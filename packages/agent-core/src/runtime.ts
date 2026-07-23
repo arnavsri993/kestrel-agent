@@ -856,7 +856,7 @@ export class AgentRuntime extends EventEmitter {
       descriptor: {
         name: "workspace.instructions",
         title: "Load workspace instructions",
-        description: "Load root-to-leaf AGENTS.md, CLAUDE.md, HERMES.md, and Workstrand instruction files for a target path.",
+        description: "Load root-to-leaf AGENTS.md, CLAUDE.md, HERMES.md, and Kestrel instruction files for a target path.",
         category: "workspace",
         riskLevel: "read_only",
         readOnly: true,
@@ -1342,7 +1342,7 @@ export class AgentRuntime extends EventEmitter {
         const directoryName = parsed.branch.replaceAll("/", "--");
         const relativePath = `.kestrel/worktrees/${directoryName}`;
         const absolutePath = resolve(workspaceRoot, relativePath);
-        if (existsSync(absolutePath)) throw new Error("The requested Workstrand worktree path already exists.");
+        if (existsSync(absolutePath)) throw new Error("The requested Kestrel worktree path already exists.");
         const args = ["worktree", "add", ...(parsed.createBranch ? ["-b", parsed.branch] : []), relativePath, parsed.startPoint];
         const result = await this.commandRunner.run({ command: "git", args, cwd: workspaceRoot, workspaceRoot, mode: "workspace_write", timeoutMs: 120_000 }, { signal, onProgress: progress });
         if (result.exitCode !== 0) throw new Error(result.stderr || "git worktree add failed.");

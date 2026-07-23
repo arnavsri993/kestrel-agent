@@ -85,6 +85,7 @@ export interface ModelProvider {
   readonly capabilities: ModelProviderCapabilities;
   probe?(signal?: AbortSignal): Promise<void>;
   complete(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResult>;
+  close?(): Promise<void>;
 }
 
 export class ModelProviderError extends Error {

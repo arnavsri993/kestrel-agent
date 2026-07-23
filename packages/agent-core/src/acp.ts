@@ -73,10 +73,10 @@ export function createKestrelAcpAgent(options: KestrelAcpOptions): AgentApp {
     }
     for (const name of ["editor.fs.read_text", "editor.fs.write_text", "editor.terminal.run"]) options.runtime.allowTool(sessionId, name);
   };
-  return agent({ name: "Workstrand" })
+  return agent({ name: "Kestrel" })
     .onRequest("initialize", ({ params }) => ({
       protocolVersion: params.protocolVersion === PROTOCOL_VERSION ? params.protocolVersion : PROTOCOL_VERSION,
-      agentInfo: { name: "Workstrand", version: "0.1.0" },
+      agentInfo: { name: "Kestrel", version: "0.1.0" },
       agentCapabilities: {
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
         mcpCapabilities: { http: true, sse: false },

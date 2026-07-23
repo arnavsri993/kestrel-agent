@@ -19,7 +19,7 @@ describe("provider-neutral agent loop", () => {
   it("runs model-requested tools, persists encrypted structured history, and audits usage", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-loop-"));
     directories.push(root);
-    writeFileSync(join(root, "README.md"), "# Workstrand\nlocal-first runtime\n");
+    writeFileSync(join(root, "README.md"), "# Kestrel\nlocal-first runtime\n");
     writeFileSync(join(root, "AGENTS.md"), "Always inspect before changing files.\n");
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database, [root], () => "2026-07-22T18:00:00.000Z");
@@ -43,11 +43,11 @@ describe("provider-neutral agent loop", () => {
           finishReason: "tool_calls"
         };
         expect(request.messages.some((message) => message.role === "tool" && message.toolCallId === "call-read")).toBe(true);
-        options?.onEvent?.({ type: "text_delta", delta: "Workstrand is local-first." });
+        options?.onEvent?.({ type: "text_delta", delta: "Kestrel is local-first." });
         return {
           providerId: "fake",
           model: request.model,
-          text: "Workstrand is local-first.",
+          text: "Kestrel is local-first.",
           toolCalls: [],
           usage: { inputTokens: 35, outputTokens: 6 },
           finishReason: "stop"
@@ -64,8 +64,8 @@ describe("provider-neutral agent loop", () => {
       onTextDelta: (delta) => deltas.push(delta)
     });
     expect(output.run).toMatchObject({ status: "completed", turn: 2 });
-    expect(output.assistantMessage?.content).toBe("Workstrand is local-first.");
-    expect(deltas).toEqual(["Workstrand is local-first."]);
+    expect(output.assistantMessage?.content).toBe("Kestrel is local-first.");
+    expect(deltas).toEqual(["Kestrel is local-first."]);
     expect(database.listToolExecutions(session.id)).toHaveLength(1);
     expect(database.listModelCallAudits(output.run.id)).toHaveLength(2);
     const messages = runtime.listMessages(session.id);

@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { AgentCore, BrowserController, VisualValidator, createEnvironmentMediaProviders, createEnvironmentModelProviders, createEnvironmentTranscriptionProvider, environmentChannelConfiguration, environmentLanguageServerClient, environmentRemoteExecutionConfiguration, environmentWebAccessOptions, installBrowserTools, installCodeIntelligenceTools, loadSignedManagedPolicy, type BrowserAction, type BrowserAutomationBackend, type BrowserDiagnostic, type BrowserDownload, type BrowserSnapshot, type BrowserViewport, type DesktopAction, type ScreenshotFrame, type LanguageServerClient } from "@kestrel/agent-core";
+import { AgentCore, BrowserController, VisualValidator, createEnvironmentMediaProviders, createEnvironmentModelProviders, createEnvironmentTranscriptionProvider, environmentChannelConfiguration, environmentGoogleWorkspaceClient, environmentLanguageServerClient, environmentRemoteExecutionConfiguration, environmentWebAccessOptions, installBrowserTools, installCodeIntelligenceTools, installGoogleWorkspaceTools, loadSignedManagedPolicy, type BrowserAction, type BrowserAutomationBackend, type BrowserDiagnostic, type BrowserDownload, type BrowserSnapshot, type BrowserViewport, type DesktopAction, type ScreenshotFrame, type LanguageServerClient } from "@kestrel/agent-core";
 import { KestrelDatabase } from "@kestrel/database";
 import { CoreRequestSchema } from "@kestrel/shared-types";
 
 interface ParentPort { on(event: "message", listener: (event: { data: unknown }) => void): void; postMessage(message: unknown): void }
 const port = (process as typeof process & { parentPort?: ParentPort }).parentPort;
-if (!port) throw new Error("Workstrand Agent Core must run as an Electron utility process.");
+if (!port) throw new Error("Kestrel Agent Core must run as an Electron utility process.");
 
 let core: AgentCore | undefined;
 let languageServer: LanguageServerClient | undefined;
@@ -58,7 +58,13 @@ port.on("message", async ({ data }) => {
     try {
       const database = new KestrelDatabase(message.config.databasePath, Buffer.from(message.config.encryptionKeyBase64, "base64"));
       const webAccess = environmentWebAccessOptions(message.config.secureEnvironment);
-      const channels = environmentChannelConfiguration();
+      const configuredChannels = environmentChannelConfiguration();
+      const googleWorkspace = environmentGoogleWorkspaceClient(message.config.secureEnvironment);
+      const channels = googleWorkspace ? {
+        adapters: [...(configuredChannels?.adapters ?? []), googleWorkspace.gmailAdapter],
+        signingSecrets: configuredChannels?.signingSecrets ?? {},
+        sessionRoutes: configuredChannels?.sessionRoutes ?? {}
+      } : configuredChannels;
       const managedPolicy = process.env.KESTREL_MANAGED_POLICY && process.env.KESTREL_MANAGED_POLICY_KEY ? loadSignedManagedPolicy(process.env.KESTREL_MANAGED_POLICY, process.env.KESTREL_MANAGED_POLICY_KEY) : undefined;
       if (Boolean(process.env.KESTREL_MANAGED_POLICY) !== Boolean(process.env.KESTREL_MANAGED_POLICY_KEY)) throw new Error("KESTREL_MANAGED_POLICY and KESTREL_MANAGED_POLICY_KEY must be configured together.");
       const artifactRoot = join(dirname(message.config.databasePath), "artifacts");
@@ -70,12 +76,14 @@ port.on("message", async ({ data }) => {
         mediaProviders: createEnvironmentMediaProviders(message.config.secureEnvironment),
         ...(transcriptionProvider ? { transcriptionProvider } : {}),
         ...(message.config.secureEnvironment.GITHUB_TOKEN ? { githubToken: message.config.secureEnvironment.GITHUB_TOKEN } : {}),
+        ...(message.config.secureEnvironment.HONCHO_API_KEY ? { honchoApiKey: message.config.secureEnvironment.HONCHO_API_KEY } : {}),
         ...(remoteExecution ? { remoteExecution } : {}),
         workspaceRoots: message.config.workspaceRoots,
         learnedSkillRoot: message.config.learnedSkillRoot,
         pluginRoots: message.config.pluginRoots,
         managedPluginRoots: message.config.managedPluginRoots,
         artifactRoot,
+        petRoot: join(dirname(message.config.databasePath), "pets"),
         onAgentTextDelta: (event) => port.postMessage({ type: "agent-stream", event }),
         ...(webAccess ? { webAccess } : {}),
         ...(channels ? { channels } : {}),
@@ -83,6 +91,7 @@ port.on("message", async ({ data }) => {
       });
       for (const key of Object.keys(message.config.secureEnvironment)) delete message.config.secureEnvironment[key];
       const mainSession = core.runtime.ensureMainSession();
+      if (googleWorkspace) installGoogleWorkspaceTools(core.runtime, googleWorkspace, mainSession.id);
       installBrowserTools(core.runtime, new BrowserController(browserBackend), mainSession.id, new VisualValidator(database, artifactRoot));
       const configuredLanguageServer = await environmentLanguageServerClient();
       if (configuredLanguageServer) {
@@ -94,7 +103,10 @@ port.on("message", async ({ data }) => {
         if (!core || automationRunning) return;
         automationRunning = true;
         const checkedAt = new Date();
-        void core.orchestrator.runDue(checkedAt).then((jobs) => {
+        void Promise.resolve().then(() => {
+          core!.runAmbientMaintenance(checkedAt);
+          return core!.orchestrator.runDue(checkedAt);
+        }).then((jobs) => {
           if (jobs.length === 0) return;
           port.postMessage({ type: "background-jobs", event: { checkedAt: checkedAt.toISOString(), jobs: jobs.map(({ prompt: _prompt, instructions: _instructions, providerModels: _models, ...job }) => job) } });
         }).catch((error) => port.postMessage({ type: "automation-error", error: error instanceof Error ? error.message : "Background automation failed." })).finally(() => { automationRunning = false; });

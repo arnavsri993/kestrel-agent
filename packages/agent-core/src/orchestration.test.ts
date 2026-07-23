@@ -97,6 +97,10 @@ describe("task orchestration", () => {
     const second = item.runtime.createSession({ title: "Second", parentSessionId: item.parent.id, workspaceRoot: item.root });
     const goal = item.orchestrator.createGoal(item.parent.id, "Ship", "Finish the release", ["Test", "Package"]);
     expect(item.orchestrator.updateGoal(goal.id, { taskId: goal.tasks[0]!.id, taskStatus: "completed" }).tasks[0]?.status).toBe("completed");
+    expect(item.orchestrator.updateGoal(goal.id, { taskId: goal.tasks[1]!.id, assigneeSessionId: first.id }).tasks[1]?.assigneeSessionId).toBe(first.id);
+    expect(item.orchestrator.updateGoal(goal.id, { taskId: goal.tasks[1]!.id, assigneeSessionId: null }).tasks[1]?.assigneeSessionId).toBeUndefined();
+    const unrelated = item.runtime.createSession({ title: "Unrelated", workspaceRoot: item.root });
+    expect(() => item.orchestrator.updateGoal(goal.id, { taskId: goal.tasks[1]!.id, assigneeSessionId: unrelated.id })).toThrow("child session");
     const opportunityGoal = item.orchestrator.goalFromOpportunity(item.parent.id, teacherOpportunity);
     expect(opportunityGoal).toMatchObject({ sourceOpportunityId: teacherOpportunity.id, title: teacherOpportunity.title });
     expect(opportunityGoal.tasks[0]?.title).toContain(teacherOpportunity.expectedOutputs[0]!.type);

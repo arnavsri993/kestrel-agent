@@ -3,10 +3,13 @@ import { createServer as createHttpsServer, type Server as HttpsServer, type Ser
 import type { AddressInfo } from "node:net";
 import type { ScheduledAgentJob } from "./orchestration";
 import type { ChannelEnvelope, ChannelGateway } from "./channels";
-import type { RemoteControl, RemoteScope } from "./remote";
+import type { RemoteControl, RemoteCredential, RemoteScope } from "./remote";
 import type { AgentRuntime } from "./runtime";
 import { McpRuntimeServer, type JsonRpcMessage } from "./extensions/mcp";
 import { remoteWebAsset } from "./remote-web";
+import type { PresenceManager } from "./presence";
+import type { TrustedProxyAuthorizer } from "./gateway-networking";
+import type { NativeNodeManager } from "./native-nodes";
 
 export interface RemoteHttpServerOptions {
   remote: RemoteControl;
@@ -19,6 +22,12 @@ export interface RemoteHttpServerOptions {
   maximumSseClients?: number;
   channelGateway?: ChannelGateway;
   resolveChannelSession?: (envelope: ChannelEnvelope) => string;
+  prometheusMetrics?: () => string;
+  presence?: PresenceManager;
+  trustedProxy?: TrustedProxyAuthorizer;
+  allowProxyTerminatedTls?: boolean;
+  nativeNodes?: NativeNodeManager;
+  onNodeTalk?: (input: { nodeId: string; text: string }) => Promise<{ text: string; sessionId?: string }>;
 }
 
 interface RateRecord { count: number; resetAt: number; }
@@ -27,10 +36,15 @@ function isLoopback(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
 
-function bearer(request: IncomingMessage): string {
+function bearer(request: IncomingMessage): string | undefined {
   const authorization = request.headers.authorization;
-  if (!authorization?.startsWith("Bearer ") || authorization.length > 600) throw new Error("Remote bearer token is required.");
+  if (!authorization) return undefined;
+  if (!authorization.startsWith("Bearer ") || authorization.length > 600) throw new Error("Remote bearer token is invalid.");
   return authorization.slice(7);
+}
+
+function credentialKey(credential: RemoteCredential): string {
+  return typeof credential === "string" ? credential : `proxy:${credential.identity}:${credential.scopes.slice().sort().join(",")}`;
 }
 
 function json(response: ServerResponse, status: number, payload: unknown): void {
@@ -47,6 +61,18 @@ function webAsset(response: ServerResponse, asset: NonNullable<ReturnType<typeof
     "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cross-origin-opener-policy": "same-origin"
   });
   response.end(body);
+}
+
+function prometheus(response: ServerResponse, body: string): void {
+  const payload = Buffer.from(body);
+  response.writeHead(200, {
+    "content-type": "text/plain; version=0.0.4; charset=utf-8",
+    "content-length": payload.byteLength,
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer"
+  });
+  response.end(payload);
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -127,7 +153,8 @@ export class RemoteHttpServer {
   async start(): Promise<{ origin: string }> {
     if (this.server) throw new Error("Remote HTTP server is already running.");
     const host = this.options.host ?? "127.0.0.1";
-    if (!isLoopback(host) && !this.options.tls) throw new Error("Non-loopback remote transport requires TLS.");
+    if (!isLoopback(host) && !this.options.tls && !(this.options.trustedProxy && this.options.allowProxyTerminatedTls)) throw new Error("Non-loopback remote transport requires TLS or explicit trusted-proxy TLS termination.");
+    if (this.options.allowProxyTerminatedTls && !this.options.trustedProxy) throw new Error("Proxy-terminated TLS requires trusted-proxy authentication.");
     const handler = (request: IncomingMessage, response: ServerResponse) => { void this.handle(request, response); };
     this.server = this.options.tls ? createHttpsServer(this.options.tls, handler) : createHttpServer(handler);
     this.server.requestTimeout = 15_000;
@@ -196,7 +223,107 @@ export class RemoteHttpServer {
         json(response, 202, this.options.channelGateway.receive(sessionId, envelope, signature));
         return;
       }
-      const token = bearer(request);
+      const token = bearer(request) ?? this.options.trustedProxy?.authorize({ ...(request.socket.remoteAddress ? { remoteAddress: request.socket.remoteAddress } : {}), headers: request.headers });
+      if (!token) throw new Error("Remote bearer token or trusted proxy identity is required.");
+      if (request.method === "GET" && url.pathname === "/v1/diagnostics/prometheus") {
+        if (!this.options.prometheusMetrics) { json(response, 404, { error: "Prometheus diagnostics are disabled." }); return; }
+        this.options.remote.assertAuthorized(token, "read" satisfies RemoteScope);
+        prometheus(response, this.options.prometheusMetrics());
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/v1/presence") {
+        if (!this.options.presence) { json(response, 404, { error: "Presence is not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "read" satisfies RemoteScope);
+        json(response, 200, { presence: this.options.presence.list() });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/presence") {
+        if (!this.options.presence) { json(response, 404, { error: "Presence is not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "read" satisfies RemoteScope);
+        const body = await readJson(request);
+        const mode = stringField(body, "mode", 20);
+        if (!["ui", "webchat", "node", "test"].includes(mode)) throw new Error("Field mode is invalid.");
+        const version = typeof body.version === "string" && body.version.length <= 100 ? body.version : undefined;
+        const reason = typeof body.reason === "string" && body.reason.length <= 200 ? body.reason : undefined;
+        json(response, 200, {
+          presence: this.options.presence.beacon({
+            instanceId: stringField(body, "instanceId", 128),
+            mode: mode as "ui" | "webchat" | "node" | "test",
+            ...(version ? { version } : {}),
+            ...(reason ? { reason } : {})
+          })
+        });
+        return;
+      }
+      if (url.pathname === "/v1/nodes" && request.method === "GET") {
+        if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "read");
+        json(response, 200, { nodes: this.options.nativeNodes.list() });
+        return;
+      }
+      if (url.pathname === "/v1/nodes/beacon" && request.method === "POST") {
+        if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "read");
+        const body = await readJson(request);
+        json(response, 200, { node: this.options.nativeNodes.beacon({
+          nodeId: stringField(body, "nodeId", 128),
+          label: stringField(body, "label", 100),
+          platform: stringField(body, "platform", 20) as "ios" | "android" | "macos",
+          capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) as never : [],
+          ...(typeof body.version === "string" ? { version: body.version } : {}),
+          ...(Number.isInteger(body.idleSeconds) ? { idleSeconds: Number(body.idleSeconds) } : {})
+        }) });
+        return;
+      }
+      const nodePoll = url.pathname.match(/^\/v1\/nodes\/([A-Za-z0-9._-]{1,128})\/poll$/);
+      if (request.method === "POST" && nodePoll) {
+        if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "read");
+        json(response, 200, this.options.nativeNodes.poll(nodePoll[1]!));
+        return;
+      }
+      const nodeResult = url.pathname.match(/^\/v1\/nodes\/([A-Za-z0-9._-]{1,128})\/results$/);
+      if (request.method === "POST" && nodeResult) {
+        if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "read");
+        const body = await readJson(request);
+        const output = body.output && typeof body.output === "object" && !Array.isArray(body.output) ? body.output as Record<string, unknown> : undefined;
+        const rawError = body.error && typeof body.error === "object" && !Array.isArray(body.error) ? body.error as Record<string, unknown> : undefined;
+        this.options.nativeNodes.complete(nodeResult[1]!, {
+          commandId: stringField(body, "commandId", 200),
+          ok: body.ok === true,
+          ...(output ? { output } : {}),
+          ...(rawError ? { error: { code: stringField(rawError, "code", 100), message: stringField(rawError, "message", 1_000) } } : {})
+        });
+        json(response, 202, { accepted: true });
+        return;
+      }
+      const nodeTalk = url.pathname.match(/^\/v1\/nodes\/([A-Za-z0-9._-]{1,128})\/talk$/);
+      if (request.method === "POST" && nodeTalk) {
+        if (!this.options.nativeNodes || !this.options.onNodeTalk) { json(response, 404, { error: "Native Talk is not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "tasks");
+        const body = await readJson(request);
+        const nodeId = nodeTalk[1]!;
+        const text = stringField(body, "text", 10_000);
+        void this.options.onNodeTalk({ nodeId, text })
+          .then((result) => this.options.nativeNodes?.enqueueTalk(nodeId, result.text, result.sessionId))
+          .catch((error) => this.options.nativeNodes?.enqueueTalk(nodeId, `Talk failed: ${error instanceof Error ? error.message.slice(0, 500) : "The agent could not respond."}`));
+        json(response, 202, { accepted: true });
+        return;
+      }
+      if (url.pathname === "/v1/nodes/voice-wake" && request.method === "GET") {
+        if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "read");
+        json(response, 200, { triggers: this.options.nativeNodes.getVoiceWake() });
+        return;
+      }
+      if (url.pathname === "/v1/nodes/voice-wake" && request.method === "POST") {
+        if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
+        this.options.remote.assertAuthorized(token, "approve");
+        const body = await readJson(request);
+        json(response, 200, { triggers: this.options.nativeNodes.setVoiceWake(body.triggers) });
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/v1/mcp") {
         this.options.remote.assertAuthorized(token, "read" satisfies RemoteScope);
         const sessionHeader = request.headers["x-kestrel-session-id"];
@@ -204,7 +331,7 @@ export class RemoteHttpServer {
         this.options.runtime.getSession(sessionHeader);
         const body = await readJson(request);
         if (body.jsonrpc !== "2.0" || (typeof body.method !== "string" && !("result" in body) && !("error" in body))) throw new Error("MCP JSON-RPC message is invalid.");
-        const key = `${token}:${sessionHeader}`;
+        const key = `${credentialKey(token)}:${sessionHeader}`;
         const server = this.mcpSessions.get(key) ?? new McpRuntimeServer(this.options.runtime, sessionHeader);
         this.mcpSessions.set(key, server);
         const result = await server.handle(body as JsonRpcMessage);
@@ -222,12 +349,12 @@ export class RemoteHttpServer {
     } catch (error) {
       if (response.headersSent) { response.end(); return; }
       const message = error instanceof Error ? error.message : "Remote request failed.";
-      const status = /token|bearer|scope/i.test(message) ? 401 : /rate limit/i.test(message) ? 429 : /invalid|requires|exceeds|must|field|schedule/i.test(message) ? 400 : 500;
+      const status = /token|bearer|scope|trusted proxy|identity|untrusted source|not allowed/i.test(message) ? 401 : /rate limit/i.test(message) ? 429 : /invalid|requires|exceeds|must|field|schedule/i.test(message) ? 400 : 500;
       json(response, status, { error: status === 500 ? "Remote request failed." : message });
     }
   }
 
-  private openEvents(token: string, request: IncomingMessage, response: ServerResponse): void {
+  private openEvents(token: RemoteCredential, request: IncomingMessage, response: ServerResponse): void {
     this.options.remote.assertAuthorized(token, "read" satisfies RemoteScope);
     if (this.sse.size >= (this.options.maximumSseClients ?? 8)) throw new Error("Remote event client limit exceeded.");
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });

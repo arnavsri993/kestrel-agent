@@ -108,7 +108,7 @@ export interface WorkflowRecord {
   updatedAt: string;
 }
 
-export interface GoalTask { id: string; title: string; status: "pending" | "in_progress" | "completed"; dependsOn?: string[]; dueAt?: string; }
+export interface GoalTask { id: string; title: string; status: "pending" | "in_progress" | "completed"; assigneeSessionId?: string; dependsOn?: string[]; dueAt?: string; }
 export interface GoalRecord { id: string; sessionId: string; title: string; objective: string; status: "active" | "completed" | "cancelled"; tasks: GoalTask[]; sourceOpportunityId?: string; deadline?: string; createdAt: string; updatedAt: string; }
 export interface TeamMessage { id: string; fromSessionId: string; toSessionId: string; text: string; createdAt: string; }
 export interface TeamRecord { id: string; parentSessionId: string; title: string; memberSessionIds: string[]; sharedPlan: string[]; messages: TeamMessage[]; createdAt: string; updatedAt: string; }
@@ -247,16 +247,30 @@ export class TaskOrchestrator {
     return this.createGoal(sessionId, opportunity.title, opportunity.proposedGoal, opportunity.expectedOutputs.map((output) => `${output.type}: ${output.description}`), { sourceOpportunityId: opportunity.id, ...(opportunity.expiresAt ? { deadline: opportunity.expiresAt } : {}) });
   }
 
-  updateGoal(goalId: string, input: { status?: GoalRecord["status"]; taskId?: string; taskStatus?: GoalTask["status"] }): GoalRecord {
+  updateGoal(goalId: string, input: { status?: GoalRecord["status"]; taskId?: string; taskStatus?: GoalTask["status"]; assigneeSessionId?: string | null }): GoalRecord {
     const goals = this.listGoals();
     const index = goals.findIndex((goal) => goal.id === goalId);
     const current = goals[index];
     if (!current) throw new Error("Goal not found.");
     let tasks = current.tasks;
     if (input.taskId) {
-      if (!input.taskStatus) throw new Error("Task status is required.");
       if (!tasks.some((task) => task.id === input.taskId)) throw new Error("Goal task not found.");
-      tasks = tasks.map((task) => task.id === input.taskId ? { ...task, status: input.taskStatus! } : task);
+      if (input.taskStatus === undefined && input.assigneeSessionId === undefined) throw new Error("Task status or worker lane is required.");
+      if (input.assigneeSessionId) {
+        const assignee = this.runtime.getSession(input.assigneeSessionId);
+        if (assignee.parentSessionId !== current.sessionId) throw new Error("Worker lane must be a child session of the goal session.");
+      }
+      tasks = tasks.map((task) => {
+        if (task.id !== input.taskId) return task;
+        const base = input.assigneeSessionId === null
+          ? (({ assigneeSessionId: _assigneeSessionId, ...unassigned }) => unassigned)(task)
+          : task;
+        return {
+          ...base,
+          ...(input.taskStatus ? { status: input.taskStatus } : {}),
+          ...(input.assigneeSessionId ? { assigneeSessionId: input.assigneeSessionId } : {})
+        };
+      });
     }
     const updated = { ...current, ...(input.status ? { status: input.status } : {}), tasks, updatedAt: this.now().toISOString() };
     goals[index] = updated;
@@ -477,7 +491,7 @@ export function installOrchestrationTools(runtime: AgentRuntime, orchestrator: T
   const add = (name: string, title: string, readOnly: boolean, schema: Record<string, unknown>, execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"]) => { runtime.registerExternalTool({ descriptor: { name, title, description: title, category: "automation", riskLevel: "sensitive", readOnly, requiresWorkspace: false, source: "builtin", tags: ["goal", "team", "orchestration"] }, inputSchema: schema, execute }); runtime.allowTool(sessionId, name); };
   add("goal.list", "List durable goals", true, { type: "object", properties: {}, additionalProperties: false }, async () => ({ goals: orchestrator.listGoals() }));
   add("goal.create", "Create a durable goal and task list", false, { type: "object", properties: { sessionId: { type: "string" }, title: { type: "string" }, objective: { type: "string" }, tasks: { type: "array", items: { type: "string" } } }, required: ["sessionId", "title", "objective"], additionalProperties: false }, async (_context, input) => ({ goal: orchestrator.createGoal(String(input.sessionId), String(input.title), String(input.objective), Array.isArray(input.tasks) ? input.tasks.map(String) : []) }));
-  add("goal.update", "Update a goal or task status", false, { type: "object", properties: { goalId: { type: "string" }, status: { enum: ["active", "completed", "cancelled"] }, taskId: { type: "string" }, taskStatus: { enum: ["pending", "in_progress", "completed"] } }, required: ["goalId"], additionalProperties: false }, async (_context, input) => ({ goal: orchestrator.updateGoal(String(input.goalId), { ...(input.status ? { status: input.status as GoalRecord["status"] } : {}), ...(input.taskId ? { taskId: String(input.taskId) } : {}), ...(input.taskStatus ? { taskStatus: input.taskStatus as GoalTask["status"] } : {}) }) }));
+  add("goal.update", "Update a goal task, status, or worker lane", false, { type: "object", properties: { goalId: { type: "string" }, status: { enum: ["active", "completed", "cancelled"] }, taskId: { type: "string" }, taskStatus: { enum: ["pending", "in_progress", "completed"] }, assigneeSessionId: { anyOf: [{ type: "string" }, { type: "null" }] } }, required: ["goalId"], additionalProperties: false }, async (_context, input) => ({ goal: orchestrator.updateGoal(String(input.goalId), { ...(input.status ? { status: input.status as GoalRecord["status"] } : {}), ...(input.taskId ? { taskId: String(input.taskId) } : {}), ...(input.taskStatus ? { taskStatus: input.taskStatus as GoalTask["status"] } : {}), ...(input.assigneeSessionId !== undefined ? { assigneeSessionId: input.assigneeSessionId === null ? null : String(input.assigneeSessionId) } : {}) }) }));
   add("orchestration.delegate", "Delegate an isolated child-agent task", false, { type: "object", properties: { parentSessionId: { type: "string" }, title: { type: "string" }, prompt: { type: "string" }, model: { type: "string" }, providerIds: { type: "array", items: { type: "string" }, minItems: 1 }, allowedTools: { type: "array", items: { type: "string" } }, isolateWorktree: { type: "boolean" } }, required: ["parentSessionId", "title", "prompt", "model", "providerIds"], additionalProperties: false }, async (_context, input) => ({ delegated: await orchestrator.delegate({ parentSessionId: String(input.parentSessionId), title: String(input.title), prompt: String(input.prompt), model: String(input.model), providerIds: (input.providerIds as unknown[]).map(String), ...(Array.isArray(input.allowedTools) ? { allowedTools: input.allowedTools.map(String) } : {}), isolateWorktree: Boolean(input.isolateWorktree) }) }));
   add("orchestration.handoff", "Hand delegated work back to its parent", false, { type: "object", properties: { childSessionId: { type: "string" }, summary: { type: "string" } }, required: ["childSessionId", "summary"], additionalProperties: false }, async (_context, input) => ({ message: orchestrator.handoff(String(input.childSessionId), String(input.summary)) }));
   add("team.list", "List durable agent teams", true, { type: "object", properties: {}, additionalProperties: false }, async () => ({ teams: orchestrator.listTeams() }));

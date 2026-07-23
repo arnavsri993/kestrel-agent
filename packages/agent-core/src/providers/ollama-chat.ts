@@ -15,6 +15,8 @@ export interface OllamaChatProviderOptions {
   defaultModel?: string;
   baseUrl?: string;
   headers?: Record<string, string>;
+  contextWindow?: number;
+  thinking?: boolean;
 }
 
 function ollamaMessages(messages: ModelMessage[]): Array<Record<string, unknown>> {
@@ -40,12 +42,14 @@ export class OllamaChatProvider implements ModelProvider {
   readonly defaultModel?: string;
   readonly capabilities = { streaming: true, tools: true, images: true, audio: false, documents: false, local: true } as const;
   private readonly baseUrl: string;
+  private readonly contextWindow: number;
 
   constructor(private readonly options: OllamaChatProviderOptions = {}) {
     this.id = options.id ?? "ollama";
     if (options.poolId) this.poolId = options.poolId;
     if (options.defaultModel) this.defaultModel = options.defaultModel;
     this.baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(/\/$/, "");
+    this.contextWindow = Math.max(16_384, Math.min(131_072, Math.floor(options.contextWindow ?? 32_768)));
   }
 
   async probe(signal?: AbortSignal): Promise<void> {
@@ -61,6 +65,7 @@ export class OllamaChatProvider implements ModelProvider {
         model: request.model,
         messages: ollamaMessages(request.messages),
         stream: true,
+        think: this.options.thinking ?? false,
         ...(request.tools?.length ? {
           tools: request.tools.map((tool) => ({
             type: "function",
@@ -69,10 +74,11 @@ export class OllamaChatProvider implements ModelProvider {
         } : {}),
         ...((request.temperature !== undefined || request.maxOutputTokens) ? {
           options: {
+            num_ctx: this.contextWindow,
             ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
             ...(request.maxOutputTokens ? { num_predict: request.maxOutputTokens } : {})
           }
-        } : {})
+        } : { options: { num_ctx: this.contextWindow } })
       }),
       ...(options.signal ? { signal: options.signal } : {})
     });

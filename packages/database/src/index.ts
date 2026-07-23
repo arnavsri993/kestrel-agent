@@ -352,6 +352,11 @@ export class KestrelDatabase {
       .map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)));
   }
 
+  listAllToolExecutions(): RuntimeToolExecution[] {
+    return (this.db.prepare("SELECT payload FROM tool_executions ORDER BY started_at ASC").all() as Array<{ payload: string }>)
+      .map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)));
+  }
+
   getToolExecution(id: string): RuntimeToolExecution | undefined {
     const row = this.db.prepare("SELECT payload FROM tool_executions WHERE id = ?").get(id) as { payload: string } | undefined;
     return row ? RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)) : undefined;

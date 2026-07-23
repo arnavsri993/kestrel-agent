@@ -11,7 +11,7 @@
     <path d="M14 14h36v16L20 49h31" fill="none" stroke="#d7ff52" stroke-width="9" stroke-linecap="butt" stroke-linejoin="round" mask="url(#workstrand-checkpoint)"/>
     <circle cx="43" cy="34" r="2.25" fill="#f4f7f1"/>
   </g>
-  <text x="180" y="126" font-family="Arial, sans-serif" font-size="36" font-weight="700" fill="#f4f7f1">Workstrand</text>
+  <text x="180" y="126" font-family="Arial, sans-serif" font-size="36" font-weight="700" fill="#f4f7f1">Kestrel</text>
   <text x="70" y="257" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#f4f7f1">Bring the outcome.</text>
   <text x="70" y="337" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#d7ff52">Follow the whole job.</text>
   <text x="70" y="402" font-family="Arial, sans-serif" font-size="26" fill="#aeb8b1">A local-first work agent with visible approval and verified delivery.</text>

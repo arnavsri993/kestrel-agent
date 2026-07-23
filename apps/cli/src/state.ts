@@ -13,10 +13,10 @@ function encryptionKey(directory: string): Buffer {
   const path = join(directory, "encryption.key");
   if (existsSync(path)) {
     const metadata = lstatSync(path);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("Workstrand data key must be a regular non-symlink file.");
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("Kestrel data key must be a regular non-symlink file.");
     chmodSync(path, 0o600);
     const key = Buffer.from(readFileSync(path, "utf8").trim(), "base64");
-    if (key.byteLength !== 32) throw new Error("Workstrand data key is invalid.");
+    if (key.byteLength !== 32) throw new Error("Kestrel data key is invalid.");
     return key;
   }
   const key = randomBytes(32);
@@ -29,10 +29,10 @@ export function openKestrel(workspaceRoots: string[] = []): AgentCore {
   const directory = dataDirectory();
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const metadata = lstatSync(directory);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Workstrand data directory must be a regular directory.");
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error("Kestrel data directory must be a regular directory.");
   chmodSync(directory, 0o700);
   const databasePath = join(directory, "kestrel.sqlite");
-  if (existsSync(databasePath) && lstatSync(databasePath).isSymbolicLink()) throw new Error("Workstrand database cannot be a symbolic link.");
+  if (existsSync(databasePath) && lstatSync(databasePath).isSymbolicLink()) throw new Error("Kestrel database cannot be a symbolic link.");
   const managedPluginRoot = join(directory, "plugins");
   const pluginRoots = [managedPluginRoot, join(homedir(), ".codex", "plugins", "cache", "camarade")];
   const database = new KestrelDatabase(databasePath, encryptionKey(directory));
@@ -59,6 +59,7 @@ export function openKestrel(workspaceRoots: string[] = []): AgentCore {
     pluginRoots,
     managedPluginRoots: [managedPluginRoot],
     artifactRoot: join(directory, "artifacts"),
+    petRoot: join(directory, "pets"),
     mediaProviders: createEnvironmentMediaProviders(),
     ...(transcriptionProvider ? { transcriptionProvider } : {}),
     ...(remoteExecution ? { remoteExecution } : {}),

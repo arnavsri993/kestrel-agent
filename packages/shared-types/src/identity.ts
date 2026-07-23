@@ -12,12 +12,12 @@ export interface ProductIdentity {
 
 const runtimeProcess = Reflect.get(globalThis, "process") as { env?: Record<string, string | undefined> } | undefined;
 const runtimeEnv = runtimeProcess?.env ?? {};
-const channel = (runtimeEnv.KESTREL_RELEASE_CHANNEL ?? "development") as ReleaseChannel;
+const channel = (runtimeEnv.KESTREL_RELEASE_CHANNEL ?? "stable") as ReleaseChannel;
 const suffix = channel === "stable" ? "" : `.${channel === "development" ? "dev" : channel}`;
 
 /** Human-visible identity is centralized here; privileged compatibility identifiers migrate separately. */
 export const PRODUCT_IDENTITY: ProductIdentity = {
-  productName: runtimeEnv.KESTREL_PRODUCT_NAME ?? "Workstrand",
+  productName: runtimeEnv.KESTREL_PRODUCT_NAME ?? "Kestrel",
   internalName: "agent-one",
   appId: `com.kestrel.desktop${suffix}`,
   protocol: "kestrel",

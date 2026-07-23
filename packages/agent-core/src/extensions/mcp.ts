@@ -144,7 +144,7 @@ export class McpClient {
     const result = await this.request("initialize", {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { roots: { listChanged: false } },
-      clientInfo: { name: "kestrel", title: "Workstrand", version: "0.1.0", description: "Local-first personal agent" }
+      clientInfo: { name: "kestrel", title: "Kestrel", version: "0.1.0", description: "Local-first personal agent" }
     });
     const negotiated = String((result as Record<string, unknown>).protocolVersion ?? "");
     if (negotiated !== MCP_PROTOCOL_VERSION) throw new Error(`Unsupported MCP protocol version ${negotiated}.`);
@@ -182,7 +182,7 @@ export class McpClient {
     const request = this.request("tools/call", { name, arguments: args });
     if (signal) {
       if (signal.aborted) throw signal.reason;
-      const abort = () => { void this.transport.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { reason: "Cancelled by Workstrand" } }); };
+      const abort = () => { void this.transport.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { reason: "Cancelled by Kestrel" } }); };
       signal.addEventListener("abort", abort, { once: true });
       try { return await request as McpToolResult; }
       finally { signal.removeEventListener("abort", abort); }
@@ -261,7 +261,7 @@ export class McpRuntimeServer {
         jsonrpc: "2.0", id: message.id, result: {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: "kestrel-runtime", title: "Workstrand Runtime", version: "0.1.0", description: "Policy-scoped Workstrand tools" }
+          serverInfo: { name: "kestrel-runtime", title: "Kestrel Runtime", version: "0.1.0", description: "Policy-scoped Kestrel tools" }
         }
       };
       if (!this.initialized) throw new Error("MCP server is not initialized.");

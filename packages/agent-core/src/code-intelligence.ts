@@ -106,7 +106,7 @@ export class LanguageServerClient {
   }
 
   async initialize(rootUri: string): Promise<unknown> {
-    const result = await this.request("initialize", { processId: null, rootUri, capabilities: { textDocument: { publishDiagnostics: {}, definition: {}, references: {} } }, clientInfo: { name: "Workstrand", version: "0.1.0" } });
+    const result = await this.request("initialize", { processId: null, rootUri, capabilities: { textDocument: { publishDiagnostics: {}, definition: {}, references: {} } }, clientInfo: { name: "Kestrel", version: "0.1.0" } });
     await this.notify("initialized", {});
     return result;
   }

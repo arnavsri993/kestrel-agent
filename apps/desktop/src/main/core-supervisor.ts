@@ -18,8 +18,8 @@ export class CoreSupervisor extends EventEmitter {
 
   async start(config: { databasePath: string; encryptionKeyBase64: string; workspaceRoots: string[]; pluginRoots: string[]; managedPluginRoots: string[]; learnedSkillRoot: string; secureEnvironment: NodeJS.ProcessEnv }): Promise<void> {
     this.stopping = false;
-    const inheritedEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !["OPENAI_API_KEY", "OPENAI_API_KEY_SECONDARY", "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_SECONDARY", "GEMINI_API_KEY", "BRAVE_SEARCH_API_KEY", "GITHUB_TOKEN", "KESTREL_REMOTE_TARGETS"].includes(key))) as Record<string, string>;
-    const child = utilityProcess.fork(join(__dirname, "utility.js"), [], { serviceName: "Workstrand Agent Core", env: inheritedEnvironment });
+    const inheritedEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && !["OPENAI_API_KEY", "OPENAI_API_KEY_SECONDARY", "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_SECONDARY", "GEMINI_API_KEY", "BRAVE_SEARCH_API_KEY", "GITHUB_TOKEN", "HONCHO_API_KEY", "FAL_KEY", "KESTREL_REMOTE_TARGETS", "KESTREL_GOOGLE_WORKSPACE_OAUTH"].includes(key))) as Record<string, string>;
+    const child = utilityProcess.fork(join(__dirname, "utility.js"), [], { serviceName: "Kestrel Agent Core", env: inheritedEnvironment });
     this.child = child;
     child.on("message", (message) => this.onMessage(message as WireResponse));
     child.on("exit", (code) => this.onExit(code));

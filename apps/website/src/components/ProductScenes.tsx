@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
+import { sitePath } from "../lib/site-path";
 
 export function TeacherScene() {
   const reduced = useReducedMotion();
-  return <div className="teacher-scene" aria-label="Workstrand scheduling workflow preview">
-    <div className="scene-topbar"><span><b><img src="/brand/workstrand-mark.svg" alt="" /></b> Workstrand</span><small>waiting for approval</small></div>
+  return <div className="teacher-scene" aria-label="Kestrel scheduling workflow preview">
+    <div className="scene-topbar"><span><b><img src={sitePath("/brand/workstrand-mark.svg")} alt="" /></b> Kestrel</span><small>waiting for approval</small></div>
     <motion.div className="scene-signal" initial={reduced ? false : { scaleX: 0 }} whileInView={{ scaleX: 1 }} viewport={{ once: true }} transition={{ duration: .8, ease: [.22, 1, .36, 1] }} />
     <div className="scene-body">
       <div className="scene-message"><span>Teacher email</span><strong>Friday or Monday?</strong><p>Choose a date for the Algebra II test.</p></div>

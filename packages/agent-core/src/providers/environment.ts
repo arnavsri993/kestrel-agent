@@ -2,7 +2,8 @@ import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { OllamaChatProvider } from "./ollama-chat";
 import { OpenAIResponsesProvider } from "./openai-responses";
 import { GeminiGenerateContentProvider } from "./gemini-generate-content";
-import { ClaudeSubscriptionProvider, CodexSubscriptionProvider } from "./subscription-cli";
+import { ClaudeSubscriptionProvider } from "./subscription-cli";
+import { CodexAppServerProvider } from "./codex-app-server";
 import type { ModelProvider } from "./types";
 
 export function createEnvironmentModelProviders(environment: NodeJS.ProcessEnv = process.env): ModelProvider[] {
@@ -28,7 +29,7 @@ export function createEnvironmentModelProviders(environment: NodeJS.ProcessEnv =
   }
   if (environment.ANTHROPIC_API_KEY_SECONDARY) providers.push(new AnthropicMessagesProvider({ apiKey: environment.ANTHROPIC_API_KEY_SECONDARY, id: "anthropic-key-2", poolId: "anthropic", ...(environment.ANTHROPIC_MODEL ? { defaultModel: environment.ANTHROPIC_MODEL } : {}), ...(environment.ANTHROPIC_BASE_URL ? { baseUrl: environment.ANTHROPIC_BASE_URL } : {}) }));
   if (environment.GEMINI_API_KEY) providers.push(new GeminiGenerateContentProvider({ apiKey: environment.GEMINI_API_KEY, ...(environment.GEMINI_MODEL ? { defaultModel: environment.GEMINI_MODEL } : {}), ...(environment.GEMINI_BASE_URL ? { baseUrl: environment.GEMINI_BASE_URL } : {}) }));
-  if (environment.KESTREL_ENABLE_CODEX_SUBSCRIPTION === "1") providers.push(new CodexSubscriptionProvider({
+  if (environment.KESTREL_ENABLE_CODEX_SUBSCRIPTION === "1") providers.push(new CodexAppServerProvider({
     ...(environment.KESTREL_CODEX_PATH ? { executable: environment.KESTREL_CODEX_PATH } : {}),
     ...(environment.KESTREL_CODEX_SUBSCRIPTION_MODEL ? { defaultModel: environment.KESTREL_CODEX_SUBSCRIPTION_MODEL } : {}),
     environment
@@ -42,6 +43,7 @@ export function createEnvironmentModelProviders(environment: NodeJS.ProcessEnv =
     providers.push(new OllamaChatProvider({
       baseUrl: environment.KESTREL_OLLAMA_BASE_URL ?? "http://127.0.0.1:11434"
       ,...(environment.KESTREL_OLLAMA_MODEL ? { defaultModel: environment.KESTREL_OLLAMA_MODEL } : {})
+      ,...(environment.KESTREL_OLLAMA_CONTEXT_WINDOW && Number.isFinite(Number(environment.KESTREL_OLLAMA_CONTEXT_WINDOW)) ? { contextWindow: Number(environment.KESTREL_OLLAMA_CONTEXT_WINDOW) } : {})
     }));
   }
   return providers;

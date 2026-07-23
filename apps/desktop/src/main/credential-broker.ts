@@ -3,17 +3,24 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { dirname, join } from "node:path";
 import { safeStorage } from "electron";
 
-export type BrokeredCredentialId = "openai" | "openai-secondary" | "anthropic" | "anthropic-secondary" | "gemini" | "brave-search" | "github";
+export type BrokeredCredentialId = "openai" | "openai-secondary" | "anthropic" | "anthropic-secondary" | "gemini" | "brave-search" | "github" | "honcho" | "fal";
 
-const credentials: Record<BrokeredCredentialId, { environmentKey: string; label: string }> = {
+export const BROKERED_CREDENTIALS: Record<BrokeredCredentialId, { environmentKey: string; label: string }> = {
   openai: { environmentKey: "OPENAI_API_KEY", label: "OpenAI API key" },
   "openai-secondary": { environmentKey: "OPENAI_API_KEY_SECONDARY", label: "OpenAI backup API key" },
   anthropic: { environmentKey: "ANTHROPIC_API_KEY", label: "Anthropic API key" },
   "anthropic-secondary": { environmentKey: "ANTHROPIC_API_KEY_SECONDARY", label: "Anthropic backup API key" },
   gemini: { environmentKey: "GEMINI_API_KEY", label: "Google Gemini API key" },
   "brave-search": { environmentKey: "BRAVE_SEARCH_API_KEY", label: "Brave Search API key" },
-  github: { environmentKey: "GITHUB_TOKEN", label: "GitHub token" }
+  github: { environmentKey: "GITHUB_TOKEN", label: "GitHub token" },
+  honcho: { environmentKey: "HONCHO_API_KEY", label: "Honcho API key" },
+  fal: { environmentKey: "FAL_KEY", label: "fal media API key" }
 };
+
+export interface ResolvedExternalCredentials {
+  values: Partial<Record<BrokeredCredentialId, string>>;
+  overrideStoredIds: BrokeredCredentialId[];
+}
 
 interface SecretProtection {
   isEncryptionAvailable(): boolean;
@@ -46,12 +53,12 @@ export class CredentialBroker {
   }
 
   async listCredentials(): Promise<Array<{ id: BrokeredCredentialId; label: string; configured: boolean }>> {
-    return Promise.all((Object.keys(credentials) as BrokeredCredentialId[]).map(async (id) => ({ id, label: credentials[id].label, configured: await this.hasCredential(id) })));
+    return Promise.all((Object.keys(BROKERED_CREDENTIALS) as BrokeredCredentialId[]).map(async (id) => ({ id, label: BROKERED_CREDENTIALS[id].label, configured: await this.hasCredential(id) })));
   }
 
   async setCredential(id: BrokeredCredentialId, value: string): Promise<void> {
     this.assertAvailable();
-    if (!credentials[id]) throw new Error("Credential type is not supported.");
+    if (!BROKERED_CREDENTIALS[id]) throw new Error("Credential type is not supported.");
     const secret = value.trim();
     if (secret.length < 8 || secret.length > 20_000 || /[\r\n\0]/.test(secret)) throw new Error("Credential value is invalid.");
     const path = this.credentialPath(id);
@@ -64,12 +71,38 @@ export class CredentialBroker {
   }
 
   async removeCredential(id: BrokeredCredentialId): Promise<void> {
-    if (!credentials[id]) throw new Error("Credential type is not supported.");
+    if (!BROKERED_CREDENTIALS[id]) throw new Error("Credential type is not supported.");
     try { await unlink(this.credentialPath(id)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   }
 
-  async providerEnvironment(base: NodeJS.ProcessEnv = process.env): Promise<NodeJS.ProcessEnv> {
+  async setOpaqueSecret(id: string, value: string): Promise<void> {
+    this.assertOpaqueId(id);
+    this.assertAvailable();
+    if (value.length < 8 || value.length > 100_000 || value.includes("\0")) throw new Error("Opaque credential value is invalid.");
+    const path = this.opaquePath(id);
+    const temporary = `${path}.new`;
+    await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
+    await writeFile(temporary, this.protection.encryptString(value), { mode: 0o600 });
+    await chmod(temporary, 0o600);
+    await rename(temporary, path);
+    await chmod(path, 0o600);
+  }
+
+  async getOpaqueSecret(id: string): Promise<string | undefined> {
+    this.assertOpaqueId(id);
+    this.assertAvailable();
+    try { return this.protection.decryptString(await readFile(this.opaquePath(id))); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  }
+
+  async removeOpaqueSecret(id: string): Promise<void> {
+    this.assertOpaqueId(id);
+    try { await unlink(this.opaquePath(id)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+
+  async providerEnvironment(base: NodeJS.ProcessEnv = process.env, external?: ResolvedExternalCredentials): Promise<NodeJS.ProcessEnv> {
     const environment: NodeJS.ProcessEnv = {
       ...(base.OPENAI_BASE_URL ? { OPENAI_BASE_URL: base.OPENAI_BASE_URL } : {}),
       ...(base.OPENAI_ORGANIZATION ? { OPENAI_ORGANIZATION: base.OPENAI_ORGANIZATION } : {}),
@@ -91,11 +124,17 @@ export class CredentialBroker {
       ...(base.KESTREL_WEB_ALLOW_PUBLIC ? { KESTREL_WEB_ALLOW_PUBLIC: base.KESTREL_WEB_ALLOW_PUBLIC } : {})
       ,...(base.KESTREL_REMOTE_TARGETS ? { KESTREL_REMOTE_TARGETS: base.KESTREL_REMOTE_TARGETS } : {})
     };
-    for (const id of Object.keys(credentials) as BrokeredCredentialId[]) {
-      const value = await this.getCredential(id);
-      if (value) environment[credentials[id].environmentKey] = value;
-      else if (base[credentials[id].environmentKey]) environment[credentials[id].environmentKey] = base[credentials[id].environmentKey];
+    for (const id of Object.keys(BROKERED_CREDENTIALS) as BrokeredCredentialId[]) {
+      const stored = await this.getCredential(id);
+      const inherited = base[BROKERED_CREDENTIALS[id].environmentKey];
+      const resolved = external?.values[id];
+      const value = resolved && (external?.overrideStoredIds.includes(id) || (!stored && !inherited))
+        ? resolved
+        : stored ?? inherited;
+      if (value) environment[BROKERED_CREDENTIALS[id].environmentKey] = value;
     }
+    const googleWorkspaceOAuth = await this.getOpaqueSecret("google-workspace-oauth");
+    if (googleWorkspaceOAuth) environment.KESTREL_GOOGLE_WORKSPACE_OAUTH = googleWorkspaceOAuth;
     return environment;
   }
 
@@ -111,6 +150,10 @@ export class CredentialBroker {
   }
 
   private credentialPath(id: BrokeredCredentialId): string { return join(this.credentialRoot, `${id}.bin`); }
+  private opaquePath(id: string): string { return join(this.credentialRoot, `opaque-${id}.bin`); }
+  private assertOpaqueId(id: string): void {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(id)) throw new Error("Opaque credential ID is invalid.");
+  }
 
   private assertAvailable(): void {
     if (!this.protection.isEncryptionAvailable()) throw new Error("macOS secure storage is unavailable; credentials will not be stored or loaded unprotected.");

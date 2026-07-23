@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
+import { ChannelInteractionConfigurationSchema, type ChannelInteractionConfiguration } from "@kestrel/shared-types";
 import type { AgentRuntime } from "./runtime";
 import { isPrivateNetworkAddress } from "./web-tools";
 
@@ -21,6 +22,9 @@ export interface ChannelAdapter {
   id: string;
   kind?: "webhook" | "slack" | "discord" | "teams" | "gmail";
   send(input: { conversationId: string; text: string; attachments?: ChannelAttachment[]; idempotencyKey: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }>;
+  edit?(input: { conversationId: string; externalId: string; text: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }>;
+  typing?(input: { conversationId: string; signal: AbortSignal }): Promise<void>;
+  react?(input: { conversationId: string; externalId: string; emoji: string; remove: boolean; signal: AbortSignal }): Promise<void>;
 }
 
 export interface WebhookChannelAdapterOptions {
@@ -40,12 +44,12 @@ export interface ChannelRuntimeConfiguration {
   sessionRoutes: Record<string, string>;
 }
 
-export interface NativeChannelAdapterOptions { id: string; kind: "slack" | "discord" | "teams" | "gmail"; token: string; fetcher?: typeof fetch; now?: () => Date; }
+export interface NativeChannelAdapterOptions { id: string; kind: "slack" | "discord" | "teams" | "gmail"; token?: string; tokenProvider?: () => Promise<string>; fetcher?: typeof fetch; now?: () => Date; }
 
 export class NativeChannelAdapter implements ChannelAdapter {
   readonly id: string; readonly kind: NativeChannelAdapterOptions["kind"];
   private readonly fetcher: typeof fetch; private readonly now: () => Date;
-  constructor(private readonly options: NativeChannelAdapterOptions) { this.id = options.id; this.kind = options.kind; this.fetcher = options.fetcher ?? fetch; this.now = options.now ?? (() => new Date()); if (!options.token || options.token.length > 20_000) throw new Error("Native channel token is invalid."); }
+  constructor(private readonly options: NativeChannelAdapterOptions) { this.id = options.id; this.kind = options.kind; this.fetcher = options.fetcher ?? fetch; this.now = options.now ?? (() => new Date()); if (Boolean(options.token) === Boolean(options.tokenProvider) || (options.token?.length ?? 0) > 20_000) throw new Error("Native channel token source is invalid."); }
   async send(input: { conversationId: string; text: string; attachments?: ChannelAttachment[]; idempotencyKey: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }> {
     const attachments = input.attachments ?? []; if (attachments.length > 10 || attachments.some((file) => file.data.byteLength > 25_000_000)) throw new Error("Channel attachments exceed provider limits.");
     if (this.kind === "slack") return this.slack(input, attachments);
@@ -53,6 +57,55 @@ export class NativeChannelAdapter implements ChannelAdapter {
     if (this.kind === "gmail") return this.gmail(input, attachments);
     if (attachments.length) throw new Error("Teams channel attachments require a hosted-content provider and are not accepted by this adapter.");
     return this.json(`https://graph.microsoft.com/v1.0/chats/${encodeURIComponent(input.conversationId)}/messages`, { body: { contentType: "text", content: input.text } }, input, "id");
+  }
+  async edit(input: { conversationId: string; externalId: string; text: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }> {
+    if (this.kind === "gmail") throw new Error("Gmail does not support editable progress messages.");
+    if (this.kind === "slack") return this.json("https://slack.com/api/chat.update", { channel: input.conversationId, ts: input.externalId, text: input.text }, { idempotencyKey: `edit-${input.externalId}`, signal: input.signal }, "ts", true);
+    const url = this.kind === "discord"
+      ? `https://discord.com/api/v10/channels/${encodeURIComponent(input.conversationId)}/messages/${encodeURIComponent(input.externalId)}`
+      : `https://graph.microsoft.com/v1.0/chats/${encodeURIComponent(input.conversationId)}/messages/${encodeURIComponent(input.externalId)}`;
+    const body = this.kind === "discord" ? { content: input.text } : { body: { content: input.text } };
+    const response = await this.fetcher(url, { method: "PATCH", signal: input.signal, headers: { authorization: `${this.kind === "discord" ? "Bot " : "Bearer "}${await this.accessToken()}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+    return this.response(response, "id");
+  }
+  async typing(input: { conversationId: string; signal: AbortSignal }): Promise<void> {
+    if (this.kind !== "discord") throw new Error(`${this.kind} does not expose a supported typing signal.`);
+    const response = await this.fetcher(`https://discord.com/api/v10/channels/${encodeURIComponent(input.conversationId)}/typing`, { method: "POST", signal: input.signal, headers: { authorization: `Bot ${await this.accessToken()}` } });
+    if (!response.ok) throw new Error(`Discord typing signal failed with status ${response.status}.`);
+  }
+  async react(input: { conversationId: string; externalId: string; emoji: string; remove: boolean; signal: AbortSignal }): Promise<void> {
+    if (this.kind === "gmail") throw new Error("Gmail does not support message reactions.");
+    if (!input.conversationId || input.conversationId.length > 500 || !input.externalId || input.externalId.length > 500 || !input.emoji || Buffer.byteLength(input.emoji) > 100 || /[\0\r\n]/.test(input.emoji)) throw new Error("Channel reaction input is invalid.");
+    const token = await this.accessToken();
+    let response: Response;
+    if (this.kind === "slack") {
+      response = await this.fetcher(`https://slack.com/api/reactions.${input.remove ? "remove" : "add"}`, {
+        method: "POST",
+        signal: input.signal,
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ channel: input.conversationId, timestamp: input.externalId, name: input.emoji })
+      });
+      const body = await this.boundedBody(response);
+      if (!response.ok || body.ok !== true) throw new Error(`Slack reaction failed (${response.status}: ${String(body.error ?? response.statusText).slice(0, 500)}).`);
+      return;
+    }
+    if (this.kind === "discord") {
+      response = await this.fetcher(`https://discord.com/api/v10/channels/${encodeURIComponent(input.conversationId)}/messages/${encodeURIComponent(input.externalId)}/reactions/${encodeURIComponent(input.emoji)}/@me`, {
+        method: input.remove ? "DELETE" : "PUT",
+        signal: input.signal,
+        headers: { authorization: `Bot ${token}` }
+      });
+    } else {
+      response = await this.fetcher(`https://graph.microsoft.com/v1.0/chats/${encodeURIComponent(input.conversationId)}/messages/${encodeURIComponent(input.externalId)}/${input.remove ? "unsetReaction" : "setReaction"}`, {
+        method: "POST",
+        signal: input.signal,
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ reactionType: input.emoji })
+      });
+    }
+    if (!response.ok) throw new Error(`${this.kind === "discord" ? "Discord" : "Teams"} reaction failed with status ${response.status}.`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > 1_000_000) throw new Error("Channel provider response exceeds 1 MB.");
   }
   private async slack(input: { conversationId: string; text: string; idempotencyKey: string; signal: AbortSignal }, attachments: ChannelAttachment[]) {
     if (!attachments.length) return this.json("https://slack.com/api/chat.postMessage", { channel: input.conversationId, text: input.text, client_msg_id: input.idempotencyKey }, input, "ts", true);
@@ -67,16 +120,18 @@ export class NativeChannelAdapter implements ChannelAdapter {
   }
   private async discord(input: { conversationId: string; text: string; idempotencyKey: string; signal: AbortSignal }, attachments: ChannelAttachment[]) {
     const form = new FormData(); form.append("payload_json", JSON.stringify({ content: input.text, nonce: input.idempotencyKey, enforce_nonce: true })); attachments.forEach((attachment, index) => form.append(`files[${index}]`, new Blob([Uint8Array.from(attachment.data).buffer], { type: attachment.mediaType }), attachment.filename));
-    const response = await this.fetcher(`https://discord.com/api/v10/channels/${encodeURIComponent(input.conversationId)}/messages`, { method: "POST", signal: input.signal, headers: { authorization: `Bot ${this.options.token}` }, body: form });
+    const response = await this.fetcher(`https://discord.com/api/v10/channels/${encodeURIComponent(input.conversationId)}/messages`, { method: "POST", signal: input.signal, headers: { authorization: `Bot ${await this.accessToken()}` }, body: form });
     return this.response(response, "id");
   }
   private async gmail(input: { conversationId: string; text: string; idempotencyKey: string; signal: AbortSignal }, attachments: ChannelAttachment[]) {
-    const boundary = `kestrel-${createHash("sha256").update(input.idempotencyKey).digest("hex").slice(0, 24)}`; const lines = [`To: ${input.conversationId.replace(/[\r\n]/g, "")}`, "Subject: Workstrand message", `Message-ID: <${input.idempotencyKey.replace(/[^A-Za-z0-9._-]/g, "")}@kestrel.local>`, "MIME-Version: 1.0", `Content-Type: multipart/mixed; boundary=${boundary}`, "", `--${boundary}`, "Content-Type: text/plain; charset=utf-8", "", input.text];
+    const boundary = `kestrel-${createHash("sha256").update(input.idempotencyKey).digest("hex").slice(0, 24)}`; const lines = [`To: ${input.conversationId.replace(/[\r\n]/g, "")}`, "Subject: Kestrel message", `Message-ID: <${input.idempotencyKey.replace(/[^A-Za-z0-9._-]/g, "")}@kestrel.local>`, "MIME-Version: 1.0", `Content-Type: multipart/mixed; boundary=${boundary}`, "", `--${boundary}`, "Content-Type: text/plain; charset=utf-8", "", input.text];
     for (const attachment of attachments) lines.push(`--${boundary}`, `Content-Type: ${attachment.mediaType}`, `Content-Disposition: attachment; filename="${attachment.filename.replace(/["\r\n]/g, "-")}"`, "Content-Transfer-Encoding: base64", "", Buffer.from(attachment.data).toString("base64")); lines.push(`--${boundary}--`, "");
     const raw = Buffer.from(lines.join("\r\n")).toString("base64url"); return this.json("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", { raw }, input, "id");
   }
-  private async json(url: string, body: unknown, input: { idempotencyKey: string; signal: AbortSignal }, idField: string, slack = false) { const response = await this.fetcher(url, { method: "POST", signal: input.signal, headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/json", "idempotency-key": input.idempotencyKey }, body: JSON.stringify(body) }); const result = await this.response(response, idField, slack); return result; }
-  private async jsonBody(url: string, body: BodyInit, signal: AbortSignal, headers: Record<string, string>) { const response = await this.fetcher(url, { method: "POST", signal, headers: { authorization: `Bearer ${this.options.token}`, ...headers }, body }); if (!response.ok) throw new Error(`Channel provider failed with status ${response.status}.`); return response.json(); }
+  private async json(url: string, body: unknown, input: { idempotencyKey: string; signal: AbortSignal }, idField: string, slack = false) { const response = await this.fetcher(url, { method: "POST", signal: input.signal, headers: { authorization: `Bearer ${await this.accessToken()}`, "content-type": "application/json", "idempotency-key": input.idempotencyKey }, body: JSON.stringify(body) }); const result = await this.response(response, idField, slack); return result; }
+  private async jsonBody(url: string, body: BodyInit, signal: AbortSignal, headers: Record<string, string>) { const response = await this.fetcher(url, { method: "POST", signal, headers: { authorization: `Bearer ${await this.accessToken()}`, ...headers }, body }); if (!response.ok) throw new Error(`Channel provider failed with status ${response.status}.`); return response.json(); }
+  private async accessToken(): Promise<string> { const token = this.options.token ?? await this.options.tokenProvider?.(); if (!token || token.length > 20_000 || /[\r\n\0]/.test(token)) throw new Error("Native channel token is unavailable."); return token; }
+  private async boundedBody(response: Response): Promise<Record<string, unknown>> { const bytes = new Uint8Array(await response.arrayBuffer()); if (bytes.byteLength > 1_000_000) throw new Error("Channel provider response exceeds 1 MB."); try { return JSON.parse(Buffer.from(bytes).toString("utf8")) as Record<string, unknown>; } catch { return {}; } }
   private async response(response: Response, idField: string, slack = false) { const bytes = new Uint8Array(await response.arrayBuffer()); if (bytes.byteLength > 1_000_000) throw new Error("Channel provider response exceeds 1 MB."); let body: Record<string, unknown> = {}; try { body = JSON.parse(Buffer.from(bytes).toString("utf8")) as Record<string, unknown>; } catch {} if (!response.ok || (slack && body.ok !== true)) throw new Error(`Channel provider delivery failed (${response.status}: ${String(body.error ?? response.statusText).slice(0, 500)}).`); const externalId = String(body[idField] ?? body.id ?? body.ts ?? response.headers.get("x-request-id") ?? ""); if (!externalId) throw new Error("Channel provider did not return a delivery ID."); return { externalId: externalId.slice(0, 500), deliveredAt: this.now().toISOString() }; }
 }
 
@@ -194,7 +249,17 @@ export class ChannelGateway {
     for (const adapter of adapters) this.adapters.set(adapter.id, adapter);
   }
 
-  list(): Array<{ id: string; kind: NonNullable<ChannelAdapter["kind"]>; inbound: boolean }> { return [...new Set([...this.adapters.keys(), ...Object.keys(this.signingSecrets)])].map((id) => ({ id, kind: this.adapters.get(id)?.kind ?? "webhook", inbound: Boolean(this.signingSecrets[id]) })); }
+  list(): Array<{ id: string; kind: NonNullable<ChannelAdapter["kind"]>; inbound: boolean; editableProgress: boolean; typingSignals: boolean; reactions: boolean }> { return [...new Set([...this.adapters.keys(), ...Object.keys(this.signingSecrets)])].map((id) => { const adapter = this.adapters.get(id); return { id, kind: adapter?.kind ?? "webhook", inbound: Boolean(this.signingSecrets[id]), editableProgress: Boolean(adapter?.edit && adapter.kind !== "gmail"), typingSignals: Boolean(adapter?.typing && adapter.kind === "discord"), reactions: Boolean(adapter?.react && adapter.kind !== "gmail") }; }); }
+
+  interactionConfiguration(): ChannelInteractionConfiguration {
+    return ChannelInteractionConfigurationSchema.parse(this.database.getPrivateState("channels.interaction") ?? { progressMode: "progress", typingMode: "thinking", typingIntervalSeconds: 6, reactionLevel: "minimal" });
+  }
+
+  configureInteraction(configuration: ChannelInteractionConfiguration): ChannelInteractionConfiguration {
+    const parsed = ChannelInteractionConfigurationSchema.parse(configuration);
+    this.database.setPrivateState("channels.interaction", parsed);
+    return parsed;
+  }
 
   receive(sessionId: string, payload: ChannelEnvelope, signatureHex: string): { accepted: boolean; duplicate: boolean } {
     const secret = this.signingSecrets[payload.channelId];
@@ -218,6 +283,107 @@ export class ChannelGateway {
     if (!conversationId || !text || text.length > 100_000) throw new Error("Outbound channel message is invalid.");
     return { channelId, conversationId, ...await adapter.send({ conversationId, text, ...(attachments.length ? { attachments } : {}), idempotencyKey, signal }) };
   }
+
+  async beginProgress(channelId: string, conversationId: string, idempotencyKey: string, signal: AbortSignal): Promise<ChannelProgressSession> {
+    const adapter = this.adapters.get(channelId);
+    if (!adapter) throw new Error(`Channel ${channelId} is not configured.`);
+    const session = new ChannelProgressSession(adapter, conversationId, idempotencyKey, signal, this.interactionConfiguration());
+    await session.begin();
+    return session;
+  }
+
+  async react(channelId: string, conversationId: string, externalId: string, action: "add" | "remove" | "clear", emoji: string | undefined, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const adapter = this.adapters.get(channelId);
+    if (!adapter?.react || adapter.kind === "gmail") throw new Error(`Channel ${channelId} does not support reactions.`);
+    if (!conversationId || conversationId.length > 500 || !externalId || externalId.length > 500) throw new Error("Channel reaction target is invalid.");
+    if (action !== "clear" && (!emoji || Buffer.byteLength(emoji) > 100 || /[\0\r\n]/.test(emoji))) throw new Error("A bounded emoji is required to add or remove a reaction.");
+    const level = this.interactionConfiguration().reactionLevel;
+    if (level === "off") throw new Error("Channel reactions are disabled by interaction policy.");
+    const stateKey = `channel-reactions:${createHash("sha256").update(`${channelId}\0${conversationId}\0${externalId}`).digest("hex")}`;
+    let tracked = this.database.getPrivateState<string[]>(stateKey) ?? [];
+    if (action === "clear") {
+      for (const current of [...tracked]) {
+        await adapter.react({ conversationId, externalId, emoji: current, remove: true, signal });
+        tracked = tracked.filter((value) => value !== current);
+        this.database.setPrivateState(stateKey, tracked);
+      }
+      return { channelId, conversationId, externalId, action, removed: true, trackedReactionCount: 0 };
+    }
+    const value = emoji!;
+    if (action === "add") {
+      const maximum = level === "ack" ? 1 : level === "minimal" ? 2 : 8;
+      if (!tracked.includes(value) && tracked.length >= maximum) throw new Error(`Channel ${level} reaction policy allows at most ${maximum} tracked reaction${maximum === 1 ? "" : "s"} per message.`);
+      await adapter.react({ conversationId, externalId, emoji: value, remove: false, signal });
+      tracked = [...new Set([...tracked, value])];
+    } else {
+      await adapter.react({ conversationId, externalId, emoji: value, remove: true, signal });
+      tracked = tracked.filter((current) => current !== value);
+    }
+    this.database.setPrivateState(stateKey, tracked);
+    return { channelId, conversationId, externalId, action, emoji: value, trackedReactionCount: tracked.length };
+  }
+}
+
+export type ChannelProgressPhase = "thinking" | "tool" | "waiting" | "verifying";
+
+export class ChannelProgressSession {
+  private externalId: string | undefined;
+  private lastTypingAt = 0;
+  constructor(
+    private readonly adapter: ChannelAdapter,
+    private readonly conversationId: string,
+    private readonly idempotencyKey: string,
+    private readonly signal: AbortSignal,
+    private readonly configuration: ChannelInteractionConfiguration
+  ) {}
+
+  async begin(): Promise<void> {
+    if (this.configuration.typingMode === "instant") await this.pulseTyping();
+  }
+
+  async update(input: { phase: ChannelProgressPhase; completed?: number; total?: number }): Promise<void> {
+    if (this.signal.aborted) throw this.signal.reason;
+    if (this.shouldType(input.phase)) await this.pulseTyping();
+    if (!this.adapter.edit || this.adapter.kind === "gmail" || !this.shouldDraft(input.phase)) return;
+    const progress = input.completed !== undefined && input.total !== undefined && input.total > 0
+      ? ` · ${Math.max(0, Math.min(input.total, Math.trunc(input.completed)))}/${Math.trunc(input.total)}`
+      : "";
+    const label = input.phase === "thinking" ? "Thinking" : input.phase === "tool" ? "Using approved tools" : input.phase === "waiting" ? "Waiting at a safe boundary" : "Verifying the result";
+    const text = `${label}${progress}…`;
+    if (!this.externalId) {
+      const sent = await this.adapter.send({ conversationId: this.conversationId, text, idempotencyKey: `${this.idempotencyKey}:progress`, signal: this.signal });
+      this.externalId = sent.externalId;
+    } else {
+      await this.adapter.edit({ conversationId: this.conversationId, externalId: this.externalId, text, signal: this.signal });
+    }
+  }
+
+  async finish(text: string, attachments: ChannelAttachment[] = []): Promise<{ externalId?: string; deliveredAt?: string }> {
+    if (!text.trim()) return {};
+    if (this.externalId && this.adapter.edit && this.adapter.kind !== "gmail" && attachments.length === 0) return this.adapter.edit({ conversationId: this.conversationId, externalId: this.externalId, text, signal: this.signal });
+    return this.adapter.send({ conversationId: this.conversationId, text, ...(attachments.length ? { attachments } : {}), idempotencyKey: this.idempotencyKey, signal: this.signal });
+  }
+
+  private shouldDraft(phase: ChannelProgressPhase): boolean {
+    if (this.configuration.progressMode === "off") return false;
+    if (this.configuration.progressMode === "block") return phase === "waiting";
+    if (this.configuration.progressMode === "partial") return phase === "thinking" || phase === "verifying";
+    return true;
+  }
+
+  private shouldType(phase: ChannelProgressPhase): boolean {
+    return this.configuration.typingMode === "thinking" ? phase === "thinking"
+      : this.configuration.typingMode === "message" ? true
+        : false;
+  }
+
+  private async pulseTyping(): Promise<void> {
+    if (!this.adapter.typing || (this.adapter.kind && this.adapter.kind !== "discord")) return;
+    const now = Date.now();
+    if (now - this.lastTypingAt < this.configuration.typingIntervalSeconds * 1_000) return;
+    await this.adapter.typing({ conversationId: this.conversationId, signal: this.signal });
+    this.lastTypingAt = now;
+  }
 }
 
 export function signChannelEnvelope(payload: ChannelEnvelope, secret: Buffer): string {
@@ -238,4 +404,10 @@ export function installChannelTools(runtime: AgentRuntime, gateway: ChannelGatew
     }
   });
   runtime.allowTool(sessionId, "channel.send");
+  runtime.registerExternalTool({
+    descriptor: { name: "channel.react", title: "React to channel message", description: "Add, remove, or clear Kestrel's tracked emoji reactions on a configured native chat message after explicit approval.", category: "connector", riskLevel: "external", readOnly: false, requiresWorkspace: false, source: "connector", tags: ["chat", "channel", "reaction", "emoji"] },
+    inputSchema: { type: "object", properties: { channelId: { type: "string" }, conversationId: { type: "string" }, messageId: { type: "string" }, action: { type: "string", enum: ["add", "remove", "clear"] }, emoji: { type: "string", maxLength: 100 } }, required: ["channelId", "conversationId", "messageId", "action"] },
+    execute: ({ signal }, input) => gateway.react(String(input.channelId), String(input.conversationId), String(input.messageId), String(input.action) as "add" | "remove" | "clear", typeof input.emoji === "string" ? input.emoji : undefined, signal)
+  });
+  runtime.allowTool(sessionId, "channel.react");
 }

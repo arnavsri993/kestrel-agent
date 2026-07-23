@@ -49,6 +49,12 @@ export class ProviderPool {
     return [...this.providers.values()];
   }
 
+  async close(): Promise<void> {
+    await Promise.all(
+      [...this.providers.values()].map((provider) => provider.close?.()),
+    );
+  }
+
   health(): ProviderHealth[] {
     return [...this.providers.values()].map((provider) => {
       const measurement = this.measurements.get(provider.id) ?? { attempts: 0, successes: 0, failures: 0, consecutiveFailures: 0, averageLatencyMs: 0 };

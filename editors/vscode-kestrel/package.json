@@ -1,7 +1,7 @@
 {
   "name": "kestrel-acp",
-  "displayName": "Workstrand ACP",
-  "description": "Run Workstrand tasks with native streaming, approvals, files, and terminals in VS Code.",
+  "displayName": "Kestrel ACP",
+  "description": "Run Kestrel tasks with native streaming, approvals, files, and terminals in VS Code.",
   "version": "0.1.0",
   "publisher": "kestrel",
   "license": "UNLICENSED",
@@ -12,13 +12,13 @@
   "activationEvents": ["onCommand:kestrel.startTask", "onCommand:kestrel.cancelTask"],
   "contributes": {
     "commands": [
-      { "command": "kestrel.startTask", "title": "Workstrand: Start Task" },
-      { "command": "kestrel.cancelTask", "title": "Workstrand: Cancel Active Task" }
+      { "command": "kestrel.startTask", "title": "Kestrel: Start Task" },
+      { "command": "kestrel.cancelTask", "title": "Kestrel: Cancel Active Task" }
     ],
     "configuration": {
-      "title": "Workstrand",
+      "title": "Kestrel",
       "properties": {
-        "kestrel.acpExecutable": { "type": "string", "default": "kestrel-acp", "description": "Absolute path or PATH-resolved Workstrand ACP executable." },
+        "kestrel.acpExecutable": { "type": "string", "default": "kestrel-acp", "description": "Absolute path or PATH-resolved Kestrel ACP executable." },
         "kestrel.model": { "type": "string", "default": "", "description": "Model ID passed to the ACP host; falls back to KESTREL_MODEL." },
         "kestrel.providers": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Provider IDs passed to the ACP host; falls back to KESTREL_PROVIDERS." },
         "kestrel.mcpServers": { "type": "array", "default": [], "description": "ACP MCP server descriptors passed during session creation." }

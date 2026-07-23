@@ -19,7 +19,7 @@ try {
   await page.waitForLoadState("domcontentloaded");
 
   await page.getByRole("heading", { name: /Bring your models/ }).waitFor();
-  await page.getByRole("button", { name: "Set up Workstrand" }).click();
+  await page.getByRole("button", { name: "Set up Kestrel" }).click();
   const continueButton = page.getByRole("button", { name: "Continue" });
   assert.equal(await continueButton.isDisabled(), true);
   await page.getByLabel("I understand these boundaries").check();
@@ -56,17 +56,39 @@ try {
   await page.setViewportSize({ width: 1320, height: 860 });
   assert.equal(await page.getByRole("button", { name: "Set up models later" }).count(), 0);
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("heading", { name: /Workstrand is ready for a model|Your foundation is set/ }).waitFor();
+  await page.getByRole("heading", { name: /Kestrel is ready for a model|Your foundation is set/ }).waitFor();
   await page.getByRole("button", { name: "Continue with setup assistant" }).click();
   await page.getByRole("button", { name: "New chat" }).waitFor();
-  assert.match(await page.getByLabel("Message Workstrand").inputValue(), /Help me finish setting up Workstrand/);
+  const setupAssistantPrompt = await page.getByLabel("Message Kestrel").inputValue();
+  assert.match(setupAssistantPrompt, /Help me finish setting up Kestrel/);
+  assert.match(setupAssistantPrompt, /Current non-secret setup state:/);
+  assert.match(setupAssistantPrompt, /Protected API credentials configured:/);
+  assert.match(setupAssistantPrompt, /Project access, tools\/MCP, skills\/plugins, channels, and automations/);
+  assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:setup-coach-context")), null);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), "yes");
+  await page.getByRole("button", { name: "Connections" }).click();
+  await page.getByRole("heading", { name: "Access only what helps." }).waitFor();
+  const chatGptConnection = page.locator(".oauth-connection").filter({ hasText: "ChatGPT" });
+  await chatGptConnection.getByText("ChatGPT", { exact: true }).waitFor();
+  assert.equal(
+    await chatGptConnection
+      .getByRole("button", {
+        name: /Sign in with ChatGPT|Enable model route|Disable model route|Codex not found/,
+      })
+      .count(),
+    1,
+  );
+  await page.getByLabel("Desktop OAuth client ID").waitFor();
+  assert.equal(await page.getByRole("button", { name: "Connect with Google" }).isDisabled(), true);
+  await page.getByLabel("Desktop OAuth client ID").fill("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com");
+  assert.equal(await page.getByRole("button", { name: "Connect with Google" }).isEnabled(), true);
+  await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Open setup guide" }).click();
   await page.getByRole("heading", { name: /Bring your models/ }).waitFor();
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), null);
   assert.deepEqual(runtimeErrors, []);
-  process.stdout.write("Four-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, compact reflow, completion, and Settings re-entry passed.\n");
+  process.stdout.write("Four-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n");
 } finally {
   await application?.close();
   rmSync(root, { recursive: true, force: true });

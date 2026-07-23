@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { contentText, ModelProviderError, type ModelCallOptions, type ModelMessage, type ModelProvider, type ModelRequest, type ModelResult, type ModelUsage } from "./types";
@@ -109,63 +109,6 @@ function parseObject(line: string): Record<string, unknown> | undefined {
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
   } catch {
     return undefined;
-  }
-}
-
-export class CodexSubscriptionProvider implements ModelProvider {
-  readonly id = "codex-subscription";
-  readonly poolId = "codex-subscription";
-  readonly defaultModel: string;
-  readonly capabilities = { streaming: true, tools: false, images: false, audio: false, documents: false, video: false, local: false } as const;
-  private readonly executable: string;
-  private readonly environment: NodeJS.ProcessEnv;
-  private readonly timeoutMs: number;
-
-  constructor(options: SubscriptionCliOptions = {}) {
-    this.executable = options.executable ?? "codex";
-    this.defaultModel = options.defaultModel ?? "gpt-5.4";
-    this.environment = safeEnvironment(options.environment ?? process.env);
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  }
-
-  async probe(signal?: AbortSignal): Promise<void> {
-    const root = await mkdtemp(join(tmpdir(), "kestrel-codex-probe-"));
-    try { await runCli(this.executable, ["login", "status"], "", { cwd: root, environment: this.environment, signal, timeoutMs: 15_000 }); }
-    catch (error) { throw new ModelProviderError(error instanceof Error ? error.message : "Codex subscription authentication failed.", this.id, false); }
-    finally { await rm(root, { recursive: true, force: true }); }
-  }
-
-  async complete(request: ModelRequest, options: ModelCallOptions = {}): Promise<ModelResult> {
-    const root = await mkdtemp(join(tmpdir(), "kestrel-codex-subscription-"));
-    const lastMessage = join(root, "last-message.txt");
-    let usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
-    let responseId: string | undefined;
-    try {
-      await runCli(this.executable, [
-        "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-        "--sandbox", "read-only", "--skip-git-repo-check", "--cd", root,
-        "--model", request.model, "--output-last-message", lastMessage, "-"
-      ], promptFor(request), {
-        cwd: root,
-        environment: this.environment,
-        signal: options.signal,
-        timeoutMs: this.timeoutMs,
-        onLine: (line) => {
-          const event = parseObject(line);
-          if (!event) return;
-          if (event.type === "thread.started" && typeof event.thread_id === "string") responseId = event.thread_id;
-          if (event.type === "turn.completed") usage = usageFrom(event.usage);
-        }
-      });
-      const text = await readFile(lastMessage, "utf8");
-      if (text) options.onEvent?.({ type: "text_delta", delta: text });
-      return { providerId: this.id, model: request.model, ...(responseId ? { responseId } : {}), text, toolCalls: [], usage, finishReason: "stop" };
-    } catch (error) {
-      if (options.signal?.aborted) throw error;
-      throw new ModelProviderError(error instanceof Error ? error.message : "Codex subscription request failed.", this.id, true);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
   }
 }
 
