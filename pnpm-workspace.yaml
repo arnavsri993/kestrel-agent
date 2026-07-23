@@ -2,6 +2,15 @@ packages:
   - apps/*
   - packages/*
 
+# Universal macOS packaging needs both Sharp/libvips optional binary families
+# available in the shared pnpm install before electron-builder splits arches.
+supportedArchitectures:
+  os:
+    - darwin
+  cpu:
+    - arm64
+    - x64
+
 allowBuilds:
   better-sqlite3: true
   electron-winstaller: true

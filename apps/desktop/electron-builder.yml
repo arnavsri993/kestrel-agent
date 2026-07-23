@@ -1,6 +1,6 @@
 appId: com.kestrel.desktop
-productName: Workstrand
-copyright: Copyright © 2026 Workstrand contributors
+productName: Kestrel
+copyright: Copyright © 2026 Kestrel contributors
 directories:
   output: ../../release
   buildResources: build
@@ -10,23 +10,24 @@ files:
 asar: true
 asarUnpack:
   - node_modules/better-sqlite3/**/*
+  - node_modules/@img/**/*
   - node_modules/**/*.node
 mac:
   category: public.app-category.productivity
   icon: build/icon.icns
   target:
     - target: dmg
-      arch: [universal]
+      arch: [arm64]
     - target: zip
-      arch: [universal]
+      arch: [arm64]
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
-  artifactName: Workstrand-mac-${arch}.${ext}
+  artifactName: Kestrel-Apple-Silicon-${version}.${ext}
   minimumSystemVersion: "13.0.0"
 dmg:
-  title: Workstrand
+  title: Kestrel
   contents:
     - x: 160
       y: 180
@@ -35,7 +36,7 @@ dmg:
       type: link
       path: /Applications
 publish:
-  provider: github
-  releaseType: release
-  channel: stable
+  provider: generic
+  url: ${env.KESTREL_UPDATE_URL}
+  channel: latest
 afterPack: build/after-pack.cjs

@@ -1,6 +1,6 @@
 # Contribution policy
 
-Workstrand is an owner-maintained private development preview. External patches, pull requests, and direct repository contributions are not accepted.
+Kestrel is an owner-maintained private development preview. External patches, pull requests, and direct repository contributions are not accepted.
 
 People who receive an owner-published installer or release artifact do not need repository write access. Repository access must never be used as a shortcut for distributing builds, and no collaborator should be granted push, merge, release, Actions-administration, secret-management, or package-publishing permissions.
 

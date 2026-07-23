@@ -185,6 +185,8 @@ export function installRemoteExecutionTool(runtime: AgentRuntime, manager: Remot
 }
 
 export type RemoteScope = "read" | "tasks" | "approve";
+export interface RemoteTrustedIdentity { kind: "trusted-proxy"; identity: string; scopes: RemoteScope[]; }
+export type RemoteCredential = string | RemoteTrustedIdentity;
 interface PairingRecord { id: string; label: string; codeHash: string; scopes: RemoteScope[]; expiresAt: string; attempts: number; status: "pending" | "used" | "locked"; }
 interface DeviceRecord { id: string; label: string; tokenHash: string; scopes: RemoteScope[]; createdAt: string; revokedAt?: string; }
 export interface RemoteSessionSummary { id: string; title: string; status: RuntimeSession["status"]; parentSessionId?: string; updatedAt: string; }
@@ -225,25 +227,25 @@ export class RemoteControl {
     return { deviceId: device.id, token, scopes: device.scopes };
   }
 
-  listSessions(token: string): RemoteSessionSummary[] {
+  listSessions(token: RemoteCredential): RemoteSessionSummary[] {
     this.authorize(token, "read");
     return this.runtime.listSessions().map(({ id, title, status, parentSessionId, updatedAt }) => ({ id, title, status, ...(parentSessionId ? { parentSessionId } : {}), updatedAt }));
   }
-  listJobs(token: string): Array<Omit<ScheduledAgentJob, "prompt" | "instructions">> {
+  listJobs(token: RemoteCredential): Array<Omit<ScheduledAgentJob, "prompt" | "instructions">> {
     this.authorize(token, "read");
     return this.orchestrator.listJobs().map(({ prompt: _prompt, instructions: _instructions, ...job }) => job);
   }
-  submitJob(token: string, input: Omit<ScheduledAgentJob, "id" | "status" | "createdAt" | "updatedAt">): Omit<ScheduledAgentJob, "prompt" | "instructions"> {
+  submitJob(token: RemoteCredential, input: Omit<ScheduledAgentJob, "id" | "status" | "createdAt" | "updatedAt">): Omit<ScheduledAgentJob, "prompt" | "instructions"> {
     this.authorize(token, "tasks");
     const { prompt: _prompt, instructions: _instructions, ...job } = this.orchestrator.schedule(input);
     return job;
   }
-  async resumeJob(token: string, jobId: string): Promise<Omit<ScheduledAgentJob, "prompt" | "instructions">> {
+  async resumeJob(token: RemoteCredential, jobId: string): Promise<Omit<ScheduledAgentJob, "prompt" | "instructions">> {
     this.authorize(token, "approve");
     const { prompt: _prompt, instructions: _instructions, ...job } = await this.orchestrator.resumeJob(jobId);
     return job;
   }
-  assertAuthorized(token: string, scope: RemoteScope): void { this.authorize(token, scope); }
+  assertAuthorized(token: RemoteCredential, scope: RemoteScope): void { this.authorize(token, scope); }
   revoke(deviceId: string): void {
     const devices = this.devices();
     const index = devices.findIndex((device) => device.id === deviceId);
@@ -252,7 +254,11 @@ export class RemoteControl {
     this.database.setPrivateState(this.devicesKey, devices);
   }
 
-  private authorize(token: string, scope: RemoteScope): DeviceRecord {
+  private authorize(token: RemoteCredential, scope: RemoteScope): DeviceRecord | RemoteTrustedIdentity {
+    if (typeof token !== "string") {
+      if (!token.scopes.includes(scope)) throw new Error("Trusted proxy identity lacks the required scope.");
+      return token;
+    }
     const hash = digest(token);
     const device = this.devices().find((candidate) => candidate.tokenHash === hash && !candidate.revokedAt);
     if (!device || !device.scopes.includes(scope)) throw new Error("Remote token is invalid or lacks the required scope.");

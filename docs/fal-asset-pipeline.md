@@ -1,6 +1,6 @@
 # fal marketing asset pipeline
 
-fal is a development-only provenance source for optional website atmosphere. It is not a Workstrand feature, is not imported by the website or desktop app, and is never called during build, deploy, page load, or application startup.
+fal is a development-only provenance source for optional website atmosphere. It is not a Kestrel feature, is not imported by the website or desktop app, and is never called during build, deploy, page load, or application startup.
 
 The manual pipeline is: approved brief -> allowlisted endpoint -> cost check -> duplicate check -> request -> original download -> review -> processing -> checksum -> registry entry -> public variant. Originals and manifests remain outside the deployed bundle; published variants are poster-first, muted, loop-safe, compressed, and pause offscreen.
 

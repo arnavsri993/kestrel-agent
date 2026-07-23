@@ -10,10 +10,10 @@ describe("network-policy web tools", () => {
     let fetches = 0;
     const client = new NetworkPolicyWebClient({
       allowedHosts: ["docs.example.test"], resolveHost: async () => ["203.0.113.20"],
-      fetcher: async () => { fetches += 1; return new Response("<html><title>Workstrand guide</title><script>bad()</script><body><h1>Safe docs</h1></body></html>", { headers: { "content-type": "text/html" } }); },
+      fetcher: async () => { fetches += 1; return new Response("<html><title>Kestrel guide</title><script>bad()</script><body><h1>Safe docs</h1></body></html>", { headers: { "content-type": "text/html" } }); },
       cache: new EncryptedDatabaseWebCache(database, () => new Date("2026-07-22T23:30:00.000Z")), now: () => new Date("2026-07-22T23:30:00.000Z")
     });
-    expect(await client.fetch("https://docs.example.test/guide#section")).toMatchObject({ content: "Workstrand guide Safe docs", trust: "untrusted_external", url: "https://docs.example.test/guide", cached: false, citation: { title: "Workstrand guide" } });
+    expect(await client.fetch("https://docs.example.test/guide#section")).toMatchObject({ content: "Kestrel guide Safe docs", trust: "untrusted_external", url: "https://docs.example.test/guide", cached: false, citation: { title: "Kestrel guide" } });
     expect(await client.fetch("https://docs.example.test/guide#section")).toMatchObject({ cached: true, citation: { url: "https://docs.example.test/guide" } });
     expect(fetches).toBe(1);
     const ciphertext = database.db.prepare("SELECT value_ciphertext FROM private_runtime_state WHERE key = ?").get("web.result-cache") as { value_ciphertext: string };

@@ -20,7 +20,7 @@ page.on("pageerror", (error) => runtimeErrors.push(error.message));
 await page.waitForLoadState("domcontentloaded");
 await page.setViewportSize({ width: 1320, height: 860 });
 await page.screenshot({ path: join(output, "onboarding.png"), fullPage: false });
-await page.getByRole("button", { name: "Set up Workstrand" }).click();
+await page.getByRole("button", { name: "Set up Kestrel" }).click();
 await page.getByRole("heading", { name: "You stay in control." }).waitFor();
 await page.screenshot({ path: join(output, "setup-warning.png"), fullPage: false });
 await page.getByLabel("I understand these boundaries").check();
@@ -39,14 +39,18 @@ const setupOverflow = await page.evaluate(() => document.documentElement.scrollW
 if (setupOverflow) throw new Error("Compact setup layout has page-level horizontal overflow.");
 await page.setViewportSize({ width: 1320, height: 860 });
 await page.getByRole("button", { name: "Set up models later" }).click();
-await page.getByRole("heading", { name: /Your foundation is set|Workstrand is ready for a model/ }).waitFor();
+await page.getByRole("heading", { name: /Your foundation is set|Kestrel is ready for a model/ }).waitFor();
 await page.screenshot({ path: join(output, "setup-ready.png"), fullPage: false });
-await page.getByRole("button", { name: /Start using Workstrand|Open local preview/ }).click();
+await page.getByRole("button", { name: /Start using Kestrel|Open local preview/ }).click();
 await page.getByRole("heading", { name: /^Good (morning|afternoon|evening)\.$/ }).waitFor();
 await page.getByRole("button", { name: "New chat" }).waitFor();
-await page.getByText("Workstrand", { exact: true }).first().waitFor();
+await page.getByText("Kestrel", { exact: true }).first().waitFor();
 await page.waitForTimeout(200);
 await page.screenshot({ path: join(output, "today.png"), fullPage: false });
+await page.getByRole("button", { name: "Connections" }).click();
+await page.getByRole("heading", { name: "Access only what helps." }).waitFor();
+await page.screenshot({ path: join(output, "connections-google-oauth.png"), fullPage: false });
+await page.getByRole("button", { name: "New chat" }).click();
 await page.getByText("Advanced execution", { exact: true }).click();
 await page.getByLabel("Execution").waitFor();
 await page.screenshot({ path: join(output, "task-setup.png"), fullPage: false });
@@ -57,6 +61,9 @@ if (await firstSession.count()) {
   await page.locator(".conversation-view").waitFor();
   await page.screenshot({ path: join(output, "conversation.png"), fullPage: false });
 }
+await page.getByRole("button", { name: "More" }).click();
+await page.screenshot({ path: join(output, "more-tools.png"), fullPage: false });
+await page.getByRole("button", { name: /More/ }).click();
 await page.getByRole("button", { name: "Readiness" }).click();
 await page.getByRole("heading", { name: "What can work right now" }).waitFor();
 await page.screenshot({ path: join(output, "readiness.png"), fullPage: false });
@@ -69,8 +76,8 @@ await page.getByRole("heading", { name: /^Good (morning|afternoon|evening)\.$/ }
 await page.screenshot({ path: join(output, "compact.png"), fullPage: false });
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
 if (overflow) throw new Error("Compact desktop layout has page-level horizontal overflow.");
-await page.getByLabel("Message Workstrand").fill("RC not connected to mobile device.");
-await page.getByLabel("Message Workstrand").press("Tab");
+await page.getByLabel("Message Kestrel").fill("RC not connected to mobile device.");
+await page.getByLabel("Message Kestrel").press("Tab");
 const keyboardFocus = await page.evaluate(() => {
   const active = document.activeElement as HTMLElement | null;
   if (!active) return { label: "", outline: "none" };

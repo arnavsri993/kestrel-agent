@@ -27,7 +27,7 @@ describe("stable ACP v1 editor bridge", () => {
     });
     await editor.connectWith(app, async (acp) => {
       const initialized = await acp.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientInfo: { name: "Test editor", version: "1" } });
-      expect(initialized).toMatchObject({ protocolVersion: 1, agentInfo: { name: "Workstrand" }, agentCapabilities: { sessionCapabilities: { list: {}, resume: {}, close: {} } } });
+      expect(initialized).toMatchObject({ protocolVersion: 1, agentInfo: { name: "Kestrel" }, agentCapabilities: { sessionCapabilities: { list: {}, resume: {}, close: {} } } });
       const session = await acp.request("session/new", { cwd: root, mcpServers: [] });
       expect(await acp.request("session/list", { cwd: root })).toMatchObject({ sessions: [{ sessionId: session.sessionId, cwd: realpathSync(root) }] });
       expect(await acp.request("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "Inspect this project" }] })).toMatchObject({ stopReason: "end_turn" });

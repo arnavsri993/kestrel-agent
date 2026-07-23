@@ -18,7 +18,7 @@ export async function runAcpStdio(options: AcpStdioOptions = {}): Promise<void> 
     Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
   );
   const connection = application.connect(stream);
-  const stop = () => connection.close(new Error("Workstrand ACP host stopped."));
+  const stop = () => connection.close(new Error("Kestrel ACP host stopped."));
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try { await connection.closed; }

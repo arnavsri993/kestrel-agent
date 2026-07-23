@@ -74,7 +74,7 @@ export class AgentLoop {
     private readonly runtime: AgentRuntime,
     private readonly providers: ProviderPool,
     private readonly now: () => Date = () => new Date(),
-    private readonly onUserMessage?: (message: RuntimeMessage) => void,
+    private readonly onMessage?: (message: RuntimeMessage) => void,
     usageGovernor?: UsageGovernor,
     private readonly providerAllowed?: (providerId: string, poolId?: string) => boolean
   ) { this.usageGovernor = usageGovernor ?? new UsageGovernor(database, now); }
@@ -116,7 +116,7 @@ export class AgentLoop {
       messageCount: messageCountBefore,
       mutationIds: mutationIdsBefore
     });
-    this.onUserMessage?.(userMessage);
+    this.onMessage?.(userMessage);
     const compacted = this.compactor.compact(
       this.runtime.listMessages(session.id),
       session.checkpoints,
@@ -212,7 +212,7 @@ export class AgentLoop {
         let poolResult;
         const lease = this.usageGovernor.acquire();
         try {
-          poolResult = await this.providers.complete({ model: run.model, messages: modelMessages, tools, ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}), ...(run.serviceTier ? { serviceTier: run.serviceTier } : {}) }, {
+          poolResult = await this.providers.complete({ model: run.model, messages: modelMessages, tools, metadata: { session_id: session.id, ...(session.workspaceRoot ? { workspace_root: session.workspaceRoot } : {}) }, ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}), ...(run.serviceTier ? { serviceTier: run.serviceTier } : {}) }, {
             ...(run.providerIds.includes("auto") ? {} : { providerIds: run.providerIds }),
             automaticRouting: run.providerIds.includes("auto"),
             ...(run.providerModels ? { providerModels: run.providerModels } : {}),
@@ -239,12 +239,14 @@ export class AgentLoop {
           content: assistantContent,
           ...(result.toolCalls.length ? { modelToolCalls: result.toolCalls } : {})
         });
+        this.onMessage?.(assistantMessage);
         modelMessages = [...modelMessages, { role: "assistant", content: textContent(result.text), ...(result.toolCalls.length ? { toolCalls: result.toolCalls } : {}) }];
 
         const consumeSteering = () => {
           const steering = options.takeSteering?.().map((message) => message.trim()).filter(Boolean) ?? [];
           for (const message of steering) {
-            this.runtime.appendMessage({ sessionId: session.id, role: "user", content: message });
+            const appended = this.runtime.appendMessage({ sessionId: session.id, role: "user", content: message });
+            this.onMessage?.(appended);
             modelMessages.push({ role: "user", content: textContent(message) });
           }
           return steering.length;

@@ -20,6 +20,7 @@ jobs:
       APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       GH_TOKEN: ${{ github.token }}
+      KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,7 +29,11 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm verify
-      - run: corepack pnpm test:e2e
+      - name: Verify real managed local AI on Apple Silicon
+        shell: bash
+        run: |
+          test "$(uname -m)" = "arm64"
+          corepack pnpm test:local-ai:real
       - name: Require release credentials
         shell: bash
         run: |
@@ -37,23 +42,31 @@ jobs:
           test -n "$APPLE_ID"
           test -n "$APPLE_APP_SPECIFIC_PASSWORD"
           test -n "$APPLE_TEAM_ID"
-      - name: Build signed universal DMG and ZIP
-        run: corepack pnpm --filter @kestrel/desktop exec electron-builder --mac dmg zip --universal --publish never --config electron-builder.yml
+          [[ "$KESTREL_UPDATE_URL" == https://* ]]
+      - name: Build signed Apple Silicon DMG and ZIP
+        run: corepack pnpm --filter @kestrel/desktop exec electron-builder --mac dmg zip --arm64 --publish never --config electron-builder.yml
       - name: Verify signature and Gatekeeper
         shell: bash
         run: |
-          codesign --verify --deep --strict --verbose=2 release/mac-universal/Workstrand.app
-          xcrun stapler validate release/mac-universal/Workstrand.app
-          spctl --assess --type execute --verbose=4 release/mac-universal/Workstrand.app
-          lipo -info release/mac-universal/Workstrand.app/Contents/MacOS/Workstrand
+          codesign --verify --deep --strict --verbose=2 release/mac-arm64/Kestrel.app
+          xcrun stapler validate release/mac-arm64/Kestrel.app
+          spctl --assess --type execute --verbose=4 release/mac-arm64/Kestrel.app
+          test "$(lipo -archs release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel)" = "arm64"
+      - name: Smoke-test the signed packaged application
+        run: corepack pnpm test:packaged-desktop:arm64
       - name: Create checksummed release manifest
-        run: node scripts/create-release-manifest.mjs release
+        shell: bash
+        run: |
+          test -f release/latest-mac.yml
+          node scripts/create-release-manifest.mjs release
       - uses: actions/upload-artifact@v4
         with:
-          name: kestrel-macos-universal
+          name: kestrel-macos-apple-silicon
           path: |
             release/*.dmg
             release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
             release/SHA256SUMS
             release/release-manifest.json
           if-no-files-found: error
@@ -62,4 +75,4 @@ jobs:
         shell: bash
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
-          gh release upload "$GITHUB_REF_NAME" release/*.dmg release/*.zip release/SHA256SUMS release/release-manifest.json --clobber
+          gh release upload "$GITHUB_REF_NAME" release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml release/SHA256SUMS release/release-manifest.json --clobber

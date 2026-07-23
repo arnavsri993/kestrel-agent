@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,7 +23,7 @@ function testManifest(bytes: Uint8Array, sha256 = createHash("sha256").update(by
     fileName: "ollama-darwin.tgz",
     sha256,
     bytes: bytes.byteLength,
-    binaryPath: "bin/ollama"
+    binaryPath: "ollama"
   };
 }
 
@@ -62,11 +62,12 @@ describe("managed local runtime", () => {
       throw new Error(`Unexpected URL: ${url}`);
     };
     const execute = async (_file: string, args: string[]) => {
-      if (args[0] === "-tzf") return { stdout: "bin/ollama\n", stderr: "" };
+      if (args[0] === "-tzf") return { stdout: "ollama\nlibreal.dylib\nliblink.dylib\n", stderr: "" };
       if (args[0] === "-xzf") {
         const destination = args[args.indexOf("-C") + 1]!;
-        await mkdir(join(destination, "bin"), { recursive: true });
-        await writeFile(join(destination, "bin", "ollama"), "verified binary");
+        await writeFile(join(destination, "ollama"), "verified binary");
+        await writeFile(join(destination, "libreal.dylib"), "verified library");
+        await symlink("libreal.dylib", join(destination, "liblink.dylib"));
         return { stdout: "", stderr: "" };
       }
       throw new Error(`Unexpected command: ${args.join(" ")}`);
@@ -91,7 +92,8 @@ describe("managed local runtime", () => {
       ollamaAvailable: true,
       source: "managed",
       runtimeVersion: "test",
-      localModels: [{ name: "qwen:test", size: 42 }]
+      localModels: [{ name: "qwen:test", size: 42 }],
+      verifiedModel: "qwen:test"
     });
     expect(progress.map((event) => event.stage)).toEqual(expect.arrayContaining([
       "detecting",
@@ -104,8 +106,29 @@ describe("managed local runtime", () => {
       "ready"
     ]));
     const marker = JSON.parse(await readFile(join(root, "local-runtime", "ollama", "test", "workstrand-install.json"), "utf8"));
-    expect(marker).toMatchObject({ version: "test", sha256: manifest.sha256, binaryPath: "bin/ollama" });
+    expect(marker).toMatchObject({ version: "test", sha256: manifest.sha256, binaryPath: "ollama" });
+    const verification = JSON.parse(await readFile(join(root, "local-runtime", "last-verification.json"), "utf8"));
+    expect(verification).toMatchObject({ model: "qwen:test" });
     await manager.stop();
+
+    serviceReady = false;
+    const relaunched = new LocalRuntimeManager(root, () => undefined, {
+      fetch: fetcher,
+      execFile: execute,
+      platform: "darwin",
+      architecture: "arm64",
+      manifest,
+      spawn: (() => {
+        serviceReady = true;
+        return fakeChild();
+      }) as unknown as typeof import("node:child_process").spawn,
+    });
+    await relaunched.startManagedIfInstalled();
+    expect(serviceReady).toBe(true);
+    await expect(relaunched.listModels()).resolves.toEqual([
+      { name: "qwen:test", size: 42 },
+    ]);
+    await relaunched.stop();
   });
 
   it("removes a partial install when the signed checksum does not match", async () => {
@@ -142,6 +165,25 @@ describe("managed local runtime", () => {
 
     const status = await manager.status();
     expect(status).toMatchObject({ automaticSupported: false, ollamaAvailable: false, source: "none" });
+    await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
+  });
+
+  it("does not offer the managed runtime on Intel Macs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: (async () => {
+        throw new TypeError("connection refused");
+      }) as typeof fetch,
+      platform: "darwin",
+      architecture: "x64",
+      manifest: testManifest(new TextEncoder().encode("archive")),
+    });
+
+    await expect(manager.status()).resolves.toMatchObject({
+      automaticSupported: false,
+      ollamaAvailable: false,
+    });
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
   });
 });

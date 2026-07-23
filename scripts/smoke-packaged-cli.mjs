@@ -70,7 +70,7 @@ try {
     timeout: 10_000
   });
   assert.equal(tui.status, 0, tui.stderr || "Packaged TUI failed.");
-  assert.match(tui.stdout, /Workstrand terminal/);
+  assert.match(tui.stdout, /Kestrel terminal/);
   assert.match(tui.stdout, /Terminal session/);
 
   const pairing = JSON.parse(command(cli, ["remote", "pair", "--label", "Packaged smoke remote", "--scopes", "read,tasks,approve"]));

@@ -186,8 +186,13 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px soli
 .release-copy h2 span { color: #b5beb8; }
 .release-copy > p { max-width: 720px; margin-top: 28px; color: #b2bcb5; }
 .release-actions { display: flex; gap: 10px; margin-top: 36px; }
-.release-actions button { min-width: 220px; min-height: 54px; display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 0 16px; border: 1px solid #667169; background: #202923; color: #9ba59e; text-align: left; }
-.release-actions button small { font: 8px var(--mono); text-transform: uppercase; }
+.release-actions button, .release-actions a { min-width: 220px; min-height: 54px; display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 0 16px; border: 1px solid #667169; background: #202923; color: #9ba59e; text-align: left; text-decoration: none; }
+.release-actions button small, .release-actions a small { font: 8px var(--mono); text-transform: uppercase; }
+.release-actions .release-download { background: var(--signal); border-color: var(--signal); color: var(--night); font-weight: 700; }
+.release-actions .release-verify { color: white; }
+.release-actions a:hover { border-color: white; }
+.release-provenance { margin: 18px 0 0; color: #89948c; font: 9px/1.6 var(--mono); }
+.release-provenance a { color: white; }
 .release-panel { background: rgba(14, 20, 16, .82); border: 1px solid #4b5750; backdrop-filter: blur(6px); }
 .release-version { margin: 0; padding: 19px 20px; display: flex; justify-content: space-between; gap: 22px; border-bottom: 1px solid #465148; }
 .release-version span, .release-checklist span { color: #89948c; font: 8px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
@@ -206,6 +211,36 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px soli
 .footer-links a:hover { color: white; }
 .provenance { padding-left: 22px; border-left: 1px solid #354039; }
 .provenance strong { display: block; margin-bottom: 9px; color: var(--signal); font: 8px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+
+.legal-header { min-height: 84px; display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px var(--page-x); background: var(--night); border-bottom: 1px solid #354039; color: white; }
+.legal-header > a:last-child { color: #aab4ad; font-size: 12px; text-decoration: none; }
+.legal-header > a:last-child:hover { color: white; }
+.legal-brand { display: inline-flex; align-items: center; gap: 12px; color: white; text-decoration: none; }
+.legal-brand img { width: 29px; height: 29px; }
+.legal-brand span { display: grid; }
+.legal-brand strong { font: 650 16px var(--display); }
+.legal-brand small { color: #89948c; font: 8px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.legal-page { min-height: 80vh; background: var(--paper); }
+.legal-intro { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(280px, .55fr); gap: clamp(44px, 9vw, 150px); padding: clamp(86px, 12vw, 160px) var(--page-x) clamp(72px, 9vw, 116px); border-bottom: 1px solid var(--line); }
+.legal-intro .kicker { grid-column: 1 / -1; margin: 0; }
+.legal-intro h1 { max-width: 820px; margin: 0; font: 630 clamp(56px, 7vw, 108px)/.88 var(--display); letter-spacing: -.07em; }
+.legal-intro > p:not(.kicker) { align-self: end; margin: 0; color: var(--muted); font-size: clamp(16px, 1.5vw, 20px); line-height: 1.55; }
+.legal-intro > small { grid-column: 2; color: var(--muted); font: 9px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+.legal-ledger { max-width: 1500px; margin-inline: auto; }
+.legal-ledger section { display: grid; grid-template-columns: minmax(90px, .26fr) minmax(0, 1fr); padding: clamp(46px, 7vw, 86px) var(--page-x); border-bottom: 1px solid var(--line); }
+.legal-ledger section > span { color: var(--muted); font: 9px var(--mono); }
+.legal-ledger section > div { max-width: 850px; }
+.legal-ledger h2 { margin: 0 0 25px; font: 610 clamp(28px, 3.4vw, 48px)/1 var(--display); letter-spacing: -.045em; }
+.legal-ledger p, .legal-ledger li { color: #515a55; font-size: 14px; line-height: 1.75; }
+.legal-ledger p { margin: 0 0 15px; }
+.legal-ledger ul { margin: 0; padding-left: 18px; }
+.legal-ledger li + li { margin-top: 10px; }
+.legal-footer { display: grid; grid-template-columns: .6fr 1.2fr .6fr; gap: 36px; align-items: start; padding: 52px var(--page-x); background: #0b100d; color: white; }
+.legal-footer > strong { font: 620 18px var(--display); }
+.legal-footer > p { margin: 0; color: #828d85; font-size: 11px; line-height: 1.65; }
+.legal-footer nav { display: flex; justify-content: flex-end; gap: 20px; }
+.legal-footer a { color: #aab4ad; font-size: 11px; text-decoration: none; }
+.legal-footer a:hover { color: white; }
 
 @media (max-width: 1080px) {
   .nav-links { display: none; }
@@ -289,6 +324,14 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px soli
   .site-footer { grid-template-columns: 1fr; padding: 60px 20px; }
   .site-footer > p, .provenance p, .footer-links a { font-size: 12px; }
   .provenance { padding: 20px 0 0; border: 0; border-top: 1px solid #354039; }
+  .legal-header { min-height: 70px; padding-inline: 20px; }
+  .legal-intro { grid-template-columns: 1fr; padding: 82px 20px 66px; }
+  .legal-intro h1 { font-size: clamp(54px, 17vw, 74px); }
+  .legal-intro > small { grid-column: 1; }
+  .legal-ledger section { grid-template-columns: 42px 1fr; padding: 48px 20px; }
+  .legal-ledger p, .legal-ledger li { font-size: 15px; }
+  .legal-footer { grid-template-columns: 1fr; padding: 46px 20px; }
+  .legal-footer nav { justify-content: flex-start; }
 }
 
 @media (max-width: 360px) {

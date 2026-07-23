@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "description": "A local-first personal agent with visible approvals and verified actions.",
-  "author": "Workstrand contributors",
+  "author": "Kestrel contributors",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "KESTREL_RELEASE_CHANNEL=development electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
-    "preview": "electron-vite preview",
-    "package:mac:dev": "pnpm build && electron-builder --mac dir --arm64 --config electron-builder.yml"
+    "preview": "KESTREL_RELEASE_CHANNEL=development electron-vite preview",
+    "package:mac:dev": "pnpm build && KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac dir --arm64 --config electron-builder.yml"
   },
   "dependencies": {
     "@kestrel/agent-core": "workspace:*",
@@ -23,6 +23,7 @@
     "motion": "12.42.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "sharp": "0.34.5",
     "zod": "4.4.3"
   },
   "devDependencies": {

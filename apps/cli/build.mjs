@@ -11,8 +11,8 @@ await build({
   target: "node22",
   sourcemap: true,
   legalComments: "none",
-  external: ["better-sqlite3"],
-  banner: { js: "#!/usr/bin/env node" }
+  external: ["better-sqlite3", "sharp"],
+  banner: { js: "#!/usr/bin/env node\nimport { createRequire as __createRequire } from \"node:module\";\nconst require = __createRequire(import.meta.url);" }
 });
 
 chmodSync("dist/kestrel.mjs", 0o755);

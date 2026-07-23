@@ -4,6 +4,8 @@ import { motion, useReducedMotion } from "motion/react";
 import mediaRegistry from "../data/media-registry.json";
 import { AmbientMedia, type VisualAsset } from "../components/AmbientMedia";
 import { ApprovalScene, ContextScene, TeacherScene } from "../components/ProductScenes";
+import { resolvePublicRelease } from "../lib/release-config";
+import { sitePath } from "../lib/site-path";
 
 const assets = mediaRegistry as VisualAsset[];
 const hero = assets.find((asset) => asset.id === "hero-signal-field")!;
@@ -27,20 +29,36 @@ const securityControls = [
   ["06", "Deletable context", "The architecture includes source inspection, correction, deletion, and channel-separated storage."]
 ];
 
-const releaseChecks = [
-  ["available", "Unsigned Apple Silicon development app"],
-  ["pending", "Developer ID signing and notarization"],
-  ["pending", "Gatekeeper verification on packaged artifacts"],
-  ["pending", "Intel hardware and universal-build verification"],
-  ["pending", "Public download, repository, and update host"]
-];
+const publicRelease = resolvePublicRelease({
+  NEXT_PUBLIC_RELEASE_VERSION: process.env.NEXT_PUBLIC_RELEASE_VERSION,
+  NEXT_PUBLIC_RELEASE_STATUS: process.env.NEXT_PUBLIC_RELEASE_STATUS,
+  NEXT_PUBLIC_DOWNLOAD_URL: process.env.NEXT_PUBLIC_DOWNLOAD_URL,
+  NEXT_PUBLIC_RELEASE_MANIFEST_URL: process.env.NEXT_PUBLIC_RELEASE_MANIFEST_URL,
+  NEXT_PUBLIC_RELEASE_CHECKSUMS_URL: process.env.NEXT_PUBLIC_RELEASE_CHECKSUMS_URL,
+});
+
+const releaseChecks = publicRelease.available
+  ? [
+      ["available", "Developer ID signature and Apple notarization"],
+      ["available", "Gatekeeper-verified Apple Silicon DMG"],
+      ["available", "Apple Silicon arm64 architecture verification"],
+      ["available", "Published manifest and SHA-256 checksums"],
+      ["available", "Signed direct-download and update channel"],
+    ]
+  : [
+      ["available", "Unsigned Apple Silicon development app"],
+      ["pending", "Developer ID signing and notarization"],
+      ["pending", "Gatekeeper verification on packaged artifacts"],
+      ["available", "Apple Silicon arm64 architecture verification"],
+      ["pending", "Public download, manifest, checksums, and update host"],
+    ];
 
 function Arrow() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h15M14 6l6 6-6 6" /></svg>;
 }
 
 function Brand() {
-  return <span className="brand-lockup"><img className="brand-mark" src="/brand/workstrand-mark.svg" alt="" /><strong>Workstrand</strong><small>local work agent</small></span>;
+  return <span className="brand-lockup"><img className="brand-mark" src={sitePath("/brand/workstrand-mark.svg")} alt="" /><strong>Kestrel</strong><small>local work agent</small></span>;
 }
 
 const navItems = [
@@ -58,7 +76,7 @@ export default function Home() {
 
     <header className="site-header">
       <nav className="site-nav" aria-label="Primary navigation">
-        <a className="site-brand" href="#top" aria-label="Workstrand home"><Brand /></a>
+        <a className="site-brand" href="#top" aria-label="Kestrel home"><Brand /></a>
         <div className="nav-links">
           {navItems.map(([label, href]) => <a key={href} href={href}>{label}</a>)}
         </div>
@@ -78,8 +96,8 @@ export default function Home() {
         <AmbientMedia asset={hero} className="hero-media" />
         <div className="hero-copy">
           <span className="kicker">One local place for the whole job</span>
-          <h1 id="hero-title">Bring the outcome.<span>Workstrand handles the work.</span></h1>
-          <p>Choose a project and say what done looks like. Workstrand can inspect, build, research, run, and verify—then pause before consequential action.</p>
+          <h1 id="hero-title">Bring the outcome.<span>Kestrel handles the work.</span></h1>
+          <p>Choose a project and say what done looks like. Kestrel can inspect, build, research, run, and verify—then pause before consequential action.</p>
           <div className="hero-actions">
             <a className="primary-cta" href="#decision">See one verified workflow <Arrow /></a>
             <a className="text-cta" href="#safety">Read the safety model</a>
@@ -90,7 +108,7 @@ export default function Home() {
         <motion.div className="hero-thread" initial={reduced ? false : { scaleX: 0 }} animate={{ scaleX: 1 }} transition={{ duration: 1.05, delay: 0.18, ease: [0.22, 1, 0.36, 1] }} />
       </section>
 
-      <ol className="stage-strip" aria-label="Workstrand decision path">
+      <ol className="stage-strip" aria-label="Kestrel decision path">
         {stages.map((stage, index) => <li key={stage}><span>{String(index + 1).padStart(2, "0")}</span><strong>{stage}</strong>{index < stages.length - 1 && <i aria-hidden="true" />}</li>)}
       </ol>
 
@@ -98,7 +116,7 @@ export default function Home() {
         <div className="section-index">01 / ONE COMPLETE DECISION</div>
         <div className="section-heading">
           <h2 id="decision-title">A request arrives.<span>A reviewable answer is already waiting.</span></h2>
-          <p>A teacher offered Friday or Monday. Workstrand checked the calendar, found Friday swim, protected the weekend for study, and prepared the exact changes—without sending them.</p>
+          <p>A teacher offered Friday or Monday. Kestrel checked the calendar, found Friday swim, protected the weekend for study, and prepared the exact changes—without sending them.</p>
         </div>
         <div className="teacher-workflow">
           <ol className="workflow-rail" aria-label="Scheduling decision evidence">
@@ -112,7 +130,7 @@ export default function Home() {
         <div className="memory-copy">
           <div className="section-index">02 / CONTEXT WITH A BOUNDARY</div>
           <h2 id="memory-title">Remember less.<span>Use the part that changes the answer.</span></h2>
-          <p>When a DJI controller reports a connection problem, generic troubleshooting starts with a cable and restart. Workstrand can avoid repeating steps already tried and weigh the phone&apos;s developer beta instead.</p>
+          <p>When a DJI controller reports a connection problem, generic troubleshooting starts with a cable and restart. Kestrel can avoid repeating steps already tried and weigh the phone&apos;s developer beta instead.</p>
           <blockquote>“Because the phone still charges, DJI Fly launches, and another cable already failed, software compatibility now outranks a dead controller.”</blockquote>
           <div className="memory-note"><span>Retrieval scope</span><strong>Decision-changing context only</strong><small>Unrelated personal memory stays outside the working context.</small></div>
         </div>
@@ -124,7 +142,7 @@ export default function Home() {
           <div className="section-index">03 / CONTROL THAT STAYS VISIBLE</div>
           <h2 id="control-title">Autonomy stops where consequence starts.</h2>
           <p>Every action receives a policy level. External communication pauses by default. Sensitive submissions and high-consequence changes always require stronger review.</p>
-          <ol className="risk-ladder" aria-label="Workstrand action levels">
+          <ol className="risk-ladder" aria-label="Kestrel action levels">
             <li><span>0</span><div><strong>Read and prepare</strong><small>No external side effect</small></div></li>
             <li><span>1</span><div><strong>Reversible local work</strong><small>Configurable approval</small></div></li>
             <li className="active"><span>2</span><div><strong>External communication</strong><small>Approval by default</small></div></li>
@@ -143,7 +161,7 @@ export default function Home() {
         <div className="section-index">04 / ONE GRAMMAR, DIFFERENT WORK</div>
         <div className="section-heading compact-heading">
           <h2 id="capability-title">The plan changes.<span>The safety grammar does not.</span></h2>
-          <p>Workstrand uses available tools and installable skills to plan unfamiliar work. Each example below is a task shape—not a claim of a dedicated production integration.</p>
+          <p>Kestrel uses available tools and installable skills to plan unfamiliar work. Each example below is a task shape—not a claim of a dedicated production integration.</p>
         </div>
         <div className="capability-ledger">
           {capabilityExamples.map((example, index) => <article key={example.trigger}>
@@ -170,15 +188,21 @@ export default function Home() {
         <AmbientMedia asset={cta} />
         <div className="release-copy">
           <div className="section-index">06 / RELEASE READINESS</div>
-          <h2 id="release-title">The development app is real.<span>The public release is not ready to pretend.</span></h2>
-          <p>A signed download stays unavailable until the distribution gates are complete. The website will not turn pending infrastructure into a fake call to action.</p>
-          <div className="release-actions" aria-label="Unavailable release actions">
-            <button type="button" disabled>Download for macOS <small>not signed yet</small></button>
-            <button type="button" disabled>View repository <small>publishing later</small></button>
+          <h2 id="release-title">{publicRelease.available ? "Download Kestrel for Apple Silicon." : "The development app is real."}<span>{publicRelease.available ? "Signed, notarized, and traceable to its checksum." : "The public release is not ready to pretend."}</span></h2>
+          <p>{publicRelease.available ? "The direct-download build is for M-series Macs. Its release manifest and SHA-256 checksums remain beside the installer so the artifact can be independently verified." : "A signed download stays unavailable until the distribution gates are complete. The website will not turn pending infrastructure into a fake call to action."}</p>
+          <div className="release-actions" aria-label={publicRelease.available ? "Apple Silicon release actions" : "Unavailable release actions"}>
+            {publicRelease.available ? <>
+              <a className="release-download" href={publicRelease.downloadUrl}>Download for Apple Silicon <small>DMG · {publicRelease.version}</small></a>
+              <a className="release-verify" href={publicRelease.manifestUrl}>Verify this release <small>manifest + SHA-256</small></a>
+            </> : <>
+              <button type="button" disabled>Download for Apple Silicon <small>not signed yet</small></button>
+              <button type="button" disabled>Verify this release <small>publishing later</small></button>
+            </>}
           </div>
+          {publicRelease.available && <p className="release-provenance">Checksums: <a href={publicRelease.checksumsUrl}>SHA256SUMS</a> · Requires an Apple Silicon Mac running macOS 13 or later.</p>}
         </div>
         <div className="release-panel">
-          <p className="release-version"><span>Current version</span><strong>0.1.0 development</strong></p>
+          <p className="release-version"><span>Current version</span><strong>{publicRelease.version}</strong></p>
           <ul className="release-checklist">
             {releaseChecks.map(([status, label]) => <li key={label} className={status}><span>{status === "available" ? "Ready" : "Pending"}</span><strong>{label}</strong></li>)}
           </ul>
@@ -189,8 +213,8 @@ export default function Home() {
     <footer className="site-footer">
       <div className="footer-brand"><Brand /></div>
       <p>A local-first workbench for coding, research, automation, files, and verified delivery—with consequential actions kept visible.</p>
-      <div className="footer-links">{navItems.map(([label, href]) => <a key={href} href={href}>{label}</a>)}<a href="#release">Release</a></div>
-      <div className="provenance"><strong>Build provenance</strong><p>fal is used only by deliberate development scripts for optional website atmosphere. It is absent from the public runtime and is not a Workstrand capability.</p></div>
+      <div className="footer-links">{navItems.map(([label, href]) => <a key={href} href={href}>{label}</a>)}<a href="#release">Release</a><a href={sitePath("/privacy")}>Privacy</a><a href={sitePath("/support")}>Support</a></div>
+      <div className="provenance"><strong>Build provenance</strong><p>fal is used only by deliberate development scripts for optional website atmosphere. It is absent from the public runtime and is not a Kestrel capability.</p></div>
     </footer>
   </>;
 }

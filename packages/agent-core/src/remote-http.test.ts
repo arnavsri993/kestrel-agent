@@ -8,6 +8,9 @@ import { RemoteControl } from "./remote";
 import { RemoteHttpServer } from "./remote-http";
 import { AgentRuntime } from "./runtime";
 import { ChannelGateway, signChannelEnvelope, type ChannelEnvelope } from "./channels";
+import { PresenceManager } from "./presence";
+import { TrustedProxyAuthorizer } from "./gateway-networking";
+import { NativeNodeManager } from "./native-nodes";
 
 const servers: RemoteHttpServer[] = [];
 afterEach(async () => { for (const server of servers.splice(0)) await server.stop(); });
@@ -27,23 +30,48 @@ describe("authenticated remote HTTP transport", () => {
   it("pairs a device, enforces bearer scopes, redacts jobs, and streams runtime events", async () => {
     const { database, runtime, session, remote } = fixture();
     const pairing = remote.beginPairing("Browser client", ["read", "tasks"]);
-    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1", allowedOrigins: ["https://control.example"] });
+    const presence = new PresenceManager(() => new Date("2026-07-23T10:00:00.000Z"));
+    const nativeNodes = new NativeNodeManager(() => new Date("2026-07-23T10:00:00.000Z"));
+    const server = new RemoteHttpServer({ remote, runtime, presence, nativeNodes, host: "127.0.0.1", allowedOrigins: ["https://control.example"], prometheusMetrics: () => "# TYPE workstrand_sessions_total counter\nworkstrand_sessions_total 1\n" });
     servers.push(server);
     const { origin } = await server.start();
     const application = await fetch(`${origin}/app/`);
     expect(application.status).toBe(200);
     expect(application.headers.get("content-security-policy")).toContain("default-src 'self'");
     expect(await application.text()).toContain("Pair this device");
-    expect(await (await fetch(`${origin}/app/manifest.webmanifest`)).json()).toMatchObject({ name: "Workstrand Remote", display: "standalone", start_url: "/app/" });
+    expect(await (await fetch(`${origin}/app/manifest.webmanifest`)).json()).toMatchObject({ name: "Kestrel Remote", display: "standalone", start_url: "/app/" });
     expect(await (await fetch(`${origin}/app/app.js`)).text()).toContain("sessionStorage.getItem('kestrel-token')");
     expect(await fetch(`${origin}/v1/sessions`)).toMatchObject({ status: 401 });
     const paired = await fetch(`${origin}/v1/pairings/complete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pairingId: pairing.pairingId, code: pairing.code }) });
     expect(paired.status).toBe(200);
     const device = await paired.json() as { token: string };
     const headers = { authorization: `Bearer ${device.token}` };
+    expect((await fetch(`${origin}/v1/diagnostics/prometheus`)).status).toBe(401);
+    const metrics = await fetch(`${origin}/v1/diagnostics/prometheus`, { headers });
+    expect(metrics.status).toBe(200);
+    expect(metrics.headers.get("content-type")).toBe("text/plain; version=0.0.4; charset=utf-8");
+    expect(await metrics.text()).toContain("workstrand_sessions_total 1");
     const sessions = await fetch(`${origin}/v1/sessions`, { headers });
     expect(await sessions.json()).toMatchObject({ sessions: [{ id: session.id, title: "Remote HTTP" }] });
     expect(JSON.stringify(await (await fetch(`${origin}/v1/sessions`, { headers })).json())).not.toContain("workspaceRoot");
+    expect((await fetch(`${origin}/v1/presence`)).status).toBe(401);
+    const presenceWrite = await fetch(`${origin}/v1/presence`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ instanceId: "webchat-stable", mode: "webchat", reason: "paired remote" }) });
+    expect(await presenceWrite.json()).toMatchObject({ presence: { instanceId: "webchat-stable", status: "active" } });
+    const presenceRead = await fetch(`${origin}/v1/presence`, { headers });
+    expect(await presenceRead.json()).toMatchObject({ presence: [{ instanceId: "webchat-stable", mode: "webchat" }] });
+    expect(JSON.stringify(await (await fetch(`${origin}/v1/presence`, { headers })).json())).not.toMatch(/remoteAddress|hostname|clientIp/i);
+    const nodeBeacon = await fetch(`${origin}/v1/nodes/beacon`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ nodeId: "phone-1", label: "Phone", platform: "ios", capabilities: ["location", "talk", "voiceWake"], idleSeconds: 4 }) });
+    expect(await nodeBeacon.json()).toMatchObject({ node: { nodeId: "phone-1", platform: "ios", status: "active" } });
+    nativeNodes.enqueueLocation("phone-1", { desiredAccuracy: "balanced" });
+    expect(await (await fetch(`${origin}/v1/nodes/phone-1/poll`, { method: "POST", headers })).json()).toMatchObject({ commands: [{ kind: "location.get" }], voiceWake: ["openclaw", "claude", "computer"] });
+    const talkServer = new RemoteHttpServer({ remote, runtime, nativeNodes, host: "127.0.0.1", onNodeTalk: async ({ text }) => ({ text: `Reply: ${text}`, sessionId: session.id }) });
+    servers.push(talkServer);
+    const talkOrigin = (await talkServer.start()).origin;
+    const talk = await fetch(`${talkOrigin}/v1/nodes/phone-1/talk`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ text: "Hello" }) });
+    expect(await talk.json()).toMatchObject({ accepted: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(nativeNodes.poll("phone-1").commands).toMatchObject([{ kind: "talk.speak", input: { text: "Reply: Hello" } }]);
+    expect((await fetch(`${origin}/v1/nodes/voice-wake`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ triggers: ["hey kestrel"] }) })).status).toBe(401);
 
     const mcpHeaders = { ...headers, "content-type": "application/json", "x-kestrel-session-id": session.id };
     const initialized = await fetch(`${origin}/v1/mcp`, { method: "POST", headers: mcpHeaders, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } }) });
@@ -78,6 +106,29 @@ describe("authenticated remote HTTP transport", () => {
     const { origin } = await server.start();
     expect((await fetch(`${origin}/health`, { headers: { origin: "https://blocked.example" } })).status).toBe(403);
     await expect(new RemoteHttpServer({ remote, runtime, host: "0.0.0.0" }).start()).rejects.toThrow("requires TLS");
+    database.close();
+  });
+
+  it("accepts a scope-capped identity only from a configured trusted loopback proxy", async () => {
+    const { database, runtime, session, remote } = fixture();
+    const trustedProxy = new TrustedProxyAuthorizer({
+      trustedSources: ["127.0.0.1"],
+      userHeader: "x-auth-user",
+      requiredHeaders: ["x-forwarded-proto", "x-forwarded-host"],
+      allowUsers: ["operator@example.test"],
+      allowLoopback: true,
+      maximumScopes: ["read", "tasks"]
+    });
+    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1", trustedProxy });
+    servers.push(server);
+    const { origin } = await server.start();
+    const headers = { "x-auth-user": "operator@example.test", "x-forwarded-proto": "https", "x-forwarded-host": "control.example" };
+    const sessions = await fetch(`${origin}/v1/sessions`, { headers });
+    expect(sessions.status).toBe(200);
+    expect(await sessions.json()).toMatchObject({ sessions: [{ id: session.id }] });
+    expect((await fetch(`${origin}/v1/sessions`, { headers: { ...headers, "x-auth-user": "blocked@example.test" } })).status).toBe(401);
+    const resume = await fetch(`${origin}/v1/jobs/missing/resume`, { method: "POST", headers });
+    expect(resume.status).toBe(401);
     database.close();
   });
 

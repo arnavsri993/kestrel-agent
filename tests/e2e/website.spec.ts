@@ -2,12 +2,12 @@ import { expect, test } from "@playwright/test";
 
 test("01 has the product title", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveTitle(/Workstrand/);
+  await expect(page).toHaveTitle(/Kestrel/);
 });
 
 test("02 has one decisive headline", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Bring the outcome\.\s*Workstrand handles the work\./);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Bring the outcome\.\s*Kestrel handles the work\./);
   await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
 });
 
@@ -15,7 +15,7 @@ test("03 exposes the primary navigation", async ({ page }) => {
   await page.goto("/");
   const navigation = page.getByRole("navigation", { name: "Primary navigation" });
   await expect(navigation).toBeVisible();
-  await expect(navigation.getByRole("link", { name: /Workstrand/ })).toBeVisible();
+  await expect(navigation.getByRole("link", { name: /Kestrel/ })).toBeVisible();
   await expect(navigation.locator('a[href="#release"]')).toHaveCount(2);
   for (const href of ["#decision", "#memory", "#control", "#architecture"]) await expect(navigation.locator(`a[href="${href}"]`)).toHaveCount(2);
   if ((page.viewportSize()?.width ?? 0) <= 1080) {
@@ -31,13 +31,13 @@ test("03 exposes the primary navigation", async ({ page }) => {
 
 test("04 keeps unavailable releases disabled", async ({ page }) => {
   await page.goto("/#release");
-  await expect(page.getByRole("button", { name: /Download for macOS/ })).toBeDisabled();
-  await expect(page.getByRole("button", { name: /View repository/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Download for Apple Silicon/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Verify this release/ })).toBeDisabled();
 });
 
 test("05 presents all six agent stages", async ({ page }) => {
   await page.goto("/");
-  const workflow = page.getByLabel("Workstrand decision path");
+  const workflow = page.getByLabel("Kestrel decision path");
   for (const label of ["Notice", "Retrieve", "Plan", "Approve", "Act", "Verify"]) await expect(workflow.getByText(label, { exact: true })).toBeVisible();
 });
 
@@ -134,7 +134,7 @@ test("19 exposes release status without a false download", async ({ page }) => {
 test("20 includes descriptive social metadata", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator('meta[name="description"]')).toHaveAttribute("content", /local-first macOS agent/);
-  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", /Workstrand/);
+  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute("content", /Kestrel/);
 });
 
 test("21 makes the approval preview functional without implying an external action", async ({ page }) => {
@@ -156,4 +156,27 @@ test("22 edits and returns a recommendation to review", async ({ page }) => {
   await page.getByRole("button", { name: "Friday" }).click();
   await page.getByRole("button", { name: "Return to review" }).click();
   await expect(page.getByText(/Friday keeps the original week/)).toBeVisible();
+});
+
+for (const [index, route, heading, sectionCount] of [
+  ["23", "/privacy", "Your context is not the product.", 8],
+  ["24", "/support", "Recover from evidence, not guesswork.", 7]
+] as const) {
+  test(`${index} renders the ${route.slice(1)} release surface`, async ({ page }) => {
+    const failed: string[] = [];
+    page.on("pageerror", (error) => failed.push(error.message));
+    await page.goto(route);
+    await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+    await expect(page.locator("main section")).toHaveCount(sectionCount);
+    await expect(page.getByRole("navigation", { name: "Legal and support" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    expect(failed).toEqual([]);
+  });
+}
+
+test("25 links the public privacy and support routes from the product", async ({ page }) => {
+  await page.goto("/");
+  const footer = page.locator(".site-footer");
+  await expect(footer.getByRole("link", { name: "Privacy" })).toHaveAttribute("href", "/privacy");
+  await expect(footer.getByRole("link", { name: "Support" })).toHaveAttribute("href", "/support");
 });

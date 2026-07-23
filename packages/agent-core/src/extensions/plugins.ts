@@ -1,6 +1,10 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, resolve, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
+import {
+  DashboardContributionSchema,
+  type DashboardContribution,
+} from "@kestrel/shared-types";
 
 export interface PluginDescriptor {
   name: string;
@@ -15,6 +19,8 @@ export interface PluginDescriptor {
   dependencies?: Record<string, string>;
   skillsRoot?: string;
   mcpServersPath?: string;
+  dashboardPath?: string;
+  dashboard?: DashboardContribution;
   interface?: {
     displayName?: string;
     shortDescription?: string;
@@ -91,6 +97,18 @@ export class PluginRegistry {
         })) : undefined;
         const skillsRoot = resolvePluginPath(pluginRoot, manifest.skills);
         const mcpServersPath = resolvePluginPath(pluginRoot, manifest.mcpServers);
+        const dashboardPath = resolvePluginPath(pluginRoot, manifest.dashboard);
+        let dashboard: DashboardContribution | undefined;
+        if (dashboardPath) {
+          const dashboardMetadata = statSync(dashboardPath);
+          if (!dashboardMetadata.isFile() || dashboardMetadata.size > 65_536)
+            throw new Error(
+              "Plugin dashboard contribution must be a regular JSON file no larger than 64 KB.",
+            );
+          dashboard = DashboardContributionSchema.parse(
+            JSON.parse(readFileSync(dashboardPath, "utf8")),
+          );
+        }
         const descriptor: PluginDescriptor = {
           name,
           version,
@@ -104,6 +122,9 @@ export class PluginRegistry {
           ...(dependencies && Object.keys(dependencies).length ? { dependencies } : {}),
           ...(skillsRoot ? { skillsRoot } : {}),
           ...(mcpServersPath ? { mcpServersPath } : {}),
+          ...(dashboardPath && dashboard
+            ? { dashboardPath, dashboard }
+            : {}),
           ...(ui ? {
             interface: {
               ...(typeof ui.displayName === "string" ? { displayName: ui.displayName } : {}),
@@ -156,11 +177,12 @@ export class PluginRegistry {
     return this.list().filter((plugin) => plugin.enabled && plugin.skillsRoot).map((plugin) => plugin.skillsRoot!);
   }
 
-  summary(): Array<Omit<PluginDescriptor, "root" | "manifestPath" | "skillsRoot" | "mcpServersPath"> & { hasSkills: boolean; hasMcpServers: boolean }> {
-    return this.list().map(({ root: _root, manifestPath: _manifest, skillsRoot, mcpServersPath, ...plugin }) => ({
+  summary(): Array<Omit<PluginDescriptor, "root" | "manifestPath" | "skillsRoot" | "mcpServersPath" | "dashboardPath"> & { hasSkills: boolean; hasMcpServers: boolean; hasDashboard: boolean }> {
+    return this.list().map(({ root: _root, manifestPath: _manifest, skillsRoot, mcpServersPath, dashboardPath: _dashboardPath, ...plugin }) => ({
       ...plugin,
       hasSkills: Boolean(skillsRoot),
-      hasMcpServers: Boolean(mcpServersPath)
+      hasMcpServers: Boolean(mcpServersPath),
+      hasDashboard: Boolean(plugin.dashboard)
     }));
   }
 }

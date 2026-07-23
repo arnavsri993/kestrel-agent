@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { once } from "node:events";
 import { promisify } from "node:util";
@@ -14,7 +14,7 @@ export interface LocalRuntimeManifest {
   runtime: "ollama";
   version: string;
   platform: "darwin";
-  architectures: Array<"arm64" | "x64">;
+  architectures: ["arm64"];
   url: string;
   fileName: string;
   sha256: string;
@@ -26,12 +26,12 @@ export const MANAGED_OLLAMA_MANIFEST: LocalRuntimeManifest = {
   runtime: "ollama",
   version: "0.32.1",
   platform: "darwin",
-  architectures: ["arm64", "x64"],
+  architectures: ["arm64"],
   url: "https://github.com/ollama/ollama/releases/download/v0.32.1/ollama-darwin.tgz",
   fileName: "ollama-darwin.tgz",
   sha256: "346d28fe70f3ef3776e42100f5721510aa35fc07f3733f6629dbb117b1cfede9",
   bytes: 145_355_166,
-  binaryPath: "bin/ollama"
+  binaryPath: "ollama"
 };
 
 interface OllamaTag {
@@ -77,12 +77,19 @@ function safeArchiveEntries(stdout: string): string[] {
   return entries;
 }
 
-async function rejectExtractedLinks(root: string, current = root): Promise<void> {
+async function rejectExtractedLinks(root: string, current = root, canonicalRoot?: string): Promise<void> {
+  const containedRoot = canonicalRoot ?? await realpath(root);
   for (const entry of await readdir(current)) {
     const path = join(current, entry);
     const metadata = await lstat(path);
-    if (metadata.isSymbolicLink()) throw new Error("The local runtime archive contains an unsupported symbolic link.");
-    if (metadata.isDirectory()) await rejectExtractedLinks(root, path);
+    if (metadata.isSymbolicLink()) {
+      const resolved = await realpath(path);
+      if (resolved !== containedRoot && !resolved.startsWith(`${containedRoot}${sep}`)) {
+        throw new Error("The local runtime archive contains a symbolic link outside its install folder.");
+      }
+      continue;
+    }
+    if (metadata.isDirectory()) await rejectExtractedLinks(root, path, containedRoot);
     const pathWithinRoot = relative(root, path);
     if (pathWithinRoot.startsWith(`..${sep}`) || pathWithinRoot === "..") throw new Error("The local runtime archive escaped its install folder.");
   }
@@ -128,8 +135,15 @@ export class LocalRuntimeManager {
     return join(this.installRoot(), "workstrand-install.json");
   }
 
+  private verificationPath(): string {
+    return join(this.root, "local-runtime", "last-verification.json");
+  }
+
   private automaticSupported(): boolean {
-    return this.currentPlatform === this.manifest.platform && this.manifest.architectures.includes(this.currentArchitecture as "arm64" | "x64");
+    return (
+      this.currentPlatform === this.manifest.platform &&
+      this.currentArchitecture === "arm64"
+    );
   }
 
   private progress(progress: Omit<LocalRuntimeProgress, "updatedAt">): void {
@@ -163,14 +177,16 @@ export class LocalRuntimeManager {
     const managedRuntime = await this.hasManagedInstall();
     try {
       const localModels = await this.listModels();
+      const verification = await this.readVerification(localModels);
       return {
         automaticSupported,
         managedRuntime,
         ollamaAvailable: true,
         source: managedRuntime ? "managed" : "external",
+        runtimeVersion: this.manifest.version,
         runtimeDownloadBytes: this.manifest.bytes,
         localModels,
-        ...(managedRuntime ? { runtimeVersion: this.manifest.version } : {})
+        ...verification
       };
     } catch {
       return {
@@ -178,9 +194,9 @@ export class LocalRuntimeManager {
         managedRuntime,
         ollamaAvailable: false,
         source: managedRuntime ? "managed" : "none",
+        runtimeVersion: this.manifest.version,
         runtimeDownloadBytes: this.manifest.bytes,
-        localModels: [],
-        ...(managedRuntime ? { runtimeVersion: this.manifest.version } : {})
+        localModels: []
       };
     }
   }
@@ -211,6 +227,7 @@ export class LocalRuntimeManager {
       const existing = await this.listModels(5_000, operation.signal);
       if (!existing.some((item) => item.name === model || item.name === `${model}:latest`)) await this.pullModel(model, operation.signal);
       await this.verifyModel(model, operation.signal);
+      await this.recordVerification(model);
       const status = await this.status();
       this.progress({ stage: "ready", message: `${model} completed a real local response and is ready.`, model, percent: 100 });
       return status;
@@ -225,6 +242,25 @@ export class LocalRuntimeManager {
     } finally {
       this.operation = null;
     }
+  }
+
+  private async readVerification(models: LocalModelSummary[]): Promise<{ verifiedModel: string; verifiedAt: string } | Record<string, never>> {
+    try {
+      const value = JSON.parse(await readFile(this.verificationPath(), "utf8")) as { model?: unknown; verifiedAt?: unknown };
+      if (typeof value.model !== "string" || typeof value.verifiedAt !== "string" || !Number.isFinite(Date.parse(value.verifiedAt))) return {};
+      if (!models.some((item) => item.name === value.model || item.name === `${value.model}:latest`)) return {};
+      return { verifiedModel: value.model, verifiedAt: value.verifiedAt };
+    } catch {
+      return {};
+    }
+  }
+
+  private async recordVerification(model: string): Promise<void> {
+    const path = this.verificationPath();
+    const temporary = `${path}.new`;
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await writeFile(temporary, `${JSON.stringify({ model, verifiedAt: this.now().toISOString() }, null, 2)}\n`, { mode: 0o600 });
+    await rename(temporary, path);
   }
 
   private async install(signal: AbortSignal): Promise<void> {
@@ -277,7 +313,7 @@ export class LocalRuntimeManager {
       if (digest.digest("hex") !== this.manifest.sha256) throw new Error("The local runtime checksum did not match the signed release manifest.");
       const contents = safeArchiveEntries((await this.execute("/usr/bin/tar", ["-tzf", archive])).stdout);
       if (!contents.includes(this.manifest.binaryPath)) throw new Error("The local runtime archive does not contain the expected executable.");
-      this.progress({ stage: "installing-runtime", message: "Installing the verified runtime inside Workstrand's private application data." });
+      this.progress({ stage: "installing-runtime", message: "Installing the verified runtime inside Kestrel's private application data." });
       await this.execute("/usr/bin/tar", ["-xzf", archive, "-C", staging]);
       await rm(archive, { force: true });
       await rejectExtractedLinks(staging);
@@ -322,7 +358,9 @@ export class LocalRuntimeManager {
         TMPDIR: process.env.TMPDIR ?? "/tmp",
         OLLAMA_HOST: "127.0.0.1:11434",
         OLLAMA_MODELS: modelsRoot,
-        OLLAMA_KEEP_ALIVE: "10m"
+        OLLAMA_KEEP_ALIVE: "10m",
+        OLLAMA_CONTEXT_LENGTH: "32768",
+        OLLAMA_NO_CLOUD: "1"
       }
     });
     this.child = child;
@@ -392,7 +430,8 @@ export class LocalRuntimeManager {
         model,
         messages: [{ role: "user", content: "Reply with the single word READY." }],
         stream: false,
-        options: { temperature: 0, num_predict: 8, num_ctx: 65_536 }
+        think: false,
+        options: { temperature: 0, num_predict: 32, num_ctx: 32_768 }
       }),
       signal
     });

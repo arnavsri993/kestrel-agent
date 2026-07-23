@@ -1,14 +1,14 @@
-# Workstrand brand
+# Kestrel brand
 
 ## Name
 
-**Workstrand** is the human-visible product name.
+**Kestrel** is the human-visible product name.
 
 A workstrand is a sequence of related work. That maps directly to the product:
 one persistent thread carries an outcome through context retrieval, planning,
 human approval, execution, and verification.
 
-The name should be written as `Workstrand` in prose and `workstrand` only where
+The name should be written as `Kestrel` in prose and `workstrand` only where
 a lowercase identifier is required.
 
 ## Position
@@ -22,7 +22,7 @@ Short product loop:
 ## Mark
 
 The mark is one continuous strand interrupted by a circular approval
-checkpoint. The interruption is deliberate: Workstrand can carry the job, but
+checkpoint. The interruption is deliberate: Kestrel can carry the job, but
 consequential action remains visibly gated.
 
 Primary colors:

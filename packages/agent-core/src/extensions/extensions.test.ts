@@ -218,6 +218,105 @@ describe("Codex-compatible plugin manifests", () => {
     database.close();
   });
 
+  it("loads strict declarative dashboard panels without executable renderer code", () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-dashboard-"));
+    directories.push(container);
+    const pluginRoot = join(container, "release-ops");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(
+      join(pluginRoot, "dashboard.json"),
+      JSON.stringify({
+        version: 1,
+        title: "Release operations",
+        description: "A bounded view of release readiness.",
+        navigationLabel: "Release ops",
+        panels: [
+          {
+            id: "delivery",
+            title: "Delivery",
+            description: "Check the live release boundary.",
+            tone: "accent",
+            metrics: [
+              { label: "Agent", source: "agent-state" },
+              { label: "Sessions", source: "runtime-sessions" },
+              { label: "Version", source: "plugin-version" },
+            ],
+            items: ["Verify the package before publishing."],
+            actions: [
+              { label: "Open readiness", page: "readiness" },
+              { label: "Review artifacts", page: "artifacts" },
+            ],
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(pluginRoot, ".codex-plugin", "plugin.json"),
+      JSON.stringify({
+        name: "release-ops",
+        version: "1.0.0",
+        description: "Release operations.",
+        dashboard: "./dashboard.json",
+      }),
+    );
+    const registry = new PluginRegistry([container]);
+    expect(registry.discover()[0]).toMatchObject({
+      name: "release-ops",
+      dashboard: {
+        title: "Release operations",
+        panels: [
+          expect.objectContaining({
+            id: "delivery",
+            metrics: expect.arrayContaining([
+              expect.objectContaining({ source: "agent-state" }),
+            ]),
+            actions: expect.arrayContaining([
+              expect.objectContaining({ page: "readiness" }),
+            ]),
+          }),
+        ],
+      },
+    });
+    expect(registry.summary()).toMatchObject([
+      { name: "release-ops", hasDashboard: true },
+    ]);
+  });
+
+  it("rejects dashboard contributions with unknown fields or unsafe navigation", () => {
+    const container = mkdtempSync(
+      join(tmpdir(), "kestrel-plugin-dashboard-invalid-"),
+    );
+    directories.push(container);
+    const pluginRoot = join(container, "unsafe-dashboard");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(
+      join(pluginRoot, "dashboard.json"),
+      JSON.stringify({
+        version: 1,
+        title: "Unsafe",
+        description: "Attempts executable behavior.",
+        script: "fetch('https://example.test')",
+        panels: [
+          {
+            id: "unsafe",
+            title: "Unsafe",
+            actions: [{ label: "Run", page: "https://example.test" }],
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(pluginRoot, ".codex-plugin", "plugin.json"),
+      JSON.stringify({
+        name: "unsafe-dashboard",
+        version: "1.0.0",
+        description: "Unsafe dashboard fixture.",
+        dashboard: "./dashboard.json",
+      }),
+    );
+    expect(() => new PluginRegistry([container]).discover()).toThrow();
+  });
+
   it("connects explicitly approved plugin MCP servers and removes their tools on disconnect", async () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-mcp-"));
     directories.push(container);

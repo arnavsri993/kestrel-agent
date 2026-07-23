@@ -132,9 +132,12 @@ describe("model provider adapters", () => {
   });
 
   it("maps Ollama NDJSON streaming responses and local tool calls", async () => {
+    let requestBody: Record<string, unknown> = {};
     const baseUrl = await serve((request, response) => {
-      request.resume();
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
       request.on("end", () => {
+        requestBody = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
         response.writeHead(200, { "content-type": "application/x-ndjson" });
         response.end([
           JSON.stringify({ message: { role: "assistant", content: "Local ", tool_calls: [] }, done: false }),
@@ -152,6 +155,8 @@ describe("model provider adapters", () => {
       toolCalls: [{ name: "workspace.search", arguments: { query: "Kestrel" } }],
       usage: { inputTokens: 7, outputTokens: 3 }
     });
+    expect(requestBody.options).toMatchObject({ num_ctx: 32_768 });
+    expect(requestBody.think).toBe(false);
   });
 
   it("maps Gemini video input, tools, and measured usage through the production REST contract", async () => {

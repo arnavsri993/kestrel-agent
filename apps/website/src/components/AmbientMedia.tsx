@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useReducedMotion } from "motion/react";
+import { sitePath } from "../lib/site-path";
 
 export interface VisualAsset {
   id: string;
@@ -45,11 +46,12 @@ export function AmbientMedia({ asset, className = "" }: { asset: VisualAsset; cl
     return () => document.removeEventListener("visibilitychange", sync);
   }, [visible]);
 
-  const poster = asset.mobilePosterPath ?? asset.posterPath;
+  const poster = sitePath((asset.mobilePosterPath ?? asset.posterPath) as `/${string}`);
+  const desktopPoster = sitePath(asset.posterPath as `/${string}`);
   return <div ref={container} className={`ambient-media ${className}`} aria-hidden="true">
-    {reduced || !hasPublishedVideo ? <picture><source media="(max-width: 700px)" srcSet={poster}/><img src={asset.posterPath} alt="" /></picture> : <video ref={video} muted={asset.muted} loop={asset.loop} playsInline preload="none" poster={asset.posterPath}>
-      {asset.webmPath && <source src={asset.webmPath} type="video/webm" />}
-      {asset.mp4Path && <source src={asset.mp4Path} type="video/mp4" />}
+    {reduced || !hasPublishedVideo ? <picture><source media="(max-width: 700px)" srcSet={poster}/><img src={desktopPoster} alt="" /></picture> : <video ref={video} muted={asset.muted} loop={asset.loop} playsInline preload="none" poster={desktopPoster}>
+      {asset.webmPath && <source src={sitePath(asset.webmPath as `/${string}`)} type="video/webm" />}
+      {asset.mp4Path && <source src={sitePath(asset.mp4Path as `/${string}`)} type="video/mp4" />}
     </video>}
   </div>;
 }

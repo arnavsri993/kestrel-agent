@@ -18,6 +18,6 @@ java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 intellijPlatform {
     pluginConfiguration {
         ideaVersion { sinceBuild = "261" }
-        description = "Native Workstrand ACP task window with streaming, approvals, workspace files, MCP handoff, and terminal delegation."
+        description = "Native Kestrel ACP task window with streaming, approvals, workspace files, MCP handoff, and terminal delegation."
     }
 }

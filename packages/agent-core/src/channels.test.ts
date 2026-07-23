@@ -63,13 +63,93 @@ describe("authenticated channel gateway", () => {
   });
 
   it("delivers through native Slack, Discord, Teams, and Gmail provider APIs", async () => {
-    const requests: Array<{ url: string; authorization: string; body: unknown }> = [];
-    const fetcher: typeof fetch = async (input, init) => { const url = String(input); requests.push({ url, authorization: String(new Headers(init?.headers).get("authorization")), body: init?.body }); const payload = url.includes("slack.com") ? { ok: true, ts: "slack-1" } : { id: `${url.includes("discord") ? "discord" : url.includes("googleapis") ? "gmail" : "teams"}-1` }; return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } }); };
+    const requests: Array<{ url: string; method: string; authorization: string; body: unknown }> = [];
+    const fetcher: typeof fetch = async (input, init) => { const url = String(input); requests.push({ url, method: String(init?.method ?? "GET"), authorization: String(new Headers(init?.headers).get("authorization")), body: init?.body }); const payload = url.includes("slack.com") ? { ok: true, ts: "slack-1" } : { id: `${url.includes("discord") ? "discord" : url.includes("googleapis") ? "gmail" : "teams"}-1` }; return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } }); };
     for (const kind of ["slack", "discord", "teams", "gmail"] as const) {
       const adapter = new NativeChannelAdapter({ id: kind, kind, token: `${kind}-token`, fetcher, now: () => new Date("2026-07-23T02:00:00.000Z") });
       expect(await adapter.send({ conversationId: kind === "gmail" ? "person@example.test" : "room", text: "Hello", idempotencyKey: `${kind}-send`, signal: new AbortController().signal })).toMatchObject({ externalId: expect.stringContaining(kind), deliveredAt: "2026-07-23T02:00:00.000Z" });
     }
+    const discord = new NativeChannelAdapter({ id: "discord-edit", kind: "discord", token: "discord-token", fetcher });
+    await discord.edit({ conversationId: "room", externalId: "discord-1", text: "Updated", signal: new AbortController().signal });
+    await discord.typing({ conversationId: "room", signal: new AbortController().signal });
     expect(requests.map((request) => request.url)).toEqual(expect.arrayContaining([expect.stringContaining("chat.postMessage"), expect.stringContaining("discord.com/api/v10/channels"), expect.stringContaining("graph.microsoft.com/v1.0/chats"), expect.stringContaining("gmail.googleapis.com/gmail/v1") ]));
+    expect(requests).toEqual(expect.arrayContaining([expect.objectContaining({ url: expect.stringContaining("/messages/discord-1"), method: "PATCH" }), expect.objectContaining({ url: expect.stringContaining("/typing"), method: "POST" })]));
     expect(requests.every((request) => request.authorization.includes("token"))).toBe(true);
+  });
+
+  it("adds and removes reactions through Slack, Discord, and Teams provider APIs", async () => {
+    const requests: Array<{ url: string; method: string; authorization: string; body: unknown }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({ url, method: String(init?.method ?? "GET"), authorization: String(new Headers(init?.headers).get("authorization")), body: init?.body });
+      return url.includes("slack.com")
+        ? new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } })
+        : new Response(null, { status: 204 });
+    };
+    for (const kind of ["slack", "discord", "teams"] as const) {
+      const adapter = new NativeChannelAdapter({ id: kind, kind, token: `${kind}-token`, fetcher });
+      await adapter.react({ conversationId: "room-1", externalId: "message-1", emoji: kind === "slack" ? "thumbsup" : "👍", remove: false, signal: new AbortController().signal });
+      await adapter.react({ conversationId: "room-1", externalId: "message-1", emoji: kind === "slack" ? "thumbsup" : "👍", remove: true, signal: new AbortController().signal });
+    }
+    const gmail = new NativeChannelAdapter({ id: "gmail", kind: "gmail", token: "gmail-token", fetcher });
+    await expect(gmail.react({ conversationId: "person@example.test", externalId: "message-1", emoji: "👍", remove: false, signal: new AbortController().signal })).rejects.toThrow("does not support");
+    expect(requests.map(({ method }) => method)).toEqual(["POST", "POST", "PUT", "DELETE", "POST", "POST"]);
+    expect(requests.map(({ url }) => url)).toEqual(expect.arrayContaining([
+      "https://slack.com/api/reactions.add",
+      "https://slack.com/api/reactions.remove",
+      expect.stringContaining("/reactions/%F0%9F%91%8D/@me"),
+      expect.stringContaining("/setReaction"),
+      expect.stringContaining("/unsetReaction")
+    ]));
+    expect(requests.every((request) => request.authorization.includes("token"))).toBe(true);
+  });
+
+  it("approval-gates reactions, applies the configured level, and tracks clear safely", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Reactions" });
+    const calls: Array<{ emoji: string; remove: boolean }> = [];
+    const gateway = new ChannelGateway(database, runtime, [{
+      id: "chat",
+      kind: "discord",
+      send: async () => ({ externalId: "message-1", deliveredAt: "2026-07-23T12:00:00.000Z" }),
+      react: async ({ emoji, remove }) => { calls.push({ emoji, remove }); }
+    }], {});
+    gateway.configureInteraction({ progressMode: "progress", typingMode: "thinking", typingIntervalSeconds: 6, reactionLevel: "ack" });
+    expect(gateway.list()).toMatchObject([{ reactions: true }]);
+    installChannelTools(runtime, gateway, session.id);
+    const reaction = { channelId: "chat", conversationId: "room-1", messageId: "message-1", action: "add", emoji: "👍" };
+    expect((await runtime.callTool(session.id, "channel.react", reaction, { idempotencyKey: "reaction-1" })).status).toBe("blocked");
+    expect((await runtime.callTool(session.id, "channel.react", reaction, { approvalStatus: "approved", idempotencyKey: "reaction-1" })).status).toBe("verified");
+    await expect(gateway.react("chat", "room-1", "message-1", "add", "🎉", new AbortController().signal)).rejects.toThrow("at most 1");
+    expect(await gateway.react("chat", "room-1", "message-1", "clear", undefined, new AbortController().signal)).toMatchObject({ removed: true, trackedReactionCount: 0 });
+    expect(calls).toEqual([{ emoji: "👍", remove: false }, { emoji: "👍", remove: true }]);
+    database.close();
+  });
+
+  it("uses one editable content-free progress draft and supported typing signals", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const sent: string[] = [];
+    const edited: string[] = [];
+    let typing = 0;
+    const gateway = new ChannelGateway(database, runtime, [{
+      id: "editable",
+      kind: "discord",
+      send: async ({ text }) => { sent.push(text); return { externalId: "draft-1", deliveredAt: "2026-07-23T10:00:00.000Z" }; },
+      edit: async ({ externalId, text }) => { expect(externalId).toBe("draft-1"); edited.push(text); return { externalId, deliveredAt: "2026-07-23T10:00:01.000Z" }; },
+      typing: async () => { typing += 1; }
+    }], {});
+    gateway.configureInteraction({ progressMode: "progress", typingMode: "instant", typingIntervalSeconds: 6, reactionLevel: "minimal" });
+    expect(gateway.list()).toMatchObject([{ editableProgress: true, typingSignals: true }]);
+    const progress = await gateway.beginProgress("editable", "room-1", "run-1", new AbortController().signal);
+    await progress.update({ phase: "tool", completed: 1, total: 3 });
+    await progress.update({ phase: "verifying", completed: 3, total: 3 });
+    await progress.finish("Final user-visible answer.");
+    expect(typing).toBe(1);
+    expect(sent).toEqual(["Using approved tools · 1/3…"]);
+    expect(edited).toEqual(["Verifying the result · 3/3…", "Final user-visible answer."]);
+    expect(JSON.stringify({ sent, edited })).not.toMatch(/argument|output|credential|path/i);
+    database.close();
   });
 });

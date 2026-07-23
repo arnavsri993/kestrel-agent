@@ -1,31 +1,47 @@
-# Workstrand
+# Kestrel
 
 > Working title. Privileged runtime identity—app ID, protocol, Keychain service, storage directory, and update channel—is centralized in `packages/shared-types/src/identity.ts`. Packaging metadata and human-visible copy remain explicit rename-checklist items because the static site cannot consume runtime identity safely.
 
-Workstrand is a local-first, installable personal agent for macOS designed to replace the daily Codex-style workflow: choose a project, describe the outcome, follow the work, approve consequential changes, and inspect the evidence in one conversation. Its deterministic scheduling and DJI scenarios remain honest preview fixtures, while the real runtime supports persisted repository-aware sessions, tools, research, orchestration, artifacts, extensions, and terminal/editor entry points.
+Kestrel is a local-first, installable personal agent for macOS designed to replace the daily Codex-style workflow: choose a project, describe the outcome, follow the work, approve consequential changes, and inspect the evidence in one conversation. Its deterministic scheduling and DJI scenarios remain honest preview fixtures, while the real runtime supports persisted repository-aware sessions, tools, research, orchestration, artifacts, extensions, and terminal/editor entry points.
+
+The pinned documentation audit now maps all 1,117 Hermes and OpenClaw pages with zero known implementation gaps: 588 bundled core-family mappings, 375 signed extension contracts, and 154 operational references. The paired-node server contract covers location, Talk, wake phrases, and privacy-preserving presence without bundling a mobile app; the host fleet provides hardened one-cell-per-tenant Docker or Podman isolation. See [paired node protocol](docs/paired-node-protocol.md), [gateway networking](docs/gateway-networking.md), and the machine-readable [reference audit](docs/reference-page-audit.json).
 
 The repository also contains a separate, static marketing website. It has no agent endpoint, database, authentication, or fal credential in its public runtime.
 
 ## What works now
 
 - Sandboxed Electron/React desktop app with persisted real-agent conversations, provider/model selection, per-task workspace scope, bounded attachments, token streaming and cancellation, restart-safe tool approvals, Memory, Activity, Connections, Settings, tray controls, pause/resume, run-at-login, destructive-reset confirmation, and a daily Readiness/doctor surface.
-- Inference-first onboarding with a one-click macOS local-AI path and a separate manual path. The automatic path downloads a pinned official Ollama archive, enforces its expected size and SHA-256, installs it only inside owner-only Workstrand data, starts it on loopback, streams cancellable model progress, and requires a real local response before declaring readiness.
+- Inference-first onboarding with a one-click macOS local-AI path and a separate manual path. The automatic path downloads a pinned official Ollama archive, enforces its expected size and SHA-256, installs it only inside owner-only Kestrel data, starts it on loopback, streams cancellable model progress, and requires a real local response before declaring readiness.
 - A setup-assistant handoff can guide API providers, provider-owned OAuth/CLI sign-in, tools, MCP, skills, plugins, channels, automations, and project access. A core instruction forbids asking users to paste secrets into chat; protected native fields and provider-owned login surfaces remain the only supported secret-entry paths.
-- First-run and daily checks now probe configured model accounts or local services, report local-core/project/macOS-permission/package status, and create a no-overwrite verified backup of encrypted Workstrand state without copying project folders.
-- Finder-launched builds detect the official Codex binary bundled with ChatGPT and common Claude Code installs, then offer a persistent, reversible text-only subscription opt-in. Authentication stays in the vendor CLI; Workstrand stores only the chosen executable path and never copies OAuth tokens.
+- Advanced Settings can resolve the nine supported provider credentials through the official 1Password CLI, a pinned checksum-verified Bitwarden Secrets Manager CLI, or an argv-only command helper. Bootstrap tokens and configuration are OS-encrypted; resolved values remain memory-only and are passed only to the isolated core.
+- Optional external observability sends content-free metrics and sampled lifecycle traces over OTLP/HTTP protobuf, or exposes bounded Prometheus text through the authenticated remote operator route. There is no content-capture setting, public metrics endpoint, or credential read-back.
+- Rich outputs include approval-gated fal MiniMax Music 2.6 generation with verified local audio provenance and restart-restored interactive HTML/SVG widgets. Widgets run in an opaque-origin, no-network sandbox without Electron, parent DOM, storage-origin, workspace, or credential access.
+- Opportunities provides a Cerebral Valley-style event and hackathon application assistant: import an official page, let the local agent research eligibility and draft provenance-labeled answers, review sensitive fields, approve the application, then hand off to an isolated browser agent that pauses before submission and records only a verified receipt.
+- Connections supports a user-owned Google Desktop OAuth client through external-browser PKCE and a random loopback callback. Kestrel stores only the encrypted refresh record, rotates access tokens in memory, can revoke the grant, sends through Gmail, and lists or read-back verifies approval-gated Calendar events.
+- First-run and daily checks now probe configured model accounts or local services, report local-core/project/macOS-permission/package status, and create a no-overwrite verified backup of encrypted Kestrel state without copying project folders.
+- Finder-launched builds detect the official Codex binary bundled with ChatGPT and common Claude Code installs, then offer a persistent, reversible subscription opt-in. Connections can start the official ChatGPT browser OAuth flow through Codex; Codex owns the callback, credential storage, and refresh while Kestrel receives only non-secret account status. Codex uses one long-lived stable app-server connection with durable per-session threads, streamed deltas, interruption, usage accounting, and restart-safe resume; it stays read-only so Kestrel remains the sole tool/approval authority. Claude Code remains an isolated text-only invocation. Kestrel stores only the chosen executable path and never copies OAuth tokens.
 - Separate utility-process agent core, narrow Zod-validated IPC, encrypted SQLite memory fields, policy gates, idempotency keys, and verification events.
 - A provider-neutral model/tool runtime with encrypted structured transcripts, deterministic context compaction, forks/checkpoints/cancellation, lifecycle hooks, approval pauses, provider-attempt/token audits, and allowlisted workspace/edit/shell/Git/worktree tools.
-- Production OpenAI Responses, Anthropic Messages, Gemini GenerateContent, and local Ollama wire adapters with streamed text/tool calls, multimodal mappings, provider-specific model IDs, live credential probes, and retryable failover. Optional text-only Codex and Claude subscription routes use the vendors' authenticated CLIs without copying OAuth tokens or exposing Workstrand tools.
+- Production OpenAI Responses, Anthropic Messages, Gemini GenerateContent, and local Ollama wire adapters with streamed text/tool calls, multimodal mappings, provider-specific model IDs, live credential probes, and retryable failover. The optional Codex subscription route uses the stable persistent app-server protocol; Claude uses an isolated text-only CLI call. Neither copies OAuth tokens or exposes Kestrel tools.
 - MCP 2025-11-25 stdio client/runtime-server foundations and Agent Skills-compatible metadata discovery, activation, and contained resource loading. Plugin-declared Node MCP servers can be explicitly connected, enter the catalog as sensitive tools, and remain approval-gated; skill scripts are never implicitly executed.
-- Codex-compatible plugin discovery plus an explicit desktop trust lifecycle. Managed bundles require a trusted Ed25519 publisher signature, are staged and re-verified before atomic install/update, can be removed recoverably, and default off. The installed Camarade bundle is recognized with its real version and capabilities and its actual MCP server passes the same gated runtime bridge.
+- Codex-compatible plugin discovery plus an explicit desktop trust lifecycle. Managed bundles require a trusted Ed25519 publisher signature, are staged and re-verified before atomic install/update, can be removed recoverably, and default off. Plugins can also contribute strict declarative desktop dashboard panels with approved live metrics and built-in navigation; no plugin JavaScript, CSS, HTML, network request, or backend route enters the renderer. The installed Camarade bundle is recognized with its real version and capabilities and its actual MCP server passes the same gated runtime bridge.
+- Optional Honcho remote memory uses the pinned official SDK for peer cards, session context, semantic search, dialectic reasoning, and conclusions. It is disclosure-gated and off by default; the encrypted local memory remains authoritative, protected credentials never enter prompts or renderer state, message sync excludes system/tool content, and remote output cannot bypass approvals.
 - Deterministic development adapters for email and calendar. They are visibly labeled and do not pretend to be connected accounts.
 - Auditable automatic execution routing chooses the model family, reasoning effort, and Fast mode per task. The general agent request path invokes only configured adapters and records live provider verification separately from model execution.
 - Static Next.js product site with accessible responsive states and provenance-tracked generated/fallback atmosphere.
-- Apple Silicon `.app` packaging and an architecture for universal signed/notarized DMG and ZIP releases.
+- Verified Apple Silicon (`arm64`) `.app` packaging, with signed/notarized DMG and ZIP internet-release automation.
 
-Not yet complete: production Gmail/Calendar OAuth, Developer ID signing, notarization, a real update host, Intel hardware verification, public download/GitHub URLs, and the final product name.
+Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, public download/GitHub URLs, and the final product name. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
 
-The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 55 current catalog families are implemented, but that engineering result is not a blanket claim that Workstrand is better than every reference product or that every vendor-specific channel/provider is bundled.
+The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 58 broad catalog families have repository evidence. A separate immutable [1,117-page source audit](docs/reference-page-audit.json) distinguishes native behavior, signed extension contracts, and operational material with zero known unmapped pages; it prevents broad families from being mistaken for proof that every vendor-specific feature is bundled.
+
+Google Workspace setup and its public-release boundary are documented in [docs/google-workspace-oauth.md](docs/google-workspace-oauth.md).
+External 1Password, Bitwarden, and command-helper setup and its secret-handling boundary are documented in [docs/external-secret-providers.md](docs/external-secret-providers.md).
+OTLP and Prometheus setup, privacy exclusions, and recovery are documented in [docs/external-observability.md](docs/external-observability.md).
+
+Public privacy/support surfaces, store metadata, distribution inputs, signing,
+hardware certification, and the fail-closed market gate are documented in
+[docs/market-release.md](docs/market-release.md).
 
 ## Quick start
 
@@ -46,7 +62,7 @@ corepack pnpm cli -- session create --title "My project" --workspace /absolute/p
 
 Set `KESTREL_DATA_DIR` to isolate CLI state. Model runs use only explicitly configured provider adapters.
 
-To use an existing vendor subscription without giving Workstrand an OAuth token, first sign in with the vendor's official CLI, then enable the detected route during setup or in Settings. Environment flags (`KESTREL_ENABLE_CODEX_SUBSCRIPTION=1` / `KESTREL_ENABLE_CLAUDE_SUBSCRIPTION=1`) remain available for terminal and automation use. Optional `KESTREL_CODEX_PATH`, `KESTREL_CLAUDE_PATH`, and corresponding `*_SUBSCRIPTION_MODEL` variables select nonstandard installations or models. These routes are text-only: Workstrand strips its tool catalog and the delegated CLI runs without persistence, extensions, or workspace access.
+To use ChatGPT plan access without giving Kestrel an OAuth token, choose **Sign in with ChatGPT** in Connections or setup. Kestrel asks the official Codex app-server to open the provider browser flow; Codex persists and refreshes the session, and a successful connection enables the read-only model route. You can also sign in with the vendor's official CLI and enable the detected route manually. Environment flags (`KESTREL_ENABLE_CODEX_SUBSCRIPTION=1` / `KESTREL_ENABLE_CLAUDE_SUBSCRIPTION=1`) remain available for terminal and automation use. Optional `KESTREL_CODEX_PATH`, `KESTREL_CLAUDE_PATH`, and corresponding `*_SUBSCRIPTION_MODEL` variables select nonstandard installations or models. Kestrel strips its tool catalog from both routes. Codex uses durable read-only app-server threads; Claude runs without session persistence, extensions, or workspace tools.
 
 Build packaged terminal/editor entry points with `pnpm --filter @kestrel/cli build`. The outputs are `apps/cli/dist/kestrel.mjs` and `apps/cli/dist/kestrel-acp.mjs`. `kestrel tui` opens the interactive terminal, while `kestrel-acp` serves stable ACP v1 over NDJSON stdio. Pass `--model` and `--providers`, or set `KESTREL_MODEL` and `KESTREL_PROVIDERS`; provider credentials remain environment-only.
 
@@ -66,11 +82,14 @@ corepack pnpm test:e2e
 corepack pnpm assets:verify
 ```
 
-Build the unsigned Apple Silicon development app:
+Build an unsigned development app:
 
 ```bash
 corepack pnpm package:mac:dev
-open release/mac-arm64/Workstrand.app
+open release/mac-arm64/Kestrel.app
+
+# Smoke-test the packaged Apple Silicon app:
+corepack pnpm test:packaged-desktop:arm64
 ```
 
 ## Repository map
@@ -109,8 +128,8 @@ Generated output is not treated as evidence of a product video feature. Rejected
 
 ## Security and release boundaries
 
-Read [docs/threat-model.md](docs/threat-model.md), [docs/permissions.md](docs/permissions.md), and [SECURITY.md](SECURITY.md) before adding a connector. The current `.app` is a development artifact, not a public release: it is unsigned and unnotarized. The release workflow requires signing/notarization secrets and must pass Gatekeeper and architecture checks before a public artifact is claimed.
+Read [docs/local-ai-setup.md](docs/local-ai-setup.md), [docs/threat-model.md](docs/threat-model.md), [docs/permissions.md](docs/permissions.md), and [SECURITY.md](SECURITY.md) before changing runtime installation or adding a connector. The current `.app` is a development artifact, not a public release: it is unsigned and unnotarized. The release workflow requires signing/notarization secrets and must pass Gatekeeper and architecture checks before a public artifact is claimed.
 
 ## Naming and compatibility
 
-Workstrand is the human-visible working name. Existing `@kestrel/*` package scopes, `kestrel` IPC channels and protocol, Keychain service, environment variables, CLI command, and data-directory names remain compatibility identifiers until a separately tested migration can change them without orphaning encrypted history, credentials, plugins, editor integrations, or automation entry points.
+Kestrel is the human-visible working name. Existing `@kestrel/*` package scopes, `kestrel` IPC channels and protocol, Keychain service, environment variables, CLI command, and data-directory names remain compatibility identifiers until a separately tested migration can change them without orphaning encrypted history, credentials, plugins, editor integrations, or automation entry points.

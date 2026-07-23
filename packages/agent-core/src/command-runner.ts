@@ -65,7 +65,7 @@ while status is None:
 sys.exit(os.waitstatus_to_exitcode(status))`;
 
 function resolveExecutable(command: string): string {
-  if (!allowedCommands.has(command)) throw new Error(`Command ${command} is not in the Workstrand executable allowlist.`);
+  if (!allowedCommands.has(command)) throw new Error(`Command ${command} is not in the Kestrel executable allowlist.`);
   for (const directory of (process.env.PATH ?? "").split(delimiter)) {
     if (!directory) continue;
     const candidate = resolve(directory, command);
@@ -96,7 +96,7 @@ export class SandboxedCommandRunner {
     input: SandboxedCommandInput,
     options: { signal?: AbortSignal; interactive?: boolean; onProgress(payload: { stream: "stdout" | "stderr"; chunk: string }): void }
   ): SandboxedCommandHandle {
-    if (process.platform !== "darwin") throw new Error("The current Workstrand command sandbox is implemented only for macOS.");
+    if (process.platform !== "darwin") throw new Error("The current Kestrel command sandbox is implemented only for macOS.");
     const executable = resolveExecutable(input.command);
     const startedAt = Date.now();
     const profile = sandboxProfile(input.workspaceRoot, input.mode);
