@@ -1,0 +1,33 @@
+import { describe, expect, it } from "vitest";
+import { parseCliArguments } from "./arguments";
+
+describe("Workstrand CLI arguments", () => {
+  it("parses run and session commands without evaluating shell text", () => {
+    expect(parseCliArguments(["run", "--session", "s-1", "--prompt", "inspect; rm -rf nope", "--model", "local", "--providers", "ollama,openai"]))
+      .toEqual({ name: "run", sessionId: "s-1", prompt: "inspect; rm -rf nope", model: "local", providers: ["ollama", "openai"] });
+    expect(parseCliArguments(["session", "create", "--title", "Project", "--workspace", "/tmp/project"]))
+      .toEqual({ name: "session-create", title: "Project", workspace: "/tmp/project" });
+    expect(parseCliArguments(["session", "checkpoint", "--session", "s-1", "--summary", "safe point"]))
+      .toEqual({ name: "session-checkpoint", sessionId: "s-1", summary: "safe point" });
+    expect(parseCliArguments(["session", "restore", "--session", "s-1", "--checkpoint", "checkpoint-1"]))
+      .toEqual({ name: "session-restore", sessionId: "s-1", checkpointId: "checkpoint-1" });
+    expect(parseCliArguments(["retry", "--session", "s-1", "--model", "local", "--providers", "ollama"]))
+      .toEqual({ name: "retry", sessionId: "s-1", model: "local", providers: ["ollama"] });
+    expect(parseCliArguments(["resume", "--run", "r-1", "--decision", "rejected"]))
+      .toEqual({ name: "resume", runId: "r-1", decision: "rejected" });
+    expect(parseCliArguments(["acp", "--model", "model-1", "--providers", "openai,ollama", "--workspace", "/tmp/project"]))
+      .toEqual({ name: "acp", model: "model-1", providers: ["openai", "ollama"], workspace: "/tmp/project" });
+    expect(parseCliArguments(["automation", "schedule", "--session", "s-1", "--title", "Digest", "--prompt", "Summarize", "--model", "local", "--providers", "ollama", "--when", "*/15 * * * *"]))
+      .toEqual({ name: "automation-schedule", sessionId: "s-1", title: "Digest", prompt: "Summarize", model: "local", providers: ["ollama"], expression: "*/15 * * * *" });
+    expect(parseCliArguments(["automation", "schedule", "--session", "s-1", "--title", "Digest", "--prompt", "Summarize", "--model", "local", "--providers", "ollama", "--interval-seconds", "900"]))
+      .toMatchObject({ name: "automation-schedule", expression: "every 900 seconds" });
+  });
+
+  it("rejects missing values and unknown commands", () => {
+    expect(() => parseCliArguments(["run", "--session"])).toThrow("Missing value");
+    expect(() => parseCliArguments(["jobs", "--force", "yes"])).toThrow("Unknown option");
+    expect(() => parseCliArguments(["resume", "--run", "r-1", "--decision", "maybe"])).toThrow("approved or rejected");
+    expect(() => parseCliArguments(["destroy"])).toThrow("Unknown command");
+    expect(() => parseCliArguments(["automation", "schedule", "--session", "s-1", "--title", "Digest", "--prompt", "Summarize", "--model", "local", "--providers", "ollama", "--at", "2030-01-01T00:00:00Z", "--when", "every 1 hour"])).toThrow("exactly one");
+  });
+});

@@ -1,0 +1,23 @@
+{
+  "id": "cta-resolution-wide",
+  "purpose": "section-background",
+  "targetSection": "final release call to action",
+  "narrativeGoal": "Suggest unresolved items becoming complete while leaving the release text highly readable.",
+  "visualDescription": "Wide dark matte field. Sparse off-white fragments settle into orderly horizontal positions as one quiet acid-yellow path reaches a final point on the far right.",
+  "movementDescription": "Slow settling and alignment, with large stable dark areas for copy.",
+  "cameraDescription": "Locked wide frame, no parallax or shake.",
+  "aspectRatio": "16:9",
+  "width": 1280,
+  "height": 720,
+  "durationSeconds": 6.44,
+  "shouldLoop": true,
+  "referenceAssets": [],
+  "prohibitedContent": ["text", "UI", "download icons", "robots", "humans", "video editing", "logos", "watermarks", "flashing"],
+  "costLimit": 0.3,
+  "websitePresentationOnly": true,
+  "notAProductCapability": true,
+  "notEvidenceOfBuiltInVideoFeature": true,
+  "noReadableGeneratedUiText": true,
+  "endpointId": "fal-ai/ltx-2.3-22b/text-to-video",
+  "status": "approved"
+}

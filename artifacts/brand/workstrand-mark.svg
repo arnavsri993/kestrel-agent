@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Workstrand mark</title>
+  <defs>
+    <mask id="workstrand-checkpoint">
+      <rect width="64" height="64" fill="#fff"/>
+      <circle cx="43" cy="34" r="5.25" fill="#000"/>
+    </mask>
+  </defs>
+  <path
+    d="M14 14h36v16L20 49h31"
+    fill="none"
+    stroke="#101713"
+    stroke-width="9"
+    stroke-linecap="butt"
+    stroke-linejoin="round"
+    mask="url(#workstrand-checkpoint)"
+  />
+  <circle cx="43" cy="34" r="2.25" fill="#d7ff52"/>
+</svg>

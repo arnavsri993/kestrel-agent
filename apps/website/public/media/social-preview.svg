@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#101713"/>
+  <path d="M0 520c264 0 333-166 579-166 227 0 264 95 621-78" fill="none" stroke="#2f3b34" stroke-width="2"/>
+  <g transform="translate(68 58) scale(1.45)">
+    <defs>
+      <mask id="workstrand-checkpoint">
+        <rect width="64" height="64" fill="#fff"/>
+        <circle cx="43" cy="34" r="5.25" fill="#000"/>
+      </mask>
+    </defs>
+    <path d="M14 14h36v16L20 49h31" fill="none" stroke="#d7ff52" stroke-width="9" stroke-linecap="butt" stroke-linejoin="round" mask="url(#workstrand-checkpoint)"/>
+    <circle cx="43" cy="34" r="2.25" fill="#f4f7f1"/>
+  </g>
+  <text x="180" y="126" font-family="Arial, sans-serif" font-size="36" font-weight="700" fill="#f4f7f1">Workstrand</text>
+  <text x="70" y="257" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#f4f7f1">Bring the outcome.</text>
+  <text x="70" y="337" font-family="Arial, sans-serif" font-size="72" font-weight="700" fill="#d7ff52">Follow the whole job.</text>
+  <text x="70" y="402" font-family="Arial, sans-serif" font-size="26" fill="#aeb8b1">A local-first work agent with visible approval and verified delivery.</text>
+  <g transform="translate(70 520)">
+    <circle cx="7" cy="7" r="7" fill="#d7ff52"/>
+    <text x="28" y="14" font-family="monospace" font-size="18" fill="#d7ff52">NOTICE → RETRIEVE → PLAN → APPROVE → ACT → VERIFY</text>
+  </g>
+</svg>

@@ -1,0 +1,36 @@
+{
+  "id": "poster-signal-wide",
+  "purpose": "poster-image",
+  "endpointId": "fal-ai/flux-pro/v1.1",
+  "prompt": "Editorial macro photograph of charcoal paper topography. A single unmistakable flat neon chartreuse line, hex color impression #D7FF52, crosses the dark relief from scattered points into one precise path. The chartreuse is the only colored element. Dramatic but quiet side light, empty center-left, no text, no amber, no orange, no gold, no copper. Narrative: Hold the signal-to-outcome composition in one frame. Movement: Static. Camera: Overhead 40mm product photography composition. Color and material: matte charcoal, graphite, off-white, one acid-chartreuse accent. Website presentation atmosphere only. No readable generated UI or text. Avoid: text, letters, UI, robots, brains, people, video editing, logos, watermarks, orange accents, amber accents, gold accents, copper accents.",
+  "inputAssetPaths": [],
+  "originalOutputPath": "website-media/originals/poster-signal-wide.jpg",
+  "processedOutputPaths": [
+    "apps/website/public/media/generated/poster-signal-wide.jpg"
+  ],
+  "aspectRatio": "16:9",
+  "resolution": "1920x1080",
+  "estimatedCost": 0.12,
+  "generatedAt": "2026-07-22T05:45:44.432Z",
+  "status": "published",
+  "requestId": "019f885b-ac72-76d3-9cf9-417773b74817",
+  "seed": 1729,
+  "configHash": "a547b26e4ffef5f31dff2934af53b615ea7caa07a60e7497a7c8b8e1bdc38b69",
+  "reviewedBy": "Codex visual QA",
+  "actualResolution": "1440x1056",
+  "reviewNotes": "Approved as source art: clean charcoal relief, no text or interface imagery, and one clear signal path. The processing pipeline must crop it to 16:9 and shift the green line slightly toward the product chartreuse.",
+  "attemptHistory": [
+    {
+      "requestId": "019f8857-1fa0-7782-a2c5-343e15404f1e",
+      "estimatedCost": 0.12,
+      "result": "rejected",
+      "reason": "Wrong 4:3 input schema and orange color drift."
+    },
+    {
+      "requestId": "019f885b-ac72-76d3-9cf9-417773b74817",
+      "estimatedCost": 0.12,
+      "result": "published"
+    }
+  ],
+  "remoteUrl": "https://v3b.fal.media/files/b/0aa33c1a/K_zXv8O9lfGATyxOyuj_w_cce3949849f94eaea94e56e78ffa234f.jpg"
+}

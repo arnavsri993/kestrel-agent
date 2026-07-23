@@ -1,0 +1,39 @@
+[
+  {
+    "id": "hero-signal-field",
+    "purpose": "hero-background",
+    "posterPath": "/media/generated/poster-signal-wide.jpg",
+    "mobilePosterPath": "/media/fallback-hero-mobile.svg",
+    "width": 1920,
+    "height": 1080,
+    "muted": true,
+    "loop": true,
+    "checksum": "aa365c1c453130d840990b8a02a089fb8f8cdfc2f82eb9a8d9aca208f678bd0d",
+    "sourceManifestId": "poster-signal-wide",
+    "status": "published"
+  },
+  {
+    "id": "cta-resolution-field",
+    "purpose": "cta-background",
+    "posterPath": "/media/fallback-cta.svg",
+    "width": 1920,
+    "height": 720,
+    "muted": true,
+    "loop": true,
+    "checksum": "development-fallback",
+    "sourceManifestId": "cta-resolution-wide",
+    "status": "draft"
+  },
+  {
+    "id": "social-signal-wide",
+    "purpose": "social-preview",
+    "posterPath": "/media/generated/social-signal-wide.jpg",
+    "width": 1200,
+    "height": 628,
+    "muted": true,
+    "loop": false,
+    "checksum": "33a3b861ae1e4d3e7b73f1221349097034e850d5b82c56704ca36f7af20ff828",
+    "sourceManifestId": "social-signal-wide",
+    "status": "published"
+  }
+]

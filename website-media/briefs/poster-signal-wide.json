@@ -1,0 +1,22 @@
+{
+  "id": "poster-signal-wide",
+  "purpose": "poster-image",
+  "targetSection": "hero reduced-motion and poster state",
+  "narrativeGoal": "Hold the signal-to-outcome composition in one frame.",
+  "visualDescription": "Editorial macro photograph of charcoal paper topography. A single unmistakable flat neon chartreuse line, hex color impression #D7FF52, crosses the dark relief from scattered points into one precise path. The chartreuse is the only colored element. Dramatic but quiet side light, empty center-left, no text, no amber, no orange, no gold, no copper.",
+  "movementDescription": "Static.",
+  "cameraDescription": "Overhead 40mm product photography composition.",
+  "aspectRatio": "16:9",
+  "width": 1920,
+  "height": 1080,
+  "shouldLoop": false,
+  "referenceAssets": [],
+  "prohibitedContent": ["text", "letters", "UI", "robots", "brains", "people", "video editing", "logos", "watermarks", "orange accents", "amber accents", "gold accents", "copper accents"],
+  "costLimit": 0.12,
+  "websitePresentationOnly": true,
+  "notAProductCapability": true,
+  "notEvidenceOfBuiltInVideoFeature": true,
+  "noReadableGeneratedUiText": true,
+  "endpointId": "fal-ai/flux-pro/v1.1",
+  "status": "approved"
+}

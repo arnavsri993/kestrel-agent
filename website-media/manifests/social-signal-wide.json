@@ -1,0 +1,36 @@
+{
+  "id": "social-signal-wide",
+  "purpose": "social-preview",
+  "endpointId": "fal-ai/flux-pro/v1.1",
+  "prompt": "Wide charcoal physical relief. Keep the entire left 45 percent quiet, dark, and nearly flat for typography added later in code. On the right, one unmistakable flat neon chartreuse path, hex color impression #D7FF52, resolves across the relief. Chartreuse is the only colored element. No text, no amber, no orange, no gold, no copper. Narrative: Create provenance-tracked background source art for deterministic social card typography. Movement: Static. Camera: Straight-on graphic product photography. Color and material: matte charcoal, graphite, off-white, one acid-chartreuse accent. Website presentation atmosphere only. No readable generated UI or text. Avoid: text, letters, UI, robots, people, video editing, logos, watermarks, orange accents, amber accents, gold accents, copper accents.",
+  "inputAssetPaths": [],
+  "originalOutputPath": "website-media/originals/social-signal-wide.jpg",
+  "processedOutputPaths": [
+    "apps/website/public/media/generated/social-signal-wide.jpg"
+  ],
+  "aspectRatio": "1.91:1",
+  "resolution": "1800x942",
+  "estimatedCost": 0.08,
+  "generatedAt": "2026-07-22T05:45:52.316Z",
+  "status": "published",
+  "requestId": "019f885b-c956-7522-aaba-d13e8281582a",
+  "seed": 1729,
+  "configHash": "10503aeed151f92ec43735fdba95a3df3d320bbd0aa1b26718722e4813e57d9b",
+  "reviewedBy": "Codex visual QA",
+  "actualResolution": "1440x928",
+  "reviewNotes": "Approved as source art: the left field is quiet, the chartreuse signal stays on the right, and no generated text or product UI is present. The pipeline crops it deterministically to 1.91:1.",
+  "attemptHistory": [
+    {
+      "requestId": "019f8857-3816-7222-bc40-a313e720399d",
+      "estimatedCost": 0.08,
+      "result": "rejected",
+      "reason": "Wrong 4:3 input schema and missing chartreuse signal."
+    },
+    {
+      "requestId": "019f885b-c956-7522-aaba-d13e8281582a",
+      "estimatedCost": 0.08,
+      "result": "published"
+    }
+  ],
+  "remoteUrl": "https://v3b.fal.media/files/b/0aa33c1b/ur3CJ1dgdjE_PZ0EODG_1_916ab2867b97428bb480756256cd0783.jpg"
+}

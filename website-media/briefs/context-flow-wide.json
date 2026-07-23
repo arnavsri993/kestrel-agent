@@ -1,0 +1,23 @@
+{
+  "id": "context-flow-wide",
+  "purpose": "ambient-loop",
+  "targetSection": "memory and context",
+  "narrativeGoal": "Show a small relevant subset separating from a larger quiet field.",
+  "visualDescription": "Dark physical layers like translucent mineral sheets. Many dim points remain still while six pale chartreuse threads move into focus around one open center.",
+  "movementDescription": "Six slow converging threads; background points barely move; loop resolves without a cut.",
+  "cameraDescription": "Locked camera with minimal focus breathing.",
+  "aspectRatio": "16:9",
+  "width": 1280,
+  "height": 720,
+  "durationSeconds": 6.44,
+  "shouldLoop": true,
+  "referenceAssets": [],
+  "prohibitedContent": ["text", "interfaces", "people", "brains", "network globes", "particles exploding", "video editing", "watermarks"],
+  "costLimit": 0.3,
+  "websitePresentationOnly": true,
+  "notAProductCapability": true,
+  "notEvidenceOfBuiltInVideoFeature": true,
+  "noReadableGeneratedUiText": true,
+  "endpointId": "fal-ai/ltx-2.3-22b/text-to-video",
+  "status": "approved"
+}

@@ -1,0 +1,65 @@
+name: macOS release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-package:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm verify
+      - run: corepack pnpm test:e2e
+      - name: Require release credentials
+        shell: bash
+        run: |
+          test -n "$CSC_LINK"
+          test -n "$CSC_KEY_PASSWORD"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_APP_SPECIFIC_PASSWORD"
+          test -n "$APPLE_TEAM_ID"
+      - name: Build signed universal DMG and ZIP
+        run: corepack pnpm --filter @kestrel/desktop exec electron-builder --mac dmg zip --universal --publish never --config electron-builder.yml
+      - name: Verify signature and Gatekeeper
+        shell: bash
+        run: |
+          codesign --verify --deep --strict --verbose=2 release/mac-universal/Workstrand.app
+          xcrun stapler validate release/mac-universal/Workstrand.app
+          spctl --assess --type execute --verbose=4 release/mac-universal/Workstrand.app
+          lipo -info release/mac-universal/Workstrand.app/Contents/MacOS/Workstrand
+      - name: Create checksummed release manifest
+        run: node scripts/create-release-manifest.mjs release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kestrel-macos-universal
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS
+            release/release-manifest.json
+          if-no-files-found: error
+      - name: Publish verified tag artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          gh release upload "$GITHUB_REF_NAME" release/*.dmg release/*.zip release/SHA256SUMS release/release-manifest.json --clobber

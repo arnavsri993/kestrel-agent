@@ -1,0 +1,35 @@
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { WorkspaceGrantStore } from "./workspace-grant-store";
+
+const directories: string[] = [];
+
+afterEach(() => {
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+describe("workspace grant store", () => {
+  it("persists canonical explicit directories with owner-only permissions and supports revocation", async () => {
+    const storage = mkdtempSync(join(tmpdir(), "kestrel-grants-"));
+    directories.push(storage);
+    const workspace = join(storage, "project");
+    mkdirSync(workspace);
+    const filename = join(storage, "private", "workspace-grants.json");
+    const store = new WorkspaceGrantStore(filename);
+    const added = await store.add(workspace);
+    expect(added).toEqual([{ path: realpathSync(workspace), name: "project" }]);
+    expect(statSync(filename).mode & 0o777).toBe(0o600);
+    expect(readFileSync(filename, "utf8")).toContain("project");
+    expect(await store.remove(workspace)).toEqual([]);
+  });
+
+  it("rejects broad filesystem and home-directory grants", async () => {
+    const storage = mkdtempSync(join(tmpdir(), "kestrel-grants-"));
+    directories.push(storage);
+    const store = new WorkspaceGrantStore(join(storage, "workspace-grants.json"));
+    await expect(store.add("/")).rejects.toThrow("whole filesystem volume");
+    await expect(store.add(homedir())).rejects.toThrow("entire home directory");
+  });
+});

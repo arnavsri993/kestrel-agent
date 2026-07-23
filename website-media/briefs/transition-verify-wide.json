@@ -1,0 +1,23 @@
+{
+  "id": "transition-verify-wide",
+  "purpose": "transition-video",
+  "targetSection": "action to verification transition",
+  "narrativeGoal": "Suggest that a proposed path becomes a verified result.",
+  "visualDescription": "One thin acid-yellow route crosses a charcoal embossed surface, passes through a precise mechanical aperture, and becomes a stable etched line.",
+  "movementDescription": "One measured pass from uncertain dotted route to solid line; no repeated spectacle.",
+  "cameraDescription": "Macro side tracking with constant speed and clean focus.",
+  "aspectRatio": "16:9",
+  "width": 1280,
+  "height": 720,
+  "durationSeconds": 6.44,
+  "shouldLoop": false,
+  "referenceAssets": [],
+  "prohibitedContent": ["text", "UI", "robots", "humans", "video editing", "logos", "watermarks", "fast cuts"],
+  "costLimit": 0.3,
+  "websitePresentationOnly": true,
+  "notAProductCapability": true,
+  "notEvidenceOfBuiltInVideoFeature": true,
+  "noReadableGeneratedUiText": true,
+  "endpointId": "fal-ai/ltx-2.3-22b/text-to-video",
+  "status": "approved"
+}

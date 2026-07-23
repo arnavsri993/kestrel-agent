@@ -1,0 +1,29 @@
+{
+  "name": "kestrel-acp",
+  "displayName": "Workstrand ACP",
+  "description": "Run Workstrand tasks with native streaming, approvals, files, and terminals in VS Code.",
+  "version": "0.1.0",
+  "publisher": "kestrel",
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.96.0" },
+  "categories": ["AI", "Other"],
+  "main": "./extension.js",
+  "files": ["extension.js", "README.md", "LICENSE"],
+  "activationEvents": ["onCommand:kestrel.startTask", "onCommand:kestrel.cancelTask"],
+  "contributes": {
+    "commands": [
+      { "command": "kestrel.startTask", "title": "Workstrand: Start Task" },
+      { "command": "kestrel.cancelTask", "title": "Workstrand: Cancel Active Task" }
+    ],
+    "configuration": {
+      "title": "Workstrand",
+      "properties": {
+        "kestrel.acpExecutable": { "type": "string", "default": "kestrel-acp", "description": "Absolute path or PATH-resolved Workstrand ACP executable." },
+        "kestrel.model": { "type": "string", "default": "", "description": "Model ID passed to the ACP host; falls back to KESTREL_MODEL." },
+        "kestrel.providers": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Provider IDs passed to the ACP host; falls back to KESTREL_PROVIDERS." },
+        "kestrel.mcpServers": { "type": "array", "default": [], "description": "ACP MCP server descriptors passed during session creation." }
+      }
+    }
+  },
+  "scripts": { "check": "node --check extension.js" }
+}

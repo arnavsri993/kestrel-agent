@@ -1,0 +1,36 @@
+{
+  "id": "hero-signal-wide",
+  "purpose": "hero-background",
+  "endpointId": "fal-ai/ltx-2.3-22b/text-to-video",
+  "prompt": "Macro topography of matte dark paper and oxidized graphite planes. Small acid-yellow points begin disconnected, then thin luminous paths join them into a single stable line. No people, products, devices, or interfaces. Narrative: Suggest incoming information resolving into one calm, useful course of action. Movement: Slow information-like drift; separate points converge; the final path settles and remains calm enough to loop. Camera: Controlled lateral dolly with a slight overhead angle, restrained depth, no handheld shake. Color and material: matte charcoal, graphite, off-white, one acid-chartreuse accent. Website presentation atmosphere only. No readable generated UI or text. Avoid: robots, humanoid assistants, brains, cyberpunk cities, readable text, readable UI, logos, watermarks, video editing, copyrighted interfaces, rapid flashes.",
+  "inputAssetPaths": [],
+  "originalOutputPath": "website-media/originals/hero-signal-wide.mp4",
+  "processedOutputPaths": [],
+  "aspectRatio": "16:9",
+  "durationSeconds": 6.44,
+  "resolution": "1280x720",
+  "estimatedCost": 0.238,
+  "generatedAt": "2026-07-22T05:49:08.480Z",
+  "status": "rejected",
+  "reviewedBy": "Codex visual QA",
+  "actualResolution": "1280x736",
+  "reviewNotes": "Technical checks passed: H.264, 25 fps, 6.44 seconds, silent source. Visual review failed because multicolored pins and several circuit-like branches replaced the approved single chartreuse path; it is retained only as rejected provenance.",
+  "rejectionReason": "Visual narrative drift: multiple white circuit branches and off-brand red, blue, and green points instead of one calm acid-chartreuse signal path.",
+  "attemptHistory": [
+    {
+      "requestId": null,
+      "estimatedCost": 0.238,
+      "result": "rejected",
+      "reason": "Request completed but remote download returned HTTP 500; the version 1 client failed to persist the request ID before download."
+    },
+    {
+      "requestId": "019f885e-779c-7412-8aec-7091070535fc",
+      "estimatedCost": 0.238,
+      "result": "rejected",
+      "reason": "Technical output passed, visual narrative failed."
+    }
+  ],
+  "requestId": "019f885e-779c-7412-8aec-7091070535fc",
+  "configHash": "f1208c8a81e8c556c4cee72eda9dae41d3daf5fb6f84c42ad76ccd6eca59992c",
+  "remoteUrl": "https://v3b.fal.media/files/b/0aa33c2c/UgtQQCz4EbEoJdhN05e6A_xA1MaXdx.mp4"
+}

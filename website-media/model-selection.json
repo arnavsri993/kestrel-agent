@@ -1,0 +1,54 @@
+{
+  "reviewedAt": "2026-07-22T00:00:00.000Z",
+  "discoveryMethod": "Official fal model/API pages. fal MCP was not callable in this task, so no MCP result is claimed.",
+  "inspected": [
+    {
+      "endpointId": "fal-ai/ltx-2.3-22b/text-to-video",
+      "kind": "video",
+      "pricing": "$0.001605 per generated video megapixel, rounded up",
+      "strength": "Low-cost controlled prototypes with explicit frame count and dimensions",
+      "source": "https://fal.ai/models/fal-ai/ltx-2.3-22b/text-to-video/api"
+    },
+    {
+      "endpointId": "fal-ai/ltx-2.3/text-to-video/fast",
+      "kind": "video",
+      "pricing": "Displayed page pricing was inconsistent: $0.06/s summary vs $0.04/s detailed table at 1080p",
+      "strength": "Fast 1080p/portrait prototypes up to the current documented model limits",
+      "source": "https://fal.ai/models/fal-ai/ltx-2.3/text-to-video/fast"
+    },
+    {
+      "endpointId": "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
+      "kind": "video",
+      "pricing": "$0.07 per second; $0.35 for 5 seconds",
+      "strength": "Cinematic motion and prompt adherence",
+      "source": "https://fal.ai/models/fal-ai/kling-video/v2.5-turbo/pro/text-to-video"
+    },
+    {
+      "endpointId": "fal-ai/wan/v2.7/text-to-video",
+      "kind": "video",
+      "pricing": "$0.10/s at 720p and $0.15/s at 1080p",
+      "strength": "2–15 second output, multiple aspect ratios, smooth motion",
+      "source": "https://fal.ai/models/fal-ai/wan/v2.7/text-to-video/api"
+    },
+    {
+      "endpointId": "fal-ai/flux-pro/v1.1",
+      "kind": "image",
+      "pricing": "$0.04 per megapixel, rounded up",
+      "strength": "Reliable composition and detailed poster source material",
+      "source": "https://fal.ai/models/fal-ai/flux-pro/v1.1"
+    }
+  ],
+  "selected": {
+    "prototypeVideo": "fal-ai/ltx-2.3-22b/text-to-video",
+    "posterImage": "fal-ai/flux-pro/v1.1"
+  },
+  "selectionReason": "The 22B LTX endpoint exposes the exact schema and frame-based cost needed for controlled low-cost prototypes. FLUX Pro is reserved for a small number of deterministic source posters. Paid generation must still pass each brief's cost limit.",
+  "generationRunSummary": {
+    "estimatedMaximumSpend": 0.876,
+    "actualBillingNotQueried": true,
+    "published": ["poster-signal-wide", "social-signal-wide"],
+    "rejected": ["poster-signal-wide attempt 1", "social-signal-wide attempt 1", "hero-signal-wide attempts 1 and 2"],
+    "notRun": ["hero-signal-mobile", "context-flow-wide", "transition-verify-wide", "cta-resolution-wide"],
+    "note": "The first image attempts exposed a corrected schema bug. The first hero request completed but its request ID was not persisted before a failed download. Version 2 adds four bounded retries and persists all future failures. No generated video was published because the successful technical output failed visual review."
+  }
+}

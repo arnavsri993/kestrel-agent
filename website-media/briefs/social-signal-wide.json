@@ -1,0 +1,22 @@
+{
+  "id": "social-signal-wide",
+  "purpose": "social-preview",
+  "targetSection": "social preview source art",
+  "narrativeGoal": "Create provenance-tracked background source art for deterministic social card typography.",
+  "visualDescription": "Wide charcoal physical relief. Keep the entire left 45 percent quiet, dark, and nearly flat for typography added later in code. On the right, one unmistakable flat neon chartreuse path, hex color impression #D7FF52, resolves across the relief. Chartreuse is the only colored element. No text, no amber, no orange, no gold, no copper.",
+  "movementDescription": "Static.",
+  "cameraDescription": "Straight-on graphic product photography.",
+  "aspectRatio": "1.91:1",
+  "width": 1800,
+  "height": 942,
+  "shouldLoop": false,
+  "referenceAssets": [],
+  "prohibitedContent": ["text", "letters", "UI", "robots", "people", "video editing", "logos", "watermarks", "orange accents", "amber accents", "gold accents", "copper accents"],
+  "costLimit": 0.12,
+  "websitePresentationOnly": true,
+  "notAProductCapability": true,
+  "notEvidenceOfBuiltInVideoFeature": true,
+  "noReadableGeneratedUiText": true,
+  "endpointId": "fal-ai/flux-pro/v1.1",
+  "status": "approved"
+}

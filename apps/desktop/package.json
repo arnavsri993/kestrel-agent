@@ -1,0 +1,38 @@
+{
+  "name": "@kestrel/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local-first personal agent with visible approvals and verified actions.",
+  "author": "Workstrand contributors",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
+    "preview": "electron-vite preview",
+    "package:mac:dev": "pnpm build && electron-builder --mac dir --arm64 --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@kestrel/agent-core": "workspace:*",
+    "@kestrel/database": "workspace:*",
+    "@kestrel/encryption": "workspace:*",
+    "@kestrel/shared-types": "workspace:*",
+    "better-sqlite3": "13.0.1",
+    "electron-updater": "6.7.2",
+    "motion": "12.42.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
+}

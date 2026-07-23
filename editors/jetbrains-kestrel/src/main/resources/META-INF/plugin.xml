@@ -1,0 +1,10 @@
+<idea-plugin>
+  <id>dev.kestrel.jetbrains</id>
+  <name>Workstrand ACP</name>
+  <vendor>Workstrand</vendor>
+  <description>Run Workstrand tasks with native streaming, approvals, workspace files, and terminal delegation.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <toolWindow id="Workstrand" anchor="right" factoryClass="dev.kestrel.jetbrains.KestrelToolWindowFactory" canCloseContents="false"/>
+  </extensions>
+</idea-plugin>
