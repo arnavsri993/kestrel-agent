@@ -9,6 +9,8 @@ The repository also contains a separate, static marketing website. It has no age
 ## What works now
 
 - Sandboxed Electron/React desktop app with persisted real-agent conversations, provider/model selection, per-task workspace scope, bounded attachments, token streaming and cancellation, restart-safe tool approvals, Memory, Activity, Connections, Settings, tray controls, pause/resume, run-at-login, destructive-reset confirmation, and a daily Readiness/doctor surface.
+- Inference-first onboarding with a one-click macOS local-AI path and a separate manual path. The automatic path downloads a pinned official Ollama archive, enforces its expected size and SHA-256, installs it only inside owner-only Workstrand data, starts it on loopback, streams cancellable model progress, and requires a real local response before declaring readiness.
+- A setup-assistant handoff can guide API providers, provider-owned OAuth/CLI sign-in, tools, MCP, skills, plugins, channels, automations, and project access. A core instruction forbids asking users to paste secrets into chat; protected native fields and provider-owned login surfaces remain the only supported secret-entry paths.
 - First-run and daily checks now probe configured model accounts or local services, report local-core/project/macOS-permission/package status, and create a no-overwrite verified backup of encrypted Workstrand state without copying project folders.
 - Finder-launched builds detect the official Codex binary bundled with ChatGPT and common Claude Code installs, then offer a persistent, reversible text-only subscription opt-in. Authentication stays in the vendor CLI; Workstrand stores only the chosen executable path and never copies OAuth tokens.
 - Separate utility-process agent core, narrow Zod-validated IPC, encrypted SQLite memory fields, policy gates, idempotency keys, and verification events.
@@ -23,7 +25,7 @@ The repository also contains a separate, static marketing website. It has no age
 
 Not yet complete: production Gmail/Calendar OAuth, Developer ID signing, notarization, a real update host, Intel hardware verification, public download/GitHub URLs, and the final product name.
 
-The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 52 current catalog families are implemented, but that engineering result is not a blanket claim that Workstrand is better than every reference product.
+The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 55 current catalog families are implemented, but that engineering result is not a blanket claim that Workstrand is better than every reference product or that every vendor-specific channel/provider is bundled.
 
 ## Quick start
 

@@ -31,6 +31,9 @@ describe("provider-neutral agent loop", () => {
       complete: async (request, options) => {
         calls += 1;
         expect(request.messages[0]).toMatchObject({ role: "system" });
+        expect(request.messages[0]?.content).toEqual(expect.arrayContaining([
+          expect.objectContaining({ type: "text", text: expect.stringContaining("Never ask the user to paste API keys") })
+        ]));
         if (calls === 1) return {
           providerId: "fake",
           model: request.model,

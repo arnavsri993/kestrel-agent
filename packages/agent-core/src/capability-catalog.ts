@@ -12,16 +12,22 @@ export interface CapabilityCatalogEntry {
 }
 
 export const PARITY_SOURCE_SNAPSHOT = {
-  checkedAt: "2026-07-22",
+  checkedAt: "2026-07-23",
   openclaw: [
     "https://docs.openclaw.ai/concepts/features",
     "https://docs.openclaw.ai/tools",
     "https://docs.openclaw.ai/concepts/session-tool",
-    "https://docs.openclaw.ai/concepts/memory"
+    "https://docs.openclaw.ai/concepts/memory",
+    "https://docs.openclaw.ai/start/wizard",
+    "https://docs.openclaw.ai/cli/openclaw",
+    "https://docs.openclaw.ai/cli/configure"
   ],
   hermes: [
     "https://github.com/NousResearch/hermes-agent",
-    "https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/programmatic-integration.md"
+    "https://github.com/NousResearch/hermes-agent/blob/main/website/docs/developer-guide/programmatic-integration.md",
+    "https://github.com/NousResearch/hermes-agent/blob/main/website/docs/getting-started/quickstart.md",
+    "https://github.com/NousResearch/hermes-agent/blob/main/website/docs/reference/cli-commands.md",
+    "https://github.com/NousResearch/hermes-agent/blob/main/website/docs/integrations/providers.md"
   ],
   codex: [
     "https://openai.com/codex/",
@@ -44,6 +50,7 @@ export const CAPABILITY_CATALOG: CapabilityCatalogEntry[] = [
   { id: "surface.channels", category: "surfaces", capability: "Messaging gateway across chat and email channels", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/channels.ts", "packages/agent-core/src/channels.test.ts", "packages/agent-core/src/remote-http.ts", "apps/desktop/src/renderer/App.tsx", "scripts/smoke-packaged-cli.mjs"] },
   { id: "surface.streaming-steering", category: "surfaces", capability: "Streaming tool output, interruption, and mid-turn steering", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/runtime.ts", "packages/agent-core/src/agent-loop.ts", "packages/agent-core/src/agent-core.test.ts", "apps/desktop/src/renderer/App.tsx", "apps/cli/src/tui.ts"] },
   { id: "surface.multimodal", category: "surfaces", capability: "Image, audio, video, document, and voice input/output", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/providers/types.ts", "packages/agent-core/src/providers/gemini-generate-content.ts", "packages/agent-core/src/providers/providers.test.ts", "packages/agent-core/src/media-providers.ts", "packages/agent-core/src/media-artifacts.test.ts", "packages/agent-core/src/agent-core.test.ts", "apps/desktop/src/main/index.ts", "apps/desktop/src/renderer/App.tsx"] },
+  { id: "surface.guided-onboarding", category: "surfaces", capability: "Inference-first guided onboarding plus an agent-assisted configuration handoff", referenceProducts: ["openclaw", "hermes"], status: "implemented", evidence: ["apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/styles.css", "apps/desktop/src/main/index.ts", "packages/agent-core/src/agent-loop.ts", "scripts/test-desktop-setup.mjs"] },
 
   { id: "session.persistence", category: "sessions", capability: "Durable sessions with list and resume", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/runtime.ts", "packages/agent-core/src/agent-loop.ts", "packages/database/src/index.ts", "apps/desktop/src/renderer/App.tsx", "apps/cli/src/index.ts"] },
   { id: "session.fork-checkpoint", category: "sessions", capability: "Fork, checkpoint, resume, and cancel lifecycle", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/runtime.ts", "packages/agent-core/src/runtime.test.ts", "apps/desktop/src/renderer/App.tsx", "apps/cli/src/index.ts"] },
@@ -84,6 +91,7 @@ export const CAPABILITY_CATALOG: CapabilityCatalogEntry[] = [
   { id: "provider.routing", category: "providers", capability: "Automatic model, reasoning, latency-tier, cost, and risk routing", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/model-router.ts", "packages/agent-core/src/providers/provider-pool.ts", "packages/agent-core/src/agent-loop.ts", "packages/agent-core/src/agent-core.test.ts", "apps/desktop/src/renderer/App.tsx"] },
   { id: "provider.failover", category: "providers", capability: "Provider fallback, credential pooling, and budget-aware retry", referenceProducts: ["openclaw", "hermes"], status: "implemented", evidence: ["packages/agent-core/src/providers/provider-pool.ts", "packages/agent-core/src/providers/environment.ts", "packages/agent-core/src/providers/providers.test.ts", "packages/agent-core/src/usage-governor.ts", "apps/desktop/src/main/credential-broker.ts", "apps/desktop/src/renderer/App.tsx"] },
   { id: "provider.remote-backends", category: "providers", capability: "Local, Docker, SSH, cluster, and serverless execution backends", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/remote.ts", "packages/agent-core/src/remote.test.ts", "packages/agent-core/src/runtime.ts", "apps/desktop/src/utility/index.ts", "apps/cli/src/state.ts"] },
+  { id: "provider.local-bootstrap", category: "providers", capability: "Verified automatic local runtime installation, model download, startup, and live inference check", referenceProducts: ["openclaw", "hermes"], status: "implemented", evidence: ["apps/desktop/src/main/local-runtime-manager.ts", "apps/desktop/src/main/local-runtime-manager.test.ts", "apps/desktop/src/main/index.ts", "packages/shared-types/src/contracts.ts", "apps/desktop/src/renderer/App.tsx"] },
 
   { id: "safety.approvals", category: "safety", capability: "Risk-scoped approvals and autonomy controls", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/policy-engine/src/index.ts", "packages/agent-core/src/runtime.ts", "packages/agent-core/src/runtime.test.ts", "packages/agent-core/src/agent-loop.ts", "packages/agent-core/src/acp.ts", "apps/desktop/src/renderer/App.tsx", "apps/desktop/src/renderer/components/ApprovalCard.tsx"] },
   { id: "safety.sandbox-scope", category: "safety", capability: "Process isolation, workspace allowlists, and path containment", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["apps/desktop/src/main/index.ts", "apps/desktop/src/main/workspace-grant-store.ts", "apps/desktop/src/main/electron-browser-service.ts", "packages/agent-core/src/runtime.ts", "packages/agent-core/src/runtime.test.ts", "packages/agent-core/src/command-runner.ts", "packages/agent-core/src/web-tools.ts", "packages/agent-core/src/web-tools.test.ts", "scripts/smoke-desktop.mjs"] },
@@ -95,7 +103,8 @@ export const CAPABILITY_CATALOG: CapabilityCatalogEntry[] = [
   { id: "engineering.code-review", category: "engineering", capability: "Repository understanding, code review, CI repair, and PR workflows", referenceProducts: ["hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/agent-loop.ts", "packages/agent-core/src/runtime.ts", "packages/agent-core/src/runtime.test.ts", "apps/desktop/src/main/credential-broker.ts"] },
   { id: "engineering.visual-validation", category: "engineering", capability: "Browser-based visual iteration, screenshots, and artifacts", referenceProducts: ["openclaw", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/browser-automation.ts", "packages/agent-core/src/browser-automation.test.ts", "apps/desktop/src/main/electron-browser-service.ts", "apps/desktop/src/utility/index.ts", "scripts/smoke-desktop.mjs"] },
   { id: "engineering.migration", category: "engineering", capability: "Import from OpenClaw, Hermes, Codex, and Claude configuration", referenceProducts: ["hermes"], status: "implemented", evidence: ["packages/agent-core/src/administration.ts", "packages/agent-core/src/administration.test.ts", "apps/cli/src/index.ts", "apps/desktop/src/main/index.ts", "apps/desktop/src/renderer/App.tsx", "scripts/smoke-packaged-cli.mjs"] },
-  { id: "engineering.enterprise", category: "engineering", capability: "Managed policy, analytics, SSO, and organization controls", referenceProducts: ["codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/administration.ts", "packages/agent-core/src/administration.test.ts", "packages/database/src/index.ts", "apps/cli/src/state.ts", "apps/desktop/src/utility/index.ts", "apps/desktop/src/renderer/App.tsx"] }
+  { id: "engineering.enterprise", category: "engineering", capability: "Managed policy, analytics, SSO, and organization controls", referenceProducts: ["codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/administration.ts", "packages/agent-core/src/administration.test.ts", "packages/database/src/index.ts", "apps/cli/src/state.ts", "apps/desktop/src/utility/index.ts", "apps/desktop/src/renderer/App.tsx"] },
+  { id: "engineering.lifecycle", category: "engineering", capability: "Doctor/readiness, verified backup, update, migration, reset, and uninstall preparation", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["apps/desktop/src/main/index.ts", "apps/desktop/src/renderer/App.tsx", "apps/cli/src/index.ts", "packages/agent-core/src/administration.ts", "scripts/test-desktop-readiness.mjs", "scripts/smoke-packaged-cli.mjs"] }
 ];
 
 export function capabilitySummary(): Record<ParityStatus, number> {

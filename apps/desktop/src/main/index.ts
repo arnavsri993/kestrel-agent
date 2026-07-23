@@ -411,8 +411,7 @@ function registerIpc(): void {
         systemProfile,
         ollamaAvailable: localRuntime.ollamaAvailable,
         localModels: localRuntime.localModels,
-        localRuntime,
-        ...(!localRuntime.ollamaAvailable ? { localModelError: "No local model service is running yet." } : {})
+        localRuntime
       };
     }
     if (request.type === "local-model-pull") {

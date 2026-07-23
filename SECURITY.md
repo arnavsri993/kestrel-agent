@@ -12,6 +12,8 @@ Until a public repository and private reporting address exist, do not publish su
 
 - The renderer has no Node.js, filesystem, database, Keychain, or raw credential access.
 - IPC is narrow and schema validated.
+- Agents must never request API keys, OAuth tokens, passwords, session cookies, or private keys in chat. Secret entry is restricted to protected native credential fields or provider-owned OAuth/device-login surfaces.
+- Automatic local-AI setup is explicit and cancellable. It accepts only the pinned HTTPS release URL, exact expected byte count and SHA-256, path-contained link-free archive contents, owner-only install/model directories, and a loopback listener before a real inference verification.
 - Sensitive memory content is encrypted with AES-256-GCM; the database key is protected with Electron `safeStorage`.
 - External content is untrusted data and cannot rewrite policy or tool permissions.
 - External communication pauses for approval by default.
