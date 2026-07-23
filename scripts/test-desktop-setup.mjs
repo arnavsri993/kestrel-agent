@@ -32,7 +32,7 @@ try {
 
   await page.getByRole("heading", { name: "Build your model stack." }).waitFor();
   await page.getByRole("tab", { name: /Accounts/ }).waitFor();
-  await page.getByText("ChatGPT plan, through Codex", { exact: true }).waitFor();
+  await page.getByText("ChatGPT plan through Codex", { exact: true }).waitFor();
   const openAiGroup = page.locator(".provider-group").filter({ hasText: "OpenAI API" });
   await openAiGroup.getByLabel("Account 1").fill("test-openai-account-one");
   await openAiGroup.getByRole("button", { name: "Save" }).first().click();
