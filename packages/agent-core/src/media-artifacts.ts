@@ -345,11 +345,7 @@ export class ArtifactManager {
   }
 }
 
-export function installMediaTools(
-  runtime: AgentRuntime,
-  manager: ArtifactManager,
-  sessionId: string,
-): void {
+function registerMediaListTool(runtime: AgentRuntime, manager: ArtifactManager, sessionId: string): void {
   runtime.registerExternalTool({
     descriptor: {
       name: "media.list",
@@ -369,6 +365,10 @@ export function installMediaTools(
     },
     execute: async () => ({ artifacts: manager.list() }),
   });
+  runtime.allowTool(sessionId, "media.list");
+}
+
+function registerMediaInspectTool(runtime: AgentRuntime, manager: ArtifactManager, sessionId: string): void {
   runtime.registerExternalTool({
     descriptor: {
       name: "media.inspect",
@@ -392,6 +392,10 @@ export function installMediaTools(
       artifact: manager.inspect(String(input.path)),
     }),
   });
+  runtime.allowTool(sessionId, "media.inspect");
+}
+
+function registerMediaGenerateTool(runtime: AgentRuntime, manager: ArtifactManager, sessionId: string): void {
   runtime.registerExternalTool({
     descriptor: {
       name: "media.generate",
@@ -441,72 +445,76 @@ export function installMediaTools(
     }),
   });
   runtime.allowTool(sessionId, "media.generate");
-  runtime.allowTool(sessionId, "media.list");
-  runtime.allowTool(sessionId, "media.inspect");
-  if (manager.musicProviders().length) {
-    runtime.registerExternalTool({
-      descriptor: {
-        name: "music_generate",
-        title: "Generate music",
-        description:
-          "List configured music providers or generate a verified music artifact. Generation is a paid external action and requires approval.",
-        category: "media",
-        riskLevel: "sensitive",
-        readOnly: false,
-        requiresWorkspace: false,
-        source: "builtin",
-        tags: ["music", "audio", "artifact", "generation"],
+}
+
+function registerMusicGenerateTool(runtime: AgentRuntime, manager: ArtifactManager, sessionId: string): void {
+  if (!manager.musicProviders().length) return;
+
+  runtime.registerExternalTool({
+    descriptor: {
+      name: "music_generate",
+      title: "Generate music",
+      description:
+        "List configured music providers or generate a verified music artifact. Generation is a paid external action and requires approval.",
+      category: "media",
+      riskLevel: "sensitive",
+      readOnly: false,
+      requiresWorkspace: false,
+      source: "builtin",
+      tags: ["music", "audio", "artifact", "generation"],
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { enum: ["list", "generate"] },
+        providerId: { type: "string" },
+        prompt: { type: "string", minLength: 10, maxLength: 2_000 },
+        lyrics: { type: "string", maxLength: 3_500 },
+        instrumental: { type: "boolean" },
+        format: { enum: ["mp3", "wav"] },
+        filename: { type: "string", maxLength: 120 },
       },
-      inputSchema: {
-        type: "object",
-        properties: {
-          action: { enum: ["list", "generate"] },
-          providerId: { type: "string" },
-          prompt: { type: "string", minLength: 10, maxLength: 2_000 },
-          lyrics: { type: "string", maxLength: 3_500 },
-          instrumental: { type: "boolean" },
-          format: { enum: ["mp3", "wav"] },
-          filename: { type: "string", maxLength: 120 },
-        },
-        additionalProperties: false,
-      },
-      execute: async ({ signal }, input) => {
-        if (input.action === "list")
-          return { providers: manager.musicProviders(), paid: true };
-        const providerId =
-          typeof input.providerId === "string"
-            ? input.providerId
-            : manager.musicProviders()[0]?.id;
-        if (!providerId)
-          throw new Error("No music-generation provider is configured.");
-        if (typeof input.prompt !== "string")
-          throw new Error("Music generation requires a prompt.");
-        return {
-          artifact: await manager.generate(
-            {
-              providerId,
-              prompt: input.prompt,
-              kind: "music",
-              ...(typeof input.lyrics === "string"
-                ? { lyrics: input.lyrics }
-                : {}),
-              ...(typeof input.instrumental === "boolean"
-                ? { instrumental: input.instrumental }
-                : {}),
-              ...(input.format === "mp3" || input.format === "wav"
-                ? { format: input.format }
-                : {}),
-              ...(typeof input.filename === "string"
-                ? { filename: input.filename }
-                : {}),
-            },
-            signal,
-          ),
-        };
-      },
-    });
-    runtime.allowTool(sessionId, "music_generate");
-  }
+      additionalProperties: false,
+    },
+    execute: async ({ signal }, input) => {
+      if (input.action === "list")
+        return { providers: manager.musicProviders(), paid: true };
+      const providerId =
+        typeof input.providerId === "string"
+          ? input.providerId
+          : manager.musicProviders()[0]?.id;
+      if (!providerId)
+        throw new Error("No music-generation provider is configured.");
+      if (typeof input.prompt !== "string")
+        throw new Error("Music generation requires a prompt.");
+      return {
+        artifact: await manager.generate(
+          {
+            providerId,
+            prompt: input.prompt,
+            kind: "music",
+            ...(typeof input.lyrics === "string"
+              ? { lyrics: input.lyrics }
+              : {}),
+            ...(typeof input.instrumental === "boolean"
+              ? { instrumental: input.instrumental }
+              : {}),
+            ...(input.format === "mp3" || input.format === "wav"
+              ? { format: input.format }
+              : {}),
+            ...(typeof input.filename === "string"
+              ? { filename: input.filename }
+              : {}),
+          },
+          signal,
+        ),
+      };
+    },
+  });
+  runtime.allowTool(sessionId, "music_generate");
+}
+
+function registerShowWidgetTool(runtime: AgentRuntime, manager: ArtifactManager, sessionId: string): void {
   runtime.registerExternalTool({
     descriptor: {
       name: "show_widget",
@@ -548,4 +556,16 @@ export function installMediaTools(
     }),
   });
   runtime.allowTool(sessionId, "show_widget");
+}
+
+export function installMediaTools(
+  runtime: AgentRuntime,
+  manager: ArtifactManager,
+  sessionId: string,
+): void {
+  registerMediaListTool(runtime, manager, sessionId);
+  registerMediaInspectTool(runtime, manager, sessionId);
+  registerMediaGenerateTool(runtime, manager, sessionId);
+  registerMusicGenerateTool(runtime, manager, sessionId);
+  registerShowWidgetTool(runtime, manager, sessionId);
 }
