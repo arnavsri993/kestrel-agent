@@ -57,6 +57,9 @@ import { DreamingPanel } from "./components/DreamingPanel";
 import { PresenceSettings } from "./components/PresenceSettings";
 import { applySkin, SkinSettings } from "./components/SkinSettings";
 import { FloatingPet, PetSettings } from "./components/PetSettings";
+import { PluginSettings } from "./components/PluginSettings";
+import { RunAtLoginSettings } from "./components/RunAtLoginSettings";
+import { ResetDataSettings } from "./components/ResetDataSettings";
 import { DashboardExtensions } from "./components/DashboardExtensions";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { EventApplications } from "./components/EventApplications";
@@ -105,11 +108,13 @@ function setupAssistantState({
   const subscriptions = subscriptionClis
     .filter((cli) => cli.enabled)
     .map((cli) => `${cli.label}${cli.authenticated ? " (authenticated)" : ""}`);
-  const verified = [...new Set(
-    providerChecks
-      .filter((check) => check.ok)
-      .map((check) => check.providerId),
-  )];
+  const verified = [
+    ...new Set(
+      providerChecks
+        .filter((check) => check.ok)
+        .map((check) => check.providerId),
+    ),
+  ];
   return [
     "Current non-secret setup state:",
     `- Protected API credentials configured: ${configured.length ? configured.join(", ") : "none"}.`,
@@ -141,10 +146,24 @@ const paidProviderCatalog = [
     name: "OpenAI",
     short: "OA",
     category: "Model labs",
-    description: "GPT models through the API or your own ChatGPT-backed Codex login.",
+    description:
+      "GPT models through the API or your own ChatGPT-backed Codex login.",
     methods: [
-      { id: "openai-api", label: "OpenAI API", kind: "api", note: "Pay-as-you-go API access with an optional backup key.", href: "https://platform.openai.com/api-keys", credentials: ["openai", "openai-secondary"] },
-      { id: "codex-cli", label: "Codex CLI", kind: "cli", cliId: "codex", note: "Uses the active vendor-owned ChatGPT/Codex login on this Mac." },
+      {
+        id: "openai-api",
+        label: "OpenAI API",
+        kind: "api",
+        note: "Pay-as-you-go API access with an optional backup key.",
+        href: "https://platform.openai.com/api-keys",
+        credentials: ["openai", "openai-secondary"],
+      },
+      {
+        id: "codex-cli",
+        label: "Codex CLI",
+        kind: "cli",
+        cliId: "codex",
+        note: "Uses the active vendor-owned ChatGPT/Codex login on this Mac.",
+      },
     ],
   },
   {
@@ -152,49 +171,342 @@ const paidProviderCatalog = [
     name: "Anthropic",
     short: "AN",
     category: "Model labs",
-    description: "Claude models through the API or an existing Claude Code login.",
+    description:
+      "Claude models through the API or an existing Claude Code login.",
     methods: [
-      { id: "anthropic-api", label: "Anthropic API", kind: "api", note: "Claude API access with an optional backup account.", href: "https://console.anthropic.com/settings/keys", credentials: ["anthropic", "anthropic-secondary"] },
-      { id: "claude-cli", label: "Claude Code CLI", kind: "cli", cliId: "claude", note: "Uses the active vendor-owned Claude Code login on this Mac." },
+      {
+        id: "anthropic-api",
+        label: "Anthropic API",
+        kind: "api",
+        note: "Claude API access with an optional backup account.",
+        href: "https://console.anthropic.com/settings/keys",
+        credentials: ["anthropic", "anthropic-secondary"],
+      },
+      {
+        id: "claude-cli",
+        label: "Claude Code CLI",
+        kind: "cli",
+        cliId: "claude",
+        note: "Uses the active vendor-owned Claude Code login on this Mac.",
+      },
     ],
   },
-  { id: "google", name: "Google", short: "GO", category: "Model labs", description: "Gemini through AI Studio or enterprise Vertex AI.", methods: [
-    { id: "gemini-api", label: "Gemini API", kind: "api", note: "Google AI Studio API access.", href: "https://aistudio.google.com/app/apikey", credentials: ["gemini"] },
-    { id: "vertex", label: "Vertex AI", kind: "planned", note: "Google Cloud project credentials and regional Vertex endpoints." },
-  ] },
-  { id: "mistral", name: "Mistral AI", short: "MI", category: "Model labs", description: "Mistral and Codestral models through La Plateforme.", methods: [
-    { id: "mistral-api", label: "Mistral API", kind: "api", note: "Direct Mistral API access.", href: "https://console.mistral.ai/api-keys", credentials: ["mistral"] },
-  ] },
-  { id: "openrouter", name: "OpenRouter", short: "OR", category: "Gateways", description: "One account for models from many labs.", methods: [
-    { id: "openrouter-api", label: "OpenRouter API", kind: "api", note: "Connect a paid OpenRouter balance or eligible free routes.", href: "https://openrouter.ai/settings/keys", credentials: ["openrouter"] },
-  ] },
-  { id: "groq", name: "Groq", short: "GQ", category: "Inference clouds", description: "Low-latency hosted inference through GroqCloud.", methods: [
-    { id: "groq-api", label: "GroqCloud API", kind: "api", note: "Direct Groq API access.", href: "https://console.groq.com/keys", credentials: ["groq"] },
-  ] },
-  { id: "nous", name: "Nous Research", short: "NR", category: "Inference clouds", description: "Nous Portal hosted model access.", methods: [
-    { id: "nous-api", label: "Nous Portal API", kind: "api", note: "OpenAI-compatible access through Nous Portal.", href: "https://portal.nousresearch.com/", credentials: ["nous"] },
-  ] },
-  { id: "cloudflare", name: "Cloudflare", short: "CF", category: "Cloud platforms", description: "Workers AI models inside a Cloudflare account.", methods: [
-    { id: "cloudflare-api", label: "Workers AI API", kind: "api", note: "Requires an API token and account ID. Account-ID setup is not available in this screen yet.", href: "https://dash.cloudflare.com/profile/api-tokens", credentials: ["cloudflare"] },
-  ] },
-  { id: "azure", name: "Microsoft Azure", short: "AZ", category: "Cloud platforms", description: "Azure OpenAI and Azure AI Foundry deployments.", methods: [
-    { id: "azure-key", label: "Azure API key", kind: "planned", note: "Endpoint, deployment name, API version, and key." },
-    { id: "azure-identity", label: "Azure CLI / Entra ID", kind: "planned", note: "Uses your signed-in Azure identity without copying its token." },
-  ] },
-  { id: "bedrock", name: "Amazon Bedrock", short: "AWS", category: "Cloud platforms", description: "Foundation models through your AWS account.", methods: [
-    { id: "aws-profile", label: "AWS profile", kind: "planned", note: "Uses an AWS CLI profile and selected region." },
-    { id: "aws-keys", label: "AWS access keys", kind: "planned", note: "Access key, secret, optional session token, and region." },
-  ] },
-  { id: "xai", name: "xAI", short: "xAI", category: "Model labs", description: "Grok models through the xAI API.", methods: [{ id: "xai-api", label: "xAI API", kind: "api", note: "Direct xAI API key.", href: "https://console.x.ai/", credentials: ["xai"] }] },
-  { id: "deepseek", name: "DeepSeek", short: "DS", category: "Model labs", description: "DeepSeek chat and reasoning models.", methods: [{ id: "deepseek-api", label: "DeepSeek API", kind: "api", note: "Direct DeepSeek API key.", href: "https://platform.deepseek.com/api_keys", credentials: ["deepseek"] }] },
-  { id: "cohere", name: "Cohere", short: "CO", category: "Model labs", description: "Command and Embed models through Cohere.", methods: [{ id: "cohere-api", label: "Cohere API", kind: "planned", note: "Direct Cohere API key." }] },
-  { id: "together", name: "Together AI", short: "TO", category: "Inference clouds", description: "Hosted open models and dedicated endpoints.", methods: [{ id: "together-api", label: "Together API", kind: "api", note: "OpenAI-compatible Together API key.", href: "https://api.together.ai/settings/api-keys", credentials: ["together"] }] },
-  { id: "fireworks", name: "Fireworks AI", short: "FW", category: "Inference clouds", description: "Serverless and dedicated model inference.", methods: [{ id: "fireworks-api", label: "Fireworks API", kind: "api", note: "OpenAI-compatible Fireworks API key.", href: "https://app.fireworks.ai/users?tab=account", credentials: ["fireworks"] }] },
-  { id: "nvidia", name: "NVIDIA", short: "NV", category: "Inference clouds", description: "NIM inference endpoints and build.nvidia.com models.", methods: [{ id: "nvidia-api", label: "NVIDIA NIM API", kind: "api", note: "NVIDIA-hosted NIM API key.", href: "https://build.nvidia.com/", credentials: ["nvidia"] }] },
-  { id: "huggingface", name: "Hugging Face", short: "HF", category: "Gateways", description: "Inference Providers and dedicated endpoints.", methods: [{ id: "hf-token", label: "Hugging Face token", kind: "api", note: "User access token for routed inference.", href: "https://huggingface.co/settings/tokens", credentials: ["huggingface"] }] },
-  { id: "replicate", name: "Replicate", short: "RE", category: "Inference clouds", description: "Hosted public and private model deployments.", methods: [{ id: "replicate-token", label: "Replicate API token", kind: "planned", note: "Direct Replicate API token." }] },
-  { id: "perplexity", name: "Perplexity", short: "PX", category: "Model labs", description: "Search-grounded Sonar models through the API.", methods: [{ id: "perplexity-api", label: "Perplexity API", kind: "api", note: "Direct Perplexity API key.", href: "https://www.perplexity.ai/account/api/keys", credentials: ["perplexity"] }] },
-  { id: "github-models", name: "GitHub Models", short: "GH", category: "Gateways", description: "Model access governed by your GitHub account.", methods: [{ id: "github-token", label: "GitHub token", kind: "api", note: "Fine-grained GitHub token with Models access.", href: "https://github.com/settings/tokens", credentials: ["github-models"] }] },
+  {
+    id: "google",
+    name: "Google",
+    short: "GO",
+    category: "Model labs",
+    description: "Gemini through AI Studio or enterprise Vertex AI.",
+    methods: [
+      {
+        id: "gemini-api",
+        label: "Gemini API",
+        kind: "api",
+        note: "Google AI Studio API access.",
+        href: "https://aistudio.google.com/app/apikey",
+        credentials: ["gemini"],
+      },
+      {
+        id: "vertex",
+        label: "Vertex AI",
+        kind: "planned",
+        note: "Google Cloud project credentials and regional Vertex endpoints.",
+      },
+    ],
+  },
+  {
+    id: "mistral",
+    name: "Mistral AI",
+    short: "MI",
+    category: "Model labs",
+    description: "Mistral and Codestral models through La Plateforme.",
+    methods: [
+      {
+        id: "mistral-api",
+        label: "Mistral API",
+        kind: "api",
+        note: "Direct Mistral API access.",
+        href: "https://console.mistral.ai/api-keys",
+        credentials: ["mistral"],
+      },
+    ],
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    short: "OR",
+    category: "Gateways",
+    description: "One account for models from many labs.",
+    methods: [
+      {
+        id: "openrouter-api",
+        label: "OpenRouter API",
+        kind: "api",
+        note: "Connect a paid OpenRouter balance or eligible free routes.",
+        href: "https://openrouter.ai/settings/keys",
+        credentials: ["openrouter"],
+      },
+    ],
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    short: "GQ",
+    category: "Inference clouds",
+    description: "Low-latency hosted inference through GroqCloud.",
+    methods: [
+      {
+        id: "groq-api",
+        label: "GroqCloud API",
+        kind: "api",
+        note: "Direct Groq API access.",
+        href: "https://console.groq.com/keys",
+        credentials: ["groq"],
+      },
+    ],
+  },
+  {
+    id: "nous",
+    name: "Nous Research",
+    short: "NR",
+    category: "Inference clouds",
+    description: "Nous Portal hosted model access.",
+    methods: [
+      {
+        id: "nous-api",
+        label: "Nous Portal API",
+        kind: "api",
+        note: "OpenAI-compatible access through Nous Portal.",
+        href: "https://portal.nousresearch.com/",
+        credentials: ["nous"],
+      },
+    ],
+  },
+  {
+    id: "cloudflare",
+    name: "Cloudflare",
+    short: "CF",
+    category: "Cloud platforms",
+    description: "Workers AI models inside a Cloudflare account.",
+    methods: [
+      {
+        id: "cloudflare-api",
+        label: "Workers AI API",
+        kind: "api",
+        note: "Requires an API token and account ID. Account-ID setup is not available in this screen yet.",
+        href: "https://dash.cloudflare.com/profile/api-tokens",
+        credentials: ["cloudflare"],
+      },
+    ],
+  },
+  {
+    id: "azure",
+    name: "Microsoft Azure",
+    short: "AZ",
+    category: "Cloud platforms",
+    description: "Azure OpenAI and Azure AI Foundry deployments.",
+    methods: [
+      {
+        id: "azure-key",
+        label: "Azure API key",
+        kind: "planned",
+        note: "Endpoint, deployment name, API version, and key.",
+      },
+      {
+        id: "azure-identity",
+        label: "Azure CLI / Entra ID",
+        kind: "planned",
+        note: "Uses your signed-in Azure identity without copying its token.",
+      },
+    ],
+  },
+  {
+    id: "bedrock",
+    name: "Amazon Bedrock",
+    short: "AWS",
+    category: "Cloud platforms",
+    description: "Foundation models through your AWS account.",
+    methods: [
+      {
+        id: "aws-profile",
+        label: "AWS profile",
+        kind: "planned",
+        note: "Uses an AWS CLI profile and selected region.",
+      },
+      {
+        id: "aws-keys",
+        label: "AWS access keys",
+        kind: "planned",
+        note: "Access key, secret, optional session token, and region.",
+      },
+    ],
+  },
+  {
+    id: "xai",
+    name: "xAI",
+    short: "xAI",
+    category: "Model labs",
+    description: "Grok models through the xAI API.",
+    methods: [
+      {
+        id: "xai-api",
+        label: "xAI API",
+        kind: "api",
+        note: "Direct xAI API key.",
+        href: "https://console.x.ai/",
+        credentials: ["xai"],
+      },
+    ],
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    short: "DS",
+    category: "Model labs",
+    description: "DeepSeek chat and reasoning models.",
+    methods: [
+      {
+        id: "deepseek-api",
+        label: "DeepSeek API",
+        kind: "api",
+        note: "Direct DeepSeek API key.",
+        href: "https://platform.deepseek.com/api_keys",
+        credentials: ["deepseek"],
+      },
+    ],
+  },
+  {
+    id: "cohere",
+    name: "Cohere",
+    short: "CO",
+    category: "Model labs",
+    description: "Command and Embed models through Cohere.",
+    methods: [
+      {
+        id: "cohere-api",
+        label: "Cohere API",
+        kind: "planned",
+        note: "Direct Cohere API key.",
+      },
+    ],
+  },
+  {
+    id: "together",
+    name: "Together AI",
+    short: "TO",
+    category: "Inference clouds",
+    description: "Hosted open models and dedicated endpoints.",
+    methods: [
+      {
+        id: "together-api",
+        label: "Together API",
+        kind: "api",
+        note: "OpenAI-compatible Together API key.",
+        href: "https://api.together.ai/settings/api-keys",
+        credentials: ["together"],
+      },
+    ],
+  },
+  {
+    id: "fireworks",
+    name: "Fireworks AI",
+    short: "FW",
+    category: "Inference clouds",
+    description: "Serverless and dedicated model inference.",
+    methods: [
+      {
+        id: "fireworks-api",
+        label: "Fireworks API",
+        kind: "api",
+        note: "OpenAI-compatible Fireworks API key.",
+        href: "https://app.fireworks.ai/users?tab=account",
+        credentials: ["fireworks"],
+      },
+    ],
+  },
+  {
+    id: "nvidia",
+    name: "NVIDIA",
+    short: "NV",
+    category: "Inference clouds",
+    description: "NIM inference endpoints and build.nvidia.com models.",
+    methods: [
+      {
+        id: "nvidia-api",
+        label: "NVIDIA NIM API",
+        kind: "api",
+        note: "NVIDIA-hosted NIM API key.",
+        href: "https://build.nvidia.com/",
+        credentials: ["nvidia"],
+      },
+    ],
+  },
+  {
+    id: "huggingface",
+    name: "Hugging Face",
+    short: "HF",
+    category: "Gateways",
+    description: "Inference Providers and dedicated endpoints.",
+    methods: [
+      {
+        id: "hf-token",
+        label: "Hugging Face token",
+        kind: "api",
+        note: "User access token for routed inference.",
+        href: "https://huggingface.co/settings/tokens",
+        credentials: ["huggingface"],
+      },
+    ],
+  },
+  {
+    id: "replicate",
+    name: "Replicate",
+    short: "RE",
+    category: "Inference clouds",
+    description: "Hosted public and private model deployments.",
+    methods: [
+      {
+        id: "replicate-token",
+        label: "Replicate API token",
+        kind: "planned",
+        note: "Direct Replicate API token.",
+      },
+    ],
+  },
+  {
+    id: "perplexity",
+    name: "Perplexity",
+    short: "PX",
+    category: "Model labs",
+    description: "Search-grounded Sonar models through the API.",
+    methods: [
+      {
+        id: "perplexity-api",
+        label: "Perplexity API",
+        kind: "api",
+        note: "Direct Perplexity API key.",
+        href: "https://www.perplexity.ai/account/api/keys",
+        credentials: ["perplexity"],
+      },
+    ],
+  },
+  {
+    id: "github-models",
+    name: "GitHub Models",
+    short: "GH",
+    category: "Gateways",
+    description: "Model access governed by your GitHub account.",
+    methods: [
+      {
+        id: "github-token",
+        label: "GitHub token",
+        kind: "api",
+        note: "Fine-grained GitHub token with Models access.",
+        href: "https://github.com/settings/tokens",
+        credentials: ["github-models"],
+      },
+    ],
+  },
 ] as const;
 
 const freeCredentialGroups = [
@@ -232,12 +544,14 @@ const openAccessDirectory = [
   {
     name: "Hugging Face Inference Providers",
     href: "https://huggingface.co/docs/inference-providers/index",
-    detail: "Official provider directory with a limited free tier for eligible accounts and models.",
+    detail:
+      "Official provider directory with a limited free tier for eligible accounts and models.",
   },
   {
     name: "Ollama model library",
     href: "https://ollama.com/library",
-    detail: "Free model downloads for a local Ollama runtime; inference stays on this Mac.",
+    detail:
+      "Free model downloads for a local Ollama runtime; inference stays on this Mac.",
   },
 ] as const;
 
@@ -633,14 +947,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   onClick={() => index < step && go(index)}
                   disabled={index > step}
                   aria-current={index === step ? "step" : undefined}
-                  >
+                >
                   <span>
                     <Icon name={index < step ? "check" : item.icon} />
                   </span>
-                    <span>
-                      <strong>{item.label}</strong>
-                    </span>
-                  </button>
+                  <span>
+                    <strong>{item.label}</strong>
+                  </span>
+                </button>
               </li>
             ))}
           </ol>
@@ -670,24 +984,39 @@ function Onboarding({ onDone }: { onDone(): void }) {
                 </p>
                 <div className="welcome-stack" aria-label="How Kestrel works">
                   <div>
-                    <span><Icon name="research" /></span>
+                    <span>
+                      <Icon name="research" />
+                    </span>
                     <span>
                       <strong>Start with the outcome</strong>
-                      <small>Describe what you need instead of configuring a workflow.</small>
+                      <small>
+                        Describe what you need instead of configuring a
+                        workflow.
+                      </small>
                     </span>
                   </div>
                   <div>
-                    <span><Icon name="work" /></span>
+                    <span>
+                      <Icon name="work" />
+                    </span>
                     <span>
                       <strong>Review the work as it happens</strong>
-                      <small>See progress, decisions, and files in the same conversation.</small>
+                      <small>
+                        See progress, decisions, and files in the same
+                        conversation.
+                      </small>
                     </span>
                   </div>
                   <div>
-                    <span><Icon name="approvals" /></span>
+                    <span>
+                      <Icon name="approvals" />
+                    </span>
                     <span>
                       <strong>Approve important actions</strong>
-                      <small>Sending, publishing, deleting, and spending wait for you.</small>
+                      <small>
+                        Sending, publishing, deleting, and spending wait for
+                        you.
+                      </small>
                     </span>
                   </div>
                 </div>
@@ -716,35 +1045,40 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   <div>
                     <span>02</span>
                     <div>
-                      <strong>Provider and tool usage can create charges</strong>
+                      <strong>
+                        Provider and tool usage can create charges
+                      </strong>
                       <p>
                         API calls, media generation, search, storage, and other
                         connected services can bill their own accounts. Budgets
-                        reduce risk; they do not replace provider billing controls.
+                        reduce risk; they do not replace provider billing
+                        controls.
                       </p>
                     </div>
                   </div>
                   <div>
                     <span>03</span>
                     <div>
-                      <strong>Approval protects actions, not perfect output</strong>
+                      <strong>
+                        Approval protects actions, not perfect output
+                      </strong>
                       <p>
-                        Sending, publishing, deleting, purchasing, and permission
-                        changes pause for review. You still need to verify factual,
-                        legal, financial, or safety-critical content.
+                        Sending, publishing, deleting, purchasing, and
+                        permission changes pause for review. You still need to
+                        verify factual, legal, financial, or safety-critical
+                        content.
                       </p>
                     </div>
                   </div>
                   <div>
                     <span>04</span>
                     <div>
-                      <strong>
-                        Connections widen what the agent can see
-                      </strong>
+                      <strong>Connections widen what the agent can see</strong>
                       <p>
                         Grant only the folders, accounts, microphone, browser,
-                        and screen access a task needs. Credentials are protected,
-                        but approved tools can act with the access you give them.
+                        and screen access a task needs. Credentials are
+                        protected, but approved tools can act with the access
+                        you give them.
                       </p>
                     </div>
                   </div>
@@ -795,38 +1129,45 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   </p>
                 </header>
                 {step === 2 && (
-                <div className="model-source-picker" aria-label="Model access choices">
-                  <button
-                    onClick={() => chooseModelAccess("accounts")}
+                  <div
+                    className="model-source-picker"
+                    aria-label="Model access choices"
                   >
-                    <span className="source-glyph" aria-hidden="true">☁</span>
-                    <strong>Use my AI account</strong>
-                    <small>
-                      OpenAI, Anthropic, and other providers.
-                    </small>
-                    <b>{configuredCredentials.length ? `${configuredCredentials.length} connected` : "Choose a provider"}</b>
-                  </button>
-                  <button
-                    onClick={() => chooseModelAccess("local")}
-                  >
-                    <span className="source-glyph" aria-hidden="true">⌁</span>
-                    <strong>Keep it on this Mac</strong>
-                    <small>
-                      Download a model that can work offline.
-                    </small>
-                    <b>{localModels.length ? `${localModels.length} installed` : "No account needed"}</b>
-                  </button>
-                  <button
-                    onClick={() => chooseModelAccess("open")}
-                  >
-                    <span className="source-glyph" aria-hidden="true">◎</span>
-                    <strong>Use free accounts</strong>
-                    <small>
-                      Connect one or more providers with free access.
-                    </small>
-                    <b>Four supported options</b>
-                  </button>
-                </div>
+                    <button onClick={() => chooseModelAccess("accounts")}>
+                      <span className="source-glyph" aria-hidden="true">
+                        ☁
+                      </span>
+                      <strong>Use my AI account</strong>
+                      <small>OpenAI, Anthropic, and other providers.</small>
+                      <b>
+                        {configuredCredentials.length
+                          ? `${configuredCredentials.length} connected`
+                          : "Choose a provider"}
+                      </b>
+                    </button>
+                    <button onClick={() => chooseModelAccess("local")}>
+                      <span className="source-glyph" aria-hidden="true">
+                        ⌁
+                      </span>
+                      <strong>Keep it on this Mac</strong>
+                      <small>Download a model that can work offline.</small>
+                      <b>
+                        {localModels.length
+                          ? `${localModels.length} installed`
+                          : "No account needed"}
+                      </b>
+                    </button>
+                    <button onClick={() => chooseModelAccess("open")}>
+                      <span className="source-glyph" aria-hidden="true">
+                        ◎
+                      </span>
+                      <strong>Use free accounts</strong>
+                      <small>
+                        Connect one or more providers with free access.
+                      </small>
+                      <b>Four supported options</b>
+                    </button>
+                  </div>
                 )}
 
                 {step === 3 && modelView === "accounts" && (
@@ -839,20 +1180,28 @@ function Onboarding({ onDone }: { onDone(): void }) {
                       <div>
                         <span>
                           <strong>Choose a paid provider</strong>
-                          <small>Then choose how your own account connects.</small>
+                          <small>
+                            Then choose how your own account connects.
+                          </small>
                         </span>
-                        <span className="honest-status">Private by default</span>
+                        <span className="honest-status">
+                          Private by default
+                        </span>
                       </div>
                     </div>
                     <div className="paid-provider-browser">
                       <aside className="paid-provider-directory">
-                        <label htmlFor="paid-provider-search">Find a provider</label>
+                        <label htmlFor="paid-provider-search">
+                          Find a provider
+                        </label>
                         <input
                           id="paid-provider-search"
                           type="search"
                           value={providerQuery}
                           placeholder="Search OpenAI, Azure, Groq…"
-                          onChange={(event) => setProviderQuery(event.target.value)}
+                          onChange={(event) =>
+                            setProviderQuery(event.target.value)
+                          }
                         />
                         <div role="listbox" aria-label="Paid AI providers">
                           {matchingPaidProviders.map((provider) => {
@@ -871,10 +1220,16 @@ function Onboarding({ onDone }: { onDone(): void }) {
                               <button
                                 key={provider.id}
                                 role="option"
-                                aria-selected={provider.id === selectedPaidProvider.id}
-                                onClick={() => setSelectedPaidProviderId(provider.id)}
+                                aria-selected={
+                                  provider.id === selectedPaidProvider.id
+                                }
+                                onClick={() =>
+                                  setSelectedPaidProviderId(provider.id)
+                                }
                               >
-                                <span className="provider-monogram">{provider.short}</span>
+                                <span className="provider-monogram">
+                                  {provider.short}
+                                </span>
                                 <span>
                                   <strong>{provider.name}</strong>
                                   <small>{provider.category}</small>
@@ -904,8 +1259,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
                           </span>
                         </header>
                         <p className="account-intro">
-                          Choose a connection method. API usage and subscriptions
-                          are separate products billed by the provider.
+                          Choose a connection method. API usage and
+                          subscriptions are separate products billed by the
+                          provider.
                         </p>
                         <div className="connection-method-list">
                           {selectedPaidProvider.methods.map((method) => {
@@ -914,104 +1270,174 @@ function Onboarding({ onDone }: { onDone(): void }) {
                                 (item) => item.id === method.cliId,
                               );
                               return (
-                                <article className="connection-method" key={method.id}>
+                                <article
+                                  className="connection-method"
+                                  key={method.id}
+                                >
                                   <div>
                                     <strong>{method.label}</strong>
-                                    <p>{method.note} Workstrand never copies the vendor login token.</p>
+                                    <p>
+                                      {method.note} Workstrand never copies the
+                                      vendor login token.
+                                    </p>
                                   </div>
                                   {!cli ? (
-                                    <span className="honest-status">Checking</span>
+                                    <span className="honest-status">
+                                      Checking
+                                    </span>
                                   ) : cli.detected ? (
                                     cli.id === "codex" && !cli.authenticated ? (
                                       <button
                                         className="button primary"
-                                        disabled={Boolean(subscriptionBusy) && subscriptionBusy !== "chatgpt-oauth"}
+                                        disabled={
+                                          Boolean(subscriptionBusy) &&
+                                          subscriptionBusy !== "chatgpt-oauth"
+                                        }
                                         onClick={() => void connectChatGpt()}
                                       >
-                                        {subscriptionBusy === "chatgpt-oauth" ? "Cancel sign-in" : "Sign in with ChatGPT"}
+                                        {subscriptionBusy === "chatgpt-oauth"
+                                          ? "Cancel sign-in"
+                                          : "Sign in with ChatGPT"}
                                       </button>
                                     ) : (
                                       <button
-                                        className={cli.enabled ? "button secondary" : "button primary"}
+                                        className={
+                                          cli.enabled
+                                            ? "button secondary"
+                                            : "button primary"
+                                        }
                                         disabled={Boolean(subscriptionBusy)}
-                                        onClick={() => void toggleSubscription(cli.id, !cli.enabled)}
+                                        onClick={() =>
+                                          void toggleSubscription(
+                                            cli.id,
+                                            !cli.enabled,
+                                          )
+                                        }
                                       >
-                                        {subscriptionBusy === cli.id ? "Updating…" : cli.enabled ? "Disable" : "Use this login"}
+                                        {subscriptionBusy === cli.id
+                                          ? "Updating…"
+                                          : cli.enabled
+                                            ? "Disable"
+                                            : "Use this login"}
                                       </button>
                                     )
                                   ) : (
-                                    <span className="honest-status">CLI not found</span>
+                                    <span className="honest-status">
+                                      CLI not found
+                                    </span>
                                   )}
                                 </article>
                               );
                             }
                             if (method.kind === "planned") {
                               return (
-                                <article className="connection-method unavailable" key={method.id}>
+                                <article
+                                  className="connection-method unavailable"
+                                  key={method.id}
+                                >
                                   <div>
                                     <strong>{method.label}</strong>
                                     <p>{method.note}</p>
                                   </div>
-                                  <span className="honest-status">Adapter coming later</span>
+                                  <span className="honest-status">
+                                    Adapter coming later
+                                  </span>
                                 </article>
                               );
                             }
                             return (
-                              <article className="connection-method api-method" key={method.id}>
+                              <article
+                                className="connection-method api-method"
+                                key={method.id}
+                              >
                                 <div className="method-heading">
                                   <div>
                                     <strong>{method.label}</strong>
                                     <p>{method.note}</p>
                                   </div>
-                                  <a href={method.href} target="_blank" rel="noreferrer">
+                                  <a
+                                    href={method.href}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
                                     Get API key ↗
                                   </a>
                                 </div>
-                                {method.credentials.map((rawId, accountIndex) => {
-                                  const credentialId =
-                                    rawId as BrokeredCredentialSummary["id"];
-                                  const credential = credentials.find(
-                                    (item) => item.id === credentialId,
-                                  );
-                                  return (
-                                    <div className="account-slot" key={credentialId}>
-                                      <label htmlFor={`setup-${credentialId}`}>
-                                        <span>{method.credentials.length > 1 ? `Account ${accountIndex + 1}` : "API key"}</span>
-                                        <small>{credential?.configured ? "Protected and ready" : accountIndex === 0 ? "Not connected" : "Optional backup"}</small>
-                                      </label>
-                                      {credential?.configured ? (
-                                        <span className="configured-account">
-                                          <span className="agent-dot idle" />
-                                          Connected
-                                        </span>
-                                      ) : (
-                                        <>
-                                          <input
-                                            id={`setup-${credentialId}`}
-                                            type="password"
-                                            autoComplete="off"
-                                            spellCheck={false}
-                                            value={credentialValues[credentialId] ?? ""}
-                                            placeholder="Paste API key"
-                                            onChange={(event) =>
-                                              setCredentialValues((current) => ({
-                                                ...current,
-                                                [credentialId]: event.target.value,
-                                              }))
-                                            }
-                                          />
-                                          <button
-                                            className="button secondary"
-                                            disabled={Boolean(credentialBusy)}
-                                            onClick={() => void saveCredential(credentialId)}
-                                          >
-                                            {credentialBusy === credentialId ? "Saving…" : "Save"}
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
-                                  );
-                                })}
+                                {method.credentials.map(
+                                  (rawId, accountIndex) => {
+                                    const credentialId =
+                                      rawId as BrokeredCredentialSummary["id"];
+                                    const credential = credentials.find(
+                                      (item) => item.id === credentialId,
+                                    );
+                                    return (
+                                      <div
+                                        className="account-slot"
+                                        key={credentialId}
+                                      >
+                                        <label
+                                          htmlFor={`setup-${credentialId}`}
+                                        >
+                                          <span>
+                                            {method.credentials.length > 1
+                                              ? `Account ${accountIndex + 1}`
+                                              : "API key"}
+                                          </span>
+                                          <small>
+                                            {credential?.configured
+                                              ? "Protected and ready"
+                                              : accountIndex === 0
+                                                ? "Not connected"
+                                                : "Optional backup"}
+                                          </small>
+                                        </label>
+                                        {credential?.configured ? (
+                                          <span className="configured-account">
+                                            <span className="agent-dot idle" />
+                                            Connected
+                                          </span>
+                                        ) : (
+                                          <>
+                                            <input
+                                              id={`setup-${credentialId}`}
+                                              type="password"
+                                              autoComplete="off"
+                                              spellCheck={false}
+                                              value={
+                                                credentialValues[
+                                                  credentialId
+                                                ] ?? ""
+                                              }
+                                              placeholder="Paste API key"
+                                              onChange={(event) =>
+                                                setCredentialValues(
+                                                  (current) => ({
+                                                    ...current,
+                                                    [credentialId]:
+                                                      event.target.value,
+                                                  }),
+                                                )
+                                              }
+                                            />
+                                            <button
+                                              className="button secondary"
+                                              disabled={Boolean(credentialBusy)}
+                                              onClick={() =>
+                                                void saveCredential(
+                                                  credentialId,
+                                                )
+                                              }
+                                            >
+                                              {credentialBusy === credentialId
+                                                ? "Saving…"
+                                                : "Save"}
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    );
+                                  },
+                                )}
                               </article>
                             );
                           })}
@@ -1091,14 +1517,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
                                     <div>
                                       <dt>Requirements</dt>
                                       <dd>
-                                        {model.speed} · {model.minimumMemory} GB+
-                                        usable memory
+                                        {model.speed} · {model.minimumMemory}{" "}
+                                        GB+ usable memory
                                       </dd>
                                     </div>
                                     <div>
                                       <dt>Download</dt>
                                       <dd>
-                                        {model.size} · {model.contextLength} context
+                                        {model.size} · {model.contextLength}{" "}
+                                        context
                                       </dd>
                                     </div>
                                   </dl>
@@ -1177,9 +1604,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     {!ollamaAvailable &&
                       localRuntime?.automaticSupported === false && (
                         <p className="setup-error" role="status">
-                          One-click installation is not available on this
-                          device yet. Manual setup below works with any
-                          reachable Ollama service.
+                          One-click installation is not available on this device
+                          yet. Manual setup below works with any reachable
+                          Ollama service.
                         </p>
                       )}
                     {ollamaAvailable && (
@@ -1278,9 +1705,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                           >
                             <label htmlFor="custom-ollama-model">
                               <span>Any other Ollama model</span>
-                              <small>
-                                Use the exact library name and tag.
-                              </small>
+                              <small>Use the exact library name and tag.</small>
                             </label>
                             <input
                               id="custom-ollama-model"
@@ -1342,11 +1767,17 @@ function Onboarding({ onDone }: { onDone(): void }) {
                         return (
                           <section key={group.name} className="provider-group">
                             <div className="provider-heading">
-                              <span className="provider-monogram">{group.short}</span>
+                              <span className="provider-monogram">
+                                {group.short}
+                              </span>
                               <div>
                                 <strong>{group.name}</strong>
                                 <p>{group.note}</p>
-                                <a href={group.href} target="_blank" rel="noreferrer">
+                                <a
+                                  href={group.href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
                                   Get free API key ↗
                                 </a>
                               </div>
@@ -1354,7 +1785,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
                             <div className="account-slot">
                               <label htmlFor={`setup-${credentialId}`}>
                                 <span>API key</span>
-                                <small>{credential?.configured ? "Protected and ready" : "Not connected"}</small>
+                                <small>
+                                  {credential?.configured
+                                    ? "Protected and ready"
+                                    : "Not connected"}
+                                </small>
                               </label>
                               {credential?.configured ? (
                                 <span className="configured-account">
@@ -1380,9 +1815,13 @@ function Onboarding({ onDone }: { onDone(): void }) {
                                   <button
                                     className="button secondary"
                                     disabled={Boolean(credentialBusy)}
-                                    onClick={() => void saveCredential(credentialId)}
+                                    onClick={() =>
+                                      void saveCredential(credentialId)
+                                    }
                                   >
-                                    {credentialBusy === credentialId ? "Saving…" : "Save"}
+                                    {credentialBusy === credentialId
+                                      ? "Saving…"
+                                      : "Save"}
                                   </button>
                                 </>
                               )}
@@ -1392,7 +1831,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
                       })}
                     </div>
                     {credentialError && (
-                      <p className="setup-error" role="alert">{credentialError}</p>
+                      <p className="setup-error" role="alert">
+                        {credentialError}
+                      </p>
                     )}
                     <div className="more-provider-lead">
                       <strong>More ways to run models</strong>
@@ -1415,9 +1856,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
                       ))}
                     </div>
                     <p className="provider-footnote">
-                      “Free” availability, quotas, privacy terms, and model lists
-                      change. Review the source before sending data. A listing here
-                      is not a connection or a Workstrand endorsement.
+                      “Free” availability, quotas, privacy terms, and model
+                      lists change. Review the source before sending data. A
+                      listing here is not a connection or a Workstrand
+                      endorsement.
                     </p>
                   </div>
                 )}
@@ -2720,8 +3162,8 @@ function RuntimeConversation({
       )}
       {executionMode === "automatic" && (
         <p>
-          Kestrel routes model, reasoning, and service tier from the task,
-          risk, provider health, and your budget.
+          Kestrel routes model, reasoning, and service tier from the task, risk,
+          provider health, and your budget.
         </p>
       )}
     </div>
@@ -4043,20 +4485,21 @@ function Work({
   );
 
   async function load() {
-    const [state, providerState, sessionState, localModelState] = await Promise.all([
-      window.kestrel.request({
-        type: "orchestration-list",
-      }) as Promise<CoreResponse>,
-      window.kestrel.request({
-        type: "runtime-list-providers",
-      }) as Promise<CoreResponse>,
-      window.kestrel.request({
-        type: "runtime-list-sessions",
-      }) as Promise<CoreResponse>,
-      window.kestrel.request({
-        type: "local-model-status",
-      }),
-    ]);
+    const [state, providerState, sessionState, localModelState] =
+      await Promise.all([
+        window.kestrel.request({
+          type: "orchestration-list",
+        }) as Promise<CoreResponse>,
+        window.kestrel.request({
+          type: "runtime-list-providers",
+        }) as Promise<CoreResponse>,
+        window.kestrel.request({
+          type: "runtime-list-sessions",
+        }) as Promise<CoreResponse>,
+        window.kestrel.request({
+          type: "local-model-status",
+        }),
+      ]);
     if (!state.ok) throw new Error(state.error);
     setGoals(state.goals ?? []);
     setTeams(state.teams ?? []);
@@ -4253,7 +4696,9 @@ function Work({
             ) : (
               <input
                 aria-label="Model"
-                placeholder={providerId === "auto" ? "Automatically selected" : "Model"}
+                placeholder={
+                  providerId === "auto" ? "Automatically selected" : "Model"
+                }
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
                 readOnly={providerId === "auto"}
@@ -4676,9 +5121,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
       });
       if (!response.ok)
         throw new Error(
-          "error" in response
-            ? response.error
-            : "ChatGPT route update failed.",
+          "error" in response ? response.error : "ChatGPT route update failed.",
         );
       if ("subscriptionClis" in response)
         setSubscriptionClis(response.subscriptionClis);
@@ -5309,9 +5752,7 @@ function SubscriptionCliSettings() {
                 <strong>{item.label}</strong>
                 <small>{item.detail}</small>
               </span>
-              {item.id === "codex" &&
-              item.detected &&
-              !item.authenticated ? (
+              {item.id === "codex" && item.detected && !item.authenticated ? (
                 <button
                   className="button primary"
                   disabled={Boolean(busy) && busy !== "chatgpt-oauth"}
@@ -6193,34 +6634,6 @@ function Settings({
   petStatus: PetStatus | null;
   onPetStatus(next: PetStatus): void;
 }) {
-  const [login, setLogin] = useState<{
-    enabled: boolean;
-    status: string;
-  } | null>(null);
-  const [confirmation, setConfirmation] = useState("");
-  const [resetError, setResetError] = useState("");
-  useEffect(() => {
-    void window.kestrel
-      .request({ type: "get-system-state" })
-      .then((response) => {
-        if ("launchAtLogin" in response)
-          setLogin({
-            enabled: response.launchAtLogin,
-            status: response.launchStatus,
-          });
-      });
-  }, []);
-  async function toggleLogin() {
-    const response = await window.kestrel.request({
-      type: "set-launch-at-login",
-      enabled: !login?.enabled,
-    });
-    if ("launchAtLogin" in response)
-      setLogin({
-        enabled: response.launchAtLogin,
-        status: response.launchStatus,
-      });
-  }
   async function togglePause() {
     const response = (await window.kestrel.request({
       type: "set-paused",
@@ -6234,136 +6647,6 @@ function Settings({
       personalityId,
     })) as CoreResponse;
     if (response.ok && response.snapshot) update(response.snapshot);
-  }
-  const [plugins, setPlugins] = useState<PluginSummary[]>([]);
-  const [publishers, setPublishers] = useState<TrustedPluginPublisher[]>([]);
-  const [pluginError, setPluginError] = useState("");
-  const [pluginNotice, setPluginNotice] = useState("");
-  const [pluginRecoveryPath, setPluginRecoveryPath] = useState("");
-  const [pluginBusy, setPluginBusy] = useState(false);
-  useEffect(() => {
-    void window.kestrel.request({ type: "plugin-list" }).then((raw) => {
-      const response = raw as CoreResponse;
-      if (response.ok) setPlugins(response.plugins ?? []);
-      else setPluginError(response.error);
-    });
-    void window.kestrel
-      .request({ type: "plugin-get-publishers" })
-      .then((response) => {
-        if (response.ok && "pluginPublishers" in response)
-          setPublishers(response.pluginPublishers);
-      });
-  }, []);
-  async function togglePlugin(plugin: PluginSummary) {
-    setPluginError("");
-    const response = (await window.kestrel.request({
-      type: "plugin-set-enabled",
-      name: plugin.name,
-      enabled: !plugin.enabled,
-    })) as CoreResponse;
-    if (response.ok) setPlugins(response.plugins ?? []);
-    else setPluginError(response.error);
-  }
-  async function togglePluginMcp(plugin: PluginSummary) {
-    setPluginError("");
-    const response = (await window.kestrel.request({
-      type: plugin.mcpConnected
-        ? "plugin-disconnect-mcp"
-        : "plugin-connect-mcp",
-      name: plugin.name,
-    })) as CoreResponse;
-    if (response.ok) setPlugins(response.plugins ?? []);
-    else setPluginError(response.error);
-  }
-  async function importPublisher() {
-    setPluginBusy(true);
-    setPluginError("");
-    setPluginNotice("");
-    try {
-      const response = await window.kestrel.request({
-        type: "plugin-import-publisher",
-      });
-      if (!response.ok)
-        throw new Error(
-          "error" in response ? response.error : "Publisher import failed.",
-        );
-      if ("pluginPublishers" in response)
-        setPublishers(response.pluginPublishers);
-    } catch (error) {
-      setPluginError(
-        error instanceof Error ? error.message : "Publisher import failed.",
-      );
-    } finally {
-      setPluginBusy(false);
-    }
-  }
-  async function removePublisher(keyId: string) {
-    setPluginBusy(true);
-    setPluginError("");
-    setPluginNotice("");
-    try {
-      const response = await window.kestrel.request({
-        type: "plugin-remove-publisher",
-        keyId,
-      });
-      if (!response.ok)
-        throw new Error(
-          "error" in response ? response.error : "Publisher removal failed.",
-        );
-      if ("pluginPublishers" in response)
-        setPublishers(response.pluginPublishers);
-    } catch (error) {
-      setPluginError(
-        error instanceof Error ? error.message : "Publisher removal failed.",
-      );
-    } finally {
-      setPluginBusy(false);
-    }
-  }
-  async function mutatePlugin(
-    request: Extract<
-      RendererRequest,
-      {
-        type:
-          | "plugin-install-bundle"
-          | "plugin-update-bundle"
-          | "plugin-remove-installed"
-          | "plugin-restore-removed";
-      }
-    >,
-  ) {
-    setPluginBusy(true);
-    setPluginError("");
-    setPluginNotice("");
-    try {
-      const response = await window.kestrel.request(request);
-      if (!response.ok)
-        throw new Error(
-          "error" in response ? response.error : "Plugin operation failed.",
-        );
-      if ("plugins" in response) setPlugins(response.plugins ?? []);
-      if ("pluginMutation" in response) {
-        const mutation: PluginMutation = response.pluginMutation;
-        setPluginNotice(
-          `${mutation.name} ${mutation.version}: ${mutation.action} complete.`,
-        );
-        setPluginRecoveryPath(mutation.recoveryPath ?? "");
-      }
-    } catch (error) {
-      setPluginError(
-        error instanceof Error ? error.message : "Plugin operation failed.",
-      );
-    } finally {
-      setPluginBusy(false);
-    }
-  }
-  async function reset() {
-    const response = await window.kestrel.request({
-      type: "reset-local-data",
-      confirmation,
-    });
-    if (!response.ok)
-      setResetError("error" in response ? response.error : "Reset failed");
   }
   function reopenSetup() {
     localStorage.removeItem("kestrel:onboarded");
@@ -6444,8 +6727,8 @@ function Settings({
           <div>
             <strong>Communication style</strong>
             <p>
-              Choose how Kestrel explains work; safety and capability rules
-              do not change.
+              Choose how Kestrel explains work; safety and capability rules do
+              not change.
             </p>
           </div>
           <div className="segmented" aria-label="Communication style">
@@ -6465,140 +6748,7 @@ function Settings({
             ))}
           </div>
         </article>
-        <article className="setting-row">
-          <div>
-            <strong>Plugin supply chain</strong>
-            <p>
-              Only Ed25519-signed bundles from publishers you explicitly trust
-              can be installed or updated.
-            </p>
-            {publishers.length > 0 ? (
-              <ul className="workspace-grants">
-                {publishers.map((publisher) => (
-                  <li key={publisher.keyId}>
-                    <span title={publisher.fingerprint}>
-                      {publisher.keyId} · {publisher.fingerprint.slice(0, 12)}…
-                    </span>
-                    <button
-                      className="quiet-link"
-                      disabled={pluginBusy}
-                      onClick={() => void removePublisher(publisher.keyId)}
-                    >
-                      Untrust
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <small>No plugin publishers are trusted yet.</small>
-            )}
-            {pluginNotice && <small role="status">{pluginNotice}</small>}
-            {pluginError && <small role="alert">{pluginError}</small>}
-          </div>
-          <div>
-            <button
-              className="button secondary"
-              disabled={pluginBusy}
-              onClick={() => void importPublisher()}
-            >
-              Trust publisher key
-            </button>
-            <button
-              className="button secondary"
-              disabled={pluginBusy || publishers.length === 0}
-              onClick={() =>
-                void mutatePlugin({ type: "plugin-install-bundle" })
-              }
-            >
-              Install signed plugin
-            </button>
-            <button
-              className="button secondary"
-              disabled={pluginBusy || publishers.length === 0}
-              onClick={() =>
-                void mutatePlugin({ type: "plugin-update-bundle" })
-              }
-            >
-              Update plugin
-            </button>
-            {pluginRecoveryPath && (
-              <button
-                className="button secondary"
-                disabled={pluginBusy}
-                onClick={() =>
-                  void mutatePlugin({
-                    type: "plugin-restore-removed",
-                    recoveryPath: pluginRecoveryPath,
-                  })
-                }
-              >
-                Restore removed plugin
-              </button>
-            )}
-          </div>
-        </article>
-        {plugins.map((plugin) => (
-          <article className="setting-row" key={plugin.name}>
-            <div>
-              <strong>
-                {plugin.interface?.displayName ?? plugin.name}{" "}
-                <small>v{plugin.version}</small>
-              </strong>
-              <p>{plugin.interface?.shortDescription ?? plugin.description}</p>
-              <small>
-                {plugin.managed
-                  ? "Managed signed bundle"
-                  : "External discovered bundle"}{" "}
-                · {plugin.hasSkills ? "Skills" : "No skills"} ·{" "}
-                {plugin.hasMcpServers
-                  ? plugin.mcpConnected
-                    ? "MCP connected"
-                    : "MCP available"
-                  : "No MCP"}{" "}
-                ·{" "}
-                {plugin.hasDashboard
-                  ? plugin.enabled
-                    ? "Dashboard panels active"
-                    : "Dashboard panels available"
-                  : "No dashboard"}{" "}
-                · permissions:{" "}
-                {plugin.interface?.capabilities.join(", ") || "none declared"}
-              </small>
-            </div>
-            <div>
-              <button
-                className="button secondary"
-                aria-pressed={plugin.enabled}
-                onClick={() => void togglePlugin(plugin)}
-              >
-                {plugin.enabled ? "Disable" : "Enable"}
-              </button>
-              {plugin.enabled && plugin.hasMcpServers && (
-                <button
-                  className="button secondary"
-                  aria-pressed={plugin.mcpConnected}
-                  onClick={() => void togglePluginMcp(plugin)}
-                >
-                  {plugin.mcpConnected ? "Disconnect MCP" : "Connect MCP"}
-                </button>
-              )}
-              {plugin.managed && (
-                <button
-                  className="button secondary"
-                  disabled={pluginBusy}
-                  onClick={() =>
-                    void mutatePlugin({
-                      type: "plugin-remove-installed",
-                      name: plugin.name,
-                    })
-                  }
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          </article>
-        ))}
+        <PluginSettings />
         <CredentialSettings />
         <HonchoMemorySettings />
         <ProviderVerificationSettings />
@@ -6608,24 +6758,7 @@ function Settings({
         <ApprovalRulesSettings />
         <LearnedSkillsSettings />
         <MigrationSettings />
-        <article className="setting-row">
-          <div>
-            <strong>Run at login</strong>
-            <p>
-              Off by default. macOS may require confirmation in System Settings.
-            </p>
-            {login && <small>System status: {login.status}</small>}
-          </div>
-          <button
-            className={`switch ${login?.enabled ? "on" : ""}`}
-            role="switch"
-            aria-label="Run Kestrel at login"
-            aria-checked={login?.enabled ?? false}
-            onClick={() => void toggleLogin()}
-          >
-            <span />
-          </button>
-        </article>
+        <RunAtLoginSettings />
         <article className="setting-row autonomy">
           <div>
             <strong>Initiative level</strong>
@@ -6646,29 +6779,7 @@ function Settings({
             ))}
           </div>
         </article>
-        <article className="setting-row danger">
-          <div>
-            <strong>Reset Kestrel and prepare for uninstall</strong>
-            <p>
-              Deletes this preview database and secure key, then relaunches.
-            </p>
-            <label>
-              Type Kestrel to confirm
-              <input
-                value={confirmation}
-                onChange={(event) => setConfirmation(event.target.value)}
-              />
-            </label>
-            {resetError && <small role="alert">{resetError}</small>}
-          </div>
-          <button
-            className="button danger-button"
-            disabled={confirmation !== "Kestrel"}
-            onClick={() => void reset()}
-          >
-            Reset local data
-          </button>
-        </article>
+        <ResetDataSettings />
       </section>
     </PageFrame>
   );
@@ -6915,8 +7026,7 @@ export function App() {
             {toolsOpen &&
               pages
                 .filter(
-                  ([id]) =>
-                    !["home", "connections", "settings"].includes(id),
+                  ([id]) => !["home", "connections", "settings"].includes(id),
                 )
                 .map(([id, label]) => (
                   <button
