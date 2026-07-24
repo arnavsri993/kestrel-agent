@@ -28,13 +28,9 @@ export function HonchoMemorySettings() {
       throw new Error("Honcho memory status is unavailable.");
     setStatus(memory.honchoMemoryStatus);
     setDraft(memory.honchoMemoryStatus.configuration);
-    if (
-      credentialsRaw.ok &&
-      "credentials" in credentialsRaw
-    )
+    if (credentialsRaw.ok && "credentials" in credentialsRaw)
       setCredential(
-        credentialsRaw.credentials.find((item) => item.id === "honcho") ??
-          null,
+        credentialsRaw.credentials.find((item) => item.id === "honcho") ?? null,
       );
   }
 
@@ -154,9 +150,7 @@ export function HonchoMemorySettings() {
       setNotice("Honcho workspace verified.");
     } catch (cause) {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : "Honcho verification failed.",
+        cause instanceof Error ? cause.message : "Honcho verification failed.",
       );
     } finally {
       setBusy("");
@@ -178,9 +172,9 @@ export function HonchoMemorySettings() {
       <div>
         <strong>Honcho remote memory</strong>
         <p>
-          Optional reasoning-backed memory alongside Kestrel’s encrypted
-          local memory. Local facts, corrections, review, and deletion controls
-          stay available even when Honcho is enabled.
+          Optional reasoning-backed memory alongside Kestrel’s encrypted local
+          memory. Local facts, corrections, review, and deletion controls stay
+          available even when Honcho is enabled.
         </p>
         <small className="honcho-disclosure">
           {status.remoteDataDisclosure}
@@ -221,217 +215,7 @@ export function HonchoMemorySettings() {
           )}
         </div>
 
-        <details className="honcho-configuration">
-          <summary>Provider configuration and reasoning controls</summary>
-          <div className="honcho-form">
-            <label>
-              <span>Server URL</span>
-              <input
-                value={draft.baseUrl}
-                onChange={(event) =>
-                  setDraft({ ...draft, baseUrl: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              <span>Workspace ID</span>
-              <input
-                value={draft.workspaceId}
-                onChange={(event) =>
-                  setDraft({ ...draft, workspaceId: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              <span>User peer</span>
-              <input
-                value={draft.userPeerId}
-                onChange={(event) =>
-                  setDraft({ ...draft, userPeerId: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              <span>Agent peer</span>
-              <input
-                value={draft.agentPeerId}
-                onChange={(event) =>
-                  setDraft({ ...draft, agentPeerId: event.target.value })
-                }
-              />
-            </label>
-            <label>
-              <span>Recall mode</span>
-              <select
-                value={draft.recallMode}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    recallMode: event.target
-                      .value as HonchoMemoryConfiguration["recallMode"],
-                  })
-                }
-              >
-                <option value="hybrid">Context + tools</option>
-                <option value="context">Context only</option>
-                <option value="tools">Tools only</option>
-              </select>
-            </label>
-            <label>
-              <span>Session strategy</span>
-              <select
-                value={draft.sessionStrategy}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    sessionStrategy: event.target
-                      .value as HonchoMemoryConfiguration["sessionStrategy"],
-                  })
-                }
-              >
-                <option value="per-session">Per conversation</option>
-                <option value="per-project">Per project</option>
-                <option value="global">Global</option>
-              </select>
-            </label>
-            <label>
-              <span>Observation</span>
-              <select
-                value={draft.observationMode}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    observationMode: event.target
-                      .value as HonchoMemoryConfiguration["observationMode"],
-                  })
-                }
-              >
-                <option value="directional">Directional</option>
-                <option value="unified">Unified</option>
-              </select>
-            </label>
-            <label>
-              <span>Context tokens</span>
-              <input
-                type="number"
-                min={256}
-                max={16000}
-                value={draft.contextTokens}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    contextTokens: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <label>
-              <span>Context cadence</span>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={draft.contextCadence}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    contextCadence: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <label>
-              <span>Dialectic cadence</span>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={draft.dialecticCadence}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    dialecticCadence: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <label>
-              <span>Dialectic depth</span>
-              <select
-                value={draft.dialecticDepth}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    dialecticDepth: Number(
-                      event.target.value,
-                    ) as HonchoMemoryConfiguration["dialecticDepth"],
-                  })
-                }
-              >
-                <option value={1}>1 pass</option>
-                <option value={2}>2 passes</option>
-                <option value={3}>3 passes</option>
-              </select>
-            </label>
-            <label>
-              <span>Reasoning level</span>
-              <select
-                value={draft.dialecticReasoningLevel}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    dialecticReasoningLevel: event.target
-                      .value as HonchoMemoryConfiguration["dialecticReasoningLevel"],
-                  })
-                }
-              >
-                {["minimal", "low", "medium", "high", "max"].map((level) => (
-                  <option value={level} key={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Dialectic output characters</span>
-              <input
-                type="number"
-                min={100}
-                max={4000}
-                value={draft.dialecticMaxChars}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    dialecticMaxChars: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-          </div>
-          <label className="honcho-check">
-            <input
-              type="checkbox"
-              checked={draft.saveMessages}
-              onChange={(event) =>
-                setDraft({ ...draft, saveMessages: event.target.checked })
-              }
-            />
-            Save bounded user and assistant messages to Honcho
-          </label>
-          <label className="honcho-check">
-            <input
-              type="checkbox"
-              checked={draft.reasoningHeuristic}
-              onChange={(event) =>
-                setDraft({
-                  ...draft,
-                  reasoningHeuristic: event.target.checked,
-                })
-              }
-            />
-            Scale reasoning for longer queries, capped at high
-          </label>
-        </details>
+        <HonchoConfigurationForm draft={draft} setDraft={setDraft} />
 
         {!status.configuration.enabled && (
           <label className="honcho-check honcho-consent">
@@ -448,7 +232,9 @@ export function HonchoMemorySettings() {
         {error && <small role="alert">{error}</small>}
       </div>
       <div className="honcho-actions">
-        <span className={`status status-${status.state}`}>{status.state.replace("_", " ")}</span>
+        <span className={`status status-${status.state}`}>
+          {status.state.replace("_", " ")}
+        </span>
         {status.configuration.enabled ? (
           <>
             <button
@@ -485,5 +271,227 @@ export function HonchoMemorySettings() {
         <small>{status.syncedMessages} messages synced</small>
       </div>
     </article>
+  );
+}
+
+function HonchoConfigurationForm({
+  draft,
+  setDraft,
+}: {
+  draft: HonchoMemoryConfiguration;
+  setDraft: (draft: HonchoMemoryConfiguration) => void;
+}) {
+  return (
+    <details className="honcho-configuration">
+      <summary>Provider configuration and reasoning controls</summary>
+      <div className="honcho-form">
+        <label>
+          <span>Server URL</span>
+          <input
+            value={draft.baseUrl}
+            onChange={(event) =>
+              setDraft({ ...draft, baseUrl: event.target.value })
+            }
+          />
+        </label>
+        <label>
+          <span>Workspace ID</span>
+          <input
+            value={draft.workspaceId}
+            onChange={(event) =>
+              setDraft({ ...draft, workspaceId: event.target.value })
+            }
+          />
+        </label>
+        <label>
+          <span>User peer</span>
+          <input
+            value={draft.userPeerId}
+            onChange={(event) =>
+              setDraft({ ...draft, userPeerId: event.target.value })
+            }
+          />
+        </label>
+        <label>
+          <span>Agent peer</span>
+          <input
+            value={draft.agentPeerId}
+            onChange={(event) =>
+              setDraft({ ...draft, agentPeerId: event.target.value })
+            }
+          />
+        </label>
+        <label>
+          <span>Recall mode</span>
+          <select
+            value={draft.recallMode}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                recallMode: event.target
+                  .value as HonchoMemoryConfiguration["recallMode"],
+              })
+            }
+          >
+            <option value="hybrid">Context + tools</option>
+            <option value="context">Context only</option>
+            <option value="tools">Tools only</option>
+          </select>
+        </label>
+        <label>
+          <span>Session strategy</span>
+          <select
+            value={draft.sessionStrategy}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                sessionStrategy: event.target
+                  .value as HonchoMemoryConfiguration["sessionStrategy"],
+              })
+            }
+          >
+            <option value="per-session">Per conversation</option>
+            <option value="per-project">Per project</option>
+            <option value="global">Global</option>
+          </select>
+        </label>
+        <label>
+          <span>Observation</span>
+          <select
+            value={draft.observationMode}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                observationMode: event.target
+                  .value as HonchoMemoryConfiguration["observationMode"],
+              })
+            }
+          >
+            <option value="directional">Directional</option>
+            <option value="unified">Unified</option>
+          </select>
+        </label>
+        <label>
+          <span>Context tokens</span>
+          <input
+            type="number"
+            min={256}
+            max={16000}
+            value={draft.contextTokens}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                contextTokens: Number(event.target.value),
+              })
+            }
+          />
+        </label>
+        <label>
+          <span>Context cadence</span>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={draft.contextCadence}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                contextCadence: Number(event.target.value),
+              })
+            }
+          />
+        </label>
+        <label>
+          <span>Dialectic cadence</span>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={draft.dialecticCadence}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                dialecticCadence: Number(event.target.value),
+              })
+            }
+          />
+        </label>
+        <label>
+          <span>Dialectic depth</span>
+          <select
+            value={draft.dialecticDepth}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                dialecticDepth: Number(
+                  event.target.value,
+                ) as HonchoMemoryConfiguration["dialecticDepth"],
+              })
+            }
+          >
+            <option value={1}>1 pass</option>
+            <option value={2}>2 passes</option>
+            <option value={3}>3 passes</option>
+          </select>
+        </label>
+        <label>
+          <span>Reasoning level</span>
+          <select
+            value={draft.dialecticReasoningLevel}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                dialecticReasoningLevel: event.target
+                  .value as HonchoMemoryConfiguration["dialecticReasoningLevel"],
+              })
+            }
+          >
+            {["minimal", "low", "medium", "high", "max"].map((level) => (
+              <option value={level} key={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Dialectic output characters</span>
+          <input
+            type="number"
+            min={100}
+            max={4000}
+            value={draft.dialecticMaxChars}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                dialecticMaxChars: Number(event.target.value),
+              })
+            }
+          />
+        </label>
+      </div>
+      <label className="honcho-check">
+        <input
+          type="checkbox"
+          checked={draft.saveMessages}
+          onChange={(event) =>
+            setDraft({ ...draft, saveMessages: event.target.checked })
+          }
+        />
+        Save bounded user and assistant messages to Honcho
+      </label>
+      <label className="honcho-check">
+        <input
+          type="checkbox"
+          checked={draft.reasoningHeuristic}
+          onChange={(event) =>
+            setDraft({
+              ...draft,
+              reasoningHeuristic: event.target.checked,
+            })
+          }
+        />
+        Scale reasoning for longer queries, capped at high
+      </label>
+    </details>
   );
 }
