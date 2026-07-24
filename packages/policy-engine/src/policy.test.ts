@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { assessExternalContent, mayExecute } from "./index";
+import { assessExternalContent, mayExecute, approvalLevelForRisk } from "./index";
+import type { RiskLevel } from "@kestrel/shared-types";
+
+describe("approvalLevelForRisk", () => {
+  it("returns correct approval level for known risk levels", () => {
+    expect(approvalLevelForRisk("read_only")).toBe(0);
+    expect(approvalLevelForRisk("low")).toBe(1);
+    expect(approvalLevelForRisk("external")).toBe(2);
+    expect(approvalLevelForRisk("sensitive")).toBe(3);
+    expect(approvalLevelForRisk("high_consequence")).toBe(4);
+  });
+
+  it("returns undefined for unknown risk levels", () => {
+    // Edge case: when passed a value not in the RiskLevel enum
+    expect(approvalLevelForRisk("unknown_risk_level" as RiskLevel)).toBeUndefined();
+  });
+});
 
 describe("policy engine", () => {
   it("blocks injected external instructions", () => {
