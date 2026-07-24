@@ -7,6 +7,7 @@ import { GeminiGenerateContentProvider } from "./gemini-generate-content";
 import { ProviderPool } from "./provider-pool";
 import { createEnvironmentModelProviders } from "./environment";
 import { ModelProviderError, textContent, type ModelProvider } from "./types";
+import { OpenAIChatCompletionsProvider } from "./openai-chat-completions";
 
 const servers: Server[] = [];
 
@@ -42,6 +43,51 @@ describe("model provider adapters", () => {
       { id: "codex-subscription", model: "gpt-subscription", tools: false },
       { id: "claude-subscription", model: "opus", tools: false }
     ]);
+  });
+
+  it("registers free-tier OpenAI-compatible providers for automatic routing", () => {
+    const providers = createEnvironmentModelProviders({
+      NOUS_API_KEY: "nous-key", GROQ_API_KEY: "groq-key", MISTRAL_API_KEY: "mistral-key",
+      OPENROUTER_API_KEY: "openrouter-key", CLOUDFLARE_API_KEY: "cloudflare-key", CLOUDFLARE_ACCOUNT_ID: "account"
+    });
+    expect(providers.map((provider) => [provider.id, provider.defaultModel])).toEqual([
+      ["nous", "stepfun/step-3.7-flash:free"],
+      ["groq", "openai/gpt-oss-20b"],
+      ["mistral", "mistral-small-latest"],
+      ["openrouter", "openrouter/free"],
+      ["cloudflare", "@cf/openai/gpt-oss-20b"]
+    ]);
+  });
+
+  it("maps OpenAI-compatible chat streaming text, tool calls, and usage", async () => {
+    let body: Record<string, unknown> = {};
+    const baseUrl = await serve((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.end([
+          `data: ${JSON.stringify({ id: "chat-1", model: "free-model", choices: [{ delta: { content: "Free " } }] })}\n\n`,
+          `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call-1", function: { name: "workspace.read", arguments: "{\"path\":" } }] } }] })}\n\n`,
+          `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "\"README.md\"}" } }] }, finish_reason: "tool_calls" }] })}\n\n`,
+          `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 8, completion_tokens: 3 } })}\n\n`,
+          "data: [DONE]\n\n"
+        ].join(""));
+      });
+    });
+    const provider = new OpenAIChatCompletionsProvider({ id: "free", apiKey: "secret", defaultModel: "free-model", baseUrl });
+    const result = await provider.complete({
+      model: "free-model",
+      messages: [{ role: "user", content: textContent("Read") }],
+      tools: [{ name: "workspace.read", description: "Read", inputSchema: { type: "object" } }]
+    });
+    expect(body).toMatchObject({ model: "free-model", stream: true, stream_options: { include_usage: true } });
+    expect(result).toMatchObject({
+      providerId: "free", responseId: "chat-1", text: "Free ", finishReason: "tool_calls",
+      toolCalls: [{ id: "call-1", name: "workspace.read", arguments: { path: "README.md" } }],
+      usage: { inputTokens: 8, outputTokens: 3 }
+    });
   });
 
   it("verifies live provider credentials without sending a model prompt", async () => {

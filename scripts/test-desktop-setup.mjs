@@ -18,49 +18,91 @@ try {
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
   await page.waitForLoadState("domcontentloaded");
 
-  await page.getByRole("heading", { name: /Bring your models/ }).waitFor();
-  await page.getByRole("button", { name: "Set up Kestrel" }).click();
+  await page.getByRole("heading", { name: /Your work, in one place/ }).waitFor();
+  await page.getByRole("button", { name: "Continue" }).click();
   const continueButton = page.getByRole("button", { name: "Continue" });
   assert.equal(await continueButton.isDisabled(), true);
   await page.getByLabel("I understand these boundaries").check();
   assert.equal(await continueButton.isEnabled(), true);
 
   await page.reload();
-  await page.getByRole("heading", { name: "You stay in control." }).waitFor();
+  await page.getByRole("heading", { name: "Choose what stays on this Mac." }).waitFor();
   assert.equal(await page.getByLabel("I understand these boundaries").isChecked(), true);
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await page.getByRole("heading", { name: "Build your model stack." }).waitFor();
-  await page.getByRole("tab", { name: /Accounts/ }).waitFor();
-  await page.getByText("ChatGPT plan through Codex", { exact: true }).waitFor();
-  const openAiGroup = page.locator(".provider-group").filter({ hasText: "OpenAI API" });
-  await openAiGroup.getByLabel("Account 1").fill("test-openai-account-one");
-  await openAiGroup.getByRole("button", { name: "Save" }).first().click();
-  await openAiGroup.getByText("Connected", { exact: true }).waitFor();
-  await openAiGroup.getByLabel("Account 2").fill("test-openai-account-two");
-  await openAiGroup.getByRole("button", { name: "Save" }).click();
-  await page.waitForFunction(() => document.querySelectorAll(".provider-group:first-of-type .configured-account").length === 2);
-  await page.getByRole("tab", { name: /On this Mac/ }).click();
-  await page.getByRole("button", { name: "Set up local AI automatically" }).waitFor();
-  await page.getByRole("button", { name: "Set up manually" }).click();
-  await page.getByText("Manual local setup", { exact: true }).waitFor();
+  await page.getByRole("heading", { name: "How would you like to use AI?" }).waitFor();
+  await page.getByRole("button", { name: /Use my AI account/ }).click();
+  await page.getByRole("heading", { name: "Use an account you already have." }).waitFor();
+  await page.getByText("Choose a paid provider", { exact: true }).waitFor();
+  await page.getByRole("option", { name: /OpenAI/ }).waitFor();
+  await page.getByText("Codex CLI", { exact: true }).waitFor();
+  const openAiMethods = page.locator(".paid-provider-methods");
+  await openAiMethods.getByLabel("Account 1").fill("test-openai-account-one");
+  await openAiMethods.getByRole("button", { name: "Save" }).first().click();
+  await openAiMethods.getByText("Connected", { exact: true }).waitFor();
+  await openAiMethods.getByLabel("Account 2").fill("test-openai-account-two");
+  await openAiMethods.getByRole("button", { name: "Save" }).click();
+  await page.waitForFunction(() => document.querySelectorAll(".paid-provider-methods .configured-account").length === 2);
+  await page.getByRole("option", { name: /Anthropic/ }).click();
+  await page.getByText("Claude Code CLI", { exact: true }).waitFor();
+  await page.getByRole("option", { name: /Microsoft Azure/ }).click();
+  await page.getByText("Azure CLI / Entra ID", { exact: true }).waitFor();
+  await page.getByText("Adapter coming later", { exact: true }).first().waitFor();
+  await page.getByLabel("Find a provider").fill("Groq");
+  assert.equal(await page.getByRole("option").count(), 1);
+  await page.getByLabel("Find a provider").fill("");
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: /Keep it on this Mac/ }).click();
+  await page.getByRole("heading", { name: "Choose a local model." }).waitFor();
+  await page.getByText("Balanced is recommended for this Mac.", { exact: true }).waitFor();
+  await page.getByText("Light", { exact: true }).waitFor();
+  await page.getByText("Balanced", { exact: true }).waitFor();
+  await page.getByText("Power", { exact: true }).waitFor();
+  await page.getByText("Recommended", { exact: true }).waitFor();
+  assert.equal(
+    await page.locator(".model-tier-details").nth(1).evaluate((details) => details.open),
+    false,
+  );
+  await page.locator(".model-tier-details").nth(1).getByText("Details", { exact: true }).click();
+  await page.getByText("3.3 GB · 256K context", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Automatic setup", { exact: true }).count(), 0);
+  await page
+    .getByText("huihui_ai/qwen3.5-abliterated:4b", { exact: true })
+    .count()
+    .then((count) => assert.equal(count, 0));
+  assert.equal(await page.getByText("Fast path", { exact: true }).count(), 0);
+  assert.equal(
+    await page.getByText("Standard Qwen models", { exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.getByText("qwen3.5:9b", { exact: true }).count(),
+    0,
+  );
+  await page
+    .getByText(/These models use reduced filtering/)
+    .waitFor();
+  await page.getByRole("button", { name: /Manual setup/ }).click();
   await page.getByRole("link", { name: "Install Ollama from its official download" }).waitFor();
   await page.getByText("Any other Ollama model", { exact: true }).waitFor();
-  await page.getByRole("tab", { name: "More options" }).click();
-  await page.getByText("Not claimed as native yet", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Back" }).click();
+  await page.getByRole("button", { name: /Use free accounts/ }).click();
+  await page.getByRole("heading", { name: "Start with free provider accounts." }).waitFor();
+  await page.getByText("More ways to run models", { exact: true }).waitFor();
+  await page.getByRole("link", { name: /Hugging Face Inference Providers/ }).waitFor();
 
   await page.setViewportSize({ width: 640, height: 760 });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   assert.equal(overflow, false);
 
   await page.setViewportSize({ width: 1320, height: 860 });
-  assert.equal(await page.getByRole("button", { name: "Set up models later" }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Do this later" }).count(), 0);
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("heading", { name: /Kestrel is ready for a model|Your foundation is set/ }).waitFor();
-  await page.getByRole("button", { name: "Continue with setup assistant" }).click();
+  await page.getByRole("heading", { name: /Workstrand is ready|The workspace is ready/ }).waitFor();
+  await page.getByRole("button", { name: "Finish with help" }).click();
   await page.getByRole("button", { name: "New chat" }).waitFor();
-  const setupAssistantPrompt = await page.getByLabel("Message Kestrel").inputValue();
-  assert.match(setupAssistantPrompt, /Help me finish setting up Kestrel/);
+  const setupAssistantPrompt = await page.getByLabel("Message Workstrand").inputValue();
+  assert.match(setupAssistantPrompt, /Help me finish setting up Workstrand/);
   assert.match(setupAssistantPrompt, /Current non-secret setup state:/);
   assert.match(setupAssistantPrompt, /Protected API credentials configured:/);
   assert.match(setupAssistantPrompt, /Project access, tools\/MCP, skills\/plugins, channels, and automations/);
@@ -85,10 +127,10 @@ try {
   await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Open setup guide" }).click();
-  await page.getByRole("heading", { name: /Bring your models/ }).waitFor();
+  await page.getByRole("heading", { name: /Your work, in one place/ }).waitFor();
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), null);
   assert.deepEqual(runtimeErrors, []);
-  process.stdout.write("Four-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n");
+  process.stdout.write("Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n");
 } finally {
   await application?.close();
   rmSync(root, { recursive: true, force: true });

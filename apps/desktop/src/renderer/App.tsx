@@ -60,6 +60,11 @@ import { FloatingPet, PetSettings } from "./components/PetSettings";
 import { DashboardExtensions } from "./components/DashboardExtensions";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { EventApplications } from "./components/EventApplications";
+import {
+  memoryInGb,
+  recommendedLocalModelTiers,
+  supportedLocalModels,
+} from "./local-model-catalog";
 
 const pages = [
   ["home", "New chat"],
@@ -76,20 +81,10 @@ const pages = [
   ["settings", "Settings"],
 ] as const;
 type Page = (typeof pages)[number][0];
-const primaryPageIds: Page[] = ["approvals", "artifacts"];
-const secondaryPageIds: Page[] = [
-  "readiness",
-  "memory",
-  "research",
-  "work",
-  "events",
-  "activity",
-  "extensions",
-];
 type Thread = "new" | "teacher" | "dji";
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
-  "Help me finish setting up Kestrel. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings or Connections, or to provider-owned sign-in. Verify one working route before adding more.";
+  "Help me finish setting up Workstrand. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings or Connections, or to provider-owned sign-in. Verify one working route before adding more.";
 
 function setupAssistantState({
   credentials,
@@ -133,106 +128,118 @@ function modelLabel(model: ModelRoutingDecision["model"]): string {
 }
 
 const setupSteps = [
-  { label: "Welcome", detail: "What Kestrel does" },
-  { label: "Before you begin", detail: "Privacy, cost, and control" },
-  { label: "Your models", detail: "Accounts and local models" },
-  { label: "Ready", detail: "Finish the essentials" },
+  { label: "Welcome", icon: "welcome" },
+  { label: "Privacy", icon: "safety" },
+  { label: "Pick a model", icon: "models" },
+  { label: "Connect it", icon: "work" },
+  { label: "All set", icon: "ready" },
 ] as const;
 
-const localModelCatalog = [
+const paidProviderCatalog = [
   {
-    name: "qwen3.5:0.8b",
-    title: "Qwen 3.5 · Tiny",
-    size: "1.0 GB",
-    minimumMemory: 6,
-    description: "Fastest choice for short, lightweight tasks.",
-  },
-  {
-    name: "qwen3.5:2b",
-    title: "Qwen 3.5 · Small",
-    size: "2.7 GB",
-    minimumMemory: 8,
-    description: "A balanced starter for an 8 GB Mac.",
-  },
-  {
-    name: "qwen3.5:4b",
-    title: "Qwen 3.5 · Everyday",
-    size: "3.4 GB",
-    minimumMemory: 12,
-    description: "Good everyday quality without a large download.",
-  },
-  {
-    name: "qwen3.5:9b",
-    title: "Qwen 3.5 · Capable",
-    size: "6.6 GB",
-    minimumMemory: 16,
-    description: "Stronger reasoning and vision for modern laptops.",
-  },
-  {
-    name: "gemma4:12b",
-    title: "Gemma 4 · Multimodal",
-    size: "7.6 GB",
-    minimumMemory: 24,
-    description: "A capable local model for text and image work.",
-  },
-  {
-    name: "gpt-oss:20b",
-    title: "GPT-OSS · Reasoning",
-    size: "14 GB",
-    minimumMemory: 32,
-    description: "Open-weight reasoning and tool use on higher-memory Macs.",
-  },
-  {
-    name: "qwen3-coder:30b",
-    title: "Qwen 3 Coder · Large",
-    size: "19 GB",
-    minimumMemory: 48,
-    description: "Repository-scale coding for workstation-class memory.",
-  },
-] as const;
-
-const credentialGroups = [
-  {
-    name: "OpenAI API",
+    id: "openai",
+    name: "OpenAI",
     short: "OA",
-    note: "Pay-as-you-go API access. Add a second key for automatic failover.",
-    credentials: [
-      "openai",
-      "openai-secondary",
-    ] as BrokeredCredentialSummary["id"][],
+    category: "Model labs",
+    description: "GPT models through the API or your own ChatGPT-backed Codex login.",
+    methods: [
+      { id: "openai-api", label: "OpenAI API", kind: "api", note: "Pay-as-you-go API access with an optional backup key.", href: "https://platform.openai.com/api-keys", credentials: ["openai", "openai-secondary"] },
+      { id: "codex-cli", label: "Codex CLI", kind: "cli", cliId: "codex", note: "Uses the active vendor-owned ChatGPT/Codex login on this Mac." },
+    ],
   },
   {
-    name: "Anthropic API",
+    id: "anthropic",
+    name: "Anthropic",
     short: "AN",
-    note: "Claude API access, with an optional second account.",
-    credentials: [
-      "anthropic",
-      "anthropic-secondary",
-    ] as BrokeredCredentialSummary["id"][],
+    category: "Model labs",
+    description: "Claude models through the API or an existing Claude Code login.",
+    methods: [
+      { id: "anthropic-api", label: "Anthropic API", kind: "api", note: "Claude API access with an optional backup account.", href: "https://console.anthropic.com/settings/keys", credentials: ["anthropic", "anthropic-secondary"] },
+      { id: "claude-cli", label: "Claude Code CLI", kind: "cli", cliId: "claude", note: "Uses the active vendor-owned Claude Code login on this Mac." },
+    ],
+  },
+  { id: "google", name: "Google", short: "GO", category: "Model labs", description: "Gemini through AI Studio or enterprise Vertex AI.", methods: [
+    { id: "gemini-api", label: "Gemini API", kind: "api", note: "Google AI Studio API access.", href: "https://aistudio.google.com/app/apikey", credentials: ["gemini"] },
+    { id: "vertex", label: "Vertex AI", kind: "planned", note: "Google Cloud project credentials and regional Vertex endpoints." },
+  ] },
+  { id: "mistral", name: "Mistral AI", short: "MI", category: "Model labs", description: "Mistral and Codestral models through La Plateforme.", methods: [
+    { id: "mistral-api", label: "Mistral API", kind: "api", note: "Direct Mistral API access.", href: "https://console.mistral.ai/api-keys", credentials: ["mistral"] },
+  ] },
+  { id: "openrouter", name: "OpenRouter", short: "OR", category: "Gateways", description: "One account for models from many labs.", methods: [
+    { id: "openrouter-api", label: "OpenRouter API", kind: "api", note: "Connect a paid OpenRouter balance or eligible free routes.", href: "https://openrouter.ai/settings/keys", credentials: ["openrouter"] },
+  ] },
+  { id: "groq", name: "Groq", short: "GQ", category: "Inference clouds", description: "Low-latency hosted inference through GroqCloud.", methods: [
+    { id: "groq-api", label: "GroqCloud API", kind: "api", note: "Direct Groq API access.", href: "https://console.groq.com/keys", credentials: ["groq"] },
+  ] },
+  { id: "nous", name: "Nous Research", short: "NR", category: "Inference clouds", description: "Nous Portal hosted model access.", methods: [
+    { id: "nous-api", label: "Nous Portal API", kind: "api", note: "OpenAI-compatible access through Nous Portal.", href: "https://portal.nousresearch.com/", credentials: ["nous"] },
+  ] },
+  { id: "cloudflare", name: "Cloudflare", short: "CF", category: "Cloud platforms", description: "Workers AI models inside a Cloudflare account.", methods: [
+    { id: "cloudflare-api", label: "Workers AI API", kind: "api", note: "Requires an API token and account ID. Account-ID setup is not available in this screen yet.", href: "https://dash.cloudflare.com/profile/api-tokens", credentials: ["cloudflare"] },
+  ] },
+  { id: "azure", name: "Microsoft Azure", short: "AZ", category: "Cloud platforms", description: "Azure OpenAI and Azure AI Foundry deployments.", methods: [
+    { id: "azure-key", label: "Azure API key", kind: "planned", note: "Endpoint, deployment name, API version, and key." },
+    { id: "azure-identity", label: "Azure CLI / Entra ID", kind: "planned", note: "Uses your signed-in Azure identity without copying its token." },
+  ] },
+  { id: "bedrock", name: "Amazon Bedrock", short: "AWS", category: "Cloud platforms", description: "Foundation models through your AWS account.", methods: [
+    { id: "aws-profile", label: "AWS profile", kind: "planned", note: "Uses an AWS CLI profile and selected region." },
+    { id: "aws-keys", label: "AWS access keys", kind: "planned", note: "Access key, secret, optional session token, and region." },
+  ] },
+  { id: "xai", name: "xAI", short: "xAI", category: "Model labs", description: "Grok models through the xAI API.", methods: [{ id: "xai-api", label: "xAI API", kind: "api", note: "Direct xAI API key.", href: "https://console.x.ai/", credentials: ["xai"] }] },
+  { id: "deepseek", name: "DeepSeek", short: "DS", category: "Model labs", description: "DeepSeek chat and reasoning models.", methods: [{ id: "deepseek-api", label: "DeepSeek API", kind: "api", note: "Direct DeepSeek API key.", href: "https://platform.deepseek.com/api_keys", credentials: ["deepseek"] }] },
+  { id: "cohere", name: "Cohere", short: "CO", category: "Model labs", description: "Command and Embed models through Cohere.", methods: [{ id: "cohere-api", label: "Cohere API", kind: "planned", note: "Direct Cohere API key." }] },
+  { id: "together", name: "Together AI", short: "TO", category: "Inference clouds", description: "Hosted open models and dedicated endpoints.", methods: [{ id: "together-api", label: "Together API", kind: "api", note: "OpenAI-compatible Together API key.", href: "https://api.together.ai/settings/api-keys", credentials: ["together"] }] },
+  { id: "fireworks", name: "Fireworks AI", short: "FW", category: "Inference clouds", description: "Serverless and dedicated model inference.", methods: [{ id: "fireworks-api", label: "Fireworks API", kind: "api", note: "OpenAI-compatible Fireworks API key.", href: "https://app.fireworks.ai/users?tab=account", credentials: ["fireworks"] }] },
+  { id: "nvidia", name: "NVIDIA", short: "NV", category: "Inference clouds", description: "NIM inference endpoints and build.nvidia.com models.", methods: [{ id: "nvidia-api", label: "NVIDIA NIM API", kind: "api", note: "NVIDIA-hosted NIM API key.", href: "https://build.nvidia.com/", credentials: ["nvidia"] }] },
+  { id: "huggingface", name: "Hugging Face", short: "HF", category: "Gateways", description: "Inference Providers and dedicated endpoints.", methods: [{ id: "hf-token", label: "Hugging Face token", kind: "api", note: "User access token for routed inference.", href: "https://huggingface.co/settings/tokens", credentials: ["huggingface"] }] },
+  { id: "replicate", name: "Replicate", short: "RE", category: "Inference clouds", description: "Hosted public and private model deployments.", methods: [{ id: "replicate-token", label: "Replicate API token", kind: "planned", note: "Direct Replicate API token." }] },
+  { id: "perplexity", name: "Perplexity", short: "PX", category: "Model labs", description: "Search-grounded Sonar models through the API.", methods: [{ id: "perplexity-api", label: "Perplexity API", kind: "api", note: "Direct Perplexity API key.", href: "https://www.perplexity.ai/account/api/keys", credentials: ["perplexity"] }] },
+  { id: "github-models", name: "GitHub Models", short: "GH", category: "Gateways", description: "Model access governed by your GitHub account.", methods: [{ id: "github-token", label: "GitHub token", kind: "api", note: "Fine-grained GitHub token with Models access.", href: "https://github.com/settings/tokens", credentials: ["github-models"] }] },
+] as const;
+
+const freeCredentialGroups = [
+  {
+    name: "OpenRouter",
+    short: "OR",
+    note: "One key for its currently available free-model router.",
+    href: "https://openrouter.ai/settings/keys",
+    credentials: ["openrouter"] as BrokeredCredentialSummary["id"][],
+  },
+  {
+    name: "Groq Cloud",
+    short: "GQ",
+    note: "Fast free-tier inference. Automatically joins the fallback route.",
+    href: "https://console.groq.com/keys",
+    credentials: ["groq"] as BrokeredCredentialSummary["id"][],
   },
   {
     name: "Google Gemini",
     short: "GO",
-    note: "Google AI Studio API access.",
+    note: "Google AI Studio free-tier access. Automatically joins the fallback route.",
+    href: "https://aistudio.google.com/app/apikey",
     credentials: ["gemini"] as BrokeredCredentialSummary["id"][],
+  },
+  {
+    name: "Mistral",
+    short: "MI",
+    note: "Mistral API access. Current account limits and terms apply.",
+    href: "https://console.mistral.ai/api-keys",
+    credentials: ["mistral"] as BrokeredCredentialSummary["id"][],
   },
 ] as const;
 
-function memoryInGb(profile: SetupSystemProfile | null): number {
-  return profile ? Math.max(1, Math.round(profile.memoryBytes / 1024 ** 3)) : 0;
-}
-
-function recommendedLocalModel(profile: SetupSystemProfile | null) {
-  const memory = memoryInGb(profile);
-  const modelBudget =
-    memory >= 16 ? memory - 4 : memory >= 8 ? memory - 2 : memory;
-  return (
-    [...localModelCatalog]
-      .reverse()
-      .find((model) => modelBudget >= model.minimumMemory) ??
-    localModelCatalog[0]
-  );
-}
+const openAccessDirectory = [
+  {
+    name: "Hugging Face Inference Providers",
+    href: "https://huggingface.co/docs/inference-providers/index",
+    detail: "Official provider directory with a limited free tier for eligible accounts and models.",
+  },
+  {
+    name: "Ollama model library",
+    href: "https://ollama.com/library",
+    detail: "Free model downloads for a local Ollama runtime; inference stays on this Mac.",
+  },
+] as const;
 
 function compactBytes(value: number): string {
   if (value >= 1024 ** 3)
@@ -244,16 +251,19 @@ function Onboarding({ onDone }: { onDone(): void }) {
   const reduced = useReducedMotion();
   const [step, setStep] = useState(() =>
     Math.min(
-      3,
+      4,
       Math.max(0, Number(localStorage.getItem("kestrel:setup-step") ?? 0) || 0),
     ),
   );
   const [warningAccepted, setWarningAccepted] = useState(
     () => localStorage.getItem("kestrel:setup-warning") === "yes",
   );
-  const [modelView, setModelView] = useState<"accounts" | "local" | "more">(
+  const [modelView, setModelView] = useState<"accounts" | "local" | "open">(
     "accounts",
   );
+  const [providerQuery, setProviderQuery] = useState("");
+  const [selectedPaidProviderId, setSelectedPaidProviderId] =
+    useState<(typeof paidProviderCatalog)[number]["id"]>("openai");
   const [credentials, setCredentials] = useState<BrokeredCredentialSummary[]>(
     [],
   );
@@ -273,6 +283,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
   const [localProgress, setLocalProgress] =
     useState<LocalRuntimeProgress | null>(null);
   const [automaticBusy, setAutomaticBusy] = useState(false);
+  const [automaticModel, setAutomaticModel] = useState("");
   const [manualSetupOpen, setManualSetupOpen] = useState(false);
   const [localError, setLocalError] = useState("");
   const [downloading, setDownloading] = useState("");
@@ -347,9 +358,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
   }, []);
 
   function go(next: number) {
-    const bounded = Math.min(3, Math.max(0, next));
+    const bounded = Math.min(4, Math.max(0, next));
     localStorage.setItem("kestrel:setup-step", String(bounded));
     setStep(bounded);
+  }
+
+  function chooseModelAccess(view: "accounts" | "local" | "open") {
+    setModelView(view);
+    go(3);
   }
 
   async function saveCredential(credentialId: BrokeredCredentialSummary["id"]) {
@@ -416,6 +432,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
   async function bootstrapLocal(model: string) {
     setAutomaticBusy(true);
+    setAutomaticModel(model);
     setLocalError("");
     setLocalProgress(null);
     try {
@@ -443,6 +460,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
       );
     } finally {
       setAutomaticBusy(false);
+      setAutomaticModel("");
     }
   }
 
@@ -556,16 +574,43 @@ function Onboarding({ onDone }: { onDone(): void }) {
         "anthropic",
         "anthropic-secondary",
         "gemini",
+        "openrouter",
+        "groq",
+        "mistral",
+        "nous",
+        "cloudflare",
+        "xai",
+        "deepseek",
+        "together",
+        "fireworks",
+        "nvidia",
+        "huggingface",
+        "perplexity",
+        "github-models",
       ].includes(credential.id),
     ) ||
     localModels.length > 0 ||
     subscriptionClis.some((cli) => cli.enabled);
   const verifiedModelReady = providerChecks.some((check) => check.ok);
-  const recommendation = recommendedLocalModel(systemProfile);
+  const recommendedTiers = recommendedLocalModelTiers(systemProfile);
+  const compatibleLocalModels = supportedLocalModels(systemProfile);
+  const matchingPaidProviders = paidProviderCatalog.filter((provider) => {
+    const query = providerQuery.trim().toLocaleLowerCase();
+    return (
+      !query ||
+      provider.name.toLocaleLowerCase().includes(query) ||
+      provider.category.toLocaleLowerCase().includes(query) ||
+      provider.description.toLocaleLowerCase().includes(query)
+    );
+  });
+  const selectedPaidProvider =
+    paidProviderCatalog.find(
+      (provider) => provider.id === selectedPaidProviderId,
+    ) ?? paidProviderCatalog[0];
 
   useEffect(() => {
     if (
-      step === 3 &&
+      step === 4 &&
       modelReady &&
       providerChecks.length === 0 &&
       !providerCheckBusy &&
@@ -577,12 +622,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
   return (
     <main className="onboarding setup-onboarding">
       <header className="onboarding-bar">
-        <Brand />
-        <span>Private setup · about 3 minutes</span>
-      </header>
-      <div className="setup-body">
         <nav className="setup-rail" aria-label="Setup progress">
-          <p>Set up Kestrel</p>
           <ol>
             {setupSteps.map((item, index) => (
               <li
@@ -593,24 +633,20 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   onClick={() => index < step && go(index)}
                   disabled={index > step}
                   aria-current={index === step ? "step" : undefined}
-                >
-                  <span>{index < step ? "✓" : index + 1}</span>
+                  >
                   <span>
-                    <strong>{item.label}</strong>
-                    <small>{item.detail}</small>
+                    <Icon name={index < step ? "check" : item.icon} />
                   </span>
-                </button>
+                    <span>
+                      <strong>{item.label}</strong>
+                    </span>
+                  </button>
               </li>
             ))}
           </ol>
-          <div className="setup-local-note">
-            <span className="agent-dot idle" />
-            <span>
-              <strong>Stored on this Mac</strong>
-              <small>Secrets use macOS secure storage.</small>
-            </span>
-          </div>
         </nav>
+      </header>
+      <div className="setup-body">
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
             key={step}
@@ -622,41 +658,37 @@ function Onboarding({ onDone }: { onDone(): void }) {
           >
             {step === 0 && (
               <div className="setup-welcome">
-                <span className="step-count">Welcome to Kestrel</span>
                 <h1>
-                  Bring your models.
+                  Your work, in one place
                   <br />
-                  Keep one calm workspace.
+                  with you in control.
                 </h1>
                 <p>
-                  Connect the AI accounts you already use, add a private model
-                  that runs on this Mac, or combine both. Kestrel can choose
-                  the best available route and fall back when one is busy.
+                  Workstrand can work across a project, your tools, and the
+                  services you connect. You choose what it can see, which model
+                  it uses, and what needs your approval.
                 </p>
-                <div className="welcome-stack" aria-label="Example model stack">
+                <div className="welcome-stack" aria-label="How Kestrel works">
                   <div>
-                    <span>1</span>
+                    <span><Icon name="research" /></span>
                     <span>
-                      <strong>Everyday model</strong>
-                      <small>Your usual cloud account</small>
+                      <strong>Start with the outcome</strong>
+                      <small>Describe what you need instead of configuring a workflow.</small>
                     </span>
-                    <b>Primary</b>
                   </div>
                   <div>
-                    <span>2</span>
+                    <span><Icon name="work" /></span>
                     <span>
-                      <strong>Second account</strong>
-                      <small>Optional automatic backup</small>
+                      <strong>Review the work as it happens</strong>
+                      <small>See progress, decisions, and files in the same conversation.</small>
                     </span>
-                    <b>Fallback</b>
                   </div>
                   <div>
-                    <span>3</span>
+                    <span><Icon name="approvals" /></span>
                     <span>
-                      <strong>Local model</strong>
-                      <small>Private and available offline</small>
+                      <strong>Approve important actions</strong>
+                      <small>Sending, publishing, deleting, and spending wait for you.</small>
                     </span>
-                    <b>On device</b>
                   </div>
                 </div>
               </div>
@@ -664,41 +696,42 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
             {step === 1 && (
               <div className="setup-warning">
-                <span className="step-count">Before you begin</span>
-                <h1>You stay in control.</h1>
+                <h1>Choose what stays on this Mac.</h1>
                 <p>
-                  Kestrel can prepare powerful work, so these boundaries are
-                  worth knowing once.
+                  Workstrand asks before sensitive actions. The model and
+                  services you connect still determine where task data goes.
                 </p>
                 <div className="warning-panel">
                   <div>
                     <span>01</span>
                     <div>
-                      <strong>Cloud models can cost money</strong>
+                      <strong>Cloud models receive the context you send</strong>
                       <p>
-                        API providers bill your account. Kestrel shows usage
-                        estimates and respects the budget limits you set.
+                        Prompts, selected file excerpts, and tool results may go
+                        to that provider under its retention and training terms.
+                        Use a local model for work that must stay on this Mac.
                       </p>
                     </div>
                   </div>
                   <div>
                     <span>02</span>
                     <div>
-                      <strong>Local is private, not magic</strong>
+                      <strong>Provider and tool usage can create charges</strong>
                       <p>
-                        Local models keep prompts on this Mac, but they can be
-                        slower and may be less capable than larger cloud models.
+                        API calls, media generation, search, storage, and other
+                        connected services can bill their own accounts. Budgets
+                        reduce risk; they do not replace provider billing controls.
                       </p>
                     </div>
                   </div>
                   <div>
                     <span>03</span>
                     <div>
-                      <strong>Consequential actions pause</strong>
+                      <strong>Approval protects actions, not perfect output</strong>
                       <p>
-                        Sending messages, publishing, deleting, and other
-                        sensitive actions stop for a clear preview and your
-                        approval.
+                        Sending, publishing, deleting, purchasing, and permission
+                        changes pause for review. You still need to verify factual,
+                        legal, financial, or safety-critical content.
                       </p>
                     </div>
                   </div>
@@ -706,11 +739,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     <span>04</span>
                     <div>
                       <strong>
-                        Permissions are requested only when needed
+                        Connections widen what the agent can see
                       </strong>
                       <p>
-                        Folders, microphone, screen recording, and other macOS
-                        access stay off until a feature actually needs them.
+                        Grant only the folders, accounts, microphone, browser,
+                        and screen access a task needs. Credentials are protected,
+                        but approved tools can act with the access you give them.
                       </p>
                     </div>
                   </div>
@@ -738,193 +772,251 @@ function Onboarding({ onDone }: { onDone(): void }) {
               </div>
             )}
 
-            {step === 2 && (
+            {(step === 2 || step === 3) && (
               <div className="setup-models">
                 <header>
-                  <span className="step-count">Your models</span>
-                  <h1>Build your model stack.</h1>
+                  <h1>
+                    {step === 2
+                      ? "How would you like to use AI?"
+                      : modelView === "accounts"
+                        ? "Use an account you already have."
+                        : modelView === "local"
+                          ? "Choose a local model."
+                          : "Start with free provider accounts."}
+                  </h1>
                   <p>
-                    One model is enough. Add more only if you want choice or a
-                    backup.
+                    {step === 2
+                      ? "Choose the option that feels simplest. You can add another one later."
+                      : modelView === "accounts"
+                        ? "Sign in with a supported subscription, or add an API key from your provider."
+                        : modelView === "local"
+                          ? "Balanced is recommended for this Mac."
+                          : "Add any free accounts you want to use. Workstrand can switch between the ones you connect."}
                   </p>
                 </header>
-                <div
-                  className="model-tabs"
-                  role="tablist"
-                  aria-label="Model setup"
-                >
+                {step === 2 && (
+                <div className="model-source-picker" aria-label="Model access choices">
                   <button
-                    role="tab"
-                    aria-selected={modelView === "accounts"}
-                    onClick={() => setModelView("accounts")}
+                    onClick={() => chooseModelAccess("accounts")}
                   >
-                    Accounts <span>{configuredCredentials.length || ""}</span>
+                    <span className="source-glyph" aria-hidden="true">☁</span>
+                    <strong>Use my AI account</strong>
+                    <small>
+                      OpenAI, Anthropic, and other providers.
+                    </small>
+                    <b>{configuredCredentials.length ? `${configuredCredentials.length} connected` : "Choose a provider"}</b>
                   </button>
                   <button
-                    role="tab"
-                    aria-selected={modelView === "local"}
-                    onClick={() => setModelView("local")}
+                    onClick={() => chooseModelAccess("local")}
                   >
-                    On this Mac <span>{localModels.length || ""}</span>
+                    <span className="source-glyph" aria-hidden="true">⌁</span>
+                    <strong>Keep it on this Mac</strong>
+                    <small>
+                      Download a model that can work offline.
+                    </small>
+                    <b>{localModels.length ? `${localModels.length} installed` : "No account needed"}</b>
                   </button>
                   <button
-                    role="tab"
-                    aria-selected={modelView === "more"}
-                    onClick={() => setModelView("more")}
+                    onClick={() => chooseModelAccess("open")}
                   >
-                    More options
+                    <span className="source-glyph" aria-hidden="true">◎</span>
+                    <strong>Use free accounts</strong>
+                    <small>
+                      Connect one or more providers with free access.
+                    </small>
+                    <b>Four supported options</b>
                   </button>
                 </div>
+                )}
 
-                {modelView === "accounts" && (
-                  <div className="account-setup" role="tabpanel">
-                    <div className="subscription-routes">
-                      {subscriptionClis.map((cli) => (
-                        <aside className="subscription-note" key={cli.id}>
-                          <span className="provider-monogram">
-                            {cli.id === "codex" ? "C" : "CL"}
-                          </span>
-                          <div>
-                            <strong>{cli.label}</strong>
-                            <p>
-                              {cli.detail} Kestrel never reads or copies the
-                              vendor's login token.
-                            </p>
-                          </div>
-                          {cli.detected ? (
-                            cli.id === "codex" && !cli.authenticated ? (
-                              <button
-                                className="button primary"
-                                disabled={
-                                  Boolean(subscriptionBusy) &&
-                                  subscriptionBusy !== "chatgpt-oauth"
-                                }
-                                onClick={() => void connectChatGpt()}
-                              >
-                                {subscriptionBusy === "chatgpt-oauth"
-                                  ? "Cancel sign-in"
-                                  : "Sign in with ChatGPT"}
-                              </button>
-                            ) : (
-                              <button
-                                className={
-                                  cli.enabled
-                                    ? "button secondary"
-                                    : "button primary"
-                                }
-                                disabled={Boolean(subscriptionBusy)}
-                                onClick={() =>
-                                  void toggleSubscription(cli.id, !cli.enabled)
-                                }
-                              >
-                                {subscriptionBusy === cli.id
-                                  ? "Updating…"
-                                  : cli.enabled
-                                    ? "Disable"
-                                    : "Use this login"}
-                              </button>
-                            )
-                          ) : (
-                            <span className="honest-status">Not found</span>
-                          )}
-                        </aside>
-                      ))}
-                      {subscriptionClis.length === 0 && (
-                        <aside className="subscription-note">
-                          <span className="provider-monogram">C</span>
-                          <div>
-                            <strong>Checking existing subscriptions</strong>
-                            <p>
-                              Looking only for vendor-owned Codex and Claude
-                              Code installations on this Mac.
-                            </p>
-                          </div>
-                          <span className="honest-status">Checking</span>
-                        </aside>
-                      )}
+                {step === 3 && modelView === "accounts" && (
+                  <div
+                    className="account-setup"
+                    role="tabpanel"
+                    aria-label="External providers"
+                  >
+                    <div className="provider-parity">
+                      <div>
+                        <span>
+                          <strong>Choose a paid provider</strong>
+                          <small>Then choose how your own account connects.</small>
+                        </span>
+                        <span className="honest-status">Private by default</span>
+                      </div>
                     </div>
-                    <p className="account-intro">
-                      API keys are different from ChatGPT or Claude
-                      subscriptions. They are billed separately by the provider.
-                    </p>
-                    <div className="provider-groups">
-                      {credentialGroups.map((group) => (
-                        <section key={group.name} className="provider-group">
-                          <div className="provider-heading">
-                            <span className="provider-monogram">
-                              {group.short}
-                            </span>
-                            <div>
-                              <strong>{group.name}</strong>
-                              <p>{group.note}</p>
-                            </div>
-                          </div>
-                          {group.credentials.map(
-                            (credentialId, accountIndex) => {
-                              const credential = credentials.find(
-                                (item) => item.id === credentialId,
+                    <div className="paid-provider-browser">
+                      <aside className="paid-provider-directory">
+                        <label htmlFor="paid-provider-search">Find a provider</label>
+                        <input
+                          id="paid-provider-search"
+                          type="search"
+                          value={providerQuery}
+                          placeholder="Search OpenAI, Azure, Groq…"
+                          onChange={(event) => setProviderQuery(event.target.value)}
+                        />
+                        <div role="listbox" aria-label="Paid AI providers">
+                          {matchingPaidProviders.map((provider) => {
+                            const configured = provider.methods.some(
+                              (method) =>
+                                "credentials" in method &&
+                                method.credentials.some((id) =>
+                                  credentials.some(
+                                    (credential) =>
+                                      credential.id === id &&
+                                      credential.configured,
+                                  ),
+                                ),
+                            );
+                            return (
+                              <button
+                                key={provider.id}
+                                role="option"
+                                aria-selected={provider.id === selectedPaidProvider.id}
+                                onClick={() => setSelectedPaidProviderId(provider.id)}
+                              >
+                                <span className="provider-monogram">{provider.short}</span>
+                                <span>
+                                  <strong>{provider.name}</strong>
+                                  <small>{provider.category}</small>
+                                </span>
+                                {configured && <b>Connected</b>}
+                              </button>
+                            );
+                          })}
+                          {matchingPaidProviders.length === 0 && (
+                            <p>No providers match “{providerQuery}”.</p>
+                          )}
+                        </div>
+                      </aside>
+                      <section
+                        className="paid-provider-methods"
+                        aria-labelledby="selected-provider-name"
+                      >
+                        <header>
+                          <span className="provider-monogram">
+                            {selectedPaidProvider.short}
+                          </span>
+                          <span>
+                            <strong id="selected-provider-name">
+                              {selectedPaidProvider.name}
+                            </strong>
+                            <small>{selectedPaidProvider.description}</small>
+                          </span>
+                        </header>
+                        <p className="account-intro">
+                          Choose a connection method. API usage and subscriptions
+                          are separate products billed by the provider.
+                        </p>
+                        <div className="connection-method-list">
+                          {selectedPaidProvider.methods.map((method) => {
+                            if (method.kind === "cli") {
+                              const cli = subscriptionClis.find(
+                                (item) => item.id === method.cliId,
                               );
                               return (
-                                <div
-                                  className="account-slot"
-                                  key={credentialId}
-                                >
-                                  <label htmlFor={`setup-${credentialId}`}>
-                                    <span>
-                                      {group.credentials.length > 1
-                                        ? `Account ${accountIndex + 1}`
-                                        : "API key"}
-                                    </span>
-                                    <small>
-                                      {credential?.configured
-                                        ? "Protected and ready"
-                                        : accountIndex === 0
-                                          ? "Not connected"
-                                          : "Optional backup"}
-                                    </small>
-                                  </label>
-                                  {credential?.configured ? (
-                                    <span className="configured-account">
-                                      <span className="agent-dot idle" />
-                                      Connected
-                                    </span>
-                                  ) : (
-                                    <>
-                                      <input
-                                        id={`setup-${credentialId}`}
-                                        type="password"
-                                        autoComplete="off"
-                                        spellCheck={false}
-                                        value={
-                                          credentialValues[credentialId] ?? ""
-                                        }
-                                        placeholder="Paste API key"
-                                        onChange={(event) =>
-                                          setCredentialValues((current) => ({
-                                            ...current,
-                                            [credentialId]: event.target.value,
-                                          }))
-                                        }
-                                      />
+                                <article className="connection-method" key={method.id}>
+                                  <div>
+                                    <strong>{method.label}</strong>
+                                    <p>{method.note} Workstrand never copies the vendor login token.</p>
+                                  </div>
+                                  {!cli ? (
+                                    <span className="honest-status">Checking</span>
+                                  ) : cli.detected ? (
+                                    cli.id === "codex" && !cli.authenticated ? (
                                       <button
-                                        className="button secondary"
-                                        disabled={Boolean(credentialBusy)}
-                                        onClick={() =>
-                                          void saveCredential(credentialId)
-                                        }
+                                        className="button primary"
+                                        disabled={Boolean(subscriptionBusy) && subscriptionBusy !== "chatgpt-oauth"}
+                                        onClick={() => void connectChatGpt()}
                                       >
-                                        {credentialBusy === credentialId
-                                          ? "Saving…"
-                                          : "Save"}
+                                        {subscriptionBusy === "chatgpt-oauth" ? "Cancel sign-in" : "Sign in with ChatGPT"}
                                       </button>
-                                    </>
+                                    ) : (
+                                      <button
+                                        className={cli.enabled ? "button secondary" : "button primary"}
+                                        disabled={Boolean(subscriptionBusy)}
+                                        onClick={() => void toggleSubscription(cli.id, !cli.enabled)}
+                                      >
+                                        {subscriptionBusy === cli.id ? "Updating…" : cli.enabled ? "Disable" : "Use this login"}
+                                      </button>
+                                    )
+                                  ) : (
+                                    <span className="honest-status">CLI not found</span>
                                   )}
-                                </div>
+                                </article>
                               );
-                            },
-                          )}
-                        </section>
-                      ))}
+                            }
+                            if (method.kind === "planned") {
+                              return (
+                                <article className="connection-method unavailable" key={method.id}>
+                                  <div>
+                                    <strong>{method.label}</strong>
+                                    <p>{method.note}</p>
+                                  </div>
+                                  <span className="honest-status">Adapter coming later</span>
+                                </article>
+                              );
+                            }
+                            return (
+                              <article className="connection-method api-method" key={method.id}>
+                                <div className="method-heading">
+                                  <div>
+                                    <strong>{method.label}</strong>
+                                    <p>{method.note}</p>
+                                  </div>
+                                  <a href={method.href} target="_blank" rel="noreferrer">
+                                    Get API key ↗
+                                  </a>
+                                </div>
+                                {method.credentials.map((rawId, accountIndex) => {
+                                  const credentialId =
+                                    rawId as BrokeredCredentialSummary["id"];
+                                  const credential = credentials.find(
+                                    (item) => item.id === credentialId,
+                                  );
+                                  return (
+                                    <div className="account-slot" key={credentialId}>
+                                      <label htmlFor={`setup-${credentialId}`}>
+                                        <span>{method.credentials.length > 1 ? `Account ${accountIndex + 1}` : "API key"}</span>
+                                        <small>{credential?.configured ? "Protected and ready" : accountIndex === 0 ? "Not connected" : "Optional backup"}</small>
+                                      </label>
+                                      {credential?.configured ? (
+                                        <span className="configured-account">
+                                          <span className="agent-dot idle" />
+                                          Connected
+                                        </span>
+                                      ) : (
+                                        <>
+                                          <input
+                                            id={`setup-${credentialId}`}
+                                            type="password"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={credentialValues[credentialId] ?? ""}
+                                            placeholder="Paste API key"
+                                            onChange={(event) =>
+                                              setCredentialValues((current) => ({
+                                                ...current,
+                                                [credentialId]: event.target.value,
+                                              }))
+                                            }
+                                          />
+                                          <button
+                                            className="button secondary"
+                                            disabled={Boolean(credentialBusy)}
+                                            onClick={() => void saveCredential(credentialId)}
+                                          >
+                                            {credentialBusy === credentialId ? "Saving…" : "Save"}
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </article>
+                            );
+                          })}
+                        </div>
+                      </section>
                     </div>
                     {credentialError && (
                       <p className="setup-error" role="alert">
@@ -934,7 +1026,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   </div>
                 )}
 
-                {modelView === "local" && (
+                {step === 3 && modelView === "local" && (
                   <div className="local-model-setup" role="tabpanel">
                     <div className="device-fit">
                       <div>
@@ -942,149 +1034,154 @@ function Onboarding({ onDone }: { onDone(): void }) {
                         <span>
                           <strong>
                             {systemProfile
-                              ? `${memoryInGb(systemProfile)} GB ${systemProfile.architecture}`
+                              ? `${memoryInGb(systemProfile)} GB ${systemProfile.architecture === "arm64" ? "Apple Silicon Mac" : `${systemProfile.architecture} Mac`}`
                               : "Checking this Mac…"}
                           </strong>
                           <small>
                             {systemProfile
-                              ? `${systemProfile.logicalCpus} logical CPU cores · recommendation is based on memory`
-                              : "Reading non-secret device capacity"}
+                              ? "Your device"
+                              : "Checking device capacity"}
                           </small>
                         </span>
                       </div>
-                      <div>
-                        <span>Recommended</span>
-                        <strong>{recommendation.title}</strong>
-                        <small>{recommendation.size} download</small>
-                      </div>
                     </div>
-                    {!ollamaAvailable && (
-                      <section className="local-bootstrap">
-                        <div className="local-bootstrap-copy">
-                          <span>Fast path</span>
-                          <strong>
-                            Set up a private local AI automatically
-                          </strong>
-                          <p>
-                            Kestrel downloads the pinned Ollama{" "}
-                            {localRuntime?.runtimeVersion ?? "runtime"} release
-                            from GitHub, verifies its SHA-256 checksum, installs
-                            it only inside Kestrel data, starts it on this
-                            Mac, downloads {recommendation.title}, and proves it
-                            with one real response.
-                          </p>
-                          <small>
-                            {localRuntime
-                              ? compactBytes(localRuntime.runtimeDownloadBytes)
-                              : "About 140 MB"}{" "}
-                            runtime + {recommendation.size} model · no
-                            administrator password · cancellable and retryable
-                          </small>
+                    {recommendedTiers.length > 0 && (
+                      <section
+                        className="recommended-model-tiers"
+                        aria-label="Local model sizes"
+                      >
+                        <div className="model-tier-grid">
+                          {recommendedTiers.map((model, index) => {
+                            const installed = localModels.some(
+                              (item) =>
+                                item.name === model.name ||
+                                item.name === `${model.name}:latest`,
+                            );
+                            const tier =
+                              index === 0
+                                ? { name: "Light" }
+                                : index === recommendedTiers.length - 1
+                                  ? { name: "Power" }
+                                  : { name: "Balanced" };
+                            return (
+                              <article
+                                key={model.name}
+                                className={
+                                  tier.name === "Balanced" ? "preferred" : ""
+                                }
+                              >
+                                <div className="model-tier-name">
+                                  <strong>{tier.name}</strong>
+                                  {tier.name === "Balanced" && (
+                                    <span>Recommended</span>
+                                  )}
+                                </div>
+                                <p>{model.description}</p>
+                                <details className="model-tier-details">
+                                  <summary>Details</summary>
+                                  <dl>
+                                    <div>
+                                      <dt>Model</dt>
+                                      <dd>{model.title}</dd>
+                                    </div>
+                                    <div>
+                                      <dt>Best for</dt>
+                                      <dd>{model.bestFor}</dd>
+                                    </div>
+                                    <div>
+                                      <dt>Requirements</dt>
+                                      <dd>
+                                        {model.speed} · {model.minimumMemory} GB+
+                                        usable memory
+                                      </dd>
+                                    </div>
+                                    <div>
+                                      <dt>Download</dt>
+                                      <dd>
+                                        {model.size} · {model.contextLength} context
+                                      </dd>
+                                    </div>
+                                  </dl>
+                                </details>
+                                {installed ? (
+                                  <span className="installed-model">
+                                    <span className="agent-dot idle" />
+                                    Installed
+                                  </span>
+                                ) : (
+                                  <button
+                                    className={`button ${tier.name === "Balanced" ? "primary" : "secondary"}`}
+                                    disabled={
+                                      automaticBusy ||
+                                      Boolean(downloading) ||
+                                      (!ollamaAvailable &&
+                                        localRuntime?.automaticSupported ===
+                                          false)
+                                    }
+                                    onClick={() =>
+                                      ollamaAvailable
+                                        ? void downloadModel(model.name)
+                                        : void bootstrapLocal(model.name)
+                                    }
+                                  >
+                                    {automaticBusy &&
+                                    automaticModel === model.name
+                                      ? "Setting up…"
+                                      : downloading === model.name
+                                        ? "Downloading…"
+                                        : tier.name === "Balanced"
+                                          ? `Install recommended · ${model.size}`
+                                          : `Install ${tier.name.toLowerCase()} · ${model.size}`}
+                                  </button>
+                                )}
+                              </article>
+                            );
+                          })}
                         </div>
-                        {localProgress && automaticBusy && (
-                          <div
-                            className="local-bootstrap-progress"
-                            role="status"
-                            aria-live="polite"
-                          >
-                            <div>
-                              <strong>{localProgress.message}</strong>
-                              <span>
-                                {localProgress.percent !== undefined
-                                  ? `${Math.round(localProgress.percent)}%`
-                                  : "Working"}
-                              </span>
-                            </div>
-                            <progress
-                              max="100"
-                              value={localProgress.percent ?? undefined}
-                            />
-                            {localProgress.downloadedBytes !== undefined && (
-                              <small>
-                                {compactBytes(localProgress.downloadedBytes)}
-                                {localProgress.totalBytes
-                                  ? ` of ${compactBytes(localProgress.totalBytes)}`
-                                  : ""}
-                              </small>
-                            )}
-                          </div>
-                        )}
-                        <div className="button-row">
-                          <button
-                            className="button primary"
-                            disabled={
-                              automaticBusy ||
-                              localRuntime?.automaticSupported === false
-                            }
-                            onClick={() =>
-                              void bootstrapLocal(recommendation.name)
-                            }
-                          >
-                            {automaticBusy
-                              ? "Setting up local AI…"
-                              : "Set up local AI automatically"}
-                          </button>
-                          {automaticBusy ? (
-                            <button
-                              className="button secondary"
-                              onClick={() => void cancelLocalSetup()}
-                            >
-                              Cancel
-                            </button>
-                          ) : (
-                            <button
-                              className="button secondary"
-                              aria-expanded={manualSetupOpen}
-                              onClick={() =>
-                                setManualSetupOpen((current) => !current)
-                              }
-                            >
-                              Set up manually
-                            </button>
-                          )}
-                        </div>
-                        {localRuntime?.automaticSupported === false && (
-                          <p className="setup-error" role="status">
-                            Automatic installation is not available on this
-                            device yet. The manual path still works with any
-                            reachable Ollama service.
-                          </p>
-                        )}
-                        {manualSetupOpen && (
-                          <div className="manual-local-setup">
-                            <strong>Manual local setup</strong>
-                            <ol>
-                              <li>
-                                <a
-                                  href="https://ollama.com/download"
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  Install Ollama from its official download
-                                </a>{" "}
-                                or start an existing Ollama service on{" "}
-                                <code>127.0.0.1:11434</code>.
-                              </li>
-                              <li>
-                                Return here and choose <b>Check again</b>.
-                                Kestrel will never run a shell installer
-                                copied from the web.
-                              </li>
-                              <li>
-                                Pick any model below. The model is not marked
-                                ready until the local service lists it.
-                              </li>
-                            </ol>
-                            <button
-                              className="button secondary"
-                              onClick={() => void loadLocalModels()}
-                            >
-                              Check again
-                            </button>
-                          </div>
-                        )}
                       </section>
                     )}
+                    {localProgress && automaticBusy && (
+                      <div
+                        className="local-bootstrap-progress"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <div>
+                          <strong>{localProgress.message}</strong>
+                          <span>
+                            {localProgress.percent !== undefined
+                              ? `${Math.round(localProgress.percent)}%`
+                              : "Working"}
+                          </span>
+                        </div>
+                        <progress
+                          max="100"
+                          value={localProgress.percent ?? undefined}
+                        />
+                        {localProgress.downloadedBytes !== undefined && (
+                          <small>
+                            {compactBytes(localProgress.downloadedBytes)}
+                            {localProgress.totalBytes
+                              ? ` of ${compactBytes(localProgress.totalBytes)}`
+                              : ""}
+                          </small>
+                        )}
+                        <button
+                          className="button secondary"
+                          onClick={() => void cancelLocalSetup()}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                    {!ollamaAvailable &&
+                      localRuntime?.automaticSupported === false && (
+                        <p className="setup-error" role="status">
+                          One-click installation is not available on this
+                          device yet. Manual setup below works with any
+                          reachable Ollama service.
+                        </p>
+                      )}
                     {ollamaAvailable && (
                       <div className="local-runtime-ready" role="status">
                         <span className="agent-dot idle" />
@@ -1101,170 +1198,243 @@ function Onboarding({ onDone }: { onDone(): void }) {
                               ? `A real response completed ${localRuntime.verifiedAt ? new Date(localRuntime.verifiedAt).toLocaleString() : "during setup"}.`
                               : localRuntime?.managedRuntime
                                 ? `Ollama ${localRuntime.runtimeVersion ?? ""} is contained inside Kestrel data.`
-                                : "Kestrel will use this service without changing its installation."}
+                                : "Workstrand will use this service without changing its installation."}
                           </small>
                         </span>
                       </div>
                     )}
-                    <div className="model-library">
-                      {localModelCatalog.map((model) => {
-                        const installed = localModels.some(
-                          (item) =>
-                            item.name === model.name ||
-                            item.name === `${model.name}:latest`,
-                        );
-                        const fits =
-                          memoryInGb(systemProfile) >= model.minimumMemory;
-                        const recommended = model.name === recommendation.name;
-                        return (
-                          <article
-                            key={model.name}
-                            className={recommended ? "recommended" : ""}
-                          >
-                            <div>
-                              <strong>{model.title}</strong>
-                              <code>{model.name}</code>
-                              <p>{model.description}</p>
-                              <small>
-                                {model.size} · {model.minimumMemory} GB memory
-                                suggested
-                                {recommended
-                                  ? " · best fit"
-                                  : !fits
-                                    ? " · may be slow here"
-                                    : ""}
-                              </small>
-                            </div>
-                            {installed ? (
-                              <span className="installed-model">
-                                <span className="agent-dot idle" />
-                                Installed
-                              </span>
-                            ) : (
-                              <button
-                                className="button secondary"
-                                disabled={
-                                  !ollamaAvailable || Boolean(downloading)
-                                }
-                                onClick={() => void downloadModel(model.name)}
-                              >
-                                {downloading === model.name
-                                  ? "Downloading…"
-                                  : "Download"}
-                              </button>
-                            )}
-                          </article>
-                        );
-                      })}
-                    </div>
-                    <form
-                      className="custom-model-download"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        void downloadModel(customModel);
-                      }}
-                    >
-                      <label htmlFor="custom-ollama-model">
-                        <span>Any other Ollama model</span>
-                        <small>Use the exact library name and tag.</small>
-                      </label>
-                      <input
-                        id="custom-ollama-model"
-                        value={customModel}
-                        onChange={(event) => setCustomModel(event.target.value)}
-                        placeholder="Example: llama3.2:3b"
-                      />
-                      <button
-                        className="button secondary"
-                        disabled={
-                          !ollamaAvailable ||
-                          Boolean(downloading) ||
-                          !customModel.trim()
-                        }
-                      >
-                        {downloading === customModel.trim()
-                          ? "Downloading…"
-                          : "Download"}
-                      </button>
-                    </form>
+                    {systemProfile && compatibleLocalModels.length === 0 && (
+                      <div className="model-library-empty" role="status">
+                        <strong>No curated local model fits this Mac.</strong>
+                        <p>
+                          Kestrel keeps memory available for macOS and the app.
+                          Use an external provider, or open manual setup if you
+                          accept the stability tradeoff.
+                        </p>
+                      </div>
+                    )}
+                    {compatibleLocalModels.some(
+                      (model) => model.reducedSafeguards,
+                    ) && (
+                      <p className="reduced-safeguards-note">
+                        These models use reduced filtering. Review important
+                        results before acting.
+                      </p>
+                    )}
                     {localError && (
                       <p className="setup-error" role="alert">
                         {localError}
                       </p>
                     )}
-                    <p className="model-library-note">
-                      The list above is a simple starting set.{" "}
-                      <a
-                        href="https://ollama.com/library"
-                        target="_blank"
-                        rel="noreferrer"
+                    <section className="manual-model-options">
+                      <button
+                        className="manual-model-toggle"
+                        aria-expanded={manualSetupOpen}
+                        onClick={() =>
+                          setManualSetupOpen((current) => !current)
+                        }
                       >
-                        Browse the complete Ollama library
-                      </a>{" "}
-                      and paste any exact model name here.
-                    </p>
+                        <span>
+                          <strong>Manual setup</strong>
+                          <small>
+                            Use your own Ollama install or choose any model.
+                          </small>
+                        </span>
+                        <span aria-hidden="true">
+                          {manualSetupOpen ? "−" : "+"}
+                        </span>
+                      </button>
+                      {manualSetupOpen && (
+                        <div className="manual-local-setup">
+                          <ol>
+                            <li>
+                              <a
+                                href="https://ollama.com/download"
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Install Ollama from its official download
+                              </a>{" "}
+                              or start an existing service on{" "}
+                              <code>127.0.0.1:11434</code>.
+                            </li>
+                            <li>
+                              Return here and choose <b>Check again</b>. Kestrel
+                              never runs a shell installer copied from the web.
+                            </li>
+                          </ol>
+                          <button
+                            className="button secondary"
+                            onClick={() => void loadLocalModels()}
+                          >
+                            Check again
+                          </button>
+                          <form
+                            className="custom-model-download"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              void downloadModel(customModel);
+                            }}
+                          >
+                            <label htmlFor="custom-ollama-model">
+                              <span>Any other Ollama model</span>
+                              <small>
+                                Use the exact library name and tag.
+                              </small>
+                            </label>
+                            <input
+                              id="custom-ollama-model"
+                              value={customModel}
+                              onChange={(event) =>
+                                setCustomModel(event.target.value)
+                              }
+                              placeholder="Example: llama3.2:3b"
+                            />
+                            <button
+                              className="button secondary"
+                              disabled={
+                                !ollamaAvailable ||
+                                Boolean(downloading) ||
+                                !customModel.trim()
+                              }
+                            >
+                              {downloading === customModel.trim()
+                                ? "Downloading…"
+                                : "Download"}
+                            </button>
+                          </form>
+                          <p className="model-library-note">
+                            <a
+                              href="https://ollama.com/library"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Browse the complete Ollama library
+                            </a>{" "}
+                            and paste any exact model name here.
+                          </p>
+                        </div>
+                      )}
+                    </section>
                   </div>
                 )}
 
-                {modelView === "more" && (
-                  <div className="more-provider-setup" role="tabpanel">
+                {step === 3 && modelView === "open" && (
+                  <div
+                    className="more-provider-setup"
+                    role="tabpanel"
+                    aria-label="Open access"
+                  >
                     <div className="more-provider-lead">
-                      <strong>Coming from another agent?</strong>
+                      <strong>Add the accounts you want to use.</strong>
                       <p>
-                        Kestrel can inspect OpenClaw, Hermes, Codex, or
-                        Claude Code settings before importing. The source files
-                        stay unchanged and secrets are never copied.
+                        Create a key on the provider’s official site, then save
+                        it here. Workstrand protects the key and can use any
+                        account you connect.
                       </p>
                     </div>
-                    <div className="provider-coverage">
-                      <section>
-                        <span>Native now</span>
-                        <p>
-                          OpenAI Responses · Anthropic Messages · Google Gemini
-                          · local Ollama · Codex subscription CLI · Claude
-                          subscription CLI
-                        </p>
-                      </section>
-                      <section>
-                        <span>Through safe import</span>
-                        <p>
-                          Model names, reasoning settings, approval rules,
-                          sandbox choices, MCP entries, memory settings, agents,
-                          and skills from OpenClaw or Hermes.
-                        </p>
-                      </section>
-                      <section>
-                        <span>Not claimed as native yet</span>
-                        <p>
-                          OpenRouter, Bedrock, Azure Foundry, LM Studio,
-                          Copilot, Nous, DeepSeek, Groq, and other custom
-                          endpoints need a future adapter or an imported
-                          external setup.
-                        </p>
-                      </section>
+                    <div className="provider-groups">
+                      {freeCredentialGroups.map((group) => {
+                        const credentialId = group.credentials[0]!;
+                        const credential = credentials.find(
+                          (item) => item.id === credentialId,
+                        );
+                        return (
+                          <section key={group.name} className="provider-group">
+                            <div className="provider-heading">
+                              <span className="provider-monogram">{group.short}</span>
+                              <div>
+                                <strong>{group.name}</strong>
+                                <p>{group.note}</p>
+                                <a href={group.href} target="_blank" rel="noreferrer">
+                                  Get free API key ↗
+                                </a>
+                              </div>
+                            </div>
+                            <div className="account-slot">
+                              <label htmlFor={`setup-${credentialId}`}>
+                                <span>API key</span>
+                                <small>{credential?.configured ? "Protected and ready" : "Not connected"}</small>
+                              </label>
+                              {credential?.configured ? (
+                                <span className="configured-account">
+                                  <span className="agent-dot idle" />
+                                  Connected
+                                </span>
+                              ) : (
+                                <>
+                                  <input
+                                    id={`setup-${credentialId}`}
+                                    type="password"
+                                    autoComplete="off"
+                                    spellCheck={false}
+                                    value={credentialValues[credentialId] ?? ""}
+                                    placeholder="Paste API key"
+                                    onChange={(event) =>
+                                      setCredentialValues((current) => ({
+                                        ...current,
+                                        [credentialId]: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                  <button
+                                    className="button secondary"
+                                    disabled={Boolean(credentialBusy)}
+                                    onClick={() => void saveCredential(credentialId)}
+                                  >
+                                    {credentialBusy === credentialId ? "Saving…" : "Save"}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </section>
+                        );
+                      })}
+                    </div>
+                    {credentialError && (
+                      <p className="setup-error" role="alert">{credentialError}</p>
+                    )}
+                    <div className="more-provider-lead">
+                      <strong>More ways to run models</strong>
+                    </div>
+                    <div className="open-access-list">
+                      {openAccessDirectory.map((source, index) => (
+                        <a
+                          href={source.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          key={source.name}
+                        >
+                          <span>{String(index + 1).padStart(2, "0")}</span>
+                          <span>
+                            <strong>{source.name}</strong>
+                            <small>{source.detail}</small>
+                          </span>
+                          <b>Open official source ↗</b>
+                        </a>
+                      ))}
                     </div>
                     <p className="provider-footnote">
-                      This distinction keeps provider choices honest: seeing an
-                      option here never means an account is connected or
-                      verified.
+                      “Free” availability, quotas, privacy terms, and model lists
+                      change. Review the source before sending data. A listing here
+                      is not a connection or a Workstrand endorsement.
                     </p>
                   </div>
                 )}
               </div>
             )}
 
-            {step === 3 && (
+            {step === 4 && (
               <div className="setup-finish">
-                <span className="step-count">Ready</span>
                 <h1>
                   {modelReady
-                    ? "Your foundation is set."
-                    : "Kestrel is ready for a model."}
+                    ? "Workstrand is ready."
+                    : "The workspace is ready. A model is still optional."}
                 </h1>
                 <p>
                   {modelReady
-                    ? "You can start now, or let the setup assistant help connect accounts, OAuth-backed CLIs, tools, skills, channels, and project access one safe step at a time."
-                    : "You can enter the app in local preview mode now, but live model conversations need an account or local model."}
+                    ? "Your model route and safety boundary are in place. Add folders and services only when a real task needs them."
+                    : "You can explore the local workspace now. Conversations and agent work begin after you connect an external provider or install a local model."}
                 </p>
                 <div className="finish-checks">
                   <div className={verifiedModelReady ? "done" : "attention"}>
@@ -1336,18 +1506,18 @@ function Onboarding({ onDone }: { onDone(): void }) {
         </AnimatePresence>
       </div>
       <footer className="onboarding-actions">
-        <span>
-          {step + 1} of {setupSteps.length}
-        </span>
         <div className="button-row">
           {step > 0 && (
-            <button className="button quiet" onClick={() => go(step - 1)}>
+            <button
+              className="button quiet setup-back-button"
+              onClick={() => go(step - 1)}
+            >
               Back
             </button>
           )}
-          {step === 2 && !modelReady && (
-            <button className="button quiet" onClick={() => go(3)}>
-              Set up models later
+          {step === 3 && !modelReady && (
+            <button className="button quiet" onClick={() => go(4)}>
+              Do this later
             </button>
           )}
           {step === setupSteps.length - 1 && modelReady && (
@@ -1369,28 +1539,30 @@ function Onboarding({ onDone }: { onDone(): void }) {
                 onDone();
               }}
             >
-              Continue with setup assistant
+              Finish with help
             </button>
           )}
-          <button
-            className="button primary"
-            disabled={step === 1 && !warningAccepted}
-            onClick={() => {
-              if (step === setupSteps.length - 1) {
-                localStorage.removeItem("kestrel:setup-step");
-                onDone();
-              } else go(step + 1);
-            }}
-          >
-            {step === setupSteps.length - 1
-              ? modelReady
-                ? "Start using Kestrel"
-                : "Open local preview"
-              : step === 0
-                ? "Set up Kestrel"
-                : "Continue"}
-            <Icon name="arrow" />
-          </button>
+          {step !== 2 && (
+            <button
+              className="button primary"
+              disabled={step === 1 && !warningAccepted}
+              onClick={() => {
+                if (step === setupSteps.length - 1) {
+                  localStorage.removeItem("kestrel:setup-step");
+                  onDone();
+                } else go(step + 1);
+              }}
+            >
+              {step === setupSteps.length - 1
+                ? modelReady
+                  ? "Start using Workstrand"
+                  : "Open local preview"
+                : step === 0
+                  ? "Continue"
+                  : "Continue"}
+              <Icon name="arrow" />
+            </button>
+          )}
         </div>
       </footer>
     </main>
@@ -1401,7 +1573,7 @@ function Brand() {
   return (
     <div className="brand">
       <BrandMark />
-      <strong>Kestrel</strong>
+      <strong>Workstrand</strong>
     </div>
   );
 }
@@ -1410,7 +1582,7 @@ function Loading() {
   return (
     <main className="loading-screen">
       <BrandMark />
-      <p>Starting Kestrel…</p>
+      <p>Starting Workstrand…</p>
     </main>
   );
 }
@@ -1597,7 +1769,7 @@ function Composer({
       }}
     >
       <label className="sr-only" htmlFor={compact ? "follow-up" : "new-task"}>
-        Message Kestrel
+        Message Workstrand
       </label>
       <textarea
         id={compact ? "follow-up" : "new-task"}
@@ -1706,7 +1878,7 @@ function Home({
           </div>
           <h1 id="new-task-title">What should we work on?</h1>
           <p>
-            Ask normally. Kestrel will bring in relevant local context when
+            Ask normally. Workstrand will bring in relevant local context when
             it can help.
           </p>
           <Composer
@@ -1917,6 +2089,7 @@ function RuntimeConversation({
 }) {
   const [messages, setMessages] = useState<RuntimeMessage[]>([]);
   const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
+  const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState(
     () => localStorage.getItem("kestrel:model") ?? "",
@@ -2016,8 +2189,9 @@ function RuntimeConversation({
     void Promise.all([
       window.kestrel.request({ type: "runtime-list-providers" }),
       window.kestrel.request({ type: "get-workspace-grants" }),
+      window.kestrel.request({ type: "local-model-status" }),
     ])
-      .then(([providerResponse, grantResponse]) => {
+      .then(([providerResponse, grantResponse, localModelResponse]) => {
         if (providerResponse.ok && "providers" in providerResponse) {
           const available = providerResponse.providers ?? [];
           setProviders(available);
@@ -2030,6 +2204,8 @@ function RuntimeConversation({
               current || grantResponse.workspaceGrants[0]?.path || "",
           );
         }
+        if (localModelResponse.ok && "localModels" in localModelResponse)
+          setLocalModels(localModelResponse.localModels);
       })
       .catch((cause) =>
         setError(
@@ -2039,6 +2215,15 @@ function RuntimeConversation({
         ),
       );
   }, []);
+
+  useEffect(() => {
+    if (providerId !== "ollama") return;
+    setModel((current) =>
+      localModels.some((item) => item.name === current)
+        ? current
+        : (localModels[0]?.name ?? ""),
+    );
+  }, [providerId, localModels]);
 
   useEffect(() => {
     setAttachments([]);
@@ -2508,11 +2693,29 @@ function RuntimeConversation({
       {executionMode === "manual" && (
         <label>
           Model
-          <input
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-            placeholder="Provider model ID"
-          />
+          {providerId === "ollama" ? (
+            <select
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              disabled={localModels.length === 0}
+            >
+              {localModels.length === 0 ? (
+                <option value="">No installed Ollama models found</option>
+              ) : (
+                localModels.map((localModel) => (
+                  <option value={localModel.name} key={localModel.name}>
+                    {localModel.name} · {compactBytes(localModel.size)}
+                  </option>
+                ))
+              )}
+            </select>
+          ) : (
+            <input
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder="Provider model ID"
+            />
+          )}
         </label>
       )}
       {executionMode === "automatic" && (
@@ -2565,8 +2768,8 @@ function RuntimeConversation({
           </div>
           <h1>{greeting}</h1>
           <p>
-            Bring a project or a question. Kestrel can inspect, build,
-            research, run, and verify the work.
+            Bring a project or ask a question. Workstrand keeps the work,
+            approvals, and results together.
           </p>
         </div>
       ) : (
@@ -2709,12 +2912,12 @@ function RuntimeConversation({
               disabled={busy}
               onClick={() => void addProject()}
             >
-              Add project
+              Choose folder
             </button>
             <small>
               {workspace
-                ? "Kestrel can use tools only inside this granted folder."
-                : "Choose a project when you want Kestrel to inspect or change files."}
+                ? "Workstrand can use tools only inside this folder."
+                : "Choose a folder when you want Workstrand to inspect or change files."}
             </small>
           </div>
         )}
@@ -2737,7 +2940,7 @@ function RuntimeConversation({
         )}
         <details className="runtime-setup">
           <summary>
-            <span>Advanced execution</span>
+            <span>Model and tools</span>
             <small>
               {executionMode === "automatic"
                 ? "Automatic"
@@ -2832,7 +3035,7 @@ function RuntimeConversation({
           }}
         >
           <label className="sr-only" htmlFor="runtime-prompt">
-            Message Kestrel
+            Message Workstrand
           </label>
           <textarea
             id="runtime-prompt"
@@ -2841,8 +3044,8 @@ function RuntimeConversation({
             onChange={(event) => setInput(event.target.value)}
             placeholder={
               activeSessionId
-                ? "Message Kestrel"
-                : "What do you want to get done?"
+                ? "Message Workstrand"
+                : "What are you working on?"
             }
           />
           <div className="composer-footer">
@@ -2948,7 +3151,7 @@ function RuntimeConversation({
               type="button"
               onClick={() => setInput(SETUP_ASSISTANT_PROMPT)}
             >
-              Finish setup safely
+              Finish setting up
             </button>
           </div>
         )}
@@ -3813,11 +4016,13 @@ function Work({
   const [teams, setTeams] = useState<TeamRecordContract[]>([]);
   const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
   const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
+  const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
   const [parentSessionId, setParentSessionId] = useState(sessions[0]?.id ?? "");
-  const [providerId, setProviderId] = useState("");
+  const [providerId, setProviderId] = useState("auto");
   const [model, setModel] = useState(
-    () => localStorage.getItem("kestrel:model") ?? "",
+    () => localStorage.getItem("kestrel:model") ?? "auto",
   );
+  const [delegationEvidence, setDelegationEvidence] = useState("");
   const [delegateTitle, setDelegateTitle] = useState("");
   const [delegatePrompt, setDelegatePrompt] = useState("");
   const [isolateWorktree, setIsolateWorktree] = useState(false);
@@ -3838,7 +4043,7 @@ function Work({
   );
 
   async function load() {
-    const [state, providerState, sessionState] = await Promise.all([
+    const [state, providerState, sessionState, localModelState] = await Promise.all([
       window.kestrel.request({
         type: "orchestration-list",
       }) as Promise<CoreResponse>,
@@ -3848,6 +4053,9 @@ function Work({
       window.kestrel.request({
         type: "runtime-list-sessions",
       }) as Promise<CoreResponse>,
+      window.kestrel.request({
+        type: "local-model-status",
+      }),
     ]);
     if (!state.ok) throw new Error(state.error);
     setGoals(state.goals ?? []);
@@ -3855,10 +4063,16 @@ function Work({
     setJobs(state.jobs ?? []);
     if (providerState.ok) {
       setProviders(providerState.providers ?? []);
-      setProviderId(
-        (current) => current || providerState.providers?.[0]?.id || "",
+      setProviderId((current) =>
+        providerState.providers?.some((provider) => provider.id === current)
+          ? current
+          : providerState.providers?.some((provider) => provider.id === "auto")
+            ? "auto"
+            : providerState.providers?.[0]?.id || "",
       );
     }
+    if (localModelState.ok && "localModels" in localModelState)
+      setLocalModels(localModelState.localModels);
     if (sessionState.ok) onSessions(sessionState.sessions ?? []);
   }
   useEffect(() => {
@@ -3871,6 +4085,15 @@ function Work({
     );
   }, []);
 
+  useEffect(() => {
+    if (providerId !== "ollama") return;
+    setModel((current) =>
+      localModels.some((item) => item.name === current)
+        ? current
+        : (localModels[0]?.name ?? ""),
+    );
+  }, [providerId, localModels]);
+
   async function mutate(
     request: RendererRequest,
     after?: () => void,
@@ -3880,6 +4103,12 @@ function Work({
     try {
       const response = (await window.kestrel.request(request)) as CoreResponse;
       if (!response.ok) throw new Error(response.error);
+      if (response.delegationRouting) {
+        const route = response.delegationRouting;
+        setDelegationEvidence(
+          `${route.local ? "Local" : "Connected"} worker: ${route.model} via ${route.providerId} · ${route.reasoningEffort} reasoning · verified in ${route.verificationLatencyMs} ms`,
+        );
+      }
       after?.();
       await load();
       return true;
@@ -3959,6 +4188,10 @@ function Work({
           }}
         >
           <h2>Delegate a task</h2>
+          <p className="work-card-note">
+            Auto verifies configured workers, prefers local Ollama, then known
+            free-tier endpoints, and records the exact route used.
+          </p>
           <label>
             Parent task
             <select
@@ -4000,13 +4233,36 @@ function Work({
                 <option key={provider.id}>{provider.id}</option>
               ))}
             </select>
-            <input
-              aria-label="Model"
-              placeholder="Model"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-            />
+            {providerId === "ollama" ? (
+              <select
+                aria-label="Installed Ollama model"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                disabled={localModels.length === 0}
+              >
+                {localModels.length === 0 ? (
+                  <option value="">No installed Ollama models found</option>
+                ) : (
+                  localModels.map((localModel) => (
+                    <option value={localModel.name} key={localModel.name}>
+                      {localModel.name} · {compactBytes(localModel.size)}
+                    </option>
+                  ))
+                )}
+              </select>
+            ) : (
+              <input
+                aria-label="Model"
+                placeholder={providerId === "auto" ? "Automatically selected" : "Model"}
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                readOnly={providerId === "auto"}
+              />
+            )}
           </div>
+          {delegationEvidence && (
+            <small role="status">{delegationEvidence}</small>
+          )}
           <label className="work-check">
             <input
               type="checkbox"
@@ -5044,7 +5300,7 @@ function SubscriptionCliSettings() {
           Use the authenticated Codex or Claude Code app already on this Mac.
           Codex runs as one persistent, read-only app-server with durable
           threads and streamed turns; Claude remains an isolated text-only
-          invocation. Kestrel never copies either vendor&apos;s OAuth tokens.
+          invocation. Workstrand never copies either vendor&apos;s OAuth tokens.
         </p>
         <ul className="subscription-setting-list">
           {items.map((item) => (
@@ -6458,7 +6714,7 @@ export function App() {
   const [petActivity, setPetActivity] = useState<PetActivityState>("idle");
   const petActivityTimer = useRef<number | null>(null);
   const [page, setPage] = useState<Page>("home");
-  const [moreOpen, setMoreOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState<
     string | null
@@ -6588,20 +6844,15 @@ export function App() {
       </main>
     );
   if (!snapshot) return <Loading />;
-  const pendingCount = snapshot.approvals.filter(
-    (item) => item.status === "pending",
-  ).length;
   const currentTitle =
     page === "home"
       ? (runtimeSessions.find(
           (session) => session.id === activeRuntimeSessionId,
         )?.title ?? "New chat")
       : pages.find(([id]) => id === page)?.[1];
-  const secondaryPageActive = secondaryPageIds.includes(page);
   const openRuntimeSession = (sessionId: string | null) => {
     setActiveRuntimeSessionId(sessionId);
     setPage("home");
-    setMoreOpen(false);
   };
   async function popOutPet() {
     const response = (await window.kestrel.request({
@@ -6624,64 +6875,6 @@ export function App() {
           <kbd>⌘ N</kbd>
         </button>
         <nav aria-label="Conversations and tools">
-          <section
-            className="nav-section tools-section"
-            aria-label="Daily tools"
-          >
-            {pages
-              .filter(([id]) => primaryPageIds.includes(id))
-              .map(([id, label]) => (
-                <button
-                  key={id}
-                  aria-label={label}
-                  className={page === id ? "active" : ""}
-                  aria-current={page === id ? "page" : undefined}
-                  onClick={() => {
-                    setPage(id);
-                    setMoreOpen(false);
-                  }}
-                >
-                  <Icon name={id} />
-                  <span>{label}</span>
-                  {id === "approvals" && pendingCount > 0 && (
-                    <b aria-label={`${pendingCount} pending`}>{pendingCount}</b>
-                  )}
-                </button>
-              ))}
-            <button
-              className={`more-tools-button ${secondaryPageActive ? "active" : ""}`}
-              aria-expanded={moreOpen}
-              aria-controls="secondary-tools"
-              onClick={() => setMoreOpen((open) => !open)}
-            >
-              <Icon name="chevron" />
-              <span>More</span>
-              <small>{secondaryPageActive ? currentTitle : "Tools"}</small>
-            </button>
-            <div
-              id="secondary-tools"
-              className="secondary-tools"
-              hidden={!moreOpen}
-            >
-              {pages
-                .filter(([id]) => secondaryPageIds.includes(id))
-                .map(([id, label]) => (
-                  <button
-                    key={id}
-                    aria-label={label}
-                    className={page === id ? "active" : ""}
-                    aria-current={page === id ? "page" : undefined}
-                    onClick={() => {
-                      setPage(id);
-                      setMoreOpen(false);
-                    }}
-                  >
-                    <Icon name={id} />
-                    <span>{label}</span>
-                  </button>
-                ))}
-            </div>
-          </section>
           <section
             className="nav-section recent-section"
             aria-labelledby="chats-label"
@@ -6710,6 +6903,36 @@ export function App() {
                 </button>
               ))}
           </section>
+          <section className="nav-section" aria-labelledby="tools-label">
+            <button
+              id="tools-label"
+              aria-expanded={toolsOpen}
+              onClick={() => setToolsOpen((open) => !open)}
+            >
+              <Icon name="extensions" />
+              <span>Tools</span>
+            </button>
+            {toolsOpen &&
+              pages
+                .filter(
+                  ([id]) =>
+                    !["home", "connections", "settings"].includes(id),
+                )
+                .map(([id, label]) => (
+                  <button
+                    key={id}
+                    aria-label={label}
+                    className={page === id ? "active" : ""}
+                    onClick={() => {
+                      setPage(id);
+                      setToolsOpen(false);
+                    }}
+                  >
+                    <Icon name={id} />
+                    <span>{label}</span>
+                  </button>
+                ))}
+          </section>
         </nav>
         <div className="sidebar-bottom">
           {pages
@@ -6721,7 +6944,6 @@ export function App() {
                 className={page === id ? "active" : ""}
                 onClick={() => {
                   setPage(id);
-                  setMoreOpen(false);
                 }}
               >
                 <Icon name={id} />
@@ -6733,10 +6955,10 @@ export function App() {
             <div>
               <strong>
                 {snapshot.agentState === "waiting_approval"
-                  ? "Waiting for you"
+                  ? "Needs your approval"
                   : snapshot.agentState.replace("_", " ")}
               </strong>
-              <small>Local background agent</small>
+              <small>Working on this Mac</small>
             </div>
           </div>
         </div>

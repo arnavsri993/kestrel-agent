@@ -8,10 +8,36 @@ const root = mkdtempSync(join(tmpdir(), "workstrand-readiness-test-"));
 const userData = join(root, "user-data");
 const backupParent = join(root, "backups");
 const codexFixture = join(root, "fake-codex-app-server");
+const pluginRoot = join(userData, "plugins", "readiness-test", "1.0.0");
 let application;
 
 try {
   mkdirSync(backupParent, { recursive: true });
+  mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+  writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), JSON.stringify({
+    name: "readiness-test",
+    version: "1.0.0",
+    description: "Test-only contextual entry point for readiness.",
+    interface: {
+      displayName: "Readiness Test",
+      shortDescription: "Opens readiness through the extension surface.",
+      capabilities: ["Read status"],
+      defaultPrompt: [],
+    },
+    dashboard: "./dashboard.json",
+  }));
+  writeFileSync(join(pluginRoot, "dashboard.json"), JSON.stringify({
+    version: 1,
+    title: "Readiness test",
+    description: "Exercise the contextual readiness entry point.",
+    navigationLabel: "Readiness Test",
+    panels: [{
+      id: "readiness",
+      title: "Readiness",
+      description: "Open the built-in readiness surface.",
+      actions: [{ label: "Open readiness", page: "readiness" }],
+    }],
+  }));
   writeFileSync(codexFixture, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(resolve("scripts/fixtures/fake-codex-app-server.mjs"))} "$@"\n`, { mode: 0o700 });
   chmodSync(codexFixture, 0o700);
   application = await electron.launch({
@@ -26,11 +52,16 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
 
-  await page.getByRole("button", { name: /More/ }).click();
-  await page.getByRole("button", { name: "Readiness" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const readinessPlugin = page.locator("article.setting-row").filter({ hasText: "Readiness Test" });
+  await readinessPlugin.getByRole("button", { name: "Enable" }).click();
+  await readinessPlugin.getByText("Dashboard panels active").waitFor();
+  await page.getByRole("button", { name: /Tools/ }).click();
+  await page.getByRole("button", { name: "Extensions", exact: true }).click();
+  await page.getByRole("button", { name: "Open readiness", exact: true }).click();
   await page.getByRole("heading", { name: "Finish the essentials before live work." }).waitFor();
   await page.getByRole("heading", { name: "What can work right now" }).waitFor();
-  await page.getByText("No cloud account or local Ollama model is configured.", { exact: true }).waitFor();
+  await page.getByText("This contacts only the configured provider or local model service.", { exact: false }).waitFor();
   await page.getByRole("button", { name: "Run checks" }).focus();
   await page.keyboard.press("Tab");
   await page.keyboard.press("Shift+Tab");
@@ -44,8 +75,9 @@ try {
   await subscriptionSetting.getByText("ChatGPT plan through Codex", { exact: true }).waitFor();
   await subscriptionSetting.getByRole("button", { name: "Enable" }).click();
   await subscriptionSetting.getByRole("button", { name: "Disable" }).waitFor();
-  await page.getByRole("button", { name: /More/ }).click();
-  await page.getByRole("button", { name: "Readiness" }).click();
+  await page.getByRole("button", { name: /Tools/ }).click();
+  await page.getByRole("button", { name: "Extensions", exact: true }).click();
+  await page.getByRole("button", { name: "Open readiness", exact: true }).click();
   await page.getByRole("heading", { name: "The core is ready. Verify the route." }).waitFor();
   await page.getByRole("button", { name: "Verify model access" }).click();
   await page.getByText("codex-subscription", { exact: true }).waitFor();

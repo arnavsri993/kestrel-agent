@@ -92,7 +92,7 @@ try {
   await pluginSetting.getByRole("button", { name: "Enable" }).click();
   await pluginSetting.getByText("Dashboard panels active").waitFor();
 
-  await page.getByRole("button", { name: /More/ }).click();
+  await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Extensions", exact: true }).click();
   await page.getByRole("heading", { name: "Release operations" }).waitFor();
   await page.getByText("Declarative only", { exact: true }).waitFor();
@@ -111,7 +111,7 @@ try {
       name: /The core is ready|Finish the essentials/,
     })
     .waitFor();
-  await page.getByRole("button", { name: /More/ }).click();
+  await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Extensions", exact: true }).click();
   await page.getByRole("heading", { name: "Release operations" }).waitFor();
 

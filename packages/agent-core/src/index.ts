@@ -392,6 +392,7 @@ export class AgentCore {
       this.agentLoop,
       () => new Date(this.now()),
       this.managedPolicy.get()?.maximumWorkers ?? 4,
+      this.providerPool,
     );
     installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
     this.remote = new RemoteControl(
@@ -1040,8 +1041,13 @@ export class AgentCore {
               sessionId: request.sessionId,
               model: request.model,
               providerIds: request.providerIds,
-              ...(request.providerModels
-                ? { providerModels: request.providerModels }
+              ...(request.providerModels || route
+                ? {
+                    providerModels: {
+                      ...(route ? { "codex-subscription": route.model } : {}),
+                      ...request.providerModels,
+                    },
+                  }
                 : {}),
               ...(route
                 ? {
@@ -1484,6 +1490,7 @@ export class AgentCore {
             model: request.model,
             providerIds: request.providerIds,
             isolateWorktree: request.isolateWorktree,
+            ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}),
             ...(request.allowedTools
               ? { allowedTools: request.allowedTools }
               : {}),
@@ -1493,6 +1500,7 @@ export class AgentCore {
             taskId: delegated.taskId,
             session: this.runtime.getSession(delegated.sessionId),
             run: delegated.result.run,
+            ...(delegated.route ? { delegationRouting: delegated.route } : {}),
             ...(delegated.result.assistantMessage
               ? { messages: [delegated.result.assistantMessage] }
               : {}),
@@ -1856,8 +1864,13 @@ export class AgentCore {
               providerIds: personality.providerIds?.length
                 ? personality.providerIds
                 : request.providerIds,
-              ...(request.providerModels
-                ? { providerModels: request.providerModels }
+              ...(request.providerModels || route
+                ? {
+                    providerModels: {
+                      ...(route ? { "codex-subscription": route.model } : {}),
+                      ...request.providerModels,
+                    },
+                  }
                 : {}),
               ...(route
                 ? {

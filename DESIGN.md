@@ -1,24 +1,59 @@
 # Kestrel design brief
 
+## Natural desktop controls
+
+- Operating mode: `existing-redesign` of the Workstrand desktop shell and setup flow.
+- Thesis: Workstrand should read like a well-made Mac utility—plain actions, quiet rows, and one obvious next step—not a catalog of AI features.
+- Density profile: `dense-app`, with a calmer reading measure for first use.
+- Type: SF Pro Display / SF Pro Text, with SF Mono reserved for hashes and machine-readable evidence.
+- Spacing: 4px base; 8/12/16/24/32/48 rhythm.
+- Color and material: native graphite planes, aluminum text, and one sage state/focus accent; borders define groups while elevation is reserved for the composer.
+- Control grammar: verb-led labels, sentence case, 38px minimum shared buttons, 7px control radius, list rows for mutually exclusive choices, and unboxed status text.
+- Motion: state continuity and direct feedback only; both collapse under reduced motion.
+- Avoid list: marketing-card choices, taxonomy as copy, uppercase micro-labels, badge decoration, pill forests, equal-weight CTAs, and implementation terms where an ordinary phrase works.
+- Why this is not generic: the interface uses Workstrand's actual sequence—choose scope, describe work, approve consequences, receive evidence—and presents it through restrained native desktop controls instead of SaaS-card chrome.
+
+## Native Graphite visual identity
+
+- Operating mode: `existing-redesign` of the dense React/Electron desktop application. All routes, behavior, state contracts, and the user-authored skin architecture remain intact.
+- User constraint: the prior warm orange default resembled Claude and OpenClaw. A blue/aqua exploration felt cheap and performatively futuristic. Because the product is made for M-series Macs, the selected system should feel native to macOS without becoming an imitation of Finder or a generic gray utility.
+- Candidate directions compared: `Mineral Current` (rejected after render because aqua felt like generic futuristic AI), `Ultramarine Ledger` (rejected because blue remained the identity), `Carbon Signal` (rejected because the high-contrast red felt aggressive), `Obsidian Paper` (useful restraint but not platform-specific enough), and `Native Graphite` (selected).
+- Thesis: Kestrel should feel engineered for Apple silicon—SF typography, graphite and aluminum planes, restrained sidebar vibrancy, exact separators, and one quiet sage state rail make project work, approvals, and verified delivery feel native without borrowing another AI brand.
+- Density profile: `dense-app` with a calm central composing and reading measure.
+- Type pair: SF Pro Display for the product name and decisive headings; SF Pro Text for controls and conversation; SFMono only for paths, hashes, routing, usage, and evidence.
+- Type scale: greeting 40/46, page title 34/40, section title 20/25, conversation 14/24, control 12/17, evidence/meta 9/14.
+- Spacing scale: 4px base; shell 8/12/16/20/24; conversation 8/12/20/32/52.
+- Color roles: macOS graphite `#1c1c1e` canvas; deep graphite `#141416` rail; elevated graphite `#2c2c2e` surface; aluminum `#f5f5f7` ink and brand mark; quiet sage `#78b986` interaction/focus. Yellow remains warning-only and red remains error/destructive-only.
+- Material: opaque graphite work planes with restrained vibrancy only on persistent macOS chrome. The composer is the only lifted work surface; active navigation uses an inset evidence rail rather than a rounded filled tab.
+- Geometry: primary surfaces tighten from soft 20px shells to a 12px composer and compact control radii. The angular checkpoint mark, vertical current rails, and squared evidence rows provide the repeatable identity.
+- Motion roles: state continuity through the existing short page crossfade; direct feedback through hover, press, and focus. Reduced motion removes the crossfade. No ambient motion or scroll reveals.
+- Avoid list: orange and warm gray, cream-and-serif AI brochure styling, purple gradients, glow, glass, pill forests, card dashboards, terminal costumes, decorative bento, and animation without state meaning.
+- Why this is not generic: the angular checkpoint mark, Apple-silicon-native graphite material, sage evidence rails, and compact `ask → approve → verify` hierarchy give the interface a specific workstation identity instead of a fashionable AI palette.
+
+### Rendered refinement
+
+- Pass-one captures: 1320×860 desktop and 760×760 compact states in `artifacts/screenshots/desktop/mineral-current`.
+- Three highest-impact weaknesses fixed: the all-white checkpoint made the shell anonymous; the composer shadow felt heavier than macOS material; and the central work plane spread too wide at compact desktop sizes.
+- Final adjustments: a restrained sage checkpoint anchors the identity without coloring the whole interface, the composer uses a shorter low-elevation shadow, and the primary work measure tightens from 820px to 760px.
+
 ## Calm shell, deep capability
 
 - Operating mode: `existing-redesign` of the desktop application shell.
 - Thesis: Kestrel should present one obvious place to begin and surface urgency
   without turning every background capability into permanent navigation.
-- Density and hierarchy: New chat remains the dominant action. Approvals and
-  Artifacts stay visible because they represent user attention and delivered
-  work. Readiness, Memory, Research, Work, Opportunities, Activity, and
-  Extensions remain fully available through one progressively disclosed More
-  group. Connections and Settings retain their stable utility positions.
-- State contract: the More control exposes its state, names the active hidden
-  destination when relevant, preserves visible focus, and removes its rotation
-  transition under reduced motion. No route or capability is removed.
+- Density and hierarchy: New chat and recent Chats are the default experience.
+  Specialist surfaces are not exposed in the sidebar until their final
+  information architecture is decided. Connections and Settings retain stable
+  utility positions. The underlying specialist features remain implemented.
+- State contract: removing specialist navigation does not delete its routes,
+  data, or components. Their eventual entry points can be placed in context
+  without rebuilding the underlying capabilities.
 - Avoid list: equal visual weight for every capability, multiple navigation
   taxonomies, nested dashboards, unlabeled icon-only controls, and hiding urgent
   approvals.
-- Why this is not generic: the shell promotes Kestrel's actual work loop—ask,
-  approve, receive evidence—while its specialist machinery stays one deliberate
-  reveal away.
+- Why this is not generic: the shell begins with Workstrand's actual beginner
+  loop—start or resume a conversation—while specialist machinery stays one
+  deliberate reveal away and urgent approvals still announce themselves.
 
 Reference parity is deliberately layered, not a claim that every named vendor adapter ships in core. The 1,117-page Hermes/OpenClaw audit separates bundled capability families, signed extension contracts, and operational documentation. Native-node behavior is represented by a tested paired-device extension protocol rather than a bundled mobile app; Kestrel itself is a direct-download Apple Silicon Mac application.
 
@@ -220,7 +255,9 @@ Reference parity is deliberately layered, not a claim that every named vendor ad
 - Spacing scale: 4px base; shell 8/12/16/20/28/40; large-page rhythm 56/72.
 - Color roles: preserve warm graphite canvas, cocoa-charcoal rail/header, parchment primary text, mushroom secondary text, restrained terracotta focus/action, green connected/installed state, amber warning state, and red only for errors.
 - Material: flat warm matte planes with ruled rows; only the current choice and warning acknowledgement receive a contained surface. Avoid a card catalog where simple rows communicate better.
-- Primary composition: a persistent four-step rail shows location and completed work; the content plane holds one headline, one support paragraph, and the current task. Model setup uses three honest groups: accounts, local models, and reference-product import/custom coverage. The local pane has one dominant automatic action, one manual fallback, visible download/proof progress, and the full model library below.
+- Primary composition: a persistent four-step horizontal progress line keeps the complete journey above the task plane and returns the left edge to content. Model setup opens with one three-column source chooser: external providers on the left, a private local agent in the center, and a reviewed open-access directory on the right. The selected source expands below without duplicating the choice into another tab bar. The local pane has one dominant automatic action, one manual fallback, visible download/proof progress, and the full model library below.
+- Provider integrity: the external catalog mirrors current OpenClaw and Hermes provider families, but separates Kestrel-native routes from compatible-endpoint and cloud-specific families that still need dedicated adapters. Open Access links only to official provider directories; it never imports shared tokens or claims changing free quotas as guaranteed.
+- Native-quality reset: setup uses a quiet macOS assistant composition rather than a provider console. Progress is one compact line, source choices use readable labels and one restrained symbol each, selected detail is disclosed below, and exhaustive compatibility data stays behind a native disclosure control. Body text is never miniaturized to make the catalog fit.
 - Motion roles: state continuity through a short horizontal/opacity step transition; feedback through hover/press/focus. Reduced motion changes steps without travel.
 - Persistence: current step and safe non-secret selections survive a reload; completion is stored only after the final page. Credentials remain in macOS secure storage and are never copied into browser storage.
 - State coverage: first/returning setup; warning unchecked/acknowledged; credential loading/saving/configured/error; zero/one/two accounts; provider verification; automatic runtime unsupported/detecting/downloading/checksum-verifying/installing/starting; model downloading/verifying/ready/cancelled/error; manual setup collapsed/expanded; existing versus managed Ollama; device recommendation; optional setup skipped; final incomplete/ready; setup-assistant handoff; back navigation.

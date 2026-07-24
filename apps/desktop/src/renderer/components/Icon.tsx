@@ -21,6 +21,10 @@ const paths: Record<string, string[]> = {
   check: ["M5 12l4 4L19 6"],
   pause: ["M8 5v14M16 5v14"],
   voice: ["M5 10v4M9 7v10M13 5v14M17 8v8M21 10v4"]
+  ,welcome: ["M12 3v3M12 18v3M3 12h3M18 12h3", "M6.6 6.6l2.1 2.1M15.3 15.3l2.1 2.1M17.4 6.6l-2.1 2.1M8.7 15.3l-2.1 2.1", "M12 9a3 3 0 100 6 3 3 0 000-6z"]
+  ,safety: ["M12 3l7 3v5c0 4.5-2.8 7.3-7 9-4.2-1.7-7-4.5-7-9V6z", "M9 12l2 2 4-4"]
+  ,models: ["M7 17h10a4 4 0 00.7-7.9A6 6 0 006.2 8.5 4.5 4.5 0 007 17z"]
+  ,ready: ["M12 21a9 9 0 100-18 9 9 0 000 18z", "M8 12l2.5 2.5L16 9"]
 };
 
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: string }) {

@@ -1,5 +1,13 @@
 # Kestrel desktop content lock
 
+## Natural desktop language
+
+- Prefer the user's action: “Choose folder,” “Pick a size,” “Use my AI account,” and “Do this later.”
+- Replace internal categories such as “model tier,” “provider stack,” “route,” and “local agent” when a plain equivalent is available.
+- Use Workstrand consistently in visible copy. Keep legacy Kestrel identifiers only where compatibility requires them.
+- Supporting text explains the consequence of a choice; it does not repeat the label or market the feature.
+- Button hierarchy is one primary next step, a bordered secondary action, and text-like navigation for Back or deferral.
+
 ## Kestrel daily-work entry
 
 ### Product promise

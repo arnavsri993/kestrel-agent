@@ -23,8 +23,9 @@ function fixture(provider: ModelProvider, now = () => new Date("2026-07-22T20:00
   const database = new KestrelDatabase(":memory:", createEncryptionKey());
   const runtime = new AgentRuntime(database, [root], () => now().toISOString());
   const parent = runtime.createSession({ title: "Parent", workspaceRoot: root });
-  const loop = new AgentLoop(database, runtime, new ProviderPool([provider]), now);
-  return { root, database, runtime, parent, orchestrator: new TaskOrchestrator(database, runtime, loop, now, 3) };
+  const providers = new ProviderPool([provider], now);
+  const loop = new AgentLoop(database, runtime, providers, now);
+  return { root, database, runtime, parent, orchestrator: new TaskOrchestrator(database, runtime, loop, now, 3, providers) };
 }
 
 function finalProvider(onCall?: () => Promise<void>): ModelProvider {
@@ -56,6 +57,27 @@ describe("task orchestration", () => {
     expect(delegated.result.run.status).toBe("completed");
     expect(item.runtime.getSession(delegated.sessionId)).toMatchObject({ parentSessionId: item.parent.id, allowedTools: ["workspace.read"] });
     expect(delegated.sessionId).not.toBe(item.parent.id);
+    item.database.close();
+  });
+
+  it("automatically selects and records a verified local worker route", async () => {
+    const provider: ModelProvider = {
+      ...finalProvider(),
+      defaultModel: "local-test-model",
+      probe: async () => undefined
+    };
+    const item = fixture(provider);
+    const delegated = await item.orchestrator.delegate({
+      parentSessionId: item.parent.id, title: "Auto worker", prompt: "Inspect the repository.", model: "auto", providerIds: ["auto"]
+    });
+    expect(delegated.route).toMatchObject({
+      providerId: "fake",
+      model: "local-test-model",
+      reasoningEffort: "none",
+      local: true,
+      verificationLatencyMs: 0
+    });
+    expect(delegated.result.run).toMatchObject({ model: "local-test-model", status: "completed" });
     item.database.close();
   });
 

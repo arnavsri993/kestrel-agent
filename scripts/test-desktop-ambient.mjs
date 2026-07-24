@@ -26,7 +26,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
 
-  await page.getByRole("button", { name: /More/ }).click();
+  await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   const dreaming = page.locator(".dreaming-panel");
   await dreaming.getByRole("heading", { name: "Dreaming" }).waitFor();
@@ -38,7 +38,7 @@ try {
   assert.match(await dreaming.textContent(), /Preview only · nothing stored/);
 
   await page.reload();
-  await page.getByRole("button", { name: /More/ }).click();
+  await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   await dreaming.getByRole("heading", { name: "Dreaming" }).waitFor();
   assert.match(await dreaming.textContent(), /Dream diary · 0 entries/);

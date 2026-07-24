@@ -37,7 +37,7 @@ try {
     return id;
   });
 
-  await page.getByRole("button", { name: /More/ }).click();
+  await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Opportunities", exact: true }).click();
   await page.getByRole("heading", { name: "Apply with your agent. Send with your consent." }).waitFor();
   await page.getByRole("heading", { name: "Neighborhood Build Weekend" }).waitFor();
