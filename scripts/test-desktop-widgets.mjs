@@ -54,6 +54,7 @@ try {
   assert.equal(artifact.sandbox.opaqueOrigin, true);
   assert.equal(artifact.sandbox.network, false);
 
+  await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Artifacts", exact: true }).click();
   await page.getByText("Release confidence", { exact: true }).waitFor();
   const iframe = page.locator(".artifact-widget iframe");

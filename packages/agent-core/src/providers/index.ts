@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./openai-responses";
+export * from "./openai-chat-completions";
 export * from "./anthropic-messages";
 export * from "./ollama-chat";
 export * from "./gemini-generate-content";

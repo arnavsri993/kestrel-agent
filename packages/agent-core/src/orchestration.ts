@@ -3,8 +3,18 @@ import { resolve } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import type { RuntimeToolExecution, TaskOpportunity } from "@kestrel/shared-types";
 import { AgentLoop, type AgentLoopResult } from "./agent-loop";
-import { textContent } from "./providers";
+import { ProviderPool, textContent, type ProviderVerification } from "./providers";
 import { AgentRuntime } from "./runtime";
+
+export interface DelegatedWorkerRoute {
+  providerId: string;
+  model: string;
+  reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+  local: boolean;
+  verifiedAt: string;
+  verificationLatencyMs: number;
+  rationale: string;
+}
 
 export interface DelegatedTaskInput {
   parentSessionId: string;
@@ -13,6 +23,7 @@ export interface DelegatedTaskInput {
   model: string;
   providerIds: string[];
   providerModels?: Record<string, string>;
+  reasoningEffort?: DelegatedWorkerRoute["reasoningEffort"];
   allowedTools?: string[];
   instructions?: string;
   maximumTurns?: number;
@@ -23,6 +34,7 @@ export interface DelegatedTaskResult {
   taskId: string;
   sessionId: string;
   result: AgentLoopResult;
+  route?: DelegatedWorkerRoute;
 }
 
 export interface ScheduledAgentJob {
@@ -167,7 +179,8 @@ export class TaskOrchestrator {
     private readonly runtime: AgentRuntime,
     private readonly loop: AgentLoop,
     private readonly now: () => Date = () => new Date(),
-    private readonly maximumWorkers = 4
+    private readonly maximumWorkers = 4,
+    private readonly providers?: ProviderPool
   ) {}
 
   async delegate(input: DelegatedTaskInput): Promise<DelegatedTaskResult> {
@@ -191,25 +204,76 @@ export class TaskOrchestrator {
       taskId, sessionId: session.id, parentSessionId: parent.id, title: input.title, status: "running", createdAt: this.now().toISOString()
     });
     try {
+      const route = input.model === "auto" || input.providerIds.includes("auto")
+        ? await this.selectWorker(input.prompt, input.providerIds)
+        : undefined;
       const result = await this.loop.run({
         sessionId: session.id,
-        model: input.model,
-        providerIds: input.providerIds,
+        model: route?.model ?? input.model,
+        providerIds: route ? [route.providerId] : input.providerIds,
         ...(input.providerModels ? { providerModels: input.providerModels } : {}),
+        ...(route?.reasoningEffort || input.reasoningEffort ? { reasoningEffort: route?.reasoningEffort ?? input.reasoningEffort } : {}),
         userContent: textContent(input.prompt),
         ...(input.instructions ? { instructions: input.instructions } : {}),
         ...(input.maximumTurns ? { maximumTurns: input.maximumTurns } : {})
       });
       this.database.setPrivateState(`orchestrator.task.${taskId}`, {
-        taskId, sessionId: session.id, parentSessionId: parent.id, title: input.title, status: result.run.status, runId: result.run.id, updatedAt: this.now().toISOString()
+        taskId, sessionId: session.id, parentSessionId: parent.id, title: input.title, status: result.run.status, runId: result.run.id, ...(route ? { route } : {}), updatedAt: this.now().toISOString()
       });
-      return { taskId, sessionId: session.id, result };
+      return { taskId, sessionId: session.id, result, ...(route ? { route } : {}) };
     } catch (error) {
       this.database.setPrivateState(`orchestrator.task.${taskId}`, {
         taskId, sessionId: session.id, parentSessionId: parent.id, title: input.title, status: "failed", error: "Delegated task failed.", updatedAt: this.now().toISOString()
       });
       throw error;
     }
+  }
+
+  private async selectWorker(prompt: string, requestedProviderIds: string[]): Promise<DelegatedWorkerRoute> {
+    if (!this.providers) throw new Error("Automatic delegation is unavailable because no provider pool is attached.");
+    const configured = this.providers.list().filter((provider) =>
+      provider.defaultModel
+      && provider.capabilities.tools
+      && (requestedProviderIds.includes("auto")
+        || requestedProviderIds.includes(provider.id)
+        || Boolean(provider.poolId && requestedProviderIds.includes(provider.poolId))));
+    if (!configured.length) throw new Error("No configured tool-capable worker has a default model for automatic delegation.");
+    const requested = new Set(configured.map((provider) => provider.id));
+    const verification = (await this.providers.verify("auto")).filter((result) => requested.has(result.providerId));
+    const healthy = configured.flatMap((provider) => {
+      const verified = verification.find((result) => result.providerId === provider.id && result.ok);
+      return verified ? [{ provider, verified }] : [];
+    });
+    if (!healthy.length) {
+      const detail = verification.map((item) => `${item.providerId}: ${item.error ?? "verification failed"}`).join("; ");
+      throw new Error(`No local or configured worker endpoint passed its health check${detail ? ` (${detail})` : ""}.`);
+    }
+    const freeWorkerIds = new Set(["nous", "groq", "mistral", "openrouter", "cloudflare", "github-models", "huggingface", "nvidia"]);
+    healthy.sort((left, right) => {
+      const tier = (providerId: string, local: boolean) => local ? 0 : freeWorkerIds.has(providerId) ? 1 : 2;
+      return tier(left.provider.id, left.provider.capabilities.local) - tier(right.provider.id, right.provider.capabilities.local)
+        || left.verified.latencyMs - right.verified.latencyMs
+        || left.provider.id.localeCompare(right.provider.id);
+    });
+    const selected = healthy[0]!;
+    const words = prompt.trim().split(/\s+/).filter(Boolean).length;
+    const complex = words > 220 || /\b(debug|refactor|migrate|architecture|security|review)\b/i.test(prompt);
+    const reasoningEffort: DelegatedWorkerRoute["reasoningEffort"] = selected.provider.id === "codex-subscription" || selected.provider.id.startsWith("openai")
+      ? (complex ? "high" : "medium")
+      : "none";
+    return {
+      providerId: selected.provider.poolId ?? selected.provider.id,
+      model: selected.provider.defaultModel!,
+      reasoningEffort,
+      local: selected.provider.capabilities.local,
+      verifiedAt: this.now().toISOString(),
+      verificationLatencyMs: selected.verified.latencyMs,
+      rationale: selected.provider.capabilities.local
+        ? "Selected the fastest verified local tool-capable worker; no external model endpoint is used."
+        : freeWorkerIds.has(selected.provider.id)
+          ? "Selected the fastest verified configured free-tier worker with tool support."
+          : "Selected the fastest verified configured tool-capable worker because no local or known free-tier worker passed verification."
+    };
   }
 
   async runTeam(inputs: DelegatedTaskInput[], maximumConcurrency = this.maximumWorkers): Promise<Array<DelegatedTaskResult | Error>> {
@@ -492,7 +556,7 @@ export function installOrchestrationTools(runtime: AgentRuntime, orchestrator: T
   add("goal.list", "List durable goals", true, { type: "object", properties: {}, additionalProperties: false }, async () => ({ goals: orchestrator.listGoals() }));
   add("goal.create", "Create a durable goal and task list", false, { type: "object", properties: { sessionId: { type: "string" }, title: { type: "string" }, objective: { type: "string" }, tasks: { type: "array", items: { type: "string" } } }, required: ["sessionId", "title", "objective"], additionalProperties: false }, async (_context, input) => ({ goal: orchestrator.createGoal(String(input.sessionId), String(input.title), String(input.objective), Array.isArray(input.tasks) ? input.tasks.map(String) : []) }));
   add("goal.update", "Update a goal task, status, or worker lane", false, { type: "object", properties: { goalId: { type: "string" }, status: { enum: ["active", "completed", "cancelled"] }, taskId: { type: "string" }, taskStatus: { enum: ["pending", "in_progress", "completed"] }, assigneeSessionId: { anyOf: [{ type: "string" }, { type: "null" }] } }, required: ["goalId"], additionalProperties: false }, async (_context, input) => ({ goal: orchestrator.updateGoal(String(input.goalId), { ...(input.status ? { status: input.status as GoalRecord["status"] } : {}), ...(input.taskId ? { taskId: String(input.taskId) } : {}), ...(input.taskStatus ? { taskStatus: input.taskStatus as GoalTask["status"] } : {}), ...(input.assigneeSessionId !== undefined ? { assigneeSessionId: input.assigneeSessionId === null ? null : String(input.assigneeSessionId) } : {}) }) }));
-  add("orchestration.delegate", "Delegate an isolated child-agent task", false, { type: "object", properties: { parentSessionId: { type: "string" }, title: { type: "string" }, prompt: { type: "string" }, model: { type: "string" }, providerIds: { type: "array", items: { type: "string" }, minItems: 1 }, allowedTools: { type: "array", items: { type: "string" } }, isolateWorktree: { type: "boolean" } }, required: ["parentSessionId", "title", "prompt", "model", "providerIds"], additionalProperties: false }, async (_context, input) => ({ delegated: await orchestrator.delegate({ parentSessionId: String(input.parentSessionId), title: String(input.title), prompt: String(input.prompt), model: String(input.model), providerIds: (input.providerIds as unknown[]).map(String), ...(Array.isArray(input.allowedTools) ? { allowedTools: input.allowedTools.map(String) } : {}), isolateWorktree: Boolean(input.isolateWorktree) }) }));
+  add("orchestration.delegate", "Delegate an isolated child-agent task; use model auto and providerIds auto to select a verified local or configured worker automatically", false, { type: "object", properties: { parentSessionId: { type: "string" }, title: { type: "string" }, prompt: { type: "string" }, model: { type: "string", default: "auto" }, providerIds: { type: "array", items: { type: "string" }, minItems: 1, default: ["auto"] }, allowedTools: { type: "array", items: { type: "string" } }, isolateWorktree: { type: "boolean" } }, required: ["parentSessionId", "title", "prompt"], additionalProperties: false }, async (_context, input) => ({ delegated: await orchestrator.delegate({ parentSessionId: String(input.parentSessionId), title: String(input.title), prompt: String(input.prompt), model: input.model ? String(input.model) : "auto", providerIds: Array.isArray(input.providerIds) ? input.providerIds.map(String) : ["auto"], ...(Array.isArray(input.allowedTools) ? { allowedTools: input.allowedTools.map(String) } : {}), isolateWorktree: Boolean(input.isolateWorktree) }) }));
   add("orchestration.handoff", "Hand delegated work back to its parent", false, { type: "object", properties: { childSessionId: { type: "string" }, summary: { type: "string" } }, required: ["childSessionId", "summary"], additionalProperties: false }, async (_context, input) => ({ message: orchestrator.handoff(String(input.childSessionId), String(input.summary)) }));
   add("team.list", "List durable agent teams", true, { type: "object", properties: {}, additionalProperties: false }, async () => ({ teams: orchestrator.listTeams() }));
   add("team.create", "Create an agent team with shared plan", false, { type: "object", properties: { parentSessionId: { type: "string" }, title: { type: "string" }, memberSessionIds: { type: "array", items: { type: "string" }, minItems: 1 }, sharedPlan: { type: "array", items: { type: "string" } } }, required: ["parentSessionId", "title", "memberSessionIds"], additionalProperties: false }, async (_context, input) => ({ team: orchestrator.createTeam(String(input.parentSessionId), String(input.title), (input.memberSessionIds as unknown[]).map(String), Array.isArray(input.sharedPlan) ? input.sharedPlan.map(String) : []) }));

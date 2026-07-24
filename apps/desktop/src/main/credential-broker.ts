@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { dirname, join } from "node:path";
 import { safeStorage } from "electron";
 
-export type BrokeredCredentialId = "openai" | "openai-secondary" | "anthropic" | "anthropic-secondary" | "gemini" | "brave-search" | "github" | "honcho" | "fal";
+export type BrokeredCredentialId = "openai" | "openai-secondary" | "anthropic" | "anthropic-secondary" | "gemini" | "nous" | "groq" | "mistral" | "openrouter" | "cloudflare" | "xai" | "deepseek" | "together" | "fireworks" | "nvidia" | "huggingface" | "perplexity" | "github-models" | "brave-search" | "github" | "honcho" | "fal";
 
 export const BROKERED_CREDENTIALS: Record<BrokeredCredentialId, { environmentKey: string; label: string }> = {
   openai: { environmentKey: "OPENAI_API_KEY", label: "OpenAI API key" },
@@ -11,6 +11,19 @@ export const BROKERED_CREDENTIALS: Record<BrokeredCredentialId, { environmentKey
   anthropic: { environmentKey: "ANTHROPIC_API_KEY", label: "Anthropic API key" },
   "anthropic-secondary": { environmentKey: "ANTHROPIC_API_KEY_SECONDARY", label: "Anthropic backup API key" },
   gemini: { environmentKey: "GEMINI_API_KEY", label: "Google Gemini API key" },
+  nous: { environmentKey: "NOUS_API_KEY", label: "Nous Portal API key" },
+  groq: { environmentKey: "GROQ_API_KEY", label: "Groq API key" },
+  mistral: { environmentKey: "MISTRAL_API_KEY", label: "Mistral API key" },
+  openrouter: { environmentKey: "OPENROUTER_API_KEY", label: "OpenRouter API key" },
+  cloudflare: { environmentKey: "CLOUDFLARE_API_KEY", label: "Cloudflare Workers AI API token" },
+  xai: { environmentKey: "XAI_API_KEY", label: "xAI API key" },
+  deepseek: { environmentKey: "DEEPSEEK_API_KEY", label: "DeepSeek API key" },
+  together: { environmentKey: "TOGETHER_API_KEY", label: "Together AI API key" },
+  fireworks: { environmentKey: "FIREWORKS_API_KEY", label: "Fireworks AI API key" },
+  nvidia: { environmentKey: "NVIDIA_API_KEY", label: "NVIDIA NIM API key" },
+  huggingface: { environmentKey: "HUGGINGFACE_API_KEY", label: "Hugging Face token" },
+  perplexity: { environmentKey: "PERPLEXITY_API_KEY", label: "Perplexity API key" },
+  "github-models": { environmentKey: "GITHUB_MODELS_TOKEN", label: "GitHub Models token" },
   "brave-search": { environmentKey: "BRAVE_SEARCH_API_KEY", label: "Brave Search API key" },
   github: { environmentKey: "GITHUB_TOKEN", label: "GitHub token" },
   honcho: { environmentKey: "HONCHO_API_KEY", label: "Honcho API key" },
@@ -112,6 +125,8 @@ export class CredentialBroker {
       ...(base.ANTHROPIC_MODEL ? { ANTHROPIC_MODEL: base.ANTHROPIC_MODEL } : {}),
       ...(base.GEMINI_BASE_URL ? { GEMINI_BASE_URL: base.GEMINI_BASE_URL } : {}),
       ...(base.GEMINI_MODEL ? { GEMINI_MODEL: base.GEMINI_MODEL } : {}),
+      ...Object.fromEntries(Object.entries(base).filter(([key, value]) =>
+        value && /^(NOUS|GROQ|MISTRAL|OPENROUTER|CLOUDFLARE|XAI|DEEPSEEK|TOGETHER|FIREWORKS|NVIDIA|HUGGINGFACE|PERPLEXITY|GITHUB_MODELS)_(BASE_URL|MODEL|ACCOUNT_ID|SITE_URL|APP_NAME)$/.test(key))),
       ...(base.KESTREL_OLLAMA_BASE_URL ? { KESTREL_OLLAMA_BASE_URL: base.KESTREL_OLLAMA_BASE_URL } : {}),
       ...(base.KESTREL_OLLAMA_MODEL ? { KESTREL_OLLAMA_MODEL: base.KESTREL_OLLAMA_MODEL } : {}),
       ...(base.KESTREL_ENABLE_OLLAMA ? { KESTREL_ENABLE_OLLAMA: base.KESTREL_ENABLE_OLLAMA } : {}),

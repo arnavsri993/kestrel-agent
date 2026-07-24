@@ -4,17 +4,17 @@ import { SkinDefinitionSchema, SkinImportSchema, SkinStatusSchema, type SkinDefi
 const workstrand: SkinDefinition = {
   id: "workstrand",
   name: "Kestrel",
-  description: "Warm graphite, parchment text, and a restrained terracotta signal.",
+  description: "Mac-native graphite, aluminum text, and a quiet sage signal.",
   mode: "dark",
   builtin: true,
   colors: {
-    canvas: "#232321", sidebar: "#1b1b19", sidebarHover: "#292825", surface: "#2d2c29", surfaceStrong: "#393733", panel: "#292825",
-    ink: "#f2efe7", muted: "#bbb6ab", faint: "#8f8a80", line: "#3b3935", lineStrong: "#514e48",
-    solid: "#eeeae0", solidHover: "#faf7ef", solidText: "#24231f", signal: "#d97745", signalDeep: "#ed9b71",
-    statusSoft: "#432a20", statusInk: "#f0ae89", healthy: "#70b98a", warning: "#f0a848", warningSoft: "#3b2e19", warningInk: "#ffc76b",
-    danger: "#ff5d5d", dangerSoft: "#2a1517", dangerInk: "#ffb4b4", brand: "#d7ff52"
+    canvas: "#1c1c1e", sidebar: "#141416", sidebarHover: "#29292c", surface: "#2c2c2e", surfaceStrong: "#3a3a3c", panel: "#242426",
+    ink: "#f5f5f7", muted: "#b8b8bd", faint: "#8e8e93", line: "#38383b", lineStrong: "#515156",
+    solid: "#f5f5f7", solidHover: "#ffffff", solidText: "#1c1c1e", signal: "#78b986", signalDeep: "#9bd0a5",
+    statusSoft: "#25382a", statusInk: "#b6dfbd", healthy: "#78b986", warning: "#d7b45c", warningSoft: "#3b321f", warningInk: "#f5dda0",
+    danger: "#e46c75", dangerSoft: "#351d21", dangerInk: "#f6bec3", brand: "#b7d68a"
   },
-  terminal: { accent: 190, muted: 244, success: 78, warning: 214, error: 203, promptSymbol: "❯", responseLabel: "Kestrel", toolPrefix: "┊", thinkingVerbs: ["working", "reviewing", "verifying"] }
+  terminal: { accent: 150, muted: 244, success: 108, warning: 179, error: 168, promptSymbol: "›", responseLabel: "Kestrel", toolPrefix: "┊", thinkingVerbs: ["working", "reviewing", "verifying"] }
 };
 
 const daylight: SkinDefinition = {

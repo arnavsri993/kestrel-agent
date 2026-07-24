@@ -23,7 +23,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   const openWork = async () => {
-    await page.getByRole("button", { name: /More/ }).click();
+    await page.getByRole("button", { name: /Tools/ }).click();
     await page.getByRole("button", { name: "Work", exact: true }).click();
   };
   await openWork();
