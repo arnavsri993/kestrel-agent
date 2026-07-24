@@ -357,6 +357,27 @@ export class KestrelDatabase {
       .map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)));
   }
 
+  aggregateToolExecutionStats(): Array<{ tool: string; outcome: string; count: number }> {
+    const rows = this.db.prepare(`
+      SELECT
+        json_extract(payload, '$.toolName') as tool,
+        CASE json_extract(payload, '$.status')
+          WHEN 'verified' THEN 'success'
+          WHEN 'blocked' THEN 'blocked'
+          WHEN 'failed' THEN 'error'
+          ELSE 'pending'
+        END as outcome,
+        COUNT(*) as count
+      FROM tool_executions
+      GROUP BY json_extract(payload, '$.toolName'), CASE json_extract(payload, '$.status') WHEN 'verified' THEN 'success' WHEN 'blocked' THEN 'blocked' WHEN 'failed' THEN 'error' ELSE 'pending' END
+    `).all() as Array<{ tool: string | null; outcome: string; count: number }>;
+    return rows.map(row => ({
+      tool: row.tool ?? "unknown",
+      outcome: row.outcome,
+      count: row.count
+    }));
+  }
+
   getToolExecution(id: string): RuntimeToolExecution | undefined {
     const row = this.db.prepare("SELECT payload FROM tool_executions WHERE id = ?").get(id) as { payload: string } | undefined;
     return row ? RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)) : undefined;
@@ -416,14 +437,55 @@ export class KestrelDatabase {
       .map((row) => ModelCallAuditSchema.parse(JSON.parse(row.payload)));
   }
 
+  aggregateModelCallStats(): Array<{ provider: string | null; model: string | null; outcome: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number; durations: number[] }> {
+    const rows = this.db.prepare(`
+      SELECT
+        json_extract(payload, '$.providerId') as providerId,
+        json_extract(payload, '$.model') as model,
+        CASE json_extract(payload, '$.status') WHEN 'completed' THEN 'success' ELSE 'error' END as outcome,
+        COUNT(*) as calls,
+        SUM(CAST(json_extract(payload, '$.inputTokens') as INTEGER)) as inputTokens,
+        SUM(CAST(json_extract(payload, '$.outputTokens') as INTEGER)) as outputTokens,
+        SUM(CAST(json_extract(payload, '$.estimatedCostUsd') as REAL)) as costUsd,
+        json_group_array(CAST(json_extract(payload, '$.durationMs') as REAL) / 1000) as durationsStr
+      FROM model_call_audits
+      GROUP BY json_extract(payload, '$.providerId'), json_extract(payload, '$.model'), CASE json_extract(payload, '$.status') WHEN 'completed' THEN 'success' ELSE 'error' END
+    `).all() as Array<{ providerId: string | null; model: string | null; outcome: string; calls: number; inputTokens: number | null; outputTokens: number | null; costUsd: number | null; durationsStr: string }>;
+    return rows.map(row => ({
+      provider: row.providerId,
+      model: row.model,
+      outcome: row.outcome,
+      calls: row.calls,
+      inputTokens: row.inputTokens ?? 0,
+      outputTokens: row.outputTokens ?? 0,
+      costUsd: row.costUsd ?? 0,
+      durations: JSON.parse(row.durationsStr)
+    }));
+  }
+
   organizationAnalytics(): { sessions: number; messages: number; runs: number; toolExecutions: number; modelCalls: number; failedModelCalls: number; inputTokens: number; outputTokens: number; estimatedCostUsd: number } {
     const count = (table: string) => (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-    const calls = this.listAllModelCallAudits();
+
+    const orgRaw = this.db.prepare(`
+      SELECT
+        COUNT(*) as modelCalls,
+        SUM(CASE WHEN json_extract(payload, '$.status') = 'failed' THEN 1 ELSE 0 END) as failedModelCalls,
+        SUM(CAST(json_extract(payload, '$.inputTokens') as INTEGER)) as inputTokens,
+        SUM(CAST(json_extract(payload, '$.outputTokens') as INTEGER)) as outputTokens,
+        SUM(CAST(json_extract(payload, '$.estimatedCostUsd') as REAL)) as estimatedCostUsd
+      FROM model_call_audits
+    `).get() as { modelCalls: number; failedModelCalls: number | null; inputTokens: number | null; outputTokens: number | null; estimatedCostUsd: number | null };
+
     return {
-      sessions: count("runtime_sessions"), messages: count("runtime_messages"), runs: count("agent_runs"), toolExecutions: count("tool_executions"), modelCalls: calls.length,
-      failedModelCalls: calls.filter((call) => call.status === "failed").length,
-      inputTokens: calls.reduce((sum, call) => sum + call.inputTokens, 0), outputTokens: calls.reduce((sum, call) => sum + call.outputTokens, 0),
-      estimatedCostUsd: Math.round(calls.reduce((sum, call) => sum + call.estimatedCostUsd, 0) * 100_000_000) / 100_000_000
+      sessions: count("runtime_sessions"),
+      messages: count("runtime_messages"),
+      runs: count("agent_runs"),
+      toolExecutions: count("tool_executions"),
+      modelCalls: orgRaw.modelCalls,
+      failedModelCalls: orgRaw.failedModelCalls ?? 0,
+      inputTokens: orgRaw.inputTokens ?? 0,
+      outputTokens: orgRaw.outputTokens ?? 0,
+      estimatedCostUsd: Math.round((orgRaw.estimatedCostUsd ?? 0) * 100_000_000) / 100_000_000
     };
   }
 
