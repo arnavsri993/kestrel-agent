@@ -29,23 +29,11 @@ function rowFor(state: PetActivityState, rows: number): number {
   )[state];
 }
 
-export function PetOverlay() {
+function usePetRuntimeState() {
   const [status, setStatus] = useState<PetStatus | null>(null);
-  const [asset, setAsset] = useState("");
   const [activity, setActivity] = useState<PetActivityState>("idle");
-  const [frame, setFrame] = useState(0);
-  const [composer, setComposer] = useState(false);
-  const [prompt, setPrompt] = useState("");
-  const [sending, setSending] = useState(false);
-  const [message, setMessage] = useState("");
   const [unread, setUnread] = useState(false);
   const resetTimer = useRef<number | null>(null);
-  const clickTimer = useRef<number | null>(null);
-  const selected = status?.configuration.selectedSlug
-    ? status.installed.find(
-        (pet) => pet.slug === status.configuration.selectedSlug,
-      )
-    : undefined;
 
   useEffect(() => {
     void window.kestrel.request({ type: "pet-get" }).then((raw) => {
@@ -80,15 +68,20 @@ export function PetOverlay() {
       unsubscribeRuntime();
       unsubscribeStatus();
       if (resetTimer.current) window.clearTimeout(resetTimer.current);
-      if (clickTimer.current) window.clearTimeout(clickTimer.current);
     };
   }, []);
 
+  return { status, activity, setActivity, unread, setUnread };
+}
+
+function usePetAsset(selectedSlug: string | undefined) {
+  const [asset, setAsset] = useState("");
+
   useEffect(() => {
     setAsset("");
-    if (!selected) return;
+    if (!selectedSlug) return;
     void window.kestrel
-      .request({ type: "pet-asset", slug: selected.slug })
+      .request({ type: "pet-asset", slug: selectedSlug })
       .then((raw) => {
         const response = raw as CoreResponse;
         if (response.ok && response.petAsset)
@@ -96,7 +89,13 @@ export function PetOverlay() {
             `data:${response.petAsset.mediaType};base64,${response.petAsset.dataBase64}`,
           );
       });
-  }, [selected?.slug]);
+  }, [selectedSlug]);
+
+  return asset;
+}
+
+function usePetAnimation(activity: PetActivityState, asset: string) {
+  const [frame, setFrame] = useState(0);
 
   useEffect(() => {
     setFrame(0);
@@ -108,6 +107,26 @@ export function PetOverlay() {
     );
     return () => window.clearInterval(timer);
   }, [activity, asset]);
+
+  return frame;
+}
+
+function usePetInteraction(
+  setUnread: (unread: boolean) => void,
+  setActivity: (activity: PetActivityState) => void
+) {
+  const [composer, setComposer] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const [sending, setSending] = useState(false);
+  const [message, setMessage] = useState("");
+  const clickTimer = useRef<number | null>(null);
+
+  // Clean up click timer on unmount
+  useEffect(() => {
+    return () => {
+      if (clickTimer.current) window.clearTimeout(clickTimer.current);
+    };
+  }, []);
 
   async function closeOverlay() {
     await window.kestrel.request({ type: "pet-overlay-close" });
@@ -191,6 +210,43 @@ export function PetOverlay() {
       setSending(false);
     }
   }
+
+  return {
+    composer,
+    setComposer,
+    prompt,
+    setPrompt,
+    sending,
+    message,
+    handleSpriteClick,
+    handleSpriteDoubleClick,
+    submit,
+    toggleMain,
+  };
+}
+
+export function PetOverlay() {
+  const { status, activity, setActivity, unread, setUnread } = usePetRuntimeState();
+  const selectedSlug = status?.configuration.selectedSlug;
+  const selected = selectedSlug
+    ? status.installed.find((pet) => pet.slug === selectedSlug)
+    : undefined;
+
+  const asset = usePetAsset(selectedSlug);
+  const frame = usePetAnimation(activity, asset);
+
+  const {
+    composer,
+    setComposer,
+    prompt,
+    setPrompt,
+    sending,
+    message,
+    handleSpriteClick,
+    handleSpriteDoubleClick,
+    submit,
+    toggleMain,
+  } = usePetInteraction(setUnread, setActivity);
 
   if (!selected || !asset)
     return (
