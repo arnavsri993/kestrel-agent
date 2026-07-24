@@ -418,12 +418,27 @@ export class KestrelDatabase {
 
   organizationAnalytics(): { sessions: number; messages: number; runs: number; toolExecutions: number; modelCalls: number; failedModelCalls: number; inputTokens: number; outputTokens: number; estimatedCostUsd: number } {
     const count = (table: string) => (this.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
-    const calls = this.listAllModelCallAudits();
+
+    const callStats = this.db.prepare(`
+      SELECT
+        COUNT(*) as modelCalls,
+        CAST(SUM(CASE WHEN json_extract(payload, '$.status') = 'failed' THEN 1 ELSE 0 END) as REAL) as failedModelCalls,
+        CAST(SUM(json_extract(payload, '$.inputTokens')) as REAL) as inputTokens,
+        CAST(SUM(json_extract(payload, '$.outputTokens')) as REAL) as outputTokens,
+        CAST(SUM(COALESCE(json_extract(payload, '$.estimatedCostUsd'), 0)) as REAL) as estimatedCostUsd
+      FROM model_call_audits
+    `).get() as { modelCalls: number; failedModelCalls: number | null; inputTokens: number | null; outputTokens: number | null; estimatedCostUsd: number | null };
+
     return {
-      sessions: count("runtime_sessions"), messages: count("runtime_messages"), runs: count("agent_runs"), toolExecutions: count("tool_executions"), modelCalls: calls.length,
-      failedModelCalls: calls.filter((call) => call.status === "failed").length,
-      inputTokens: calls.reduce((sum, call) => sum + call.inputTokens, 0), outputTokens: calls.reduce((sum, call) => sum + call.outputTokens, 0),
-      estimatedCostUsd: Math.round(calls.reduce((sum, call) => sum + call.estimatedCostUsd, 0) * 100_000_000) / 100_000_000
+      sessions: count("runtime_sessions"),
+      messages: count("runtime_messages"),
+      runs: count("agent_runs"),
+      toolExecutions: count("tool_executions"),
+      modelCalls: callStats.modelCalls,
+      failedModelCalls: callStats.failedModelCalls || 0,
+      inputTokens: callStats.inputTokens || 0,
+      outputTokens: callStats.outputTokens || 0,
+      estimatedCostUsd: Math.round((callStats.estimatedCostUsd || 0) * 100_000_000) / 100_000_000
     };
   }
 
