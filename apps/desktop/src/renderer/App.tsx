@@ -1813,186 +1813,188 @@ function Composer({
   );
 }
 
-function Home({
+function HomeNewTask({
   snapshot,
-  thread,
+  input,
+  setInput,
+  submit,
+  busy,
+  setAnswer,
   setThread,
   navigate,
-  onTroubleshoot,
 }: {
   snapshot: WorkspaceSnapshot;
-  thread: Thread;
-  setThread(thread: Thread): void;
-  navigate(page: Page): void;
-  onTroubleshoot(
-    message: string,
-  ): Promise<{ answer: string; routing?: ModelRoutingDecision | undefined }>;
+  input: string;
+  setInput: (value: string) => void;
+  submit: () => Promise<void>;
+  busy: boolean;
+  setAnswer: (value: string | null) => void;
+  setThread: (thread: Thread) => void;
+  navigate: (page: Page) => void;
 }) {
-  const [input, setInput] = useState("");
-  const [answer, setAnswer] = useState<string | null>(null);
-  const [sentMessage, setSentMessage] = useState(
-    "RC not connected to mobile device.",
-  );
-  const [busy, setBusy] = useState(false);
-  const [chatError, setChatError] = useState("");
-  const [routing, setRouting] = useState<ModelRoutingDecision | null>(null);
-  const inputRef = useRef(input);
-  inputRef.current = input;
   const approval = snapshot.approvals[0];
-
-  useEffect(() => {
-    if (thread !== "dji") return;
-    setSentMessage("RC not connected to mobile device.");
-  }, [thread]);
-
-  async function submit(message = inputRef.current) {
-    const clean = message.trim();
-    if (!clean || busy) return;
-    setBusy(true);
-    setChatError("");
-    setSentMessage(clean);
-    setInput("");
-    setThread("dji");
-    try {
-      const result = await onTroubleshoot(clean);
-      setAnswer(result.answer);
-      setRouting(result.routing ?? null);
-    } catch {
-      setChatError(
-        "Kestrel could not finish that response. Your message is still here—try again when the local core is available.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (thread === "new")
-    return (
-      <section
-        className="conversation-view new-task-view"
-        aria-labelledby="new-task-title"
-      >
-        <div className="new-task-center">
-          <div className="welcome-mark" aria-hidden="true">
-            <BrandMark />
-          </div>
-          <h1 id="new-task-title">What should we work on?</h1>
-          <p>
-            Ask normally. Workstrand will bring in relevant local context when
-            it can help.
-          </p>
-          <Composer
-            value={input}
-            onChange={setInput}
-            onSubmit={() => void submit()}
-            busy={busy}
-          />
-          <div className="prompt-suggestions" aria-label="Preview examples">
-            <button
-              onClick={() => {
-                setAnswer(null);
-                setThread("dji");
-              }}
-            >
-              Troubleshoot my DJI connection
-              <Icon name="arrow" />
-            </button>
-            <button onClick={() => setThread("teacher")}>
-              Open the prepared test plan
-              <Icon name="arrow" />
-            </button>
-          </div>
+  return (
+    <section
+      className="conversation-view new-task-view"
+      aria-labelledby="new-task-title"
+    >
+      <div className="new-task-center">
+        <div className="welcome-mark" aria-hidden="true">
+          <BrandMark />
         </div>
-        <button
-          className="background-note"
-          onClick={() => navigate("approvals")}
-        >
-          <span className={`agent-dot ${snapshot.agentState}`} />
-          <span>
-            <strong>
-              {approval?.status === "pending"
-                ? "1 approval waiting"
-                : "Background work is quiet"}
-            </strong>
-            <small>
-              {approval?.status === "pending"
-                ? "Kestrel prepared a plan and paused before acting"
-                : "No action needs you right now"}
-            </small>
-          </span>
-          <Icon name="chevron" />
-        </button>
-      </section>
-    );
-
-  if (thread === "teacher")
-    return (
-      <section
-        className="conversation-view"
-        aria-label="Choose the better test date conversation"
+        <h1 id="new-task-title">What should we work on?</h1>
+        <p>
+          Ask normally. Workstrand will bring in relevant local context when
+          it can help.
+        </p>
+        <Composer
+          value={input}
+          onChange={setInput}
+          onSubmit={() => void submit()}
+          busy={busy}
+        />
+        <div className="prompt-suggestions" aria-label="Preview examples">
+          <button
+            onClick={() => {
+              setAnswer(null);
+              setThread("dji");
+            }}
+          >
+            Troubleshoot my DJI connection
+            <Icon name="arrow" />
+          </button>
+          <button onClick={() => setThread("teacher")}>
+            Open the prepared test plan
+            <Icon name="arrow" />
+          </button>
+        </div>
+      </div>
+      <button
+        className="background-note"
+        onClick={() => navigate("approvals")}
       >
-        <div className="message-list">
-          <div className="assistant-message">
-            <span className="assistant-avatar">K</span>
-            <div>
-              <p>
-                I noticed Ms. Rivera offered Friday or Monday for the Algebra II
-                test. I checked the calendar and the study preferences you
-                confirmed.
-              </p>
-              <div className="work-summary">
-                <Icon name="check" />
+        <span className={`agent-dot ${snapshot.agentState}`} />
+        <span>
+          <strong>
+            {approval?.status === "pending"
+              ? "1 approval waiting"
+              : "Background work is quiet"}
+          </strong>
+          <small>
+            {approval?.status === "pending"
+              ? "Kestrel prepared a plan and paused before acting"
+              : "No action needs you right now"}
+          </small>
+        </span>
+        <Icon name="chevron" />
+      </button>
+    </section>
+  );
+}
+
+function HomeTeacher({
+  snapshot,
+  input,
+  setInput,
+  submit,
+  busy,
+  navigate,
+}: {
+  snapshot: WorkspaceSnapshot;
+  input: string;
+  setInput: (value: string) => void;
+  submit: () => Promise<void>;
+  busy: boolean;
+  navigate: (page: Page) => void;
+}) {
+  const approval = snapshot.approvals[0];
+  return (
+    <section
+      className="conversation-view"
+      aria-label="Choose the better test date conversation"
+    >
+      <div className="message-list">
+        <div className="assistant-message">
+          <span className="assistant-avatar">K</span>
+          <div>
+            <p>
+              I noticed Ms. Rivera offered Friday or Monday for the Algebra II
+              test. I checked the calendar and the study preferences you
+              confirmed.
+            </p>
+            <div className="work-summary">
+              <Icon name="check" />
+              <span>
+                Checked teacher email, Friday calendar, and study memory
+              </span>
+            </div>
+            <p>
+              <strong>Monday looks better.</strong> Friday runs into swim
+              practice; Monday leaves the weekend open for two study blocks.
+            </p>
+            <div className="inline-action">
+              <div>
+                <strong>
+                  {approval?.status === "pending"
+                    ? "Plan ready for approval"
+                    : "Plan completed"}
+                </strong>
                 <span>
-                  Checked teacher email, Friday calendar, and study memory
+                  {approval?.status === "pending"
+                    ? "Reply, calendar event, and study blocks"
+                    : "Open the result and verification trail"}
                 </span>
               </div>
-              <p>
-                <strong>Monday looks better.</strong> Friday runs into swim
-                practice; Monday leaves the weekend open for two study blocks.
-              </p>
-              <div className="inline-action">
-                <div>
-                  <strong>
-                    {approval?.status === "pending"
-                      ? "Plan ready for approval"
-                      : "Plan completed"}
-                  </strong>
-                  <span>
-                    {approval?.status === "pending"
-                      ? "Reply, calendar event, and study blocks"
-                      : "Open the result and verification trail"}
-                  </span>
-                </div>
-                <button
-                  className="button secondary"
-                  onClick={() => navigate("approvals")}
-                >
-                  {approval?.status === "pending"
-                    ? "Review plan"
-                    : "View result"}
-                  <Icon name="arrow" />
-                </button>
-              </div>
-              <details className="message-details">
-                <summary>Why Kestrel suggested this</summary>
-                <p>{snapshot.opportunity.reasonDetected}</p>
-                <p>{snapshot.opportunity.description}</p>
-              </details>
+              <button
+                className="button secondary"
+                onClick={() => navigate("approvals")}
+              >
+                {approval?.status === "pending"
+                  ? "Review plan"
+                  : "View result"}
+                <Icon name="arrow" />
+              </button>
             </div>
+            <details className="message-details">
+              <summary>Why Kestrel suggested this</summary>
+              <p>{snapshot.opportunity.reasonDetected}</p>
+              <p>{snapshot.opportunity.description}</p>
+            </details>
           </div>
         </div>
-        <div className="thread-composer">
-          <Composer
-            compact
-            value={input}
-            onChange={setInput}
-            onSubmit={() => void submit()}
-            busy={busy}
-          />
-        </div>
-      </section>
-    );
+      </div>
+      <div className="thread-composer">
+        <Composer
+          compact
+          value={input}
+          onChange={setInput}
+          onSubmit={() => void submit()}
+          busy={busy}
+        />
+      </div>
+    </section>
+  );
+}
 
+function HomeDJI({
+  input,
+  setInput,
+  submit,
+  busy,
+  sentMessage,
+  answer,
+  routing,
+  chatError,
+}: {
+  input: string;
+  setInput: (value: string) => void;
+  submit: (message?: string) => Promise<void>;
+  busy: boolean;
+  sentMessage: string;
+  answer: string | null;
+  routing: ModelRoutingDecision | null;
+  chatError: string;
+}) {
   return (
     <section
       className="conversation-view"
@@ -2073,6 +2075,100 @@ function Home({
         />
       </div>
     </section>
+  );
+}
+
+function Home({
+  snapshot,
+  thread,
+  setThread,
+  navigate,
+  onTroubleshoot,
+}: {
+  snapshot: WorkspaceSnapshot;
+  thread: Thread;
+  setThread(thread: Thread): void;
+  navigate(page: Page): void;
+  onTroubleshoot(
+    message: string,
+  ): Promise<{ answer: string; routing?: ModelRoutingDecision | undefined }>;
+}) {
+  const [input, setInput] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [sentMessage, setSentMessage] = useState(
+    "RC not connected to mobile device.",
+  );
+  const [busy, setBusy] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [routing, setRouting] = useState<ModelRoutingDecision | null>(null);
+  const inputRef = useRef(input);
+  inputRef.current = input;
+
+  useEffect(() => {
+    if (thread !== "dji") return;
+    setSentMessage("RC not connected to mobile device.");
+  }, [thread]);
+
+  async function submit(message = inputRef.current) {
+    const clean = message.trim();
+    if (!clean || busy) return;
+    setBusy(true);
+    setChatError("");
+    setSentMessage(clean);
+    setInput("");
+    setThread("dji");
+    try {
+      const result = await onTroubleshoot(clean);
+      setAnswer(result.answer);
+      setRouting(result.routing ?? null);
+    } catch {
+      setChatError(
+        "Kestrel could not finish that response. Your message is still here—try again when the local core is available.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (thread === "new") {
+    return (
+      <HomeNewTask
+        snapshot={snapshot}
+        input={input}
+        setInput={setInput}
+        submit={submit}
+        busy={busy}
+        setAnswer={setAnswer}
+        setThread={setThread}
+        navigate={navigate}
+      />
+    );
+  }
+
+  if (thread === "teacher") {
+    return (
+      <HomeTeacher
+        snapshot={snapshot}
+        input={input}
+        setInput={setInput}
+        submit={submit}
+        busy={busy}
+        navigate={navigate}
+      />
+    );
+  }
+
+  return (
+    <HomeDJI
+      input={input}
+      setInput={setInput}
+      submit={submit}
+      busy={busy}
+      sentMessage={sentMessage}
+      answer={answer}
+      routing={routing}
+      chatError={chatError}
+    />
   );
 }
 
