@@ -94,14 +94,17 @@ describe("external secret manager", () => {
       ANTHROPIC_API_KEY: "bitwarden-anthropic-secret",
       GITHUB_TOKEN: "stored-github-secret"
     });
-    expect(calls[0]).toMatchObject({
+    const opCall = calls.find(c => c.file.endsWith("/op"));
+    const bwsCall = calls.find(c => c.file.endsWith("/bws"));
+    const helperCall = calls.find(c => c.file.endsWith("/helper"));
+    expect(opCall).toMatchObject({
       file: expect.stringMatching(/\/op$/),
       args: ["read", "op://Private/OpenAI/api-key", "--no-newline", "--account", "team.1password.com"]
     });
-    expect(calls[0]!.env.OP_SERVICE_ACCOUNT_TOKEN).toBe("ops_service_account_token");
-    expect(calls[1]!.env.BWS_ACCESS_TOKEN).toBe("0.machine-account-token");
-    expect(calls[1]!.env.BWS_SERVER_URL).toBe("https://vault.bitwarden.eu");
-    expect(calls[2]!.env).not.toHaveProperty("OPENAI_API_KEY");
+    expect(opCall!.env.OP_SERVICE_ACCOUNT_TOKEN).toBe("ops_service_account_token");
+    expect(bwsCall!.env.BWS_ACCESS_TOKEN).toBe("0.machine-account-token");
+    expect(bwsCall!.env.BWS_SERVER_URL).toBe("https://vault.bitwarden.eu");
+    expect(helperCall!.env).not.toHaveProperty("OPENAI_API_KEY");
     const status = await manager.status();
     expect(status.sources).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "onepassword", state: "verified", resolvedCredentialIds: ["openai"] }),

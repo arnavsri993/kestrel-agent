@@ -233,20 +233,38 @@ export class ExternalSecretManager {
     const configuration = await this.configuration();
     const values: Partial<Record<BrokeredCredentialId, string>> = {};
     const overrideStoredIds: BrokeredCredentialId[] = [];
-    for (const providerId of ["onepassword", "bitwarden", "command"] as const) {
-      if (!configuration[providerId].enabled) continue;
-      try {
-        const sourceValues = await this.resolveSource(providerId, configuration);
+    const providers = ["onepassword", "bitwarden", "command"] as const;
+
+    const results = await Promise.all(
+      providers.map(async (providerId) => {
+        if (!configuration[providerId].enabled) {
+          return { providerId, enabled: false };
+        }
+        try {
+          const sourceValues = await this.resolveSource(providerId, configuration);
+          return { providerId, enabled: true, sourceValues, error: undefined };
+        } catch (error) {
+          return { providerId, enabled: true, sourceValues: undefined, error };
+        }
+      })
+    );
+
+    for (const result of results) {
+      if (!result.enabled) continue;
+      const providerId = result.providerId;
+      if (result.error) {
+        await this.recordVerification(providerId, "error", [], result.error instanceof Error ? result.error.message : "Secret source failed.");
+      } else if (result.sourceValues) {
+        const sourceValues = result.sourceValues;
         for (const [id, value] of Object.entries(sourceValues) as Array<[BrokeredCredentialId, string]>) {
           if (values[id]) continue;
           values[id] = value;
           if (configuration[providerId].overrideStored) overrideStoredIds.push(id);
         }
         await this.recordVerification(providerId, "verified", Object.keys(sourceValues) as BrokeredCredentialId[], `${Object.keys(sourceValues).length} supported credentials resolved.`);
-      } catch (error) {
-        await this.recordVerification(providerId, "error", [], error instanceof Error ? error.message : "Secret source failed.");
       }
     }
+
     return { values, overrideStoredIds };
   }
 
