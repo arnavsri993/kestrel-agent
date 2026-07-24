@@ -92,7 +92,7 @@ function labels(values: Record<string, string>): string {
   return entries.length ? `{${entries.map(([key, value]) => `${key}="${escapePrometheusLabel(value)}"`).join(",")}}` : "";
 }
 
-function aggregateModelCalls(calls: ModelCallAudit[]) {
+function aggregateModelCalls(stats: Array<{ provider: string | null; model: string | null; outcome: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number; durations: number[] }>) {
   const groups = new Map<string, {
     provider: string;
     model: string;
@@ -103,17 +103,17 @@ function aggregateModelCalls(calls: ModelCallAudit[]) {
     costUsd: number;
     durations: number[];
   }>();
-  for (const call of calls) {
-    const provider = boundedLabel(call.providerId);
-    const model = boundedLabel(call.model);
-    const outcome = call.status === "completed" ? "success" : "error";
+  for (const stat of stats) {
+    const provider = boundedLabel(stat.provider ?? undefined);
+    const model = boundedLabel(stat.model ?? undefined);
+    const outcome = stat.outcome;
     const key = `${provider}\0${model}\0${outcome}`;
     const group = groups.get(key) ?? { provider, model, outcome, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, durations: [] };
-    group.calls += 1;
-    group.inputTokens += call.inputTokens;
-    group.outputTokens += call.outputTokens;
-    group.costUsd += call.estimatedCostUsd;
-    group.durations.push(call.durationMs / 1_000);
+    group.calls += stat.calls;
+    group.inputTokens += stat.inputTokens;
+    group.outputTokens += stat.outputTokens;
+    group.costUsd += stat.costUsd;
+    group.durations.push(...stat.durations);
     groups.set(key, group);
   }
   return [...groups.values()];
@@ -121,14 +121,15 @@ function aggregateModelCalls(calls: ModelCallAudit[]) {
 
 export function renderPrometheusMetrics(database: KestrelDatabase): string {
   const analytics = database.organizationAnalytics();
-  const modelGroups = aggregateModelCalls(database.listAllModelCallAudits());
+  const modelGroups = aggregateModelCalls(database.aggregateModelCallStats());
+
   const toolGroups = new Map<string, { tool: string; outcome: string; count: number }>();
-  for (const execution of database.listAllToolExecutions()) {
-    const tool = boundedLabel(execution.toolName);
-    const outcome = execution.status === "verified" ? "success" : execution.status === "blocked" ? "blocked" : execution.status === "failed" ? "error" : "pending";
+  for (const stat of database.aggregateToolExecutionStats()) {
+    const tool = boundedLabel(stat.tool);
+    const outcome = stat.outcome;
     const key = `${tool}\0${outcome}`;
     const group = toolGroups.get(key) ?? { tool, outcome, count: 0 };
-    group.count += 1;
+    group.count += stat.count;
     toolGroups.set(key, group);
   }
 
