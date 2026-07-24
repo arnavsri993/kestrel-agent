@@ -5587,7 +5587,7 @@ function MigrationSettings() {
   );
 }
 
-function EnterpriseSettings() {
+function useEnterpriseSettings() {
   const [policy, setPolicy] = useState<{
     organizationId: string;
     version: number;
@@ -5605,6 +5605,7 @@ function EnterpriseSettings() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
   async function load() {
     const response = (await window.kestrel.request({
       type: "enterprise-summary",
@@ -5614,6 +5615,7 @@ function EnterpriseSettings() {
     setAnalytics(response.enterpriseAnalytics ?? null);
     setMembers(response.organizationMembers ?? []);
   }
+
   useEffect(() => {
     void load().catch((cause) =>
       setError(
@@ -5621,6 +5623,7 @@ function EnterpriseSettings() {
       ),
     );
   }, []);
+
   async function retention() {
     setBusy(true);
     setError("");
@@ -5639,6 +5642,7 @@ function EnterpriseSettings() {
       setBusy(false);
     }
   }
+
   async function provision() {
     if (!email || !displayName) return;
     setBusy(true);
@@ -5660,6 +5664,43 @@ function EnterpriseSettings() {
       setBusy(false);
     }
   }
+
+  return {
+    policy,
+    analytics,
+    members,
+    email,
+    setEmail,
+    displayName,
+    setDisplayName,
+    role,
+    setRole,
+    notice,
+    error,
+    busy,
+    retention,
+    provision,
+  };
+}
+
+function EnterpriseSettings() {
+  const {
+    policy,
+    analytics,
+    members,
+    email,
+    setEmail,
+    displayName,
+    setDisplayName,
+    role,
+    setRole,
+    notice,
+    error,
+    busy,
+    retention,
+    provision,
+  } = useEnterpriseSettings();
+
   if (!policy)
     return (
       <article className="setting-row">
