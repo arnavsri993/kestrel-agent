@@ -56,6 +56,42 @@ describe("managed Tailscale exposure", () => {
     const manager = new TailscaleExposureManager({ mode: "serve", resetOnExit: false, publicExposureApproved: false }, runner);
     await expect(manager.apply("http://0.0.0.0:18789")).rejects.toThrow("loopback");
   });
+
+  it("throws an error if Tailscale status does not report an online device with MagicDNS", async () => {
+    const errorMsg = "Tailscale status did not report an online device with MagicDNS.";
+
+    let stdoutValue = "";
+    const runner: GatewayCommandRunner = { run: async () => ({ exitCode: 0, stdout: stdoutValue, stderr: "" }) };
+    const manager = new TailscaleExposureManager({ mode: "serve", resetOnExit: true, publicExposureApproved: false }, runner);
+
+    // Invalid JSON
+    stdoutValue = "invalid json";
+    await expect(manager.apply("http://127.0.0.1:18789")).rejects.toThrow(errorMsg);
+
+    // Missing BackendState
+    stdoutValue = JSON.stringify({ Self: { Online: true, DNSName: "agent.example.ts.net." } });
+    await expect(manager.apply("http://127.0.0.1:18789")).rejects.toThrow(errorMsg);
+
+    // Not Running BackendState
+    stdoutValue = JSON.stringify({ BackendState: "Stopped", Self: { Online: true, DNSName: "agent.example.ts.net." } });
+    await expect(manager.apply("http://127.0.0.1:18789")).rejects.toThrow(errorMsg);
+
+    // Missing Self
+    stdoutValue = JSON.stringify({ BackendState: "Running" });
+    await expect(manager.apply("http://127.0.0.1:18789")).rejects.toThrow(errorMsg);
+
+    // Offline Self
+    stdoutValue = JSON.stringify({ BackendState: "Running", Self: { Online: false, DNSName: "agent.example.ts.net." } });
+    await expect(manager.apply("http://127.0.0.1:18789")).rejects.toThrow(errorMsg);
+
+    // Missing DNSName
+    stdoutValue = JSON.stringify({ BackendState: "Running", Self: { Online: true } });
+    await expect(manager.apply("http://127.0.0.1:18789")).rejects.toThrow(errorMsg);
+
+    // DNSName not a string
+    stdoutValue = JSON.stringify({ BackendState: "Running", Self: { Online: true, DNSName: 123 } });
+    await expect(manager.apply("http://127.0.0.1:18789")).rejects.toThrow(errorMsg);
+  });
 });
 
 describe("Bonjour gateway discovery", () => {
