@@ -84,7 +84,7 @@ export class AgentLoop {
     if (session.status !== "active") throw new Error(`Session ${session.id} is ${session.status}.`);
     if (input.providerIds.length === 0) throw new Error("At least one model provider is required.");
     const messageCountBefore = this.runtime.listMessages(session.id).length;
-    const mutationIdsBefore = this.database.listWorkspaceMutations(session.id).map((mutation) => mutation.id);
+    const mutationIdsBefore = this.database.listWorkspaceMutationIds(session.id);
     const createdAt = this.now().toISOString();
     let run: AgentRun = {
       id: `run-${randomUUID()}`,
