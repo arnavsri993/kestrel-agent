@@ -65,15 +65,11 @@ export class UsageGovernor {
 
   spending(): { dailyUsd: number; monthlyUsd: number; activeCalls: number } {
     const now = this.now();
-    const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
-    let dailyUsd = 0;
-    let monthlyUsd = 0;
-    for (const audit of this.database.listAllModelCallAudits()) {
-      const timestamp = Date.parse(audit.completedAt);
-      if (timestamp >= monthStart) monthlyUsd += audit.estimatedCostUsd;
-      if (timestamp >= dayStart) dailyUsd += audit.estimatedCostUsd;
-    }
+    const dayStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+    const monthStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+
+    const { dailyUsd, monthlyUsd } = this.database.calculateSpending(dayStartIso, monthStartIso);
+
     return { dailyUsd, monthlyUsd, activeCalls: this.activeCalls };
   }
 }

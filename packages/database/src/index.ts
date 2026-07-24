@@ -411,6 +411,19 @@ export class KestrelDatabase {
       .map((row) => ModelCallAuditSchema.parse(JSON.parse(row.payload)));
   }
 
+  calculateSpending(dayStartIso: string, monthStartIso: string): { dailyUsd: number, monthlyUsd: number } {
+    const row = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN json_extract(payload, '$.completedAt') >= ? THEN json_extract(payload, '$.estimatedCostUsd') ELSE 0 END), 0) as dailyUsd,
+        COALESCE(SUM(CASE WHEN json_extract(payload, '$.completedAt') >= ? THEN json_extract(payload, '$.estimatedCostUsd') ELSE 0 END), 0) as monthlyUsd
+      FROM model_call_audits
+    `).get(dayStartIso, monthStartIso) as { dailyUsd: number, monthlyUsd: number };
+    return {
+      dailyUsd: Math.round(row.dailyUsd * 100_000_000) / 100_000_000,
+      monthlyUsd: Math.round(row.monthlyUsd * 100_000_000) / 100_000_000
+    };
+  }
+
   listAllModelCallAudits(): ModelCallAudit[] {
     return (this.db.prepare("SELECT payload FROM model_call_audits ORDER BY started_at ASC").all() as Array<{ payload: string }>)
       .map((row) => ModelCallAuditSchema.parse(JSON.parse(row.payload)));
