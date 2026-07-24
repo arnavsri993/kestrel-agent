@@ -328,11 +328,13 @@ export class ExternalSecretManager {
     const token = await this.broker.getOpaqueSecret(ONEPASSWORD_TOKEN_SECRET_ID);
     if (token) environment.OP_SERVICE_ACCOUNT_TOKEN = token;
     const values: Partial<Record<BrokeredCredentialId, string>> = {};
-    for (const [id, reference] of mappings) {
-      const args = ["read", reference, "--no-newline", ...(configuration.onepassword.account ? ["--account", configuration.onepassword.account] : [])];
-      const result = await this.runSecretProcess(binary, args, { env: environment, timeoutMs: 5_000, maxBuffer: 24_000 }, "1Password");
-      values[id] = safeSecret(result.stdout, "1Password");
-    }
+    await Promise.all(
+      mappings.map(async ([id, reference]) => {
+        const args = ["read", reference, "--no-newline", ...(configuration.onepassword.account ? ["--account", configuration.onepassword.account] : [])];
+        const result = await this.runSecretProcess(binary, args, { env: environment, timeoutMs: 5_000, maxBuffer: 24_000 }, "1Password");
+        values[id] = safeSecret(result.stdout, "1Password");
+      })
+    );
     return values;
   }
 
