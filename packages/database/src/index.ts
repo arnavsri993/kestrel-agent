@@ -408,6 +408,11 @@ export class KestrelDatabase {
       .map((row) => this.parseWorkspaceMutation(row));
   }
 
+  listWorkspaceMutationIds(sessionId: string): string[] {
+    return (this.db.prepare("SELECT id FROM workspace_mutations WHERE session_id = ? ORDER BY created_at DESC").all(sessionId) as { id: string }[])
+      .map((row) => row.id);
+  }
+
   saveAgentRun(run: AgentRun): void {
     const parsed = AgentRunSchema.parse(run);
     this.db.prepare(`INSERT INTO agent_runs (id, session_id, payload, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)
