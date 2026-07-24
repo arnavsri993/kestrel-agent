@@ -142,13 +142,14 @@ export class NetworkPolicyWebClient {
     const cached = this.options.cache?.get<{ results: WebSearchResult[]; trust: "untrusted_external"; cached: boolean }>(cacheKey);
     if (cached) return { ...cached, cached: true };
     const results = await this.options.searchProvider.search(query, { maximumResults, signal });
-    const validated: WebSearchResult[] = [];
     const retrievedAt = this.now().toISOString();
-    for (const result of results.slice(0, maximumResults)) {
-      const url = await this.validate(result.url);
-      const title = result.title.slice(0, 500);
-      validated.push({ title, url, snippet: result.snippet.slice(0, 2_000), citation: { title, url, retrievedAt } });
-    }
+    const validated: WebSearchResult[] = await Promise.all(
+      results.slice(0, maximumResults).map(async (result) => {
+        const url = await this.validate(result.url);
+        const title = result.title.slice(0, 500);
+        return { title, url, snippet: result.snippet.slice(0, 2_000), citation: { title, url, retrievedAt } };
+      })
+    );
     const output = { results: validated, trust: "untrusted_external" as const, cached: false };
     this.options.cache?.set(cacheKey, output, this.options.cacheTtlMs ?? 15 * 60_000);
     return output;
