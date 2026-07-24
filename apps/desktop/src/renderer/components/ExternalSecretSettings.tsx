@@ -28,13 +28,183 @@ function errorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
 }
 
+function OnePasswordSection({
+  configuration,
+  status,
+  update,
+  onSave,
+  onSync,
+  onRemove,
+  busy,
+  onePasswordToken,
+  setOnePasswordToken
+}: {
+  configuration: ExternalSecretConfiguration["onepassword"];
+  status?: ExternalSecretProviderStatus | undefined;
+  update: (values: Partial<ExternalSecretConfiguration["onepassword"]>) => void;
+  onSave: () => void;
+  onSync: () => void;
+  onRemove: () => void;
+  busy: string;
+  onePasswordToken: string;
+  setOnePasswordToken: (token: string) => void;
+}) {
+  const [mappingId, setMappingId] = useState<BrokeredCredentialSummary["id"]>("openai");
+  const [mappingReference, setMappingReference] = useState("");
+
+  const mappedCredentials = Object.entries(configuration.mappings) as Array<[BrokeredCredentialSummary["id"], string]>;
+
+  return (
+    <details>
+      <summary>
+        <span>
+          <b>1Password CLI</b>
+          <small>{status?.detail ?? "Checking the official CLI…"}</small>
+        </span>
+        <span className={`external-secret-state ${status?.state ?? "needs_setup"}`}>
+          {status ? status.state.replace("_", " ") : "checking"}
+        </span>
+      </summary>
+      <div className="external-secret-form">
+        <label className="checkbox-label"><input type="checkbox" checked={configuration.enabled} onChange={(event) => update({ enabled: event.target.checked })} /><span>Resolve mapped credentials at startup</span></label>
+        <div className="external-secret-grid">
+          <label>CLI path <input value={configuration.binaryPath ?? ""} placeholder="/opt/homebrew/bin/op" autoComplete="off" spellCheck={false} onChange={(event) => update({ binaryPath: event.target.value || undefined })} /></label>
+          <label>Account <input value={configuration.account} placeholder="my.1password.com" autoComplete="off" spellCheck={false} onChange={(event) => update({ account: event.target.value })} /></label>
+          <label className="wide">Service-account token <input type="password" value={onePasswordToken} placeholder="Optional replacement; desktop sign-in also works" autoComplete="new-password" spellCheck={false} aria-describedby="onepassword-token-note" onChange={(event) => setOnePasswordToken(event.target.value)} /></label>
+        </div>
+        <small id="onepassword-token-note">The token is OS-encrypted and never shown again. Kestrel passes it only to the official op process.</small>
+        <div className="external-secret-mapper">
+          <label>Credential <select value={mappingId} onChange={(event) => setMappingId(event.target.value as BrokeredCredentialSummary["id"])}>{credentialOptions.map((credential) => <option key={credential.id} value={credential.id}>{credential.label}</option>)}</select></label>
+          <label>Secret reference <input value={mappingReference} placeholder="op://Vault/Item/field" autoComplete="off" spellCheck={false} onChange={(event) => setMappingReference(event.target.value)} /></label>
+          <button className="button secondary" disabled={!mappingReference.trim()} onClick={() => {
+            update({ mappings: { ...configuration.mappings, [mappingId]: mappingReference.trim() } });
+            setMappingReference("");
+          }}>Add mapping</button>
+        </div>
+        {mappedCredentials.length > 0 && <ul className="external-secret-mappings">{mappedCredentials.map(([id, reference]) => <li key={id}><span>{credentialOptions.find((option) => option.id === id)?.label ?? id}<small>{reference}</small></span><button className="quiet-link" onClick={() => {
+          const mappings = { ...configuration.mappings };
+          delete mappings[id];
+          update({ mappings });
+        }}>Remove</button></li>)}</ul>}
+        <label className="checkbox-label"><input type="checkbox" checked={configuration.overrideStored} onChange={(event) => update({ overrideStored: event.target.checked })} /><span>Override matching protected fields</span></label>
+        <div className="button-row">
+          <button className="button secondary" disabled={Boolean(busy)} onClick={onSave}>{busy === "save:onepassword" ? "Saving…" : "Save configuration"}</button>
+          <button className="button primary" disabled={Boolean(busy) || !configuration.enabled || mappedCredentials.length === 0} onClick={onSync}>{busy === "sync:onepassword" ? "Verifying…" : "Sync and verify"}</button>
+          <button className="quiet-link" disabled={Boolean(busy)} onClick={onRemove}>Remove source</button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function BitwardenSection({
+  configuration,
+  status,
+  update,
+  onSave,
+  onSync,
+  onRemove,
+  onInstall,
+  busy,
+  bitwardenToken,
+  setBitwardenToken
+}: {
+  configuration: ExternalSecretConfiguration["bitwarden"];
+  status?: ExternalSecretProviderStatus | undefined;
+  update: (values: Partial<ExternalSecretConfiguration["bitwarden"]>) => void;
+  onSave: () => void;
+  onSync: () => void;
+  onRemove: () => void;
+  onInstall: () => void;
+  busy: string;
+  bitwardenToken: string;
+  setBitwardenToken: (token: string) => void;
+}) {
+  return (
+    <details>
+      <summary>
+        <span>
+          <b>Bitwarden Secrets Manager</b>
+          <small>{status?.detail ?? "Checking the verified bws CLI…"}</small>
+        </span>
+        <span className={`external-secret-state ${status?.state ?? "needs_setup"}`}>
+          {status ? status.state.replace("_", " ") : "checking"}
+        </span>
+      </summary>
+      <div className="external-secret-form">
+        <label className="checkbox-label"><input type="checkbox" checked={configuration.enabled} onChange={(event) => update({ enabled: event.target.checked })} /><span>Resolve supported secret names at startup</span></label>
+        <div className="external-secret-grid">
+          <label>Project ID <input value={configuration.projectId} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" spellCheck={false} onChange={(event) => update({ projectId: event.target.value })} /></label>
+          <label>Server URL <input value={configuration.serverUrl} placeholder="Default Bitwarden cloud" autoComplete="off" spellCheck={false} onChange={(event) => update({ serverUrl: event.target.value })} /></label>
+          <label>CLI path <input value={configuration.binaryPath ?? ""} placeholder="Managed install or absolute path" autoComplete="off" spellCheck={false} onChange={(event) => update({ binaryPath: event.target.value || undefined })} /></label>
+          <label>Machine-account token <input type="password" value={bitwardenToken} placeholder="Enter or replace token" autoComplete="new-password" spellCheck={false} aria-describedby="bitwarden-token-note" onChange={(event) => setBitwardenToken(event.target.value)} /></label>
+        </div>
+        <small id="bitwarden-token-note">The token is OS-encrypted. Only names matching supported provider fields are accepted from the project.</small>
+        <label className="checkbox-label"><input type="checkbox" checked={configuration.autoInstall} onChange={(event) => update({ autoInstall: event.target.checked })} /><span>Use the pinned, checksum-verified managed CLI</span></label>
+        <label className="checkbox-label"><input type="checkbox" checked={configuration.overrideStored} onChange={(event) => update({ overrideStored: event.target.checked })} /><span>Override matching protected fields</span></label>
+        <div className="button-row">
+          <button className="button secondary" disabled={Boolean(busy)} onClick={onInstall}>{busy === "install:bitwarden" ? "Installing…" : status?.managedBinary ? "Verified CLI installed" : "Install verified CLI"}</button>
+          <button className="button secondary" disabled={Boolean(busy)} onClick={onSave}>{busy === "save:bitwarden" ? "Saving…" : "Save configuration"}</button>
+          <button className="button primary" disabled={Boolean(busy) || !configuration.enabled || !configuration.projectId || (!bitwardenToken && status?.state === "needs_setup")} onClick={onSync}>{busy === "sync:bitwarden" ? "Verifying…" : "Sync and verify"}</button>
+          <button className="quiet-link" disabled={Boolean(busy)} onClick={onRemove}>Remove source</button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function CommandSection({
+  configuration,
+  status,
+  update,
+  onSave,
+  onSync,
+  onRemove,
+  busy
+}: {
+  configuration: ExternalSecretConfiguration["command"];
+  status?: ExternalSecretProviderStatus | undefined;
+  update: (values: Partial<ExternalSecretConfiguration["command"]>) => void;
+  onSave: () => void;
+  onSync: () => void;
+  onRemove: () => void;
+  busy: string;
+}) {
+  return (
+    <details>
+      <summary>
+        <span>
+          <b>Command helper</b>
+          <small>{status?.detail ?? "Checking the configured executable…"}</small>
+        </span>
+        <span className={`external-secret-state ${status?.state ?? "needs_setup"}`}>
+          {status ? status.state.replace("_", " ") : "checking"}
+        </span>
+      </summary>
+      <div className="external-secret-form">
+        <label className="checkbox-label"><input type="checkbox" checked={configuration.enabled} onChange={(event) => update({ enabled: event.target.checked })} /><span>Run this exact executable at startup</span></label>
+        <div className="external-secret-grid">
+          <label className="wide">Executable path <input value={configuration.executablePath} placeholder="/absolute/path/to/helper" autoComplete="off" spellCheck={false} onChange={(event) => update({ executablePath: event.target.value })} /></label>
+          <label className="wide">Arguments, one per line <textarea value={configuration.arguments.join("\n")} placeholder={"get\n--format=env"} spellCheck={false} onChange={(event) => update({ arguments: event.target.value.split(/\r?\n/).filter(Boolean) })} /></label>
+          <label>Timeout in milliseconds <input type="number" min={250} max={10_000} step={250} value={configuration.timeoutMs} onChange={(event) => update({ timeoutMs: Number(event.target.value) })} /></label>
+        </div>
+        <small>Kestrel does not invoke a shell. The helper receives discrete arguments, a minimal environment, a hard timeout, and must print supported KEY=VALUE records.</small>
+        <label className="checkbox-label"><input type="checkbox" checked={configuration.overrideStored} onChange={(event) => update({ overrideStored: event.target.checked })} /><span>Override matching protected fields</span></label>
+        <div className="button-row">
+          <button className="button secondary" disabled={Boolean(busy)} onClick={onSave}>{busy === "save:command" ? "Saving…" : "Save configuration"}</button>
+          <button className="button primary" disabled={Boolean(busy) || !configuration.enabled || !configuration.executablePath} onClick={onSync}>{busy === "sync:command" ? "Verifying…" : "Sync and verify"}</button>
+          <button className="quiet-link" disabled={Boolean(busy)} onClick={onRemove}>Remove source</button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export function ExternalSecretSettings() {
   const [configuration, setConfiguration] = useState<ExternalSecretConfiguration>(() => structuredClone(EMPTY_CONFIGURATION));
   const [sources, setSources] = useState<ExternalSecretProviderStatus[]>([]);
   const [onePasswordToken, setOnePasswordToken] = useState("");
   const [bitwardenToken, setBitwardenToken] = useState("");
-  const [mappingId, setMappingId] = useState<BrokeredCredentialSummary["id"]>("openai");
-  const [mappingReference, setMappingReference] = useState("");
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -144,99 +314,55 @@ export function ExternalSecretSettings() {
     }
   }
 
-  function sourceSummary(providerId: ExternalSecretProviderId) {
-    const source = sourceById[providerId];
-    return <span className={`external-secret-state ${source?.state ?? "needs_setup"}`}>
-      {source ? source.state.replace("_", " ") : "checking"}
-    </span>;
-  }
-
   const activeCount = sources.filter((source) => source.state === "verified").length;
-  const mappedCredentials = Object.entries(configuration.onepassword.mappings) as Array<[BrokeredCredentialSummary["id"], string]>;
 
-  return <article className="setting-row external-secret-setting">
-    <div className="external-secret-content">
-      <strong>External secret sources</strong>
-      <p>Optional for advanced setups. Kestrel resolves only supported provider credentials, keeps values out of the interface, and gives saved protected fields precedence unless you explicitly override them.</p>
-      <div className="external-secret-list">
-        <details>
-          <summary><span><b>1Password CLI</b><small>{sourceById.onepassword?.detail ?? "Checking the official CLI…"}</small></span>{sourceSummary("onepassword")}</summary>
-          <div className="external-secret-form">
-            <label className="checkbox-label"><input type="checkbox" checked={configuration.onepassword.enabled} onChange={(event) => update("onepassword", { enabled: event.target.checked })} /><span>Resolve mapped credentials at startup</span></label>
-            <div className="external-secret-grid">
-              <label>CLI path <input value={configuration.onepassword.binaryPath ?? ""} placeholder="/opt/homebrew/bin/op" autoComplete="off" spellCheck={false} onChange={(event) => update("onepassword", { binaryPath: event.target.value || undefined })} /></label>
-              <label>Account <input value={configuration.onepassword.account} placeholder="my.1password.com" autoComplete="off" spellCheck={false} onChange={(event) => update("onepassword", { account: event.target.value })} /></label>
-              <label className="wide">Service-account token <input type="password" value={onePasswordToken} placeholder="Optional replacement; desktop sign-in also works" autoComplete="new-password" spellCheck={false} aria-describedby="onepassword-token-note" onChange={(event) => setOnePasswordToken(event.target.value)} /></label>
-            </div>
-            <small id="onepassword-token-note">The token is OS-encrypted and never shown again. Kestrel passes it only to the official op process.</small>
-            <div className="external-secret-mapper">
-              <label>Credential <select value={mappingId} onChange={(event) => setMappingId(event.target.value as BrokeredCredentialSummary["id"])}>{credentialOptions.map((credential) => <option key={credential.id} value={credential.id}>{credential.label}</option>)}</select></label>
-              <label>Secret reference <input value={mappingReference} placeholder="op://Vault/Item/field" autoComplete="off" spellCheck={false} onChange={(event) => setMappingReference(event.target.value)} /></label>
-              <button className="button secondary" disabled={!mappingReference.trim()} onClick={() => {
-                update("onepassword", { mappings: { ...configuration.onepassword.mappings, [mappingId]: mappingReference.trim() } });
-                setMappingReference("");
-              }}>Add mapping</button>
-            </div>
-            {mappedCredentials.length > 0 && <ul className="external-secret-mappings">{mappedCredentials.map(([id, reference]) => <li key={id}><span>{credentialOptions.find((option) => option.id === id)?.label ?? id}<small>{reference}</small></span><button className="quiet-link" onClick={() => {
-              const mappings = { ...configuration.onepassword.mappings };
-              delete mappings[id];
-              update("onepassword", { mappings });
-            }}>Remove</button></li>)}</ul>}
-            <label className="checkbox-label"><input type="checkbox" checked={configuration.onepassword.overrideStored} onChange={(event) => update("onepassword", { overrideStored: event.target.checked })} /><span>Override matching protected fields</span></label>
-            <div className="button-row">
-              <button className="button secondary" disabled={Boolean(busy)} onClick={() => void save("onepassword")}>{busy === "save:onepassword" ? "Saving…" : "Save configuration"}</button>
-              <button className="button primary" disabled={Boolean(busy) || !configuration.onepassword.enabled || mappedCredentials.length === 0} onClick={() => void sync("onepassword")}>{busy === "sync:onepassword" ? "Verifying…" : "Sync and verify"}</button>
-              <button className="quiet-link" disabled={Boolean(busy)} onClick={() => void remove("onepassword")}>Remove source</button>
-            </div>
-          </div>
-        </details>
+  return (
+    <article className="setting-row external-secret-setting">
+      <div className="external-secret-content">
+        <strong>External secret sources</strong>
+        <p>Optional for advanced setups. Kestrel resolves only supported provider credentials, keeps values out of the interface, and gives saved protected fields precedence unless you explicitly override them.</p>
+        <div className="external-secret-list">
+          <OnePasswordSection
+            configuration={configuration.onepassword}
+            status={sourceById.onepassword}
+            update={(values) => update("onepassword", values)}
+            onSave={() => void save("onepassword")}
+            onSync={() => void sync("onepassword")}
+            onRemove={() => void remove("onepassword")}
+            busy={busy}
+            onePasswordToken={onePasswordToken}
+            setOnePasswordToken={setOnePasswordToken}
+          />
 
-        <details>
-          <summary><span><b>Bitwarden Secrets Manager</b><small>{sourceById.bitwarden?.detail ?? "Checking the verified bws CLI…"}</small></span>{sourceSummary("bitwarden")}</summary>
-          <div className="external-secret-form">
-            <label className="checkbox-label"><input type="checkbox" checked={configuration.bitwarden.enabled} onChange={(event) => update("bitwarden", { enabled: event.target.checked })} /><span>Resolve supported secret names at startup</span></label>
-            <div className="external-secret-grid">
-              <label>Project ID <input value={configuration.bitwarden.projectId} placeholder="00000000-0000-0000-0000-000000000000" autoComplete="off" spellCheck={false} onChange={(event) => update("bitwarden", { projectId: event.target.value })} /></label>
-              <label>Server URL <input value={configuration.bitwarden.serverUrl} placeholder="Default Bitwarden cloud" autoComplete="off" spellCheck={false} onChange={(event) => update("bitwarden", { serverUrl: event.target.value })} /></label>
-              <label>CLI path <input value={configuration.bitwarden.binaryPath ?? ""} placeholder="Managed install or absolute path" autoComplete="off" spellCheck={false} onChange={(event) => update("bitwarden", { binaryPath: event.target.value || undefined })} /></label>
-              <label>Machine-account token <input type="password" value={bitwardenToken} placeholder="Enter or replace token" autoComplete="new-password" spellCheck={false} aria-describedby="bitwarden-token-note" onChange={(event) => setBitwardenToken(event.target.value)} /></label>
-            </div>
-            <small id="bitwarden-token-note">The token is OS-encrypted. Only names matching supported provider fields are accepted from the project.</small>
-            <label className="checkbox-label"><input type="checkbox" checked={configuration.bitwarden.autoInstall} onChange={(event) => update("bitwarden", { autoInstall: event.target.checked })} /><span>Use the pinned, checksum-verified managed CLI</span></label>
-            <label className="checkbox-label"><input type="checkbox" checked={configuration.bitwarden.overrideStored} onChange={(event) => update("bitwarden", { overrideStored: event.target.checked })} /><span>Override matching protected fields</span></label>
-            <div className="button-row">
-              <button className="button secondary" disabled={Boolean(busy)} onClick={() => void installBitwarden()}>{busy === "install:bitwarden" ? "Installing…" : sourceById.bitwarden?.managedBinary ? "Verified CLI installed" : "Install verified CLI"}</button>
-              <button className="button secondary" disabled={Boolean(busy)} onClick={() => void save("bitwarden")}>{busy === "save:bitwarden" ? "Saving…" : "Save configuration"}</button>
-              <button className="button primary" disabled={Boolean(busy) || !configuration.bitwarden.enabled || !configuration.bitwarden.projectId || (!bitwardenToken && sourceById.bitwarden?.state === "needs_setup")} onClick={() => void sync("bitwarden")}>{busy === "sync:bitwarden" ? "Verifying…" : "Sync and verify"}</button>
-              <button className="quiet-link" disabled={Boolean(busy)} onClick={() => void remove("bitwarden")}>Remove source</button>
-            </div>
-          </div>
-        </details>
+          <BitwardenSection
+            configuration={configuration.bitwarden}
+            status={sourceById.bitwarden}
+            update={(values) => update("bitwarden", values)}
+            onSave={() => void save("bitwarden")}
+            onSync={() => void sync("bitwarden")}
+            onRemove={() => void remove("bitwarden")}
+            onInstall={() => void installBitwarden()}
+            busy={busy}
+            bitwardenToken={bitwardenToken}
+            setBitwardenToken={setBitwardenToken}
+          />
 
-        <details>
-          <summary><span><b>Command helper</b><small>{sourceById.command?.detail ?? "Checking the configured executable…"}</small></span>{sourceSummary("command")}</summary>
-          <div className="external-secret-form">
-            <label className="checkbox-label"><input type="checkbox" checked={configuration.command.enabled} onChange={(event) => update("command", { enabled: event.target.checked })} /><span>Run this exact executable at startup</span></label>
-            <div className="external-secret-grid">
-              <label className="wide">Executable path <input value={configuration.command.executablePath} placeholder="/absolute/path/to/helper" autoComplete="off" spellCheck={false} onChange={(event) => update("command", { executablePath: event.target.value })} /></label>
-              <label className="wide">Arguments, one per line <textarea value={configuration.command.arguments.join("\n")} placeholder={"get\n--format=env"} spellCheck={false} onChange={(event) => update("command", { arguments: event.target.value.split(/\r?\n/).filter(Boolean) })} /></label>
-              <label>Timeout in milliseconds <input type="number" min={250} max={10_000} step={250} value={configuration.command.timeoutMs} onChange={(event) => update("command", { timeoutMs: Number(event.target.value) })} /></label>
-            </div>
-            <small>Kestrel does not invoke a shell. The helper receives discrete arguments, a minimal environment, a hard timeout, and must print supported KEY=VALUE records.</small>
-            <label className="checkbox-label"><input type="checkbox" checked={configuration.command.overrideStored} onChange={(event) => update("command", { overrideStored: event.target.checked })} /><span>Override matching protected fields</span></label>
-            <div className="button-row">
-              <button className="button secondary" disabled={Boolean(busy)} onClick={() => void save("command")}>{busy === "save:command" ? "Saving…" : "Save configuration"}</button>
-              <button className="button primary" disabled={Boolean(busy) || !configuration.command.enabled || !configuration.command.executablePath} onClick={() => void sync("command")}>{busy === "sync:command" ? "Verifying…" : "Sync and verify"}</button>
-              <button className="quiet-link" disabled={Boolean(busy)} onClick={() => void remove("command")}>Remove source</button>
-            </div>
-          </div>
-        </details>
+          <CommandSection
+            configuration={configuration.command}
+            status={sourceById.command}
+            update={(values) => update("command", values)}
+            onSave={() => void save("command")}
+            onSync={() => void sync("command")}
+            onRemove={() => void remove("command")}
+            busy={busy}
+          />
+        </div>
+        <div className="external-secret-feedback" aria-live="polite">
+          {notice && <small role="status">{notice}</small>}
+          {error && <small role="alert">{error}</small>}
+        </div>
       </div>
-      <div className="external-secret-feedback" aria-live="polite">
-        {notice && <small role="status">{notice}</small>}
-        {error && <small role="alert">{error}</small>}
-      </div>
-    </div>
-    <span className="status">{activeCount} verified</span>
-  </article>;
+      <span className="status">{activeCount} verified</span>
+    </article>
+  );
 }
