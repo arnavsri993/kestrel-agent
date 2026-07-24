@@ -537,12 +537,8 @@ export class HonchoMemoryProvider {
   }
 }
 
-export function installHonchoMemoryTools(
-  runtime: AgentRuntime,
-  provider: HonchoMemoryProvider,
-  sessionIds: string[],
-): void {
-  const definitions = [
+function getHonchoToolDefinitions(provider: HonchoMemoryProvider) {
+  return [
     {
       name: "honcho.profile",
       title: "Read or update the Honcho peer card",
@@ -677,6 +673,14 @@ export function installHonchoMemoryTools(
       }),
     },
   ] as const;
+}
+
+export function installHonchoMemoryTools(
+  runtime: AgentRuntime,
+  provider: HonchoMemoryProvider,
+  sessionIds: string[],
+): void {
+  const definitions = getHonchoToolDefinitions(provider);
 
   for (const definition of definitions) {
     try {
