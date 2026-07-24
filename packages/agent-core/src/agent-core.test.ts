@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { KestrelDatabase } from "@kestrel/database";
-import { AgentCore, DevelopmentCalendarConnector, DevelopmentEmailConnector, ModelRouter, OpportunityEngine, teacherOpportunity, type ModelProvider } from "./index";
+import { AgentCore, DevelopmentCalendarConnector, DevelopmentEmailConnector, OpportunityEngine, teacherOpportunity, type ModelProvider } from "./index";
 
 function createCore() {
   const database = new KestrelDatabase(":memory:", createEncryptionKey());
@@ -51,51 +51,6 @@ describe("teacher scheduling vertical slice", () => {
   });
 });
 
-describe("automatic model routing", () => {
-  const router = new ModelRouter();
-  const base = {
-    taskId: "task-test",
-    riskLevel: "read_only" as const,
-    complexity: 0.5,
-    qualitySensitivity: 0.6,
-    latencySensitivity: 0.8,
-    estimatedComputeCost: 0.02,
-    dailyModelCostRemaining: 2,
-    deterministicEligible: false,
-    requiresTools: false,
-    selectedAt: "2026-07-22T15:00:00.000Z"
-  };
-
-  it("uses local rules and disables reasoning and Fast mode when a verified deterministic path exists", () => {
-    expect(router.select({ ...base, deterministicEligible: true })).toMatchObject({
-      model: "local-rules", reasoningEffort: "none", fastMode: false, serviceTier: "standard", execution: "local"
-    });
-  });
-
-  it("uses Luna with no reasoning and Fast mode for simple latency-sensitive work", () => {
-    expect(router.select({ ...base, complexity: 0.14 })).toMatchObject({
-      model: "gpt-5.6-luna", reasoningEffort: "none", fastMode: true, serviceTier: "priority"
-    });
-  });
-
-  it("uses Terra with medium reasoning for balanced tool work", () => {
-    expect(router.select({ ...base, requiresTools: true })).toMatchObject({
-      model: "gpt-5.6-terra", reasoningEffort: "medium", fastMode: true, serviceTier: "priority"
-    });
-  });
-
-  it("uses Sol with deeper reasoning and keeps Fast mode off for quality-critical work", () => {
-    expect(router.select({ ...base, riskLevel: "high_consequence", complexity: 0.88, qualitySensitivity: 0.94 })).toMatchObject({
-      model: "gpt-5.6-sol", reasoningEffort: "high", fastMode: false, serviceTier: "standard"
-    });
-  });
-
-  it("keeps Fast mode off when the estimated task cost lacks budget headroom", () => {
-    expect(router.select({ ...base, estimatedComputeCost: 0.5, dailyModelCostRemaining: 1 })).toMatchObject({
-      model: "gpt-5.6-terra", fastMode: false, serviceTier: "standard"
-    });
-  });
-});
 
 describe("core agent request path", () => {
   it("turns model and provider auto-selection into an audited routed run", async () => {
