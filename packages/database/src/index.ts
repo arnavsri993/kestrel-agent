@@ -222,6 +222,31 @@ export class KestrelDatabase {
     });
   }
 
+
+  getMemory(id: string): MemoryRecord | undefined {
+    const row = this.db.prepare("SELECT * FROM memories WHERE id = ? AND status != 'deleted'").get(id) as MemoryRow | undefined;
+    if (!row) return undefined;
+    return MemoryRecordSchema.parse({
+      id: row.id,
+      type: row.type,
+      content: decryptText({ ciphertext: row.content_ciphertext, iv: row.content_iv, authTag: row.content_auth_tag }, this.encryptionKey),
+      structuredData: JSON.parse(row.structured_data),
+      sourceIds: JSON.parse(row.source_ids),
+      sourceType: row.source_type,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      ...(row.valid_from ? { validFrom: row.valid_from } : {}),
+      ...(row.valid_until ? { validUntil: row.valid_until } : {}),
+      confidence: row.confidence,
+      importance: row.importance,
+      sensitivity: row.sensitivity,
+      status: row.status,
+      entityIds: JSON.parse(row.entity_ids),
+      userConfirmed: row.user_confirmed === 1,
+      inferred: row.inferred === 1
+    });
+  }
+
   listMemories(): MemoryRecord[] {
     return (this.db.prepare("SELECT * FROM memories WHERE status != 'deleted' ORDER BY importance DESC, updated_at DESC").all() as MemoryRow[])
       .map((row) => MemoryRecordSchema.parse({
