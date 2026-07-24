@@ -35,7 +35,7 @@ export class MemoryManager {
   }
 
   forget(id: string): MemoryRecord {
-    const memory = this.list().find((candidate) => candidate.id === id);
+    const memory = this.database.getMemory(id);
     if (!memory) throw new Error("Memory not found.");
     const deleted = { ...memory, status: "deleted" as const, updatedAt: this.now().toISOString() };
     this.database.upsertMemory(deleted);
@@ -43,7 +43,7 @@ export class MemoryManager {
   }
 
   correct(id: string, input: { content: string; type?: MemoryRecord["type"]; sensitivity?: MemoryRecord["sensitivity"] }): MemoryRecord {
-    const memory = this.list().find((candidate) => candidate.id === id);
+    const memory = this.database.getMemory(id);
     if (!memory) throw new Error("Memory not found.");
     const content = input.content.trim();
     if (!content || content.length > 100_000) throw new Error("Corrected memory content is required.");
