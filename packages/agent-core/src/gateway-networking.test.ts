@@ -56,6 +56,20 @@ describe("managed Tailscale exposure", () => {
     const manager = new TailscaleExposureManager({ mode: "serve", resetOnExit: false, publicExposureApproved: false }, runner);
     await expect(manager.apply("http://0.0.0.0:18789")).rejects.toThrow("loopback");
   });
+
+  it("throws when Tailscale status returns invalid JSON or is missing MagicDNS", async () => {
+    const runStatus = async (stdout: string) => {
+      const runner: GatewayCommandRunner = { run: async () => ({ exitCode: 0, stdout, stderr: "" }) };
+      const manager = new TailscaleExposureManager({ mode: "serve", resetOnExit: false, publicExposureApproved: false }, runner);
+      await expect(manager.apply("http://127.0.0.1:18789")).rejects.toThrow("Tailscale status did not report an online device with MagicDNS.");
+    };
+
+    await runStatus("invalid json");
+    await runStatus(JSON.stringify({ BackendState: "Stopped", Self: { Online: true, DNSName: "agent.example.ts.net." } }));
+    await runStatus(JSON.stringify({ BackendState: "Running", Self: { Online: false, DNSName: "agent.example.ts.net." } }));
+    await runStatus(JSON.stringify({ BackendState: "Running", Self: { Online: true, DNSName: null } }));
+    await runStatus(JSON.stringify({ BackendState: "Running" }));
+  });
 });
 
 describe("Bonjour gateway discovery", () => {
