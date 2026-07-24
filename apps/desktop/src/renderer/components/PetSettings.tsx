@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   CoreResponse,
   PetActivityState,
-  PetGalleryEntry,
   PetHatchCapability,
   PetHatchDraft,
   PetStatus,
 } from "@kestrel/shared-types";
+import { PetGallery } from "./PetGallery";
+import { PetHatch } from "./PetHatch";
 
 function rowFor(state: PetActivityState, rows: number): number {
   return (
@@ -20,16 +21,6 @@ function rowFor(state: PetActivityState, rows: number): number {
       waiting: rows >= 9 ? 6 : 0,
     } as Record<PetActivityState, number>
   )[state];
-}
-
-function petSlug(value: string): string {
-  return (
-    value
-      .toLocaleLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80) || "my-pet"
-  );
 }
 
 export function FloatingPet({
@@ -112,8 +103,6 @@ export function PetSettings({
   status: PetStatus | null;
   onChange(status: PetStatus): void;
 }) {
-  const [query, setQuery] = useState("");
-  const [gallery, setGallery] = useState<PetGalleryEntry[]>([]);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -121,11 +110,6 @@ export function PetSettings({
   const [hatchCapability, setHatchCapability] =
     useState<PetHatchCapability | null>(null);
   const [hatchDrafts, setHatchDrafts] = useState<PetHatchDraft[]>([]);
-  const [hatchConcept, setHatchConcept] = useState("");
-  const [hatchStyle, setHatchStyle] = useState("auto");
-  const [selectedDraftId, setSelectedDraftId] = useState("");
-  const [hatchName, setHatchName] = useState("");
-  const [hatchSlug, setHatchSlug] = useState("");
   const installedSlugs = useMemo(
     () => new Set(status?.installed.map((pet) => pet.slug) ?? []),
     [status?.installed],
@@ -156,28 +140,6 @@ export function PetSettings({
       setHatchDrafts(response.petHatchDrafts ?? []);
     });
   }, []);
-
-  async function loadGallery(search = query) {
-    setBusy("gallery");
-    setError("");
-    try {
-      const response = (await window.kestrel.request({
-        type: "pet-gallery",
-        query: search,
-        limit: 24,
-      })) as CoreResponse;
-      if (!response.ok) throw new Error(response.error);
-      setGallery(response.petGallery ?? []);
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not reach the Petdex gallery.",
-      );
-    } finally {
-      setBusy("");
-    }
-  }
 
   async function mutate(
     request:
@@ -225,73 +187,6 @@ export function PetSettings({
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Could not pop out the pet.",
-      );
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function generateDrafts() {
-    if (!hatchConcept.trim() || busy) return;
-    setBusy("hatch-drafts");
-    setError("");
-    setNotice("");
-    try {
-      const response = (await window.kestrel.request({
-        type: "pet-hatch-drafts",
-        concept: hatchConcept.trim(),
-        style: hatchStyle,
-        count: 4,
-      })) as CoreResponse;
-      if (!response.ok) throw new Error(response.error);
-      const drafts = response.petHatchDrafts ?? [];
-      if (drafts.length === 0)
-        throw new Error("The image provider returned no usable drafts.");
-      setHatchCapability(response.petHatchCapability ?? hatchCapability);
-      setHatchDrafts(drafts);
-      setSelectedDraftId(drafts[0]!.id);
-      if (!hatchName) setHatchName(hatchConcept.trim().slice(0, 120));
-      if (!hatchSlug) setHatchSlug(petSlug(hatchConcept));
-      setNotice(
-        `${drafts.length} base look${drafts.length === 1 ? "" : "s"} ready. Pick one before the reference-grounded hatch.`,
-      );
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not generate pet drafts.",
-      );
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function hatchSelected() {
-    if (!selectedDraftId || !hatchName.trim() || !hatchSlug.trim() || busy)
-      return;
-    setBusy("hatch-complete");
-    setError("");
-    setNotice("");
-    try {
-      const response = (await window.kestrel.request({
-        type: "pet-hatch-complete",
-        draftId: selectedDraftId,
-        slug: petSlug(hatchSlug),
-        displayName: hatchName.trim(),
-        description: hatchConcept.trim(),
-      })) as CoreResponse;
-      if (!response.ok) throw new Error(response.error);
-      if (!response.petStatus || !response.petHatchResult)
-        throw new Error("Hatch result was incomplete.");
-      onChange(response.petStatus);
-      setNotice(
-        `${response.petHatchResult.displayName} hatched with ${response.petHatchResult.states.length} verified animation rows and is now active.`,
-      );
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not complete the pet hatch.",
       );
     } finally {
       setBusy("");
@@ -473,213 +368,24 @@ export function PetSettings({
         )}
         {notice && <small role="status">{notice}</small>}
         {error && <small role="alert">{error}</small>}
-        <details className="pet-gallery">
-          <summary
-            onClick={() => {
-              if (gallery.length === 0 && !busy) void loadGallery("");
-            }}
-          >
-            Browse approved Petdex gallery
-          </summary>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void loadGallery();
-            }}
-          >
-            <label className="sr-only" htmlFor="pet-search">
-              Search pets
-            </label>
-            <input
-              id="pet-search"
-              value={query}
-              placeholder="Search by pet, kind, or creator"
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <button className="button secondary" disabled={Boolean(busy)}>
-              {busy === "gallery" ? "Searching…" : "Search"}
-            </button>
-          </form>
-          {gallery.length === 0 && busy !== "gallery" ? (
-            <small>Open the gallery or search for a mascot.</small>
-          ) : (
-            <ul>
-              {gallery.map((pet) => (
-                <li key={pet.slug}>
-                  <span className="pet-monogram" aria-hidden="true">
-                    {pet.displayName.slice(0, 2).toUpperCase()}
-                  </span>
-                  <span>
-                    <b>{pet.displayName}</b>
-                    <small>
-                      {pet.kind} · by {pet.submittedBy}
-                    </small>
-                  </span>
-                  <button
-                    className="button secondary"
-                    disabled={Boolean(busy) || installedSlugs.has(pet.slug)}
-                    onClick={() =>
-                      void mutate(
-                        installedSlugs.has(pet.slug)
-                          ? { type: "pet-select", slug: pet.slug }
-                          : {
-                              type: "pet-install",
-                              slug: pet.slug,
-                              select: true,
-                              force: false,
-                            },
-                        `${pet.displayName} installed and adopted.`,
-                      )
-                    }
-                  >
-                    {installedSlugs.has(pet.slug) ? "Installed" : "Install"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <small>
-            Community assets remain owned by their submitters. Kestrel
-            downloads only after you choose Install.
-          </small>
-        </details>
-        <details className="pet-hatch">
-          <summary>Hatch an original pet with AI</summary>
-          <p>
-            Generate up to four low-quality base looks, choose one, then make
-            eight reference-grounded animation strips. Kestrel assembles and
-            verifies the final 8×9 atlas locally. Your image provider’s pricing
-            applies.
-          </p>
-          {!hatchCapability ? (
-            <small>Checking for a reference-image provider…</small>
-          ) : !hatchCapability.available ? (
-            <div className="pet-hatch-unavailable">
-              <small>{hatchCapability.reason}</small>
-              <small>
-                Use the Connections page to add the provider, then return here.
-              </small>
-            </div>
-          ) : (
-            <>
-              <div className="pet-hatch-inputs">
-                <label>
-                  Pet concept
-                  <textarea
-                    value={hatchConcept}
-                    maxLength={500}
-                    placeholder="A tiny midnight-blue kestrel made of folded paper"
-                    onChange={(event) => setHatchConcept(event.target.value)}
-                  />
-                </label>
-                <label>
-                  Style
-                  <select
-                    value={hatchStyle}
-                    onChange={(event) => setHatchStyle(event.target.value)}
-                  >
-                    <option value="auto">16-bit pixel art</option>
-                    <option value="plush">Plush</option>
-                    <option value="clay">Clay</option>
-                    <option value="sticker">Sticker</option>
-                    <option value="flat-vector">Flat vector</option>
-                  </select>
-                </label>
-                <button
-                  className="button secondary"
-                  type="button"
-                  disabled={Boolean(busy) || !hatchConcept.trim()}
-                  onClick={() => void generateDrafts()}
-                >
-                  {busy === "hatch-drafts"
-                    ? "Drawing drafts…"
-                    : hatchDrafts.length
-                      ? "Remix four drafts"
-                      : "Generate four drafts"}
-                </button>
-              </div>
-              {hatchDrafts.length > 0 && (
-                <>
-                  <div
-                    className="pet-draft-grid"
-                    role="radiogroup"
-                    aria-label="Choose a base pet look"
-                  >
-                    {hatchDrafts.map((draft, index) => (
-                      <button
-                        key={draft.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={selectedDraftId === draft.id}
-                        className={
-                          selectedDraftId === draft.id ? "selected" : ""
-                        }
-                        onClick={() => setSelectedDraftId(draft.id)}
-                      >
-                        <img
-                          src={`data:${draft.mediaType};base64,${draft.dataBase64}`}
-                          alt={`Generated pet base look ${index + 1}`}
-                        />
-                        <span>Draft {index + 1}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="pet-hatch-metadata">
-                    <label>
-                      Pet name
-                      <input
-                        value={hatchName}
-                        maxLength={120}
-                        onChange={(event) => {
-                          setHatchName(event.target.value);
-                          if (!hatchSlug || hatchSlug === petSlug(hatchName))
-                            setHatchSlug(petSlug(event.target.value));
-                        }}
-                      />
-                    </label>
-                    <label>
-                      Local slug
-                      <input
-                        value={hatchSlug}
-                        maxLength={80}
-                        onChange={(event) =>
-                          setHatchSlug(petSlug(event.target.value))
-                        }
-                      />
-                    </label>
-                    <button
-                      className="button primary"
-                      type="button"
-                      disabled={
-                        Boolean(busy) ||
-                        !selectedDraftId ||
-                        !hatchName.trim() ||
-                        !hatchSlug.trim()
-                      }
-                      onClick={() => void hatchSelected()}
-                    >
-                      {busy === "hatch-complete"
-                        ? "Hatching 8 grounded rows…"
-                        : "Hatch selected pet"}
-                    </button>
-                  </div>
-                  <small>
-                    The hatch can take several minutes. It retries malformed
-                    rows, mirrors the left walk deterministically, requires at
-                    least six usable states, and installs only a digest-verified
-                    atlas.
-                  </small>
-                </>
-              )}
-              <small>
-                Provider: {hatchCapability.providerId}
-                {hatchCapability.model ? ` · ${hatchCapability.model}` : ""}.
-                Reference images stay inside the configured generation request
-                and are not added to chat.
-              </small>
-            </>
-          )}
-        </details>
+        <PetGallery
+          busy={busy}
+          setBusy={setBusy}
+          setError={setError}
+          mutate={mutate}
+          installedSlugs={installedSlugs}
+        />
+        <PetHatch
+          busy={busy}
+          setBusy={setBusy}
+          setError={setError}
+          setNotice={setNotice}
+          onChange={onChange}
+          hatchCapability={hatchCapability}
+          setHatchCapability={setHatchCapability}
+          hatchDrafts={hatchDrafts}
+          setHatchDrafts={setHatchDrafts}
+        />
       </div>
       <span className="status">
         {selected
