@@ -7,7 +7,9 @@ Web tools are disabled by default. Configure exact fetch/result hosts with
 public HTTPS host after DNS/private-address checks, explicitly set
 `KESTREL_WEB_ALLOW_PUBLIC=true`.
 
-Set `BRAVE_SEARCH_API_KEY` to enable the Brave Search adapter. The key remains
+Set `BRAVE_SEARCH_API_KEY` and explicitly opt in with
+`KESTREL_ALLOW_EXTERNAL_SEARCH=true` to enable the Brave Search adapter. A
+credential alone does not activate hosted search. The key remains
 inside the CLI process or isolated desktop utility process and is never sent to
 the renderer. Search and fetch output is bounded and labeled untrusted.
 

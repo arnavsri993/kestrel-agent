@@ -16,6 +16,7 @@ import {
 } from "./providers";
 
 const CREDENTIAL_BOUNDARY_INSTRUCTIONS = "Never ask the user to paste API keys, OAuth tokens, passwords, session cookies, private keys, or other secrets into chat. Direct credential entry to the product's protected native credential field or the provider's own OAuth or device-login surface. You may explain what a credential enables and verify only non-secret connection status.";
+export const LOCAL_FIRST_TOOL_INSTRUCTIONS = "Prefer self-contained local capability before any external tool or hosted service. Inspect existing conversation, workspace files, local memory, and local runtime tools first. For interactive web research, prefer Kestrel's isolated on-device browser over a hosted search API when direct navigation can satisfy the request. Use web.search, hosted transcription, remote execution, or another external service only when local capability cannot complete the request and the user has explicitly enabled that fallback. Make the external boundary visible; never imply that network-derived content or hosted processing happened locally.";
 
 export interface AgentLoopInput {
   sessionId: string;
@@ -104,6 +105,7 @@ export class AgentLoop {
 
     const instructions = [
       CREDENTIAL_BOUNDARY_INSTRUCTIONS,
+      LOCAL_FIRST_TOOL_INSTRUCTIONS,
       input.instructions,
       ...this.runtime.workspaceInstructions(session.id, input.targetPath)
         .map((item) => `Instructions from ${item.path} (precedence ${item.precedence}):\n${item.content}`)

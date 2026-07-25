@@ -221,7 +221,9 @@ export function environmentWebAccessOptions(environment: NodeJS.ProcessEnv = pro
   const allowedHosts = (environment.KESTREL_WEB_ALLOWED_HOSTS ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
   if (allowedHosts.some((host) => !/^(?:[a-z0-9](?:[a-z0-9-]{0,62})\.)*[a-z0-9][a-z0-9-]{0,62}$/.test(host))) throw new Error("KESTREL_WEB_ALLOWED_HOSTS contains an invalid hostname.");
   const allowPublicHosts = environment.KESTREL_WEB_ALLOW_PUBLIC === "true";
-  const apiKey = environment.BRAVE_SEARCH_API_KEY;
+  const apiKey = environment.KESTREL_ALLOW_EXTERNAL_SEARCH === "true"
+    ? environment.BRAVE_SEARCH_API_KEY
+    : undefined;
   if (!allowedHosts.length && !allowPublicHosts && !apiKey) return undefined;
   return {
     allowedHosts,

@@ -57,9 +57,6 @@ import { DreamingPanel } from "./components/DreamingPanel";
 import { PresenceSettings } from "./components/PresenceSettings";
 import { applySkin, SkinSettings } from "./components/SkinSettings";
 import { FloatingPet, PetSettings } from "./components/PetSettings";
-import { PluginSettings } from "./components/PluginSettings";
-import { RunAtLoginSettings } from "./components/RunAtLoginSettings";
-import { ResetDataSettings } from "./components/ResetDataSettings";
 import { DashboardExtensions } from "./components/DashboardExtensions";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { EventApplications } from "./components/EventApplications";
@@ -68,7 +65,7 @@ import {
   recommendedLocalModelTiers,
   supportedLocalModels,
 } from "./local-model-catalog";
-import { UsagePolicySettings } from "./components/UsagePolicySettings";
+import { chatTitleFromPrompt } from "./chat-title";
 
 const pages = [
   ["home", "New chat"],
@@ -81,14 +78,13 @@ const pages = [
   ["events", "Opportunities"],
   ["activity", "Activity"],
   ["extensions", "Extensions"],
-  ["connections", "Connections"],
   ["settings", "Settings"],
 ] as const;
 type Page = (typeof pages)[number][0];
 type Thread = "new" | "teacher" | "dji";
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
-  "Help me finish setting up Workstrand. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings or Connections, or to provider-owned sign-in. Verify one working route before adding more.";
+  "Help me finish setting up Workstrand. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings, or to provider-owned sign-in. Verify one working route before adding more.";
 
 function setupAssistantState({
   credentials,
@@ -109,13 +105,11 @@ function setupAssistantState({
   const subscriptions = subscriptionClis
     .filter((cli) => cli.enabled)
     .map((cli) => `${cli.label}${cli.authenticated ? " (authenticated)" : ""}`);
-  const verified = [
-    ...new Set(
-      providerChecks
-        .filter((check) => check.ok)
-        .map((check) => check.providerId),
-    ),
-  ];
+  const verified = [...new Set(
+    providerChecks
+      .filter((check) => check.ok)
+      .map((check) => check.providerId),
+  )];
   return [
     "Current non-secret setup state:",
     `- Protected API credentials configured: ${configured.length ? configured.join(", ") : "none"}.`,
@@ -147,24 +141,10 @@ const paidProviderCatalog = [
     name: "OpenAI",
     short: "OA",
     category: "Model labs",
-    description:
-      "GPT models through the API or your own ChatGPT-backed Codex login.",
+    description: "GPT models through the API or your own ChatGPT-backed Codex login.",
     methods: [
-      {
-        id: "openai-api",
-        label: "OpenAI API",
-        kind: "api",
-        note: "Pay-as-you-go API access with an optional backup key.",
-        href: "https://platform.openai.com/api-keys",
-        credentials: ["openai", "openai-secondary"],
-      },
-      {
-        id: "codex-cli",
-        label: "Codex CLI",
-        kind: "cli",
-        cliId: "codex",
-        note: "Uses the active vendor-owned ChatGPT/Codex login on this Mac.",
-      },
+      { id: "openai-api", label: "OpenAI API", kind: "api", note: "Pay-as-you-go API access with an optional backup key.", href: "https://platform.openai.com/api-keys", credentials: ["openai", "openai-secondary"] },
+      { id: "codex-cli", label: "Codex CLI", kind: "cli", cliId: "codex", note: "Uses the active vendor-owned ChatGPT/Codex login on this Mac." },
     ],
   },
   {
@@ -172,342 +152,49 @@ const paidProviderCatalog = [
     name: "Anthropic",
     short: "AN",
     category: "Model labs",
-    description:
-      "Claude models through the API or an existing Claude Code login.",
+    description: "Claude models through the API or an existing Claude Code login.",
     methods: [
-      {
-        id: "anthropic-api",
-        label: "Anthropic API",
-        kind: "api",
-        note: "Claude API access with an optional backup account.",
-        href: "https://console.anthropic.com/settings/keys",
-        credentials: ["anthropic", "anthropic-secondary"],
-      },
-      {
-        id: "claude-cli",
-        label: "Claude Code CLI",
-        kind: "cli",
-        cliId: "claude",
-        note: "Uses the active vendor-owned Claude Code login on this Mac.",
-      },
+      { id: "anthropic-api", label: "Anthropic API", kind: "api", note: "Claude API access with an optional backup account.", href: "https://console.anthropic.com/settings/keys", credentials: ["anthropic", "anthropic-secondary"] },
+      { id: "claude-cli", label: "Claude Code CLI", kind: "cli", cliId: "claude", note: "Uses the active vendor-owned Claude Code login on this Mac." },
     ],
   },
-  {
-    id: "google",
-    name: "Google",
-    short: "GO",
-    category: "Model labs",
-    description: "Gemini through AI Studio or enterprise Vertex AI.",
-    methods: [
-      {
-        id: "gemini-api",
-        label: "Gemini API",
-        kind: "api",
-        note: "Google AI Studio API access.",
-        href: "https://aistudio.google.com/app/apikey",
-        credentials: ["gemini"],
-      },
-      {
-        id: "vertex",
-        label: "Vertex AI",
-        kind: "planned",
-        note: "Google Cloud project credentials and regional Vertex endpoints.",
-      },
-    ],
-  },
-  {
-    id: "mistral",
-    name: "Mistral AI",
-    short: "MI",
-    category: "Model labs",
-    description: "Mistral and Codestral models through La Plateforme.",
-    methods: [
-      {
-        id: "mistral-api",
-        label: "Mistral API",
-        kind: "api",
-        note: "Direct Mistral API access.",
-        href: "https://console.mistral.ai/api-keys",
-        credentials: ["mistral"],
-      },
-    ],
-  },
-  {
-    id: "openrouter",
-    name: "OpenRouter",
-    short: "OR",
-    category: "Gateways",
-    description: "One account for models from many labs.",
-    methods: [
-      {
-        id: "openrouter-api",
-        label: "OpenRouter API",
-        kind: "api",
-        note: "Connect a paid OpenRouter balance or eligible free routes.",
-        href: "https://openrouter.ai/settings/keys",
-        credentials: ["openrouter"],
-      },
-    ],
-  },
-  {
-    id: "groq",
-    name: "Groq",
-    short: "GQ",
-    category: "Inference clouds",
-    description: "Low-latency hosted inference through GroqCloud.",
-    methods: [
-      {
-        id: "groq-api",
-        label: "GroqCloud API",
-        kind: "api",
-        note: "Direct Groq API access.",
-        href: "https://console.groq.com/keys",
-        credentials: ["groq"],
-      },
-    ],
-  },
-  {
-    id: "nous",
-    name: "Nous Research",
-    short: "NR",
-    category: "Inference clouds",
-    description: "Nous Portal hosted model access.",
-    methods: [
-      {
-        id: "nous-api",
-        label: "Nous Portal API",
-        kind: "api",
-        note: "OpenAI-compatible access through Nous Portal.",
-        href: "https://portal.nousresearch.com/",
-        credentials: ["nous"],
-      },
-    ],
-  },
-  {
-    id: "cloudflare",
-    name: "Cloudflare",
-    short: "CF",
-    category: "Cloud platforms",
-    description: "Workers AI models inside a Cloudflare account.",
-    methods: [
-      {
-        id: "cloudflare-api",
-        label: "Workers AI API",
-        kind: "api",
-        note: "Requires an API token and account ID. Account-ID setup is not available in this screen yet.",
-        href: "https://dash.cloudflare.com/profile/api-tokens",
-        credentials: ["cloudflare"],
-      },
-    ],
-  },
-  {
-    id: "azure",
-    name: "Microsoft Azure",
-    short: "AZ",
-    category: "Cloud platforms",
-    description: "Azure OpenAI and Azure AI Foundry deployments.",
-    methods: [
-      {
-        id: "azure-key",
-        label: "Azure API key",
-        kind: "planned",
-        note: "Endpoint, deployment name, API version, and key.",
-      },
-      {
-        id: "azure-identity",
-        label: "Azure CLI / Entra ID",
-        kind: "planned",
-        note: "Uses your signed-in Azure identity without copying its token.",
-      },
-    ],
-  },
-  {
-    id: "bedrock",
-    name: "Amazon Bedrock",
-    short: "AWS",
-    category: "Cloud platforms",
-    description: "Foundation models through your AWS account.",
-    methods: [
-      {
-        id: "aws-profile",
-        label: "AWS profile",
-        kind: "planned",
-        note: "Uses an AWS CLI profile and selected region.",
-      },
-      {
-        id: "aws-keys",
-        label: "AWS access keys",
-        kind: "planned",
-        note: "Access key, secret, optional session token, and region.",
-      },
-    ],
-  },
-  {
-    id: "xai",
-    name: "xAI",
-    short: "xAI",
-    category: "Model labs",
-    description: "Grok models through the xAI API.",
-    methods: [
-      {
-        id: "xai-api",
-        label: "xAI API",
-        kind: "api",
-        note: "Direct xAI API key.",
-        href: "https://console.x.ai/",
-        credentials: ["xai"],
-      },
-    ],
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    short: "DS",
-    category: "Model labs",
-    description: "DeepSeek chat and reasoning models.",
-    methods: [
-      {
-        id: "deepseek-api",
-        label: "DeepSeek API",
-        kind: "api",
-        note: "Direct DeepSeek API key.",
-        href: "https://platform.deepseek.com/api_keys",
-        credentials: ["deepseek"],
-      },
-    ],
-  },
-  {
-    id: "cohere",
-    name: "Cohere",
-    short: "CO",
-    category: "Model labs",
-    description: "Command and Embed models through Cohere.",
-    methods: [
-      {
-        id: "cohere-api",
-        label: "Cohere API",
-        kind: "planned",
-        note: "Direct Cohere API key.",
-      },
-    ],
-  },
-  {
-    id: "together",
-    name: "Together AI",
-    short: "TO",
-    category: "Inference clouds",
-    description: "Hosted open models and dedicated endpoints.",
-    methods: [
-      {
-        id: "together-api",
-        label: "Together API",
-        kind: "api",
-        note: "OpenAI-compatible Together API key.",
-        href: "https://api.together.ai/settings/api-keys",
-        credentials: ["together"],
-      },
-    ],
-  },
-  {
-    id: "fireworks",
-    name: "Fireworks AI",
-    short: "FW",
-    category: "Inference clouds",
-    description: "Serverless and dedicated model inference.",
-    methods: [
-      {
-        id: "fireworks-api",
-        label: "Fireworks API",
-        kind: "api",
-        note: "OpenAI-compatible Fireworks API key.",
-        href: "https://app.fireworks.ai/users?tab=account",
-        credentials: ["fireworks"],
-      },
-    ],
-  },
-  {
-    id: "nvidia",
-    name: "NVIDIA",
-    short: "NV",
-    category: "Inference clouds",
-    description: "NIM inference endpoints and build.nvidia.com models.",
-    methods: [
-      {
-        id: "nvidia-api",
-        label: "NVIDIA NIM API",
-        kind: "api",
-        note: "NVIDIA-hosted NIM API key.",
-        href: "https://build.nvidia.com/",
-        credentials: ["nvidia"],
-      },
-    ],
-  },
-  {
-    id: "huggingface",
-    name: "Hugging Face",
-    short: "HF",
-    category: "Gateways",
-    description: "Inference Providers and dedicated endpoints.",
-    methods: [
-      {
-        id: "hf-token",
-        label: "Hugging Face token",
-        kind: "api",
-        note: "User access token for routed inference.",
-        href: "https://huggingface.co/settings/tokens",
-        credentials: ["huggingface"],
-      },
-    ],
-  },
-  {
-    id: "replicate",
-    name: "Replicate",
-    short: "RE",
-    category: "Inference clouds",
-    description: "Hosted public and private model deployments.",
-    methods: [
-      {
-        id: "replicate-token",
-        label: "Replicate API token",
-        kind: "planned",
-        note: "Direct Replicate API token.",
-      },
-    ],
-  },
-  {
-    id: "perplexity",
-    name: "Perplexity",
-    short: "PX",
-    category: "Model labs",
-    description: "Search-grounded Sonar models through the API.",
-    methods: [
-      {
-        id: "perplexity-api",
-        label: "Perplexity API",
-        kind: "api",
-        note: "Direct Perplexity API key.",
-        href: "https://www.perplexity.ai/account/api/keys",
-        credentials: ["perplexity"],
-      },
-    ],
-  },
-  {
-    id: "github-models",
-    name: "GitHub Models",
-    short: "GH",
-    category: "Gateways",
-    description: "Model access governed by your GitHub account.",
-    methods: [
-      {
-        id: "github-token",
-        label: "GitHub token",
-        kind: "api",
-        note: "Fine-grained GitHub token with Models access.",
-        href: "https://github.com/settings/tokens",
-        credentials: ["github-models"],
-      },
-    ],
-  },
+  { id: "google", name: "Google", short: "GO", category: "Model labs", description: "Gemini through AI Studio or enterprise Vertex AI.", methods: [
+    { id: "gemini-api", label: "Gemini API", kind: "api", note: "Google AI Studio API access.", href: "https://aistudio.google.com/app/apikey", credentials: ["gemini"] },
+    { id: "vertex", label: "Vertex AI", kind: "planned", note: "Google Cloud project credentials and regional Vertex endpoints." },
+  ] },
+  { id: "mistral", name: "Mistral AI", short: "MI", category: "Model labs", description: "Mistral and Codestral models through La Plateforme.", methods: [
+    { id: "mistral-api", label: "Mistral API", kind: "api", note: "Direct Mistral API access.", href: "https://console.mistral.ai/api-keys", credentials: ["mistral"] },
+  ] },
+  { id: "openrouter", name: "OpenRouter", short: "OR", category: "Gateways", description: "One account for models from many labs.", methods: [
+    { id: "openrouter-api", label: "OpenRouter API", kind: "api", note: "Connect a paid OpenRouter balance or eligible free routes.", href: "https://openrouter.ai/settings/keys", credentials: ["openrouter"] },
+  ] },
+  { id: "groq", name: "Groq", short: "GQ", category: "Inference clouds", description: "Low-latency hosted inference through GroqCloud.", methods: [
+    { id: "groq-api", label: "GroqCloud API", kind: "api", note: "Direct Groq API access.", href: "https://console.groq.com/keys", credentials: ["groq"] },
+  ] },
+  { id: "nous", name: "Nous Research", short: "NR", category: "Inference clouds", description: "Nous Portal hosted model access.", methods: [
+    { id: "nous-api", label: "Nous Portal API", kind: "api", note: "OpenAI-compatible access through Nous Portal.", href: "https://portal.nousresearch.com/", credentials: ["nous"] },
+  ] },
+  { id: "cloudflare", name: "Cloudflare", short: "CF", category: "Cloud platforms", description: "Workers AI models inside a Cloudflare account.", methods: [
+    { id: "cloudflare-api", label: "Workers AI API", kind: "api", note: "Requires an API token and account ID. Account-ID setup is not available in this screen yet.", href: "https://dash.cloudflare.com/profile/api-tokens", credentials: ["cloudflare"] },
+  ] },
+  { id: "azure", name: "Microsoft Azure", short: "AZ", category: "Cloud platforms", description: "Azure OpenAI and Azure AI Foundry deployments.", methods: [
+    { id: "azure-key", label: "Azure API key", kind: "planned", note: "Endpoint, deployment name, API version, and key." },
+    { id: "azure-identity", label: "Azure CLI / Entra ID", kind: "planned", note: "Uses your signed-in Azure identity without copying its token." },
+  ] },
+  { id: "bedrock", name: "Amazon Bedrock", short: "AWS", category: "Cloud platforms", description: "Foundation models through your AWS account.", methods: [
+    { id: "aws-profile", label: "AWS profile", kind: "planned", note: "Uses an AWS CLI profile and selected region." },
+    { id: "aws-keys", label: "AWS access keys", kind: "planned", note: "Access key, secret, optional session token, and region." },
+  ] },
+  { id: "xai", name: "xAI", short: "xAI", category: "Model labs", description: "Grok models through the xAI API.", methods: [{ id: "xai-api", label: "xAI API", kind: "api", note: "Direct xAI API key.", href: "https://console.x.ai/", credentials: ["xai"] }] },
+  { id: "deepseek", name: "DeepSeek", short: "DS", category: "Model labs", description: "DeepSeek chat and reasoning models.", methods: [{ id: "deepseek-api", label: "DeepSeek API", kind: "api", note: "Direct DeepSeek API key.", href: "https://platform.deepseek.com/api_keys", credentials: ["deepseek"] }] },
+  { id: "cohere", name: "Cohere", short: "CO", category: "Model labs", description: "Command and Embed models through Cohere.", methods: [{ id: "cohere-api", label: "Cohere API", kind: "planned", note: "Direct Cohere API key." }] },
+  { id: "together", name: "Together AI", short: "TO", category: "Inference clouds", description: "Hosted open models and dedicated endpoints.", methods: [{ id: "together-api", label: "Together API", kind: "api", note: "OpenAI-compatible Together API key.", href: "https://api.together.ai/settings/api-keys", credentials: ["together"] }] },
+  { id: "fireworks", name: "Fireworks AI", short: "FW", category: "Inference clouds", description: "Serverless and dedicated model inference.", methods: [{ id: "fireworks-api", label: "Fireworks API", kind: "api", note: "OpenAI-compatible Fireworks API key.", href: "https://app.fireworks.ai/users?tab=account", credentials: ["fireworks"] }] },
+  { id: "nvidia", name: "NVIDIA", short: "NV", category: "Inference clouds", description: "NIM inference endpoints and build.nvidia.com models.", methods: [{ id: "nvidia-api", label: "NVIDIA NIM API", kind: "api", note: "NVIDIA-hosted NIM API key.", href: "https://build.nvidia.com/", credentials: ["nvidia"] }] },
+  { id: "huggingface", name: "Hugging Face", short: "HF", category: "Gateways", description: "Inference Providers and dedicated endpoints.", methods: [{ id: "hf-token", label: "Hugging Face token", kind: "api", note: "User access token for routed inference.", href: "https://huggingface.co/settings/tokens", credentials: ["huggingface"] }] },
+  { id: "replicate", name: "Replicate", short: "RE", category: "Inference clouds", description: "Hosted public and private model deployments.", methods: [{ id: "replicate-token", label: "Replicate API token", kind: "planned", note: "Direct Replicate API token." }] },
+  { id: "perplexity", name: "Perplexity", short: "PX", category: "Model labs", description: "Search-grounded Sonar models through the API.", methods: [{ id: "perplexity-api", label: "Perplexity API", kind: "api", note: "Direct Perplexity API key.", href: "https://www.perplexity.ai/account/api/keys", credentials: ["perplexity"] }] },
+  { id: "github-models", name: "GitHub Models", short: "GH", category: "Gateways", description: "Model access governed by your GitHub account.", methods: [{ id: "github-token", label: "GitHub token", kind: "api", note: "Fine-grained GitHub token with Models access.", href: "https://github.com/settings/tokens", credentials: ["github-models"] }] },
 ] as const;
 
 const freeCredentialGroups = [
@@ -545,14 +232,12 @@ const openAccessDirectory = [
   {
     name: "Hugging Face Inference Providers",
     href: "https://huggingface.co/docs/inference-providers/index",
-    detail:
-      "Official provider directory with a limited free tier for eligible accounts and models.",
+    detail: "Official provider directory with a limited free tier for eligible accounts and models.",
   },
   {
     name: "Ollama model library",
     href: "https://ollama.com/library",
-    detail:
-      "Free model downloads for a local Ollama runtime; inference stays on this Mac.",
+    detail: "Free model downloads for a local Ollama runtime; inference stays on this Mac.",
   },
 ] as const;
 
@@ -948,14 +633,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   onClick={() => index < step && go(index)}
                   disabled={index > step}
                   aria-current={index === step ? "step" : undefined}
-                >
+                  >
                   <span>
                     <Icon name={index < step ? "check" : item.icon} />
                   </span>
-                  <span>
-                    <strong>{item.label}</strong>
-                  </span>
-                </button>
+                    <span>
+                      <strong>{item.label}</strong>
+                    </span>
+                  </button>
               </li>
             ))}
           </ol>
@@ -985,39 +670,24 @@ function Onboarding({ onDone }: { onDone(): void }) {
                 </p>
                 <div className="welcome-stack" aria-label="How Kestrel works">
                   <div>
-                    <span>
-                      <Icon name="research" />
-                    </span>
+                    <span><Icon name="research" /></span>
                     <span>
                       <strong>Start with the outcome</strong>
-                      <small>
-                        Describe what you need instead of configuring a
-                        workflow.
-                      </small>
+                      <small>Describe what you need instead of configuring a workflow.</small>
                     </span>
                   </div>
                   <div>
-                    <span>
-                      <Icon name="work" />
-                    </span>
+                    <span><Icon name="work" /></span>
                     <span>
                       <strong>Review the work as it happens</strong>
-                      <small>
-                        See progress, decisions, and files in the same
-                        conversation.
-                      </small>
+                      <small>See progress, decisions, and files in the same conversation.</small>
                     </span>
                   </div>
                   <div>
-                    <span>
-                      <Icon name="approvals" />
-                    </span>
+                    <span><Icon name="approvals" /></span>
                     <span>
                       <strong>Approve important actions</strong>
-                      <small>
-                        Sending, publishing, deleting, and spending wait for
-                        you.
-                      </small>
+                      <small>Sending, publishing, deleting, and spending wait for you.</small>
                     </span>
                   </div>
                 </div>
@@ -1046,40 +716,35 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   <div>
                     <span>02</span>
                     <div>
-                      <strong>
-                        Provider and tool usage can create charges
-                      </strong>
+                      <strong>Provider and tool usage can create charges</strong>
                       <p>
                         API calls, media generation, search, storage, and other
                         connected services can bill their own accounts. Budgets
-                        reduce risk; they do not replace provider billing
-                        controls.
+                        reduce risk; they do not replace provider billing controls.
                       </p>
                     </div>
                   </div>
                   <div>
                     <span>03</span>
                     <div>
-                      <strong>
-                        Approval protects actions, not perfect output
-                      </strong>
+                      <strong>Approval protects actions, not perfect output</strong>
                       <p>
-                        Sending, publishing, deleting, purchasing, and
-                        permission changes pause for review. You still need to
-                        verify factual, legal, financial, or safety-critical
-                        content.
+                        Sending, publishing, deleting, purchasing, and permission
+                        changes pause for review. You still need to verify factual,
+                        legal, financial, or safety-critical content.
                       </p>
                     </div>
                   </div>
                   <div>
                     <span>04</span>
                     <div>
-                      <strong>Connections widen what the agent can see</strong>
+                      <strong>
+                        Connections widen what the agent can see
+                      </strong>
                       <p>
                         Grant only the folders, accounts, microphone, browser,
-                        and screen access a task needs. Credentials are
-                        protected, but approved tools can act with the access
-                        you give them.
+                        and screen access a task needs. Credentials are protected,
+                        but approved tools can act with the access you give them.
                       </p>
                     </div>
                   </div>
@@ -1130,45 +795,38 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   </p>
                 </header>
                 {step === 2 && (
-                  <div
-                    className="model-source-picker"
-                    aria-label="Model access choices"
+                <div className="model-source-picker" aria-label="Model access choices">
+                  <button
+                    onClick={() => chooseModelAccess("accounts")}
                   >
-                    <button onClick={() => chooseModelAccess("accounts")}>
-                      <span className="source-glyph" aria-hidden="true">
-                        ☁
-                      </span>
-                      <strong>Use my AI account</strong>
-                      <small>OpenAI, Anthropic, and other providers.</small>
-                      <b>
-                        {configuredCredentials.length
-                          ? `${configuredCredentials.length} connected`
-                          : "Choose a provider"}
-                      </b>
-                    </button>
-                    <button onClick={() => chooseModelAccess("local")}>
-                      <span className="source-glyph" aria-hidden="true">
-                        ⌁
-                      </span>
-                      <strong>Keep it on this Mac</strong>
-                      <small>Download a model that can work offline.</small>
-                      <b>
-                        {localModels.length
-                          ? `${localModels.length} installed`
-                          : "No account needed"}
-                      </b>
-                    </button>
-                    <button onClick={() => chooseModelAccess("open")}>
-                      <span className="source-glyph" aria-hidden="true">
-                        ◎
-                      </span>
-                      <strong>Use free accounts</strong>
-                      <small>
-                        Connect one or more providers with free access.
-                      </small>
-                      <b>Four supported options</b>
-                    </button>
-                  </div>
+                    <span className="source-glyph" aria-hidden="true">☁</span>
+                    <strong>Use my AI account</strong>
+                    <small>
+                      OpenAI, Anthropic, and other providers.
+                    </small>
+                    <b>{configuredCredentials.length ? `${configuredCredentials.length} connected` : "Choose a provider"}</b>
+                  </button>
+                  <button
+                    onClick={() => chooseModelAccess("local")}
+                  >
+                    <span className="source-glyph" aria-hidden="true">⌁</span>
+                    <strong>Keep it on this Mac</strong>
+                    <small>
+                      Download a model that can work offline.
+                    </small>
+                    <b>{localModels.length ? `${localModels.length} installed` : "No account needed"}</b>
+                  </button>
+                  <button
+                    onClick={() => chooseModelAccess("open")}
+                  >
+                    <span className="source-glyph" aria-hidden="true">◎</span>
+                    <strong>Use free accounts</strong>
+                    <small>
+                      Connect one or more providers with free access.
+                    </small>
+                    <b>Four supported options</b>
+                  </button>
+                </div>
                 )}
 
                 {step === 3 && modelView === "accounts" && (
@@ -1181,28 +839,20 @@ function Onboarding({ onDone }: { onDone(): void }) {
                       <div>
                         <span>
                           <strong>Choose a paid provider</strong>
-                          <small>
-                            Then choose how your own account connects.
-                          </small>
+                          <small>Then choose how your own account connects.</small>
                         </span>
-                        <span className="honest-status">
-                          Private by default
-                        </span>
+                        <span className="honest-status">Private by default</span>
                       </div>
                     </div>
                     <div className="paid-provider-browser">
                       <aside className="paid-provider-directory">
-                        <label htmlFor="paid-provider-search">
-                          Find a provider
-                        </label>
+                        <label htmlFor="paid-provider-search">Find a provider</label>
                         <input
                           id="paid-provider-search"
                           type="search"
                           value={providerQuery}
                           placeholder="Search OpenAI, Azure, Groq…"
-                          onChange={(event) =>
-                            setProviderQuery(event.target.value)
-                          }
+                          onChange={(event) => setProviderQuery(event.target.value)}
                         />
                         <div role="listbox" aria-label="Paid AI providers">
                           {matchingPaidProviders.map((provider) => {
@@ -1221,16 +871,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
                               <button
                                 key={provider.id}
                                 role="option"
-                                aria-selected={
-                                  provider.id === selectedPaidProvider.id
-                                }
-                                onClick={() =>
-                                  setSelectedPaidProviderId(provider.id)
-                                }
+                                aria-selected={provider.id === selectedPaidProvider.id}
+                                onClick={() => setSelectedPaidProviderId(provider.id)}
                               >
-                                <span className="provider-monogram">
-                                  {provider.short}
-                                </span>
+                                <span className="provider-monogram">{provider.short}</span>
                                 <span>
                                   <strong>{provider.name}</strong>
                                   <small>{provider.category}</small>
@@ -1260,9 +904,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
                           </span>
                         </header>
                         <p className="account-intro">
-                          Choose a connection method. API usage and
-                          subscriptions are separate products billed by the
-                          provider.
+                          Choose a connection method. API usage and subscriptions
+                          are separate products billed by the provider.
                         </p>
                         <div className="connection-method-list">
                           {selectedPaidProvider.methods.map((method) => {
@@ -1271,174 +914,104 @@ function Onboarding({ onDone }: { onDone(): void }) {
                                 (item) => item.id === method.cliId,
                               );
                               return (
-                                <article
-                                  className="connection-method"
-                                  key={method.id}
-                                >
+                                <article className="connection-method" key={method.id}>
                                   <div>
                                     <strong>{method.label}</strong>
-                                    <p>
-                                      {method.note} Workstrand never copies the
-                                      vendor login token.
-                                    </p>
+                                    <p>{method.note} Workstrand never copies the vendor login token.</p>
                                   </div>
                                   {!cli ? (
-                                    <span className="honest-status">
-                                      Checking
-                                    </span>
+                                    <span className="honest-status">Checking</span>
                                   ) : cli.detected ? (
                                     cli.id === "codex" && !cli.authenticated ? (
                                       <button
                                         className="button primary"
-                                        disabled={
-                                          Boolean(subscriptionBusy) &&
-                                          subscriptionBusy !== "chatgpt-oauth"
-                                        }
+                                        disabled={Boolean(subscriptionBusy) && subscriptionBusy !== "chatgpt-oauth"}
                                         onClick={() => void connectChatGpt()}
                                       >
-                                        {subscriptionBusy === "chatgpt-oauth"
-                                          ? "Cancel sign-in"
-                                          : "Sign in with ChatGPT"}
+                                        {subscriptionBusy === "chatgpt-oauth" ? "Cancel sign-in" : "Sign in with ChatGPT"}
                                       </button>
                                     ) : (
                                       <button
-                                        className={
-                                          cli.enabled
-                                            ? "button secondary"
-                                            : "button primary"
-                                        }
+                                        className={cli.enabled ? "button secondary" : "button primary"}
                                         disabled={Boolean(subscriptionBusy)}
-                                        onClick={() =>
-                                          void toggleSubscription(
-                                            cli.id,
-                                            !cli.enabled,
-                                          )
-                                        }
+                                        onClick={() => void toggleSubscription(cli.id, !cli.enabled)}
                                       >
-                                        {subscriptionBusy === cli.id
-                                          ? "Updating…"
-                                          : cli.enabled
-                                            ? "Disable"
-                                            : "Use this login"}
+                                        {subscriptionBusy === cli.id ? "Updating…" : cli.enabled ? "Disable" : "Use this login"}
                                       </button>
                                     )
                                   ) : (
-                                    <span className="honest-status">
-                                      CLI not found
-                                    </span>
+                                    <span className="honest-status">CLI not found</span>
                                   )}
                                 </article>
                               );
                             }
                             if (method.kind === "planned") {
                               return (
-                                <article
-                                  className="connection-method unavailable"
-                                  key={method.id}
-                                >
+                                <article className="connection-method unavailable" key={method.id}>
                                   <div>
                                     <strong>{method.label}</strong>
                                     <p>{method.note}</p>
                                   </div>
-                                  <span className="honest-status">
-                                    Adapter coming later
-                                  </span>
+                                  <span className="honest-status">Adapter coming later</span>
                                 </article>
                               );
                             }
                             return (
-                              <article
-                                className="connection-method api-method"
-                                key={method.id}
-                              >
+                              <article className="connection-method api-method" key={method.id}>
                                 <div className="method-heading">
                                   <div>
                                     <strong>{method.label}</strong>
                                     <p>{method.note}</p>
                                   </div>
-                                  <a
-                                    href={method.href}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
+                                  <a href={method.href} target="_blank" rel="noreferrer">
                                     Get API key ↗
                                   </a>
                                 </div>
-                                {method.credentials.map(
-                                  (rawId, accountIndex) => {
-                                    const credentialId =
-                                      rawId as BrokeredCredentialSummary["id"];
-                                    const credential = credentials.find(
-                                      (item) => item.id === credentialId,
-                                    );
-                                    return (
-                                      <div
-                                        className="account-slot"
-                                        key={credentialId}
-                                      >
-                                        <label
-                                          htmlFor={`setup-${credentialId}`}
-                                        >
-                                          <span>
-                                            {method.credentials.length > 1
-                                              ? `Account ${accountIndex + 1}`
-                                              : "API key"}
-                                          </span>
-                                          <small>
-                                            {credential?.configured
-                                              ? "Protected and ready"
-                                              : accountIndex === 0
-                                                ? "Not connected"
-                                                : "Optional backup"}
-                                          </small>
-                                        </label>
-                                        {credential?.configured ? (
-                                          <span className="configured-account">
-                                            <span className="agent-dot idle" />
-                                            Connected
-                                          </span>
-                                        ) : (
-                                          <>
-                                            <input
-                                              id={`setup-${credentialId}`}
-                                              type="password"
-                                              autoComplete="off"
-                                              spellCheck={false}
-                                              value={
-                                                credentialValues[
-                                                  credentialId
-                                                ] ?? ""
-                                              }
-                                              placeholder="Paste API key"
-                                              onChange={(event) =>
-                                                setCredentialValues(
-                                                  (current) => ({
-                                                    ...current,
-                                                    [credentialId]:
-                                                      event.target.value,
-                                                  }),
-                                                )
-                                              }
-                                            />
-                                            <button
-                                              className="button secondary"
-                                              disabled={Boolean(credentialBusy)}
-                                              onClick={() =>
-                                                void saveCredential(
-                                                  credentialId,
-                                                )
-                                              }
-                                            >
-                                              {credentialBusy === credentialId
-                                                ? "Saving…"
-                                                : "Save"}
-                                            </button>
-                                          </>
-                                        )}
-                                      </div>
-                                    );
-                                  },
-                                )}
+                                {method.credentials.map((rawId, accountIndex) => {
+                                  const credentialId =
+                                    rawId as BrokeredCredentialSummary["id"];
+                                  const credential = credentials.find(
+                                    (item) => item.id === credentialId,
+                                  );
+                                  return (
+                                    <div className="account-slot" key={credentialId}>
+                                      <label htmlFor={`setup-${credentialId}`}>
+                                        <span>{method.credentials.length > 1 ? `Account ${accountIndex + 1}` : "API key"}</span>
+                                        <small>{credential?.configured ? "Protected and ready" : accountIndex === 0 ? "Not connected" : "Optional backup"}</small>
+                                      </label>
+                                      {credential?.configured ? (
+                                        <span className="configured-account">
+                                          <span className="agent-dot idle" />
+                                          Connected
+                                        </span>
+                                      ) : (
+                                        <>
+                                          <input
+                                            id={`setup-${credentialId}`}
+                                            type="password"
+                                            autoComplete="off"
+                                            spellCheck={false}
+                                            value={credentialValues[credentialId] ?? ""}
+                                            placeholder="Paste API key"
+                                            onChange={(event) =>
+                                              setCredentialValues((current) => ({
+                                                ...current,
+                                                [credentialId]: event.target.value,
+                                              }))
+                                            }
+                                          />
+                                          <button
+                                            className="button secondary"
+                                            disabled={Boolean(credentialBusy)}
+                                            onClick={() => void saveCredential(credentialId)}
+                                          >
+                                            {credentialBusy === credentialId ? "Saving…" : "Save"}
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </article>
                             );
                           })}
@@ -1518,15 +1091,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
                                     <div>
                                       <dt>Requirements</dt>
                                       <dd>
-                                        {model.speed} · {model.minimumMemory}{" "}
-                                        GB+ usable memory
+                                        {model.speed} · {model.minimumMemory} GB+
+                                        usable memory
                                       </dd>
                                     </div>
                                     <div>
                                       <dt>Download</dt>
                                       <dd>
-                                        {model.size} · {model.contextLength}{" "}
-                                        context
+                                        {model.size} · {model.contextLength} context
                                       </dd>
                                     </div>
                                   </dl>
@@ -1605,9 +1177,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     {!ollamaAvailable &&
                       localRuntime?.automaticSupported === false && (
                         <p className="setup-error" role="status">
-                          One-click installation is not available on this device
-                          yet. Manual setup below works with any reachable
-                          Ollama service.
+                          One-click installation is not available on this
+                          device yet. Manual setup below works with any
+                          reachable Ollama service.
                         </p>
                       )}
                     {ollamaAvailable && (
@@ -1706,7 +1278,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
                           >
                             <label htmlFor="custom-ollama-model">
                               <span>Any other Ollama model</span>
-                              <small>Use the exact library name and tag.</small>
+                              <small>
+                                Use the exact library name and tag.
+                              </small>
                             </label>
                             <input
                               id="custom-ollama-model"
@@ -1768,17 +1342,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
                         return (
                           <section key={group.name} className="provider-group">
                             <div className="provider-heading">
-                              <span className="provider-monogram">
-                                {group.short}
-                              </span>
+                              <span className="provider-monogram">{group.short}</span>
                               <div>
                                 <strong>{group.name}</strong>
                                 <p>{group.note}</p>
-                                <a
-                                  href={group.href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
+                                <a href={group.href} target="_blank" rel="noreferrer">
                                   Get free API key ↗
                                 </a>
                               </div>
@@ -1786,11 +1354,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                             <div className="account-slot">
                               <label htmlFor={`setup-${credentialId}`}>
                                 <span>API key</span>
-                                <small>
-                                  {credential?.configured
-                                    ? "Protected and ready"
-                                    : "Not connected"}
-                                </small>
+                                <small>{credential?.configured ? "Protected and ready" : "Not connected"}</small>
                               </label>
                               {credential?.configured ? (
                                 <span className="configured-account">
@@ -1816,13 +1380,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
                                   <button
                                     className="button secondary"
                                     disabled={Boolean(credentialBusy)}
-                                    onClick={() =>
-                                      void saveCredential(credentialId)
-                                    }
+                                    onClick={() => void saveCredential(credentialId)}
                                   >
-                                    {credentialBusy === credentialId
-                                      ? "Saving…"
-                                      : "Save"}
+                                    {credentialBusy === credentialId ? "Saving…" : "Save"}
                                   </button>
                                 </>
                               )}
@@ -1832,9 +1392,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                       })}
                     </div>
                     {credentialError && (
-                      <p className="setup-error" role="alert">
-                        {credentialError}
-                      </p>
+                      <p className="setup-error" role="alert">{credentialError}</p>
                     )}
                     <div className="more-provider-lead">
                       <strong>More ways to run models</strong>
@@ -1857,10 +1415,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
                       ))}
                     </div>
                     <p className="provider-footnote">
-                      “Free” availability, quotas, privacy terms, and model
-                      lists change. Review the source before sending data. A
-                      listing here is not a connection or a Workstrand
-                      endorsement.
+                      “Free” availability, quotas, privacy terms, and model lists
+                      change. Review the source before sending data. A listing here
+                      is not a connection or a Workstrand endorsement.
                     </p>
                   </div>
                 )}
@@ -2256,183 +1813,186 @@ function Composer({
   );
 }
 
-function HomeNewTaskView({
-  input,
-  setInput,
-  submit,
-  busy,
-  setAnswer,
+function Home({
+  snapshot,
+  thread,
   setThread,
   navigate,
-  snapshot,
+  onTroubleshoot,
 }: {
-  input: string;
-  setInput(input: string): void;
-  submit(): void;
-  busy: boolean;
-  setAnswer(answer: string | null): void;
+  snapshot: WorkspaceSnapshot;
+  thread: Thread;
   setThread(thread: Thread): void;
   navigate(page: Page): void;
-  snapshot: WorkspaceSnapshot;
+  onTroubleshoot(
+    message: string,
+  ): Promise<{ answer: string; routing?: ModelRoutingDecision | undefined }>;
 }) {
-  const approval = snapshot.approvals[0];
-  return (
-    <section
-      className="conversation-view new-task-view"
-      aria-labelledby="new-task-title"
-    >
-      <div className="new-task-center">
-        <div className="welcome-mark" aria-hidden="true">
-          <BrandMark />
-        </div>
-        <h1 id="new-task-title">What should we work on?</h1>
-        <p>
-          Ask normally. Workstrand will bring in relevant local context when it
-          can help.
-        </p>
-        <Composer
-          value={input}
-          onChange={setInput}
-          onSubmit={() => void submit()}
-          busy={busy}
-        />
-        <div className="prompt-suggestions" aria-label="Preview examples">
-          <button
-            onClick={() => {
-              setAnswer(null);
-              setThread("dji");
-            }}
-          >
-            Troubleshoot my DJI connection
-            <Icon name="arrow" />
-          </button>
-          <button onClick={() => setThread("teacher")}>
-            Open the prepared test plan
-            <Icon name="arrow" />
-          </button>
-        </div>
-      </div>
-      <button className="background-note" onClick={() => navigate("approvals")}>
-        <span className={`agent-dot ${snapshot.agentState}`} />
-        <span>
-          <strong>
-            {approval?.status === "pending"
-              ? "1 approval waiting"
-              : "Background work is quiet"}
-          </strong>
-          <small>
-            {approval?.status === "pending"
-              ? "Kestrel prepared a plan and paused before acting"
-              : "No action needs you right now"}
-          </small>
-        </span>
-        <Icon name="chevron" />
-      </button>
-    </section>
+  const [input, setInput] = useState("");
+  const [answer, setAnswer] = useState<string | null>(null);
+  const [sentMessage, setSentMessage] = useState(
+    "RC not connected to mobile device.",
   );
-}
-
-function HomeTeacherView({
-  input,
-  setInput,
-  submit,
-  busy,
-  navigate,
-  snapshot,
-}: {
-  input: string;
-  setInput(input: string): void;
-  submit(): void;
-  busy: boolean;
-  navigate(page: Page): void;
-  snapshot: WorkspaceSnapshot;
-}) {
+  const [busy, setBusy] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const [routing, setRouting] = useState<ModelRoutingDecision | null>(null);
+  const inputRef = useRef(input);
+  inputRef.current = input;
   const approval = snapshot.approvals[0];
-  return (
-    <section
-      className="conversation-view"
-      aria-label="Choose the better test date conversation"
-    >
-      <div className="message-list">
-        <div className="assistant-message">
-          <span className="assistant-avatar">K</span>
-          <div>
-            <p>
-              I noticed Ms. Rivera offered Friday or Monday for the Algebra II
-              test. I checked the calendar and the study preferences you
-              confirmed.
-            </p>
-            <div className="work-summary">
-              <Icon name="check" />
-              <span>
-                Checked teacher email, Friday calendar, and study memory
-              </span>
-            </div>
-            <p>
-              <strong>Monday looks better.</strong> Friday runs into swim
-              practice; Monday leaves the weekend open for two study blocks.
-            </p>
-            <div className="inline-action">
-              <div>
-                <strong>
-                  {approval?.status === "pending"
-                    ? "Plan ready for approval"
-                    : "Plan completed"}
-                </strong>
-                <span>
-                  {approval?.status === "pending"
-                    ? "Reply, calendar event, and study blocks"
-                    : "Open the result and verification trail"}
-                </span>
-              </div>
-              <button
-                className="button secondary"
-                onClick={() => navigate("approvals")}
-              >
-                {approval?.status === "pending" ? "Review plan" : "View result"}
-                <Icon name="arrow" />
-              </button>
-            </div>
-            <details className="message-details">
-              <summary>Why Kestrel suggested this</summary>
-              <p>{snapshot.opportunity.reasonDetected}</p>
-              <p>{snapshot.opportunity.description}</p>
-            </details>
+
+  useEffect(() => {
+    if (thread !== "dji") return;
+    setSentMessage("RC not connected to mobile device.");
+  }, [thread]);
+
+  async function submit(message = inputRef.current) {
+    const clean = message.trim();
+    if (!clean || busy) return;
+    setBusy(true);
+    setChatError("");
+    setSentMessage(clean);
+    setInput("");
+    setThread("dji");
+    try {
+      const result = await onTroubleshoot(clean);
+      setAnswer(result.answer);
+      setRouting(result.routing ?? null);
+    } catch {
+      setChatError(
+        "Kestrel could not finish that response. Your message is still here—try again when the local core is available.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (thread === "new")
+    return (
+      <section
+        className="conversation-view new-task-view"
+        aria-labelledby="new-task-title"
+      >
+        <div className="new-task-center">
+          <div className="welcome-mark" aria-hidden="true">
+            <BrandMark />
+          </div>
+          <h1 id="new-task-title">What should we work on?</h1>
+          <p>
+            Ask normally. Workstrand will bring in relevant local context when
+            it can help.
+          </p>
+          <Composer
+            value={input}
+            onChange={setInput}
+            onSubmit={() => void submit()}
+            busy={busy}
+          />
+          <div className="prompt-suggestions" aria-label="Preview examples">
+            <button
+              onClick={() => {
+                setAnswer(null);
+                setThread("dji");
+              }}
+            >
+              Troubleshoot my DJI connection
+              <Icon name="arrow" />
+            </button>
+            <button onClick={() => setThread("teacher")}>
+              Open the prepared test plan
+              <Icon name="arrow" />
+            </button>
           </div>
         </div>
-      </div>
-      <div className="thread-composer">
-        <Composer
-          compact
-          value={input}
-          onChange={setInput}
-          onSubmit={() => void submit()}
-          busy={busy}
-        />
-      </div>
-    </section>
-  );
-}
+        <button
+          className="background-note"
+          onClick={() => navigate("approvals")}
+        >
+          <span className={`agent-dot ${snapshot.agentState}`} />
+          <span>
+            <strong>
+              {approval?.status === "pending"
+                ? "1 approval waiting"
+                : "Background work is quiet"}
+            </strong>
+            <small>
+              {approval?.status === "pending"
+                ? "Kestrel prepared a plan and paused before acting"
+                : "No action needs you right now"}
+            </small>
+          </span>
+          <Icon name="chevron" />
+        </button>
+      </section>
+    );
 
-function HomeTroubleshootView({
-  input,
-  setInput,
-  submit,
-  busy,
-  sentMessage,
-  answer,
-  routing,
-  chatError,
-}: {
-  input: string;
-  setInput(input: string): void;
-  submit(message?: string): void;
-  busy: boolean;
-  sentMessage: string;
-  answer: string | null;
-  routing: ModelRoutingDecision | null;
-  chatError: string;
-}) {
+  if (thread === "teacher")
+    return (
+      <section
+        className="conversation-view"
+        aria-label="Choose the better test date conversation"
+      >
+        <div className="message-list">
+          <div className="assistant-message">
+            <span className="assistant-avatar">K</span>
+            <div>
+              <p>
+                I noticed Ms. Rivera offered Friday or Monday for the Algebra II
+                test. I checked the calendar and the study preferences you
+                confirmed.
+              </p>
+              <div className="work-summary">
+                <Icon name="check" />
+                <span>
+                  Checked teacher email, Friday calendar, and study memory
+                </span>
+              </div>
+              <p>
+                <strong>Monday looks better.</strong> Friday runs into swim
+                practice; Monday leaves the weekend open for two study blocks.
+              </p>
+              <div className="inline-action">
+                <div>
+                  <strong>
+                    {approval?.status === "pending"
+                      ? "Plan ready for approval"
+                      : "Plan completed"}
+                  </strong>
+                  <span>
+                    {approval?.status === "pending"
+                      ? "Reply, calendar event, and study blocks"
+                      : "Open the result and verification trail"}
+                  </span>
+                </div>
+                <button
+                  className="button secondary"
+                  onClick={() => navigate("approvals")}
+                >
+                  {approval?.status === "pending"
+                    ? "Review plan"
+                    : "View result"}
+                  <Icon name="arrow" />
+                </button>
+              </div>
+              <details className="message-details">
+                <summary>Why Kestrel suggested this</summary>
+                <p>{snapshot.opportunity.reasonDetected}</p>
+                <p>{snapshot.opportunity.description}</p>
+              </details>
+            </div>
+          </div>
+        </div>
+        <div className="thread-composer">
+          <Composer
+            compact
+            value={input}
+            onChange={setInput}
+            onSubmit={() => void submit()}
+            busy={busy}
+          />
+        </div>
+      </section>
+    );
+
   return (
     <section
       className="conversation-view"
@@ -2516,99 +2076,6 @@ function HomeTroubleshootView({
   );
 }
 
-function Home({
-  snapshot,
-  thread,
-  setThread,
-  navigate,
-  onTroubleshoot,
-}: {
-  snapshot: WorkspaceSnapshot;
-  thread: Thread;
-  setThread(thread: Thread): void;
-  navigate(page: Page): void;
-  onTroubleshoot(
-    message: string,
-  ): Promise<{ answer: string; routing?: ModelRoutingDecision | undefined }>;
-}) {
-  const [input, setInput] = useState("");
-  const [answer, setAnswer] = useState<string | null>(null);
-  const [sentMessage, setSentMessage] = useState(
-    "RC not connected to mobile device.",
-  );
-  const [busy, setBusy] = useState(false);
-  const [chatError, setChatError] = useState("");
-  const [routing, setRouting] = useState<ModelRoutingDecision | null>(null);
-  const inputRef = useRef(input);
-  inputRef.current = input;
-
-  useEffect(() => {
-    if (thread !== "dji") return;
-    setSentMessage("RC not connected to mobile device.");
-  }, [thread]);
-
-  async function submit(message = inputRef.current) {
-    const clean = message.trim();
-    if (!clean || busy) return;
-    setBusy(true);
-    setChatError("");
-    setSentMessage(clean);
-    setInput("");
-    setThread("dji");
-    try {
-      const result = await onTroubleshoot(clean);
-      setAnswer(result.answer);
-      setRouting(result.routing ?? null);
-    } catch {
-      setChatError(
-        "Kestrel could not finish that response. Your message is still here—try again when the local core is available.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (thread === "new") {
-    return (
-      <HomeNewTaskView
-        input={input}
-        setInput={setInput}
-        submit={submit}
-        busy={busy}
-        setAnswer={setAnswer}
-        setThread={setThread}
-        navigate={navigate}
-        snapshot={snapshot}
-      />
-    );
-  }
-
-  if (thread === "teacher") {
-    return (
-      <HomeTeacherView
-        input={input}
-        setInput={setInput}
-        submit={submit}
-        busy={busy}
-        navigate={navigate}
-        snapshot={snapshot}
-      />
-    );
-  }
-
-  return (
-    <HomeTroubleshootView
-      input={input}
-      setInput={setInput}
-      submit={submit}
-      busy={busy}
-      sentMessage={sentMessage}
-      answer={answer}
-      routing={routing}
-      chatError={chatError}
-    />
-  );
-}
 function RuntimeConversation({
   activeSessionId,
   sessions,
@@ -2659,6 +2126,7 @@ function RuntimeConversation({
   const streamIdRef = useRef<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const [voiceState, setVoiceState] = useState<
     "idle" | "recording" | "transcribing"
   >("idle");
@@ -2669,6 +2137,15 @@ function RuntimeConversation({
   const selectedGrant = grants.find((grant) => grant.path === taskWorkspace);
   const manualRoutingReady = Boolean(providerId && model.trim());
   const executionReady = executionMode === "automatic" || manualRoutingReady;
+
+  useEffect(() => {
+    const prompt = promptRef.current;
+    if (!prompt) return;
+    prompt.style.height = "auto";
+    const nextHeight = Math.min(prompt.scrollHeight, 180);
+    prompt.style.height = `${nextHeight}px`;
+    prompt.style.overflowY = prompt.scrollHeight > 180 ? "auto" : "hidden";
+  }, [input]);
 
   async function refreshSessions() {
     const response = (await window.kestrel.request({
@@ -3007,7 +2484,7 @@ function RuntimeConversation({
       if (!sessionId) {
         const created = (await window.kestrel.request({
           type: "runtime-create-session",
-          title: prompt.slice(0, 80),
+          title: chatTitleFromPrompt(prompt),
           ...(workspace ? { workspaceRoot: workspace } : {}),
         })) as CoreResponse;
         if (!created.ok || !created.session)
@@ -3253,8 +2730,8 @@ function RuntimeConversation({
       )}
       {executionMode === "automatic" && (
         <p>
-          Kestrel routes model, reasoning, and service tier from the task, risk,
-          provider health, and your budget.
+          Kestrel routes model, reasoning, and service tier from the task,
+          risk, provider health, and your budget.
         </p>
       )}
     </div>
@@ -3420,129 +2897,6 @@ function RuntimeConversation({
             : "runtime-new-composer"
         }
       >
-        {!activeSessionId && (
-          <div className="runtime-project-picker">
-            <label>
-              Project
-              <select
-                value={workspace}
-                onChange={(event) => {
-                  setWorkspace(event.target.value);
-                  setAttachments([]);
-                }}
-              >
-                <option value="">No project — conversation only</option>
-                {grants.map((grant) => (
-                  <option value={grant.path} key={grant.path}>
-                    {grant.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={busy}
-              onClick={() => void addProject()}
-            >
-              Choose folder
-            </button>
-            <small>
-              {workspace
-                ? "Workstrand can use tools only inside this folder."
-                : "Choose a folder when you want Workstrand to inspect or change files."}
-            </small>
-          </div>
-        )}
-        {activeSessionId && (
-          <div
-            className="runtime-project-context"
-            title={activeSession?.workspaceRoot}
-          >
-            <span>Project</span>
-            <strong>
-              {selectedGrant?.name ??
-                (activeSession?.workspaceRoot
-                  ? activeSession.workspaceRoot
-                      .split("/")
-                      .filter(Boolean)
-                      .at(-1)
-                  : "Conversation only")}
-            </strong>
-          </div>
-        )}
-        <details className="runtime-setup">
-          <summary>
-            <span>Model and tools</span>
-            <small>
-              {executionMode === "automatic"
-                ? "Automatic"
-                : manualRoutingReady
-                  ? "Manual · ready"
-                  : "Manual · incomplete"}
-            </small>
-          </summary>
-          {taskControls}
-        </details>
-        {activeSessionId && (
-          <div
-            className="runtime-lifecycle-controls"
-            aria-label="Task restore and retry controls"
-          >
-            <label>
-              Checkpoint
-              <input
-                value={checkpointSummary}
-                onChange={(event) => setCheckpointSummary(event.target.value)}
-                placeholder="What is safe to return to?"
-                maxLength={20_000}
-              />
-            </label>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={busy || !checkpointSummary.trim()}
-              onClick={() => void createCheckpoint()}
-            >
-              Save checkpoint
-            </button>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={
-                busy ||
-                visibleMessages.every((message) => message.role !== "user") ||
-                !executionReady
-              }
-              onClick={() => void retryLastTurn()}
-            >
-              Retry last turn
-            </button>
-            {activeSession?.checkpoints.map((checkpoint) => (
-              <button
-                type="button"
-                className="quiet-link"
-                disabled={busy}
-                key={checkpoint.id}
-                title={checkpoint.summary}
-                onClick={() => void restoreCheckpoint(checkpoint.id)}
-              >
-                Restore #{checkpoint.sequence} · {checkpoint.summary}
-              </button>
-            ))}
-            {usage && (
-              <span
-                className="runtime-usage"
-                title={`${usage.cachedInputTokens} cached input tokens · ${usage.reasoningTokens} reasoning tokens`}
-              >
-                {usage.modelCalls} calls · {usage.inputTokens.toLocaleString()}{" "}
-                in / {usage.outputTokens.toLocaleString()} out · $
-                {usage.estimatedCostUsd.toFixed(4)} · {usage.compactedMessages}{" "}
-                compacted
-              </span>
-            )}
-          </div>
-        )}
         {attachments.length > 0 && (
           <div className="attachment-chips">
             {attachments.map((attachment) => (
@@ -3571,6 +2925,7 @@ function RuntimeConversation({
             Message Workstrand
           </label>
           <textarea
+            ref={promptRef}
             id="runtime-prompt"
             rows={2}
             value={input}
@@ -3592,6 +2947,129 @@ function RuntimeConversation({
               >
                 <Icon name="plus" />
               </button>
+              <details className="task-settings">
+                <summary aria-label="Task settings" title="Task settings">
+                  <Icon name="settings" />
+                </summary>
+                <div className="task-settings-panel">
+                  <header>
+                    <strong>Task settings</strong>
+                    <small>
+                      {executionMode === "automatic"
+                        ? "Automatic"
+                        : manualRoutingReady
+                          ? "Manual · ready"
+                          : "Manual · incomplete"}
+                    </small>
+                  </header>
+                  {!activeSessionId ? (
+                    <div className="runtime-project-picker">
+                      <label>
+                        Project
+                        <select
+                          value={workspace}
+                          onChange={(event) => {
+                            setWorkspace(event.target.value);
+                            setAttachments([]);
+                          }}
+                        >
+                          <option value="">Conversation only</option>
+                          {grants.map((grant) => (
+                            <option value={grant.path} key={grant.path}>
+                              {grant.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        disabled={busy}
+                        onClick={() => void addProject()}
+                      >
+                        Choose folder
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="runtime-project-context">
+                      <span>Project</span>
+                      <strong>
+                        {selectedGrant?.name ??
+                          (activeSession?.workspaceRoot
+                            ? activeSession.workspaceRoot
+                                .split("/")
+                                .filter(Boolean)
+                                .at(-1)
+                            : "Conversation only")}
+                      </strong>
+                    </div>
+                  )}
+                  {taskControls}
+                  {activeSessionId && (
+                    <div
+                      className="runtime-lifecycle-controls"
+                      aria-label="Task restore and retry controls"
+                    >
+                      <label>
+                        Checkpoint
+                        <input
+                          value={checkpointSummary}
+                          onChange={(event) =>
+                            setCheckpointSummary(event.target.value)
+                          }
+                          placeholder="What is safe to return to?"
+                          maxLength={20_000}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        disabled={busy || !checkpointSummary.trim()}
+                        onClick={() => void createCheckpoint()}
+                      >
+                        Save checkpoint
+                      </button>
+                      <button
+                        type="button"
+                        className="button secondary"
+                        disabled={
+                          busy ||
+                          visibleMessages.every(
+                            (message) => message.role !== "user",
+                          ) ||
+                          !executionReady
+                        }
+                        onClick={() => void retryLastTurn()}
+                      >
+                        Retry last turn
+                      </button>
+                      {activeSession?.checkpoints.map((checkpoint) => (
+                        <button
+                          type="button"
+                          className="quiet-link"
+                          disabled={busy}
+                          key={checkpoint.id}
+                          title={checkpoint.summary}
+                          onClick={() => void restoreCheckpoint(checkpoint.id)}
+                        >
+                          Restore #{checkpoint.sequence} · {checkpoint.summary}
+                        </button>
+                      ))}
+                      {usage && (
+                        <span
+                          className="runtime-usage"
+                          title={`${usage.cachedInputTokens} cached input tokens · ${usage.reasoningTokens} reasoning tokens`}
+                        >
+                          {usage.modelCalls} calls ·{" "}
+                          {usage.inputTokens.toLocaleString()} in /{" "}
+                          {usage.outputTokens.toLocaleString()} out · $
+                          {usage.estimatedCostUsd.toFixed(4)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </details>
             </div>
             <span>
               {voiceState === "recording"
@@ -3636,58 +3114,6 @@ function RuntimeConversation({
             )}
           </div>
         </form>
-        {!activeSessionId && (
-          <div className="prompt-suggestions" aria-label="Ways to start">
-            <button
-              type="button"
-              disabled={!workspace}
-              title={
-                workspace ? undefined : "Add a project to use repository tools"
-              }
-              onClick={() =>
-                setInput("Build or change a feature in this project")
-              }
-            >
-              Build or change a feature
-            </button>
-            <button
-              type="button"
-              disabled={!workspace}
-              title={
-                workspace ? undefined : "Add a project to use repository tools"
-              }
-              onClick={() =>
-                setInput("Find the cause of a bug in this project and fix it")
-              }
-            >
-              Find and fix a bug
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setInput(
-                  "Research this question and explain the answer with sources",
-                )
-              }
-            >
-              Research and explain
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                setInput("Automate this recurring workflow safely")
-              }
-            >
-              Automate recurring work
-            </button>
-            <button
-              type="button"
-              onClick={() => setInput(SETUP_ASSISTANT_PROMPT)}
-            >
-              Finish setting up
-            </button>
-          </div>
-        )}
         {error && (
           <p className="chat-error" role="alert">
             {error}
@@ -3736,159 +3162,22 @@ function Approvals({
   );
 }
 
-
-function MemoryCreate({
-  busy,
-  mutate,
-}: {
-  busy: boolean;
-  mutate: (request: RendererRequest) => Promise<void>;
-}) {
-  const [newContent, setNewContent] = useState("");
-  const [newType, setNewType] = useState<MemoryRecord["type"]>("semantic");
-
-  return (
-    <form
-      className="memory-create"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const content = newContent.trim();
-        if (!content) return;
-        void mutate({
-          type: "memory-remember",
-          memoryType: newType,
-          content,
-          sensitivity: "personal",
-          sourceId: "desktop-user",
-        }).then(() => setNewContent(""));
-      }}
-    >
-      <label>
-        New confirmed memory
-        <textarea
-          value={newContent}
-          onChange={(event) => setNewContent(event.target.value)}
-          rows={2}
-          placeholder="Store something with explicit provenance…"
-        />
-      </label>
-      <select
-        aria-label="Memory type"
-        value={newType}
-        onChange={(event) =>
-          setNewType(event.target.value as MemoryRecord["type"])
-        }
-      >
-        {[
-          "semantic",
-          "episodic",
-          "procedural",
-          "project",
-          "relationship",
-        ].map((type) => (
-          <option key={type}>{type}</option>
-        ))}
-      </select>
-      <button
-        className="button primary"
-        disabled={busy || !newContent.trim()}
-      >
-        Remember
-      </button>
-    </form>
-  );
-}
-
-function MemorySearch({
-  busy,
-  setBusy,
-  setMemoryError,
-}: {
-  busy: boolean;
-  setBusy: (busy: boolean) => void;
-  setMemoryError: (error: string) => void;
-}) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<RuntimeMessage[]>([]);
-
-  async function searchTranscripts() {
-    const query = searchQuery.trim();
-    if (!query) {
-      setSearchResults([]);
-      return;
-    }
-    setBusy(true);
-    setMemoryError("");
-    try {
-      const response = (await window.kestrel.request({
-        type: "runtime-search-messages",
-        query,
-        limit: 30,
-      })) as CoreResponse;
-      if (!response.ok) throw new Error(response.error);
-      setSearchResults(response.messages ?? []);
-    } catch (cause) {
-      setMemoryError(
-        cause instanceof Error ? cause.message : "Transcript search failed.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <>
-      <form
-        className="memory-search"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void searchTranscripts();
-        }}
-      >
-        <input
-          aria-label="Search task history"
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="Search across encrypted task history"
-        />
-        <button
-          className="button secondary"
-          disabled={busy || !searchQuery.trim()}
-        >
-          Search history
-        </button>
-      </form>
-      {searchResults.length > 0 && (
-        <section
-          className="memory-search-results"
-          aria-label="Task history results"
-        >
-          {searchResults.map((message) => (
-            <article key={message.id}>
-              <span className="eyebrow">
-                {message.role} · session {message.sessionId.slice(-8)}
-              </span>
-              <p>{message.content}</p>
-            </article>
-          ))}
-        </section>
-      )}
-    </>
-  );
-}
-
-function MemoryList({
+function Memory({
   snapshot,
-  busy,
-  mutate,
+  update,
 }: {
   snapshot: WorkspaceSnapshot;
-  busy: boolean;
-  mutate: (request: RendererRequest) => Promise<void>;
+  update(next: WorkspaceSnapshot): void;
 }) {
   const [filter, setFilter] = useState<MemoryRecord["type"] | "all">("all");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-
+  const [facts, setFacts] = useState<UserModelFact[]>([]);
+  const [newContent, setNewContent] = useState("");
+  const [newType, setNewType] = useState<MemoryRecord["type"]>("semantic");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<RuntimeMessage[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [memoryError, setMemoryError] = useState("");
   const grouped = useMemo(
     () =>
       snapshot.memories.reduce<Record<string, MemoryRecord[]>>(
@@ -3896,7 +3185,7 @@ function MemoryList({
           (groups[item.type] ??= []).push(item);
           return groups;
         },
-        {} as Record<string, MemoryRecord[]>,
+        {},
       ),
     [snapshot.memories],
   );
@@ -3910,150 +3199,6 @@ function MemoryList({
       ),
     );
   }, [snapshot.memories]);
-
-  return (
-    <div className="memory-layout">
-      <aside className="memory-filters">
-        <button
-          className={filter === "all" ? "active" : ""}
-          onClick={() => setFilter("all")}
-        >
-          <span>All</span>
-          <strong>{snapshot.memories.length}</strong>
-        </button>
-        {Object.entries(grouped).map(([key, items]) => (
-          <button
-            className={filter === key ? "active" : ""}
-            onClick={() => setFilter(key as MemoryRecord["type"])}
-            key={key}
-          >
-            <span>{key}</span>
-            <strong>{items.length}</strong>
-          </button>
-        ))}
-      </aside>
-      <section className="memory-list">
-        {visible.map((item) => (
-          <article key={item.id}>
-            <div>
-              <span className="eyebrow">
-                {item.type} · {item.userConfirmed ? "confirmed" : "inferred"}{" "}
-                · {item.sensitivity}
-              </span>
-              <textarea
-                aria-label={`Edit ${item.type} memory`}
-                value={drafts[item.id] ?? item.content}
-                onChange={(event) =>
-                  setDrafts((current) => ({
-                    ...current,
-                    [item.id]: event.target.value,
-                  }))
-                }
-                rows={2}
-              />
-              <details>
-                <summary>Provenance</summary>
-                <small>
-                  {item.sourceType} · {item.sourceIds.join(" · ")}
-                </small>
-              </details>
-            </div>
-            <div className="memory-actions">
-              <button
-                className="button secondary"
-                disabled={
-                  busy ||
-                  !(drafts[item.id] ?? "").trim() ||
-                  drafts[item.id] === item.content
-                }
-                onClick={() =>
-                  void mutate({
-                    type: "memory-correct",
-                    id: item.id,
-                    content: drafts[item.id]!,
-                    memoryType: item.type,
-                    sensitivity: item.sensitivity,
-                  })
-                }
-              >
-                Save correction
-              </button>
-              <button
-                className="quiet-link"
-                disabled={busy}
-                onClick={() =>
-                  void mutate({ type: "memory-forget", id: item.id })
-                }
-              >
-                Forget
-              </button>
-            </div>
-          </article>
-        ))}
-      </section>
-    </div>
-  );
-}
-
-function UserModelReview({
-  facts,
-  busy,
-  reviewFact,
-}: {
-  facts: UserModelFact[];
-  busy: boolean;
-  reviewFact: (id: string, decision: "confirm" | "reject") => Promise<void>;
-}) {
-  return (
-    <section className="user-model-review">
-      <h2>Proposed user model</h2>
-      {facts.filter((fact) => fact.status === "proposed").length === 0 ? (
-        <p>No facts are waiting for review.</p>
-      ) : (
-        facts
-          .filter((fact) => fact.status === "proposed")
-          .map((fact) => (
-            <article key={fact.id}>
-              <div>
-                <span className="eyebrow">
-                  {fact.kind}.{fact.key} · {fact.sensitivity}
-                </span>
-                <p>{fact.value}</p>
-                <small>Sources · {fact.sourceIds.join(" · ")}</small>
-              </div>
-              <div className="button-row">
-                <button
-                  className="button primary"
-                  disabled={busy}
-                  onClick={() => void reviewFact(fact.id, "confirm")}
-                >
-                  Confirm
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={busy}
-                  onClick={() => void reviewFact(fact.id, "reject")}
-                >
-                  Reject
-                </button>
-              </div>
-            </article>
-          ))
-      )}
-    </section>
-  );
-}
-
-function Memory({
-  snapshot,
-  update,
-}: {
-  snapshot: WorkspaceSnapshot;
-  update(next: WorkspaceSnapshot): void;
-}) {
-  const [facts, setFacts] = useState<UserModelFact[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [memoryError, setMemoryError] = useState("");
 
   async function loadFacts() {
     const response = (await window.kestrel.request({
@@ -4118,28 +3263,240 @@ function Memory({
     }
   }
 
+  async function searchTranscripts() {
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchResults([]);
+      return;
+    }
+    setBusy(true);
+    setMemoryError("");
+    try {
+      const response = (await window.kestrel.request({
+        type: "runtime-search-messages",
+        query,
+        limit: 30,
+      })) as CoreResponse;
+      if (!response.ok) throw new Error(response.error);
+      setSearchResults(response.messages ?? []);
+    } catch (cause) {
+      setMemoryError(
+        cause instanceof Error ? cause.message : "Transcript search failed.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <PageFrame
       eyebrow="Local memory"
       title="What Kestrel knows."
       text="Inspect provenance, correct or forget durable memories, review proposed user facts, and search encrypted task history."
     >
-      <MemoryCreate busy={busy} mutate={mutate} />
-      <MemorySearch
-        busy={busy}
-        setBusy={setBusy}
-        setMemoryError={setMemoryError}
-      />
+      <form
+        className="memory-create"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const content = newContent.trim();
+          if (!content) return;
+          void mutate({
+            type: "memory-remember",
+            memoryType: newType,
+            content,
+            sensitivity: "personal",
+            sourceId: "desktop-user",
+          }).then(() => setNewContent(""));
+        }}
+      >
+        <label>
+          New confirmed memory
+          <textarea
+            value={newContent}
+            onChange={(event) => setNewContent(event.target.value)}
+            rows={2}
+            placeholder="Store something with explicit provenance…"
+          />
+        </label>
+        <select
+          aria-label="Memory type"
+          value={newType}
+          onChange={(event) =>
+            setNewType(event.target.value as MemoryRecord["type"])
+          }
+        >
+          {[
+            "semantic",
+            "episodic",
+            "procedural",
+            "project",
+            "relationship",
+          ].map((type) => (
+            <option key={type}>{type}</option>
+          ))}
+        </select>
+        <button
+          className="button primary"
+          disabled={busy || !newContent.trim()}
+        >
+          Remember
+        </button>
+      </form>
+      <form
+        className="memory-search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void searchTranscripts();
+        }}
+      >
+        <input
+          aria-label="Search task history"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="Search across encrypted task history"
+        />
+        <button
+          className="button secondary"
+          disabled={busy || !searchQuery.trim()}
+        >
+          Search history
+        </button>
+      </form>
+      {searchResults.length > 0 && (
+        <section
+          className="memory-search-results"
+          aria-label="Task history results"
+        >
+          {searchResults.map((message) => (
+            <article key={message.id}>
+              <span className="eyebrow">
+                {message.role} · session {message.sessionId.slice(-8)}
+              </span>
+              <p>{message.content}</p>
+            </article>
+          ))}
+        </section>
+      )}
       <DreamingPanel
         memories={snapshot.memories}
         onMemoryChanged={refreshSnapshot}
       />
-      <MemoryList snapshot={snapshot} busy={busy} mutate={mutate} />
-      <UserModelReview
-        facts={facts}
-        busy={busy}
-        reviewFact={reviewFact}
-      />
+      <div className="memory-layout">
+        <aside className="memory-filters">
+          <button
+            className={filter === "all" ? "active" : ""}
+            onClick={() => setFilter("all")}
+          >
+            <span>All</span>
+            <strong>{snapshot.memories.length}</strong>
+          </button>
+          {Object.entries(grouped).map(([key, items]) => (
+            <button
+              className={filter === key ? "active" : ""}
+              onClick={() => setFilter(key as MemoryRecord["type"])}
+              key={key}
+            >
+              <span>{key}</span>
+              <strong>{items.length}</strong>
+            </button>
+          ))}
+        </aside>
+        <section className="memory-list">
+          {visible.map((item) => (
+            <article key={item.id}>
+              <div>
+                <span className="eyebrow">
+                  {item.type} · {item.userConfirmed ? "confirmed" : "inferred"}{" "}
+                  · {item.sensitivity}
+                </span>
+                <textarea
+                  aria-label={`Edit ${item.type} memory`}
+                  value={drafts[item.id] ?? item.content}
+                  onChange={(event) =>
+                    setDrafts((current) => ({
+                      ...current,
+                      [item.id]: event.target.value,
+                    }))
+                  }
+                  rows={2}
+                />
+                <details>
+                  <summary>Provenance</summary>
+                  <small>
+                    {item.sourceType} · {item.sourceIds.join(" · ")}
+                  </small>
+                </details>
+              </div>
+              <div className="memory-actions">
+                <button
+                  className="button secondary"
+                  disabled={
+                    busy ||
+                    !(drafts[item.id] ?? "").trim() ||
+                    drafts[item.id] === item.content
+                  }
+                  onClick={() =>
+                    void mutate({
+                      type: "memory-correct",
+                      id: item.id,
+                      content: drafts[item.id]!,
+                      memoryType: item.type,
+                      sensitivity: item.sensitivity,
+                    })
+                  }
+                >
+                  Save correction
+                </button>
+                <button
+                  className="quiet-link"
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate({ type: "memory-forget", id: item.id })
+                  }
+                >
+                  Forget
+                </button>
+              </div>
+            </article>
+          ))}
+        </section>
+      </div>
+      <section className="user-model-review">
+        <h2>Proposed user model</h2>
+        {facts.filter((fact) => fact.status === "proposed").length === 0 ? (
+          <p>No facts are waiting for review.</p>
+        ) : (
+          facts
+            .filter((fact) => fact.status === "proposed")
+            .map((fact) => (
+              <article key={fact.id}>
+                <div>
+                  <span className="eyebrow">
+                    {fact.kind}.{fact.key} · {fact.sensitivity}
+                  </span>
+                  <p>{fact.value}</p>
+                  <small>Sources · {fact.sourceIds.join(" · ")}</small>
+                </div>
+                <div className="button-row">
+                  <button
+                    className="button primary"
+                    disabled={busy}
+                    onClick={() => void reviewFact(fact.id, "confirm")}
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    className="button secondary"
+                    disabled={busy}
+                    onClick={() => void reviewFact(fact.id, "reject")}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </article>
+            ))
+        )}
+      </section>
       {memoryError && (
         <p className="connection-error" role="alert">
           {memoryError}
@@ -4645,21 +4002,20 @@ function Work({
   );
 
   async function load() {
-    const [state, providerState, sessionState, localModelState] =
-      await Promise.all([
-        window.kestrel.request({
-          type: "orchestration-list",
-        }) as Promise<CoreResponse>,
-        window.kestrel.request({
-          type: "runtime-list-providers",
-        }) as Promise<CoreResponse>,
-        window.kestrel.request({
-          type: "runtime-list-sessions",
-        }) as Promise<CoreResponse>,
-        window.kestrel.request({
-          type: "local-model-status",
-        }),
-      ]);
+    const [state, providerState, sessionState, localModelState] = await Promise.all([
+      window.kestrel.request({
+        type: "orchestration-list",
+      }) as Promise<CoreResponse>,
+      window.kestrel.request({
+        type: "runtime-list-providers",
+      }) as Promise<CoreResponse>,
+      window.kestrel.request({
+        type: "runtime-list-sessions",
+      }) as Promise<CoreResponse>,
+      window.kestrel.request({
+        type: "local-model-status",
+      }),
+    ]);
     if (!state.ok) throw new Error(state.error);
     setGoals(state.goals ?? []);
     setTeams(state.teams ?? []);
@@ -4856,9 +4212,7 @@ function Work({
             ) : (
               <input
                 aria-label="Model"
-                placeholder={
-                  providerId === "auto" ? "Automatically selected" : "Model"
-                }
+                placeholder={providerId === "auto" ? "Automatically selected" : "Model"}
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
                 readOnly={providerId === "auto"}
@@ -5281,7 +4635,9 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
       });
       if (!response.ok)
         throw new Error(
-          "error" in response ? response.error : "ChatGPT route update failed.",
+          "error" in response
+            ? response.error
+            : "ChatGPT route update failed.",
         );
       if ("subscriptionClis" in response)
         setSubscriptionClis(response.subscriptionClis);
@@ -5382,11 +4738,15 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
     }
   }
   return (
-    <PageFrame
-      eyebrow="Connections"
-      title="Access only what helps."
-      text="OAuth stays in the provider browser; folders and external actions remain explicit and revocable."
-    >
+    <section className="settings-panel" aria-labelledby="settings-connections-title">
+      <header className="settings-panel-header">
+        <span className="eyebrow">Connections</span>
+        <h2 id="settings-connections-title">Accounts and access</h2>
+        <p>
+          Sign-ins stay with their providers. Project folders and external
+          access remain explicit and revocable.
+        </p>
+      </header>
       <div className="connection-list">
         <article className="oauth-connection">
           <div className="connection-monogram">CG</div>
@@ -5585,7 +4945,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
           {grantError || googleError || chatGptError}
         </p>
       )}
-    </PageFrame>
+    </section>
   );
 }
 
@@ -5912,7 +5272,9 @@ function SubscriptionCliSettings() {
                 <strong>{item.label}</strong>
                 <small>{item.detail}</small>
               </span>
-              {item.id === "codex" && item.detected && !item.authenticated ? (
+              {item.id === "codex" &&
+              item.detected &&
+              !item.authenticated ? (
                 <button
                   className="button primary"
                   disabled={Boolean(busy) && busy !== "chatgpt-oauth"}
@@ -6188,7 +5550,7 @@ function MigrationSettings() {
   );
 }
 
-function useEnterpriseSettings() {
+function EnterpriseSettings() {
   const [policy, setPolicy] = useState<{
     organizationId: string;
     version: number;
@@ -6206,7 +5568,6 @@ function useEnterpriseSettings() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
   async function load() {
     const response = (await window.kestrel.request({
       type: "enterprise-summary",
@@ -6216,7 +5577,6 @@ function useEnterpriseSettings() {
     setAnalytics(response.enterpriseAnalytics ?? null);
     setMembers(response.organizationMembers ?? []);
   }
-
   useEffect(() => {
     void load().catch((cause) =>
       setError(
@@ -6224,7 +5584,6 @@ function useEnterpriseSettings() {
       ),
     );
   }, []);
-
   async function retention() {
     setBusy(true);
     setError("");
@@ -6243,7 +5602,6 @@ function useEnterpriseSettings() {
       setBusy(false);
     }
   }
-
   async function provision() {
     if (!email || !displayName) return;
     setBusy(true);
@@ -6265,43 +5623,6 @@ function useEnterpriseSettings() {
       setBusy(false);
     }
   }
-
-  return {
-    policy,
-    analytics,
-    members,
-    email,
-    setEmail,
-    displayName,
-    setDisplayName,
-    role,
-    setRole,
-    notice,
-    error,
-    busy,
-    retention,
-    provision,
-  };
-}
-
-function EnterpriseSettings() {
-  const {
-    policy,
-    analytics,
-    members,
-    email,
-    setEmail,
-    displayName,
-    setDisplayName,
-    role,
-    setRole,
-    notice,
-    error,
-    busy,
-    retention,
-    provision,
-  } = useEnterpriseSettings();
-
   if (!policy)
     return (
       <article className="setting-row">
@@ -6568,6 +5889,182 @@ function CustomAgentsSettings({
   );
 }
 
+function UsagePolicySettings() {
+  const [policy, setPolicy] = useState<UsagePolicy | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    void window.kestrel
+      .request({ type: "runtime-get-usage-policy" })
+      .then((raw) => {
+        const response = raw as CoreResponse;
+        if (response.ok) setPolicy(response.usagePolicy ?? null);
+        else setError(response.error);
+      });
+  }, []);
+  if (!policy)
+    return (
+      <article className="setting-row">
+        <div>
+          <strong>Usage and cost guardrails</strong>
+          <p>Loading encrypted budget policy…</p>
+          {error && <small role="alert">{error}</small>}
+        </div>
+      </article>
+    );
+  const updateNumber = (
+    field:
+      | "dailyBudgetUsd"
+      | "monthlyBudgetUsd"
+      | "perCallReservationUsd"
+      | "maximumConcurrentCalls",
+    value: string,
+  ) => setPolicy({ ...policy, [field]: Number(value) });
+  const updateRate = (field: keyof UsagePolicy["defaultRate"], value: string) =>
+    setPolicy({
+      ...policy,
+      defaultRate: { ...policy.defaultRate, [field]: Number(value) },
+    });
+  async function save() {
+    if (!policy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = (await window.kestrel.request({
+        type: "runtime-set-usage-policy",
+        policy,
+      })) as CoreResponse;
+      if (!response.ok) throw new Error(response.error);
+      setPolicy(response.usagePolicy ?? policy);
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Usage policy save failed.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <article className="setting-row usage-policy-setting">
+      <div>
+        <strong>Usage and cost guardrails</strong>
+        <p>
+          Budget reservations and concurrency are enforced before every provider
+          call. Rates are accounting estimates per million tokens and can be
+          overridden through the policy API by model.
+        </p>
+        <div className="usage-policy-grid">
+          <label>
+            Daily budget, USD
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={policy.dailyBudgetUsd}
+              onChange={(event) =>
+                updateNumber("dailyBudgetUsd", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            Monthly budget, USD
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={policy.monthlyBudgetUsd}
+              onChange={(event) =>
+                updateNumber("monthlyBudgetUsd", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            Per-call reserve, USD
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={policy.perCallReservationUsd}
+              onChange={(event) =>
+                updateNumber("perCallReservationUsd", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            Concurrent calls
+            <input
+              type="number"
+              min="1"
+              max="64"
+              step="1"
+              value={policy.maximumConcurrentCalls}
+              onChange={(event) =>
+                updateNumber("maximumConcurrentCalls", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            Input / 1M
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={policy.defaultRate.inputPerMillionUsd}
+              onChange={(event) =>
+                updateRate("inputPerMillionUsd", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            Output / 1M
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={policy.defaultRate.outputPerMillionUsd}
+              onChange={(event) =>
+                updateRate("outputPerMillionUsd", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            Cached input / 1M
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={policy.defaultRate.cachedInputPerMillionUsd}
+              onChange={(event) =>
+                updateRate("cachedInputPerMillionUsd", event.target.value)
+              }
+            />
+          </label>
+          <label>
+            Reasoning / 1M
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={policy.defaultRate.reasoningPerMillionUsd}
+              onChange={(event) =>
+                updateRate("reasoningPerMillionUsd", event.target.value)
+              }
+            />
+          </label>
+        </div>
+        {error && <small role="alert">{error}</small>}
+      </div>
+      <button
+        className="button secondary"
+        disabled={busy}
+        onClick={() => void save()}
+      >
+        {busy ? "Saving…" : "Save guardrails"}
+      </button>
+    </article>
+  );
+}
+
 function ApprovalRulesSettings() {
   const [rules, setRules] = useState<ApprovalRule[]>([]);
   const [error, setError] = useState("");
@@ -6659,6 +6156,43 @@ function Settings({
   petStatus: PetStatus | null;
   onPetStatus(next: PetStatus): void;
 }) {
+  const [login, setLogin] = useState<{
+    enabled: boolean;
+    status: string;
+  } | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [resetError, setResetError] = useState("");
+  const [section, setSection] = useState<
+    | "connections"
+    | "general"
+    | "models"
+    | "intelligence"
+    | "extensions"
+    | "privacy"
+    | "advanced"
+  >("connections");
+  useEffect(() => {
+    void window.kestrel
+      .request({ type: "get-system-state" })
+      .then((response) => {
+        if ("launchAtLogin" in response)
+          setLogin({
+            enabled: response.launchAtLogin,
+            status: response.launchStatus,
+          });
+      });
+  }, []);
+  async function toggleLogin() {
+    const response = await window.kestrel.request({
+      type: "set-launch-at-login",
+      enabled: !login?.enabled,
+    });
+    if ("launchAtLogin" in response)
+      setLogin({
+        enabled: response.launchAtLogin,
+        status: response.launchStatus,
+      });
+  }
   async function togglePause() {
     const response = (await window.kestrel.request({
       type: "set-paused",
@@ -6673,19 +6207,182 @@ function Settings({
     })) as CoreResponse;
     if (response.ok && response.snapshot) update(response.snapshot);
   }
+  const [plugins, setPlugins] = useState<PluginSummary[]>([]);
+  const [publishers, setPublishers] = useState<TrustedPluginPublisher[]>([]);
+  const [pluginError, setPluginError] = useState("");
+  const [pluginNotice, setPluginNotice] = useState("");
+  const [pluginRecoveryPath, setPluginRecoveryPath] = useState("");
+  const [pluginBusy, setPluginBusy] = useState(false);
+  useEffect(() => {
+    void window.kestrel.request({ type: "plugin-list" }).then((raw) => {
+      const response = raw as CoreResponse;
+      if (response.ok) setPlugins(response.plugins ?? []);
+      else setPluginError(response.error);
+    });
+    void window.kestrel
+      .request({ type: "plugin-get-publishers" })
+      .then((response) => {
+        if (response.ok && "pluginPublishers" in response)
+          setPublishers(response.pluginPublishers);
+      });
+  }, []);
+  async function togglePlugin(plugin: PluginSummary) {
+    setPluginError("");
+    const response = (await window.kestrel.request({
+      type: "plugin-set-enabled",
+      name: plugin.name,
+      enabled: !plugin.enabled,
+    })) as CoreResponse;
+    if (response.ok) setPlugins(response.plugins ?? []);
+    else setPluginError(response.error);
+  }
+  async function togglePluginMcp(plugin: PluginSummary) {
+    setPluginError("");
+    const response = (await window.kestrel.request({
+      type: plugin.mcpConnected
+        ? "plugin-disconnect-mcp"
+        : "plugin-connect-mcp",
+      name: plugin.name,
+    })) as CoreResponse;
+    if (response.ok) setPlugins(response.plugins ?? []);
+    else setPluginError(response.error);
+  }
+  async function importPublisher() {
+    setPluginBusy(true);
+    setPluginError("");
+    setPluginNotice("");
+    try {
+      const response = await window.kestrel.request({
+        type: "plugin-import-publisher",
+      });
+      if (!response.ok)
+        throw new Error(
+          "error" in response ? response.error : "Publisher import failed.",
+        );
+      if ("pluginPublishers" in response)
+        setPublishers(response.pluginPublishers);
+    } catch (error) {
+      setPluginError(
+        error instanceof Error ? error.message : "Publisher import failed.",
+      );
+    } finally {
+      setPluginBusy(false);
+    }
+  }
+  async function removePublisher(keyId: string) {
+    setPluginBusy(true);
+    setPluginError("");
+    setPluginNotice("");
+    try {
+      const response = await window.kestrel.request({
+        type: "plugin-remove-publisher",
+        keyId,
+      });
+      if (!response.ok)
+        throw new Error(
+          "error" in response ? response.error : "Publisher removal failed.",
+        );
+      if ("pluginPublishers" in response)
+        setPublishers(response.pluginPublishers);
+    } catch (error) {
+      setPluginError(
+        error instanceof Error ? error.message : "Publisher removal failed.",
+      );
+    } finally {
+      setPluginBusy(false);
+    }
+  }
+  async function mutatePlugin(
+    request: Extract<
+      RendererRequest,
+      {
+        type:
+          | "plugin-install-bundle"
+          | "plugin-update-bundle"
+          | "plugin-remove-installed"
+          | "plugin-restore-removed";
+      }
+    >,
+  ) {
+    setPluginBusy(true);
+    setPluginError("");
+    setPluginNotice("");
+    try {
+      const response = await window.kestrel.request(request);
+      if (!response.ok)
+        throw new Error(
+          "error" in response ? response.error : "Plugin operation failed.",
+        );
+      if ("plugins" in response) setPlugins(response.plugins ?? []);
+      if ("pluginMutation" in response) {
+        const mutation: PluginMutation = response.pluginMutation;
+        setPluginNotice(
+          `${mutation.name} ${mutation.version}: ${mutation.action} complete.`,
+        );
+        setPluginRecoveryPath(mutation.recoveryPath ?? "");
+      }
+    } catch (error) {
+      setPluginError(
+        error instanceof Error ? error.message : "Plugin operation failed.",
+      );
+    } finally {
+      setPluginBusy(false);
+    }
+  }
+  async function reset() {
+    const response = await window.kestrel.request({
+      type: "reset-local-data",
+      confirmation,
+    });
+    if (!response.ok)
+      setResetError("error" in response ? response.error : "Reset failed");
+  }
   function reopenSetup() {
     localStorage.removeItem("kestrel:onboarded");
     localStorage.setItem("kestrel:setup-step", "0");
     location.reload();
   }
   const route = snapshot.modelRouting.currentDecision;
+  const settingsSections = [
+    ["connections", "Connections", "Accounts, providers, and folders"],
+    ["general", "General", "Appearance and everyday behavior"],
+    ["models", "Models & routing", "Execution, providers, and usage"],
+    ["intelligence", "Memory & behavior", "Memory, presence, and learning"],
+    ["extensions", "Extensions", "Plugins and trusted publishers"],
+    ["privacy", "Privacy & safety", "Approvals, data, and recovery"],
+    ["advanced", "Advanced", "Diagnostics and organization"],
+  ] as const;
   return (
     <PageFrame
       eyebrow="Settings"
-      title="Set the boundary once."
-      text="Autonomy is scoped by capability and risk, not hidden behind one mysterious switch."
+      title="Everything in its place."
+      text="Connect accounts, choose how Kestrel works, and review privacy boundaries from one organized home."
     >
-      <section className="settings-stack">
+      <div className="settings-layout">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {settingsSections.map(([id, label, description]) => (
+            <button
+              key={id}
+              className={section === id ? "active" : ""}
+              aria-current={section === id ? "page" : undefined}
+              onClick={() => setSection(id)}
+            >
+              <span>{label}</span>
+              <small>{description}</small>
+            </button>
+          ))}
+        </nav>
+        <div className="settings-content">
+        {section === "connections" && (
+          <>
+            <Connections snapshot={snapshot} />
+            <section className="settings-stack" aria-label="Provider credentials">
+              <CredentialSettings />
+            </section>
+          </>
+        )}
+        {section === "general" && (
+          <section className="settings-stack" aria-label="General settings">
         <article className="setting-row">
           <div>
             <strong>Setup guide</strong>
@@ -6714,6 +6411,73 @@ function Settings({
               : "Pause background work"}
           </button>
         </article>
+        <article className="setting-row routing-setting">
+          <div>
+            <strong>Communication style</strong>
+            <p>
+              Choose how Kestrel explains work; safety and capability rules
+              do not change.
+            </p>
+          </div>
+          <div className="segmented" aria-label="Communication style">
+            {snapshot.personality.available.map((personality) => (
+              <button
+                key={personality.id}
+                title={personality.description}
+                className={
+                  snapshot.personality.selectedId === personality.id
+                    ? "selected"
+                    : ""
+                }
+                onClick={() => void selectPersonality(personality.id)}
+              >
+                {personality.name}
+              </button>
+            ))}
+          </div>
+        </article>
+        <article className="setting-row">
+          <div>
+            <strong>Run at login</strong>
+            <p>
+              Off by default. macOS may require confirmation in System Settings.
+            </p>
+            {login && <small>System status: {login.status}</small>}
+          </div>
+          <button
+            className={`switch ${login?.enabled ? "on" : ""}`}
+            role="switch"
+            aria-label="Run Kestrel at login"
+            aria-checked={login?.enabled ?? false}
+            onClick={() => void toggleLogin()}
+          >
+            <span />
+          </button>
+        </article>
+        <article className="setting-row autonomy">
+          <div>
+            <strong>Initiative level</strong>
+            <p>
+              Assistant prepares safe work and pauses at meaningful external
+              actions.
+            </p>
+          </div>
+          <div className="segmented" aria-label="Initiative level">
+            {["Observer", "Assistant", "Operator", "High"].map((label) => (
+              <button
+                key={label}
+                disabled={label !== "Assistant"}
+                className={label === "Assistant" ? "selected" : ""}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </article>
+          </section>
+        )}
+        {section === "models" && (
+          <section className="settings-stack" aria-label="Model and routing settings">
         <article className="setting-row routing-setting">
           <div>
             <strong>Execution routing</strong>
@@ -6748,64 +6512,193 @@ function Settings({
             </div>
           </div>
         </article>
+        <ProviderVerificationSettings />
+        <UsagePolicySettings />
+          </section>
+        )}
+        {section === "extensions" && (
+          <section className="settings-stack" aria-label="Extension settings">
         <article className="setting-row">
           <div>
-            <strong>Communication style</strong>
+            <strong>Plugin supply chain</strong>
             <p>
-              Choose how Kestrel explains work; safety and capability rules do
-              not change.
+              Only Ed25519-signed bundles from publishers you explicitly trust
+              can be installed or updated.
             </p>
+            {publishers.length > 0 ? (
+              <ul className="workspace-grants">
+                {publishers.map((publisher) => (
+                  <li key={publisher.keyId}>
+                    <span title={publisher.fingerprint}>
+                      {publisher.keyId} · {publisher.fingerprint.slice(0, 12)}…
+                    </span>
+                    <button
+                      className="quiet-link"
+                      disabled={pluginBusy}
+                      onClick={() => void removePublisher(publisher.keyId)}
+                    >
+                      Untrust
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <small>No plugin publishers are trusted yet.</small>
+            )}
+            {pluginNotice && <small role="status">{pluginNotice}</small>}
+            {pluginError && <small role="alert">{pluginError}</small>}
           </div>
-          <div className="segmented" aria-label="Communication style">
-            {snapshot.personality.available.map((personality) => (
-              <button
-                key={personality.id}
-                title={personality.description}
-                className={
-                  snapshot.personality.selectedId === personality.id
-                    ? "selected"
-                    : ""
-                }
-                onClick={() => void selectPersonality(personality.id)}
-              >
-                {personality.name}
-              </button>
-            ))}
-          </div>
-        </article>
-        <PluginSettings />
-        <CredentialSettings />
-        <HonchoMemorySettings />
-        <ProviderVerificationSettings />
-        <ObservabilitySettings />
-        <PresenceSettings />
-        <UsagePolicySettings />
-        <ApprovalRulesSettings />
-        <LearnedSkillsSettings />
-        <MigrationSettings />
-        <RunAtLoginSettings />
-        <article className="setting-row autonomy">
           <div>
-            <strong>Initiative level</strong>
-            <p>
-              Assistant prepares safe work and pauses at meaningful external
-              actions.
-            </p>
-          </div>
-          <div className="segmented" aria-label="Initiative level">
-            {["Observer", "Assistant", "Operator", "High"].map((label) => (
+            <button
+              className="button secondary"
+              disabled={pluginBusy}
+              onClick={() => void importPublisher()}
+            >
+              Trust publisher key
+            </button>
+            <button
+              className="button secondary"
+              disabled={pluginBusy || publishers.length === 0}
+              onClick={() =>
+                void mutatePlugin({ type: "plugin-install-bundle" })
+              }
+            >
+              Install signed plugin
+            </button>
+            <button
+              className="button secondary"
+              disabled={pluginBusy || publishers.length === 0}
+              onClick={() =>
+                void mutatePlugin({ type: "plugin-update-bundle" })
+              }
+            >
+              Update plugin
+            </button>
+            {pluginRecoveryPath && (
               <button
-                key={label}
-                disabled={label !== "Assistant"}
-                className={label === "Assistant" ? "selected" : ""}
+                className="button secondary"
+                disabled={pluginBusy}
+                onClick={() =>
+                  void mutatePlugin({
+                    type: "plugin-restore-removed",
+                    recoveryPath: pluginRecoveryPath,
+                  })
+                }
               >
-                {label}
+                Restore removed plugin
               </button>
-            ))}
+            )}
           </div>
         </article>
-        <ResetDataSettings />
-      </section>
+        {plugins.map((plugin) => (
+          <article className="setting-row" key={plugin.name}>
+            <div>
+              <strong>
+                {plugin.interface?.displayName ?? plugin.name}{" "}
+                <small>v{plugin.version}</small>
+              </strong>
+              <p>{plugin.interface?.shortDescription ?? plugin.description}</p>
+              <small>
+                {plugin.managed
+                  ? "Managed signed bundle"
+                  : "External discovered bundle"}{" "}
+                · {plugin.hasSkills ? "Skills" : "No skills"} ·{" "}
+                {plugin.hasMcpServers
+                  ? plugin.mcpConnected
+                    ? "MCP connected"
+                    : "MCP available"
+                  : "No MCP"}{" "}
+                ·{" "}
+                {plugin.hasDashboard
+                  ? plugin.enabled
+                    ? "Dashboard panels active"
+                    : "Dashboard panels available"
+                  : "No dashboard"}{" "}
+                · permissions:{" "}
+                {plugin.interface?.capabilities.join(", ") || "none declared"}
+              </small>
+            </div>
+            <div>
+              <button
+                className="button secondary"
+                aria-pressed={plugin.enabled}
+                onClick={() => void togglePlugin(plugin)}
+              >
+                {plugin.enabled ? "Disable" : "Enable"}
+              </button>
+              {plugin.enabled && plugin.hasMcpServers && (
+                <button
+                  className="button secondary"
+                  aria-pressed={plugin.mcpConnected}
+                  onClick={() => void togglePluginMcp(plugin)}
+                >
+                  {plugin.mcpConnected ? "Disconnect MCP" : "Connect MCP"}
+                </button>
+              )}
+              {plugin.managed && (
+                <button
+                  className="button secondary"
+                  disabled={pluginBusy}
+                  onClick={() =>
+                    void mutatePlugin({
+                      type: "plugin-remove-installed",
+                      name: plugin.name,
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </article>
+        ))}
+          </section>
+        )}
+        {section === "intelligence" && (
+          <section className="settings-stack" aria-label="Memory and behavior settings">
+        <HonchoMemorySettings />
+        <PresenceSettings />
+        <LearnedSkillsSettings />
+          </section>
+        )}
+        {section === "privacy" && (
+          <section className="settings-stack" aria-label="Privacy and safety settings">
+        <ApprovalRulesSettings />
+        <MigrationSettings />
+        <article className="setting-row danger">
+          <div>
+            <strong>Reset Kestrel and prepare for uninstall</strong>
+            <p>
+              Deletes this preview database and secure key, then relaunches.
+            </p>
+            <label>
+              Type Kestrel to confirm
+              <input
+                value={confirmation}
+                onChange={(event) => setConfirmation(event.target.value)}
+              />
+            </label>
+            {resetError && <small role="alert">{resetError}</small>}
+          </div>
+          <button
+            className="button danger-button"
+            disabled={confirmation !== "Kestrel"}
+            onClick={() => void reset()}
+          >
+            Reset local data
+          </button>
+        </article>
+          </section>
+        )}
+        {section === "advanced" && (
+          <section className="settings-stack" aria-label="Advanced settings">
+            <ObservabilitySettings />
+            <EnterpriseSettings />
+            <CustomAgentsSettings snapshot={snapshot} update={update} />
+          </section>
+        )}
+        </div>
+      </div>
     </PageFrame>
   );
 }
@@ -7051,7 +6944,8 @@ export function App() {
             {toolsOpen &&
               pages
                 .filter(
-                  ([id]) => !["home", "connections", "settings"].includes(id),
+                  ([id]) =>
+                    !["home", "settings"].includes(id),
                 )
                 .map(([id, label]) => (
                   <button
@@ -7071,7 +6965,7 @@ export function App() {
         </nav>
         <div className="sidebar-bottom">
           {pages
-            .filter(([id]) => id === "connections" || id === "settings")
+            .filter(([id]) => id === "settings")
             .map(([id, label]) => (
               <button
                 key={id}
@@ -7101,15 +6995,6 @@ export function App() {
       <main className="main-plane">
         <div className="topbar">
           <span>{currentTitle}</span>
-          <div>
-            <span className="local-badge">
-              <span className="agent-dot idle" />
-              Local host
-            </span>
-            <button className="avatar" aria-label="Account menu" disabled>
-              J
-            </button>
-          </div>
         </div>
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
@@ -7151,31 +7036,24 @@ export function App() {
               <DashboardExtensions
                 snapshot={snapshot}
                 sessions={runtimeSessions}
-                onNavigate={setPage}
+                onNavigate={(destination) =>
+                  setPage(
+                    destination === "connections"
+                      ? "settings"
+                      : destination,
+                  )
+                }
               />
             )}
-            {page === "connections" && <Connections snapshot={snapshot} />}
             {page === "settings" && (
-              <>
-                <Settings
-                  snapshot={snapshot}
-                  update={setSnapshot}
-                  skinStatus={skinStatus}
-                  onSkinStatus={updateSkinStatus}
-                  petStatus={petStatus}
-                  onPetStatus={setPetStatus}
-                />
-                <section
-                  className="settings-extension"
-                  aria-label="Organization and custom agent controls"
-                >
-                  <EnterpriseSettings />
-                  <CustomAgentsSettings
-                    snapshot={snapshot}
-                    update={setSnapshot}
-                  />
-                </section>
-              </>
+              <Settings
+                snapshot={snapshot}
+                update={setSnapshot}
+                skinStatus={skinStatus}
+                onSkinStatus={updateSkinStatus}
+                petStatus={petStatus}
+                onPetStatus={setPetStatus}
+              />
             )}
           </motion.div>
         </AnimatePresence>
