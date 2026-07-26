@@ -4,11 +4,9 @@ packages:
 
 # Universal macOS packaging needs both Sharp/libvips optional binary families
 # available in the shared pnpm install before electron-builder splits arches.
-# The Linux CI job also needs its Rollup native optional package installed.
 supportedArchitectures:
   os:
     - darwin
-    - linux
   cpu:
     - arm64
     - x64

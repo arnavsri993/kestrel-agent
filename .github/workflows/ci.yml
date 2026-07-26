@@ -15,9 +15,9 @@ concurrency:
 
 jobs:
   core:
-    name: Core, website, and security
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: Core, website, and security (macOS)
+    runs-on: macos-15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,7 +25,7 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
-      - run: corepack pnpm exec playwright install --with-deps chromium
+      - run: corepack pnpm exec playwright install chromium
       - run: corepack pnpm typecheck
       - run: corepack pnpm test
       - run: corepack pnpm audit --prod
