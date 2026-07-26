@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, sep } from "node:path";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import type { KestrelDatabase } from "@kestrel/database";
 import type { PetStatus } from "@kestrel/shared-types";
 import type { MediaGenerationProvider } from "./media-artifacts";
@@ -305,7 +305,7 @@ async function baseFrames(data: Uint8Array, count: number): Promise<Buffer[]> {
 }
 
 async function composeAtlas(frames: Map<string, Buffer[]>): Promise<Buffer> {
-  const composites: sharp.OverlayOptions[] = [];
+  const composites: OverlayOptions[] = [];
   for (const spec of ROWS) {
     const row = frames.get(spec.state) ?? [];
     for (const [column, frame] of row.slice(0, spec.frames).entries()) {
