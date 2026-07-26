@@ -40,6 +40,14 @@ Build the website with `NEXT_PUBLIC_PUBLISHER_NAME` and
 mode fetches the deployed site, privacy, and support pages and verifies their
 status and Kestrel-specific content.
 
+The GitHub Pages workflow reads the public release inputs from repository
+variables with these names: `PUBLIC_PUBLISHER_NAME`, `PUBLIC_SUPPORT_EMAIL`,
+`NEXT_PUBLIC_RELEASE_STATUS`, `NEXT_PUBLIC_RELEASE_VERSION`,
+`NEXT_PUBLIC_DOWNLOAD_URL`, `NEXT_PUBLIC_RELEASE_MANIFEST_URL`, and
+`NEXT_PUBLIC_RELEASE_CHECKSUMS_URL`. It always publishes the site as a
+development preview until `NEXT_PUBLIC_RELEASE_STATUS=verified` and all three
+artifact URLs are supplied.
+
 After the signed workflow, Gatekeeper assessment, notarization validation, and
 clean-machine download test pass, build the website with:
 

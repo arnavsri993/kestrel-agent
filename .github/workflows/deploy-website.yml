@@ -35,6 +35,13 @@ jobs:
         env:
           NEXT_PUBLIC_BASE_PATH: /kestrel-agent
           NEXT_PUBLIC_SITE_URL: https://arnavsri993.github.io/kestrel-agent
+          NEXT_PUBLIC_PUBLISHER_NAME: ${{ vars.PUBLIC_PUBLISHER_NAME }}
+          NEXT_PUBLIC_SUPPORT_EMAIL: ${{ vars.PUBLIC_SUPPORT_EMAIL }}
+          NEXT_PUBLIC_RELEASE_STATUS: ${{ vars.NEXT_PUBLIC_RELEASE_STATUS }}
+          NEXT_PUBLIC_RELEASE_VERSION: ${{ vars.NEXT_PUBLIC_RELEASE_VERSION }}
+          NEXT_PUBLIC_DOWNLOAD_URL: ${{ vars.NEXT_PUBLIC_DOWNLOAD_URL }}
+          NEXT_PUBLIC_RELEASE_MANIFEST_URL: ${{ vars.NEXT_PUBLIC_RELEASE_MANIFEST_URL }}
+          NEXT_PUBLIC_RELEASE_CHECKSUMS_URL: ${{ vars.NEXT_PUBLIC_RELEASE_CHECKSUMS_URL }}
         run: corepack pnpm build:website
       - uses: actions/upload-pages-artifact@v3
         with:
