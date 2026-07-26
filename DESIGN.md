@@ -1,5 +1,20 @@
 # Kestrel design brief
 
+## Apple-grade product polish — current pass
+
+- Operating mode: `existing-redesign` of the packaged Kestrel desktop shell, with behavior and safety boundaries preserved.
+- Thesis: Kestrel should feel like a quiet, capable Mac instrument: the app name is unmistakable, the next action is obvious, the empty state is useful, and every control has enough space and feedback to feel deliberate.
+- Density profile: `dense-app` with an editorial first-use center and a compact, information-rich chat surface after work begins.
+- Type pair: SF Pro Display for the Kestrel name and decisive headings; SF Pro Text for controls and conversation; SF Mono only for paths, routing, and evidence.
+- Type scale: product name 17/21, page title 28/34, empty-state title 34/40, conversation 14/23, control 13/18, supporting text 11/16, evidence 10/15.
+- Spacing scale: 4px base; 8/12/16/20/24/32/48 rhythm; 16px minimum touch target inset with 36–44px control heights.
+- Color roles: graphite canvas `#1c1c1e`; sidebar `#141416`; raised surface `#2c2c2e`; ink `#f5f5f7`; secondary ink `#b8b8bd`; quiet sage signal `#78b986`; warning and danger reserved for actual state.
+- Material: opaque graphite planes with one lifted composer and thin, exact separators. No decorative glass or gradient layers.
+- First viewport: Kestrel wordmark, one specific welcome line, one support line, one composer, one compact context/status rail. Returning empty sessions get a useful “continue your work” prompt instead of a blank canvas.
+- Motion grammar: state continuity through the existing short page transition; direct feedback through focus, hover, press, and recording state. Reduced motion removes the page transition and pulse while preserving state.
+- Avoid list: Workstrand copy, anonymous blank canvases, tiny low-contrast helper text, dense card galleries, pill badges, icon-only mystery controls, equal-weight navigation, and generic AI dashboard chrome.
+- Why this is not generic: Kestrel’s identity comes from its actual local-first work loop—scope a project, describe the task, approve consequences, and verify results—expressed through a restrained Mac-native shell with a useful first-run center rather than a marketing dashboard.
+
 ## Natural desktop controls
 
 - Operating mode: `existing-redesign` of the Workstrand desktop shell and setup flow.
@@ -476,3 +491,14 @@ The identity is built around one real scheduling decision and a single inspectab
 - Responsive contract: provider controls are two-column only when their labels and values remain readable; compact windows and zoom stack them in source order without horizontal overflow.
 - Motion contract: static by intent except existing button feedback. Reduced motion requires no special substitute because no information moves.
 - Why this is not generic: the surface explains the actual Kestrel credential precedence, core-process boundary, pinned Bitwarden installer, and argv-only helper contract instead of presenting three interchangeable integration tiles.
+
+## Desktop refinement — action before ornament
+
+- Thesis: the empty desktop is a launch surface for a real task, not a decorative hero or a vacant chat canvas.
+- Density and material: preserve the `dense-app` graphite shell, restrained green status signal, local UI type, and feedback-only motion.
+- Primary action contract: project work exposes a visible `Add project` control; project review opens the real folder chooser; conversation-only sessions never claim a project can be attached after creation.
+- Starter composition: two ruled, text-led actions replace small generic suggestion pills. Each action names the task and consequence without adding cards, badges, or fake activity.
+- Navigation contract: `New chat` has an honest current state and remains reachable with a visible label when the desktop window recomposes to its compact bottom navigation.
+- Copy pass: utility headings name the surface or decision directly; supporting lines keep only task, boundary, or recovery information.
+- Motion contract: no new role. Existing short page-state feedback remains optional under reduced motion.
+- Why this is not generic: Kestrel's first view is organized around a granted local project, a reviewable task sequence, explicit tool scope, and real approval boundaries instead of prompt chips or fabricated workspace content.

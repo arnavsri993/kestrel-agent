@@ -263,7 +263,7 @@ describe("agent runtime", () => {
     database.close();
   });
 
-  it("runs commands without a shell and enforces read-only and workspace-write Seatbelt profiles", async () => {
+  it.skipIf(process.platform !== "darwin")("runs commands without a shell and enforces read-only and workspace-write Seatbelt profiles", async () => {
     const { root, database, runtime, session } = fixture();
     const events: Array<{ type: string }> = [];
     runtime.on("event", (event) => events.push(event));
@@ -297,7 +297,7 @@ describe("agent runtime", () => {
     database.close();
   });
 
-  it("streams process output and cancels an active execution", async () => {
+  it.skipIf(process.platform !== "darwin")("streams process output and cancels an active execution", async () => {
     const { database, runtime, session } = fixture();
     let cancelled = false;
     runtime.on("event", (event) => {
@@ -315,7 +315,7 @@ describe("agent runtime", () => {
     database.close();
   });
 
-  it("supervises interactive background processes with bounded input, status, and stop controls", async () => {
+  it.skipIf(process.platform !== "darwin")("supervises interactive background processes with bounded input, status, and stop controls", async () => {
     const { root, database, runtime, session } = fixture();
     const started = await runtime.callTool(session.id, "execution.start-background", {
       command: "node",
@@ -353,7 +353,7 @@ describe("agent runtime", () => {
     database.close();
   });
 
-  it("exposes sandboxed Git status, diff, and approved worktree creation", async () => {
+  it.skipIf(process.platform !== "darwin")("exposes sandboxed Git status, diff, and approved worktree creation", async () => {
     const { root, database, runtime, session } = fixture();
     execFileSync("/usr/bin/git", ["init", "-q"], { cwd: root });
     execFileSync("/usr/bin/git", ["config", "user.email", "kestrel@example.test"], { cwd: root });
@@ -378,7 +378,7 @@ describe("agent runtime", () => {
     database.close();
   });
 
-  it("creates pull requests and reads CI through the protected GitHub workflow", async () => {
+  it.skipIf(process.platform !== "darwin")("creates pull requests and reads CI through the protected GitHub workflow", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-github-")); temporaryDirectories.push(root);
     writeFileSync(join(root, "README.md"), "# GitHub\n"); execFileSync("/usr/bin/git", ["init", "-q"], { cwd: root }); execFileSync("/usr/bin/git", ["remote", "add", "origin", "git@github.com:example/kestrel.git"], { cwd: root });
     const database = new KestrelDatabase(":memory:", createEncryptionKey()); const runtime = new AgentRuntime(database, [root], () => "2026-07-22T16:00:00.000Z", "github-secret"); const session = runtime.createSession({ title: "GitHub", workspaceRoot: root });

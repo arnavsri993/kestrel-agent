@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promi
 import { dirname, join } from "node:path";
 import { safeStorage } from "electron";
 
-export type BrokeredCredentialId = "openai" | "openai-secondary" | "anthropic" | "anthropic-secondary" | "gemini" | "nous" | "groq" | "mistral" | "openrouter" | "cloudflare" | "xai" | "deepseek" | "together" | "fireworks" | "nvidia" | "huggingface" | "perplexity" | "github-models" | "brave-search" | "github" | "honcho" | "fal";
+export type BrokeredCredentialId = "openai" | "openai-secondary" | "anthropic" | "anthropic-secondary" | "gemini" | "nous" | "groq" | "mistral" | "openrouter" | "cloudflare" | "xai" | "deepseek" | "together" | "fireworks" | "nvidia" | "huggingface" | "perplexity" | "github-models" | "cohere" | "brave-search" | "github" | "honcho" | "fal";
 
 export const BROKERED_CREDENTIALS: Record<BrokeredCredentialId, { environmentKey: string; label: string }> = {
   openai: { environmentKey: "OPENAI_API_KEY", label: "OpenAI API key" },
@@ -24,6 +24,7 @@ export const BROKERED_CREDENTIALS: Record<BrokeredCredentialId, { environmentKey
   huggingface: { environmentKey: "HUGGINGFACE_API_KEY", label: "Hugging Face token" },
   perplexity: { environmentKey: "PERPLEXITY_API_KEY", label: "Perplexity API key" },
   "github-models": { environmentKey: "GITHUB_MODELS_TOKEN", label: "GitHub Models token" },
+  cohere: { environmentKey: "COHERE_API_KEY", label: "Cohere API key" },
   "brave-search": { environmentKey: "BRAVE_SEARCH_API_KEY", label: "Brave Search API key" },
   github: { environmentKey: "GITHUB_TOKEN", label: "GitHub token" },
   honcho: { environmentKey: "HONCHO_API_KEY", label: "Honcho API key" },
@@ -126,7 +127,7 @@ export class CredentialBroker {
       ...(base.GEMINI_BASE_URL ? { GEMINI_BASE_URL: base.GEMINI_BASE_URL } : {}),
       ...(base.GEMINI_MODEL ? { GEMINI_MODEL: base.GEMINI_MODEL } : {}),
       ...Object.fromEntries(Object.entries(base).filter(([key, value]) =>
-        value && /^(NOUS|GROQ|MISTRAL|OPENROUTER|CLOUDFLARE|XAI|DEEPSEEK|TOGETHER|FIREWORKS|NVIDIA|HUGGINGFACE|PERPLEXITY|GITHUB_MODELS)_(BASE_URL|MODEL|ACCOUNT_ID|SITE_URL|APP_NAME)$/.test(key))),
+        value && /^(NOUS|GROQ|MISTRAL|OPENROUTER|CLOUDFLARE|XAI|DEEPSEEK|TOGETHER|FIREWORKS|NVIDIA|HUGGINGFACE|PERPLEXITY|GITHUB_MODELS|COHERE)_(BASE_URL|MODEL|ACCOUNT_ID|SITE_URL|APP_NAME)$/.test(key))),
       ...(base.KESTREL_OLLAMA_BASE_URL ? { KESTREL_OLLAMA_BASE_URL: base.KESTREL_OLLAMA_BASE_URL } : {}),
       ...(base.KESTREL_OLLAMA_MODEL ? { KESTREL_OLLAMA_MODEL: base.KESTREL_OLLAMA_MODEL } : {}),
       ...(base.KESTREL_ENABLE_OLLAMA ? { KESTREL_ENABLE_OLLAMA: base.KESTREL_ENABLE_OLLAMA } : {}),

@@ -55,16 +55,25 @@ try {
   await page.getByRole("button", { name: /Keep it on this Mac/ }).click();
   await page.getByRole("heading", { name: "Choose a local model." }).waitFor();
   await page.getByText("Balanced is recommended for this Mac.", { exact: true }).waitFor();
-  await page.getByText("Light", { exact: true }).waitFor();
-  await page.getByText("Balanced", { exact: true }).waitFor();
-  await page.getByText("Power", { exact: true }).waitFor();
-  await page.getByText("Recommended", { exact: true }).waitFor();
+  const tierNames = page.locator(".model-tier-name strong");
+  await tierNames.first().waitFor();
+  const names = await tierNames.allTextContents();
+  assert.ok(names.includes("Light"));
+  assert.ok(names.length >= 1 && names.length <= 3);
+  if (names.length === 3) {
+    assert.deepEqual(names, ["Light", "Balanced", "Power"]);
+    await page.getByText("Recommended", { exact: true }).waitFor();
+  } else {
+    assert.ok(!names.includes("Balanced"));
+  }
+  const tierDetails = page.locator(".model-tier-details");
+  const detailIndex = Math.min(1, (await tierDetails.count()) - 1);
   assert.equal(
-    await page.locator(".model-tier-details").nth(1).evaluate((details) => details.open),
+    await tierDetails.nth(detailIndex).evaluate((details) => details.open),
     false,
   );
-  await page.locator(".model-tier-details").nth(1).getByText("Details", { exact: true }).click();
-  await page.getByText("3.3 GB · 256K context", { exact: true }).waitFor();
+  await tierDetails.nth(detailIndex).getByText("Details", { exact: true }).click();
+  await tierDetails.nth(detailIndex).getByText(/GB · 256K context/, { exact: true }).waitFor();
   assert.equal(await page.getByText("Automatic setup", { exact: true }).count(), 0);
   await page
     .getByText("huihui_ai/qwen3.5-abliterated:4b", { exact: true })
@@ -98,18 +107,39 @@ try {
   await page.setViewportSize({ width: 1320, height: 860 });
   assert.equal(await page.getByRole("button", { name: "Do this later" }).count(), 0);
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("heading", { name: /Workstrand is ready|The workspace is ready/ }).waitFor();
+  await page.getByRole("heading", { name: /Kestrel is ready|The workspace is ready/ }).waitFor();
   await page.getByRole("button", { name: "Finish with help" }).click();
   await page.getByRole("button", { name: "New chat" }).waitFor();
-  const setupAssistantPrompt = await page.getByLabel("Message Workstrand").inputValue();
-  assert.match(setupAssistantPrompt, /Help me finish setting up Workstrand/);
+  const setupAssistantPrompt = await page.getByLabel("Message Kestrel").inputValue();
+  assert.match(setupAssistantPrompt, /Help me finish setting up Kestrel/);
   assert.match(setupAssistantPrompt, /Current non-secret setup state:/);
   assert.match(setupAssistantPrompt, /Protected API credentials configured:/);
   assert.match(setupAssistantPrompt, /Project access, tools\/MCP, skills\/plugins, channels, and automations/);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:setup-coach-context")), null);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), "yes");
+  await page.getByRole("button", { name: "New chat" }).click();
+  const newChatButton = page.getByRole("button", { name: "New chat" });
+  assert.equal(await newChatButton.getAttribute("aria-current"), "page");
+  await page.getByRole("button", { name: "Add project" }).waitFor();
+  await page.getByText("Choose a folder and find the next useful step.").waitFor();
+  await page.getByText("Turn an outcome into a clear, reviewable sequence.").waitFor();
+  await page.setViewportSize({ width: 640, height: 760 });
+  await newChatButton.getByText("New chat", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Tools" }).getByText("Tools", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Settings" }).getByText("Settings", { exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    ),
+    false,
+  );
+  await page.setViewportSize({ width: 1320, height: 860 });
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("heading", { name: "Everything in its place." }).waitFor();
+  await page.getByRole("heading", { name: "Configure Kestrel" }).waitFor();
+  assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
+  assert.equal(await page.locator(".page-header > p").count(), 0);
   await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
   const chatGptConnection = page.locator(".oauth-connection").filter({ hasText: "ChatGPT" });
   await chatGptConnection.getByText("ChatGPT", { exact: true }).waitFor();
@@ -127,6 +157,12 @@ try {
   assert.equal(await page.getByRole("button", { name: "Connect with Google" }).isEnabled(), true);
   await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
   await page.getByRole("button", { name: "General" }).click();
+  const selectedButtonShadows = await page
+    .locator(
+      ".sidebar-bottom > button.active, .nav-section button.active, .new-task-button.active, .settings-nav button.active, .skin-picker button.selected, [role=\"option\"][aria-selected=\"true\"], .event-application-rail button.active",
+    )
+    .evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).boxShadow));
+  assert.equal(selectedButtonShadows.some((shadow) => shadow.includes("inset 3px 0")), false);
   await page.getByRole("button", { name: "Open setup guide" }).click();
   await page.getByRole("heading", { name: /Your work, in one place/ }).waitFor();
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), null);

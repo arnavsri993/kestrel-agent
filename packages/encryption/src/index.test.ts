@@ -60,7 +60,9 @@ describe("encryption", () => {
       // Alter the authTag slightly
       const invalidPayload = {
         ...payload,
-        authTag: Buffer.from(payload.authTag, "base64").map(b => (b + 1) % 256).toString("base64")
+        authTag: Buffer.from(
+          Uint8Array.from(Buffer.from(payload.authTag, "base64"), b => (b + 1) % 256)
+        ).toString("base64")
       };
 
       expect(() => decryptText(invalidPayload, key)).toThrow();
@@ -74,7 +76,9 @@ describe("encryption", () => {
       // Alter the ciphertext slightly
       const invalidPayload = {
         ...payload,
-        ciphertext: Buffer.from(payload.ciphertext, "base64").map(b => (b + 1) % 256).toString("base64")
+        ciphertext: Buffer.from(
+          Uint8Array.from(Buffer.from(payload.ciphertext, "base64"), b => (b + 1) % 256)
+        ).toString("base64")
       };
 
       expect(() => decryptText(invalidPayload, key)).toThrow();

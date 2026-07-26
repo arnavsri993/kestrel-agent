@@ -19,11 +19,11 @@
     "@kestrel/encryption": "workspace:*",
     "@kestrel/shared-types": "workspace:*",
     "better-sqlite3": "13.0.1",
-    "electron-updater": "6.7.2",
+    "electron-updater": "6.8.9",
     "motion": "12.42.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "sharp": "0.34.5",
+    "sharp": "0.35.3",
     "zod": "4.4.3"
   },
   "devDependencies": {

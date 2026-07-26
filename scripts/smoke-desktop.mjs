@@ -35,17 +35,17 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   await page.getByRole("heading", { name: /^Good (morning|afternoon|evening)\.$/ }).waitFor();
+  await page.locator('summary[aria-label="Task settings"]').click();
   await page.getByLabel("Project").waitFor();
-  await page.getByText("Advanced execution", { exact: true }).click();
   const execution = page.getByLabel("Execution");
   await execution.waitFor();
   assert.equal(await execution.inputValue(), "automatic");
   await execution.selectOption("manual");
   await page.locator(".runtime-task-controls label", { hasText: /^Provider/ }).locator("select").waitFor();
-  await page.locator(".runtime-task-controls label", { hasText: /^Model/ }).locator("input").waitFor();
+  await page.locator(".runtime-task-controls label", { hasText: /^Model/ }).locator("input, select").waitFor();
   assert.equal(await page.getByRole("button", { name: "Send message" }).isDisabled(), true);
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByText("Camarade", { exact: false }).first().waitFor();
+  await page.getByRole("button", { name: /^General/ }).click();
   await page.getByText("Activity pet", { exact: true }).waitFor();
   await page.getByText("Hatch an original pet with AI", { exact: true }).waitFor();
 

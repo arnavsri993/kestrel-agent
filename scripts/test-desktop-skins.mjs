@@ -33,6 +33,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^General/ }).click();
 
   const skinSetting = page.locator(".skin-setting");
   await skinSetting.getByText("Visual skin", { exact: true }).waitFor();
@@ -40,6 +41,7 @@ try {
   assert.equal(await skinSetting.getByRole("button", { name: /Kestrel/ }).getAttribute("aria-pressed"), "true");
   await daylight.click();
   await page.waitForFunction(() => document.documentElement.dataset.skin === "daylight");
+  await page.waitForFunction(() => [...document.querySelectorAll(".skin-setting button")].some((button) => button.textContent?.includes("Daylight") && button.getAttribute("aria-pressed") === "true"));
   assert.equal(await daylight.getAttribute("aria-pressed"), "true");
   assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim()), "#f5f2ea");
   assert.equal(await page.evaluate(() => document.documentElement.style.colorScheme), "light");
@@ -49,6 +51,7 @@ try {
 
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^General/ }).click();
   await page.waitForFunction(() => document.documentElement.dataset.skin === "daylight");
   assert.equal(await page.locator(".skin-setting").getByRole("button", { name: /Daylight/ }).getAttribute("aria-pressed"), "true");
 

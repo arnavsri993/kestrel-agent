@@ -1262,6 +1262,11 @@ export class AgentCore {
             dreamingStatus: this.dreaming.review(request.id, request.decision),
           };
         case "presence-list":
+          this.presence.beacon({
+            instanceId: this.coreInstanceId,
+            mode: "node",
+            reason: "isolated agent core",
+          });
           return { ok: true, presence: this.presence.list() };
         case "presence-beacon":
           return {

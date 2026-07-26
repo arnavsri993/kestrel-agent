@@ -53,8 +53,11 @@ try {
   await page.screenshot({ path: memoryScreenshot });
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Memory & behavior/ }).click();
   const presence = page.locator(".presence-setting");
   await presence.getByText("Connected instances", { exact: true }).waitFor();
+  await presence.getByText("Local agent core", { exact: true }).waitFor();
+  await presence.getByText("Desktop window", { exact: true }).waitFor();
   assert.match(await presence.textContent(), /Local agent core/);
   assert.match(await presence.textContent(), /Desktop window/);
   assert.match(await presence.textContent(), /never stores client IP addresses, hostnames, or probe traffic/);

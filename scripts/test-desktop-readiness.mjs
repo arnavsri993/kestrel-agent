@@ -53,13 +53,14 @@ try {
   await page.reload();
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Extensions/ }).click();
   const readinessPlugin = page.locator("article.setting-row").filter({ hasText: "Readiness Test" });
   await readinessPlugin.getByRole("button", { name: "Enable" }).click();
   await readinessPlugin.getByText("Dashboard panels active").waitFor();
   await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Extensions", exact: true }).click();
   await page.getByRole("button", { name: "Open readiness", exact: true }).click();
-  await page.getByRole("heading", { name: "Finish the essentials before live work." }).waitFor();
+  await page.getByRole("heading", { name: /Finish the essentials before live work\.|The core is ready\. Verify the route\./ }).waitFor();
   await page.getByRole("heading", { name: "What can work right now" }).waitFor();
   await page.getByText("This contacts only the configured provider or local model service.", { exact: false }).waitFor();
   await page.getByRole("button", { name: "Run checks" }).focus();
