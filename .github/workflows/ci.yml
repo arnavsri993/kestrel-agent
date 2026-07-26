@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core, website, and security
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm typecheck
+      - run: corepack pnpm test
+      - run: corepack pnpm audit --prod
+      - run: corepack pnpm audit:references
+      - run: corepack pnpm audit:market
+      - run: corepack pnpm build
+      - run: corepack pnpm test:e2e
+      - run: corepack pnpm test:packaged-cli
+      - run: corepack pnpm test:editors
+      - run: corepack pnpm test:security
+
+  desktop:
+    name: Desktop and packaged arm64 smoke
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm build:desktop
+      - run: corepack pnpm test:desktop-setup
+      - run: corepack pnpm test:desktop-kanban
+      - run: corepack pnpm test:desktop-readiness
+      - run: corepack pnpm test:desktop-external-secrets
+      - run: corepack pnpm test:desktop-observability
+      - run: corepack pnpm test:desktop-ambient
+      - run: corepack pnpm test:desktop-skins
+      - run: corepack pnpm test:desktop-dashboard-extensions
+      - run: corepack pnpm test:desktop-honcho-memory
+      - run: corepack pnpm test:desktop-widgets
+      - run: corepack pnpm test:desktop-events
+      - run: corepack pnpm package:mac:dev
+      - run: corepack pnpm test:packaged-desktop:arm64
