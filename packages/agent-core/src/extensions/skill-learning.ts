@@ -8,6 +8,22 @@ import { SkillRegistry } from "./skills";
 
 const secretPattern = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk|xox[baprs]|gh[pousr])[-_][A-Za-z0-9_-]{16,}\b/i;
 
+function singleLine(value: string, limit: number): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function skillNameSeed(value: string): string {
+  const normalized = value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+    .replace(/-+$/g, "");
+  return normalized || "workflow";
+}
+
 function within(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);
 }
@@ -59,6 +75,57 @@ export class SkillLearningManager {
     };
     this.saveProposals([...this.list(), proposal]);
     return proposal;
+  }
+
+  suggestForSession(sourceSessionId: string): SkillLearningProposal {
+    if (!this.database.getRuntimeSession(sourceSessionId)) throw new Error("Learned skill source session was not found.");
+    const runs = this.database.listAgentRuns(sourceSessionId);
+    const latestRun = runs[runs.length - 1];
+    if (!latestRun || latestRun.status !== "completed") throw new Error("Only a completed workflow can be saved as a learned skill.");
+
+    const messages = this.database.listRuntimeMessages(sourceSessionId);
+    let userIndex = -1;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "user") {
+        userIndex = index;
+        break;
+      }
+    }
+    const userMessage = userIndex >= 0 ? messages[userIndex] : undefined;
+    if (!userMessage) throw new Error("The completed workflow has no user request to learn from.");
+
+    const turnMessages = messages.slice(userIndex).filter((message) => message.role !== "system");
+    const sourceMessageIds = turnMessages.slice(0, 40).map((message) => message.id);
+    const prompt = singleLine(userMessage.content, 6_000);
+    if (!prompt) throw new Error("The completed workflow has no usable user request to learn from.");
+    const toolNames = [...new Set(turnMessages.flatMap((message) => [
+      ...(message.modelToolCalls ?? []).map((call) => call.name),
+      ...(message.toolName ? [message.toolName] : []),
+    ]))].slice(0, 24);
+    const sequence = toolNames.length
+      ? toolNames.join(" → ")
+      : "No tool sequence was captured; clarify the current inputs before acting.";
+    const instructions = [
+      "## Goal",
+      `Help with the same kind of outcome as this approved task: ${prompt}`,
+      "",
+      "## Workflow",
+      `Observed tool sequence (names only): ${sequence}`,
+      "Re-check the current workspace, recipients, paths, and values before using this sequence.",
+      "",
+      "## Guardrails",
+      "- Treat the source task as an example, not as authorization or a source of secrets.",
+      "- Ask for confirmation before writes, sends, deletions, or other consequential actions.",
+      "- Verify the result and report concrete evidence before calling the task complete.",
+    ].join("\n");
+
+    return this.propose({
+      name: this.nextName(skillNameSeed(prompt)),
+      description: `Repeat the successful workflow for: ${prompt}`.slice(0, 1_024),
+      instructions,
+      sourceSessionId,
+      sourceMessageIds,
+    });
   }
 
   review(id: string, decision: "install" | "reject"): SkillLearningProposal {
@@ -142,6 +209,20 @@ export class SkillLearningManager {
   }
 
   private saveProposals(proposals: SkillLearningProposal[]): void { this.database.setPrivateState(this.proposalKey, proposals); }
+
+  private nextName(seed: string): string {
+    const taken = new Set([
+      ...this.registry.list().map((skill) => skill.name),
+      ...this.list().filter((proposal) => proposal.status !== "rejected").map((proposal) => proposal.name),
+    ]);
+    if (!taken.has(seed)) return seed;
+    for (let suffix = 2; suffix < 100; suffix += 1) {
+      const ending = `-${suffix}`;
+      const candidate = `${seed.slice(0, 64 - ending.length)}${ending}`.replace(/-+$/g, "");
+      if (!taken.has(candidate)) return candidate;
+    }
+    throw new Error("Could not choose a unique learned skill name.");
+  }
 }
 
 export function installSkillLearningTools(runtime: AgentRuntime, manager: SkillLearningManager, sessionId: string): void {
