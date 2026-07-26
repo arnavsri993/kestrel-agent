@@ -128,8 +128,13 @@ export class ElectronBrowserService {
     if (signal.aborted) throw signal.reason;
     if (action.type === "click") {
       const point = await this.targetPoint(window, action.target);
-      window.webContents.sendInputEvent({ type: "mouseDown", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
-      window.webContents.sendInputEvent({ type: "mouseUp", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
+      // BrowserWindow sessions stay hidden, so Electron's window-level input
+      // dispatch can be dropped by a headless runner. CDP input dispatch keeps
+      // the action semantic (real mouse events and default activation) without
+      // showing or focusing the user's desktop window.
+      if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
+      await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
+      await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
     } else if (action.type === "type") {
       await this.targetPoint(window, action.target, true);
       window.webContents.insertText(action.text);
