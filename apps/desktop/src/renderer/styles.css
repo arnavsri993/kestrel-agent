@@ -5345,7 +5345,7 @@ html:has(.pet-overlay-shell) #root {
     display: none;
   }
   .setup-rail ol {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 3px;
     padding: 0;
   }
@@ -5803,8 +5803,8 @@ html:has(.pet-overlay-shell) #root {
   }
   .setup-rail strong {
     display: block;
-    max-width: 64px;
-    font-size: 8px;
+    max-width: 90px;
+    font-size: 9px;
     line-height: 1.15;
     white-space: normal;
   }
