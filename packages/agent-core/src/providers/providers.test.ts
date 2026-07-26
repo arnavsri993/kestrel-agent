@@ -48,13 +48,14 @@ describe("model provider adapters", () => {
   it("registers free-tier OpenAI-compatible providers for automatic routing", () => {
     const providers = createEnvironmentModelProviders({
       NOUS_API_KEY: "nous-key", GROQ_API_KEY: "groq-key", MISTRAL_API_KEY: "mistral-key",
-      OPENROUTER_API_KEY: "openrouter-key", CLOUDFLARE_API_KEY: "cloudflare-key", CLOUDFLARE_ACCOUNT_ID: "account"
+      OPENROUTER_API_KEY: "openrouter-key", CLOUDFLARE_API_KEY: "cloudflare-key", CLOUDFLARE_ACCOUNT_ID: "account", COHERE_API_KEY: "cohere-key"
     });
     expect(providers.map((provider) => [provider.id, provider.defaultModel])).toEqual([
       ["nous", "stepfun/step-3.7-flash:free"],
       ["groq", "openai/gpt-oss-20b"],
       ["mistral", "mistral-small-latest"],
       ["openrouter", "openrouter/free"],
+      ["cohere", "command-a-plus-05-2026"],
       ["cloudflare", "@cf/openai/gpt-oss-20b"]
     ]);
   });

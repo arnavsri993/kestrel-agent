@@ -42,7 +42,8 @@ export function createEnvironmentModelProviders(environment: NodeJS.ProcessEnv =
     ["nvidia", "NVIDIA_API_KEY", "NVIDIA_MODEL", "NVIDIA_BASE_URL", "meta/llama-3.3-70b-instruct", "https://integrate.api.nvidia.com/v1", true],
     ["huggingface", "HUGGINGFACE_API_KEY", "HUGGINGFACE_MODEL", "HUGGINGFACE_BASE_URL", "openai/gpt-oss-120b:cerebras", "https://router.huggingface.co/v1", true],
     ["perplexity", "PERPLEXITY_API_KEY", "PERPLEXITY_MODEL", "PERPLEXITY_BASE_URL", "sonar", "https://api.perplexity.ai", false],
-    ["github-models", "GITHUB_MODELS_TOKEN", "GITHUB_MODELS_MODEL", "GITHUB_MODELS_BASE_URL", "openai/gpt-4.1-mini", "https://models.github.ai/inference", true]
+    ["github-models", "GITHUB_MODELS_TOKEN", "GITHUB_MODELS_MODEL", "GITHUB_MODELS_BASE_URL", "openai/gpt-4.1-mini", "https://models.github.ai/inference", true],
+    ["cohere", "COHERE_API_KEY", "COHERE_MODEL", "COHERE_BASE_URL", "command-a-plus-05-2026", "https://api.cohere.ai/compatibility/v1", false]
   ] as const;
   for (const [id, keyName, modelName, baseName, defaultModel, defaultBase, images] of compatible) {
     const apiKey = environment[keyName];

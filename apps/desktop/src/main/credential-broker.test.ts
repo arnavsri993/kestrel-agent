@@ -22,11 +22,13 @@ describe("desktop credential broker", () => {
     const broker = new CredentialBroker(root, protection);
     await broker.setCredential("openai", "sk-test-secret-value");
     await broker.setCredential("openai-secondary", "sk-test-backup-value");
+    await broker.setCredential("cohere", "cohere-test-secret");
     await broker.setOpaqueSecret("google-workspace-oauth", "{\"refreshToken\":\"refresh-secret\"}");
     expect(await broker.listCredentials()).toContainEqual({ id: "openai", label: "OpenAI API key", configured: true });
     expect(await broker.providerEnvironment({ OPENAI_BASE_URL: "https://provider.test/v1", KESTREL_ENABLE_CODEX_SUBSCRIPTION: "1", KESTREL_CODEX_PATH: "/Applications/ChatGPT.app/Contents/Resources/codex", UNRELATED_SECRET: "do-not-forward" })).toEqual({
       OPENAI_API_KEY: "sk-test-secret-value",
       OPENAI_API_KEY_SECONDARY: "sk-test-backup-value",
+      COHERE_API_KEY: "cohere-test-secret",
       OPENAI_BASE_URL: "https://provider.test/v1",
       KESTREL_ENABLE_CODEX_SUBSCRIPTION: "1",
       KESTREL_CODEX_PATH: "/Applications/ChatGPT.app/Contents/Resources/codex",
