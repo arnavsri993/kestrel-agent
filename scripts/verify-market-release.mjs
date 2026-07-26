@@ -42,6 +42,7 @@ if (!desktopPackage.includes('"package:mac:dev"') || !desktopPackage.includes("-
 if (!desktopPackage.includes('"package:mac:mdm"') || !desktopPackage.includes("--mac pkg")) fail("desktop MDM packaging must provide an arm64 PKG target.");
 if (/package:mac:universal|test:packaged-desktop:universal/.test(`${desktopPackage}\n${rootPackage}`)) fail("universal desktop scripts remain configured.");
 if (!rootPackage.includes("pnpm test:desktop-setup")) fail("the market verification command does not exercise guided local-AI setup.");
+if (!rootPackage.includes("pnpm test:desktop-personas")) fail("the market verification command does not exercise the full desktop persona matrix.");
 
 if (process.argv.includes("--distribution")) {
   for (const name of ["PUBLIC_SITE_URL", "PUBLIC_SUPPORT_URL", "PUBLIC_PRIVACY_URL", "PUBLIC_DOWNLOAD_URL", "PUBLIC_RELEASE_MANIFEST_URL", "PUBLIC_RELEASE_CHECKSUMS_URL", "PUBLIC_PUBLISHER_NAME", "PUBLIC_SUPPORT_EMAIL"]) {
