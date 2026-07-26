@@ -157,6 +157,12 @@ try {
   assert.equal(await page.getByRole("button", { name: "Connect with Google" }).isEnabled(), true);
   await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
   await page.getByRole("button", { name: "General" }).click();
+  const selectedButtonShadows = await page
+    .locator(
+      ".sidebar-bottom > button.active, .nav-section button.active, .new-task-button.active, .settings-nav button.active, .skin-picker button.selected, [role=\"option\"][aria-selected=\"true\"], .event-application-rail button.active",
+    )
+    .evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).boxShadow));
+  assert.equal(selectedButtonShadows.some((shadow) => shadow.includes("inset 3px 0")), false);
   await page.getByRole("button", { name: "Open setup guide" }).click();
   await page.getByRole("heading", { name: /Your work, in one place/ }).waitFor();
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), null);

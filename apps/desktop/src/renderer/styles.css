@@ -201,16 +201,17 @@ button:disabled {
 .nav-section button:focus-visible,
 .sidebar-bottom > button:focus-visible,
 .new-task-button:focus-visible {
-  outline: 0;
+  outline: 2px solid color-mix(in srgb, var(--signal) 76%, transparent);
+  outline-offset: 2px;
   background: var(--sidebar-hover);
   color: var(--ink);
-  box-shadow: inset 2px 0 var(--signal);
+  box-shadow: none;
 }
 .nav-section button.active,
 .sidebar-bottom > button.active {
-  background: var(--surface);
+  background: color-mix(in srgb, var(--signal) 10%, var(--surface));
   color: var(--ink);
-  box-shadow: inset 2px 0 var(--signal);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent);
 }
 .nav-section button svg,
 .sidebar-bottom > button svg {
@@ -1722,8 +1723,9 @@ button:disabled {
   text-transform: capitalize;
 }
 .memory-filters button.active {
-  background: var(--surface-strong);
+  background: color-mix(in srgb, var(--signal) 10%, var(--surface-strong));
   color: var(--ink);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 24%, transparent);
 }
 .memory-filters strong {
   font: 9px var(--mono);
@@ -2825,8 +2827,9 @@ button:disabled {
   color: var(--ink);
 }
 .settings-nav button.active {
-  background: var(--ink);
-  color: var(--canvas);
+  background: color-mix(in srgb, var(--signal) 12%, var(--surface));
+  color: var(--ink);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent);
 }
 .settings-nav button span {
   font-size: 11px;
@@ -3365,8 +3368,8 @@ button:disabled {
   background: var(--panel);
 }
 .skin-picker button.selected {
-  box-shadow: inset 3px 0 var(--signal);
-  background: var(--status-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal) 32%, transparent);
+  background: color-mix(in srgb, var(--signal) 9%, var(--status-soft));
 }
 .skin-picker button > span:nth-child(2) {
   min-width: 0;
@@ -3663,8 +3666,8 @@ button:disabled {
   background: var(--surface);
 }
 .pet-draft-grid button.selected {
-  box-shadow: inset 0 -3px var(--signal);
-  background: var(--status-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal) 32%, transparent);
+  background: color-mix(in srgb, var(--signal) 9%, var(--status-soft));
   color: var(--ink);
 }
 .pet-draft-grid img {
@@ -4526,7 +4529,7 @@ html:has(.pet-overlay-shell) #root {
   background: var(--surface);
 }
 .paid-provider-directory [role="option"][aria-selected="true"] {
-  box-shadow: inset 2px 0 var(--signal-deep);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal-deep) 34%, transparent);
 }
 .paid-provider-directory [role="option"] strong,
 .paid-provider-directory [role="option"] small {
@@ -5948,7 +5951,7 @@ html:has(.pet-overlay-shell) #root {
 .event-application-rail ul { list-style: none; margin: 0; padding: 0; display: grid; }
 .event-application-rail li { border-top: 1px solid var(--line); }
 .event-application-rail button { width: 100%; padding: 13px 8px; border: 0; background: transparent; color: inherit; text-align: left; display: grid; gap: 3px; cursor: pointer; }
-.event-application-rail button.active { background: var(--sidebar-hover); box-shadow: inset 3px 0 var(--signal); padding-left: 12px; }
+.event-application-rail button.active { background: color-mix(in srgb, var(--signal) 10%, var(--sidebar-hover)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent); padding-left: 8px; }
 .event-application-rail button span, .event-application-rail button small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .event-application-rail button small { text-transform: capitalize; }
 .event-application-main { padding: 24px 0 0 28px; min-width: 0; }
@@ -6082,8 +6085,8 @@ body {
 
 .new-task-button.active {
   border-color: color-mix(in srgb, var(--signal) 34%, var(--line));
-  background: var(--surface);
-  box-shadow: inset 3px 0 var(--signal);
+  background: color-mix(in srgb, var(--signal) 10%, var(--surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent);
 }
 
 .new-task-button span {
@@ -6121,8 +6124,14 @@ body {
 
 .nav-section button.active,
 .sidebar-bottom > button.active {
-  background: var(--surface);
-  box-shadow: inset 3px 0 var(--signal);
+  background: color-mix(in srgb, var(--signal) 10%, var(--surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent);
+}
+
+.nav-section button.active svg,
+.sidebar-bottom > button.active svg,
+.new-task-button.active svg {
+  color: var(--signal-deep);
 }
 
 .sidebar-status {
@@ -6612,8 +6621,8 @@ body {
   }
 
   .new-task-button.active {
-    background: var(--surface);
-    box-shadow: inset 0 2px var(--signal);
+    background: color-mix(in srgb, var(--signal) 10%, var(--surface));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent);
   }
 
   .new-task-button span,
