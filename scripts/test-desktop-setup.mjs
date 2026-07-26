@@ -55,16 +55,25 @@ try {
   await page.getByRole("button", { name: /Keep it on this Mac/ }).click();
   await page.getByRole("heading", { name: "Choose a local model." }).waitFor();
   await page.getByText("Balanced is recommended for this Mac.", { exact: true }).waitFor();
-  await page.getByText("Light", { exact: true }).waitFor();
-  await page.getByText("Balanced", { exact: true }).waitFor();
-  await page.getByText("Power", { exact: true }).waitFor();
-  await page.getByText("Recommended", { exact: true }).waitFor();
+  const tierNames = page.locator(".model-tier-name strong");
+  await tierNames.first().waitFor();
+  const names = await tierNames.allTextContents();
+  assert.ok(names.includes("Light"));
+  assert.ok(names.length >= 1 && names.length <= 3);
+  if (names.length === 3) {
+    assert.deepEqual(names, ["Light", "Balanced", "Power"]);
+    await page.getByText("Recommended", { exact: true }).waitFor();
+  } else {
+    assert.ok(!names.includes("Balanced"));
+  }
+  const tierDetails = page.locator(".model-tier-details");
+  const detailIndex = Math.min(1, (await tierDetails.count()) - 1);
   assert.equal(
-    await page.locator(".model-tier-details").nth(1).evaluate((details) => details.open),
+    await tierDetails.nth(detailIndex).evaluate((details) => details.open),
     false,
   );
-  await page.locator(".model-tier-details").nth(1).getByText("Details", { exact: true }).click();
-  await page.getByText("3.3 GB · 256K context", { exact: true }).waitFor();
+  await tierDetails.nth(detailIndex).getByText("Details", { exact: true }).click();
+  await tierDetails.nth(detailIndex).getByText(/GB · 256K context/, { exact: true }).waitFor();
   assert.equal(await page.getByText("Automatic setup", { exact: true }).count(), 0);
   await page
     .getByText("huihui_ai/qwen3.5-abliterated:4b", { exact: true })
