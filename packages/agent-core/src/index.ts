@@ -1335,6 +1335,16 @@ export class AgentCore {
             skillFeedback: this.skillLearning.listFeedback(),
           };
         }
+        case "skill-learning-suggest": {
+          if (!this.skillLearning)
+            throw new Error("Learned skills are not configured.");
+          return {
+            ok: true,
+            skillProposals: [
+              this.skillLearning.suggestForSession(request.sessionId),
+            ],
+          };
+        }
         case "skill-learning-propose": {
           if (!this.skillLearning)
             throw new Error("Learned skills are not configured.");

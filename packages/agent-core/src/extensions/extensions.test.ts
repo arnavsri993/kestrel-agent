@@ -166,6 +166,24 @@ describe("Agent Skills extensions", () => {
     expect(() => manager.propose({ name: "unsafe", description: "Unsafe", instructions: "Use sk-example0123456789012345", sourceSessionId: source.id, sourceMessageIds: [firstSource.id] })).toThrow("credential");
     database.close();
   });
+
+  it("turns a completed session into a reviewable workflow proposal without copying tool output", () => {
+    const learnedRoot = mkdtempSync(join(tmpdir(), "kestrel-learned-skill-suggestion-"));
+    directories.push(learnedRoot);
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database, [], () => "2026-07-22T23:00:00.000Z");
+    const source = runtime.createSession({ title: "Weekly release notes" });
+    const user = runtime.appendMessage({ sessionId: source.id, role: "user", content: "Prepare the weekly release notes." });
+    runtime.appendMessage({ sessionId: source.id, role: "tool", toolName: "workspace.read", content: "PRIVATE_TOOL_OUTPUT_SHOULD_NOT_BE_COPIED" });
+    const assistant = runtime.appendMessage({ sessionId: source.id, role: "assistant", content: "The release notes are ready." });
+    database.saveAgentRun({ id: "run-suggest", sessionId: source.id, model: "test-model", providerIds: ["test"], status: "completed", turn: 1, createdAt: "2026-07-22T22:59:00.000Z", updatedAt: "2026-07-22T23:00:00.000Z" });
+    const manager = new SkillLearningManager(database, learnedRoot, new SkillRegistry([learnedRoot]), () => new Date("2026-07-22T23:00:00.000Z"));
+    const proposal = manager.suggestForSession(source.id);
+    expect(proposal).toMatchObject({ name: "prepare-the-weekly-release-notes", status: "proposed", sourceSessionId: source.id, sourceMessageIds: [user.id, expect.any(String), assistant.id] });
+    expect(proposal.instructions).toContain("workspace.read");
+    expect(proposal.instructions).not.toContain("PRIVATE_TOOL_OUTPUT_SHOULD_NOT_BE_COPIED");
+    database.close();
+  });
 });
 
 describe("Codex-compatible plugin manifests", () => {

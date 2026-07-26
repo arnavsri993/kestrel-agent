@@ -2126,6 +2126,9 @@ function RuntimeConversation({
   const [optimisticSteering, setOptimisticSteering] = useState<string[]>([]);
   const [toolActivity, setToolActivity] = useState<RuntimeEvent[]>([]);
   const [usage, setUsage] = useState<SessionUsageSummary | null>(null);
+  const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
+  const [skillBusy, setSkillBusy] = useState(false);
+  const [skillNotice, setSkillNotice] = useState("");
   const [checkpointSummary, setCheckpointSummary] = useState("");
   const [pending, setPending] = useState<{
     run: AgentRun;
@@ -2190,7 +2193,9 @@ function RuntimeConversation({
     if (!usageResponse.ok) throw new Error(usageResponse.error);
     setMessages(messageResponse.messages ?? []);
     setUsage(usageResponse.usage ?? null);
-    const waiting = [...(runResponse.runs ?? [])]
+    const runs = runResponse.runs ?? [];
+    setLatestRun(runs[runs.length - 1] ?? null);
+    const waiting = [...runs]
       .reverse()
       .find(
         (run) =>
@@ -2249,10 +2254,13 @@ function RuntimeConversation({
     setStreamText("");
     setOptimisticUser("");
     setError("");
+    setSkillNotice("");
     if (!activeSessionId) {
       setMessages([]);
       setPending(null);
       setUsage(null);
+      setLatestRun(null);
+      setSkillNotice("");
       return;
     }
     void loadSession(activeSessionId).catch((cause) =>
@@ -2490,6 +2498,7 @@ function RuntimeConversation({
     }
     setBusy(true);
     setError("");
+    setSkillNotice("");
     setStreamText("");
     setToolActivity([]);
     setOptimisticUser(prompt);
@@ -2648,6 +2657,7 @@ function RuntimeConversation({
     if (!activeSessionId || !executionReady || busy) return;
     setBusy(true);
     setError("");
+    setSkillNotice("");
     setStreamText("");
     setToolActivity([]);
     setOptimisticSteering([]);
@@ -2678,6 +2688,34 @@ function RuntimeConversation({
       streamIdRef.current = null;
       setBusy(false);
       setStreamText("");
+    }
+  }
+
+  async function saveWorkflowAsSkill() {
+    if (!activeSessionId || busy || skillBusy || latestRun?.status !== "completed") return;
+    setSkillBusy(true);
+    setSkillNotice("");
+    setError("");
+    try {
+      const response = (await window.kestrel.request({
+        type: "skill-learning-suggest",
+        sessionId: activeSessionId,
+      })) as CoreResponse;
+      if (!response.ok) throw new Error(response.error);
+      const proposal = response.skillProposals?.[0];
+      setSkillNotice(
+        proposal
+          ? `${proposal.name} is ready for review in Settings → Memory & behavior.`
+          : "The workflow is ready for review in Settings → Memory & behavior.",
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not save this workflow as a skill.",
+      );
+    } finally {
+      setSkillBusy(false);
     }
   }
 
@@ -2954,6 +2992,27 @@ function RuntimeConversation({
                 </div>
               </div>
             </div>
+          )}
+          {latestRun?.status === "completed" && !busy && !pending && !skillNotice && (
+            <div className="workflow-memory-action">
+              <div>
+                <strong>Keep this workflow</strong>
+                <small>Save the approved sequence as a reusable skill.</small>
+              </div>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={skillBusy}
+                onClick={() => void saveWorkflowAsSkill()}
+              >
+                {skillBusy ? "Saving…" : "Save as skill"}
+              </button>
+            </div>
+          )}
+          {skillNotice && (
+            <p className="skill-notice" role="status">
+              {skillNotice}
+            </p>
           )}
         </div>
       )}

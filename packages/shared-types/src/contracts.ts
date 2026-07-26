@@ -1440,6 +1440,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("skill-learning-list") }),
   z.object({
+    type: z.literal("skill-learning-suggest"),
+    sessionId: z.string().min(1),
+  }),
+  z.object({
     type: z.literal("skill-learning-propose"),
     name: z.string().min(1).max(64),
     description: z.string().min(1).max(1_024),

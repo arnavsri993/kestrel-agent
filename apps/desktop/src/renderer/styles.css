@@ -1040,6 +1040,32 @@ button:disabled {
   color: var(--muted);
   font: 10px/1.5 var(--mono);
 }
+.workflow-memory-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0 0 40px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 82%, var(--canvas));
+}
+.workflow-memory-action > div {
+  display: grid;
+  gap: 3px;
+}
+.workflow-memory-action strong {
+  font-size: 11px;
+}
+.workflow-memory-action small,
+.skill-notice {
+  color: var(--muted);
+  font-size: 10px;
+}
+.skill-notice {
+  margin: 8px 0 0 40px;
+}
 .runtime-composer .chat-error,
 .runtime-new-composer .chat-error {
   margin: 7px 0 0;
