@@ -25,7 +25,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("heading", { name: "Set the boundary once." }).waitFor();
+  await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
 
   const external = page.locator(".external-secret-setting");
   await external.getByText("External secret sources", { exact: true }).waitFor();

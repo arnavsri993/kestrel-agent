@@ -85,6 +85,7 @@ try {
   await page.reload();
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Extensions/ }).click();
   const pluginSetting = page
     .locator("article.setting-row")
     .filter({ hasText: "Release Ops" });

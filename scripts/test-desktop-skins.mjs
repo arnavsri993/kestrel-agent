@@ -33,6 +33,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^General/ }).click();
 
   const skinSetting = page.locator(".skin-setting");
   await skinSetting.getByText("Visual skin", { exact: true }).waitFor();
@@ -49,6 +50,7 @@ try {
 
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^General/ }).click();
   await page.waitForFunction(() => document.documentElement.dataset.skin === "daylight");
   assert.equal(await page.locator(".skin-setting").getByRole("button", { name: /Daylight/ }).getAttribute("aria-pressed"), "true");
 

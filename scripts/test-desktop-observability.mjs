@@ -38,6 +38,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: /^Advanced/ }).click();
   const observability = page.locator(".observability-setting");
   await observability.getByText("External observability", { exact: true }).waitFor();
   assert.match(await observability.textContent(), /never eligible for export/);

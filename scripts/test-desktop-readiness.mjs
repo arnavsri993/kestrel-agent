@@ -53,6 +53,7 @@ try {
   await page.reload();
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Extensions/ }).click();
   const readinessPlugin = page.locator("article.setting-row").filter({ hasText: "Readiness Test" });
   await readinessPlugin.getByRole("button", { name: "Enable" }).click();
   await readinessPlugin.getByText("Dashboard panels active").waitFor();

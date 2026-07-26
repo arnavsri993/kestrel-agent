@@ -10,17 +10,46 @@ export function PresenceSettings() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void Promise.all([
-      window.kestrel.request({ type: "presence-list" }),
-      window.kestrel.request({ type: "channel-list" }),
-      window.kestrel.request({ type: "channel-interaction-get" })
-    ]).then(([presenceRaw, channelRaw, interactionRaw]) => {
-      const presence = presenceRaw as CoreResponse; const channel = channelRaw as CoreResponse; const interaction = interactionRaw as CoreResponse;
-      if (!presence.ok || !channel.ok || !interaction.ok) throw new Error(!presence.ok ? presence.error : !channel.ok ? channel.error : !interaction.ok ? interaction.error : "Ambient settings failed.");
-      setEntries(presence.presence ?? []);
-      setChannels(channel.channels ?? []);
-      setConfiguration(interaction.channelInteractionConfiguration ?? null);
-    }).catch((cause) => setError(cause instanceof Error ? cause.message : "Presence could not be loaded."));
+    let disposed = false;
+    const load = async () => {
+      try {
+        const [presenceRaw, channelRaw, interactionRaw] = await Promise.all([
+          window.kestrel.request({ type: "presence-list" }),
+          window.kestrel.request({ type: "channel-list" }),
+          window.kestrel.request({ type: "channel-interaction-get" }),
+        ]);
+        const presence = presenceRaw as CoreResponse;
+        const channel = channelRaw as CoreResponse;
+        const interaction = interactionRaw as CoreResponse;
+        if (!presence.ok || !channel.ok || !interaction.ok)
+          throw new Error(
+            !presence.ok
+              ? presence.error
+              : !channel.ok
+                ? channel.error
+                : !interaction.ok
+                  ? interaction.error
+                  : "Ambient settings failed.",
+          );
+        if (disposed) return;
+        setEntries(presence.presence ?? []);
+        setChannels(channel.channels ?? []);
+        setConfiguration(interaction.channelInteractionConfiguration ?? null);
+      } catch (cause) {
+        if (!disposed)
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Presence could not be loaded.",
+          );
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 15_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   async function save() {
