@@ -84,7 +84,7 @@ type Page = (typeof pages)[number][0];
 type Thread = "new" | "teacher" | "dji";
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
-  "Help me finish setting up Workstrand. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings, or to provider-owned sign-in. Verify one working route before adding more.";
+  "Help me finish setting up Kestrel. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings, or to provider-owned sign-in. Verify one working route before adding more.";
 
 function setupAssistantState({
   credentials,
@@ -125,6 +125,15 @@ function modelLabel(model: ModelRoutingDecision["model"]): string {
   return model === "local-rules"
     ? "Local rules"
     : model.replace("gpt-", "GPT-").replaceAll("-", " ");
+}
+
+function sessionTitleForDisplay(title: string): string {
+  // The setup coach session predates the visible Kestrel rename. Keep stored
+  // history intact while preventing old product chrome from leaking into the
+  // current shell.
+  return title.startsWith("Help me finish setting up Workstrand")
+    ? title.replaceAll("Workstrand", "Kestrel")
+    : title;
 }
 
 const setupSteps = [
@@ -664,7 +673,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   with you in control.
                 </h1>
                 <p>
-                  Workstrand can work across a project, your tools, and the
+                  Kestrel can work across a project, your tools, and the
                   services you connect. You choose what it can see, which model
                   it uses, and what needs your approval.
                 </p>
@@ -698,7 +707,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
               <div className="setup-warning">
                 <h1>Choose what stays on this Mac.</h1>
                 <p>
-                  Workstrand asks before sensitive actions. The model and
+                  Kestrel asks before sensitive actions. The model and
                   services you connect still determine where task data goes.
                 </p>
                 <div className="warning-panel">
@@ -791,7 +800,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                         ? "Sign in with a supported subscription, or add an API key from your provider."
                         : modelView === "local"
                           ? "Balanced is recommended for this Mac."
-                          : "Add any free accounts you want to use. Workstrand can switch between the ones you connect."}
+                          : "Add any free accounts you want to use. Kestrel can switch between the ones you connect."}
                   </p>
                 </header>
                 {step === 2 && (
@@ -917,7 +926,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                                 <article className="connection-method" key={method.id}>
                                   <div>
                                     <strong>{method.label}</strong>
-                                    <p>{method.note} Workstrand never copies the vendor login token.</p>
+                                    <p>{method.note} Kestrel never copies the vendor login token.</p>
                                   </div>
                                   {!cli ? (
                                     <span className="honest-status">Checking</span>
@@ -1198,7 +1207,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                               ? `A real response completed ${localRuntime.verifiedAt ? new Date(localRuntime.verifiedAt).toLocaleString() : "during setup"}.`
                               : localRuntime?.managedRuntime
                                 ? `Ollama ${localRuntime.runtimeVersion ?? ""} is contained inside Kestrel data.`
-                                : "Workstrand will use this service without changing its installation."}
+                                : "Kestrel will use this service without changing its installation."}
                           </small>
                         </span>
                       </div>
@@ -1329,7 +1338,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                       <strong>Add the accounts you want to use.</strong>
                       <p>
                         Create a key on the provider’s official site, then save
-                        it here. Workstrand protects the key and can use any
+                        it here. Kestrel protects the key and can use any
                         account you connect.
                       </p>
                     </div>
@@ -1417,7 +1426,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     <p className="provider-footnote">
                       “Free” availability, quotas, privacy terms, and model lists
                       change. Review the source before sending data. A listing here
-                      is not a connection or a Workstrand endorsement.
+                      is not a connection or a Kestrel endorsement.
                     </p>
                   </div>
                 )}
@@ -1428,7 +1437,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
               <div className="setup-finish">
                 <h1>
                   {modelReady
-                    ? "Workstrand is ready."
+                    ? "Kestrel is ready."
                     : "The workspace is ready. A model is still optional."}
                 </h1>
                 <p>
@@ -1555,7 +1564,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
             >
               {step === setupSteps.length - 1
                 ? modelReady
-                  ? "Start using Workstrand"
+                  ? "Start using Kestrel"
                   : "Open local preview"
                 : step === 0
                   ? "Continue"
@@ -1573,7 +1582,7 @@ function Brand() {
   return (
     <div className="brand">
       <BrandMark />
-      <strong>Workstrand</strong>
+      <strong>Kestrel</strong>
     </div>
   );
 }
@@ -1582,7 +1591,7 @@ function Loading() {
   return (
     <main className="loading-screen">
       <BrandMark />
-      <p>Starting Workstrand…</p>
+      <p>Starting Kestrel…</p>
     </main>
   );
 }
@@ -1769,7 +1778,7 @@ function Composer({
       }}
     >
       <label className="sr-only" htmlFor={compact ? "follow-up" : "new-task"}>
-        Message Workstrand
+        Message Kestrel
       </label>
       <textarea
         id={compact ? "follow-up" : "new-task"}
@@ -1878,7 +1887,7 @@ function Home({
           </div>
           <h1 id="new-task-title">What should we work on?</h1>
           <p>
-            Ask normally. Workstrand will bring in relevant local context when
+            Ask normally. Kestrel will bring in relevant local context when
             it can help.
           </p>
           <Composer
@@ -2766,21 +2775,64 @@ function RuntimeConversation({
       : localHour < 18
         ? "Good afternoon."
         : "Good evening.";
+  const emptySession = Boolean(
+    activeSessionId &&
+      visibleMessages.length === 0 &&
+      !optimisticUser &&
+      !optimisticSteering.length &&
+      !busy &&
+      !pending &&
+      !error,
+  );
   return (
     <section
-      className={`conversation-view ${activeSessionId ? "" : "new-task-view"}`}
+      className={`conversation-view ${activeSessionId ? "" : "new-task-view"} ${emptySession ? "session-empty-view" : ""}`}
       aria-label={activeSession?.title ?? "New agent task"}
     >
-      {!activeSessionId && visibleMessages.length === 0 ? (
+      {!activeSessionId && visibleMessages.length === 0 || emptySession ? (
         <div className="new-task-center">
+          <span className="welcome-kicker">
+            {activeSessionId ? "Ready when you are" : "Kestrel · local-first work"}
+          </span>
           <div className="welcome-mark" aria-hidden="true">
             <BrandMark />
           </div>
-          <h1>{greeting}</h1>
+          <h1>{activeSessionId ? "Pick up where you left off." : greeting}</h1>
           <p>
-            Bring a project or ask a question. Workstrand keeps the work,
-            approvals, and results together.
+            {activeSessionId
+              ? "Your workspace is ready. Describe the next useful step and Kestrel will keep the plan, approvals, and results together."
+              : "Bring a project or ask a question. Kestrel keeps the work, approvals, and results together."}
           </p>
+          {!activeSessionId && (
+            <div className="prompt-suggestions runtime-suggestions" aria-label="Suggested starts">
+              <button
+                type="button"
+                onClick={() => {
+                  setInput("Review this project and suggest the next useful step.");
+                  window.setTimeout(() => promptRef.current?.focus(), 0);
+                }}
+              >
+                Review a project
+                <Icon name="arrow" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setInput("Help me plan the next thing I need to get done.");
+                  window.setTimeout(() => promptRef.current?.focus(), 0);
+                }}
+              >
+                Plan something
+                <Icon name="arrow" />
+              </button>
+            </div>
+          )}
+          {activeSessionId && (
+            <div className="empty-session-note">
+              <span className="agent-dot idle" />
+              <span>Conversation only until you add a project in task settings.</span>
+            </div>
+          )}
         </div>
       ) : (
         <div className="message-list" aria-live="polite">
@@ -2922,7 +2974,7 @@ function RuntimeConversation({
           }}
         >
           <label className="sr-only" htmlFor="runtime-prompt">
-            Message Workstrand
+            Message Kestrel
           </label>
           <textarea
             ref={promptRef}
@@ -2932,7 +2984,7 @@ function RuntimeConversation({
             onChange={(event) => setInput(event.target.value)}
             placeholder={
               activeSessionId
-                ? "Message Workstrand"
+                ? "Message Kestrel"
                 : "What are you working on?"
             }
           />
@@ -5263,7 +5315,7 @@ function SubscriptionCliSettings() {
           Use the authenticated Codex or Claude Code app already on this Mac.
           Codex runs as one persistent, read-only app-server with durable
           threads and streamed turns; Claude remains an isolated text-only
-          invocation. Workstrand never copies either vendor&apos;s OAuth tokens.
+          invocation. Kestrel never copies either vendor&apos;s OAuth tokens.
         </p>
         <ul className="subscription-setting-list">
           {items.map((item) => (
@@ -6875,9 +6927,12 @@ export function App() {
   if (!snapshot) return <Loading />;
   const currentTitle =
     page === "home"
-      ? (runtimeSessions.find(
-          (session) => session.id === activeRuntimeSessionId,
-        )?.title ?? "New chat")
+      ? (() => {
+          const session = runtimeSessions.find(
+            (item) => item.id === activeRuntimeSessionId,
+          );
+          return session ? sessionTitleForDisplay(session.title) : "New chat";
+        })()
       : pages.find(([id]) => id === page)?.[1];
   const openRuntimeSession = (sessionId: string | null) => {
     setActiveRuntimeSessionId(sessionId);
@@ -6917,8 +6972,8 @@ export function App() {
               .slice(0, 12)
               .map((session) => (
                 <button
-                  aria-label={session.title}
-                  title={session.title}
+                  aria-label={sessionTitleForDisplay(session.title)}
+                  title={sessionTitleForDisplay(session.title)}
                   key={session.id}
                   className={
                     page === "home" && activeRuntimeSessionId === session.id
@@ -6928,7 +6983,7 @@ export function App() {
                   onClick={() => openRuntimeSession(session.id)}
                 >
                   <Icon name="chat" />
-                  <span>{session.title}</span>
+                  <span>{sessionTitleForDisplay(session.title)}</span>
                 </button>
               ))}
           </section>

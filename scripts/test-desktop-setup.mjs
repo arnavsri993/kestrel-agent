@@ -107,11 +107,11 @@ try {
   await page.setViewportSize({ width: 1320, height: 860 });
   assert.equal(await page.getByRole("button", { name: "Do this later" }).count(), 0);
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("heading", { name: /Workstrand is ready|The workspace is ready/ }).waitFor();
+  await page.getByRole("heading", { name: /Kestrel is ready|The workspace is ready/ }).waitFor();
   await page.getByRole("button", { name: "Finish with help" }).click();
   await page.getByRole("button", { name: "New chat" }).waitFor();
-  const setupAssistantPrompt = await page.getByLabel("Message Workstrand").inputValue();
-  assert.match(setupAssistantPrompt, /Help me finish setting up Workstrand/);
+  const setupAssistantPrompt = await page.getByLabel("Message Kestrel").inputValue();
+  assert.match(setupAssistantPrompt, /Help me finish setting up Kestrel/);
   assert.match(setupAssistantPrompt, /Current non-secret setup state:/);
   assert.match(setupAssistantPrompt, /Protected API credentials configured:/);
   assert.match(setupAssistantPrompt, /Project access, tools\/MCP, skills\/plugins, channels, and automations/);

@@ -42,7 +42,7 @@ try {
   assert.equal(await execution.inputValue(), "automatic");
   await execution.selectOption("manual");
   await page.locator(".runtime-task-controls label", { hasText: /^Provider/ }).locator("select").waitFor();
-  await page.locator(".runtime-task-controls label", { hasText: /^Model/ }).locator("input").waitFor();
+  await page.locator(".runtime-task-controls label", { hasText: /^Model/ }).locator("input, select").waitFor();
   assert.equal(await page.getByRole("button", { name: "Send message" }).isDisabled(), true);
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: /^General/ }).click();
