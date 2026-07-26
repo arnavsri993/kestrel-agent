@@ -48,6 +48,9 @@ Build the website with `NEXT_PUBLIC_PUBLISHER_NAME` and
 `NEXT_PUBLIC_SUPPORT_EMAIL` set to the verified operator values. Distribution
 mode fetches the deployed site, privacy, and support pages and verifies their
 status and Kestrel-specific content.
+It also checks that the DMG, release manifest, checksums, and
+`latest-mac.yml` updater feed are reachable over HTTPS; missing inputs fail
+before any undefined or placeholder URL is contacted.
 
 The GitHub Pages workflow reads the public release inputs from repository
 variables with these names: `PUBLIC_PUBLISHER_NAME`, `PUBLIC_SUPPORT_EMAIL`,
