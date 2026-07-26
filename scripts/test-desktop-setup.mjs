@@ -137,7 +137,9 @@ try {
   );
   await page.setViewportSize({ width: 1320, height: 860 });
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("heading", { name: "Set up Kestrel." }).waitFor();
+  await page.getByRole("heading", { name: "Configure Kestrel" }).waitFor();
+  assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
+  assert.equal(await page.locator(".page-header > p").count(), 0);
   await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
   const chatGptConnection = page.locator(".oauth-connection").filter({ hasText: "ChatGPT" });
   await chatGptConnection.getByText("ChatGPT", { exact: true }).waitFor();

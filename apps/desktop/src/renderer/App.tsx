@@ -6435,9 +6435,7 @@ function Settings({
   ] as const;
   return (
     <PageFrame
-      eyebrow="Settings"
-      title="Set up Kestrel."
-      text="Connect accounts, choose everyday behavior, and keep project and privacy boundaries explicit."
+      title="Configure Kestrel"
     >
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings sections">
@@ -6790,17 +6788,17 @@ function PageFrame({
   text,
   children,
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
-  text: string;
+  text?: string;
   children: ReactNode;
 }) {
   return (
     <div className="page-frame">
       <header className="page-header">
-        <span className="eyebrow">{eyebrow}</span>
+        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
         <h1>{title}</h1>
-        <p>{text}</p>
+        {text && <p>{text}</p>}
       </header>
       {children}
     </div>
