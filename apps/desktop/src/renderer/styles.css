@@ -66,6 +66,7 @@ button {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
+select:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: 2px;
@@ -410,7 +411,6 @@ button:disabled {
   overflow-y: hidden;
   padding: 19px 19px 8px;
   border: 0;
-  outline: 0;
   background: transparent;
   color: var(--ink);
   line-height: 1.5;
@@ -801,7 +801,6 @@ button:disabled {
   padding: 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: 9px;
-  outline: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 12px;
@@ -942,7 +941,6 @@ button:disabled {
   background: var(--surface);
   color: var(--ink);
   font: 12px var(--sans);
-  outline: 0;
 }
 .runtime-task-controls select:focus,
 .runtime-task-controls input:focus {
@@ -973,7 +971,6 @@ button:disabled {
   background: var(--surface);
   color: var(--ink);
   font: 10px var(--sans);
-  outline: 0;
 }
 .runtime-lifecycle-controls input:focus {
   border-color: color-mix(in srgb, var(--signal) 62%, transparent);
@@ -1536,7 +1533,6 @@ button:disabled {
   background: var(--canvas);
   color: var(--ink);
   font: 11px/1.5 var(--sans);
-  outline: 0;
 }
 .memory-create textarea,
 .memory-list textarea {
@@ -1816,7 +1812,6 @@ button:disabled {
   border-radius: 8px;
   background: var(--canvas);
   color: var(--ink);
-  outline: 0;
 }
 .research-search input:focus {
   border-color: color-mix(in srgb, var(--signal) 62%, transparent);
@@ -2037,7 +2032,6 @@ button:disabled {
   border-radius: 7px;
   background: var(--canvas);
   color: var(--ink);
-  outline: 0;
 }
 .work-card textarea {
   resize: vertical;
@@ -2335,7 +2329,6 @@ button:disabled {
   background: var(--canvas);
   color: var(--muted);
   font-size: 8px;
-  outline: 0;
   text-transform: none;
 }
 .kanban-card select:focus-visible {
@@ -2994,7 +2987,6 @@ button:disabled {
   padding: 7px 9px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  outline: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 10px;
@@ -3152,7 +3144,6 @@ button:disabled {
   padding: 7px 9px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  outline: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 10px;
@@ -3626,7 +3617,6 @@ button:disabled {
   padding: 8px 9px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  outline: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 10px;
@@ -3851,7 +3841,6 @@ html:has(.pet-overlay-shell) #root {
   padding: 8px;
   border: 1px solid rgba(244, 239, 227, 0.16);
   border-radius: 8px;
-  outline: 0;
   background: rgba(45, 44, 41, 0.95);
   color: #f2efe7;
   font-size: 10px;
@@ -4494,7 +4483,6 @@ html:has(.pet-overlay-shell) #root {
   padding: 0 11px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  outline: 0;
   background: var(--surface);
   color: var(--ink);
 }
@@ -4680,7 +4668,6 @@ html:has(.pet-overlay-shell) #root {
   padding: 0 11px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  outline: 0;
   background: var(--surface);
   color: var(--ink);
   font-size: 12px;

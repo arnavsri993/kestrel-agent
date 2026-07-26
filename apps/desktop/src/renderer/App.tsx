@@ -65,7 +65,7 @@ import {
   recommendedLocalModelTiers,
   supportedLocalModels,
 } from "./local-model-catalog";
-import { chatTitleFromPrompt } from "./chat-title";
+import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 
 const pages = [
   ["home", "New chat"],
@@ -125,15 +125,6 @@ function modelLabel(model: ModelRoutingDecision["model"]): string {
   return model === "local-rules"
     ? "Local rules"
     : model.replace("gpt-", "GPT-").replaceAll("-", " ");
-}
-
-function sessionTitleForDisplay(title: string): string {
-  // The setup coach session predates the visible Kestrel rename. Keep stored
-  // history intact while preventing old product chrome from leaking into the
-  // current shell.
-  return title.startsWith("Help me finish setting up Workstrand")
-    ? title.replaceAll("Workstrand", "Kestrel")
-    : title;
 }
 
 const setupSteps = [
@@ -2793,7 +2784,11 @@ function RuntimeConversation({
   return (
     <section
       className={`conversation-view ${activeSessionId ? "" : "new-task-view"} ${emptySession ? "session-empty-view" : ""}`}
-      aria-label={activeSession?.title ?? "New agent task"}
+      aria-label={
+        activeSession
+          ? sessionTitleForDisplay(activeSession.title)
+          : "New agent task"
+      }
     >
       {!activeSessionId && visibleMessages.length === 0 || emptySession ? (
         <div className="new-task-center">
@@ -4082,6 +4077,19 @@ function Work({
     (session) => session.parentSessionId === parentSessionId,
   );
 
+  useEffect(() => {
+    if (sessions.length === 0) {
+      if (parentSessionId) setParentSessionId("");
+      return;
+    }
+    if (
+      !parentSessionId ||
+      !sessions.some((session) => session.id === parentSessionId)
+    ) {
+      setParentSessionId(sessions[0]!.id);
+    }
+  }, [parentSessionId, sessions]);
+
   async function load() {
     const [state, providerState, sessionState, localModelState] = await Promise.all([
       window.kestrel.request({
@@ -4243,7 +4251,7 @@ function Work({
             >
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>
-                  {session.title}
+                  {sessionTitleForDisplay(session.title)}
                 </option>
               ))}
             </select>
@@ -4491,7 +4499,7 @@ function Work({
                     )
                   }
                 />
-                {child.title}
+                {sessionTitleForDisplay(child.title)}
               </label>
             ))}
           </fieldset>
@@ -4538,7 +4546,7 @@ function Work({
                 .filter((session) => session.parentSessionId)
                 .map((session) => (
                   <option key={session.id} value={session.id}>
-                    {session.title}
+                    {sessionTitleForDisplay(session.title)}
                   </option>
                 ))}
             </select>
