@@ -2450,6 +2450,12 @@ function RuntimeConversation({
     }
   }
 
+  async function reviewProject() {
+    setInput("Review this project and suggest the next useful step.");
+    if (!taskWorkspace) await addProject();
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  }
+
   async function submit() {
     const prompt = input.trim();
     if (!prompt) return;
@@ -2792,27 +2798,24 @@ function RuntimeConversation({
       {!activeSessionId && visibleMessages.length === 0 || emptySession ? (
         <div className="new-task-center">
           <span className="welcome-kicker">
-            {activeSessionId ? "Ready when you are" : "Kestrel · local-first work"}
+            {activeSessionId ? "Ready when you are" : "Kestrel · on this Mac"}
           </span>
-          <div className="welcome-mark" aria-hidden="true">
-            <BrandMark />
-          </div>
           <h1>{activeSessionId ? "Pick up where you left off." : greeting}</h1>
           <p>
             {activeSessionId
               ? "Your workspace is ready. Describe the next useful step and Kestrel will keep the plan, approvals, and results together."
-              : "Bring a project or ask a question. Kestrel keeps the work, approvals, and results together."}
+              : "Bring a project or ask a question. Kestrel keeps the plan, approvals, and results in one thread."}
           </p>
           {!activeSessionId && (
             <div className="prompt-suggestions runtime-suggestions" aria-label="Suggested starts">
               <button
                 type="button"
-                onClick={() => {
-                  setInput("Review this project and suggest the next useful step.");
-                  window.setTimeout(() => promptRef.current?.focus(), 0);
-                }}
+                onClick={() => void reviewProject()}
               >
-                Review a project
+                <span>
+                  <strong>Review a project</strong>
+                  <small>Choose a folder and find the next useful step.</small>
+                </span>
                 <Icon name="arrow" />
               </button>
               <button
@@ -2822,7 +2825,12 @@ function RuntimeConversation({
                   window.setTimeout(() => promptRef.current?.focus(), 0);
                 }}
               >
-                Plan something
+                <span>
+                  <strong>Plan a task</strong>
+                  <small>
+                    Turn an outcome into a clear, reviewable sequence.
+                  </small>
+                </span>
                 <Icon name="arrow" />
               </button>
             </div>
@@ -2830,7 +2838,14 @@ function RuntimeConversation({
           {activeSessionId && (
             <div className="empty-session-note">
               <span className="agent-dot idle" />
-              <span>Conversation only until you add a project in task settings.</span>
+              <span>This chat is conversation-only.</span>
+              <button
+                type="button"
+                className="quiet-link"
+                onClick={() => onActiveSession(null)}
+              >
+                Start a new chat
+              </button>
             </div>
           )}
         </div>
@@ -2989,16 +3004,28 @@ function RuntimeConversation({
             }
           />
           <div className="composer-footer">
-            <div className="button-row">
-              <button
-                type="button"
-                className="composer-icon"
-                aria-label="Add context files"
-                disabled={!taskWorkspace || busy || voiceState !== "idle"}
-                onClick={() => void addContext()}
-              >
-                <Icon name="plus" />
-              </button>
+            <div className="button-row composer-context-actions">
+              {taskWorkspace ? (
+                <button
+                  type="button"
+                  className="composer-icon"
+                  aria-label="Add context files"
+                  disabled={busy || voiceState !== "idle"}
+                  onClick={() => void addContext()}
+                >
+                  <Icon name="plus" />
+                </button>
+              ) : !activeSessionId ? (
+                <button
+                  type="button"
+                  className="composer-project-button"
+                  disabled={busy || voiceState !== "idle"}
+                  onClick={() => void addProject()}
+                >
+                  <Icon name="plus" />
+                  <span>Add project</span>
+                </button>
+              ) : null}
               <details className="task-settings">
                 <summary aria-label="Task settings" title="Task settings">
                   <Icon name="settings" />
@@ -3130,7 +3157,9 @@ function RuntimeConversation({
                   ? "Send an update at the next safe turn boundary"
                   : taskWorkspace
                     ? `${selectedGrant?.name ?? "Project"} · files and tools stay scoped`
-                    : "Conversation only · add a project for file tools"}
+                    : activeSessionId
+                      ? "Conversation only · start a new chat to add a project"
+                      : "Conversation only"}
             </span>
             {busy ? (
               <div className="button-row">
@@ -6407,8 +6436,8 @@ function Settings({
   return (
     <PageFrame
       eyebrow="Settings"
-      title="Everything in its place."
-      text="Connect accounts, choose how Kestrel works, and review privacy boundaries from one organized home."
+      title="Set up Kestrel."
+      text="Connect accounts, choose everyday behavior, and keep project and privacy boundaries explicit."
     >
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings sections">
@@ -6950,8 +6979,13 @@ export function App() {
         <div className="drag-region" />
         <Brand />
         <button
-          className="new-task-button"
+          className={`new-task-button ${
+            page === "home" && !activeRuntimeSessionId ? "active" : ""
+          }`}
           aria-label="New chat"
+          aria-current={
+            page === "home" && !activeRuntimeSessionId ? "page" : undefined
+          }
           onClick={() => openRuntimeSession(null)}
         >
           <Icon name="plus" />

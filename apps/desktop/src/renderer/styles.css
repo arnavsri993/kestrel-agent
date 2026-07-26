@@ -6077,6 +6077,12 @@ body {
   border-color: var(--line-strong);
 }
 
+.new-task-button.active {
+  border-color: color-mix(in srgb, var(--signal) 34%, var(--line));
+  background: var(--surface);
+  box-shadow: inset 3px 0 var(--signal);
+}
+
 .new-task-button span {
   font-size: 13px;
   font-weight: 600;
@@ -6235,6 +6241,13 @@ body {
   height: 6px;
 }
 
+.empty-session-note .quiet-link {
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--ink);
+  font-size: inherit;
+}
+
 .composer {
   border-color: var(--line-strong);
   border-radius: 16px;
@@ -6276,6 +6289,36 @@ body {
   height: 36px;
 }
 
+.composer-project-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.composer-project-button:hover:not(:disabled) {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.composer-project-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.composer-project-button svg {
+  width: 14px;
+  height: 14px;
+}
+
 .send-button {
   background: var(--ink);
   color: var(--canvas);
@@ -6286,24 +6329,55 @@ body {
   color: #9a9aa0;
 }
 
-.prompt-suggestions {
-  justify-content: flex-start;
-  gap: 8px;
-  margin-top: 14px;
+.runtime-suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin: 2px 0 12px;
+  border-block: 1px solid var(--line);
 }
 
-.prompt-suggestions button {
-  min-height: 36px;
-  padding: 0 12px;
+.runtime-suggestions button {
+  min-height: 68px;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.runtime-suggestions button + button {
+  border-left: 1px solid var(--line);
+}
+
+.runtime-suggestions button:hover {
   border-color: var(--line);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--panel) 72%, transparent);
-  font-size: 12px;
+  background: color-mix(in srgb, var(--surface) 66%, transparent);
 }
 
-.prompt-suggestions button:hover {
-  border-color: var(--line-strong);
-  background: var(--surface);
+.runtime-suggestions button > span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.runtime-suggestions strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.runtime-suggestions small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.runtime-suggestions svg {
+  flex: 0 0 auto;
+  color: var(--faint);
 }
 
 .background-note {
@@ -6515,6 +6589,70 @@ body {
 }
 
 @media (max-width: 680px) {
+  .sidebar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: center;
+  }
+
+  .new-task-button {
+    width: 100%;
+    min-height: 46px;
+    display: flex;
+    justify-content: center;
+    gap: 7px;
+    margin: 0;
+    padding: 0 8px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .new-task-button.active {
+    background: var(--surface);
+    box-shadow: inset 0 2px var(--signal);
+  }
+
+  .new-task-button span,
+  .nav-section button span,
+  .sidebar-bottom > button span {
+    display: inline;
+    font-size: 11px;
+  }
+
+  .new-task-button kbd {
+    display: none;
+  }
+
+  .sidebar nav {
+    width: auto;
+  }
+
+  .nav-section {
+    margin: 0;
+  }
+
+  .nav-section button,
+  .sidebar-bottom > button {
+    display: flex;
+    justify-content: center;
+    gap: 7px;
+  }
+
+  .sidebar-bottom {
+    width: auto;
+    display: block;
+  }
+
+  .runtime-suggestions {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-suggestions button + button {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
   .topbar {
     height: 54px;
     padding-inline: 17px;

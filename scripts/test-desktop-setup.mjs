@@ -117,8 +117,27 @@ try {
   assert.match(setupAssistantPrompt, /Project access, tools\/MCP, skills\/plugins, channels, and automations/);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:setup-coach-context")), null);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), "yes");
+  await page.getByRole("button", { name: "New chat" }).click();
+  const newChatButton = page.getByRole("button", { name: "New chat" });
+  assert.equal(await newChatButton.getAttribute("aria-current"), "page");
+  await page.getByRole("button", { name: "Add project" }).waitFor();
+  await page.getByText("Choose a folder and find the next useful step.").waitFor();
+  await page.getByText("Turn an outcome into a clear, reviewable sequence.").waitFor();
+  await page.setViewportSize({ width: 640, height: 760 });
+  await newChatButton.getByText("New chat", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Tools" }).getByText("Tools", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Settings" }).getByText("Settings", { exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    ),
+    false,
+  );
+  await page.setViewportSize({ width: 1320, height: 860 });
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("heading", { name: "Everything in its place." }).waitFor();
+  await page.getByRole("heading", { name: "Set up Kestrel." }).waitFor();
   await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
   const chatGptConnection = page.locator(".oauth-connection").filter({ hasText: "ChatGPT" });
   await chatGptConnection.getByText("ChatGPT", { exact: true }).waitFor();

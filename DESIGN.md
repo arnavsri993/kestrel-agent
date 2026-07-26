@@ -491,3 +491,14 @@ The identity is built around one real scheduling decision and a single inspectab
 - Responsive contract: provider controls are two-column only when their labels and values remain readable; compact windows and zoom stack them in source order without horizontal overflow.
 - Motion contract: static by intent except existing button feedback. Reduced motion requires no special substitute because no information moves.
 - Why this is not generic: the surface explains the actual Kestrel credential precedence, core-process boundary, pinned Bitwarden installer, and argv-only helper contract instead of presenting three interchangeable integration tiles.
+
+## Desktop refinement — action before ornament
+
+- Thesis: the empty desktop is a launch surface for a real task, not a decorative hero or a vacant chat canvas.
+- Density and material: preserve the `dense-app` graphite shell, restrained green status signal, local UI type, and feedback-only motion.
+- Primary action contract: project work exposes a visible `Add project` control; project review opens the real folder chooser; conversation-only sessions never claim a project can be attached after creation.
+- Starter composition: two ruled, text-led actions replace small generic suggestion pills. Each action names the task and consequence without adding cards, badges, or fake activity.
+- Navigation contract: `New chat` has an honest current state and remains reachable with a visible label when the desktop window recomposes to its compact bottom navigation.
+- Copy pass: utility headings name the surface or decision directly; supporting lines keep only task, boundary, or recovery information.
+- Motion contract: no new role. Existing short page-state feedback remains optional under reduced motion.
+- Why this is not generic: Kestrel's first view is organized around a granted local project, a reviewable task sequence, explicit tool scope, and real approval boundaries instead of prompt chips or fabricated workspace content.
