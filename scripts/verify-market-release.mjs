@@ -22,16 +22,16 @@ for (const [name, source] of [["privacy", privacy], ["support", support]]) {
   if (/TODO|TBD|example\\.com|your[- ]?(email|company)/i.test(source)) fail(`${name} route contains a release placeholder.`);
 }
 
-for (const marker of ["arch: [arm64]", "Kestrel-Apple-Silicon-", "hardenedRuntime: true", "target: dmg", "target: zip", "provider: generic", "${env.KESTREL_UPDATE_URL}", "channel: latest"]) {
+for (const marker of ["arch: [arm64]", "Kestrel-Apple-Silicon-", "hardenedRuntime: true", "target: dmg", "target: zip", "target: pkg", "provider: generic", "${env.KESTREL_UPDATE_URL}", "channel: latest"]) {
   if (!builder.includes(marker)) fail(`desktop packaging is missing ${marker}.`);
 }
 for (const forbidden of ["universal", "x64", "mas", "app-store"]) {
   if (builder.toLowerCase().includes(forbidden)) fail(`desktop packaging still contains unsupported target ${forbidden}.`);
 }
-for (const marker of ["--arm64", "uname -m", "test:local-ai:real", "codesign --verify", "stapler validate", "spctl --assess", 'lipo -archs', '= \"arm64\"', "KESTREL_UPDATE_URL", "release/*.dmg", "release/*.zip", "release/*.blockmap", "latest-mac.yml", "SHA256SUMS", "release-manifest.json"]) {
+for (const marker of ["--arm64", "uname -m", "test:local-ai:real", "codesign --verify", "stapler validate", "spctl --assess", "pkgutil --check-signature", 'lipo -archs', '= \"arm64\"', "KESTREL_UPDATE_URL", "release/*.dmg", "release/*.zip", "release/*.pkg", "release/*.blockmap", "latest-mac.yml", "SHA256SUMS", "release-manifest.json"]) {
   if (!workflow.includes(marker)) fail(`macOS release workflow is missing ${marker}.`);
 }
-for (const secret of ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]) {
+for (const secret of ["CSC_LINK", "CSC_KEY_PASSWORD", "CSC_INSTALLER_LINK", "CSC_INSTALLER_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]) {
   if (!workflow.includes(secret)) fail(`macOS release workflow is missing ${secret}.`);
 }
 if (!workflow.includes("test:packaged-desktop:arm64")) fail("macOS release workflow does not smoke-test the signed packaged application.");
@@ -39,6 +39,7 @@ for (const marker of ["actions/configure-pages@v5", "actions/upload-pages-artifa
   if (!websiteWorkflow.includes(marker)) fail(`website deployment workflow is missing ${marker}.`);
 }
 if (!desktopPackage.includes('"package:mac:dev"') || !desktopPackage.includes("--arm64")) fail("desktop development packaging must target arm64.");
+if (!desktopPackage.includes('"package:mac:mdm"') || !desktopPackage.includes("--mac pkg")) fail("desktop MDM packaging must provide an arm64 PKG target.");
 if (/package:mac:universal|test:packaged-desktop:universal/.test(`${desktopPackage}\n${rootPackage}`)) fail("universal desktop scripts remain configured.");
 if (!rootPackage.includes("pnpm test:desktop-setup")) fail("the market verification command does not exercise guided local-AI setup.");
 
