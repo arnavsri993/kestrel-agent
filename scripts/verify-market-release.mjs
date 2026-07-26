@@ -43,6 +43,7 @@ if (!desktopPackage.includes('"package:mac:mdm"') || !desktopPackage.includes("-
 if (/package:mac:universal|test:packaged-desktop:universal/.test(`${desktopPackage}\n${rootPackage}`)) fail("universal desktop scripts remain configured.");
 if (!rootPackage.includes("pnpm test:desktop-setup")) fail("the market verification command does not exercise guided local-AI setup.");
 if (!rootPackage.includes("pnpm test:desktop-personas")) fail("the market verification command does not exercise the full desktop persona matrix.");
+if (!rootPackage.includes("pnpm test:desktop-managed-policy")) fail("the market verification command does not exercise signed managed-policy bootstrap.");
 
 if (process.argv.includes("--distribution")) {
   for (const name of ["PUBLIC_SITE_URL", "PUBLIC_SUPPORT_URL", "PUBLIC_PRIVACY_URL", "PUBLIC_DOWNLOAD_URL", "PUBLIC_RELEASE_MANIFEST_URL", "PUBLIC_RELEASE_CHECKSUMS_URL", "PUBLIC_PUBLISHER_NAME", "PUBLIC_SUPPORT_EMAIL"]) {

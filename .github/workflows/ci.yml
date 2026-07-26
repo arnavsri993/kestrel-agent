@@ -62,5 +62,6 @@ jobs:
       - run: corepack pnpm test:desktop-widgets
       - run: corepack pnpm test:desktop-events
       - run: corepack pnpm test:desktop-personas
+      - run: corepack pnpm test:desktop-managed-policy
       - run: corepack pnpm package:mac:dev
       - run: corepack pnpm test:packaged-desktop:arm64

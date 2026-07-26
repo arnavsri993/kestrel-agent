@@ -40,6 +40,10 @@ The tag workflow also publishes the signed PKG for MDM distribution. The public
 download URL remains the DMG; the PKG is for an organization's managed rollout
 and must be tested on a clean enrolled device before broad deployment.
 
+The signed-policy contract, required launch variables, policy bounds, and
+clean-device rollout sequence are documented in
+[enterprise deployment](enterprise-deployment.md).
+
 Build the website with `NEXT_PUBLIC_PUBLISHER_NAME` and
 `NEXT_PUBLIC_SUPPORT_EMAIL` set to the verified operator values. Distribution
 mode fetches the deployed site, privacy, and support pages and verifies their
