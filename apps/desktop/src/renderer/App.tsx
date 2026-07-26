@@ -137,12 +137,23 @@ function sessionTitleForDisplay(title: string): string {
 }
 
 const setupSteps = [
-  { label: "Welcome", icon: "welcome" },
-  { label: "Privacy", icon: "safety" },
-  { label: "Pick a model", icon: "models" },
-  { label: "Connect it", icon: "work" },
-  { label: "All set", icon: "ready" },
+  { id: "welcome", label: "Welcome", icon: "welcome" },
+  { id: "before-you-begin", label: "Before you begin", icon: "safety" },
+  { id: "choose-model", label: "Choose a model", icon: "models" },
+  { id: "model-setup", label: "Model setup", icon: "work" },
+  { id: "ready", label: "Ready", icon: "ready" },
 ] as const;
+const finalSetupStep = setupSteps.length - 1;
+
+function readPersistedSetupStep(): number {
+  const persisted = localStorage.getItem("kestrel:setup-step");
+  const persistedId = setupSteps.findIndex((item) => item.id === persisted);
+  if (persistedId >= 0) return persistedId;
+  const legacyIndex = Number(persisted);
+  return Number.isFinite(legacyIndex)
+    ? Math.min(finalSetupStep, Math.max(0, legacyIndex))
+    : 0;
+}
 
 const paidProviderCatalog = [
   {
@@ -258,12 +269,7 @@ function compactBytes(value: number): string {
 
 function Onboarding({ onDone }: { onDone(): void }) {
   const reduced = useReducedMotion();
-  const [step, setStep] = useState(() =>
-    Math.min(
-      4,
-      Math.max(0, Number(localStorage.getItem("kestrel:setup-step") ?? 0) || 0),
-    ),
-  );
+  const [step, setStep] = useState(() => readPersistedSetupStep());
   const [warningAccepted, setWarningAccepted] = useState(
     () => localStorage.getItem("kestrel:setup-warning") === "yes",
   );
@@ -367,8 +373,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
   }, []);
 
   function go(next: number) {
-    const bounded = Math.min(4, Math.max(0, next));
-    localStorage.setItem("kestrel:setup-step", String(bounded));
+    const bounded = Math.min(finalSetupStep, Math.max(0, next));
+    localStorage.setItem("kestrel:setup-step", setupSteps[bounded]!.id);
     setStep(bounded);
   }
 
@@ -600,7 +606,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
     ) ||
     localModels.length > 0 ||
     subscriptionClis.some((cli) => cli.enabled);
-  const verifiedModelReady = providerChecks.some((check) => check.ok);
+  const verifiedModelReady =
+    Boolean(localRuntime?.verifiedModel) || providerChecks.some((check) => check.ok);
   const recommendedTiers = recommendedLocalModelTiers(systemProfile);
   const compatibleLocalModels = supportedLocalModels(systemProfile);
   const matchingPaidProviders = paidProviderCatalog.filter((provider) => {
@@ -619,14 +626,31 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
   useEffect(() => {
     if (
-      step === 4 &&
+      step === finalSetupStep &&
       modelReady &&
+      !verifiedModelReady &&
       providerChecks.length === 0 &&
       !providerCheckBusy &&
       !providerCheckError
     )
       void checkModelRoutes();
-  }, [step, modelReady]);
+  }, [step, modelReady, verifiedModelReady]);
+
+  const finishHeading = verifiedModelReady
+    ? "Kestrel is ready."
+    : modelReady
+      ? "Your model route is configured."
+      : "Your workspace is ready.";
+  const finishDescription = verifiedModelReady
+    ? "A real model route responded during setup. Add folders and services only when a real task needs them."
+    : modelReady
+      ? "A model route is saved, but it has not passed a live check yet. Check it before relying on live agent work."
+      : "You can explore the workspace now and connect a model later when you want live agent work.";
+  const finishPrimaryLabel = verifiedModelReady
+    ? "Start using Kestrel"
+    : modelReady
+      ? "Open Kestrel"
+      : "Open local preview";
 
   return (
     <main className="onboarding setup-onboarding">
@@ -786,16 +810,16 @@ function Onboarding({ onDone }: { onDone(): void }) {
                 <header>
                   <h1>
                     {step === 2
-                      ? "How would you like to use AI?"
+                      ? "Choose a model."
                       : modelView === "accounts"
-                        ? "Use an account you already have."
+                        ? "Connect an account."
                         : modelView === "local"
-                          ? "Choose a local model."
-                          : "Start with free provider accounts."}
+                          ? "Set up a local model."
+                          : "Connect a free account."}
                   </h1>
                   <p>
                     {step === 2
-                      ? "Choose the option that feels simplest. You can add another one later."
+                      ? "Choose how Kestrel should run. You can add another route later."
                       : modelView === "accounts"
                         ? "Sign in with a supported subscription, or add an API key from your provider."
                         : modelView === "local"
@@ -809,7 +833,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     onClick={() => chooseModelAccess("accounts")}
                   >
                     <span className="source-glyph" aria-hidden="true">☁</span>
-                    <strong>Use my AI account</strong>
+                    <strong>Use an account I already have</strong>
                     <small>
                       OpenAI, Anthropic, and other providers.
                     </small>
@@ -829,7 +853,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     onClick={() => chooseModelAccess("open")}
                   >
                     <span className="source-glyph" aria-hidden="true">◎</span>
-                    <strong>Use free accounts</strong>
+                    <strong>Start with free accounts</strong>
                     <small>
                       Connect one or more providers with free access.
                     </small>
@@ -1433,33 +1457,27 @@ function Onboarding({ onDone }: { onDone(): void }) {
               </div>
             )}
 
-            {step === 4 && (
+            {step === finalSetupStep && (
               <div className="setup-finish">
-                <h1>
-                  {modelReady
-                    ? "Kestrel is ready."
-                    : "The workspace is ready. A model is still optional."}
-                </h1>
-                <p>
-                  {modelReady
-                    ? "Your model route and safety boundary are in place. Add folders and services only when a real task needs them."
-                    : "You can explore the local workspace now. Conversations and agent work begin after you connect an external provider or install a local model."}
-                </p>
+                <h1>{finishHeading}</h1>
+                <p>{finishDescription}</p>
                 <div className="finish-checks">
                   <div className={verifiedModelReady ? "done" : "attention"}>
                     <span>
                       {verifiedModelReady ? "✓" : providerCheckBusy ? "…" : "!"}
                     </span>
                     <span>
-                      <strong>Live model route</strong>
-                      <small>
-                        {verifiedModelReady
-                          ? `${providerChecks.filter((check) => check.ok).length} route${providerChecks.filter((check) => check.ok).length === 1 ? "" : "s"} responded to an account check`
-                          : providerCheckBusy
-                            ? "Checking the configured route now…"
-                            : modelReady
-                              ? "Configured, but not yet verified"
-                              : "Add later in Settings"}
+                        <strong>{verifiedModelReady ? "Live model route" : "Model route"}</strong>
+                        <small>
+                          {verifiedModelReady
+                            ? providerChecks.filter((check) => check.ok).length > 0
+                              ? `${providerChecks.filter((check) => check.ok).length} route${providerChecks.filter((check) => check.ok).length === 1 ? "" : "s"} responded to an account check`
+                              : `${localRuntime?.verifiedModel ?? "A local model"} returned a real response during setup`
+                            : providerCheckBusy
+                              ? "Checking the configured route now…"
+                              : modelReady
+                                ? "Configured; check it before live work"
+                                : "Not connected yet; add one later in Settings"}
                       </small>
                     </span>
                     {modelReady &&
@@ -1524,12 +1542,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
               Back
             </button>
           )}
-          {step === 3 && !modelReady && (
-            <button className="button quiet" onClick={() => go(4)}>
+          {step === 3 && !modelReady && !automaticBusy && !downloading && (
+            <button className="button quiet" onClick={() => go(finalSetupStep)}>
               Do this later
             </button>
           )}
-          {step === setupSteps.length - 1 && modelReady && (
+          {step === finalSetupStep && (
             <button
               className="button secondary"
               onClick={() => {
@@ -1548,7 +1566,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                 onDone();
               }}
             >
-              Finish with help
+              Finish with setup help
             </button>
           )}
           {step !== 2 && (
@@ -1556,19 +1574,13 @@ function Onboarding({ onDone }: { onDone(): void }) {
               className="button primary"
               disabled={step === 1 && !warningAccepted}
               onClick={() => {
-                if (step === setupSteps.length - 1) {
+                if (step === finalSetupStep) {
                   localStorage.removeItem("kestrel:setup-step");
                   onDone();
                 } else go(step + 1);
               }}
             >
-              {step === setupSteps.length - 1
-                ? modelReady
-                  ? "Start using Kestrel"
-                  : "Open local preview"
-                : step === 0
-                  ? "Continue"
-                  : "Continue"}
+              {step === finalSetupStep ? finishPrimaryLabel : "Continue"}
               <Icon name="arrow" />
             </button>
           )}
@@ -6420,7 +6432,7 @@ function Settings({
   }
   function reopenSetup() {
     localStorage.removeItem("kestrel:onboarded");
-    localStorage.setItem("kestrel:setup-step", "0");
+    localStorage.setItem("kestrel:setup-step", setupSteps[0]!.id);
     location.reload();
   }
   const route = snapshot.modelRouting.currentDecision;

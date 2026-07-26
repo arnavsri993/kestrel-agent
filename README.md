@@ -66,7 +66,7 @@ To use ChatGPT plan access without giving Kestrel an OAuth token, choose **Sign 
 
 Build packaged terminal/editor entry points with `pnpm --filter @kestrel/cli build`. The outputs are `apps/cli/dist/kestrel.mjs` and `apps/cli/dist/kestrel-acp.mjs`. `kestrel tui` opens the interactive terminal, while `kestrel-acp` serves stable ACP v1 over NDJSON stdio. Pass `--model` and `--providers`, or set `KESTREL_MODEL` and `KESTREL_PROVIDERS`; provider credentials remain environment-only.
 
-The development app uses an isolated local database under the normal macOS application-support directory. Complete the four onboarding screens, then review the prepared teacher-scheduling approval. Approving executes only the development adapters.
+The development app uses an isolated local database under the normal macOS application-support directory. Complete the five onboarding screens, then review the prepared teacher-scheduling approval. Approving executes only the development adapters.
 
 Run the website:
 
