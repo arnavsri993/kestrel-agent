@@ -48,6 +48,7 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm build:desktop
+      - run: corepack pnpm test
       - run: corepack pnpm test:desktop-setup
       - run: corepack pnpm test:desktop-kanban
       - run: corepack pnpm test:desktop-readiness

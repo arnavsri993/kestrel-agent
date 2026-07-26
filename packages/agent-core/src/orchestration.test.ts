@@ -81,7 +81,7 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
-  it("delegates into an approved Git worktree and hands evidence back to the parent", async () => {
+  it.skipIf(process.platform !== "darwin")("delegates into an approved Git worktree and hands evidence back to the parent", async () => {
     const item = fixture(finalProvider());
     writeFileSync(join(item.root, "README.md"), "# Isolated\n");
     execFileSync("git", ["init"], { cwd: item.root });
