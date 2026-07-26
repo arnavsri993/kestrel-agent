@@ -71,6 +71,20 @@ The agent loop always receives a system-level credential rule:
 
 The local model is a guide, not a credential broker and not a bypass around approval or plugin trust policy.
 
+## Local-first tool policy
+
+Agent runs inspect conversation context, local memory, granted workspace files,
+and local runtime tools before reaching for an external service. Interactive
+research prefers Kestrel's isolated on-device browser when direct navigation is
+enough. Hosted search is an explicit fallback and requires
+`KESTREL_ALLOW_EXTERNAL_SEARCH=true` in addition to its provider credential.
+
+Voice data is not sent to OpenAI merely because an OpenAI credential is saved.
+Hosted transcription requires the separate
+`KESTREL_ALLOW_HOSTED_TRANSCRIPTION=true` opt-in. Until a local speech engine is
+installed and verified, voice transcription remains unavailable by default
+rather than silently leaving the device.
+
 ## Recovery
 
 - Re-run automatic setup to reuse a verified managed runtime/model and repeat the live inference check.

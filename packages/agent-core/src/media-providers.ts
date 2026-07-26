@@ -507,7 +507,11 @@ export function createEnvironmentMediaProviders(
 export function createEnvironmentTranscriptionProvider(
   environment: NodeJS.ProcessEnv = process.env,
 ): VoiceTranscriptionProvider | undefined {
-  if (!environment.OPENAI_API_KEY) return undefined;
+  if (
+    !environment.OPENAI_API_KEY ||
+    environment.KESTREL_ALLOW_HOSTED_TRANSCRIPTION !== "true"
+  )
+    return undefined;
   return new OpenAiTranscriptionProvider({
     apiKey: environment.OPENAI_API_KEY,
     ...(environment.KESTREL_OPENAI_TRANSCRIPTION_MODEL

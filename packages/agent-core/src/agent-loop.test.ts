@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { KestrelDatabase } from "@kestrel/database";
-import { AgentLoop } from "./agent-loop";
+import { AgentLoop, LOCAL_FIRST_TOOL_INSTRUCTIONS } from "./agent-loop";
 import { ContextCompactor } from "./context-compactor";
 import { AgentRuntime } from "./runtime";
 import { ProviderPool, textContent, type ModelProvider } from "./providers";
@@ -32,7 +32,14 @@ describe("provider-neutral agent loop", () => {
         calls += 1;
         expect(request.messages[0]).toMatchObject({ role: "system" });
         expect(request.messages[0]?.content).toEqual(expect.arrayContaining([
-          expect.objectContaining({ type: "text", text: expect.stringContaining("Never ask the user to paste API keys") })
+          expect.objectContaining({
+            type: "text",
+            text: expect.stringMatching(
+              new RegExp(
+                `Never ask the user to paste API keys[\\s\\S]*${LOCAL_FIRST_TOOL_INSTRUCTIONS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+              ),
+            ),
+          }),
         ]));
         if (calls === 1) return {
           providerId: "fake",

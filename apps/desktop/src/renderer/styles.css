@@ -198,6 +198,14 @@ button:disabled {
   background: var(--sidebar-hover);
   color: var(--ink);
 }
+.nav-section button:focus-visible,
+.sidebar-bottom > button:focus-visible,
+.new-task-button:focus-visible {
+  outline: 0;
+  background: var(--sidebar-hover);
+  color: var(--ink);
+  box-shadow: inset 2px 0 var(--signal);
+}
 .nav-section button.active,
 .sidebar-bottom > button.active {
   background: var(--surface);
@@ -377,8 +385,9 @@ button:disabled {
   line-height: 1.55;
 }
 .composer {
+  position: relative;
   width: 100%;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   background: var(--surface);
@@ -388,7 +397,6 @@ button:disabled {
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--signal) 62%, transparent);
   box-shadow:
-    inset 3px 0 var(--signal),
     0 0 0 2px color-mix(in srgb, var(--signal) 13%, transparent),
     var(--shadow-composer);
 }
@@ -397,7 +405,8 @@ button:disabled {
   width: 100%;
   min-height: 66px;
   max-height: 180px;
-  resize: vertical;
+  resize: none;
+  overflow-y: hidden;
   padding: 19px 19px 8px;
   border: 0;
   outline: 0;
@@ -434,6 +443,64 @@ button:disabled {
 .composer-icon {
   color: var(--muted);
   opacity: 1;
+}
+.task-settings {
+  position: relative;
+}
+.task-settings > summary {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+.task-settings > summary::-webkit-details-marker {
+  display: none;
+}
+.task-settings > summary:hover,
+.task-settings[open] > summary {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+.task-settings > summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 1px;
+}
+.task-settings > summary svg {
+  width: 16px;
+}
+.task-settings-panel {
+  position: absolute;
+  z-index: 10;
+  left: -42px;
+  bottom: 42px;
+  width: min(620px, calc(100vw - 300px));
+  max-height: min(520px, calc(100vh - 180px));
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow-composer);
+}
+.task-settings-panel > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.task-settings-panel > header strong {
+  font-size: 12px;
+}
+.task-settings-panel > header small {
+  color: var(--muted);
+  font-size: 10px;
 }
 .voice-button {
   display: grid;
@@ -754,7 +821,7 @@ button:disabled {
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  margin-bottom: 7px;
+  margin-bottom: 0;
   padding: 0 3px;
   color: var(--muted);
   font-size: 9px;
@@ -886,7 +953,7 @@ button:disabled {
   flex-wrap: wrap;
   align-items: end;
   gap: 7px;
-  margin-bottom: 7px;
+  margin-bottom: 0;
 }
 .runtime-lifecycle-controls label {
   min-width: 190px;
@@ -2725,10 +2792,66 @@ button:disabled {
 .settings-stack {
   border-top: 1px solid var(--line-strong);
 }
-.settings-extension {
-  width: min(980px, calc(100% - 64px));
-  margin: 0 auto 72px;
-  border-top: 1px solid var(--line-strong);
+.settings-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 34px;
+  align-items: start;
+}
+.settings-nav {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+.settings-nav button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 11px;
+  border-radius: 8px;
+  color: var(--muted);
+  text-align: left;
+}
+.settings-nav button:hover {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+.settings-nav button.active {
+  background: var(--ink);
+  color: var(--canvas);
+}
+.settings-nav button span {
+  font-size: 11px;
+  font-weight: 620;
+}
+.settings-nav button small {
+  color: inherit;
+  font-size: 8px;
+  line-height: 1.35;
+  opacity: 0.68;
+}
+.settings-content {
+  min-width: 0;
+}
+.settings-panel-header {
+  padding-bottom: 18px;
+}
+.settings-panel-header h2 {
+  margin: 5px 0 0;
+  font-size: clamp(22px, 3vw, 32px);
+  letter-spacing: -0.04em;
+}
+.settings-panel-header p {
+  max-width: 620px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
 }
 .learned-skills-setting details {
   max-width: 620px;
@@ -5537,6 +5660,14 @@ html:has(.pet-overlay-shell) #root {
   }
   .memory-filters {
     grid-template-columns: repeat(3, 1fr);
+  }
+  .settings-layout {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .settings-nav {
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .connection-list article {
     grid-template-columns: 40px 1fr;

@@ -64,5 +64,10 @@ describe("network-policy web tools", () => {
     expect(request?.url).toContain("api.search.brave.com/res/v1/web/search?q=kestrel");
     expect(request?.headers.get("x-subscription-token")).toBe("search-secret");
     expect(environmentWebAccessOptions({ KESTREL_WEB_ALLOW_PUBLIC: "true", BRAVE_SEARCH_API_KEY: "key" })).toMatchObject({ allowPublicHosts: true });
+    expect(environmentWebAccessOptions({ BRAVE_SEARCH_API_KEY: "key" })).toBeUndefined();
+    expect(environmentWebAccessOptions({
+      BRAVE_SEARCH_API_KEY: "key",
+      KESTREL_ALLOW_EXTERNAL_SEARCH: "true",
+    })?.searchProvider).toBeInstanceOf(BraveSearchProvider);
   });
 });

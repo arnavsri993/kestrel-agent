@@ -11,6 +11,7 @@ import {
   FalMusicProvider,
   OpenAiMediaProvider,
   OpenAiTranscriptionProvider,
+  createEnvironmentTranscriptionProvider,
 } from "./media-providers";
 
 const directories: string[] = [];
@@ -20,6 +21,14 @@ afterEach(() => {
 });
 
 describe("media artifact workflow", () => {
+  it("does not activate hosted transcription from a credential alone", () => {
+    expect(createEnvironmentTranscriptionProvider({ OPENAI_API_KEY: "key" })).toBeUndefined();
+    expect(createEnvironmentTranscriptionProvider({
+      OPENAI_API_KEY: "key",
+      KESTREL_ALLOW_HOSTED_TRANSCRIPTION: "true",
+    })?.id).toBe("openai-transcription");
+  });
+
   it("approval-gates generation, writes verified bytes, and records provenance privately", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-artifacts-"));
     directories.push(root);

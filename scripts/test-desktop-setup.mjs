@@ -108,8 +108,9 @@ try {
   assert.match(setupAssistantPrompt, /Project access, tools\/MCP, skills\/plugins, channels, and automations/);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:setup-coach-context")), null);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), "yes");
-  await page.getByRole("button", { name: "Connections" }).click();
-  await page.getByRole("heading", { name: "Access only what helps." }).waitFor();
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("heading", { name: "Everything in its place." }).waitFor();
+  await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
   const chatGptConnection = page.locator(".oauth-connection").filter({ hasText: "ChatGPT" });
   await chatGptConnection.getByText("ChatGPT", { exact: true }).waitFor();
   assert.equal(
@@ -125,7 +126,7 @@ try {
   await page.getByLabel("Desktop OAuth client ID").fill("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com");
   assert.equal(await page.getByRole("button", { name: "Connect with Google" }).isEnabled(), true);
   await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "General" }).click();
   await page.getByRole("button", { name: "Open setup guide" }).click();
   await page.getByRole("heading", { name: /Your work, in one place/ }).waitFor();
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), null);
