@@ -16,7 +16,7 @@ This pass adds that missing action. After a completed run, the desktop conversat
 
 | Project | Durable feature pattern | Why it became popular | Current status / caution |
 | --- | --- | --- | --- |
-| [OpenClaw](https://github.com/openclaw/openclaw) | Always-on Gateway, many messaging channels, multi-agent routing, voice, Canvas, workspace skills, pairing and allowlists | It meets users where they already communicate and makes an assistant feel present across devices | Active, not dead. The same breadth creates a large security, channel-compatibility, and maintenance surface. |
+| [OpenClaw](https://github.com/openclaw/openclaw) | Always-on Gateway, many messaging channels, multi-agent routing, voice, Canvas, workspace skills, pairing and allowlists | It meets users where they already communicate and makes an assistant feel present across devices | Code and installs remain active, but the latest evidence shows declining ecosystem engagement and migration pressure toward Hermes. Treat it as a momentum/retention decline, not an archived project. |
 | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Self-improving skills, searchable sessions, user modeling, memory nudges, cron, subagents, multiple terminal backends, Telegram/Discord/Slack/WhatsApp/Signal | It closes the learning loop: the assistant can remember, reuse, and improve work instead of starting from chat every time | Active, not dead. A very broad surface and large public issue volume are maintenance signals, not proof of failure. |
 | [OpenWorker](https://github.com/andrewyng/openworker) | Desktop coworker, 25+ connectors, terminal/files, MCP, scheduled automations, BYOM, approval gates, unattended-run inbox | “Delivers finished work” is a clear promise, while local-first and BYOM reduce lock-in | Public beta and too young to call dead. Its durable test is whether connector breadth becomes reliable outcomes rather than setup work. |
 | [OpenHands](https://github.com/OpenHands/OpenHands) | Coding agents, automations, Agent Canvas, local/remote/cloud backends, SDK and multi-agent task APIs | Strong developer identity, visible agent work, and a path from local experiments to hosted/enterprise execution | Active, but the repository explicitly points users toward the newer [software-agent-sdk](https://github.com/OpenHands/software-agent-sdk) and [Agent Canvas](https://github.com/OpenHands/agent-canvas). This is a replatforming example, not a death. |
@@ -24,7 +24,17 @@ This pass adds that missing action. After a completed run, the desktop conversat
 | [Goose](https://github.com/aaif-goose/goose) | Native desktop app, CLI/API, many providers, MCP extensions, existing subscription/ACP paths, custom distributions | Cross-platform access plus standards and provider choice make it easy to adopt without choosing one model vendor | Active and moving quickly under the Linux Foundation/AAIF umbrella. Standards help adoption, but extension quality remains a trust boundary. |
 | [gpt-engineer](https://github.com/AntonOsika/gpt-engineer) | Early “describe software, watch it write and run code, then ask for changes” loop | It made code generation legible and demoable before the category was crowded | Archived by its owner in April 2026. The repository describes itself as the precursor to the managed [gptengineer.app](https://gptengineer.app/), so the evidence supports product evolution/absorption rather than a verified single-cause postmortem. |
 
-OpenClaw, Hermes, OpenWorker, OpenHands, Aider, and Goose should not be described as dead based on this snapshot. The useful comparison is between active products, a beta, a replatformed project, and one genuinely archived precursor.
+Hermes, OpenWorker, OpenHands, Aider, and Goose should not be described as dead based on this snapshot. OpenClaw is the important borderline case: it is still operationally active, but its viral-era engagement has declined and users are visibly migrating. The useful comparison is between active products, a beta, a declining incumbent, a replatformed project, and one genuinely archived precursor.
+
+## Latest OpenClaw check: decline versus death
+
+The latest public signals point in two directions:
+
+- **The project is not low-use in absolute terms.** The [GitHub repository API](https://api.github.com/repos/openclaw/openclaw) reported a push on 2026-07-26, `archived: false`, 384,123 stars, 80,712 forks, and 7,059 open issues. The [npm package page](https://www.npmjs.com/package/openclaw?activeTab=versions) reported 2,579,037 weekly downloads and 292,017 downloads for the current `2026.7.1-2` tag over its last seven days. These are not unique active users, but they rule out “almost nobody is getting it.”
+- **The ecosystem did lose engagement.** A study of Moltbook, an adjacent agent community powered by frameworks including OpenClaw, measured mean comments per post falling from 31.7 to 8.3 to 1.7, with the median reaching zero; the authors interpret this as casual participants disengaging while committed users remain. See the [study’s results](https://arxiv.org/abs/2602.18832).
+- **Migration pressure is real.** Hermes now publishes an [official OpenClaw migration guide](https://hermes-agent.nousresearch.com/docs/guides/migrate-from-openclaw), and its community megathread explicitly describes a “recent influx of users moving over from OpenClaw.” Community posts are self-selected and cannot establish a migration percentage, but they are meaningful directional evidence when paired with the official importer.
+
+The correct product label is therefore **declining momentum / retention pressure**, not “archived” and not “no users.” For Kestrel, that distinction matters: target dissatisfied and migrating users with reliable import, clear permissions, and a better repeat-work loop rather than trying to copy OpenClaw’s peak feature surface.
 
 ## What made them popular
 
@@ -73,6 +83,7 @@ The new **Save as skill** action makes the learning loop visible at the moment i
 1. Unify artifacts, checks, approvals, and final messages into one verified outcome receipt.
 2. Ship an explicit launchd/OS-woken automation path with the same local encryption and approval boundary.
 3. Add one carefully tested high-demand channel only after inbound authentication, pairing, replay protection, and migration behavior are covered.
-4. Provide export/import for memories, learned skills, schedules, and channel settings so Kestrel remains portable if its architecture changes.
+4. Add a read-only OpenClaw/Hermes import preview for memories, skills, schedules, and channel settings; require explicit approval before copying secrets or activating behavior.
+5. Provide export/import for Kestrel’s own memories, learned skills, schedules, and channel settings so Kestrel remains portable if its architecture changes.
 
 The intended product shape is therefore not “the assistant with every feature.” It is a calm local system that turns successful work into trustworthy, reusable capability.
