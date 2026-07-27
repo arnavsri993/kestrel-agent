@@ -19,6 +19,10 @@ try {
   await page.waitForLoadState("domcontentloaded");
 
   await page.getByRole("heading", { name: /Your work, in one place/ }).waitFor();
+  assert.deepEqual(
+    await page.locator(".setup-rail li strong").allTextContents(),
+    ["Welcome", "Before you begin", "Choose a model", "Model setup", "Ready"],
+  );
   await page.getByRole("button", { name: "Continue" }).click();
   const continueButton = page.getByRole("button", { name: "Continue" });
   assert.equal(await continueButton.isDisabled(), true);
@@ -30,9 +34,9 @@ try {
   assert.equal(await page.getByLabel("I understand these boundaries").isChecked(), true);
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await page.getByRole("heading", { name: "How would you like to use AI?" }).waitFor();
-  await page.getByRole("button", { name: /Use my AI account/ }).click();
-  await page.getByRole("heading", { name: "Use an account you already have." }).waitFor();
+  await page.getByRole("heading", { name: "Choose a model." }).waitFor();
+  await page.getByRole("button", { name: /Use an account I already have/ }).click();
+  await page.getByRole("heading", { name: "Connect an account." }).waitFor();
   await page.getByText("Choose a paid provider", { exact: true }).waitFor();
   await page.getByRole("option", { name: /OpenAI/ }).waitFor();
   await page.getByText("Codex CLI", { exact: true }).waitFor();
@@ -53,7 +57,7 @@ try {
   await page.getByLabel("Find a provider").fill("");
   await page.getByRole("button", { name: "Back" }).click();
   await page.getByRole("button", { name: /Keep it on this Mac/ }).click();
-  await page.getByRole("heading", { name: "Choose a local model." }).waitFor();
+  await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
   await page.getByText("Balanced is recommended for this Mac.", { exact: true }).waitFor();
   const tierNames = page.locator(".model-tier-name strong");
   await tierNames.first().waitFor();
@@ -95,8 +99,8 @@ try {
   await page.getByRole("link", { name: "Install Ollama from its official download" }).waitFor();
   await page.getByText("Any other Ollama model", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: /Use free accounts/ }).click();
-  await page.getByRole("heading", { name: "Start with free provider accounts." }).waitFor();
+  await page.getByRole("button", { name: /Start with free accounts/ }).click();
+  await page.getByRole("heading", { name: "Connect a free account." }).waitFor();
   await page.getByText("More ways to run models", { exact: true }).waitFor();
   await page.getByRole("link", { name: /Hugging Face Inference Providers/ }).waitFor();
 
@@ -107,8 +111,8 @@ try {
   await page.setViewportSize({ width: 1320, height: 860 });
   assert.equal(await page.getByRole("button", { name: "Do this later" }).count(), 0);
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("heading", { name: /Kestrel is ready|The workspace is ready/ }).waitFor();
-  await page.getByRole("button", { name: "Finish with help" }).click();
+  await page.getByRole("heading", { name: /Kestrel is ready|Your model route is configured\.|Your workspace is ready\./ }).waitFor();
+  await page.getByRole("button", { name: "Finish with setup help" }).click();
   await page.getByRole("button", { name: "New chat" }).waitFor();
   const setupAssistantPrompt = await page.getByLabel("Message Kestrel").inputValue();
   assert.match(setupAssistantPrompt, /Help me finish setting up Kestrel/);
