@@ -60,7 +60,10 @@ try {
   const iframe = page.locator(".artifact-widget iframe");
   await iframe.waitFor();
   assert.equal(await iframe.getAttribute("sandbox"), "allow-scripts");
-  const widget = page.frameLocator(".artifact-widget iframe");
+  const iframeHandle = await iframe.elementHandle();
+  const widget = await iframeHandle?.contentFrame();
+  assert.ok(widget, "Interactive artifact frame was not attached.");
+  await widget.waitForLoadState("load");
   await widget.getByRole("button", { name: "Visual" }).click();
   await widget
     .getByRole("heading", { name: "Visual review selected" })
