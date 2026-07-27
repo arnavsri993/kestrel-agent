@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import type { GoalRecordContract, RuntimeSession } from "@kestrel/shared-types";
+import { sessionTitleForDisplay } from "../chat-title";
 
 type TaskStatus = GoalRecordContract["tasks"][number]["status"];
 
@@ -62,7 +63,7 @@ export function GoalKanban({ goals, sessions, busy, onTaskUpdate, onCompleteGoal
     const succeeded = await onTaskUpdate({ goalId, taskId, assigneeSessionId });
     if (!succeeded) return;
     const worker = workers.find((session) => session.id === assigneeSessionId);
-    setAnnouncement(worker ? `Task assigned to ${worker.title}.` : "Task returned to the local operator.");
+    setAnnouncement(worker ? `Task assigned to ${sessionTitleForDisplay(worker.title)}.` : "Task returned to the local operator.");
   }
 
   function startDrag(event: DragEvent<HTMLElement>, goalId: string, taskId: string, status: TaskStatus) {
@@ -99,7 +100,7 @@ export function GoalKanban({ goals, sessions, busy, onTaskUpdate, onCompleteGoal
         {workers.length > 0
           ? <ul>{workers.map((worker) => {
               const assigned = activeGoals.reduce((total, goal) => total + goal.tasks.filter((task) => task.assigneeSessionId === worker.id).length, 0);
-              return <li key={worker.id}><span className={`agent-dot ${worker.status === "active" ? "working" : worker.status === "waiting" ? "paused" : "idle"}`} /><strong>{worker.title}</strong><small>{worker.status.replaceAll("_", " ")} · {assigned} assigned</small></li>;
+              return <li key={worker.id}><span className={`agent-dot ${worker.status === "active" ? "working" : worker.status === "waiting" ? "paused" : "idle"}`} /><strong>{sessionTitleForDisplay(worker.title)}</strong><small>{worker.status.replaceAll("_", " ")} · {assigned} assigned</small></li>;
             })}</ul>
           : <p>No worker lanes are configured. Cards remain with the local operator.</p>}
       </div>
@@ -165,7 +166,7 @@ export function GoalKanban({ goals, sessions, busy, onTaskUpdate, onCompleteGoal
                               onChange={(event) => void assignTask(goal.id, task.id, event.target.value || null)}
                             >
                               <option value="">Local operator</option>
-                              {workerOptions.map((worker) => <option key={worker.id} value={worker.id}>{worker.title}</option>)}
+                              {workerOptions.map((worker) => <option key={worker.id} value={worker.id}>{sessionTitleForDisplay(worker.title)}</option>)}
                             </select>
                           </label>
                           <div className="kanban-card-actions">

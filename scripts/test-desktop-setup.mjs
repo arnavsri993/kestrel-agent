@@ -107,6 +107,15 @@ try {
   await page.setViewportSize({ width: 640, height: 760 });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   assert.equal(overflow, false);
+  const railLayout = await page.locator(".setup-rail ol").evaluate((rail) => {
+    const items = [...rail.querySelectorAll("li")].map((item) => item.getBoundingClientRect());
+    return {
+      rows: getComputedStyle(rail).gridTemplateRows.split(" ").filter(Boolean).length,
+      topEdges: [...new Set(items.map((item) => Math.round(item.top)))],
+    };
+  });
+  assert.equal(railLayout.rows, 1);
+  assert.equal(railLayout.topEdges.length, 1);
 
   await page.setViewportSize({ width: 1320, height: 860 });
   assert.equal(await page.getByRole("button", { name: "Do this later" }).count(), 0);

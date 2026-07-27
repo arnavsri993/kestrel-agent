@@ -42,6 +42,9 @@ OTLP and Prometheus setup, privacy exclusions, and recovery are documented in [d
 Public privacy/support surfaces, store metadata, distribution inputs, signing,
 hardware certification, and the fail-closed market gate are documented in
 [docs/market-release.md](docs/market-release.md).
+The signed-policy contract, MDM PKG rollout, clean-device verification, and
+the exact organization-owned deployment inputs are documented in
+[docs/enterprise-deployment.md](docs/enterprise-deployment.md).
 
 ## Quick start
 

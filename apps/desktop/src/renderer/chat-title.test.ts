@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatTitleFromPrompt } from "./chat-title";
+import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 
 describe("chatTitleFromPrompt", () => {
   it("turns a conversational request into a concise title", () => {
@@ -34,5 +34,12 @@ describe("chatTitleFromPrompt", () => {
     expect(chatTitleFromPrompt("Could you fix OAuth in Kestrel?")).toBe(
       "Fix OAuth in Kestrel",
     );
+  });
+
+  it("hides the retired visible product name in setup session labels", () => {
+    expect(
+      sessionTitleForDisplay("Help me finish setting up Workstrand."),
+    ).toBe("Help me finish setting up Kestrel.");
+    expect(sessionTitleForDisplay("Main session")).toBe("Main session");
   });
 });

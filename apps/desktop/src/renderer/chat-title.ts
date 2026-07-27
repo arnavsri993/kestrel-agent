@@ -54,3 +54,12 @@ export function chatTitleFromPrompt(prompt: string): string {
   const concise = truncateAtWord(cleaned, MAX_CHAT_TITLE_LENGTH);
   return concise.charAt(0).toUpperCase() + concise.slice(1);
 }
+
+export function sessionTitleForDisplay(title: string): string {
+  // The setup coach session predates the visible Kestrel rename. Keep stored
+  // history intact while preventing old product chrome from leaking into the
+  // current shell.
+  return title.startsWith("Help me finish setting up Workstrand")
+    ? title.replaceAll("Workstrand", "Kestrel")
+    : title;
+}

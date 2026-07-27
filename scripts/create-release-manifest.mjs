@@ -3,11 +3,11 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 const root = resolve(process.argv[2] ?? "release");
-const artifacts = readdirSync(root).map((name) => join(root, name)).filter((path) => statSync(path).isFile() && /\.(?:dmg|zip)$/.test(path)).sort();
-if (artifacts.length === 0) throw new Error("No DMG or ZIP release artifacts were found.");
+const artifacts = readdirSync(root).map((name) => join(root, name)).filter((path) => statSync(path).isFile() && /\.(?:dmg|zip|pkg)$/.test(path)).sort();
+if (artifacts.length === 0) throw new Error("No DMG, ZIP, or PKG release artifacts were found.");
 const records = artifacts.map((path) => {
   const filename = basename(path);
-  if (!/^Kestrel-Apple-Silicon-[0-9A-Za-z.-]+\.(?:dmg|zip)$/.test(filename)) {
+  if (!/^Kestrel-Apple-Silicon-[0-9A-Za-z.-]+\.(?:dmg|zip|pkg)$/.test(filename)) {
     throw new Error(`Unsupported release artifact: ${filename}`);
   }
   return { filename, bytes: statSync(path).size, sha256: createHash("sha256").update(readFileSync(path)).digest("hex") };
