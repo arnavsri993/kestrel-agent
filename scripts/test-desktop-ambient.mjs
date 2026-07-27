@@ -53,7 +53,7 @@ try {
   await page.screenshot({ path: memoryScreenshot });
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: /^Memory & behavior/ }).click();
+  await page.getByRole("button", { name: /^Memory/ }).click();
   const presence = page.locator(".presence-setting");
   await presence.getByText("Connected instances", { exact: true }).waitFor();
   await presence.getByText("Local agent core", { exact: true }).waitFor();

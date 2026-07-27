@@ -18,24 +18,30 @@ try {
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
   await page.waitForLoadState("domcontentloaded");
 
-  await page.getByRole("heading", { name: /Your work, in one place/ }).waitFor();
+  await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
+  assert.equal(await page.locator(".setup-product-anchor").count(), 1);
   assert.deepEqual(
     await page.locator(".setup-rail li strong").allTextContents(),
     ["Welcome", "Before you begin", "Choose a model", "Model setup", "Ready"],
   );
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Get started" }).click();
   const continueButton = page.getByRole("button", { name: "Continue" });
   assert.equal(await continueButton.isDisabled(), true);
+  const firstBoundary = page.locator(".warning-panel details").first();
+  await firstBoundary.locator("summary").click();
+  await page
+    .getByText(/retention and training terms/)
+    .waitFor();
   await page.getByLabel("I understand these boundaries").check();
   assert.equal(await continueButton.isEnabled(), true);
 
   await page.reload();
-  await page.getByRole("heading", { name: "Choose what stays on this Mac." }).waitFor();
+  await page.getByRole("heading", { name: "Know what leaves this Mac." }).waitFor();
   assert.equal(await page.getByLabel("I understand these boundaries").isChecked(), true);
   await page.getByRole("button", { name: "Continue" }).click();
 
   await page.getByRole("heading", { name: "Choose a model." }).waitFor();
-  await page.getByRole("button", { name: /Use an account I already have/ }).click();
+  await page.getByRole("button", { name: /Use an account/ }).click();
   await page.getByRole("heading", { name: "Connect an account." }).waitFor();
   await page.getByText("Choose a paid provider", { exact: true }).waitFor();
   await page.getByRole("option", { name: /OpenAI/ }).waitFor();
@@ -56,7 +62,7 @@ try {
   assert.equal(await page.getByRole("option").count(), 1);
   await page.getByLabel("Find a provider").fill("");
   await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: /Keep it on this Mac/ }).click();
+  await page.getByRole("button", { name: /Run on this Mac/ }).click();
   await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
   await page.getByText("Balanced is recommended for this Mac.", { exact: true }).waitFor();
   const tierNames = page.locator(".model-tier-name strong");
@@ -99,7 +105,7 @@ try {
   await page.getByRole("link", { name: "Install Ollama from its official download" }).waitFor();
   await page.getByText("Any other Ollama model", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("button", { name: /Start with free accounts/ }).click();
+  await page.getByRole("button", { name: /Try free providers/ }).click();
   await page.getByRole("heading", { name: "Connect a free account." }).waitFor();
   await page.getByText("More ways to run models", { exact: true }).waitFor();
   await page.getByRole("link", { name: /Hugging Face Inference Providers/ }).waitFor();
@@ -107,6 +113,7 @@ try {
   await page.setViewportSize({ width: 640, height: 760 });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   assert.equal(overflow, false);
+  assert.equal(await page.locator(".setup-product-anchor").count(), 1);
   const railLayout = await page.locator(".setup-rail ol").evaluate((rail) => {
     const items = [...rail.querySelectorAll("li")].map((item) => item.getBoundingClientRect());
     return {
@@ -148,9 +155,23 @@ try {
     ),
     false,
   );
+  await page.getByRole("button", { name: "Tools" }).click();
+  await page.getByLabel("Kestrel tools").waitFor();
+  const compactTools = await page.locator(".tools-disclosure").evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return {
+      bottom: bounds.bottom,
+      viewport: window.innerHeight,
+      scrollable: element.scrollHeight >= element.clientHeight,
+    };
+  });
+  assert.ok(compactTools.bottom <= compactTools.viewport - 64);
+  assert.equal(compactTools.scrollable, true);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.locator(".tools-disclosure").waitFor({ state: "detached" });
+  assert.equal(await page.locator(".tools-disclosure").count(), 0);
   await page.setViewportSize({ width: 1320, height: 860 });
-  await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("heading", { name: "Configure Kestrel" }).waitFor();
+  await page.getByRole("heading", { name: "Settings" }).waitFor();
   assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
   assert.equal(await page.locator(".page-header > p").count(), 0);
   await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
@@ -169,7 +190,7 @@ try {
   await page.getByLabel("Desktop OAuth client ID").fill("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com");
   assert.equal(await page.getByRole("button", { name: "Connect with Google" }).isEnabled(), true);
   await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
-  await page.getByRole("button", { name: "General" }).click();
+  await page.getByRole("button", { name: /General/ }).click();
   const selectedButtonShadows = await page
     .locator(
       ".sidebar-bottom > button.active, .nav-section button.active, .new-task-button.active, .settings-nav button.active, .skin-picker button.selected, [role=\"option\"][aria-selected=\"true\"], .event-application-rail button.active",
@@ -177,7 +198,7 @@ try {
     .evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).boxShadow));
   assert.equal(selectedButtonShadows.some((shadow) => shadow.includes("inset 3px 0")), false);
   await page.getByRole("button", { name: "Open setup guide" }).click();
-  await page.getByRole("heading", { name: /Your work, in one place/ }).waitFor();
+  await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), null);
   assert.deepEqual(runtimeErrors, []);
   process.stdout.write("Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n");

@@ -68,9 +68,9 @@ try {
   await page.waitForLoadState("domcontentloaded");
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
-  await page.getByRole("heading", { name: /^Good (morning|afternoon|evening)\.$/ }).waitFor();
+  await page.getByRole("heading", { name: "What should we get done?" }).waitFor();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("heading", { name: "Configure Kestrel" }).waitFor();
+  await page.getByRole("heading", { name: "Settings" }).waitFor();
   await page
     .locator(".settings-nav button")
     .filter({ hasText: "Advanced" })

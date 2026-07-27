@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import {
+  AnimatePresence,
+  LayoutGroup,
+  motion,
+  useReducedMotion,
+} from "motion/react";
 import type {
   AgentRun,
   ApprovalRule,
@@ -81,6 +86,23 @@ const pages = [
   ["settings", "Settings"],
 ] as const;
 type Page = (typeof pages)[number][0];
+const toolGroups: ReadonlyArray<{
+  label: string;
+  pages: ReadonlyArray<Page>;
+}> = [
+  {
+    label: "Act",
+    pages: ["readiness", "approvals", "work", "events"],
+  },
+  {
+    label: "Inspect",
+    pages: ["memory", "research", "artifacts", "activity"],
+  },
+  {
+    label: "Extend",
+    pages: ["extensions"],
+  },
+];
 type Thread = "new" | "teacher" | "dji";
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
@@ -633,10 +655,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
       ? "Your model route is configured."
       : "Your workspace is ready.";
   const finishDescription = verifiedModelReady
-    ? "A real model route responded during setup. Add folders and services only when a real task needs them."
+    ? "A real model route responded. Add access only when a task needs it."
     : modelReady
-      ? "A model route is saved, but it has not passed a live check yet. Check it before relying on live agent work."
-      : "You can explore the workspace now and connect a model later when you want live agent work.";
+      ? "The route is saved but not live-verified yet."
+      : "Explore now. Connect a model when you need live work.";
   const finishPrimaryLabel = verifiedModelReady
     ? "Start using Kestrel"
     : modelReady
@@ -644,7 +666,13 @@ function Onboarding({ onDone }: { onDone(): void }) {
       : "Open local preview";
 
   return (
-    <main className="onboarding setup-onboarding">
+    <motion.main
+      className="onboarding setup-onboarding"
+      initial={false}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: reduced ? 1 : 0 }}
+      transition={{ duration: reduced ? 0 : 0.16 }}
+    >
       <header className="onboarding-bar">
         <nav className="setup-rail" aria-label="Setup progress">
           <ol>
@@ -671,6 +699,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
         </nav>
       </header>
       <div className="setup-body">
+        <ProductAnchor
+          className="setup-product-anchor"
+          detail={
+            step === finalSetupStep
+              ? "Ready on this Mac"
+              : `Setup · ${setupSteps[step]!.label}`
+          }
+        />
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
             key={step}
@@ -683,36 +719,26 @@ function Onboarding({ onDone }: { onDone(): void }) {
             {step === 0 && (
               <div className="setup-welcome">
                 <h1>
-                  Your work, in one place
+                  Your AI answers.
                   <br />
-                  with you in control.
+                  Kestrel gets it done.
                 </h1>
                 <p>
-                  Kestrel can work across a project, your tools, and the
-                  services you connect. You choose what it can see, which model
-                  it uses, and what needs your approval.
+                  Give it an outcome. Kestrel plans the work, asks when it
+                  matters, and shows what changed.
                 </p>
                 <div className="welcome-stack" aria-label="How Kestrel works">
                   <div>
                     <span><Icon name="research" /></span>
-                    <span>
-                      <strong>Start with the outcome</strong>
-                      <small>Describe what you need instead of configuring a workflow.</small>
-                    </span>
-                  </div>
-                  <div>
-                    <span><Icon name="work" /></span>
-                    <span>
-                      <strong>Review the work as it happens</strong>
-                      <small>See progress, decisions, and files in the same conversation.</small>
-                    </span>
+                    <strong>Plan the work</strong>
                   </div>
                   <div>
                     <span><Icon name="approvals" /></span>
-                    <span>
-                      <strong>Approve important actions</strong>
-                      <small>Sending, publishing, deleting, and spending wait for you.</small>
-                    </span>
+                    <strong>Pause when it matters</strong>
+                  </div>
+                  <div>
+                    <span><Icon name="ready" /></span>
+                    <strong>Verify the result</strong>
                   </div>
                 </div>
               </div>
@@ -720,58 +746,70 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
             {step === 1 && (
               <div className="setup-warning">
-                <h1>Choose what stays on this Mac.</h1>
+                <h1>Know what leaves this Mac.</h1>
                 <p>
-                  Kestrel asks before sensitive actions. The model and
-                  services you connect still determine where task data goes.
+                  Models and connections determine where task data goes.
                 </p>
                 <div className="warning-panel">
-                  <div>
-                    <span>01</span>
-                    <div>
-                      <strong>Cloud models receive the context you send</strong>
-                      <p>
-                        Prompts, selected file excerpts, and tool results may go
-                        to that provider under its retention and training terms.
-                        Use a local model for work that must stay on this Mac.
-                      </p>
-                    </div>
-                  </div>
-                  <div>
-                    <span>02</span>
-                    <div>
-                      <strong>Provider and tool usage can create charges</strong>
-                      <p>
-                        API calls, media generation, search, storage, and other
-                        connected services can bill their own accounts. Budgets
-                        reduce risk; they do not replace provider billing controls.
-                      </p>
-                    </div>
-                  </div>
-                  <div>
-                    <span>03</span>
-                    <div>
-                      <strong>Approval protects actions, not perfect output</strong>
-                      <p>
-                        Sending, publishing, deleting, purchasing, and permission
-                        changes pause for review. You still need to verify factual,
-                        legal, financial, or safety-critical content.
-                      </p>
-                    </div>
-                  </div>
-                  <div>
-                    <span>04</span>
-                    <div>
-                      <strong>
-                        Connections widen what the agent can see
-                      </strong>
-                      <p>
-                        Grant only the folders, accounts, microphone, browser,
-                        and screen access a task needs. Credentials are protected,
-                        but approved tools can act with the access you give them.
-                      </p>
-                    </div>
-                  </div>
+                  <details>
+                    <summary>
+                      <span>01</span>
+                      <span>
+                        <strong>Cloud models receive what you send</strong>
+                        <small>Use local models for work that must stay here.</small>
+                      </span>
+                      <Icon name="chevron" />
+                    </summary>
+                    <p>
+                      Prompts, selected file excerpts, and tool results may go
+                      to the provider under its retention and training terms.
+                    </p>
+                  </details>
+                  <details>
+                    <summary>
+                      <span>02</span>
+                      <span>
+                        <strong>Connected services may charge you</strong>
+                        <small>Provider billing and limits still apply.</small>
+                      </span>
+                      <Icon name="chevron" />
+                    </summary>
+                    <p>
+                      API calls, media generation, search, and storage can bill
+                      their own accounts. Kestrel budgets do not replace
+                      provider controls.
+                    </p>
+                  </details>
+                  <details>
+                    <summary>
+                      <span>03</span>
+                      <span>
+                        <strong>Approval is a pause, not a guarantee</strong>
+                        <small>Verify high-stakes output before relying on it.</small>
+                      </span>
+                      <Icon name="chevron" />
+                    </summary>
+                    <p>
+                      Sending, publishing, deleting, purchasing, and permission
+                      changes pause for review. Factual, legal, financial, and
+                      safety-critical work still needs your judgment.
+                    </p>
+                  </details>
+                  <details>
+                    <summary>
+                      <span>04</span>
+                      <span>
+                        <strong>Connections widen access</strong>
+                        <small>Grant only what the task needs.</small>
+                      </span>
+                      <Icon name="chevron" />
+                    </summary>
+                    <p>
+                      Approved tools can act through the folders, accounts,
+                      microphone, browser, and screen access you grant.
+                      Credentials remain protected.
+                    </p>
+                  </details>
                 </div>
                 <label className="warning-check">
                   <input
@@ -788,8 +826,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   <span>
                     <strong>I understand these boundaries</strong>
                     <small>
-                      You can change providers, budgets, permissions, and
-                      approval rules later.
+                      Providers, permissions, budgets, and approval rules can
+                      change later.
                     </small>
                   </span>
                 </label>
@@ -810,12 +848,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   </h1>
                   <p>
                     {step === 2
-                      ? "Choose how Kestrel should run. You can add another route later."
+                      ? "You can change this later."
                       : modelView === "accounts"
-                        ? "Sign in with a supported subscription, or add an API key from your provider."
+                        ? "Sign in or add a protected API key."
                         : modelView === "local"
                           ? "Balanced is recommended for this Mac."
-                          : "Add any free accounts you want to use. Kestrel can switch between the ones you connect."}
+                          : "Terms and free limits vary by provider."}
                   </p>
                 </header>
                 {step === 2 && (
@@ -823,30 +861,36 @@ function Onboarding({ onDone }: { onDone(): void }) {
                   <button
                     onClick={() => chooseModelAccess("accounts")}
                   >
-                    <span className="source-glyph" aria-hidden="true">☁</span>
-                    <strong>Use an account I already have</strong>
+                    <span className="source-glyph" aria-hidden="true">
+                      <Icon name="models" />
+                    </span>
+                    <strong>Use an account</strong>
                     <small>
-                      OpenAI, Anthropic, and other providers.
+                      Sign in or add an API key.
                     </small>
                     <b>{configuredCredentials.length ? `${configuredCredentials.length} connected` : "Choose a provider"}</b>
                   </button>
                   <button
                     onClick={() => chooseModelAccess("local")}
                   >
-                    <span className="source-glyph" aria-hidden="true">⌁</span>
-                    <strong>Keep it on this Mac</strong>
+                    <span className="source-glyph" aria-hidden="true">
+                      <Icon name="local" />
+                    </span>
+                    <strong>Run on this Mac</strong>
                     <small>
-                      Download a model that can work offline.
+                      Private and offline-capable.
                     </small>
                     <b>{localModels.length ? `${localModels.length} installed` : "No account needed"}</b>
                   </button>
                   <button
                     onClick={() => chooseModelAccess("open")}
                   >
-                    <span className="source-glyph" aria-hidden="true">◎</span>
-                    <strong>Start with free accounts</strong>
+                    <span className="source-glyph" aria-hidden="true">
+                      <Icon name="free" />
+                    </span>
+                    <strong>Try free providers</strong>
                     <small>
-                      Connect one or more providers with free access.
+                      Current terms and limits apply.
                     </small>
                     <b>Four supported options</b>
                   </button>
@@ -1513,11 +1557,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     {providerCheckError}
                   </p>
                 )}
-                <p className="finish-note">
-                  The setup assistant never asks for secrets in chat. API keys
-                  stay in protected native fields, while OAuth remains in the
-                  provider's browser or official CLI. Nothing here is permanent.
-                </p>
+                <details className="finish-disclosure">
+                  <summary>How setup stays private</summary>
+                  <p>
+                    The setup assistant never asks for secrets in chat. API
+                    keys stay in protected native fields, while OAuth remains
+                    in the provider&apos;s browser or official CLI. Nothing
+                    here is permanent.
+                  </p>
+                </details>
               </div>
             )}
           </motion.section>
@@ -1571,13 +1619,57 @@ function Onboarding({ onDone }: { onDone(): void }) {
                 } else go(step + 1);
               }}
             >
-              {step === finalSetupStep ? finishPrimaryLabel : "Continue"}
+              {step === finalSetupStep
+                ? finishPrimaryLabel
+                : step === 0
+                  ? "Get started"
+                  : "Continue"}
               <Icon name="arrow" />
             </button>
           )}
         </div>
       </footer>
-    </main>
+    </motion.main>
+  );
+}
+
+function ProductAnchor({
+  className = "",
+  detail,
+}: {
+  className?: string;
+  detail: string;
+}) {
+  const reduced = useReducedMotion();
+  return (
+    <motion.div
+      className={`product-anchor ${className}`.trim()}
+      {...(reduced ? {} : { layoutId: "kestrel-product-anchor" })}
+      transition={{
+        layout: {
+          duration: 0.22,
+          ease: [0.22, 1, 0.36, 1],
+        },
+      }}
+    >
+      <span className="product-anchor-mark">
+        <BrandMark />
+      </span>
+      <span>
+        <strong>Kestrel</strong>
+        <small>{detail}</small>
+      </span>
+    </motion.div>
+  );
+}
+
+function ProductShellTransition({ children }: { children: ReactNode }) {
+  return (
+    <LayoutGroup id="kestrel-shell">
+      <AnimatePresence initial={false} mode="sync">
+        {children}
+      </AnimatePresence>
+    </LayoutGroup>
   );
 }
 
@@ -1591,11 +1683,17 @@ function Brand() {
 }
 
 function Loading() {
+  const reduced = useReducedMotion();
   return (
-    <main className="loading-screen">
-      <BrandMark />
-      <p>Starting Kestrel…</p>
-    </main>
+    <motion.main
+      className="loading-screen"
+      initial={reduced ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: reduced ? 1 : 0 }}
+      transition={{ duration: reduced ? 0 : 0.14 }}
+    >
+      <ProductAnchor detail="Starting on this Mac…" />
+    </motion.main>
   );
 }
 
@@ -1651,9 +1749,8 @@ function Artifacts() {
   }, []);
   return (
     <PageFrame
-      eyebrow="Artifacts"
-      title="Final files, with receipts."
-      text="Generated and imported outputs stay in the owner-only local vault with byte-level provenance and QC."
+      title="Artifacts"
+      text="Verified outputs, kept locally with their provenance."
     >
       <div className="artifact-toolbar">
         <span>
@@ -1678,7 +1775,7 @@ function Artifacts() {
       {artifacts.length === 0 ? (
         <Empty
           title="No artifacts yet"
-          text="Image, speech, document, and configured video providers will place verified outputs here."
+          text="Verified files and interactive results will appear here."
         />
       ) : (
         <section className="artifact-grid">
@@ -2815,13 +2912,6 @@ function RuntimeConversation({
       )}
     </button>
   );
-  const localHour = new Date().getHours();
-  const greeting =
-    localHour < 12
-      ? "Good morning."
-      : localHour < 18
-        ? "Good afternoon."
-        : "Good evening.";
   const emptySession = Boolean(
     activeSessionId &&
       visibleMessages.length === 0 &&
@@ -2842,15 +2932,20 @@ function RuntimeConversation({
     >
       {!activeSessionId && visibleMessages.length === 0 || emptySession ? (
         <div className="new-task-center">
-          <span className="welcome-kicker">
-            {activeSessionId ? "Ready when you are" : "Kestrel · on this Mac"}
-          </span>
-          <h1>{activeSessionId ? "Pick up where you left off." : greeting}</h1>
+          <h1>
+            {activeSessionId
+              ? "Continue this chat."
+              : "What should we get done?"}
+          </h1>
           <p>
             {activeSessionId
-              ? "Your workspace is ready. Describe the next useful step and Kestrel will keep the plan, approvals, and results together."
-              : "Bring a project or ask a question. Kestrel keeps the plan, approvals, and results in one thread."}
+              ? "Describe the next useful step."
+              : "Bring a project or ask a question. The plan, approvals, and results stay together."}
           </p>
+          <ProductAnchor
+            className="workspace-product-anchor"
+            detail={activeSessionId ? "This chat is ready" : "Ready on this Mac"}
+          />
           {!activeSessionId && (
             <div className="prompt-suggestions runtime-suggestions" aria-label="Suggested starts">
               <button
@@ -3066,7 +3161,7 @@ function RuntimeConversation({
             placeholder={
               activeSessionId
                 ? "Message Kestrel"
-                : "What are you working on?"
+                : "Describe the outcome"
             }
           />
           <div className="composer-footer">
@@ -3293,9 +3388,8 @@ function Approvals({
   }
   return (
     <PageFrame
-      eyebrow="Approval"
-      title="Review the exact changes."
-      text="Edit the draft, approve the plan, or stop it. Nothing is sent before you decide."
+      title="Review this action"
+      text="Nothing happens until you decide."
     >
       <ApprovalCard
         approval={approval}
@@ -3437,9 +3531,8 @@ function Memory({
 
   return (
     <PageFrame
-      eyebrow="Local memory"
-      title="What Kestrel knows."
-      text="Inspect provenance, correct or forget durable memories, review proposed user facts, and search encrypted task history."
+      title="Memory"
+      text="Review, correct, or forget what Kestrel keeps."
     >
       <form
         className="memory-create"
@@ -3656,9 +3749,8 @@ function Memory({
 function Activity({ snapshot }: { snapshot: WorkspaceSnapshot }) {
   return (
     <PageFrame
-      eyebrow="Background activity"
-      title="A reason for every step."
-      text="Observed input, reasoning, permission gates, execution, and verification stay separate."
+      title="Activity"
+      text="Every step keeps its source and status."
     >
       <ol className="activity-list">
         {snapshot.activity.map((item, index) => (
@@ -3809,13 +3901,12 @@ function Readiness() {
 
   return (
     <PageFrame
-      eyebrow="Daily readiness"
       title={
         readiness?.readyForLiveWork
-          ? "The core is ready. Verify the route."
-          : "Finish the essentials before live work."
+          ? "Ready for work"
+          : "Needs attention"
       }
-      text="One place to check the local core, model access, project scope, macOS permissions, and a recoverable snapshot."
+      text="Core, model route, project scope, permissions, and recovery."
     >
       <section
         className={`readiness-hero ${readiness?.readyForLiveWork ? "ready" : "attention"}`}
@@ -4039,9 +4130,8 @@ function Research() {
   }
   return (
     <PageFrame
-      eyebrow="Policy-contained web"
-      title="Research with traceable sources."
-      text="Search and readable fetch stay HTTPS-only, DNS-checked, bounded, cached locally, and labeled as untrusted external content."
+      title="Research"
+      text="HTTPS sources remain cited and untrusted."
     >
       <form
         className="research-search"
@@ -4244,9 +4334,8 @@ function Work({
 
   return (
     <PageFrame
-      eyebrow="Durable orchestration"
-      title="Goals, delegates, teams, and review."
-      text="Child agents get isolated sessions and optional Git worktrees. Shared plans, peer messages, scheduled work, and approvals remain inspectable."
+      title="Work"
+      text="Goals, delegates, and scheduled work stay inspectable."
     >
       <div className="work-board-tools">
         <button
@@ -6504,17 +6593,17 @@ function Settings({
   }
   const route = snapshot.modelRouting.currentDecision;
   const settingsSections = [
-    ["connections", "Connections", "Accounts, providers, and folders"],
-    ["general", "General", "Appearance and everyday behavior"],
-    ["models", "Models & routing", "Execution, providers, and usage"],
-    ["intelligence", "Memory & behavior", "Memory, presence, and learning"],
-    ["extensions", "Extensions", "Plugins and trusted publishers"],
-    ["privacy", "Privacy & safety", "Approvals, data, and recovery"],
+    ["connections", "Connections", "Accounts and folders"],
+    ["general", "General", "Appearance and behavior"],
+    ["models", "Models", "Choice, routing, and limits"],
+    ["intelligence", "Memory", "Memory, presence, and learning"],
+    ["extensions", "Extensions", "Plugins and publishers"],
+    ["privacy", "Privacy", "Approvals and recovery"],
     ["advanced", "Advanced", "Diagnostics and organization"],
   ] as const;
   return (
     <PageFrame
-      title="Configure Kestrel"
+      title="Settings"
     >
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings sections">
@@ -6902,6 +6991,8 @@ export function App() {
   const petActivityTimer = useRef<number | null>(null);
   const [page, setPage] = useState<Page>("home");
   const [toolsOpen, setToolsOpen] = useState(false);
+  const toolsContainerRef = useRef<HTMLElement | null>(null);
+  const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState<
     string | null
@@ -7010,27 +7101,73 @@ export function App() {
     const timer = window.setInterval(beacon, 45_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    setToolsOpen(false);
+  }, [page]);
+  useEffect(() => {
+    if (!toolsOpen) return;
+    const focusTimer = window.setTimeout(() => {
+      toolsContainerRef.current
+        ?.querySelector<HTMLButtonElement>(".tools-disclosure button")
+        ?.focus();
+    }, 0);
+    const closeOnPointer = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !toolsContainerRef.current?.contains(event.target)
+      )
+        setToolsOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setToolsOpen(false);
+      window.setTimeout(() => toolsTriggerRef.current?.focus(), 0);
+    };
+    document.addEventListener("pointerdown", closeOnPointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener("pointerdown", closeOnPointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [toolsOpen]);
   if (!onboarded)
     return (
-      <Onboarding
-        onDone={() => {
-          localStorage.setItem("kestrel:onboarded", "yes");
-          setOnboarded(true);
-        }}
-      />
+      <ProductShellTransition>
+        <Onboarding
+          key="setup"
+          onDone={() => {
+            localStorage.setItem("kestrel:onboarded", "yes");
+            setOnboarded(true);
+          }}
+        />
+      </ProductShellTransition>
     );
   if (error)
     return (
-      <main className="loading-screen error-screen">
-        <span className="error-mark">!</span>
-        <h1>Kestrel could not start.</h1>
-        <p>{error}</p>
-        <button className="button secondary" onClick={() => location.reload()}>
-          Try again
-        </button>
-      </main>
+      <ProductShellTransition>
+        <motion.main
+          key="error"
+          className="loading-screen error-screen"
+          initial={reduced ? false : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: reduced ? 1 : 0 }}
+        >
+          <span className="error-mark">!</span>
+          <h1>Kestrel could not start.</h1>
+          <p>{error}</p>
+          <button className="button secondary" onClick={() => location.reload()}>
+            Try again
+          </button>
+        </motion.main>
+      </ProductShellTransition>
     );
-  if (!snapshot) return <Loading />;
+  if (!snapshot)
+    return (
+      <ProductShellTransition>
+        <Loading key="loading" />
+      </ProductShellTransition>
+    );
   const currentTitle =
     page === "home"
       ? (() => {
@@ -7041,6 +7178,7 @@ export function App() {
         })()
       : pages.find(([id]) => id === page)?.[1];
   const openRuntimeSession = (sessionId: string | null) => {
+    setToolsOpen(false);
     setActiveRuntimeSessionId(sessionId);
     setPage("home");
   };
@@ -7050,8 +7188,17 @@ export function App() {
     })) as CoreResponse;
     if (response.ok && response.petStatus) setPetStatus(response.petStatus);
   }
+  const toolPageActive = !["home", "settings"].includes(page);
   return (
-    <div className="app-shell">
+    <ProductShellTransition>
+    <motion.div
+      key="workspace"
+      className="app-shell"
+      initial={reduced ? false : { opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: reduced ? 1 : 0 }}
+      transition={{ duration: reduced ? 0 : 0.16 }}
+    >
       <aside className="sidebar">
         <div className="drag-region" />
         <Brand />
@@ -7098,35 +7245,66 @@ export function App() {
                 </button>
               ))}
           </section>
-          <section className="nav-section" aria-labelledby="tools-label">
+          <section
+            className="nav-section tools-section"
+            aria-labelledby="tools-label"
+            ref={toolsContainerRef}
+          >
             <button
               id="tools-label"
+              ref={toolsTriggerRef}
               aria-expanded={toolsOpen}
+              aria-controls="tools-disclosure"
+              className={toolPageActive ? "active" : ""}
               onClick={() => setToolsOpen((open) => !open)}
             >
               <Icon name="extensions" />
               <span>Tools</span>
+              <Icon name="chevron" />
             </button>
-            {toolsOpen &&
-              pages
-                .filter(
-                  ([id]) =>
-                    !["home", "settings"].includes(id),
-                )
-                .map(([id, label]) => (
-                  <button
-                    key={id}
-                    aria-label={label}
-                    className={page === id ? "active" : ""}
-                    onClick={() => {
-                      setPage(id);
-                      setToolsOpen(false);
-                    }}
-                  >
-                    <Icon name={id} />
-                    <span>{label}</span>
-                  </button>
-                ))}
+            <AnimatePresence>
+              {toolsOpen && (
+                <motion.div
+                  id="tools-disclosure"
+                  className="tools-disclosure"
+                  aria-label="Kestrel tools"
+                  initial={reduced ? false : { opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: reduced ? 1 : 0, y: reduced ? 0 : -4 }}
+                  transition={{ duration: reduced ? 0 : 0.14 }}
+                >
+                  <header>
+                    <strong>Tools</strong>
+                    <small>Open when the task needs them.</small>
+                  </header>
+                  {toolGroups.map((group) => (
+                    <section key={group.label}>
+                      <h3>{group.label}</h3>
+                      <div>
+                        {group.pages.map((id) => {
+                          const label = pages.find(
+                            ([pageId]) => pageId === id,
+                          )?.[1];
+                          if (!label) return null;
+                          return (
+                            <button
+                              key={id}
+                              aria-label={label}
+                              aria-current={page === id ? "page" : undefined}
+                              className={page === id ? "active" : ""}
+                              onClick={() => setPage(id)}
+                            >
+                              <Icon name={id} />
+                              <span>{label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </section>
         </nav>
         <div className="sidebar-bottom">
@@ -7138,6 +7316,7 @@ export function App() {
                 aria-label={label}
                 className={page === id ? "active" : ""}
                 onClick={() => {
+                  setToolsOpen(false);
                   setPage(id);
                 }}
               >
@@ -7227,9 +7406,13 @@ export function App() {
       <FloatingPet
         status={petStatus}
         activity={petActivity}
-        onOpen={() => setPage("settings")}
+        onOpen={() => {
+          setToolsOpen(false);
+          setPage("settings");
+        }}
         onPopOut={() => void popOutPet()}
       />
-    </div>
+    </motion.div>
+    </ProductShellTransition>
   );
 }

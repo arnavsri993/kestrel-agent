@@ -41,6 +41,7 @@
     "test:desktop-personas": "node scripts/test-desktop-personas.mjs",
     "test:desktop-managed-policy": "node scripts/test-desktop-managed-policy.mjs",
     "test:desktop-pets:live": "node scripts/test-desktop-pets.mjs",
+    "capture:desktop": "tsx scripts/capture-desktop.ts",
     "test:editors": "node scripts/verify-editor-integrations.mjs",
     "test:e2e": "playwright test",
     "package:mac:dev": "pnpm --filter @kestrel/desktop package:mac:dev",

@@ -34,7 +34,7 @@ try {
   const page = await application.firstWindow();
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
-  await page.getByRole("heading", { name: /^Good (morning|afternoon|evening)\.$/ }).waitFor();
+  await page.getByRole("heading", { name: "What should we get done?" }).waitFor();
   await page.locator('summary[aria-label="Task settings"]').click();
   await page.getByLabel("Project").waitFor();
   const execution = page.getByLabel("Execution");

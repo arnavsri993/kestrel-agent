@@ -109,7 +109,7 @@ try {
     .click();
   await page
     .getByRole("heading", {
-      name: /The core is ready|Finish the essentials/,
+      name: /Ready for work|Needs attention/,
     })
     .waitFor();
   await page.getByRole("button", { name: /Tools/ }).click();

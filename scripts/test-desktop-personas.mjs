@@ -28,17 +28,17 @@ try {
   // the complete daily product surface after a successful first run.
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
-  await page.getByRole("heading", { name: /^Good (morning|afternoon|evening)\.$/ }).waitFor();
+  await page.getByRole("heading", { name: "What should we get done?" }).waitFor();
 
   const tools = [
-    ["Readiness", /Finish the essentials before live work\.|The core is ready\. Verify the route\./],
-    ["Approvals", /Review the exact changes\.|No approvals waiting/],
-    ["Memory", "What Kestrel knows."],
-    ["Research", "Research with traceable sources."],
-    ["Artifacts", "Final files, with receipts."],
-    ["Work", "Goals, delegates, teams, and review."],
+    ["Readiness", /Needs attention|Ready for work/],
+    ["Approvals", /Review this action|No approvals waiting/],
+    ["Memory", "Memory"],
+    ["Research", "Research"],
+    ["Artifacts", "Artifacts"],
+    ["Work", "Work"],
     ["Opportunities", /Apply with your agent\. Send with your consent\./],
-    ["Activity", "A reason for every step."],
+    ["Activity", "Activity"],
     ["Extensions", "Useful surfaces, without hidden code."],
   ];
 
@@ -47,7 +47,12 @@ try {
     const entry = page.getByRole("button", { name: label, exact: true });
     await entry.waitFor();
     await entry.click();
-    await page.getByRole("heading", { name: heading }).waitFor();
+    await page
+      .getByRole("heading", {
+        name: heading,
+        exact: typeof heading === "string",
+      })
+      .waitFor();
     assert.equal(
       await page.locator(".loading-screen.error-screen").count(),
       0,
@@ -56,15 +61,15 @@ try {
   }
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("heading", { name: "Configure Kestrel" }).waitFor();
+  await page.getByRole("heading", { name: "Settings" }).waitFor();
 
   const settings = [
     ["Connections", "Accounts and access"],
     ["General", "General settings"],
-    ["Models & routing", "Model and routing settings"],
-    ["Memory & behavior", "Memory and behavior settings"],
+    ["Models", "Model and routing settings"],
+    ["Memory", "Memory and behavior settings"],
     ["Extensions", "Extension settings"],
-    ["Privacy & safety", "Privacy and safety settings"],
+    ["Privacy", "Privacy and safety settings"],
     ["Advanced", "Advanced settings"],
   ];
   for (const [label, sectionLabel] of settings) {
