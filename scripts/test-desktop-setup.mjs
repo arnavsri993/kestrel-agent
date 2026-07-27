@@ -18,7 +18,27 @@ try {
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
   await page.waitForLoadState("domcontentloaded");
 
+  const selectedSkin = await page.evaluate(async () =>
+    window.kestrel.request({ type: "skin-select", skinId: "daylight" }),
+  );
+  assert.equal(selectedSkin.ok, true);
+  await page.reload();
+
   await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
+  const setupTheme = await page.locator(".setup-onboarding").evaluate((element) => ({
+    canvas: getComputedStyle(element).getPropertyValue("--canvas").trim(),
+    signal: getComputedStyle(element).getPropertyValue("--signal").trim(),
+    colorScheme: getComputedStyle(element).colorScheme,
+    color: getComputedStyle(element).color,
+  }));
+  assert.equal(setupTheme.canvas, "#1c1c1e");
+  assert.equal(setupTheme.signal, "#78b986");
+  assert.equal(setupTheme.colorScheme, "dark");
+  assert.equal(setupTheme.color, "rgb(245, 245, 247)");
+  assert.equal(
+    await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim()),
+    "#f5f2ea",
+  );
   assert.equal(await page.locator(".setup-product-anchor").count(), 1);
   assert.deepEqual(
     await page.locator(".setup-rail li strong").allTextContents(),

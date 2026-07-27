@@ -4073,6 +4073,38 @@ html:has(.pet-overlay-shell) #root {
   overflow: hidden;
   background: var(--canvas);
 }
+
+/* Setup exists before Settings, so it always uses the product's shared visual baseline. */
+.setup-onboarding {
+  color-scheme: dark;
+  color: var(--ink);
+  --canvas: #1c1c1e;
+  --sidebar: #141416;
+  --sidebar-hover: #29292c;
+  --surface: #2c2c2e;
+  --surface-strong: #3a3a3c;
+  --panel: #242426;
+  --ink: #f5f5f7;
+  --muted: #b8b8bd;
+  --faint: #8e8e93;
+  --line: #38383b;
+  --line-strong: #515156;
+  --solid: #f5f5f7;
+  --solid-hover: #ffffff;
+  --solid-text: #1c1c1e;
+  --signal: #78b986;
+  --signal-deep: #9bd0a5;
+  --status-soft: #25382a;
+  --status-ink: #b6dfbd;
+  --healthy: #78b986;
+  --warning: #d7b45c;
+  --warning-soft: #3b321f;
+  --warning-ink: #f5dda0;
+  --danger: #e46c75;
+  --danger-soft: #351d21;
+  --danger-ink: #f6bec3;
+  --brand: #b7d68a;
+}
 .onboarding-bar {
   display: flex;
   align-items: center;
