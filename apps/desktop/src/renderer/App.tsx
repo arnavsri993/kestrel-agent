@@ -72,6 +72,7 @@ import { FloatingPet, PetSettings } from "./components/PetSettings";
 import {
   availableWorkspaceGrants,
   runtimeRunScope,
+  runtimeSessionsAfterEvent,
   runtimeTaskWorkspace,
   shouldPreserveActiveRun,
 } from "./runtime-session-state";
@@ -7251,6 +7252,10 @@ export function App() {
               if (response.ok) setRuntimeSessions(response.sessions ?? []);
             })
             .catch(() => undefined);
+        else if (event.type === "message.appended")
+          setRuntimeSessions((current) =>
+            runtimeSessionsAfterEvent(current, event),
+          );
         if (petActivityTimer.current)
           window.clearTimeout(petActivityTimer.current);
         if (event.type === "tool.started" || event.type === "tool.progress")

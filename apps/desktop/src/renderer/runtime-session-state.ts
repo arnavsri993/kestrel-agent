@@ -1,6 +1,33 @@
-import type { WorkspaceGrant } from "@kestrel/shared-types";
+import type {
+  RuntimeEvent,
+  RuntimeSession,
+  WorkspaceGrant,
+} from "@kestrel/shared-types";
 
 export type RuntimeRunScope = "idle" | "active" | "background";
+
+export function runtimeSessionsAfterEvent(
+  sessions: RuntimeSession[],
+  event: RuntimeEvent,
+): RuntimeSession[] {
+  if (event.type !== "message.appended") return sessions;
+  const rawUpdatedAt = event.payload.sessionUpdatedAt;
+  if (typeof rawUpdatedAt !== "string") return sessions;
+  const updatedAtTime = Date.parse(rawUpdatedAt);
+  if (!Number.isFinite(updatedAtTime)) return sessions;
+  const updatedAt = new Date(updatedAtTime).toISOString();
+  let changed = false;
+  const next = sessions.map((session) => {
+    if (
+      session.id !== event.sessionId ||
+      updatedAtTime <= Date.parse(session.updatedAt)
+    )
+      return session;
+    changed = true;
+    return { ...session, updatedAt };
+  });
+  return changed ? next : sessions;
+}
 
 export function availableWorkspaceGrants(
   grants: WorkspaceGrant[],

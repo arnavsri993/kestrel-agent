@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { KestrelDatabase } from "@kestrel/database";
+import type { RuntimeEvent } from "@kestrel/shared-types";
 import { AgentRuntime } from "./runtime";
 
 const temporaryDirectories: string[] = [];
@@ -31,6 +32,157 @@ describe("agent runtime", () => {
     const runtime = new AgentRuntime(database, [], () => "2026-07-22T16:00:00.000Z");
     const session = runtime.ensureMainSession();
     expect(runtime.discoverTools(session.id).filter((tool) => tool.category === "workspace")).toEqual([]);
+    database.close();
+  });
+
+  it("persists message activity as session recency without allowing stale clocks to move it backward", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kestrel-session-recency-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "runtime.sqlite");
+    const encryptionKey = createEncryptionKey();
+    let now = "2026-07-22T16:00:00.000Z";
+    const database = new KestrelDatabase(databasePath, encryptionKey);
+    const runtime = new AgentRuntime(database, [], () => now);
+    const events: RuntimeEvent[] = [];
+    runtime.on("event", (event: RuntimeEvent) => events.push(event));
+    const first = runtime.createSession({ title: "First" });
+    now = "2026-07-22T16:01:00.000Z";
+    const second = runtime.createSession({ title: "Second" });
+
+    now = "2026-07-22T16:02:00.000Z";
+    runtime.appendMessage({
+      sessionId: first.id,
+      role: "user",
+      content: "This is now the most recent conversation.",
+    });
+    expect(runtime.getSession(first.id).updatedAt).toBe(now);
+    expect(runtime.listSessions().map((session) => session.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "message.appended",
+      sessionId: first.id,
+      payload: { role: "user", sessionUpdatedAt: now },
+    });
+    const persisted = database.db
+      .prepare(
+        "SELECT payload, updated_at FROM runtime_sessions WHERE id = ?",
+      )
+      .get(first.id) as { payload: string; updated_at: string };
+    expect(persisted.updated_at).toBe(now);
+    expect(
+      (JSON.parse(persisted.payload) as { updatedAt: string }).updatedAt,
+    ).toBe(now);
+
+    now = "2026-07-22T15:59:00.000Z";
+    runtime.appendMessage({
+      sessionId: first.id,
+      role: "assistant",
+      content: "A stale clock must not regress session recency.",
+    });
+    expect(runtime.getSession(first.id).updatedAt).toBe(
+      "2026-07-22T16:02:00.000Z",
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "message.appended",
+      payload: { sessionUpdatedAt: "2026-07-22T16:02:00.000Z" },
+    });
+    runtime.close();
+    database.close();
+
+    const reopenedDatabase = new KestrelDatabase(
+      databasePath,
+      encryptionKey,
+    );
+    const restarted = new AgentRuntime(
+      reopenedDatabase,
+      [],
+      () => "2026-07-22T16:03:00.000Z",
+    );
+    expect(restarted.getSession(first.id).updatedAt).toBe(
+      "2026-07-22T16:02:00.000Z",
+    );
+    expect(restarted.listSessions().map((session) => session.id)).toEqual([
+      first.id,
+      second.id,
+    ]);
+    restarted.close();
+    reopenedDatabase.close();
+  });
+
+  it("rolls back the message when its session recency cannot commit", () => {
+    const { database, runtime, session } = fixture();
+    const events: RuntimeEvent[] = [];
+    runtime.on("event", (event: RuntimeEvent) => events.push(event));
+    database.db.exec(`
+      CREATE TRIGGER reject_runtime_session_touch
+      BEFORE UPDATE ON runtime_sessions
+      BEGIN
+        SELECT RAISE(ABORT, 'forced session touch failure');
+      END
+    `);
+
+    expect(() =>
+      runtime.appendMessage({
+        sessionId: session.id,
+        role: "user",
+        content: "This message must roll back with its session touch.",
+      }),
+    ).toThrow("forced session touch failure");
+    expect(runtime.listMessages(session.id)).toEqual([]);
+    expect(
+      database.db
+        .prepare("SELECT COUNT(*) AS count FROM runtime_message_order")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      database.db
+        .prepare("SELECT COUNT(*) AS count FROM runtime_message_terms")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(events.some((event) => event.type === "message.appended")).toBe(
+      false,
+    );
+    runtime.close();
+    database.close();
+  });
+
+  it("returns and emits the touched child after cloning fork messages", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    let tick = 0;
+    const runtime = new AgentRuntime(
+      database,
+      [],
+      () => new Date(Date.UTC(2026, 6, 22, 16, 0, tick++)).toISOString(),
+    );
+    const parent = runtime.createSession({ title: "Parent" });
+    runtime.appendMessage({
+      sessionId: parent.id,
+      role: "user",
+      content: "Clone this request.",
+    });
+    runtime.appendMessage({
+      sessionId: parent.id,
+      role: "assistant",
+      content: "Clone this answer.",
+    });
+    const events: RuntimeEvent[] = [];
+    runtime.on("event", (event: RuntimeEvent) => events.push(event));
+
+    const child = runtime.forkSession(parent.id, "Child");
+    expect(child.updatedAt).toBe(runtime.getSession(child.id).updatedAt);
+    expect(events.find((event) =>
+      event.type === "session.updated" &&
+      event.sessionId === child.id &&
+      event.payload.action === "fork"
+    )).toMatchObject({
+      payload: {
+        inheritedMessages: 2,
+        sessionUpdatedAt: child.updatedAt,
+      },
+    });
+    runtime.close();
     database.close();
   });
 

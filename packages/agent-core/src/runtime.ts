@@ -440,7 +440,13 @@ export class AgentRuntime extends EventEmitter {
       });
       messageIds.set(message.id, cloned.id);
     }
-    this.emitRuntimeEvent("session.updated", child.id, { action: "fork", parentSessionId: parent.id, inheritedMessages: messageIds.size });
+    child = this.requireSession(child.id);
+    this.emitRuntimeEvent("session.updated", child.id, {
+      action: "fork",
+      parentSessionId: parent.id,
+      inheritedMessages: messageIds.size,
+      sessionUpdatedAt: child.updatedAt
+    });
     return child;
   }
 
@@ -462,8 +468,11 @@ export class AgentRuntime extends EventEmitter {
   appendMessage(input: Omit<RuntimeMessage, "id" | "createdAt">): RuntimeMessage {
     this.requireSession(input.sessionId);
     const message = RuntimeMessageSchema.parse({ ...input, id: `message-${randomUUID()}`, createdAt: this.now() });
-    this.database.saveRuntimeMessage(message);
-    this.emitRuntimeEvent("message.appended", message.sessionId, { role: message.role }, { messageId: message.id });
+    const session = this.database.saveRuntimeMessage(message);
+    this.emitRuntimeEvent("message.appended", message.sessionId, {
+      role: message.role,
+      sessionUpdatedAt: session.updatedAt
+    }, { messageId: message.id });
     return message;
   }
 

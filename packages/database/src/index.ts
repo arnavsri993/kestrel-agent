@@ -348,7 +348,7 @@ export class KestrelDatabase {
       .map((row) => RuntimeSessionSchema.parse(JSON.parse(row.payload)));
   }
 
-  saveRuntimeMessage(message: RuntimeMessage): void {
+  saveRuntimeMessage(message: RuntimeMessage): RuntimeSession {
     const parsed = RuntimeMessageSchema.parse(message);
     const encrypted = encryptText(JSON.stringify({
       version: 2,
@@ -358,7 +358,7 @@ export class KestrelDatabase {
       ...(parsed.toolName ? { toolName: parsed.toolName } : {})
     }), this.encryptionKey);
     const terms = this.searchTerms(parsed.content);
-    this.db.transaction(() => {
+    return this.db.transaction(() => {
       this.db.prepare(`INSERT INTO runtime_messages (
         id, session_id, role, content_ciphertext, content_iv, content_auth_tag,
         parent_message_id, tool_execution_id, created_at
@@ -371,6 +371,18 @@ export class KestrelDatabase {
         .run(parsed.sessionId, parsed.id, next.sequence);
       const insertTerm = this.db.prepare("INSERT OR IGNORE INTO runtime_message_terms (message_id, term_hash) VALUES (?, ?)");
       for (const term of terms) insertTerm.run(parsed.id, this.hashSearchTerm(term));
+      const ownerRow = this.db.prepare("SELECT payload FROM runtime_sessions WHERE id = ?")
+        .get(parsed.sessionId) as { payload: string } | undefined;
+      if (!ownerRow) throw new Error("Runtime message session was not found.");
+      const owner = RuntimeSessionSchema.parse(JSON.parse(ownerRow.payload));
+      const updatedAt = Date.parse(parsed.createdAt) > Date.parse(owner.updatedAt)
+        ? parsed.createdAt
+        : owner.updatedAt;
+      const updatedOwner = RuntimeSessionSchema.parse({ ...owner, updatedAt });
+      const touched = this.db.prepare("UPDATE runtime_sessions SET payload = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(updatedOwner), updatedOwner.updatedAt, updatedOwner.id);
+      if (touched.changes !== 1) throw new Error("Runtime message session could not be updated.");
+      return updatedOwner;
     })();
   }
 
