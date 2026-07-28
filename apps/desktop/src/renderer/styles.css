@@ -89,6 +89,11 @@ summary:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: 2px;
 }
+.page-content h1[tabindex="-1"]:focus-visible,
+.page-content h2[tabindex="-1"]:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 5px;
+}
 button:disabled {
   cursor: not-allowed;
 }
@@ -1531,6 +1536,15 @@ button:disabled {
   justify-content: space-between;
   gap: 20px;
   padding: 18px 24px;
+}
+.approval-error {
+  margin: 0;
+  padding: 12px 24px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 32%, var(--line));
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .policy-check {
   display: flex;

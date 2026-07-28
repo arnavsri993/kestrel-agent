@@ -158,10 +158,29 @@ test("21 makes the approval preview functional without implying an external acti
 
 test("22 edits and returns a recommendation to review", async ({ page }) => {
   await page.goto("/#control");
-  await page.getByRole("button", { name: "Edit recommendation" }).click();
-  await page.getByRole("button", { name: "Friday" }).click();
-  await page.getByRole("button", { name: "Return to review" }).click();
+  const edit = page.getByRole("button", { name: "Edit recommendation" });
+  await edit.focus();
+  await edit.press("Enter");
+  const options = page.getByRole("group", { name: "Preview recommendation" });
+  await expect(options).toBeVisible();
+  const monday = options.getByRole("button", { name: "Monday" });
+  const friday = options.getByRole("button", { name: "Friday" });
+  await expect(monday).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(friday).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(friday).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  const returnToReview = page.getByRole("button", { name: "Return to review" });
+  await expect(returnToReview).toBeFocused();
+  await returnToReview.press("Enter");
   await expect(page.getByText(/Friday keeps the original week/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve preview" })).toBeFocused();
+  await edit.focus();
+  await edit.press("Enter");
+  await expect(friday).toBeFocused();
 });
 
 for (const [index, route, heading, sectionCount] of [
