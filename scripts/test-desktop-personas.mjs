@@ -42,7 +42,57 @@ try {
     ["Extensions", "Useful surfaces, without hidden code."],
   ];
 
-  for (const [label, heading] of tools) {
+  const toolsTrigger = page.getByRole("button", { name: "Tools", exact: true });
+  await toolsTrigger.focus();
+  await toolsTrigger.press("Enter");
+  const readinessEntry = page.getByRole("button", {
+    name: "Readiness",
+    exact: true,
+  });
+  await readinessEntry.waitFor();
+  await readinessEntry.focus();
+  await readinessEntry.press("Enter");
+  const readinessHeading = page
+    .getByRole("heading", { name: /Needs attention|Ready for work/ })
+    .first();
+  await readinessHeading.waitFor();
+  await page.waitForFunction(
+    () =>
+      /Needs attention|Ready for work/.test(
+        document.activeElement?.textContent ?? "",
+      ),
+  );
+  assert.equal(
+    await readinessHeading.evaluate(
+      (heading) => document.activeElement === heading,
+    ),
+    true,
+    "keyboard tool navigation did not move focus to the destination heading",
+  );
+
+  await toolsTrigger.focus();
+  await toolsTrigger.press("Enter");
+  await readinessEntry.waitFor();
+  await readinessEntry.focus();
+  await readinessEntry.press("Enter");
+  assert.equal(
+    await toolsTrigger.getAttribute("aria-expanded"),
+    "true",
+    "activating the current tool page should keep the menu open",
+  );
+  assert.equal(
+    await readinessEntry.evaluate((entry) => document.activeElement === entry),
+    true,
+    "activating the current tool page should preserve focus",
+  );
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () =>
+      document.activeElement?.id === "tools-label" &&
+      document.activeElement?.getAttribute("aria-expanded") === "false",
+  );
+
+  for (const [label, heading] of tools.slice(1)) {
     await page.getByRole("button", { name: "Tools", exact: true }).click();
     const entry = page.getByRole("button", { name: label, exact: true });
     await entry.waitFor();
@@ -106,7 +156,7 @@ try {
 
   assert.deepEqual(runtimeErrors, []);
   process.stdout.write(
-    "Returning-user persona matrix passed: all desktop tools, all Settings sections, unmanaged enterprise disclosure, and compact reflow are healthy.\n",
+    "Returning-user persona matrix passed: keyboard tool routing, same-page and Escape focus, all desktop tools, all Settings sections, unmanaged enterprise disclosure, and compact reflow are healthy.\n",
   );
 } finally {
   await application?.close();

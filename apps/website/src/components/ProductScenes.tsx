@@ -30,10 +30,12 @@ export function ApprovalScene() {
   const [recommendation, setRecommendation] = useState<"Monday" | "Friday">("Monday");
   const [restoreFocus, setRestoreFocus] = useState(false);
   const primaryAction = useRef<HTMLButtonElement>(null);
+  const selectedOption = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!restoreFocus) return;
-    primaryAction.current?.focus();
+    if (state === "editing") selectedOption.current?.focus();
+    else primaryAction.current?.focus();
     setRestoreFocus(false);
   }, [restoreFocus, state]);
 
@@ -57,8 +59,8 @@ export function ApprovalScene() {
     {state === "editing" ? <div className="demo-editor">
       <small>Recommendation</small>
       <p>Choose the date shown in this local preview.</p>
-      <div className="demo-options" aria-label="Preview recommendation">
-        {(["Monday", "Friday"] as const).map((day) => <button key={day} type="button" aria-pressed={recommendation === day} onClick={() => setRecommendation(day)}>{day}</button>)}
+      <div className="demo-options" role="group" aria-label="Preview recommendation">
+        {(["Monday", "Friday"] as const).map((day) => <button ref={recommendation === day ? selectedOption : undefined} key={day} type="button" aria-pressed={recommendation === day} onClick={() => setRecommendation(day)}>{day}</button>)}
       </div>
     </div> : <>
       <div><small>Reason</small><p>{recommendation === "Monday" ? "Monday avoids Friday swim and keeps the weekend open." : "Friday keeps the original week, but overlaps with swim practice."}</p></div>

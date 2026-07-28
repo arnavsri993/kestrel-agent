@@ -7173,6 +7173,8 @@ export function App() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsContainerRef = useRef<HTMLElement | null>(null);
   const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const pendingToolRouteFocusRef = useRef<Page | null>(null);
+  const routeFocusFrameRef = useRef<number | null>(null);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState<
     string | null
@@ -7324,6 +7326,38 @@ export function App() {
   useEffect(() => {
     setToolsOpen(false);
   }, [page]);
+  const focusToolRoute = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node || pendingToolRouteFocusRef.current !== page) return;
+      pendingToolRouteFocusRef.current = null;
+      const heading = node.querySelector<HTMLElement>("h1, h2");
+      if (!heading) return;
+      const previousTabIndex = heading.getAttribute("tabindex");
+      heading.tabIndex = -1;
+      if (routeFocusFrameRef.current !== null)
+        window.cancelAnimationFrame(routeFocusFrameRef.current);
+      routeFocusFrameRef.current = window.requestAnimationFrame(() => {
+        routeFocusFrameRef.current = null;
+        heading.focus();
+        heading.addEventListener(
+          "blur",
+          () => {
+            if (previousTabIndex === null) heading.removeAttribute("tabindex");
+            else heading.setAttribute("tabindex", previousTabIndex);
+          },
+          { once: true },
+        );
+      });
+    },
+    [page],
+  );
+  useEffect(
+    () => () => {
+      if (routeFocusFrameRef.current !== null)
+        window.cancelAnimationFrame(routeFocusFrameRef.current);
+    },
+    [],
+  );
   useEffect(() => {
     if (!onboarded) return;
     const openNewChat = (event: KeyboardEvent) => {
@@ -7531,7 +7565,11 @@ export function App() {
                               aria-label={label}
                               aria-current={page === id ? "page" : undefined}
                               className={page === id ? "active" : ""}
-                              onClick={() => setPage(id)}
+                              onClick={() => {
+                                if (page !== id)
+                                  pendingToolRouteFocusRef.current = id;
+                                setPage(id);
+                              }}
                             >
                               <Icon name={id} />
                               <span>{label}</span>
@@ -7602,6 +7640,7 @@ export function App() {
             {page !== "home" && (
               <motion.div
                 key={page}
+                ref={focusToolRoute}
                 className="page-content"
                 initial={reduced ? false : { opacity: 0 }}
                 animate={{ opacity: 1 }}
