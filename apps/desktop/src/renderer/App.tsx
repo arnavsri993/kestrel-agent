@@ -7334,15 +7334,17 @@ export function App() {
   const focusToolRoute = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node || pendingToolRouteFocusRef.current !== page) return;
-      pendingToolRouteFocusRef.current = null;
-      const heading = node.querySelector<HTMLElement>("h1, h2");
-      if (!heading) return;
-      const previousTabIndex = heading.getAttribute("tabindex");
-      heading.tabIndex = -1;
       if (routeFocusFrameRef.current !== null)
         window.cancelAnimationFrame(routeFocusFrameRef.current);
       routeFocusFrameRef.current = window.requestAnimationFrame(() => {
         routeFocusFrameRef.current = null;
+        if (pendingToolRouteFocusRef.current !== page || !node.isConnected)
+          return;
+        const heading = node.querySelector<HTMLElement>("h1, h2");
+        if (!heading) return;
+        pendingToolRouteFocusRef.current = null;
+        const previousTabIndex = heading.getAttribute("tabindex");
+        heading.tabIndex = -1;
         heading.focus();
         heading.addEventListener(
           "blur",
@@ -7571,9 +7573,11 @@ export function App() {
                               aria-current={page === id ? "page" : undefined}
                               className={page === id ? "active" : ""}
                               onClick={() => {
-                                if (page !== id)
+                                if (page !== id) {
                                   pendingToolRouteFocusRef.current = id;
-                                setPage(id);
+                                  setToolsOpen(false);
+                                  setPage(id);
+                                }
                               }}
                             >
                               <Icon name={id} />
