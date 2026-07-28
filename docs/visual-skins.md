@@ -31,10 +31,10 @@ The first command lists installed skins and the second selects one immediately. 
 For scripts and lifecycle management:
 
 ```sh
-workstrand skin list
-workstrand skin select daylight
-workstrand skin import ./field-notes.json
-workstrand skin remove field-notes
+kestrel skin list
+kestrel skin select --id daylight
+kestrel skin import --path ./field-notes.json
+kestrel skin remove --id field-notes
 ```
 
 ## Custom format

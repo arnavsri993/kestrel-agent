@@ -1,6 +1,6 @@
 # Kestrel
 
-> Working title. Privileged runtime identity—app ID, protocol, Keychain service, storage directory, and update channel—is centralized in `packages/shared-types/src/identity.ts`. Packaging metadata and human-visible copy remain explicit rename-checklist items because the static site cannot consume runtime identity safely.
+> Kestrel is the finalized human-visible product name. Privileged runtime compatibility identity—app ID, protocol, Keychain service, storage directory, and update channel—is centralized in `packages/shared-types/src/identity.ts` and intentionally remains stable so existing encrypted data, credentials, integrations, and update behavior continue to work.
 
 Kestrel is a local-first, installable personal agent for macOS designed to replace the daily Codex-style workflow: choose a project, describe the outcome, follow the work, approve consequential changes, and inspect the evidence in one conversation. Its deterministic scheduling and DJI scenarios remain honest preview fixtures, while the real runtime supports persisted repository-aware sessions, tools, research, orchestration, artifacts, extensions, and terminal/editor entry points.
 
@@ -31,7 +31,7 @@ The repository also contains a separate, static marketing website. It has no age
 - Static Next.js product site with accessible responsive states and provenance-tracked generated/fallback atmosphere.
 - Verified ad-hoc-signed Apple Silicon (`arm64`) `.app` packaging (not Developer ID signed and not notarized), plus release automation that can produce signed/notarized DMG and ZIP artifacts once organization-owned credentials are supplied.
 
-Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, a public download URL, and the final product name. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
+Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, and a public download URL. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
 
 The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 58 broad catalog families have repository evidence. A separate immutable [1,117-page source audit](docs/reference-page-audit.json) distinguishes native behavior, signed extension contracts, and operational material with zero known unmapped pages; it prevents broad families from being mistaken for proof that every vendor-specific feature is bundled.
 
@@ -139,4 +139,4 @@ Read [docs/local-ai-setup.md](docs/local-ai-setup.md), [docs/threat-model.md](do
 
 ## Naming and compatibility
 
-Kestrel is the human-visible working name. Existing `@kestrel/*` package scopes, `kestrel` IPC channels and protocol, Keychain service, environment variables, CLI command, and data-directory names remain compatibility identifiers until a separately tested migration can change them without orphaning encrypted history, credentials, plugins, editor integrations, or automation entry points.
+Kestrel is the finalized human-visible product name. Existing `@kestrel/*` package scopes, `kestrel` IPC channels and protocol, Keychain service, environment variables, CLI command, and data-directory names are intentionally stable compatibility identifiers. Finalizing the visible name does not imply a compatibility-identity migration; any future identifier change would require a separately designed and tested migration that preserves encrypted history, credentials, plugins, editor integrations, and automation entry points.

@@ -30,16 +30,18 @@ Reduced-motion preference freezes sprite animation without removing the text sta
 The packaged CLI exposes:
 
 ```text
-workstrand pets list [query] [--limit N] [--installed]
-workstrand pets install <slug> [--select] [--force]
-workstrand pets hatch-drafts --concept "..." [--style auto] [--count 4]
-workstrand pets hatch --draft <id> --slug <slug> --name "Name"
-workstrand pets select <slug>
-workstrand pets scale <0.1-3>
-workstrand pets show [--state STATE] [--cycle] [--once] [--mode MODE] [--scale N]
-workstrand pets off
-workstrand pets remove <slug>
-workstrand pets doctor
+kestrel pets list [query] [--limit N] [--installed]
+kestrel pets install <slug> [--select] [--force]
+kestrel pets hatch-drafts --concept "..." [--style auto] [--count 4]
+kestrel pets hatch --draft <id> --slug <slug> --name "Name" [--description "..."]
+kestrel pets select <slug>
+kestrel pets scale <0.1-3>
+kestrel pets show [slug] [--state idle|wave|run|failed|review|jump|waiting]
+                  [--cycle] [--once] [--mode auto|kitty|iterm|sixel|unicode]
+                  [--scale 0.1-3]
+kestrel pets off
+kestrel pets remove <slug>
+kestrel pets doctor
 ```
 
 `pets show` is TTY-only. Automatic mode prefers Kitty, iTerm2, or detected sixel support and otherwise uses a true-color Unicode half-block fallback. The current sixel path intentionally falls back to Unicode because Kestrel does not ship a sixel encoder.

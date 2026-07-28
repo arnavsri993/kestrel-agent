@@ -57,6 +57,7 @@ const help = `Kestrel CLI
   kestrel pets scale <0.1-3>
   kestrel pets show [slug] [--state idle|wave|run|failed|review|jump|waiting]
                     [--cycle] [--once] [--mode auto|kitty|iterm|sixel|unicode]
+                    [--scale 0.1-3]
   kestrel pets off
   kestrel pets remove <slug>
   kestrel pets doctor
