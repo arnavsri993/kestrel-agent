@@ -1673,7 +1673,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("runtime-resume-agent"),
     runId: z.string().min(1),
-    approvalDecision: z.enum(["approved", "rejected"]).optional(),
+    approvalDecision: z.enum(["approved", "rejected"]),
     streamId: z.string().min(1).max(100).optional(),
     maximumTurns: z.number().int().positive().max(50).optional(),
   }),
@@ -1897,6 +1897,27 @@ export type ExternalSecretProviderStatus = z.infer<
   typeof ExternalSecretProviderStatusSchema
 >;
 
+export const KestrelDeepLinkSchema = z
+  .string()
+  .min(1)
+  .max(8_192)
+  .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), {
+    message: "Deep link contains control characters.",
+  })
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        url.protocol === "kestrel:" &&
+        !url.username &&
+        !url.password
+      );
+    } catch {
+      return false;
+    }
+  }, "Deep link must use the Kestrel protocol.");
+export type KestrelDeepLink = z.infer<typeof KestrelDeepLinkSchema>;
+
 export const RendererRequestSchema = z.union([
   CoreRequestSchema,
   z.object({ type: z.literal("get-system-state") }),
@@ -2058,6 +2079,7 @@ export type RendererRequest = z.infer<typeof RendererRequestSchema>;
 export const WorkspaceGrantSchema = z.object({
   path: z.string().min(1),
   name: z.string().min(1),
+  available: z.boolean().optional(),
 });
 export type WorkspaceGrant = z.infer<typeof WorkspaceGrantSchema>;
 
@@ -2200,6 +2222,7 @@ export type RendererResponse =
       ok: true;
       workspaceGrants: WorkspaceGrant[];
       cancelled?: boolean;
+      selectedWorkspacePath?: string;
       snapshot?: WorkspaceSnapshot;
     }
   | { ok: true; selectedAttachments: SelectedAttachment[]; cancelled?: boolean }
@@ -2240,8 +2263,10 @@ export type RendererResponse =
 
 export interface RendererBridge {
   request(request: RendererRequest): Promise<RendererResponse>;
+  onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
   onSnapshot(callback: (snapshot: WorkspaceSnapshot) => void): () => void;
   onPetStatus(callback: (status: PetStatus) => void): () => void;
+  onPetActivity(callback: (activity: PetActivityState) => void): () => void;
   onRuntimeEvent(callback: (event: RuntimeEvent) => void): () => void;
   onAgentStream(callback: (event: AgentStreamEvent) => void): () => void;
   onLocalRuntimeProgress(

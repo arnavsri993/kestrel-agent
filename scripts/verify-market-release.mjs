@@ -9,14 +9,18 @@ const fail = (message) => {
   process.exitCode = 1;
 };
 
-const [builder, desktopPackage, workflow, websiteWorkflow, privacy, support, rootPackage] = await Promise.all([
+const [builder, developmentBuilder, desktopPackage, desktopMain, productIdentity, workflow, websiteWorkflow, privacy, support, rootPackage, developmentSigner] = await Promise.all([
   read("apps/desktop/electron-builder.yml"),
+  read("apps/desktop/electron-builder.dev.yml"),
   read("apps/desktop/package.json"),
+  read("apps/desktop/src/main/index.ts"),
+  read("packages/shared-types/src/identity.ts"),
   read(".github/workflows/release-macos.yml"),
   read(".github/workflows/deploy-website.yml"),
   read("apps/website/src/app/privacy/page.tsx"),
   read("apps/website/src/app/support/page.tsx"),
-  read("package.json")
+  read("package.json"),
+  read("scripts/sign-development-macos-app.mjs"),
 ]);
 
 for (const [name, source] of [["privacy", privacy], ["support", support]]) {
@@ -36,10 +40,22 @@ for (const secret of ["CSC_LINK", "CSC_KEY_PASSWORD", "CSC_INSTALLER_LINK", "CSC
   if (!workflow.includes(secret)) fail(`macOS release workflow is missing ${secret}.`);
 }
 if (!workflow.includes("test:packaged-desktop:arm64")) fail("macOS release workflow does not smoke-test the signed packaged application.");
-for (const marker of ["actions/configure-pages@v5", "actions/upload-pages-artifact@v3", "actions/deploy-pages@v4", "NEXT_PUBLIC_BASE_PATH", "NEXT_PUBLIC_SITE_URL"]) {
+for (const marker of ["actions/configure-pages@v5", "actions/upload-pages-artifact@v3", "actions/deploy-pages@v4", "NEXT_PUBLIC_BASE_PATH", "NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_RELEASE_STATUS == 'verified'", "audit:market -- --distribution"]) {
   if (!websiteWorkflow.includes(marker)) fail(`website deployment workflow is missing ${marker}.`);
 }
 if (!desktopPackage.includes('"package:mac:dev"') || !desktopPackage.includes("--arm64")) fail("desktop development packaging must target arm64.");
+for (const marker of ["extends: electron-builder.yml", "appId: com.kestrel.desktop.dev", "KESTREL_RELEASE_CHANNEL: development"]) {
+  if (!developmentBuilder.includes(marker)) fail(`desktop development packaging is missing ${marker}.`);
+}
+if (!desktopPackage.includes("KESTREL_RELEASE_CHANNEL=development") || !desktopPackage.includes("electron-builder.dev.yml")) fail("desktop development packaging must persist its isolated development identity.");
+if (!desktopPackage.includes("sign-development-macos-app.mjs")) fail("desktop development packaging must apply its documented ad-hoc signature.");
+if (!desktopMain.includes("app.setName(PRODUCT_IDENTITY.runtimeApplicationName)")) fail("desktop startup must preserve its compatibility runtime name for safeStorage.");
+for (const marker of ['runtimeApplicationName = "Kestrel"', 'keychainService: `${runtimeApplicationName} Safe Storage`', "userDataDirectoryName: runtimeApplicationName"]) {
+  if (!productIdentity.includes(marker)) fail(`product identity is missing ${marker}.`);
+}
+for (const marker of ['"--force", "--deep", "--sign", "-"', '"--verify", "--deep", "--strict"', '"Signature=adhoc"', '"Identifier=com.kestrel.desktop.dev"']) {
+  if (!developmentSigner.includes(marker)) fail(`development app signer is missing ${marker}.`);
+}
 if (!desktopPackage.includes('"package:mac:mdm"') || !desktopPackage.includes("--mac pkg")) fail("desktop MDM packaging must provide an arm64 PKG target.");
 if (/package:mac:universal|test:packaged-desktop:universal/.test(`${desktopPackage}\n${rootPackage}`)) fail("universal desktop scripts remain configured.");
 if (!rootPackage.includes("pnpm test:desktop-setup")) fail("the market verification command does not exercise guided local-AI setup.");

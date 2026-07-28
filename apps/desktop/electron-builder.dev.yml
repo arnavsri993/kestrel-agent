@@ -1,0 +1,6 @@
+extends: electron-builder.yml
+appId: com.kestrel.desktop.dev
+mac:
+  extendInfo:
+    LSEnvironment:
+      KESTREL_RELEASE_CHANNEL: development

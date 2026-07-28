@@ -89,6 +89,9 @@ function validateContrast(skin: SkinDefinition): void {
     ["faint text", skin.colors.faint, skin.colors.canvas, 3],
     ["focus signal", skin.colors.signal, skin.colors.canvas, 3],
     ["primary button", skin.colors.solidText, skin.colors.solid, 4.5],
+    ["primary button hover", skin.colors.solidText, skin.colors.solidHover, 4.5],
+    ["status text", skin.colors.statusInk, skin.colors.statusSoft, 4.5],
+    ["secondary text on surfaces", skin.colors.muted, skin.colors.surface, 4.5],
     ["warning text", skin.colors.warningInk, skin.colors.warningSoft, 4.5],
     ["error text", skin.colors.dangerInk, skin.colors.dangerSoft, 4.5]
   ];
@@ -101,27 +104,38 @@ export class SkinManager {
   private readonly customKey = "display.custom-skins";
   private readonly selectedKey = "display.selected-skin";
   private custom: SkinDefinition[];
+  private readonly quarantined: unknown[];
+  private readonly unsafeCustomIds = new Set<string>();
   private selectedId: string;
 
   constructor(private readonly database: KestrelDatabase) {
     const stored = database.getPrivateState<unknown[]>(this.customKey) ?? [];
-    this.custom = stored.flatMap((value) => {
+    const custom: SkinDefinition[] = [];
+    const quarantined: unknown[] = [];
+    for (const value of stored) {
       const parsed = SkinDefinitionSchema.safeParse(value);
-      if (!parsed.success || parsed.data.builtin) return [];
+      if (!parsed.success || parsed.data.builtin || custom.length >= 20) {
+        quarantined.push(value);
+        continue;
+      }
+      custom.push(parsed.data);
       try {
         validateContrast(parsed.data);
-        return [parsed.data];
       } catch {
-        return [];
+        this.unsafeCustomIds.add(parsed.data.id);
       }
-    }).slice(0, 20);
+    }
+    this.custom = custom;
+    this.quarantined = quarantined;
     this.selectedId = database.getPrivateState<string>(this.selectedKey) ?? "workstrand";
     if (!this.all().some((skin) => skin.id === this.selectedId)) this.selectedId = "workstrand";
-    this.persist();
   }
 
   all(): SkinDefinition[] {
-    return [...BUILTIN_SKINS, ...this.custom];
+    return [
+      ...BUILTIN_SKINS,
+      ...this.custom.map((skin) => this.renderableSkin(skin)),
+    ];
   }
 
   selected(): SkinDefinition {
@@ -160,6 +174,7 @@ export class SkinManager {
     const exists = this.custom.some((candidate) => candidate.id === skin.id);
     if (!exists && this.custom.length >= 20) throw new Error("At most 20 custom skins can be installed.");
     this.custom = [...this.custom.filter((candidate) => candidate.id !== skin.id), skin];
+    this.unsafeCustomIds.delete(skin.id);
     this.selectedId = skin.id;
     this.persist();
     return this.status();
@@ -169,13 +184,29 @@ export class SkinManager {
     if (BUILTIN_SKINS.some((skin) => skin.id === id)) throw new Error("Built-in skins cannot be removed.");
     if (!this.custom.some((skin) => skin.id === id)) throw new Error(`Custom skin ${id} is not installed.`);
     this.custom = this.custom.filter((skin) => skin.id !== id);
+    this.unsafeCustomIds.delete(id);
     if (this.selectedId === id) this.selectedId = "workstrand";
     this.persist();
     return this.status();
   }
 
   private persist(): void {
-    this.database.setPrivateState(this.customKey, this.custom);
+    this.database.setPrivateState(this.customKey, [
+      ...this.custom,
+      ...this.quarantined,
+    ]);
     this.database.setPrivateState(this.selectedKey, this.selectedId);
+  }
+
+  private renderableSkin(skin: SkinDefinition): SkinDefinition {
+    if (!this.unsafeCustomIds.has(skin.id)) return skin;
+    const fallback = skin.mode === "light" ? daylight : workstrand;
+    return {
+      ...fallback,
+      id: skin.id,
+      name: skin.name,
+      description: skin.description,
+      builtin: false,
+    };
   }
 }

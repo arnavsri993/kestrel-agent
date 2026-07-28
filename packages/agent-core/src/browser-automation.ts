@@ -44,7 +44,18 @@ export class BrowserController {
     if (allowedOrigins.length === 0) throw new Error("Browser sessions require at least one allowed origin.");
     const origins = [...new Set(allowedOrigins.map((value) => {
       const url = new URL(value);
-      if (url.protocol !== "https:" && url.hostname !== "127.0.0.1" && url.hostname !== "localhost") throw new Error("Browser origins must use HTTPS except explicit localhost development origins.");
+      const loopbackHttp =
+        url.protocol === "http:" &&
+        ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+      if (
+        (url.protocol !== "https:" && !loopbackHttp) ||
+        url.origin === "null" ||
+        url.username ||
+        url.password
+      )
+        throw new Error(
+          "Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
+        );
       return url.origin;
     }))];
     const backendSessionId = await this.backend.createSession({ allowedOrigins: origins, isolated: true });

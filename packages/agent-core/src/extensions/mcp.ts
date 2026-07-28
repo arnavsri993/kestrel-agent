@@ -15,6 +15,7 @@ export type JsonRpcMessage =
 export interface McpTransport {
   send(message: JsonRpcMessage): void | Promise<void>;
   onMessage(listener: (message: JsonRpcMessage) => void): () => void;
+  onError(listener: (error: Error) => void): () => void;
   close(): void | Promise<void>;
 }
 
@@ -38,6 +39,7 @@ export class StreamableHttpMcpTransport implements McpTransport {
   private readonly url: URL;
   private sessionId: string | undefined;
   private closed = false;
+  private closePromise?: Promise<void>;
 
   constructor(endpoint: string, private readonly options: { authorization?: string; fetcher?: typeof fetch } = {}) {
     this.url = new URL(endpoint);
@@ -71,19 +73,35 @@ export class StreamableHttpMcpTransport implements McpTransport {
   }
 
   onMessage(listener: (message: JsonRpcMessage) => void): () => void { this.events.on("message", listener); return () => this.events.off("message", listener); }
+  onError(listener: (error: Error) => void): () => void { this.events.on("transport-error", listener); return () => this.events.off("transport-error", listener); }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
-    if (this.sessionId) await (this.options.fetcher ?? fetch)(this.url, { method: "DELETE", headers: { "mcp-session-id": this.sessionId, ...(this.options.authorization ? { authorization: this.options.authorization } : {}) } });
-    this.events.removeAllListeners();
+    this.closePromise = (async () => {
+      try {
+        if (this.sessionId) await (this.options.fetcher ?? fetch)(this.url, { method: "DELETE", headers: { "mcp-session-id": this.sessionId, ...(this.options.authorization ? { authorization: this.options.authorization } : {}) } });
+      } finally {
+        this.events.removeAllListeners();
+      }
+    })();
+    return this.closePromise;
   }
 }
 
 export class StdioMcpTransport implements McpTransport {
+  private static readonly MAX_STDERR_RECORD_BYTES = 1_000_000;
+  private static readonly MAX_STDERR_BURST_BYTES = 1_000_000;
+  private static readonly STDERR_BURST_WINDOW_MS = 1_000;
   private readonly events = new EventEmitter();
   private readonly child: ChildProcessWithoutNullStreams;
   private buffer = "";
+  private stderrRecordBytes = 0;
+  private stderrBurstBytes = 0;
+  private stderrBurstUpdatedAt = Date.now();
+  private failure?: Error;
+  private closing = false;
+  private closePromise?: Promise<void>;
 
   constructor(config: { command: string; args?: string[]; cwd: string; environment?: Record<string, string> }) {
     this.child = spawn(config.command, config.args ?? [], {
@@ -93,10 +111,11 @@ export class StdioMcpTransport implements McpTransport {
       stdio: ["pipe", "pipe", "pipe"]
     });
     this.child.stdout.on("data", (chunk: Buffer) => {
+      if (this.failure) return;
       this.buffer += chunk.toString("utf8");
       if (Buffer.byteLength(this.buffer) > 1_000_000) {
         this.child.kill("SIGTERM");
-        this.events.emit("error", new Error("MCP stdio message exceeded 1 MB."));
+        this.reportError(new Error("MCP stdio message exceeded 1 MB."));
         return;
       }
       const lines = this.buffer.split(/\r?\n/);
@@ -104,15 +123,67 @@ export class StdioMcpTransport implements McpTransport {
       for (const line of lines) {
         if (!line.trim()) continue;
         try { this.events.emit("message", JSON.parse(line) as JsonRpcMessage); }
-        catch { this.events.emit("error", new Error("MCP server wrote invalid JSON to stdout.")); }
+        catch {
+          this.child.kill("SIGTERM");
+          this.reportError(new Error("MCP server wrote invalid JSON to stdout."));
+          return;
+        }
       }
+    });
+    this.child.stderr.on("data", (chunk: Buffer) => {
+      if (this.failure) return;
+      for (let offset = 0; offset < chunk.byteLength; offset += 1) {
+        if (chunk[offset] === 0x0a) this.stderrRecordBytes = 0;
+        else this.stderrRecordBytes += 1;
+        if (
+          this.stderrRecordBytes >
+          StdioMcpTransport.MAX_STDERR_RECORD_BYTES
+        ) {
+          this.child.kill("SIGTERM");
+          this.reportError(
+            new Error("MCP server stderr record exceeded 1 MB."),
+          );
+          return;
+        }
+      }
+      const now = Date.now();
+      const elapsed = Math.max(0, now - this.stderrBurstUpdatedAt);
+      this.stderrBurstUpdatedAt = now;
+      this.stderrBurstBytes =
+        Math.max(
+          0,
+          this.stderrBurstBytes -
+            elapsed *
+              (StdioMcpTransport.MAX_STDERR_BURST_BYTES /
+                StdioMcpTransport.STDERR_BURST_WINDOW_MS),
+        ) + chunk.byteLength;
+      if (
+        this.stderrBurstBytes >
+        StdioMcpTransport.MAX_STDERR_BURST_BYTES
+      ) {
+        this.child.kill("SIGTERM");
+        this.reportError(
+          new Error("MCP server stderr burst exceeded 1 MB per second."),
+        );
+      }
+    });
+    this.child.once("error", (error) => this.reportError(new Error(`MCP stdio server failed: ${error.message}`)));
+    this.child.once("exit", (code, signal) => {
+      if (!this.closing && !this.failure) this.reportError(new Error(`MCP stdio server exited unexpectedly (${signal ?? code ?? "unknown"}).`));
+    });
+    this.child.stdin.on("error", (error) => {
+      if (!this.closing) this.reportError(new Error(`MCP stdio input failed: ${error.message}`));
     });
   }
 
-  send(message: JsonRpcMessage): void {
+  async send(message: JsonRpcMessage): Promise<void> {
+    if (this.failure) throw this.failure;
+    if (this.closing || this.child.stdin.destroyed || !this.child.stdin.writable) throw new Error("MCP stdio transport is closed.");
     const encoded = JSON.stringify(message);
     if (encoded.includes("\n")) throw new Error("MCP stdio messages must be newline-delimited single-line JSON.");
-    this.child.stdin.write(`${encoded}\n`);
+    await new Promise<void>((resolvePromise, reject) => {
+      this.child.stdin.write(`${encoded}\n`, (error) => error ? reject(error) : resolvePromise());
+    });
   }
 
   onMessage(listener: (message: JsonRpcMessage) => void): () => void {
@@ -120,24 +191,67 @@ export class StdioMcpTransport implements McpTransport {
     return () => this.events.off("message", listener);
   }
 
-  async close(): Promise<void> {
-    if (this.child.exitCode !== null) return;
-    this.child.stdin.end();
-    await new Promise<void>((resolvePromise) => {
-      const timer = setTimeout(() => { this.child.kill("SIGTERM"); resolvePromise(); }, 2_000);
-      this.child.once("exit", () => { clearTimeout(timer); resolvePromise(); });
-    });
+  onError(listener: (error: Error) => void): () => void {
+    this.events.on("transport-error", listener);
+    if (this.failure) queueMicrotask(() => listener(this.failure!));
+    return () => this.events.off("transport-error", listener);
+  }
+
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closing = true;
+    this.closePromise = (async () => {
+      try {
+        if (this.child.exitCode !== null || this.child.signalCode !== null) return;
+        await new Promise<void>((resolvePromise) => {
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(terminate);
+            clearTimeout(force);
+            this.child.off("exit", finish);
+            resolvePromise();
+          };
+          const terminate = setTimeout(() => this.child.kill("SIGTERM"), 1_000);
+          const force = setTimeout(() => { this.child.kill("SIGKILL"); finish(); }, 2_000);
+          terminate.unref();
+          force.unref();
+          this.child.once("exit", finish);
+          this.child.stdin.end();
+        });
+      } finally {
+        this.events.removeAllListeners();
+      }
+    })();
+    return this.closePromise;
+  }
+
+  private reportError(error: Error): void {
+    if (this.failure || this.closing) return;
+    this.failure = error;
+    this.events.emit("transport-error", error);
   }
 }
 
 export class McpClient {
-  private readonly pending = new Map<JsonRpcId, { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
+  private readonly pending = new Map<JsonRpcId, {
+    resolve(value: unknown): void;
+    reject(error: Error): void;
+    timer: NodeJS.Timeout;
+    cleanup(): void;
+  }>();
   private nextId = 0;
   private initialized = false;
-  private unsubscribe?: () => void;
+  private unsubscribeMessage: (() => void) | undefined;
+  private unsubscribeError: (() => void) | undefined;
+  private failure?: Error;
+  private closed = false;
+  private closePromise?: Promise<void>;
 
   constructor(private readonly transport: McpTransport, private readonly timeoutMs = 30_000) {
-    this.unsubscribe = transport.onMessage((message) => this.receive(message));
+    this.unsubscribeMessage = transport.onMessage((message) => this.receive(message));
+    this.unsubscribeError = transport.onError((error) => this.fail(error));
   }
 
   async initialize(): Promise<Record<string, unknown>> {
@@ -148,7 +262,7 @@ export class McpClient {
     });
     const negotiated = String((result as Record<string, unknown>).protocolVersion ?? "");
     if (negotiated !== MCP_PROTOCOL_VERSION) throw new Error(`Unsupported MCP protocol version ${negotiated}.`);
-    await this.transport.send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    await this.send({ jsonrpc: "2.0", method: "notifications/initialized" });
     this.initialized = true;
     return result as Record<string, unknown>;
   }
@@ -179,15 +293,7 @@ export class McpClient {
 
   async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpToolResult> {
     this.requireInitialized();
-    const request = this.request("tools/call", { name, arguments: args });
-    if (signal) {
-      if (signal.aborted) throw signal.reason;
-      const abort = () => { void this.transport.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { reason: "Cancelled by Kestrel" } }); };
-      signal.addEventListener("abort", abort, { once: true });
-      try { return await request as McpToolResult; }
-      finally { signal.removeEventListener("abort", abort); }
-    }
-    return await request as McpToolResult;
+    return await this.request("tools/call", { name, arguments: args }, signal) as McpToolResult;
   }
 
   async listResources(): Promise<Array<Record<string, unknown>>> { return this.paginatedList("resources/list", "resources"); }
@@ -196,23 +302,50 @@ export class McpClient {
   async listPrompts(): Promise<Array<Record<string, unknown>>> { return this.paginatedList("prompts/list", "prompts"); }
   async getPrompt(name: string, args: Record<string, string> = {}): Promise<Record<string, unknown>> { this.requireInitialized(); return await this.request("prompts/get", { name, arguments: args }) as Record<string, unknown>; }
 
-  async close(): Promise<void> {
-    this.unsubscribe?.();
-    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("MCP client closed.")); }
-    this.pending.clear();
-    await this.transport.close();
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.unsubscribeMessage?.();
+    this.unsubscribeError?.();
+    this.unsubscribeMessage = undefined;
+    this.unsubscribeError = undefined;
+    this.rejectPending(new Error("MCP client closed."));
+    this.closePromise = (async () => { await this.transport.close(); })();
+    return this.closePromise;
   }
 
-  private request(method: string, params: Record<string, unknown>): Promise<unknown> {
+  private request(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (this.closed) return Promise.reject(new Error("MCP client is closed."));
+    if (this.failure) return Promise.reject(this.failure);
+    if (signal?.aborted) return Promise.reject(this.abortError(signal));
     const id = ++this.nextId;
     return new Promise((resolvePromise, reject) => {
+      const cleanup = () => signal?.removeEventListener("abort", abort);
+      const abort = () => {
+        const pending = this.takePending(id);
+        if (!pending) return;
+        pending.reject(this.abortError(signal!));
+        void this.send({
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { requestId: id, reason: "Cancelled by Kestrel" }
+        }).catch(() => undefined);
+      };
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        void this.transport.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason: "Request timeout" } });
-        reject(new Error(`MCP ${method} timed out.`));
+        const pending = this.takePending(id);
+        if (!pending) return;
+        void this.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason: "Request timeout" } }).catch(() => undefined);
+        pending.reject(new Error(`MCP ${method} timed out.`));
       }, this.timeoutMs);
-      this.pending.set(id, { resolve: resolvePromise, reject, timer });
-      void this.transport.send({ jsonrpc: "2.0", id, method, params });
+      this.pending.set(id, { resolve: resolvePromise, reject, timer, cleanup });
+      if (signal) {
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) {
+          abort();
+          return;
+        }
+      }
+      void this.send({ jsonrpc: "2.0", id, method, params }).catch(() => undefined);
     });
   }
 
@@ -234,10 +367,54 @@ export class McpClient {
     if (!("id" in message) || !("result" in message || "error" in message) || message.id === null) return;
     const pending = this.pending.get(message.id);
     if (!pending) return;
-    clearTimeout(pending.timer);
-    this.pending.delete(message.id);
+    this.takePending(message.id);
     if ("error" in message) pending.reject(new Error(`MCP ${message.error.code}: ${message.error.message}`));
     else pending.resolve(message.result);
+  }
+
+  private takePending(id: JsonRpcId): {
+    resolve(value: unknown): void;
+    reject(error: Error): void;
+    timer: NodeJS.Timeout;
+    cleanup(): void;
+  } | undefined {
+    const pending = this.pending.get(id);
+    if (!pending) return undefined;
+    this.pending.delete(id);
+    clearTimeout(pending.timer);
+    pending.cleanup();
+    return pending;
+  }
+
+  private abortError(signal: AbortSignal): Error {
+    if (signal.reason instanceof Error) return signal.reason;
+    return new Error(typeof signal.reason === "string" && signal.reason ? signal.reason : "MCP request cancelled.");
+  }
+
+  private async send(message: JsonRpcMessage): Promise<void> {
+    if (this.closed) throw new Error("MCP client is closed.");
+    if (this.failure) throw this.failure;
+    try { await this.transport.send(message); }
+    catch (error) {
+      const failure = error instanceof Error ? error : new Error("MCP transport failed.");
+      this.fail(failure);
+      throw failure;
+    }
+  }
+
+  private fail(error: Error): void {
+    if (this.failure || this.closed) return;
+    this.failure = error;
+    this.rejectPending(error);
+  }
+
+  private rejectPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.cleanup();
+      pending.reject(error);
+    }
+    this.pending.clear();
   }
 
   private requireInitialized(): void {
@@ -245,12 +422,16 @@ export class McpClient {
   }
 }
 
+export interface McpRuntimeAccess {
+  allowMutatingTools: boolean;
+}
+
 export class McpRuntimeServer {
   private initialized = false;
 
   constructor(private readonly runtime: AgentRuntime, private readonly sessionId: string) {}
 
-  async handle(message: JsonRpcMessage): Promise<JsonRpcMessage | undefined> {
+  async handle(message: JsonRpcMessage, access: McpRuntimeAccess = { allowMutatingTools: true }): Promise<JsonRpcMessage | undefined> {
     if (!("method" in message)) return undefined;
     if (!("id" in message)) {
       if (message.method === "notifications/initialized") this.initialized = true;
@@ -267,7 +448,7 @@ export class McpRuntimeServer {
       if (!this.initialized) throw new Error("MCP server is not initialized.");
       if (message.method === "tools/list") return {
         jsonrpc: "2.0", id: message.id, result: {
-          tools: this.runtime.modelTools(this.sessionId).map((tool) => ({
+          tools: this.runtime.modelTools(this.sessionId).filter((tool) => access.allowMutatingTools || tool.descriptor.readOnly).map((tool) => ({
             name: tool.descriptor.name,
             title: tool.descriptor.title,
             description: tool.descriptor.description,
@@ -278,6 +459,9 @@ export class McpRuntimeServer {
       };
       if (message.method === "tools/call") {
         const name = String(message.params?.name ?? "");
+        const tool = this.runtime.modelTools(this.sessionId).find((candidate) => candidate.descriptor.name === name);
+        if (!access.allowMutatingTools && !tool?.descriptor.readOnly)
+          throw new Error("Mutating MCP tools require task authorization.");
         const args = message.params?.arguments;
         const execution = await this.runtime.callTool(this.sessionId, name, args && typeof args === "object" ? args as Record<string, unknown> : {}, {
           approvalStatus: "pending",

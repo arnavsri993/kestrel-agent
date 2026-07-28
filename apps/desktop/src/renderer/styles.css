@@ -4566,14 +4566,14 @@ html:has(.pet-overlay-shell) #root {
   border-color: color-mix(in srgb, var(--signal) 62%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 12%, transparent);
 }
-.paid-provider-directory [role="listbox"] {
+.paid-provider-directory [role="group"] {
   display: grid;
   gap: 3px;
   max-height: 370px;
   margin-top: 10px;
   overflow: auto;
 }
-.paid-provider-directory [role="option"] {
+.paid-provider-directory [role="group"] > button {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
@@ -4587,32 +4587,32 @@ html:has(.pet-overlay-shell) #root {
   text-align: left;
   cursor: pointer;
 }
-.paid-provider-directory [role="option"]:hover,
-.paid-provider-directory [role="option"][aria-selected="true"] {
+.paid-provider-directory [role="group"] > button:hover,
+.paid-provider-directory [role="group"] > button[aria-pressed="true"] {
   border-color: var(--line);
   background: var(--surface);
 }
-.paid-provider-directory [role="option"][aria-selected="true"] {
+.paid-provider-directory [role="group"] > button[aria-pressed="true"] {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal-deep) 34%, transparent);
 }
-.paid-provider-directory [role="option"] strong,
-.paid-provider-directory [role="option"] small {
+.paid-provider-directory [role="group"] > button strong,
+.paid-provider-directory [role="group"] > button small {
   display: block;
 }
-.paid-provider-directory [role="option"] strong {
+.paid-provider-directory [role="group"] > button strong {
   font-size: 11px;
 }
-.paid-provider-directory [role="option"] small {
+.paid-provider-directory [role="group"] > button small {
   margin-top: 2px;
   color: var(--muted);
   font-size: 9px;
 }
-.paid-provider-directory [role="option"] b {
+.paid-provider-directory [role="group"] > button b {
   color: var(--healthy);
   font: 7px var(--mono);
   text-transform: uppercase;
 }
-.paid-provider-directory [role="listbox"] > p {
+.paid-provider-directory [role="group"] > p {
   margin: 14px 5px;
   color: var(--muted);
   font-size: 10px;
@@ -5521,7 +5521,7 @@ html:has(.pet-overlay-shell) #root {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .paid-provider-directory [role="listbox"] {
+  .paid-provider-directory [role="group"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     max-height: 205px;
   }
@@ -6204,6 +6204,33 @@ body {
   letter-spacing: -0.01em;
 }
 
+.main-plane {
+  display: grid;
+  grid-template-rows: max-content minmax(0, 1fr);
+}
+
+.page-stack {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.page-stack > .page-content {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+
+.deep-link-notice {
+  max-width: min(520px, 55vw);
+  overflow: hidden;
+  color: var(--warning);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .page-content {
   height: calc(100vh - 58px);
 }
@@ -6325,7 +6352,7 @@ body {
 }
 
 .composer textarea::placeholder {
-  color: #a5a5ab;
+  color: var(--muted);
 }
 
 .composer-footer {
@@ -6468,8 +6495,8 @@ body {
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: var(--signal);
-  color: #17331d;
+  background: var(--status-soft);
+  color: var(--status-ink);
   font-size: 14px;
 }
 
@@ -6574,12 +6601,12 @@ body {
 }
 
 .button.primary {
-  background: var(--ink);
-  color: var(--canvas);
+  background: var(--solid);
+  color: var(--solid-text);
 }
 
 .button.primary:hover:not(:disabled) {
-  background: #ffffff;
+  background: var(--solid-hover);
 }
 
 .button.secondary {
@@ -7684,16 +7711,16 @@ select {
   background: color-mix(in srgb, var(--panel) 82%, transparent);
 }
 
-.paid-provider-directory [role="option"] {
+.paid-provider-directory [role="group"] > button {
   min-height: 46px;
   border-radius: 9px;
 }
 
-.paid-provider-directory [role="option"] strong {
+.paid-provider-directory [role="group"] > button strong {
   font-size: 12px;
 }
 
-.paid-provider-directory [role="option"] small {
+.paid-provider-directory [role="group"] > button small {
   font-size: 10px;
 }
 

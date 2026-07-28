@@ -34,6 +34,72 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("preserves configured sessions while their workspace is unavailable without exposing workspace tools", async () => {
+    const { root, database, runtime, session } = fixture();
+    runtime.appendMessage({
+      sessionId: session.id,
+      role: "user",
+      content: "Keep this conversation while its folder is unavailable.",
+    });
+    runtime.close();
+    rmSync(root, { recursive: true, force: true });
+
+    const restarted = new AgentRuntime(
+      database,
+      [],
+      () => "2026-07-22T16:01:00.000Z",
+      undefined,
+      [session.workspaceRoot!],
+    );
+    expect(restarted.getSession(session.id)).toMatchObject({
+      id: session.id,
+      title: session.title,
+      workspaceRoot: session.workspaceRoot,
+    });
+    expect(restarted.listMessages(session.id).map((message) => message.content)).toEqual([
+      "Keep this conversation while its folder is unavailable.",
+    ]);
+    expect(restarted.workspaceInstructions(session.id)).toEqual([]);
+    const fork = restarted.forkSession(session.id, "Unavailable workspace fork");
+    expect(fork.workspaceRoot).toBe(session.workspaceRoot);
+    expect(
+      restarted
+        .discoverTools(fork.id)
+        .filter((tool) => tool.requiresWorkspace),
+    ).toEqual([]);
+    expect(
+      restarted
+        .discoverTools(session.id)
+        .filter((tool) => tool.requiresWorkspace),
+    ).toEqual([]);
+    expect(
+      restarted
+        .modelTools(session.id)
+        .filter((tool) => tool.descriptor.requiresWorkspace),
+    ).toEqual([]);
+    await expect(
+      restarted.callTool(session.id, "workspace.read", { path: "README.md" }),
+    ).rejects.toThrow("requires a user-granted workspace root");
+    restarted.close();
+    database.close();
+  });
+
+  it("detaches persisted sessions when their workspace grant is explicitly revoked", () => {
+    const { database, runtime, session } = fixture();
+    runtime.close();
+
+    const restarted = new AgentRuntime(
+      database,
+      [],
+      () => "2026-07-22T16:01:00.000Z",
+      undefined,
+      [],
+    );
+    expect(restarted.getSession(session.id).workspaceRoot).toBeUndefined();
+    restarted.close();
+    database.close();
+  });
+
   it("discovers and executes bounded workspace tools with persisted audit records", async () => {
     const { root, database, runtime, session } = fixture();
     expect(runtime.discoverTools(session.id).map((tool) => tool.name)).toEqual(expect.arrayContaining([

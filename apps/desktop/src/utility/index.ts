@@ -44,7 +44,7 @@ const browserBackend: BrowserAutomationBackend = {
 };
 
 port.on("message", async ({ data }) => {
-  const message = data as { type?: string; config?: { databasePath: string; encryptionKeyBase64: string; workspaceRoots: string[]; pluginRoots: string[]; managedPluginRoots: string[]; learnedSkillRoot: string; secureEnvironment: NodeJS.ProcessEnv }; requestId?: string; request?: unknown; ok?: boolean; result?: unknown; error?: string };
+  const message = data as { type?: string; config?: { databasePath: string; encryptionKeyBase64: string; workspaceRoots: string[]; configuredWorkspaceRoots: string[]; pluginRoots: string[]; managedPluginRoots: string[]; learnedSkillRoot: string; secureEnvironment: NodeJS.ProcessEnv }; requestId?: string; request?: unknown; ok?: boolean; result?: unknown; error?: string };
   if (message.type === "browser-backend-response" && message.requestId) {
     const pending = browserPending.get(message.requestId);
     if (!pending) return;
@@ -79,6 +79,7 @@ port.on("message", async ({ data }) => {
         ...(message.config.secureEnvironment.HONCHO_API_KEY ? { honchoApiKey: message.config.secureEnvironment.HONCHO_API_KEY } : {}),
         ...(remoteExecution ? { remoteExecution } : {}),
         workspaceRoots: message.config.workspaceRoots,
+        configuredWorkspaceRoots: message.config.configuredWorkspaceRoots,
         learnedSkillRoot: message.config.learnedSkillRoot,
         pluginRoots: message.config.pluginRoots,
         managedPluginRoots: message.config.managedPluginRoots,

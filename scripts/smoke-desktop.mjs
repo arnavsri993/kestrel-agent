@@ -16,7 +16,7 @@ const launchArgs = packagedExecutable ? [] : [resolve("apps/desktop")];
 let application;
 const server = createServer((_request, response) => {
   response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-  response.end(`<!doctype html><html><head><title>Kestrel browser smoke</title></head><body><label>Name <input id="name"></label><button id="submit" onclick="document.querySelector('#result').textContent = 'Hello ' + document.querySelector('#name').value">Submit</button><output id="result">Waiting</output></body></html>`);
+  response.end(`<!doctype html><html><head><title>Kestrel browser smoke</title></head><body><label>Name <input id="name"></label><div style="height: 1600px" aria-hidden="true"></div><button id="submit">Submit</button><output id="result">Waiting</output><script>let activationCount = 0; document.querySelector("#submit").addEventListener("click", () => { activationCount += 1; document.querySelector("#result").textContent = "Hello " + document.querySelector("#name").value + " / activation " + activationCount; });</script></body></html>`);
 });
 await new Promise((resolveListen, rejectListen) => {
   server.once("error", rejectListen);
@@ -81,17 +81,26 @@ try {
     try {
       await call("browser.navigate", { browserSessionId, url: `${browserOrigin}/smoke` }, "desktop-smoke-navigate");
       await call("browser.act", { browserSessionId, action: { type: "type", target: "#name", text: "Kestrel" } }, "desktop-smoke-type");
-      await call("browser.act", { browserSessionId, action: { type: "click", target: "#submit" } }, "desktop-smoke-click");
       let snapshot;
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        snapshot = await call("browser.snapshot", { browserSessionId });
+      let clickAttempts = 0;
+      // This fixture's handler only assigns local text, so one bounded retry
+      // cannot repeat an external or non-idempotent effect. Production browser
+      // clicks deliberately remain one-shot.
+      for (let clickAttempt = 0; clickAttempt < 2; clickAttempt += 1) {
+        clickAttempts += 1;
+        await call("browser.act", { browserSessionId, action: { type: "click", target: "#submit" } }, `desktop-smoke-click-${clickAttempt}`);
+        for (let snapshotAttempt = 0; snapshotAttempt < 20; snapshotAttempt += 1) {
+          snapshot = await call("browser.snapshot", { browserSessionId });
+          if (JSON.stringify(snapshot?.accessibilityTree).includes("Hello Kestrel")) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
         if (JSON.stringify(snapshot?.accessibilityTree).includes("Hello Kestrel")) break;
-        await new Promise((resolve) => setTimeout(resolve, 50));
       }
       const screenshot = await call("browser.screenshot", { browserSessionId });
       return {
         title: snapshot?.title,
         snapshotText: JSON.stringify(snapshot?.accessibilityTree),
+        clickAttempts,
         screenshotWidth: screenshot?.width,
         screenshotHeight: screenshot?.height,
         pngBase64: screenshot?.pngBase64
@@ -101,7 +110,8 @@ try {
     }
   }, { browserOrigin });
   assert.equal(browserSmoke.title, "Kestrel browser smoke");
-  assert.match(browserSmoke.snapshotText, /Hello Kestrel/);
+  assert.match(browserSmoke.snapshotText, /Hello Kestrel \/ activation 1/);
+  assert.equal(browserSmoke.clickAttempts, 1, "Browser click required the smoke-only retry.");
   assert.equal(typeof browserSmoke.screenshotWidth, "number");
   assert.equal(typeof browserSmoke.screenshotHeight, "number");
   assert.match(browserSmoke.pngBase64, /^iVBOR/);

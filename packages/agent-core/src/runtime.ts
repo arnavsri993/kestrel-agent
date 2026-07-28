@@ -238,6 +238,7 @@ export class AgentRuntime extends EventEmitter {
   private readonly deferredTools = new Map<string, { catalogId: string; descriptor: RuntimeToolDescriptor }>();
   private readonly hooks: RuntimeHook[] = [];
   private readonly workspaceRoots: string[];
+  private readonly configuredWorkspaceRoots: string[];
   private readonly activeExecutions = new Map<string, AbortController>();
   private readonly commandRunner = new SandboxedCommandRunner();
   private readonly backgroundProcesses = new Map<string, {
@@ -256,10 +257,34 @@ export class AgentRuntime extends EventEmitter {
     private readonly database: KestrelDatabase,
     workspaceRoots: string[] = [],
     private readonly now: () => string = () => new Date().toISOString(),
-    private readonly githubToken?: string
+    private readonly githubToken?: string,
+    configuredWorkspaceRoots: string[] = workspaceRoots,
   ) {
     super();
-    this.workspaceRoots = [...new Set(workspaceRoots.map((root) => realpathSync(root)))];
+    const canonicalWorkspaceRoots: string[] = [];
+    for (const root of workspaceRoots) {
+      try {
+        canonicalWorkspaceRoots.push(realpathSync(root));
+      } catch {
+        // Missing, unmounted, or newly inaccessible roots are not active grants.
+      }
+    }
+    this.workspaceRoots = [...new Set(canonicalWorkspaceRoots)];
+    this.configuredWorkspaceRoots = [
+      ...new Set(
+        [
+          ...canonicalWorkspaceRoots,
+          ...configuredWorkspaceRoots.map((root) => {
+            try {
+              return realpathSync(root);
+            } catch {
+              return resolve(root);
+            }
+          }),
+        ],
+      ),
+    ];
+    this.reconcilePersistedWorkspaceRoots();
     const previousProcesses = this.database.getPrivateState<Array<Record<string, unknown>>>(this.processJournalKey) ?? [];
     if (previousProcesses.some((process) => process.status === "running")) this.database.setPrivateState(this.processJournalKey, previousProcesses.map((process) => process.status === "running" ? { ...process, status: "interrupted", error: "The host restarted while this process was running.", updatedAt: this.now() } : process));
     this.registerWorkspaceTools();
@@ -308,8 +333,13 @@ export class AgentRuntime extends EventEmitter {
 
   workspaceInstructions(sessionId: string, targetPath?: string): Array<{ path: string; content: string; precedence: number }> {
     const session = this.requireSession(sessionId);
-    if (!session.workspaceRoot) return [];
-    return this.loadInstructions(session.workspaceRoot, targetPath);
+    const workspaceRoot = this.resolveActiveWorkspaceRoot(session);
+    if (!workspaceRoot) return [];
+    return this.loadInstructions(workspaceRoot, targetPath);
+  }
+
+  activeWorkspaceRoot(sessionId: string): string | undefined {
+    return this.resolveActiveWorkspaceRoot(this.requireSession(sessionId));
   }
 
   checkpoint(sessionId: string, summary: string): RuntimeSession {
@@ -367,12 +397,19 @@ export class AgentRuntime extends EventEmitter {
 
   forkSession(sessionId: string, title?: string): RuntimeSession {
     const parent = this.requireSession(sessionId);
-    const child = this.createSession({
+    const activeWorkspaceRoot = this.resolveActiveWorkspaceRoot(parent);
+    let child = this.createSession({
       title: title ?? `${parent.title} (fork)`,
       parentSessionId: parent.id,
-      ...(parent.workspaceRoot ? { workspaceRoot: parent.workspaceRoot } : {}),
+      ...(activeWorkspaceRoot ? { workspaceRoot: activeWorkspaceRoot } : {}),
       allowedTools: parent.allowedTools
     });
+    if (!activeWorkspaceRoot && parent.workspaceRoot) {
+      child = this.saveSession({
+        ...child,
+        workspaceRoot: parent.workspaceRoot,
+      });
+    }
     const messageIds = new Map<string, string>();
     for (const message of this.listMessages(parent.id)) {
       const cloned = this.appendMessage({
@@ -606,11 +643,12 @@ export class AgentRuntime extends EventEmitter {
 
   discoverTools(sessionId: string, query?: string): RuntimeToolDescriptor[] {
     const session = this.requireSession(sessionId);
+    const hasActiveWorkspace = Boolean(this.resolveActiveWorkspaceRoot(session));
     const terms = query?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
     return [...this.tools.values()]
       .map((definition) => definition.descriptor)
       .filter((tool) => session.allowedTools.includes(tool.name))
-      .filter((tool) => !tool.requiresWorkspace || Boolean(session.workspaceRoot))
+      .filter((tool) => !tool.requiresWorkspace || hasActiveWorkspace)
       .filter((tool) => terms.length === 0 || terms.every((term) => `${tool.name} ${tool.title} ${tool.description} ${tool.tags.join(" ")}`.toLowerCase().includes(term)))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -645,10 +683,11 @@ export class AgentRuntime extends EventEmitter {
 
   async callTool(sessionId: string, toolName: string, rawInput: Record<string, unknown>, options: ToolCallOptions = {}): Promise<RuntimeToolExecution> {
     const session = this.requireSession(sessionId);
+    const workspaceRoot = this.resolveActiveWorkspaceRoot(session);
     const definition = this.tools.get(toolName);
     if (!definition || !session.allowedTools.includes(toolName)) throw new Error(`Tool ${toolName} is unavailable in this session.`);
     if (session.status !== "active") throw new Error(`Session ${sessionId} is ${session.status}.`);
-    if (definition.descriptor.requiresWorkspace && !session.workspaceRoot) throw new Error("This tool requires a user-granted workspace root.");
+    if (definition.descriptor.requiresWorkspace && !workspaceRoot) throw new Error("This tool requires a user-granted workspace root.");
     if (!definition.descriptor.readOnly && !options.idempotencyKey) throw new Error("Mutating tools require an idempotency key.");
 
     const idempotencyKey = options.idempotencyKey ? `runtime-tool:${sessionId}:${toolName}:${options.idempotencyKey}` : undefined;
@@ -700,7 +739,7 @@ export class AgentRuntime extends EventEmitter {
       executionId: execution.id,
       signal: controller.signal,
       progress: (payload) => this.emitRuntimeEvent("tool.progress", sessionId, payload, { executionId: execution.id }),
-      ...(session.workspaceRoot ? { workspaceRoot: session.workspaceRoot } : {})
+      ...(workspaceRoot ? { workspaceRoot } : {})
     };
     if (idempotencyKey) this.database.saveIdempotentResult(idempotencyKey, execution);
     try {
@@ -1720,6 +1759,34 @@ export class AgentRuntime extends EventEmitter {
     const granted = this.workspaceRoots.find((root) => isWithin(root, candidate));
     if (!granted) throw new Error("Workspace access has not been granted for this root.");
     return candidate;
+  }
+
+  private resolveActiveWorkspaceRoot(session: RuntimeSession): string | undefined {
+    if (!session.workspaceRoot) return undefined;
+    try {
+      const candidate = realpathSync(session.workspaceRoot);
+      return this.workspaceRoots.some((root) => isWithin(root, candidate))
+        ? candidate
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private reconcilePersistedWorkspaceRoots(): void {
+    for (const session of this.database.listRuntimeSessions()) {
+      if (!session.workspaceRoot) continue;
+      const candidate = resolve(session.workspaceRoot);
+      if (
+        this.configuredWorkspaceRoots.some((root) =>
+          isWithin(root, candidate),
+        )
+      )
+        continue;
+      const detached = { ...session };
+      delete detached.workspaceRoot;
+      this.database.saveRuntimeSession(detached);
+    }
   }
 
   private requireSession(id: string): RuntimeSession {

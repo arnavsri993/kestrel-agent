@@ -1,4 +1,5 @@
 import { mkdir, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron, type Page } from "@playwright/test";
 
@@ -30,10 +31,35 @@ const output = join(
   captureName,
 );
 const testData = join(root, ".tmp", "desktop-capture-data");
+const captureHome = join(testData, "home");
+const captureCodexHome = join(testData, "codex-home");
+const captureConfigHome = join(testData, "config");
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
+const forbiddenPersonalText = packagedExecutable
+  ? [homedir(), process.env.USER, process.env.LOGNAME].filter(
+      (value): value is string => Boolean(value && value.length >= 4),
+    )
+  : [];
 
 await rm(testData, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
+await mkdir(captureHome, { recursive: true });
+await mkdir(captureCodexHome, { recursive: true });
+await mkdir(captureConfigHome, { recursive: true });
+
+const captureEnvironment = Object.fromEntries(
+  [
+    "PATH",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    "TMPDIR",
+    "CI",
+  ].flatMap((key) =>
+    process.env[key] === undefined ? [] : [[key, process.env[key]!]],
+  ),
+);
 
 const application = await electron.launch({
   ...(packagedExecutable
@@ -43,7 +69,22 @@ const application = await electron.launch({
           join(root, "apps", "desktop", "out", "main", "index.js"),
         ],
       }),
-  env: { ...process.env, KESTREL_TEST_USER_DATA: testData },
+  env: {
+    ...captureEnvironment,
+    // A packaged macOS app needs the signed-in user's Keychain home for
+    // safeStorage. All application data, CLI configuration, provider
+    // discovery, and captured state remain isolated below testData.
+    HOME: packagedExecutable ? homedir() : captureHome,
+    USER: "kestrel-capture",
+    LOGNAME: "kestrel-capture",
+    CODEX_HOME: captureCodexHome,
+    CLAUDE_CONFIG_DIR: join(captureConfigHome, "claude"),
+    XDG_CONFIG_HOME: captureConfigHome,
+    KESTREL_TEST_USER_DATA: testData,
+    KESTREL_DISABLE_UPDATES: "1",
+    KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
+    KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+  },
 });
 
 async function settle(page: Page, duration = 260) {
@@ -52,6 +93,14 @@ async function settle(page: Page, duration = 260) {
 
 async function capture(page: Page, name: string, duration = 260) {
   await settle(page, duration);
+  const visibleText = await page.locator("body").innerText();
+  const leaked = forbiddenPersonalText.find((value) =>
+    visibleText.includes(value),
+  );
+  if (leaked)
+    throw new Error(
+      `${name} exposed host identity or home-directory text in the capture.`,
+    );
   await page.screenshot({ path: join(output, name), fullPage: false });
 }
 
@@ -71,10 +120,30 @@ async function openTool(page: Page, label: string) {
     .locator(".tools-disclosure")
     .getByRole("button", { name: label, exact: true })
     .click();
-  await page.locator(".page-content").waitFor();
+  await page.locator(".page-content:not([hidden])").waitFor();
 }
 
-const page = await application.firstWindow();
+const launchOutput: string[] = [];
+for (const stream of [
+  application.process().stdout,
+  application.process().stderr,
+]) {
+  stream?.on("data", (chunk) => {
+    launchOutput.push(String(chunk));
+    if (launchOutput.length > 100) launchOutput.shift();
+  });
+}
+let page: Page;
+try {
+  page = await application.firstWindow();
+} catch (cause) {
+  await application.close().catch(() => undefined);
+  const detail = launchOutput.join("").trim().slice(-8_000);
+  throw new Error(
+    `Desktop capture did not open a window${detail ? `:\n${detail}` : "."}`,
+    { cause },
+  );
+}
 const runtimeErrors: string[] = [];
 page.on("console", (message) => {
   if (message.type() === "error") runtimeErrors.push(message.text());

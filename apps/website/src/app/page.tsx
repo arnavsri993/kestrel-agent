@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "motion/react";
+import type { MouseEvent } from "react";
 import mediaRegistry from "../data/media-registry.json";
 import { AmbientMedia, type VisualAsset } from "../components/AmbientMedia";
 import { ApprovalScene, ContextScene, TeacherScene } from "../components/ProductScenes";
@@ -12,6 +13,7 @@ const hero = assets.find((asset) => asset.id === "hero-signal-field")!;
 const cta = assets.find((asset) => asset.id === "cta-resolution-field")!;
 
 const stages = ["Notice", "Retrieve", "Plan", "Approve", "Act", "Verify"];
+const repositoryUrl = "https://github.com/arnavsri993/kestrel-agent";
 
 const capabilityExamples = [
   { trigger: "A repository is shared", work: "Inspect the project, plan the change, implement it, and run the relevant checks.", boundary: "Local changes remain reviewable." },
@@ -46,7 +48,7 @@ const releaseChecks = publicRelease.available
       ["available", "Signed direct-download and update channel"],
     ]
   : [
-      ["available", "Unsigned Apple Silicon development app"],
+      ["available", "Ad-hoc-signed Apple Silicon development app"],
       ["pending", "Developer ID signing and notarization"],
       ["pending", "Gatekeeper verification on packaged artifacts"],
       ["available", "Apple Silicon arm64 architecture verification"],
@@ -68,6 +70,16 @@ const navItems = [
   ["Architecture", "#architecture"]
 ];
 
+function closeMobileMenu(event: MouseEvent<HTMLAnchorElement>) {
+  const details = event.currentTarget.closest("details");
+  const href = event.currentTarget.getAttribute("href");
+  const target = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+  if (details) details.open = false;
+  requestAnimationFrame(() => {
+    (target ?? details?.querySelector<HTMLElement>("summary"))?.focus({ preventScroll: true });
+  });
+}
+
 export default function Home() {
   const reduced = useReducedMotion();
 
@@ -84,8 +96,8 @@ export default function Home() {
         <details className="nav-menu">
           <summary>Menu</summary>
           <div>
-            {navItems.map(([label, href]) => <a key={href} href={href} onClick={(event) => event.currentTarget.closest("details")?.removeAttribute("open")}>{label}</a>)}
-            <a href="#release" onClick={(event) => event.currentTarget.closest("details")?.removeAttribute("open")}>Release status</a>
+            {navItems.map(([label, href]) => <a key={href} href={href} onClick={closeMobileMenu}>{label}</a>)}
+            <a href="#release" onClick={closeMobileMenu}>Release status</a>
           </div>
         </details>
       </nav>
@@ -112,7 +124,7 @@ export default function Home() {
         {stages.map((stage, index) => <li key={stage}><span>{String(index + 1).padStart(2, "0")}</span><strong>{stage}</strong>{index < stages.length - 1 && <i aria-hidden="true" />}</li>)}
       </ol>
 
-      <section className="narrative-section decision-section" id="decision" aria-labelledby="decision-title">
+      <section className="narrative-section decision-section" id="decision" aria-labelledby="decision-title" tabIndex={-1}>
         <div className="section-index">01 / ONE COMPLETE DECISION</div>
         <div className="section-heading">
           <h2 id="decision-title">A request arrives.<span>A reviewable answer is already waiting.</span></h2>
@@ -126,7 +138,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="memory-section" id="memory" aria-labelledby="memory-title">
+      <section className="memory-section" id="memory" aria-labelledby="memory-title" tabIndex={-1}>
         <div className="memory-copy">
           <div className="section-index">02 / CONTEXT WITH A BOUNDARY</div>
           <h2 id="memory-title">Remember less.<span>Use the part that changes the answer.</span></h2>
@@ -137,7 +149,7 @@ export default function Home() {
         <ContextScene />
       </section>
 
-      <section className="control-section" id="control" aria-labelledby="control-title">
+      <section className="control-section" id="control" aria-labelledby="control-title" tabIndex={-1}>
         <div className="control-copy" id="safety">
           <div className="section-index">03 / CONTROL THAT STAYS VISIBLE</div>
           <h2 id="control-title">Autonomy stops where consequence starts.</h2>
@@ -173,7 +185,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="security-section" id="architecture" aria-labelledby="architecture-title">
+      <section className="security-section" id="architecture" aria-labelledby="architecture-title" tabIndex={-1}>
         <div className="section-index">05 / LOCAL-FIRST BY ARCHITECTURE</div>
         <div className="section-heading compact-heading">
           <h2 id="architecture-title">Personal context has a perimeter.</h2>
@@ -184,7 +196,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="release-section" id="release" aria-labelledby="release-title">
+      <section className="release-section" id="release" aria-labelledby="release-title" tabIndex={-1}>
         <AmbientMedia asset={cta} />
         <div className="release-copy">
           <div className="section-index">06 / RELEASE READINESS</div>
@@ -213,7 +225,7 @@ export default function Home() {
     <footer className="site-footer">
       <div className="footer-brand"><Brand /></div>
       <p>A local-first workbench for coding, research, automation, files, and verified delivery—with consequential actions kept visible.</p>
-      <div className="footer-links">{navItems.map(([label, href]) => <a key={href} href={href}>{label}</a>)}<a href="#release">Release</a><a href={sitePath("/privacy")}>Privacy</a><a href={sitePath("/support")}>Support</a></div>
+      <div className="footer-links">{navItems.map(([label, href]) => <a key={href} href={href}>{label}</a>)}<a href="#release">Release</a><a href={repositoryUrl}>Repository</a><a href={sitePath("/privacy")}>Privacy</a><a href={sitePath("/support")}>Support</a></div>
       <div className="provenance"><strong>Build provenance</strong><p>fal is used only by deliberate development scripts for optional website atmosphere. It is absent from the public runtime and is not a Kestrel capability.</p></div>
     </footer>
   </>;

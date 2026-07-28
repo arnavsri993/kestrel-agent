@@ -7,7 +7,12 @@ import { KestrelDatabase } from "@kestrel/database";
 import { AgentLoop, LOCAL_FIRST_TOOL_INSTRUCTIONS } from "./agent-loop";
 import { ContextCompactor } from "./context-compactor";
 import { AgentRuntime } from "./runtime";
-import { ProviderPool, textContent, type ModelProvider } from "./providers";
+import {
+  ProviderPool,
+  contentText,
+  textContent,
+  type ModelProvider,
+} from "./providers";
 
 const directories: string[] = [];
 
@@ -16,6 +21,68 @@ afterEach(() => {
 });
 
 describe("provider-neutral agent loop", () => {
+  it("keeps workspace-free chat usable when a configured workspace becomes unavailable", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-loop-unavailable-"));
+    directories.push(root);
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(
+      database,
+      [root],
+      () => "2026-07-22T18:00:00.000Z",
+    );
+    const session = runtime.createSession({
+      title: "Unavailable workspace",
+      workspaceRoot: root,
+    });
+    rmSync(root, { recursive: true, force: true });
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: false,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        expect(request.metadata).toEqual({ session_id: session.id });
+        expect(
+          (request.tools ?? []).some((tool) =>
+            tool.name.startsWith("workspace."),
+          ),
+        ).toBe(false);
+        return {
+          providerId: "fake",
+          model: request.model,
+          text: "Conversation remains available.",
+          toolCalls: [],
+          usage: { inputTokens: 5, outputTokens: 4 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+      () => new Date("2026-07-22T18:00:00.000Z"),
+    );
+    const output = await loop.run({
+      sessionId: session.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Continue without the drive"),
+    });
+    expect(output.assistantMessage?.content).toBe(
+      "Conversation remains available.",
+    );
+    expect(runtime.getSession(session.id).workspaceRoot).toBe(
+      session.workspaceRoot,
+    );
+    database.close();
+  });
+
   it("runs model-requested tools, persists encrypted structured history, and audits usage", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-loop-"));
     directories.push(root);
@@ -118,10 +185,365 @@ describe("provider-neutral agent loop", () => {
     expect(output.run.status).toBe("waiting_approval");
     expect(output.pendingExecution?.status).toBe("blocked");
     expect(existsSync(join(root, "delete.txt"))).toBe(true);
-    const resumed = await loop.resume({ runId: output.run.id });
+    const resumed = await loop.resume({
+      runId: output.run.id,
+      approvalDecision: "approved",
+    });
     expect(resumed.run).toMatchObject({ status: "completed", turn: 2 });
     expect(resumed.assistantMessage?.content).toBe("Deleted after approval.");
     expect(existsSync(join(root, "delete.txt"))).toBe(false);
+    database.close();
+  });
+
+  it("resolves one approval decision at a time for each waiting run", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(
+      database,
+      [],
+      () => "2026-07-22T18:00:00.000Z",
+    );
+    const session = runtime.createSession({ title: "Concurrent approval" });
+    let executions = 0;
+    let releaseExecution: () => void = () => undefined;
+    let reportExecutionStarted: () => void = () => undefined;
+    const executionStarted = new Promise<void>((resolvePromise) => {
+      reportExecutionStarted = resolvePromise;
+    });
+    const executionGate = new Promise<void>((resolvePromise) => {
+      releaseExecution = resolvePromise;
+    });
+    runtime.registerExternalTool({
+      descriptor: {
+        name: "test.sensitive-mutation",
+        title: "Sensitive mutation fixture",
+        description:
+          "Pause a consequential tool so concurrent approval decisions overlap.",
+        category: "connector",
+        riskLevel: "sensitive",
+        readOnly: false,
+        requiresWorkspace: false,
+        source: "plugin",
+        tags: ["test", "approval"],
+      },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        executions += 1;
+        reportExecutionStarted();
+        await executionGate;
+        return { receipt: `mutation-${executions}` };
+      },
+    });
+    runtime.allowTool(session.id, "test.sensitive-mutation");
+    let modelCalls = 0;
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: true,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        modelCalls += 1;
+        return modelCalls === 1
+          ? {
+              providerId: "fake",
+              model: request.model,
+              text: "",
+              toolCalls: [{
+                id: "call-sensitive",
+                name: "test.sensitive-mutation",
+                arguments: {},
+              }],
+              usage: { inputTokens: 5, outputTokens: 3 },
+              finishReason: "tool_calls",
+            }
+          : {
+              providerId: "fake",
+              model: request.model,
+              text: "The approved mutation completed once.",
+              toolCalls: [],
+              usage: { inputTokens: 8, outputTokens: 4 },
+              finishReason: "stop",
+            };
+      },
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+      () => new Date("2026-07-22T18:00:00.000Z"),
+    );
+    const waiting = await loop.run({
+      sessionId: session.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Run the sensitive mutation"),
+    });
+    expect(waiting.run.status).toBe("waiting_approval");
+
+    const first = loop.resume({
+      runId: waiting.run.id,
+      approvalDecision: "approved",
+    });
+    await executionStarted;
+    const second = loop.resume({
+      runId: waiting.run.id,
+      approvalDecision: "approved",
+    });
+    releaseExecution();
+    const [firstResult, secondResult] = await Promise.allSettled([
+      first,
+      second,
+    ]);
+
+    expect(firstResult).toMatchObject({
+      status: "fulfilled",
+      value: { run: { status: "completed" } },
+    });
+    expect(secondResult).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        message: "Agent run approval is already being resolved.",
+      }),
+    });
+    expect(executions).toBe(1);
+    expect(
+      runtime
+        .listMessages(session.id)
+        .filter(
+          (message) =>
+            message.role === "tool" &&
+            message.providerToolCallId === "call-sensitive",
+        ),
+    ).toHaveLength(1);
+    database.close();
+  });
+
+  it.each(["approved", "rejected"] as const)(
+    "allows one model follow-up after a %s decision at the configured turn ceiling",
+    async (approvalDecision) => {
+      const root = mkdtempSync(join(tmpdir(), `kestrel-loop-turn-ceiling-${approvalDecision}-`));
+      directories.push(root);
+      writeFileSync(join(root, "delete.txt"), "keep me\n");
+      const database = new KestrelDatabase(":memory:", createEncryptionKey());
+      const runtime = new AgentRuntime(
+        database,
+        [root],
+        () => "2026-07-22T18:00:00.000Z",
+      );
+      const session = runtime.createSession({
+        title: `Turn ceiling ${approvalDecision}`,
+        workspaceRoot: root,
+      });
+      let calls = 0;
+      const provider: ModelProvider = {
+        id: "fake",
+        capabilities: {
+          streaming: true,
+          tools: true,
+          images: false,
+          audio: false,
+          documents: false,
+          local: true,
+        },
+        complete: async (request) => {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              providerId: "fake",
+              model: request.model,
+              text: "",
+              toolCalls: [{
+                id: "call-delete-at-limit",
+                name: "workspace.delete",
+                arguments: { path: "delete.txt" },
+              }],
+              usage: { inputTokens: 5, outputTokens: 3 },
+              finishReason: "tool_calls",
+            };
+          }
+          const result = request.messages.find(
+            (message) =>
+              message.role === "tool" &&
+              message.toolCallId === "call-delete-at-limit",
+          );
+          expect(result).toBeDefined();
+          expect(contentText(result!.content)).toContain(
+            approvalDecision === "approved"
+              ? '"status":"verified"'
+              : '"status":"cancelled"',
+          );
+          return {
+            providerId: "fake",
+            model: request.model,
+            text: `Observed the ${approvalDecision} decision.`,
+            toolCalls: [],
+            usage: { inputTokens: 8, outputTokens: 4 },
+            finishReason: "stop",
+          };
+        },
+      };
+      const loop = new AgentLoop(
+        database,
+        runtime,
+        new ProviderPool([provider]),
+        () => new Date("2026-07-22T18:00:00.000Z"),
+      );
+      const waiting = await loop.run({
+        sessionId: session.id,
+        model: "fake",
+        providerIds: ["fake"],
+        userContent: textContent("Delete it"),
+        maximumTurns: 1,
+      });
+      expect(waiting.run).toMatchObject({
+        status: "waiting_approval",
+        turn: 1,
+      });
+
+      const resumed = await loop.resume({
+        runId: waiting.run.id,
+        approvalDecision,
+        maximumTurns: 1,
+      });
+
+      expect(resumed.run).toMatchObject({ status: "completed", turn: 2 });
+      expect(resumed.assistantMessage?.content).toBe(
+        `Observed the ${approvalDecision} decision.`,
+      );
+      expect(calls).toBe(2);
+      expect(existsSync(join(root, "delete.txt"))).toBe(
+        approvalDecision === "rejected",
+      );
+      database.close();
+    },
+  );
+
+  it("accounts for every parallel tool call when one pauses for approval, even when a provider reuses an older call ID", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-loop-parallel-approval-"));
+    directories.push(root);
+    writeFileSync(join(root, "delete.txt"), "keep me\n");
+    writeFileSync(join(root, "deferred.txt"), "keep me\n");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(
+      database,
+      [root],
+      () => "2026-07-22T18:00:00.000Z",
+    );
+    const session = runtime.createSession({
+      title: "Parallel approval",
+      workspaceRoot: root,
+    });
+    runtime.appendMessage({
+      sessionId: session.id,
+      role: "assistant",
+      content: "An older turn used the same provider call ID.",
+      modelToolCalls: [
+        {
+          id: "call-delete-second",
+          name: "workspace.read",
+          arguments: { path: "deferred.txt" },
+        },
+      ],
+    });
+    runtime.appendMessage({
+      sessionId: session.id,
+      role: "tool",
+      content: JSON.stringify({ status: "verified", output: "older result" }),
+      providerToolCallId: "call-delete-second",
+      toolName: "workspace.read",
+    });
+    runtime.appendMessage({
+      sessionId: session.id,
+      role: "assistant",
+      content: "The older turn completed.",
+    });
+    let calls = 0;
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: true,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        calls += 1;
+        if (calls === 1)
+          return {
+            providerId: "fake",
+            model: request.model,
+            text: "",
+            toolCalls: [
+              {
+                id: "call-delete-first",
+                name: "workspace.delete",
+                arguments: { path: "delete.txt" },
+              },
+              {
+                id: "call-delete-second",
+                name: "workspace.delete",
+                arguments: { path: "deferred.txt" },
+              },
+            ],
+            usage: { inputTokens: 5, outputTokens: 3 },
+            finishReason: "tool_calls",
+          };
+        const results = request.messages.filter(
+          (message) => message.role === "tool",
+        );
+        expect(results.map((message) => message.toolCallId)).toEqual([
+          "call-delete-second",
+          "call-delete-first",
+          "call-delete-second",
+        ]);
+        const newestDeferredResult = [...results]
+          .reverse()
+          .find((message) => message.toolCallId === "call-delete-second");
+        expect(
+          contentText(newestDeferredResult!.content),
+        ).toContain("Deferred because an earlier tool call required");
+        return {
+          providerId: "fake",
+          model: request.model,
+          text: "Approved the first deletion; the second can be requested again.",
+          toolCalls: [],
+          usage: { inputTokens: 8, outputTokens: 4 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+      () => new Date("2026-07-22T18:00:00.000Z"),
+    );
+    const waiting = await loop.run({
+      sessionId: session.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Delete and inspect"),
+    });
+    expect(waiting.run.status).toBe("waiting_approval");
+    expect(
+      runtime
+        .listMessages(session.id)
+        .filter((message) => message.role === "tool")
+        .map((message) => message.providerToolCallId),
+    ).toEqual(["call-delete-second"]);
+    const resumed = await loop.resume({
+      runId: waiting.run.id,
+      approvalDecision: "approved",
+    });
+    expect(resumed.run.status).toBe("completed");
+    expect(existsSync(join(root, "delete.txt"))).toBe(false);
+    expect(existsSync(join(root, "deferred.txt"))).toBe(true);
     database.close();
   });
 

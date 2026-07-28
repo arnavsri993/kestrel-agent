@@ -31,6 +31,17 @@ export const BROKERED_CREDENTIALS: Record<BrokeredCredentialId, { environmentKey
   fal: { environmentKey: "FAL_KEY", label: "fal media API key" }
 };
 
+const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
+  "KESTREL_ALLOW_EXTERNAL_SEARCH",
+  "KESTREL_WEB_ALLOWED_HOSTS",
+  "KESTREL_ALLOW_HOSTED_TRANSCRIPTION",
+  "KESTREL_OPENAI_TRANSCRIPTION_MODEL",
+  "KESTREL_OPENAI_IMAGE_MODEL",
+  "KESTREL_OPENAI_SPEECH_MODEL",
+  "KESTREL_OPENAI_VOICE",
+  "KESTREL_OLLAMA_CONTEXT_WINDOW"
+] as const;
+
 export interface ResolvedExternalCredentials {
   values: Partial<Record<BrokeredCredentialId, string>>;
   overrideStoredIds: BrokeredCredentialId[];
@@ -137,8 +148,9 @@ export class CredentialBroker {
       ...(base.KESTREL_ENABLE_CLAUDE_SUBSCRIPTION ? { KESTREL_ENABLE_CLAUDE_SUBSCRIPTION: base.KESTREL_ENABLE_CLAUDE_SUBSCRIPTION } : {}),
       ...(base.KESTREL_CLAUDE_PATH ? { KESTREL_CLAUDE_PATH: base.KESTREL_CLAUDE_PATH } : {}),
       ...(base.KESTREL_CLAUDE_SUBSCRIPTION_MODEL ? { KESTREL_CLAUDE_SUBSCRIPTION_MODEL: base.KESTREL_CLAUDE_SUBSCRIPTION_MODEL } : {}),
-      ...(base.KESTREL_WEB_ALLOW_PUBLIC ? { KESTREL_WEB_ALLOW_PUBLIC: base.KESTREL_WEB_ALLOW_PUBLIC } : {})
-      ,...(base.KESTREL_REMOTE_TARGETS ? { KESTREL_REMOTE_TARGETS: base.KESTREL_REMOTE_TARGETS } : {})
+      ...(base.KESTREL_WEB_ALLOW_PUBLIC ? { KESTREL_WEB_ALLOW_PUBLIC: base.KESTREL_WEB_ALLOW_PUBLIC } : {}),
+      ...Object.fromEntries(BROKERED_NON_SECRET_ENVIRONMENT_KEYS.flatMap((key) => base[key] ? [[key, base[key]]] : [])),
+      ...(base.KESTREL_REMOTE_TARGETS ? { KESTREL_REMOTE_TARGETS: base.KESTREL_REMOTE_TARGETS } : {})
     };
     for (const id of Object.keys(BROKERED_CREDENTIALS) as BrokeredCredentialId[]) {
       const stored = await this.getCredential(id);

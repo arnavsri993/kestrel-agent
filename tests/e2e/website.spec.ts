@@ -20,10 +20,15 @@ test("03 exposes the primary navigation", async ({ page }) => {
   for (const href of ["#decision", "#memory", "#control", "#architecture"]) await expect(navigation.locator(`a[href="${href}"]`)).toHaveCount(2);
   if ((page.viewportSize()?.width ?? 0) <= 1080) {
     const menu = navigation.locator(".nav-menu");
-    await navigation.getByText("Menu", { exact: true }).click();
-    await expect(navigation.locator(".nav-menu").getByRole("link", { name: "Release status" })).toBeVisible();
-    await navigation.locator(".nav-menu").getByRole("link", { name: "Release status" }).click();
+    const summary = navigation.getByText("Menu", { exact: true });
+    await summary.focus();
+    await summary.press("Enter");
+    const releaseLink = navigation.locator(".nav-menu").getByRole("link", { name: "Release status" });
+    await expect(releaseLink).toBeVisible();
+    await releaseLink.focus();
+    await releaseLink.press("Enter");
     await expect(menu).not.toHaveAttribute("open", "");
+    await expect(page.locator("#release")).toBeFocused();
   } else {
     await expect(navigation.locator(".nav-release")).toBeVisible();
   }
@@ -127,6 +132,7 @@ test("18 preserves semantic heading order", async ({ page }) => {
 test("19 exposes release status without a false download", async ({ page }) => {
   await page.goto("/#release");
   await expect(page.getByText("0.1.0 development")).toBeVisible();
+  await expect(page.getByText("Ad-hoc-signed Apple Silicon development app")).toBeVisible();
   await expect(page.getByText(/Developer ID signing and notarization/)).toBeVisible();
   await expect(page.locator('a[download]')).toHaveCount(0);
 });
@@ -169,14 +175,19 @@ for (const [index, route, heading, sectionCount] of [
     await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
     await expect(page.locator("main section")).toHaveCount(sectionCount);
     await expect(page.getByRole("navigation", { name: "Legal and support" })).toBeVisible();
+    if (route === "/support") await expect(page.getByText(/Open Tools, then choose Readiness/)).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
     expect(failed).toEqual([]);
   });
 }
 
-test("25 links the public privacy and support routes from the product", async ({ page }) => {
+test("25 links the public repository, privacy, and support routes from the product", async ({ page }) => {
   await page.goto("/");
   const footer = page.locator(".site-footer");
+  await expect(footer.getByRole("link", { name: "Repository" })).toHaveAttribute(
+    "href",
+    "https://github.com/arnavsri993/kestrel-agent",
+  );
   await expect(footer.getByRole("link", { name: "Privacy" })).toHaveAttribute("href", "/privacy");
   await expect(footer.getByRole("link", { name: "Support" })).toHaveAttribute("href", "/support");
 });

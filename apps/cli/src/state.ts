@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { AgentCore, createEnvironmentMediaProviders, createEnvironmentTranscriptionProvider, environmentChannelConfiguration, environmentRemoteExecutionConfiguration, environmentWebAccessOptions, loadSignedManagedPolicy } from "@kestrel/agent-core";
 import { KestrelDatabase } from "@kestrel/database";
 
@@ -38,12 +38,27 @@ export function openKestrel(workspaceRoots: string[] = []): AgentCore {
   const database = new KestrelDatabase(databasePath, encryptionKey(directory));
   const persistedWorkspaceRoots = database.listRuntimeSessions()
     .flatMap((session) => session.workspaceRoot ? [session.workspaceRoot] : [])
-    .filter((root) => existsSync(root))
-    .filter((root) => {
+    .filter(isAbsolute)
+    .map((root) => resolve(root));
+  const activePersistedWorkspaceRoots = persistedWorkspaceRoots.flatMap((root) => {
+    try {
       const rootMetadata = lstatSync(root);
-      return rootMetadata.isDirectory() && !rootMetadata.isSymbolicLink();
-    });
-  const grantedWorkspaceRoots = [...new Set([...workspaceRoots, ...persistedWorkspaceRoots].map((root) => realpathSync(root)))];
+      return rootMetadata.isDirectory() && !rootMetadata.isSymbolicLink()
+        ? [realpathSync(root)]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const explicitWorkspaceRoots = workspaceRoots.map((root) => realpathSync(root));
+  const grantedWorkspaceRoots = [...new Set([
+    ...explicitWorkspaceRoots,
+    ...activePersistedWorkspaceRoots,
+  ])];
+  const configuredWorkspaceRoots = [...new Set([
+    ...explicitWorkspaceRoots,
+    ...persistedWorkspaceRoots,
+  ])];
   const webAccess = environmentWebAccessOptions();
   const channels = environmentChannelConfiguration();
   const transcriptionProvider = createEnvironmentTranscriptionProvider();
@@ -55,6 +70,7 @@ export function openKestrel(workspaceRoots: string[] = []): AgentCore {
   return new AgentCore({
     database,
     workspaceRoots: grantedWorkspaceRoots,
+    configuredWorkspaceRoots,
     learnedSkillRoot: join(directory, "learned-skills"),
     pluginRoots,
     managedPluginRoots: [managedPluginRoot],

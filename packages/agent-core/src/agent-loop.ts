@@ -47,7 +47,7 @@ export interface AgentLoopResult {
 
 export interface AgentLoopResumeInput {
   runId: string;
-  approvalDecision?: "approved" | "rejected";
+  approvalDecision: "approved" | "rejected";
   maximumTurns?: number;
   maximumContextCharacters?: number;
   signal?: AbortSignal;
@@ -69,6 +69,7 @@ function durationMs(startedAt: string, completedAt: string): number {
 export class AgentLoop {
   private readonly compactor = new ContextCompactor();
   private readonly usageGovernor: UsageGovernor;
+  private readonly resumingRunIds = new Set<string>();
 
   constructor(
     private readonly database: KestrelDatabase,
@@ -144,49 +145,63 @@ export class AgentLoop {
   }
 
   async resume(input: AgentLoopResumeInput): Promise<AgentLoopResult> {
-    let run = this.database.getAgentRun(input.runId);
-    if (!run) throw new Error("Agent run not found.");
-    if (run.status !== "waiting_approval" || !run.pendingToolExecutionId || !run.pendingProviderToolCallId || !run.pendingToolName) {
-      throw new Error("Agent run is not waiting at an approval boundary.");
-    }
-    const blocked = this.database.getToolExecution(run.pendingToolExecutionId);
-    if (!blocked) throw new Error("Pending tool execution was not found.");
-    let execution: RuntimeToolExecution;
-    if (input.approvalDecision === "rejected") {
-      execution = { ...blocked, status: "cancelled", error: "The user denied this tool call.", completedAt: this.now().toISOString() };
-      this.database.saveToolExecution(execution);
-    } else {
-      execution = await this.runtime.callTool(run.sessionId, run.pendingToolName, blocked.input, {
-        approvalStatus: "approved",
-        idempotencyKey: `${run.id}:${run.pendingProviderToolCallId}`
+    if (this.resumingRunIds.has(input.runId))
+      throw new Error("Agent run approval is already being resolved.");
+    this.resumingRunIds.add(input.runId);
+    try {
+      let run = this.database.getAgentRun(input.runId);
+      if (!run) throw new Error("Agent run not found.");
+      if (run.status !== "waiting_approval" || !run.pendingToolExecutionId || !run.pendingProviderToolCallId || !run.pendingToolName) {
+        throw new Error("Agent run is not waiting at an approval boundary.");
+      }
+      const blocked = this.database.getToolExecution(run.pendingToolExecutionId);
+      if (!blocked) throw new Error("Pending tool execution was not found.");
+      let execution: RuntimeToolExecution;
+      if (input.approvalDecision === "rejected") {
+        execution = { ...blocked, status: "cancelled", error: "The user denied this tool call.", completedAt: this.now().toISOString() };
+        this.database.saveToolExecution(execution);
+      } else if (input.approvalDecision === "approved") {
+        execution = await this.runtime.callTool(run.sessionId, run.pendingToolName, blocked.input, {
+          approvalStatus: "approved",
+          idempotencyKey: `${run.id}:${run.pendingProviderToolCallId}`
+        });
+        if (execution.status !== "verified") throw new Error(execution.error ?? "Approved tool execution did not complete.");
+      } else {
+        throw new Error("An explicit approval decision is required.");
+      }
+      const content = JSON.stringify({ status: execution.status, output: execution.output, error: execution.error });
+      this.runtime.appendMessage({
+        sessionId: run.sessionId,
+        role: "tool",
+        content,
+        toolExecutionId: execution.id,
+        providerToolCallId: run.pendingProviderToolCallId,
+        toolName: run.pendingToolName
       });
-      if (execution.status !== "verified") throw new Error(execution.error ?? "Approved tool execution did not complete.");
+      this.appendDeferredToolCancellations(
+        run.sessionId,
+        run.pendingProviderToolCallId,
+      );
+      const { pendingToolExecutionId: _execution, pendingProviderToolCallId: _call, pendingToolName: _tool, ...base } = run;
+      run = { ...base, status: "running", updatedAt: this.now().toISOString() };
+      this.database.saveAgentRun(run);
+      const session = this.runtime.getSession(run.sessionId);
+      const compacted = this.compactor.compact(this.runtime.listMessages(run.sessionId), session.checkpoints, {
+        maximumCharacters: input.maximumContextCharacters ?? 120_000
+      });
+      const priorCompaction = this.database.getPrivateState<{ removedMessages: number }>(`agent-run-compaction.${run.id}`);
+      this.database.setPrivateState(`agent-run-compaction.${run.id}`, { sessionId: run.sessionId, removedMessages: Math.max(priorCompaction?.removedMessages ?? 0, compacted.removedMessages), estimatedCharacters: compacted.estimatedCharacters });
+      const configuredMaximumTurns = input.maximumTurns ?? 12;
+      return await this.continueRun(run, compacted.messages, compacted.removedMessages, {
+        maximumTurns: Math.max(configuredMaximumTurns, run.turn + 1),
+        approvalStatus: "pending",
+        ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
+        ...(input.takeSteering ? { takeSteering: input.takeSteering } : {})
+      });
+    } finally {
+      this.resumingRunIds.delete(input.runId);
     }
-    const content = JSON.stringify({ status: execution.status, output: execution.output, error: execution.error });
-    this.runtime.appendMessage({
-      sessionId: run.sessionId,
-      role: "tool",
-      content,
-      toolExecutionId: execution.id,
-      providerToolCallId: run.pendingProviderToolCallId,
-      toolName: run.pendingToolName
-    });
-    const { pendingToolExecutionId: _execution, pendingProviderToolCallId: _call, pendingToolName: _tool, ...base } = run;
-    run = { ...base, status: "running", updatedAt: this.now().toISOString() };
-    this.database.saveAgentRun(run);
-    const session = this.runtime.getSession(run.sessionId);
-    const compacted = this.compactor.compact(this.runtime.listMessages(run.sessionId), session.checkpoints, {
-      maximumCharacters: input.maximumContextCharacters ?? 120_000
-    });
-    const priorCompaction = this.database.getPrivateState<{ removedMessages: number }>(`agent-run-compaction.${run.id}`);
-    this.database.setPrivateState(`agent-run-compaction.${run.id}`, { sessionId: run.sessionId, removedMessages: Math.max(priorCompaction?.removedMessages ?? 0, compacted.removedMessages), estimatedCharacters: compacted.estimatedCharacters });
-    return this.continueRun(run, compacted.messages, compacted.removedMessages, {
-      maximumTurns: input.maximumTurns ?? 12,
-      approvalStatus: "pending",
-      ...(input.signal ? { signal: input.signal } : {}),
-      ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
-      ...(input.takeSteering ? { takeSteering: input.takeSteering } : {})
-    });
   }
 
   private async continueRun(
@@ -211,10 +226,11 @@ export class AgentLoop {
         if (options.signal?.aborted) throw options.signal.reason;
         run = { ...run, turn, updatedAt: this.now().toISOString() };
         this.database.saveAgentRun(run);
+        const workspaceRoot = this.runtime.activeWorkspaceRoot(session.id);
         let poolResult;
         const lease = this.usageGovernor.acquire();
         try {
-          poolResult = await this.providers.complete({ model: run.model, messages: modelMessages, tools, metadata: { session_id: session.id, ...(session.workspaceRoot ? { workspace_root: session.workspaceRoot } : {}) }, ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}), ...(run.serviceTier ? { serviceTier: run.serviceTier } : {}) }, {
+          poolResult = await this.providers.complete({ model: run.model, messages: modelMessages, tools, metadata: { session_id: session.id, ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}) }, ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}), ...(run.serviceTier ? { serviceTier: run.serviceTier } : {}) }, {
             ...(run.providerIds.includes("auto") ? {} : { providerIds: run.providerIds }),
             automaticRouting: run.providerIds.includes("auto"),
             ...(run.providerModels ? { providerModels: run.providerModels } : {}),
@@ -319,6 +335,48 @@ export class AgentLoop {
       };
       this.database.saveAgentRun(run);
       throw error;
+    }
+  }
+
+  private appendDeferredToolCancellations(
+    sessionId: string,
+    pendingProviderToolCallId: string,
+  ): void {
+    const messages = this.runtime.listMessages(sessionId);
+    const assistant = [...messages].reverse().find(
+      (message) =>
+        message.role === "assistant" &&
+        message.modelToolCalls?.some(
+          (call) => call.id === pendingProviderToolCallId,
+        ),
+    );
+    const pendingIndex = assistant?.modelToolCalls?.findIndex(
+      (call) => call.id === pendingProviderToolCallId,
+    ) ?? -1;
+    if (!assistant?.modelToolCalls || pendingIndex < 0) return;
+    const assistantMessageIndex = messages.findIndex(
+      (message) => message.id === assistant.id,
+    );
+    const resolved = new Set<string>();
+    for (const message of messages.slice(assistantMessageIndex + 1)) {
+      if (message.role !== "tool") break;
+      if (message.providerToolCallId)
+        resolved.add(message.providerToolCallId);
+    }
+    for (const deferred of assistant.modelToolCalls.slice(pendingIndex + 1)) {
+      if (resolved.has(deferred.id)) continue;
+      this.runtime.appendMessage({
+        sessionId,
+        role: "tool",
+        content: JSON.stringify({
+          status: "cancelled",
+          error:
+            "Deferred because an earlier tool call required user approval. Request this tool again if it is still needed.",
+        }),
+        providerToolCallId: deferred.id,
+        toolName: deferred.name,
+      });
+      resolved.add(deferred.id);
     }
   }
 

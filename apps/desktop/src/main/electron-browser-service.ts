@@ -118,7 +118,48 @@ export class ElectronBrowserService {
 
   private async targetPoint(window: BrowserWindow, selector: string, focus = false): Promise<{ x: number; y: number }> {
     if (!selector || selector.length > 2_000) throw new Error("Browser selector is invalid.");
-    const result = await window.webContents.executeJavaScript(`(() => { const node = document.querySelector(${JSON.stringify(selector)}); if (!node) throw new Error('Target not found'); ${focus ? "node.focus();" : ""} const box = node.getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2 }; })()`, true) as { x: number; y: number };
+    const result = await window.webContents.executeJavaScript(`(async () => {
+      const node = document.querySelector(${JSON.stringify(selector)});
+      if (!(node instanceof Element)) throw new Error("Browser target was not found.");
+      node.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const box = node.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = document.documentElement.clientHeight;
+      const styles = [];
+      for (let current = node; current; current = current.parentElement) styles.push(getComputedStyle(current));
+      if (
+        !Number.isFinite(box.left) ||
+        !Number.isFinite(box.top) ||
+        !Number.isFinite(box.width) ||
+        !Number.isFinite(box.height) ||
+        box.width <= 0 ||
+        box.height <= 0 ||
+        styles.some((style) =>
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.visibility === "collapse" ||
+          style.contentVisibility === "hidden" ||
+          Number(style.opacity) <= 0
+        )
+      ) throw new Error("Browser target is not visible.");
+      if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") {
+        throw new Error("Browser target is disabled.");
+      }
+      const left = Math.max(0, box.left);
+      const top = Math.max(0, box.top);
+      const right = Math.min(viewportWidth, box.right);
+      const bottom = Math.min(viewportHeight, box.bottom);
+      if (right <= left || bottom <= top) throw new Error("Browser target is outside the viewport.");
+      const x = left + (right - left) / 2;
+      const y = top + (bottom - top) / 2;
+      const hit = document.elementFromPoint(x, y);
+      if (!(hit instanceof Element) || (hit !== node && !node.contains(hit))) {
+        throw new Error("Browser target is obscured or cannot receive pointer input.");
+      }
+      ${focus ? "if (typeof node.focus === \"function\") node.focus({ preventScroll: true });" : ""}
+      return { x, y };
+    })()`, true) as { x: number; y: number };
     if (!Number.isFinite(result.x) || !Number.isFinite(result.y)) throw new Error("Browser target bounds are invalid.");
     return result;
   }
@@ -128,15 +169,33 @@ export class ElectronBrowserService {
     if (signal.aborted) throw signal.reason;
     if (action.type === "click") {
       const point = await this.targetPoint(window, action.target);
+      if (signal.aborted) throw signal.reason;
       // BrowserWindow sessions stay hidden, so Electron's window-level input
       // dispatch can be dropped by a headless runner. CDP input dispatch keeps
       // the action semantic (real mouse events and default activation) without
       // showing or focusing the user's desktop window.
       if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
-      await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
-      await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
+      const pointer = { x: point.x, y: point.y, modifiers: 0, pointerType: "mouse" };
+      await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { ...pointer, type: "mouseMoved", button: "none", buttons: 0, clickCount: 0 });
+      if (signal.aborted) throw signal.reason;
+      let pressed = false;
+      try {
+        await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { ...pointer, type: "mousePressed", button: "left", buttons: 1, clickCount: 1 });
+        pressed = true;
+        if (signal.aborted) throw signal.reason;
+        await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { ...pointer, type: "mouseReleased", button: "left", buttons: 0, clickCount: 1 });
+        pressed = false;
+      } finally {
+        if (pressed)
+          await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { ...pointer, type: "mouseReleased", button: "left", buttons: 0, clickCount: 1 }).catch(() => undefined);
+      }
+      // Let the renderer process the click handler before the verified action
+      // returns. Generic clicks are never retried here because activation may
+      // be consequential and the browser service cannot infer idempotency.
+      await window.webContents.executeJavaScript("new Promise((resolve) => requestAnimationFrame(resolve))", true);
     } else if (action.type === "type") {
       await this.targetPoint(window, action.target, true);
+      if (signal.aborted) throw signal.reason;
       window.webContents.insertText(action.text);
     } else if (action.type === "key") {
       if (!/^[A-Za-z0-9]{1,20}$/.test(action.key) && !["Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(action.key)) throw new Error("Browser key is not allowed.");

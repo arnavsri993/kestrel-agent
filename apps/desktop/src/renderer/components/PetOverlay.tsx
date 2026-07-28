@@ -4,6 +4,7 @@ import type {
   PetActivityState,
   PetStatus,
 } from "@kestrel/shared-types";
+import { petTaskSessionRequest } from "../pet-task";
 
 const speech: Record<PetActivityState, string> = {
   idle: "ready",
@@ -40,24 +41,10 @@ function usePetRuntimeState() {
       const response = raw as CoreResponse;
       if (response.ok && response.petStatus) setStatus(response.petStatus);
     });
-    const unsubscribeRuntime = window.kestrel.onRuntimeEvent((event) => {
+    const unsubscribeActivity = window.kestrel.onPetActivity((nextActivity) => {
       if (resetTimer.current) window.clearTimeout(resetTimer.current);
-      if (event.type === "tool.started" || event.type === "tool.progress")
-        setActivity("run");
-      else if (event.type === "tool.completed")
-        setActivity(
-          ["failed", "blocked", "cancelled"].includes(
-            String(event.payload.status ?? ""),
-          )
-            ? "failed"
-            : /goal|task/.test(String(event.payload.toolName ?? ""))
-              ? "jump"
-              : "review",
-        );
-      else if (event.type === "message.appended") {
-        setActivity(event.payload.role === "assistant" ? "wave" : "review");
-        if (event.payload.role === "assistant") setUnread(true);
-      }
+      setActivity(nextActivity);
+      if (nextActivity === "wave") setUnread(true);
       resetTimer.current = window.setTimeout(() => {
         resetTimer.current = null;
         setActivity("idle");
@@ -65,7 +52,7 @@ function usePetRuntimeState() {
     });
     const unsubscribeStatus = window.kestrel.onPetStatus(setStatus);
     return () => {
-      unsubscribeRuntime();
+      unsubscribeActivity();
       unsubscribeStatus();
       if (resetTimer.current) window.clearTimeout(resetTimer.current);
     };
@@ -120,15 +107,24 @@ function usePetInteraction(
   const [sending, setSending] = useState(false);
   const [message, setMessage] = useState("");
   const clickTimer = useRef<number | null>(null);
+  const spriteRef = useRef<HTMLButtonElement | null>(null);
+  const activeStreamId = useRef<string | null>(null);
+  const cancelRequested = useRef(false);
 
-  // Clean up click timer on unmount
   useEffect(() => {
     return () => {
       if (clickTimer.current) window.clearTimeout(clickTimer.current);
+      const streamId = activeStreamId.current;
+      if (streamId)
+        void window.kestrel.request({
+          type: "runtime-cancel-stream",
+          streamId,
+        }).catch(() => undefined);
     };
   }, []);
 
   async function closeOverlay() {
+    await cancelTask();
     await window.kestrel.request({ type: "pet-overlay-close" });
   }
 
@@ -158,41 +154,72 @@ function usePetInteraction(
     void toggleMain();
   }
 
+  async function cancelTask() {
+    cancelRequested.current = true;
+    const streamId = activeStreamId.current;
+    activeStreamId.current = null;
+    setComposer(false);
+    window.setTimeout(() => spriteRef.current?.focus(), 0);
+    if (!streamId) {
+      if (sending) {
+        setActivity("idle");
+        setMessage("Cancelled.");
+      }
+      return;
+    }
+    setMessage("Cancelling…");
+    try {
+      const response = (await window.kestrel.request({
+        type: "runtime-cancel-stream",
+        streamId,
+      })) as CoreResponse;
+      setActivity(response.ok ? "idle" : "failed");
+      setMessage(response.ok ? "Cancelled." : response.error);
+    } catch (cause) {
+      setActivity("failed");
+      setMessage(
+        cause instanceof Error ? cause.message : "Could not cancel the task.",
+      );
+    }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!prompt.trim() || sending) return;
     setSending(true);
     setMessage("");
+    cancelRequested.current = false;
+    let submittedStreamId: string | null = null;
     try {
-      const sessions = (await window.kestrel.request({
-        type: "runtime-list-sessions",
-      })) as CoreResponse;
-      if (!sessions.ok) throw new Error(sessions.error);
-      let session = [...(sessions.sessions ?? [])].sort((left, right) =>
-        right.updatedAt.localeCompare(left.updatedAt),
-      )[0];
-      if (!session) {
-        const created = (await window.kestrel.request({
-          type: "runtime-create-session",
-          title: "Pet quick task",
-        })) as CoreResponse;
-        if (!created.ok || !created.session)
-          throw new Error(
-            created.ok ? "Could not create a task." : created.error,
-          );
-        session = created.session;
-      }
+      const task = prompt.trim();
+      // A pet task must never inherit the workspace or tool scope from an
+      // unrelated recent chat. Give every quick task an explicit, visible,
+      // workspace-free session that can be reviewed from the main window.
+      const created = (await window.kestrel.request(
+        petTaskSessionRequest(task),
+      )) as CoreResponse;
+      if (!created.ok || !created.session)
+        throw new Error(
+          created.ok ? "Could not create a task." : created.error,
+        );
+      if (cancelRequested.current) return;
+      const session = created.session;
       setActivity("review");
+      const streamId = `pet-${crypto.randomUUID()}`;
+      submittedStreamId = streamId;
+      activeStreamId.current = streamId;
       const response = (await window.kestrel.request({
         type: "runtime-run-agent",
         sessionId: session.id,
-        message: prompt.trim(),
+        message: task,
         model: "auto",
         providerIds: ["auto"],
+        streamId,
       })) as CoreResponse;
       if (!response.ok) throw new Error(response.error);
       setPrompt("");
       setComposer(false);
+      window.setTimeout(() => spriteRef.current?.focus(), 0);
       setActivity(
         response.run?.status === "waiting_approval" ? "waiting" : "wave",
       );
@@ -202,22 +229,34 @@ function usePetInteraction(
           : "Sent.",
       );
     } catch (cause) {
-      setActivity("failed");
-      setMessage(
-        cause instanceof Error ? cause.message : "Could not send the task.",
-      );
+      if (
+        !submittedStreamId ||
+        activeStreamId.current === submittedStreamId
+      ) {
+        setActivity("failed");
+        setMessage(
+          cause instanceof Error ? cause.message : "Could not send the task.",
+        );
+      }
     } finally {
+      if (
+        !submittedStreamId ||
+        activeStreamId.current === submittedStreamId
+      )
+        activeStreamId.current = null;
+      cancelRequested.current = false;
       setSending(false);
     }
   }
 
   return {
     composer,
-    setComposer,
+    spriteRef,
     prompt,
     setPrompt,
     sending,
     message,
+    cancelTask,
     handleSpriteClick,
     handleSpriteDoubleClick,
     submit,
@@ -237,11 +276,12 @@ export function PetOverlay() {
 
   const {
     composer,
-    setComposer,
+    spriteRef,
     prompt,
     setPrompt,
     sending,
     message,
+    cancelTask,
     handleSpriteClick,
     handleSpriteDoubleClick,
     submit,
@@ -266,6 +306,7 @@ export function PetOverlay() {
         {speech[activity]}
       </span>
       <button
+        ref={spriteRef}
         type="button"
         className="pet-overlay-sprite"
         aria-label={`${selected.displayName} is ${activity}. Click for a quick task, double-click for Kestrel, or shift-click to return it.`}
@@ -282,7 +323,7 @@ export function PetOverlay() {
       {unread && (
         <button
           className="pet-mail"
-          aria-label="Open completed task in Kestrel"
+          aria-label="Open Kestrel"
           onClick={() => void toggleMain()}
         >
           ↗
@@ -292,6 +333,11 @@ export function PetOverlay() {
         <form
           className="pet-mini-composer"
           onSubmit={(event) => void submit(event)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            void cancelTask();
+          }}
         >
           <label className="sr-only" htmlFor="pet-prompt">
             Quick task
@@ -299,12 +345,13 @@ export function PetOverlay() {
           <textarea
             id="pet-prompt"
             autoFocus
+            maxLength={10_000}
             value={prompt}
             placeholder="Ask Kestrel…"
             onChange={(event) => setPrompt(event.target.value)}
           />
           <div>
-            <button type="button" onClick={() => setComposer(false)}>
+            <button type="button" onClick={() => void cancelTask()}>
               Cancel
             </button>
             <button disabled={sending || !prompt.trim()}>
@@ -313,7 +360,16 @@ export function PetOverlay() {
           </div>
         </form>
       )}
-      {message && <span className="pet-overlay-message">{message}</span>}
+      {message && (
+        <span
+          className="pet-overlay-message"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {message}
+        </span>
+      )}
     </main>
   );
 }

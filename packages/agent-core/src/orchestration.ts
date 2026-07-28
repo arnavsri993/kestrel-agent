@@ -436,7 +436,10 @@ export class TaskOrchestrator {
     let updated: ScheduledAgentJob = { ...job, status: "running", updatedAt: this.now().toISOString() };
     this.replaceJob(updated);
     try {
-      const result = await this.loop.resume({ runId: job.lastRunId });
+      const result = await this.loop.resume({
+        runId: job.lastRunId,
+        approvalDecision: "approved",
+      });
       updated = this.finishJob(updated, result, this.now());
     } catch {
       updated = { ...updated, status: "failed", error: "Scheduled agent resume failed.", updatedAt: this.now().toISOString() };

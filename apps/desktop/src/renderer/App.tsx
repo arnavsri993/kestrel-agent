@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   AnimatePresence,
   LayoutGroup,
@@ -62,6 +69,12 @@ import { DreamingPanel } from "./components/DreamingPanel";
 import { PresenceSettings } from "./components/PresenceSettings";
 import { applySkin, SkinSettings } from "./components/SkinSettings";
 import { FloatingPet, PetSettings } from "./components/PetSettings";
+import {
+  availableWorkspaceGrants,
+  runtimeRunScope,
+  runtimeTaskWorkspace,
+  shouldPreserveActiveRun,
+} from "./runtime-session-state";
 import { DashboardExtensions } from "./components/DashboardExtensions";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { EventApplications } from "./components/EventApplications";
@@ -71,6 +84,7 @@ import {
   supportedLocalModels,
 } from "./local-model-catalog";
 import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
+import { desktopDeepLinkAction } from "./deep-link-route";
 
 const pages = [
   ["home", "New chat"],
@@ -229,6 +243,14 @@ const paidProviderCatalog = [
   { id: "perplexity", name: "Perplexity", short: "PX", category: "Model labs", description: "Search-grounded Sonar models through the API.", methods: [{ id: "perplexity-api", label: "Perplexity API", kind: "api", note: "Direct Perplexity API key.", href: "https://www.perplexity.ai/account/api/keys", credentials: ["perplexity"] }] },
   { id: "github-models", name: "GitHub Models", short: "GH", category: "Gateways", description: "Model access governed by your GitHub account.", methods: [{ id: "github-token", label: "GitHub token", kind: "api", note: "Fine-grained GitHub token with Models access.", href: "https://github.com/settings/tokens", credentials: ["github-models"] }] },
 ] as const;
+
+const paidProviderCredentialIds = new Set<string>(
+  paidProviderCatalog.flatMap((provider) =>
+    provider.methods.flatMap((method) =>
+      "credentials" in method ? [...method.credentials] : [],
+    ),
+  ),
+);
 
 const freeCredentialGroups = [
   {
@@ -596,26 +618,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
   );
   const modelReady =
     configuredCredentials.some((credential) =>
-      [
-        "openai",
-        "openai-secondary",
-        "anthropic",
-        "anthropic-secondary",
-        "gemini",
-        "openrouter",
-        "groq",
-        "mistral",
-        "nous",
-        "cloudflare",
-        "xai",
-        "deepseek",
-        "together",
-        "fireworks",
-        "nvidia",
-        "huggingface",
-        "perplexity",
-        "github-models",
-      ].includes(credential.id),
+      paidProviderCredentialIds.has(credential.id),
     ) ||
     localModels.length > 0 ||
     subscriptionClis.some((cli) => cli.enabled);
@@ -922,7 +925,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                           placeholder="Search OpenAI, Azure, Groq…"
                           onChange={(event) => setProviderQuery(event.target.value)}
                         />
-                        <div role="listbox" aria-label="Paid AI providers">
+                        <div role="group" aria-label="Paid AI providers">
                           {matchingPaidProviders.map((provider) => {
                             const configured = provider.methods.some(
                               (method) =>
@@ -938,8 +941,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
                             return (
                               <button
                                 key={provider.id}
-                                role="option"
-                                aria-selected={provider.id === selectedPaidProvider.id}
+                                aria-pressed={provider.id === selectedPaidProvider.id}
                                 onClick={() => setSelectedPaidProviderId(provider.id)}
                               >
                                 <span className="provider-monogram">{provider.short}</span>
@@ -2107,7 +2109,7 @@ function Home({
       className="conversation-view"
       aria-label="DJI controller troubleshooting conversation"
     >
-      <div className="message-list" aria-live="polite">
+      <div className="message-list">
         <div className="user-message">
           <p>{sentMessage}</p>
         </div>
@@ -2186,11 +2188,13 @@ function Home({
 }
 
 function RuntimeConversation({
+  visible,
   activeSessionId,
   sessions,
   onActiveSession,
   onSessions,
 }: {
+  visible: boolean;
   activeSessionId: string | null;
   sessions: RuntimeSession[];
   onActiveSession(sessionId: string | null): void;
@@ -2236,6 +2240,9 @@ function RuntimeConversation({
   } | null>(null);
   const [error, setError] = useState("");
   const streamIdRef = useRef<string | null>(null);
+  const streamSessionIdRef = useRef<string | null>(null);
+  const activeSessionIdRef = useRef(activeSessionId);
+  const sessionLoadSequenceRef = useRef(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2245,10 +2252,16 @@ function RuntimeConversation({
   const activeSession = sessions.find(
     (session) => session.id === activeSessionId,
   );
-  const taskWorkspace = activeSession?.workspaceRoot ?? workspace;
+  const activeGrants = availableWorkspaceGrants(grants);
+  const taskWorkspace = runtimeTaskWorkspace({
+    activeSessionId,
+    sessionWorkspaceRoot: activeSession?.workspaceRoot,
+    draftWorkspaceRoot: workspace,
+  });
   const selectedGrant = grants.find((grant) => grant.path === taskWorkspace);
   const manualRoutingReady = Boolean(providerId && model.trim());
   const executionReady = executionMode === "automatic" || manualRoutingReady;
+  activeSessionIdRef.current = activeSessionId;
 
   useEffect(() => {
     const prompt = promptRef.current;
@@ -2267,7 +2280,9 @@ function RuntimeConversation({
     onSessions(response.sessions ?? []);
   }
 
-  async function loadSession(sessionId: string) {
+  async function loadSession(sessionId: string): Promise<boolean> {
+    if (activeSessionIdRef.current !== sessionId) return false;
+    const loadSequence = ++sessionLoadSequenceRef.current;
     const [messageResponse, runResponse, executionResponse, usageResponse] =
       await Promise.all([
         window.kestrel.request({
@@ -2291,6 +2306,11 @@ function RuntimeConversation({
     if (!runResponse.ok) throw new Error(runResponse.error);
     if (!executionResponse.ok) throw new Error(executionResponse.error);
     if (!usageResponse.ok) throw new Error(usageResponse.error);
+    if (
+      activeSessionIdRef.current !== sessionId ||
+      sessionLoadSequenceRef.current !== loadSequence
+    )
+      return false;
     setMessages(messageResponse.messages ?? []);
     setUsage(usageResponse.usage ?? null);
     const runs = runResponse.runs ?? [];
@@ -2307,38 +2327,68 @@ function RuntimeConversation({
         )
       : undefined;
     setPending(waiting && execution ? { run: waiting, execution } : null);
+    return true;
   }
 
   useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
     void Promise.all([
       window.kestrel.request({ type: "runtime-list-providers" }),
       window.kestrel.request({ type: "get-workspace-grants" }),
       window.kestrel.request({ type: "local-model-status" }),
+      window.kestrel.request({ type: "runtime-list-sessions" }),
     ])
-      .then(([providerResponse, grantResponse, localModelResponse]) => {
-        if (providerResponse.ok && "providers" in providerResponse) {
-          const available = providerResponse.providers ?? [];
-          setProviders(available);
-          setProviderId((current) => current || available[0]?.id || "");
-        }
-        if (grantResponse.ok && "workspaceGrants" in grantResponse) {
-          setGrants(grantResponse.workspaceGrants);
-          setWorkspace(
-            (current) =>
-              current || grantResponse.workspaceGrants[0]?.path || "",
+      .then(
+        async ([
+          providerResponse,
+          grantResponse,
+          localModelResponse,
+          sessionResponse,
+        ]) => {
+          if (cancelled) return;
+          if (providerResponse.ok && "providers" in providerResponse) {
+            const available = providerResponse.providers ?? [];
+            setProviders(available);
+            setProviderId((current) =>
+              available.some((provider) => provider.id === current)
+                ? current
+                : available[0]?.id || "",
+            );
+          }
+          if (grantResponse.ok && "workspaceGrants" in grantResponse) {
+            setGrants(grantResponse.workspaceGrants);
+            const availableGrants = availableWorkspaceGrants(
+              grantResponse.workspaceGrants,
+            );
+            setWorkspace(
+              (current) =>
+                (current &&
+                availableGrants.some((grant) => grant.path === current)
+                  ? current
+                  : availableGrants[0]?.path) ?? "",
+            );
+          }
+          if (localModelResponse.ok && "localModels" in localModelResponse)
+            setLocalModels(localModelResponse.localModels);
+          if (sessionResponse.ok && "sessions" in sessionResponse)
+            onSessions(sessionResponse.sessions ?? []);
+          const visibleSessionId = activeSessionIdRef.current;
+          if (visibleSessionId) await loadSession(visibleSessionId);
+        },
+      )
+      .catch((cause) => {
+        if (!cancelled)
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Could not load task options.",
           );
-        }
-        if (localModelResponse.ok && "localModels" in localModelResponse)
-          setLocalModels(localModelResponse.localModels);
-      })
-      .catch((cause) =>
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Could not load task options.",
-        ),
-      );
-  }, []);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, onSessions]);
 
   useEffect(() => {
     if (providerId !== "ollama") return;
@@ -2350,30 +2400,45 @@ function RuntimeConversation({
   }, [providerId, localModels]);
 
   useEffect(() => {
+    const preserveActiveRun = shouldPreserveActiveRun({
+      streamId: streamIdRef.current,
+      streamSessionId: streamSessionIdRef.current,
+      activeSessionId,
+    });
+    sessionLoadSequenceRef.current += 1;
+    setMessages([]);
     setAttachments([]);
     setStreamText("");
-    setOptimisticUser("");
+    if (!preserveActiveRun) {
+      setOptimisticUser("");
+      setOptimisticSteering([]);
+    }
+    setToolActivity([]);
+    setPending(null);
+    setUsage(null);
+    setLatestRun(null);
     setError("");
     setSkillNotice("");
     if (!activeSessionId) {
-      setMessages([]);
-      setPending(null);
-      setUsage(null);
-      setLatestRun(null);
-      setSkillNotice("");
       return;
     }
-    void loadSession(activeSessionId).catch((cause) =>
+    const sessionId = activeSessionId;
+    void loadSession(sessionId).catch((cause) => {
+      if (activeSessionIdRef.current !== sessionId) return;
       setError(
         cause instanceof Error ? cause.message : "Could not load this session.",
-      ),
-    );
+      );
+    });
   }, [activeSessionId]);
 
   useEffect(
     () =>
       window.kestrel.onAgentStream((event) => {
-        if (event.streamId === streamIdRef.current)
+        if (
+          event.streamId === streamIdRef.current &&
+          event.sessionId === streamSessionIdRef.current &&
+          event.sessionId === activeSessionIdRef.current
+        )
           setStreamText((current) => current + event.delta);
       }),
     [],
@@ -2544,11 +2609,28 @@ function RuntimeConversation({
       if (!("workspaceGrants" in response)) return;
       setGrants(response.workspaceGrants);
       if (response.cancelled) return;
+      const availableGrants = availableWorkspaceGrants(
+        response.workspaceGrants,
+      );
+      const selectedWorkspacePath =
+        response.selectedWorkspacePath &&
+        availableGrants.some(
+          (grant) => grant.path === response.selectedWorkspacePath,
+        )
+          ? response.selectedWorkspacePath
+          : undefined;
       const added = response.workspaceGrants.find(
-        (grant) => !previousPaths.has(grant.path),
+        (grant) =>
+          grant.available !== false && !previousPaths.has(grant.path),
       );
       setWorkspace(
-        added?.path ?? workspace ?? response.workspaceGrants[0]?.path ?? "",
+        selectedWorkspacePath ??
+          added?.path ??
+          (activeGrants.some((grant) => grant.path === workspace)
+            ? workspace
+            : undefined) ??
+          availableGrants[0]?.path ??
+          "",
       );
       setAttachments([]);
     } catch (cause) {
@@ -2569,7 +2651,16 @@ function RuntimeConversation({
     if (!prompt) return;
     if (busy) {
       const streamId = streamIdRef.current;
-      if (!streamId || !activeSessionId) return;
+      if (
+        !streamId ||
+        !activeSessionId ||
+        streamSessionIdRef.current !== activeSessionId
+      ) {
+        setError(
+          "Kestrel is still working in another chat. Return to that chat to send an update or cancel the run.",
+        );
+        return;
+      }
       setError("");
       setInput("");
       const response = (await window.kestrel.request({
@@ -2604,8 +2695,10 @@ function RuntimeConversation({
     setOptimisticUser(prompt);
     setInput("");
     let sessionId = activeSessionId;
+    let streamId: string | null = null;
     try {
       if (!sessionId) {
+        const sessionBeforeCreation = activeSessionIdRef.current;
         const created = (await window.kestrel.request({
           type: "runtime-create-session",
           title: chatTitleFromPrompt(prompt),
@@ -2616,11 +2709,21 @@ function RuntimeConversation({
             created.ok ? "Session creation failed." : created.error,
           );
         sessionId = created.session.id;
-        onActiveSession(sessionId);
+        streamId = crypto.randomUUID();
+        streamIdRef.current = streamId;
+        streamSessionIdRef.current = sessionId;
+        if (activeSessionIdRef.current === sessionBeforeCreation) {
+          activeSessionIdRef.current = sessionId;
+          sessionLoadSequenceRef.current += 1;
+          onActiveSession(sessionId);
+        }
         await refreshSessions();
       }
-      const streamId = crypto.randomUUID();
-      streamIdRef.current = streamId;
+      if (!streamId) {
+        streamId = crypto.randomUUID();
+        streamIdRef.current = streamId;
+        streamSessionIdRef.current = sessionId;
+      }
       localStorage.setItem("kestrel:execution-mode", executionMode);
       if (executionMode === "manual")
         localStorage.setItem("kestrel:model", model.trim());
@@ -2634,19 +2737,25 @@ function RuntimeConversation({
         attachments,
       })) as CoreResponse;
       if (!response.ok) throw new Error(response.error);
-      setPending(
-        response.run?.status === "waiting_approval" && response.execution
-          ? { run: response.run, execution: response.execution }
-          : null,
-      );
-      await loadSession(sessionId);
-      setAttachments([]);
+      if (activeSessionIdRef.current === sessionId) {
+        setPending(
+          response.run?.status === "waiting_approval" && response.execution
+            ? { run: response.run, execution: response.execution }
+            : null,
+        );
+        await loadSession(sessionId);
+        setAttachments([]);
+      }
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "The agent run failed.",
-      );
+      if (activeSessionIdRef.current === sessionId)
+        setError(
+          cause instanceof Error ? cause.message : "The agent run failed.",
+        );
     } finally {
-      streamIdRef.current = null;
+      if (!streamId || streamIdRef.current === streamId) {
+        streamIdRef.current = null;
+        streamSessionIdRef.current = null;
+      }
       setBusy(false);
       setStreamText("");
       setOptimisticUser("");
@@ -2656,12 +2765,15 @@ function RuntimeConversation({
 
   async function decide(approvalDecision: "approved" | "rejected") {
     if (!pending || busy) return;
+    const sessionId = pending.run.sessionId;
+    let streamId: string | null = null;
     setBusy(true);
     setError("");
     setStreamText("");
     try {
-      const streamId = crypto.randomUUID();
+      streamId = crypto.randomUUID();
       streamIdRef.current = streamId;
+      streamSessionIdRef.current = sessionId;
       const response = (await window.kestrel.request({
         type: "runtime-resume-agent",
         runId: pending.run.id,
@@ -2669,20 +2781,26 @@ function RuntimeConversation({
         streamId,
       })) as CoreResponse;
       if (!response.ok) throw new Error(response.error);
-      setPending(
-        response.run?.status === "waiting_approval" && response.execution
-          ? { run: response.run, execution: response.execution }
-          : null,
-      );
-      await loadSession(pending.run.sessionId);
+      if (activeSessionIdRef.current === sessionId) {
+        setPending(
+          response.run?.status === "waiting_approval" && response.execution
+            ? { run: response.run, execution: response.execution }
+            : null,
+        );
+        await loadSession(sessionId);
+      }
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not resolve the approval.",
-      );
+      if (activeSessionIdRef.current === sessionId)
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not resolve the approval.",
+        );
     } finally {
-      streamIdRef.current = null;
+      if (!streamId || streamIdRef.current === streamId) {
+        streamIdRef.current = null;
+        streamSessionIdRef.current = null;
+      }
       setBusy(false);
       setStreamText("");
     }
@@ -2707,7 +2825,11 @@ function RuntimeConversation({
 
   async function cancel() {
     const streamId = streamIdRef.current;
-    if (!streamId) return;
+    if (
+      !streamId ||
+      streamSessionIdRef.current !== activeSessionIdRef.current
+    )
+      return;
     await window.kestrel.request({ type: "runtime-cancel-stream", streamId });
   }
 
@@ -2735,26 +2857,30 @@ function RuntimeConversation({
 
   async function restoreCheckpoint(checkpointId: string) {
     if (!activeSessionId || busy) return;
+    const sessionId = activeSessionId;
     setError("");
     try {
       const response = (await window.kestrel.request({
         type: "runtime-restore-checkpoint",
-        sessionId: activeSessionId,
+        sessionId,
         checkpointId,
       })) as CoreResponse;
       if (!response.ok) throw new Error(response.error);
-      await Promise.all([refreshSessions(), loadSession(activeSessionId)]);
+      await Promise.all([refreshSessions(), loadSession(sessionId)]);
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not restore the checkpoint.",
-      );
+      if (activeSessionIdRef.current === sessionId)
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not restore the checkpoint.",
+        );
     }
   }
 
   async function retryLastTurn() {
     if (!activeSessionId || !executionReady || busy) return;
+    const sessionId = activeSessionId;
+    let streamId: string | null = null;
     setBusy(true);
     setError("");
     setSkillNotice("");
@@ -2762,30 +2888,37 @@ function RuntimeConversation({
     setToolActivity([]);
     setOptimisticSteering([]);
     try {
-      const streamId = crypto.randomUUID();
+      streamId = crypto.randomUUID();
       streamIdRef.current = streamId;
+      streamSessionIdRef.current = sessionId;
       const response = (await window.kestrel.request({
         type: "runtime-retry-agent",
-        sessionId: activeSessionId,
+        sessionId,
         model: executionMode === "automatic" ? "auto" : model.trim(),
         providerIds: executionMode === "automatic" ? ["auto"] : [providerId],
         streamId,
       })) as CoreResponse;
       if (!response.ok) throw new Error(response.error);
-      setPending(
-        response.run?.status === "waiting_approval" && response.execution
-          ? { run: response.run, execution: response.execution }
-          : null,
-      );
-      await loadSession(activeSessionId);
+      if (activeSessionIdRef.current === sessionId) {
+        setPending(
+          response.run?.status === "waiting_approval" && response.execution
+            ? { run: response.run, execution: response.execution }
+            : null,
+        );
+        await loadSession(sessionId);
+      }
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not retry the last turn.",
-      );
+      if (activeSessionIdRef.current === sessionId)
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not retry the last turn.",
+        );
     } finally {
-      streamIdRef.current = null;
+      if (!streamId || streamIdRef.current === streamId) {
+        streamIdRef.current = null;
+        streamSessionIdRef.current = null;
+      }
       setBusy(false);
       setStreamText("");
     }
@@ -2912,15 +3045,34 @@ function RuntimeConversation({
       )}
     </button>
   );
+  const runScope = runtimeRunScope({
+    busy,
+    streamSessionId: streamSessionIdRef.current,
+    activeSessionId,
+    hasOptimisticNewTask: Boolean(optimisticUser),
+  });
+  const activeSessionBusy = runScope === "active";
+  const backgroundSessionBusy = runScope === "background";
   const emptySession = Boolean(
     activeSessionId &&
       visibleMessages.length === 0 &&
       !optimisticUser &&
       !optimisticSteering.length &&
-      !busy &&
+      !activeSessionBusy &&
       !pending &&
       !error,
   );
+  const assistiveStatus = activeSessionBusy
+    ? streamText
+      ? "Kestrel is responding in this chat."
+      : "Kestrel is working on this chat."
+    : backgroundSessionBusy
+      ? "Kestrel is working in another chat."
+      : pending
+        ? `Kestrel needs your approval for ${pending.execution.toolName}.`
+        : latestRun?.status === "completed"
+          ? "Kestrel finished the latest response."
+          : "";
   return (
     <section
       className={`conversation-view ${activeSessionId ? "" : "new-task-view"} ${emptySession ? "session-empty-view" : ""}`}
@@ -2930,6 +3082,9 @@ function RuntimeConversation({
           : "New agent task"
       }
     >
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {assistiveStatus}
+      </p>
       {!activeSessionId && visibleMessages.length === 0 || emptySession ? (
         <div className="new-task-center">
           <h1>
@@ -2990,7 +3145,7 @@ function RuntimeConversation({
           )}
         </div>
       ) : (
-        <div className="message-list" aria-live="polite">
+        <div className="message-list">
           {visibleMessages.map((message) =>
             message.role === "user" ? (
               <div className="user-message" key={message.id}>
@@ -3023,7 +3178,7 @@ function RuntimeConversation({
               <small>Queued update</small>
             </div>
           ))}
-          {busy && (
+          {activeSessionBusy && (
             <div className="assistant-message">
               <span className="assistant-avatar">K</span>
               <div>
@@ -3166,7 +3321,7 @@ function RuntimeConversation({
           />
           <div className="composer-footer">
             <div className="button-row composer-context-actions">
-              {taskWorkspace ? (
+              {taskWorkspace && selectedGrant?.available !== false ? (
                 <button
                   type="button"
                   className="composer-icon"
@@ -3214,7 +3369,7 @@ function RuntimeConversation({
                           }}
                         >
                           <option value="">Conversation only</option>
-                          {grants.map((grant) => (
+                          {activeGrants.map((grant) => (
                             <option value={grant.path} key={grant.path}>
                               {grant.name}
                             </option>
@@ -3241,6 +3396,9 @@ function RuntimeConversation({
                                 .filter(Boolean)
                                 .at(-1)
                             : "Conversation only")}
+                        {selectedGrant?.available === false
+                          ? " · unavailable"
+                          : ""}
                       </strong>
                     </div>
                   )}
@@ -3314,15 +3472,19 @@ function RuntimeConversation({
             <span>
               {voiceState === "recording"
                 ? "Microphone live · tap Stop to transcribe"
-                : busy
+                : activeSessionBusy
                   ? "Send an update at the next safe turn boundary"
-                  : taskWorkspace
+                  : backgroundSessionBusy
+                    ? "Another chat is running · return there to update or cancel"
+                  : selectedGrant?.available === false
+                    ? `${selectedGrant.name} · unavailable; reconnect or remove it in Settings`
+                    : taskWorkspace
                     ? `${selectedGrant?.name ?? "Project"} · files and tools stay scoped`
                     : activeSessionId
                       ? "Conversation only · start a new chat to add a project"
                       : "Conversation only"}
             </span>
-            {busy ? (
+            {activeSessionBusy ? (
               <div className="button-row">
                 {voiceButton}
                 <button
@@ -3347,7 +3509,10 @@ function RuntimeConversation({
                   className="send-button"
                   aria-label="Send message"
                   disabled={
-                    !input.trim() || !executionReady || voiceState !== "idle"
+                    backgroundSessionBusy ||
+                    !input.trim() ||
+                    !executionReady ||
+                    voiceState !== "idle"
                   }
                 >
                   <Icon name="arrow" />
@@ -5155,7 +5320,10 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
                   <ul className="workspace-grants">
                     {grants.map((grant) => (
                       <li key={grant.path}>
-                        <span title={grant.path}>{grant.name}</span>
+                        <span title={grant.path}>
+                          {grant.name}
+                          {grant.available === false ? " · unavailable" : ""}
+                        </span>
                         <button
                           className="quiet-link"
                           disabled={busy}
@@ -6666,11 +6834,18 @@ function Settings({
               do not change.
             </p>
           </div>
-          <div className="segmented" aria-label="Communication style">
+          <div
+            className="segmented"
+            role="group"
+            aria-label="Communication style"
+          >
             {snapshot.personality.available.map((personality) => (
               <button
                 key={personality.id}
                 title={personality.description}
+                aria-pressed={
+                  snapshot.personality.selectedId === personality.id
+                }
                 className={
                   snapshot.personality.selectedId === personality.id
                     ? "selected"
@@ -6709,11 +6884,16 @@ function Settings({
               actions.
             </p>
           </div>
-          <div className="segmented" aria-label="Initiative level">
+          <div
+            className="segmented"
+            role="group"
+            aria-label="Initiative level"
+          >
             {["Observer", "Assistant", "Operator", "High"].map((label) => (
               <button
                 key={label}
                 disabled={label !== "Assistant"}
+                aria-pressed={label === "Assistant"}
                 className={label === "Assistant" ? "selected" : ""}
               >
                 {label}
@@ -6998,12 +7178,44 @@ export function App() {
     string | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+  const [deepLinkNotice, setDeepLinkNotice] = useState("");
   const [onboarded, setOnboarded] = useState(
     () =>
       localStorage.getItem("kestrel:onboarded") === "yes" ||
       new URLSearchParams(location.search).has("preview"),
   );
   const reduced = useReducedMotion();
+  const openRuntimeSession = useCallback((sessionId: string | null) => {
+    setToolsOpen(false);
+    setActiveRuntimeSessionId(sessionId);
+    setPage("home");
+  }, []);
+  useEffect(
+    () =>
+      window.kestrel.onDeepLink((deepLink) => {
+        const action = desktopDeepLinkAction(deepLink);
+        if (action === "new-chat") {
+          setDeepLinkNotice("");
+          openRuntimeSession(null);
+          return;
+        }
+        if (action === "settings") {
+          setDeepLinkNotice("");
+          setToolsOpen(false);
+          setPage("settings");
+          return;
+        }
+        setDeepLinkNotice(
+          "This Kestrel link is not supported. Open New chat or Settings from the sidebar.",
+        );
+      }),
+    [openRuntimeSession],
+  );
+  useEffect(() => {
+    if (!deepLinkNotice) return;
+    const timer = window.setTimeout(() => setDeepLinkNotice(""), 8_000);
+    return () => window.clearTimeout(timer);
+  }, [deepLinkNotice]);
   function updateSkinStatus(next: SkinStatus) {
     setSkinStatus(next);
     const selected = next.skins.find((skin) => skin.id === next.selectedId);
@@ -7029,6 +7241,14 @@ export function App() {
   useEffect(
     () =>
       window.kestrel.onRuntimeEvent((event) => {
+        if (event.type === "session.created")
+          void window.kestrel
+            .request({ type: "runtime-list-sessions" })
+            .then((raw) => {
+              const response = raw as CoreResponse;
+              if (response.ok) setRuntimeSessions(response.sessions ?? []);
+            })
+            .catch(() => undefined);
         if (petActivityTimer.current)
           window.clearTimeout(petActivityTimer.current);
         if (event.type === "tool.started" || event.type === "tool.progress")
@@ -7105,6 +7325,23 @@ export function App() {
     setToolsOpen(false);
   }, [page]);
   useEffect(() => {
+    if (!onboarded) return;
+    const openNewChat = (event: KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() !== "n" ||
+        !event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey
+      )
+        return;
+      event.preventDefault();
+      openRuntimeSession(null);
+    };
+    document.addEventListener("keydown", openNewChat);
+    return () => document.removeEventListener("keydown", openNewChat);
+  }, [onboarded, openRuntimeSession]);
+  useEffect(() => {
     if (!toolsOpen) return;
     const focusTimer = window.setTimeout(() => {
       toolsContainerRef.current
@@ -7177,11 +7414,6 @@ export function App() {
           return session ? sessionTitleForDisplay(session.title) : "New chat";
         })()
       : pages.find(([id]) => id === page)?.[1];
-  const openRuntimeSession = (sessionId: string | null) => {
-    setToolsOpen(false);
-    setActiveRuntimeSessionId(sessionId);
-    setPage("home");
-  };
   async function popOutPet() {
     const response = (await window.kestrel.request({
       type: "pet-overlay-open",
@@ -7207,6 +7439,7 @@ export function App() {
             page === "home" && !activeRuntimeSessionId ? "active" : ""
           }`}
           aria-label="New chat"
+          aria-keyshortcuts="Meta+N"
           aria-current={
             page === "home" && !activeRuntimeSessionId ? "page" : undefined
           }
@@ -7232,6 +7465,11 @@ export function App() {
                 <button
                   aria-label={sessionTitleForDisplay(session.title)}
                   title={sessionTitleForDisplay(session.title)}
+                  aria-current={
+                    page === "home" && activeRuntimeSessionId === session.id
+                      ? "page"
+                      : undefined
+                  }
                   key={session.id}
                   className={
                     page === "home" && activeRuntimeSessionId === session.id
@@ -7255,6 +7493,7 @@ export function App() {
               ref={toolsTriggerRef}
               aria-expanded={toolsOpen}
               aria-controls="tools-disclosure"
+              aria-current={toolPageActive ? "page" : undefined}
               className={toolPageActive ? "active" : ""}
               onClick={() => setToolsOpen((open) => !open)}
             >
@@ -7314,6 +7553,7 @@ export function App() {
               <button
                 key={id}
                 aria-label={label}
+                aria-current={page === id ? "page" : undefined}
                 className={page === id ? "active" : ""}
                 onClick={() => {
                   setToolsOpen(false);
@@ -7340,68 +7580,80 @@ export function App() {
       <main className="main-plane">
         <div className="topbar">
           <span>{currentTitle}</span>
+          {deepLinkNotice && (
+            <small className="deep-link-notice" role="status">
+              {deepLinkNotice}
+            </small>
+          )}
         </div>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={page}
-            className="page-content"
-            initial={reduced ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: reduced ? 1 : 0 }}
-            transition={{ duration: reduced ? 0 : 0.12 }}
-          >
-            {page === "home" && (
-              <RuntimeConversation
-                activeSessionId={activeRuntimeSessionId}
-                sessions={runtimeSessions}
-                onActiveSession={setActiveRuntimeSessionId}
-                onSessions={setRuntimeSessions}
-              />
+        <div className="page-stack">
+          {/* Keep the conversation mounted so navigating to Settings or a
+              dashboard does not orphan an active stream or its cancel state. */}
+          <div className="page-content" hidden={page !== "home"}>
+            <RuntimeConversation
+              visible={page === "home"}
+              activeSessionId={activeRuntimeSessionId}
+              sessions={runtimeSessions}
+              onActiveSession={setActiveRuntimeSessionId}
+              onSessions={setRuntimeSessions}
+            />
+          </div>
+          <AnimatePresence mode="wait" initial={false}>
+            {page !== "home" && (
+              <motion.div
+                key={page}
+                className="page-content"
+                initial={reduced ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: reduced ? 1 : 0 }}
+                transition={{ duration: reduced ? 0 : 0.12 }}
+              >
+                {page === "readiness" && <Readiness />}
+                {page === "approvals" && (
+                  <Approvals snapshot={snapshot} update={setSnapshot} />
+                )}
+                {page === "memory" && (
+                  <Memory snapshot={snapshot} update={setSnapshot} />
+                )}
+                {page === "research" && <Research />}
+                {page === "artifacts" && <Artifacts />}
+                {page === "work" && (
+                  <Work
+                    sessions={runtimeSessions}
+                    onSessions={setRuntimeSessions}
+                  />
+                )}
+                {page === "events" && (
+                  <EventApplications onOpenSession={openRuntimeSession} />
+                )}
+                {page === "activity" && <Activity snapshot={snapshot} />}
+                {page === "extensions" && (
+                  <DashboardExtensions
+                    snapshot={snapshot}
+                    sessions={runtimeSessions}
+                    onNavigate={(destination) =>
+                      setPage(
+                        destination === "connections"
+                          ? "settings"
+                          : destination,
+                      )
+                    }
+                  />
+                )}
+                {page === "settings" && (
+                  <Settings
+                    snapshot={snapshot}
+                    update={setSnapshot}
+                    skinStatus={skinStatus}
+                    onSkinStatus={updateSkinStatus}
+                    petStatus={petStatus}
+                    onPetStatus={setPetStatus}
+                  />
+                )}
+              </motion.div>
             )}
-            {page === "readiness" && <Readiness />}
-            {page === "approvals" && (
-              <Approvals snapshot={snapshot} update={setSnapshot} />
-            )}
-            {page === "memory" && (
-              <Memory snapshot={snapshot} update={setSnapshot} />
-            )}
-            {page === "research" && <Research />}
-            {page === "artifacts" && <Artifacts />}
-            {page === "work" && (
-              <Work
-                sessions={runtimeSessions}
-                onSessions={setRuntimeSessions}
-              />
-            )}
-            {page === "events" && (
-              <EventApplications onOpenSession={openRuntimeSession} />
-            )}
-            {page === "activity" && <Activity snapshot={snapshot} />}
-            {page === "extensions" && (
-              <DashboardExtensions
-                snapshot={snapshot}
-                sessions={runtimeSessions}
-                onNavigate={(destination) =>
-                  setPage(
-                    destination === "connections"
-                      ? "settings"
-                      : destination,
-                  )
-                }
-              />
-            )}
-            {page === "settings" && (
-              <Settings
-                snapshot={snapshot}
-                update={setSnapshot}
-                skinStatus={skinStatus}
-                onSkinStatus={updateSkinStatus}
-                petStatus={petStatus}
-                onPetStatus={setPetStatus}
-              />
-            )}
-          </motion.div>
-        </AnimatePresence>
+          </AnimatePresence>
+        </div>
       </main>
       <FloatingPet
         status={petStatus}

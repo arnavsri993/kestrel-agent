@@ -263,7 +263,7 @@ export class RemoteHttpServer {
       }
       if (url.pathname === "/v1/nodes/beacon" && request.method === "POST") {
         if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
-        this.options.remote.assertAuthorized(token, "read");
+        this.options.remote.assertAuthorized(token, "tasks");
         const body = await readJson(request);
         json(response, 200, { node: this.options.nativeNodes.beacon({
           nodeId: stringField(body, "nodeId", 128),
@@ -278,14 +278,14 @@ export class RemoteHttpServer {
       const nodePoll = url.pathname.match(/^\/v1\/nodes\/([A-Za-z0-9._-]{1,128})\/poll$/);
       if (request.method === "POST" && nodePoll) {
         if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
-        this.options.remote.assertAuthorized(token, "read");
+        this.options.remote.assertAuthorized(token, "tasks");
         json(response, 200, this.options.nativeNodes.poll(nodePoll[1]!));
         return;
       }
       const nodeResult = url.pathname.match(/^\/v1\/nodes\/([A-Za-z0-9._-]{1,128})\/results$/);
       if (request.method === "POST" && nodeResult) {
         if (!this.options.nativeNodes) { json(response, 404, { error: "Native nodes are not configured." }); return; }
-        this.options.remote.assertAuthorized(token, "read");
+        this.options.remote.assertAuthorized(token, "tasks");
         const body = await readJson(request);
         const output = body.output && typeof body.output === "object" && !Array.isArray(body.output) ? body.output as Record<string, unknown> : undefined;
         const rawError = body.error && typeof body.error === "object" && !Array.isArray(body.error) ? body.error as Record<string, unknown> : undefined;
@@ -326,15 +326,22 @@ export class RemoteHttpServer {
       }
       if (request.method === "POST" && url.pathname === "/v1/mcp") {
         this.options.remote.assertAuthorized(token, "read" satisfies RemoteScope);
+        const allowMutatingTools = this.options.remote.hasAuthorizedScope(token, "tasks");
         const sessionHeader = request.headers["x-kestrel-session-id"];
         if (typeof sessionHeader !== "string" || sessionHeader.length > 200) throw new Error("MCP session header is required.");
         this.options.runtime.getSession(sessionHeader);
         const body = await readJson(request);
         if (body.jsonrpc !== "2.0" || (typeof body.method !== "string" && !("result" in body) && !("error" in body))) throw new Error("MCP JSON-RPC message is invalid.");
+        if (body.method === "tools/call" && !allowMutatingTools) {
+          const name = String((body.params as Record<string, unknown> | undefined)?.name ?? "");
+          const tool = this.options.runtime.modelTools(sessionHeader).find((candidate) => candidate.descriptor.name === name);
+          if (!tool?.descriptor.readOnly)
+            this.options.remote.assertAuthorized(token, "tasks");
+        }
         const key = `${credentialKey(token)}:${sessionHeader}`;
         const server = this.mcpSessions.get(key) ?? new McpRuntimeServer(this.options.runtime, sessionHeader);
         this.mcpSessions.set(key, server);
-        const result = await server.handle(body as JsonRpcMessage);
+        const result = await server.handle(body as JsonRpcMessage, { allowMutatingTools });
         if (!result) { response.writeHead(202, { "cache-control": "no-store" }); response.end(); }
         else json(response, 200, result);
         return;

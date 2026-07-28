@@ -27,6 +27,30 @@ class FakeBrowser implements BrowserAutomationBackend {
 }
 
 describe("isolated browser automation and visual validation", () => {
+  it("accepts only HTTPS or exact loopback HTTP browser origins", async () => {
+    const controller = new BrowserController(new FakeBrowser());
+    for (const allowed of [
+      "https://example.test",
+      "http://localhost:4173",
+      "http://127.0.0.1:4173",
+      "http://[::1]:4173",
+    ])
+      await expect(controller.create("owner", [allowed])).resolves.toMatchObject({
+        browserSessionId: expect.any(String),
+      });
+    for (const rejected of [
+      "file://127.0.0.1/etc/hosts",
+      "data://localhost/text/plain,private",
+      "ftp://localhost/private",
+      "ws://localhost/socket",
+      "http://localhost.evil.example",
+      "https://user:secret@example.test",
+    ])
+      await expect(controller.create("owner", [rejected])).rejects.toThrow(
+        "must use HTTPS",
+      );
+  });
+
   it("scopes sessions and origins and approval-gates computer actions", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const root = mkdtempSync(join(tmpdir(), "kestrel-browser-workspace-"));

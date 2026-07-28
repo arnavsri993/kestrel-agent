@@ -117,4 +117,4 @@ Product abbreviations: O = OpenClaw, H = Hermes Agent, C = Codex, A = Claude Cod
 
 ## Completion rule
 
-All 58 broad catalog families have implemented repository evidence, but the full requested reference surface is not yet complete: the reproducible page audit records 5 pages across 2 explicit gaps. Vendor-specific pages mapped to `implemented-extension-contract` are supported as signed plugins, skills, channels, or provider adapters and are not falsely described as bundled. Completion requires driving the page-level gap count to zero, preserving the extension boundary, and rerunning the live source refresh and product verification.
+All 58 broad catalog families have implemented repository evidence, and the reproducible page audit currently records zero unmapped pages. Vendor-specific pages mapped to `implemented-extension-contract` are supported as signed plugins, skills, channels, or provider adapters and are not falsely described as bundled. Preserve that extension boundary and rerun the live source refresh plus product verification before treating a future reference update as current.

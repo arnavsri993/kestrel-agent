@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
@@ -7,13 +10,18 @@ import { ProviderPool, type ModelProvider } from "./providers";
 import { RemoteControl } from "./remote";
 import { RemoteHttpServer } from "./remote-http";
 import { AgentRuntime } from "./runtime";
+import type { JsonRpcMessage } from "./extensions/mcp";
 import { ChannelGateway, signChannelEnvelope, type ChannelEnvelope } from "./channels";
 import { PresenceManager } from "./presence";
 import { TrustedProxyAuthorizer } from "./gateway-networking";
 import { NativeNodeManager } from "./native-nodes";
 
 const servers: RemoteHttpServer[] = [];
-afterEach(async () => { for (const server of servers.splice(0)) await server.stop(); });
+const directories: string[] = [];
+afterEach(async () => {
+  for (const server of servers.splice(0)) await server.stop();
+  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
 
 const provider: ModelProvider = { id: "fake", capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: true }, complete: async (request) => ({ providerId: "fake", model: request.model, text: "done", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }) };
 
@@ -27,6 +35,88 @@ function fixture() {
 }
 
 describe("authenticated remote HTTP transport", () => {
+  it("keeps read-only MCP sessions non-mutating and rechecks task scope after initialization", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-remote-mcp-"));
+    directories.push(root);
+    writeFileSync(join(root, "README.md"), "read scope fixture\n");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database, [root]);
+    const session = runtime.createSession({ title: "Scoped remote MCP", workspaceRoot: root });
+    const orchestrator = new TaskOrchestrator(database, runtime, new AgentLoop(database, runtime, new ProviderPool([provider])));
+    const remote = new RemoteControl(database, runtime, orchestrator);
+    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1" });
+    servers.push(server);
+    const { origin } = await server.start();
+
+    const pair = async (label: string, scopes: Array<"read" | "tasks" | "approve">) => {
+      const pairing = remote.beginPairing(label, scopes);
+      const response = await fetch(`${origin}/v1/pairings/complete`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pairingId: pairing.pairingId, code: pairing.code })
+      });
+      expect(response.status).toBe(200);
+      return await response.json() as { deviceId: string; token: string };
+    };
+    const mcp = (token: string, message: JsonRpcMessage) => fetch(`${origin}/v1/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-kestrel-session-id": session.id },
+      body: JSON.stringify(message)
+    });
+    const initialize = async (token: string) => {
+      expect((await mcp(token, { jsonrpc: "2.0", id: 1, method: "initialize" })).status).toBe(200);
+      expect((await mcp(token, { jsonrpc: "2.0", method: "notifications/initialized" })).status).toBe(202);
+    };
+
+    const readOnly = await pair("Read-only browser", ["read"]);
+    await initialize(readOnly.token);
+    const readToolsResponse = await mcp(readOnly.token, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const readTools = await readToolsResponse.json() as { result: { tools: Array<{ name: string }> } };
+    expect(readTools.result.tools.some((tool) => tool.name === "workspace.read")).toBe(true);
+    expect(readTools.result.tools.some((tool) => tool.name === "workspace.write")).toBe(false);
+    const read = await mcp(readOnly.token, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "workspace.read", arguments: { path: "README.md" } }
+    });
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({ result: { isError: false } });
+    const blocked = await mcp(readOnly.token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "workspace.write", arguments: { path: "blocked.txt", content: "scope bypass" } }
+    });
+    expect(blocked.status).toBe(401);
+    expect(existsSync(join(root, "blocked.txt"))).toBe(false);
+
+    const taskDevice = await pair("Task browser", ["read", "tasks"]);
+    await initialize(taskDevice.token);
+    const taskTools = await (await mcp(taskDevice.token, { jsonrpc: "2.0", id: 2, method: "tools/list" })).json() as { result: { tools: Array<{ name: string }> } };
+    expect(taskTools.result.tools.some((tool) => tool.name === "workspace.write")).toBe(true);
+    const written = await mcp(taskDevice.token, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "workspace.write", arguments: { path: "allowed.txt", content: "task scope" } }
+    });
+    expect(written.status).toBe(200);
+    expect(await written.json()).toMatchObject({ result: { isError: false } });
+    expect(readFileSync(join(root, "allowed.txt"), "utf8")).toBe("task scope");
+
+    remote.revoke(taskDevice.deviceId);
+    const revoked = await mcp(taskDevice.token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "workspace.write", arguments: { path: "revoked.txt", content: "must not run" } }
+    });
+    expect(revoked.status).toBe(401);
+    expect(existsSync(join(root, "revoked.txt"))).toBe(false);
+    database.close();
+  });
+
   it("pairs a device, enforces bearer scopes, redacts jobs, and streams runtime events", async () => {
     const { database, runtime, session, remote } = fixture();
     const pairing = remote.beginPairing("Browser client", ["read", "tasks"]);
@@ -60,10 +150,21 @@ describe("authenticated remote HTTP transport", () => {
     const presenceRead = await fetch(`${origin}/v1/presence`, { headers });
     expect(await presenceRead.json()).toMatchObject({ presence: [{ instanceId: "webchat-stable", mode: "webchat" }] });
     expect(JSON.stringify(await (await fetch(`${origin}/v1/presence`, { headers })).json())).not.toMatch(/remoteAddress|hostname|clientIp/i);
+    const readOnlyPairing = remote.beginPairing("Read-only browser", ["read"]);
+    const readOnlyPaired = await fetch(`${origin}/v1/pairings/complete`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pairingId: readOnlyPairing.pairingId, code: readOnlyPairing.code }) });
+    const readOnlyDevice = await readOnlyPaired.json() as { token: string };
+    const readOnlyHeaders = { authorization: `Bearer ${readOnlyDevice.token}`, "content-type": "application/json" };
+    expect((await fetch(`${origin}/v1/nodes/beacon`, { method: "POST", headers: readOnlyHeaders, body: JSON.stringify({ nodeId: "imposter", label: "Imposter", platform: "ios", capabilities: ["location"] }) })).status).toBe(401);
+    expect((await fetch(`${origin}/v1/nodes/phone-1/poll`, { method: "POST", headers: readOnlyHeaders })).status).toBe(401);
+    expect((await fetch(`${origin}/v1/nodes/phone-1/results`, { method: "POST", headers: readOnlyHeaders, body: JSON.stringify({ commandId: "node-command-imposter", ok: true, output: {} }) })).status).toBe(401);
     const nodeBeacon = await fetch(`${origin}/v1/nodes/beacon`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ nodeId: "phone-1", label: "Phone", platform: "ios", capabilities: ["location", "talk", "voiceWake"], idleSeconds: 4 }) });
     expect(await nodeBeacon.json()).toMatchObject({ node: { nodeId: "phone-1", platform: "ios", status: "active" } });
-    nativeNodes.enqueueLocation("phone-1", { desiredAccuracy: "balanced" });
-    expect(await (await fetch(`${origin}/v1/nodes/phone-1/poll`, { method: "POST", headers })).json()).toMatchObject({ commands: [{ kind: "location.get" }], voiceWake: ["openclaw", "claude", "computer"] });
+    const locationCommand = nativeNodes.enqueueLocation("phone-1", { desiredAccuracy: "balanced" });
+    expect(await (await fetch(`${origin}/v1/nodes/phone-1/poll`, { method: "POST", headers })).json()).toMatchObject({ commands: [{ id: locationCommand.id, kind: "location.get" }], voiceWake: ["openclaw", "claude", "computer"] });
+    const nodeResult = await fetch(`${origin}/v1/nodes/phone-1/results`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ commandId: locationCommand.id, ok: true, output: { accuracy: "balanced" } }) });
+    expect(nodeResult.status).toBe(202);
+    expect(await nodeResult.json()).toEqual({ accepted: true });
+    expect(nativeNodes.result(locationCommand.id)).toMatchObject({ ok: true, output: { accuracy: "balanced" } });
     const talkServer = new RemoteHttpServer({ remote, runtime, nativeNodes, host: "127.0.0.1", onNodeTalk: async ({ text }) => ({ text: `Reply: ${text}`, sessionId: session.id }) });
     servers.push(talkServer);
     const talkOrigin = (await talkServer.start()).origin;

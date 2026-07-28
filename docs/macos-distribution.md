@@ -1,8 +1,15 @@
 # macOS runtime and distribution
 
-The initial target is macOS 13+ through a direct, signed, notarized DMG. Development packages are intentionally labeled unsigned and are not release artifacts.
+The initial target is macOS 13+ through a direct, signed, notarized DMG. Development packages are ad-hoc signed, not Developer ID signed or notarized, and are not release artifacts.
 
-Identity values live in `packages/shared-types/src/identity.ts`. Development, beta, and stable channels use separate bundle IDs, storage directories, secrets, update feeds, pairing credentials, and IPC names.
+Identity values live in `packages/shared-types/src/identity.ts`. The packaged
+development app persists `KESTREL_RELEASE_CHANNEL=development` in its
+Info.plist and uses `com.kestrel.desktop.dev`, so its bundle and disabled-update
+identity remain distinct when Finder launches it. Its `Kestrel` application
+data directory and macOS `Kestrel Safe Storage` Keychain identity remain
+compatibility-shared with earlier development builds; changing either without a
+tested migration would make existing encrypted history and credentials appear
+lost. The repository does not yet ship a beta-specific packaging workflow.
 
 Closing the main window hides it while the opted-in background agent continues. The menu bar exposes exact states, pending approvals, pause/resume, open, and quit. Quit checkpoints work and terminates the utility process.
 

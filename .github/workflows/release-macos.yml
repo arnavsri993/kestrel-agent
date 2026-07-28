@@ -24,13 +24,15 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm verify
+      - run: corepack pnpm audit --prod
       - name: Verify real managed local AI on Apple Silicon
         shell: bash
         run: |

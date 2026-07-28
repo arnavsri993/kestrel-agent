@@ -59,9 +59,9 @@ try {
   assert.ok(stored?.approvedAt);
 
   await page.setViewportSize({ width: 1320, height: 900 });
-  await page.locator(".page-content").evaluate((element) => { element.scrollTop = 0; });
+  await page.locator(".page-content:not([hidden])").evaluate((element) => { element.scrollTop = 0; });
   await page.screenshot({ path: importScreenshotPath });
-  await page.locator(".page-content").evaluate((element) => { element.scrollTop = 520; });
+  await page.locator(".page-content:not([hidden])").evaluate((element) => { element.scrollTop = 520; });
   await page.screenshot({ path: screenshotPath });
   await page.setViewportSize({ width: 620, height: 760 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);
