@@ -56,11 +56,14 @@ try {
     .getByRole("heading", { name: /Needs attention|Ready for work/ })
     .first();
   await readinessHeading.waitFor();
+  const readinessHeadingHandle = await readinessHeading.elementHandle();
+  assert.ok(
+    readinessHeadingHandle,
+    "readiness heading did not resolve to a DOM element",
+  );
   await page.waitForFunction(
-    () =>
-      /Needs attention|Ready for work/.test(
-        document.activeElement?.textContent ?? "",
-      ),
+    (heading) => document.activeElement === heading,
+    readinessHeadingHandle,
   );
   assert.equal(
     await readinessHeading.evaluate(
