@@ -1,5 +1,26 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCliArguments } from "./arguments";
+
+function documentedCommands(source: string, prefix: string): string[] {
+  const commands: string[] = [];
+  let current = "";
+  for (const line of source.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(`${prefix} `)) {
+      if (current) commands.push(current);
+      current = trimmed;
+    } else if (current && trimmed.startsWith("[--")) {
+      current += ` ${trimmed}`;
+    } else if (current) {
+      commands.push(current);
+      current = "";
+    }
+  }
+  if (current) commands.push(current);
+  return commands;
+}
 
 describe("Kestrel CLI arguments", () => {
   it("parses run and session commands without evaluating shell text", () => {
@@ -157,6 +178,9 @@ describe("Kestrel CLI arguments", () => {
     expect(
       parseCliArguments(["skin", "import", "--path", "/tmp/field-notes.json"]),
     ).toEqual({ name: "skin-import", path: "/tmp/field-notes.json" });
+    expect(
+      parseCliArguments(["skin", "remove", "--id", "field-notes"]),
+    ).toEqual({ name: "skin-remove", skinId: "field-notes" });
     expect(parseCliArguments(["pets", "list", "cat", "--limit", "12"])).toEqual(
       { name: "pet-list", query: "cat", limit: 12, installed: false },
     );
@@ -237,6 +261,22 @@ describe("Kestrel CLI arguments", () => {
       displayName: "Bluebird",
       description: "",
     });
+    expect(parseCliArguments(["pets", "select", "paperclip"])).toEqual({
+      name: "pet-select",
+      slug: "paperclip",
+    });
+    expect(parseCliArguments(["pets", "scale", "0.5"])).toEqual({
+      name: "pet-scale",
+      scale: 0.5,
+    });
+    expect(parseCliArguments(["pets", "off"])).toEqual({ name: "pet-off" });
+    expect(parseCliArguments(["pets", "remove", "paperclip"])).toEqual({
+      name: "pet-remove",
+      slug: "paperclip",
+    });
+    expect(parseCliArguments(["pets", "doctor"])).toEqual({
+      name: "pet-doctor",
+    });
     expect(
       parseCliArguments([
         "remote",
@@ -279,6 +319,38 @@ describe("Kestrel CLI arguments", () => {
       tailscaleResetOnExit: false,
       tailscalePublicApproved: true,
     });
+  });
+
+  it("keeps documented skin and pet commands aligned with CLI help", () => {
+    const root = resolve(import.meta.dirname, "../../..");
+    const cliSource = readFileSync(
+      resolve(root, "apps/cli/src/index.ts"),
+      "utf8",
+    );
+    const skinDocs = readFileSync(
+      resolve(root, "docs/visual-skins.md"),
+      "utf8",
+    );
+    const petDocs = readFileSync(
+      resolve(root, "docs/activity-pets.md"),
+      "utf8",
+    );
+
+    expect(`${skinDocs}\n${petDocs}`).not.toMatch(
+      /^\s*workstrand (?:skin|pets)\b/m,
+    );
+    expect(
+      documentedCommands(skinDocs, "kestrel skin").map((command) =>
+        command
+          .replace(/--id \S+/, "--id <skin>")
+          .replace(/--path \S+/, "--path <skin.json>"),
+      ),
+    ).toEqual(
+      documentedCommands(cliSource, "kestrel skin"),
+    );
+    expect(documentedCommands(petDocs, "kestrel pets")).toEqual(
+      documentedCommands(cliSource, "kestrel pets"),
+    );
   });
 
   it("rejects missing values and unknown commands", () => {
