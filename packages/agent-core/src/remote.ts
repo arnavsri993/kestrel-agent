@@ -7,6 +7,7 @@ import type { KestrelDatabase } from "@kestrel/database";
 import type { RuntimeSession } from "@kestrel/shared-types";
 import type { AgentRuntime } from "./runtime";
 import type { ScheduledAgentJob, TaskOrchestrator } from "./orchestration";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 export type RemoteBackendKind = "docker" | "ssh" | "cluster" | "serverless";
 export interface RemoteTarget { id: string; kind: RemoteBackendKind; backendId: string; allowedCommands: string[]; enabled: boolean; configuration?: Record<string, unknown>; }
@@ -112,8 +113,8 @@ export class ServerlessHttpRemoteBackend implements RemoteExecutionBackend {
     const bearerToken = stringConfig(target, "bearerToken", false);
     const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
     const response = await this.fetcher(endpoint, { method: "POST", signal: boundedSignal, headers: { "content-type": "application/json", accept: "application/json", ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}) }, body: JSON.stringify({ executionId: `kestrel-${randomUUID()}`, command, args, timeoutMs }) });
-    const declared = Number(response.headers.get("content-length") ?? 0); if (declared > 36_000_000) throw new Error("Serverless response exceeds 36 MB.");
-    const text = await response.text(); if (text.length > 48_000_000) throw new Error("Serverless response exceeds its encoded limit.");
+    const bytes = await readBoundedResponseBytes(response, 36_000_000, "Serverless response exceeds 36 MB.");
+    const text = new TextDecoder().decode(bytes);
     if (!response.ok) throw new Error(`Serverless backend returned HTTP ${response.status}: ${text.slice(0, 2_000)}`);
     let body: Record<string, unknown>; try { body = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error("Serverless backend returned malformed JSON."); }
     if (!Number.isInteger(body.exitCode) || typeof body.stdout !== "string" || typeof body.stderr !== "string") throw new Error("Serverless backend response is invalid.");

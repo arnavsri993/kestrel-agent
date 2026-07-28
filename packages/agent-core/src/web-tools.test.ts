@@ -31,6 +31,60 @@ describe("network-policy web tools", () => {
     await expect(client.fetch("https://safe.example.test/")).rejects.toThrow("byte limit");
   });
 
+  it("cancels chunked oversized pages before parsing or caching them", async () => {
+    let pulls = 0;
+    let cancellations = 0;
+    let cacheWrites = 0;
+    const client = new NetworkPolicyWebClient({
+      allowedHosts: ["safe.example.test"],
+      maximumBytes: 4,
+      resolveHost: async () => ["203.0.113.21"],
+      fetcher: async () => new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(new Uint8Array([pulls, pulls, pulls]));
+          if (pulls === 20) controller.close();
+        },
+        cancel() {
+          cancellations += 1;
+        },
+      }), { headers: { "content-type": "text/html" } }),
+      cache: {
+        get: () => undefined,
+        set: () => {
+          cacheWrites += 1;
+        },
+      },
+    });
+
+    await expect(client.fetch("https://safe.example.test/")).rejects.toThrow("byte limit");
+    expect(cancellations).toBe(1);
+    expect(pulls).toBeLessThan(20);
+    expect(cacheWrites).toBe(0);
+  });
+
+  it("rejects an already-aborted fetch before validation or network access", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Fetch cancelled before start."));
+    let resolutions = 0;
+    let requests = 0;
+    const client = new NetworkPolicyWebClient({
+      allowedHosts: ["safe.example.test"],
+      resolveHost: async () => {
+        resolutions += 1;
+        return ["203.0.113.21"];
+      },
+      fetcher: async () => {
+        requests += 1;
+        return new Response("unexpected");
+      },
+    });
+
+    await expect(client.fetch("https://safe.example.test/", controller.signal)).rejects.toThrow("Fetch cancelled before start.");
+    expect(resolutions).toBe(0);
+    expect(requests).toBe(0);
+  });
+
   it("exposes approval-gated runtime fetch and search tools", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
@@ -52,10 +106,16 @@ describe("network-policy web tools", () => {
 
   it("uses the bounded official Brave Search API contract and explicit public-host opt-in", async () => {
     let request: Request | undefined;
+    let resolutions = 0;
+    let fetches = 0;
     const provider = new BraveSearchProvider({
       apiKey: "search-secret",
-      resolveHost: async () => ["203.0.113.44"],
+      resolveHost: async () => {
+        resolutions += 1;
+        return ["203.0.113.44"];
+      },
       fetcher: async (input, init) => {
+        fetches += 1;
         request = new Request(input, init);
         return new Response(JSON.stringify({ web: { results: [{ title: "Official", url: "https://docs.example/guide", description: "A result" }] } }), { headers: { "content-type": "application/json" } });
       }
@@ -69,5 +129,10 @@ describe("network-policy web tools", () => {
       BRAVE_SEARCH_API_KEY: "key",
       KESTREL_ALLOW_EXTERNAL_SEARCH: "true",
     })?.searchProvider).toBeInstanceOf(BraveSearchProvider);
+    const aborted = new AbortController();
+    aborted.abort(new Error("Search cancelled before start."));
+    await expect(provider.search("kestrel", { maximumResults: 5, signal: aborted.signal })).rejects.toThrow("Search cancelled before start.");
+    expect(resolutions).toBe(1);
+    expect(fetches).toBe(1);
   });
 });
