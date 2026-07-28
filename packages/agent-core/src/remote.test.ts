@@ -94,6 +94,37 @@ describe("remote backends and scoped supervision", () => {
     database.close(); rmSync(root, { recursive: true, force: true });
   });
 
+  it("cancels chunked oversized serverless responses before parsing or emitting output", async () => {
+    let pulls = 0;
+    let cancellations = 0;
+    let outputEvents = 0;
+    const chunk = new Uint8Array(12_000_001);
+    const backend = new ServerlessHttpRemoteBackend(async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(chunk);
+        if (pulls === 20) controller.close();
+      },
+      cancel() {
+        cancellations += 1;
+      },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    await expect(backend.execute({
+      target: { id: "function", kind: "serverless", backendId: "serverless-http", allowedCommands: ["build"], enabled: true, configuration: { endpoint: "https://functions.example.test/run" } },
+      command: "build",
+      args: [],
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+      onOutput: () => {
+        outputEvents += 1;
+      },
+    })).rejects.toThrow("exceeds 36 MB");
+    expect(cancellations).toBe(1);
+    expect(pulls).toBeLessThan(20);
+    expect(outputEvents).toBe(0);
+  });
+
   it("constructs all production remote adapters from bounded environment configuration", () => {
     const config = environmentRemoteExecutionConfiguration({ KESTREL_REMOTE_TARGETS: JSON.stringify([{ id: "docker", kind: "docker", backendId: "docker-cli", allowedCommands: ["node"], enabled: true, configuration: { image: "node:24" } }]) });
     expect(config?.backends.map((backend) => backend.id)).toEqual(["docker-cli", "ssh-cli", "kubernetes-cli", "serverless-http"]); expect(config?.targets).toHaveLength(1);

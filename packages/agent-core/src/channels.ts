@@ -6,6 +6,7 @@ import type { KestrelDatabase } from "@kestrel/database";
 import { ChannelInteractionConfigurationSchema, type ChannelInteractionConfiguration } from "@kestrel/shared-types";
 import type { AgentRuntime } from "./runtime";
 import { isPrivateNetworkAddress } from "./web-tools";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 export interface ChannelEnvelope {
   channelId: string;
@@ -104,8 +105,7 @@ export class NativeChannelAdapter implements ChannelAdapter {
       });
     }
     if (!response.ok) throw new Error(`${this.kind === "discord" ? "Discord" : "Teams"} reaction failed with status ${response.status}.`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > 1_000_000) throw new Error("Channel provider response exceeds 1 MB.");
+    await readBoundedResponseBytes(response, 1_000_000, "Channel provider response exceeds 1 MB.");
   }
   private async slack(input: { conversationId: string; text: string; idempotencyKey: string; signal: AbortSignal }, attachments: ChannelAttachment[]) {
     if (!attachments.length) return this.json("https://slack.com/api/chat.postMessage", { channel: input.conversationId, text: input.text, client_msg_id: input.idempotencyKey }, input, "ts", true);
@@ -129,10 +129,10 @@ export class NativeChannelAdapter implements ChannelAdapter {
     const raw = Buffer.from(lines.join("\r\n")).toString("base64url"); return this.json("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", { raw }, input, "id");
   }
   private async json(url: string, body: unknown, input: { idempotencyKey: string; signal: AbortSignal }, idField: string, slack = false) { const response = await this.fetcher(url, { method: "POST", signal: input.signal, headers: { authorization: `Bearer ${await this.accessToken()}`, "content-type": "application/json", "idempotency-key": input.idempotencyKey }, body: JSON.stringify(body) }); const result = await this.response(response, idField, slack); return result; }
-  private async jsonBody(url: string, body: BodyInit, signal: AbortSignal, headers: Record<string, string>) { const response = await this.fetcher(url, { method: "POST", signal, headers: { authorization: `Bearer ${await this.accessToken()}`, ...headers }, body }); if (!response.ok) throw new Error(`Channel provider failed with status ${response.status}.`); return response.json(); }
+  private async jsonBody(url: string, body: BodyInit, signal: AbortSignal, headers: Record<string, string>) { const response = await this.fetcher(url, { method: "POST", signal, headers: { authorization: `Bearer ${await this.accessToken()}`, ...headers }, body }); if (!response.ok) throw new Error(`Channel provider failed with status ${response.status}.`); const bytes = await readBoundedResponseBytes(response, 1_000_000, "Channel provider response exceeds 1 MB."); return JSON.parse(new TextDecoder().decode(bytes)) as unknown; }
   private async accessToken(): Promise<string> { const token = this.options.token ?? await this.options.tokenProvider?.(); if (!token || token.length > 20_000 || /[\r\n\0]/.test(token)) throw new Error("Native channel token is unavailable."); return token; }
-  private async boundedBody(response: Response): Promise<Record<string, unknown>> { const bytes = new Uint8Array(await response.arrayBuffer()); if (bytes.byteLength > 1_000_000) throw new Error("Channel provider response exceeds 1 MB."); try { return JSON.parse(Buffer.from(bytes).toString("utf8")) as Record<string, unknown>; } catch { return {}; } }
-  private async response(response: Response, idField: string, slack = false) { const bytes = new Uint8Array(await response.arrayBuffer()); if (bytes.byteLength > 1_000_000) throw new Error("Channel provider response exceeds 1 MB."); let body: Record<string, unknown> = {}; try { body = JSON.parse(Buffer.from(bytes).toString("utf8")) as Record<string, unknown>; } catch {} if (!response.ok || (slack && body.ok !== true)) throw new Error(`Channel provider delivery failed (${response.status}: ${String(body.error ?? response.statusText).slice(0, 500)}).`); const externalId = String(body[idField] ?? body.id ?? body.ts ?? response.headers.get("x-request-id") ?? ""); if (!externalId) throw new Error("Channel provider did not return a delivery ID."); return { externalId: externalId.slice(0, 500), deliveredAt: this.now().toISOString() }; }
+  private async boundedBody(response: Response): Promise<Record<string, unknown>> { const bytes = await readBoundedResponseBytes(response, 1_000_000, "Channel provider response exceeds 1 MB."); try { return JSON.parse(Buffer.from(bytes).toString("utf8")) as Record<string, unknown>; } catch { return {}; } }
+  private async response(response: Response, idField: string, slack = false) { const bytes = await readBoundedResponseBytes(response, 1_000_000, "Channel provider response exceeds 1 MB."); let body: Record<string, unknown> = {}; try { body = JSON.parse(Buffer.from(bytes).toString("utf8")) as Record<string, unknown>; } catch {} if (!response.ok || (slack && body.ok !== true)) throw new Error(`Channel provider delivery failed (${response.status}: ${String(body.error ?? response.statusText).slice(0, 500)}).`); const externalId = String(body[idField] ?? body.id ?? body.ts ?? response.headers.get("x-request-id") ?? ""); if (!externalId) throw new Error("Channel provider did not return a delivery ID."); return { externalId: externalId.slice(0, 500), deliveredAt: this.now().toISOString() }; }
 }
 
 export function environmentChannelConfiguration(environment: NodeJS.ProcessEnv = process.env): ChannelRuntimeConfiguration | undefined {
@@ -208,12 +208,14 @@ export class WebhookChannelAdapter implements ChannelAdapter {
   }
 
   async send(input: { conversationId: string; text: string; idempotencyKey: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }> {
+    input.signal.throwIfAborted();
     const addresses = await this.resolver(this.url.hostname);
     if (addresses.length === 0 || addresses.some(isPrivateNetworkAddress)) throw new Error("Webhook channel resolved to a private or unsafe address.");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new Error("Webhook channel request timed out.")), this.timeoutMs);
     const abort = () => controller.abort(input.signal.reason);
-    input.signal.addEventListener("abort", abort, { once: true });
+    if (input.signal.aborted) abort();
+    else input.signal.addEventListener("abort", abort, { once: true });
     try {
       const response = await this.fetcher(this.url, {
         method: "POST",
@@ -228,10 +230,7 @@ export class WebhookChannelAdapter implements ChannelAdapter {
         },
         body: JSON.stringify({ conversationId: input.conversationId, text: input.text })
       });
-      const declared = Number(response.headers.get("content-length") ?? 0);
-      if (declared > 64_000) throw new Error("Webhook channel response exceeds 64 KB.");
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > 64_000) throw new Error("Webhook channel response exceeds 64 KB.");
+      await readBoundedResponseBytes(response, 64_000, "Webhook channel response exceeds 64 KB.");
       if (!response.ok) throw new Error(`Webhook channel delivery failed with status ${response.status}.`);
       const requestId = response.headers.get("x-request-id")?.slice(0, 200);
       const fallback = createHash("sha256").update(`${this.id}\0${input.conversationId}\0${input.idempotencyKey}`).digest("hex").slice(0, 24);

@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { createHash } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
 import type { AgentRuntime } from "./runtime";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 export interface WebSearchResult {
   title: string;
@@ -101,10 +102,12 @@ export class NetworkPolicyWebClient {
   }
 
   async fetch(url: string, signal?: AbortSignal): Promise<{ url: string; status: number; contentType: string; content: string; trust: "untrusted_external"; citation: { title: string; url: string; retrievedAt: string }; cached: boolean }> {
+    signal?.throwIfAborted();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error("Web fetch timed out.")), this.timeoutMs);
     const relay = () => controller.abort(signal?.reason);
-    signal?.addEventListener("abort", relay, { once: true });
+    if (signal?.aborted) relay();
+    else signal?.addEventListener("abort", relay, { once: true });
     try {
       let current = await this.validate(url);
       const cacheKey = `fetch:${createHash("sha256").update(current).digest("hex")}`;
@@ -120,10 +123,7 @@ export class NetworkPolicyWebClient {
         }
         const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "application/octet-stream";
         if (!/^(text\/|application\/(json|xml|xhtml\+xml))/.test(contentType)) throw new Error(`Unsupported web content type: ${contentType}`);
-        const declared = Number(response.headers.get("content-length") ?? 0);
-        if (declared > this.maximumBytes) throw new Error("Web response exceeds the configured byte limit.");
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (bytes.byteLength > this.maximumBytes) throw new Error("Web response exceeds the configured byte limit.");
+        const bytes = await readBoundedResponseBytes(response, this.maximumBytes, "Web response exceeds the configured byte limit.");
         const raw = new TextDecoder().decode(bytes);
         const result = { url: current, status: response.status, contentType, content: readableText(contentType, raw), trust: "untrusted_external" as const, citation: { title: pageTitle(contentType, raw, current), url: current, retrievedAt: this.now().toISOString() }, cached: false };
         this.options.cache?.set(cacheKey, result, this.options.cacheTtlMs ?? 15 * 60_000);
@@ -188,6 +188,7 @@ export class BraveSearchProvider implements WebSearchProvider {
   }
 
   async search(query: string, { maximumResults, signal }: { maximumResults: number; signal: AbortSignal }): Promise<WebSearchResult[]> {
+    signal.throwIfAborted();
     if (!query.trim() || query.length > 2_000) throw new Error("Web search query is invalid.");
     const hostname = "api.search.brave.com";
     const addresses = await this.resolver(hostname);
@@ -198,13 +199,11 @@ export class BraveSearchProvider implements WebSearchProvider {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new Error("Brave Search timed out.")), this.timeoutMs);
     const abort = () => controller.abort(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
     try {
       const response = await this.fetcher(url, { redirect: "error", signal: controller.signal, headers: { accept: "application/json", "x-subscription-token": this.options.apiKey } });
-      const declared = Number(response.headers.get("content-length") ?? 0);
-      if (declared > 2_000_000) throw new Error("Brave Search response exceeds 2 MB.");
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > 2_000_000) throw new Error("Brave Search response exceeds 2 MB.");
+      const bytes = await readBoundedResponseBytes(response, 2_000_000, "Brave Search response exceeds 2 MB.");
       if (!response.ok) throw new Error(`Brave Search failed with status ${response.status}.`);
       const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { web?: { results?: Array<{ title?: unknown; url?: unknown; description?: unknown }> } };
       return (parsed.web?.results ?? []).slice(0, maximumResults).flatMap((result) => typeof result.title === "string" && typeof result.url === "string"
