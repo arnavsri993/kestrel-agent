@@ -9,10 +9,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createReleaseManifest,
+  resolveReleaseCommit,
   resolveReleaseVersion,
 } from "./create-release-manifest.mjs";
 
 const temporaryRoots = [];
+const commit = "a".repeat(40);
 
 function fixture(version = "1.2.3") {
   const root = mkdtempSync(join(tmpdir(), "kestrel-release-manifest-"));
@@ -44,18 +46,23 @@ describe("release manifest version integrity", () => {
       desktopPackagePath,
       environment: {
         GITHUB_REF_NAME: "main",
-        GITHUB_SHA: "abc123",
+        GITHUB_SHA: commit,
       },
     });
 
     expect(manifest).toMatchObject({
+      schemaVersion: 2,
       version: "1.2.3",
-      commit: "abc123",
+      commit,
     });
     expect(
       JSON.parse(readFileSync(join(root, "release-manifest.json"), "utf8")),
     ).toEqual(manifest);
     expect(manifest.artifacts).toHaveLength(3);
+    for (const artifact of manifest.artifacts) {
+      expect(artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(Buffer.from(artifact.sha512, "base64")).toHaveLength(64);
+    }
   });
 
   it("rejects a release tag that does not match the package", () => {
@@ -76,8 +83,34 @@ describe("release manifest version integrity", () => {
       createReleaseManifest({
         root,
         desktopPackagePath,
-        environment: { GITHUB_REF_NAME: "v1.2.3" },
+        environment: {
+          GITHUB_REF_NAME: "v1.2.3",
+          GITHUB_SHA: commit,
+        },
       }),
     ).toThrow(/does not match desktop package version 1\.2\.3/);
+  });
+
+  it("rejects incomplete artifact sets", () => {
+    const { root, desktopPackagePath } = fixture();
+    rmSync(join(root, "Kestrel-Apple-Silicon-1.2.3.pkg"));
+
+    expect(() =>
+      createReleaseManifest({
+        root,
+        desktopPackagePath,
+        environment: {
+          GITHUB_REF_NAME: "v1.2.3",
+          GITHUB_SHA: commit,
+        },
+      }),
+    ).toThrow(/Release must contain exactly/);
+  });
+
+  it("requires a full source commit", () => {
+    expect(() => resolveReleaseCommit("abc123")).toThrow(
+      /full lowercase Git commit SHA/,
+    );
+    expect(resolveReleaseCommit(commit)).toBe(commit);
   });
 });

@@ -5,7 +5,9 @@ import { pathToFileURL } from "node:url";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const supportedExtensions = new Set([".dmg", ".zip", ".pkg"]);
-const packageVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const packageVersionPattern =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*))?$/;
+const commitPattern = /^[a-f0-9]{40}$/;
 
 export function resolveReleaseVersion(packageVersion, githubRefName) {
   if (
@@ -25,6 +27,15 @@ export function resolveReleaseVersion(packageVersion, githubRefName) {
   return packageVersion;
 }
 
+export function resolveReleaseCommit(githubSha) {
+  if (typeof githubSha !== "string" || !commitPattern.test(githubSha)) {
+    throw new Error(
+      "GITHUB_SHA must be a full lowercase Git commit SHA for a release manifest.",
+    );
+  }
+  return githubSha;
+}
+
 export function createReleaseManifest({
   root = resolve("release"),
   desktopPackagePath = resolve(
@@ -40,6 +51,7 @@ export function createReleaseManifest({
     desktopPackage.version,
     environment.GITHUB_REF_NAME,
   );
+  const commit = resolveReleaseCommit(environment.GITHUB_SHA);
   const artifacts = readdirSync(root)
     .map((name) => join(root, name))
     .filter(
@@ -60,22 +72,35 @@ export function createReleaseManifest({
         `Release artifact ${filename} does not match desktop package version ${version}.`,
       );
     }
+    const artifact = readFileSync(path);
     return {
       filename,
-      bytes: statSync(path).size,
-      sha256: createHash("sha256")
-        .update(readFileSync(path))
-        .digest("hex"),
+      bytes: artifact.byteLength,
+      sha256: createHash("sha256").update(artifact).digest("hex"),
+      sha512: createHash("sha512").update(artifact).digest("base64"),
     };
   });
+  const expectedFilenames = [...supportedExtensions]
+    .map((extension) => `Kestrel-Apple-Silicon-${version}${extension}`)
+    .sort();
+  if (
+    records.length !== expectedFilenames.length ||
+    records.some(
+      (record, index) => record.filename !== expectedFilenames[index],
+    )
+  ) {
+    throw new Error(
+      `Release must contain exactly ${expectedFilenames.join(", ")}.`,
+    );
+  }
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "Kestrel",
     platform: "darwin",
     architecture: "arm64",
     distribution: "internet",
     version,
-    commit: environment.GITHUB_SHA ?? "unknown",
+    commit,
     artifacts: records,
   };
   writeFileSync(

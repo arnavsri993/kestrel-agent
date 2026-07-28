@@ -8,6 +8,10 @@ on:
     paths:
       - "apps/website/**"
       - "website-media/**"
+      - "scripts/create-release-manifest.mjs"
+      - "scripts/release-distribution-verifier.mjs"
+      - "scripts/verify-release-bundle.mjs"
+      - "scripts/verify-market-release.mjs"
       - "scripts/verify-marketing-assets.ts"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -15,8 +19,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: github-pages
@@ -26,8 +28,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           package-manager-cache: false
@@ -43,11 +45,13 @@ jobs:
           PUBLIC_DOWNLOAD_URL: ${{ vars.NEXT_PUBLIC_DOWNLOAD_URL }}
           PUBLIC_RELEASE_MANIFEST_URL: ${{ vars.NEXT_PUBLIC_RELEASE_MANIFEST_URL }}
           PUBLIC_RELEASE_CHECKSUMS_URL: ${{ vars.NEXT_PUBLIC_RELEASE_CHECKSUMS_URL }}
+          PUBLIC_RELEASE_VERSION: ${{ vars.NEXT_PUBLIC_RELEASE_VERSION }}
+          PUBLIC_RELEASE_COMMIT: ${{ vars.PUBLIC_RELEASE_COMMIT }}
           PUBLIC_PUBLISHER_NAME: ${{ vars.PUBLIC_PUBLISHER_NAME }}
           PUBLIC_SUPPORT_EMAIL: ${{ vars.PUBLIC_SUPPORT_EMAIL }}
           KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
         run: corepack pnpm audit:market -- --distribution
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Build static website
         env:
           NEXT_PUBLIC_BASE_PATH: /kestrel-agent
@@ -60,11 +64,14 @@ jobs:
           NEXT_PUBLIC_RELEASE_MANIFEST_URL: ${{ vars.NEXT_PUBLIC_RELEASE_MANIFEST_URL }}
           NEXT_PUBLIC_RELEASE_CHECKSUMS_URL: ${{ vars.NEXT_PUBLIC_RELEASE_CHECKSUMS_URL }}
         run: corepack pnpm build:website
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: apps/website/out
 
   deploy:
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -73,4 +80,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5

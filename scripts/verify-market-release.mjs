@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
 import process from "node:process";
+import {
+  fetchHttpsResponse,
+  verifyPublicReleaseArtifacts,
+} from "./release-distribution-verifier.mjs";
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
@@ -43,7 +47,7 @@ for (const secret of ["CSC_LINK", "CSC_KEY_PASSWORD", "CSC_INSTALLER_LINK", "CSC
   if (!workflow.includes(secret)) fail(`macOS release workflow is missing ${secret}.`);
 }
 if (!workflow.includes("test:packaged-desktop:arm64")) fail("macOS release workflow does not smoke-test the signed packaged application.");
-for (const marker of ["actions/configure-pages@v5", "actions/upload-pages-artifact@v3", "actions/deploy-pages@v4", "NEXT_PUBLIC_BASE_PATH", "NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_RELEASE_STATUS == 'verified'", "audit:market -- --distribution"]) {
+for (const marker of ["actions/configure-pages@", "actions/upload-pages-artifact@", "actions/deploy-pages@", "NEXT_PUBLIC_BASE_PATH", "NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_RELEASE_STATUS == 'verified'", "PUBLIC_RELEASE_VERSION", "PUBLIC_RELEASE_COMMIT", "audit:market -- --distribution"]) {
   if (!websiteWorkflow.includes(marker)) fail(`website deployment workflow is missing ${marker}.`);
 }
 if (!desktopPackage.includes('"package:mac:dev"') || !desktopPackage.includes("--arm64")) fail("desktop development packaging must target arm64.");
@@ -77,6 +81,8 @@ if (distributionMode) {
     "PUBLIC_DOWNLOAD_URL",
     "PUBLIC_RELEASE_MANIFEST_URL",
     "PUBLIC_RELEASE_CHECKSUMS_URL",
+    "PUBLIC_RELEASE_VERSION",
+    "PUBLIC_RELEASE_COMMIT",
     "PUBLIC_PUBLISHER_NAME",
     "PUBLIC_SUPPORT_EMAIL",
     "KESTREL_UPDATE_URL",
@@ -105,6 +111,19 @@ if (distributionMode) {
   if (process.env.PUBLIC_SUPPORT_EMAIL?.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(process.env.PUBLIC_SUPPORT_EMAIL)) {
     fail("PUBLIC_SUPPORT_EMAIL must be a valid public email address.");
   }
+  const releaseVersion = process.env.PUBLIC_RELEASE_VERSION?.trim() ?? "";
+  const releaseCommit = process.env.PUBLIC_RELEASE_COMMIT?.trim() ?? "";
+  if (
+    releaseVersion &&
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[A-Za-z-][0-9A-Za-z-]*))*))?$/.test(
+      releaseVersion,
+    )
+  ) {
+    fail("PUBLIC_RELEASE_VERSION must be a semantic release version.");
+  }
+  if (releaseCommit && !/^[a-f0-9]{40}$/.test(releaseCommit)) {
+    fail("PUBLIC_RELEASE_COMMIT must be a full lowercase Git commit SHA.");
+  }
 
   const artifactSuffixes = [
     ["PUBLIC_DOWNLOAD_URL", ".dmg"],
@@ -115,18 +134,14 @@ if (distributionMode) {
     if (url && !url.pathname.toLowerCase().endsWith(suffix)) fail(`${name} must point to a ${suffix} release artifact.`);
   }
 
-  const verifyEndpoint = async (name, url, { marker, method = "GET" } = {}) => {
+  const verifyEndpoint = async (name, url, { marker } = {}) => {
     if (!url) return;
     try {
-      let response = await fetch(url, { method, redirect: "follow", signal: AbortSignal.timeout(15_000) });
-      if (method === "HEAD" && response.status === 405) {
-        response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15_000) });
-      }
+      const response = await fetchHttpsResponse({ url, label: name });
       if (!response.ok) {
         fail(`${name} returned HTTP ${response.status}.`);
         return;
       }
-      if (response.url.startsWith("http:")) fail(`${name} redirected away from HTTPS.`);
       if (marker) {
         const body = await response.text();
         if (!body.includes(marker)) fail(`${name} does not contain the expected Kestrel release marker.`);
@@ -139,14 +154,34 @@ if (distributionMode) {
   await verifyEndpoint("PUBLIC_SITE_URL", urls.get("PUBLIC_SITE_URL"), { marker: "Kestrel" });
   await verifyEndpoint("PUBLIC_SUPPORT_URL", urls.get("PUBLIC_SUPPORT_URL"), { marker: "Product support" });
   await verifyEndpoint("PUBLIC_PRIVACY_URL", urls.get("PUBLIC_PRIVACY_URL"), { marker: "Privacy boundary" });
-  await verifyEndpoint("PUBLIC_DOWNLOAD_URL", urls.get("PUBLIC_DOWNLOAD_URL"), { method: "HEAD" });
-  await verifyEndpoint("PUBLIC_RELEASE_MANIFEST_URL", urls.get("PUBLIC_RELEASE_MANIFEST_URL"), { method: "HEAD" });
-  await verifyEndpoint("PUBLIC_RELEASE_CHECKSUMS_URL", urls.get("PUBLIC_RELEASE_CHECKSUMS_URL"), { method: "HEAD" });
-
-  const updateBase = urls.get("KESTREL_UPDATE_URL");
-  if (updateBase) {
-    const updateFeed = new URL("latest-mac.yml", `${updateBase.toString().replace(/\/$/, "")}/`);
-    await verifyEndpoint("KESTREL_UPDATE_URL/latest-mac.yml", updateFeed, { marker: "version:" });
+  const downloadUrl = urls.get("PUBLIC_DOWNLOAD_URL");
+  const manifestUrl = urls.get("PUBLIC_RELEASE_MANIFEST_URL");
+  const checksumsUrl = urls.get("PUBLIC_RELEASE_CHECKSUMS_URL");
+  const updateBaseUrl = urls.get("KESTREL_UPDATE_URL");
+  if (
+    releaseVersion &&
+    releaseCommit &&
+    downloadUrl &&
+    manifestUrl &&
+    checksumsUrl &&
+    updateBaseUrl
+  ) {
+    try {
+      await verifyPublicReleaseArtifacts({
+        version: releaseVersion,
+        expectedCommit: releaseCommit,
+        downloadUrl,
+        manifestUrl,
+        checksumsUrl,
+        updateBaseUrl,
+      });
+    } catch (error) {
+      fail(
+        `public release artifacts are inconsistent: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 }
 

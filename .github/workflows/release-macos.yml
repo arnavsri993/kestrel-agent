@@ -7,25 +7,21 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  verify-and-package:
+  verify-source:
     runs-on: macos-15
     timeout-minutes: 45
-    env:
-      CSC_LINK: ${{ secrets.CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-      CSC_INSTALLER_LINK: ${{ secrets.CSC_INSTALLER_LINK }}
-      CSC_INSTALLER_KEY_PASSWORD: ${{ secrets.CSC_INSTALLER_KEY_PASSWORD }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      GH_TOKEN: ${{ github.token }}
-      KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           package-manager-cache: false
@@ -38,8 +34,43 @@ jobs:
         run: |
           test "$(uname -m)" = "arm64"
           corepack pnpm test:local-ai:real
+
+  sign-and-package:
+    needs: verify-source
+    runs-on: macos-15
+    timeout-minutes: 30
+    environment:
+      name: macos-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Require a stable release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
       - name: Require release credentials
         shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_INSTALLER_LINK: ${{ secrets.CSC_INSTALLER_LINK }}
+          CSC_INSTALLER_KEY_PASSWORD: ${{ secrets.CSC_INSTALLER_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
         run: |
           test -n "$CSC_LINK"
           test -n "$CSC_KEY_PASSWORD"
@@ -50,6 +81,15 @@ jobs:
           test -n "$APPLE_TEAM_ID"
           [[ "$KESTREL_UPDATE_URL" == https://* ]]
       - name: Build signed Apple Silicon DMG, ZIP, and MDM PKG
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_INSTALLER_LINK: ${{ secrets.CSC_INSTALLER_LINK }}
+          CSC_INSTALLER_KEY_PASSWORD: ${{ secrets.CSC_INSTALLER_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
         run: corepack pnpm --filter @kestrel/desktop exec electron-builder --mac dmg zip pkg --arm64 --publish never --config electron-builder.yml
       - name: Verify signature and Gatekeeper
         shell: bash
@@ -64,9 +104,11 @@ jobs:
       - name: Create checksummed release manifest
         shell: bash
         run: |
+          set -euo pipefail
           test -f release/latest-mac.yml
           node scripts/create-release-manifest.mjs release
-      - uses: actions/upload-artifact@v4
+          node scripts/verify-release-bundle.mjs release
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: kestrel-macos-apple-silicon
           path: |
@@ -78,9 +120,124 @@ jobs:
             release/SHA256SUMS
             release/release-manifest.json
           if-no-files-found: error
-      - name: Publish verified tag artifacts
-        if: startsWith(github.ref, 'refs/tags/v')
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: sign-and-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: kestrel-macos-apple-silicon
+          path: release
+      - name: Verify downloaded release artifacts
         shell: bash
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
-          gh release upload "$GITHUB_REF_NAME" release/*.dmg release/*.zip release/*.pkg release/*.blockmap release/latest-mac.yml release/SHA256SUMS release/release-manifest.json --clobber
+          set -euo pipefail
+          test -f release/latest-mac.yml
+          test -f release/SHA256SUMS
+          test -f release/release-manifest.json
+          compgen -G "release/*.dmg" >/dev/null
+          compgen -G "release/*.zip" >/dev/null
+          compgen -G "release/*.pkg" >/dev/null
+          compgen -G "release/*.blockmap" >/dev/null
+          (cd release && sha256sum --check SHA256SUMS)
+          node scripts/verify-release-bundle.mjs release
+      - name: Verify tag still points to the packaged commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          resolved_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)"
+          test "$resolved_commit" = "$GITHUB_SHA"
+      - name: Publish verified tag artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          release_assets=(
+            release/*.dmg
+            release/*.zip
+            release/*.pkg
+            release/*.blockmap
+            release/latest-mac.yml
+            release/SHA256SUMS
+            release/release-manifest.json
+          )
+          draft_marker="<!-- kestrel-release-commit:$GITHUB_SHA -->"
+          if release_json="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,body,assets 2>/dev/null)"; then
+            if [[ "$(jq -r .isDraft <<<"$release_json")" != "true" ]] ||
+              [[ "$(jq -r .body <<<"$release_json")" != *"$draft_marker"* ]]; then
+              echo "::error::Release $GITHUB_REF_NAME already exists and is not this workflow's matching draft."
+              exit 1
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --notes "$draft_marker" \
+              --draft
+            release_json="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft,body,assets)"
+          fi
+
+          for asset_path in "${release_assets[@]}"; do
+            asset_name="$(basename "$asset_path")"
+            existing_asset="$(
+              jq -r --arg name "$asset_name" \
+                '.assets[] | select(.name == $name) | [.size, .digest, .state] | @tsv' \
+                <<<"$release_json"
+            )"
+            if [[ -z "$existing_asset" ]]; then
+              gh release upload "$GITHUB_REF_NAME" \
+                --repo "$GITHUB_REPOSITORY" \
+                "$asset_path"
+              continue
+            fi
+            IFS=$'\t' read -r remote_bytes remote_digest remote_state <<<"$existing_asset"
+            local_bytes="$(stat --format=%s "$asset_path")"
+            local_digest="sha256:$(sha256sum "$asset_path" | cut -d ' ' -f1)"
+            if [[ "$remote_state" != "uploaded" ]] ||
+              [[ "$remote_bytes" != "$local_bytes" ]] ||
+              [[ "$remote_digest" != "$local_digest" ]]; then
+              echo "::error::Existing draft asset $asset_name does not match the verified bundle."
+              exit 1
+            fi
+          done
+
+          release_json="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets)"
+          if [[ "$(jq '.assets | length' <<<"$release_json")" -ne "${#release_assets[@]}" ]]; then
+            echo "::error::Draft release contains an unexpected asset set."
+            exit 1
+          fi
+          for asset_path in "${release_assets[@]}"; do
+            asset_name="$(basename "$asset_path")"
+            local_bytes="$(stat --format=%s "$asset_path")"
+            local_digest="sha256:$(sha256sum "$asset_path" | cut -d ' ' -f1)"
+            jq -e \
+              --arg name "$asset_name" \
+              --arg digest "$local_digest" \
+              --argjson size "$local_bytes" \
+              '.assets | any(.name == $name and .digest == $digest and .size == $size and .state == "uploaded")' \
+              <<<"$release_json" >/dev/null
+          done
+          resolved_commit="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)"
+          test "$resolved_commit" = "$GITHUB_SHA"
+          gh release edit "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest
