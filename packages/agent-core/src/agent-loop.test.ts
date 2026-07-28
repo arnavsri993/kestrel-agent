@@ -83,6 +83,233 @@ describe("provider-neutral agent loop", () => {
     database.close();
   });
 
+  it("propagates Stop cancellation into a cooperative tool during approval resume", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Cooperative cancellation" });
+    let reportToolStarted: () => void = () => undefined;
+    const toolStarted = new Promise<void>((resolvePromise) => {
+      reportToolStarted = resolvePromise;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    runtime.registerExternalTool({
+      descriptor: {
+        name: "test.cooperative-wait",
+        title: "Cooperative wait fixture",
+        description: "Wait until the caller cancels the active tool.",
+        category: "connector",
+        riskLevel: "sensitive",
+        readOnly: false,
+        requiresWorkspace: false,
+        source: "plugin",
+        tags: ["test", "cancellation"],
+      },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: ({ signal }) =>
+        new Promise<Record<string, unknown>>((_resolvePromise, rejectPromise) => {
+          receivedSignal = signal;
+          reportToolStarted();
+          const abort = () =>
+            rejectPromise(
+              signal.reason instanceof Error
+                ? signal.reason
+                : new Error("Tool execution was cancelled."),
+            );
+          if (signal.aborted) abort();
+          else signal.addEventListener("abort", abort, { once: true });
+        }),
+    });
+    runtime.allowTool(session.id, "test.cooperative-wait");
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: false,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => ({
+        providerId: "fake",
+        model: request.model,
+        text: "",
+        toolCalls: [
+          { id: "call-wait", name: "test.cooperative-wait", arguments: {} },
+        ],
+        usage: { inputTokens: 4, outputTokens: 2 },
+        finishReason: "tool_calls",
+      }),
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+    );
+    const waiting = await loop.run({
+      sessionId: session.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Wait until I stop this"),
+    });
+    expect(waiting.run.status).toBe("waiting_approval");
+
+    const controller = new AbortController();
+    const resumePromise = loop.resume({
+      runId: waiting.run.id,
+      approvalDecision: "approved",
+      signal: controller.signal,
+    });
+
+    await toolStarted;
+    controller.abort(new Error("Stopped by the user."));
+
+    await expect(resumePromise).rejects.toThrow("could not confirm whether it completed");
+    expect(receivedSignal?.aborted).toBe(true);
+    expect(database.listToolExecutions(session.id)).toMatchObject([
+      { toolName: "test.cooperative-wait", status: "blocked" },
+      {
+        toolName: "test.cooperative-wait",
+        status: "failed",
+        error: expect.stringContaining("will not be retried automatically"),
+      },
+    ]);
+    expect(database.listAgentRuns(session.id)).toMatchObject([
+      { status: "cancelled", error: "Cancelled by the user." },
+    ]);
+    database.close();
+  });
+
+  it("records an uncooperative late mutation truthfully and skips queued tools after Stop", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Late mutation cancellation" });
+    let reportToolStarted: () => void = () => undefined;
+    let releaseTool: () => void = () => undefined;
+    const toolStarted = new Promise<void>((resolvePromise) => {
+      reportToolStarted = resolvePromise;
+    });
+    const toolGate = new Promise<void>((resolvePromise) => {
+      releaseTool = resolvePromise;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    let completedMutations = 0;
+    let queuedMutations = 0;
+    runtime.registerExternalTool({
+      descriptor: {
+        name: "test.uncooperative-mutation",
+        title: "Uncooperative mutation fixture",
+        description: "Finish a mutation after cancellation to preserve audit truth.",
+        category: "connector",
+        riskLevel: "low",
+        readOnly: false,
+        requiresWorkspace: false,
+        source: "plugin",
+        tags: ["test", "cancellation"],
+      },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async ({ signal }) => {
+        receivedSignal = signal;
+        reportToolStarted();
+        await toolGate;
+        completedMutations += 1;
+        return { receipt: "late-mutation-1" };
+      },
+      verify: async () => ({
+        method: "fixture-readback",
+        evidence: { completedMutations },
+      }),
+    });
+    runtime.registerExternalTool({
+      descriptor: {
+        name: "test.queued-mutation",
+        title: "Queued mutation fixture",
+        description: "Must not start after the run has been cancelled.",
+        category: "connector",
+        riskLevel: "low",
+        readOnly: false,
+        requiresWorkspace: false,
+        source: "plugin",
+        tags: ["test", "cancellation"],
+      },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        queuedMutations += 1;
+        return { receipt: "queued-mutation-1" };
+      },
+      verify: async () => ({
+        method: "fixture-readback",
+        evidence: { queuedMutations },
+      }),
+    });
+    runtime.allowTool(session.id, "test.uncooperative-mutation");
+    runtime.allowTool(session.id, "test.queued-mutation");
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: false,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => ({
+        providerId: "fake",
+        model: request.model,
+        text: "",
+        toolCalls: [
+          {
+            id: "call-late-mutation",
+            name: "test.uncooperative-mutation",
+            arguments: {},
+          },
+          {
+            id: "call-queued-mutation",
+            name: "test.queued-mutation",
+            arguments: {},
+          },
+        ],
+        usage: { inputTokens: 4, outputTokens: 2 },
+        finishReason: "tool_calls",
+      }),
+    };
+    const controller = new AbortController();
+    const runPromise = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+    ).run({
+      sessionId: session.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Make both changes"),
+      approvalStatus: "approved",
+      signal: controller.signal,
+    });
+
+    await toolStarted;
+    controller.abort(new Error("Stopped during the mutation."));
+    releaseTool();
+
+    await expect(runPromise).rejects.toThrow("Stopped during the mutation.");
+    expect(receivedSignal?.aborted).toBe(true);
+    expect(completedMutations).toBe(1);
+    expect(queuedMutations).toBe(0);
+    expect(database.listToolExecutions(session.id)).toMatchObject([
+      {
+        toolName: "test.uncooperative-mutation",
+        status: "verified",
+        output: { receipt: "late-mutation-1" },
+        verification: { method: "fixture-readback" },
+      },
+    ]);
+    expect(database.listAgentRuns(session.id)).toMatchObject([
+      { status: "cancelled", error: "Cancelled by the user." },
+    ]);
+    database.close();
+  });
+
   it("runs model-requested tools, persists encrypted structured history, and audits usage", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-loop-"));
     directories.push(root);

@@ -193,6 +193,331 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("single-flights concurrent mutations that share an idempotency key", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Concurrent mutation" });
+    let calls = 0;
+    let reportStarted: () => void = () => undefined;
+    let releaseMutation: () => void = () => undefined;
+    const started = new Promise<void>((resolvePromise) => {
+      reportStarted = resolvePromise;
+    });
+    const mutationGate = new Promise<void>((resolvePromise) => {
+      releaseMutation = resolvePromise;
+    });
+    runtime.registerExternalTool({
+      descriptor: { name: "fixture.concurrent-mutate", title: "Concurrent mutation", description: "Exercise same-process mutation deduplication.", category: "connector", riskLevel: "low", readOnly: false, requiresWorkspace: false, source: "plugin", tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        calls += 1;
+        reportStarted();
+        await mutationGate;
+        return { receipt: "same-process-1" };
+      },
+      verify: async () => ({ method: "fixture-readback", evidence: { calls } })
+    });
+    runtime.allowTool(session.id, "fixture.concurrent-mutate");
+
+    const firstPromise = runtime.callTool(session.id, "fixture.concurrent-mutate", {}, { idempotencyKey: "same-key" });
+    const secondPromise = runtime.callTool(session.id, "fixture.concurrent-mutate", {}, { idempotencyKey: "same-key" });
+    await started;
+    releaseMutation();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+    expect(calls).toBe(1);
+    expect(first).toMatchObject({ status: "verified", output: { receipt: "same-process-1" } });
+    expect(second).toEqual(first);
+    expect(database.listToolExecutions(session.id)).toEqual([first]);
+    database.close();
+  });
+
+  it("releases a pre-effect claim when runtime event delivery fails", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Observer failure" });
+    let calls = 0;
+    const toolName = "fixture.observer-failure";
+    runtime.registerExternalTool({
+      descriptor: { name: toolName, title: "Observer failure", description: "Exercise pre-effect idempotency cleanup.", category: "connector", riskLevel: "low", readOnly: false, requiresWorkspace: false, source: "plugin", tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        calls += 1;
+        return { receipt: "observer-retry-1" };
+      },
+      verify: async () => ({ method: "fixture-readback", evidence: { calls } })
+    });
+    runtime.allowTool(session.id, toolName);
+    const failingListener = () => {
+      throw new Error("Runtime event observer failed.");
+    };
+    runtime.on("event", failingListener);
+
+    const failedBeforeEffect = await runtime.callTool(session.id, toolName, {}, { idempotencyKey: "retry-safe" });
+    runtime.off("event", failingListener);
+    const retried = await runtime.callTool(session.id, toolName, {}, { idempotencyKey: "retry-safe" });
+
+    expect(failedBeforeEffect).toMatchObject({ status: "failed", error: "Runtime event observer failed." });
+    expect(retried).toMatchObject({ status: "verified", output: { receipt: "observer-retry-1" } });
+    expect(calls).toBe(1);
+    expect(database.getIdempotentClaim(`runtime-tool:${session.id}:${toolName}:retry-safe`)).toBeUndefined();
+    database.close();
+  });
+
+  it("does not permanently cache a transient pre-tool hook block", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Transient hook" });
+    let shouldBlock = true;
+    let calls = 0;
+    const toolName = "fixture.transient-hook";
+    runtime.registerExternalTool({
+      descriptor: { name: toolName, title: "Transient hook", description: "Exercise safe retry after a pre-effect hook block.", category: "connector", riskLevel: "low", readOnly: false, requiresWorkspace: false, source: "plugin", tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        calls += 1;
+        return { receipt: "hook-retry-1" };
+      },
+      verify: async () => ({ method: "fixture-readback", evidence: { calls } })
+    });
+    runtime.allowTool(session.id, toolName);
+    runtime.registerHook({
+      id: "fixture-transient-block",
+      event: "pre_tool",
+      toolPattern: /^fixture\.transient-hook$/,
+      run: () => shouldBlock
+        ? { blocked: true, reason: "Temporary policy unavailable." }
+        : {}
+    });
+
+    const blocked = await runtime.callTool(session.id, toolName, {}, { idempotencyKey: "same-key" });
+    shouldBlock = false;
+    const retried = await runtime.callTool(session.id, toolName, {}, { idempotencyKey: "same-key" });
+    const replayed = await runtime.callTool(session.id, toolName, {}, { idempotencyKey: "same-key" });
+
+    expect(blocked).toMatchObject({ status: "blocked", error: "Temporary policy unavailable." });
+    expect(retried).toMatchObject({ status: "verified", output: { receipt: "hook-retry-1" } });
+    expect(replayed).toEqual(retried);
+    expect(calls).toBe(1);
+    database.close();
+  });
+
+  it("records an aborted in-flight mutation as uncertain instead of cancelled", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Uncertain cancellation" });
+    let calls = 0;
+    let mutations = 0;
+    let reportAccepted: () => void = () => undefined;
+    const accepted = new Promise<void>((resolvePromise) => {
+      reportAccepted = resolvePromise;
+    });
+    const toolName = "fixture.accept-then-abort";
+    runtime.registerExternalTool({
+      descriptor: { name: toolName, title: "Accept then abort", description: "Exercise cancellation after an external mutation boundary.", category: "connector", riskLevel: "low", readOnly: false, requiresWorkspace: false, source: "plugin", tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: ({ signal }) => new Promise<Record<string, unknown>>((_resolvePromise, rejectPromise) => {
+        calls += 1;
+        mutations += 1;
+        reportAccepted();
+        const abort = () => rejectPromise(new Error("Transport aborted after the server accepted the mutation."));
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      }),
+      verify: async () => ({ method: "fixture-readback", evidence: { mutations } })
+    });
+    runtime.allowTool(session.id, toolName);
+    const controller = new AbortController();
+
+    const firstPromise = runtime.callTool(session.id, toolName, {}, { idempotencyKey: "uncertain", signal: controller.signal });
+    await accepted;
+    controller.abort(new Error("Stopped by the user."));
+    const first = await firstPromise;
+    const replayed = await runtime.callTool(session.id, toolName, {}, { idempotencyKey: "uncertain" });
+
+    expect(mutations).toBe(1);
+    expect(calls).toBe(1);
+    expect(first).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("could not confirm whether it completed")
+    });
+    expect(replayed).toEqual(first);
+    database.close();
+  });
+
+  it("does not relabel a verified mutation as cancelled when a post-tool hook fails", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Verified post-hook failure" });
+    let mutations = 0;
+    let reportHookStarted: () => void = () => undefined;
+    let releaseHook: () => void = () => undefined;
+    const hookStarted = new Promise<void>((resolvePromise) => {
+      reportHookStarted = resolvePromise;
+    });
+    const hookGate = new Promise<void>((resolvePromise) => {
+      releaseHook = resolvePromise;
+    });
+    const toolName = "fixture.verified-post-hook";
+    runtime.registerExternalTool({
+      descriptor: { name: toolName, title: "Verified post-hook", description: "Exercise cancellation after verification.", category: "connector", riskLevel: "low", readOnly: false, requiresWorkspace: false, source: "plugin", tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        mutations += 1;
+        return { receipt: "verified-before-hook" };
+      },
+      verify: async () => ({ method: "fixture-readback", evidence: { mutations } })
+    });
+    runtime.allowTool(session.id, toolName);
+    runtime.registerHook({
+      id: "fixture-post-hook-failure",
+      event: "post_tool",
+      toolPattern: /^fixture\.verified-post-hook$/,
+      run: async () => {
+        reportHookStarted();
+        await hookGate;
+        throw new Error("Post-tool notification failed.");
+      }
+    });
+    const controller = new AbortController();
+
+    const pending = runtime.callTool(session.id, toolName, {}, {
+      idempotencyKey: "post-hook",
+      signal: controller.signal
+    });
+    await hookStarted;
+    controller.abort(new Error("Stopped after verification."));
+    releaseHook();
+    const execution = await pending;
+    const replayed = await runtime.callTool(session.id, toolName, {}, { idempotencyKey: "post-hook" });
+
+    expect(mutations).toBe(1);
+    expect(execution).toMatchObject({
+      status: "failed",
+      error: "Post-tool notification failed.",
+      verification: { method: "fixture-readback" }
+    });
+    expect(replayed).toEqual(execution);
+    database.close();
+  });
+
+  it("coordinates idempotent mutations across database connections", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-idempotency-"));
+    temporaryDirectories.push(root);
+    const databasePath = join(root, "runtime.sqlite");
+    const encryptionKey = createEncryptionKey();
+    const firstDatabase = new KestrelDatabase(databasePath, encryptionKey);
+    const firstRuntime = new AgentRuntime(firstDatabase);
+    const session = firstRuntime.createSession({ title: "Cross-runtime mutation" });
+    const secondDatabase = new KestrelDatabase(databasePath, encryptionKey);
+    const secondRuntime = new AgentRuntime(secondDatabase);
+    let calls = 0;
+    let reportStarted: () => void = () => undefined;
+    let releaseMutation: () => void = () => undefined;
+    const started = new Promise<void>((resolvePromise) => {
+      reportStarted = resolvePromise;
+    });
+    const mutationGate = new Promise<void>((resolvePromise) => {
+      releaseMutation = resolvePromise;
+    });
+    const definition = {
+      descriptor: { name: "fixture.cross-runtime-mutate", title: "Cross-runtime mutation", description: "Exercise cross-connection mutation deduplication.", category: "connector" as const, riskLevel: "low" as const, readOnly: false, requiresWorkspace: false, source: "plugin" as const, tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        calls += 1;
+        reportStarted();
+        await mutationGate;
+        return { receipt: "cross-runtime-1" };
+      },
+      verify: async () => ({ method: "fixture-readback", evidence: { calls } })
+    };
+    firstRuntime.registerExternalTool(definition);
+    secondRuntime.registerExternalTool(definition);
+    firstRuntime.allowTool(session.id, definition.descriptor.name);
+
+    const firstPromise = firstRuntime.callTool(session.id, definition.descriptor.name, {}, { idempotencyKey: "shared-key" });
+    await started;
+    const waiterController = new AbortController();
+    const cancelledWaiter = secondRuntime.callTool(session.id, definition.descriptor.name, {}, {
+      idempotencyKey: "shared-key",
+      signal: waiterController.signal
+    });
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    waiterController.abort(new Error("Stop waiting for the other runtime."));
+    await expect(cancelledWaiter).rejects.toThrow("Stop waiting for the other runtime.");
+    expect(calls).toBe(1);
+    const secondPromise = secondRuntime.callTool(session.id, definition.descriptor.name, {}, { idempotencyKey: "shared-key" });
+    releaseMutation();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    const replayed = await secondRuntime.callTool(session.id, definition.descriptor.name, {}, { idempotencyKey: "shared-key" });
+
+    expect(calls).toBe(1);
+    expect(first).toMatchObject({ status: "verified", output: { receipt: "cross-runtime-1" } });
+    expect(second).toEqual(first);
+    expect(replayed).toEqual(first);
+    expect(firstDatabase.listToolExecutions(session.id)).toEqual([first]);
+    firstRuntime.close();
+    secondRuntime.close();
+    firstDatabase.close();
+    secondDatabase.close();
+  });
+
+  it("fails closed instead of replaying a mutation abandoned by a dead process", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-idempotency-recovery-"));
+    temporaryDirectories.push(root);
+    const databasePath = join(root, "runtime.sqlite");
+    const encryptionKey = createEncryptionKey();
+    const initialDatabase = new KestrelDatabase(databasePath, encryptionKey);
+    const initialRuntime = new AgentRuntime(initialDatabase);
+    const session = initialRuntime.createSession({ title: "Abandoned mutation" });
+    const toolName = "fixture.abandoned-mutate";
+    const idempotencyKey = `runtime-tool:${session.id}:${toolName}:crash-key`;
+    initialDatabase.claimIdempotentResult(
+      idempotencyKey,
+      "dead-runtime",
+      2_147_483_647,
+      {
+        id: "tool-abandoned",
+        sessionId: session.id,
+        toolName,
+        status: "running",
+        riskLevel: "low",
+        input: {},
+        idempotencyKey: "crash-key",
+        startedAt: "2026-07-22T16:00:00.000Z"
+      }
+    );
+    initialRuntime.close();
+    initialDatabase.close();
+
+    const recoveredDatabase = new KestrelDatabase(databasePath, encryptionKey);
+    const recoveredRuntime = new AgentRuntime(recoveredDatabase, [], () => "2026-07-22T16:01:00.000Z");
+    let calls = 0;
+    recoveredRuntime.registerExternalTool({
+      descriptor: { name: toolName, title: "Abandoned mutation", description: "Must never replay an uncertain mutation.", category: "connector", riskLevel: "low", readOnly: false, requiresWorkspace: false, source: "plugin", tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        calls += 1;
+        return { receipt: "must-not-run" };
+      },
+      verify: async () => ({ method: "fixture-readback", evidence: { calls } })
+    });
+    recoveredRuntime.allowTool(session.id, toolName);
+
+    const recovered = await recoveredRuntime.callTool(session.id, toolName, {}, { idempotencyKey: "crash-key" });
+
+    expect(calls).toBe(0);
+    expect(recovered).toMatchObject({
+      id: "tool-abandoned",
+      status: "failed",
+      error: expect.stringContaining("will not be retried automatically")
+    });
+    expect(recoveredDatabase.getIdempotentClaim(idempotencyKey)).toBeUndefined();
+    expect(recoveredDatabase.listToolExecutions(session.id)).toEqual([recovered]);
+    recoveredRuntime.close();
+    recoveredDatabase.close();
+  });
+
   it("rejects roots that were not explicitly granted and symlinks that escape a granted root", async () => {
     const { root, database, runtime, session } = fixture();
     expect(() => runtime.createSession({ title: "Outside", workspaceRoot: tmpdir() })).toThrow("Workspace access has not been granted");

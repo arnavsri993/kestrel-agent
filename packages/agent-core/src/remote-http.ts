@@ -1,6 +1,7 @@
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions as HttpsServerOptions } from "node:https";
 import type { AddressInfo } from "node:net";
+import { RuntimeEventSchema, type RuntimeEvent, type RuntimeToolExecution } from "@kestrel/shared-types";
 import type { ScheduledAgentJob } from "./orchestration";
 import type { ChannelEnvelope, ChannelGateway } from "./channels";
 import type { RemoteControl, RemoteCredential, RemoteScope } from "./remote";
@@ -31,6 +32,20 @@ export interface RemoteHttpServerOptions {
 }
 
 interface RateRecord { count: number; resetAt: number; }
+
+interface RemoteRuntimeEvent {
+  type: RuntimeEvent["type"];
+  createdAt: string;
+  payload: {
+    toolName?: string;
+    status?: RuntimeToolExecution["status"];
+    state?: "running" | "completed" | "failed" | "stopped";
+  };
+}
+
+const remoteToolStatuses = new Set<RuntimeToolExecution["status"]>(["running", "verified", "blocked", "failed", "cancelled"]);
+const remoteProgressStates = new Set<NonNullable<RemoteRuntimeEvent["payload"]["state"]>>(["running", "completed", "failed", "stopped"]);
+const remoteToolNamePattern = /^[a-z][a-z0-9_.-]{0,99}$/;
 
 function isLoopback(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
@@ -73,6 +88,26 @@ function prometheus(response: ServerResponse, body: string): void {
     "referrer-policy": "no-referrer"
   });
   response.end(payload);
+}
+
+// Read-scoped clients need lifecycle updates, never local runtime payloads.
+function serializeRemoteRuntimeEvent(rawEvent: unknown): string | undefined {
+  const parsed = RuntimeEventSchema.safeParse(rawEvent);
+  if (!parsed.success) return undefined;
+  const event = parsed.data;
+  const payload: RemoteRuntimeEvent["payload"] = {};
+  if (event.type === "tool.started" || event.type === "tool.completed") {
+    const toolName = event.payload.toolName;
+    const status = event.payload.status;
+    if (typeof toolName === "string" && remoteToolNamePattern.test(toolName)) payload.toolName = toolName;
+    if (typeof status === "string" && remoteToolStatuses.has(status as RuntimeToolExecution["status"]))
+      payload.status = status as RuntimeToolExecution["status"];
+  } else if (event.type === "tool.progress") {
+    const state = event.payload.state;
+    if (typeof state === "string" && remoteProgressStates.has(state as NonNullable<RemoteRuntimeEvent["payload"]["state"]>))
+      payload.state = state as NonNullable<RemoteRuntimeEvent["payload"]["state"]>;
+  }
+  return JSON.stringify({ type: event.type, createdAt: event.createdAt, payload } satisfies RemoteRuntimeEvent);
 }
 
 async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
@@ -367,7 +402,10 @@ export class RemoteHttpServer {
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
     response.write(": connected\n\n");
     this.sse.add(response);
-    const listener = (event: unknown) => response.write(`event: runtime\ndata: ${JSON.stringify(event)}\n\n`);
+    const listener = (event: unknown) => {
+      const serialized = serializeRemoteRuntimeEvent(event);
+      if (serialized) response.write(`event: runtime\ndata: ${serialized}\n\n`);
+    };
     this.options.runtime.on("event", listener);
     const heartbeat = setInterval(() => response.write(": heartbeat\n\n"), 15_000);
     heartbeat.unref();
