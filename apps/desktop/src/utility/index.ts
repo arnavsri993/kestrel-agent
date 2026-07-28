@@ -12,6 +12,8 @@ let core: AgentCore | undefined;
 let languageServer: LanguageServerClient | undefined;
 let automationTimer: NodeJS.Timeout | undefined;
 let automationRunning = false;
+let automationController: AbortController | undefined;
+let automationTask: Promise<void> | undefined;
 const browserPending = new Map<string, { resolve(value: unknown): void; reject(error: Error): void; abort?: () => void; signal?: AbortSignal }>();
 
 function browserRequest<T>(request: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
@@ -103,14 +105,22 @@ port.on("message", async ({ data }) => {
       automationTimer = setInterval(() => {
         if (!core || automationRunning) return;
         automationRunning = true;
+        const controller = new AbortController();
+        automationController = controller;
         const checkedAt = new Date();
-        void Promise.resolve().then(() => {
+        const task = Promise.resolve().then(() => {
           core!.runAmbientMaintenance(checkedAt);
-          return core!.orchestrator.runDue(checkedAt);
+          return core!.orchestrator.runDue(checkedAt, controller.signal);
         }).then((jobs) => {
           if (jobs.length === 0) return;
           port.postMessage({ type: "background-jobs", event: { checkedAt: checkedAt.toISOString(), jobs: jobs.map(({ prompt: _prompt, instructions: _instructions, providerModels: _models, ...job }) => job) } });
-        }).catch((error) => port.postMessage({ type: "automation-error", error: error instanceof Error ? error.message : "Background automation failed." })).finally(() => { automationRunning = false; });
+        }).catch((error) => port.postMessage({ type: "automation-error", error: error instanceof Error ? error.message : "Background automation failed." })).finally(() => {
+          if (automationController === controller) automationController = undefined;
+          if (automationTask === task) automationTask = undefined;
+          automationRunning = false;
+        });
+        automationTask = task;
+        void task;
       }, 30_000);
       automationTimer.unref();
       port.postMessage({ type: "ready" });
@@ -127,6 +137,10 @@ port.on("message", async ({ data }) => {
   if (message.type === "shutdown") {
     if (automationTimer) clearInterval(automationTimer);
     automationTimer = undefined;
+    automationController?.abort(new Error("Kestrel is shutting down."));
+    automationController = undefined;
+    await automationTask;
+    automationTask = undefined;
     for (const pending of browserPending.values()) {
       if (pending.abort && pending.signal) pending.signal.removeEventListener("abort", pending.abort);
       pending.reject(new Error("Agent Core is shutting down."));
