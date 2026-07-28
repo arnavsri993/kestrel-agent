@@ -153,6 +153,93 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("fails closed when recovering a scheduled job interrupted by restart", async () => {
+    const instant = new Date("2026-07-22T20:00:00.000Z");
+    const item = fixture(finalProvider(), () => instant);
+    const job = item.orchestrator.schedule({
+      title: "Interrupted schedule",
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      prompt: "Do not replay this automatically.",
+      schedule: { kind: "once", nextRunAt: instant.toISOString() }
+    });
+    item.database.setPrivateState("orchestrator.scheduled-jobs", [{
+      ...job,
+      status: "running",
+      updatedAt: "2026-07-22T19:59:00.000Z"
+    }]);
+
+    const providers = new ProviderPool([finalProvider()], () => instant);
+    const restarted = new TaskOrchestrator(
+      item.database,
+      item.runtime,
+      new AgentLoop(item.database, item.runtime, providers, () => instant),
+      () => instant,
+      3,
+      providers
+    );
+
+    expect(restarted.listJobs()).toMatchObject([{
+      id: job.id,
+      status: "failed",
+      error: expect.stringMatching(/outcome is uncertain.*not be retried/i),
+      updatedAt: instant.toISOString()
+    }]);
+    expect(await restarted.runDue(new Date(instant.getTime() + 60_000))).toEqual([]);
+    item.database.close();
+  });
+
+  it("propagates automation cancellation and leaves interrupted jobs failed instead of retryable", async () => {
+    let started: (() => void) | undefined;
+    const providerStarted = new Promise<void>((resolve) => { started = resolve; });
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: true },
+      complete: async (_request, options) => {
+        started?.();
+        await new Promise<void>((_resolve, reject) => {
+          const signal = options?.signal;
+          if (signal?.aborted) {
+            reject(signal.reason);
+            return;
+          }
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+        throw new Error("The cancellation test provider must not complete.");
+      }
+    };
+    const item = fixture(provider);
+    const job = item.orchestrator.schedule({
+      title: "Cancellable schedule",
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      prompt: "Wait for shutdown.",
+      schedule: { kind: "once", nextRunAt: "2026-07-22T20:00:00.000Z" }
+    });
+    const controller = new AbortController();
+    const running = item.orchestrator.runDue(
+      new Date("2026-07-22T20:00:00.000Z"),
+      controller.signal
+    );
+    await providerStarted;
+    controller.abort(new Error("Kestrel is shutting down."));
+
+    await expect(running).resolves.toMatchObject([{
+      id: job.id,
+      status: "failed",
+      error: expect.stringMatching(/interrupted.*not be retried/i)
+    }]);
+    expect(item.database.listAgentRuns(item.parent.id)).toMatchObject([{
+      status: "cancelled"
+    }]);
+    expect(await item.orchestrator.runDue(
+      new Date("2026-07-22T20:01:00.000Z")
+    )).toEqual([]);
+    item.database.close();
+  });
+
   it("advances cron jobs to the next matching occurrence", async () => {
     const instant = new Date("2026-07-22T20:15:00.000Z");
     const item = fixture(finalProvider(), () => instant);

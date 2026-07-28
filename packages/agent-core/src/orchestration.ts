@@ -181,7 +181,9 @@ export class TaskOrchestrator {
     private readonly now: () => Date = () => new Date(),
     private readonly maximumWorkers = 4,
     private readonly providers?: ProviderPool
-  ) {}
+  ) {
+    this.reconcileInterruptedJobs();
+  }
 
   async delegate(input: DelegatedTaskInput): Promise<DelegatedTaskResult> {
     const parent = this.runtime.getSession(input.parentSessionId);
@@ -448,11 +450,12 @@ export class TaskOrchestrator {
     return updated;
   }
 
-  async runDue(at = this.now()): Promise<ScheduledAgentJob[]> {
+  async runDue(at = this.now(), signal?: AbortSignal): Promise<ScheduledAgentJob[]> {
     const jobs = this.listJobs();
     const due = jobs.filter((job) => job.status === "pending" && new Date(job.schedule.nextRunAt).getTime() <= at.getTime());
     const output: ScheduledAgentJob[] = [];
     for (const job of due) {
+      if (signal?.aborted) break;
       let current: ScheduledAgentJob = { ...job, status: "running", updatedAt: this.now().toISOString() };
       this.replaceJob(current);
       try {
@@ -462,11 +465,19 @@ export class TaskOrchestrator {
           providerIds: job.providerIds,
           ...(job.providerModels ? { providerModels: job.providerModels } : {}),
           userContent: textContent(job.prompt),
-          ...(job.instructions ? { instructions: job.instructions } : {})
+          ...(job.instructions ? { instructions: job.instructions } : {}),
+          ...(signal ? { signal } : {})
         });
         current = this.finishJob(current, result, at);
       } catch {
-        current = { ...current, status: "failed", error: "Scheduled agent run failed.", updatedAt: this.now().toISOString() };
+        current = {
+          ...current,
+          status: "failed",
+          error: signal?.aborted
+            ? "Scheduled agent run was interrupted and will not be retried automatically."
+            : "Scheduled agent run failed.",
+          updatedAt: this.now().toISOString()
+        };
       }
       this.replaceJob(current);
       output.push(current);
@@ -552,6 +563,23 @@ export class TaskOrchestrator {
     if (job.schedule.kind === "cron") return { ...job, status: "pending", lastRunId: result.run.id, error: undefined, schedule: { ...job.schedule, nextRunAt: nextCronOccurrence(job.schedule.expression, at).toISOString() }, updatedAt: this.now().toISOString() };
     return { ...job, status: "completed", lastRunId: result.run.id, error: undefined, updatedAt: this.now().toISOString() };
   }
+
+  private reconcileInterruptedJobs(): void {
+    const jobs = this.listJobs();
+    let changed = false;
+    const recovered = jobs.map((job) => {
+      if (job.status !== "running") return job;
+      changed = true;
+      return {
+        ...job,
+        status: "failed" as const,
+        error:
+          "Kestrel stopped before this scheduled run finished. Its outcome is uncertain, so it will not be retried automatically.",
+        updatedAt: this.now().toISOString()
+      };
+    });
+    if (changed) this.saveJobs(recovered);
+  }
 }
 
 export function installOrchestrationTools(runtime: AgentRuntime, orchestrator: TaskOrchestrator, sessionId: string): void {
@@ -575,7 +603,13 @@ export class AutomationDaemon {
   async run(signal: AbortSignal, onCycle?: (result: { checkedAt: string; jobs: ScheduledAgentJob[] }) => void): Promise<void> {
     while (!signal.aborted) {
       const checkedAt = this.now();
-      const jobs = await this.orchestrator.runDue(checkedAt);
+      let jobs: ScheduledAgentJob[];
+      try {
+        jobs = await this.orchestrator.runDue(checkedAt, signal);
+      } catch (error) {
+        if (signal.aborted) break;
+        throw error;
+      }
       onCycle?.({ checkedAt: checkedAt.toISOString(), jobs });
       if (signal.aborted) break;
       await new Promise<void>((resolve) => {
