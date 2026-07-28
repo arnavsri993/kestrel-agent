@@ -200,6 +200,55 @@ describe("authenticated remote HTTP transport", () => {
     database.close();
   });
 
+  it("streams only allowlisted runtime event metadata to read-scoped clients", async () => {
+    const { database, runtime, session, remote } = fixture();
+    const pairing = remote.beginPairing("Read-only event client", ["read"]);
+    const device = remote.completePairing(pairing.pairingId, pairing.code);
+    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1" });
+    servers.push(server);
+    const { origin } = await server.start();
+    const response = await fetch(`${origin}/v1/events`, { headers: { authorization: `Bearer ${device.token}` } });
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    await reader.read();
+
+    const sentinel = "SENTINEL_PRIVATE_OUTPUT";
+    const createdAt = "2026-07-23T10:00:00.000Z";
+    const rawEvents = [
+      { id: "event-session-created", type: "session.created", sessionId: session.id, payload: { title: sentinel }, createdAt },
+      { id: "event-session-updated", type: "session.updated", sessionId: session.id, payload: { action: "cancel", providerError: sentinel }, createdAt },
+      { id: "event-message", type: "message.appended", sessionId: session.id, messageId: "message-private", payload: { role: "assistant", content: sentinel }, createdAt },
+      { id: "event-tool-started", type: "tool.started", sessionId: session.id, executionId: "execution-private", payload: { toolName: "execution.run", status: "running", input: sentinel }, createdAt },
+      { id: "event-tool-progress", type: "tool.progress", sessionId: session.id, executionId: "execution-private", payload: { state: "running", stream: "stdout", chunk: sentinel, stderr: sentinel, error: sentinel }, createdAt },
+      { id: "event-tool-completed", type: "tool.completed", sessionId: session.id, executionId: "execution-private", payload: { toolName: "execution.run", status: "failed", error: sentinel, providerError: sentinel }, createdAt }
+    ] as const;
+    for (const event of rawEvents) runtime.emit("event", event);
+
+    let stream = "";
+    while ((stream.match(/event: runtime/g) ?? []).length < rawEvents.length) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      stream += new TextDecoder().decode(chunk.value);
+    }
+    const events = stream
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>);
+
+    expect(stream).not.toContain(sentinel);
+    expect(stream).not.toMatch(/sessionId|executionId|messageId|stdout|stderr|chunk|error|providerError|content|title/);
+    expect(events).toEqual([
+      { type: "session.created", createdAt, payload: {} },
+      { type: "session.updated", createdAt, payload: {} },
+      { type: "message.appended", createdAt, payload: {} },
+      { type: "tool.started", createdAt, payload: { toolName: "execution.run", status: "running" } },
+      { type: "tool.progress", createdAt, payload: { state: "running" } },
+      { type: "tool.completed", createdAt, payload: { toolName: "execution.run", status: "failed" } }
+    ]);
+    await reader.cancel();
+    database.close();
+  });
+
   it("rejects browser origins not on the allowlist and non-loopback plaintext binding", async () => {
     const { database, runtime, remote } = fixture();
     const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1", allowedOrigins: ["https://allowed.example"] });

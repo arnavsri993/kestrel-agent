@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
-import type { KestrelDatabase } from "@kestrel/database";
+import type { IdempotencyClaim, KestrelDatabase } from "@kestrel/database";
 import { assessExternalContent, mayExecute } from "@kestrel/policy-engine";
 import { SandboxedCommandRunner, type SandboxedCommandHandle } from "./command-runner";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
@@ -91,6 +91,7 @@ export interface ToolCallOptions {
   approvalStatus?: "pending" | "approved";
   idempotencyKey?: string;
   externalContent?: string;
+  signal?: AbortSignal;
 }
 
 export interface RuntimeModelTool {
@@ -232,6 +233,19 @@ function textFile(path: string, maximumBytes: number): { content: string; trunca
   return { content: buffer.toString("utf8"), truncated: size > buffer.byteLength };
 }
 
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new Error("Execution cancelled by the user.");
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 export class AgentRuntime extends EventEmitter {
   private readonly tools = new Map<string, RuntimeToolDefinition>();
   private readonly deferredCatalogs = new Map<string, DeferredToolCatalog>();
@@ -240,6 +254,8 @@ export class AgentRuntime extends EventEmitter {
   private readonly workspaceRoots: string[];
   private readonly configuredWorkspaceRoots: string[];
   private readonly activeExecutions = new Map<string, AbortController>();
+  private readonly inFlightIdempotentExecutions = new Map<string, Promise<RuntimeToolExecution>>();
+  private readonly idempotencyOwnerToken = `runtime-${randomUUID()}`;
   private readonly commandRunner = new SandboxedCommandRunner();
   private readonly backgroundProcesses = new Map<string, {
     sessionId: string;
@@ -285,6 +301,7 @@ export class AgentRuntime extends EventEmitter {
       ),
     ];
     this.reconcilePersistedWorkspaceRoots();
+    this.reconcileIdempotencyClaims();
     const previousProcesses = this.database.getPrivateState<Array<Record<string, unknown>>>(this.processJournalKey) ?? [];
     if (previousProcesses.some((process) => process.status === "running")) this.database.setPrivateState(this.processJournalKey, previousProcesses.map((process) => process.status === "running" ? { ...process, status: "interrupted", error: "The host restarted while this process was running.", updatedAt: this.now() } : process));
     this.registerWorkspaceTools();
@@ -694,9 +711,44 @@ export class AgentRuntime extends EventEmitter {
     const repeated = idempotencyKey ? this.database.getIdempotentResult<RuntimeToolExecution>(idempotencyKey) : undefined;
     if (repeated) return RuntimeToolExecutionSchema.parse(repeated);
 
+    const activeExecution = idempotencyKey
+      ? this.inFlightIdempotentExecutions.get(idempotencyKey)
+      : undefined;
+    if (activeExecution) return this.waitForPromise(activeExecution, options.signal);
+
+    const pendingExecution = this.executeToolCall(
+      session,
+      workspaceRoot,
+      definition,
+      toolName,
+      rawInput,
+      options,
+      idempotencyKey,
+    );
+    if (!idempotencyKey) return pendingExecution;
+
+    this.inFlightIdempotentExecutions.set(idempotencyKey, pendingExecution);
+    try {
+      return await pendingExecution;
+    } finally {
+      if (this.inFlightIdempotentExecutions.get(idempotencyKey) === pendingExecution) {
+        this.inFlightIdempotentExecutions.delete(idempotencyKey);
+      }
+    }
+  }
+
+  private async executeToolCall(
+    session: RuntimeSession,
+    workspaceRoot: string | undefined,
+    definition: RuntimeToolDefinition,
+    toolName: string,
+    rawInput: Record<string, unknown>,
+    options: ToolCallOptions,
+    idempotencyKey: string | undefined,
+  ): Promise<RuntimeToolExecution> {
     const input = definition.inputSchema.parse(rawInput);
     const assessment = options.externalContent ? assessExternalContent(options.externalContent) : undefined;
-    const approvalRule = this.listApprovalRules().filter((rule) => rule.toolName === toolName && (rule.scope === "global" || rule.sessionId === sessionId)).sort((left, right) => left.scope === "session" ? -1 : right.scope === "session" ? 1 : 0)[0];
+    const approvalRule = this.listApprovalRules().filter((rule) => rule.toolName === toolName && (rule.scope === "global" || rule.sessionId === session.id)).sort((left, right) => left.scope === "session" ? -1 : right.scope === "session" ? 1 : 0)[0];
     const policy = approvalRule?.decision === "deny"
       ? { allowed: false, approvalRequired: false, reason: `A persistent ${approvalRule.scope} rule denies ${toolName}.` }
       : mayExecute({
@@ -707,7 +759,7 @@ export class AgentRuntime extends EventEmitter {
     const startedAt = this.now();
     let execution = RuntimeToolExecutionSchema.parse({
       id: `tool-${randomUUID()}`,
-      sessionId,
+      sessionId: session.id,
       toolName,
       status: policy.allowed ? "running" : "blocked",
       riskLevel: definition.descriptor.riskLevel,
@@ -717,10 +769,10 @@ export class AgentRuntime extends EventEmitter {
       startedAt,
       ...(!policy.allowed ? { error: policy.reason, completedAt: startedAt } : {})
     });
-    this.database.saveToolExecution(execution);
-    this.emitRuntimeEvent("tool.started", sessionId, { toolName, status: execution.status }, { executionId: execution.id });
     if (!policy.allowed) {
-      this.emitRuntimeEvent("tool.completed", sessionId, { toolName, status: execution.status, error: execution.error }, { executionId: execution.id });
+      this.database.saveToolExecution(execution);
+      this.emitRuntimeEvent("tool.started", session.id, { toolName, status: execution.status }, { executionId: execution.id });
+      this.emitRuntimeEvent("tool.completed", session.id, { toolName, status: execution.status, error: execution.error }, { executionId: execution.id });
       return execution;
     }
 
@@ -728,23 +780,65 @@ export class AgentRuntime extends EventEmitter {
     if (preHook.blocked) {
       execution = RuntimeToolExecutionSchema.parse({ ...execution, status: "blocked", error: preHook.reason ?? "A pre-tool hook blocked execution.", completedAt: this.now() });
       this.database.saveToolExecution(execution);
-      this.emitRuntimeEvent("tool.completed", sessionId, { toolName, status: execution.status, error: execution.error }, { executionId: execution.id });
+      this.emitRuntimeEvent("tool.started", session.id, { toolName, status: execution.status }, { executionId: execution.id });
+      this.emitRuntimeEvent("tool.completed", session.id, { toolName, status: execution.status, error: execution.error }, { executionId: execution.id });
       return execution;
     }
 
-    const controller = new AbortController();
-    this.activeExecutions.set(execution.id, controller);
-    const context: RuntimeToolContext = {
-      session,
-      executionId: execution.id,
-      signal: controller.signal,
-      progress: (payload) => this.emitRuntimeEvent("tool.progress", sessionId, payload, { executionId: execution.id }),
-      ...(workspaceRoot ? { workspaceRoot } : {})
+    if (options.signal?.aborted) {
+      const reason = abortReason(options.signal);
+      execution = RuntimeToolExecutionSchema.parse({
+        ...execution,
+        status: "cancelled",
+        error: reason instanceof Error
+          ? reason.message
+          : "Execution cancelled by the user.",
+        completedAt: this.now(),
+      });
+      this.database.saveToolExecution(execution);
+      this.emitRuntimeEvent("tool.started", session.id, { toolName, status: execution.status }, { executionId: execution.id });
+      this.emitRuntimeEvent("tool.completed", session.id, { toolName, status: execution.status, error: execution.error }, { executionId: execution.id });
+      return execution;
+    }
+
+    if (idempotencyKey) {
+      const repeatedExecution = await this.acquireIdempotentExecution(
+        idempotencyKey,
+        execution,
+        options.signal,
+      );
+      if (repeatedExecution) return repeatedExecution;
+    }
+
+    const activeExecutionId = execution.id;
+    let claimOwned = Boolean(idempotencyKey);
+    let effectStarted = false;
+    let effectVerified = false;
+    let controller: AbortController | undefined;
+    const abortFromCaller = () => {
+      if (controller && !controller.signal.aborted) {
+        controller.abort(options.signal ? abortReason(options.signal) : new Error("Execution cancelled by the user."));
+      }
     };
-    if (idempotencyKey) this.database.saveIdempotentResult(idempotencyKey, execution);
     try {
+      this.database.saveToolExecution(execution);
+      this.emitRuntimeEvent("tool.started", session.id, { toolName, status: execution.status }, { executionId: execution.id });
+      controller = new AbortController();
+      if (options.signal?.aborted) abortFromCaller();
+      else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+      this.activeExecutions.set(activeExecutionId, controller);
+      const context: RuntimeToolContext = {
+        session,
+        executionId: activeExecutionId,
+        signal: controller.signal,
+        progress: (payload) => this.emitRuntimeEvent("tool.progress", session.id, payload, { executionId: activeExecutionId }),
+        ...(workspaceRoot ? { workspaceRoot } : {})
+      };
+      if (controller.signal.aborted) throw abortReason(controller.signal);
+      effectStarted = true;
       const output = definition.outputSchema.parse(await definition.execute(context, input));
       const verificationResult = definition.descriptor.readOnly ? undefined : await this.verifyMutation(definition, context, input, output);
+      effectVerified = true;
       const verifiedAt = this.now();
       const verification = verificationResult ? {
         method: verificationResult.method,
@@ -754,24 +848,196 @@ export class AgentRuntime extends EventEmitter {
       execution = RuntimeToolExecutionSchema.parse({ ...execution, status: "verified", output, ...(verification ? { verification } : {}), completedAt: verifiedAt });
       this.database.saveToolExecution(execution);
       await this.runHooks("post_tool", session, definition.descriptor, execution);
-      if (idempotencyKey) this.database.updateIdempotentResult(idempotencyKey, execution);
-      this.emitRuntimeEvent("tool.completed", sessionId, { toolName, status: execution.status }, { executionId: execution.id });
+      if (idempotencyKey) {
+        execution = this.completeIdempotentExecution(idempotencyKey, execution);
+        claimOwned = false;
+      }
+      this.emitRuntimeEvent("tool.completed", session.id, { toolName, status: execution.status }, { executionId: execution.id });
       return execution;
     } catch (error) {
+      const cancelled = controller?.signal.aborted === true || options.signal?.aborted === true;
+      const uncertainMutation = cancelled
+        && !definition.descriptor.readOnly
+        && effectStarted
+        && !effectVerified;
       execution = RuntimeToolExecutionSchema.parse({
         ...execution,
-        status: controller.signal.aborted ? "cancelled" : "failed",
-        error: error instanceof Error ? error.message : "Tool execution failed.",
+        status: uncertainMutation
+          ? "failed"
+          : cancelled && !effectVerified
+            ? "cancelled"
+            : "failed",
+        error: uncertainMutation
+          ? "Cancellation arrived after this mutation started, so Kestrel could not confirm whether it completed. The action will not be retried automatically."
+          : error instanceof Error
+            ? error.message
+            : "Tool execution failed.",
         completedAt: this.now()
       });
       this.database.saveToolExecution(execution);
-      if (idempotencyKey) this.database.updateIdempotentResult(idempotencyKey, execution);
-      await this.runHooks("tool_error", session, definition.descriptor, execution);
-      this.emitRuntimeEvent("tool.completed", sessionId, { toolName, status: execution.status, error: execution.error }, { executionId: execution.id });
+      if (idempotencyKey && effectStarted) {
+        execution = this.completeIdempotentExecution(idempotencyKey, execution);
+        claimOwned = false;
+      } else if (idempotencyKey && claimOwned) {
+        this.database.releaseIdempotentClaim(idempotencyKey, this.idempotencyOwnerToken);
+        claimOwned = false;
+      }
+      if (effectStarted) await this.runHooks("tool_error", session, definition.descriptor, execution);
+      try {
+        this.emitRuntimeEvent("tool.completed", session.id, { toolName, status: execution.status, error: execution.error }, { executionId: execution.id });
+      } catch {
+        // Observer failures must not strand an idempotency claim.
+      }
       return execution;
     } finally {
-      this.activeExecutions.delete(execution.id);
+      options.signal?.removeEventListener("abort", abortFromCaller);
+      this.activeExecutions.delete(activeExecutionId);
+      if (idempotencyKey && claimOwned) {
+        if (!effectStarted) {
+          this.database.releaseIdempotentClaim(idempotencyKey, this.idempotencyOwnerToken);
+        } else {
+          const uncertain = RuntimeToolExecutionSchema.parse({
+            ...execution,
+            status: "failed",
+            error: "Kestrel lost the terminal journal update after this mutation started. The outcome is uncertain and the action will not be retried automatically.",
+            completedAt: this.now(),
+          });
+          const completion = this.database.abandonIdempotentClaim(
+            idempotencyKey,
+            this.idempotencyOwnerToken,
+            uncertain,
+          );
+          this.database.saveToolExecution(
+            RuntimeToolExecutionSchema.parse(completion.result),
+          );
+        }
+      }
     }
+  }
+
+  private completeIdempotentExecution(
+    idempotencyKey: string,
+    execution: RuntimeToolExecution,
+  ): RuntimeToolExecution {
+    const completion = this.database.completeIdempotentResult(
+      idempotencyKey,
+      this.idempotencyOwnerToken,
+      execution,
+    );
+    const result = RuntimeToolExecutionSchema.parse(completion.result);
+    this.database.saveToolExecution(result);
+    return result;
+  }
+
+  private async acquireIdempotentExecution(
+    idempotencyKey: string,
+    pendingExecution: RuntimeToolExecution,
+    signal?: AbortSignal,
+  ): Promise<RuntimeToolExecution | undefined> {
+    const waitStartedAt = Date.now();
+    const initial = this.database.claimIdempotentResult(
+      idempotencyKey,
+      this.idempotencyOwnerToken,
+      process.pid,
+      pendingExecution,
+    );
+    if (initial.state === "claimed") return undefined;
+    if (initial.state === "completed") {
+      return RuntimeToolExecutionSchema.parse(initial.result);
+    }
+    let activeClaim = initial.claim;
+    while (true) {
+      // A live owner may be slow or hung, but stealing its claim could repeat an
+      // external side effect. Bound only this caller's wait; leave ownership intact.
+      if (!processIsAlive(activeClaim.ownerPid)) {
+        return this.recoverAbandonedIdempotentClaim(idempotencyKey, activeClaim);
+      }
+      if (Date.now() - waitStartedAt >= 30_000) {
+        throw new Error("A matching tool execution is still running in another Kestrel process. Retry after it finishes or cancel this wait.");
+      }
+      await this.waitForPromise(
+        new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 50)),
+        signal,
+      );
+      const completed = this.database.getIdempotentResult<RuntimeToolExecution>(idempotencyKey);
+      if (completed) return RuntimeToolExecutionSchema.parse(completed);
+      const observed = this.database.getIdempotentClaim<RuntimeToolExecution>(idempotencyKey);
+      if (observed) {
+        activeClaim = observed;
+        continue;
+      }
+      const retry = this.database.claimIdempotentResult(
+        idempotencyKey,
+        this.idempotencyOwnerToken,
+        process.pid,
+        pendingExecution,
+      );
+      if (retry.state === "claimed") return undefined;
+      if (retry.state === "completed") return RuntimeToolExecutionSchema.parse(retry.result);
+      activeClaim = retry.claim;
+    }
+  }
+
+  private recoverAbandonedIdempotentClaim(
+    idempotencyKey: string,
+    claim: IdempotencyClaim<RuntimeToolExecution>,
+  ): RuntimeToolExecution {
+    const pending = RuntimeToolExecutionSchema.parse(claim.pendingResult);
+    const recorded = this.database.getToolExecution(pending.id);
+    const terminal = recorded && recorded.status !== "running"
+      ? recorded
+      : RuntimeToolExecutionSchema.parse({
+          ...pending,
+          status: "failed",
+          error: "The previous Kestrel process stopped before it could confirm this tool's outcome. The action will not be retried automatically because it may already have completed.",
+          completedAt: this.now(),
+        });
+    const completion = this.database.abandonIdempotentClaim(
+      idempotencyKey,
+      claim.ownerToken,
+      terminal,
+    );
+    const result = RuntimeToolExecutionSchema.parse(completion.result);
+    if (completion.completed) {
+      this.database.saveToolExecution(result);
+      this.emitRuntimeEvent(
+        "tool.completed",
+        result.sessionId,
+        { toolName: result.toolName, status: result.status, error: result.error },
+        { executionId: result.id },
+      );
+    }
+    return result;
+  }
+
+  private reconcileIdempotencyClaims(): void {
+    for (const claim of this.database.listIdempotentClaims<RuntimeToolExecution>("runtime-tool:")) {
+      if (!processIsAlive(claim.ownerPid)) {
+        this.recoverAbandonedIdempotentClaim(claim.key, claim);
+      }
+    }
+  }
+
+  private waitForPromise<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return promise;
+    if (signal.aborted) return Promise.reject(abortReason(signal));
+    return new Promise<T>((resolvePromise, rejectPromise) => {
+      const abort = () => {
+        signal.removeEventListener("abort", abort);
+        rejectPromise(abortReason(signal));
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      promise.then(
+        (value) => {
+          signal.removeEventListener("abort", abort);
+          resolvePromise(value);
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", abort);
+          rejectPromise(error);
+        },
+      );
+    });
   }
 
   private registerWorkspaceTools(): void {

@@ -108,6 +108,34 @@ CREATE TABLE IF NOT EXISTS private_runtime_state (
 );
 `;
 
+const migration007 = `
+CREATE TABLE IF NOT EXISTS idempotency_claims (
+  key TEXT PRIMARY KEY,
+  owner_token TEXT NOT NULL,
+  owner_pid INTEGER NOT NULL CHECK(owner_pid > 0),
+  pending_result TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+`;
+
+export interface IdempotencyClaim<T = unknown> {
+  key: string;
+  ownerToken: string;
+  ownerPid: number;
+  pendingResult: T;
+  createdAt: string;
+}
+
+export type IdempotencyClaimResult<T> =
+  | { state: "claimed"; claim: IdempotencyClaim<T> }
+  | { state: "active"; claim: IdempotencyClaim<T> }
+  | { state: "completed"; result: T };
+
+export interface IdempotencyCompletion<T> {
+  result: T;
+  completed: boolean;
+}
+
 interface RuntimeMessageRow {
   id: string;
   session_id: string;
@@ -124,6 +152,14 @@ interface WorkspaceMutationRow {
   payload_ciphertext: string;
   payload_iv: string;
   payload_auth_tag: string;
+}
+
+interface IdempotencyClaimRow {
+  key: string;
+  owner_token: string;
+  owner_pid: number;
+  pending_result: string;
+  created_at: string;
 }
 
 interface MemoryRow {
@@ -174,6 +210,8 @@ export class KestrelDatabase {
       this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(5, new Date().toISOString());
       this.db.exec(migration006);
       this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(6, new Date().toISOString());
+      this.db.exec(migration007);
+      this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(7, new Date().toISOString());
     })();
   }
 
@@ -570,6 +608,79 @@ export class KestrelDatabase {
     if (update.changes !== 1) throw new Error("Idempotency journal entry does not exist.");
   }
 
+  claimIdempotentResult<T>(
+    key: string,
+    ownerToken: string,
+    ownerPid: number,
+    pendingResult: T,
+  ): IdempotencyClaimResult<T> {
+    this.validateIdempotencyOwner(key, ownerToken, ownerPid);
+    const serializedPendingResult = this.serializeIdempotencyValue(pendingResult);
+    const createdAt = new Date().toISOString();
+    return this.db.transaction(() => {
+      const insertion = this.db.prepare(`
+        INSERT OR IGNORE INTO idempotency_claims (
+          key, owner_token, owner_pid, pending_result, created_at
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(key, ownerToken, ownerPid, serializedPendingResult, createdAt);
+      const completed = this.db.prepare("SELECT result FROM idempotency_keys WHERE key = ?")
+        .get(key) as { result: string } | undefined;
+      if (completed) {
+        this.db.prepare("DELETE FROM idempotency_claims WHERE key = ?").run(key);
+        return { state: "completed" as const, result: JSON.parse(completed.result) as T };
+      }
+      const row = this.db.prepare(`
+        SELECT key, owner_token, owner_pid, pending_result, created_at
+        FROM idempotency_claims WHERE key = ?
+      `).get(key) as IdempotencyClaimRow | undefined;
+      if (!row) throw new Error("Idempotency claim could not be acquired or observed.");
+      const claim = this.parseIdempotencyClaim<T>(row);
+      return insertion.changes === 1
+        ? { state: "claimed" as const, claim }
+        : { state: "active" as const, claim };
+    })();
+  }
+
+  getIdempotentClaim<T>(key: string): IdempotencyClaim<T> | undefined {
+    const row = this.db.prepare(`
+      SELECT key, owner_token, owner_pid, pending_result, created_at
+      FROM idempotency_claims WHERE key = ?
+    `).get(key) as IdempotencyClaimRow | undefined;
+    return row ? this.parseIdempotencyClaim<T>(row) : undefined;
+  }
+
+  listIdempotentClaims<T>(prefix?: string): IdempotencyClaim<T>[] {
+    const rows = this.db.prepare(`
+      SELECT key, owner_token, owner_pid, pending_result, created_at
+      FROM idempotency_claims ORDER BY created_at ASC, key ASC
+    `).all() as IdempotencyClaimRow[];
+    return rows
+      .filter((row) => prefix === undefined || row.key.startsWith(prefix))
+      .map((row) => this.parseIdempotencyClaim<T>(row));
+  }
+
+  completeIdempotentResult<T>(
+    key: string,
+    ownerToken: string,
+    result: T,
+  ): IdempotencyCompletion<T> {
+    return this.finishIdempotentClaim(key, ownerToken, result);
+  }
+
+  abandonIdempotentClaim<T>(
+    key: string,
+    ownerToken: string,
+    terminalResult: T,
+  ): IdempotencyCompletion<T> {
+    return this.finishIdempotentClaim(key, ownerToken, terminalResult);
+  }
+
+  releaseIdempotentClaim(key: string, ownerToken: string): boolean {
+    if (!key || !ownerToken) throw new Error("Idempotency claim key and owner token are required.");
+    return this.db.prepare("DELETE FROM idempotency_claims WHERE key = ? AND owner_token = ?")
+      .run(key, ownerToken).changes === 1;
+  }
+
   setState(key: string, value: unknown): void {
     this.db.prepare(`INSERT INTO runtime_state (key, value, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
@@ -631,6 +742,53 @@ export class KestrelDatabase {
 
   private hashSearchTerm(term: string): string {
     return createHmac("sha256", this.encryptionKey).update(`runtime-message:${term}`).digest("hex");
+  }
+
+  private finishIdempotentClaim<T>(
+    key: string,
+    ownerToken: string,
+    result: T,
+  ): IdempotencyCompletion<T> {
+    if (!key || !ownerToken) throw new Error("Idempotency claim key and owner token are required.");
+    const serializedResult = this.serializeIdempotencyValue(result);
+    const createdAt = new Date().toISOString();
+    return this.db.transaction(() => {
+      const insertion = this.db.prepare(`
+        INSERT OR IGNORE INTO idempotency_keys (key, result, created_at)
+        SELECT key, ?, ? FROM idempotency_claims
+        WHERE key = ? AND owner_token = ?
+      `).run(serializedResult, createdAt, key, ownerToken);
+      const completed = this.db.prepare("SELECT result FROM idempotency_keys WHERE key = ?")
+        .get(key) as { result: string } | undefined;
+      if (!completed) throw new Error("Idempotency claim is not owned by this runtime.");
+      this.db.prepare("DELETE FROM idempotency_claims WHERE key = ? AND owner_token = ?")
+        .run(key, ownerToken);
+      return {
+        result: JSON.parse(completed.result) as T,
+        completed: insertion.changes === 1,
+      };
+    })();
+  }
+
+  private parseIdempotencyClaim<T>(row: IdempotencyClaimRow): IdempotencyClaim<T> {
+    return {
+      key: row.key,
+      ownerToken: row.owner_token,
+      ownerPid: row.owner_pid,
+      pendingResult: JSON.parse(row.pending_result) as T,
+      createdAt: row.created_at,
+    };
+  }
+
+  private serializeIdempotencyValue(value: unknown): string {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new Error("Idempotency journal values must be JSON-serializable.");
+    return serialized;
+  }
+
+  private validateIdempotencyOwner(key: string, ownerToken: string, ownerPid: number): void {
+    if (!key || !ownerToken) throw new Error("Idempotency claim key and owner token are required.");
+    if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0) throw new Error("Idempotency claim owner PID is invalid.");
   }
 
   close(): void {

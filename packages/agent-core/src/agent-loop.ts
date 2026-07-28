@@ -163,7 +163,8 @@ export class AgentLoop {
       } else if (input.approvalDecision === "approved") {
         execution = await this.runtime.callTool(run.sessionId, run.pendingToolName, blocked.input, {
           approvalStatus: "approved",
-          idempotencyKey: `${run.id}:${run.pendingProviderToolCallId}`
+          idempotencyKey: `${run.id}:${run.pendingProviderToolCallId}`,
+          ...(input.signal ? { signal: input.signal } : {})
         });
         if (execution.status !== "verified") throw new Error(execution.error ?? "Approved tool execution did not complete.");
       } else {
@@ -199,6 +200,25 @@ export class AgentLoop {
         ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
         ...(input.takeSteering ? { takeSteering: input.takeSteering } : {})
       });
+    } catch (error) {
+      if (input.signal?.aborted) {
+        const current = this.database.getAgentRun(input.runId);
+        if (current) {
+          const {
+            pendingToolExecutionId: _execution,
+            pendingProviderToolCallId: _call,
+            pendingToolName: _tool,
+            ...base
+          } = current;
+          this.database.saveAgentRun({
+            ...base,
+            status: "cancelled",
+            error: "Cancelled by the user.",
+            updatedAt: this.now().toISOString(),
+          });
+        }
+      }
+      throw error;
     } finally {
       this.resumingRunIds.delete(input.runId);
     }
@@ -278,6 +298,7 @@ export class AgentLoop {
         }
 
         for (const call of result.toolCalls) {
+          if (options.signal?.aborted) throw options.signal.reason;
           const descriptor = descriptors.get(call.name);
           if (!descriptor) {
             const content = JSON.stringify({ status: "failed", error: `Tool ${call.name} is unavailable.` });
@@ -288,7 +309,8 @@ export class AgentLoop {
           const execution = await this.runtime.callTool(session.id, call.name, call.arguments, {
             approvalStatus: options.approvalStatus,
             idempotencyKey: `${run.id}:${call.id}`,
-            ...(!descriptor.readOnly && untrustedExternalContent ? { externalContent: untrustedExternalContent } : {})
+            ...(!descriptor.readOnly && untrustedExternalContent ? { externalContent: untrustedExternalContent } : {}),
+            ...(options.signal ? { signal: options.signal } : {})
           });
           if (execution.status === "blocked") {
             if (execution.output?.approvalRequired === true) {
