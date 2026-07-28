@@ -253,7 +253,10 @@ export class AgentRuntime extends EventEmitter {
   private readonly hooks: RuntimeHook[] = [];
   private readonly workspaceRoots: string[];
   private readonly configuredWorkspaceRoots: string[];
-  private readonly activeExecutions = new Map<string, AbortController>();
+  private readonly activeExecutions = new Map<
+    string,
+    { controller: AbortController; sessionId: string }
+  >();
   private readonly inFlightIdempotentExecutions = new Map<string, Promise<RuntimeToolExecution>>();
   private readonly idempotencyOwnerToken = `runtime-${randomUUID()}`;
   private readonly commandRunner = new SandboxedCommandRunner();
@@ -375,18 +378,42 @@ export class AgentRuntime extends EventEmitter {
 
   restoreCheckpoint(sessionId: string, checkpointId: string): RuntimeSession {
     const session = this.requireSession(sessionId);
-    if (!session.checkpoints.some((checkpoint) => checkpoint.id === checkpointId)) throw new Error("Checkpoint does not belong to this session.");
+    const checkpointIndex = session.checkpoints.findIndex(
+      (checkpoint) => checkpoint.id === checkpointId,
+    );
+    if (checkpointIndex < 0)
+      throw new Error("Checkpoint does not belong to this session.");
     const state = this.database.getPrivateState<{ sessionId: string; messageCount: number; mutationIds: string[] }>(`session.checkpoint.${checkpointId}`);
     if (!state || state.sessionId !== sessionId) throw new Error("Checkpoint restoration state is unavailable.");
+    const completedAt = this.now();
+    const reason =
+      "Agent run and any pending approval were invalidated because the session was restored to an earlier checkpoint.";
+    this.abortActiveExecutionsForHistoryRollback(sessionId, reason);
+    this.database.retireActiveAgentHistory(sessionId, completedAt, reason);
     const baseline = new Set(state.mutationIds);
     for (const mutation of this.database.listWorkspaceMutations(sessionId).filter((item) => !baseline.has(item.id) && !item.undoneAt)) this.undoWorkspaceMutation(sessionId, mutation.id);
-    this.database.truncateRuntimeMessages(sessionId, state.messageCount);
-    const updated = this.saveSession({ ...session, status: "active", updatedAt: this.now() });
+    const checkpoints = session.checkpoints.slice(0, checkpointIndex + 1);
+    const prunedCheckpointIds = session.checkpoints
+      .slice(checkpointIndex + 1)
+      .map((checkpoint) => checkpoint.id);
+    const { session: updated } = this.database.rollbackRuntimeHistory({
+      session: {
+        ...session,
+        status: "active",
+        checkpoints,
+        updatedAt: completedAt,
+      },
+      keepMessageCount: state.messageCount,
+      prunedCheckpointIds,
+      completedAt,
+      reason,
+    });
     this.emitRuntimeEvent("session.updated", sessionId, { action: "restore-checkpoint", checkpointId });
     return updated;
   }
 
   rewindLastTurn(sessionId: string): { message: string } {
+    const session = this.requireSession(sessionId);
     const messages = this.listMessages(sessionId);
     let index = messages.length - 1;
     while (index >= 0 && messages[index]?.role !== "user") index -= 1;
@@ -399,15 +426,47 @@ export class AgentRuntime extends EventEmitter {
     const baseline = matchingRun
       ? this.database.getPrivateState<{ sessionId: string; userMessageId: string; messageCount: number; mutationIds: string[] }>(`agent-run-baseline.${matchingRun.id}`)
       : undefined;
+    const keepMessageCount =
+      baseline?.sessionId === sessionId ? baseline.messageCount : index;
+    const completedAt = this.now();
+    const reason =
+      "Agent run and any pending approval were invalidated because the session turn was retried.";
+    this.abortActiveExecutionsForHistoryRollback(sessionId, reason);
+    this.database.retireActiveAgentHistory(sessionId, completedAt, reason);
     if (baseline?.sessionId === sessionId) {
       const mutationIds = new Set(baseline.mutationIds);
       for (const mutation of this.database.listWorkspaceMutations(sessionId).filter((item) => !item.undoneAt && !mutationIds.has(item.id))) this.undoWorkspaceMutation(sessionId, mutation.id);
-      this.database.truncateRuntimeMessages(sessionId, baseline.messageCount);
     } else {
       // Legacy turns created before exact run baselines use the safest available fallback.
       for (const mutation of this.database.listWorkspaceMutations(sessionId).filter((item) => !item.undoneAt && item.createdAt >= user.createdAt)) this.undoWorkspaceMutation(sessionId, mutation.id);
-      this.database.truncateRuntimeMessages(sessionId, index);
     }
+    const prunedCheckpointIds = session.checkpoints
+      .filter((checkpoint) => {
+        const checkpointState = this.database.getPrivateState<{
+          sessionId: string;
+          messageCount: number;
+        }>(`session.checkpoint.${checkpoint.id}`);
+        return (
+          checkpointState?.sessionId === sessionId &&
+          checkpointState.messageCount > keepMessageCount
+        );
+      })
+      .map((checkpoint) => checkpoint.id);
+    const prunedCheckpointSet = new Set(prunedCheckpointIds);
+    this.database.rollbackRuntimeHistory({
+      session: {
+        ...session,
+        status: "active",
+        checkpoints: session.checkpoints.filter(
+          (checkpoint) => !prunedCheckpointSet.has(checkpoint.id),
+        ),
+        updatedAt: completedAt,
+      },
+      keepMessageCount,
+      prunedCheckpointIds,
+      completedAt,
+      reason,
+    });
     this.emitRuntimeEvent("session.updated", sessionId, { action: "rewind-turn", messageId: user.id });
     return { message: user.content };
   }
@@ -498,9 +557,9 @@ export class AgentRuntime extends EventEmitter {
   }
 
   cancelExecution(executionId: string): boolean {
-    const controller = this.activeExecutions.get(executionId);
-    if (!controller) return false;
-    controller.abort(new Error("Execution cancelled by the user."));
+    const active = this.activeExecutions.get(executionId);
+    if (!active) return false;
+    active.controller.abort(new Error("Execution cancelled by the user."));
     return true;
   }
 
@@ -835,7 +894,10 @@ export class AgentRuntime extends EventEmitter {
       controller = new AbortController();
       if (options.signal?.aborted) abortFromCaller();
       else options.signal?.addEventListener("abort", abortFromCaller, { once: true });
-      this.activeExecutions.set(activeExecutionId, controller);
+      this.activeExecutions.set(activeExecutionId, {
+        controller,
+        sessionId: session.id,
+      });
       const context: RuntimeToolContext = {
         session,
         executionId: activeExecutionId,
@@ -1047,6 +1109,16 @@ export class AgentRuntime extends EventEmitter {
         },
       );
     });
+  }
+
+  private abortActiveExecutionsForHistoryRollback(
+    sessionId: string,
+    reason: string,
+  ): void {
+    for (const active of this.activeExecutions.values()) {
+      if (active.sessionId === sessionId && !active.controller.signal.aborted)
+        active.controller.abort(new Error(reason));
+    }
   }
 
   private registerWorkspaceTools(): void {

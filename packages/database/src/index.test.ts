@@ -98,3 +98,132 @@ describe("idempotency claims", () => {
     }
   });
 });
+
+describe("runtime history retirement", () => {
+  it("atomically retires active runs and their approval executions without releasing an in-flight idempotency claim", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const sessionId = "session-rollback";
+    const runId = "run-rollback";
+    const startedAt = "2026-07-22T18:00:00.000Z";
+    const completedAt = "2026-07-22T18:01:00.000Z";
+    const reason = "Approval invalidated because history was rolled back.";
+    try {
+      database.saveRuntimeSession({
+        id: sessionId,
+        title: "Rollback fixture",
+        allowedTools: ["test.mutation"],
+        status: "active",
+        checkpoints: [],
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      });
+      database.saveAgentRun({
+        id: runId,
+        sessionId,
+        model: "fixture",
+        providerIds: ["fixture"],
+        status: "waiting_approval",
+        turn: 1,
+        pendingToolExecutionId: "tool-blocked",
+        pendingProviderToolCallId: "call-blocked",
+        pendingToolName: "test.mutation",
+        createdAt: startedAt,
+        updatedAt: startedAt,
+      });
+      database.saveToolExecution({
+        id: "tool-blocked",
+        sessionId,
+        toolName: "test.mutation",
+        status: "blocked",
+        riskLevel: "sensitive",
+        input: { target: "pending" },
+        output: { approvalRequired: true, preview: "Pending mutation" },
+        error: "Approval required.",
+        idempotencyKey: `${runId}:call-blocked`,
+        startedAt,
+        completedAt: startedAt,
+      });
+      const runningStartedAt = "2026-07-22T18:00:30.000Z";
+      const runningExecution = {
+        id: "tool-running",
+        sessionId,
+        toolName: "test.mutation",
+        status: "running" as const,
+        riskLevel: "sensitive" as const,
+        input: { target: "in-flight" },
+        idempotencyKey: `${runId}:call-running`,
+        startedAt: runningStartedAt,
+      };
+      database.saveToolExecution(runningExecution);
+      const claimKey =
+        `runtime-tool:${sessionId}:test.mutation:${runId}:call-running`;
+      expect(
+        database.claimIdempotentResult(
+          claimKey,
+          "runtime-owner",
+          process.pid,
+          runningExecution,
+        ).state,
+      ).toBe("claimed");
+
+      database.db.exec(`
+        CREATE TRIGGER fail_history_retirement
+        BEFORE UPDATE OF status ON tool_executions
+        WHEN OLD.id = 'tool-blocked'
+        BEGIN
+          SELECT RAISE(ABORT, 'fixture retirement failure');
+        END;
+      `);
+      expect(() =>
+        database.retireActiveAgentHistory(sessionId, completedAt, reason),
+      ).toThrow("fixture retirement failure");
+      expect(database.getAgentRun(runId)).toMatchObject({
+        status: "waiting_approval",
+        pendingToolExecutionId: "tool-blocked",
+      });
+      expect(database.getToolExecution("tool-blocked")).toMatchObject({
+        status: "blocked",
+        output: { approvalRequired: true },
+      });
+      expect(database.getToolExecution("tool-running")).toMatchObject({
+        status: "running",
+      });
+      database.db.exec("DROP TRIGGER fail_history_retirement");
+
+      expect(
+        database.retireActiveAgentHistory(sessionId, completedAt, reason),
+      ).toMatchObject({
+        runs: [
+          {
+            id: runId,
+            status: "cancelled",
+            error: reason,
+          },
+        ],
+        toolExecutions: [
+          {
+            id: "tool-blocked",
+            status: "cancelled",
+            output: { approvalRequired: false },
+          },
+          {
+            id: "tool-running",
+            status: "failed",
+            error: expect.stringContaining(
+              "outcome is uncertain and it will not be retried automatically",
+            ),
+          },
+        ],
+      });
+      expect(database.getAgentRun(runId)).not.toHaveProperty(
+        "pendingToolExecutionId",
+      );
+      expect(database.getIdempotentClaim(claimKey)).toMatchObject({
+        ownerToken: "runtime-owner",
+        pendingResult: { id: "tool-running", status: "running" },
+      });
+    } finally {
+      database.close();
+    }
+  });
+});
