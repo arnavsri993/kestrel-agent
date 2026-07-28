@@ -233,6 +233,81 @@ describe("core agent request path", () => {
     await core.close();
   });
 
+  it("cancels an active desktop stream before restoring its session history", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    let reportStarted!: () => void;
+    const started = new Promise<void>((resolvePromise) => {
+      reportStarted = resolvePromise;
+    });
+    const provider: ModelProvider = {
+      id: "rollback-provider",
+      capabilities: {
+        streaming: true,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (_request, call) =>
+        new Promise((_resolve, reject) => {
+          reportStarted();
+          call?.signal?.addEventListener(
+            "abort",
+            () => reject(call.signal?.reason),
+            { once: true },
+          );
+        }),
+    };
+    const core = new AgentCore({ database, modelProviders: [provider] });
+    const session = core.runtime.ensureMainSession();
+    const checkpoint = core.runtime.checkpoint(
+      session.id,
+      "Before the active request",
+    ).checkpoints[0]!;
+    const running = core.handle({
+      type: "runtime-run-agent",
+      sessionId: session.id,
+      message: "Wait for the provider",
+      model: "fixture",
+      providerIds: ["rollback-provider"],
+      streamId: "rollback-stream",
+    });
+    await started;
+
+    expect(
+      await core.handle({
+        type: "runtime-restore-checkpoint",
+        sessionId: session.id,
+        checkpointId: checkpoint.id,
+      }),
+    ).toMatchObject({
+      ok: true,
+      session: { checkpoints: [checkpoint] },
+    });
+    expect(await running).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "session history was rolled back",
+      ),
+    });
+    expect(database.listAgentRuns(session.id)).toMatchObject([
+      {
+        status: "cancelled",
+        error:
+          "Agent run and any pending approval were invalidated because the session was restored to an earlier checkpoint.",
+      },
+    ]);
+    expect(core.runtime.listMessages(session.id)).toEqual([]);
+    expect(
+      await core.handle({
+        type: "runtime-cancel-stream",
+        streamId: "rollback-stream",
+      }),
+    ).toMatchObject({ ok: true, answer: "Agent stream is not active." });
+    await core.close();
+  });
+
   it("transcribes bounded voice data without exposing provider credentials to the request surface", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const core = new AgentCore({ database, transcriptionProvider: { id: "voice-test", transcribe: async ({ data, mediaType }) => ({ text: `${mediaType}:${data.byteLength}`, model: "voice-model", providerRequestId: "voice-1" }) } });

@@ -170,6 +170,7 @@ export class AgentLoop {
       } else {
         throw new Error("An explicit approval decision is required.");
       }
+      this.saveActiveRun(run);
       const content = JSON.stringify({ status: execution.status, output: execution.output, error: execution.error });
       this.runtime.appendMessage({
         sessionId: run.sessionId,
@@ -185,7 +186,7 @@ export class AgentLoop {
       );
       const { pendingToolExecutionId: _execution, pendingProviderToolCallId: _call, pendingToolName: _tool, ...base } = run;
       run = { ...base, status: "running", updatedAt: this.now().toISOString() };
-      this.database.saveAgentRun(run);
+      this.saveActiveRun(run);
       const session = this.runtime.getSession(run.sessionId);
       const compacted = this.compactor.compact(this.runtime.listMessages(run.sessionId), session.checkpoints, {
         maximumCharacters: input.maximumContextCharacters ?? 120_000
@@ -210,7 +211,7 @@ export class AgentLoop {
             pendingToolName: _tool,
             ...base
           } = current;
-          this.database.saveAgentRun({
+          this.database.saveAgentRunIfActive({
             ...base,
             status: "cancelled",
             error: "Cancelled by the user.",
@@ -245,7 +246,7 @@ export class AgentLoop {
       for (let turn = run.turn + 1; turn <= options.maximumTurns; turn += 1) {
         if (options.signal?.aborted) throw options.signal.reason;
         run = { ...run, turn, updatedAt: this.now().toISOString() };
-        this.database.saveAgentRun(run);
+        this.saveActiveRun(run);
         const workspaceRoot = this.runtime.activeWorkspaceRoot(session.id);
         let poolResult;
         const lease = this.usageGovernor.acquire();
@@ -269,6 +270,7 @@ export class AgentLoop {
           lease.release();
         }
         this.saveAttemptAudits(run, run.model, poolResult.attempts, poolResult.result);
+        this.saveActiveRun(run);
         const result = poolResult.result;
         const assistantContent = result.text.trim() || `Requested tools: ${result.toolCalls.map((call) => call.name).join(", ")}`;
         const assistantMessage = this.runtime.appendMessage({
@@ -293,7 +295,7 @@ export class AgentLoop {
         if (result.toolCalls.length === 0) {
           if (consumeSteering() > 0) continue;
           run = { ...run, status: "completed", updatedAt: this.now().toISOString() };
-          this.database.saveAgentRun(run);
+          this.saveActiveRun(run);
           return { run, assistantMessage, modelResult: result, compactedMessages };
         }
 
@@ -312,6 +314,7 @@ export class AgentLoop {
             ...(!descriptor.readOnly && untrustedExternalContent ? { externalContent: untrustedExternalContent } : {}),
             ...(options.signal ? { signal: options.signal } : {})
           });
+          this.saveActiveRun(run);
           if (execution.status === "blocked") {
             if (execution.output?.approvalRequired === true) {
               run = {
@@ -322,7 +325,7 @@ export class AgentLoop {
                 pendingToolName: call.name,
                 updatedAt: this.now().toISOString()
               };
-              this.database.saveAgentRun(run);
+              this.saveActiveRun(run);
               return { run, assistantMessage, pendingExecution: execution, modelResult: result, compactedMessages };
             }
             const content = JSON.stringify({ status: execution.status, output: execution.output, error: execution.error });
@@ -355,9 +358,16 @@ export class AgentLoop {
         error: cancelled ? "Cancelled by the user." : "Model or agent execution failed.",
         updatedAt: this.now().toISOString()
       };
-      this.database.saveAgentRun(run);
+      this.database.saveAgentRunIfActive(run);
       throw error;
     }
+  }
+
+  private saveActiveRun(run: AgentRun): void {
+    if (!this.database.saveAgentRunIfActive(run))
+      throw new Error(
+        "Agent run was superseded by a session history rollback.",
+      );
   }
 
   private appendDeferredToolCancellations(

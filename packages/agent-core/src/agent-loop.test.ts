@@ -422,6 +422,255 @@ describe("provider-neutral agent loop", () => {
     database.close();
   });
 
+  it("invalidates a waiting destructive approval when retry rewinds its turn", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-loop-retry-approval-"));
+    directories.push(root);
+    writeFileSync(join(root, "delete.txt"), "keep me\n");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(
+      database,
+      [root],
+      () => "2026-07-22T18:00:00.000Z",
+    );
+    const session = runtime.createSession({
+      title: "Retry approval",
+      workspaceRoot: root,
+    });
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: false,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => ({
+        providerId: "fake",
+        model: request.model,
+        text: "",
+        toolCalls: [
+          {
+            id: "call-delete-retry",
+            name: "workspace.delete",
+            arguments: { path: "delete.txt" },
+          },
+        ],
+        usage: { inputTokens: 5, outputTokens: 3 },
+        finishReason: "tool_calls",
+      }),
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+      () => new Date("2026-07-22T18:00:00.000Z"),
+    );
+    const waiting = await loop.run({
+      sessionId: session.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Delete it"),
+    });
+    expect(waiting.run.status).toBe("waiting_approval");
+
+    expect(runtime.rewindLastTurn(session.id)).toEqual({
+      message: "Delete it",
+    });
+    expect(database.getAgentRun(waiting.run.id)).toMatchObject({
+      status: "cancelled",
+      error:
+        "Agent run and any pending approval were invalidated because the session turn was retried.",
+    });
+    expect(database.getAgentRun(waiting.run.id)).not.toHaveProperty(
+      "pendingToolExecutionId",
+    );
+    expect(database.getToolExecution(waiting.pendingExecution!.id)).toMatchObject(
+      {
+        status: "cancelled",
+        output: { approvalRequired: false },
+        error:
+          "Agent run and any pending approval were invalidated because the session turn was retried.",
+      },
+    );
+    await expect(
+      loop.resume({
+        runId: waiting.run.id,
+        approvalDecision: "approved",
+      }),
+    ).rejects.toThrow("not waiting at an approval boundary");
+    expect(existsSync(join(root, "delete.txt"))).toBe(true);
+    expect(database.listToolExecutions(session.id)).toHaveLength(1);
+    expect(runtime.listMessages(session.id)).toEqual([]);
+    database.close();
+  });
+
+  it("keeps a rewound in-flight run cancelled when its provider responds late", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Late provider result" });
+    let reportStarted: () => void = () => undefined;
+    let releaseProvider: () => void = () => undefined;
+    const started = new Promise<void>((resolvePromise) => {
+      reportStarted = resolvePromise;
+    });
+    const providerGate = new Promise<void>((resolvePromise) => {
+      releaseProvider = resolvePromise;
+    });
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        reportStarted();
+        await providerGate;
+        return {
+          providerId: "fake",
+          model: request.model,
+          text: "This answer belongs to the superseded history.",
+          toolCalls: [],
+          usage: { inputTokens: 5, outputTokens: 3 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+    );
+    const running = loop.run({
+      sessionId: session.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Answer this"),
+    });
+    await started;
+
+    expect(runtime.rewindLastTurn(session.id)).toEqual({
+      message: "Answer this",
+    });
+    releaseProvider();
+
+    await expect(running).rejects.toThrow(
+      "superseded by a session history rollback",
+    );
+    expect(database.listAgentRuns(session.id)).toMatchObject([
+      {
+        status: "cancelled",
+        error:
+          "Agent run and any pending approval were invalidated because the session turn was retried.",
+      },
+    ]);
+    expect(runtime.listMessages(session.id)).toEqual([]);
+    database.close();
+  });
+
+  it("restores a checkpoint by retiring its waiting approval and pruning every descendant checkpoint", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-loop-restore-approval-"));
+    directories.push(root);
+    writeFileSync(join(root, "delete.txt"), "keep me\n");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(
+      database,
+      [root],
+      () => "2026-07-22T18:00:00.000Z",
+    );
+    const session = runtime.createSession({
+      title: "Restore approval",
+      workspaceRoot: root,
+    });
+    runtime.appendMessage({
+      sessionId: session.id,
+      role: "user",
+      content: "Keep this baseline",
+    });
+    const baseline = runtime.checkpoint(session.id, "Safe baseline")
+      .checkpoints[0]!;
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: false,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => ({
+        providerId: "fake",
+        model: request.model,
+        text: "",
+        toolCalls: [
+          {
+            id: "call-delete-restore",
+            name: "workspace.delete",
+            arguments: { path: "delete.txt" },
+          },
+        ],
+        usage: { inputTokens: 5, outputTokens: 3 },
+        finishReason: "tool_calls",
+      }),
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+      () => new Date("2026-07-22T18:00:00.000Z"),
+    );
+    const waiting = await loop.run({
+      sessionId: session.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Delete it"),
+    });
+    const descendant = runtime.checkpoint(
+      session.id,
+      "Unsafe descendant approval",
+    ).checkpoints[1]!;
+
+    const restored = runtime.restoreCheckpoint(session.id, baseline.id);
+
+    expect(restored.checkpoints).toEqual([baseline]);
+    expect(
+      database.getPrivateState(`session.checkpoint.${descendant.id}`),
+    ).toBeUndefined();
+    expect(() =>
+      runtime.restoreCheckpoint(session.id, descendant.id),
+    ).toThrow("Checkpoint does not belong to this session");
+    expect(database.getAgentRun(waiting.run.id)).toMatchObject({
+      status: "cancelled",
+      error:
+        "Agent run and any pending approval were invalidated because the session was restored to an earlier checkpoint.",
+    });
+    expect(database.getAgentRun(waiting.run.id)).not.toHaveProperty(
+      "pendingToolExecutionId",
+    );
+    expect(database.getToolExecution(waiting.pendingExecution!.id)).toMatchObject(
+      {
+        status: "cancelled",
+        output: { approvalRequired: false },
+      },
+    );
+    await expect(
+      loop.resume({
+        runId: waiting.run.id,
+        approvalDecision: "approved",
+      }),
+    ).rejects.toThrow("not waiting at an approval boundary");
+    expect(existsSync(join(root, "delete.txt"))).toBe(true);
+    expect(runtime.listMessages(session.id).map((message) => message.content))
+      .toEqual(["Keep this baseline"]);
+    database.close();
+  });
+
   it("resolves one approval decision at a time for each waiting run", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(

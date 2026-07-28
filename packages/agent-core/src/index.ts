@@ -1015,6 +1015,7 @@ export class AgentCore {
             ),
           };
         case "runtime-restore-checkpoint":
+          this.abortActiveStreamsForHistoryRollback(request.sessionId);
           return {
             ok: true,
             session: this.runtime.restoreCheckpoint(
@@ -1023,6 +1024,7 @@ export class AgentCore {
             ),
           };
         case "runtime-retry-agent": {
+          this.abortActiveStreamsForHistoryRollback(request.sessionId);
           const prior = this.runtime.rewindLastTurn(request.sessionId);
           const route =
             request.model === "auto"
@@ -2107,6 +2109,17 @@ export class AgentCore {
       reason: "isolated agent core",
     });
     this.dreaming.runIfDue(at);
+  }
+
+  private abortActiveStreamsForHistoryRollback(sessionId: string): void {
+    for (const active of this.activeStreams.values()) {
+      if (active.sessionId === sessionId && !active.controller.signal.aborted)
+        active.controller.abort(
+          new Error(
+            "Active agent stream cancelled because the session history was rolled back.",
+          ),
+        );
+    }
   }
 
   async close(): Promise<void> {

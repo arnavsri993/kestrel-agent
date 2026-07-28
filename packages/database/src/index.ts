@@ -136,6 +136,15 @@ export interface IdempotencyCompletion<T> {
   completed: boolean;
 }
 
+export interface RetiredAgentHistory {
+  runs: AgentRun[];
+  toolExecutions: RuntimeToolExecution[];
+}
+
+export interface RuntimeHistoryRollbackResult extends RetiredAgentHistory {
+  session: RuntimeSession;
+}
+
 interface RuntimeMessageRow {
   id: string;
   session_id: string;
@@ -491,6 +500,105 @@ export class KestrelDatabase {
       .run(parsed.id, parsed.sessionId, JSON.stringify(parsed), parsed.status, parsed.createdAt, parsed.updatedAt);
   }
 
+  saveAgentRunIfActive(run: AgentRun): boolean {
+    const parsed = AgentRunSchema.parse(run);
+    return this.db.prepare(`UPDATE agent_runs
+      SET payload = ?, status = ?, updated_at = ?
+      WHERE id = ? AND session_id = ? AND status IN ('running', 'waiting_approval')`)
+      .run(
+        JSON.stringify(parsed),
+        parsed.status,
+        parsed.updatedAt,
+        parsed.id,
+        parsed.sessionId,
+      ).changes === 1;
+  }
+
+  retireActiveAgentHistory(
+    sessionId: string,
+    completedAt: string,
+    reason: string,
+  ): RetiredAgentHistory {
+    return this.db.transaction(() =>
+      this.retireActiveAgentHistoryInTransaction(
+        sessionId,
+        completedAt,
+        reason,
+      ),
+    )();
+  }
+
+  rollbackRuntimeHistory(input: {
+    session: RuntimeSession;
+    keepMessageCount: number;
+    prunedCheckpointIds: string[];
+    completedAt: string;
+    reason: string;
+  }): RuntimeHistoryRollbackResult {
+    const session = RuntimeSessionSchema.parse(input.session);
+    if (!Number.isInteger(input.keepMessageCount) || input.keepMessageCount < 0)
+      throw new Error("Message truncation count is invalid.");
+    if (!Number.isFinite(Date.parse(input.completedAt)))
+      throw new Error("History rollback timestamp is invalid.");
+    if (!input.reason.trim())
+      throw new Error("History rollback reason is required.");
+    return this.db.transaction(() => {
+      const stored = this.db
+        .prepare("SELECT id FROM runtime_sessions WHERE id = ?")
+        .get(session.id) as { id: string } | undefined;
+      if (!stored) throw new Error("Runtime session was not found.");
+      const messageCount = (
+        this.db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM runtime_message_order WHERE session_id = ?",
+          )
+          .get(session.id) as { count: number }
+      ).count;
+      if (input.keepMessageCount > messageCount)
+        throw new Error("History rollback exceeds the stored transcript.");
+
+      const retired = this.retireActiveAgentHistoryInTransaction(
+        session.id,
+        input.completedAt,
+        input.reason,
+      );
+      const ids = this.db
+        .prepare(
+          "SELECT message_id FROM runtime_message_order WHERE session_id = ? AND sequence > ? ORDER BY sequence DESC",
+        )
+        .all(session.id, input.keepMessageCount) as Array<{
+        message_id: string;
+      }>;
+      const removeMessage = this.db.prepare(
+        "DELETE FROM runtime_messages WHERE id = ? AND session_id = ?",
+      );
+      for (const { message_id } of ids)
+        removeMessage.run(message_id, session.id);
+
+      const updated = this.db
+        .prepare(
+          "UPDATE runtime_sessions SET payload = ?, status = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(
+          JSON.stringify(session),
+          session.status,
+          session.updatedAt,
+          session.id,
+        );
+      if (updated.changes !== 1)
+        throw new Error("Runtime session could not be rolled back.");
+      const removeCheckpointState = this.db.prepare(
+        "DELETE FROM private_runtime_state WHERE key = ?",
+      );
+      for (const checkpointId of [...new Set(input.prunedCheckpointIds)]) {
+        if (!checkpointId)
+          throw new Error("Pruned checkpoint ID is invalid.");
+        removeCheckpointState.run(`session.checkpoint.${checkpointId}`);
+      }
+      return { session, ...retired };
+    })();
+  }
+
   getAgentRun(id: string): AgentRun | undefined {
     const row = this.db.prepare("SELECT payload FROM agent_runs WHERE id = ?").get(id) as { payload: string } | undefined;
     return row ? AgentRunSchema.parse(JSON.parse(row.payload)) : undefined;
@@ -796,6 +904,105 @@ export class KestrelDatabase {
     const serialized = JSON.stringify(value);
     if (serialized === undefined) throw new Error("Idempotency journal values must be JSON-serializable.");
     return serialized;
+  }
+
+  private retireActiveAgentHistoryInTransaction(
+    sessionId: string,
+    completedAt: string,
+    reason: string,
+  ): RetiredAgentHistory {
+    if (!Number.isFinite(Date.parse(completedAt)))
+      throw new Error("History rollback timestamp is invalid.");
+    if (!reason.trim()) throw new Error("History rollback reason is required.");
+    const activeRuns = (
+      this.db
+        .prepare(
+          "SELECT payload FROM agent_runs WHERE session_id = ? AND status IN ('running', 'waiting_approval') ORDER BY created_at ASC",
+        )
+        .all(sessionId) as Array<{ payload: string }>
+    ).map((row) => AgentRunSchema.parse(JSON.parse(row.payload)));
+    if (activeRuns.length === 0)
+      return { runs: [], toolExecutions: [] };
+
+    const runIds = new Set(activeRuns.map((run) => run.id));
+    const pendingExecutionIds = new Set(
+      activeRuns.flatMap((run) =>
+        run.pendingToolExecutionId ? [run.pendingToolExecutionId] : [],
+      ),
+    );
+    const candidates = (
+      this.db
+        .prepare(
+          "SELECT payload FROM tool_executions WHERE session_id = ? AND status IN ('running', 'blocked') ORDER BY started_at ASC",
+        )
+        .all(sessionId) as Array<{ payload: string }>
+    )
+      .map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)))
+      .filter(
+        (execution) =>
+          pendingExecutionIds.has(execution.id) ||
+          (execution.idempotencyKey !== undefined &&
+            [...runIds].some((runId) =>
+              execution.idempotencyKey!.startsWith(`${runId}:`),
+            )),
+      );
+
+    const saveExecution = this.db.prepare(
+      "UPDATE tool_executions SET payload = ?, status = ? WHERE id = ? AND session_id = ?",
+    );
+    const toolExecutions = candidates.map((execution) => {
+      const uncertain = execution.status === "running";
+      const output = execution.output
+        ? { ...execution.output, approvalRequired: false }
+        : undefined;
+      const retired = RuntimeToolExecutionSchema.parse({
+        ...execution,
+        status: uncertain ? "failed" : "cancelled",
+        ...(output ? { output } : {}),
+        error: uncertain
+          ? `${reason} This action was already running, so its outcome is uncertain and it will not be retried automatically.`
+          : reason,
+        completedAt,
+      });
+      const saved = saveExecution.run(
+        JSON.stringify(retired),
+        retired.status,
+        retired.id,
+        retired.sessionId,
+      );
+      if (saved.changes !== 1)
+        throw new Error("Pending tool execution could not be retired.");
+      return retired;
+    });
+
+    const saveRun = this.db.prepare(
+      "UPDATE agent_runs SET payload = ?, status = ?, updated_at = ? WHERE id = ? AND session_id = ? AND status IN ('running', 'waiting_approval')",
+    );
+    const runs = activeRuns.map((run) => {
+      const {
+        pendingToolExecutionId: _execution,
+        pendingProviderToolCallId: _call,
+        pendingToolName: _tool,
+        ...base
+      } = run;
+      const retired = AgentRunSchema.parse({
+        ...base,
+        status: "cancelled",
+        error: reason,
+        updatedAt: completedAt,
+      });
+      const saved = saveRun.run(
+        JSON.stringify(retired),
+        retired.status,
+        retired.updatedAt,
+        retired.id,
+        retired.sessionId,
+      );
+      if (saved.changes !== 1)
+        throw new Error("Agent run could not be retired.");
+      return retired;
+    });
+    return { runs, toolExecutions };
   }
 
   private validateIdempotencyOwner(key: string, ownerToken: string, ownerPid: number): void {
