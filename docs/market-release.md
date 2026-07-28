@@ -31,6 +31,8 @@ Deploy the static website over HTTPS and configure:
 - `PUBLIC_DOWNLOAD_URL`, pointing to the signed DMG release
 - `PUBLIC_RELEASE_MANIFEST_URL`, pointing to `release-manifest.json`
 - `PUBLIC_RELEASE_CHECKSUMS_URL`, pointing to `SHA256SUMS`
+- `PUBLIC_RELEASE_VERSION`, matching the signed artifact version
+- `PUBLIC_RELEASE_COMMIT`, matching the full tagged source commit
 - `PUBLIC_PUBLISHER_NAME`
 - `PUBLIC_SUPPORT_EMAIL`
 - `KESTREL_UPDATE_URL`, the stable HTTPS base containing `latest-mac.yml`, the
@@ -47,21 +49,27 @@ clean-device rollout sequence are documented in
 Build the website with `NEXT_PUBLIC_PUBLISHER_NAME` and
 `NEXT_PUBLIC_SUPPORT_EMAIL` set to the verified operator values. Distribution
 mode fetches the deployed site, privacy, and support pages and verifies their
-status and Kestrel-specific content.
-It also checks that the DMG, release manifest, checksums, and
-`latest-mac.yml` updater feed are reachable over HTTPS; missing inputs fail
-before any undefined or placeholder URL is contacted.
+status and Kestrel-specific content. It also requires one semantic release
+version and cross-checks that version across the DMG filename, schema-v2
+release manifest, `SHA256SUMS`, and `latest-mac.yml`. Manifest SHA-256 and
+SHA-512 records, updater SHA-512 records, artifact sizes, product, platform,
+architecture, distribution mode, and full source commit must agree before the
+site can advertise a download. Missing, stale, mixed, or unreachable inputs
+fail before a verified release state is built.
 
 The GitHub Pages workflow reads the public release inputs from repository
 variables with these names: `PUBLIC_PUBLISHER_NAME`, `PUBLIC_SUPPORT_EMAIL`,
-`NEXT_PUBLIC_RELEASE_STATUS`, `NEXT_PUBLIC_RELEASE_VERSION`,
+`PUBLIC_RELEASE_COMMIT`, `NEXT_PUBLIC_RELEASE_STATUS`,
+`NEXT_PUBLIC_RELEASE_VERSION`,
 `NEXT_PUBLIC_DOWNLOAD_URL`, `NEXT_PUBLIC_RELEASE_MANIFEST_URL`, and
 `NEXT_PUBLIC_RELEASE_CHECKSUMS_URL`. It always publishes the site as a
 development preview until `NEXT_PUBLIC_RELEASE_STATUS=verified` and all three
-artifact URLs are supplied. When that status is `verified`, the workflow maps
+artifact URLs plus the release version and source commit are supplied. When
+that status is `verified`, the workflow maps
 those values plus `KESTREL_UPDATE_URL` into the distribution gate and refuses
 to build the public-release state unless the site, privacy and support routes,
-DMG, manifest, checksums, and updater feed are reachable over HTTPS.
+DMG, manifest, checksums, and updater feed are reachable and mutually
+consistent over HTTPS.
 
 After the signed workflow, Gatekeeper assessment, notarization validation, and
 clean-machine download test pass, build the website with:
@@ -87,15 +95,24 @@ The GitHub release workflow requires:
 - `APPLE_APP_SPECIFIC_PASSWORD`
 - `APPLE_TEAM_ID`
 
+Store these as secrets in the `macos-release` GitHub environment. Protect that
+environment with a required reviewer and restrict deployment refs to stable
+version tags before enabling the workflow. Source verification runs before the
+environment-gated signing job, and the stable workflow rejects prerelease
+package versions instead of placing them on the `latest` update channel.
+
 It builds arm64 DMG and ZIP artifacts using a Developer ID Application
 certificate and the MDM PKG using a Developer ID Installer certificate, submits
 them for Apple notarization through electron-builder,
 validates the stapled ticket, runs Gatekeeper assessment, and verifies that the
 packaged executable contains only the `arm64` architecture.
 
-Tagged builds upload the DMG, ZIP, PKG, updater blockmaps, electron-updater
-`latest-mac.yml`, `SHA256SUMS`, and `release-manifest.json` to the matching
-GitHub release. The generic update provider is configured from the explicit
+Tagged builds verify the assembled bundle before and after the Actions artifact
+transfer, then upload the DMG, ZIP, PKG, updater blockmaps, electron-updater
+`latest-mac.yml`, `SHA256SUMS`, and `release-manifest.json` to a matching draft
+before making it public. Interrupted runs resume only their own commit-bound
+draft and revalidate every existing asset. The generic update provider is
+configured from the explicit
 `KESTREL_UPDATE_URL` repository variable instead of relying on a developer's
 local Git remote or embedding a private token. The website download control
 fails closed unless a semantic version and HTTPS URLs
