@@ -111,6 +111,7 @@ export interface AgentCoreDependencies {
   calendar?: CalendarConnector;
   now?: () => string;
   workspaceRoots?: string[];
+  configuredWorkspaceRoots?: string[];
   modelProviders?: ModelProvider[];
   skillRoots?: string[];
   learnedSkillRoot?: string;
@@ -224,6 +225,7 @@ export class AgentCore {
       this.deps.workspaceRoots ?? [],
       () => this.now(),
       this.deps.githubToken,
+      this.deps.configuredWorkspaceRoots ?? this.deps.workspaceRoots ?? [],
     );
     this.observability = new ObservabilityManager(
       this.deps.database,
@@ -1962,9 +1964,7 @@ export class AgentCore {
           try {
             const result = await this.agentLoop.resume({
               runId: request.runId,
-              ...(request.approvalDecision
-                ? { approvalDecision: request.approvalDecision }
-                : {}),
+              approvalDecision: request.approvalDecision,
               ...(request.maximumTurns
                 ? { maximumTurns: request.maximumTurns }
                 : {}),

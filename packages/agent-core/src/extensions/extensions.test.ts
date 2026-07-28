@@ -1,11 +1,20 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { KestrelDatabase } from "@kestrel/database";
 import { AgentRuntime } from "../runtime";
-import { McpClient, McpRuntimeServer, StreamableHttpMcpTransport, bridgeMcpTools, type JsonRpcMessage, type McpTransport } from "./mcp";
+import {
+  MCP_PROTOCOL_VERSION,
+  McpClient,
+  McpRuntimeServer,
+  StdioMcpTransport,
+  StreamableHttpMcpTransport,
+  bridgeMcpTools,
+  type JsonRpcMessage,
+  type McpTransport,
+} from "./mcp";
 import { SkillRegistry, installSkillTools } from "./skills";
 import { SkillLearningManager } from "./skill-learning";
 import { PluginRegistry } from "./plugins";
@@ -29,6 +38,35 @@ class LoopbackTransport implements McpTransport {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
+  onError(): () => void { return () => undefined; }
+  close(): void { this.listeners.clear(); }
+}
+
+class ControlledTransport implements McpTransport {
+  readonly sent: JsonRpcMessage[] = [];
+  private readonly listeners = new Set<(message: JsonRpcMessage) => void>();
+
+  send(message: JsonRpcMessage): void {
+    this.sent.push(message);
+    if ("method" in message && "id" in message && message.method === "initialize") {
+      queueMicrotask(() => this.emit({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { protocolVersion: MCP_PROTOCOL_VERSION },
+      }));
+    }
+  }
+
+  emit(message: JsonRpcMessage): void {
+    for (const listener of this.listeners) listener(message);
+  }
+
+  onMessage(listener: (message: JsonRpcMessage) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  onError(): () => void { return () => undefined; }
   close(): void { this.listeners.clear(); }
 }
 
@@ -81,6 +119,183 @@ describe("MCP extensions", () => {
     expect(result).toMatchObject({ isError: false, structuredContent: { content: expect.stringContaining("mcp-server") } });
     await client.close();
     fixture.database.close();
+  });
+
+  it("does not send a tool request for an already-aborted signal", async () => {
+    const transport = new ControlledTransport();
+    const client = new McpClient(transport);
+    await client.initialize();
+    const sentBeforeCall = transport.sent.length;
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled before dispatch"));
+
+    await expect(client.callTool("workspace.read", {}, controller.signal))
+      .rejects.toThrow("cancelled before dispatch");
+    expect(transport.sent).toHaveLength(sentBeforeCall);
+    await client.close();
+  });
+
+  it("rejects an aborted tool request locally and cancels its exact request id", async () => {
+    const transport = new ControlledTransport();
+    const client = new McpClient(transport);
+    await client.initialize();
+    const controller = new AbortController();
+    const call = client.callTool("workspace.read", { path: "README.md" }, controller.signal);
+    const request = transport.sent.find(
+      (message) => "method" in message && message.method === "tools/call" && "id" in message,
+    );
+    if (!request || !("method" in request) || !("id" in request)) {
+      throw new Error("Expected an in-flight MCP tool request.");
+    }
+    const rejected = expect(call).rejects.toThrow("cancelled in flight");
+
+    controller.abort(new Error("cancelled in flight"));
+
+    await rejected;
+    expect(transport.sent).toContainEqual({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: {
+        requestId: request.id,
+        reason: "Cancelled by Kestrel",
+      },
+    });
+    transport.emit({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: { content: [{ type: "text", text: "too late" }] },
+    });
+    await client.close();
+  });
+
+  it("filters and rejects tool calls when a runtime server has read-only access", async () => {
+    const fixture = runtimeFixture("mcp-read-only");
+    const server = new McpRuntimeServer(fixture.runtime, fixture.session.id);
+    const access = { allowMutatingTools: false };
+    await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" }, access);
+    await server.handle({ jsonrpc: "2.0", method: "notifications/initialized" }, access);
+    const listed = await server.handle({ jsonrpc: "2.0", id: 2, method: "tools/list" }, access) as { result: { tools: Array<{ name: string }> } };
+    expect(listed.result.tools.some((tool) => tool.name === "workspace.read")).toBe(true);
+    expect(listed.result.tools.some((tool) => tool.name === "workspace.write")).toBe(false);
+    const read = await server.handle({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "workspace.read", arguments: { path: "README.md" } }
+    }, access);
+    expect(read).toMatchObject({ result: { isError: false } });
+    const called = await server.handle({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "workspace.write", arguments: { path: "blocked.txt", content: "must not be written" } }
+    }, access);
+    expect(called).toMatchObject({ error: { message: expect.stringContaining("task authorization") } });
+    expect(existsSync(join(fixture.root, "blocked.txt"))).toBe(false);
+    fixture.database.close();
+  });
+
+  it("rejects failed async sends immediately without leaking an unhandled rejection", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    const transport: McpTransport = {
+      send: async () => { throw new Error("wire down"); },
+      onMessage: () => () => undefined,
+      onError: () => () => undefined,
+      close: () => undefined
+    };
+    const client = new McpClient(transport, 10_000);
+    try {
+      await expect(client.initialize()).rejects.toThrow("wire down");
+      await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await client.close();
+    }
+  });
+
+  it("contains a rejected timeout-cancellation send", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    let sends = 0;
+    const transport: McpTransport = {
+      send: () => {
+        sends += 1;
+        return sends === 1 ? undefined : Promise.reject(new Error("cancellation wire down"));
+      },
+      onMessage: () => () => undefined,
+      onError: () => () => undefined,
+      close: () => undefined
+    };
+    const client = new McpClient(transport, 5);
+    try {
+      await expect(client.initialize()).rejects.toThrow("timed out");
+      await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await client.close();
+    }
+  });
+
+  it("rejects all pending work on a transport error and closes idempotently", async () => {
+    let reportError: ((error: Error) => void) | undefined;
+    let closes = 0;
+    const transport: McpTransport = {
+      send: () => undefined,
+      onMessage: () => () => undefined,
+      onError: (listener) => { reportError = listener; return () => { reportError = undefined; }; },
+      close: () => { closes += 1; }
+    };
+    const client = new McpClient(transport, 10_000);
+    const initializing = client.initialize();
+    reportError?.(new Error("stdio framing failed"));
+    await expect(initializing).rejects.toThrow("stdio framing failed");
+    const firstClose = client.close();
+    expect(client.close()).toBe(firstClose);
+    await firstClose;
+    expect(closes).toBe(1);
+  });
+
+  it.each([
+    ["malformed stdout", "process.stdout.write('not-json\\n');setTimeout(()=>{},10000)", "invalid JSON"],
+    ["oversized stderr record", "process.stderr.write('x'.repeat(1000001));setTimeout(()=>{},10000)", "stderr record exceeded 1 MB"],
+    ["abusive stderr burst", "process.stderr.write(('x'.repeat(999) + '\\n').repeat(2100));setTimeout(()=>{},10000)", "stderr burst exceeded 1 MB"]
+  ])("turns %s from a stdio server into a bounded client error", async (_label, source, expected) => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-mcp-stdio-"));
+    directories.push(root);
+    const client = new McpClient(new StdioMcpTransport({ command: process.execPath, args: ["-e", source], cwd: root }), 5_000);
+    await expect(client.initialize()).rejects.toThrow(expected);
+    await client.close();
+  });
+
+  it("allows bounded diagnostic lines to exceed 1 MB over a long-lived stdio session", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-mcp-stderr-"));
+    directories.push(root);
+    const source = [
+      "let count = 0;",
+      "const timer = setInterval(() => {",
+      "  process.stderr.write('x'.repeat(99999) + '\\n');",
+      "  count += 1;",
+      "  if (count === 12) clearInterval(timer);",
+      "}, 125);",
+      "setTimeout(() => {}, 10000);",
+    ].join("\n");
+    const transport = new StdioMcpTransport({
+      command: process.execPath,
+      args: ["-e", source],
+      cwd: root,
+    });
+    let failure: Error | undefined;
+    transport.onError((error) => {
+      failure = error;
+    });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_700));
+    expect(failure).toBeUndefined();
+    await transport.close();
   });
 
   it("bridges remote MCP tools into a session as sensitive untrusted tools", async () => {

@@ -53,10 +53,27 @@ import { ProviderAuthMonitor } from "./provider-auth-monitor";
 import { ExternalSecretManager } from "./external-secret-manager";
 import type { ResolvedExternalCredentials } from "./credential-broker";
 import { shouldCheckForUpdates, updaterFeedChannel } from "./update-channel";
+import {
+  isTrustedRendererFrame,
+  isTrustedRendererUrl,
+  protectRendererNavigation,
+  trustedDevelopmentRendererUrl,
+} from "./renderer-security";
+import { DeepLinkQueue, deepLinksFromArgv } from "./deep-links";
+import {
+  PetOverlayRequestAccess,
+  petOverlayActivityForRuntimeEvent,
+} from "./pet-overlay-security";
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
 const petOverlaysReturning = new WeakSet<BrowserWindow>();
+const petOverlayAccess = new WeakMap<
+  BrowserWindow,
+  PetOverlayRequestAccess
+>();
+const pendingDeepLinks = new DeepLinkQueue();
+let mainRendererDeepLinkReady = false;
 let tray: Tray | null = null;
 let quitting = false;
 let agentState: AgentState = "idle";
@@ -85,11 +102,24 @@ const providerAuthMonitor = new ProviderAuthMonitor({
 });
 const { autoUpdater } = updater;
 const OLLAMA_ORIGIN = "http://127.0.0.1:11434";
+const RENDERER_ENTRY_PATH = join(__dirname, "../renderer/index.html");
+const RAW_DEVELOPMENT_RENDERER_URL = process.env.ELECTRON_RENDERER_URL;
+const DEVELOPMENT_RENDERER_URL = trustedDevelopmentRendererUrl(
+  RAW_DEVELOPMENT_RENDERER_URL,
+);
 const execFileAsync = promisify(execFile);
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let googleOAuthController: AbortController | null = null;
 let chatGptOAuthController: AbortController | null = null;
 let activeChatGptOAuthManager: ChatGptOAuthManager | null = null;
+
+function trustedRendererUrl(value: string): boolean {
+  return isTrustedRendererUrl(
+    value,
+    RENDERER_ENTRY_PATH,
+    DEVELOPMENT_RENDERER_URL,
+  );
+}
 
 interface OllamaTag {
   name?: unknown;
@@ -162,6 +192,8 @@ async function writeRuntimePreferences(
 }
 
 function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
+  if (process.env.KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY === "1")
+    return undefined;
   const home = app.getPath("home");
   const configured =
     id === "codex"
@@ -428,6 +460,7 @@ async function distributionReadiness(): Promise<{
 async function listLocalModels(
   timeoutMs = 1_500,
 ): Promise<Array<{ name: string; size: number; modifiedAt?: string }>> {
+  if (process.env.KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY === "1") return [];
   const response = await fetch(`${OLLAMA_ORIGIN}/api/tags`, {
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -473,16 +506,36 @@ async function pullLocalModel(
   return downloaded;
 }
 
-supervisor.on("runtime-event", (event) =>
-  BrowserWindow.getAllWindows().forEach((window) =>
-    window.webContents.send("kestrel:runtime-event", event),
-  ),
-);
-supervisor.on("agent-stream", (event) =>
-  BrowserWindow.getAllWindows().forEach((window) =>
-    window.webContents.send("kestrel:agent-stream", event),
-  ),
-);
+supervisor.on("runtime-event", (event) => {
+  const main = mainWindow;
+  if (
+    main &&
+    !main.isDestroyed() &&
+    trustedRendererUrl(main.webContents.getURL())
+  )
+    main.webContents.send("kestrel:runtime-event", event);
+  const overlay = petOverlayWindow;
+  const overlayAccess = overlay ? petOverlayAccess.get(overlay) : undefined;
+  const activity = overlayAccess
+    ? petOverlayActivityForRuntimeEvent(overlayAccess, event)
+    : undefined;
+  if (
+    activity &&
+    overlay &&
+    !overlay.isDestroyed() &&
+    trustedRendererUrl(overlay.webContents.getURL())
+  )
+    overlay.webContents.send("kestrel:pet-activity", activity);
+});
+supervisor.on("agent-stream", (event) => {
+  const main = mainWindow;
+  if (
+    main &&
+    !main.isDestroyed() &&
+    trustedRendererUrl(main.webContents.getURL())
+  )
+    main.webContents.send("kestrel:agent-stream", event);
+});
 supervisor.on("background-jobs", (event: BackgroundJobsEvent) => {
   mainWindow?.webContents.send("kestrel:background-jobs", event);
   if (!Notification.isSupported()) return;
@@ -515,8 +568,58 @@ supervisor.on("automation-error", (error: Error) => {
       body: error.message,
     }).show();
 });
+supervisor.on(
+  "crash",
+  (event: {
+    restarts: number;
+    recovering: boolean;
+    delayMs?: number;
+  }) => {
+    if (
+      !event.recovering ||
+      event.restarts !== 1 ||
+      !Notification.isSupported()
+    )
+      return;
+    const notification = new Notification({
+      title: `${PRODUCT_IDENTITY.productName} · Agent Core restarting`,
+      body: "Local agent work was interrupted. Kestrel is recovering it automatically.",
+    });
+    notification.on("click", showMainWindow);
+    notification.show();
+  },
+);
+supervisor.on("recovered", () => {
+  void supervisor
+    .request({ type: "snapshot" })
+    .then((response) => {
+      if (!response.ok || !response.snapshot) return;
+      agentState = response.snapshot.agentState;
+      updateTray();
+      mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
+    })
+    .catch(() => undefined);
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({
+    title: `${PRODUCT_IDENTITY.productName} · Agent Core recovered`,
+    body: "Local agent work is available again.",
+  });
+  notification.on("click", showMainWindow);
+  notification.show();
+});
+supervisor.on("recovery-failed", (error: Error) => {
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({
+    title: `${PRODUCT_IDENTITY.productName} · Agent Core needs attention`,
+    body: error.message,
+  });
+  notification.on("click", showMainWindow);
+  notification.show();
+});
 
-app.setName(PRODUCT_IDENTITY.productName);
+// Keep the runtime name stable until a tested migration can move the existing
+// safeStorage Keychain account and encrypted user data without orphaning them.
+app.setName(PRODUCT_IDENTITY.runtimeApplicationName);
 app.setPath(
   "userData",
   process.env.KESTREL_TEST_USER_DATA ??
@@ -525,6 +628,48 @@ app.setPath(
 
 const singleInstance = app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
+
+for (const deepLink of deepLinksFromArgv(process.argv))
+  pendingDeepLinks.enqueue(deepLink);
+
+function showMainWindow(): void {
+  if (mainWindow?.isDestroyed()) {
+    mainWindow = null;
+    mainRendererDeepLinkReady = false;
+  }
+  if (!mainWindow && app.isReady()) mainWindow = createMainWindow();
+  if (!mainWindow) return;
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function deliverPendingDeepLinks(): void {
+  const window = mainWindow;
+  if (
+    !mainRendererDeepLinkReady ||
+    !window ||
+    window.isDestroyed() ||
+    !trustedRendererUrl(window.webContents.getURL())
+  )
+    return;
+  pendingDeepLinks.drain((deepLink) => {
+    if (
+      !mainRendererDeepLinkReady ||
+      window.isDestroyed() ||
+      window !== mainWindow ||
+      !trustedRendererUrl(window.webContents.getURL())
+    )
+      throw new Error("The main renderer is not ready for deep links.");
+    window.webContents.send("kestrel:deep-link", deepLink);
+  });
+}
+
+function queueDeepLink(value: unknown): boolean {
+  if (!pendingDeepLinks.enqueue(value)) return false;
+  showMainWindow();
+  deliverPendingDeepLinks();
+  return true;
+}
 
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -562,24 +707,29 @@ function createMainWindow(): BrowserWindow {
       );
     },
   );
-  window.webContents.on("will-navigate", (event, url) => {
-    const current = window.webContents.getURL();
-    if (
-      url !== current &&
-      !url.startsWith("file://") &&
-      !url.startsWith("http://localhost")
-    )
-      event.preventDefault();
-  });
+  protectRendererNavigation(window.webContents, trustedRendererUrl);
+  window.webContents.on(
+    "did-start-navigation",
+    (_event, _url, _isInPlace, isMainFrame) => {
+      if (isMainFrame && mainWindow === window)
+        mainRendererDeepLinkReady = false;
+    },
+  );
   window.on("close", (event) => {
     if (!quitting && process.platform === "darwin") {
       event.preventDefault();
       window.hide();
     }
   });
-  if (process.env.ELECTRON_RENDERER_URL)
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL);
-  else void window.loadFile(join(__dirname, "../renderer/index.html"));
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = null;
+      mainRendererDeepLinkReady = false;
+    }
+  });
+  if (DEVELOPMENT_RENDERER_URL)
+    void window.loadURL(DEVELOPMENT_RENDERER_URL);
+  else void window.loadFile(RENDERER_ENTRY_PATH);
   window.once("ready-to-show", () => window.show());
   return window;
 }
@@ -613,6 +763,17 @@ async function savePetOverlayPosition(window: BrowserWindow): Promise<void> {
   const temporary = `${path}.new`;
   await writeFile(temporary, `${JSON.stringify({ x, y })}\n`, { mode: 0o600 });
   await rename(temporary, path);
+}
+
+function releasePetOverlayAccess(window: BrowserWindow): void {
+  const access = petOverlayAccess.get(window);
+  if (!access) return;
+  petOverlayAccess.delete(window);
+  for (const streamId of access.drainStreamIds()) {
+    void supervisor
+      .request({ type: "runtime-cancel-stream", streamId })
+      .catch(() => undefined);
+  }
 }
 
 async function createPetOverlay(): Promise<BrowserWindow> {
@@ -652,6 +813,7 @@ async function createPetOverlay(): Promise<BrowserWindow> {
     backgroundColor: "#00000000",
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
+      partition: "kestrel-pet-overlay",
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -660,20 +822,16 @@ async function createPetOverlay(): Promise<BrowserWindow> {
     },
   });
   petOverlayWindow = window;
+  petOverlayAccess.set(window, new PetOverlayRequestAccess());
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // The overlay must not replace the permission policy on Electron's shared
+  // default session. Keep its renderer and permission state isolated.
+  window.webContents.session.setPermissionCheckHandler(() => false);
   window.webContents.session.setPermissionRequestHandler(
     (_webContents, _permission, callback) => callback(false),
   );
-  window.webContents.on("will-navigate", (event, url) => {
-    const current = window.webContents.getURL();
-    if (
-      url !== current &&
-      !url.startsWith("file://") &&
-      !url.startsWith("http://localhost")
-    )
-      event.preventDefault();
-  });
+  protectRendererNavigation(window.webContents, trustedRendererUrl);
   let positionTimer: NodeJS.Timeout | undefined;
   window.on("moved", () => {
     if (positionTimer) clearTimeout(positionTimer);
@@ -681,20 +839,22 @@ async function createPetOverlay(): Promise<BrowserWindow> {
   });
   window.on("closed", () => {
     if (positionTimer) clearTimeout(positionTimer);
+    releasePetOverlayAccess(window);
     if (petOverlayWindow === window) petOverlayWindow = null;
     if (!quitting && !petOverlaysReturning.has(window)) {
       void supervisor
         .request({ type: "pet-configure", poppedOut: false })
-        .then(broadcastPetStatus);
+        .then(broadcastPetStatus)
+        .catch(() => undefined);
     }
   });
   window.once("ready-to-show", () => window.showInactive());
-  if (process.env.ELECTRON_RENDERER_URL) {
-    const url = new URL(process.env.ELECTRON_RENDERER_URL);
+  if (DEVELOPMENT_RENDERER_URL) {
+    const url = new URL(DEVELOPMENT_RENDERER_URL);
     url.searchParams.set("petOverlay", "1");
     await window.loadURL(url.toString());
   } else
-    await window.loadFile(join(__dirname, "../renderer/index.html"), {
+    await window.loadFile(RENDERER_ENTRY_PATH, {
       query: { petOverlay: "1" },
     });
   if (!window.isVisible()) window.showInactive();
@@ -810,11 +970,14 @@ async function initializeCore(
   } catch {
     // A local model server is optional and must not delay or block startup.
   }
-  const workspaceRoots = (
-    await new WorkspaceGrantStore(
-      join(userData, "workspace-grants.json"),
-    ).list()
-  ).map((grant) => grant.path);
+  const workspaceGrantStore = new WorkspaceGrantStore(
+    join(userData, "workspace-grants.json"),
+  );
+  const configuredWorkspaceRoots =
+    await workspaceGrantStore.configuredPaths();
+  const workspaceRoots = (await workspaceGrantStore.list()).map(
+    (grant) => grant.path,
+  );
   const managedPluginRoot = join(userData, "plugins");
   const pluginRoots = [
     managedPluginRoot,
@@ -824,6 +987,7 @@ async function initializeCore(
     databasePath: join(userData, "database", "kestrel.sqlite"),
     encryptionKeyBase64: key.toString("base64"),
     workspaceRoots,
+    configuredWorkspaceRoots,
     pluginRoots,
     managedPluginRoots: [managedPluginRoot],
     learnedSkillRoot: join(userData, "learned-skills"),
@@ -918,12 +1082,57 @@ async function restartCoreAfterGrantChange(): Promise<WorkspaceGrant[]> {
   }
   return new WorkspaceGrantStore(
     join(app.getPath("userData"), "workspace-grants.json"),
-  ).list();
+  ).statusList();
 }
 
 function registerIpc(): void {
-  ipcMain.handle("kestrel:request", async (_event, raw) => {
+  const setDeepLinkReadiness = (
+    event: Electron.IpcMainEvent,
+    ready: boolean,
+  ) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (
+      !senderWindow ||
+      senderWindow !== mainWindow ||
+      !isTrustedRendererFrame(
+        event.senderFrame,
+        event.sender.mainFrame,
+        trustedRendererUrl,
+      )
+    )
+      return;
+    mainRendererDeepLinkReady = ready;
+    if (ready) deliverPendingDeepLinks();
+  };
+  ipcMain.on("kestrel:deep-link-ready", (event) =>
+    setDeepLinkReadiness(event, true),
+  );
+  ipcMain.on("kestrel:deep-link-not-ready", (event) =>
+    setDeepLinkReadiness(event, false),
+  );
+
+  ipcMain.handle("kestrel:request", async (event, raw) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (
+      !senderWindow ||
+      (senderWindow !== mainWindow && senderWindow !== petOverlayWindow) ||
+      !isTrustedRendererFrame(
+        event.senderFrame,
+        event.sender.mainFrame,
+        trustedRendererUrl,
+      )
+    )
+      throw new Error("Kestrel rejected a request from an untrusted renderer.");
     const request = RendererRequestSchema.parse(raw);
+    const overlayAccess =
+      senderWindow === petOverlayWindow
+        ? petOverlayAccess.get(senderWindow)
+        : undefined;
+    if (senderWindow === petOverlayWindow) {
+      if (!overlayAccess)
+        throw new Error("Kestrel rejected a stale pet overlay request.");
+      overlayAccess.assertAllowed(request);
+    }
     if (request.type === "get-system-state") {
       const state = app.getLoginItemSettings();
       return {
@@ -1239,7 +1448,7 @@ function registerIpc(): void {
       join(app.getPath("userData"), "workspace-grants.json"),
     );
     if (request.type === "get-workspace-grants")
-      return { ok: true, workspaceGrants: await grantStore.list() };
+      return { ok: true, workspaceGrants: await grantStore.statusList() };
     if (request.type === "select-workspace-folder") {
       const options = {
         title: `Grant ${PRODUCT_IDENTITY.productName} a project folder`,
@@ -1255,10 +1464,15 @@ function registerIpc(): void {
         return {
           ok: true,
           cancelled: true,
-          workspaceGrants: await grantStore.list(),
+          workspaceGrants: await grantStore.statusList(),
         };
-      await grantStore.add(selection.filePaths[0]);
-      return { ok: true, workspaceGrants: await restartCoreAfterGrantChange() };
+      const selectedWorkspacePath = realpathSync(selection.filePaths[0]);
+      await grantStore.add(selectedWorkspacePath);
+      return {
+        ok: true,
+        selectedWorkspacePath,
+        workspaceGrants: await restartCoreAfterGrantChange(),
+      };
     }
     if (request.type === "remove-workspace-folder") {
       await grantStore.remove(request.path);
@@ -1663,7 +1877,10 @@ function registerIpc(): void {
       });
       broadcastPetStatus(response);
       const overlay = petOverlayWindow;
-      if (overlay) petOverlaysReturning.add(overlay);
+      if (overlay) {
+        petOverlaysReturning.add(overlay);
+        releasePetOverlayAccess(overlay);
+      }
       petOverlayWindow = null;
       setTimeout(() => {
         if (overlay && !overlay.isDestroyed()) overlay.destroy();
@@ -1694,6 +1911,21 @@ function registerIpc(): void {
       return { ok: true };
     }
     const coreRequest = CoreRequestSchema.parse(request);
+    if (overlayAccess && request.type === "runtime-create-session") {
+      const response = await supervisor.request(coreRequest);
+      if (response.ok && response.session)
+        overlayAccess.registerSession(response.session.id);
+      return response;
+    }
+    if (overlayAccess && request.type === "runtime-run-agent") {
+      const streamId = request.streamId!;
+      overlayAccess.beginStream(streamId);
+      try {
+        return await supervisor.request(coreRequest);
+      } finally {
+        overlayAccess.finishStream(streamId);
+      }
+    }
     const response = await supervisor.request(coreRequest);
     if (response.ok && response.snapshot) {
       agentState = response.snapshot.agentState;
@@ -1704,17 +1936,14 @@ function registerIpc(): void {
 }
 
 app.on("second-instance", (_event, argv) => {
-  mainWindow?.show();
-  mainWindow?.focus();
-  const deepLink = argv.find((value) =>
-    value.startsWith(`${PRODUCT_IDENTITY.protocol}://`),
-  );
-  if (deepLink) mainWindow?.webContents.send("kestrel:deep-link", deepLink);
+  const deepLinks = deepLinksFromArgv(argv);
+  if (deepLinks.length === 0) showMainWindow();
+  else for (const deepLink of deepLinks) queueDeepLink(deepLink);
 });
 
 app.on("open-url", (event, url) => {
   event.preventDefault();
-  mainWindow?.webContents.send("kestrel:deep-link", url);
+  queueDeepLink(url);
 });
 app.on("before-quit", () => {
   quitting = true;
@@ -1727,55 +1956,67 @@ app.on("will-quit", () => {
   ]);
 });
 app.on("activate", () => {
-  if (!mainWindow) mainWindow = createMainWindow();
-  else mainWindow.show();
+  showMainWindow();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-void app.whenReady().then(async () => {
-  app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
-  registerIpc();
-  await initializeCore();
-  providerAuthMonitor.start();
-  updateTray();
-  const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
-  mainWindow = createMainWindow();
-  const pet = await supervisor.request({ type: "pet-get" });
-  if (
-    pet.ok &&
-    pet.petStatus?.configuration.poppedOut &&
-    pet.petStatus.configuration.enabled
-  )
-    await createPetOverlay();
-  if (launchedAtLogin)
-    mainWindow.once("ready-to-show", () => mainWindow?.hide());
-  if (
-    shouldCheckForUpdates(
-      app.isPackaged,
-      PRODUCT_IDENTITY.updateChannel,
-      process.env.KESTREL_DISABLE_UPDATES === "1",
+void app
+  .whenReady()
+  .then(async () => {
+    app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
+    registerIpc();
+    await initializeCore();
+    providerAuthMonitor.start();
+    updateTray();
+    const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
+    if (!mainWindow) mainWindow = createMainWindow();
+    const startupWindow = mainWindow;
+    const pet = await supervisor.request({ type: "pet-get" });
+    if (
+      pet.ok &&
+      pet.petStatus?.configuration.poppedOut &&
+      pet.petStatus.configuration.enabled
     )
-  ) {
-    autoUpdater.autoDownload = true;
-    autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdater.channel = updaterFeedChannel(PRODUCT_IDENTITY.updateChannel)!;
-    autoUpdater.on("update-downloaded", (info) => {
-      if (!Notification.isSupported()) return;
-      const notification = new Notification({
-        title: `${PRODUCT_IDENTITY.productName} ${info.version} is ready`,
-        body: "The signed update will install after you quit and reopen Kestrel.",
+      await createPetOverlay();
+    if (launchedAtLogin)
+      startupWindow.once("ready-to-show", () => startupWindow.hide());
+    if (
+      shouldCheckForUpdates(
+        app.isPackaged,
+        PRODUCT_IDENTITY.updateChannel,
+        process.env.KESTREL_DISABLE_UPDATES === "1",
+      )
+    ) {
+      autoUpdater.autoDownload = true;
+      autoUpdater.autoInstallOnAppQuit = true;
+      autoUpdater.channel = updaterFeedChannel(PRODUCT_IDENTITY.updateChannel)!;
+      autoUpdater.on("update-downloaded", (info) => {
+        if (!Notification.isSupported()) return;
+        const notification = new Notification({
+          title: `${PRODUCT_IDENTITY.productName} ${info.version} is ready`,
+          body: "The signed update will install after you quit and reopen Kestrel.",
+        });
+        notification.on("click", () => {
+          mainWindow?.show();
+          mainWindow?.focus();
+        });
+        notification.show();
       });
-      notification.on("click", () => {
-        mainWindow?.show();
-        mainWindow?.focus();
-      });
-      notification.show();
-    });
-    setTimeout(
-      () => void autoUpdater.checkForUpdates().catch(() => undefined),
-      15000,
-    ).unref();
-  }
-});
+      setTimeout(
+        () => void autoUpdater.checkForUpdates().catch(() => undefined),
+        15000,
+      ).unref();
+    }
+  })
+  .catch((cause) => {
+    const detail =
+      cause instanceof Error ? cause.message : "An unknown startup error occurred.";
+    dialog.showErrorBox(
+      `${PRODUCT_IDENTITY.productName} could not start`,
+      `${detail}\n\nKestrel did not open your data without its encryption boundary. Unlock macOS secure storage and try again.`,
+    );
+    quitting = true;
+    app.quit();
+  });

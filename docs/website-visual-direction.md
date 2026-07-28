@@ -6,4 +6,4 @@ The first viewport is an asymmetric editorial composition: Kestrel and the suppl
 
 Video editing is not a section, navigation item, pricing tier, or architecture claim. Media work may appear once in the task spectrum as one example of choosing available tools.
 
-Download and GitHub controls must report their real availability. Until a signed/notarized release and repository URL exist, the site shows an explicit release-readiness state rather than a false download.
+Repository access links directly to the public source. Until a signed/notarized release and verified download artifacts exist, the site shows an explicit release-readiness state rather than a false download.

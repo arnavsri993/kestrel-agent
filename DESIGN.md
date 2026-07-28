@@ -1,74 +1,207 @@
-# Kestrel design brief
+# Kestrel design system
 
-## Apple-grade product polish — current pass
+## Final Native Graphite system — July 2026
 
-- Operating mode: `existing-redesign` of the packaged Kestrel desktop shell, with behavior and safety boundaries preserved.
-- Thesis: Kestrel should feel like a quiet, capable Mac instrument: the app name is unmistakable, the next action is obvious, the empty state is useful, and every control has enough space and feedback to feel deliberate.
-- Density profile: `dense-app` with an editorial first-use center and a compact, information-rich chat surface after work begins.
-- Type pair: SF Pro Display for the Kestrel name and decisive headings; SF Pro Text for controls and conversation; SF Mono only for paths, routing, and evidence.
-- Type scale: product name 17/21, page title 28/34, empty-state title 34/40, conversation 14/23, control 13/18, supporting text 11/16, evidence 10/15.
-- Spacing scale: 4px base; 8/12/16/20/24/32/48 rhythm; 16px minimum touch target inset with 36–44px control heights.
-- Color roles: graphite canvas `#1c1c1e`; sidebar `#141416`; raised surface `#2c2c2e`; ink `#f5f5f7`; secondary ink `#b8b8bd`; quiet sage signal `#78b986`; warning and danger reserved for actual state.
-- Material: opaque graphite planes with one lifted composer and thin, exact separators. No decorative glass or gradient layers.
-- First viewport: Kestrel wordmark, one specific welcome line, one support line, one composer, one compact context/status rail. Returning empty sessions get a useful “continue your work” prompt instead of a blank canvas.
-- Motion grammar: state continuity through the existing short page transition; direct feedback through focus, hover, press, and recording state. Reduced motion removes the page transition and pulse while preserving state.
-- Avoid list: Workstrand copy, anonymous blank canvases, tiny low-contrast helper text, dense card galleries, pill badges, icon-only mystery controls, equal-weight navigation, and generic AI dashboard chrome.
-- Why this is not generic: Kestrel’s identity comes from its actual local-first work loop—scope a project, describe the task, approve consequences, and verify results—expressed through a restrained Mac-native shell with a useful first-run center rather than a marketing dashboard.
+This section is the authoritative desktop visual and interaction specification.
+Older sections below preserve feature-specific safety boundaries and design
+history. Where an older palette, type scale, material, navigation treatment, or
+product name conflicts with this section, this section wins.
 
-## Natural desktop controls
+### Product position
 
-- Operating mode: `existing-redesign` of the Workstrand desktop shell and setup flow.
-- Thesis: Workstrand should read like a well-made Mac utility—plain actions, quiet rows, and one obvious next step—not a catalog of AI features.
-- Density profile: `dense-app`, with a calmer reading measure for first use.
-- Type: SF Pro Display / SF Pro Text, with SF Mono reserved for hashes and machine-readable evidence.
-- Spacing: 4px base; 8/12/16/24/32/48 rhythm.
-- Color and material: native graphite planes, aluminum text, and one sage state/focus accent; borders define groups while elevation is reserved for the composer.
-- Control grammar: verb-led labels, sentence case, 38px minimum shared buttons, 7px control radius, list rows for mutually exclusive choices, and unboxed status text.
-- Motion: state continuity and direct feedback only; both collapse under reduced motion.
-- Avoid list: marketing-card choices, taxonomy as copy, uppercase micro-labels, badge decoration, pill forests, equal-weight CTAs, and implementation terms where an ordinary phrase works.
-- Why this is not generic: the interface uses Workstrand's actual sequence—choose scope, describe work, approve consequences, receive evidence—and presents it through restrained native desktop controls instead of SaaS-card chrome.
+- Operating mode: `existing-redesign` of the packaged React/Electron desktop
+  product. Renderer behavior, IPC, persistence, provider setup, approvals,
+  extension contracts, and user-authored skins remain intact.
+- Thesis: Kestrel is a quiet Mac instrument that turns an outcome into
+  inspectable work. One current task is visually primary; permissions,
+  execution state, evidence, and recovery remain nearby without becoming a
+  dashboard.
+- Product loop: `ask → scope → act → approve when consequential → verify`.
+  Setup introduces that same loop and structurally becomes the workspace.
+- Density: sparse and welcoming for setup and a new task; comfortable dense-app
+  rhythm for conversations, ledgers, settings, and specialist tools.
+- Identity: dark Native Graphite, aluminum ink, and a restrained sage signal.
+  The angular Kestrel mark and a persistent local-status anchor are the repeated
+  motifs. The product must not resemble a generic AI dashboard, developer
+  console, Apple clone, or card catalog.
 
-## Native Graphite visual identity
+### Tokens and geometry
 
-- Operating mode: `existing-redesign` of the dense React/Electron desktop application. All routes, behavior, state contracts, and the user-authored skin architecture remain intact.
-- User constraint: the prior warm orange default resembled Claude and OpenClaw. A blue/aqua exploration felt cheap and performatively futuristic. Because the product is made for M-series Macs, the selected system should feel native to macOS without becoming an imitation of Finder or a generic gray utility.
-- Candidate directions compared: `Mineral Current` (rejected after render because aqua felt like generic futuristic AI), `Ultramarine Ledger` (rejected because blue remained the identity), `Carbon Signal` (rejected because the high-contrast red felt aggressive), `Obsidian Paper` (useful restraint but not platform-specific enough), and `Native Graphite` (selected).
-- Thesis: Kestrel should feel engineered for Apple silicon—SF typography, graphite and aluminum planes, restrained sidebar vibrancy, exact separators, and one quiet sage state rail make project work, approvals, and verified delivery feel native without borrowing another AI brand.
-- Density profile: `dense-app` with a calm central composing and reading measure.
-- Type pair: SF Pro Display for the product name and decisive headings; SF Pro Text for controls and conversation; SFMono only for paths, hashes, routing, usage, and evidence.
-- Type scale: greeting 40/46, page title 34/40, section title 20/25, conversation 14/24, control 12/17, evidence/meta 9/14.
-- Spacing scale: 4px base; shell 8/12/16/20/24; conversation 8/12/20/32/52.
-- Color roles: macOS graphite `#1c1c1e` canvas; deep graphite `#141416` rail; elevated graphite `#2c2c2e` surface; aluminum `#f5f5f7` ink and brand mark; quiet sage `#78b986` interaction/focus. Yellow remains warning-only and red remains error/destructive-only.
-- Material: opaque graphite work planes with restrained vibrancy only on persistent macOS chrome. The composer is the only lifted work surface; active navigation uses an inset evidence rail rather than a rounded filled tab.
-- Geometry: primary surfaces tighten from soft 20px shells to a 12px composer and compact control radii. The angular checkpoint mark, vertical current rails, and squared evidence rows provide the repeatable identity.
-- Motion roles: state continuity through the existing short page crossfade; direct feedback through hover, press, and focus. Reduced motion removes the crossfade. No ambient motion or scroll reveals.
-- Avoid list: orange and warm gray, cream-and-serif AI brochure styling, purple gradients, glow, glass, pill forests, card dashboards, terminal costumes, decorative bento, and animation without state meaning.
-- Why this is not generic: the angular checkpoint mark, Apple-silicon-native graphite material, sage evidence rails, and compact `ask → approve → verify` hierarchy give the interface a specific workstation identity instead of a fashionable AI palette.
+- Type: SF Pro Display for setup headlines, page titles, and the Kestrel name;
+  SF Pro Text for controls and reading; SF Mono only for paths, hashes, model
+  IDs, routing, usage, and evidence.
+- Scale: setup display `48/50`; workspace greeting `40/44`; page title `32/38`;
+  section title `19/24`; body and conversation `14/22`; control `13/18`;
+  support `12/18`; evidence `11/16`. Critical explanatory text never uses the
+  evidence size.
+- Spacing: 4px base with `8/12/16/20/24/32/40/56/72`. Main reading measure is
+  760px; setup task measure is 880px; dense ledgers may expand to 1040px.
+- Radius ladder: 8px compact controls, 12px grouped rows and buttons, 16px
+  elevated composer and transient disclosures, 22px major setup surfaces.
+  Circular geometry is reserved for icon actions, status dots, and the mark.
+- Controls: 36px minimum compact controls, 40px normal controls, and 44px
+  primary/setup actions. One primary action per decision region. Hover,
+  pressed, selected, disabled, busy, success, warning, and error states must
+  remain distinct without relying on color alone.
+- Color roles: canvas `#1c1c1e`; deep rail `#141416`; panel `#242426`; raised
+  surface `#2c2c2e`; strong surface `#3a3a3c`; aluminum ink `#f5f5f7`;
+  secondary ink `#b8b8bd`; tertiary ink `#8e8e93`; line `#38383b`; sage signal
+  `#78b986`; amber only for warning/approval; red only for error/destructive.
 
-### Rendered refinement
+### Material and surface grammar
 
-- Pass-one captures: 1320×860 desktop and 760×760 compact states in `artifacts/screenshots/desktop/mineral-current`.
-- Three highest-impact weaknesses fixed: the all-white checkpoint made the shell anonymous; the composer shadow felt heavier than macOS material; and the central work plane spread too wide at compact desktop sizes.
-- Final adjustments: a restrained sage checkpoint anchors the identity without coloring the whole interface, the composer uses a shorter low-elevation shadow, and the primary work measure tightens from 820px to 760px.
+- Content planes are matte and mostly opaque. List-like information lives in
+  one continuous surface with subtle separators rather than separate bordered
+  cards.
+- The composer is the primary elevated work surface. Approval drafts, artifact
+  previews, and isolated interactive results may be self-contained surfaces
+  because their boundaries carry meaning.
+- Transparency and blur are limited to persistent navigation over scrolled
+  content, the top drag bar, and transient floating disclosures. They must
+  respond to reduced transparency and increased contrast. No content panel gets
+  `backdrop-filter` merely for decoration.
+- Selected controls use a quiet sage-tinted surface and exact ring, never a
+  glowing border or left-edge selection bar. Sage marks focus, verification, or
+  the current anchor; it does not color whole screens.
+- Shadows are short and low elevation. Gradients, decorative glass, glow,
+  floating bento layouts, ornamental badges, pill forests, provider-logo walls,
+  fake terminal chrome, and ambient AI visuals are out of scope.
 
-## Calm shell, deep capability
+### Information architecture and copy
 
-- Operating mode: `existing-redesign` of the desktop application shell.
-- Thesis: Kestrel should present one obvious place to begin and surface urgency
-  without turning every background capability into permanent navigation.
-- Density and hierarchy: New chat and recent Chats are the default experience.
-  Specialist surfaces are not exposed in the sidebar until their final
-  information architecture is decided. Connections and Settings retain stable
-  utility positions. The underlying specialist features remain implemented.
-- State contract: removing specialist navigation does not delete its routes,
-  data, or components. Their eventual entry points can be placed in context
-  without rebuilding the underlying capabilities.
-- Avoid list: equal visual weight for every capability, multiple navigation
-  taxonomies, nested dashboards, unlabeled icon-only controls, and hiding urgent
-  approvals.
-- Why this is not generic: the shell begins with Workstrand's actual beginner
-  loop—start or resume a conversation—while specialist machinery stays one
-  deliberate reveal away and urgent approvals still announce themselves.
+- Primary navigation is New chat, recent Chats, a single Tools disclosure, and
+  Settings. Urgent approval status remains visible. Specialist routes are fully
+  retained inside the Tools disclosure and contextual links.
+- The Tools disclosure is a transient, grouped launcher. It closes after
+  navigation, on Escape, and when Settings or New chat is chosen. Compact
+  windows render it as a bounded sheet above bottom navigation with its own
+  scroll region.
+- Page headers name the surface directly. Eyebrows are reserved for real state
+  or trust boundaries, not decoration. Support copy appears only when it
+  explains consequence, provenance, privacy, recovery, or an empty state.
+- Settings uses one section navigator and continuous setting rows. Technical
+  detail stays in native disclosures; primary choices and current state remain
+  visible.
+
+### Setup and workspace continuity
+
+- The five stable stages remain Welcome, Before you begin, Choose a model,
+  Model setup, and Ready. The progress rail is one row at every supported
+  width and should feel like a short path, not five separate forms.
+- A shared Kestrel anchor combines the mark, local/private status, and current
+  setup state. It remains in a stable composition through setup, then moves into
+  the workspace status location when setup completes.
+- Each stage makes one decision dominant. Welcome states the promise; Before
+  you begin exposes four non-negotiable boundaries with concise summaries and
+  optional detail; Choose a model presents three clear routes; Model setup
+  progressively discloses provider or model detail; Ready reports verified,
+  configured-but-unverified, or preview truthfully.
+- Completion is state-driven. The final anchor and primary surface use shared
+  layout continuity into the first workspace; no prerecorded transition,
+  timeout-gated interaction, or fixed copy is required. If the workspace is
+  still loading, the same anchor remains visible rather than flashing an
+  unrelated loading screen.
+
+### Motion and accessibility
+
+- Motion role 1 — focal continuity: the shared Kestrel anchor and setup surface
+  reposition across setup and completion.
+- Motion role 2 — state continuity: brief opacity/position changes for setup
+  stages, route changes, and transient disclosures.
+- Motion role 3 — direct feedback: hover, press, focus, recording, progress, and
+  verified/error state changes.
+- Motion is interruptible, usually 120–220ms, and never delays interaction.
+  Reduced motion removes travel, scale, blur, and pulse, retaining short fades,
+  text, icons, and color/state changes. Reduced transparency replaces blurred
+  chrome with an opaque surface. Keyboard focus remains a visible 2px sage ring.
+
+### Functional state contract
+
+- Setup: first and returning visit; all five stages; warning unchecked/checked;
+  account, local, and free-account routes; credential loading/saving/configured
+  and failure; provider search/selection/planned adapters; automatic local setup
+  unsupported/detecting/downloading/verifying/installing/starting/cancelled/
+  failed/ready; manual setup collapsed/expanded; live provider verification;
+  verified/configured/preview completion; setup-help handoff.
+- Workspace: startup/error/retry; new and persisted chat; project absent/granted;
+  automatic/manual routing; attachments; recording/transcribing; empty,
+  streaming, steering, tool progress, failure/retry, checkpoint, usage, skill
+  review, approval pending/approved/rejected/edited, and local agent status.
+- Specialist surfaces: loading, empty, selected, busy, disabled, success,
+  warning, error, provenance, verification, recovery, compact reflow, keyboard
+  focus, reduced motion, and reduced transparency remain representable.
+
+### Implementation plan and expected files
+
+- Consolidate renderer tokens and final component overrides in
+  `apps/desktop/src/renderer/styles.css`.
+- Introduce the shared setup/workspace anchor, shorten high-volume copy, and
+  improve the Tools disclosure and navigation behavior in
+  `apps/desktop/src/renderer/App.tsx`.
+- Reuse and normalize the existing approval, artifact, dashboard, memory,
+  opportunity, work, settings, skin, presence, observability, and secret-source
+  components rather than adding a second component system.
+- Expand `scripts/capture-desktop.ts` and setup/desktop assertions to capture
+  every setup stage, major workspace surfaces, compact layouts, reduced motion,
+  reduced transparency, and overflow.
+- Inspect three rendered passes, record the largest visible weaknesses, then
+  package and smoke-test the actual macOS application.
+
+### Research and source-use ledger
+
+- Apple Human Interface Guidelines, Materials, and accessibility evaluation
+  criteria, accessed 2026-07-27: navigation/control layers may use material when
+  depth is real; text-heavy content needs stable contrast; reduced motion keeps
+  meaning while removing spatial, scale, and blur effects.
+- `naplesblue/apple-design-skill` at
+  `e81692da299d64b9bf38ae26db2d709fc60c8bf3`, accessed 2026-07-27, MIT:
+  direction-only guidance for hierarchy, unified surfaces, purposeful
+  material, concise controls, and interruptible same-path motion. No tokens,
+  assets, or components copied.
+- `justinwetch/HIGAgentSkills` at
+  `701151a7b39609b71a58d54de6d86e3500c0c316`, accessed 2026-07-27, no repository
+  license detected: summary-only research for macOS density, onboarding,
+  sidebars, lists, settings, focus, and motion. Nothing copied or derived
+  verbatim.
+- Frontend classifier output was treated as non-authoritative because it routed
+  this repository-wide product redesign as a marketing/component task. The
+  actual repository, user contract, and rendered Electron states establish
+  `existing-redesign`, multi-surface product-interface mode.
+
+### Rendered refinement and delivery evidence
+
+- The final evidence set contains 34 screenshots captured from the packaged
+  Apple Silicon application in
+  `artifacts/screenshots/desktop/final-native-graphite/`: every setup stage and
+  route, warning detail, account/local/free provider variants, setup completion,
+  workspace continuity, transient Task settings and Tools, every specialist
+  surface, every Settings section, compact navigation, reduced motion, and
+  reduced transparency.
+- Pass 1 joined the setup anchor to its workspace target, removed clipped Tools
+  navigation, and replaced the Readiness card cluster with one ruled plane.
+  Pass 2 corrected the compact model chooser's squeezed text and control
+  geometry. Pass 3 re-ran the complete packaged capture with no page-level
+  horizontal overflow, one-row setup progress, bounded disclosures, visible
+  keyboard focus, console errors, or long-running reduced-motion animations.
+- Sparse space is intentional only in setup, new task, Research, Artifacts, and
+  extension empty states: it protects one decision, one composer, or one empty
+  outcome. Dense operational surfaces use continuous rows and dividers instead
+  of vacant scale or decorative cards.
+- Controls remain real application controls, not presentational imitations.
+  Setup, model routes, local installation, OAuth entries, Tools navigation,
+  task settings, Kanban movement, readiness and backup, secrets, observability,
+  memory, skins, plugins, widgets, applications, managed policy, and compact
+  reflow are exercised by the desktop suites.
+- The redesign adds no runtime dependency, generated media, or heavy UI
+  framework. The production renderer is 1,296,287 bytes of JavaScript and
+  164,446 bytes of CSS before transport compression. Motion is limited to the
+  three roles above and reduced-motion capture rejects any animation that
+  remains active beyond 50ms.
+- `release/mac-arm64/Kestrel.app` is a 460 MB development bundle. Its renderer,
+  native Sharp dependency, and isolated browser tool pass the packaged smoke
+  test. Its linker signature is ad hoc with no Team ID; this proves the private
+  Apple Silicon build only, not Developer ID signing, notarization, update-feed
+  readiness, or public distribution.
 
 Reference parity is deliberately layered, not a claim that every named vendor adapter ships in core. The 1,117-page Hermes/OpenClaw audit separates bundled capability families, signed extension contracts, and operational documentation. Native-node behavior is represented by a tested paired-device extension protocol rather than a bundled mobile app; Kestrel itself is a direct-download Apple Silicon Mac application.
 

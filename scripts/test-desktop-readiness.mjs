@@ -60,7 +60,7 @@ try {
   await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Extensions", exact: true }).click();
   await page.getByRole("button", { name: "Open readiness", exact: true }).click();
-  await page.getByRole("heading", { name: /Finish the essentials before live work\.|The core is ready\. Verify the route\./ }).waitFor();
+  await page.getByRole("heading", { name: /Needs attention|Ready for work/ }).waitFor();
   await page.getByRole("heading", { name: "What can work right now" }).waitFor();
   await page.getByText("This contacts only the configured provider or local model service.", { exact: false }).waitFor();
   await page.getByRole("button", { name: "Run checks" }).focus();
@@ -79,7 +79,7 @@ try {
   await page.getByRole("button", { name: /Tools/ }).click();
   await page.getByRole("button", { name: "Extensions", exact: true }).click();
   await page.getByRole("button", { name: "Open readiness", exact: true }).click();
-  await page.getByRole("heading", { name: "The core is ready. Verify the route." }).waitFor();
+  await page.getByRole("heading", { name: "Ready for work" }).waitFor();
   await page.getByRole("button", { name: "Verify model access" }).click();
   await page.getByText("codex-subscription", { exact: true }).waitFor();
   const codexCheck = page.locator(".model-check-panel").getByRole("listitem").filter({ hasText: "codex-subscription" });

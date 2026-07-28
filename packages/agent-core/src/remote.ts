@@ -246,6 +246,10 @@ export class RemoteControl {
     return job;
   }
   assertAuthorized(token: RemoteCredential, scope: RemoteScope): void { this.authorize(token, scope); }
+  hasAuthorizedScope(token: RemoteCredential, scope: RemoteScope): boolean {
+    try { this.authorize(token, scope); return true; }
+    catch { return false; }
+  }
   revoke(deviceId: string): void {
     const devices = this.devices();
     const index = devices.findIndex((device) => device.id === deviceId);

@@ -83,6 +83,9 @@ describe("Kestrel CLI arguments", () => {
     expect(
       parseCliArguments(["resume", "--run", "r-1", "--decision", "rejected"]),
     ).toEqual({ name: "resume", runId: "r-1", decision: "rejected" });
+    expect(() =>
+      parseCliArguments(["resume", "--run", "r-1"]),
+    ).toThrow("Missing required --decision.");
     expect(
       parseCliArguments([
         "acp",

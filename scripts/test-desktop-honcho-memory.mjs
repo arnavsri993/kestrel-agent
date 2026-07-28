@@ -64,7 +64,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: /^Memory & behavior/ }).click();
+  await page.getByRole("button", { name: /^Memory/ }).click();
 
   const setting = page.locator(".honcho-memory-setting");
   await setting.getByText("Honcho remote memory", { exact: true }).waitFor();

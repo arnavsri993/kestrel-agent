@@ -664,7 +664,7 @@ export function parseCliArguments(input: string[]): CliCommand {
   }
   if (args[0] === "resume") {
     const values = options(args.slice(1), ["run", "decision"]);
-    const decision = values.get("decision") ?? "approved";
+    const decision = required(values, "decision");
     if (decision !== "approved" && decision !== "rejected")
       throw new Error("--decision must be approved or rejected.");
     return { name: "resume", runId: required(values, "run"), decision };

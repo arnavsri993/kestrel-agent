@@ -40,4 +40,10 @@ describe("remoteWebAsset", () => {
     expect(remoteWebAsset("/app/unknown.js")).toBeUndefined();
     expect(remoteWebAsset("")).toBeUndefined();
   });
+
+  it("shows resume controls for the persisted waiting-approval job status", () => {
+    const script = remoteWebAsset("/app/app.js")?.body;
+    expect(script).toContain("j.status==='waiting_approval'");
+    expect(script).not.toContain("j.status==='awaiting_approval'");
+  });
 });

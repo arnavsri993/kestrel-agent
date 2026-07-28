@@ -13,7 +13,7 @@ const sections = [
   {
     title: "Start with readiness",
     paragraphs: [
-      "Open Settings → Readiness to check the local runtime, model route, protected storage, database, workspace access, and packaged application state. Use the automatic setup action for the recommended local model, or choose Manual setup to use an existing Ollama installation.",
+      "Open Tools, then choose Readiness to check the local runtime, model route, protected storage, database, workspace access, and packaged application state. Use the automatic setup action for the recommended local model, or choose Manual setup to use an existing Ollama installation.",
       "Readiness reports observed state. It does not mark a provider connected until verification succeeds."
     ]
   },
@@ -71,7 +71,7 @@ export default function SupportPage() {
       eyebrow="Product support"
       title="Recover from evidence, not guesswork."
       summary="Kestrel exposes setup, connection, permission, and activity state so most failures can be diagnosed without sharing private prompts."
-      updated="July 23, 2026"
+      updated="July 27, 2026"
       sections={sections}
     />
   );

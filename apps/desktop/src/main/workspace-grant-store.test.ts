@@ -32,4 +32,58 @@ describe("workspace grant store", () => {
     await expect(store.add("/")).rejects.toThrow("whole filesystem volume");
     await expect(store.add(homedir())).rejects.toThrow("entire home directory");
   });
+
+  it("preserves unavailable grants while other grants are added or removed", async () => {
+    const storage = mkdtempSync(join(tmpdir(), "kestrel-grants-"));
+    directories.push(storage);
+    const available = join(storage, "available");
+    const unavailable = join(storage, "unavailable");
+    const addedLater = join(storage, "added-later");
+    mkdirSync(available);
+    mkdirSync(unavailable);
+    mkdirSync(addedLater);
+    const availablePath = realpathSync(available);
+    const unavailablePath = realpathSync(unavailable);
+    const addedLaterPath = realpathSync(addedLater);
+    const store = new WorkspaceGrantStore(
+      join(storage, "private", "workspace-grants.json"),
+    );
+    await store.add(available);
+    await store.add(unavailable);
+    rmSync(unavailable, { recursive: true });
+
+    expect(await store.list()).toEqual([
+      { path: availablePath, name: "available" },
+    ]);
+    expect(await store.statusList()).toEqual([
+      { path: availablePath, name: "available", available: true },
+      { path: unavailablePath, name: "unavailable", available: false },
+    ]);
+    expect(await store.configuredPaths()).toEqual([
+      availablePath,
+      unavailablePath,
+    ]);
+
+    await store.add(addedLater);
+    expect(await store.configuredPaths()).toEqual([
+      availablePath,
+      unavailablePath,
+      addedLaterPath,
+    ]);
+
+    await store.remove(available);
+    expect(await store.configuredPaths()).toEqual([
+      unavailablePath,
+      addedLaterPath,
+    ]);
+    expect(await store.list()).toEqual([
+      { path: addedLaterPath, name: "added-later" },
+    ]);
+
+    await store.remove(unavailablePath);
+    expect(await store.configuredPaths()).toEqual([addedLaterPath]);
+    expect(await store.statusList()).toEqual([
+      { path: addedLaterPath, name: "added-later", available: true },
+    ]);
+  });
 });

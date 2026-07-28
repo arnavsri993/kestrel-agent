@@ -1,0 +1,8 @@
+extends: electron-builder.yml
+appId: com.kestrel.desktop.dev
+mac:
+  identity: "-"
+  entitlementsInherit: build/entitlements.mac.dev.inherit.plist
+  extendInfo:
+    LSEnvironment:
+      KESTREL_RELEASE_CHANNEL: development

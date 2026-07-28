@@ -41,7 +41,7 @@ try {
       toolName: "show_widget",
       input: {
         title: "Release confidence",
-        widget_code: `<section class="card"><p class="muted">Choose a review lane</p><h2 id="result">No lane selected</h2><div class="row"><button id="visual" class="primary">Visual</button><button id="security">Security</button></div></section><script>document.getElementById("visual").addEventListener("click",()=>document.getElementById("result").textContent="Visual review selected");document.getElementById("security").addEventListener("click",()=>document.getElementById("result").textContent="Security review selected");</script>`,
+        widget_code: `<section class="card"><p class="muted">Choose a review lane</p><h2 id="result">No lane selected</h2><div class="row"><button id="visual" class="primary">Visual</button><button id="security">Security</button></div></section><script>document.getElementById("visual").addEventListener("click",()=>document.getElementById("result").textContent="Visual review selected");document.getElementById("security").addEventListener("click",()=>document.getElementById("result").textContent="Security review selected");document.documentElement.dataset.widgetReady="true";</script>`,
       },
       approvalStatus: "approved",
       idempotencyKey: "desktop-widget-fixture",
@@ -60,8 +60,14 @@ try {
   const iframe = page.locator(".artifact-widget iframe");
   await iframe.waitFor();
   assert.equal(await iframe.getAttribute("sandbox"), "allow-scripts");
-  const widget = page.frameLocator(".artifact-widget iframe");
-  await widget.getByRole("button", { name: "Visual" }).click();
+  const iframeHandle = await iframe.elementHandle();
+  const widget = await iframeHandle?.contentFrame();
+  assert.ok(widget, "Interactive artifact frame was not attached.");
+  await widget.waitForLoadState("load");
+  await widget.locator("html[data-widget-ready='true']").waitFor();
+  await widget
+    .getByRole("button", { name: "Visual" })
+    .evaluate((button) => button.click());
   await widget
     .getByRole("heading", { name: "Visual review selected" })
     .waitFor();

@@ -7,7 +7,67 @@ import { WorkspaceGrantSchema, type WorkspaceGrant } from "@kestrel/shared-types
 export class WorkspaceGrantStore {
   constructor(private readonly filename: string) {}
 
+  async configuredPaths(): Promise<string[]> {
+    return (await this.configuredGrants()).map((grant) => grant.path);
+  }
+
   async list(): Promise<WorkspaceGrant[]> {
+    const configured = await this.configuredGrants();
+    const grants: WorkspaceGrant[] = [];
+    for (const grant of configured) {
+      try {
+        const canonical = this.validateRoot(grant.path);
+        if ((await stat(canonical)).isDirectory())
+          grants.push({ path: canonical, name: basename(canonical) });
+      } catch {
+        // Missing, moved, or newly unsafe roots remain configured but are not active.
+      }
+    }
+    return [...new Map(grants.map((grant) => [grant.path, grant])).values()];
+  }
+
+  async statusList(): Promise<WorkspaceGrant[]> {
+    const configured = await this.configuredGrants();
+    const grants: WorkspaceGrant[] = [];
+    for (const grant of configured) {
+      let available = false;
+      try {
+        const canonical = this.validateRoot(grant.path);
+        available = (await stat(canonical)).isDirectory();
+      } catch {
+        // Keep unavailable grants visible so the user can explicitly revoke them.
+      }
+      grants.push({ ...grant, available });
+    }
+    return grants;
+  }
+
+  async add(path: string): Promise<WorkspaceGrant[]> {
+    const canonical = this.validateRoot(path);
+    if (!(await stat(canonical)).isDirectory())
+      throw new Error("Workspace grants require a directory.");
+    const grants = await this.configuredGrants();
+    if (!grants.some((grant) => grant.path === canonical))
+      grants.push({ path: canonical, name: basename(canonical) });
+    await this.save(grants);
+    return this.list();
+  }
+
+  async remove(path: string): Promise<WorkspaceGrant[]> {
+    let canonical = path;
+    try {
+      canonical = this.validateRoot(path);
+    } catch {
+      // A missing stored path can still be removed by its exact value.
+    }
+    const grants = (await this.configuredGrants()).filter(
+      (grant) => grant.path !== canonical && grant.path !== path,
+    );
+    await this.save(grants);
+    return this.list();
+  }
+
+  private async configuredGrants(): Promise<WorkspaceGrant[]> {
     let values: unknown;
     try {
       values = JSON.parse(await readFile(this.filename, "utf8"));
@@ -20,31 +80,16 @@ export class WorkspaceGrantStore {
     for (const value of values) {
       const parsed = WorkspaceGrantSchema.safeParse(value);
       if (!parsed.success) continue;
-      try {
-        const canonical = this.validateRoot(parsed.data.path);
-        if ((await stat(canonical)).isDirectory()) grants.push({ path: canonical, name: basename(canonical) });
-      } catch {
-        // Missing, moved, or newly unsafe roots are not re-granted at launch.
-      }
+      const normalized = resolve(parsed.data.path);
+      if (
+        normalized !== parsed.data.path ||
+        normalized === parse(normalized).root ||
+        normalized === resolve(homedir())
+      )
+        continue;
+      grants.push({ path: normalized, name: basename(normalized) });
     }
     return [...new Map(grants.map((grant) => [grant.path, grant])).values()];
-  }
-
-  async add(path: string): Promise<WorkspaceGrant[]> {
-    const canonical = this.validateRoot(path);
-    if (!(await stat(canonical)).isDirectory()) throw new Error("Workspace grants require a directory.");
-    const grants = await this.list();
-    if (!grants.some((grant) => grant.path === canonical)) grants.push({ path: canonical, name: basename(canonical) });
-    await this.save(grants);
-    return grants;
-  }
-
-  async remove(path: string): Promise<WorkspaceGrant[]> {
-    let canonical = path;
-    try { canonical = this.validateRoot(path); } catch { /* A missing stored path can still be removed by its exact value. */ }
-    const grants = (await this.list()).filter((grant) => grant.path !== canonical && grant.path !== path);
-    await this.save(grants);
-    return grants;
   }
 
   private validateRoot(path: string): string {

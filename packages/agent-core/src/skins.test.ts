@@ -31,12 +31,57 @@ describe("visual skin registry", () => {
     });
     expect(manager.import(source)).toMatchObject({ selectedId: "field-notes", skins: expect.arrayContaining([expect.objectContaining({ id: "field-notes", builtin: false, mode: "light" })]) });
     expect(() => manager.import(JSON.stringify({ version: 1, id: "invisible", name: "Invisible", description: "Bad contrast.", base: "daylight", colors: { ink: "#f5f2ea" } }))).toThrow("contrast");
+    expect(() => manager.import(JSON.stringify({ version: 1, id: "hover-invisible", name: "Hover invisible", description: "Bad hover contrast.", base: "daylight", colors: { solidHover: "#ffffff" } }))).toThrow("primary button hover contrast");
+    expect(() => manager.import(JSON.stringify({ version: 1, id: "status-invisible", name: "Status invisible", description: "Bad status contrast.", base: "daylight", colors: { statusInk: "#f1d8ca" } }))).toThrow("status text contrast");
+    expect(() => manager.import(JSON.stringify({ version: 1, id: "surface-invisible", name: "Surface invisible", description: "Bad surface contrast.", base: "workstrand", colors: { muted: "#888888" } }))).toThrow("secondary text on surfaces contrast");
     expect(() => manager.import(JSON.stringify({ version: 1, id: "scripted", name: "Scripted", description: "Unknown executable input.", script: "alert(1)" }))).toThrow();
     expect(() => manager.import(JSON.stringify({ version: 1, id: "remote", name: "Remote", description: "Remote stylesheet.", colors: { signal: "https://example.com/theme.css" } }))).toThrow();
     expect(() => manager.import(" ".repeat(65_537))).toThrow("64 KB");
     expect(manager.status().selectedId).toBe("field-notes");
     expect(manager.remove("field-notes")).toMatchObject({ selectedId: "workstrand" });
     expect(() => manager.remove("workstrand")).toThrow("Built-in");
+    database.close();
+  });
+
+  it("retains legacy custom skins and selection while rendering unsafe definitions through a safe fallback", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const daylight = BUILTIN_SKINS.find((skin) => skin.id === "daylight")!;
+    const legacy = {
+      ...daylight,
+      id: "legacy-paper",
+      name: "Legacy Paper",
+      description: "Created before hover contrast was enforced.",
+      builtin: false,
+      colors: {
+        ...daylight.colors,
+        solidHover: daylight.colors.solidText,
+      },
+    };
+    database.setPrivateState("display.custom-skins", [legacy]);
+    database.setPrivateState("display.selected-skin", legacy.id);
+
+    const manager = new SkinManager(database);
+    const status = manager.status();
+    expect(status.selectedId).toBe(legacy.id);
+    expect(status.skins.find((skin) => skin.id === legacy.id)).toMatchObject({
+      id: legacy.id,
+      colors: { solidHover: daylight.colors.solidHover },
+    });
+    expect(database.getPrivateState("display.custom-skins")).toEqual([legacy]);
+    expect(database.getPrivateState("display.selected-skin")).toBe(legacy.id);
+    manager.select(legacy.id);
+    expect(database.getPrivateState("display.custom-skins")).toEqual([legacy]);
+
+    expect(() =>
+      manager.import(JSON.stringify({
+        version: 1,
+        id: "new-inaccessible-paper",
+        name: "New inaccessible paper",
+        description: "New imports must meet current contrast requirements.",
+        base: "daylight",
+        colors: { solidHover: daylight.colors.solidText },
+      })),
+    ).toThrow("primary button hover contrast");
     database.close();
   });
 });

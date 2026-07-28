@@ -58,7 +58,10 @@ variables with these names: `PUBLIC_PUBLISHER_NAME`, `PUBLIC_SUPPORT_EMAIL`,
 `NEXT_PUBLIC_DOWNLOAD_URL`, `NEXT_PUBLIC_RELEASE_MANIFEST_URL`, and
 `NEXT_PUBLIC_RELEASE_CHECKSUMS_URL`. It always publishes the site as a
 development preview until `NEXT_PUBLIC_RELEASE_STATUS=verified` and all three
-artifact URLs are supplied.
+artifact URLs are supplied. When that status is `verified`, the workflow maps
+those values plus `KESTREL_UPDATE_URL` into the distribution gate and refuses
+to build the public-release state unless the site, privacy and support routes,
+DMG, manifest, checksums, and updater feed are reachable over HTTPS.
 
 After the signed workflow, Gatekeeper assessment, notarization validation, and
 clean-machine download test pass, build the website with:
@@ -115,4 +118,5 @@ A candidate is ready for internet distribution only when:
 5. The public privacy, support, download, and update paths are live.
 6. Rollback and update-channel behavior are verified.
 
-An unsigned local `.app` is development evidence, not a public release.
+An ad-hoc-signed local `.app` without a Developer ID identity or notarization is
+development evidence, not a public release.

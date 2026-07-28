@@ -5,6 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "workstrand-pets-"));
+const testHome = join(temporaryRoot, "home");
+const testCodexHome = join(temporaryRoot, "codex-home");
 const screenshotPath = resolve(
   "artifacts/screenshots/desktop/setup-revised/settings-pet-paperclip.png",
 );
@@ -15,13 +17,26 @@ const hatchScreenshotPath = resolve(
   "artifacts/screenshots/desktop/setup-revised/settings-pet-hatch.png",
 );
 mkdirSync(dirname(screenshotPath), { recursive: true });
+mkdirSync(testHome, { recursive: true });
+mkdirSync(testCodexHome, { recursive: true });
+const testEnvironment = Object.fromEntries(
+  ["PATH", "SHELL", "LANG", "LC_ALL", "TERM", "TMPDIR", "CI"].flatMap(
+    (key) =>
+      process.env[key] === undefined ? [] : [[key, process.env[key]]],
+  ),
+);
 let application;
 
 try {
   application = await electron.launch({
     args: [resolve("apps/desktop/out/main/index.js")],
     env: {
-      ...process.env,
+      ...testEnvironment,
+      HOME: testHome,
+      USER: "kestrel-test",
+      LOGNAME: "kestrel-test",
+      CODEX_HOME: testCodexHome,
+      KESTREL_DISABLE_UPDATES: "1",
       KESTREL_TEST_USER_DATA: join(temporaryRoot, "user-data"),
     },
   });
@@ -35,6 +50,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /General/ }).click();
   const setting = page.locator(".pet-setting");
   await setting.getByText("Activity pet", { exact: true }).waitFor();
   await setting
@@ -81,6 +97,7 @@ try {
   );
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /General/ }).click();
   await page.locator(".floating-pet").waitFor();
   assert.equal(
     Math.round(
@@ -193,7 +210,7 @@ try {
   await page.screenshot({ path: hatchScreenshotPath });
   assert.deepEqual(runtimeErrors, []);
   process.stdout.write(
-    `Live approved Petdex search/install, verified floating animation, sizing, persisted always-on-top pop-out, quick composer, hatch capability UI, toggle, compact reflow, and screenshots passed. Screenshots: ${screenshotPath}, ${overlayScreenshotPath}, ${hatchScreenshotPath}\n`,
+    `Live approved Petdex search/install, verified floating animation, sizing, persisted always-on-top pop-out, quick composer UI, hatch capability UI, toggle, compact reflow, and screenshots passed. Screenshots: ${screenshotPath}, ${overlayScreenshotPath}, ${hatchScreenshotPath}\n`,
   );
 } finally {
   await application?.close();

@@ -33,7 +33,7 @@ const help = `Kestrel CLI
   kestrel tools --session <id> [--query <text>]
   kestrel run --session <id> --prompt <text> --model <id> --providers <id,id>
   kestrel retry --session <id> --model <id> --providers <id,id>
-  kestrel resume --run <run-id> [--decision approved|rejected]
+  kestrel resume --run <run-id> --decision <approved|rejected>
   kestrel jobs
   kestrel automation schedule --session <id> --title <title> --prompt <text>
                               --model <id> --providers <id,id>

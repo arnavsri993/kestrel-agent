@@ -4,7 +4,7 @@
 
 Kestrel is a local-first, installable personal agent for macOS designed to replace the daily Codex-style workflow: choose a project, describe the outcome, follow the work, approve consequential changes, and inspect the evidence in one conversation. Its deterministic scheduling and DJI scenarios remain honest preview fixtures, while the real runtime supports persisted repository-aware sessions, tools, research, orchestration, artifacts, extensions, and terminal/editor entry points.
 
-The pinned documentation audit now maps all 1,117 Hermes and OpenClaw pages with zero known implementation gaps: 588 bundled core-family mappings, 375 signed extension contracts, and 154 operational references. The paired-node server contract covers location, Talk, wake phrases, and privacy-preserving presence without bundling a mobile app; the host fleet provides hardened one-cell-per-tenant Docker or Podman isolation. See [paired node protocol](docs/paired-node-protocol.md), [gateway networking](docs/gateway-networking.md), and the machine-readable [reference audit](docs/reference-page-audit.json).
+The pinned documentation audit now maps all 1,117 Hermes and OpenClaw pages with zero known unmapped pages: 588 bundled core-family mappings, 375 signed extension contracts, and 154 operational references. The paired-node server contract covers location, Talk, wake phrases, and privacy-preserving presence without bundling a mobile app; the host fleet provides hardened one-cell-per-tenant Docker or Podman isolation. See [paired node protocol](docs/paired-node-protocol.md), [gateway networking](docs/gateway-networking.md), and the machine-readable [reference audit](docs/reference-page-audit.json).
 
 The repository also contains a separate, static marketing website. It has no agent endpoint, database, authentication, or fal credential in its public runtime.
 
@@ -29,9 +29,9 @@ The repository also contains a separate, static marketing website. It has no age
 - Deterministic development adapters for email and calendar. They are visibly labeled and do not pretend to be connected accounts.
 - Auditable automatic execution routing chooses the model family, reasoning effort, and Fast mode per task. The general agent request path invokes only configured adapters and records live provider verification separately from model execution.
 - Static Next.js product site with accessible responsive states and provenance-tracked generated/fallback atmosphere.
-- Verified Apple Silicon (`arm64`) `.app` packaging, with signed/notarized DMG and ZIP internet-release automation.
+- Verified ad-hoc-signed Apple Silicon (`arm64`) `.app` packaging (not Developer ID signed and not notarized), plus release automation that can produce signed/notarized DMG and ZIP artifacts once organization-owned credentials are supplied.
 
-Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, public download/GitHub URLs, and the final product name. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
+Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, a public download URL, and the final product name. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
 
 The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 58 broad catalog families have repository evidence. A separate immutable [1,117-page source audit](docs/reference-page-audit.json) distinguishes native behavior, signed extension contracts, and operational material with zero known unmapped pages; it prevents broad families from being mistaken for proof that every vendor-specific feature is bundled.
 
@@ -85,7 +85,11 @@ corepack pnpm test:e2e
 corepack pnpm assets:verify
 ```
 
-Build an unsigned development app:
+Build an ad-hoc-signed development app (not Developer ID signed or notarized).
+Its `com.kestrel.desktop.dev` bundle identity and disabled-update channel are
+distinct. It intentionally keeps the existing `Kestrel` data directory and
+safeStorage Keychain identity until a tested migration can move existing
+encrypted history and credentials:
 
 ```bash
 corepack pnpm package:mac:dev
@@ -131,7 +135,7 @@ Generated output is not treated as evidence of a product video feature. Rejected
 
 ## Security and release boundaries
 
-Read [docs/local-ai-setup.md](docs/local-ai-setup.md), [docs/threat-model.md](docs/threat-model.md), [docs/permissions.md](docs/permissions.md), and [SECURITY.md](SECURITY.md) before changing runtime installation or adding a connector. The current `.app` is a development artifact, not a public release: it is unsigned and unnotarized. The release workflow requires signing/notarization secrets and must pass Gatekeeper and architecture checks before a public artifact is claimed.
+Read [docs/local-ai-setup.md](docs/local-ai-setup.md), [docs/threat-model.md](docs/threat-model.md), [docs/permissions.md](docs/permissions.md), and [SECURITY.md](SECURITY.md) before changing runtime installation or adding a connector. The current `.app` is an ad-hoc-signed development artifact, not a public release: it is not Developer ID signed and is not notarized. The release workflow requires signing/notarization secrets and must pass Gatekeeper and architecture checks before a public artifact is claimed.
 
 ## Naming and compatibility
 

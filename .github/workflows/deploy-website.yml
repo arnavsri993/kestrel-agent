@@ -7,6 +7,8 @@ on:
       - main
     paths:
       - "apps/website/**"
+      - "website-media/**"
+      - "scripts/verify-marketing-assets.ts"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - ".github/workflows/deploy-website.yml"
@@ -24,12 +26,27 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
+          package-manager-cache: false
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
+      - run: corepack pnpm assets:verify
+      - name: Verify configured public release
+        if: ${{ vars.NEXT_PUBLIC_RELEASE_STATUS == 'verified' }}
+        env:
+          PUBLIC_SITE_URL: https://arnavsri993.github.io/kestrel-agent
+          PUBLIC_SUPPORT_URL: https://arnavsri993.github.io/kestrel-agent/support
+          PUBLIC_PRIVACY_URL: https://arnavsri993.github.io/kestrel-agent/privacy
+          PUBLIC_DOWNLOAD_URL: ${{ vars.NEXT_PUBLIC_DOWNLOAD_URL }}
+          PUBLIC_RELEASE_MANIFEST_URL: ${{ vars.NEXT_PUBLIC_RELEASE_MANIFEST_URL }}
+          PUBLIC_RELEASE_CHECKSUMS_URL: ${{ vars.NEXT_PUBLIC_RELEASE_CHECKSUMS_URL }}
+          PUBLIC_PUBLISHER_NAME: ${{ vars.PUBLIC_PUBLISHER_NAME }}
+          PUBLIC_SUPPORT_EMAIL: ${{ vars.PUBLIC_SUPPORT_EMAIL }}
+          KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
+        run: corepack pnpm audit:market -- --distribution
       - uses: actions/configure-pages@v5
       - name: Build static website
         env:

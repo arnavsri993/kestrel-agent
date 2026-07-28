@@ -1,7 +1,9 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
   AgentStreamEventSchema,
+  KestrelDeepLinkSchema,
   LocalRuntimeProgressSchema,
+  PetActivityStateSchema,
   PetStatusSchema,
   RendererRequestSchema,
   RuntimeEventSchema,
@@ -12,6 +14,16 @@ import {
 const bridge: RendererBridge = {
   request: (request) =>
     ipcRenderer.invoke("kestrel:request", RendererRequestSchema.parse(request)),
+  onDeepLink(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
+      callback(KestrelDeepLinkSchema.parse(value));
+    ipcRenderer.on("kestrel:deep-link", listener);
+    ipcRenderer.send("kestrel:deep-link-ready");
+    return () => {
+      ipcRenderer.off("kestrel:deep-link", listener);
+      ipcRenderer.send("kestrel:deep-link-not-ready");
+    };
+  },
   onSnapshot(callback) {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown) =>
       callback(WorkspaceSnapshotSchema.parse(snapshot));
@@ -23,6 +35,12 @@ const bridge: RendererBridge = {
       callback(PetStatusSchema.parse(status));
     ipcRenderer.on("kestrel:pet-status", listener);
     return () => ipcRenderer.off("kestrel:pet-status", listener);
+  },
+  onPetActivity(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, activity: unknown) =>
+      callback(PetActivityStateSchema.parse(activity));
+    ipcRenderer.on("kestrel:pet-activity", listener);
+    return () => ipcRenderer.off("kestrel:pet-activity", listener);
   },
   onRuntimeEvent(callback) {
     const listener = (_event: Electron.IpcRendererEvent, event: unknown) =>

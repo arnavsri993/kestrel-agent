@@ -25,13 +25,34 @@ describe("desktop credential broker", () => {
     await broker.setCredential("cohere", "cohere-test-secret");
     await broker.setOpaqueSecret("google-workspace-oauth", "{\"refreshToken\":\"refresh-secret\"}");
     expect(await broker.listCredentials()).toContainEqual({ id: "openai", label: "OpenAI API key", configured: true });
-    expect(await broker.providerEnvironment({ OPENAI_BASE_URL: "https://provider.test/v1", KESTREL_ENABLE_CODEX_SUBSCRIPTION: "1", KESTREL_CODEX_PATH: "/Applications/ChatGPT.app/Contents/Resources/codex", UNRELATED_SECRET: "do-not-forward" })).toEqual({
+    expect(await broker.providerEnvironment({
+      OPENAI_BASE_URL: "https://provider.test/v1",
+      KESTREL_ENABLE_CODEX_SUBSCRIPTION: "1",
+      KESTREL_CODEX_PATH: "/Applications/ChatGPT.app/Contents/Resources/codex",
+      KESTREL_ALLOW_EXTERNAL_SEARCH: "true",
+      KESTREL_WEB_ALLOWED_HOSTS: "docs.example.test,api.example.test",
+      KESTREL_ALLOW_HOSTED_TRANSCRIPTION: "true",
+      KESTREL_OPENAI_TRANSCRIPTION_MODEL: "gpt-4o-mini-transcribe",
+      KESTREL_OPENAI_IMAGE_MODEL: "gpt-image-1",
+      KESTREL_OPENAI_SPEECH_MODEL: "gpt-4o-mini-tts",
+      KESTREL_OPENAI_VOICE: "alloy",
+      KESTREL_OLLAMA_CONTEXT_WINDOW: "32768",
+      UNRELATED_SECRET: "do-not-forward"
+    })).toEqual({
       OPENAI_API_KEY: "sk-test-secret-value",
       OPENAI_API_KEY_SECONDARY: "sk-test-backup-value",
       COHERE_API_KEY: "cohere-test-secret",
       OPENAI_BASE_URL: "https://provider.test/v1",
       KESTREL_ENABLE_CODEX_SUBSCRIPTION: "1",
       KESTREL_CODEX_PATH: "/Applications/ChatGPT.app/Contents/Resources/codex",
+      KESTREL_ALLOW_EXTERNAL_SEARCH: "true",
+      KESTREL_WEB_ALLOWED_HOSTS: "docs.example.test,api.example.test",
+      KESTREL_ALLOW_HOSTED_TRANSCRIPTION: "true",
+      KESTREL_OPENAI_TRANSCRIPTION_MODEL: "gpt-4o-mini-transcribe",
+      KESTREL_OPENAI_IMAGE_MODEL: "gpt-image-1",
+      KESTREL_OPENAI_SPEECH_MODEL: "gpt-4o-mini-tts",
+      KESTREL_OPENAI_VOICE: "alloy",
+      KESTREL_OLLAMA_CONTEXT_WINDOW: "32768",
       KESTREL_GOOGLE_WORKSPACE_OAUTH: "{\"refreshToken\":\"refresh-secret\"}"
     });
     const storedPath = join(root, "secure", "credentials", "openai.bin");
