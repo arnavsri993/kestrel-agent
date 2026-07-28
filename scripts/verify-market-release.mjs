@@ -9,9 +9,11 @@ const fail = (message) => {
   process.exitCode = 1;
 };
 
-const [builder, developmentBuilder, desktopPackage, desktopMain, productIdentity, workflow, websiteWorkflow, privacy, support, rootPackage, developmentSigner] = await Promise.all([
+const [builder, developmentBuilder, inheritedEntitlements, developmentInheritedEntitlements, desktopPackage, desktopMain, productIdentity, workflow, websiteWorkflow, privacy, support, rootPackage, developmentVerifier, desktopSmoke] = await Promise.all([
   read("apps/desktop/electron-builder.yml"),
   read("apps/desktop/electron-builder.dev.yml"),
+  read("apps/desktop/build/entitlements.mac.inherit.plist"),
+  read("apps/desktop/build/entitlements.mac.dev.inherit.plist"),
   read("apps/desktop/package.json"),
   read("apps/desktop/src/main/index.ts"),
   read("packages/shared-types/src/identity.ts"),
@@ -20,7 +22,8 @@ const [builder, developmentBuilder, desktopPackage, desktopMain, productIdentity
   read("apps/website/src/app/privacy/page.tsx"),
   read("apps/website/src/app/support/page.tsx"),
   read("package.json"),
-  read("scripts/sign-development-macos-app.mjs"),
+  read("scripts/verify-development-macos-app.mjs"),
+  read("scripts/smoke-desktop.mjs"),
 ]);
 
 for (const [name, source] of [["privacy", privacy], ["support", support]]) {
@@ -44,18 +47,22 @@ for (const marker of ["actions/configure-pages@v5", "actions/upload-pages-artifa
   if (!websiteWorkflow.includes(marker)) fail(`website deployment workflow is missing ${marker}.`);
 }
 if (!desktopPackage.includes('"package:mac:dev"') || !desktopPackage.includes("--arm64")) fail("desktop development packaging must target arm64.");
-for (const marker of ["extends: electron-builder.yml", "appId: com.kestrel.desktop.dev", "KESTREL_RELEASE_CHANNEL: development"]) {
+for (const marker of ["extends: electron-builder.yml", "appId: com.kestrel.desktop.dev", 'identity: "-"', "entitlements.mac.dev.inherit.plist", "KESTREL_RELEASE_CHANNEL: development"]) {
   if (!developmentBuilder.includes(marker)) fail(`desktop development packaging is missing ${marker}.`);
 }
-if (!desktopPackage.includes("KESTREL_RELEASE_CHANNEL=development") || !desktopPackage.includes("electron-builder.dev.yml")) fail("desktop development packaging must persist its isolated development identity.");
-if (!desktopPackage.includes("sign-development-macos-app.mjs")) fail("desktop development packaging must apply its documented ad-hoc signature.");
+if (inheritedEntitlements.includes("com.apple.security.cs.disable-library-validation")) fail("production helper entitlements unnecessarily disable library validation.");
+if (!developmentInheritedEntitlements.includes("com.apple.security.cs.disable-library-validation")) fail("development helper entitlements do not permit the ad-hoc Electron framework identity.");
+if (!desktopPackage.includes("KESTREL_RELEASE_CHANNEL=development") || !desktopPackage.includes("CSC_FOR_PULL_REQUEST=true") || !desktopPackage.includes("electron-builder.dev.yml")) fail("desktop development packaging must persist and sign its isolated development identity.");
+if (!desktopPackage.includes("verify-development-macos-app.mjs")) fail("desktop development packaging must verify its documented ad-hoc signature.");
+if (!desktopSmoke.includes("--use-mock-keychain")) fail("packaged desktop smoke must isolate its test-only keychain from production Safe Storage.");
 if (!desktopMain.includes("app.setName(PRODUCT_IDENTITY.runtimeApplicationName)")) fail("desktop startup must preserve its compatibility runtime name for safeStorage.");
 for (const marker of ['runtimeApplicationName = "Kestrel"', 'keychainService: `${runtimeApplicationName} Safe Storage`', "userDataDirectoryName: runtimeApplicationName"]) {
   if (!productIdentity.includes(marker)) fail(`product identity is missing ${marker}.`);
 }
-for (const marker of ['"--force", "--deep", "--sign", "-"', '"--verify", "--deep", "--strict"', '"Signature=adhoc"', '"Identifier=com.kestrel.desktop.dev"']) {
-  if (!developmentSigner.includes(marker)) fail(`development app signer is missing ${marker}.`);
+for (const marker of ['"--verify", "--deep", "--strict"', '"Signature=adhoc"', '"Identifier=com.kestrel.desktop.dev"', '"TeamIdentifier=not set"', '"/usr/bin/lipo"', '"com.apple.security.cs.disable-library-validation"']) {
+  if (!developmentVerifier.includes(marker)) fail(`development app verifier is missing ${marker}.`);
 }
+if (developmentVerifier.includes('"--sign"')) fail("development app verifier must not replace electron-builder's entitlement-aware signing.");
 if (!desktopPackage.includes('"package:mac:mdm"') || !desktopPackage.includes("--mac pkg")) fail("desktop MDM packaging must provide an arm64 PKG target.");
 if (/package:mac:universal|test:packaged-desktop:universal/.test(`${desktopPackage}\n${rootPackage}`)) fail("universal desktop scripts remain configured.");
 if (!rootPackage.includes("pnpm test:desktop-setup")) fail("the market verification command does not exercise guided local-AI setup.");

@@ -5,8 +5,8 @@ import process from "node:process";
 
 const appArgument = process.argv[2];
 if (process.platform !== "darwin")
-  throw new Error("Development app signing is only available on macOS.");
-if (!appArgument) throw new Error("Pass the packaged .app path to sign.");
+  throw new Error("Development app verification is only available on macOS.");
+if (!appArgument) throw new Error("Pass the packaged .app path to verify.");
 
 const appPath = resolve(process.cwd(), appArgument);
 if (
@@ -46,14 +46,17 @@ const readPlistValue = (path, key) => {
 };
 
 const appInfo = join(appPath, "Contents", "Info.plist");
+const helperApps = [
+  "Kestrel Helper.app",
+  "Kestrel Helper (Renderer).app",
+  "Kestrel Helper (GPU).app",
+  "Kestrel Helper (Plugin).app",
+].map((name) => join(appPath, "Contents", "Frameworks", name));
 const expectedBundles = [
   [appInfo, "com.kestrel.desktop.dev"],
   [
     join(
-      appPath,
-      "Contents",
-      "Frameworks",
-      "Kestrel Helper.app",
+      helperApps[0],
       "Contents",
       "Info.plist",
     ),
@@ -61,10 +64,7 @@ const expectedBundles = [
   ],
   [
     join(
-      appPath,
-      "Contents",
-      "Frameworks",
-      "Kestrel Helper (Renderer).app",
+      helperApps[1],
       "Contents",
       "Info.plist",
     ),
@@ -72,10 +72,7 @@ const expectedBundles = [
   ],
   [
     join(
-      appPath,
-      "Contents",
-      "Frameworks",
-      "Kestrel Helper (GPU).app",
+      helperApps[2],
       "Contents",
       "Info.plist",
     ),
@@ -83,10 +80,7 @@ const expectedBundles = [
   ],
   [
     join(
-      appPath,
-      "Contents",
-      "Frameworks",
-      "Kestrel Helper (Plugin).app",
+      helperApps[3],
       "Contents",
       "Info.plist",
     ),
@@ -109,9 +103,17 @@ if (releaseChannel !== "development")
     `Development launch channel is ${releaseChannel}; expected development.`,
   );
 
-runCodesign(["--force", "--deep", "--sign", "-", appPath], {
-  stdio: "inherit",
+const executablePath = join(appPath, "Contents", "MacOS", "Kestrel");
+const architecture = spawnSync("/usr/bin/lipo", ["-archs", executablePath], {
+  encoding: "utf8",
 });
+if (architecture.status !== 0 || architecture.stdout.trim() !== "arm64") {
+  const detail = `${architecture.stdout ?? ""}${architecture.stderr ?? ""}`.trim();
+  throw new Error(
+    `Development app architecture must be arm64${detail ? `; received ${detail}` : "."}`,
+  );
+}
+
 runCodesign(["--verify", "--deep", "--strict", "--verbose=2", appPath], {
   stdio: "inherit",
 });
@@ -125,6 +127,30 @@ for (const marker of [
 ]) {
   if (!signature.includes(marker))
     throw new Error(`Development app signature is missing ${marker}.`);
+}
+if (!/flags=.*\([^)]*runtime/.test(signature))
+  throw new Error("Development app signature is missing hardened runtime.");
+
+const requiredEntitlements = [
+  "com.apple.security.cs.allow-jit",
+  "com.apple.security.cs.allow-unsigned-executable-memory",
+  "com.apple.security.cs.disable-library-validation",
+];
+for (const target of [appPath, ...helperApps]) {
+  const entitlementResult = runCodesign(["-d", "--entitlements", "-", target]);
+  const entitlements = `${entitlementResult.stdout}${entitlementResult.stderr}`;
+  for (const entitlement of requiredEntitlements) {
+    if (!entitlements.includes(entitlement))
+      throw new Error(`${target} is missing the ${entitlement} entitlement.`);
+  }
+
+  const targetEvidence = runCodesign(["-dv", "--verbose=4", target]);
+  const targetSignature = `${targetEvidence.stdout}${targetEvidence.stderr}`;
+  if (
+    !targetSignature.includes("Signature=adhoc") ||
+    !/flags=.*\([^)]*runtime/.test(targetSignature)
+  )
+    throw new Error(`${target} is not ad-hoc signed with hardened runtime.`);
 }
 
 console.log(`Verified ad-hoc development signature: ${appPath}`);
