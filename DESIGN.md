@@ -706,3 +706,15 @@ The identity is built around one real scheduling decision and a single inspectab
 - Copy pass: utility headings name the surface or decision directly; supporting lines keep only task, boundary, or recovery information.
 - Motion contract: no new role. Existing short page-state feedback remains optional under reduced motion.
 - Why this is not generic: Kestrel's first view is organized around a granted local project, a reviewable task sequence, explicit tool scope, and real approval boundaries instead of prompt chips or fabricated workspace content.
+
+## Conversational configuration extension
+
+- Thesis: self-configuration is an inspectable change ledger inside the conversation, not a second settings dashboard and never a hidden act of self-modification.
+- Composition: the ordinary assistant message explains intent; one ruled configuration record then carries preview-only status, exact diff, isolated checks, approval, verification, version identity, and recovery. The approval boundary remains visually and semantically distinct from both planning and success.
+- Protected boundary: editable behavior, prompts, tool scope, stricter permissions, workflow limits, UI, memory, integration preferences, and general settings live in the versioned data plane. Safety, authentication, secret storage, approval enforcement, isolation, verification, immutable history, and recovery remain in the protected control plane.
+- Interaction contract: planning never claims a live effect. High-risk apply and rollback controls accept only the exact staged preview and require a fresh one-time decision; persistent allow is unavailable. The post-apply `Prepare undo` action writes a restoration request into the composer without executing it.
+- State contract: inspect, preview-only, waiting approval, rejected, stale plan, verification failure, applied, known-good restored, no improvement detected, improvement awaiting review, and unreadable result are all explicit. Failed or stale changes preserve the current live version and staged evidence.
+- Accessibility contract: native disclosures expose long diffs and checks; headings and persistent text carry status without color; verified apply and rollback can announce through a polite status; focus remains in the conversation and moves to the composer only when the user chooses to prepare an undo.
+- Density and material: extend Native Graphite with fine horizontal rules, one restrained status square, mono only for immutable IDs and diffs, and no glow, nested card stack, or new motion role. Compact density shortens conversation rhythm without removing recovery information.
+- Responsive contract: metadata sheds indentation before content; undo actions stack below their explanation; diffs wrap and scroll within a bounded region without creating page-level horizontal overflow.
+- Why this is not generic: the component exposes Kestrel's actual encrypted version, isolated validation, exact approval, read-back verification, and append-only recovery semantics instead of decorating a normal chat message with a generic settings card.

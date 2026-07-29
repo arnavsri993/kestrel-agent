@@ -529,12 +529,14 @@ export const RuntimeToolDescriptorSchema = z.object({
     "automation",
     "media",
     "extension",
+    "configuration",
   ]),
   riskLevel: RiskLevelSchema,
   readOnly: z.boolean(),
   requiresWorkspace: z.boolean(),
   source: z.enum(["builtin", "skill", "plugin", "mcp", "connector"]),
   tags: z.array(z.string().min(1)),
+  approvalMode: z.enum(["policy", "always"]).optional(),
 });
 export type RuntimeToolDescriptor = z.infer<typeof RuntimeToolDescriptorSchema>;
 
@@ -597,6 +599,7 @@ export const AgentRunSchema = z.object({
   providerModels: z.record(z.string(), z.string().min(1)).optional(),
   reasoningEffort: ReasoningEffortSchema.optional(),
   serviceTier: z.enum(["standard", "priority"]).optional(),
+  maximumTurns: z.number().int().positive().max(50).optional(),
   toolScope: z
     .array(z.string().regex(/^[a-z][a-z0-9_.-]+$/))
     .max(200)
@@ -1053,6 +1056,26 @@ export const WorkspaceSnapshotSchema = z.object({
         builtin: z.boolean(),
       }),
     ),
+  }),
+  configuration: z.object({
+    currentVersionId: z
+      .string()
+      .regex(/^config-version-[a-f0-9-]{36}$/),
+    sequence: z.number().int().positive(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    knownGood: z.boolean(),
+    pendingProposals: z.number().int().nonnegative(),
+    pendingImprovements: z.number().int().nonnegative(),
+    rollbackVersionId: z
+      .string()
+      .regex(/^config-version-[a-f0-9-]{36}$/)
+      .optional(),
+    ui: z.object({
+      density: z.enum(["comfortable", "compact"]),
+      showToolActivity: z.boolean(),
+      showConfigurationDiffs: z.boolean(),
+      announceVerification: z.boolean(),
+    }),
   }),
   updatedAt: z.string().datetime(),
 });

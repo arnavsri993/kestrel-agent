@@ -1299,12 +1299,12 @@ describe("provider-neutral agent loop", () => {
       expect(waiting.run).toMatchObject({
         status: "waiting_approval",
         turn: 1,
+        maximumTurns: 1,
       });
 
       const resumed = await loop.resume({
         runId: waiting.run.id,
         approvalDecision,
-        maximumTurns: 1,
       });
 
       expect(resumed.run).toMatchObject({ status: "completed", turn: 2 });

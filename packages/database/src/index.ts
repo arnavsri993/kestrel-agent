@@ -5,6 +5,10 @@ import Database from "better-sqlite3";
 import { decryptText, encryptText } from "@kestrel/encryption";
 import {
   ActivitySchema,
+  AgentConfigurationAuditEventSchema,
+  AgentConfigurationProposalSchema,
+  AgentConfigurationVersionSchema,
+  AgentImprovementProposalSchema,
   AgentRunSchema,
   ApprovalSchema,
   AgentContextBundleSchema,
@@ -18,6 +22,10 @@ import {
   UnifiedCalendarEventSchema,
   WorkspaceMutationSchema,
   type ActivityItem,
+  type AgentConfigurationAuditEvent,
+  type AgentConfigurationProposal,
+  type AgentConfigurationVersion,
+  type AgentImprovementProposal,
   type AgentContextBundle,
   type AgentRun,
   type Approval,
@@ -170,6 +178,23 @@ CREATE TABLE IF NOT EXISTS calendar_sync_state (
 );
 `;
 
+const migration009 = `
+CREATE TABLE IF NOT EXISTS agent_configuration_records (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK(kind IN ('version', 'proposal', 'audit', 'improvement')),
+  status TEXT NOT NULL,
+  payload_ciphertext TEXT NOT NULL,
+  payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_configuration_records_kind_created
+  ON agent_configuration_records(kind, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_configuration_records_kind_status
+  ON agent_configuration_records(kind, status);
+`;
+
 export interface IdempotencyClaim<T = unknown> {
   key: string;
   ownerToken: string;
@@ -245,6 +270,17 @@ interface MemoryRow {
   inferred: number;
 }
 
+interface AgentConfigurationRecordRow {
+  id: string;
+  kind: "version" | "proposal" | "audit" | "improvement";
+  status: string;
+  payload_ciphertext: string;
+  payload_iv: string;
+  payload_auth_tag: string;
+  created_at: string;
+  updated_at: string;
+}
+
 interface EncryptedPayloadRow {
   payload_ciphertext: string;
   payload_iv: string;
@@ -285,6 +321,8 @@ export class KestrelDatabase {
       this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(7, new Date().toISOString());
       this.db.exec(migration008);
       this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(8, new Date().toISOString());
+      this.db.exec(migration009);
+      this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(9, new Date().toISOString());
     })();
   }
 
@@ -891,6 +929,175 @@ export class KestrelDatabase {
       .run(key, ownerToken).changes === 1;
   }
 
+  saveAgentConfigurationVersion(
+    version: AgentConfigurationVersion,
+  ): void {
+    const parsed = AgentConfigurationVersionSchema.parse(version);
+    this.writeAgentConfigurationRecord(
+      "version",
+      parsed.id,
+      parsed.knownGood ? "known_good" : "verified",
+      parsed.createdAt,
+      parsed.createdAt,
+      parsed,
+      true,
+    );
+  }
+
+  getAgentConfigurationVersion(
+    id: string,
+  ): AgentConfigurationVersion | undefined {
+    const row = this.readAgentConfigurationRecord("version", id);
+    return row
+      ? AgentConfigurationVersionSchema.parse(
+          this.decryptAgentConfigurationRecord(row),
+        )
+      : undefined;
+  }
+
+  listAgentConfigurationVersions(): AgentConfigurationVersion[] {
+    return this.listAgentConfigurationRecordRows("version")
+      .map((row) =>
+        AgentConfigurationVersionSchema.parse(
+          this.decryptAgentConfigurationRecord(row),
+        ),
+      )
+      .sort((left, right) => left.sequence - right.sequence);
+  }
+
+  listValidAgentConfigurationVersions(): AgentConfigurationVersion[] {
+    return this.listAgentConfigurationRecordRows("version")
+      .flatMap((row) => {
+        try {
+          return [
+            AgentConfigurationVersionSchema.parse(
+              this.decryptAgentConfigurationRecord(row),
+            ),
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .sort((left, right) => left.sequence - right.sequence);
+  }
+
+  saveAgentConfigurationProposal(
+    proposal: AgentConfigurationProposal,
+  ): void {
+    const parsed = AgentConfigurationProposalSchema.parse(proposal);
+    this.writeAgentConfigurationRecord(
+      "proposal",
+      parsed.id,
+      parsed.status,
+      parsed.createdAt,
+      parsed.updatedAt,
+      parsed,
+      false,
+    );
+  }
+
+  getAgentConfigurationProposal(
+    id: string,
+  ): AgentConfigurationProposal | undefined {
+    const row = this.readAgentConfigurationRecord("proposal", id);
+    return row
+      ? AgentConfigurationProposalSchema.parse(
+          this.decryptAgentConfigurationRecord(row),
+        )
+      : undefined;
+  }
+
+  listAgentConfigurationProposals(): AgentConfigurationProposal[] {
+    return this.listAgentConfigurationRecordRows("proposal").map((row) =>
+      AgentConfigurationProposalSchema.parse(
+        this.decryptAgentConfigurationRecord(row),
+      ),
+    );
+  }
+
+  saveAgentConfigurationAuditEvent(
+    event: AgentConfigurationAuditEvent,
+  ): void {
+    const parsed = AgentConfigurationAuditEventSchema.parse(event);
+    this.writeAgentConfigurationRecord(
+      "audit",
+      parsed.id,
+      parsed.action,
+      parsed.createdAt,
+      parsed.createdAt,
+      parsed,
+      true,
+    );
+  }
+
+  listAgentConfigurationAuditEvents(): AgentConfigurationAuditEvent[] {
+    return this.listAgentConfigurationRecordRows("audit").map((row) =>
+      AgentConfigurationAuditEventSchema.parse(
+        this.decryptAgentConfigurationRecord(row),
+      ),
+    );
+  }
+
+  saveAgentImprovementProposal(
+    proposal: AgentImprovementProposal,
+  ): void {
+    const parsed = AgentImprovementProposalSchema.parse(proposal);
+    this.writeAgentConfigurationRecord(
+      "improvement",
+      parsed.id,
+      parsed.status,
+      parsed.createdAt,
+      parsed.updatedAt,
+      parsed,
+      false,
+    );
+  }
+
+  getAgentImprovementProposal(
+    id: string,
+  ): AgentImprovementProposal | undefined {
+    const row = this.readAgentConfigurationRecord("improvement", id);
+    return row
+      ? AgentImprovementProposalSchema.parse(
+          this.decryptAgentConfigurationRecord(row),
+        )
+      : undefined;
+  }
+
+  listAgentImprovementProposals(): AgentImprovementProposal[] {
+    return this.listAgentConfigurationRecordRows("improvement").map((row) =>
+      AgentImprovementProposalSchema.parse(
+        this.decryptAgentConfigurationRecord(row),
+      ),
+    );
+  }
+
+  commitAgentConfigurationVersion(input: {
+    expectedHeadVersionId?: string;
+    version: AgentConfigurationVersion;
+    auditEvent: AgentConfigurationAuditEvent;
+    proposal?: AgentConfigurationProposal;
+  }): void {
+    const version = AgentConfigurationVersionSchema.parse(input.version);
+    const auditEvent = AgentConfigurationAuditEventSchema.parse(
+      input.auditEvent,
+    );
+    const proposal = input.proposal
+      ? AgentConfigurationProposalSchema.parse(input.proposal)
+      : undefined;
+    this.db.transaction(() => {
+      const currentHead = this.getState<string>("agent.configuration.head");
+      if (currentHead !== input.expectedHeadVersionId)
+        throw new Error(
+          "Agent configuration changed after this plan was staged. Review a fresh diff before applying.",
+        );
+      this.saveAgentConfigurationVersion(version);
+      if (proposal) this.saveAgentConfigurationProposal(proposal);
+      this.saveAgentConfigurationAuditEvent(auditEvent);
+      this.setState("agent.configuration.head", version.id);
+    })();
+  }
+
   saveMemoryVersion(version: MemoryVersion): void {
     const parsed = MemoryVersionSchema.parse(version);
     this.upsertEncryptedPayload(
@@ -1061,6 +1268,105 @@ export class KestrelDatabase {
     if (!row) return undefined;
     const value = decryptText({ ciphertext: row.value_ciphertext, iv: row.value_iv, authTag: row.value_auth_tag }, this.encryptionKey);
     return JSON.parse(value) as T;
+  }
+
+  private writeAgentConfigurationRecord(
+    kind: AgentConfigurationRecordRow["kind"],
+    id: string,
+    status: string,
+    createdAt: string,
+    updatedAt: string,
+    value: unknown,
+    immutable: boolean,
+  ): void {
+    const encrypted = encryptText(JSON.stringify(value), this.encryptionKey);
+    if (immutable) {
+      this.db
+        .prepare(
+          `INSERT INTO agent_configuration_records (
+            id, kind, status, payload_ciphertext, payload_iv,
+            payload_auth_tag, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          kind,
+          status,
+          encrypted.ciphertext,
+          encrypted.iv,
+          encrypted.authTag,
+          createdAt,
+          updatedAt,
+        );
+      return;
+    }
+    const result = this.db
+      .prepare(
+        `INSERT INTO agent_configuration_records (
+          id, kind, status, payload_ciphertext, payload_iv,
+          payload_auth_tag, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          status=excluded.status,
+          payload_ciphertext=excluded.payload_ciphertext,
+          payload_iv=excluded.payload_iv,
+          payload_auth_tag=excluded.payload_auth_tag,
+          updated_at=excluded.updated_at
+        WHERE agent_configuration_records.kind=excluded.kind`,
+      )
+      .run(
+        id,
+        kind,
+        status,
+        encrypted.ciphertext,
+        encrypted.iv,
+        encrypted.authTag,
+        createdAt,
+        updatedAt,
+      );
+    if (result.changes !== 1)
+      throw new Error("Agent configuration record kind cannot be changed.");
+  }
+
+  private readAgentConfigurationRecord(
+    kind: AgentConfigurationRecordRow["kind"],
+    id: string,
+  ): AgentConfigurationRecordRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT id, kind, status, payload_ciphertext, payload_iv,
+          payload_auth_tag, created_at, updated_at
+        FROM agent_configuration_records WHERE id = ? AND kind = ?`,
+      )
+      .get(id, kind) as AgentConfigurationRecordRow | undefined;
+  }
+
+  private listAgentConfigurationRecordRows(
+    kind: AgentConfigurationRecordRow["kind"],
+  ): AgentConfigurationRecordRow[] {
+    return this.db
+      .prepare(
+        `SELECT id, kind, status, payload_ciphertext, payload_iv,
+          payload_auth_tag, created_at, updated_at
+        FROM agent_configuration_records
+        WHERE kind = ? ORDER BY created_at ASC, rowid ASC`,
+      )
+      .all(kind) as AgentConfigurationRecordRow[];
+  }
+
+  private decryptAgentConfigurationRecord(
+    row: AgentConfigurationRecordRow,
+  ): unknown {
+    return JSON.parse(
+      decryptText(
+        {
+          ciphertext: row.payload_ciphertext,
+          iv: row.payload_iv,
+          authTag: row.payload_auth_tag,
+        },
+        this.encryptionKey,
+      ),
+    ) as unknown;
   }
 
   private withMemoryMetadata(memory: MemoryRecord): MemoryRecord {

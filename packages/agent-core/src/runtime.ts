@@ -45,6 +45,18 @@ export interface RuntimeHook {
   run(context: RuntimeHookContext): RuntimeHookResult | Promise<RuntimeHookResult>;
 }
 
+export interface RuntimeToolPolicyDecision {
+  denied?: boolean;
+  requireApproval?: boolean;
+  reason?: string;
+}
+
+export interface RuntimeToolPolicyContext {
+  session: RuntimeSession;
+  tool: RuntimeToolDescriptor;
+  input: Record<string, unknown>;
+}
+
 export interface DeclarativeRuntimeHook {
   id: string;
   event: RuntimeHookEvent;
@@ -89,6 +101,7 @@ interface RuntimeToolDefinition {
 
 export interface ToolCallOptions {
   approvalStatus?: "pending" | "approved";
+  approvalGrantExecutionId?: string;
   idempotencyKey?: string;
   externalContent?: string;
   signal?: AbortSignal;
@@ -271,6 +284,11 @@ export class AgentRuntime extends EventEmitter {
   }>();
   private readonly approvalRulesKey = "runtime.approval-rules";
   private readonly processJournalKey = "runtime.background-processes";
+  private toolPolicyResolver:
+    | ((
+        context: RuntimeToolPolicyContext,
+      ) => RuntimeToolPolicyDecision)
+    | undefined;
 
   constructor(
     private readonly database: KestrelDatabase,
@@ -579,7 +597,15 @@ export class AgentRuntime extends EventEmitter {
   listApprovalRules(): ApprovalRule[] { return this.database.getPrivateState<ApprovalRule[]>(this.approvalRulesKey) ?? []; }
 
   setApprovalRule(input: Pick<ApprovalRule, "toolName" | "decision" | "scope"> & { sessionId?: string }): ApprovalRule {
-    if (!this.tools.has(input.toolName)) throw new Error("Approval rule tool is not registered.");
+    const definition = this.tools.get(input.toolName);
+    if (!definition) throw new Error("Approval rule tool is not registered.");
+    if (
+      input.decision === "allow" &&
+      definition.descriptor.approvalMode === "always"
+    )
+      throw new Error(
+        "This protected action always requires a fresh one-time approval.",
+      );
     if (input.scope === "session") {
       if (!input.sessionId) throw new Error("Session-scoped approval rules require a session.");
       this.requireSession(input.sessionId);
@@ -643,6 +669,14 @@ export class AgentRuntime extends EventEmitter {
   registerHook(hook: RuntimeHook): void {
     if (this.hooks.some((candidate) => candidate.id === hook.id)) throw new Error(`Hook ${hook.id} is already registered.`);
     this.hooks.push(hook);
+  }
+
+  setToolPolicyResolver(
+    resolver:
+      | ((context: RuntimeToolPolicyContext) => RuntimeToolPolicyDecision)
+      | undefined,
+  ): void {
+    this.toolPolicyResolver = resolver;
   }
 
   registerDeclarativeHook(config: DeclarativeRuntimeHook): void {
@@ -829,24 +863,86 @@ export class AgentRuntime extends EventEmitter {
   ): Promise<RuntimeToolExecution> {
     const input = definition.inputSchema.parse(rawInput);
     const assessment = options.externalContent ? assessExternalContent(options.externalContent) : undefined;
+    const configuredPolicy = this.toolPolicyResolver?.({
+      session,
+      tool: definition.descriptor,
+      input,
+    }) ?? {};
     const approvalRule = this.listApprovalRules().filter((rule) => rule.toolName === toolName && (rule.scope === "global" || rule.sessionId === session.id)).sort((left, right) => left.scope === "session" ? -1 : right.scope === "session" ? 1 : 0)[0];
-    const policy = approvalRule?.decision === "deny"
+    const alwaysRequireApproval =
+      definition.descriptor.approvalMode === "always" ||
+      configuredPolicy.requireApproval === true;
+    const oneTimeApprovalGrant =
+      options.approvalStatus === "approved" && alwaysRequireApproval
+        ? this.validOneTimeApprovalGrant(
+            session.id,
+            toolName,
+            input,
+            options.approvalGrantExecutionId,
+          )
+        : undefined;
+    const oneTimeApprovalValid =
+      options.approvalStatus === "approved" &&
+      (!alwaysRequireApproval || Boolean(oneTimeApprovalGrant));
+    const effectiveRisk =
+      alwaysRequireApproval &&
+      (definition.descriptor.riskLevel === "read_only" ||
+        definition.descriptor.riskLevel === "low")
+        ? "sensitive"
+        : definition.descriptor.riskLevel;
+    const policy = configuredPolicy.denied
+      ? {
+          allowed: false,
+          approvalRequired: false,
+          reason:
+            configuredPolicy.reason ??
+            `The active agent configuration denies ${toolName}.`,
+        }
+      : approvalRule?.decision === "deny"
       ? { allowed: false, approvalRequired: false, reason: `A persistent ${approvalRule.scope} rule denies ${toolName}.` }
       : mayExecute({
-      risk: definition.descriptor.riskLevel,
-      ...(approvalRule?.decision === "allow" ? { approvalStatus: "approved" } : options.approvalStatus ? { approvalStatus: options.approvalStatus } : {}),
+      risk: effectiveRisk,
+      ...(
+        alwaysRequireApproval
+          ? oneTimeApprovalValid
+            ? { approvalStatus: "approved" }
+            : {}
+          : approvalRule?.decision === "allow"
+            ? { approvalStatus: "approved" }
+            : options.approvalStatus
+              ? { approvalStatus: options.approvalStatus }
+              : {}
+      ),
       ...(assessment ? { externalContentSuspicious: assessment.suspicious } : {})
     });
+    if (
+      !policy.allowed &&
+      policy.approvalRequired &&
+      configuredPolicy.reason
+    )
+      policy.reason = configuredPolicy.reason;
     const startedAt = this.now();
+    if (policy.allowed && oneTimeApprovalGrant) {
+      this.database.saveToolExecution({
+        ...oneTimeApprovalGrant,
+        status: "cancelled",
+        error: "The approved one-time grant was consumed.",
+        completedAt: startedAt,
+      });
+    }
     let execution = RuntimeToolExecutionSchema.parse({
       id: `tool-${randomUUID()}`,
       sessionId: session.id,
       toolName,
       status: policy.allowed ? "running" : "blocked",
-      riskLevel: definition.descriptor.riskLevel,
+      riskLevel: effectiveRisk,
       input,
       ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
-      ...(!policy.allowed ? { output: { preview: this.approvalPreview(session, toolName, input), approvalRequired: policy.approvalRequired } } : {}),
+      ...(!policy.allowed ? { output: {
+        preview: this.approvalPreview(session, toolName, input),
+        approvalRequired: policy.approvalRequired,
+        persistentApprovalAllowed: !alwaysRequireApproval,
+      } } : {}),
       startedAt,
       ...(!policy.allowed ? { error: policy.reason, completedAt: startedAt } : {})
     });
@@ -2024,6 +2120,12 @@ export class AgentRuntime extends EventEmitter {
   }
 
   private approvalPreview(session: RuntimeSession, toolName: string, input: Record<string, unknown>): string {
+    if (
+      (toolName === "agent.config.apply" ||
+        toolName === "agent.config.rollback") &&
+      typeof input.preview === "string"
+    )
+      return input.preview.slice(0, 20_000);
     if (!session.workspaceRoot || !toolName.startsWith("workspace.")) return JSON.stringify(input, null, 2).slice(0, 20_000);
     try {
       if (toolName === "workspace.move") return `Move ${String(input.from)} → ${String(input.to)}`;
@@ -2047,6 +2149,25 @@ export class AgentRuntime extends EventEmitter {
     } catch {
       return JSON.stringify(input, null, 2).slice(0, 20_000);
     }
+  }
+
+  private validOneTimeApprovalGrant(
+    sessionId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    executionId?: string,
+  ): RuntimeToolExecution | undefined {
+    if (!executionId) return undefined;
+    const blocked = this.database.getToolExecution(executionId);
+    return blocked &&
+      blocked.sessionId === sessionId &&
+      blocked.toolName === toolName &&
+      blocked.status === "blocked" &&
+      blocked.output?.approvalRequired === true &&
+      blocked.output?.persistentApprovalAllowed === false &&
+      JSON.stringify(blocked.input) === JSON.stringify(input)
+      ? blocked
+      : undefined;
   }
 
   private requireBackgroundProcess(sessionId: string, processId: string) {

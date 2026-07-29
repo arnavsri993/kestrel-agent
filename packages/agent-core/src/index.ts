@@ -106,6 +106,10 @@ import {
   HonchoMemoryProvider,
   installHonchoMemoryTools,
 } from "./honcho-memory";
+import {
+  AgentConfigurationManager,
+  installAgentConfigurationTools,
+} from "./configuration";
 
 export interface AgentCoreDependencies {
   database: KestrelDatabase;
@@ -172,6 +176,7 @@ export class AgentCore {
   readonly pets: PetManager | undefined;
   readonly petHatch: PetHatchManager | undefined;
   readonly honchoMemory: HonchoMemoryProvider;
+  readonly configuration: AgentConfigurationManager;
   private state: AgentState;
   private opportunity: TaskOpportunity;
   private currentRouting: ModelRoutingDecision;
@@ -242,6 +247,18 @@ export class AgentCore {
       this.managedPolicy.enforceRetention();
     installManagedPolicy(this.runtime, this.managedPolicy);
     const mainSession = this.runtime.ensureMainSession();
+    this.configuration = new AgentConfigurationManager(
+      deps.database,
+      () => new Date(this.now()),
+    );
+    installAgentConfigurationTools(
+      this.runtime,
+      this.configuration,
+      mainSession.id,
+    );
+    this.runtime.setToolPolicyResolver(({ tool }) =>
+      this.configuration.toolPolicy(tool.name),
+    );
     this.memory = new MemoryManager(
       deps.database,
       () => new Date(this.now()),
@@ -373,8 +390,12 @@ export class AgentCore {
       undefined,
       (message) => {
         if (message.role === "user") {
-          this.memory.captureExplicit(message.content, message.id);
-          this.lifeContext.captureConversation(message.content, message.id);
+          const captureExplicit =
+            this.configuration.current().memory.captureExplicit;
+          if (captureExplicit)
+            this.memory.captureExplicit(message.content, message.id);
+          if (captureExplicit)
+            this.lifeContext.captureConversation(message.content, message.id);
         }
         const session = this.runtime.getSession(message.sessionId);
         this.honchoMemory.captureMessage(
@@ -410,6 +431,7 @@ export class AgentCore {
       () => new Date(this.now()),
       this.managedPolicy.get()?.maximumWorkers ?? 4,
       this.providerPool,
+      () => this.configuration.current().workflows.maximumTurns,
     );
     installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
     this.remote = new RemoteControl(
@@ -507,6 +529,7 @@ export class AgentCore {
             ({ instructions: _instructions, ...personality }) => personality,
           ),
       },
+      configuration: this.configuration.status(),
       updatedAt: this.now(),
     });
   }
@@ -553,7 +576,7 @@ export class AgentCore {
       ),
       deterministicEligible: false,
       requiresTools:
-        /\b(file|code|repository|web|browser|run|command|git)\b/.test(
+        /\b(file|code|repository|web|browser|run|command|git|configur|setting|personality|prompt|permission|workflow|memory|integration)\w*\b/.test(
           normalized,
         ),
       selectedAt: this.now(),
@@ -1058,6 +1081,23 @@ export class AgentCore {
           if (request.streamId && active)
             this.activeStreams.set(request.streamId, active);
           try {
+            const personality = this.personalities.get(
+              this.selectedPersonalityId,
+            );
+            const configuration = this.configuration.current();
+            const runtimeSession = this.runtime.getSession(request.sessionId);
+            const sharedMemoryEnabled =
+              personality.memoryScope === "shared" &&
+              configuration.memory.useSharedContext;
+            const honchoContext = sharedMemoryEnabled
+              ? await this.honchoMemory.contextFor({
+                  sessionId: request.sessionId,
+                  ...(runtimeSession.workspaceRoot
+                    ? { workspaceRoot: runtimeSession.workspaceRoot }
+                    : {}),
+                  query: priorMessage,
+                })
+              : "";
             const result = await this.agentLoop.retry({
               sessionId: request.sessionId,
               model: request.model,
@@ -1076,6 +1116,30 @@ export class AgentCore {
                     serviceTier: route.serviceTier,
                   }
                 : {}),
+              allowedTools: this.configuration.filterToolNames(
+                this.runtime
+                  .discoverTools(request.sessionId)
+                  .map((tool) => tool.name),
+                personality.toolNames,
+                      {
+                        includeProtectedRecovery:
+                          personality.toolNames === undefined ||
+                          (personality.toolNames.length > 0 &&
+                            this.configuration.isConfigurationRequest(
+                              priorMessage,
+                            )),
+                },
+              ),
+              instructions: [
+                personality.instructions,
+                this.configuration.instructions(),
+                ...(sharedMemoryEnabled
+                  ? [this.userModel.promptContext(), honchoContext]
+                  : []),
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+              maximumTurns: configuration.workflows.maximumTurns,
               signal: controller.signal,
               ...(request.streamId
                 ? {
@@ -1973,6 +2037,7 @@ export class AgentCore {
             const personality = this.personalities.get(
               request.personalityId ?? this.selectedPersonalityId,
             );
+            const configuration = this.configuration.current();
             const selectedModel = personality.preferredModel ?? request.model;
             const route =
               selectedModel === "auto"
@@ -1982,8 +2047,11 @@ export class AgentCore {
                   )
                 : undefined;
             const runtimeSession = this.runtime.getSession(request.sessionId);
+            const sharedMemoryEnabled =
+              personality.memoryScope === "shared" &&
+              configuration.memory.useSharedContext;
             const honchoContext =
-              personality.memoryScope === "shared"
+              sharedMemoryEnabled
                 ? await this.honchoMemory.contextFor({
                     sessionId: request.sessionId,
                     ...(runtimeSession.workspaceRoot
@@ -1993,7 +2061,7 @@ export class AgentCore {
                   })
                 : "";
             const localContext =
-              personality.memoryScope === "shared"
+              sharedMemoryEnabled
                 ? this.lifeContext.assembleContext({
                     query: request.message,
                   })
@@ -2019,15 +2087,37 @@ export class AgentCore {
                   }
                 : {}),
               ...(personality.toolNames
-                ? { allowedTools: personality.toolNames }
-                : {}),
+                ? {
+                    allowedTools: this.configuration.filterToolNames(
+                      this.runtime
+                        .discoverTools(request.sessionId)
+                        .map((tool) => tool.name),
+                      personality.toolNames,
+                      {
+                        includeProtectedRecovery:
+                          personality.toolNames !== undefined &&
+                          personality.toolNames.length > 0 &&
+                          this.configuration.isConfigurationRequest(
+                            request.message,
+                          ),
+                      },
+                    ),
+                  }
+                : {
+                    allowedTools: this.configuration.filterToolNames(
+                      this.runtime
+                        .discoverTools(request.sessionId)
+                        .map((tool) => tool.name),
+                    ),
+                  }),
               userContent: [
                 ...textContent(request.message),
                 ...this.attachmentParts(request.sessionId, request.attachments),
               ],
               instructions: [
                 personality.instructions,
-                ...(personality.memoryScope === "shared"
+                this.configuration.instructions(),
+                ...(sharedMemoryEnabled
                   ? [
                       this.userModel.promptContext(),
                       localContext?.prompt ?? "",
@@ -2037,9 +2127,10 @@ export class AgentCore {
               ]
                 .filter(Boolean)
                 .join("\n\n"),
-              ...(request.maximumTurns
-                ? { maximumTurns: request.maximumTurns }
-                : {}),
+              maximumTurns: Math.min(
+                request.maximumTurns ?? configuration.workflows.maximumTurns,
+                configuration.workflows.maximumTurns,
+              ),
               ...(request.approvalStatus
                 ? { approvalStatus: request.approvalStatus }
                 : {}),
@@ -2078,6 +2169,21 @@ export class AgentCore {
             throw new Error("Agent stream ID is already active.");
           const controller = new AbortController();
           const waitingRun = this.deps.database.getAgentRun(request.runId);
+          const rejectedConfigurationProposalId =
+            request.approvalDecision === "rejected" &&
+            waitingRun?.pendingToolName === "agent.config.apply" &&
+            waitingRun.pendingToolExecutionId
+              ? String(
+                  this.deps.database.getToolExecution(
+                    waitingRun.pendingToolExecutionId,
+                  )?.input.proposalId ?? "",
+                )
+              : "";
+          if (rejectedConfigurationProposalId)
+            this.configuration.rejectProposal(
+              rejectedConfigurationProposalId,
+              "User declined the one-time apply approval.",
+            );
           const active =
             request.streamId && waitingRun
               ? {
@@ -2089,12 +2195,14 @@ export class AgentCore {
           if (request.streamId && active)
             this.activeStreams.set(request.streamId, active);
           try {
+            const configuration = this.configuration.current();
             const result = await this.agentLoop.resume({
               runId: request.runId,
               approvalDecision: request.approvalDecision,
-              ...(request.maximumTurns
-                ? { maximumTurns: request.maximumTurns }
-                : {}),
+              maximumTurns: Math.min(
+                request.maximumTurns ?? configuration.workflows.maximumTurns,
+                configuration.workflows.maximumTurns,
+              ),
               signal: controller.signal,
               ...(request.streamId && waitingRun
                 ? {
@@ -2234,6 +2342,7 @@ export class AgentCore {
       reason: "isolated agent core",
     });
     this.dreaming.runIfDue(at);
+    this.configuration.runImprovementScanIfDue(at);
     this.lifeContext.maintain();
     await this.lifeContext.syncGoogleIfStale(at);
   }
@@ -2283,11 +2392,15 @@ export {
   type RuntimeHookEvent,
   type RuntimeHookResult,
   type RuntimeModelTool,
+  type RuntimeToolPolicyContext,
+  type RuntimeToolPolicyDecision,
   type ToolCallOptions,
 } from "./runtime";
 export {
   AgentLoop,
   SessionRunBusyError,
+  CHAT_CONFIGURATION_INSTRUCTIONS,
+  LOCAL_FIRST_TOOL_INSTRUCTIONS,
   type AgentLoopInput,
   type AgentLoopResult,
   type AgentLoopRetryInput,
@@ -2467,6 +2580,13 @@ export {
   renderPrometheusMetrics,
 } from "./observability";
 export { DEFAULT_DREAMING_CONFIGURATION, DreamingManager } from "./dreaming";
+export {
+  CONFIGURATION_TOOL_NAMES,
+  DEFAULT_AGENT_CONFIGURATION,
+  AgentConfigurationManager,
+  installAgentConfigurationTools,
+  type AgentConfigurationSurfaceRegistration,
+} from "./configuration";
 export { PresenceManager, type PresenceBeacon } from "./presence";
 export { NativeNodeManager, type NativeNodeBeacon, type NativeNodeRecord, type NativeNodeCommand, type NativeNodeResult, type NativeNodeCapability, type LocationAccuracy } from "./native-nodes";
 export { TenantFleet, type TenantCell, type TenantFleetRunner } from "./tenant-fleet";
