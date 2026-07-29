@@ -10,6 +10,7 @@ import { AutomationDaemon, TaskOrchestrator, nextCronOccurrence, parseScheduleEx
 import { ProviderPool, textContent, type ModelProvider } from "./providers";
 import { AgentRuntime } from "./runtime";
 import { teacherOpportunity } from "./fixtures";
+import { AdaptiveModelRouter, ModelRegistry } from "./model-orchestration";
 
 const directories: string[] = [];
 
@@ -17,15 +18,17 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-function fixture(provider: ModelProvider, now = () => new Date("2026-07-22T20:00:00.000Z")) {
+function fixture(provider: ModelProvider | ModelProvider[], now = () => new Date("2026-07-22T20:00:00.000Z")) {
   const root = mkdtempSync(join(tmpdir(), "kestrel-orchestration-"));
   directories.push(root);
   const database = new KestrelDatabase(":memory:", createEncryptionKey());
   const runtime = new AgentRuntime(database, [root], () => now().toISOString());
   const parent = runtime.createSession({ title: "Parent", workspaceRoot: root });
-  const providers = new ProviderPool([provider], now);
+  const providers = new ProviderPool(Array.isArray(provider) ? provider : [provider], now);
   const loop = new AgentLoop(database, runtime, providers, now);
-  return { root, database, runtime, parent, loop, orchestrator: new TaskOrchestrator(database, runtime, loop, now, 3, providers) };
+  const registry = new ModelRegistry(database, providers.list(), [], now);
+  const router = new AdaptiveModelRouter(database, registry, () => 0, () => true, now);
+  return { root, database, runtime, parent, loop, orchestrator: new TaskOrchestrator(database, runtime, loop, now, 3, providers, router, registry) };
 }
 
 function finalProvider(onCall?: () => Promise<void>): ModelProvider {
@@ -73,11 +76,50 @@ describe("task orchestration", () => {
     expect(delegated.route).toMatchObject({
       providerId: "fake",
       model: "local-test-model",
-      reasoningEffort: "none",
+      reasoningEffort: "low",
       local: true,
       verificationLatencyMs: 0
     });
     expect(delegated.result.run).toMatchObject({ model: "local-test-model", status: "completed" });
+    item.database.close();
+  });
+
+  it("routes an independent reviewer away from the model being reviewed", async () => {
+    const reviewerProvider = (id: string, model: string): ModelProvider => ({
+      id,
+      defaultModel: model,
+      capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false },
+      profileHints: { capabilities: { code_review: 0.9, reliability: 0.9 } },
+      probe: async () => undefined,
+      complete: async (request) => ({ providerId: id, model: request.model, text: "Reviewed.", toolCalls: [], usage: { inputTokens: 2, outputTokens: 1 }, finishReason: "stop" })
+    });
+    const item = fixture([
+      reviewerProvider("primary", "architect"),
+      reviewerProvider("independent", "critic"),
+    ]);
+    item.database.saveAgentRun({
+      id: "parent-run",
+      sessionId: item.parent.id,
+      model: "architect",
+      providerIds: ["primary"],
+      status: "completed",
+      turn: 1,
+      createdAt: "2026-07-22T19:59:00.000Z",
+      updatedAt: "2026-07-22T19:59:01.000Z",
+    });
+    const delegated = await item.orchestrator.delegate({
+      parentSessionId: item.parent.id,
+      title: "Independent review",
+      prompt: "Review the architecture and identify defects.",
+      model: "auto",
+      providerIds: ["auto"],
+      role: "reviewer",
+    });
+    expect(delegated.route).toMatchObject({
+      role: "reviewer",
+      providerId: "independent",
+      model: "critic",
+    });
     item.database.close();
   });
 

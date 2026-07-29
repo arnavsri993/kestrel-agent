@@ -750,10 +750,6 @@ button:disabled {
   line-height: 1.55;
 }
 .route-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
   margin: 18px 0 4px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
@@ -761,9 +757,18 @@ button:disabled {
   color: var(--muted);
   font-size: 9px;
 }
-.route-strip span:first-child {
+.route-strip summary {
+  width: max-content;
+  cursor: pointer;
   font-family: var(--mono);
   text-transform: uppercase;
+}
+.route-strip-values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 9px;
 }
 .route-strip strong {
   color: var(--ink);
@@ -3935,6 +3940,104 @@ html:has(.pet-overlay-shell) #root {
   align-items: start;
   padding-block: 22px;
 }
+.settings-routing-details {
+  border-bottom: 1px solid var(--line);
+  padding-block: 14px;
+}
+.settings-routing-details > summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+.settings-routing-details .routing-setting {
+  border-bottom: 0;
+  padding-bottom: 6px;
+}
+.routing-policy-setting {
+  align-items: start;
+}
+.routing-policy-setting > div {
+  width: 100%;
+}
+.routing-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 14px;
+}
+.routing-mode-grid button {
+  min-height: 78px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.routing-mode-grid button:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-soft);
+}
+.routing-mode-grid button:focus-visible {
+  outline: 2px solid var(--signal-deep);
+  outline-offset: 2px;
+}
+.routing-mode-grid button.selected {
+  border-color: var(--signal-deep);
+  background: var(--surface-soft);
+}
+.routing-mode-grid strong,
+.routing-mode-grid span {
+  display: block;
+}
+.routing-mode-grid span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.routing-registry-summary {
+  display: block;
+  margin-top: 12px;
+}
+.routing-advanced {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 11px;
+}
+.routing-advanced summary,
+.work-routing-override summary,
+.orchestration-status summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+.routing-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-block: 12px;
+}
+.routing-advanced-grid label {
+  color: var(--muted);
+  font-size: 9px;
+}
+.routing-advanced-grid input {
+  width: 100%;
+  margin-top: 5px;
+}
+.routing-trace-summary {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line-strong);
+}
+.routing-trace-summary span,
+.routing-trace-summary small {
+  color: var(--muted);
+}
 .routing-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(94px, 1fr));
@@ -3954,6 +4057,59 @@ html:has(.pet-overlay-shell) #root {
 .routing-grid strong,
 .routing-grid small {
   display: block;
+}
+.orchestration-status {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
+  gap: 12px 24px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 15px 16px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+.orchestration-status > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+.orchestration-status > div:first-child small,
+.orchestration-status > div:first-child span {
+  color: var(--muted);
+}
+.orchestration-status progress {
+  width: 100%;
+  height: 5px;
+  accent-color: var(--signal-deep);
+}
+.orchestration-status > p,
+.orchestration-status > details {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.orchestration-status.status-failed {
+  border-color: var(--danger);
+}
+.orchestration-route-detail {
+  display: grid;
+  gap: 3px;
+  margin-top: 9px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line-strong);
+}
+.orchestration-route-detail strong {
+  text-transform: capitalize;
+}
+.orchestration-route-detail span,
+.orchestration-route-detail small {
+  color: var(--muted);
+}
+.work-routing-override {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.work-routing-override .work-inline {
+  margin-top: 9px;
 }
 .routing-grid span {
   color: var(--muted);
@@ -5860,6 +6016,17 @@ html:has(.pet-overlay-shell) #root {
   }
   .usage-policy-grid {
     grid-template-columns: 1fr 1fr;
+  }
+  .routing-mode-grid,
+  .routing-advanced-grid {
+    grid-template-columns: 1fr;
+  }
+  .orchestration-status {
+    grid-template-columns: 1fr;
+  }
+  .orchestration-status > p,
+  .orchestration-status > details {
+    grid-column: auto;
   }
   .routing-grid {
     width: 100%;

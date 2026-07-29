@@ -59,6 +59,7 @@ describe("core agent request path", () => {
     const provider: ModelProvider = {
       id: "routed-provider", defaultModel: "routed-model",
       capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false },
+      profileHints: { features: { reasoningLevels: true } },
       complete: async (request) => {
         received = request;
         return { providerId: "routed-provider", model: request.model, text: "Routed", toolCalls: [], usage: { inputTokens: 2, outputTokens: 1 }, finishReason: "stop" };
@@ -67,7 +68,7 @@ describe("core agent request path", () => {
     const core = new AgentCore({ database, modelProviders: [provider], now: () => "2026-07-22T15:00:00.000Z" });
     const session = core.runtime.ensureMainSession();
     const response = await core.handle({ type: "runtime-run-agent", sessionId: session.id, message: "Review this repository architecture", model: "auto", providerIds: ["auto"] });
-    expect(response).toMatchObject({ ok: true, routing: { reasoningEffort: "medium" }, run: { model: "auto", providerIds: ["auto"], reasoningEffort: "medium", status: "completed" } });
+    expect(response).toMatchObject({ ok: true, routing: { model: "routed-model", providerId: "routed-provider", reasoningEffort: "medium" }, run: { model: "routed-model", providerIds: ["routed-provider"], reasoningEffort: "medium", status: "completed" } });
     expect(received).toMatchObject({ model: "routed-model", reasoningEffort: "medium" });
     await core.close();
   });

@@ -30,6 +30,7 @@ import type {
   MigrationPlanContract,
   MigrationResultContract,
   ModelProviderSummary,
+  ModelProfile,
   ModelRoutingDecision,
   OrganizationMemberContract,
   PetActivityState,
@@ -42,6 +43,8 @@ import type {
   RuntimeMessage,
   RuntimeSession,
   RuntimeToolExecution,
+  RoutingPolicy,
+  RoutingTrace,
   ScheduledJobSummary,
   SelectedAttachment,
   SessionUsageSummary,
@@ -161,7 +164,7 @@ function setupAssistantState({
 function modelLabel(model: ModelRoutingDecision["model"]): string {
   return model === "local-rules"
     ? "Local rules"
-    : model.replace("gpt-", "GPT-").replaceAll("-", " ");
+    : model.replaceAll("-", " ");
 }
 
 const setupSteps = [
@@ -2128,12 +2131,14 @@ function Home({
             <div>
               <p>{answer}</p>
               {routing && (
-                <div className="route-strip">
-                  <span>Auto-selected</span>
-                  <strong>{modelLabel(routing.model)}</strong>
-                  <span>{routing.reasoningEffort} reasoning</span>
-                  <span>Fast {routing.fastMode ? "on" : "off"}</span>
-                </div>
+                <details className="route-strip">
+                  <summary>How this task was routed</summary>
+                  <div className="route-strip-values">
+                    <strong>{modelLabel(routing.model)}</strong>
+                    <span>{routing.reasoningEffort} reasoning</span>
+                    <span>Fast {routing.fastMode ? "on" : "off"}</span>
+                  </div>
+                </details>
               )}
               <details className="message-details">
                 <summary>Context used · 6 memories</summary>
@@ -2392,6 +2397,10 @@ function RuntimeConversation({
   }, [visible, onSessions]);
 
   useEffect(() => {
+    if (providerId === "auto") {
+      setModel("auto");
+      return;
+    }
     if (providerId !== "ollama") return;
     setModel((current) =>
       localModels.some((item) => item.name === current)
@@ -4377,6 +4386,7 @@ function Work({
   const [goals, setGoals] = useState<GoalRecordContract[]>([]);
   const [teams, setTeams] = useState<TeamRecordContract[]>([]);
   const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
+  const [routingTraces, setRoutingTraces] = useState<RoutingTrace[]>([]);
   const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
   const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
   const [parentSessionId, setParentSessionId] = useState(sessions[0]?.id ?? "");
@@ -4418,7 +4428,7 @@ function Work({
   }, [parentSessionId, sessions]);
 
   async function load() {
-    const [state, providerState, sessionState, localModelState] = await Promise.all([
+    const [state, providerState, sessionState, localModelState, traceState] = await Promise.all([
       window.kestrel.request({
         type: "orchestration-list",
       }) as Promise<CoreResponse>,
@@ -4431,6 +4441,9 @@ function Work({
       window.kestrel.request({
         type: "local-model-status",
       }),
+      window.kestrel.request({
+        type: "orchestration-routing-traces",
+      }) as Promise<CoreResponse>,
     ]);
     if (!state.ok) throw new Error(state.error);
     setGoals(state.goals ?? []);
@@ -4448,6 +4461,7 @@ function Work({
     }
     if (localModelState.ok && "localModels" in localModelState)
       setLocalModels(localModelState.localModels);
+    if (traceState.ok) setRoutingTraces(traceState.routingTraces ?? []);
     if (sessionState.ok) onSessions(sessionState.sessions ?? []);
   }
   useEffect(() => {
@@ -4458,6 +4472,18 @@ function Work({
           : "Could not load orchestration state.",
       ),
     );
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void window.kestrel
+        .request({ type: "orchestration-routing-traces" })
+        .then((raw) => {
+          const response = raw as CoreResponse;
+          if (response.ok) setRoutingTraces(response.routingTraces ?? []);
+        });
+    }, 4_000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -4498,11 +4524,75 @@ function Work({
     }
   }
 
+  const routedTask =
+    [...routingTraces]
+      .reverse()
+      .find((item) => item.status === "planned" || item.status === "running") ??
+    routingTraces.at(-1);
+  const routedProgress =
+    routedTask?.status === "planned"
+      ? 12
+      : routedTask?.status === "running"
+        ? 58
+        : 100;
+
   return (
     <PageFrame
       title="Work"
       text="Goals, delegates, and scheduled work stay inspectable."
     >
+      {routedTask && (
+        <section
+          className={`orchestration-status status-${routedTask.status}`}
+          aria-label="Current routed task"
+        >
+          <div>
+            <small>Current task</small>
+            <strong>{routedTask.summary}</strong>
+            <span>
+              {routedTask.decisions
+                .map((decision) => decision.role)
+                .join(" · ")}{" "}
+              · {routedTask.status.replaceAll("_", " ")}
+            </span>
+          </div>
+          <progress
+            value={routedProgress}
+            max="100"
+            aria-label={`Approximate progress: ${routedProgress}%`}
+          />
+          {(routedTask.escalationCount > 0 ||
+            routedTask.status === "failed" ||
+            routedTask.status === "cancelled") && (
+            <p role={routedTask.status === "failed" ? "alert" : "status"}>
+              {routedTask.status === "failed"
+                ? "The routed task failed. Open details to inspect the route."
+                : routedTask.status === "cancelled"
+                  ? "The routed task was cancelled."
+                  : `Kestrel escalated ${routedTask.escalationCount} time${routedTask.escalationCount === 1 ? "" : "s"} to protect result quality.`}
+            </p>
+          )}
+          <details>
+            <summary>Model and cost details</summary>
+            {routedTask.decisions.map((decision) => (
+              <div key={decision.id} className="orchestration-route-detail">
+                <strong>{decision.role}</strong>
+                <span>
+                  {decision.model} via {decision.providerId} ·{" "}
+                  {decision.reasoningLevel} reasoning · Fast{" "}
+                  {decision.fastMode ? "on" : "off"}
+                </span>
+                <small>
+                  {Math.round(decision.confidence * 100)}% routing confidence
+                  {decision.estimatedCost === undefined
+                    ? ""
+                    : ` · about $${decision.estimatedCost.toFixed(3)}`}
+                </small>
+              </div>
+            ))}
+          </details>
+        </section>
+      )}
       <div className="work-board-tools">
         <button
           className="button secondary"
@@ -4563,8 +4653,8 @@ function Work({
         >
           <h2>Delegate a task</h2>
           <p className="work-card-note">
-            Auto verifies configured workers, prefers local Ollama, then known
-            free-tier endpoints, and records the exact route used.
+            Kestrel chooses a verified worker by capability, quality,
+            reliability, latency, cost, privacy, and your routing preference.
           </p>
           <label>
             Parent task
@@ -4597,6 +4687,8 @@ function Work({
               onChange={(event) => setDelegatePrompt(event.target.value)}
             />
           </label>
+          <details className="work-routing-override">
+            <summary>Override automatic routing</summary>
           <div className="work-inline">
             <select
               aria-label="Provider"
@@ -4634,6 +4726,7 @@ function Work({
               />
             )}
           </div>
+          </details>
           {delegationEvidence && (
             <small role="status">{delegationEvidence}</small>
           )}
@@ -6307,6 +6400,257 @@ function CustomAgentsSettings({
   );
 }
 
+const routingModeOptions: ReadonlyArray<{
+  id: RoutingPolicy["mode"];
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "balanced",
+    label: "Balanced",
+    description: "Strong results without unnecessary premium-model use.",
+  },
+  {
+    id: "fastest",
+    label: "Fastest",
+    description: "Prefer responsive endpoints when quality remains adequate.",
+  },
+  {
+    id: "cheapest",
+    label: "Cheapest",
+    description: "Use the lowest-cost model expected to pass validation.",
+  },
+  {
+    id: "best_quality",
+    label: "Best quality",
+    description: "Favor capability and reliability over cost and latency.",
+  },
+  {
+    id: "local_first",
+    label: "Local first",
+    description: "Start on this Mac, then use cloud models only when needed.",
+  },
+  {
+    id: "privacy_first",
+    label: "Privacy first",
+    description: "Keep model work on configured local endpoints.",
+  },
+];
+
+function RoutingPolicySettings() {
+  const [policy, setPolicy] = useState<RoutingPolicy | null>(null);
+  const [profiles, setProfiles] = useState<ModelProfile[]>([]);
+  const [traces, setTraces] = useState<RoutingTrace[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load() {
+    const [policyRaw, profilesRaw, tracesRaw] = await Promise.all([
+      window.kestrel.request({ type: "orchestration-routing-policy-get" }),
+      window.kestrel.request({ type: "orchestration-model-registry" }),
+      window.kestrel.request({ type: "orchestration-routing-traces" }),
+    ]);
+    const policyResponse = policyRaw as CoreResponse;
+    const profilesResponse = profilesRaw as CoreResponse;
+    const tracesResponse = tracesRaw as CoreResponse;
+    if (!policyResponse.ok) throw new Error(policyResponse.error);
+    if (!profilesResponse.ok) throw new Error(profilesResponse.error);
+    if (!tracesResponse.ok) throw new Error(tracesResponse.error);
+    setPolicy(policyResponse.routingPolicy ?? null);
+    setProfiles(profilesResponse.modelProfiles ?? []);
+    setTraces(tracesResponse.routingTraces ?? []);
+  }
+
+  useEffect(() => {
+    void load().catch((cause) =>
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Routing policy could not be loaded.",
+      ),
+    );
+  }, []);
+
+  async function save(next: RoutingPolicy) {
+    setBusy(true);
+    setError("");
+    try {
+      const response = (await window.kestrel.request({
+        type: "orchestration-routing-policy-set",
+        policy: next,
+      })) as CoreResponse;
+      if (!response.ok) throw new Error(response.error);
+      setPolicy(response.routingPolicy ?? next);
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Routing policy could not be saved.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!policy)
+    return (
+      <article className="setting-row">
+        <div>
+          <strong>How Kestrel chooses models</strong>
+          <p>Loading the encrypted routing policy…</p>
+          {error && <small role="alert">{error}</small>}
+        </div>
+      </article>
+    );
+
+  const latest = traces.at(-1);
+  return (
+    <article className="setting-row routing-policy-setting">
+      <div>
+        <strong>How Kestrel chooses models</strong>
+        <p>
+          Choose an outcome. Kestrel still selects the model, provider,
+          reasoning, speed, context, fallbacks, and review for each task.
+        </p>
+        <div
+          className="routing-mode-grid"
+          role="radiogroup"
+          aria-label="Model routing preference"
+        >
+          {routingModeOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={policy.mode === option.id}
+              className={policy.mode === option.id ? "selected" : ""}
+              disabled={busy}
+              onClick={() =>
+                void save({
+                  ...policy,
+                  mode: option.id,
+                  preferLocal:
+                    option.id === "local_first" ||
+                    option.id === "privacy_first",
+                  allowExternal: option.id !== "privacy_first",
+                })
+              }
+            >
+              <strong>{option.label}</strong>
+              <span>{option.description}</span>
+            </button>
+          ))}
+        </div>
+        <small className="routing-registry-summary">
+          {profiles.length} configured model endpoint
+          {profiles.length === 1 ? "" : "s"} ·{" "}
+          {profiles.filter((profile) => profile.local).length} local · learning
+          from {profiles.reduce((sum, profile) => sum + profile.observations, 0)}{" "}
+          observed outcome
+          {profiles.reduce((sum, profile) => sum + profile.observations, 0) ===
+          1
+            ? ""
+            : "s"}
+        </small>
+        <details className="routing-advanced">
+          <summary>Advanced routing and latest trace</summary>
+          <div className="routing-advanced-grid">
+            <label>
+              Maximum parallel agents
+              <input
+                type="number"
+                min="1"
+                max="64"
+                value={policy.maximumParallelism}
+                onChange={(event) =>
+                  setPolicy({
+                    ...policy,
+                    maximumParallelism: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              Fallback attempts
+              <input
+                type="number"
+                min="0"
+                max="8"
+                value={policy.maximumRetries}
+                onChange={(event) =>
+                  setPolicy({
+                    ...policy,
+                    maximumRetries: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              Delegation depth
+              <input
+                type="number"
+                min="0"
+                max="8"
+                value={policy.maximumDelegationDepth}
+                onChange={(event) =>
+                  setPolicy({
+                    ...policy,
+                    maximumDelegationDepth: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <label>
+              Task time limit, minutes
+              <input
+                type="number"
+                min="1"
+                max="1440"
+                value={Math.round(policy.maximumTaskDurationMs / 60_000)}
+                onChange={(event) =>
+                  setPolicy({
+                    ...policy,
+                    maximumTaskDurationMs:
+                      Number(event.target.value) * 60_000,
+                  })
+                }
+              />
+            </label>
+          </div>
+          <button
+            className="button secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void save(policy)}
+          >
+            {busy ? "Saving…" : "Save advanced limits"}
+          </button>
+          {latest ? (
+            <div className="routing-trace-summary">
+              <strong>{latest.summary}</strong>
+              <span>
+                {latest.status.replaceAll("_", " ")} ·{" "}
+                {latest.decisions.map((decision) => decision.role).join(", ")}
+              </span>
+              <small>
+                {latest.decisions[0]?.model} via{" "}
+                {latest.decisions[0]?.providerId} · about $
+                {latest.estimatedCostUsd.toFixed(3)}
+                {latest.escalationCount
+                  ? ` · ${latest.escalationCount} escalation${latest.escalationCount === 1 ? "" : "s"}`
+                  : ""}
+              </small>
+            </div>
+          ) : (
+            <small>No routed task trace yet.</small>
+          )}
+        </details>
+        {error && <small role="alert">{error}</small>}
+      </div>
+    </article>
+  );
+}
+
 function UsagePolicySettings() {
   const [policy, setPolicy] = useState<UsagePolicy | null>(null);
   const [busy, setBusy] = useState(false);
@@ -6906,6 +7250,9 @@ function Settings({
         )}
         {section === "models" && (
           <section className="settings-stack" aria-label="Model and routing settings">
+        <RoutingPolicySettings />
+        <details className="settings-routing-details">
+          <summary>Current routing details</summary>
         <article className="setting-row routing-setting">
           <div>
             <strong>Execution routing</strong>
@@ -6940,6 +7287,7 @@ function Settings({
             </div>
           </div>
         </article>
+        </details>
         <ProviderVerificationSettings />
         <UsagePolicySettings />
           </section>

@@ -31,6 +31,8 @@ export interface AgentLoopInput {
   targetPath?: string;
   maximumTurns?: number;
   maximumContextCharacters?: number;
+  maximumOutputTokens?: number;
+  temperature?: number;
   approvalStatus?: "pending" | "approved";
   signal?: AbortSignal;
   onTextDelta?: (delta: string) => void;
@@ -177,6 +179,8 @@ export class AgentLoop {
     return this.continueRun(run, modelMessages, compacted.removedMessages, {
       maximumTurns: input.maximumTurns ?? 12,
       approvalStatus: input.approvalStatus ?? "pending",
+      ...(input.maximumOutputTokens ? { maximumOutputTokens: input.maximumOutputTokens } : {}),
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
       ...(input.takeSteering ? { takeSteering: input.takeSteering } : {})
@@ -323,7 +327,7 @@ export class AgentLoop {
     initialRun: AgentRun,
     initialMessages: ModelMessage[],
     compactedMessages: number,
-    options: { maximumTurns: number; approvalStatus: "pending" | "approved"; signal?: AbortSignal; onTextDelta?: (delta: string) => void; takeSteering?: () => string[] }
+    options: { maximumTurns: number; approvalStatus: "pending" | "approved"; maximumOutputTokens?: number; temperature?: number; signal?: AbortSignal; onTextDelta?: (delta: string) => void; takeSteering?: () => string[] }
   ): Promise<AgentLoopResult> {
     let run = initialRun;
     let modelMessages = initialMessages;
@@ -345,7 +349,7 @@ export class AgentLoop {
         let poolResult;
         const lease = this.usageGovernor.acquire();
         try {
-          poolResult = await this.providers.complete({ model: run.model, messages: modelMessages, tools, metadata: { session_id: session.id, ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}) }, ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}), ...(run.serviceTier ? { serviceTier: run.serviceTier } : {}) }, {
+          poolResult = await this.providers.complete({ model: run.model, messages: modelMessages, tools, metadata: { session_id: session.id, ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}) }, ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}), ...(run.serviceTier ? { serviceTier: run.serviceTier } : {}), ...(options.maximumOutputTokens ? { maxOutputTokens: options.maximumOutputTokens } : {}), ...(options.temperature !== undefined ? { temperature: options.temperature } : {}) }, {
             ...(run.providerIds.includes("auto") ? {} : { providerIds: run.providerIds }),
             automaticRouting: run.providerIds.includes("auto"),
             ...(run.providerModels ? { providerModels: run.providerModels } : {}),

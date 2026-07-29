@@ -227,11 +227,11 @@ describe("model provider adapters", () => {
     expect(result).toMatchObject({ providerId: "gemini", responseId: "gemini-response", text: "At 00:02, ", finishReason: "tool_calls", toolCalls: [{ name: "workspace.read", arguments: { path: "notes.md" } }], usage: { inputTokens: 44, outputTokens: 7, cachedInputTokens: 3, reasoningTokens: 2 } });
   });
 
-  it("fails over only after retryable provider errors and records both attempts", async () => {
+  it("escalates to a different endpoint after a failed strategy and records both attempts", async () => {
     const failing: ModelProvider = {
       id: "failing",
       capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false },
-      complete: async () => { throw new ModelProviderError("temporary outage", "failing", true, 503); }
+      complete: async () => { throw new ModelProviderError("unsupported model strategy", "failing", false, 400); }
     };
     const succeeding: ModelProvider = {
       id: "succeeding",

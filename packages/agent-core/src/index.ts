@@ -7,7 +7,9 @@ import type {
   CoreRequest,
   CoreResponse,
   MemoryRecord,
+  ModelProfile,
   ModelRoutingDecision,
+  RoutingPolicy,
   SelectedAttachment,
   TaskOpportunity,
   WorkspaceSnapshot,
@@ -33,9 +35,13 @@ import {
   teacherOpportunity,
 } from "./fixtures";
 import { OpportunityEngine } from "./opportunity-engine";
-import { ModelRouter } from "./model-router";
+import {
+  AdaptiveModelRouter,
+  ModelRegistry,
+  TaskRequirementAnalyzer,
+} from "./model-orchestration";
 import { AgentRuntime } from "./runtime";
-import { AgentLoop } from "./agent-loop";
+import { AgentLoop, type AgentLoopResult } from "./agent-loop";
 import {
   ProviderPool,
   createEnvironmentModelProviders,
@@ -113,6 +119,8 @@ export interface AgentCoreDependencies {
   workspaceRoots?: string[];
   configuredWorkspaceRoots?: string[];
   modelProviders?: ModelProvider[];
+  modelProfiles?: ModelProfile[];
+  routingPolicy?: RoutingPolicy;
   skillRoots?: string[];
   learnedSkillRoot?: string;
   pluginRoots?: string[];
@@ -139,7 +147,9 @@ export class AgentCore {
   readonly email: EmailConnector;
   readonly calendar: CalendarConnector;
   readonly opportunities = new OpportunityEngine();
-  readonly modelRouter = new ModelRouter();
+  readonly modelRegistry: ModelRegistry;
+  readonly requirementAnalyzer = new TaskRequirementAnalyzer();
+  readonly modelRouter: AdaptiveModelRouter;
   readonly runtime: AgentRuntime;
   readonly providerPool: ProviderPool;
   readonly usageGovernor: UsageGovernor;
@@ -203,19 +213,17 @@ export class AgentCore {
       deps.database.getState<TaskOpportunity>("teacherOpportunity") ??
       teacherOpportunity;
     this.currentRouting =
-      deps.database.getState<ModelRoutingDecision>("modelRouting") ??
-      this.modelRouter.select({
+      deps.database.getState<ModelRoutingDecision>("modelRouting") ?? {
         taskId: this.opportunity.id,
-        riskLevel: this.opportunity.riskLevel,
-        complexity: 0.34,
-        qualitySensitivity: this.opportunity.importance,
-        latencySensitivity: this.opportunity.urgency,
-        estimatedComputeCost: this.opportunity.estimatedComputeCost,
-        dailyModelCostRemaining: 2.5,
-        deterministicEligible: true,
-        requiresTools: true,
+        model: "local-rules",
+        reasoningEffort: "none",
+        fastMode: false,
+        serviceTier: "standard",
+        execution: "local",
+        rationale: "No model route has been required yet.",
+        confidence: 1,
         selectedAt: this.now(),
-      });
+      };
     this.seed();
     this.context = new PreResponseContextResolver(() =>
       this.deps.database.listMemories(),
@@ -353,6 +361,32 @@ export class AgentCore {
       this.deps.database,
       () => new Date(this.deps.now?.() ?? Date.now()),
     );
+    this.modelRegistry = new ModelRegistry(
+      this.deps.database,
+      this.providerPool.list(),
+      this.deps.modelProfiles ?? [],
+      () => new Date(this.now()),
+    );
+    this.modelRouter = new AdaptiveModelRouter(
+      this.deps.database,
+      this.modelRegistry,
+      (providerId, model, inputTokens, outputTokens) =>
+        this.usageGovernor.estimateCost(providerId, model, {
+          inputTokens,
+          outputTokens,
+        }),
+      (providerId, _endpointId) => {
+        try {
+          this.managedPolicy.assertProviderAllowed(providerId);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      () => new Date(this.now()),
+    );
+    if (this.deps.routingPolicy)
+      this.modelRouter.setPolicy(this.deps.routingPolicy);
     this.agentLoop = new AgentLoop(
       this.deps.database,
       this.runtime,
@@ -395,6 +429,8 @@ export class AgentCore {
       () => new Date(this.now()),
       this.managedPolicy.get()?.maximumWorkers ?? 4,
       this.providerPool,
+      this.modelRouter,
+      this.modelRegistry,
     );
     installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
     this.remote = new RemoteControl(
@@ -503,49 +539,141 @@ export class AgentCore {
   private automaticRoute(
     taskId: string,
     message: string,
-  ): ModelRoutingDecision {
-    const normalized = message.toLowerCase();
-    const wordCount = message.trim().split(/\s+/).filter(Boolean).length;
-    const highConsequence =
-      /\b(deploy|publish|production|delete|payment|legal|medical|credential|security)\b/.test(
-        normalized,
-      );
-    const complexity = Math.min(
-      1,
-      wordCount / 500 +
-        (/```|\b(debug|refactor|migrate|architecture|review)\b/.test(normalized)
-          ? 0.38
-          : 0.12),
+    providerIds: string[] = ["auto"],
+  ): {
+    route: ModelRoutingDecision;
+    execution: ReturnType<AdaptiveModelRouter["executionPlan"]>;
+    maximumContextCharacters: number;
+    maximumOutputTokens: number;
+    temperature: number;
+    orchestrationInstructions: string;
+    decision: ReturnType<AdaptiveModelRouter["route"]>;
+    requirements: ReturnType<TaskRequirementAnalyzer["analyze"]>;
+  } {
+    this.modelRegistry.applyProviderHealth(this.providerPool.health());
+    const requirements = this.requirementAnalyzer.analyze(taskId, message);
+    const taskPolicy = this.requirementAnalyzer.routingPolicy(
+      message,
+      this.modelRouter.policy(),
     );
-    const spending = this.usageGovernor.spending();
-    const policy = this.usageGovernor.getPolicy();
-    const route = this.modelRouter.select({
-      taskId,
-      riskLevel: highConsequence
-        ? "high_consequence"
-        : /\b(write|edit|change|create|run)\b/.test(normalized)
-          ? "sensitive"
-          : "read_only",
-      complexity,
-      qualitySensitivity: highConsequence
-        ? 0.95
-        : Math.min(0.9, 0.45 + complexity / 2),
-      latencySensitivity: wordCount < 80 ? 0.8 : 0.45,
-      estimatedComputeCost: Math.max(0.002, wordCount * 0.00002),
-      dailyModelCostRemaining: Math.max(
-        0,
-        policy.dailyBudgetUsd - spending.dailyUsd,
-      ),
-      deterministicEligible: false,
-      requiresTools:
-        /\b(file|code|repository|web|browser|run|command|git)\b/.test(
-          normalized,
-        ),
-      selectedAt: this.now(),
+    const decision = this.modelRouter.route(requirements, {
+      role: requirements.parallelizable ? "orchestrator" : "worker",
+      allowedProviderIds: providerIds,
+      policy: taskPolicy,
     });
+    if (decision.traceId)
+      this.modelRouter.completeTrace(decision.traceId, { status: "running" });
+    const execution = this.modelRouter.executionPlan(decision);
+    const route: ModelRoutingDecision = {
+      taskId,
+      model: decision.model,
+      providerId: decision.providerId,
+      selectedModelId: decision.selectedModelId,
+      reasoningEffort: decision.reasoningLevel,
+      fastMode: decision.fastMode,
+      serviceTier: decision.fastMode ? "priority" : "standard",
+      execution: this.modelRegistry.get(decision.selectedModelId).local
+        ? "local"
+        : "configured_endpoint",
+      rationale: decision.reasons.join(" "),
+      confidence: decision.confidence,
+      ...(decision.traceId ? { traceId: decision.traceId } : {}),
+      fallbackModelIds: decision.fallbackModelIds,
+      reviewRequired: decision.settings.reviewRequired,
+      selectedAt: decision.selectedAt,
+    };
     this.currentRouting = route;
     this.deps.database.setState("modelRouting", route);
-    return route;
+    const orchestrationInstructions = requirements.parallelizable
+      ? [
+          "This request has independent specialist work. You are the accountable orchestrator.",
+          "Create focused subtasks only when they can run independently or provide a useful review.",
+          "Use orchestration.delegate with model auto and providerIds auto; give each worker only the files, constraints, decisions, and output contract it needs.",
+          `Do not exceed ${decision.settings.parallelism} concurrent workers or the configured delegation depth. Reconcile contradictions and validate the integrated result before answering.`,
+          decision.settings.reviewRequired
+            ? "Use an independent reviewer for consequential or low-confidence integration decisions."
+            : "",
+        ].filter(Boolean).join(" ")
+      : decision.settings.reviewRequired
+        ? "Validate the result with deterministic checks when available. Use an independent reviewer route if validation is inconclusive or confidence drops."
+        : "";
+    return {
+      route,
+      execution,
+      maximumContextCharacters: decision.settings.maximumContextCharacters,
+      maximumOutputTokens: decision.settings.maximumOutputTokens,
+      temperature: decision.settings.temperature,
+      orchestrationInstructions,
+      decision,
+      requirements,
+    };
+  }
+
+  private recordAutomaticOutcome(
+    automatic: ReturnType<AgentCore["automaticRoute"]>,
+    result: AgentLoopResult,
+  ): void {
+    const audits = this.deps.database.listModelCallAudits(result.run.id);
+    const actualCostUsd = audits.reduce(
+      (sum, audit) => sum + audit.estimatedCostUsd,
+      0,
+    );
+    const winning = result.modelResult
+      ? this.modelRegistry
+          .list()
+          .find(
+            (profile) =>
+              profile.endpointId === result.modelResult?.providerId &&
+              profile.model === result.modelResult.model,
+          )
+      : undefined;
+    const modelId = winning?.id ?? automatic.decision.selectedModelId;
+    const completed = result.run.status === "completed";
+    const acceptedExecution =
+      completed || result.run.status === "waiting_approval";
+    this.modelRegistry.recordOutcome({
+      modelId,
+      capabilities: automatic.requirements.capabilities,
+      succeeded: acceptedExecution,
+      validationPassed: completed,
+      latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
+      actualCostUsd,
+      escalated: modelId !== automatic.decision.selectedModelId,
+      observedAt: this.now(),
+    });
+    if (automatic.decision.traceId) {
+      this.modelRouter.completeTrace(automatic.decision.traceId, {
+        status: completed
+          ? "completed"
+          : result.run.status === "cancelled"
+            ? "cancelled"
+            : result.run.status === "failed"
+              ? "failed"
+              : "running",
+        actualCostUsd,
+        escalated: modelId !== automatic.decision.selectedModelId,
+      });
+    }
+  }
+
+  private recordAutomaticFailure(
+    automatic: ReturnType<AgentCore["automaticRoute"]>,
+    cancelled: boolean,
+  ): void {
+    this.modelRegistry.recordOutcome({
+      modelId: automatic.decision.selectedModelId,
+      capabilities: automatic.requirements.capabilities,
+      succeeded: false,
+      validationPassed: false,
+      escalated: false,
+      observedAt: this.now(),
+    });
+    if (automatic.decision.traceId) {
+      this.modelRouter.completeTrace(automatic.decision.traceId, {
+        status: cancelled ? "cancelled" : "failed",
+        escalated: false,
+      });
+    }
   }
 
   resolveChannelSession(envelope: ChannelEnvelope): string {
@@ -724,18 +852,17 @@ export class AgentCore {
   }
 
   troubleshoot(message: string): string {
-    this.currentRouting = this.modelRouter.select({
+    this.currentRouting = {
       taskId: "chat-device-troubleshooting",
-      riskLevel: "read_only",
-      complexity: 0.42,
-      qualitySensitivity: 0.66,
-      latencySensitivity: 0.86,
-      estimatedComputeCost: 0.015,
-      dailyModelCostRemaining: 2.5,
-      deterministicEligible: true,
-      requiresTools: false,
+      model: "local-rules",
+      reasoningEffort: "none",
+      fastMode: false,
+      serviceTier: "standard",
+      execution: "local",
+      rationale: "Verified local troubleshooting rules cover this demonstration without a model request.",
+      confidence: 1,
       selectedAt: this.now(),
-    });
+    };
     this.deps.database.setState("modelRouting", this.currentRouting);
     const categories = this.context.categoriesFor(message);
     const resolved = this.context.resolve({
@@ -1030,7 +1157,11 @@ export class AgentCore {
           );
           const route =
             request.model === "auto"
-              ? this.automaticRoute(`retry-${request.sessionId}`, priorMessage)
+              ? this.automaticRoute(
+                  `retry-${request.sessionId}`,
+                  priorMessage,
+                  request.providerIds,
+                )
               : undefined;
           const controller = new AbortController();
           const active = request.streamId
@@ -1042,26 +1173,36 @@ export class AgentCore {
             : undefined;
           if (request.streamId && active)
             this.activeStreams.set(request.streamId, active);
+          const executionSignal = AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(
+              this.modelRouter.policy().maximumTaskDurationMs,
+            ),
+          ]);
           try {
             const result = await this.agentLoop.retry({
               sessionId: request.sessionId,
-              model: request.model,
-              providerIds: request.providerIds,
+              model: route?.execution.model ?? request.model,
+              providerIds: route?.execution.providerIds ?? request.providerIds,
               ...(request.providerModels || route
                 ? {
                     providerModels: {
-                      ...(route ? { "codex-subscription": route.model } : {}),
+                      ...route?.execution.providerModels,
                       ...request.providerModels,
                     },
                   }
                 : {}),
               ...(route
                 ? {
-                    reasoningEffort: route.reasoningEffort,
-                    serviceTier: route.serviceTier,
+                    reasoningEffort: route.route.reasoningEffort,
+                    serviceTier: route.route.serviceTier,
+                    maximumContextCharacters:
+                      route.maximumContextCharacters,
+                    maximumOutputTokens: route.maximumOutputTokens,
+                    temperature: route.temperature,
                   }
                 : {}),
-              signal: controller.signal,
+              signal: executionSignal,
               ...(request.streamId
                 ? {
                     onTextDelta: (delta: string) =>
@@ -1076,10 +1217,11 @@ export class AgentCore {
                 ? { takeSteering: () => active.steering.splice(0) }
                 : {}),
             });
+            if (route) this.recordAutomaticOutcome(route, result);
             return {
               ok: true,
               run: result.run,
-              ...(route ? { routing: route } : {}),
+              ...(route ? { routing: route.route } : {}),
               ...(result.assistantMessage
                 ? { messages: [result.assistantMessage] }
                 : {}),
@@ -1087,6 +1229,9 @@ export class AgentCore {
                 ? { execution: result.pendingExecution }
                 : {}),
             };
+          } catch (error) {
+            if (route) this.recordAutomaticFailure(route, executionSignal.aborted);
+            throw error;
           } finally {
             if (request.streamId) this.activeStreams.delete(request.streamId);
           }
@@ -1421,6 +1566,31 @@ export class AgentCore {
                 }) => job,
               ),
           };
+        case "orchestration-model-registry":
+          this.modelRegistry.applyProviderHealth(this.providerPool.health());
+          return { ok: true, modelProfiles: this.modelRegistry.list() };
+        case "orchestration-routing-policy-get":
+          return { ok: true, routingPolicy: this.modelRouter.policy() };
+        case "orchestration-routing-policy-set":
+          return {
+            ok: true,
+            routingPolicy: this.modelRouter.setPolicy(request.policy),
+          };
+        case "orchestration-routing-traces":
+          return { ok: true, routingTraces: this.modelRouter.traces() };
+        case "orchestration-routing-feedback":
+          this.modelRegistry.recordOutcome({
+            modelId: request.modelId,
+            capabilities: request.capabilities,
+            succeeded: request.outcome !== "rejected",
+            validationPassed: request.outcome === "accepted",
+            ...(request.reviewerConfidence === undefined
+              ? {}
+              : { reviewerConfidence: request.reviewerConfidence }),
+            rewritten: request.outcome === "corrected",
+            observedAt: this.now(),
+          });
+          return { ok: true, modelProfiles: this.modelRegistry.list() };
         case "orchestration-goal-create":
           return {
             ok: true,
@@ -1511,6 +1681,10 @@ export class AgentCore {
             providerIds: request.providerIds,
             isolateWorktree: request.isolateWorktree,
             ...(request.reasoningEffort ? { reasoningEffort: request.reasoningEffort } : {}),
+            ...(request.role ? { role: request.role } : {}),
+            ...(request.requiredCapabilities
+              ? { requiredCapabilities: request.requiredCapabilities }
+              : {}),
             ...(request.allowedTools
               ? { allowedTools: request.allowedTools }
               : {}),
@@ -1855,16 +2029,27 @@ export class AgentCore {
             : undefined;
           if (request.streamId && active)
             this.activeStreams.set(request.streamId, active);
+          const executionSignal = AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(
+              this.modelRouter.policy().maximumTaskDurationMs,
+            ),
+          ]);
+          let route: ReturnType<AgentCore["automaticRoute"]> | undefined;
           try {
             const personality = this.personalities.get(
               request.personalityId ?? this.selectedPersonalityId,
             );
             const selectedModel = personality.preferredModel ?? request.model;
-            const route =
+            const selectedProviderIds = personality.providerIds?.length
+              ? personality.providerIds
+              : request.providerIds;
+            route =
               selectedModel === "auto"
                 ? this.automaticRoute(
                     `run-${request.sessionId}`,
                     request.message,
+                    selectedProviderIds,
                   )
                 : undefined;
             const runtimeSession = this.runtime.getSession(request.sessionId);
@@ -1880,22 +2065,25 @@ export class AgentCore {
                 : "";
             const result = await this.agentLoop.run({
               sessionId: request.sessionId,
-              model: selectedModel,
-              providerIds: personality.providerIds?.length
-                ? personality.providerIds
-                : request.providerIds,
+              model: route?.execution.model ?? selectedModel,
+              providerIds:
+                route?.execution.providerIds ?? selectedProviderIds,
               ...(request.providerModels || route
                 ? {
                     providerModels: {
-                      ...(route ? { "codex-subscription": route.model } : {}),
+                      ...route?.execution.providerModels,
                       ...request.providerModels,
                     },
                   }
                 : {}),
               ...(route
                 ? {
-                    reasoningEffort: route.reasoningEffort,
-                    serviceTier: route.serviceTier,
+                    reasoningEffort: route.route.reasoningEffort,
+                    serviceTier: route.route.serviceTier,
+                    maximumContextCharacters:
+                      route.maximumContextCharacters,
+                    maximumOutputTokens: route.maximumOutputTokens,
+                    temperature: route.temperature,
                   }
                 : {}),
               ...(personality.toolNames
@@ -1907,6 +2095,7 @@ export class AgentCore {
               ],
               instructions: [
                 personality.instructions,
+                route?.orchestrationInstructions,
                 ...(personality.memoryScope === "shared"
                   ? [this.userModel.promptContext(), honchoContext]
                   : []),
@@ -1919,7 +2108,7 @@ export class AgentCore {
               ...(request.approvalStatus
                 ? { approvalStatus: request.approvalStatus }
                 : {}),
-              signal: controller.signal,
+              signal: executionSignal,
               ...(request.streamId
                 ? {
                     onTextDelta: (delta: string) =>
@@ -1934,10 +2123,11 @@ export class AgentCore {
                 ? { takeSteering: () => active.steering.splice(0) }
                 : {}),
             });
+            if (route) this.recordAutomaticOutcome(route, result);
             return {
               ok: true,
               run: result.run,
-              ...(route ? { routing: route } : {}),
+              ...(route ? { routing: route.route } : {}),
               ...(result.assistantMessage
                 ? { messages: [result.assistantMessage] }
                 : {}),
@@ -1945,6 +2135,9 @@ export class AgentCore {
                 ? { execution: result.pendingExecution }
                 : {}),
             };
+          } catch (error) {
+            if (route) this.recordAutomaticFailure(route, executionSignal.aborted);
+            throw error;
           } finally {
             if (request.streamId) this.activeStreams.delete(request.streamId);
           }
@@ -2148,7 +2341,15 @@ export {
   type HonchoClientFactory,
 } from "./honcho-memory";
 export { OpportunityEngine } from "./opportunity-engine";
-export { ModelRouter, type ModelRoutingInput } from "./model-router";
+export {
+  AdaptiveModelRouter,
+  ModelRegistry,
+  TaskRequirementAnalyzer,
+  DEFAULT_ROUTING_POLICY,
+  type RouteOptions,
+  type RoutingOutcome,
+  type TaskRequirements,
+} from "./model-orchestration";
 export {
   AgentRuntime,
   type DeclarativeRuntimeHook,
