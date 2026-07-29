@@ -100,6 +100,23 @@ function riskRank(risk: RiskLevel): number {
   return ["read_only", "low", "external", "sensitive", "high_consequence"].indexOf(risk);
 }
 
+function estimatedLatencyMs(profile: ModelProfile): number {
+  return profile.latency.p95Ms ?? profile.latency.averageMs ?? (profile.local ? 1_500 : 3_000);
+}
+
+function priorityEligible(
+  profile: ModelProfile,
+  requirements: TaskRequirements,
+  policy: RoutingPolicy,
+): boolean {
+  return policy.mode !== "cheapest"
+    && policy.mode !== "custom_budget"
+    && profile.features.fastMode
+    && requirements.latencySensitivity >= 0.7
+    && requirements.riskLevel !== "high_consequence"
+    && requirements.qualitySensitivity < 0.86;
+}
+
 function baselineCapabilities(provider: ModelProvider): Record<ModelCapability, number> {
   const scores = emptyScores(0.5);
   scores.speed = provider.capabilities.local ? 0.82 : 0.58;
@@ -291,7 +308,7 @@ export class TaskRequirementAnalyzer {
       mode = "maximum_parallelism";
     else if (/\b(local models? unless|local[- ]first|prefer local)\b/.test(normalized)) {
       mode = "local_first";
-      allowExternal = true;
+      allowExternal = base.allowExternal;
       preferLocal = true;
     } else if (/\b(local models? only|privacy[- ]first|do not send .* cloud)\b/.test(normalized)) {
       mode = "privacy_first";
@@ -434,7 +451,7 @@ export class AdaptiveModelRouter {
     if (candidates.length === 0) throw new Error("No configured model satisfies the task features, context, provider policy, and privacy constraints.");
     const scored = candidates.map((profile) => this.score(profile, requirements, policy))
       .filter((candidate) => policy.maximumTaskCostUsd === undefined || candidate.estimatedCost <= policy.maximumTaskCostUsd)
-      .filter((candidate) => policy.maximumLatencyMs === undefined || (candidate.profile.latency.p95Ms ?? candidate.profile.latency.averageMs ?? 0) <= policy.maximumLatencyMs);
+      .filter((candidate) => policy.maximumLatencyMs === undefined || estimatedLatencyMs(candidate.profile) <= policy.maximumLatencyMs);
     if (scored.length === 0) throw new Error("No configured model fits the task budget and latency limits.");
     scored.sort((left, right) => right.score - left.score || left.estimatedCost - right.estimatedCost || left.profile.id.localeCompare(right.profile.id));
     const selected = scored[0]!;
@@ -460,14 +477,11 @@ export class AdaptiveModelRouter {
       model: selected.profile.model,
       role: options.role,
       reasoningLevel,
-      fastMode: selected.profile.features.fastMode
-        && requirements.latencySensitivity >= 0.7
-        && requirements.riskLevel !== "high_consequence"
-        && requirements.qualitySensitivity < 0.86,
+      fastMode: priorityEligible(selected.profile, requirements, policy),
       estimatedCost: selected.estimatedCost,
       confidence,
       reasons,
-      fallbackModelIds: scored.slice(1, policy.maximumRetries + 2).map((item) => item.profile.id),
+      fallbackModelIds: scored.slice(1, policy.maximumRetries + 1).map((item) => item.profile.id),
       validationStrategy: reviewRequired
         ? "Validate tool and structured outputs, run available deterministic checks, then use an independent reviewer route."
         : "Validate structured output and any available deterministic checks before accepting the result.",
@@ -497,7 +511,11 @@ export class AdaptiveModelRouter {
     return {
       model: decision.model,
       providerIds: [...new Set(profiles.map((profile) => profile.endpointId))],
-      providerModels: Object.fromEntries(profiles.map((profile) => [profile.endpointId, profile.model])),
+      providerModels: profiles.reduce<Record<string, string>>((mapping, profile) => {
+        if (mapping[profile.endpointId] === undefined)
+          mapping[profile.endpointId] = profile.model;
+        return mapping;
+      }, {}),
     };
   }
 
@@ -526,22 +544,32 @@ export class AdaptiveModelRouter {
       return sum + observed * weight;
     }, 0) / importance;
     const reliability = profile.reliability.successRate ?? profile.capabilities.reliability;
-    const latencyMs = profile.latency.p95Ms ?? profile.latency.averageMs ?? (profile.local ? 1_500 : 3_000);
+    const latencyMs = estimatedLatencyMs(profile);
     const latencyScore = 1 / (1 + latencyMs / 4_000);
-    const configuredTokenCost =
-      profile.cost.inputPerMillion !== undefined
-      || profile.cost.outputPerMillion !== undefined
-        ? (
-            requirements.expectedInputTokens * (profile.cost.inputPerMillion ?? 0)
-            + requirements.expectedOutputTokens * (profile.cost.outputPerMillion ?? 0)
-          ) / 1_000_000
-        : this.estimateCost(
-            profile.provider,
-            profile.model,
-            requirements.expectedInputTokens,
-            requirements.expectedOutputTokens,
-          );
-    const estimatedCost = configuredTokenCost + (profile.cost.fixedRequestCost ?? 0);
+    const fallbackInputCost = this.estimateCost(
+      profile.provider,
+      profile.model,
+      requirements.expectedInputTokens,
+      0,
+    );
+    const fallbackOutputCost = this.estimateCost(
+      profile.provider,
+      profile.model,
+      0,
+      requirements.expectedOutputTokens,
+    );
+    const configuredTokenCost = (
+      profile.cost.inputPerMillion === undefined
+        ? fallbackInputCost
+        : requirements.expectedInputTokens * profile.cost.inputPerMillion / 1_000_000
+    ) + (
+      profile.cost.outputPerMillion === undefined
+        ? fallbackOutputCost
+        : requirements.expectedOutputTokens * profile.cost.outputPerMillion / 1_000_000
+    );
+    const priorityCostMultiplier = profile.cost.priorityMultiplier ?? 1.5;
+    const estimatedCost = configuredTokenCost * (priorityEligible(profile, requirements, policy) ? priorityCostMultiplier : 1)
+      + (profile.cost.fixedRequestCost ?? 0);
     const costScore = 1 / (1 + estimatedCost * 20);
     const localScore = profile.local ? 1 : 0;
     const weightSets: Record<RoutingPolicy["mode"], readonly [number, number, number, number, number]> = {
@@ -555,7 +583,8 @@ export class AdaptiveModelRouter {
       custom_budget: [0.42, 0.2, 0.08, 0.27, 0.03],
     };
     const weights = weightSets[policy.mode];
-    const score = capabilityFit * weights[0] + reliability * weights[1] + latencyScore * weights[2] + costScore * weights[3] + localScore * weights[4];
+    const localPreferenceBonus = policy.preferLocal && profile.local ? 0.25 : 0;
+    const score = capabilityFit * weights[0] + reliability * weights[1] + latencyScore * weights[2] + costScore * weights[3] + localScore * weights[4] + localPreferenceBonus;
     return { profile, score, estimatedCost, capabilityFit, reliability };
   }
 

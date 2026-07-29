@@ -73,6 +73,77 @@ describe("core agent request path", () => {
     await core.close();
   });
 
+  it("routes automatic image work only to providers with image capability", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-core-auto-image-"));
+    writeFileSync(join(root, "diagram.png"), Buffer.from("image fixture"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const calls: string[] = [];
+    const makeProvider = (id: string, images: boolean): ModelProvider => ({
+      id,
+      defaultModel: `${id}-model`,
+      capabilities: { streaming: true, tools: true, images, audio: false, documents: false, local: id === "vision" },
+      ...(images ? { profileHints: { capabilities: { image_understanding: 0.98, reliability: 0.95 } } } : {}),
+      complete: async (request) => {
+        calls.push(id);
+        return { providerId: id, model: request.model, text: id, toolCalls: [], usage: { inputTokens: 2, outputTokens: 1 }, finishReason: "stop" };
+      },
+    });
+    const core = new AgentCore({
+      database,
+      workspaceRoots: [root],
+      modelProviders: [makeProvider("text", false), makeProvider("vision", true)],
+      now: () => "2026-07-22T15:00:00.000Z",
+    });
+    const session = core.runtime.ensureMainSession();
+    const response = await core.handle({
+      type: "runtime-run-agent",
+      sessionId: session.id,
+      message: "Describe this diagram.",
+      model: "auto",
+      providerIds: ["auto"],
+      attachments: [{ path: join(root, "diagram.png"), name: "diagram.png", mediaType: "image/png", size: 13 }],
+    });
+    expect(response).toMatchObject({ ok: true, run: { model: "vision-model", providerIds: ["vision"] } });
+    expect(calls).toEqual(["vision"]);
+    await core.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("requires an independent reviewer before accepting a consequential automatic result", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const calls: string[] = [];
+    const makeProvider = (id: string, capabilities: Record<string, number>): ModelProvider => ({
+      id,
+      defaultModel: `${id}-model`,
+      capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false },
+      profileHints: { capabilities, features: { reasoningLevels: true } },
+      probe: async () => undefined,
+      complete: async (request) => {
+        calls.push(id);
+        return { providerId: id, model: request.model, text: `${id} result`, toolCalls: [], usage: { inputTokens: 3, outputTokens: 1 }, finishReason: "stop" };
+      },
+    });
+    const core = new AgentCore({
+      database,
+      modelProviders: [
+        makeProvider("primary", { coding: 0.99, backend_architecture: 0.99, reliability: 0.98 }),
+        makeProvider("reviewer", { code_review: 0.99, reliability: 0.99 }),
+      ],
+      now: () => "2026-07-22T15:00:00.000Z",
+    });
+    const session = core.runtime.ensureMainSession();
+    const response = await core.handle({
+      type: "runtime-run-agent",
+      sessionId: session.id,
+      message: "Implement this production backend architecture change.",
+      model: "auto",
+      providerIds: ["auto"],
+    });
+    expect(response).toMatchObject({ ok: true, run: { status: "completed" } });
+    expect(calls).toEqual(["primary", "reviewer"]);
+    await core.close();
+  });
+
   it("creates natural-language schedules through the public request contract", async () => {
     const { core } = createCore();
     const session = core.runtime.ensureMainSession();

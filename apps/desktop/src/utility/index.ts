@@ -90,7 +90,8 @@ port.on("message", async ({ data }) => {
         onAgentTextDelta: (event) => port.postMessage({ type: "agent-stream", event }),
         ...(webAccess ? { webAccess } : {}),
         ...(channels ? { channels } : {}),
-        ...(managedPolicy ? { managedPolicy } : {})
+        ...(managedPolicy ? { managedPolicy } : {}),
+        ...(googleWorkspace ? { googleWorkspace } : {}),
       });
       for (const key of Object.keys(message.config.secureEnvironment)) delete message.config.secureEnvironment[key];
       const mainSession = core.runtime.ensureMainSession();
@@ -108,8 +109,8 @@ port.on("message", async ({ data }) => {
         const controller = new AbortController();
         automationController = controller;
         const checkedAt = new Date();
-        const task = Promise.resolve().then(() => {
-          core!.runAmbientMaintenance(checkedAt);
+        const task = Promise.resolve().then(async () => {
+          await core!.runAmbientMaintenance(checkedAt);
           return core!.orchestrator.runDue(checkedAt, controller.signal);
         }).then((jobs) => {
           if (jobs.length === 0) return;

@@ -196,6 +196,7 @@ export class TaskOrchestrator {
     private readonly modelRouter?: AdaptiveModelRouter,
     private readonly modelRegistry?: ModelRegistry,
     private readonly requirementAnalyzer = new TaskRequirementAnalyzer(),
+    private readonly configuredMaximumTurns: () => number = () => 12,
   ) {
     this.reconcileInterruptedJobs();
   }
@@ -223,7 +224,7 @@ export class TaskOrchestrator {
     let selected: Awaited<ReturnType<TaskOrchestrator["selectWorker"]>> | undefined;
     try {
       selected = input.model === "auto" || input.providerIds.includes("auto")
-        ? await this.selectWorker(input, taskId)
+        ? await this.selectWorker(input, taskId, session.allowedTools)
         : undefined;
       const result = await this.loop.run({
         sessionId: session.id,
@@ -239,37 +240,13 @@ export class TaskOrchestrator {
         } : {}),
         userContent: textContent(input.prompt),
         ...(input.instructions || selected?.instructions ? { instructions: [input.instructions, selected?.instructions].filter(Boolean).join("\n\n") } : {}),
-        ...(input.maximumTurns ? { maximumTurns: input.maximumTurns } : {}),
+        maximumTurns: this.maximumTurnsForRun(input.maximumTurns),
         signal: AbortSignal.any([
           ...(input.signal ? [input.signal] : []),
           AbortSignal.timeout(this.modelRouter?.policy().maximumTaskDurationMs ?? 600_000),
         ])
       });
-      if (selected) {
-        const audits = this.database.listModelCallAudits(result.run.id);
-        const winning = result.modelResult
-          ? this.modelRegistry?.list().find((profile) =>
-              profile.endpointId === result.modelResult?.providerId
-              && profile.model === result.modelResult.model)
-          : undefined;
-        const modelId = winning?.id ?? selected.decision.selectedModelId;
-        this.modelRegistry?.recordOutcome({
-          modelId,
-          capabilities: selected.requirements.capabilities,
-          succeeded: result.run.status === "completed" || result.run.status === "waiting_approval",
-          validationPassed: result.run.status === "completed",
-          latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
-          actualCostUsd: audits.reduce((sum, audit) => sum + audit.estimatedCostUsd, 0),
-          escalated: modelId !== selected.decision.selectedModelId,
-          observedAt: this.now().toISOString(),
-        });
-        if (selected.decision.traceId)
-          this.modelRouter?.completeTrace(selected.decision.traceId, {
-            status: result.run.status === "completed" ? "completed" : result.run.status === "cancelled" ? "cancelled" : result.run.status === "failed" ? "failed" : "running",
-            actualCostUsd: audits.reduce((sum, audit) => sum + audit.estimatedCostUsd, 0),
-            escalated: modelId !== selected.decision.selectedModelId,
-          });
-      }
+      this.recordSelectedOutcome(selected, result);
       const route = selected?.route;
       this.database.setPrivateState(`orchestrator.task.${taskId}`, {
         taskId, sessionId: session.id, parentSessionId: parent.id, title: input.title, status: result.run.status, runId: result.run.id, ...(route ? { route } : {}), updatedAt: this.now().toISOString()
@@ -299,7 +276,11 @@ export class TaskOrchestrator {
     }
   }
 
-  private async selectWorker(input: DelegatedTaskInput, taskId: string): Promise<{
+  private async selectWorker(
+    input: DelegatedTaskInput,
+    taskId: string,
+    effectiveAllowedTools?: string[],
+  ): Promise<{
     route: DelegatedWorkerRoute & { fastMode: boolean };
     execution: ReturnType<AdaptiveModelRouter["executionPlan"]>;
     maximumContextCharacters: number;
@@ -315,11 +296,11 @@ export class TaskOrchestrator {
       input.prompt,
       this.modelRouter.policy(),
     );
-    const depth = input.delegationDepth ?? 0;
+    const depth = this.delegationDepth(input.parentSessionId);
     if (depth > policy.maximumDelegationDepth)
       throw new Error(`Delegation depth exceeds the configured maximum of ${policy.maximumDelegationDepth}.`);
     this.modelRegistry.applyProviderHealth(this.providers.health());
-    const requirements = this.requirementAnalyzer.analyze(taskId, input.prompt, { requiresTools: Boolean(input.allowedTools?.length) });
+    const requirements = this.requirementAnalyzer.analyze(taskId, input.prompt, { requiresTools: Boolean(effectiveAllowedTools?.length) });
     for (const [capability, importance] of Object.entries(input.requiredCapabilities ?? {})) {
       if (importance !== undefined)
         requirements.capabilities[capability as ModelCapability] = Math.max(requirements.capabilities[capability as ModelCapability] ?? 0, importance);
@@ -404,6 +385,61 @@ export class TaskOrchestrator {
       errors.push(`${decision.endpointId}: ${checked?.error ?? "health check failed"}`);
     }
     throw new Error(`No routed worker endpoint passed its health check (${errors.join("; ")}).`);
+  }
+
+  private recordSelectedOutcome(
+    selected: Awaited<ReturnType<TaskOrchestrator["selectWorker"]>> | undefined,
+    result: AgentLoopResult,
+  ): void {
+    if (!selected || result.run.status === "waiting_approval") return;
+    const audits = this.database.listModelCallAudits(result.run.id);
+    const winning = result.modelResult
+      ? this.modelRegistry?.list().find(
+          (profile) =>
+            profile.endpointId === result.modelResult?.providerId &&
+            profile.model === result.modelResult.model,
+        )
+      : undefined;
+    const modelId = winning?.id ?? selected.decision.selectedModelId;
+    const actualCostUsd = audits.reduce(
+      (sum, audit) => sum + audit.estimatedCostUsd,
+      0,
+    );
+    this.modelRegistry?.recordOutcome({
+      modelId,
+      capabilities: selected.requirements.capabilities,
+      succeeded: result.run.status === "completed",
+      validationPassed: result.run.status === "completed",
+      latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
+      actualCostUsd,
+      escalated: modelId !== selected.decision.selectedModelId,
+      observedAt: this.now().toISOString(),
+    });
+    if (selected.decision.traceId)
+      this.modelRouter?.completeTrace(selected.decision.traceId, {
+        status:
+          result.run.status === "completed"
+            ? "completed"
+            : result.run.status === "cancelled"
+              ? "cancelled"
+              : "failed",
+        actualCostUsd,
+        escalated: modelId !== selected.decision.selectedModelId,
+      });
+  }
+
+  private delegationDepth(parentSessionId: string): number {
+    let depth = 1;
+    let current = this.runtime.getSession(parentSessionId);
+    const visited = new Set<string>();
+    while (current.parentSessionId) {
+      if (visited.has(current.id))
+        throw new Error("Delegation session hierarchy contains a cycle.");
+      visited.add(current.id);
+      depth += 1;
+      current = this.runtime.getSession(current.parentSessionId);
+    }
+    return depth;
   }
 
   async runTeam(inputs: DelegatedTaskInput[], maximumConcurrency = this.maximumWorkers): Promise<Array<DelegatedTaskResult | Error>> {
@@ -569,6 +605,7 @@ export class TaskOrchestrator {
       const result = await this.loop.resume({
         runId: job.lastRunId,
         approvalDecision: "approved",
+        maximumTurns: this.maximumTurnsForRun(),
       });
       updated = this.finishJob(updated, result, this.now());
     } catch (error) {
@@ -589,15 +626,48 @@ export class TaskOrchestrator {
       let current: ScheduledAgentJob = { ...job, status: "running", updatedAt: this.now().toISOString() };
       this.replaceJob(current);
       try {
+        const session = this.runtime.getSession(job.sessionId);
+        const selected = job.model === "auto" || job.providerIds.includes("auto")
+          ? await this.selectWorker(
+              {
+                parentSessionId: job.sessionId,
+                title: job.title,
+                prompt: job.prompt,
+                model: job.model,
+                providerIds: job.providerIds,
+                ...(job.providerModels ? { providerModels: job.providerModels } : {}),
+                ...(job.instructions ? { instructions: job.instructions } : {}),
+                role: "worker",
+                ...(signal ? { signal } : {}),
+              },
+              `scheduled-${job.id}`,
+              session.allowedTools,
+            )
+          : undefined;
         const result = await this.loop.run({
           sessionId: job.sessionId,
-          model: job.model,
-          providerIds: job.providerIds,
-          ...(job.providerModels ? { providerModels: job.providerModels } : {}),
+          model: selected?.execution.model ?? job.model,
+          providerIds: selected?.execution.providerIds ?? job.providerIds,
+          ...(job.providerModels || selected
+            ? { providerModels: { ...selected?.execution.providerModels, ...job.providerModels } }
+            : {}),
+          ...(selected
+            ? {
+                reasoningEffort: selected.route.reasoningEffort,
+                serviceTier: selected.route.fastMode ? "priority" : "standard",
+                maximumContextCharacters: selected.maximumContextCharacters,
+                maximumOutputTokens: selected.maximumOutputTokens,
+                temperature: selected.temperature,
+              }
+            : {}),
           userContent: textContent(job.prompt),
-          ...(job.instructions ? { instructions: job.instructions } : {}),
-          ...(signal ? { signal } : {})
+          ...(job.instructions || selected?.instructions
+            ? { instructions: [job.instructions, selected?.instructions].filter(Boolean).join("\n\n") }
+            : {}),
+          maximumTurns: this.maximumTurnsForRun(),
+          ...(signal ? { signal } : {}),
         });
+        this.recordSelectedOutcome(selected, result);
         current = this.finishJob(current, result, at);
       } catch (error) {
         current = signal?.aborted
@@ -694,6 +764,11 @@ export class TaskOrchestrator {
     if (job.schedule.kind === "interval") return { ...job, status: "pending", lastRunId: result.run.id, error: undefined, schedule: { ...job.schedule, nextRunAt: new Date(at.getTime() + job.schedule.intervalMs).toISOString() }, updatedAt: this.now().toISOString() };
     if (job.schedule.kind === "cron") return { ...job, status: "pending", lastRunId: result.run.id, error: undefined, schedule: { ...job.schedule, nextRunAt: nextCronOccurrence(job.schedule.expression, at).toISOString() }, updatedAt: this.now().toISOString() };
     return { ...job, status: "completed", lastRunId: result.run.id, error: undefined, updatedAt: this.now().toISOString() };
+  }
+
+  private maximumTurnsForRun(requested?: number): number {
+    const configured = this.configuredMaximumTurns();
+    return Math.min(requested ?? configured, configured);
   }
 
   private reconcileInterruptedJobs(): void {

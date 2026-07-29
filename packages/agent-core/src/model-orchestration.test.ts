@@ -17,6 +17,16 @@ function provider(input: {
   contextWindow?: number;
   reasoningLevels?: boolean;
   fastMode?: boolean;
+  cost?: {
+    inputPerMillion?: number;
+    outputPerMillion?: number;
+    fixedRequestCost?: number;
+    priorityMultiplier?: number;
+  };
+  latency?: {
+    averageMs?: number;
+    p95Ms?: number;
+  };
 }): ModelProvider {
   return {
     id: input.id,
@@ -37,6 +47,8 @@ function provider(input: {
         reasoningLevels: input.reasoningLevels ?? false,
         fastMode: input.fastMode ?? false,
       },
+      ...(input.cost ? { cost: input.cost } : {}),
+      ...(input.latency ? { latency: input.latency } : {}),
     },
     complete: async (request) => ({
       providerId: input.id,
@@ -183,6 +195,121 @@ describe("adaptive model orchestration", () => {
     item.database.close();
   });
 
+  it("keeps a privacy-first global policy closed to external local-first wording", () => {
+    const item = fixture([provider({ id: "local", model: "private", local: true })]);
+    const policy = item.router.setPolicy({
+      ...item.router.policy(),
+      allowExternal: false,
+      mode: "privacy_first",
+    });
+    expect(item.analyzer.routingPolicy(
+      "Use local models unless quality would suffer.",
+      policy,
+    )).toMatchObject({
+      mode: "local_first",
+      allowExternal: false,
+      preferLocal: true,
+    });
+    item.database.close();
+  });
+
+  it("keeps the selected model mapping when a fallback shares its endpoint", () => {
+    const item = fixture([provider({ id: "shared", model: "selected" })]);
+    const selected = item.registry.get("shared:selected");
+    item.registry.register({
+      ...selected,
+      id: "shared:fallback",
+      model: "fallback",
+      displayName: "fallback",
+    });
+    const decision = item.router.route(
+      item.analyzer.analyze("mapping", "Review this implementation."),
+      { role: "worker" },
+    );
+    const plan = item.router.executionPlan({
+      ...decision,
+      selectedModelId: "shared:selected",
+      model: "selected",
+      fallbackModelIds: ["shared:fallback"],
+    });
+    expect(plan).toEqual({
+      model: "selected",
+      providerIds: ["shared"],
+      providerModels: { shared: "selected" },
+    });
+    item.database.close();
+  });
+
+  it("applies local preference independently of the routing mode", () => {
+    const item = fixture([
+      provider({
+        id: "local",
+        model: "private",
+        local: true,
+        capabilities: { coding: 0.72, reliability: 0.8 },
+      }),
+      provider({
+        id: "external",
+        model: "remote",
+        capabilities: { coding: 0.98, reliability: 0.8 },
+      }),
+    ]);
+    const policy = item.analyzer.routingPolicy(
+      "Prefer local models and keep this under $1.",
+      item.router.policy(),
+    );
+    expect(policy).toMatchObject({ mode: "custom_budget", preferLocal: true });
+    expect(item.router.route(
+      item.analyzer.analyze("local-preference", "Implement this code change."),
+      { role: "worker", policy },
+    ).selectedModelId).toBe("local:private");
+    item.database.close();
+  });
+
+  it("uses conservative defaults for unknown latency and partial price data", () => {
+    const item = fixture([provider({ id: "external", model: "remote" })]);
+    const requirements = item.analyzer.analyze("limits", "Summarize this note.");
+    expect(() => item.router.route(requirements, {
+      role: "worker",
+      policy: { ...item.router.policy(), maximumLatencyMs: 2_000 },
+    })).toThrow("latency limits");
+
+    const priced = fixture([provider({ id: "priced", model: "remote" })]);
+    const decision = priced.router.route(
+      priced.analyzer.analyze("price", "Summarize this note."),
+      { role: "worker" },
+    );
+    expect(decision.estimatedCost).toBeCloseTo(0.02, 8);
+    item.database.close();
+    priced.database.close();
+  });
+
+  it("disables priority mode for budget policies and prices priority execution", () => {
+    const item = fixture([provider({
+      id: "priority",
+      model: "fast",
+      fastMode: true,
+      cost: { inputPerMillion: 1, outputPerMillion: 1, priorityMultiplier: 2 },
+    })]);
+    const requirements = item.analyzer.analyze("priority", "Finish this quickly.");
+    const balanced = item.router.route(requirements, { role: "worker" });
+    expect(balanced.fastMode).toBe(true);
+    expect(balanced.estimatedCost).toBeCloseTo(0.006, 8);
+    const cheapest = item.router.route(requirements, {
+      role: "worker",
+      policy: { ...item.router.policy(), mode: "cheapest" },
+    });
+    expect(cheapest.fastMode).toBe(false);
+    expect(cheapest.estimatedCost).toBeCloseTo(0.003, 8);
+    const budgeted = item.router.route(requirements, {
+      role: "worker",
+      policy: { ...item.router.policy(), mode: "custom_budget", maximumTaskCostUsd: 1 },
+    });
+    expect(budgeted.fastMode).toBe(false);
+    expect(budgeted.estimatedCost).toBeCloseTo(0.003, 8);
+    item.database.close();
+  });
+
   it("learns from corrections and reranks models for the affected capability", () => {
     const item = fixture([
       provider({
@@ -231,6 +358,7 @@ describe("adaptive model orchestration", () => {
       provider({ id: "cheap", model: "one" }),
       provider({ id: "strong", model: "two" }),
       provider({ id: "external", model: "three" }),
+      provider({ id: "more", model: "four" }),
     ]);
     const decision = item.router.route(
       item.analyzer.analyze("trace", "Review this implementation."),
@@ -242,7 +370,7 @@ describe("adaptive model orchestration", () => {
       status: "planned",
       decisions: [{ id: decision.id, role: "reviewer" }],
     });
-    expect(trace.decisions[0]?.fallbackModelIds.length).toBeLessThanOrEqual(3);
+    expect(trace.decisions[0]?.fallbackModelIds).toHaveLength(2);
     item.database.close();
   });
 

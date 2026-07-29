@@ -20,7 +20,17 @@ describe("durable memory manager", () => {
     expect(manager.correct(captured.memory!.id, { content: "Deployment notes belong in RELEASE.md", type: "project", sensitivity: "sensitive" })).toMatchObject({
       content: "Deployment notes belong in RELEASE.md", type: "project", sensitivity: "sensitive", userConfirmed: true, inferred: false, sourceType: "user-correction"
     });
-    expect(manager.list().find((memory) => memory.id === captured.memory?.id)?.structuredData).toMatchObject({ correctionCount: 1, previousContent: "I keep deployment notes in ops.md" });
+    expect(
+      manager.list().find((memory) => memory.id === captured.memory?.id)
+        ?.structuredData,
+    ).toMatchObject({ correctionCount: 1 });
+    expect(
+      manager.list().find((memory) => memory.id === captured.memory?.id)
+        ?.structuredData,
+    ).not.toHaveProperty("previousContent");
+    expect(manager.versions(captured.memory!.id)[0]?.content).toBe(
+      "I keep deployment notes in ops.md",
+    );
     expect(manager.forget(captured.memory!.id).status).toBe("deleted");
     expect(manager.list().some((memory) => memory.id === captured.memory?.id)).toBe(false);
     database.close();

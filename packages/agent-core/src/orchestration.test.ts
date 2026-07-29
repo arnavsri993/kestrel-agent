@@ -18,7 +18,11 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-function fixture(provider: ModelProvider | ModelProvider[], now = () => new Date("2026-07-22T20:00:00.000Z")) {
+function fixture(
+  provider: ModelProvider | ModelProvider[],
+  now = () => new Date("2026-07-22T20:00:00.000Z"),
+  configuredMaximumTurns = () => 12,
+) {
   const root = mkdtempSync(join(tmpdir(), "kestrel-orchestration-"));
   directories.push(root);
   const database = new KestrelDatabase(":memory:", createEncryptionKey());
@@ -28,7 +32,26 @@ function fixture(provider: ModelProvider | ModelProvider[], now = () => new Date
   const loop = new AgentLoop(database, runtime, providers, now);
   const registry = new ModelRegistry(database, providers.list(), [], now);
   const router = new AdaptiveModelRouter(database, registry, () => 0, () => true, now);
-  return { root, database, runtime, parent, loop, orchestrator: new TaskOrchestrator(database, runtime, loop, now, 3, providers, router, registry) };
+  return {
+    root,
+    database,
+    runtime,
+    parent,
+    loop,
+    router,
+    orchestrator: new TaskOrchestrator(
+      database,
+      runtime,
+      loop,
+      now,
+      3,
+      providers,
+      router,
+      registry,
+      undefined,
+      configuredMaximumTurns,
+    ),
+  };
 }
 
 function finalProvider(onCall?: () => Promise<void>): ModelProvider {
@@ -63,6 +86,39 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("caps delegated and scheduled runs at the active workflow turn limit", async () => {
+    let instant = new Date("2026-07-22T20:00:00.000Z");
+    const item = fixture(
+      finalProvider(),
+      () => instant,
+      () => 3,
+    );
+    const delegated = await item.orchestrator.delegate({
+      parentSessionId: item.parent.id,
+      title: "Capped worker",
+      prompt: "Work within the configured limit.",
+      model: "fake",
+      providerIds: ["fake"],
+      maximumTurns: 20,
+    });
+    expect(delegated.result.run.maximumTurns).toBe(3);
+
+    const job = item.orchestrator.schedule({
+      title: "Capped schedule",
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      prompt: "Run within the configured limit.",
+      schedule: { kind: "once", nextRunAt: instant.toISOString() },
+    });
+    const [completed] = await item.orchestrator.runDue(instant);
+    expect(completed?.id).toBe(job.id);
+    expect(
+      item.database.getAgentRun(completed?.lastRunId ?? "")?.maximumTurns,
+    ).toBe(3);
+    item.database.close();
+  });
+
   it("automatically selects and records a verified local worker route", async () => {
     const provider: ModelProvider = {
       ...finalProvider(),
@@ -81,6 +137,98 @@ describe("task orchestration", () => {
       verificationLatencyMs: 0
     });
     expect(delegated.result.run).toMatchObject({ model: "local-test-model", status: "completed" });
+    item.database.close();
+  });
+
+  it("requires inherited tools when selecting an automatic child worker", async () => {
+    const makeProvider = (id: string, tools: boolean): ModelProvider => ({
+      id,
+      defaultModel: `${id}-model`,
+      capabilities: {
+        streaming: true,
+        tools,
+        images: false,
+        audio: false,
+        documents: false,
+        local: id === "tools",
+      },
+      probe: async () => undefined,
+      complete: async (request) => ({
+        providerId: id,
+        model: request.model,
+        text: id,
+        toolCalls: [],
+        usage: { inputTokens: 2, outputTokens: 1 },
+        finishReason: "stop",
+      }),
+    });
+    const item = fixture([makeProvider("text", false), makeProvider("tools", true)]);
+    const scopedParent = item.runtime.createSession({
+      title: "Scoped parent",
+      parentSessionId: item.parent.id,
+      allowedTools: ["workspace.read"],
+    });
+    const delegated = await item.orchestrator.delegate({
+      parentSessionId: scopedParent.id,
+      title: "Tool worker",
+      prompt: "Inspect the repository.",
+      model: "auto",
+      providerIds: ["auto"],
+    });
+    expect(delegated.route?.providerId).toBe("tools");
+    item.database.close();
+  });
+
+  it("derives automatic delegation depth from the session hierarchy", async () => {
+    const provider: ModelProvider = {
+      ...finalProvider(),
+      defaultModel: "local-model",
+      probe: async () => undefined,
+    };
+    const item = fixture(provider);
+    item.router.setPolicy({ ...item.router.policy(), maximumDelegationDepth: 1 });
+    const child = await item.orchestrator.delegate({
+      parentSessionId: item.parent.id,
+      title: "First child",
+      prompt: "Inspect the repository.",
+      model: "auto",
+      providerIds: ["auto"],
+    });
+    await expect(item.orchestrator.delegate({
+      parentSessionId: child.sessionId,
+      title: "Nested child",
+      prompt: "Inspect the repository.",
+      model: "auto",
+      providerIds: ["auto"],
+    })).rejects.toThrow("Delegation depth exceeds");
+    item.database.close();
+  });
+
+  it("routes automatic scheduled work through the active privacy policy", async () => {
+    const calls: string[] = [];
+    const makeProvider = (id: string, local: boolean): ModelProvider => ({
+      id,
+      defaultModel: `${id}-model`,
+      capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local },
+      probe: async () => undefined,
+      complete: async (request) => {
+        calls.push(id);
+        return { providerId: id, model: request.model, text: id, toolCalls: [], usage: { inputTokens: 2, outputTokens: 1 }, finishReason: "stop" };
+      },
+    });
+    const item = fixture([makeProvider("local", true), makeProvider("external", false)]);
+    item.router.setPolicy({ ...item.router.policy(), mode: "privacy_first", allowExternal: false });
+    const job = item.orchestrator.schedule({
+      title: "Private scheduled task",
+      sessionId: item.parent.id,
+      model: "auto",
+      providerIds: ["auto"],
+      prompt: "Summarize this private note.",
+      schedule: { kind: "once", nextRunAt: "2026-07-22T20:00:00.000Z" },
+    });
+    const [completed] = await item.orchestrator.runDue();
+    expect(completed).toMatchObject({ id: job.id, status: "completed" });
+    expect(calls).toEqual(["local"]);
     item.database.close();
   });
 

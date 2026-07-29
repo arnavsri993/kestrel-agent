@@ -82,6 +82,8 @@ import {
   type ChannelEnvelope,
 } from "./channels";
 import { MemoryManager, installMemoryTools } from "./memory";
+import { LifeContextService } from "./life-context";
+import type { GoogleWorkspaceClient } from "./google-workspace";
 import {
   ArtifactManager,
   installMediaTools,
@@ -110,11 +112,16 @@ import {
   HonchoMemoryProvider,
   installHonchoMemoryTools,
 } from "./honcho-memory";
+import {
+  AgentConfigurationManager,
+  installAgentConfigurationTools,
+} from "./configuration";
 
 export interface AgentCoreDependencies {
   database: KestrelDatabase;
   email?: EmailConnector;
   calendar?: CalendarConnector;
+  googleWorkspace?: GoogleWorkspaceClient;
   now?: () => string;
   workspaceRoots?: string[];
   configuredWorkspaceRoots?: string[];
@@ -163,6 +170,7 @@ export class AgentCore {
   readonly userModel: UserModelStore;
   readonly context: PreResponseContextResolver;
   readonly memory: MemoryManager;
+  readonly lifeContext: LifeContextService;
   readonly remote: RemoteControl;
   readonly remoteBackendManager?: RemoteBackendManager;
   readonly web?: NetworkPolicyWebClient;
@@ -178,6 +186,7 @@ export class AgentCore {
   readonly pets: PetManager | undefined;
   readonly petHatch: PetHatchManager | undefined;
   readonly honchoMemory: HonchoMemoryProvider;
+  readonly configuration: AgentConfigurationManager;
   private state: AgentState;
   private opportunity: TaskOpportunity;
   private currentRouting: ModelRoutingDecision;
@@ -246,8 +255,29 @@ export class AgentCore {
       this.managedPolicy.enforceRetention();
     installManagedPolicy(this.runtime, this.managedPolicy);
     const mainSession = this.runtime.ensureMainSession();
-    this.memory = new MemoryManager(deps.database);
+    this.configuration = new AgentConfigurationManager(
+      deps.database,
+      () => new Date(this.now()),
+    );
+    installAgentConfigurationTools(
+      this.runtime,
+      this.configuration,
+      mainSession.id,
+    );
+    this.runtime.setToolPolicyResolver(({ tool }) =>
+      this.configuration.toolPolicy(tool.name),
+    );
+    this.memory = new MemoryManager(
+      deps.database,
+      () => new Date(this.now()),
+    );
     this.userModel = this.memory.userModel;
+    this.lifeContext = new LifeContextService(
+      deps.database,
+      deps.googleWorkspace,
+      () => new Date(this.now()),
+      this.memory,
+    );
     this.honchoMemory = new HonchoMemoryProvider(
       deps.database,
       deps.honchoApiKey,
@@ -393,8 +423,14 @@ export class AgentCore {
       this.providerPool,
       undefined,
       (message) => {
-        if (message.role === "user")
-          this.memory.captureExplicit(message.content, message.id);
+        if (message.role === "user") {
+          const captureExplicit =
+            this.configuration.current().memory.captureExplicit;
+          if (captureExplicit)
+            this.memory.captureExplicit(message.content, message.id);
+          if (captureExplicit)
+            this.lifeContext.captureConversation(message.content, message.id);
+        }
         const session = this.runtime.getSession(message.sessionId);
         this.honchoMemory.captureMessage(
           message,
@@ -431,6 +467,8 @@ export class AgentCore {
       this.providerPool,
       this.modelRouter,
       this.modelRegistry,
+      undefined,
+      () => this.configuration.current().workflows.maximumTurns,
     );
     installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
     this.remote = new RemoteControl(
@@ -528,6 +566,7 @@ export class AgentCore {
             ({ instructions: _instructions, ...personality }) => personality,
           ),
       },
+      configuration: this.configuration.status(),
       updatedAt: this.now(),
     });
   }
@@ -536,10 +575,75 @@ export class AgentCore {
     return this.deps.now?.() ?? new Date().toISOString();
   }
 
+  private providerIdsForAttachments(
+    providerIds: string[],
+    attachments: SelectedAttachment[] = [],
+  ): string[] {
+    if (attachments.length === 0) return providerIds;
+    const textMediaTypes = new Set([
+      "application/json",
+      "application/xml",
+      "application/javascript",
+    ]);
+    const isTextAttachment = (attachment: SelectedAttachment) =>
+      attachment.mediaType.startsWith("text/") ||
+      textMediaTypes.has(attachment.mediaType);
+    const required = {
+      images: attachments.some((attachment) =>
+        attachment.mediaType.startsWith("image/"),
+      ),
+      audio: attachments.some((attachment) =>
+        attachment.mediaType.startsWith("audio/"),
+      ),
+      video: attachments.some((attachment) =>
+        attachment.mediaType.startsWith("video/"),
+      ),
+      documents: attachments.some((attachment) =>
+        !attachment.mediaType.startsWith("image/") &&
+        !attachment.mediaType.startsWith("audio/") &&
+        !attachment.mediaType.startsWith("video/") &&
+        !isTextAttachment(attachment),
+      ),
+    };
+    const matching = this.providerPool.list().filter(
+      (provider) =>
+        (!required.images || provider.capabilities.images) &&
+        (!required.audio || provider.capabilities.audio) &&
+        (!required.video || provider.capabilities.video) &&
+        (!required.documents || provider.capabilities.documents),
+    );
+    if (matching.length === 0)
+      throw new Error("No configured model provider supports the selected attachments.");
+    if (providerIds.includes("auto"))
+      return [
+        ...new Set(
+          matching.flatMap((provider) =>
+            [provider.id, provider.poolId].filter(
+              (id): id is string => Boolean(id),
+            ),
+          ),
+        ),
+      ];
+    const supportedIds = new Set(
+      matching.flatMap((provider) =>
+        [provider.id, provider.poolId].filter(
+          (id): id is string => Boolean(id),
+        ),
+      ),
+    );
+    const filtered = providerIds.filter((providerId) =>
+      supportedIds.has(providerId),
+    );
+    if (filtered.length === 0)
+      throw new Error("The selected model providers do not support the attachments.");
+    return filtered;
+  }
+
   private automaticRoute(
     taskId: string,
     message: string,
     providerIds: string[] = ["auto"],
+    attachments: SelectedAttachment[] = [],
   ): {
     route: ModelRoutingDecision;
     execution: ReturnType<AdaptiveModelRouter["executionPlan"]>;
@@ -551,14 +655,22 @@ export class AgentCore {
     requirements: ReturnType<TaskRequirementAnalyzer["analyze"]>;
   } {
     this.modelRegistry.applyProviderHealth(this.providerPool.health());
-    const requirements = this.requirementAnalyzer.analyze(taskId, message);
+    const routedProviderIds = this.providerIdsForAttachments(
+      providerIds,
+      attachments,
+    );
+    const requirements = this.requirementAnalyzer.analyze(taskId, message, {
+      requiresVision: attachments.some((attachment) =>
+        attachment.mediaType.startsWith("image/"),
+      ),
+    });
     const taskPolicy = this.requirementAnalyzer.routingPolicy(
       message,
       this.modelRouter.policy(),
     );
     const decision = this.modelRouter.route(requirements, {
       role: requirements.parallelizable ? "orchestrator" : "worker",
-      allowedProviderIds: providerIds,
+      allowedProviderIds: routedProviderIds,
       policy: taskPolicy,
     });
     if (decision.traceId)
@@ -613,6 +725,13 @@ export class AgentCore {
     automatic: ReturnType<AgentCore["automaticRoute"]>,
     result: AgentLoopResult,
   ): void {
+    if (result.run.status === "waiting_approval") {
+      this.deps.database.setPrivateState(
+        `agent-run-routing.${result.run.id}`,
+        automatic,
+      );
+      return;
+    }
     const audits = this.deps.database.listModelCallAudits(result.run.id);
     const actualCostUsd = audits.reduce(
       (sum, audit) => sum + audit.estimatedCostUsd,
@@ -629,12 +748,10 @@ export class AgentCore {
       : undefined;
     const modelId = winning?.id ?? automatic.decision.selectedModelId;
     const completed = result.run.status === "completed";
-    const acceptedExecution =
-      completed || result.run.status === "waiting_approval";
     this.modelRegistry.recordOutcome({
       modelId,
       capabilities: automatic.requirements.capabilities,
-      succeeded: acceptedExecution,
+      succeeded: completed,
       validationPassed: completed,
       latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
       actualCostUsd,
@@ -674,6 +791,32 @@ export class AgentCore {
         escalated: false,
       });
     }
+  }
+
+  private async ensureIndependentReview(
+    automatic: ReturnType<AgentCore["automaticRoute"]>,
+    sessionId: string,
+    result: AgentLoopResult,
+  ): Promise<void> {
+    if (!automatic.route.reviewRequired || result.run.status !== "completed")
+      return;
+    const review = await this.orchestrator.delegate({
+      parentSessionId: sessionId,
+      title: "Independent result review",
+      prompt: [
+        "Review the completed agent result below for correctness, safety, and evidence.",
+        "This is an independent review route. Identify any concrete defect or missing validation; do not delegate further.",
+        `Result:\n${result.assistantMessage?.content.slice(0, 50_000) ?? "[No assistant text was returned.]"}`,
+      ].join("\n\n"),
+      model: "auto",
+      providerIds: automatic.execution.providerIds,
+      role: "reviewer",
+      allowedTools: [],
+      requiredCapabilities: { code_review: 0.95, reliability: 0.9 },
+      maximumTurns: this.configuration.current().workflows.maximumTurns,
+    });
+    if (review.result.run.status !== "completed")
+      throw new Error("The required independent reviewer did not complete.");
   }
 
   resolveChannelSession(envelope: ChannelEnvelope): string {
@@ -1180,6 +1323,23 @@ export class AgentCore {
             ),
           ]);
           try {
+            const personality = this.personalities.get(
+              this.selectedPersonalityId,
+            );
+            const configuration = this.configuration.current();
+            const runtimeSession = this.runtime.getSession(request.sessionId);
+            const sharedMemoryEnabled =
+              personality.memoryScope === "shared" &&
+              configuration.memory.useSharedContext;
+            const honchoContext = sharedMemoryEnabled
+              ? await this.honchoMemory.contextFor({
+                  sessionId: request.sessionId,
+                  ...(runtimeSession.workspaceRoot
+                    ? { workspaceRoot: runtimeSession.workspaceRoot }
+                    : {}),
+                  query: priorMessage,
+                })
+              : "";
             const result = await this.agentLoop.retry({
               sessionId: request.sessionId,
               model: route?.execution.model ?? request.model,
@@ -1202,6 +1362,30 @@ export class AgentCore {
                     temperature: route.temperature,
                   }
                 : {}),
+              allowedTools: this.configuration.filterToolNames(
+                this.runtime
+                  .discoverTools(request.sessionId)
+                  .map((tool) => tool.name),
+                personality.toolNames,
+                      {
+                        includeProtectedRecovery:
+                          personality.toolNames === undefined ||
+                          (personality.toolNames.length > 0 &&
+                            this.configuration.isConfigurationRequest(
+                              priorMessage,
+                            )),
+                },
+              ),
+              instructions: [
+                personality.instructions,
+                this.configuration.instructions(),
+                ...(sharedMemoryEnabled
+                  ? [this.userModel.promptContext(), honchoContext]
+                  : []),
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+              maximumTurns: configuration.workflows.maximumTurns,
               signal: executionSignal,
               ...(request.streamId
                 ? {
@@ -1217,7 +1401,14 @@ export class AgentCore {
                 ? { takeSteering: () => active.steering.splice(0) }
                 : {}),
             });
-            if (route) this.recordAutomaticOutcome(route, result);
+            if (route) {
+              await this.ensureIndependentReview(
+                route,
+                request.sessionId,
+                result,
+              );
+              this.recordAutomaticOutcome(route, result);
+            }
             return {
               ok: true,
               run: result.run,
@@ -1353,6 +1544,9 @@ export class AgentCore {
                 entityIds: [],
                 userConfirmed: true,
                 inferred: false,
+                subject: request.subject,
+                ...(request.layer ? { layer: request.layer } : {}),
+                confirmationStatus: "explicit",
               }),
             ],
           };
@@ -1366,11 +1560,19 @@ export class AgentCore {
                 ...(request.sensitivity
                   ? { sensitivity: request.sensitivity }
                   : {}),
+                ...(request.layer ? { layer: request.layer } : {}),
               }),
             ],
           };
         case "memory-forget":
           return { ok: true, memories: [this.memory.forget(request.id)] };
+        case "memory-versions":
+          return {
+            ok: true,
+            memoryVersions: this.memory.versions(request.id),
+          };
+        case "memory-run-maintenance":
+          return { ok: true, memories: this.lifeContext.maintain().memories };
         case "memory-user-model-list":
           return { ok: true, userModelFacts: this.userModel.list() };
         case "memory-user-model-review":
@@ -1379,6 +1581,94 @@ export class AgentCore {
             userModelFacts: [
               this.userModel.review(request.id, request.decision),
             ],
+          };
+        case "people-list":
+          return { ok: true, people: this.lifeContext.listPeople() };
+        case "people-upsert":
+          return {
+            ok: true,
+            people: [
+              this.lifeContext.upsertPerson({
+                ...(request.id ? { id: request.id } : {}),
+                displayName: request.displayName,
+                nicknames: request.nicknames,
+                ...(request.relationship
+                  ? { relationship: request.relationship }
+                  : {}),
+                ...(request.organization
+                  ? { organization: request.organization }
+                  : {}),
+                ...(request.role ? { role: request.role } : {}),
+                ...(request.timeZone ? { timeZone: request.timeZone } : {}),
+                ...(request.tone ? { tone: request.tone } : {}),
+                ...(request.formality
+                  ? { formality: request.formality }
+                  : {}),
+                ...(request.email ? { email: request.email } : {}),
+                ...(request.phone ? { phone: request.phone } : {}),
+                sourceId: request.sourceId,
+                sensitivity: request.sensitivity,
+              }),
+            ],
+          };
+        case "people-delete":
+          return {
+            ok: true,
+            people: [this.lifeContext.deletePerson(request.id)],
+            memories: this.memory.list(),
+          };
+        case "calendar-list":
+          return {
+            ok: true,
+            calendarEvents: this.lifeContext.listCalendar(
+              request.startsAt,
+              request.endsAt,
+            ),
+            calendarProviders: this.lifeContext.providerStatuses(),
+          };
+        case "calendar-sync":
+          return {
+            ok: true,
+            calendarEvents: await this.lifeContext.syncGoogle(
+              request.startsAt,
+              request.endsAt,
+            ),
+            calendarProviders: this.lifeContext.providerStatuses(),
+          };
+        case "calendar-create-local":
+          return {
+            ok: true,
+            calendarEvents: [
+              this.lifeContext.createLocalEvent({
+                title: request.title,
+                startsAt: request.startsAt,
+                endsAt: request.endsAt,
+                ...(request.description
+                  ? { description: request.description }
+                  : {}),
+                ...(request.location ? { location: request.location } : {}),
+                origin: request.origin,
+                confidence: request.confidence,
+                sourceId: request.sourceId,
+              }),
+            ],
+          };
+        case "calendar-delete-local":
+          return {
+            ok: true,
+            calendarEvents: [
+              this.lifeContext.deleteLocalEvent(request.id),
+            ],
+          };
+        case "life-context-preview":
+          return {
+            ok: true,
+            contextBundle: this.lifeContext.assembleContext({
+              query: request.query,
+              includeSensitive: request.includeSensitive,
+              includeRestricted: request.includeRestricted,
+              persistUsage: false,
+            }),
           };
         case "honcho-memory-get":
           return { ok: true, honchoMemoryStatus: this.honchoMemory.status() };
@@ -2040,6 +2330,7 @@ export class AgentCore {
             const personality = this.personalities.get(
               request.personalityId ?? this.selectedPersonalityId,
             );
+            const configuration = this.configuration.current();
             const selectedModel = personality.preferredModel ?? request.model;
             const selectedProviderIds = personality.providerIds?.length
               ? personality.providerIds
@@ -2050,11 +2341,15 @@ export class AgentCore {
                     `run-${request.sessionId}`,
                     request.message,
                     selectedProviderIds,
+                    request.attachments,
                   )
                 : undefined;
             const runtimeSession = this.runtime.getSession(request.sessionId);
+            const sharedMemoryEnabled =
+              personality.memoryScope === "shared" &&
+              configuration.memory.useSharedContext;
             const honchoContext =
-              personality.memoryScope === "shared"
+              sharedMemoryEnabled
                 ? await this.honchoMemory.contextFor({
                     sessionId: request.sessionId,
                     ...(runtimeSession.workspaceRoot
@@ -2063,6 +2358,12 @@ export class AgentCore {
                     query: request.message,
                   })
                 : "";
+            const localContext =
+              sharedMemoryEnabled
+                ? this.lifeContext.assembleContext({
+                    query: request.message,
+                  })
+                : undefined;
             const result = await this.agentLoop.run({
               sessionId: request.sessionId,
               model: route?.execution.model ?? selectedModel,
@@ -2087,8 +2388,29 @@ export class AgentCore {
                   }
                 : {}),
               ...(personality.toolNames
-                ? { allowedTools: personality.toolNames }
-                : {}),
+                ? {
+                    allowedTools: this.configuration.filterToolNames(
+                      this.runtime
+                        .discoverTools(request.sessionId)
+                        .map((tool) => tool.name),
+                      personality.toolNames,
+                      {
+                        includeProtectedRecovery:
+                          personality.toolNames !== undefined &&
+                          personality.toolNames.length > 0 &&
+                          this.configuration.isConfigurationRequest(
+                            request.message,
+                          ),
+                      },
+                    ),
+                  }
+                : {
+                    allowedTools: this.configuration.filterToolNames(
+                      this.runtime
+                        .discoverTools(request.sessionId)
+                        .map((tool) => tool.name),
+                    ),
+                  }),
               userContent: [
                 ...textContent(request.message),
                 ...this.attachmentParts(request.sessionId, request.attachments),
@@ -2096,15 +2418,21 @@ export class AgentCore {
               instructions: [
                 personality.instructions,
                 route?.orchestrationInstructions,
-                ...(personality.memoryScope === "shared"
-                  ? [this.userModel.promptContext(), honchoContext]
+                this.configuration.instructions(),
+                ...(sharedMemoryEnabled
+                  ? [
+                      this.userModel.promptContext(),
+                      localContext?.prompt ?? "",
+                      honchoContext,
+                    ]
                   : []),
               ]
                 .filter(Boolean)
                 .join("\n\n"),
-              ...(request.maximumTurns
-                ? { maximumTurns: request.maximumTurns }
-                : {}),
+              maximumTurns: Math.min(
+                request.maximumTurns ?? configuration.workflows.maximumTurns,
+                configuration.workflows.maximumTurns,
+              ),
               ...(request.approvalStatus
                 ? { approvalStatus: request.approvalStatus }
                 : {}),
@@ -2123,7 +2451,14 @@ export class AgentCore {
                 ? { takeSteering: () => active.steering.splice(0) }
                 : {}),
             });
-            if (route) this.recordAutomaticOutcome(route, result);
+            if (route) {
+              await this.ensureIndependentReview(
+                route,
+                request.sessionId,
+                result,
+              );
+              this.recordAutomaticOutcome(route, result);
+            }
             return {
               ok: true,
               run: result.run,
@@ -2147,6 +2482,21 @@ export class AgentCore {
             throw new Error("Agent stream ID is already active.");
           const controller = new AbortController();
           const waitingRun = this.deps.database.getAgentRun(request.runId);
+          const rejectedConfigurationProposalId =
+            request.approvalDecision === "rejected" &&
+            waitingRun?.pendingToolName === "agent.config.apply" &&
+            waitingRun.pendingToolExecutionId
+              ? String(
+                  this.deps.database.getToolExecution(
+                    waitingRun.pendingToolExecutionId,
+                  )?.input.proposalId ?? "",
+                )
+              : "";
+          if (rejectedConfigurationProposalId)
+            this.configuration.rejectProposal(
+              rejectedConfigurationProposalId,
+              "User declined the one-time apply approval.",
+            );
           const active =
             request.streamId && waitingRun
               ? {
@@ -2158,12 +2508,17 @@ export class AgentCore {
           if (request.streamId && active)
             this.activeStreams.set(request.streamId, active);
           try {
+            const configuration = this.configuration.current();
+            const automatic = this.deps.database.getPrivateState<
+              ReturnType<AgentCore["automaticRoute"]>
+            >(`agent-run-routing.${request.runId}`);
             const result = await this.agentLoop.resume({
               runId: request.runId,
               approvalDecision: request.approvalDecision,
-              ...(request.maximumTurns
-                ? { maximumTurns: request.maximumTurns }
-                : {}),
+              maximumTurns: Math.min(
+                request.maximumTurns ?? configuration.workflows.maximumTurns,
+                configuration.workflows.maximumTurns,
+              ),
               signal: controller.signal,
               ...(request.streamId && waitingRun
                 ? {
@@ -2179,6 +2534,18 @@ export class AgentCore {
                 ? { takeSteering: () => active.steering.splice(0) }
                 : {}),
             });
+            if (automatic && result.run.status !== "waiting_approval") {
+              await this.ensureIndependentReview(
+                automatic,
+                result.run.sessionId,
+                result,
+              );
+              this.recordAutomaticOutcome(automatic, result);
+              this.deps.database.setPrivateState(
+                `agent-run-routing.${request.runId}`,
+                null,
+              );
+            }
             return {
               ok: true,
               run: result.run,
@@ -2296,13 +2663,16 @@ export class AgentCore {
       this.runtime.unregisterExternalTool(toolName);
   }
 
-  runAmbientMaintenance(at = new Date(this.now())): void {
+  async runAmbientMaintenance(at = new Date(this.now())): Promise<void> {
     this.presence.beacon({
       instanceId: this.coreInstanceId,
       mode: "node",
       reason: "isolated agent core",
     });
     this.dreaming.runIfDue(at);
+    this.configuration.runImprovementScanIfDue(at);
+    this.lifeContext.maintain();
+    await this.lifeContext.syncGoogleIfStale(at);
   }
 
   private abortActiveStreamsForHistoryRollback(sessionId: string): void {
@@ -2358,11 +2728,15 @@ export {
   type RuntimeHookEvent,
   type RuntimeHookResult,
   type RuntimeModelTool,
+  type RuntimeToolPolicyContext,
+  type RuntimeToolPolicyDecision,
   type ToolCallOptions,
 } from "./runtime";
 export {
   AgentLoop,
   SessionRunBusyError,
+  CHAT_CONFIGURATION_INSTRUCTIONS,
+  LOCAL_FIRST_TOOL_INSTRUCTIONS,
   type AgentLoopInput,
   type AgentLoopResult,
   type AgentLoopRetryInput,
@@ -2513,6 +2887,10 @@ export {
   installGoogleWorkspaceTools,
 } from "./google-workspace";
 export {
+  LifeContextService,
+  type PersonInput,
+} from "./life-context";
+export {
   DockerCliRemoteBackend,
   KubernetesCliRemoteBackend,
   RemoteBackendManager,
@@ -2538,6 +2916,13 @@ export {
   renderPrometheusMetrics,
 } from "./observability";
 export { DEFAULT_DREAMING_CONFIGURATION, DreamingManager } from "./dreaming";
+export {
+  CONFIGURATION_TOOL_NAMES,
+  DEFAULT_AGENT_CONFIGURATION,
+  AgentConfigurationManager,
+  installAgentConfigurationTools,
+  type AgentConfigurationSurfaceRegistration,
+} from "./configuration";
 export { PresenceManager, type PresenceBeacon } from "./presence";
 export { NativeNodeManager, type NativeNodeBeacon, type NativeNodeRecord, type NativeNodeCommand, type NativeNodeResult, type NativeNodeCapability, type LocationAccuracy } from "./native-nodes";
 export { TenantFleet, type TenantCell, type TenantFleetRunner } from "./tenant-fleet";

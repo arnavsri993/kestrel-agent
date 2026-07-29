@@ -81,7 +81,9 @@ import {
 } from "./runtime-session-state";
 import { DashboardExtensions } from "./components/DashboardExtensions";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
+import { ConfigurationMessage } from "./components/ConfigurationMessage";
 import { EventApplications } from "./components/EventApplications";
+import { LifeContext } from "./components/LifeContext";
 import {
   memoryInGb,
   recommendedLocalModelTiers,
@@ -94,7 +96,7 @@ const pages = [
   ["home", "New chat"],
   ["readiness", "Readiness"],
   ["approvals", "Approvals"],
-  ["memory", "Memory"],
+  ["memory", "Life"],
   ["research", "Research"],
   ["artifacts", "Artifacts"],
   ["work", "Work"],
@@ -2199,12 +2201,16 @@ function RuntimeConversation({
   sessions,
   onActiveSession,
   onSessions,
+  onSnapshot,
+  configurationUi,
 }: {
   visible: boolean;
   activeSessionId: string | null;
   sessions: RuntimeSession[];
   onActiveSession(sessionId: string | null): void;
   onSessions(sessions: RuntimeSession[]): void;
+  onSnapshot(snapshot: WorkspaceSnapshot): void;
+  configurationUi: WorkspaceSnapshot["configuration"]["ui"];
 }) {
   const [messages, setMessages] = useState<RuntimeMessage[]>([]);
   const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
@@ -2799,6 +2805,15 @@ function RuntimeConversation({
         );
         await loadSession(sessionId);
       }
+      const snapshotResponse = await window.kestrel.request({
+        type: "snapshot",
+      });
+      if (
+        snapshotResponse.ok &&
+        "snapshot" in snapshotResponse &&
+        snapshotResponse.snapshot
+      )
+        onSnapshot(snapshotResponse.snapshot);
     } catch (cause) {
       if (activeSessionIdRef.current === sessionId)
         setError(
@@ -3061,6 +3076,14 @@ function RuntimeConversation({
     activeSessionId,
     hasOptimisticNewTask: Boolean(optimisticUser),
   });
+  const latestRunHasConfigurationMessage = Boolean(
+    latestRun &&
+      messages.some(
+        (message) =>
+          message.createdAt >= latestRun.createdAt &&
+          message.toolName?.startsWith("agent.config."),
+      ),
+  );
   const activeSessionBusy = runScope === "active";
   const backgroundSessionBusy = runScope === "background";
   const emptySession = Boolean(
@@ -3169,12 +3192,25 @@ function RuntimeConversation({
                 </div>
               </div>
             ) : (
-              <div className="work-summary" key={message.id}>
-                <Icon name="check" />
-                <span>
-                  {message.toolName ?? "Tool result"}: {message.content}
-                </span>
-              </div>
+              message.toolName?.startsWith("agent.config.") ? (
+                <ConfigurationMessage
+                  key={message.id}
+                  message={message}
+                  showDiffs={configurationUi.showConfigurationDiffs}
+                  announceVerification={configurationUi.announceVerification}
+                  onPrepareUndo={(prompt) => {
+                    setInput(prompt);
+                    window.setTimeout(() => promptRef.current?.focus(), 0);
+                  }}
+                />
+              ) : (
+                <div className="work-summary" key={message.id}>
+                  <Icon name="check" />
+                  <span>
+                    {message.toolName ?? "Tool result"}: {message.content}
+                  </span>
+                </div>
+              )
             ),
           )}
           {optimisticUser && (
@@ -3198,28 +3234,41 @@ function RuntimeConversation({
               </div>
             </div>
           )}
-          {toolActivity.map((event) => (
-            <div className="work-summary" key={event.id}>
-              <Icon
-                name={event.type === "tool.completed" ? "check" : "arrow"}
-              />
-              <span>
-                {event.type.replace("tool.", "Tool ")} ·{" "}
-                {String(
-                  event.payload.toolName ?? event.executionId ?? "execution",
-                )}
-                {event.type === "tool.progress"
-                  ? ` · ${JSON.stringify(event.payload)}`
-                  : ""}
-              </span>
-            </div>
-          ))}
+          {configurationUi.showToolActivity &&
+            toolActivity
+              .filter(
+                (event) =>
+                  !String(event.payload.toolName ?? "").startsWith(
+                    "agent.config.",
+                  ),
+              )
+              .map((event) => (
+                <div className="work-summary" key={event.id}>
+                  <Icon
+                    name={event.type === "tool.completed" ? "check" : "arrow"}
+                  />
+                  <span>
+                    {event.type.replace("tool.", "Tool ")} ·{" "}
+                    {String(
+                      event.payload.toolName ??
+                        event.executionId ??
+                        "execution",
+                    )}
+                    {event.type === "tool.progress"
+                      ? ` · ${JSON.stringify(event.payload)}`
+                      : ""}
+                  </span>
+                </div>
+              ))}
           {pending && !busy && (
             <div className="assistant-message approval-message">
               <span className="assistant-avatar">!</span>
               <div>
                 <strong>
-                  Approval required · {pending.execution.riskLevel}
+                  {pending.execution.toolName.startsWith("agent.config.")
+                    ? "Review configuration change"
+                    : "Approval required"}{" "}
+                  · {pending.execution.riskLevel.replaceAll("_", " ")}
                 </strong>
                 <p>{pending.execution.toolName}</p>
                 {typeof pending.execution.output?.preview === "string" && (
@@ -3228,7 +3277,11 @@ function RuntimeConversation({
                   </pre>
                 )}
                 <details>
-                  <summary>Raw tool input</summary>
+                  <summary>
+                    {pending.execution.toolName.startsWith("agent.config.")
+                      ? "Plan identifiers and exact input"
+                      : "Raw tool input"}
+                  </summary>
                   <pre>{JSON.stringify(pending.execution.input, null, 2)}</pre>
                 </details>
                 <div className="button-row">
@@ -3236,14 +3289,19 @@ function RuntimeConversation({
                     className="button primary"
                     onClick={() => void decide("approved")}
                   >
-                    Allow once
+                    {pending.execution.toolName.startsWith("agent.config.")
+                      ? "Apply this version"
+                      : "Allow once"}
                   </button>
-                  <button
-                    className="button secondary"
-                    onClick={() => void decidePersistently("allow")}
-                  >
-                    Always allow here
-                  </button>
+                  {pending.execution.output?.persistentApprovalAllowed !==
+                    false && (
+                    <button
+                      className="button secondary"
+                      onClick={() => void decidePersistently("allow")}
+                    >
+                      Always allow here
+                    </button>
+                  )}
                   <button
                     className="button secondary"
                     onClick={() => void decide("rejected")}
@@ -3260,7 +3318,11 @@ function RuntimeConversation({
               </div>
             </div>
           )}
-          {latestRun?.status === "completed" && !busy && !pending && !skillNotice && (
+          {latestRun?.status === "completed" &&
+            !busy &&
+            !pending &&
+            !skillNotice &&
+            !latestRunHasConfigurationMessage && (
             <div className="workflow-memory-action">
               <div>
                 <strong>Keep this workflow</strong>
@@ -3275,7 +3337,7 @@ function RuntimeConversation({
                 {skillBusy ? "Saving…" : "Save as skill"}
               </button>
             </div>
-          )}
+            )}
           {skillNotice && (
             <p className="skill-notice" role="status">
               {skillNotice}
@@ -7611,6 +7673,18 @@ export function App() {
         else if (event.type === "tool.completed") {
           const status = String(event.payload.status ?? "");
           const toolName = String(event.payload.toolName ?? "");
+          if (toolName.startsWith("agent.config.") && status === "verified")
+            void window.kestrel
+              .request({ type: "snapshot" })
+              .then((response) => {
+                if (
+                  response.ok &&
+                  "snapshot" in response &&
+                  response.snapshot
+                )
+                  setSnapshot(response.snapshot);
+              })
+              .catch(() => undefined);
           setPetActivity(
             ["failed", "blocked", "cancelled"].includes(status)
               ? "failed"
@@ -7814,7 +7888,7 @@ export function App() {
     <ProductShellTransition>
     <motion.div
       key="workspace"
-      className="app-shell"
+      className={`app-shell configuration-density-${snapshot.configuration.ui.density}`}
       initial={reduced ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: reduced ? 1 : 0 }}
@@ -7991,6 +8065,8 @@ export function App() {
               sessions={runtimeSessions}
               onActiveSession={setActiveRuntimeSessionId}
               onSessions={setRuntimeSessions}
+              onSnapshot={setSnapshot}
+              configurationUi={snapshot.configuration.ui}
             />
           </div>
           <AnimatePresence mode="wait" initial={false}>
@@ -8009,7 +8085,7 @@ export function App() {
                   <Approvals snapshot={snapshot} update={setSnapshot} />
                 )}
                 {page === "memory" && (
-                  <Memory snapshot={snapshot} update={setSnapshot} />
+                  <LifeContext snapshot={snapshot} update={setSnapshot} />
                 )}
                 {page === "research" && <Research />}
                 {page === "artifacts" && <Artifacts />}

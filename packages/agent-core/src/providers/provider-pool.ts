@@ -176,9 +176,9 @@ export class ProviderPool {
           error: error instanceof Error ? error.message : "Provider call failed."
         });
         this.measured(provider, startedAt, false);
+        this.unhealthyUntil.set(providerId, this.now().getTime() + (options.healthBackoffMs ?? 30_000));
         const next = candidates[index + 1];
         if (!next) break;
-        this.unhealthyUntil.set(providerId, this.now().getTime() + (options.healthBackoffMs ?? 30_000));
       }
     }
     for (const requested of providerIds) if (![...this.providers.values()].some((provider) => provider.id === requested || provider.poolId === requested)) {

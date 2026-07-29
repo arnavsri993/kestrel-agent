@@ -85,6 +85,7 @@ export interface ModelProfileHints {
     inputPerMillion?: number;
     outputPerMillion?: number;
     fixedRequestCost?: number;
+    priorityMultiplier?: number;
   };
   latency?: {
     averageMs?: number;

@@ -1,5 +1,76 @@
 # Kestrel design system
 
+## Unified life context — July 2026
+
+### Product and architecture
+
+- Operating mode: `design-system` and `component-build` inside the existing
+  Electron product. The current encrypted database, agent runtime, provider
+  permissions, Google Workspace OAuth, Native Graphite shell, and Memory route
+  remain compatible.
+- Thesis: time, people, and remembered context form one inspectable life model;
+  the calendar is the temporal projection of that model, while every block and
+  fact keeps its authority, source, confidence, sensitivity, and correction
+  path visible.
+- Increment: add backward-compatible structured memory metadata, encrypted
+  people and unified-calendar records, deterministic context selection,
+  contradiction/lifecycle maintenance, Google Calendar import, and one combined
+  Life surface. Apple Calendar, Outlook, richer inference, and destructive
+  external edits remain explicit adapter boundaries for later increments.
+- Trust: high. Direct user statements outrank agent inference; provider events,
+  explicit blocks, inferred routines, and unapproved suggestions never collapse
+  into one visual state. Sensitive and restricted records require explicit
+  retrieval permission and remain encrypted at rest.
+
+### Visual system lock
+
+- Density: `dense-app`. The week is a ruled time plane, not a set of event
+  cards. People and memory use continuous rows with separators.
+- Type: preserve SF Pro Display, SF Pro Text, and SF Mono roles from Native
+  Graphite. Calendar time, confidence, provenance IDs, and recency use SF Mono.
+- Scale: page title `32/38`; week day `13/18`; event title `12/16`; time and
+  provenance `10/14`; body and editable values `13/19`.
+- Spacing: preserve the 4px base and `8/12/16/20/24/32` operational rhythm.
+- Color roles: confirmed provider events use aluminum plus a solid source edge;
+  explicit Kestrel events use sage; inferred blocks use a dashed amber edge and
+  confidence text; suggestions use a dotted tertiary edge and an approval
+  label. Color is never the only distinction.
+- Material: matte graphite planes, thin rules, and one selected-detail surface.
+  No glow, glass event cards, rainbow provider palette, pill forest, or bento
+  dashboard.
+- Composition: a compact Life header, one three-way view switch, then one
+  dominant work plane. Calendar is the default temporal view; People and Memory
+  expose the same underlying records rather than separate mini-products.
+- Motion: existing route/state fade and direct control feedback only. Calendar
+  data never animates while the user is reading it. Reduced motion removes all
+  travel without changing state.
+- Compact behavior: below the wide calendar threshold, recompose the week into
+  a chronological agenda; do not shrink seven columns or introduce page-level
+  horizontal scrolling.
+- Accessibility: semantic buttons/forms/lists first, visible focus, text labels
+  for source and confidence, logical chronological reading order, destructive
+  confirmation, and focus restoration after removal.
+- Why this is not generic: the provenance hierarchy is the visual hierarchy—the
+  same fact can be inspected as time, person context, or memory without losing
+  where it came from or being promoted from inference to truth.
+
+### State and verification contract
+
+- Calendar: loading, first-use, disconnected provider, connected/stale, syncing,
+  sync error/retry, empty range, provider-confirmed, explicit, inferred,
+  suggested, recurring, conflict, selected detail, compact agenda, and local
+  creation.
+- People: empty, resolved aliases, relationship/tone facts, sensitive fields,
+  conflicting facts, correction, delete-person warning, and deleted.
+- Memory: short/mid/long/archive, active/superseded/contradicted/expired,
+  confirmed/inferred/suggested, search/no results, correction, provenance,
+  related entities/events, usage explanation, and deletion.
+- Engineering checks: schema migration and encryption, retrieval minimization,
+  sensitivity filtering, contradiction precedence, relationship tone,
+  recurring schedule correction, Google normalization/idempotent sync,
+  person-scoped deletion, lifecycle archival, renderer typecheck/build,
+  keyboard/focus, compact reflow, packaged macOS capture, and no console errors.
+
 ## Final Native Graphite system — July 2026
 
 This section is the authoritative desktop visual and interaction specification.
@@ -635,3 +706,15 @@ The identity is built around one real scheduling decision and a single inspectab
 - Copy pass: utility headings name the surface or decision directly; supporting lines keep only task, boundary, or recovery information.
 - Motion contract: no new role. Existing short page-state feedback remains optional under reduced motion.
 - Why this is not generic: Kestrel's first view is organized around a granted local project, a reviewable task sequence, explicit tool scope, and real approval boundaries instead of prompt chips or fabricated workspace content.
+
+## Conversational configuration extension
+
+- Thesis: self-configuration is an inspectable change ledger inside the conversation, not a second settings dashboard and never a hidden act of self-modification.
+- Composition: the ordinary assistant message explains intent; one ruled configuration record then carries preview-only status, exact diff, isolated checks, approval, verification, version identity, and recovery. The approval boundary remains visually and semantically distinct from both planning and success.
+- Protected boundary: editable behavior, prompts, tool scope, stricter permissions, workflow limits, UI, memory, integration preferences, and general settings live in the versioned data plane. Safety, authentication, secret storage, approval enforcement, isolation, verification, immutable history, and recovery remain in the protected control plane.
+- Interaction contract: planning never claims a live effect. High-risk apply and rollback controls accept only the exact staged preview and require a fresh one-time decision; persistent allow is unavailable. The post-apply `Prepare undo` action writes a restoration request into the composer without executing it.
+- State contract: inspect, preview-only, waiting approval, rejected, stale plan, verification failure, applied, known-good restored, no improvement detected, improvement awaiting review, and unreadable result are all explicit. Failed or stale changes preserve the current live version and staged evidence.
+- Accessibility contract: native disclosures expose long diffs and checks; headings and persistent text carry status without color; verified apply and rollback can announce through a polite status; focus remains in the conversation and moves to the composer only when the user chooses to prepare an undo.
+- Density and material: extend Native Graphite with fine horizontal rules, one restrained status square, mono only for immutable IDs and diffs, and no glow, nested card stack, or new motion role. Compact density shortens conversation rhythm without removing recovery information.
+- Responsive contract: metadata sheds indentation before content; undo actions stack below their explanation; diffs wrap and scroll within a bounded region without creating page-level horizontal overflow.
+- Why this is not generic: the component exposes Kestrel's actual encrypted version, isolated validation, exact approval, read-back verification, and append-only recovery semantics instead of decorating a normal chat message with a generic settings card.
