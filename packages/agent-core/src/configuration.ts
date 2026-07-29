@@ -108,9 +108,9 @@ const EDITABLE_PATH_SET = new Set<string>(EDITABLE_PATHS);
 const secretPattern =
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk|xox[baprs]|gh[pousr])[-_][A-Za-z0-9_-]{16,}\b|\bAKIA[A-Z0-9]{16}\b/i;
 const protectedOverridePattern =
-  /\b(?:ignore|disable|remove|bypass|override)\b.{0,48}\b(?:safety|approval|permission|authentication|security|recovery|credential|secret)\b/i;
+  /(?:\b(?:ignore|disable|remove|bypass|override)\b.{0,80}\b(?:safety|approval|permission|authentication|security|recovery|credential|secret)\b)|(?:\b(?:ask|request|tell|instruct|collect|solicit|accept|have|prompt|require|provide|send|share|paste|enter|reveal)\b.{0,100}\b(?:api\s*key|oauth|token|password|secret|private\s*key|credential|session\s*cookie)\b)|(?:\b(?:api\s*key|oauth|token|password|secret|private\s*key|credential|session\s*cookie)\b.{0,100}\b(?:ask|request|tell|instruct|collect|solicit|accept|have|prompt|require|provide|send|share|paste|enter|reveal)\b)/i;
 const configurationRequestPattern =
-  /\b(?:configur(?:e|ation)|setting|personality|system prompt|permission|workflow|memory|integration|rollback|restore|undo)\b/i;
+  /\b(?:configur(?:e|ation)|setting|personality|system prompt|permission|workflow|memory|integration|rollback|restore|undo)\b|\b(?:make|keep|use|be|answer|respond|reply|write|explain|speak|talk)\b.{0,80}\b(?:concise|brief|detailed|coaching|coach|friendly|formal|casual|professional|tone|style|language|locale|timezone|instruction|response)\b/i;
 
 const riskRank: Record<RiskLevel, number> = {
   read_only: 0,
@@ -359,7 +359,7 @@ function patternMatches(pattern: string, value: string): boolean {
 
 function valuePreview(value: unknown): string {
   const rendered = JSON.stringify(value);
-  return (rendered ?? "null").slice(0, 2_000);
+  return rendered ?? "null";
 }
 
 function diffForPatch(
@@ -377,7 +377,7 @@ function diffForPatch(
     lines.push(`-${valuePreview(readPath(before, path))}`);
     lines.push(`+${valuePreview(readPath(after, path))}`);
   }
-  return lines.join("\n").slice(0, 50_000);
+  return lines.join("\n");
 }
 
 function patchBetween(
@@ -685,6 +685,10 @@ export class AgentConfigurationManager {
     if (patch.length === 0)
       throw new Error("A configuration plan requires at least one change.");
     const base = this.currentVersion();
+    if (improvement && improvement.baseVersionId !== base.id)
+      throw new Error(
+        "This self-improvement was derived from an older configuration version. Rescan improvements before staging it.",
+      );
     const candidate = applyPatch(base.document, patch);
     const isolatedChecks = this.validateCandidate(candidate, base.document);
     const candidateSha256 = documentSha256(candidate);
@@ -885,8 +889,7 @@ export class AgentConfigurationManager {
       "",
       diffForPatch(current.document, target.document, patch),
     ]
-      .join("\n")
-      .slice(0, 50_000);
+      .join("\n");
   }
 
   rollback(input: {
@@ -903,6 +906,10 @@ export class AgentConfigurationManager {
     const reason = input.reason.trim();
     if (!reason || reason.length > 2_000)
       throw new Error("A concise rollback reason is required.");
+    if (secretPattern.test(reason))
+      throw new Error(
+        "Rollback reasons cannot contain credentials or private keys. Remove the secret and record only the non-secret recovery context.",
+      );
     const expectedPreview = this.rollbackPreview(input.targetVersionId);
     if (input.preview !== expectedPreview)
       throw new Error(
@@ -1101,6 +1108,7 @@ export class AgentConfigurationManager {
       const createdAt = timestamp.toISOString();
       const proposal = AgentImprovementProposalSchema.parse({
         id: `agent-improvement-${randomUUID()}`,
+        baseVersionId: this.currentVersion().id,
         weaknessId,
         title: `Reduce repeated ${toolName} failures`,
         rationale:
@@ -1166,9 +1174,17 @@ export class AgentConfigurationManager {
       disabled:
         "Do not use hosted fallbacks. Explain the limitation and propose a local alternative.",
     }[configuration.integrations.hostedFallback];
+    const settings = [
+      `Use ${configuration.settings.locale} for user-facing language, dates, and number formatting when appropriate.`,
+      `Interpret relative dates and times in ${configuration.settings.timezone}.`,
+      configuration.settings.explainConfigurationChanges
+        ? "When a configuration change is requested, explain its live effect, risk, exact diff, checks, and protected boundaries before approval."
+        : "Keep configuration-change explanations brief while still showing the exact diff, risk, checks, and protected boundaries before approval.",
+    ];
     return [
       responseStyle,
       hostedBoundary,
+      ...settings,
       configuration.behavior.userInstructions.trim(),
       configuration.prompts.systemAddon.trim(),
     ]
@@ -1216,6 +1232,15 @@ export class AgentConfigurationManager {
     reason?: string;
   } {
     const configuration = this.current();
+    if (
+      !configuration.tools.enabled.some((pattern) =>
+        patternMatches(pattern, toolName),
+      )
+    )
+      return {
+        denied: true,
+        reason: `The active chat configuration allowlist does not include ${toolName}.`,
+      };
     if (
       configuration.tools.disabled.some((pattern) =>
         patternMatches(pattern, toolName),
@@ -1499,7 +1524,7 @@ export function installAgentConfigurationTools(
       properties: {
         proposalId: { type: "string" },
         expectedBaseVersionId: { type: "string" },
-        preview: { type: "string", maxLength: 50_000 },
+        preview: { type: "string", maxLength: 250_000 },
       },
       required: ["proposalId", "expectedBaseVersionId", "preview"],
       additionalProperties: false,
@@ -1643,7 +1668,7 @@ export function installAgentConfigurationTools(
       properties: {
         targetVersionId: { type: "string" },
         reason: { type: "string", minLength: 1, maxLength: 2_000 },
-        preview: { type: "string", maxLength: 50_000 },
+        preview: { type: "string", maxLength: 250_000 },
       },
       required: ["targetVersionId", "reason", "preview"],
       additionalProperties: false,

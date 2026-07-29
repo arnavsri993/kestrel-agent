@@ -3067,6 +3067,14 @@ function RuntimeConversation({
     activeSessionId,
     hasOptimisticNewTask: Boolean(optimisticUser),
   });
+  const latestRunHasConfigurationMessage = Boolean(
+    latestRun &&
+      messages.some(
+        (message) =>
+          message.createdAt >= latestRun.createdAt &&
+          message.toolName?.startsWith("agent.config."),
+      ),
+  );
   const activeSessionBusy = runScope === "active";
   const backgroundSessionBusy = runScope === "background";
   const emptySession = Boolean(
@@ -3305,9 +3313,7 @@ function RuntimeConversation({
             !busy &&
             !pending &&
             !skillNotice &&
-            !messages.some((message) =>
-              message.toolName?.startsWith("agent.config."),
-            ) && (
+            !latestRunHasConfigurationMessage && (
             <div className="workflow-memory-action">
               <div>
                 <strong>Keep this workflow</strong>

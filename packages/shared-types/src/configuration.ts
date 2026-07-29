@@ -144,7 +144,7 @@ export const AgentConfigurationProposalSchema = z.strictObject({
   baseSha256: z.string().regex(/^[a-f0-9]{64}$/),
   candidateSha256: z.string().regex(/^[a-f0-9]{64}$/),
   patch: z.array(AgentConfigurationPatchOperationSchema).min(1).max(100),
-  diff: z.string().min(1).max(50_000),
+  diff: z.string().min(1).max(250_000),
   riskLevel: RiskLevelSchema,
   requiresExplicitApproval: z.literal(true),
   isolatedChecks: z.array(AgentConfigurationCheckSchema).min(1).max(50),
@@ -206,6 +206,10 @@ export const AgentImprovementProposalSchema = z.strictObject({
     .array(AgentConfigurationPatchOperationSchema)
     .min(1)
     .max(100),
+  baseVersionId: z
+    .string()
+    .regex(/^config-version-[a-f0-9-]{36}$/)
+    .optional(),
   riskLevel: RiskLevelSchema,
   status: z.enum(["proposed", "staged", "applied", "dismissed"]),
   createdAt: z.string().datetime(),

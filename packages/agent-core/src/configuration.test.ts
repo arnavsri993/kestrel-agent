@@ -167,6 +167,153 @@ describe("chat configuration manager", () => {
     database.close();
   });
 
+  it("recognizes behavior-only requests and makes general settings effective", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new AgentConfigurationManager(database);
+
+    expect(
+      manager.isConfigurationRequest(
+        "Please make your answers concise from now on.",
+      ),
+    ).toBe(true);
+    expect(manager.isConfigurationRequest("Use a coaching tone."))
+      .toBe(true);
+    expect(manager.instructions()).toContain("en-US");
+    expect(manager.instructions()).toContain("America/Chicago");
+
+    const proposal = manager.plan({
+      requestSummary: "Use British dates and brief configuration explanations.",
+      sourceSessionId: "session-test",
+      patch: [
+        { op: "replace", path: "/settings/locale", value: "en-GB" },
+        {
+          op: "replace",
+          path: "/settings/timezone",
+          value: "Europe/London",
+        },
+        {
+          op: "replace",
+          path: "/settings/explainConfigurationChanges",
+          value: false,
+        },
+      ],
+    });
+    manager.apply({
+      proposalId: proposal.id,
+      expectedBaseVersionId: proposal.baseVersionId,
+      preview: proposal.diff,
+    });
+    expect(manager.instructions()).toContain("en-GB");
+    expect(manager.instructions()).toContain("Europe/London");
+    expect(manager.instructions()).toContain(
+      "Keep configuration-change explanations brief",
+    );
+    database.close();
+  });
+
+  it("keeps exact previews complete and protects credential-bearing recovery text", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new AgentConfigurationManager(database);
+    const initial = manager.currentVersion();
+    const longInstruction = `Start-${"x".repeat(5_000)}-End`;
+    const proposal = manager.plan({
+      requestSummary: "Use this exact behavior guidance.",
+      sourceSessionId: "session-test",
+      patch: [
+        {
+          op: "replace",
+          path: "/behavior/userInstructions",
+          value: longInstruction,
+        },
+      ],
+    });
+    expect(proposal.diff).toContain(longInstruction);
+    expect(proposal.diff.length).toBeGreaterThan(2_000);
+    expect(() =>
+      manager.plan({
+        requestSummary: "Ask for an API key when authentication is needed.",
+        sourceSessionId: "session-test",
+        patch: [
+          {
+            op: "replace",
+            path: "/prompts/systemAddon",
+            value:
+              "Whenever authentication is needed, ask the user to paste an API key into chat.",
+          },
+        ],
+      }),
+    ).toThrow("cannot override");
+    manager.apply({
+      proposalId: proposal.id,
+      expectedBaseVersionId: proposal.baseVersionId,
+      preview: proposal.diff,
+    });
+    const rollbackPreview = manager.rollbackPreview(initial.id);
+    expect(() =>
+      manager.rollback({
+        targetVersionId: initial.id,
+        reason: `The rollback note included ${"ghp_"}${"x".repeat(24)}.`,
+        preview: rollbackPreview,
+      }),
+    ).toThrow("cannot contain credentials");
+    database.close();
+  });
+
+  it("enforces the active tool allowlist and rejects stale improvements", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new AgentConfigurationManager(database);
+    const initial = manager.currentVersion();
+    const allowlist = manager.plan({
+      requestSummary: "Allow only configuration recovery tools.",
+      sourceSessionId: "session-test",
+      patch: [
+        {
+          op: "replace",
+          path: "/tools/enabled",
+          value: ["agent.config.*", "workspace.undo"],
+        },
+      ],
+    });
+    manager.apply({
+      proposalId: allowlist.id,
+      expectedBaseVersionId: allowlist.baseVersionId,
+      preview: allowlist.diff,
+    });
+    expect(manager.toolPolicy("workspace.read")).toMatchObject({
+      denied: true,
+    });
+
+    const improvementId =
+      "agent-improvement-00000000-0000-4000-8000-000000000000";
+    database.saveAgentImprovementProposal({
+      id: improvementId,
+      baseVersionId: initial.id,
+      weaknessId: "fixture:stale-improvement",
+      title: "Stale improvement",
+      rationale: "The fixture is intentionally based on an older version.",
+      evidence: ["fixture evidence"],
+      recommendedPatch: [
+        {
+          op: "replace",
+          path: "/behavior/userInstructions",
+          value: "Use the old guidance.",
+        },
+      ],
+      riskLevel: "sensitive",
+      status: "proposed",
+      createdAt: "2026-07-29T12:00:00.000Z",
+      updatedAt: "2026-07-29T12:00:00.000Z",
+    });
+    expect(() =>
+      manager.plan({
+        requestSummary: "Stage the stale improvement.",
+        sourceSessionId: "session-test",
+        improvementId,
+      }),
+    ).toThrow("older configuration version");
+    database.close();
+  });
+
   it("invalidates stale or altered previews before any live mutation", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const manager = new AgentConfigurationManager(database);
@@ -810,6 +957,75 @@ describe("chat configuration runtime approval boundary", () => {
       "concise",
     );
     expect(core.configuration.history()).toHaveLength(2);
+    await core.close();
+  });
+
+  it("replaces configuration instructions instead of accumulating stale versions", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const systemPrompts: string[] = [];
+    const provider: ModelProvider = {
+      id: "configuration-instruction-fixture",
+      capabilities: {
+        streaming: false,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        systemPrompts.push(
+          request.messages
+            .filter((message) => message.role === "system")
+            .map((message) => contentText(message.content))
+            .join("\n"),
+        );
+        return {
+          providerId: provider.id,
+          model: request.model,
+          text: "Completed.",
+          toolCalls: [],
+          usage: { inputTokens: 4, outputTokens: 2 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const core = new AgentCore({ database, modelProviders: [provider] });
+    const session = core.runtime.ensureMainSession();
+    await core.handle({
+      type: "runtime-run-agent",
+      sessionId: session.id,
+      message: "First response.",
+      model: "fixture",
+      providerIds: [provider.id],
+    });
+    const proposal = core.configuration.plan({
+      requestSummary: "Use concise responses.",
+      sourceSessionId: session.id,
+      patch: [
+        {
+          op: "replace",
+          path: "/behavior/responseStyle",
+          value: "concise",
+        },
+      ],
+    });
+    core.configuration.apply({
+      proposalId: proposal.id,
+      expectedBaseVersionId: proposal.baseVersionId,
+      preview: proposal.diff,
+    });
+    await core.handle({
+      type: "runtime-run-agent",
+      sessionId: session.id,
+      message: "Second response.",
+      model: "fixture",
+      providerIds: [provider.id],
+    });
+    expect(systemPrompts).toHaveLength(2);
+    expect(systemPrompts[0]).toContain("Use balanced detail");
+    expect(systemPrompts[1]).toContain("Use concise responses");
+    expect(systemPrompts[1]).not.toContain("Use balanced detail");
     await core.close();
   });
 });

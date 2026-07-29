@@ -599,6 +599,7 @@ export const AgentRunSchema = z.object({
   providerModels: z.record(z.string(), z.string().min(1)).optional(),
   reasoningEffort: ReasoningEffortSchema.optional(),
   serviceTier: z.enum(["standard", "priority"]).optional(),
+  maximumTurns: z.number().int().positive().max(50).optional(),
   toolScope: z
     .array(z.string().regex(/^[a-z][a-z0-9_.-]+$/))
     .max(200)

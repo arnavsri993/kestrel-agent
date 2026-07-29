@@ -2170,10 +2170,11 @@ export class AgentCore {
                   )?.input.proposalId ?? "",
                 )
               : "";
-          const rejectedConfigurationExecutionId =
-            rejectedConfigurationProposalId
-              ? waitingRun?.pendingToolExecutionId
-              : undefined;
+          if (rejectedConfigurationProposalId)
+            this.configuration.rejectProposal(
+              rejectedConfigurationProposalId,
+              "User declined the one-time apply approval.",
+            );
           const active =
             request.streamId && waitingRun
               ? {
@@ -2217,17 +2218,6 @@ export class AgentCore {
                 : {}),
             };
           } finally {
-            if (
-              rejectedConfigurationProposalId &&
-              rejectedConfigurationExecutionId &&
-              this.deps.database.getToolExecution(
-                rejectedConfigurationExecutionId,
-              )?.status === "cancelled"
-            )
-              this.configuration.rejectProposal(
-                rejectedConfigurationProposalId,
-                "User declined the one-time apply approval.",
-              );
             if (request.streamId) this.activeStreams.delete(request.streamId);
           }
         }
