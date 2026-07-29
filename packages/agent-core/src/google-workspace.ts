@@ -66,12 +66,68 @@ export class GoogleWorkspaceClient {
       const event = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
       const start = event.start && typeof event.start === "object" ? event.start as Record<string, unknown> : {};
       const end = event.end && typeof event.end === "object" ? event.end as Record<string, unknown> : {};
+      const attendees = Array.isArray(event.attendees)
+        ? event.attendees.slice(0, 500).flatMap((rawAttendee) => {
+            if (!rawAttendee || typeof rawAttendee !== "object") return [];
+            const attendee = rawAttendee as Record<string, unknown>;
+            const email =
+              typeof attendee.email === "string"
+                ? attendee.email.slice(0, 500)
+                : undefined;
+            const name =
+              typeof attendee.displayName === "string"
+                ? attendee.displayName.slice(0, 300)
+                : undefined;
+            if (!email && !name) return [];
+            return [{
+              ...(email ? { email } : {}),
+              ...(name ? { name } : {}),
+              ...(typeof attendee.responseStatus === "string"
+                ? { responseStatus: attendee.responseStatus.slice(0, 100) }
+                : {}),
+              organizer: attendee.organizer === true,
+            }];
+          })
+        : [];
+      const conference = event.conferenceData && typeof event.conferenceData === "object"
+        ? event.conferenceData as Record<string, unknown>
+        : {};
+      const entryPoints = Array.isArray(conference.entryPoints)
+        ? conference.entryPoints
+        : [];
+      const videoEntry = entryPoints.find((entry) =>
+        Boolean(
+          entry &&
+            typeof entry === "object" &&
+            (entry as Record<string, unknown>).entryPointType === "video",
+        ),
+      ) as Record<string, unknown> | undefined;
       return {
         id: String(event.id ?? "").slice(0, 1_024),
         title: String(event.summary ?? "(untitled)").slice(0, 2_000),
         start: String(start.dateTime ?? start.date ?? "").slice(0, 100),
         end: String(end.dateTime ?? end.date ?? "").slice(0, 100),
-        status: String(event.status ?? "").slice(0, 100)
+        allDay: Boolean(start.date && !start.dateTime),
+        timeZone: String(start.timeZone ?? end.timeZone ?? "").slice(0, 200),
+        status: String(event.status ?? "").slice(0, 100),
+        description:
+          typeof event.description === "string"
+            ? event.description.slice(0, 20_000)
+            : undefined,
+        location:
+          typeof event.location === "string"
+            ? event.location.slice(0, 2_000)
+            : undefined,
+        meetingUrl:
+          typeof event.hangoutLink === "string"
+            ? event.hangoutLink.slice(0, 4_000)
+            : typeof videoEntry?.uri === "string"
+              ? videoEntry.uri.slice(0, 4_000)
+              : undefined,
+        attendees,
+        recurrenceRule: Array.isArray(event.recurrence)
+          ? event.recurrence.map(String).join("\n").slice(0, 4_000)
+          : undefined
       };
     }) : [];
     return { calendar: "primary", items };

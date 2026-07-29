@@ -250,9 +250,11 @@ try {
     .waitFor();
   await capture(page, "surface-approvals.png");
 
-  await openTool(page, "Memory");
-  await page.getByRole("heading", { name: "Memory", exact: true }).waitFor();
-  await capture(page, "surface-memory.png");
+  await openTool(page, "Life");
+  await page.getByRole("heading", { name: "Life", exact: true }).waitFor();
+  await capture(page, "surface-life-calendar.png");
+  await page.getByRole("button", { name: "Memory", exact: true }).click();
+  await capture(page, "surface-life-memory.png");
 
   await openTool(page, "Research");
   await page.getByRole("heading", { name: "Research", exact: true }).waitFor();

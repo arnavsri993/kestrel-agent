@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
+import "./life-context.css";
 import { App } from "./App";
 import { PetOverlay } from "./components/PetOverlay";
 
