@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { KestrelDatabase } from "@kestrel/database";
-import { AgentLoop, LOCAL_FIRST_TOOL_INSTRUCTIONS } from "./agent-loop";
+import {
+  AgentLoop,
+  LOCAL_FIRST_TOOL_INSTRUCTIONS,
+  SessionRunBusyError,
+} from "./agent-loop";
 import { ContextCompactor } from "./context-compactor";
 import { AgentRuntime } from "./runtime";
 import {
@@ -21,6 +25,423 @@ afterEach(() => {
 });
 
 describe("provider-neutral agent loop", () => {
+  it("rejects a reverse-completion race across database connections before the competing run mutates history", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-loop-single-flight-"));
+    directories.push(root);
+    const path = join(root, "shared.sqlite");
+    const encryptionKey = createEncryptionKey();
+    const firstDatabase = new KestrelDatabase(path, encryptionKey);
+    const secondDatabase = new KestrelDatabase(path, encryptionKey);
+    const firstRuntime = new AgentRuntime(firstDatabase);
+    const secondRuntime = new AgentRuntime(secondDatabase);
+    const session = firstRuntime.createSession({ title: "Single flight" });
+    let reportStarted: () => void = () => undefined;
+    let releaseFirst: () => void = () => undefined;
+    const started = new Promise<void>((resolvePromise) => {
+      reportStarted = resolvePromise;
+    });
+    const gate = new Promise<void>((resolvePromise) => {
+      releaseFirst = resolvePromise;
+    });
+    let competingProviderCalls = 0;
+    const firstProvider: ModelProvider = {
+      id: "first",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        reportStarted();
+        await gate;
+        return {
+          providerId: "first",
+          model: request.model,
+          text: "The first run completed.",
+          toolCalls: [],
+          usage: { inputTokens: 3, outputTokens: 2 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const competingProvider: ModelProvider = {
+      id: "competing",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        competingProviderCalls += 1;
+        return {
+          providerId: "competing",
+          model: request.model,
+          text: "This faster run must never start.",
+          toolCalls: [],
+          usage: { inputTokens: 3, outputTokens: 2 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const firstLoop = new AgentLoop(
+      firstDatabase,
+      firstRuntime,
+      new ProviderPool([firstProvider]),
+    );
+    const competingLoop = new AgentLoop(
+      secondDatabase,
+      secondRuntime,
+      new ProviderPool([competingProvider]),
+    );
+
+    const firstRun = firstLoop.run({
+      sessionId: session.id,
+      model: "first",
+      providerIds: ["first"],
+      userContent: textContent("First request"),
+    });
+    await started;
+    await expect(
+      competingLoop.run({
+        sessionId: session.id,
+        model: "competing",
+        providerIds: ["competing"],
+        userContent: textContent("Competing request"),
+      }),
+    ).rejects.toMatchObject({
+      name: "SessionRunBusyError",
+      code: "SESSION_RUN_BUSY",
+      sessionId: session.id,
+    });
+
+    expect(competingProviderCalls).toBe(0);
+    expect(secondDatabase.listAgentRuns(session.id)).toHaveLength(1);
+    expect(
+      secondRuntime
+        .listMessages(session.id)
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual(["First request"]);
+    expect(
+      secondDatabase.listIdempotentClaims("agent-session-run:"),
+    ).toHaveLength(1);
+
+    releaseFirst();
+    await expect(firstRun).resolves.toMatchObject({
+      run: { status: "completed" },
+    });
+    expect(
+      firstDatabase.listIdempotentClaims("agent-session-run:"),
+    ).toEqual([]);
+    firstDatabase.close();
+    secondDatabase.close();
+  });
+
+  it("preserves parallelism across sessions and releases claims after completion", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const firstSession = runtime.createSession({ title: "First session" });
+    const secondSession = runtime.createSession({ title: "Second session" });
+    let active = 0;
+    let peak = 0;
+    let starts = 0;
+    let reportBothStarted: () => void = () => undefined;
+    let releaseBoth: () => void = () => undefined;
+    const bothStarted = new Promise<void>((resolvePromise) => {
+      reportBothStarted = resolvePromise;
+    });
+    const gate = new Promise<void>((resolvePromise) => {
+      releaseBoth = resolvePromise;
+    });
+    const provider: ModelProvider = {
+      id: "parallel",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        starts += 1;
+        active += 1;
+        peak = Math.max(peak, active);
+        if (starts === 2) reportBothStarted();
+        await gate;
+        active -= 1;
+        return {
+          providerId: "parallel",
+          model: request.model,
+          text: "Done.",
+          toolCalls: [],
+          usage: { inputTokens: 2, outputTokens: 1 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+    );
+    const first = loop.run({
+      sessionId: firstSession.id,
+      model: "parallel",
+      providerIds: ["parallel"],
+      userContent: textContent("First"),
+    });
+    const second = loop.run({
+      sessionId: secondSession.id,
+      model: "parallel",
+      providerIds: ["parallel"],
+      userContent: textContent("Second"),
+    });
+    await bothStarted;
+    expect(peak).toBe(2);
+    releaseBoth();
+    await expect(Promise.all([first, second])).resolves.toMatchObject([
+      { run: { status: "completed" } },
+      { run: { status: "completed" } },
+    ]);
+    await expect(
+      loop.run({
+        sessionId: firstSession.id,
+        model: "parallel",
+        providerIds: ["parallel"],
+        userContent: textContent("First again"),
+      }),
+    ).resolves.toMatchObject({ run: { status: "completed" } });
+    expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
+    database.close();
+  });
+
+  it("releases the session claim after provider errors and cancellation", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Claim release" });
+    let calls = 0;
+    let reportCancellationStarted: () => void = () => undefined;
+    const cancellationStarted = new Promise<void>((resolvePromise) => {
+      reportCancellationStarted = resolvePromise;
+    });
+    const provider: ModelProvider = {
+      id: "release",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request, options) => {
+        calls += 1;
+        if (calls === 1) throw new Error("Provider fixture failed.");
+        if (calls === 2) {
+          reportCancellationStarted();
+          await new Promise<void>((_resolvePromise, rejectPromise) => {
+            const abort = () =>
+              rejectPromise(
+                options?.signal?.reason ?? new Error("Cancelled."),
+              );
+            if (options?.signal?.aborted) abort();
+            else options?.signal?.addEventListener("abort", abort, {
+              once: true,
+            });
+          });
+        }
+        return {
+          providerId: "release",
+          model: request.model,
+          text: "Recovered.",
+          toolCalls: [],
+          usage: { inputTokens: 2, outputTokens: 1 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+    );
+    await expect(
+      loop.run({
+        sessionId: session.id,
+        model: "release",
+        providerIds: ["release"],
+        userContent: textContent("Fail"),
+      }),
+    ).rejects.toBeDefined();
+    expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
+
+    const controller = new AbortController();
+    const cancelled = loop.run({
+      sessionId: session.id,
+      model: "release",
+      providerIds: ["release"],
+      userContent: textContent("Cancel"),
+      signal: controller.signal,
+    });
+    await cancellationStarted;
+    controller.abort(new Error("Stop this run."));
+    await expect(cancelled).rejects.toBeDefined();
+    expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
+
+    await expect(
+      loop.run({
+        sessionId: session.id,
+        model: "release",
+        providerIds: ["release"],
+        userContent: textContent("Recover"),
+      }),
+    ).resolves.toMatchObject({ run: { status: "completed" } });
+    expect(
+      database
+        .listAgentRuns(session.id)
+        .map((run) => run.status)
+        .sort(),
+    ).toEqual(["cancelled", "completed", "failed"]);
+    database.close();
+  });
+
+  it("releases at approval boundaries while preventing run and resume overlap", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Approval claim release" });
+    let executions = 0;
+    runtime.registerExternalTool({
+      descriptor: {
+        name: "test.approval-claim",
+        title: "Approval claim fixture",
+        description: "Require approval before recording one fixture action.",
+        category: "connector",
+        riskLevel: "sensitive",
+        readOnly: false,
+        requiresWorkspace: false,
+        source: "plugin",
+        tags: ["test", "approval"],
+      },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => {
+        executions += 1;
+        return { receipt: `execution-${executions}` };
+      },
+    });
+    runtime.allowTool(session.id, "test.approval-claim");
+    let calls = 0;
+    let reportSecondStarted: () => void = () => undefined;
+    let releaseSecond: () => void = () => undefined;
+    const secondStarted = new Promise<void>((resolvePromise) => {
+      reportSecondStarted = resolvePromise;
+    });
+    const secondGate = new Promise<void>((resolvePromise) => {
+      releaseSecond = resolvePromise;
+    });
+    const provider: ModelProvider = {
+      id: "approval",
+      capabilities: {
+        streaming: false,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            providerId: "approval",
+            model: request.model,
+            text: "",
+            toolCalls: [
+              {
+                id: "call-approval-claim",
+                name: "test.approval-claim",
+                arguments: {},
+              },
+            ],
+            usage: { inputTokens: 2, outputTokens: 1 },
+            finishReason: "tool_calls",
+          };
+        }
+        if (calls === 2) {
+          reportSecondStarted();
+          await secondGate;
+        }
+        return {
+          providerId: "approval",
+          model: request.model,
+          text: "Done.",
+          toolCalls: [],
+          usage: { inputTokens: 2, outputTokens: 1 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+    );
+    const waiting = await loop.run({
+      sessionId: session.id,
+      model: "approval",
+      providerIds: ["approval"],
+      userContent: textContent("Wait for approval"),
+    });
+    expect(waiting.run.status).toBe("waiting_approval");
+    expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
+
+    const active = loop.run({
+      sessionId: session.id,
+      model: "approval",
+      providerIds: ["approval"],
+      userContent: textContent("Run something else"),
+    });
+    await secondStarted;
+    await expect(
+      loop.resume({
+        runId: waiting.run.id,
+        approvalDecision: "approved",
+      }),
+    ).rejects.toBeInstanceOf(SessionRunBusyError);
+    expect(database.getAgentRun(waiting.run.id)?.status).toBe(
+      "waiting_approval",
+    );
+    expect(executions).toBe(0);
+
+    releaseSecond();
+    await expect(active).resolves.toMatchObject({
+      run: { status: "completed" },
+    });
+    await expect(
+      loop.resume({
+        runId: waiting.run.id,
+        approvalDecision: "approved",
+      }),
+    ).resolves.toMatchObject({ run: { status: "completed" } });
+    expect(executions).toBe(1);
+    await expect(
+      loop.run({
+        sessionId: session.id,
+        model: "approval",
+        providerIds: ["approval"],
+        userContent: textContent("After resume"),
+      }),
+    ).resolves.toMatchObject({ run: { status: "completed" } });
+    expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
+    database.close();
+  });
+
   it("keeps workspace-free chat usable when a configured workspace becomes unavailable", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-loop-unavailable-"));
     directories.push(root);

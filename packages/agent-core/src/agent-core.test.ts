@@ -375,6 +375,110 @@ describe("core agent request path", () => {
     expect(core.runtime.listMessages(session.id).filter((message) => message.role === "assistant").map((message) => message.content)).toEqual(["Retried answer"]);
     await core.close();
   });
+
+  it("rejects retry before rewinding an active turn in the same session", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    let calls = 0;
+    let reportActiveStarted: () => void = () => undefined;
+    let releaseActive: () => void = () => undefined;
+    const activeStarted = new Promise<void>((resolvePromise) => {
+      reportActiveStarted = resolvePromise;
+    });
+    const activeGate = new Promise<void>((resolvePromise) => {
+      releaseActive = resolvePromise;
+    });
+    const provider: ModelProvider = {
+      id: "retry-race-provider",
+      capabilities: {
+        streaming: true,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        calls += 1;
+        if (calls === 2) {
+          reportActiveStarted();
+          await activeGate;
+        }
+        return {
+          providerId: "retry-race-provider",
+          model: request.model,
+          text: calls === 1 ? "Initial answer" : "Active answer",
+          toolCalls: [],
+          usage: { inputTokens: 2, outputTokens: 2 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const core = new AgentCore({
+      database,
+      modelProviders: [provider],
+      now: () => "2026-07-22T15:00:00.000Z",
+    });
+    const session = core.runtime.ensureMainSession();
+    await expect(
+      core.handle({
+        type: "runtime-run-agent",
+        sessionId: session.id,
+        message: "Initial request",
+        model: "fixture",
+        providerIds: ["retry-race-provider"],
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      messages: [{ content: "Initial answer" }],
+    });
+
+    const active = core.handle({
+      type: "runtime-run-agent",
+      sessionId: session.id,
+      message: "Active request",
+      model: "fixture",
+      providerIds: ["retry-race-provider"],
+    });
+    await activeStarted;
+    await expect(
+      core.handle({
+        type: "runtime-retry-agent",
+        sessionId: session.id,
+        model: "fixture",
+        providerIds: ["retry-race-provider"],
+      }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error:
+        "This session already has an active agent run. Wait for it to finish or stop it before starting another.",
+    });
+    expect(calls).toBe(2);
+    expect(
+      core.runtime
+        .listMessages(session.id)
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual(["Initial request", "Active request"]);
+    expect(
+      database
+        .listAgentRuns(session.id)
+        .map((run) => run.status)
+        .sort(),
+    ).toEqual(["completed", "running"]);
+
+    releaseActive();
+    await expect(active).resolves.toMatchObject({
+      ok: true,
+      messages: [{ content: "Active answer" }],
+    });
+    expect(
+      core.runtime
+        .listMessages(session.id)
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual(["Initial request", "Active request"]);
+    await core.close();
+  });
 });
 
 describe("opportunity governance", () => {

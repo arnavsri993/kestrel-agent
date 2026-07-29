@@ -1025,10 +1025,12 @@ export class AgentCore {
           };
         case "runtime-retry-agent": {
           this.abortActiveStreamsForHistoryRollback(request.sessionId);
-          const prior = this.runtime.rewindLastTurn(request.sessionId);
+          const priorMessage = this.runtime.retryLastTurnMessage(
+            request.sessionId,
+          );
           const route =
             request.model === "auto"
-              ? this.automaticRoute(`retry-${request.sessionId}`, prior.message)
+              ? this.automaticRoute(`retry-${request.sessionId}`, priorMessage)
               : undefined;
           const controller = new AbortController();
           const active = request.streamId
@@ -1041,7 +1043,7 @@ export class AgentCore {
           if (request.streamId && active)
             this.activeStreams.set(request.streamId, active);
           try {
-            const result = await this.agentLoop.run({
+            const result = await this.agentLoop.retry({
               sessionId: request.sessionId,
               model: request.model,
               providerIds: request.providerIds,
@@ -1059,7 +1061,6 @@ export class AgentCore {
                     serviceTier: route.serviceTier,
                   }
                 : {}),
-              userContent: textContent(prior.message),
               signal: controller.signal,
               ...(request.streamId
                 ? {
@@ -2160,8 +2161,10 @@ export {
 } from "./runtime";
 export {
   AgentLoop,
+  SessionRunBusyError,
   type AgentLoopInput,
   type AgentLoopResult,
+  type AgentLoopRetryInput,
   type AgentLoopResumeInput,
 } from "./agent-loop";
 export { ContextCompactor, type CompactedContext } from "./context-compactor";

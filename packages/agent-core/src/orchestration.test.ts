@@ -7,7 +7,7 @@ import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { AgentLoop } from "./agent-loop";
 import { AutomationDaemon, TaskOrchestrator, nextCronOccurrence, parseScheduleExpression } from "./orchestration";
-import { ProviderPool, type ModelProvider } from "./providers";
+import { ProviderPool, textContent, type ModelProvider } from "./providers";
 import { AgentRuntime } from "./runtime";
 import { teacherOpportunity } from "./fixtures";
 
@@ -25,7 +25,7 @@ function fixture(provider: ModelProvider, now = () => new Date("2026-07-22T20:00
   const parent = runtime.createSession({ title: "Parent", workspaceRoot: root });
   const providers = new ProviderPool([provider], now);
   const loop = new AgentLoop(database, runtime, providers, now);
-  return { root, database, runtime, parent, orchestrator: new TaskOrchestrator(database, runtime, loop, now, 3, providers) };
+  return { root, database, runtime, parent, loop, orchestrator: new TaskOrchestrator(database, runtime, loop, now, 3, providers) };
 }
 
 function finalProvider(onCall?: () => Promise<void>): ModelProvider {
@@ -240,6 +240,99 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("defers scheduled work without mutating its session while an interactive run is active", async () => {
+    let calls = 0;
+    let reportInteractiveStarted: () => void = () => undefined;
+    let releaseInteractive: () => void = () => undefined;
+    const interactiveStarted = new Promise<void>((resolvePromise) => {
+      reportInteractiveStarted = resolvePromise;
+    });
+    const interactiveGate = new Promise<void>((resolvePromise) => {
+      releaseInteractive = resolvePromise;
+    });
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: {
+        streaming: true,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        calls += 1;
+        if (calls === 1) {
+          reportInteractiveStarted();
+          await interactiveGate;
+        }
+        return {
+          providerId: "fake",
+          model: request.model,
+          text: calls === 1 ? "Interactive complete." : "Scheduled complete.",
+          toolCalls: [],
+          usage: { inputTokens: 3, outputTokens: 2 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const item = fixture(provider);
+    const job = item.orchestrator.schedule({
+      title: "Deferred schedule",
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      prompt: "Scheduled request",
+      schedule: {
+        kind: "once",
+        nextRunAt: "2026-07-22T20:00:00.000Z",
+      },
+    });
+    const interactive = item.loop.run({
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Interactive request"),
+    });
+    await interactiveStarted;
+
+    const [deferred] = await item.orchestrator.runDue();
+    expect(deferred).toMatchObject({
+      id: job.id,
+      status: "pending",
+      error: expect.stringContaining("already has an active agent run"),
+    });
+    expect(item.database.listAgentRuns(item.parent.id)).toHaveLength(1);
+    expect(
+      item.runtime
+        .listMessages(item.parent.id)
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual(["Interactive request"]);
+
+    releaseInteractive();
+    await expect(interactive).resolves.toMatchObject({
+      run: { status: "completed" },
+    });
+    const [completed] = await item.orchestrator.runDue();
+    expect(completed).toMatchObject({
+      id: job.id,
+      status: "completed",
+      lastRunId: expect.any(String),
+      error: undefined,
+    });
+    expect(
+      item.runtime
+        .listMessages(item.parent.id)
+        .filter((message) => message.role === "user")
+        .map((message) => message.content),
+    ).toEqual(["Interactive request", "Scheduled request"]);
+    expect(
+      item.database.listIdempotentClaims("agent-session-run:"),
+    ).toEqual([]);
+    item.database.close();
+  });
+
   it("advances cron jobs to the next matching occurrence", async () => {
     const instant = new Date("2026-07-22T20:15:00.000Z");
     const item = fixture(finalProvider(), () => instant);
@@ -262,12 +355,29 @@ describe("task orchestration", () => {
 
   it("keeps scheduled runs in a review queue and resumes the same run after approval", async () => {
     let calls = 0;
+    let reportInteractiveStarted: () => void = () => undefined;
+    let releaseInteractive: () => void = () => undefined;
+    const interactiveStarted = new Promise<void>((resolvePromise) => {
+      reportInteractiveStarted = resolvePromise;
+    });
+    const interactiveGate = new Promise<void>((resolvePromise) => {
+      releaseInteractive = resolvePromise;
+    });
     const provider: ModelProvider = {
       id: "fake",
       capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: true },
-      complete: async (request) => ++calls === 1
-        ? { providerId: "fake", model: request.model, text: "", toolCalls: [{ id: "delete-call", name: "workspace.delete", arguments: { path: "review.txt" } }], usage: { inputTokens: 3, outputTokens: 1 }, finishReason: "tool_calls" }
-        : { providerId: "fake", model: request.model, text: "Approved and deleted.", toolCalls: [], usage: { inputTokens: 4, outputTokens: 2 }, finishReason: "stop" }
+      complete: async (request) => {
+        calls += 1;
+        if (calls === 1) {
+          return { providerId: "fake", model: request.model, text: "", toolCalls: [{ id: "delete-call", name: "workspace.delete", arguments: { path: "review.txt" } }], usage: { inputTokens: 3, outputTokens: 1 }, finishReason: "tool_calls" };
+        }
+        if (calls === 2) {
+          reportInteractiveStarted();
+          await interactiveGate;
+          return { providerId: "fake", model: request.model, text: "Interactive work completed.", toolCalls: [], usage: { inputTokens: 4, outputTokens: 2 }, finishReason: "stop" };
+        }
+        return { providerId: "fake", model: request.model, text: "Approved and deleted.", toolCalls: [], usage: { inputTokens: 4, outputTokens: 2 }, finishReason: "stop" };
+      }
     };
     const item = fixture(provider);
     writeFileSync(join(item.root, "review.txt"), "review first\n");
@@ -278,6 +388,26 @@ describe("task orchestration", () => {
     const [waiting] = await item.orchestrator.runDue();
     expect(waiting).toMatchObject({ id: job.id, status: "waiting_approval", lastRunId: expect.any(String) });
     expect(existsSync(join(item.root, "review.txt"))).toBe(true);
+
+    const interactive = item.loop.run({
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      userContent: textContent("Handle an interactive task"),
+    });
+    await interactiveStarted;
+    const deferred = await item.orchestrator.resumeJob(job.id);
+    expect(deferred).toMatchObject({
+      status: "waiting_approval",
+      lastRunId: waiting?.lastRunId,
+      error: expect.stringContaining("already has an active agent run"),
+    });
+    expect(existsSync(join(item.root, "review.txt"))).toBe(true);
+    releaseInteractive();
+    await expect(interactive).resolves.toMatchObject({
+      run: { status: "completed" },
+    });
+
     const resumed = await item.orchestrator.resumeJob(job.id);
     expect(resumed.status).toBe("completed");
     expect(existsSync(join(item.root, "review.txt"))).toBe(false);

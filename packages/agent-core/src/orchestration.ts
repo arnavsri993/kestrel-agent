@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import type { RuntimeToolExecution, TaskOpportunity } from "@kestrel/shared-types";
-import { AgentLoop, type AgentLoopResult } from "./agent-loop";
+import { AgentLoop, SessionRunBusyError, type AgentLoopResult } from "./agent-loop";
 import { ProviderPool, textContent, type ProviderVerification } from "./providers";
 import { AgentRuntime } from "./runtime";
 
@@ -443,8 +443,10 @@ export class TaskOrchestrator {
         approvalDecision: "approved",
       });
       updated = this.finishJob(updated, result, this.now());
-    } catch {
-      updated = { ...updated, status: "failed", error: "Scheduled agent resume failed.", updatedAt: this.now().toISOString() };
+    } catch (error) {
+      updated = error instanceof SessionRunBusyError
+        ? { ...job, status: "waiting_approval", error: error.message, updatedAt: this.now().toISOString() }
+        : { ...updated, status: "failed", error: "Scheduled agent resume failed.", updatedAt: this.now().toISOString() };
     }
     this.replaceJob(updated);
     return updated;
@@ -469,15 +471,17 @@ export class TaskOrchestrator {
           ...(signal ? { signal } : {})
         });
         current = this.finishJob(current, result, at);
-      } catch {
-        current = {
-          ...current,
-          status: "failed",
-          error: signal?.aborted
-            ? "Scheduled agent run was interrupted and will not be retried automatically."
-            : "Scheduled agent run failed.",
-          updatedAt: this.now().toISOString()
-        };
+      } catch (error) {
+        current = signal?.aborted
+          ? {
+              ...current,
+              status: "failed",
+              error: "Scheduled agent run was interrupted and will not be retried automatically.",
+              updatedAt: this.now().toISOString()
+            }
+          : error instanceof SessionRunBusyError
+            ? { ...job, status: "pending", error: error.message, updatedAt: this.now().toISOString() }
+            : { ...current, status: "failed", error: "Scheduled agent run failed.", updatedAt: this.now().toISOString() };
       }
       this.replaceJob(current);
       output.push(current);
