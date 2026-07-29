@@ -412,13 +412,13 @@ export class AgentRuntime extends EventEmitter {
     return updated;
   }
 
+  retryLastTurnMessage(sessionId: string): string {
+    return this.retryableUserTurn(sessionId).user.content;
+  }
+
   rewindLastTurn(sessionId: string): { message: string } {
     const session = this.requireSession(sessionId);
-    const messages = this.listMessages(sessionId);
-    let index = messages.length - 1;
-    while (index >= 0 && messages[index]?.role !== "user") index -= 1;
-    const user = messages[index];
-    if (!user) throw new Error("No user turn is available to retry.");
+    const { index, user } = this.retryableUserTurn(sessionId);
     const matchingRun = [...this.database.listAgentRuns(sessionId)].reverse().find((run) => {
       const baseline = this.database.getPrivateState<{ userMessageId?: string }>(`agent-run-baseline.${run.id}`);
       return baseline?.userMessageId === user.id;
@@ -469,6 +469,19 @@ export class AgentRuntime extends EventEmitter {
     });
     this.emitRuntimeEvent("session.updated", sessionId, { action: "rewind-turn", messageId: user.id });
     return { message: user.content };
+  }
+
+  private retryableUserTurn(sessionId: string): {
+    messages: RuntimeMessage[];
+    index: number;
+    user: RuntimeMessage;
+  } {
+    const messages = this.listMessages(sessionId);
+    let index = messages.length - 1;
+    while (index >= 0 && messages[index]?.role !== "user") index -= 1;
+    const user = messages[index];
+    if (!user) throw new Error("No user turn is available to retry.");
+    return { messages, index, user };
   }
 
   forkSession(sessionId: string, title?: string): RuntimeSession {

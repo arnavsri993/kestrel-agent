@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRun, ModelCallAudit, RuntimeMessage, RuntimeToolExecution } from "@kestrel/shared-types";
+import type { AgentRun, ModelCallAudit, RuntimeMessage, RuntimeSession, RuntimeToolExecution } from "@kestrel/shared-types";
 import type { KestrelDatabase } from "@kestrel/database";
 import { ContextCompactor } from "./context-compactor";
 import { UsageGovernor } from "./usage-governor";
@@ -55,6 +55,17 @@ export interface AgentLoopResumeInput {
   takeSteering?: () => string[];
 }
 
+export type AgentLoopRetryInput = Omit<AgentLoopInput, "userContent">;
+
+export class SessionRunBusyError extends Error {
+  readonly code = "SESSION_RUN_BUSY";
+
+  constructor(readonly sessionId: string) {
+    super("This session already has an active agent run. Wait for it to finish or stop it before starting another.");
+    this.name = "SessionRunBusyError";
+  }
+}
+
 function transcriptContent(parts: ModelContentPart[]): string {
   const text = contentText(parts).trim();
   const attachments = parts.filter((part) => part.type !== "text")
@@ -66,10 +77,20 @@ function durationMs(startedAt: string, completedAt: string): number {
   return Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
 }
 
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 export class AgentLoop {
   private readonly compactor = new ContextCompactor();
   private readonly usageGovernor: UsageGovernor;
   private readonly resumingRunIds = new Set<string>();
+  private readonly sessionRunOwnerToken = `agent-loop-${randomUUID()}`;
 
   constructor(
     private readonly database: KestrelDatabase,
@@ -82,9 +103,27 @@ export class AgentLoop {
   ) { this.usageGovernor = usageGovernor ?? new UsageGovernor(database, now); }
 
   async run(input: AgentLoopInput): Promise<AgentLoopResult> {
-    const session = this.runtime.getSession(input.sessionId);
-    if (session.status !== "active") throw new Error(`Session ${session.id} is ${session.status}.`);
-    if (input.providerIds.length === 0) throw new Error("At least one model provider is required.");
+    return this.withSessionRunClaim(input.sessionId, () => {
+      const session = this.requireRunnableSession(input.sessionId, input.providerIds);
+      return this.startRun(input, session);
+    });
+  }
+
+  async retry(input: AgentLoopRetryInput): Promise<AgentLoopResult> {
+    return this.withSessionRunClaim(input.sessionId, () => {
+      const session = this.requireRunnableSession(input.sessionId, input.providerIds);
+      const prior = this.runtime.rewindLastTurn(session.id);
+      return this.startRun(
+        { ...input, userContent: textContent(prior.message) },
+        session,
+      );
+    });
+  }
+
+  private async startRun(
+    input: AgentLoopInput,
+    session: RuntimeSession,
+  ): Promise<AgentLoopResult> {
     const messageCountBefore = this.runtime.listMessages(session.id).length;
     const mutationIdsBefore = this.database.listWorkspaceMutationIds(session.id);
     const createdAt = this.now().toISOString();
@@ -148,6 +187,20 @@ export class AgentLoop {
     if (this.resumingRunIds.has(input.runId))
       throw new Error("Agent run approval is already being resolved.");
     this.resumingRunIds.add(input.runId);
+    try {
+      const run = this.database.getAgentRun(input.runId);
+      if (!run) throw new Error("Agent run not found.");
+      return await this.withSessionRunClaim(run.sessionId, () =>
+        this.resumeClaimed(input),
+      );
+    } finally {
+      this.resumingRunIds.delete(input.runId);
+    }
+  }
+
+  private async resumeClaimed(
+    input: AgentLoopResumeInput,
+  ): Promise<AgentLoopResult> {
     try {
       let run = this.database.getAgentRun(input.runId);
       if (!run) throw new Error("Agent run not found.");
@@ -220,8 +273,49 @@ export class AgentLoop {
         }
       }
       throw error;
+    }
+  }
+
+  private requireRunnableSession(
+    sessionId: string,
+    providerIds: string[],
+  ): RuntimeSession {
+    const session = this.runtime.getSession(sessionId);
+    if (session.status !== "active")
+      throw new Error(`Session ${session.id} is ${session.status}.`);
+    if (providerIds.length === 0)
+      throw new Error("At least one model provider is required.");
+    return session;
+  }
+
+  private async withSessionRunClaim<T>(
+    sessionId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = `agent-session-run:${sessionId}`;
+    const claim = this.database.claimIdempotentResult(
+      key,
+      this.sessionRunOwnerToken,
+      process.pid,
+      { sessionId, status: "running" },
+    );
+    if (claim.state !== "claimed") {
+      if (
+        claim.state === "active" &&
+        !processIsAlive(claim.claim.ownerPid) &&
+        this.database.releaseIdempotentClaim(key, claim.claim.ownerToken)
+      ) {
+        return this.withSessionRunClaim(sessionId, operation);
+      }
+      throw new SessionRunBusyError(sessionId);
+    }
+    try {
+      return await operation();
     } finally {
-      this.resumingRunIds.delete(input.runId);
+      this.database.releaseIdempotentClaim(
+        key,
+        this.sessionRunOwnerToken,
+      );
     }
   }
 

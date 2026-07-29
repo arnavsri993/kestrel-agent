@@ -288,12 +288,10 @@ export async function runCli(args: string[]): Promise<void> {
       );
       if (result.run.status === "waiting_approval") process.exitCode = 2;
     } else if (command.name === "retry") {
-      const prior = core.runtime.rewindLastTurn(command.sessionId);
-      const result = await core.agentLoop.run({
+      const result = await core.agentLoop.retry({
         sessionId: command.sessionId,
         model: command.model,
         providerIds: command.providers,
-        userContent: textContent(prior.message),
         onTextDelta: (delta) => process.stdout.write(delta),
       });
       process.stdout.write(
