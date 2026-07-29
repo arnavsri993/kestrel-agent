@@ -227,6 +227,7 @@ describe("provider-neutral agent loop", () => {
     const runtime = new AgentRuntime(database);
     const session = runtime.createSession({ title: "Claim release" });
     let calls = 0;
+    let providerNow = new Date("2026-07-29T12:00:00.000Z");
     let reportCancellationStarted: () => void = () => undefined;
     const cancellationStarted = new Promise<void>((resolvePromise) => {
       reportCancellationStarted = resolvePromise;
@@ -270,7 +271,7 @@ describe("provider-neutral agent loop", () => {
     const loop = new AgentLoop(
       database,
       runtime,
-      new ProviderPool([provider]),
+      new ProviderPool([provider], () => providerNow),
     );
     await expect(
       loop.run({
@@ -282,6 +283,7 @@ describe("provider-neutral agent loop", () => {
     ).rejects.toBeDefined();
     expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
 
+    providerNow = new Date(providerNow.getTime() + 30_001);
     const controller = new AbortController();
     const cancelled = loop.run({
       sessionId: session.id,
@@ -295,6 +297,7 @@ describe("provider-neutral agent loop", () => {
     await expect(cancelled).rejects.toBeDefined();
     expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
 
+    providerNow = new Date(providerNow.getTime() + 30_001);
     await expect(
       loop.run({
         sessionId: session.id,

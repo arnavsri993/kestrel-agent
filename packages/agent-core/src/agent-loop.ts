@@ -32,6 +32,8 @@ export interface AgentLoopInput {
   targetPath?: string;
   maximumTurns?: number;
   maximumContextCharacters?: number;
+  maximumOutputTokens?: number;
+  temperature?: number;
   approvalStatus?: "pending" | "approved";
   signal?: AbortSignal;
   onTextDelta?: (delta: string) => void;
@@ -144,6 +146,15 @@ export class AgentLoop {
       ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
       ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
       maximumTurns: input.maximumTurns ?? 12,
+      ...(input.maximumContextCharacters
+        ? { maximumContextCharacters: input.maximumContextCharacters }
+        : {}),
+      ...(input.maximumOutputTokens
+        ? { maximumOutputTokens: input.maximumOutputTokens }
+        : {}),
+      ...(input.temperature !== undefined
+        ? { temperature: input.temperature }
+        : {}),
       ...(input.allowedTools ? { toolScope: input.allowedTools } : {}),
       status: "running",
       turn: 0,
@@ -202,6 +213,8 @@ export class AgentLoop {
     return this.continueRun(run, modelMessages, compacted.removedMessages, {
       maximumTurns: input.maximumTurns ?? 12,
       approvalStatus: input.approvalStatus ?? "pending",
+      ...(input.maximumOutputTokens ? { maximumOutputTokens: input.maximumOutputTokens } : {}),
+      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
       ...(input.takeSteering ? { takeSteering: input.takeSteering } : {})
@@ -276,7 +289,10 @@ export class AgentLoop {
           .filter((message) => !isManagedInstructionMessage(message)),
         session.checkpoints,
         {
-        maximumCharacters: input.maximumContextCharacters ?? 120_000
+        maximumCharacters:
+          input.maximumContextCharacters ??
+          run.maximumContextCharacters ??
+          120_000,
         },
       );
       const priorCompaction = this.database.getPrivateState<{ removedMessages: number }>(`agent-run-compaction.${run.id}`);
@@ -295,6 +311,12 @@ export class AgentLoop {
       return await this.continueRun(run, modelMessages, compacted.removedMessages, {
         maximumTurns: Math.max(configuredMaximumTurns, run.turn + 1),
         approvalStatus: "pending",
+        ...(run.maximumOutputTokens
+          ? { maximumOutputTokens: run.maximumOutputTokens }
+          : {}),
+        ...(run.temperature !== undefined
+          ? { temperature: run.temperature }
+          : {}),
         ...(input.signal ? { signal: input.signal } : {}),
         ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
         ...(input.takeSteering ? { takeSteering: input.takeSteering } : {})
@@ -368,7 +390,7 @@ export class AgentLoop {
     initialRun: AgentRun,
     initialMessages: ModelMessage[],
     compactedMessages: number,
-    options: { maximumTurns: number; approvalStatus: "pending" | "approved"; signal?: AbortSignal; onTextDelta?: (delta: string) => void; takeSteering?: () => string[] }
+    options: { maximumTurns: number; approvalStatus: "pending" | "approved"; maximumOutputTokens?: number; temperature?: number; signal?: AbortSignal; onTextDelta?: (delta: string) => void; takeSteering?: () => string[] }
   ): Promise<AgentLoopResult> {
     let run = initialRun;
     let modelMessages = initialMessages;
@@ -390,7 +412,7 @@ export class AgentLoop {
         let poolResult;
         const lease = this.usageGovernor.acquire();
         try {
-          poolResult = await this.providers.complete({ model: run.model, messages: modelMessages, tools, metadata: { session_id: session.id, ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}) }, ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}), ...(run.serviceTier ? { serviceTier: run.serviceTier } : {}) }, {
+          poolResult = await this.providers.complete({ model: run.model, messages: modelMessages, tools, metadata: { session_id: session.id, ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}) }, ...(run.reasoningEffort ? { reasoningEffort: run.reasoningEffort } : {}), ...(run.serviceTier ? { serviceTier: run.serviceTier } : {}), ...(options.maximumOutputTokens ? { maxOutputTokens: options.maximumOutputTokens } : {}), ...(options.temperature !== undefined ? { temperature: options.temperature } : {}) }, {
             ...(run.providerIds.includes("auto") ? {} : { providerIds: run.providerIds }),
             automaticRouting: run.providerIds.includes("auto"),
             ...(run.providerModels ? { providerModels: run.providerModels } : {}),

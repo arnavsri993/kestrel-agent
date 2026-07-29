@@ -398,12 +398,7 @@ export const AgentStateSchema = z.enum([
 ]);
 export type AgentState = z.infer<typeof AgentStateSchema>;
 
-export const ExecutionModelSchema = z.enum([
-  "local-rules",
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
-]);
+export const ExecutionModelSchema = z.string().min(1).max(200);
 export type ExecutionModel = z.infer<typeof ExecutionModelSchema>;
 
 export const ReasoningEffortSchema = z.enum([
@@ -416,14 +411,162 @@ export const ReasoningEffortSchema = z.enum([
 ]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 
+export const ModelCapabilitySchema = z.enum([
+  "complex_reasoning",
+  "coding",
+  "backend_architecture",
+  "frontend_implementation",
+  "ui_visual_design",
+  "creative_writing",
+  "technical_writing",
+  "research",
+  "long_context",
+  "image_understanding",
+  "tool_use",
+  "planning",
+  "debugging",
+  "code_review",
+  "mathematical_reasoning",
+  "speed",
+  "cost_efficiency",
+  "reliability",
+  "instruction_following",
+  "structured_output",
+]);
+export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
+
+const CapabilityScoresSchema = z.record(
+  ModelCapabilitySchema,
+  z.number().min(0).max(1),
+);
+
+export const ModelProfileSchema = z.object({
+  id: z.string().min(1).max(300),
+  provider: z.string().min(1).max(100),
+  endpointId: z.string().min(1).max(100),
+  model: z.string().min(1).max(200),
+  displayName: z.string().min(1).max(300),
+  enabled: z.boolean(),
+  local: z.boolean(),
+  capabilities: CapabilityScoresSchema,
+  cost: z.object({
+    inputPerMillion: z.number().nonnegative().optional(),
+    outputPerMillion: z.number().nonnegative().optional(),
+    fixedRequestCost: z.number().nonnegative().optional(),
+    priorityMultiplier: z.number().min(1).optional(),
+  }),
+  latency: z.object({
+    averageMs: z.number().nonnegative().optional(),
+    p95Ms: z.number().nonnegative().optional(),
+  }),
+  limits: z.object({
+    contextWindow: z.number().int().positive().optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+    concurrency: z.number().int().positive().optional(),
+  }),
+  features: z.object({
+    tools: z.boolean(),
+    vision: z.boolean(),
+    structuredOutput: z.boolean(),
+    reasoningLevels: z.boolean(),
+    fastMode: z.boolean(),
+    streaming: z.boolean(),
+  }),
+  reliability: z.object({
+    successRate: z.number().min(0).max(1).optional(),
+    toolSuccessRate: z.number().min(0).max(1).optional(),
+    structuredOutputRate: z.number().min(0).max(1).optional(),
+  }),
+  learnedPerformance: CapabilityScoresSchema,
+  observations: z.number().int().nonnegative().default(0),
+  lastEvaluatedAt: z.string().datetime().optional(),
+});
+export type ModelProfile = z.infer<typeof ModelProfileSchema>;
+
+export const RoutingModeSchema = z.enum([
+  "fastest",
+  "cheapest",
+  "balanced",
+  "best_quality",
+  "local_first",
+  "privacy_first",
+  "maximum_parallelism",
+  "custom_budget",
+]);
+export type RoutingMode = z.infer<typeof RoutingModeSchema>;
+
+export const RoutingPolicySchema = z.object({
+  mode: RoutingModeSchema,
+  maximumTaskCostUsd: z.number().nonnegative().optional(),
+  maximumLatencyMs: z.number().int().positive().optional(),
+  allowExternal: z.boolean(),
+  preferLocal: z.boolean(),
+  maximumParallelism: z.number().int().min(1).max(64),
+  maximumRetries: z.number().int().min(0).max(8),
+  maximumDelegationDepth: z.number().int().min(0).max(8),
+  maximumTaskDurationMs: z.number().int().min(1_000).max(86_400_000),
+  requireReviewAboveRisk: z.enum(["read_only", "low", "sensitive", "high_consequence"]),
+});
+export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
+
+export const RoutingDecisionSchema = z.object({
+  id: z.string().min(1),
+  taskId: z.string().min(1),
+  selectedModelId: z.string().min(1),
+  providerId: z.string().min(1),
+  endpointId: z.string().min(1),
+  model: z.string().min(1),
+  role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]),
+  reasoningLevel: z.enum(["low", "medium", "high", "max"]),
+  fastMode: z.boolean(),
+  estimatedCost: z.number().nonnegative().optional(),
+  confidence: z.number().min(0).max(1),
+  reasons: z.array(z.string().min(1)).min(1).max(12),
+  fallbackModelIds: z.array(z.string().min(1)).max(8),
+  traceId: z.string().min(1).optional(),
+  validationStrategy: z.string().min(1).optional(),
+  settings: z.object({
+    temperature: z.number().min(0).max(2),
+    maximumOutputTokens: z.number().int().positive(),
+    maximumContextCharacters: z.number().int().positive(),
+    retryCount: z.number().int().min(0).max(8),
+    parallelism: z.number().int().min(1).max(64),
+    reviewRequired: z.boolean(),
+  }),
+  selectedAt: z.string().datetime(),
+});
+export type RoutingDecision = z.infer<typeof RoutingDecisionSchema>;
+
+export const RoutingTraceSchema = z.object({
+  id: z.string().min(1),
+  parentTraceId: z.string().min(1).optional(),
+  taskId: z.string().min(1),
+  summary: z.string().min(1).max(2_000),
+  status: z.enum(["planned", "running", "completed", "failed", "cancelled"]),
+  policy: RoutingPolicySchema,
+  decisions: z.array(RoutingDecisionSchema),
+  escalationCount: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+  actualCostUsd: z.number().nonnegative(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type RoutingTrace = z.infer<typeof RoutingTraceSchema>;
+
 export const ModelRoutingDecisionSchema = z.object({
   taskId: z.string().min(1),
   model: ExecutionModelSchema,
+  providerId: z.string().min(1).optional(),
+  selectedModelId: z.string().min(1).optional(),
   reasoningEffort: ReasoningEffortSchema,
   fastMode: z.boolean(),
   serviceTier: z.enum(["standard", "priority"]),
-  execution: z.enum(["local", "development_adapter"]),
+  execution: z.enum(["local", "configured_endpoint", "development_adapter"]),
   rationale: z.string().min(1),
+  confidence: z.number().min(0).max(1).optional(),
+  traceId: z.string().min(1).optional(),
+  fallbackModelIds: z.array(z.string().min(1)).optional(),
+  reviewRequired: z.boolean().optional(),
   selectedAt: z.string().datetime(),
 });
 export type ModelRoutingDecision = z.infer<typeof ModelRoutingDecisionSchema>;
@@ -431,8 +574,15 @@ export type ModelRoutingDecision = z.infer<typeof ModelRoutingDecisionSchema>;
 export const DelegatedWorkerRouteSchema = z.object({
   providerId: z.string().min(1),
   model: z.string().min(1),
+  selectedModelId: z.string().min(1).optional(),
+  role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]).optional(),
   reasoningEffort: ReasoningEffortSchema,
+  fastMode: z.boolean().optional(),
   local: z.boolean(),
+  confidence: z.number().min(0).max(1).optional(),
+  estimatedCost: z.number().nonnegative().optional(),
+  fallbackModelIds: z.array(z.string().min(1)).optional(),
+  traceId: z.string().min(1).optional(),
   verifiedAt: z.string().datetime(),
   verificationLatencyMs: z.number().int().nonnegative(),
   rationale: z.string().min(1),
@@ -600,6 +750,9 @@ export const AgentRunSchema = z.object({
   reasoningEffort: ReasoningEffortSchema.optional(),
   serviceTier: z.enum(["standard", "priority"]).optional(),
   maximumTurns: z.number().int().positive().max(50).optional(),
+  maximumContextCharacters: z.number().int().positive().max(10_000_000).optional(),
+  maximumOutputTokens: z.number().int().positive().max(1_000_000).optional(),
+  temperature: z.number().min(0).max(2).optional(),
   toolScope: z
     .array(z.string().regex(/^[a-z][a-z0-9_.-]+$/))
     .max(200)
@@ -1739,6 +1892,23 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
     url: z.string().url().max(8_000),
   }),
   z.object({ type: z.literal("orchestration-list") }),
+  z.object({ type: z.literal("orchestration-model-registry") }),
+  z.object({ type: z.literal("orchestration-routing-policy-get") }),
+  z.object({
+    type: z.literal("orchestration-routing-policy-set"),
+    policy: RoutingPolicySchema,
+  }),
+  z.object({ type: z.literal("orchestration-routing-traces") }),
+  z.object({
+    type: z.literal("orchestration-routing-feedback"),
+    modelId: z.string().min(1),
+    capabilities: z.partialRecord(
+      ModelCapabilitySchema,
+      z.number().min(0).max(1),
+    ),
+    outcome: z.enum(["accepted", "corrected", "rejected"]),
+    reviewerConfidence: z.number().min(0).max(1).optional(),
+  }),
   z.object({
     type: z.literal("orchestration-goal-create"),
     sessionId: z.string().min(1),
@@ -1786,6 +1956,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
     model: z.string().min(1).max(200),
     providerIds: z.array(z.string().min(1)).min(1),
     reasoningEffort: ReasoningEffortSchema.optional(),
+    role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]).optional(),
+    requiredCapabilities: z.partialRecord(
+      ModelCapabilitySchema,
+      z.number().min(0).max(1),
+    ).optional(),
     allowedTools: z.array(z.string()).optional(),
     isolateWorktree: z.boolean().default(false),
   }),
@@ -2003,6 +2178,9 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
     executions: z.array(RuntimeToolExecutionSchema).optional(),
     plugins: z.array(PluginSummarySchema).optional(),
     providers: z.array(ModelProviderSummarySchema).optional(),
+    modelProfiles: z.array(ModelProfileSchema).optional(),
+    routingPolicy: RoutingPolicySchema.optional(),
+    routingTraces: z.array(RoutingTraceSchema).optional(),
     providerVerifications: z.array(ProviderVerificationSchema).optional(),
     memories: z.array(MemoryRecordSchema).optional(),
     memoryVersions: z.array(MemoryVersionSchema).optional(),

@@ -227,11 +227,11 @@ describe("model provider adapters", () => {
     expect(result).toMatchObject({ providerId: "gemini", responseId: "gemini-response", text: "At 00:02, ", finishReason: "tool_calls", toolCalls: [{ name: "workspace.read", arguments: { path: "notes.md" } }], usage: { inputTokens: 44, outputTokens: 7, cachedInputTokens: 3, reasoningTokens: 2 } });
   });
 
-  it("fails over only after retryable provider errors and records both attempts", async () => {
+  it("escalates to a different endpoint after a failed strategy and records both attempts", async () => {
     const failing: ModelProvider = {
       id: "failing",
       capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false },
-      complete: async () => { throw new ModelProviderError("temporary outage", "failing", true, 503); }
+      complete: async () => { throw new ModelProviderError("unsupported model strategy", "failing", false, 400); }
     };
     const succeeding: ModelProvider = {
       id: "succeeding",
@@ -286,6 +286,32 @@ describe("model provider adapters", () => {
 
     const budgeted = new ProviderPool([provider("first", true), provider("second")]);
     await expect(budgeted.complete({ model: "test", messages: [{ role: "user", content: textContent("route") }] }, { canAttempt: (_id, _model, attempt) => attempt === 0 })).rejects.toMatchObject({ attempts: [{ providerId: "first", status: "failed" }, { providerId: "second", error: "Budget policy blocked this provider attempt." }] });
+  });
+
+  it("backs off a final failing provider instead of retrying it immediately", async () => {
+    let nowMs = Date.parse("2026-07-29T12:00:00.000Z");
+    let calls = 0;
+    const provider: ModelProvider = {
+      id: "only",
+      capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false },
+      complete: async () => {
+        calls += 1;
+        throw new ModelProviderError("temporary", "only", true, 503);
+      },
+    };
+    const pool = new ProviderPool([provider], () => new Date(nowMs));
+    const request = { model: "test", messages: [{ role: "user" as const, content: textContent("retry") }] };
+    await expect(pool.complete(request)).rejects.toMatchObject({ attempts: [{ providerId: "only", status: "failed" }] });
+    expect(pool.health()[0]).toMatchObject({
+      providerId: "only",
+      failures: 1,
+      unhealthyUntil: "2026-07-29T12:00:30.000Z",
+    });
+    await expect(pool.complete(request)).rejects.toMatchObject({ attempts: [] });
+    expect(calls).toBe(1);
+    nowMs += 30_001;
+    await expect(pool.complete(request)).rejects.toMatchObject({ attempts: [{ providerId: "only", status: "failed" }] });
+    expect(calls).toBe(2);
   });
 
   it("routes multimodal automatic requests only to capable providers", async () => {

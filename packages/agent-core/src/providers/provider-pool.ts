@@ -1,4 +1,4 @@
-import { ModelProviderError, type ModelCallOptions, type ModelProvider, type ModelRequest, type ModelResult } from "./types";
+import type { ModelCallOptions, ModelProvider, ModelRequest, ModelResult } from "./types";
 
 export interface ProviderAttempt {
   providerId: string;
@@ -168,7 +168,6 @@ export class ProviderPool {
       } catch (error) {
         if (options.signal?.aborted) throw error;
         lastError = error;
-        const retryable = error instanceof ModelProviderError ? error.retryable : false;
         attempts.push({
           providerId,
           startedAt,
@@ -177,10 +176,9 @@ export class ProviderPool {
           error: error instanceof Error ? error.message : "Provider call failed."
         });
         this.measured(provider, startedAt, false);
-        const next = candidates[index + 1];
-        const sameCredentialPool = Boolean(next && provider.poolId && next.poolId === provider.poolId);
-        if (!retryable && !sameCredentialPool) break;
         this.unhealthyUntil.set(providerId, this.now().getTime() + (options.healthBackoffMs ?? 30_000));
+        const next = candidates[index + 1];
+        if (!next) break;
       }
     }
     for (const requested of providerIds) if (![...this.providers.values()].some((provider) => provider.id === requested || provider.poolId === requested)) {

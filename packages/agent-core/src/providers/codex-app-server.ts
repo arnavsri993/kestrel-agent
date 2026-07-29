@@ -141,6 +141,9 @@ export class CodexAppServerProvider {
     video: false,
     local: false,
   } as const;
+  readonly profileHints = {
+    features: { structuredOutput: true, reasoningLevels: true, fastMode: true },
+  } as const;
 
   private readonly executable: string;
   private readonly environment: NodeJS.ProcessEnv;

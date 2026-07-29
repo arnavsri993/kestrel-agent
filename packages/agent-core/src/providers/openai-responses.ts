@@ -76,6 +76,9 @@ export class OpenAIResponsesProvider implements ModelProvider {
   readonly poolId?: string;
   readonly defaultModel?: string;
   readonly capabilities = { streaming: true, tools: true, images: true, audio: true, documents: true, local: false } as const;
+  readonly profileHints = {
+    features: { structuredOutput: true, reasoningLevels: true, fastMode: true },
+  } as const;
   private readonly baseUrl: string;
 
   constructor(private readonly options: OpenAIResponsesProviderOptions) {
@@ -103,7 +106,10 @@ export class OpenAIResponsesProvider implements ModelProvider {
       store: false,
       ...(instructions ? { instructions } : {}),
       ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
-      ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(request.temperature !== undefined
+        && (!request.reasoningEffort || request.reasoningEffort === "none")
+        ? { temperature: request.temperature }
+        : {}),
       ...(request.metadata ? { metadata: request.metadata } : {}),
       ...(request.tools?.length ? {
         tools: request.tools.map((tool) => ({

@@ -55,6 +55,7 @@ jobs:
       - run: corepack pnpm test
       - run: corepack pnpm test:desktop-setup
       - run: corepack pnpm test:desktop-kanban
+      - run: corepack pnpm test:desktop-model-routing
       - run: corepack pnpm test:desktop-readiness
       - run: corepack pnpm test:desktop-external-secrets
       - run: corepack pnpm test:desktop-observability

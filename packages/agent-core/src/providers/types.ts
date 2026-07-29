@@ -78,11 +78,37 @@ export interface ModelProviderCapabilities {
   local: boolean;
 }
 
+export interface ModelProfileHints {
+  displayName?: string;
+  capabilities?: Record<string, number>;
+  cost?: {
+    inputPerMillion?: number;
+    outputPerMillion?: number;
+    fixedRequestCost?: number;
+    priorityMultiplier?: number;
+  };
+  latency?: {
+    averageMs?: number;
+    p95Ms?: number;
+  };
+  limits?: {
+    contextWindow?: number;
+    maxOutputTokens?: number;
+    concurrency?: number;
+  };
+  features?: {
+    structuredOutput?: boolean;
+    reasoningLevels?: boolean;
+    fastMode?: boolean;
+  };
+}
+
 export interface ModelProvider {
   readonly id: string;
   readonly poolId?: string;
   readonly defaultModel?: string;
   readonly capabilities: ModelProviderCapabilities;
+  readonly profileHints?: ModelProfileHints;
   probe?(signal?: AbortSignal): Promise<void>;
   complete(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResult>;
   close?(): Promise<void>;
