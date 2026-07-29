@@ -1,5 +1,76 @@
 # Kestrel design system
 
+## Unified life context — July 2026
+
+### Product and architecture
+
+- Operating mode: `design-system` and `component-build` inside the existing
+  Electron product. The current encrypted database, agent runtime, provider
+  permissions, Google Workspace OAuth, Native Graphite shell, and Memory route
+  remain compatible.
+- Thesis: time, people, and remembered context form one inspectable life model;
+  the calendar is the temporal projection of that model, while every block and
+  fact keeps its authority, source, confidence, sensitivity, and correction
+  path visible.
+- Increment: add backward-compatible structured memory metadata, encrypted
+  people and unified-calendar records, deterministic context selection,
+  contradiction/lifecycle maintenance, Google Calendar import, and one combined
+  Life surface. Apple Calendar, Outlook, richer inference, and destructive
+  external edits remain explicit adapter boundaries for later increments.
+- Trust: high. Direct user statements outrank agent inference; provider events,
+  explicit blocks, inferred routines, and unapproved suggestions never collapse
+  into one visual state. Sensitive and restricted records require explicit
+  retrieval permission and remain encrypted at rest.
+
+### Visual system lock
+
+- Density: `dense-app`. The week is a ruled time plane, not a set of event
+  cards. People and memory use continuous rows with separators.
+- Type: preserve SF Pro Display, SF Pro Text, and SF Mono roles from Native
+  Graphite. Calendar time, confidence, provenance IDs, and recency use SF Mono.
+- Scale: page title `32/38`; week day `13/18`; event title `12/16`; time and
+  provenance `10/14`; body and editable values `13/19`.
+- Spacing: preserve the 4px base and `8/12/16/20/24/32` operational rhythm.
+- Color roles: confirmed provider events use aluminum plus a solid source edge;
+  explicit Kestrel events use sage; inferred blocks use a dashed amber edge and
+  confidence text; suggestions use a dotted tertiary edge and an approval
+  label. Color is never the only distinction.
+- Material: matte graphite planes, thin rules, and one selected-detail surface.
+  No glow, glass event cards, rainbow provider palette, pill forest, or bento
+  dashboard.
+- Composition: a compact Life header, one three-way view switch, then one
+  dominant work plane. Calendar is the default temporal view; People and Memory
+  expose the same underlying records rather than separate mini-products.
+- Motion: existing route/state fade and direct control feedback only. Calendar
+  data never animates while the user is reading it. Reduced motion removes all
+  travel without changing state.
+- Compact behavior: below the wide calendar threshold, recompose the week into
+  a chronological agenda; do not shrink seven columns or introduce page-level
+  horizontal scrolling.
+- Accessibility: semantic buttons/forms/lists first, visible focus, text labels
+  for source and confidence, logical chronological reading order, destructive
+  confirmation, and focus restoration after removal.
+- Why this is not generic: the provenance hierarchy is the visual hierarchy—the
+  same fact can be inspected as time, person context, or memory without losing
+  where it came from or being promoted from inference to truth.
+
+### State and verification contract
+
+- Calendar: loading, first-use, disconnected provider, connected/stale, syncing,
+  sync error/retry, empty range, provider-confirmed, explicit, inferred,
+  suggested, recurring, conflict, selected detail, compact agenda, and local
+  creation.
+- People: empty, resolved aliases, relationship/tone facts, sensitive fields,
+  conflicting facts, correction, delete-person warning, and deleted.
+- Memory: short/mid/long/archive, active/superseded/contradicted/expired,
+  confirmed/inferred/suggested, search/no results, correction, provenance,
+  related entities/events, usage explanation, and deletion.
+- Engineering checks: schema migration and encryption, retrieval minimization,
+  sensitivity filtering, contradiction precedence, relationship tone,
+  recurring schedule correction, Google normalization/idempotent sync,
+  person-scoped deletion, lifecycle archival, renderer typecheck/build,
+  keyboard/focus, compact reflow, packaged macOS capture, and no console errors.
+
 ## Final Native Graphite system — July 2026
 
 This section is the authoritative desktop visual and interaction specification.

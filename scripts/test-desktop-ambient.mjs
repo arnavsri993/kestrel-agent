@@ -27,6 +27,7 @@ try {
   await page.reload();
 
   await page.getByRole("button", { name: /Tools/ }).click();
+  await page.getByRole("button", { name: "Life", exact: true }).click();
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   const dreaming = page.locator(".dreaming-panel");
   await dreaming.getByRole("heading", { name: "Dreaming" }).waitFor();
@@ -39,6 +40,7 @@ try {
 
   await page.reload();
   await page.getByRole("button", { name: /Tools/ }).click();
+  await page.getByRole("button", { name: "Life", exact: true }).click();
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   await dreaming.getByRole("heading", { name: "Dreaming" }).waitFor();
   assert.match(await dreaming.textContent(), /Dream diary · 0 entries/);
@@ -53,7 +55,11 @@ try {
   await page.screenshot({ path: memoryScreenshot });
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: /^Memory/ }).click();
+  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  await page
+    .getByRole("navigation", { name: "Settings sections" })
+    .getByRole("button", { name: /^Memory/ })
+    .click();
   const presence = page.locator(".presence-setting");
   await presence.getByText("Connected instances", { exact: true }).waitFor();
   await presence.getByText("Local agent core", { exact: true }).waitFor();

@@ -33,7 +33,7 @@ try {
   const tools = [
     ["Readiness", /Needs attention|Ready for work/],
     ["Approvals", /Review this action|No approvals waiting/],
-    ["Memory", "Memory"],
+    ["Life", "Life"],
     ["Research", "Research"],
     ["Artifacts", "Artifacts"],
     ["Work", "Work"],
