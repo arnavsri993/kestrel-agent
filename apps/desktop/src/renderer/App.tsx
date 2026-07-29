@@ -80,6 +80,7 @@ import { DashboardExtensions } from "./components/DashboardExtensions";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
 import { EventApplications } from "./components/EventApplications";
+import { LifeContext } from "./components/LifeContext";
 import {
   memoryInGb,
   recommendedLocalModelTiers,
@@ -92,7 +93,7 @@ const pages = [
   ["home", "New chat"],
   ["readiness", "Readiness"],
   ["approvals", "Approvals"],
-  ["memory", "Memory"],
+  ["memory", "Life"],
   ["research", "Research"],
   ["artifacts", "Artifacts"],
   ["work", "Work"],
@@ -7730,7 +7731,7 @@ export function App() {
                   <Approvals snapshot={snapshot} update={setSnapshot} />
                 )}
                 {page === "memory" && (
-                  <Memory snapshot={snapshot} update={setSnapshot} />
+                  <LifeContext snapshot={snapshot} update={setSnapshot} />
                 )}
                 {page === "research" && <Research />}
                 {page === "artifacts" && <Artifacts />}

@@ -11,24 +11,32 @@ import {
   AgentImprovementProposalSchema,
   AgentRunSchema,
   ApprovalSchema,
+  AgentContextBundleSchema,
+  MemoryVersionSchema,
   MemoryRecordSchema,
   ModelCallAuditSchema,
+  PersonRecordSchema,
   RuntimeSessionSchema,
   RuntimeMessageSchema,
   RuntimeToolExecutionSchema,
+  UnifiedCalendarEventSchema,
   WorkspaceMutationSchema,
   type ActivityItem,
   type AgentConfigurationAuditEvent,
   type AgentConfigurationProposal,
   type AgentConfigurationVersion,
   type AgentImprovementProposal,
+  type AgentContextBundle,
   type AgentRun,
   type Approval,
+  type MemoryVersion,
   type MemoryRecord,
   type ModelCallAudit,
+  type PersonRecord,
   type RuntimeSession,
   type RuntimeMessage,
   type RuntimeToolExecution,
+  type UnifiedCalendarEvent,
   type WorkspaceMutation
 } from "@kestrel/shared-types";
 
@@ -127,6 +135,50 @@ CREATE TABLE IF NOT EXISTS idempotency_claims (
 `;
 
 const migration008 = `
+CREATE TABLE IF NOT EXISTS memory_metadata (
+  memory_id TEXT PRIMARY KEY,
+  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL, updated_at TEXT NOT NULL,
+  FOREIGN KEY(memory_id) REFERENCES memories(id)
+);
+CREATE TABLE IF NOT EXISTS memory_versions (
+  id TEXT PRIMARY KEY, memory_id TEXT NOT NULL,
+  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL, changed_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(memory_id) REFERENCES memories(id)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_versions_memory_changed
+  ON memory_versions(memory_id, changed_at);
+CREATE TABLE IF NOT EXISTS people (
+  id TEXT PRIMARY KEY,
+  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_people_status_updated ON people(status, updated_at);
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id TEXT PRIMARY KEY,
+  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL, provider_id TEXT NOT NULL,
+  status TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_status
+  ON calendar_events(provider_id, status, updated_at);
+CREATE TABLE IF NOT EXISTS context_usage (
+  id TEXT PRIMARY KEY,
+  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL, created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_context_usage_created ON context_usage(created_at);
+CREATE TABLE IF NOT EXISTS calendar_sync_state (
+  provider_id TEXT PRIMARY KEY,
+  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+`;
+
+const migration009 = `
 CREATE TABLE IF NOT EXISTS agent_configuration_records (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL CHECK(kind IN ('version', 'proposal', 'audit', 'improvement')),
@@ -229,6 +281,16 @@ interface AgentConfigurationRecordRow {
   updated_at: string;
 }
 
+interface EncryptedPayloadRow {
+  payload_ciphertext: string;
+  payload_iv: string;
+  payload_auth_tag: string;
+}
+
+interface MemoryMetadataRow extends EncryptedPayloadRow {
+  memory_id: string;
+}
+
 export class KestrelDatabase {
   readonly db: Database.Database;
 
@@ -259,6 +321,8 @@ export class KestrelDatabase {
       this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(7, new Date().toISOString());
       this.db.exec(migration008);
       this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(8, new Date().toISOString());
+      this.db.exec(migration009);
+      this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(9, new Date().toISOString());
     })();
   }
 
@@ -305,13 +369,39 @@ export class KestrelDatabase {
       userConfirmed: parsed.userConfirmed ? 1 : 0,
       inferred: parsed.inferred ? 1 : 0
     });
+    const metadata = {
+      ...(parsed.subject ? { subject: parsed.subject } : {}),
+      ...(parsed.layer ? { layer: parsed.layer } : {}),
+      ...(parsed.confirmationStatus
+        ? { confirmationStatus: parsed.confirmationStatus }
+        : {}),
+      ...(parsed.lastAccessedAt ? { lastAccessedAt: parsed.lastAccessedAt } : {}),
+      ...(parsed.relevanceScore !== undefined
+        ? { relevanceScore: parsed.relevanceScore }
+        : {}),
+      ...(parsed.reviewAt ? { reviewAt: parsed.reviewAt } : {}),
+      ...(parsed.archivedAt ? { archivedAt: parsed.archivedAt } : {}),
+      relatedPersonIds: parsed.relatedPersonIds ?? [],
+      relatedProjectIds: parsed.relatedProjectIds ?? [],
+      relatedEventIds: parsed.relatedEventIds ?? [],
+      relatedLocationIds: parsed.relatedLocationIds ?? [],
+      conflictingMemoryIds: parsed.conflictingMemoryIds ?? [],
+      version: parsed.version ?? 1,
+    };
+    this.upsertEncryptedPayload(
+      "memory_metadata",
+      "memory_id",
+      parsed.id,
+      metadata,
+      parsed.updatedAt,
+    );
   }
 
 
   getMemory(id: string): MemoryRecord | undefined {
     const row = this.db.prepare("SELECT * FROM memories WHERE id = ? AND status != 'deleted'").get(id) as MemoryRow | undefined;
     if (!row) return undefined;
-    return MemoryRecordSchema.parse({
+    return this.withMemoryMetadata(MemoryRecordSchema.parse({
       id: row.id,
       type: row.type,
       content: decryptText({ ciphertext: row.content_ciphertext, iv: row.content_iv, authTag: row.content_auth_tag }, this.encryptionKey),
@@ -329,12 +419,12 @@ export class KestrelDatabase {
       entityIds: JSON.parse(row.entity_ids),
       userConfirmed: row.user_confirmed === 1,
       inferred: row.inferred === 1
-    });
+    }));
   }
 
   listMemories(): MemoryRecord[] {
     return (this.db.prepare("SELECT * FROM memories WHERE status != 'deleted' ORDER BY importance DESC, updated_at DESC").all() as MemoryRow[])
-      .map((row) => MemoryRecordSchema.parse({
+      .map((row) => this.withMemoryMetadata(MemoryRecordSchema.parse({
         id: row.id,
         type: row.type,
         content: decryptText({ ciphertext: row.content_ciphertext, iv: row.content_iv, authTag: row.content_auth_tag }, this.encryptionKey),
@@ -352,7 +442,7 @@ export class KestrelDatabase {
         entityIds: JSON.parse(row.entity_ids),
         userConfirmed: row.user_confirmed === 1,
         inferred: row.inferred === 1
-      }));
+      })));
   }
 
   saveApproval(approval: Approval): void {
@@ -992,6 +1082,151 @@ export class KestrelDatabase {
     })();
   }
 
+  saveMemoryVersion(version: MemoryVersion): void {
+    const parsed = MemoryVersionSchema.parse(version);
+    this.upsertEncryptedPayload(
+      "memory_versions",
+      "id",
+      parsed.id,
+      parsed,
+      parsed.changedAt,
+      { memory_id: parsed.memoryId, changed_at: parsed.changedAt },
+    );
+  }
+
+  listMemoryVersions(memoryId: string): MemoryVersion[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT payload_ciphertext, payload_iv, payload_auth_tag FROM memory_versions WHERE memory_id = ? ORDER BY changed_at DESC",
+        )
+        .all(memoryId) as EncryptedPayloadRow[]
+    ).map((row) => MemoryVersionSchema.parse(this.decryptPayload(row)));
+  }
+
+  upsertPerson(person: PersonRecord): void {
+    const parsed = PersonRecordSchema.parse(person);
+    this.upsertEncryptedPayload(
+      "people",
+      "id",
+      parsed.id,
+      parsed,
+      parsed.updatedAt,
+      { status: parsed.status },
+    );
+  }
+
+  getPerson(id: string): PersonRecord | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT payload_ciphertext, payload_iv, payload_auth_tag FROM people WHERE id = ? AND status != 'deleted'",
+      )
+      .get(id) as EncryptedPayloadRow | undefined;
+    return row ? PersonRecordSchema.parse(this.decryptPayload(row)) : undefined;
+  }
+
+  listPeople(includeArchived = true): PersonRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT payload_ciphertext, payload_iv, payload_auth_tag
+         FROM people WHERE status != 'deleted'
+         ORDER BY updated_at DESC`,
+      )
+      .all() as EncryptedPayloadRow[];
+    return rows
+      .map((row) => PersonRecordSchema.parse(this.decryptPayload(row)))
+      .filter((person) => includeArchived || person.status === "active")
+      .sort(
+        (left, right) =>
+          right.relevanceScore - left.relevanceScore ||
+          right.updatedAt.localeCompare(left.updatedAt),
+      );
+  }
+
+  upsertCalendarEvent(event: UnifiedCalendarEvent): void {
+    const parsed = UnifiedCalendarEventSchema.parse(event);
+    this.upsertEncryptedPayload(
+      "calendar_events",
+      "id",
+      parsed.id,
+      parsed,
+      parsed.updatedAt,
+      { provider_id: parsed.providerId, status: parsed.status },
+    );
+  }
+
+  getCalendarEvent(id: string): UnifiedCalendarEvent | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT payload_ciphertext, payload_iv, payload_auth_tag FROM calendar_events WHERE id = ? AND status != 'deleted'",
+      )
+      .get(id) as EncryptedPayloadRow | undefined;
+    return row
+      ? UnifiedCalendarEventSchema.parse(this.decryptPayload(row))
+      : undefined;
+  }
+
+  listCalendarEvents(): UnifiedCalendarEvent[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT payload_ciphertext, payload_iv, payload_auth_tag
+           FROM calendar_events WHERE status NOT IN ('deleted', 'superseded', 'cancelled')
+           ORDER BY updated_at DESC`,
+        )
+        .all() as EncryptedPayloadRow[]
+    )
+      .map((row) => UnifiedCalendarEventSchema.parse(this.decryptPayload(row)))
+      .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+  }
+
+  saveContextUsage(bundle: AgentContextBundle): void {
+    const parsed = AgentContextBundleSchema.parse(bundle);
+    this.upsertEncryptedPayload(
+      "context_usage",
+      "id",
+      parsed.id,
+      parsed,
+      parsed.createdAt,
+      { created_at: parsed.createdAt },
+    );
+  }
+
+  listContextUsage(limit = 100): AgentContextBundle[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT payload_ciphertext, payload_iv, payload_auth_tag
+           FROM context_usage ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(Math.max(1, Math.min(1_000, limit))) as EncryptedPayloadRow[]
+    ).map((row) => AgentContextBundleSchema.parse(this.decryptPayload(row)));
+  }
+
+  setCalendarSyncState(
+    providerId: string,
+    value: Record<string, unknown>,
+  ): void {
+    this.upsertEncryptedPayload(
+      "calendar_sync_state",
+      "provider_id",
+      providerId,
+      value,
+      new Date().toISOString(),
+    );
+  }
+
+  getCalendarSyncState<T extends Record<string, unknown>>(
+    providerId: string,
+  ): T | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT payload_ciphertext, payload_iv, payload_auth_tag FROM calendar_sync_state WHERE provider_id = ?",
+      )
+      .get(providerId) as EncryptedPayloadRow | undefined;
+    return row ? (this.decryptPayload(row) as T) : undefined;
+  }
+
   setState(key: string, value: unknown): void {
     this.db.prepare(`INSERT INTO runtime_state (key, value, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
@@ -1116,6 +1351,89 @@ export class KestrelDatabase {
         this.encryptionKey,
       ),
     ) as unknown;
+  }
+
+  private withMemoryMetadata(memory: MemoryRecord): MemoryRecord {
+    const row = this.db
+      .prepare(
+        "SELECT memory_id, payload_ciphertext, payload_iv, payload_auth_tag FROM memory_metadata WHERE memory_id = ?",
+      )
+      .get(memory.id) as MemoryMetadataRow | undefined;
+    if (!row) return memory;
+    return MemoryRecordSchema.parse({
+      ...memory,
+      ...(this.decryptPayload(row) as Record<string, unknown>),
+    });
+  }
+
+  private upsertEncryptedPayload(
+    table:
+      | "memory_metadata"
+      | "memory_versions"
+      | "people"
+      | "calendar_events"
+      | "context_usage"
+      | "calendar_sync_state",
+    idColumn: "memory_id" | "id" | "provider_id",
+    id: string,
+    value: unknown,
+    updatedAt: string,
+    extra: Record<string, string> = {},
+  ): void {
+    const allowedExtraColumns = {
+      memory_id: "memory_id",
+      changed_at: "changed_at",
+      status: "status",
+      provider_id: "provider_id",
+      created_at: "created_at",
+    } as const;
+    const entries = Object.entries(extra).map(([key, columnValue]) => {
+      const column =
+        allowedExtraColumns[key as keyof typeof allowedExtraColumns];
+      if (!column) throw new Error("Unsupported encrypted payload index.");
+      return [column, columnValue] as const;
+    });
+    const encrypted = encryptText(JSON.stringify(value), this.encryptionKey);
+    const columns = [
+      idColumn,
+      "payload_ciphertext",
+      "payload_iv",
+      "payload_auth_tag",
+      ...entries.map(([column]) => column),
+      "updated_at",
+    ];
+    const parameters = [
+      id,
+      encrypted.ciphertext,
+      encrypted.iv,
+      encrypted.authTag,
+      ...entries.map(([, columnValue]) => columnValue),
+      updatedAt,
+    ];
+    const updates = columns
+      .filter((column) => column !== idColumn)
+      .map((column) => `${column}=excluded.${column}`)
+      .join(", ");
+    this.db
+      .prepare(
+        `INSERT INTO ${table} (${columns.join(", ")})
+         VALUES (${columns.map(() => "?").join(", ")})
+         ON CONFLICT(${idColumn}) DO UPDATE SET ${updates}`,
+      )
+      .run(...parameters);
+  }
+
+  private decryptPayload(row: EncryptedPayloadRow): unknown {
+    return JSON.parse(
+      decryptText(
+        {
+          ciphertext: row.payload_ciphertext,
+          iv: row.payload_iv,
+          authTag: row.payload_auth_tag,
+        },
+        this.encryptionKey,
+      ),
+    );
   }
 
   private parseRuntimeMessage(row: RuntimeMessageRow): RuntimeMessage {

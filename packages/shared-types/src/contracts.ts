@@ -64,8 +64,185 @@ export const MemoryRecordSchema = z.object({
   entityIds: z.array(z.string()),
   userConfirmed: z.boolean(),
   inferred: z.boolean(),
+  subject: z.string().min(1).max(500).optional(),
+  layer: z
+    .enum(["short_term", "mid_term", "long_term", "archived"])
+    .optional(),
+  confirmationStatus: z
+    .enum([
+      "inferred",
+      "suggested",
+      "explicit",
+      "provider_confirmed",
+      "user_confirmed",
+    ])
+    .optional(),
+  lastAccessedAt: z.string().datetime().optional(),
+  relevanceScore: z.number().min(0).max(1).optional(),
+  reviewAt: z.string().datetime().optional(),
+  archivedAt: z.string().datetime().optional(),
+  relatedPersonIds: z.array(z.string()).optional(),
+  relatedProjectIds: z.array(z.string()).optional(),
+  relatedEventIds: z.array(z.string()).optional(),
+  relatedLocationIds: z.array(z.string()).optional(),
+  conflictingMemoryIds: z.array(z.string()).optional(),
+  version: z.number().int().positive().optional(),
 });
 export type MemoryRecord = z.infer<typeof MemoryRecordSchema>;
+
+export const MemoryVersionSchema = z.object({
+  id: z.string().min(1),
+  memoryId: z.string().min(1),
+  version: z.number().int().positive(),
+  content: z.string().max(100_000),
+  structuredData: z.record(z.string(), z.unknown()),
+  sourceIds: z.array(z.string().min(1)).min(1),
+  sourceType: z.string().min(1),
+  changedAt: z.string().datetime(),
+  changedBy: z.enum(["user", "agent", "provider", "maintenance"]),
+});
+export type MemoryVersion = z.infer<typeof MemoryVersionSchema>;
+
+export const PersonFactSchema = z.object({
+  id: z.string().min(1),
+  key: z.string().min(1).max(200),
+  value: z.string().min(1).max(20_000),
+  sourceIds: z.array(z.string().min(1)).min(1),
+  sourceType: z.string().min(1).max(200),
+  confidence: z.number().min(0).max(1),
+  sensitivity: SensitivitySchema,
+  userConfirmed: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  validFrom: z.string().datetime().optional(),
+  validUntil: z.string().datetime().optional(),
+  status: z.enum(["active", "superseded", "contradicted", "deleted"]),
+  conflictingFactIds: z.array(z.string()).default([]),
+});
+export type PersonFact = z.infer<typeof PersonFactSchema>;
+
+export const PersonRecordSchema = z.object({
+  id: z.string().min(1),
+  displayName: z.string().min(1).max(300),
+  nicknames: z.array(z.string().min(1).max(200)).max(40),
+  relationship: z.string().max(500).optional(),
+  organization: z.string().max(500).optional(),
+  role: z.string().max(500).optional(),
+  timeZone: z.string().max(200).optional(),
+  communicationStyle: z
+    .object({
+      tone: z.string().max(500).optional(),
+      formality: z.enum(["casual", "neutral", "professional", "formal"]).optional(),
+      greeting: z.string().max(500).optional(),
+      signOff: z.string().max(500).optional(),
+      boundaries: z.array(z.string().max(1_000)).max(50).default([]),
+    })
+    .default({ boundaries: [] }),
+  facts: z.array(PersonFactSchema).max(2_000),
+  sourceIds: z.array(z.string().min(1)).min(1),
+  confidence: z.number().min(0).max(1),
+  sensitivity: SensitivitySchema,
+  status: z.enum(["active", "archived", "deleted"]),
+  lastInteractionAt: z.string().datetime().optional(),
+  relevanceScore: z.number().min(0).max(1),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type PersonRecord = z.infer<typeof PersonRecordSchema>;
+
+export const CalendarEventOriginSchema = z.enum([
+  "provider",
+  "explicit",
+  "inferred",
+  "suggested",
+]);
+export type CalendarEventOrigin = z.infer<typeof CalendarEventOriginSchema>;
+
+export const CalendarAttendeeSchema = z.object({
+  name: z.string().max(300).optional(),
+  email: z.string().email().max(500).optional(),
+  responseStatus: z.string().max(100).optional(),
+  personId: z.string().optional(),
+  organizer: z.boolean().optional(),
+});
+export type CalendarAttendee = z.infer<typeof CalendarAttendeeSchema>;
+
+export const UnifiedCalendarEventSchema = z.object({
+  id: z.string().min(1),
+  externalId: z.string().max(1_024).optional(),
+  providerId: z
+    .enum(["google", "apple", "outlook", "caldav", "local", "agent"])
+    .default("local"),
+  calendarId: z.string().max(1_024).optional(),
+  origin: CalendarEventOriginSchema,
+  status: z.enum([
+    "confirmed",
+    "tentative",
+    "suggested",
+    "superseded",
+    "cancelled",
+    "deleted",
+  ]),
+  title: z.string().min(1).max(2_000),
+  description: z.string().max(20_000).optional(),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+  allDay: z.boolean().default(false),
+  timeZone: z.string().max(200).optional(),
+  location: z.string().max(2_000).optional(),
+  meetingUrl: z.string().url().max(4_000).optional(),
+  notes: z.string().max(20_000).optional(),
+  attendees: z.array(CalendarAttendeeSchema).max(500).default([]),
+  recurrenceRule: z.string().max(4_000).optional(),
+  recurrenceDays: z
+    .array(z.number().int().min(0).max(6))
+    .max(7)
+    .optional(),
+  confidence: z.number().min(0).max(1),
+  confidenceReason: z.string().max(2_000).optional(),
+  sourceIds: z.array(z.string().min(1)).min(1),
+  relatedMemoryIds: z.array(z.string()).default([]),
+  relatedPersonIds: z.array(z.string()).default([]),
+  userConfirmed: z.boolean(),
+  externalReadOnly: z.boolean().default(false),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  lastSyncedAt: z.string().datetime().optional(),
+});
+export type UnifiedCalendarEvent = z.infer<typeof UnifiedCalendarEventSchema>;
+
+export const CalendarProviderStatusSchema = z.object({
+  id: z.enum(["google", "apple", "outlook", "caldav", "local"]),
+  label: z.string().min(1),
+  state: z.enum(["connected", "disconnected", "unsupported", "error"]),
+  detail: z.string().min(1),
+  readOnly: z.boolean(),
+  lastSyncedAt: z.string().datetime().optional(),
+});
+export type CalendarProviderStatus = z.infer<
+  typeof CalendarProviderStatusSchema
+>;
+
+export const ContextInfluenceSchema = z.object({
+  kind: z.enum(["memory", "person", "event", "user_model"]),
+  id: z.string().min(1),
+  reason: z.string().min(1).max(1_000),
+  confidence: z.number().min(0).max(1),
+  sensitivity: SensitivitySchema,
+});
+export type ContextInfluence = z.infer<typeof ContextInfluenceSchema>;
+
+export const AgentContextBundleSchema = z.object({
+  id: z.string().min(1),
+  query: z.string().max(10_000),
+  memories: z.array(MemoryRecordSchema).max(20),
+  people: z.array(PersonRecordSchema).max(10),
+  events: z.array(UnifiedCalendarEventSchema).max(30),
+  influences: z.array(ContextInfluenceSchema).max(60),
+  prompt: z.string().max(100_000),
+  createdAt: z.string().datetime(),
+});
+export type AgentContextBundle = z.infer<typeof AgentContextBundleSchema>;
 
 export const UserModelFactSchema = z.object({
   id: z.string().min(1),
@@ -1393,6 +1570,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
     content: z.string().min(1).max(100_000),
     sensitivity: SensitivitySchema.default("personal"),
     sourceId: z.string().min(1).max(500).default("desktop-user"),
+    subject: z.string().min(1).max(500).optional(),
+    layer: z
+      .enum(["short_term", "mid_term", "long_term", "archived"])
+      .optional(),
   }),
   z.object({
     type: z.literal("memory-correct"),
@@ -1400,13 +1581,75 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
     content: z.string().min(1).max(100_000),
     memoryType: MemoryTypeSchema.optional(),
     sensitivity: SensitivitySchema.optional(),
+    layer: z
+      .enum(["short_term", "mid_term", "long_term", "archived"])
+      .optional(),
   }),
   z.object({ type: z.literal("memory-forget"), id: z.string().min(1) }),
+  z.object({
+    type: z.literal("memory-versions"),
+    id: z.string().min(1),
+  }),
+  z.object({ type: z.literal("memory-run-maintenance") }),
   z.object({ type: z.literal("memory-user-model-list") }),
   z.object({
     type: z.literal("memory-user-model-review"),
     id: z.string().min(1),
     decision: z.enum(["confirm", "reject"]),
+  }),
+  z.object({ type: z.literal("people-list") }),
+  z.object({
+    type: z.literal("people-upsert"),
+    id: z.string().min(1).optional(),
+    displayName: z.string().min(1).max(300),
+    nicknames: z.array(z.string().min(1).max(200)).max(40).default([]),
+    relationship: z.string().max(500).optional(),
+    organization: z.string().max(500).optional(),
+    role: z.string().max(500).optional(),
+    timeZone: z.string().max(200).optional(),
+    tone: z.string().max(500).optional(),
+    formality: z
+      .enum(["casual", "neutral", "professional", "formal"])
+      .optional(),
+    email: z.string().email().max(500).optional(),
+    phone: z.string().max(200).optional(),
+    sourceId: z.string().min(1).max(500).default("desktop-user"),
+    sensitivity: SensitivitySchema.default("personal"),
+  }),
+  z.object({
+    type: z.literal("people-delete"),
+    id: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("calendar-list"),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
+  }),
+  z.object({
+    type: z.literal("calendar-sync"),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
+  }),
+  z.object({
+    type: z.literal("calendar-create-local"),
+    title: z.string().min(1).max(2_000),
+    startsAt: z.string().datetime(),
+    endsAt: z.string().datetime(),
+    description: z.string().max(20_000).optional(),
+    location: z.string().max(2_000).optional(),
+    origin: z.enum(["explicit", "inferred", "suggested"]).default("explicit"),
+    confidence: z.number().min(0).max(1).default(1),
+    sourceId: z.string().min(1).max(500).default("desktop-user"),
+  }),
+  z.object({
+    type: z.literal("calendar-delete-local"),
+    id: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("life-context-preview"),
+    query: z.string().min(1).max(10_000),
+    includeSensitive: z.boolean().default(false),
+    includeRestricted: z.boolean().default(false),
   }),
   z.object({ type: z.literal("honcho-memory-get") }),
   z.object({
@@ -1761,7 +2004,12 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
     providers: z.array(ModelProviderSummarySchema).optional(),
     providerVerifications: z.array(ProviderVerificationSchema).optional(),
     memories: z.array(MemoryRecordSchema).optional(),
+    memoryVersions: z.array(MemoryVersionSchema).optional(),
     userModelFacts: z.array(UserModelFactSchema).optional(),
+    people: z.array(PersonRecordSchema).optional(),
+    calendarEvents: z.array(UnifiedCalendarEventSchema).optional(),
+    calendarProviders: z.array(CalendarProviderStatusSchema).optional(),
+    contextBundle: AgentContextBundleSchema.optional(),
     skillProposals: z.array(SkillLearningProposalSchema).optional(),
     skillFeedback: z.array(SkillLearningFeedbackSchema).optional(),
     usage: SessionUsageSummarySchema.optional(),

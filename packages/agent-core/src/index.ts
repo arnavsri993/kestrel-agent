@@ -76,6 +76,8 @@ import {
   type ChannelEnvelope,
 } from "./channels";
 import { MemoryManager, installMemoryTools } from "./memory";
+import { LifeContextService } from "./life-context";
+import type { GoogleWorkspaceClient } from "./google-workspace";
 import {
   ArtifactManager,
   installMediaTools,
@@ -113,6 +115,7 @@ export interface AgentCoreDependencies {
   database: KestrelDatabase;
   email?: EmailConnector;
   calendar?: CalendarConnector;
+  googleWorkspace?: GoogleWorkspaceClient;
   now?: () => string;
   workspaceRoots?: string[];
   configuredWorkspaceRoots?: string[];
@@ -157,6 +160,7 @@ export class AgentCore {
   readonly userModel: UserModelStore;
   readonly context: PreResponseContextResolver;
   readonly memory: MemoryManager;
+  readonly lifeContext: LifeContextService;
   readonly remote: RemoteControl;
   readonly remoteBackendManager?: RemoteBackendManager;
   readonly web?: NetworkPolicyWebClient;
@@ -255,8 +259,17 @@ export class AgentCore {
     this.runtime.setToolPolicyResolver(({ tool }) =>
       this.configuration.toolPolicy(tool.name),
     );
-    this.memory = new MemoryManager(deps.database);
+    this.memory = new MemoryManager(
+      deps.database,
+      () => new Date(this.now()),
+    );
     this.userModel = this.memory.userModel;
+    this.lifeContext = new LifeContextService(
+      deps.database,
+      deps.googleWorkspace,
+      () => new Date(this.now()),
+      this.memory,
+    );
     this.honchoMemory = new HonchoMemoryProvider(
       deps.database,
       deps.honchoApiKey,
@@ -376,11 +389,11 @@ export class AgentCore {
       this.providerPool,
       undefined,
       (message) => {
-        if (
-          message.role === "user" &&
-          this.configuration.current().memory.captureExplicit
-        )
-          this.memory.captureExplicit(message.content, message.id);
+        if (message.role === "user") {
+          if (this.configuration.current().memory.captureExplicit)
+            this.memory.captureExplicit(message.content, message.id);
+          this.lifeContext.captureConversation(message.content, message.id);
+        }
         const session = this.runtime.getSession(message.sessionId);
         this.honchoMemory.captureMessage(
           message,
@@ -1267,6 +1280,9 @@ export class AgentCore {
                 entityIds: [],
                 userConfirmed: true,
                 inferred: false,
+                subject: request.subject,
+                ...(request.layer ? { layer: request.layer } : {}),
+                confirmationStatus: "explicit",
               }),
             ],
           };
@@ -1280,11 +1296,19 @@ export class AgentCore {
                 ...(request.sensitivity
                   ? { sensitivity: request.sensitivity }
                   : {}),
+                ...(request.layer ? { layer: request.layer } : {}),
               }),
             ],
           };
         case "memory-forget":
           return { ok: true, memories: [this.memory.forget(request.id)] };
+        case "memory-versions":
+          return {
+            ok: true,
+            memoryVersions: this.memory.versions(request.id),
+          };
+        case "memory-run-maintenance":
+          return { ok: true, memories: this.lifeContext.maintain().memories };
         case "memory-user-model-list":
           return { ok: true, userModelFacts: this.userModel.list() };
         case "memory-user-model-review":
@@ -1293,6 +1317,94 @@ export class AgentCore {
             userModelFacts: [
               this.userModel.review(request.id, request.decision),
             ],
+          };
+        case "people-list":
+          return { ok: true, people: this.lifeContext.listPeople() };
+        case "people-upsert":
+          return {
+            ok: true,
+            people: [
+              this.lifeContext.upsertPerson({
+                ...(request.id ? { id: request.id } : {}),
+                displayName: request.displayName,
+                nicknames: request.nicknames,
+                ...(request.relationship
+                  ? { relationship: request.relationship }
+                  : {}),
+                ...(request.organization
+                  ? { organization: request.organization }
+                  : {}),
+                ...(request.role ? { role: request.role } : {}),
+                ...(request.timeZone ? { timeZone: request.timeZone } : {}),
+                ...(request.tone ? { tone: request.tone } : {}),
+                ...(request.formality
+                  ? { formality: request.formality }
+                  : {}),
+                ...(request.email ? { email: request.email } : {}),
+                ...(request.phone ? { phone: request.phone } : {}),
+                sourceId: request.sourceId,
+                sensitivity: request.sensitivity,
+              }),
+            ],
+          };
+        case "people-delete":
+          return {
+            ok: true,
+            people: [this.lifeContext.deletePerson(request.id)],
+            memories: this.memory.list(),
+          };
+        case "calendar-list":
+          return {
+            ok: true,
+            calendarEvents: this.lifeContext.listCalendar(
+              request.startsAt,
+              request.endsAt,
+            ),
+            calendarProviders: this.lifeContext.providerStatuses(),
+          };
+        case "calendar-sync":
+          return {
+            ok: true,
+            calendarEvents: await this.lifeContext.syncGoogle(
+              request.startsAt,
+              request.endsAt,
+            ),
+            calendarProviders: this.lifeContext.providerStatuses(),
+          };
+        case "calendar-create-local":
+          return {
+            ok: true,
+            calendarEvents: [
+              this.lifeContext.createLocalEvent({
+                title: request.title,
+                startsAt: request.startsAt,
+                endsAt: request.endsAt,
+                ...(request.description
+                  ? { description: request.description }
+                  : {}),
+                ...(request.location ? { location: request.location } : {}),
+                origin: request.origin,
+                confidence: request.confidence,
+                sourceId: request.sourceId,
+              }),
+            ],
+          };
+        case "calendar-delete-local":
+          return {
+            ok: true,
+            calendarEvents: [
+              this.lifeContext.deleteLocalEvent(request.id),
+            ],
+          };
+        case "life-context-preview":
+          return {
+            ok: true,
+            contextBundle: this.lifeContext.assembleContext({
+              query: request.query,
+              includeSensitive: request.includeSensitive,
+              includeRestricted: request.includeRestricted,
+              persistUsage: false,
+            }),
           };
         case "honcho-memory-get":
           return { ok: true, honchoMemoryStatus: this.honchoMemory.status() };
@@ -1941,6 +2053,12 @@ export class AgentCore {
                     query: request.message,
                   })
                 : "";
+            const localContext =
+              personality.memoryScope === "shared"
+                ? this.lifeContext.assembleContext({
+                    query: request.message,
+                  })
+                : undefined;
             const result = await this.agentLoop.run({
               sessionId: request.sessionId,
               model: selectedModel,
@@ -1991,7 +2109,11 @@ export class AgentCore {
                 personality.instructions,
                 this.configuration.instructions(),
                 ...(sharedMemoryEnabled
-                  ? [this.userModel.promptContext(), honchoContext]
+                  ? [
+                      this.userModel.promptContext(),
+                      localContext?.prompt ?? "",
+                      honchoContext,
+                    ]
                   : []),
               ]
                 .filter(Boolean)
@@ -2212,7 +2334,7 @@ export class AgentCore {
       this.runtime.unregisterExternalTool(toolName);
   }
 
-  runAmbientMaintenance(at = new Date(this.now())): void {
+  async runAmbientMaintenance(at = new Date(this.now())): Promise<void> {
     this.presence.beacon({
       instanceId: this.coreInstanceId,
       mode: "node",
@@ -2220,6 +2342,8 @@ export class AgentCore {
     });
     this.dreaming.runIfDue(at);
     this.configuration.runImprovementScanIfDue(at);
+    this.lifeContext.maintain();
+    await this.lifeContext.syncGoogleIfStale(at);
   }
 
   private abortActiveStreamsForHistoryRollback(sessionId: string): void {
@@ -2425,6 +2549,10 @@ export {
   environmentGoogleWorkspaceClient,
   installGoogleWorkspaceTools,
 } from "./google-workspace";
+export {
+  LifeContextService,
+  type PersonInput,
+} from "./life-context";
 export {
   DockerCliRemoteBackend,
   KubernetesCliRemoteBackend,
