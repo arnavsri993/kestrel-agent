@@ -180,7 +180,8 @@ export class TaskOrchestrator {
     private readonly loop: AgentLoop,
     private readonly now: () => Date = () => new Date(),
     private readonly maximumWorkers = 4,
-    private readonly providers?: ProviderPool
+    private readonly providers?: ProviderPool,
+    private readonly configuredMaximumTurns: () => number = () => 12,
   ) {
     this.reconcileInterruptedJobs();
   }
@@ -217,7 +218,7 @@ export class TaskOrchestrator {
         ...(route?.reasoningEffort || input.reasoningEffort ? { reasoningEffort: route?.reasoningEffort ?? input.reasoningEffort } : {}),
         userContent: textContent(input.prompt),
         ...(input.instructions ? { instructions: input.instructions } : {}),
-        ...(input.maximumTurns ? { maximumTurns: input.maximumTurns } : {})
+        maximumTurns: this.maximumTurnsForRun(input.maximumTurns),
       });
       this.database.setPrivateState(`orchestrator.task.${taskId}`, {
         taskId, sessionId: session.id, parentSessionId: parent.id, title: input.title, status: result.run.status, runId: result.run.id, ...(route ? { route } : {}), updatedAt: this.now().toISOString()
@@ -441,6 +442,7 @@ export class TaskOrchestrator {
       const result = await this.loop.resume({
         runId: job.lastRunId,
         approvalDecision: "approved",
+        maximumTurns: this.maximumTurnsForRun(),
       });
       updated = this.finishJob(updated, result, this.now());
     } catch (error) {
@@ -468,6 +470,7 @@ export class TaskOrchestrator {
           ...(job.providerModels ? { providerModels: job.providerModels } : {}),
           userContent: textContent(job.prompt),
           ...(job.instructions ? { instructions: job.instructions } : {}),
+          maximumTurns: this.maximumTurnsForRun(),
           ...(signal ? { signal } : {})
         });
         current = this.finishJob(current, result, at);
@@ -566,6 +569,11 @@ export class TaskOrchestrator {
     if (job.schedule.kind === "interval") return { ...job, status: "pending", lastRunId: result.run.id, error: undefined, schedule: { ...job.schedule, nextRunAt: new Date(at.getTime() + job.schedule.intervalMs).toISOString() }, updatedAt: this.now().toISOString() };
     if (job.schedule.kind === "cron") return { ...job, status: "pending", lastRunId: result.run.id, error: undefined, schedule: { ...job.schedule, nextRunAt: nextCronOccurrence(job.schedule.expression, at).toISOString() }, updatedAt: this.now().toISOString() };
     return { ...job, status: "completed", lastRunId: result.run.id, error: undefined, updatedAt: this.now().toISOString() };
+  }
+
+  private maximumTurnsForRun(requested?: number): number {
+    const configured = this.configuredMaximumTurns();
+    return Math.min(requested ?? configured, configured);
   }
 
   private reconcileInterruptedJobs(): void {

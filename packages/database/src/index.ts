@@ -965,6 +965,22 @@ export class KestrelDatabase {
       .sort((left, right) => left.sequence - right.sequence);
   }
 
+  listValidAgentConfigurationVersions(): AgentConfigurationVersion[] {
+    return this.listAgentConfigurationRecordRows("version")
+      .flatMap((row) => {
+        try {
+          return [
+            AgentConfigurationVersionSchema.parse(
+              this.decryptAgentConfigurationRecord(row),
+            ),
+          ];
+        } catch {
+          return [];
+        }
+      })
+      .sort((left, right) => left.sequence - right.sequence);
+  }
+
   saveAgentConfigurationProposal(
     proposal: AgentConfigurationProposal,
   ): void {

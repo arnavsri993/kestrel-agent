@@ -390,9 +390,12 @@ export class AgentCore {
       undefined,
       (message) => {
         if (message.role === "user") {
-          if (this.configuration.current().memory.captureExplicit)
+          const captureExplicit =
+            this.configuration.current().memory.captureExplicit;
+          if (captureExplicit)
             this.memory.captureExplicit(message.content, message.id);
-          this.lifeContext.captureConversation(message.content, message.id);
+          if (captureExplicit)
+            this.lifeContext.captureConversation(message.content, message.id);
         }
         const session = this.runtime.getSession(message.sessionId);
         this.honchoMemory.captureMessage(
@@ -428,6 +431,7 @@ export class AgentCore {
       () => new Date(this.now()),
       this.managedPolicy.get()?.maximumWorkers ?? 4,
       this.providerPool,
+      () => this.configuration.current().workflows.maximumTurns,
     );
     installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
     this.remote = new RemoteControl(
@@ -1117,10 +1121,13 @@ export class AgentCore {
                   .discoverTools(request.sessionId)
                   .map((tool) => tool.name),
                 personality.toolNames,
-                {
-                  includeProtectedRecovery:
-                    !personality.toolNames?.length ||
-                    this.configuration.isConfigurationRequest(priorMessage),
+                      {
+                        includeProtectedRecovery:
+                          personality.toolNames === undefined ||
+                          (personality.toolNames.length > 0 &&
+                            this.configuration.isConfigurationRequest(
+                              priorMessage,
+                            )),
                 },
               ),
               instructions: [
@@ -2054,7 +2061,7 @@ export class AgentCore {
                   })
                 : "";
             const localContext =
-              personality.memoryScope === "shared"
+              sharedMemoryEnabled
                 ? this.lifeContext.assembleContext({
                     query: request.message,
                   })
@@ -2088,6 +2095,8 @@ export class AgentCore {
                       personality.toolNames,
                       {
                         includeProtectedRecovery:
+                          personality.toolNames !== undefined &&
+                          personality.toolNames.length > 0 &&
                           this.configuration.isConfigurationRequest(
                             request.message,
                           ),
@@ -2186,12 +2195,14 @@ export class AgentCore {
           if (request.streamId && active)
             this.activeStreams.set(request.streamId, active);
           try {
+            const configuration = this.configuration.current();
             const result = await this.agentLoop.resume({
               runId: request.runId,
               approvalDecision: request.approvalDecision,
-              ...(request.maximumTurns
-                ? { maximumTurns: request.maximumTurns }
-                : {}),
+              maximumTurns: Math.min(
+                request.maximumTurns ?? configuration.workflows.maximumTurns,
+                configuration.workflows.maximumTurns,
+              ),
               signal: controller.signal,
               ...(request.streamId && waitingRun
                 ? {

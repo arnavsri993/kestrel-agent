@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { KestrelDatabase } from "@kestrel/database";
-import { createEncryptionKey } from "@kestrel/encryption";
+import { createEncryptionKey, encryptText } from "@kestrel/encryption";
 import type { RuntimeToolExecution } from "@kestrel/shared-types";
 import { AgentCore } from "./index";
 import {
@@ -104,6 +104,40 @@ describe("chat configuration manager", () => {
       "rolled_back",
     ]);
     secondDatabase.close();
+  });
+
+  it("recovers around malformed encrypted history records", () => {
+    const key = createEncryptionKey();
+    const database = new KestrelDatabase(":memory:", key);
+    const first = new AgentConfigurationManager(database);
+    const knownGood = first.currentVersion();
+    const corrupt = encryptText(JSON.stringify({ id: "not-a-version" }), key);
+    database.db
+      .prepare(
+        `INSERT INTO agent_configuration_records (
+          id, kind, status, payload_ciphertext, payload_iv,
+          payload_auth_tag, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "corrupt-version",
+        "version",
+        "verified",
+        corrupt.ciphertext,
+        corrupt.iv,
+        corrupt.authTag,
+        "2026-07-29T12:01:00.000Z",
+        "2026-07-29T12:01:00.000Z",
+      );
+    database.setState("agent.configuration.head", "corrupt-version");
+
+    const recovered = new AgentConfigurationManager(database);
+    expect(recovered.currentVersion().id).toBe(knownGood.id);
+    expect(recovered.audit().at(-1)).toMatchObject({
+      action: "recovery_fallback",
+      versionId: knownGood.id,
+    });
+    database.close();
   });
 
   it("rejects secrets, protected paths, safety overrides, and attempts to hide recovery tools", () => {
@@ -282,6 +316,12 @@ describe("chat configuration manager", () => {
     expect(manager.toolPolicy("workspace.read")).toMatchObject({
       denied: true,
     });
+    expect(
+      manager.filterToolNames(
+        ["workspace.read", "agent.config.inspect"],
+        [],
+      ),
+    ).toEqual([]);
 
     const improvementId =
       "agent-improvement-00000000-0000-4000-8000-000000000000";

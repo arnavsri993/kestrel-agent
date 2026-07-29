@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createEncryptionKey } from "@kestrel/encryption";
+import { createEncryptionKey, encryptText } from "@kestrel/encryption";
 import { KestrelDatabase } from "./index";
 
 const temporaryDirectories: string[] = [];
@@ -98,6 +98,35 @@ describe("idempotency claims", () => {
       first.close();
       second.close();
     }
+  });
+});
+
+describe("configuration history recovery", () => {
+  it("skips malformed encrypted versions in the recovery view", () => {
+    const key = createEncryptionKey();
+    const database = new KestrelDatabase(":memory:", key);
+    const corrupt = encryptText(JSON.stringify({ id: "not-a-version" }), key);
+    database.db
+      .prepare(
+        `INSERT INTO agent_configuration_records (
+          id, kind, status, payload_ciphertext, payload_iv,
+          payload_auth_tag, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "corrupt-version",
+        "version",
+        "verified",
+        corrupt.ciphertext,
+        corrupt.iv,
+        corrupt.authTag,
+        "2026-07-29T12:00:00.000Z",
+        "2026-07-29T12:00:00.000Z",
+      );
+
+    expect(database.listValidAgentConfigurationVersions()).toEqual([]);
+    expect(() => database.listAgentConfigurationVersions()).toThrow();
+    database.close();
   });
 });
 

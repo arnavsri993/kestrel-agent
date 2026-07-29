@@ -17,7 +17,11 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-function fixture(provider: ModelProvider, now = () => new Date("2026-07-22T20:00:00.000Z")) {
+function fixture(
+  provider: ModelProvider,
+  now = () => new Date("2026-07-22T20:00:00.000Z"),
+  configuredMaximumTurns = () => 12,
+) {
   const root = mkdtempSync(join(tmpdir(), "kestrel-orchestration-"));
   directories.push(root);
   const database = new KestrelDatabase(":memory:", createEncryptionKey());
@@ -25,7 +29,22 @@ function fixture(provider: ModelProvider, now = () => new Date("2026-07-22T20:00
   const parent = runtime.createSession({ title: "Parent", workspaceRoot: root });
   const providers = new ProviderPool([provider], now);
   const loop = new AgentLoop(database, runtime, providers, now);
-  return { root, database, runtime, parent, loop, orchestrator: new TaskOrchestrator(database, runtime, loop, now, 3, providers) };
+  return {
+    root,
+    database,
+    runtime,
+    parent,
+    loop,
+    orchestrator: new TaskOrchestrator(
+      database,
+      runtime,
+      loop,
+      now,
+      3,
+      providers,
+      configuredMaximumTurns,
+    ),
+  };
 }
 
 function finalProvider(onCall?: () => Promise<void>): ModelProvider {
@@ -57,6 +76,39 @@ describe("task orchestration", () => {
     expect(delegated.result.run.status).toBe("completed");
     expect(item.runtime.getSession(delegated.sessionId)).toMatchObject({ parentSessionId: item.parent.id, allowedTools: ["workspace.read"] });
     expect(delegated.sessionId).not.toBe(item.parent.id);
+    item.database.close();
+  });
+
+  it("caps delegated and scheduled runs at the active workflow turn limit", async () => {
+    let instant = new Date("2026-07-22T20:00:00.000Z");
+    const item = fixture(
+      finalProvider(),
+      () => instant,
+      () => 3,
+    );
+    const delegated = await item.orchestrator.delegate({
+      parentSessionId: item.parent.id,
+      title: "Capped worker",
+      prompt: "Work within the configured limit.",
+      model: "fake",
+      providerIds: ["fake"],
+      maximumTurns: 20,
+    });
+    expect(delegated.result.run.maximumTurns).toBe(3);
+
+    const job = item.orchestrator.schedule({
+      title: "Capped schedule",
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      prompt: "Run within the configured limit.",
+      schedule: { kind: "once", nextRunAt: instant.toISOString() },
+    });
+    const [completed] = await item.orchestrator.runDue(instant);
+    expect(completed?.id).toBe(job.id);
+    expect(
+      item.database.getAgentRun(completed?.lastRunId ?? "")?.maximumTurns,
+    ).toBe(3);
     item.database.close();
   });
 

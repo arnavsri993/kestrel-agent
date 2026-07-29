@@ -281,7 +281,11 @@ export class AgentLoop {
       );
       const priorCompaction = this.database.getPrivateState<{ removedMessages: number }>(`agent-run-compaction.${run.id}`);
       this.database.setPrivateState(`agent-run-compaction.${run.id}`, { sessionId: run.sessionId, removedMessages: Math.max(priorCompaction?.removedMessages ?? 0, compacted.removedMessages), estimatedCharacters: compacted.estimatedCharacters });
-      const configuredMaximumTurns = run.maximumTurns ?? input.maximumTurns ?? 12;
+      const storedMaximumTurns = run.maximumTurns ?? 12;
+      const configuredMaximumTurns =
+        input.maximumTurns === undefined
+          ? storedMaximumTurns
+          : Math.min(storedMaximumTurns, input.maximumTurns);
       const modelMessages: ModelMessage[] = [
         ...(instructionState?.instructions
           ? [{ role: "system" as const, content: textContent(instructionState.instructions) }]

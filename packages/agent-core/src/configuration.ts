@@ -1203,7 +1203,8 @@ export class AgentConfigurationManager {
   ): string[] {
     const configuration = this.current();
     const available = new Set(availableToolNames);
-    const base = personalityToolNames?.length
+    const hasPersonalityScope = personalityToolNames !== undefined;
+    const base = hasPersonalityScope
       ? personalityToolNames.filter((name) => available.has(name))
       : availableToolNames;
     const selected = base.filter(
@@ -1216,7 +1217,7 @@ export class AgentConfigurationManager {
         ),
     );
     const includeProtectedRecovery =
-      options.includeProtectedRecovery ?? !personalityToolNames?.length;
+      options.includeProtectedRecovery ?? !hasPersonalityScope;
     if (includeProtectedRecovery) {
       for (const protectedName of PROTECTED_RECOVERY_TOOLS) {
         if (available.has(protectedName) && !selected.includes(protectedName))
@@ -1263,7 +1264,7 @@ export class AgentConfigurationManager {
   }
 
   private initialize(): void {
-    const versions = this.database.listAgentConfigurationVersions();
+    const versions = this.database.listValidAgentConfigurationVersions();
     const currentId = this.database.getState<string>(
       "agent.configuration.head",
     );
