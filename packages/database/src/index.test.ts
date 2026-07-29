@@ -92,6 +92,8 @@ describe("idempotency claims", () => {
         .toEqual({ state: "completed", result: { accepted: true } });
       expect(second.db.prepare("SELECT version FROM schema_migrations WHERE version = 7").get())
         .toEqual({ version: 7 });
+      expect(second.db.prepare("SELECT version FROM schema_migrations WHERE version = 8").get())
+        .toEqual({ version: 8 });
     } finally {
       first.close();
       second.close();

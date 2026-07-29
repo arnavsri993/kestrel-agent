@@ -17,6 +17,7 @@ import {
 
 const CREDENTIAL_BOUNDARY_INSTRUCTIONS = "Never ask the user to paste API keys, OAuth tokens, passwords, session cookies, private keys, or other secrets into chat. Direct credential entry to the product's protected native credential field or the provider's own OAuth or device-login surface. You may explain what a credential enables and verify only non-secret connection status.";
 export const LOCAL_FIRST_TOOL_INSTRUCTIONS = "Prefer self-contained local capability before any external tool or hosted service. Inspect existing conversation, workspace files, local memory, and local runtime tools first. For interactive web research, prefer Kestrel's isolated on-device browser over a hosted search API when direct navigation can satisfy the request. Use web.search, hosted transcription, remote execution, or another external service only when local capability cannot complete the request and the user has explicitly enabled that fallback. Make the external boundary visible; never imply that network-derived content or hosted processing happened locally.";
+export const CHAT_CONFIGURATION_INSTRUCTIONS = "Treat conversational self-configuration as a reviewable transaction. For behavior, personality, prompt, tool, permission, workflow, UI, memory, integration, or setting changes, inspect the agent.config catalog first, stage an exact patch with agent.config.plan, explain the proposed live effect, risk, diff, isolated checks, and protected boundaries, then use agent.config.apply only after the staged result is available so the user receives a fresh one-time approval. Never claim a staged plan changed the live agent. Never place secrets in configuration. Never weaken or reinterpret protected safety, authentication, approval enforcement, isolation, verification, history, or recovery controls. A self-improvement suggestion is evidence, not authorization, and follows the same plan, diff, test, approval, verification, and rollback path. If the request requires source code rather than registered data configuration, use the isolated worktree, test, diff, and unmerged pull-request workflow; do not patch the running protected core in place. If a request is unsafe or unsupported, explain the exact boundary and offer the closest safe editable alternative.";
 
 export interface AgentLoopInput {
   sessionId: string;
@@ -146,6 +147,7 @@ export class AgentLoop {
     const instructions = [
       CREDENTIAL_BOUNDARY_INSTRUCTIONS,
       LOCAL_FIRST_TOOL_INSTRUCTIONS,
+      CHAT_CONFIGURATION_INSTRUCTIONS,
       input.instructions,
       ...this.runtime.workspaceInstructions(session.id, input.targetPath)
         .map((item) => `Instructions from ${item.path} (precedence ${item.precedence}):\n${item.content}`)
@@ -216,6 +218,7 @@ export class AgentLoop {
       } else if (input.approvalDecision === "approved") {
         execution = await this.runtime.callTool(run.sessionId, run.pendingToolName, blocked.input, {
           approvalStatus: "approved",
+          approvalGrantExecutionId: blocked.id,
           idempotencyKey: `${run.id}:${run.pendingProviderToolCallId}`,
           ...(input.signal ? { signal: input.signal } : {})
         });

@@ -40,6 +40,7 @@
     "test:desktop-events": "node scripts/test-desktop-event-applications.mjs",
     "test:desktop-personas": "node scripts/test-desktop-personas.mjs",
     "test:desktop-approvals": "node scripts/test-desktop-approvals.mjs",
+    "test:desktop-chat-configuration": "node scripts/test-desktop-chat-configuration.mjs",
     "test:desktop-managed-policy": "node scripts/test-desktop-managed-policy.mjs",
     "test:desktop-pets:live": "node scripts/test-desktop-pets.mjs",
     "capture:desktop": "tsx scripts/capture-desktop.ts",
@@ -51,7 +52,7 @@
     "assets:posters": "tsx scripts/fal-generate-posters.ts",
     "assets:process": "tsx scripts/process-marketing-assets.ts",
     "assets:verify": "tsx scripts/verify-marketing-assets.ts",
-    "verify": "pnpm typecheck && pnpm test && pnpm audit:references && pnpm audit:market && pnpm build && pnpm test:e2e && pnpm test:desktop-setup && pnpm test:desktop-kanban && pnpm test:desktop-readiness && pnpm test:desktop-external-secrets && pnpm test:desktop-observability && pnpm test:desktop-ambient && pnpm test:desktop-skins && pnpm test:desktop-dashboard-extensions && pnpm test:desktop-honcho-memory && pnpm test:desktop-widgets && pnpm test:desktop-events && pnpm test:desktop-personas && pnpm test:desktop-approvals && pnpm test:desktop-managed-policy && pnpm test:packaged-cli && pnpm test:editors && pnpm test:security"
+    "verify": "pnpm typecheck && pnpm test && pnpm audit:references && pnpm audit:market && pnpm build && pnpm test:e2e && pnpm test:desktop-setup && pnpm test:desktop-kanban && pnpm test:desktop-readiness && pnpm test:desktop-external-secrets && pnpm test:desktop-observability && pnpm test:desktop-ambient && pnpm test:desktop-skins && pnpm test:desktop-dashboard-extensions && pnpm test:desktop-honcho-memory && pnpm test:desktop-widgets && pnpm test:desktop-events && pnpm test:desktop-personas && pnpm test:desktop-approvals && pnpm test:desktop-chat-configuration && pnpm test:desktop-managed-policy && pnpm test:packaged-cli && pnpm test:editors && pnpm test:security"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.3.0",
