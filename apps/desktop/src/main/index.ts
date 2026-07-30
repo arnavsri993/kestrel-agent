@@ -109,6 +109,7 @@ const DEVELOPMENT_RENDERER_URL = trustedDevelopmentRendererUrl(
 );
 const execFileAsync = promisify(execFile);
 let managedLocalRuntime: LocalRuntimeManager | null = null;
+let appCredentialBroker: CredentialBroker | null = null;
 let googleOAuthController: AbortController | null = null;
 let chatGptOAuthController: AbortController | null = null;
 let activeChatGptOAuthManager: ChatGptOAuthManager | null = null;
@@ -154,9 +155,14 @@ function localRuntimeManager(): LocalRuntimeManager {
   return managedLocalRuntime;
 }
 
+function credentialBroker(): CredentialBroker {
+  appCredentialBroker ??= new CredentialBroker(app.getPath("userData"));
+  return appCredentialBroker;
+}
+
 function googleWorkspaceOAuthManager(): GoogleWorkspaceOAuthManager {
   return new GoogleWorkspaceOAuthManager({
-    broker: new CredentialBroker(app.getPath("userData")),
+    broker: credentialBroker(),
     openExternal: (url) => shell.openExternal(url),
   });
 }
@@ -930,7 +936,7 @@ async function initializeCore(
   resolvedExternal?: ResolvedExternalCredentials,
 ): Promise<void> {
   const userData = app.getPath("userData");
-  const broker = new CredentialBroker(userData);
+  const broker = credentialBroker();
   const key = await broker.getDatabaseKey();
   const external =
     resolvedExternal ??
@@ -1532,19 +1538,17 @@ function registerIpc(): void {
     if (request.type === "credential-list")
       return {
         ok: true,
-        credentials: await new CredentialBroker(
-          app.getPath("userData"),
-        ).listCredentials(),
+        credentials: await credentialBroker().listCredentials(),
       };
     if (request.type === "credential-set") {
-      const broker = new CredentialBroker(app.getPath("userData"));
+      const broker = credentialBroker();
       await broker.setCredential(request.credentialId, request.value);
       await supervisor.stop();
       await initializeCore();
       return { ok: true, credentials: await broker.listCredentials() };
     }
     if (request.type === "credential-remove") {
-      const broker = new CredentialBroker(app.getPath("userData"));
+      const broker = credentialBroker();
       await broker.removeCredential(request.credentialId);
       await supervisor.stop();
       await initializeCore();
@@ -1553,7 +1557,7 @@ function registerIpc(): void {
     if (request.type === "external-secret-list") {
       const manager = new ExternalSecretManager(
         app.getPath("userData"),
-        new CredentialBroker(app.getPath("userData")),
+        credentialBroker(),
       );
       const state = await manager.status();
       return {
@@ -1565,7 +1569,7 @@ function registerIpc(): void {
     if (request.type === "external-secret-save") {
       const manager = new ExternalSecretManager(
         app.getPath("userData"),
-        new CredentialBroker(app.getPath("userData")),
+        credentialBroker(),
       );
       await manager.save(request.configuration, {
         ...(request.onePasswordToken
@@ -1583,7 +1587,7 @@ function registerIpc(): void {
       };
     }
     if (request.type === "external-secret-sync") {
-      const broker = new CredentialBroker(app.getPath("userData"));
+      const broker = credentialBroker();
       const manager = new ExternalSecretManager(
         app.getPath("userData"),
         broker,
@@ -1608,7 +1612,7 @@ function registerIpc(): void {
     if (request.type === "external-secret-install-bitwarden") {
       const manager = new ExternalSecretManager(
         app.getPath("userData"),
-        new CredentialBroker(app.getPath("userData")),
+        credentialBroker(),
       );
       const sources = await manager.installBitwarden();
       return {
@@ -1620,7 +1624,7 @@ function registerIpc(): void {
     if (request.type === "external-secret-remove") {
       const manager = new ExternalSecretManager(
         app.getPath("userData"),
-        new CredentialBroker(app.getPath("userData")),
+        credentialBroker(),
       );
       await manager.remove(request.providerId);
       await supervisor.stop();
@@ -1935,6 +1939,31 @@ function registerIpc(): void {
   });
 }
 
+async function initializeCoreForStartup(): Promise<boolean> {
+  while (true) {
+    try {
+      await initializeCore();
+      return true;
+    } catch (cause) {
+      const detail =
+        cause instanceof Error
+          ? cause.message
+          : "An unknown startup error occurred.";
+      const result = await dialog.showMessageBox({
+        type: "error",
+        title: `${PRODUCT_IDENTITY.productName} could not start`,
+        message: "Kestrel needs access to its encrypted data.",
+        detail: `${detail}\n\nKestrel will not open your data without its encryption boundary. If you denied the Keychain prompt, unlock the login keychain and choose “Always Allow” for Kestrel Safe Storage, then try again.`,
+        buttons: ["Try again", "Quit"],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (result.response !== 0) return false;
+    }
+  }
+}
+
 app.on("second-instance", (_event, argv) => {
   const deepLinks = deepLinksFromArgv(argv);
   if (deepLinks.length === 0) showMainWindow();
@@ -1967,7 +1996,11 @@ void app
   .then(async () => {
     app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
     registerIpc();
-    await initializeCore();
+    if (!(await initializeCoreForStartup())) {
+      quitting = true;
+      app.quit();
+      return;
+    }
     providerAuthMonitor.start();
     updateTray();
     const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
