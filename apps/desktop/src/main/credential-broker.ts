@@ -1,7 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { safeStorage } from "electron";
+
+interface ElectronSafeStorage {
+  isEncryptionAvailable(): boolean;
+  isAsyncEncryptionAvailable(): Promise<boolean>;
+  encryptStringAsync(value: string): Promise<Buffer>;
+  decryptStringAsync(value: Buffer): Promise<{
+    result: string;
+    shouldReEncrypt: boolean;
+  }>;
+}
 
 export type BrokeredCredentialId = "openai" | "openai-secondary" | "anthropic" | "anthropic-secondary" | "gemini" | "nous" | "groq" | "mistral" | "openrouter" | "cloudflare" | "xai" | "deepseek" | "together" | "fireworks" | "nvidia" | "huggingface" | "perplexity" | "github-models" | "cohere" | "brave-search" | "github" | "honcho" | "fal";
 
@@ -42,6 +51,9 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
   "KESTREL_OLLAMA_CONTEXT_WINDOW"
 ] as const;
 
+const DATABASE_STORAGE_UNAVAILABLE =
+  "macOS secure storage is unavailable; Agent Core will not start with an unprotected key.";
+
 export interface ResolvedExternalCredentials {
   values: Partial<Record<BrokeredCredentialId, string>>;
   overrideStoredIds: BrokeredCredentialId[];
@@ -49,31 +61,104 @@ export interface ResolvedExternalCredentials {
 
 interface SecretProtection {
   isEncryptionAvailable(): boolean;
-  encryptString(value: string): Buffer;
-  decryptString(value: Buffer): string;
+  encryptString(value: string): Promise<Buffer>;
+  decryptString(value: Buffer): Promise<string>;
+}
+
+class ElectronSecretProtection implements SecretProtection {
+  private availability: Promise<void> | undefined;
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(private readonly safeStorage: ElectronSafeStorage) {}
+
+  isEncryptionAvailable(): boolean {
+    return this.safeStorage.isEncryptionAvailable();
+  }
+
+  encryptString(value: string): Promise<Buffer> {
+    return this.withEncryption(() => this.safeStorage.encryptStringAsync(value));
+  }
+
+  decryptString(value: Buffer): Promise<string> {
+    return this.withEncryption(async () => {
+      let decrypted = await this.safeStorage.decryptStringAsync(value);
+      while (decrypted.shouldReEncrypt)
+        decrypted = await this.safeStorage.decryptStringAsync(value);
+      return decrypted.result;
+    });
+  }
+
+  private async withEncryption<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.queue;
+    let release!: () => void;
+    this.queue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      await this.ensureAvailable();
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private async ensureAvailable(): Promise<void> {
+    this.availability ??= this.safeStorage
+      .isAsyncEncryptionAvailable()
+      .then((available) => {
+        if (!available)
+          throw new Error(DATABASE_STORAGE_UNAVAILABLE);
+      });
+    try {
+      await this.availability;
+    } catch (error) {
+      // A denied or locked login keychain can become available after the user
+      // unlocks it. Do not permanently poison the process with one failure.
+      this.availability = undefined;
+      throw error;
+    }
+  }
+}
+
+let defaultProtection: Promise<SecretProtection> | undefined;
+
+function loadDefaultProtection(): Promise<SecretProtection> {
+  defaultProtection ??= import("electron").then(
+    ({ safeStorage }) => new ElectronSecretProtection(safeStorage),
+  );
+  return defaultProtection;
 }
 
 export class CredentialBroker {
   private readonly keyPath: string;
   private readonly credentialRoot: string;
+  private readonly protection: Promise<SecretProtection>;
+  private databaseKey: Promise<Buffer> | undefined;
+  private readonly credentialCache = new Map<
+    BrokeredCredentialId,
+    Promise<string | undefined>
+  >();
+  private readonly opaqueSecretCache = new Map<
+    string,
+    Promise<string | undefined>
+  >();
 
-  constructor(userDataPath: string, private readonly protection: SecretProtection = safeStorage) {
+  constructor(userDataPath: string, protection?: SecretProtection) {
     this.keyPath = join(userDataPath, "secure", "database-key.bin");
     this.credentialRoot = join(userDataPath, "secure", "credentials");
+    this.protection = protection
+      ? Promise.resolve(protection)
+      : loadDefaultProtection();
   }
 
   async getDatabaseKey(): Promise<Buffer> {
-    if (!this.protection.isEncryptionAvailable()) throw new Error("macOS secure storage is unavailable; Agent Core will not start with an unprotected key.");
+    this.databaseKey ??= this.loadDatabaseKey();
     try {
-      const encrypted = await readFile(this.keyPath);
-      return Buffer.from(this.protection.decryptString(encrypted), "base64");
+      return await this.databaseKey;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const key = randomBytes(32);
-      await mkdir(dirname(this.keyPath), { recursive: true, mode: 0o700 });
-      await writeFile(this.keyPath, this.protection.encryptString(key.toString("base64")), { mode: 0o600 });
-      await chmod(this.keyPath, 0o600);
-      return key;
+      this.databaseKey = undefined;
+      throw error;
     }
   }
 
@@ -82,49 +167,61 @@ export class CredentialBroker {
   }
 
   async setCredential(id: BrokeredCredentialId, value: string): Promise<void> {
-    this.assertAvailable();
+    const protection = await this.availableProtection();
     if (!BROKERED_CREDENTIALS[id]) throw new Error("Credential type is not supported.");
     const secret = value.trim();
     if (secret.length < 8 || secret.length > 20_000 || /[\r\n\0]/.test(secret)) throw new Error("Credential value is invalid.");
     const path = this.credentialPath(id);
     const temporary = `${path}.new`;
     await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
-    await writeFile(temporary, this.protection.encryptString(secret), { mode: 0o600 });
+    await writeFile(temporary, await protection.encryptString(secret), { mode: 0o600 });
     await chmod(temporary, 0o600);
     await rename(temporary, path);
     await chmod(path, 0o600);
+    this.credentialCache.set(id, Promise.resolve(secret));
   }
 
   async removeCredential(id: BrokeredCredentialId): Promise<void> {
     if (!BROKERED_CREDENTIALS[id]) throw new Error("Credential type is not supported.");
     try { await unlink(this.credentialPath(id)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    this.credentialCache.delete(id);
   }
 
   async setOpaqueSecret(id: string, value: string): Promise<void> {
     this.assertOpaqueId(id);
-    this.assertAvailable();
+    const protection = await this.availableProtection();
     if (value.length < 8 || value.length > 100_000 || value.includes("\0")) throw new Error("Opaque credential value is invalid.");
     const path = this.opaquePath(id);
     const temporary = `${path}.new`;
     await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
-    await writeFile(temporary, this.protection.encryptString(value), { mode: 0o600 });
+    await writeFile(temporary, await protection.encryptString(value), { mode: 0o600 });
     await chmod(temporary, 0o600);
     await rename(temporary, path);
     await chmod(path, 0o600);
+    this.opaqueSecretCache.set(id, Promise.resolve(value));
   }
 
   async getOpaqueSecret(id: string): Promise<string | undefined> {
     this.assertOpaqueId(id);
-    this.assertAvailable();
-    try { return this.protection.decryptString(await readFile(this.opaquePath(id))); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+    const cached = this.opaqueSecretCache.get(id);
+    if (cached) return cached;
+    const pending = this.loadOpaqueSecret(id);
+    this.opaqueSecretCache.set(id, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      if (this.opaqueSecretCache.get(id) === pending)
+        this.opaqueSecretCache.delete(id);
+      throw error;
+    }
   }
 
   async removeOpaqueSecret(id: string): Promise<void> {
     this.assertOpaqueId(id);
     try { await unlink(this.opaquePath(id)); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    this.opaqueSecretCache.delete(id);
   }
 
   async providerEnvironment(base: NodeJS.ProcessEnv = process.env, external?: ResolvedExternalCredentials): Promise<NodeJS.ProcessEnv> {
@@ -172,9 +269,60 @@ export class CredentialBroker {
   }
 
   private async getCredential(id: BrokeredCredentialId): Promise<string | undefined> {
-    this.assertAvailable();
-    try { return this.protection.decryptString(await readFile(this.credentialPath(id))); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+    const cached = this.credentialCache.get(id);
+    if (cached) return cached;
+    const pending = this.loadCredential(id);
+    this.credentialCache.set(id, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      if (this.credentialCache.get(id) === pending)
+        this.credentialCache.delete(id);
+      throw error;
+    }
+  }
+
+  private async loadDatabaseKey(): Promise<Buffer> {
+    const protection = await this.availableProtection(DATABASE_STORAGE_UNAVAILABLE);
+    try {
+      const encrypted = await readFile(this.keyPath);
+      return Buffer.from(await protection.decryptString(encrypted), "base64");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const key = randomBytes(32);
+      await mkdir(dirname(this.keyPath), { recursive: true, mode: 0o700 });
+      await writeFile(
+        this.keyPath,
+        await protection.encryptString(key.toString("base64")),
+        { mode: 0o600 },
+      );
+      await chmod(this.keyPath, 0o600);
+      return key;
+    }
+  }
+
+  private async loadCredential(
+    id: BrokeredCredentialId,
+  ): Promise<string | undefined> {
+    let encrypted: Buffer;
+    try {
+      encrypted = await readFile(this.credentialPath(id));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    return (await this.availableProtection()).decryptString(encrypted);
+  }
+
+  private async loadOpaqueSecret(id: string): Promise<string | undefined> {
+    let encrypted: Buffer;
+    try {
+      encrypted = await readFile(this.opaquePath(id));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    return (await this.availableProtection()).decryptString(encrypted);
   }
 
   private credentialPath(id: BrokeredCredentialId): string { return join(this.credentialRoot, `${id}.bin`); }
@@ -183,7 +331,13 @@ export class CredentialBroker {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(id)) throw new Error("Opaque credential ID is invalid.");
   }
 
-  private assertAvailable(): void {
-    if (!this.protection.isEncryptionAvailable()) throw new Error("macOS secure storage is unavailable; credentials will not be stored or loaded unprotected.");
+  private async availableProtection(
+    unavailableMessage =
+      "macOS secure storage is unavailable; credentials will not be stored or loaded unprotected.",
+  ): Promise<SecretProtection> {
+    const protection = await this.protection;
+    if (!protection.isEncryptionAvailable())
+      throw new Error(unavailableMessage);
+    return protection;
   }
 }

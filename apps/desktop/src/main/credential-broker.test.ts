@@ -14,10 +14,14 @@ describe("desktop credential broker", () => {
   it("stores scoped credentials encrypted, exports only the core environment, and revokes them", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-"));
     roots.push(root);
+    let decryptCalls = 0;
     const protection = {
       isEncryptionAvailable: () => true,
-      encryptString: (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
-      decryptString: (value: Buffer) => Buffer.from(value.toString().slice("sealed:".length), "base64").toString()
+      encryptString: async (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+      decryptString: async (value: Buffer) => {
+        decryptCalls += 1;
+        return Buffer.from(value.toString().slice("sealed:".length), "base64").toString();
+      }
     };
     const broker = new CredentialBroker(root, protection);
     await broker.setCredential("openai", "sk-test-secret-value");
@@ -25,7 +29,7 @@ describe("desktop credential broker", () => {
     await broker.setCredential("cohere", "cohere-test-secret");
     await broker.setOpaqueSecret("google-workspace-oauth", "{\"refreshToken\":\"refresh-secret\"}");
     expect(await broker.listCredentials()).toContainEqual({ id: "openai", label: "OpenAI API key", configured: true });
-    expect(await broker.providerEnvironment({
+    const baseEnvironment = {
       OPENAI_BASE_URL: "https://provider.test/v1",
       KESTREL_ENABLE_CODEX_SUBSCRIPTION: "1",
       KESTREL_CODEX_PATH: "/Applications/ChatGPT.app/Contents/Resources/codex",
@@ -38,7 +42,9 @@ describe("desktop credential broker", () => {
       KESTREL_OPENAI_VOICE: "alloy",
       KESTREL_OLLAMA_CONTEXT_WINDOW: "32768",
       UNRELATED_SECRET: "do-not-forward"
-    })).toEqual({
+    };
+    const environment = await broker.providerEnvironment(baseEnvironment);
+    expect(environment).toEqual({
       OPENAI_API_KEY: "sk-test-secret-value",
       OPENAI_API_KEY_SECONDARY: "sk-test-backup-value",
       COHERE_API_KEY: "cohere-test-secret",
@@ -55,6 +61,11 @@ describe("desktop credential broker", () => {
       KESTREL_OLLAMA_CONTEXT_WINDOW: "32768",
       KESTREL_GOOGLE_WORKSPACE_OAUTH: "{\"refreshToken\":\"refresh-secret\"}"
     });
+    expect(await broker.providerEnvironment(baseEnvironment)).toEqual(environment);
+    const reopened = new CredentialBroker(root, protection);
+    expect(await reopened.providerEnvironment(baseEnvironment)).toEqual(environment);
+    expect(await reopened.providerEnvironment(baseEnvironment)).toEqual(environment);
+    expect(decryptCalls).toBe(4);
     const storedPath = join(root, "secure", "credentials", "openai.bin");
     expect(readFileSync(storedPath, "utf8")).not.toContain("sk-test-secret-value");
     expect(statSync(storedPath).mode & 0o777).toBe(0o600);
@@ -66,7 +77,7 @@ describe("desktop credential broker", () => {
   it("refuses to load or store secrets without OS encryption", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-unavailable-"));
     roots.push(root);
-    const broker = new CredentialBroker(root, { isEncryptionAvailable: () => false, encryptString: () => Buffer.alloc(0), decryptString: () => "" });
+    const broker = new CredentialBroker(root, { isEncryptionAvailable: () => false, encryptString: async () => Buffer.alloc(0), decryptString: async () => "" });
     await expect(broker.setCredential("anthropic", "test-secret-value")).rejects.toThrow("secure storage is unavailable");
     await expect(broker.getDatabaseKey()).rejects.toThrow("secure storage is unavailable");
   });

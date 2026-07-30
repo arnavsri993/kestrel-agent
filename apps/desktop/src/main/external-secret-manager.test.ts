@@ -12,8 +12,8 @@ import {
 const roots: string[] = [];
 const protection = {
   isEncryptionAvailable: () => true,
-  encryptString: (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
-  decryptString: (value: Buffer) => Buffer.from(value.toString().slice("sealed:".length), "base64").toString()
+  encryptString: async (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+  decryptString: async (value: Buffer) => Buffer.from(value.toString().slice("sealed:".length), "base64").toString()
 };
 
 afterEach(() => {
