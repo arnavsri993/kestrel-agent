@@ -74,6 +74,9 @@ port.on("message", async ({ data }) => {
       const remoteExecution = environmentRemoteExecutionConfiguration(message.config.secureEnvironment, join(artifactRoot, "remote"));
       core = new AgentCore({
         database,
+        seedDevelopmentFixtures:
+          Boolean(process.env.KESTREL_TEST_USER_DATA) &&
+          process.env.KESTREL_REAL_USER_PROFILE !== "1",
         modelProviders: createEnvironmentModelProviders(message.config.secureEnvironment),
         mediaProviders: createEnvironmentMediaProviders(message.config.secureEnvironment),
         ...(transcriptionProvider ? { transcriptionProvider } : {}),

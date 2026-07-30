@@ -31,6 +31,31 @@ export const teacherOpportunity: TaskOpportunity = {
   priority: 4.71
 };
 
+export function emptyOpportunity(now: string): TaskOpportunity {
+  return {
+    id: "opportunity-empty",
+    title: "No task queued",
+    description: "Kestrel will show the next useful step after you ask for one.",
+    reasonDetected: "No background task has been requested.",
+    triggerEventIds: [],
+    relatedEntityIds: [],
+    relevantMemoryIds: [],
+    proposedGoal: "Start with a request in the conversation.",
+    expectedOutputs: [],
+    confidence: 0,
+    urgency: 0,
+    importance: 0,
+    expectedUtility: 0,
+    estimatedInterruptionCost: 0,
+    estimatedComputeCost: 0,
+    riskLevel: "read_only",
+    requiredApprovalLevel: 0,
+    status: "suggested",
+    createdAt: now,
+    priority: 0,
+  };
+}
+
 export const teacherApproval: Approval = {
   id: "approval-teacher-monday",
   title: "Finalize the Monday test plan?",

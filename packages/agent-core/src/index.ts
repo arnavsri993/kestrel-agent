@@ -28,7 +28,7 @@ import {
 } from "./connectors";
 import { PreResponseContextResolver } from "./context-resolver";
 import {
-  FIXTURE_NOW,
+  emptyOpportunity,
   fixtureMemories,
   initialActivity,
   teacherApproval,
@@ -119,6 +119,8 @@ import {
 
 export interface AgentCoreDependencies {
   database: KestrelDatabase;
+  /** Seed the deterministic teacher-scheduling data used by preview and test surfaces. */
+  seedDevelopmentFixtures?: boolean;
   email?: EmailConnector;
   calendar?: CalendarConnector;
   googleWorkspace?: GoogleWorkspaceClient;
@@ -199,10 +201,12 @@ export class AgentCore {
   private readonly coreInstanceId: string;
 
   constructor(private readonly deps: AgentCoreDependencies) {
+    const seedDevelopmentFixtures = deps.seedDevelopmentFixtures === true;
     this.email = deps.email ?? new DevelopmentEmailConnector();
     this.calendar = deps.calendar ?? new DevelopmentCalendarConnector();
     this.state =
-      deps.database.getState<AgentState>("agentState") ?? "waiting_approval";
+      deps.database.getState<AgentState>("agentState") ??
+      (seedDevelopmentFixtures ? "waiting_approval" : "idle");
     const storedPersonalities =
       deps.database.getPrivateState<Array<Omit<AgentPersonality, "builtin">>>(
         this.customPersonalitiesKey,
@@ -220,7 +224,7 @@ export class AgentCore {
     this.personalities.get(this.selectedPersonalityId);
     this.opportunity =
       deps.database.getState<TaskOpportunity>("teacherOpportunity") ??
-      teacherOpportunity;
+      (seedDevelopmentFixtures ? teacherOpportunity : emptyOpportunity(this.now()));
     this.currentRouting =
       deps.database.getState<ModelRoutingDecision>("modelRouting") ?? {
         taskId: this.opportunity.id,
@@ -233,7 +237,7 @@ export class AgentCore {
         confidence: 1,
         selectedAt: this.now(),
       };
-    this.seed();
+    this.seed(seedDevelopmentFixtures);
     this.context = new PreResponseContextResolver(() =>
       this.deps.database.listMemories(),
     );
@@ -491,12 +495,12 @@ export class AgentCore {
     }
   }
 
-  private seed(): void {
-    if (this.deps.database.listMemories().length === 0)
+  private seed(seedDevelopmentFixtures: boolean): void {
+    if (seedDevelopmentFixtures && this.deps.database.listMemories().length === 0)
       fixtureMemories.forEach((item) => this.deps.database.upsertMemory(item));
-    if (this.deps.database.listApprovals().length === 0)
+    if (seedDevelopmentFixtures && this.deps.database.listApprovals().length === 0)
       this.deps.database.saveApproval(teacherApproval);
-    if (this.deps.database.listActivity().length === 0)
+    if (seedDevelopmentFixtures && this.deps.database.listActivity().length === 0)
       initialActivity.forEach((item) => this.deps.database.addActivity(item));
     this.deps.database.setState("teacherOpportunity", this.opportunity);
     this.deps.database.setState("modelRouting", this.currentRouting);

@@ -69,6 +69,7 @@ export function openKestrel(workspaceRoots: string[] = []): AgentCore {
   if (Boolean(process.env.KESTREL_MANAGED_POLICY) !== Boolean(process.env.KESTREL_MANAGED_POLICY_KEY)) throw new Error("KESTREL_MANAGED_POLICY and KESTREL_MANAGED_POLICY_KEY must be configured together.");
   return new AgentCore({
     database,
+    seedDevelopmentFixtures: process.env.KESTREL_ENABLE_DEVELOPMENT_FIXTURES === "1",
     workspaceRoots: grantedWorkspaceRoots,
     configuredWorkspaceRoots,
     learnedSkillRoot: join(directory, "learned-skills"),

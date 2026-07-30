@@ -91,6 +91,10 @@ import {
 } from "./local-model-catalog";
 import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 import { desktopDeepLinkAction } from "./deep-link-route";
+import {
+  loadInitialDesktopState,
+  startupFailureMessage,
+} from "./startup-state";
 
 const pages = [
   ["home", "New chat"],
@@ -7635,21 +7639,23 @@ export function App() {
     if (selected) applySkin(selected);
   }
   useEffect(() => {
-    void window.kestrel.request({ type: "snapshot" }).then((response) => {
-      if (response.ok && "snapshot" in response && response.snapshot)
-        setSnapshot(response.snapshot);
-      else if (!response.ok)
-        setError(
-          "error" in response ? response.error : "Could not load Kestrel.",
-        );
+    let active = true;
+    const unsubscribe = window.kestrel.onSnapshot((next) => {
+      if (active) setSnapshot(next);
     });
-    void window.kestrel
-      .request({ type: "runtime-list-sessions" })
-      .then((raw) => {
-        const response = raw as CoreResponse;
-        if (response.ok) setRuntimeSessions(response.sessions ?? []);
+    void loadInitialDesktopState((request) => window.kestrel.request(request))
+      .then((initial) => {
+        if (!active) return;
+        setSnapshot(initial.snapshot);
+        setRuntimeSessions(initial.sessions);
+      })
+      .catch((cause) => {
+        if (active) setError(startupFailureMessage(cause));
       });
-    return window.kestrel.onSnapshot(setSnapshot);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
   useEffect(
     () =>
