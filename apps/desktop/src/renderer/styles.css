@@ -8450,3 +8450,216 @@ select {
     animation: none !important;
   }
 }
+
+/*
+ * Unified UI contract
+ *
+ * Feature surfaces above this point retain their behavior-specific layout.
+ * This final semantic layer gives equivalent surfaces one shared material,
+ * control, selection, and focus language without flattening dense data into a
+ * card catalog.
+ */
+.unified-ui {
+  --page-measure: 1120px;
+  --surface-fill: var(--panel);
+  --surface-fill-raised: var(--surface);
+  --surface-rule: var(--line);
+  --surface-rule-strong: var(--line-strong);
+  --control-fill: var(--surface);
+  --control-height: 40px;
+  --selection-fill: color-mix(in srgb, var(--signal) 10%, var(--surface));
+  --selection-rule: color-mix(in srgb, var(--signal) 28%, transparent);
+}
+
+.unified-ui .page-frame {
+  width: min(var(--page-measure), calc(100% - 80px));
+  margin-inline: auto;
+  padding: 44px 0 72px;
+}
+
+.unified-ui .event-applications-page {
+  max-width: none;
+}
+
+.unified-ui .page-header {
+  margin-bottom: 32px;
+}
+
+.unified-ui .page-header h1 {
+  font-size: clamp(30px, 3.4vw, 38px);
+  line-height: 1.08;
+}
+
+.unified-ui .page-header p {
+  max-width: 660px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.unified-ui .settings-nav,
+.unified-ui .research-reader,
+.unified-ui .approval-card,
+.unified-ui .artifact-card,
+.unified-ui .paid-provider-browser {
+  border-color: var(--surface-rule-strong);
+  border-radius: var(--radius-surface);
+  background: var(--surface-fill);
+  box-shadow: none;
+}
+
+.unified-ui .settings-nav {
+  padding: 6px;
+}
+
+.unified-ui .settings-nav button,
+.unified-ui .settings-nav button.active {
+  border-radius: var(--radius-control);
+}
+
+.unified-ui :is(
+    .settings-nav button.active,
+    .memory-filters button.active,
+    .segmented button.selected,
+    .skin-picker button.selected
+  ) {
+  background: var(--selection-fill);
+  box-shadow: 0 0 0 1px var(--selection-rule);
+  color: var(--ink);
+}
+
+.unified-ui :is(.work-grid, .readiness-grid, .dashboard-panel-list) {
+  overflow: hidden;
+  border: 1px solid var(--surface-rule-strong);
+  border-radius: var(--radius-surface);
+  background: var(--surface-fill);
+  box-shadow: none;
+}
+
+.unified-ui :is(.work-card, .readiness-panel, .dashboard-panel) {
+  background: transparent;
+  box-shadow: none;
+}
+
+.unified-ui .work-grid {
+  gap: 0;
+}
+
+.unified-ui .readiness-grid {
+  gap: 0;
+}
+
+.unified-ui .dashboard-panel-list {
+  gap: 0;
+}
+
+.unified-ui .kanban {
+  overflow: hidden;
+  border: 1px solid var(--surface-rule-strong);
+  border-radius: var(--radius-surface);
+  background: var(--surface-fill);
+}
+
+.unified-ui .kanban-header {
+  padding-inline: 18px;
+}
+
+.unified-ui .kanban-columns {
+  border-inline: 0;
+}
+
+.unified-ui .kanban-empty-board {
+  border-inline: 0;
+}
+
+.unified-ui .kanban-card {
+  border-color: var(--surface-rule-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-fill-raised);
+  box-shadow: none;
+}
+
+.unified-ui .kanban-card select,
+.unified-ui .kanban-card-actions button {
+  border-radius: var(--radius-control);
+}
+
+.unified-ui .empty-state {
+  border: 1px solid var(--surface-rule-strong);
+  border-radius: var(--radius-surface);
+  background: var(--surface-fill);
+}
+
+.unified-ui .page-frame input:not([type="checkbox"]):not([type="radio"]),
+.unified-ui .page-frame select,
+.unified-ui .settings-content input:not([type="checkbox"]):not([type="radio"]),
+.unified-ui .settings-content select {
+  min-height: var(--control-height);
+  padding-inline: 11px;
+  border: 1px solid var(--surface-rule-strong);
+  border-radius: var(--radius-control);
+  background: var(--control-fill);
+  color: var(--ink);
+}
+
+.unified-ui .page-frame textarea,
+.unified-ui .settings-content textarea {
+  padding: 10px 11px;
+  border: 1px solid var(--surface-rule-strong);
+  border-radius: var(--radius-control);
+  background: var(--control-fill);
+  color: var(--ink);
+}
+
+.unified-ui .page-frame input:not([type="checkbox"]):not([type="radio"]):focus,
+.unified-ui .page-frame select:focus,
+.unified-ui .page-frame textarea:focus,
+.unified-ui .settings-content input:not([type="checkbox"]):not([type="radio"]):focus,
+.unified-ui .settings-content select:focus,
+.unified-ui .settings-content textarea:focus {
+  border-color: color-mix(in srgb, var(--signal) 62%, var(--surface-rule-strong));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 12%, transparent);
+}
+
+.unified-ui :is(.status, .external-secret-state, .declarative-badge) {
+  border-radius: var(--radius-control);
+}
+
+.unified-ui .event-applications-hero {
+  gap: 36px;
+  padding-top: 0;
+}
+
+.unified-ui .event-applications-hero h1 {
+  font-size: clamp(32px, 3.4vw, 42px);
+}
+
+.unified-ui .event-applications-hero p {
+  font-size: 13px;
+}
+
+.unified-ui .event-import-form input,
+.unified-ui .event-answer textarea,
+.unified-ui .eligibility-list select {
+  background: var(--control-fill);
+}
+
+@media (max-width: 980px) {
+  .unified-ui .page-frame {
+    width: min(var(--page-measure), calc(100% - 56px));
+  }
+}
+
+@media (max-width: 680px) {
+  .unified-ui .page-frame {
+    width: calc(100% - 36px);
+    padding-top: 34px;
+  }
+
+  .unified-ui .event-applications-hero {
+    gap: 22px;
+  }
+
+  .unified-ui .event-applications-hero h1 {
+    font-size: 34px;
+  }
+}

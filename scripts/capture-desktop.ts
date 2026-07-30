@@ -4,25 +4,27 @@ import { join, resolve } from "node:path";
 import { _electron as electron, type Page } from "@playwright/test";
 
 const root = resolve(import.meta.dirname, "..");
-const captureName = process.argv.includes("--final-native-graphite")
-  ? "final-native-graphite"
-  : process.argv.includes("--natural-controls")
-    ? "natural-controls"
-    : process.argv.includes("--model-tiers")
-      ? "model-tiers"
-      : process.argv.includes("--native-graphite")
-        ? "native-graphite"
-        : process.argv.includes("--mineral-current")
-          ? "mineral-current"
-          : process.argv.includes("--setup-revised")
-            ? "setup-revised"
-            : process.argv.includes("--workstrand-pass1")
-              ? "workstrand-pass1"
-              : process.argv.includes("--workstrand-revised")
-                ? "workstrand-revised"
-                : process.argv.includes("--revised")
-                  ? "revised"
-                  : "initial";
+const captureName =
+  process.env.KESTREL_CAPTURE_NAME ??
+  (process.argv.includes("--final-native-graphite")
+    ? "final-native-graphite"
+    : process.argv.includes("--natural-controls")
+      ? "natural-controls"
+      : process.argv.includes("--model-tiers")
+        ? "model-tiers"
+        : process.argv.includes("--native-graphite")
+          ? "native-graphite"
+          : process.argv.includes("--mineral-current")
+            ? "mineral-current"
+            : process.argv.includes("--setup-revised")
+              ? "setup-revised"
+              : process.argv.includes("--workstrand-pass1")
+                ? "workstrand-pass1"
+                : process.argv.includes("--workstrand-revised")
+                  ? "workstrand-revised"
+                  : process.argv.includes("--revised")
+                    ? "revised"
+                    : "initial");
 const output = join(
   root,
   "artifacts",

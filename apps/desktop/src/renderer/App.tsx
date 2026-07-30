@@ -7888,7 +7888,7 @@ export function App() {
     <ProductShellTransition>
     <motion.div
       key="workspace"
-      className={`app-shell configuration-density-${snapshot.configuration.ui.density}`}
+      className={`app-shell unified-ui configuration-density-${snapshot.configuration.ui.density}`}
       initial={reduced ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: reduced ? 1 : 0 }}
