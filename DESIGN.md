@@ -276,6 +276,72 @@ product name conflicts with this section, this section wins.
 
 Reference parity is deliberately layered, not a claim that every named vendor adapter ships in core. The 1,117-page Hermes/OpenClaw audit separates bundled capability families, signed extension contracts, and operational documentation. Native-node behavior is represented by a tested paired-device extension protocol rather than a bundled mobile app; Kestrel itself is a direct-download Apple Silicon Mac application.
 
+## Cross-surface unification increment — July 29 2026
+
+### Operating mode and evidence
+
+- Operating mode: `existing-redesign` plus `design-system` maintenance across
+  the packaged desktop renderer.
+- Evidence: the current `styles.css`, representative packaged Native Graphite
+  captures in `artifacts/screenshots/desktop/final-native-graphite/`, and the
+  current route/component map. Existing user-authored screenshot changes under
+  `artifacts/screenshots/desktop/setup-revised/` are unrelated and remain
+  untouched.
+- Root cause: several historical final-override blocks were appended to the
+  renderer stylesheet, while specialist routes still carried local radii,
+  field geometry, shadows, and surface fills. Shared color names existed, but
+  the interaction grammar did not consistently consume them.
+
+### Unified system lock
+
+- Thesis: Kestrel is one quiet instrument for inspectable work, so every route
+  should read as the same ruled graphite workspace before its feature-specific
+  data appears.
+- Density: `dense-app` for operational and settings surfaces, with the existing
+  sparse treatment retained for new chat and honest empty states.
+- Type: preserve SF Pro Display, SF Pro Text, and SF Mono roles; route titles,
+  section titles, controls, support text, and evidence use the shared scale.
+- Geometry: `8px` controls, `12px` grouped rows, `16px` meaningful surfaces;
+  `40px` normal controls and `42px` primary actions; one `1120px` content
+  measure and shared `44px` page inset at wide widths.
+- Surface grammar: matte semantic planes with a single line hierarchy;
+  dense lists use continuous borders and separators, while approvals, artifact
+  previews, the composer, and transient disclosures use the same surface
+  contract with elevation only when layering is real.
+- Interaction grammar: selected navigation, settings sections, segmented
+  choices, and recommended routes use the same restrained sage tint and ring;
+  focus remains a visible 2px sage outline; warning, error, and success keep
+  text or icon cues in addition to color.
+- Form grammar: route forms consume the same field border, fill, radius,
+  padding, and focus treatment. Compact specialist controls may be smaller,
+  but they retain the same token roles rather than inventing a new chrome.
+- Responsive strategy: preserve the shared page measure and reading order;
+  let settings/navigation and dense grids recompose at existing breakpoints,
+  and never introduce page-level horizontal scrolling.
+- Accessibility target: preserve native controls, keyboard focus, status
+  announcements, reduced motion, reduced transparency, and user skin
+  overrides while changing presentation only.
+- Performance budget: CSS-only normalization and existing motion tokens; no new
+  runtime dependency, font, image, or animation library.
+
+### Why this is not generic
+
+The interface uses Kestrel's inspectability loop as its visual grammar: every
+route shares the same ruled plane, but provenance, approval, recovery, and
+execution state remain visible without becoming a generic dashboard.
+
+### Acceptance and refinement contract
+
+- Representative before/after captures cover new chat, Work, Readiness,
+  Approvals, Extensions, Opportunities, Settings, compact navigation, and a
+  reduced-transparency state.
+- Verify that user skins still map through semantic roles, that field and
+  selected-state changes do not alter behavior, and that no new overflow or
+  console error appears.
+- Rejected directions: per-route card catalogs, mixed 3/4/7/9/10/13/16px
+  radii for equivalent surfaces, hardcoded component colors, unnecessary
+  shadows, decorative glass on content, and status pills used as layout.
+
 ## Public privacy and support surfaces
 
 - Operating mode: `greenfield-build` for two bounded static release routes inside
