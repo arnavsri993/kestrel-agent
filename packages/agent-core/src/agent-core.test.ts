@@ -10,9 +10,28 @@ function createCore() {
   const database = new KestrelDatabase(":memory:", createEncryptionKey());
   const email = new DevelopmentEmailConnector();
   const calendar = new DevelopmentCalendarConnector();
-  const core = new AgentCore({ database, email, calendar, now: () => "2026-07-22T15:00:00.000Z" });
+  const core = new AgentCore({ database, email, calendar, seedDevelopmentFixtures: true, now: () => "2026-07-22T15:00:00.000Z" });
   return { core, email, calendar };
 }
+
+describe("fresh application state", () => {
+  it("starts idle without importing development fixtures", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
+    const snapshot = core.snapshot();
+
+    expect(snapshot.agentState).toBe("idle");
+    expect(snapshot.approvals).toEqual([]);
+    expect(snapshot.memories).toEqual([]);
+    expect(snapshot.activity).toEqual([]);
+    expect(snapshot.opportunity).toMatchObject({
+      id: "opportunity-empty",
+      status: "suggested",
+      requiredApprovalLevel: 0,
+    });
+    core.close();
+  });
+});
 
 describe("teacher scheduling vertical slice", () => {
   it("uses calendar evidence to recommend Monday and waits for approval", () => {

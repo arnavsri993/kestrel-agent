@@ -1,12 +1,22 @@
 # Kestrel
 
-> Kestrel is the finalized human-visible product name. Privileged runtime compatibility identity—app ID, protocol, Keychain service, storage directory, and update channel—is centralized in `packages/shared-types/src/identity.ts` and intentionally remains stable so existing encrypted data, credentials, integrations, and update behavior continue to work.
+> Your AI answers. Kestrel gets it done.
 
-Kestrel is a local-first, installable personal agent for macOS designed to replace the daily Codex-style workflow: choose a project, describe the outcome, follow the work, approve consequential changes, and inspect the evidence in one conversation. Its deterministic scheduling and DJI scenarios remain honest preview fixtures, while the real runtime supports persisted repository-aware sessions, tools, research, orchestration, artifacts, extensions, and terminal/editor entry points.
+Kestrel is a local-first desktop agent for macOS. Describe an outcome in one conversation; Kestrel chooses the route, uses the tools it needs, pauses for consequential actions, and shows the evidence.
 
-The pinned documentation audit now maps all 1,117 Hermes and OpenClaw pages with zero known unmapped pages: 588 bundled core-family mappings, 375 signed extension contracts, and 154 operational references. The paired-node server contract covers location, Talk, wake phrases, and privacy-preserving presence without bundling a mobile app; the host fleet provides hardened one-cell-per-tenant Docker or Podman isolation. See [paired node protocol](docs/paired-node-protocol.md), [gateway networking](docs/gateway-networking.md), and the machine-readable [reference audit](docs/reference-page-audit.json).
+## Start here
 
-The repository also contains a separate, static marketing website. It has no agent endpoint, database, authentication, or fal credential in its public runtime.
+Requirements: macOS 13+, Node 22.12+, Corepack, and pnpm 11.
+
+```bash
+corepack enable
+corepack pnpm install
+corepack pnpm dev:desktop
+```
+
+On first launch, Kestrel checks the local runtime, lets you connect a model only when needed, and opens a clean conversation. Choose **Add project** for folder-scoped work, or describe a question directly. Read-only work can proceed automatically; sending, publishing, deleting, purchasing, and permission changes pause with a plain-language review.
+
+The packaged development build is Apple Silicon and ad-hoc signed. It is useful for local testing, but it is not a public release: Developer ID signing, notarization, update hosting, and a public download are still external release requirements.
 
 ## What works now
 
@@ -35,6 +45,14 @@ The repository also contains a separate, static marketing website. It has no age
 
 Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, and a public download URL. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
 
+## Architecture and research evidence
+
+Kestrel is the finalized human-visible product name. Privileged runtime compatibility identity—app ID, protocol, Keychain service, storage directory, and update channel—is centralized in `packages/shared-types/src/identity.ts` and intentionally remains stable so existing encrypted data, credentials, integrations, and update behavior continue to work.
+
+The pinned documentation audit maps all 1,117 Hermes and OpenClaw pages with zero known unmapped pages: 588 bundled core-family mappings, 375 signed extension contracts, and 154 operational references. The paired-node server contract covers location, Talk, wake phrases, and privacy-preserving presence without bundling a mobile app; the host fleet provides hardened one-cell-per-tenant Docker or Podman isolation. See [paired node protocol](docs/paired-node-protocol.md), [gateway networking](docs/gateway-networking.md), and the machine-readable [reference audit](docs/reference-page-audit.json).
+
+The repository also contains a separate, static marketing website. It has no agent endpoint, database, authentication, or fal credential in its public runtime.
+
 The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 58 broad catalog families have repository evidence. A separate immutable [1,117-page source audit](docs/reference-page-audit.json) distinguishes native behavior, signed extension contracts, and operational material with zero known unmapped pages; it prevents broad families from being mistaken for proof that every vendor-specific feature is bundled.
 
 Google Workspace setup and its public-release boundary are documented in [docs/google-workspace-oauth.md](docs/google-workspace-oauth.md).
@@ -50,15 +68,7 @@ The signed-policy contract, MDM PKG rollout, clean-device verification, and
 the exact organization-owned deployment inputs are documented in
 [docs/enterprise-deployment.md](docs/enterprise-deployment.md).
 
-## Quick start
-
-Requirements: macOS 13+, Node 22.12+, Corepack, and pnpm 11.
-
-```bash
-corepack enable
-corepack pnpm install
-corepack pnpm dev:desktop
-```
+## Developer paths
 
 The local terminal surface uses the same encrypted database and agent core:
 
@@ -73,7 +83,7 @@ To use ChatGPT plan access without giving Kestrel an OAuth token, choose **Sign 
 
 Build packaged terminal/editor entry points with `pnpm --filter @kestrel/cli build`. The outputs are `apps/cli/dist/kestrel.mjs` and `apps/cli/dist/kestrel-acp.mjs`. `kestrel tui` opens the interactive terminal, while `kestrel-acp` serves stable ACP v1 over NDJSON stdio. Pass `--model` and `--providers`, or set `KESTREL_MODEL` and `KESTREL_PROVIDERS`; provider credentials remain environment-only.
 
-The development app uses an isolated local database under the normal macOS application-support directory. Complete the five onboarding screens, then review the prepared teacher-scheduling approval. Approving executes only the development adapters.
+The desktop app uses an isolated local database under the normal macOS application-support directory. Fresh profiles start idle with no imported memories, activity, or approvals. Deterministic teacher-scheduling fixtures are reserved for preview and test surfaces and never represent a connected account or completed external action.
 
 Run the website:
 
