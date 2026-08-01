@@ -309,28 +309,35 @@ export class ChatGptOAuthManager {
   ): Promise<unknown> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const abort = () => {
-        const pending = this.pending.get(id);
-        if (!pending) return;
-        clearTimeout(pending.timer);
+      let timer: NodeJS.Timeout;
+      let abort!: () => void;
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
         this.pending.delete(id);
-        reject(
+      };
+      const fail = (error: Error) => {
+        if (!this.pending.has(id)) return;
+        cleanup();
+        reject(error);
+      };
+      abort = () => {
+        fail(
           signal?.reason instanceof Error
             ? signal.reason
             : new Error("Codex account request was cancelled."),
         );
       };
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Codex ${method} request timed out.`));
+      timer = setTimeout(() => {
+        fail(new Error(`Codex ${method} request timed out.`));
       }, this.options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS);
       this.pending.set(id, {
         resolve: (value) => {
-          signal?.removeEventListener("abort", abort);
+          cleanup();
           resolve(value);
         },
         reject: (error) => {
-          signal?.removeEventListener("abort", abort);
+          cleanup();
           reject(error);
         },
         timer,
@@ -340,8 +347,7 @@ export class ChatGptOAuthManager {
       try {
         this.write({ id, method, params });
       } catch (error) {
-        abort();
-        reject(error);
+        fail(error instanceof Error ? error : new Error("Codex account request failed."));
       }
     });
   }
