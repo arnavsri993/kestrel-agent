@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -74,6 +74,30 @@ describe("Petdex cosmetic pet manager", () => {
       const manager = new PetManager(database, root, fixtureFetch(spritesheet(100, 100)));
       await expect(manager.install("paperclip")).rejects.toThrow("8-column");
       expect(manager.status().installed).toEqual([]);
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a generated asset when encrypted state persistence fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-pets-rollback-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    try {
+      const manager = new PetManager(database, root, fixtureFetch());
+      const setPrivateState = database.setPrivateState.bind(database);
+      database.setPrivateState = (key, value) => {
+        if (key === "display.installed-pets")
+          throw new Error("private pet state unavailable");
+        setPrivateState(key, value);
+      };
+
+      expect(() => manager.installGenerated({
+        slug: "generated",
+        displayName: "Generated",
+        spritesheet: spritesheet(),
+      })).toThrow("private pet state unavailable");
+      expect(existsSync(join(root, "generated"))).toBe(false);
     } finally {
       database.close();
       rmSync(root, { recursive: true, force: true });

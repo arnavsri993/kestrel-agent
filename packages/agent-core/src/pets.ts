@@ -10,7 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import sharp from "sharp";
 import type { KestrelDatabase } from "@kestrel/database";
 import {
@@ -39,6 +39,20 @@ type Fetcher = (
 
 function within(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${sep}`);
+}
+
+function writePetAssetAtomically(destination: string, data: Uint8Array): void {
+  const temporary = join(dirname(destination), `.sprite-${randomUUID()}.partial`);
+  try {
+    writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
+    renameSync(temporary, destination);
+  } finally {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {
+      // The rename normally consumes the temporary path.
+    }
+  }
 }
 
 function checkedAssetUrl(
@@ -368,30 +382,38 @@ export class PetManager {
     const directory = this.petDirectory(slug);
     if (existsSync(directory))
       throw new Error(`Pet destination ${slug} already exists.`);
-    mkdirSync(directory, { recursive: false, mode: 0o700 });
-    const temporary = join(directory, `.sprite-${randomUUID()}.partial`);
-    writeFileSync(temporary, sprite, { mode: 0o600, flag: "wx" });
-    renameSync(temporary, this.assetPath(slug));
-    const installed = InstalledPetSchema.parse({
-      slug,
-      displayName,
-      description,
-      kind: "generated",
-      submittedBy: "Kestrel Hatch",
-      sha256: createHash("sha256").update(sprite).digest("hex"),
-      bytes: sprite.byteLength,
-      ...dimensions,
-      installedAt: this.now().toISOString(),
-    });
-    const records = [...this.installed(), installed];
-    const current = this.configuration();
-    this.persist(
-      input.select === false
-        ? current
-        : { ...current, enabled: true, selectedSlug: slug },
-      records,
-    );
-    return this.status();
+    let createdDirectory = false;
+    let persisted = false;
+    try {
+      mkdirSync(directory, { recursive: false, mode: 0o700 });
+      createdDirectory = true;
+      writePetAssetAtomically(this.assetPath(slug), sprite);
+      const installed = InstalledPetSchema.parse({
+        slug,
+        displayName,
+        description,
+        kind: "generated",
+        submittedBy: "Kestrel Hatch",
+        sha256: createHash("sha256").update(sprite).digest("hex"),
+        bytes: sprite.byteLength,
+        ...dimensions,
+        installedAt: this.now().toISOString(),
+      });
+      const records = [...this.installed(), installed];
+      const current = this.configuration();
+      this.persist(
+        input.select === false
+          ? current
+          : { ...current, enabled: true, selectedSlug: slug },
+        records,
+      );
+      persisted = true;
+      return this.status();
+    } catch (error) {
+      if (createdDirectory && !persisted)
+        rmSync(directory, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   select(slug: string): PetStatus {
