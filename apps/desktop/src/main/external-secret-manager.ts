@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
@@ -527,10 +527,14 @@ export class ExternalSecretManager {
   }
 
   private async writeVerification(verification: VerificationState): Promise<void> {
-    const temporary = `${this.statusPath}.new`;
+    const temporary = `${this.statusPath}.new-${randomUUID()}`;
     await mkdir(dirname(this.statusPath), { recursive: true, mode: 0o700 });
-    await writeFile(temporary, `${JSON.stringify(verification, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporary, this.statusPath);
+    try {
+      await writeFile(temporary, `${JSON.stringify(verification, null, 2)}\n`, { mode: 0o600 });
+      await rename(temporary, this.statusPath);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
     await chmod(this.statusPath, 0o600);
   }
 

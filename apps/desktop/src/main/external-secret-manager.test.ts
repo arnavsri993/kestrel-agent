@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -175,5 +175,16 @@ describe("external secret manager", () => {
     await manager.remove("bitwarden");
     expect((await manager.configuration()).bitwarden).toEqual(DEFAULT_EXTERNAL_SECRET_CONFIGURATION.bitwarden);
     expect(await item.broker.getOpaqueSecret("external-secret-bitwarden-token")).toBeUndefined();
+  });
+
+  it("cleans verification staging files when the status rename fails", async () => {
+    const item = fixture();
+    const statusPath = join(item.root, "secure", "external-secret-status.json");
+    mkdirSync(statusPath, { recursive: true });
+    const manager = new ExternalSecretManager(item.root, item.broker);
+    const writer = (manager as unknown as { writeVerification(value: Record<string, never>): Promise<void> }).writeVerification.bind(manager);
+
+    await expect(writer({})).rejects.toThrow();
+    expect(readdirSync(join(item.root, "secure")).filter((name) => name.includes("external-secret-status.json.new-")).length).toBe(0);
   });
 });
