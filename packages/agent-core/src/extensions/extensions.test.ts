@@ -108,6 +108,27 @@ describe("MCP extensions", () => {
     expect(deleted).toBe(true);
   });
 
+  it("rejects an oversized declared Streamable HTTP response before reading it", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    const response = new Response(body, {
+      status: 200,
+      headers: { "content-length": "1000001", "content-type": "application/json" }
+    });
+    const transport = new StreamableHttpMcpTransport("https://mcp.example.test/rpc", { fetcher: async () => response });
+
+    await expect(transport.send({ jsonrpc: "2.0", id: 1, method: "tools/list" })).rejects.toThrow("MCP HTTP response exceeded 1 MB");
+    expect(cancelled).toBe(true);
+  });
+
   it("negotiates the current lifecycle, lists tools, and calls a runtime tool", async () => {
     const fixture = runtimeFixture("mcp-server");
     const client = new McpClient(new LoopbackTransport(new McpRuntimeServer(fixture.runtime, fixture.session.id)));
