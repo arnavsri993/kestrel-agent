@@ -80,6 +80,25 @@ describe("Petdex cosmetic pet manager", () => {
     }
   });
 
+  it("does not fetch Petdex when the request is already cancelled", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-pets-abort-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    let fetches = 0;
+    try {
+      const manager = new PetManager(database, root, async () => {
+        fetches += 1;
+        return new Response("unexpected");
+      });
+      const controller = new AbortController();
+      controller.abort(new Error("already cancelled"));
+      await expect(manager.gallery("", 10, controller.signal)).rejects.toThrow("already cancelled");
+      expect(fetches).toBe(0);
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("renders verified frames through Unicode, iTerm2, and Kitty protocols", async () => {
     const image = await sharp({ create: { width: 1536, height: 1872, channels: 4, background: { r: 190, g: 80, b: 40, alpha: 1 } } }).webp().toBuffer();
     const root = mkdtempSync(join(tmpdir(), "workstrand-pets-render-"));
