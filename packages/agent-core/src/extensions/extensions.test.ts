@@ -335,6 +335,7 @@ describe("Agent Skills extensions", () => {
       "Inspect the diff before making claims."
     ].join("\n"));
     writeFileSync(join(skillRoot, "references", "CHECKLIST.md"), "Check correctness, safety, and tests.\n");
+    writeFileSync(join(skillRoot, "references", "LARGE.md"), Buffer.alloc(1_000_001));
     writeFileSync(join(container, "secret.txt"), "outside skill\n");
     const registry = new SkillRegistry([container]);
     const discovered = registry.discover();
@@ -342,6 +343,7 @@ describe("Agent Skills extensions", () => {
     expect(discovered[0]).not.toHaveProperty("instructions");
     expect(registry.activate("code-review").instructions).toContain("Inspect the diff");
     expect(registry.readResource("code-review", "references/CHECKLIST.md").content).toContain("correctness");
+    expect(() => registry.readResource("code-review", "references/LARGE.md")).toThrow("Skill resources are limited to 1 MB");
     expect(() => registry.readResource("code-review", "../secret.txt")).toThrow("escapes its skill root");
 
     const fixture = runtimeFixture("skills");

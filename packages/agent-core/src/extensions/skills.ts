@@ -122,7 +122,9 @@ export class SkillRegistry {
     if (!descriptor) throw new Error(`Skill ${name} was not discovered.`);
     const candidate = realpathSync(resolve(descriptor.root, relativePath));
     if (!within(descriptor.root, candidate)) throw new Error("Skill resource escapes its skill root.");
-    if (!statSync(candidate).isFile()) throw new Error("Skill resource must be a file.");
+    const metadata = statSync(candidate);
+    if (!metadata.isFile()) throw new Error("Skill resource must be a file.");
+    if (metadata.size > 1_000_000) throw new Error("Skill resources are limited to 1 MB.");
     const buffer = readFileSync(candidate);
     if (buffer.byteLength > 1_000_000) throw new Error("Skill resources are limited to 1 MB.");
     if (buffer.includes(0)) throw new Error("Binary skill resources are not exposed as model context.");
