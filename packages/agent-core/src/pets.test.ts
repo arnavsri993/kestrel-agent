@@ -19,7 +19,7 @@ function spritesheet(width = 1536, height = 1872): Buffer {
   return output;
 }
 
-function fixtureFetch(image = spritesheet()) {
+function fixtureFetch(image = spritesheet(), responses: Response[] = []) {
   const entry = {
     slug: "paperclip",
     displayName: "Paperclip",
@@ -31,12 +31,22 @@ function fixtureFetch(image = spritesheet()) {
   };
   return async (input: string | URL | Request): Promise<Response> => {
     const url = String(input);
-    if (url === "https://assets.petdex.dev/manifests/petdex-v1.json") return new Response(JSON.stringify({ pets: [entry] }), { headers: { "content-type": "application/json" } });
-    if (url.endsWith("/petjson.json")) return new Response(JSON.stringify({ id: "paperclip", displayName: "Paperclip", description: "A friendly office helper.", spritesheetPath: "spritesheet.webp" }));
+    if (url === "https://assets.petdex.dev/manifests/petdex-v1.json") {
+      const response = new Response(JSON.stringify({ pets: [entry] }), { headers: { "content-type": "application/json" } });
+      responses.push(response);
+      return response;
+    }
+    if (url.endsWith("/petjson.json")) {
+      const response = new Response(JSON.stringify({ id: "paperclip", displayName: "Paperclip", description: "A friendly office helper.", spritesheetPath: "spritesheet.webp" }));
+      responses.push(response);
+      return response;
+    }
     if (url.endsWith("/sprite.webp")) {
       const body = new Uint8Array(image.byteLength);
       body.set(image);
-      return new Response(body.buffer, { headers: { "content-type": "image/webp" } });
+      const response = new Response(body.buffer, { headers: { "content-type": "image/webp" } });
+      responses.push(response);
+      return response;
     }
     return new Response("missing", { status: 404 });
   };
@@ -47,7 +57,8 @@ describe("Petdex cosmetic pet manager", () => {
     const root = mkdtempSync(join(tmpdir(), "workstrand-pets-"));
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     try {
-      const manager = new PetManager(database, root, fixtureFetch(), () => new Date("2026-07-23T12:00:00.000Z"));
+      const responses: Response[] = [];
+      const manager = new PetManager(database, root, fixtureFetch(spritesheet(), responses), () => new Date("2026-07-23T12:00:00.000Z"));
       await expect(manager.verifyDecoder()).resolves.toMatchObject({
         decoder: "sharp",
         ok: true,
@@ -55,6 +66,12 @@ describe("Petdex cosmetic pet manager", () => {
       expect(manager.status()).toMatchObject({ configuration: { enabled: false, scale: 0.33 }, installed: [] });
       expect(await manager.gallery("clip", 10)).toMatchObject([{ slug: "paperclip", submittedBy: "Fixture" }]);
       expect(await manager.install("paperclip", true)).toMatchObject({ configuration: { enabled: true, selectedSlug: "paperclip" }, installed: [{ width: 1536, height: 1872 }] });
+      expect(responses).toHaveLength(3);
+      for (const response of responses) {
+        const reader = response.body?.getReader();
+        expect(reader).toBeDefined();
+        reader?.releaseLock();
+      }
       expect(manager.asset("paperclip")).toMatchObject({ slug: "paperclip", mediaType: "image/webp" });
       expect(manager.configure({ scale: 0.5, renderMode: "unicode" })).toMatchObject({ configuration: { scale: 0.5, renderMode: "unicode" } });
       expect(new PetManager(database, root, fixtureFetch()).status()).toMatchObject({ configuration: { selectedSlug: "paperclip" }, installed: [{ slug: "paperclip" }] });
