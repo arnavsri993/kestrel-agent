@@ -75,4 +75,37 @@ describe("Google Workspace desktop OAuth", () => {
     const manager = new GoogleWorkspaceOAuthManager({ broker, openExternal: async () => {} });
     await expect(manager.connect("not-a-desktop-client")).rejects.toThrow("Desktop app");
   });
+
+  it("does not persist credentials when cancelled during token exchange", async () => {
+    const { broker } = fixture();
+    const controller = new AbortController();
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url === "https://oauth2.googleapis.com/token") {
+        controller.abort(new Error("cancelled during exchange"));
+        return Response.json({
+          access_token: "access-token-value-that-is-long-enough",
+          refresh_token: "refresh-token-value-that-is-long-enough",
+          scope: "openid email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events"
+        });
+      }
+      if (url === "https://openidconnect.googleapis.com/v1/userinfo") return Response.json({ email: "person@example.test" });
+      if (url.startsWith("https://www.googleapis.com/calendar/v3/calendars/primary/events")) return Response.json({ items: [] });
+      return fetch(input);
+    };
+    const manager = new GoogleWorkspaceOAuthManager({
+      broker,
+      fetcher,
+      openExternal: async (url) => {
+        const authorization = new URL(url);
+        const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+        callback.searchParams.set("state", authorization.searchParams.get("state")!);
+        callback.searchParams.set("code", "one-time-code");
+        await fetch(callback);
+      }
+    });
+
+    await expect(manager.connect("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com", controller.signal)).rejects.toThrow("cancelled during exchange");
+    expect(await broker.getOpaqueSecret("google-workspace-oauth")).toBeUndefined();
+  });
 });

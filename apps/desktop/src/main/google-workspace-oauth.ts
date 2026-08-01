@@ -60,6 +60,12 @@ function isLoopback(address: string | undefined): boolean {
   return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new Error("Google sign-in was cancelled.");
+}
+
 async function listen(server: Server): Promise<number> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -169,7 +175,9 @@ export class GoogleWorkspaceOAuthManager {
         if (result.error === "timeout") throw new Error("Google sign-in timed out. Try again when you can finish the browser consent flow.");
         throw new Error(`Google sign-in did not complete (${result.error ?? "unknown_error"}).`);
       }
-      const token = await this.exchangeCode({ clientId, code: result.code, codeVerifier, redirectUri });
+      throwIfCancelled(signal);
+      const token = await this.exchangeCode({ clientId, code: result.code, codeVerifier, redirectUri }, signal);
+      throwIfCancelled(signal);
       const grantedScopes = String(token.scope ?? "").split(/\s+/).filter(Boolean);
       for (const scope of REQUESTED_SCOPES) {
         if (!grantedScopes.includes(scope)) throw new Error(`Google did not grant the required ${scope} scope.`);
@@ -177,7 +185,8 @@ export class GoogleWorkspaceOAuthManager {
       const accessToken = typeof token.access_token === "string" ? token.access_token : "";
       const refreshToken = typeof token.refresh_token === "string" ? token.refresh_token : "";
       if (accessToken.length < 20 || refreshToken.length < 20) throw new Error("Google did not return usable access and refresh tokens.");
-      const email = await this.verifyIdentityAndCalendar(accessToken);
+      const email = await this.verifyIdentityAndCalendar(accessToken, signal);
+      throwIfCancelled(signal);
       const record: GoogleWorkspaceOAuthRecord = {
         version: 1,
         clientId,
@@ -212,7 +221,8 @@ export class GoogleWorkspaceOAuthManager {
     return { connected: false, scopes: [] };
   }
 
-  private async exchangeCode(input: { clientId: string; code: string; codeVerifier: string; redirectUri: string }): Promise<Record<string, unknown>> {
+  private async exchangeCode(input: { clientId: string; code: string; codeVerifier: string; redirectUri: string }, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    throwIfCancelled(signal);
     const response = await this.fetcher(GOOGLE_TOKEN_ENDPOINT, {
       method: "POST",
       redirect: "error",
@@ -223,21 +233,26 @@ export class GoogleWorkspaceOAuthManager {
         code_verifier: input.codeVerifier,
         redirect_uri: input.redirectUri,
         grant_type: "authorization_code"
-      })
+      }),
+      ...(signal ? { signal } : {})
     });
+    throwIfCancelled(signal);
     const body = boundedJson(new Uint8Array(await response.arrayBuffer()), 64_000, "Google token exchange");
     if (!response.ok) throw new Error(`Google token exchange failed (${String(body.error ?? response.status).slice(0, 200)}).`);
     return body;
   }
 
-  private async verifyIdentityAndCalendar(accessToken: string): Promise<string> {
+  private async verifyIdentityAndCalendar(accessToken: string, signal?: AbortSignal): Promise<string> {
+    throwIfCancelled(signal);
     const headers = { accept: "application/json", authorization: `Bearer ${accessToken}` };
-    const identityResponse = await this.fetcher(GOOGLE_USERINFO_ENDPOINT, { redirect: "error", headers });
+    const identityResponse = await this.fetcher(GOOGLE_USERINFO_ENDPOINT, { redirect: "error", headers, ...(signal ? { signal } : {}) });
+    throwIfCancelled(signal);
     const identity = boundedJson(new Uint8Array(await identityResponse.arrayBuffer()), 64_000, "Google identity verification");
     if (!identityResponse.ok || typeof identity.email !== "string" || !identity.email.includes("@")) throw new Error("Google identity verification failed.");
     const calendarUrl = new URL(GOOGLE_CALENDAR_PROBE_ENDPOINT);
     calendarUrl.search = new URLSearchParams({ maxResults: "1", singleEvents: "true", timeMin: this.now().toISOString() }).toString();
-    const calendarResponse = await this.fetcher(calendarUrl, { redirect: "error", headers });
+    const calendarResponse = await this.fetcher(calendarUrl, { redirect: "error", headers, ...(signal ? { signal } : {}) });
+    throwIfCancelled(signal);
     const calendar = boundedJson(new Uint8Array(await calendarResponse.arrayBuffer()), 256_000, "Google Calendar verification");
     if (!calendarResponse.ok || !Array.isArray(calendar.items)) throw new Error("Google Calendar verification failed.");
     return identity.email;
