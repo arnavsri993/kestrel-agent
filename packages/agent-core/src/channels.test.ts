@@ -256,4 +256,20 @@ describe("authenticated channel gateway", () => {
     expect(JSON.stringify({ sent, edited })).not.toMatch(/argument|output|credential|path/i);
     database.close();
   });
+
+  it("returns an actionable error when progress is cancelled with a null reason", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const gateway = new ChannelGateway(database, runtime, [{
+      id: "progress",
+      send: async () => ({ externalId: "draft-1", deliveredAt: "2026-07-23T10:00:00.000Z" })
+    }], {});
+    gateway.configureInteraction({ progressMode: "progress", typingMode: "thinking", typingIntervalSeconds: 6, reactionLevel: "minimal" });
+    const controller = new AbortController();
+    controller.abort(null);
+    const progress = await gateway.beginProgress("progress", "room-1", "run-1", controller.signal);
+
+    await expect(progress.update({ phase: "thinking" })).rejects.toThrow("Channel progress was cancelled.");
+    database.close();
+  });
 });
