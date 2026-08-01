@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -175,5 +175,24 @@ describe("external secret manager", () => {
     await manager.remove("bitwarden");
     expect((await manager.configuration()).bitwarden).toEqual(DEFAULT_EXTERNAL_SECRET_CONFIGURATION.bitwarden);
     expect(await item.broker.getOpaqueSecret("external-secret-bitwarden-token")).toBeUndefined();
+  });
+
+  it("does not trust an oversized managed Bitwarden marker", async () => {
+    const item = fixture();
+    const managedRoot = join(item.root, "managed-tools", "bws", "2.0.0");
+    mkdirSync(managedRoot, { recursive: true });
+    writeFileSync(join(managedRoot, "bws"), "#!/bin/sh\n", { mode: 0o700 });
+    chmodSync(join(managedRoot, "bws"), 0o700);
+    writeFileSync(join(managedRoot, "workstrand-install.json"), JSON.stringify({
+      tool: "bws",
+      version: "2.0.0",
+      source: "x".repeat(65_000),
+      sha256: "67ab9bc345e2ec3b5dfddd116f938fdab79538042623a6bcca5ca0c1b0c42d95",
+      bytes: 12_371_243,
+      installedAt: "2026-07-23T08:00:00.000Z"
+    }));
+
+    const source = (await new ExternalSecretManager(item.root, item.broker).status()).sources.find((entry) => entry.id === "bitwarden");
+    expect(source).toMatchObject({ managedBinary: false });
   });
 });
