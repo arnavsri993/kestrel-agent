@@ -79,6 +79,26 @@ describe("remote backends and scoped supervision", () => {
     } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; rmSync(root, { recursive: true, force: true }); }
   });
 
+  it("does not start a remote CLI for an already-cancelled signal", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-remote-cli-cancelled-"));
+    const bin = join(root, "bin");
+    const marker = join(root, "started");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(bin));
+    writeFileSync(join(bin, "ssh"), `#!/bin/sh\nprintf started > '${marker}'\n`);
+    chmodSync(join(bin, "ssh"), 0o700);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    const controller = new AbortController();
+    controller.abort(null);
+    try {
+      await expect(new SshCliRemoteBackend().execute({ target: { id: "host", kind: "ssh", backendId: "ssh-cli", allowedCommands: ["git"], enabled: true, configuration: { host: "build.example.com" } }, command: "git", args: ["status"], timeoutMs: 5_000, signal: controller.signal })).rejects.toThrow("Remote execution cancelled.");
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses authenticated HTTPS serverless execution and stores only hash-verified artifacts", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-artifacts-"));
     const database = new KestrelDatabase(":memory:", createEncryptionKey()); const bytes = Buffer.from("verified remote artifact"); const sha256 = createHash("sha256").update(bytes).digest("hex");
