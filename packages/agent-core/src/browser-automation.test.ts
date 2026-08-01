@@ -85,6 +85,26 @@ describe("isolated browser automation and visual validation", () => {
     database.close();
   });
 
+  it("rolls back the comparison when final validation persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const root = mkdtempSync(join(tmpdir(), "kestrel-visual-rollback-"));
+    const validator = new VisualValidator(database, root, () => new Date("2026-07-22T23:00:00.000Z"));
+    const frame = { width: 1, height: 1, rgba: Uint8Array.from([0, 0, 0, 255]) };
+    validator.baseline("homepage", { name: "mobile", width: 1, height: 1 }, frame);
+    const originalSetPrivateState = database.setPrivateState.bind(database);
+    database.setPrivateState = (key, value) => {
+      if (key === "engineering.visual-comparisons.results") throw new Error("visual result write failed");
+      originalSetPrivateState(key, value);
+    };
+
+    expect(() => validator.validate("homepage", { name: "mobile", width: 1, height: 1 }, frame, [])).toThrow("visual result write failed");
+    expect(validator.list()).toEqual([]);
+    expect(validator.results()).toEqual([]);
+
+    database.setPrivateState = originalSetPrivateState;
+    database.close();
+  });
+
   it("persists responsive baseline, actual, diff, and diagnostics artifacts and gates browser errors", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const root = mkdtempSync(join(tmpdir(), "kestrel-visual-"));

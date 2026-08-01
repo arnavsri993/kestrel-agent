@@ -262,22 +262,24 @@ export class VisualValidator {
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as { width: number; height: number };
     const baselineRgba = readFileSync(rgbaPath);
     const baseline: ScreenshotFrame = { width: metadata.width, height: metadata.height, rgba: baselineRgba };
-    const comparison = this.compare(baseline, actual, threshold);
-    const diff = new Uint8Array(actual.rgba.byteLength);
-    for (let offset = 0; offset < actual.rgba.length; offset += 4) {
-      const changed = baseline.rgba[offset] !== actual.rgba[offset] || baseline.rgba[offset + 1] !== actual.rgba[offset + 1] || baseline.rgba[offset + 2] !== actual.rgba[offset + 2] || baseline.rgba[offset + 3] !== actual.rgba[offset + 3];
-      diff[offset] = changed ? 255 : actual.rgba[offset]! >> 2; diff[offset + 1] = changed ? 0 : actual.rgba[offset + 1]! >> 2; diff[offset + 2] = changed ? 96 : actual.rgba[offset + 2]! >> 2; diff[offset + 3] = 255;
-    }
-    const actualPath = resolve(directory, "actual.png"); const diffPath = resolve(directory, "diff.png"); const diagnosticsPath = resolve(directory, "diagnostics.json");
-    writeFileSync(actualPath, actual.png ?? encodeRgbaPng(actual), { mode: 0o600 });
-    writeFileSync(diffPath, encodeRgbaPng({ width: actual.width, height: actual.height, rgba: diff }), { mode: 0o600 });
-    writeFileSync(diagnosticsPath, JSON.stringify(diagnostics, null, 2), { mode: 0o600 });
-    for (const path of [actualPath, diffPath, diagnosticsPath]) chmodSync(path, 0o600);
-    const consoleErrors = diagnostics.filter((item) => item.kind === "console" && item.level === "error").length;
-    const networkErrors = diagnostics.filter((item) => item.kind === "network" && item.level === "error").length;
-    const result: VisualValidationResult = { ...comparison, suite: safeSegment(suiteValue, "Visual suite"), viewport, consoleErrors, networkErrors, passed: comparison.passed && (!gates.consoleErrors || consoleErrors === 0) && (!gates.networkErrors || networkErrors === 0), baselinePath: resolve(directory, "baseline.png"), actualPath, diffPath, diagnosticsPath };
-    this.database.setPrivateState(`${this.key}.results`, [...this.results(), result]);
-    return result;
+    return this.database.db.transaction(() => {
+      const comparison = this.compare(baseline, actual, threshold);
+      const diff = new Uint8Array(actual.rgba.byteLength);
+      for (let offset = 0; offset < actual.rgba.length; offset += 4) {
+        const changed = baseline.rgba[offset] !== actual.rgba[offset] || baseline.rgba[offset + 1] !== actual.rgba[offset + 1] || baseline.rgba[offset + 2] !== actual.rgba[offset + 2] || baseline.rgba[offset + 3] !== actual.rgba[offset + 3];
+        diff[offset] = changed ? 255 : actual.rgba[offset]! >> 2; diff[offset + 1] = changed ? 0 : actual.rgba[offset + 1]! >> 2; diff[offset + 2] = changed ? 96 : actual.rgba[offset + 2]! >> 2; diff[offset + 3] = 255;
+      }
+      const actualPath = resolve(directory, "actual.png"); const diffPath = resolve(directory, "diff.png"); const diagnosticsPath = resolve(directory, "diagnostics.json");
+      writeFileSync(actualPath, actual.png ?? encodeRgbaPng(actual), { mode: 0o600 });
+      writeFileSync(diffPath, encodeRgbaPng({ width: actual.width, height: actual.height, rgba: diff }), { mode: 0o600 });
+      writeFileSync(diagnosticsPath, JSON.stringify(diagnostics, null, 2), { mode: 0o600 });
+      for (const path of [actualPath, diffPath, diagnosticsPath]) chmodSync(path, 0o600);
+      const consoleErrors = diagnostics.filter((item) => item.kind === "console" && item.level === "error").length;
+      const networkErrors = diagnostics.filter((item) => item.kind === "network" && item.level === "error").length;
+      const result: VisualValidationResult = { ...comparison, suite: safeSegment(suiteValue, "Visual suite"), viewport, consoleErrors, networkErrors, passed: comparison.passed && (!gates.consoleErrors || consoleErrors === 0) && (!gates.networkErrors || networkErrors === 0), baselinePath: resolve(directory, "baseline.png"), actualPath, diffPath, diagnosticsPath };
+      this.database.setPrivateState(`${this.key}.results`, [...this.results(), result]);
+      return result;
+    })();
   }
 
   results(): VisualValidationResult[] { return this.database.getPrivateState<VisualValidationResult[]>(`${this.key}.results`) ?? []; }
