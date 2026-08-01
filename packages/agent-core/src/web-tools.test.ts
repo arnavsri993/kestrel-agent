@@ -26,6 +26,7 @@ describe("network-policy web tools", () => {
       allowedHosts: ["safe.example.test"], maximumBytes: 4, resolveHost: async (host) => host === "safe.example.test" ? ["203.0.113.21"] : ["127.0.0.1"],
       fetcher: async () => new Response("large body", { headers: { "content-type": "text/plain" } })
     });
+    await expect(client.fetch("not a URL")).rejects.toThrow("HTTPS");
     await expect(client.fetch("http://safe.example.test/")).rejects.toThrow("HTTPS");
     await expect(client.fetch("https://other.example.test/")).rejects.toThrow("not allowlisted");
     await expect(client.fetch("https://safe.example.test/")).rejects.toThrow("byte limit");
