@@ -982,19 +982,23 @@ export class AgentCore {
     if (!approval) throw new Error("Approval not found");
     if (approval.status !== "pending")
       throw new Error("Only a pending plan can be edited.");
-    this.updateApproval({
+    const edited = {
       ...approval,
       proposedEmail: { ...approval.proposedEmail, body: emailBody },
-    });
-    this.deps.database.addActivity({
+    };
+    const activity = {
       id: `activity-plan-edited-${randomUUID()}`,
       title: "Draft edited",
       detail:
         "The pending email text changed; no external action was executed.",
       timestamp: this.now(),
-      status: "reasoned",
+      status: "reasoned" as const,
       sourceIds: [approvalId],
-    });
+    };
+    this.deps.database.db.transaction(() => {
+      this.updateApproval(edited);
+      this.deps.database.addActivity(activity);
+    })();
     return this.snapshot();
   }
 

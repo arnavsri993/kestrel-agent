@@ -59,6 +59,25 @@ describe("teacher scheduling vertical slice", () => {
     core.close();
   });
 
+  it("rolls back approval edits when the audit activity cannot persist", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const core = new AgentCore({ database, seedDevelopmentFixtures: true, now: () => "2026-07-22T15:00:00.000Z" });
+    const originalBody = database.listApprovals().find((approval) => approval.id === "approval-teacher-monday")?.proposedEmail.body;
+    database.db.exec(`
+      CREATE TRIGGER reject_approval_edit_activity
+      BEFORE INSERT ON audit_events
+      WHEN NEW.id LIKE 'activity-plan-edited-%'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced approval edit activity failure');
+      END
+    `);
+
+    expect(() => core.editApproval("approval-teacher-monday", "This edit must roll back.")).toThrow("forced approval edit activity failure");
+    expect(database.listApprovals().find((approval) => approval.id === "approval-teacher-monday")?.proposedEmail.body).toBe(originalBody);
+    expect(database.listActivity().some((item) => item.id.startsWith("activity-plan-edited-"))).toBe(false);
+    core.close();
+  });
+
   it("retrieves prior DJI context and does not repeat failed basics", () => {
     const { core } = createCore();
     const response = core.troubleshoot("RC not connected to mobile device.");
