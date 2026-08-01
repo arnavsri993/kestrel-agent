@@ -170,7 +170,9 @@ export class CodexAppServerProvider {
   }
 
   async probe(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("Codex request cancelled.");
     await this.ensureStarted();
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("Codex request cancelled.");
     const result = object(
       await this.request("account/read", { refreshToken: false }, signal),
     );
@@ -185,8 +187,10 @@ export class CodexAppServerProvider {
     request: ModelRequest,
     options: ModelCallOptions = {},
   ): Promise<ModelResult> {
+    if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new Error("Codex request cancelled.");
     try {
       await this.ensureStarted();
+      if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new Error("Codex request cancelled.");
       const sessionKey = request.metadata?.session_id ?? `call-${randomUUID()}`;
       const workspaceRoot = request.metadata?.workspace_root;
       const binding = await this.ensureThread(

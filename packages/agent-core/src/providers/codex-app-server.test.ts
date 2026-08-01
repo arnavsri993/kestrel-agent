@@ -162,4 +162,20 @@ describe("persistent Codex app-server provider", () => {
       ),
     ).toBe(false);
   });
+
+  it("does not start the app-server for already-cancelled calls", async () => {
+    const fake = await fakeAppServer();
+    const provider = new CodexAppServerProvider({
+      executable: fake.executable,
+      environment: { PATH: process.env.PATH },
+      requestTimeoutMs: 2_000,
+    });
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled before startup"));
+
+    await expect(provider.probe(controller.signal)).rejects.toThrow("cancelled before startup");
+    await expect(provider.complete({ model: "gpt-test", messages: [{ role: "user", content: textContent("do not start") }] }, { signal: controller.signal })).rejects.toThrow("cancelled before startup");
+    await expect(readFile(fake.capture, "utf8")).rejects.toThrow();
+    await provider.close();
+  });
 });
