@@ -229,6 +229,32 @@ describe("unified life context", () => {
     database.close();
   });
 
+  it("does not commit Google Calendar changes after cancellation", async () => {
+    const controller = new AbortController();
+    const google = {
+      email: "owner@example.com",
+      listEvents: async () => {
+        controller.abort(new Error("calendar sync cancelled after fetch"));
+        return {
+          calendar: "primary",
+          items: [{
+            id: "provider-event",
+            title: "Should not persist",
+            start: "2026-07-30T15:00:00.000Z",
+            end: "2026-07-30T16:00:00.000Z",
+            status: "confirmed",
+          }],
+        };
+      },
+    } as unknown as GoogleWorkspaceClient;
+    const { database, life } = fixture(new Date("2026-07-29T14:00:00.000Z"), google);
+
+    await expect(life.syncGoogle("2026-07-29T00:00:00.000Z", "2026-08-05T00:00:00.000Z", controller.signal)).rejects.toThrow("calendar sync cancelled after fetch");
+    expect(database.listCalendarEvents()).toHaveLength(0);
+    expect(database.getCalendarSyncState("google")).toBeUndefined();
+    database.close();
+  });
+
   it("decays and archives stale context instead of deleting it", () => {
     const { database, life } = fixture(
       new Date("2025-01-01T12:00:00.000Z"),

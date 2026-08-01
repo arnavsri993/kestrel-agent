@@ -356,11 +356,13 @@ export class LifeContextService {
       maxResults: 100,
       signal,
     });
+    signal.throwIfAborted();
     const rawItems = Array.isArray(response.items) ? response.items : [];
     const timestamp = this.now().toISOString();
     const seen = new Set<string>();
     const synced: UnifiedCalendarEvent[] = [];
     for (const raw of rawItems) {
+      signal.throwIfAborted();
       if (!raw || typeof raw !== "object") continue;
       const item = raw as Record<string, unknown>;
       const externalId = String(item.id ?? "").slice(0, 1_024);
@@ -448,6 +450,7 @@ export class LifeContextService {
     const rangeStart = Date.parse(startsAt);
     const rangeEnd = Date.parse(endsAt);
     for (const existing of this.database.listCalendarEvents()) {
+      signal.throwIfAborted();
       if (
         existing.providerId !== "google" ||
         seen.has(existing.id) ||
@@ -461,6 +464,7 @@ export class LifeContextService {
         lastSyncedAt: timestamp,
       });
     }
+    signal.throwIfAborted();
     this.database.setCalendarSyncState("google", {
       lastSyncedAt: timestamp,
       startsAt,
