@@ -288,6 +288,18 @@ describe("model provider adapters", () => {
     await expect(budgeted.complete({ model: "test", messages: [{ role: "user", content: textContent("route") }] }, { canAttempt: (_id, _model, attempt) => attempt === 0 })).rejects.toMatchObject({ attempts: [{ providerId: "first", status: "failed" }, { providerId: "second", error: "Budget policy blocked this provider attempt." }] });
   });
 
+  it("returns an actionable error when cancellation has no reason", async () => {
+    const provider: ModelProvider = {
+      id: "cancelled",
+      capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false },
+      complete: async () => { throw new Error("must not run"); }
+    };
+    const controller = new AbortController();
+    controller.abort(null);
+
+    await expect(new ProviderPool([provider]).complete({ model: "test", messages: [{ role: "user", content: textContent("cancel") }] }, { signal: controller.signal })).rejects.toThrow("Provider request was cancelled.");
+  });
+
   it("backs off a final failing provider instead of retrying it immediately", async () => {
     let nowMs = Date.parse("2026-07-29T12:00:00.000Z");
     let calls = 0;

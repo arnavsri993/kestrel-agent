@@ -139,7 +139,7 @@ export class ProviderPool {
     }
     let lastError: unknown;
     for (let index = 0; index < candidates.length; index += 1) {
-      if (options.signal?.aborted) throw options.signal.reason;
+      if (options.signal?.aborted) throw options.signal.reason ?? new Error("Provider request was cancelled.");
       const provider = candidates[index]!;
       const providerId = provider.id;
       if ((this.unhealthyUntil.get(providerId) ?? 0) > this.now().getTime()) continue;
