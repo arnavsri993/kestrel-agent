@@ -325,6 +325,23 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("keeps deferred tools when a catalog refresh fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const descriptor = { name: "deferred.echo", title: "Deferred echo", description: "Echo text from a lazily loaded fixture.", category: "extension" as const, riskLevel: "read_only" as const, readOnly: true, requiresWorkspace: false, source: "plugin" as const, tags: ["echo", "lazy"] };
+    let entries: Array<typeof descriptor> = [descriptor];
+    runtime.registerDeferredCatalog({ id: "fixture", list: () => entries, activate: async () => ({ descriptor, inputSchema: { type: "object" }, execute: async () => ({}) }) });
+    expect(runtime.discoverDeferredTools()).toMatchObject([{ name: "deferred.echo" }]);
+
+    entries = [descriptor, { ...descriptor, name: "invalid name" }];
+    expect(() => runtime.refreshDeferredCatalog("fixture")).toThrow();
+    expect(runtime.discoverDeferredTools()).toMatchObject([{ name: "deferred.echo" }]);
+
+    expect(() => runtime.registerDeferredCatalog({ id: "broken", list: () => [{ ...descriptor, name: "invalid name" }], activate: async () => ({ descriptor, inputSchema: { type: "object" }, execute: async () => ({}) }) })).toThrow();
+    expect(() => runtime.refreshDeferredCatalog("broken")).toThrow("not registered");
+    database.close();
+  });
+
   it("journals uncertain mutation failures and never replays the side effect", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);

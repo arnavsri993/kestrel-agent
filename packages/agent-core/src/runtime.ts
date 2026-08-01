@@ -716,21 +716,30 @@ export class AgentRuntime extends EventEmitter {
 
   registerDeferredCatalog(catalog: DeferredToolCatalog): void {
     if (!/^[a-z][a-z0-9_.-]+$/.test(catalog.id)) throw new Error("Deferred catalog ID is invalid.");
+    const previous = this.deferredCatalogs.get(catalog.id);
     this.deferredCatalogs.set(catalog.id, catalog);
-    this.refreshDeferredCatalog(catalog.id);
+    try {
+      this.refreshDeferredCatalog(catalog.id);
+    } catch (error) {
+      if (previous) this.deferredCatalogs.set(catalog.id, previous);
+      else this.deferredCatalogs.delete(catalog.id);
+      throw error;
+    }
   }
 
   refreshDeferredCatalog(catalogId: string): RuntimeToolDescriptor[] {
     const catalog = this.deferredCatalogs.get(catalogId);
     if (!catalog) throw new Error(`Deferred catalog ${catalogId} is not registered.`);
-    for (const [name, entry] of this.deferredTools) if (entry.catalogId === catalogId) this.deferredTools.delete(name);
+    const refreshed = new Map([...this.deferredTools].filter(([, entry]) => entry.catalogId !== catalogId));
     for (const raw of catalog.list()) {
       const descriptor = RuntimeToolDescriptorSchema.parse(raw);
-      const existing = this.deferredTools.get(descriptor.name);
+      const existing = refreshed.get(descriptor.name);
       if (existing && existing.catalogId !== catalogId) throw new Error(`Deferred tool ${descriptor.name} is already registered by ${existing.catalogId}.`);
       if (this.tools.has(descriptor.name)) continue;
-      this.deferredTools.set(descriptor.name, { catalogId, descriptor });
+      refreshed.set(descriptor.name, { catalogId, descriptor });
     }
+    this.deferredTools.clear();
+    for (const [name, entry] of refreshed) this.deferredTools.set(name, entry);
     return this.discoverDeferredTools();
   }
 
