@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -94,6 +94,37 @@ describe("media artifact workflow", () => {
       )
       .get("media.artifacts") as { value_ciphertext: string };
     expect(ciphertext.value_ciphertext).not.toContain("request-secret");
+    database.close();
+  });
+
+  it("does not invoke or persist media after cancellation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-cancelled-artifacts-"));
+    directories.push(root);
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const png = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0x49, 0x48,
+      0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1,
+    ]);
+    let calls = 0;
+    let abortOnGenerate: AbortController | undefined;
+    const manager = new ArtifactManager(database, root, [{
+      id: "fake-media",
+      generate: async () => {
+        calls += 1;
+        abortOnGenerate?.abort(new Error("cancelled after media response"));
+        return { data: png, mediaType: "image/png", model: "test-image" };
+      },
+    }]);
+    const before = new AbortController();
+    before.abort(new Error("cancelled before media start"));
+    await expect(manager.generate({ providerId: "fake-media", prompt: "one pixel", kind: "image", filename: "before" }, before.signal)).rejects.toThrow("cancelled before media start");
+    expect(calls).toBe(0);
+
+    const during = new AbortController();
+    abortOnGenerate = during;
+    await expect(manager.generate({ providerId: "fake-media", prompt: "one pixel", kind: "image", filename: "during" }, during.signal)).rejects.toThrow("cancelled after media response");
+    expect(manager.list()).toHaveLength(0);
+    expect(readdirSync(root)).toEqual([]);
     database.close();
   });
 
