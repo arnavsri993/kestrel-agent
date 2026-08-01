@@ -5,6 +5,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -23,6 +24,7 @@ const ATLAS_WIDTH = 1536;
 const ATLAS_HEIGHT = 1872;
 const MAX_DRAFT_BYTES = 8_000_000;
 const DRAFT_TTL_MS = 24 * 60 * 60 * 1_000;
+const DRAFT_FILE_PATTERN = /^\.?draft-[a-f0-9-]{36}\.(?:png|partial)$/;
 
 const ROWS = [
   {
@@ -588,7 +590,23 @@ export class PetHatchManager {
           rmSync(filename);
       } else kept.push(record);
     }
-    this.persist(kept.slice(-12));
+    const retained = kept.slice(-12);
+    const retainedFilenames = new Set(
+      retained.map((record) => record.filename),
+    );
+    for (const filename of readdirSync(this.root)) {
+      if (!DRAFT_FILE_PATTERN.test(filename) || retainedFilenames.has(filename))
+        continue;
+      const path = join(this.root, filename);
+      try {
+        const metadata = lstatSync(path);
+        if (metadata.isFile() || metadata.isSymbolicLink())
+          rmSync(path, { force: true });
+      } catch {
+        // A concurrent cleanup may have already removed the stale draft.
+      }
+    }
+    this.persist(retained);
   }
 
   private draftPath(filename: string): string {
