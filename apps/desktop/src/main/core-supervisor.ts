@@ -472,16 +472,16 @@ export class CoreSupervisor extends EventEmitter {
     for (const controller of this.browserRequests.values())
       controller.abort(new Error("Agent Core stopped."));
     this.browserRequests.clear();
-    this.browserCleanup = Promise.resolve(this.closeBrowsers?.()).catch(
-      (error) => {
+    this.browserCleanup = Promise.resolve()
+      .then(() => this.closeBrowsers?.())
+      .catch((error) => {
         this.emit(
           "automation-error",
           error instanceof Error
             ? error
             : new Error("Browser cleanup failed after Agent Core stopped."),
         );
-      },
-    );
+      });
     if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
     this.stabilityTimer = undefined;
     if (this.stopping) return;
