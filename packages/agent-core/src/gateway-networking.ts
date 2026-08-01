@@ -153,7 +153,8 @@ export class TailscaleExposureManager {
 
   async apply(origin: string): Promise<TailscaleExposureStatus> {
     if (this.configuration.mode === "off") return { mode: "off", active: false, detail: "Tailscale exposure is off; the Tailscale daemon is not changed." };
-    const target = new URL(origin);
+    let target: URL;
+    try { target = new URL(origin); } catch { throw new Error("Tailscale Serve and Funnel require a loopback gateway origin."); }
     if (!["127.0.0.1", "[::1]", "::1", "localhost"].includes(target.hostname)) throw new Error("Tailscale Serve and Funnel require a loopback gateway origin.");
     if (target.protocol !== "http:") throw new Error("Tailscale exposure expects loopback HTTP and terminates HTTPS itself.");
     const executable = this.configuration.executable ?? "tailscale";

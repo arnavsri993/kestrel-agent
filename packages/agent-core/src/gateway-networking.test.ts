@@ -54,6 +54,7 @@ describe("managed Tailscale exposure", () => {
     expect(() => new TailscaleExposureManager({ mode: "funnel", resetOnExit: true, publicExposureApproved: false })).toThrow("explicit public exposure approval");
     const runner: GatewayCommandRunner = { run: async () => ({ exitCode: 0, stdout: JSON.stringify({ BackendState: "Running", Self: { Online: true, DNSName: "agent.example.ts.net." } }), stderr: "" }) };
     const manager = new TailscaleExposureManager({ mode: "serve", resetOnExit: false, publicExposureApproved: false }, runner);
+    await expect(manager.apply("not a URL")).rejects.toThrow("loopback");
     await expect(manager.apply("http://0.0.0.0:18789")).rejects.toThrow("loopback");
   });
 
