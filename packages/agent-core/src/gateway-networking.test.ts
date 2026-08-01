@@ -70,6 +70,20 @@ describe("managed Tailscale exposure", () => {
     await runStatus(JSON.stringify({ BackendState: "Running", Self: { Online: true, DNSName: null } }));
     await runStatus(JSON.stringify({ BackendState: "Running" }));
   });
+
+  it("retains the applied mode when reset fails so cleanup can be retried", async () => {
+    let resets = 0;
+    const runner: GatewayCommandRunner = { run: async (_executable, args) => {
+      if (args[0] === "status") return { exitCode: 0, stdout: JSON.stringify({ BackendState: "Running", Self: { Online: true, DNSName: "agent.example.ts.net." } }), stderr: "" };
+      if (args[1] === "reset" && resets++ === 0) return { exitCode: 1, stdout: "", stderr: "temporarily unavailable" };
+      return { exitCode: 0, stdout: "", stderr: "" };
+    } };
+    const manager = new TailscaleExposureManager({ mode: "serve", resetOnExit: true, publicExposureApproved: false }, runner);
+    await manager.apply("http://127.0.0.1:18789");
+    await expect(manager.close()).rejects.toThrow("temporarily unavailable");
+    await manager.close();
+    expect(resets).toBe(2);
+  });
 });
 
 describe("Bonjour gateway discovery", () => {
