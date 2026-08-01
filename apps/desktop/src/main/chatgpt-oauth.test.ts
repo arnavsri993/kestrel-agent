@@ -6,7 +6,9 @@ import { ChatGptOAuthManager } from "./chatgpt-oauth";
 
 const roots: string[] = [];
 
-async function fakeCodex(): Promise<{ executable: string; capture: string }> {
+async function fakeCodex(
+  authUrl = "https://auth.openai.com/oauth/authorize?test=1",
+): Promise<{ executable: string; capture: string }> {
   const root = await mkdtemp(join(tmpdir(), "kestrel-chatgpt-oauth-test-"));
   roots.push(root);
   const executable = join(root, "codex");
@@ -27,7 +29,7 @@ input.on("line", line => {
   if (message.method === "initialized") return;
   if (message.method === "account/read") return send({ id: message.id, result: { account: connected ? { type: "chatgpt", email: "owner@example.com", planType: "plus" } : null, requiresOpenaiAuth: true } });
   if (message.method === "account/login/start") {
-    send({ id: message.id, result: { type: "chatgpt", loginId: "login-1", authUrl: "https://auth.openai.com/oauth/authorize?test=1" } });
+    send({ id: message.id, result: { type: "chatgpt", loginId: "login-1", authUrl: ${JSON.stringify(authUrl)} } });
     setTimeout(() => {
       connected = true;
       send({ method: "account/login/completed", params: { loginId: "login-1", success: true, error: null } });
@@ -89,5 +91,19 @@ describe("ChatGPT OAuth through Codex", () => {
         ?.message.params,
     ).toEqual({ type: "chatgpt" });
     expect(records.every((record) => record.leaked === null)).toBe(true);
+  });
+
+  it("normalizes malformed sign-in URLs from the account service", async () => {
+    const fake = await fakeCodex("not a URL");
+    const manager = new ChatGptOAuthManager({
+      executable: fake.executable,
+      openExternal: async () => undefined,
+      requestTimeoutMs: 2_000,
+      loginTimeoutMs: 2_000,
+    });
+
+    await expect(manager.connect()).rejects.toThrow(
+      "Codex returned an unexpected ChatGPT sign-in URL.",
+    );
   });
 });
