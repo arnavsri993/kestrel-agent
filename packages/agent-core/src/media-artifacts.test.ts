@@ -279,6 +279,29 @@ describe("media artifact workflow", () => {
     });
   });
 
+  it("bounds fal music downloads independently of provider metadata", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([0x49, 0x44, 0x33]));
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    const provider = new FalMusicProvider({
+      apiKey: "fal-secret-value",
+      client: {
+        subscribe: async () => ({ data: { audio: { url: "https://v3b.fal.media/files/test/output.mp3", content_type: "audio/mpeg", file_size: 7 } }, requestId: "fal-bounded" })
+      } as never,
+      fetcher: async () => new Response(body, { status: 200, headers: { "content-type": "audio/mpeg", "content-length": "100000001" } })
+    });
+
+    await expect(provider.generate({ prompt: "Warm analog ambient loop", kind: "music", signal: new AbortController().signal })).rejects.toThrow("fal music response exceeds 100 MB");
+    expect(cancelled).toBe(true);
+  });
+
   it("sends bounded reference images through the OpenAI image edits contract", async () => {
     const png = Uint8Array.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0x49, 0x48,

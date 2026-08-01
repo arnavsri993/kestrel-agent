@@ -3,6 +3,7 @@ import type {
   MediaGenerationProvider,
 } from "./media-artifacts";
 import { createFalClient, type FalClient } from "@fal-ai/client";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 export interface OpenAiMediaProviderOptions {
   apiKey: string;
@@ -380,7 +381,7 @@ export class FalMusicProvider implements MediaGenerationProvider {
       .trim();
     if (!["audio/mpeg", "audio/wav", "audio/x-wav"].includes(contentType))
       throw new Error("fal music download returned an unexpected media type.");
-    const data = new Uint8Array(await response.arrayBuffer());
+    const data = await readBoundedResponseBytes(response, 100_000_000, "fal music response exceeds 100 MB.");
     if (data.byteLength === 0 || data.byteLength > 100_000_000)
       throw new Error("fal music download is empty or exceeds 100 MB.");
     return {
