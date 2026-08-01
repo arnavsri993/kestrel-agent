@@ -251,12 +251,12 @@ export class ObservabilityManager {
 
   async configure(configuration: ObservabilityConfiguration, headerValue?: string): Promise<void> {
     const normalized = validateConfiguration(configuration);
-    if (headerValue !== undefined) {
-      const clean = headerValue.trim();
-      if (!clean || clean.length > 20_000 || /[\r\n\0]/.test(clean)) throw new Error("The OTLP header value is invalid.");
-      this.database.setPrivateState(HEADER_VALUE_KEY, clean);
-    }
-    this.database.setPrivateState(CONFIGURATION_KEY, normalized);
+    const clean = headerValue === undefined ? undefined : headerValue.trim();
+    if (clean !== undefined && (!clean || clean.length > 20_000 || /[\r\n\0]/.test(clean))) throw new Error("The OTLP header value is invalid.");
+    this.database.db.transaction(() => {
+      if (clean !== undefined) this.database.setPrivateState(HEADER_VALUE_KEY, clean);
+      this.database.setPrivateState(CONFIGURATION_KEY, normalized);
+    })();
     await this.restart();
   }
 
