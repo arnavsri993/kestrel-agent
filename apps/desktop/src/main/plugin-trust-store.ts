@@ -1,7 +1,9 @@
 import { createHash, createPublicKey, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { PluginTrustKey } from "@kestrel/agent-core";
+
+const MAX_PUBLISHER_DOCUMENT_BYTES = 64_000;
 
 export interface TrustedPluginPublisher {
   keyId: string;
@@ -63,8 +65,9 @@ export class PluginTrustStore {
   }
 
   async importDocument(path: string): Promise<TrustedPluginPublisher> {
+    if ((await stat(path)).size > MAX_PUBLISHER_DOCUMENT_BYTES) throw new Error("Plugin publisher key document exceeds 64 KB.");
     const bytes = await readFile(path);
-    if (bytes.byteLength > 64_000) throw new Error("Plugin publisher key document exceeds 64 KB.");
+    if (bytes.byteLength > MAX_PUBLISHER_DOCUMENT_BYTES) throw new Error("Plugin publisher key document exceeds 64 KB.");
     const publisher = parsePublisher(JSON.parse(bytes.toString("utf8")) as unknown);
     const publishers = await this.stored();
     const existing = publishers.find((item) => item.keyId === publisher.keyId);
