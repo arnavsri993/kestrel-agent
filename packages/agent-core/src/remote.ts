@@ -20,7 +20,13 @@ export interface RemoteExecutionBackend {
 
 interface ProcessResult { exitCode: number; stdout: string; stderr: string; }
 
+function abortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  return new Error(typeof signal.reason === "string" && signal.reason ? signal.reason : "Remote execution cancelled.");
+}
+
 async function runBounded(executable: string, args: string[], timeoutMs: number, signal: AbortSignal, onOutput?: (stream: "stdout" | "stderr", chunk: string) => void): Promise<ProcessResult> {
+  if (signal.aborted) throw abortError(signal);
   return new Promise((resolve, reject) => {
     const environment = Object.fromEntries(["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "SSH_AUTH_SOCK", "KUBECONFIG", "DOCKER_HOST", "DOCKER_CONTEXT"].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]));
     const child = spawn(executable, args, { shell: false, stdio: ["ignore", "pipe", "pipe"], env: environment });
@@ -37,7 +43,7 @@ async function runBounded(executable: string, args: string[], timeoutMs: number,
     child.stdout.on("data", capture(stdout, "stdout")); child.stderr.on("data", capture(stderr, "stderr"));
     child.once("error", (error) => finish(new Error(`Remote adapter could not start ${executable}: ${error.message}`)));
     child.once("close", (code) => finish(undefined, code));
-    const abort = () => { child.kill("SIGTERM"); setTimeout(() => child.kill("SIGKILL"), 1_000).unref(); finish(signal.reason instanceof Error ? signal.reason : new Error("Remote execution cancelled.")); };
+    const abort = () => { child.kill("SIGTERM"); setTimeout(() => child.kill("SIGKILL"), 1_000).unref(); finish(abortError(signal)); };
     signal.addEventListener("abort", abort, { once: true });
     const timeout = setTimeout(() => { child.kill("SIGTERM"); setTimeout(() => child.kill("SIGKILL"), 1_000).unref(); finish(new Error("Remote execution timed out.")); }, timeoutMs);
     timeout.unref();
