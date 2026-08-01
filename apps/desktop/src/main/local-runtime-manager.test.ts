@@ -186,4 +186,34 @@ describe("managed local runtime", () => {
     });
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
   });
+
+  it("cancels an oversized local model progress stream before retaining it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    const oversized = new Uint8Array(1_000_001);
+    let cancelled = false;
+    const reader = {
+      read: async () => ({ done: false, value: oversized }),
+      cancel: async () => {
+        cancelled = true;
+      },
+      releaseLock: () => undefined,
+    };
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: async (input) => {
+        if (String(input).endsWith("/api/tags")) return Response.json({ models: [] });
+        return {
+          ok: true,
+          status: 200,
+          body: { getReader: () => reader },
+        } as unknown as Response;
+      },
+      platform: "darwin",
+      architecture: "arm64",
+      manifest: testManifest(new TextEncoder().encode("archive")),
+    });
+
+    await expect(manager.bootstrap("qwen:test")).rejects.toThrow("The local model service progress stream exceeded 1 MB.");
+    expect(cancelled).toBe(true);
+  });
 });
