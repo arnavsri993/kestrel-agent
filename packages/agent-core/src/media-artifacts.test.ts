@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -95,6 +95,49 @@ describe("media artifact workflow", () => {
       .get("media.artifacts") as { value_ciphertext: string };
     expect(ciphertext.value_ciphertext).not.toContain("request-secret");
     database.close();
+  });
+
+  it("rolls back generated files when private provenance cannot be persisted", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-artifacts-rollback-"));
+    directories.push(root);
+    const png = Uint8Array.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0x49, 0x48,
+      0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1,
+    ]);
+    const database = {
+      getPrivateState: () => [],
+      setPrivateState: () => {
+        throw new Error("private state unavailable");
+      },
+    } as unknown as KestrelDatabase;
+    const manager = new ArtifactManager(database, root, [
+      {
+        id: "fake-media",
+        generate: async () => ({
+          data: png,
+          mediaType: "image/png",
+          model: "test-image",
+        }),
+      },
+    ]);
+
+    await expect(
+      manager.generate({
+        providerId: "fake-media",
+        prompt: "one pixel",
+        kind: "image",
+        filename: "orphan",
+      }, new AbortController().signal),
+    ).rejects.toThrow("private state unavailable");
+    expect(readdirSync(root)).toEqual([]);
+
+    expect(() => manager.createWidget({
+      title: "Orphaned widget",
+      code: "<p>unused</p>",
+      sessionId: "session-1",
+      filename: "orphan.html",
+    })).toThrow("private state unavailable");
+    expect(readdirSync(root)).toEqual([]);
   });
 
   it("uses the production OpenAI image and speech contracts without exposing its credential", async () => {

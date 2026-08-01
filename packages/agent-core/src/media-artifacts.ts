@@ -9,7 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, extname, join, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import type { AgentRuntime } from "./runtime";
 
@@ -133,6 +133,28 @@ globalThis.sendPrompt=function(text){if(!navigator.userActivation||!navigator.us
 </html>`;
 }
 
+function writeArtifactAtomically(destination: string, data: Uint8Array): void {
+  const temporary = join(dirname(destination), `.tmp-${randomUUID()}`);
+  try {
+    writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
+    renameSync(temporary, destination);
+  } finally {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // The rename normally consumes the temporary path.
+    }
+  }
+}
+
+function removeArtifactFile(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // The destination may already have been removed by a concurrent cleanup.
+  }
+}
+
 export class ArtifactManager {
   private readonly root: string;
   private readonly providers = new Map<string, MediaGenerationProvider>();
@@ -245,30 +267,35 @@ export class ArtifactManager {
       throw new Error("Generated artifact path escapes the artifact root.");
     if (existsSync(destination))
       throw new Error("Generated artifact filename already exists.");
-    const temporary = join(this.root, `.tmp-${randomUUID()}`);
-    writeFileSync(temporary, generated.data, { mode: 0o600, flag: "wx" });
-    renameSync(temporary, destination);
-    const record: ArtifactRecord = {
-      id: `artifact-${randomUUID()}`,
-      filename,
-      path: destination,
-      mediaType: generated.mediaType,
-      bytes: generated.data.byteLength,
-      sha256: createHash("sha256").update(generated.data).digest("hex"),
-      ...(detected.width ? { width: detected.width } : {}),
-      ...(detected.height ? { height: detected.height } : {}),
-      providerId: provider.id,
-      model: generated.model,
-      ...(generated.providerRequestId
-        ? { providerRequestId: generated.providerRequestId }
-        : {}),
-      ...(generated.estimatedCostUsd !== undefined
-        ? { estimatedCostUsd: generated.estimatedCostUsd }
-        : {}),
-      createdAt: this.now().toISOString(),
-    };
-    this.database.setPrivateState(this.stateKey, [...this.list(), record]);
-    return record;
+    let registered = false;
+    try {
+      writeArtifactAtomically(destination, generated.data);
+      const record: ArtifactRecord = {
+        id: `artifact-${randomUUID()}`,
+        filename,
+        path: destination,
+        mediaType: generated.mediaType,
+        bytes: generated.data.byteLength,
+        sha256: createHash("sha256").update(generated.data).digest("hex"),
+        ...(detected.width ? { width: detected.width } : {}),
+        ...(detected.height ? { height: detected.height } : {}),
+        providerId: provider.id,
+        model: generated.model,
+        ...(generated.providerRequestId
+          ? { providerRequestId: generated.providerRequestId }
+          : {}),
+        ...(generated.estimatedCostUsd !== undefined
+          ? { estimatedCostUsd: generated.estimatedCostUsd }
+          : {}),
+        createdAt: this.now().toISOString(),
+      };
+      this.database.setPrivateState(this.stateKey, [...this.list(), record]);
+      registered = true;
+      return record;
+    } catch (error) {
+      if (!registered) removeArtifactFile(destination);
+      throw error;
+    }
   }
 
   musicProviders(): Array<{ id: string }> {
@@ -305,43 +332,48 @@ export class ArtifactManager {
     if (!within(this.root, destination) || existsSync(destination))
       throw new Error("Widget artifact destination is unavailable.");
     const data = Buffer.from(widgetDocument(title, input.code), "utf8");
-    const temporary = join(this.root, `.tmp-${randomUUID()}`);
-    writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
-    renameSync(temporary, destination);
-    const record: ArtifactRecord = {
-      id: `artifact-${randomUUID()}`,
-      filename,
-      path: destination,
-      mediaType: "text/html",
-      bytes: data.byteLength,
-      sha256: createHash("sha256").update(data).digest("hex"),
-      providerId: "local-widget",
-      model: "sandbox-v1",
-      artifactKind: "widget",
-      title,
-      sessionId: input.sessionId,
-      createdAt: this.now().toISOString(),
-    };
-    const existing = this.list();
-    const scoped = existing.filter(
-      (item) =>
-        item.artifactKind === "widget" && item.sessionId === input.sessionId,
-    );
-    const evicted = scoped.length >= 32 ? scoped.slice(0, scoped.length - 31) : [];
-    for (const item of evicted) {
-      try {
-        const path = realpathSync(item.path);
-        if (within(this.root, path) && statSync(path).isFile()) unlinkSync(path);
-      } catch {
-        // Missing historical widget files are removed from the index below.
+    let registered = false;
+    try {
+      writeArtifactAtomically(destination, data);
+      const record: ArtifactRecord = {
+        id: `artifact-${randomUUID()}`,
+        filename,
+        path: destination,
+        mediaType: "text/html",
+        bytes: data.byteLength,
+        sha256: createHash("sha256").update(data).digest("hex"),
+        providerId: "local-widget",
+        model: "sandbox-v1",
+        artifactKind: "widget",
+        title,
+        sessionId: input.sessionId,
+        createdAt: this.now().toISOString(),
+      };
+      const existing = this.list();
+      const scoped = existing.filter(
+        (item) =>
+          item.artifactKind === "widget" && item.sessionId === input.sessionId,
+      );
+      const evicted = scoped.length >= 32 ? scoped.slice(0, scoped.length - 31) : [];
+      const evictedIds = new Set(evicted.map((item) => item.id));
+      this.database.setPrivateState(this.stateKey, [
+        ...existing.filter((item) => !evictedIds.has(item.id)),
+        record,
+      ]);
+      registered = true;
+      for (const item of evicted) {
+        try {
+          const path = realpathSync(item.path);
+          if (within(this.root, path) && statSync(path).isFile()) unlinkSync(path);
+        } catch {
+          // Missing historical widget files are removed from the index below.
+        }
       }
+      return record;
+    } catch (error) {
+      if (!registered) removeArtifactFile(destination);
+      throw error;
     }
-    const evictedIds = new Set(evicted.map((item) => item.id));
-    this.database.setPrivateState(this.stateKey, [
-      ...existing.filter((item) => !evictedIds.has(item.id)),
-      record,
-    ]);
-    return record;
   }
 }
 
