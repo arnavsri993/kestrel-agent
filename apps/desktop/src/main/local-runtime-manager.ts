@@ -289,21 +289,28 @@ export class LocalRuntimeManager {
       let downloaded = 0;
       try {
         const reader = response.body.getReader();
-        while (true) {
-          signal.throwIfAborted();
-          const chunk = await reader.read();
-          if (chunk.done) break;
-          downloaded += chunk.value.byteLength;
-          if (downloaded > this.manifest.bytes) throw new Error("The local runtime download exceeded its signed manifest size.");
-          digest.update(chunk.value);
-          await file.write(chunk.value);
-          this.progress({
-            stage: "downloading-runtime",
-            message: `Downloading the verified Ollama ${this.manifest.version} runtime from GitHub.`,
-            downloadedBytes: downloaded,
-            totalBytes: this.manifest.bytes,
-            percent: Math.min(100, Math.floor(downloaded / this.manifest.bytes * 100))
-          });
+        try {
+          while (true) {
+            signal.throwIfAborted();
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            downloaded += chunk.value.byteLength;
+            if (downloaded > this.manifest.bytes) throw new Error("The local runtime download exceeded its signed manifest size.");
+            digest.update(chunk.value);
+            await file.write(chunk.value);
+            this.progress({
+              stage: "downloading-runtime",
+              message: `Downloading the verified Ollama ${this.manifest.version} runtime from GitHub.`,
+              downloadedBytes: downloaded,
+              totalBytes: this.manifest.bytes,
+              percent: Math.min(100, Math.floor(downloaded / this.manifest.bytes * 100))
+            });
+          }
+        } catch (error) {
+          try { await reader.cancel(); } catch { /* Preserve the original runtime download error. */ }
+          throw error;
+        } finally {
+          reader.releaseLock();
         }
       } finally {
         await file.close();
@@ -392,28 +399,35 @@ export class LocalRuntimeManager {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let pending = "";
-    while (true) {
-      signal.throwIfAborted();
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      pending += decoder.decode(chunk.value, { stream: true });
-      const lines = pending.split("\n");
-      pending = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const update = JSON.parse(line) as { status?: unknown; completed?: unknown; total?: unknown; error?: unknown };
-        if (typeof update.error === "string") throw new Error(update.error);
-        const completed = typeof update.completed === "number" ? Math.max(0, update.completed) : undefined;
-        const total = typeof update.total === "number" && update.total > 0 ? update.total : undefined;
-        this.progress({
-          stage: "downloading-model",
-          message: typeof update.status === "string" ? update.status : `Downloading ${model}.`,
-          model,
-          ...(completed !== undefined ? { downloadedBytes: completed } : {}),
-          ...(total !== undefined ? { totalBytes: total } : {}),
-          ...(completed !== undefined && total !== undefined ? { percent: Math.min(100, Math.floor(completed / total * 100)) } : {})
-        });
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        pending += decoder.decode(chunk.value, { stream: true });
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const update = JSON.parse(line) as { status?: unknown; completed?: unknown; total?: unknown; error?: unknown };
+          if (typeof update.error === "string") throw new Error(update.error);
+          const completed = typeof update.completed === "number" ? Math.max(0, update.completed) : undefined;
+          const total = typeof update.total === "number" && update.total > 0 ? update.total : undefined;
+          this.progress({
+            stage: "downloading-model",
+            message: typeof update.status === "string" ? update.status : `Downloading ${model}.`,
+            model,
+            ...(completed !== undefined ? { downloadedBytes: completed } : {}),
+            ...(total !== undefined ? { totalBytes: total } : {}),
+            ...(completed !== undefined && total !== undefined ? { percent: Math.min(100, Math.floor(completed / total * 100)) } : {})
+          });
+        }
       }
+    } catch (error) {
+      try { await reader.cancel(); } catch { /* Preserve the original model download error. */ }
+      throw error;
+    } finally {
+      reader.releaseLock();
     }
     const installed = await this.listModels(5_000, signal);
     if (!installed.some((item) => item.name === model || item.name === `${model}:latest`)) {
