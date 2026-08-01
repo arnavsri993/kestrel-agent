@@ -29,6 +29,26 @@ describe("authenticated channel gateway", () => {
     database.close();
   });
 
+  it("rolls back an inbound message when its deduplication record cannot be saved", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Channels" });
+    const secret = Buffer.alloc(32, 9);
+    const gateway = new ChannelGateway(database, runtime, [], { chat: secret });
+    const envelope: ChannelEnvelope = { channelId: "chat", externalId: "in-failing", conversationId: "room-1", senderId: "person-1", text: "Retry-safe inbound", receivedAt: "2026-07-22T23:29:00.000Z" };
+    const signature = signChannelEnvelope(envelope, secret);
+    const saveIdempotentResult = database.saveIdempotentResult.bind(database);
+    database.saveIdempotentResult = () => {
+      throw new Error("deduplication write failed");
+    };
+
+    expect(() => gateway.receive(session.id, envelope, signature)).toThrow("deduplication write failed");
+    expect(runtime.listMessages(session.id)).toEqual([]);
+    expect(database.getIdempotentResult(`channel-inbound:chat:${envelope.externalId}`)).toBeUndefined();
+    database.saveIdempotentResult = saveIdempotentResult;
+    database.close();
+  });
+
   it("delivers through a bounded HTTPS webhook adapter and rejects private DNS targets", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const adapter = new WebhookChannelAdapter({
