@@ -157,4 +157,25 @@ describe("privacy-safe external observability", () => {
       prometheus: { enabled: false }
     })).rejects.toThrow("Enable OTLP or Prometheus");
   });
+
+  it("rolls back an encrypted header when configuration persistence fails", async () => {
+    const { database, runtime } = fixture();
+    const manager = new ObservabilityManager(database, runtime);
+    cleanup.push(() => manager.shutdown());
+    const originalSetPrivateState = database.setPrivateState.bind(database);
+    database.setPrivateState = (key, value) => {
+      if (key === "observability.configuration") throw new Error("observability configuration write failed");
+      originalSetPrivateState(key, value);
+    };
+
+    await expect(manager.configure({
+      enabled: true,
+      otlp: { ...manager.configuration().otlp, enabled: true, endpoint: "http://127.0.0.1:4318" },
+      prometheus: { enabled: false }
+    }, "Bearer collector-secret")).rejects.toThrow("observability configuration write failed");
+    expect(database.getPrivateState("observability.otlp-header-value")).toBeUndefined();
+    expect(manager.configuration().enabled).toBe(false);
+
+    database.setPrivateState = originalSetPrivateState;
+  });
 });
