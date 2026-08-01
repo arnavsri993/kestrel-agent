@@ -33,6 +33,20 @@ describe("reference-product migration", () => {
     expect(JSON.parse(readFileSync(join(target, plan.translations[0]!.destinationPath), "utf8"))).toMatchObject({ schemaVersion: 1, values: { preferredModel: "gpt-test", approvalMode: "on-request" } });
     expect(manager.apply(plan, { approved: true }).skipped).toHaveLength(4);
   });
+
+  it("preflights all sources before writing migration output", () => {
+    const source = mkdtempSync(join(tmpdir(), "kestrel-codex-import-preflight-"));
+    const target = mkdtempSync(join(tmpdir(), "kestrel-import-preflight-target-"));
+    directories.push(source, target);
+    writeFileSync(join(source, "AGENTS.md"), "first\n");
+    writeFileSync(join(source, "CLAUDE.md"), "second\n");
+    const manager = new MigrationManager(() => new Date("2026-07-22T21:00:00.000Z"));
+    const plan = manager.plan([{ product: "codex", root: source }], target);
+    writeFileSync(join(source, "CLAUDE.md"), "changed after planning\n");
+
+    expect(() => manager.apply(plan, { approved: true })).toThrow("changed after planning");
+    expect(existsSync(join(target, "imports"))).toBe(false);
+  });
 });
 
 describe("managed organization policy", () => {
