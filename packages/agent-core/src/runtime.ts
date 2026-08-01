@@ -7,6 +7,7 @@ import type { IdempotencyClaim, KestrelDatabase } from "@kestrel/database";
 import { assessExternalContent, mayExecute } from "@kestrel/policy-engine";
 import { SandboxedCommandRunner, type SandboxedCommandHandle } from "./command-runner";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
+import { readBoundedResponseBytes } from "./bounded-http";
 import {
   RuntimeSessionSchema,
   RuntimeEventSchema,
@@ -1996,7 +1997,7 @@ export class AgentRuntime extends EventEmitter {
   private async githubApi<T>(path: string, init: RequestInit, signal: AbortSignal): Promise<T> {
     if (!this.githubToken) throw new Error("GitHub workflows require a protected GitHub token.");
     const response = await fetch(`https://api.github.com${path}`, { ...init, signal, redirect: "error", headers: { accept: "application/vnd.github+json", authorization: `Bearer ${this.githubToken}`, "content-type": "application/json", "x-github-api-version": "2022-11-28", ...(init.headers ?? {}) } });
-    const text = (await response.text()).slice(0, 1_000_000); if (!response.ok) { let message = response.statusText; try { message = String((JSON.parse(text) as { message?: unknown }).message ?? message); } catch {} throw new Error(`GitHub request failed (${response.status}: ${message.slice(0, 2_000)}).`); }
+    const text = new TextDecoder().decode(await readBoundedResponseBytes(response, 1_000_000, "GitHub response exceeds 1 MB.")); if (!response.ok) { let message = response.statusText; try { message = String((JSON.parse(text) as { message?: unknown }).message ?? message); } catch {} throw new Error(`GitHub request failed (${response.status}: ${message.slice(0, 2_000)}).`); }
     return JSON.parse(text) as T;
   }
 
