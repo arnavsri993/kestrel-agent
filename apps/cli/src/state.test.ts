@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -55,5 +55,16 @@ describe("CLI state", () => {
         .some((tool) => tool.name === "workspace.read"),
     ).toBe(true);
     await restored.close();
+  });
+
+  it("rejects an oversized encryption key before decoding it", () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-cli-state-key-large-"));
+    directories.push(container);
+    const dataDirectory = join(container, "data");
+    mkdirSync(dataDirectory, { recursive: true });
+    writeFileSync(join(dataDirectory, "encryption.key"), Buffer.alloc(129));
+    process.env.KESTREL_DATA_DIR = dataDirectory;
+
+    expect(() => openKestrel()).toThrow("Kestrel data key is invalid");
   });
 });
