@@ -431,6 +431,21 @@ describe("Codex-compatible plugin manifests", () => {
     database.close();
   });
 
+  it("rejects oversized plugin manifests before reading them", () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugins-large-"));
+    directories.push(container);
+    const pluginRoot = join(container, "large-plugin");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), JSON.stringify({
+      name: "large-plugin",
+      version: "1.0.0",
+      description: "An oversized plugin manifest.",
+      padding: "x".repeat(256_001)
+    }));
+
+    expect(() => new PluginRegistry([container]).discover()).toThrow("Plugin manifest exceeds 256 KB");
+  });
+
   it("enforces declared plugin dependency versions and enable order", () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-dependencies-"));
     directories.push(container);
