@@ -66,4 +66,49 @@ describe("Google Workspace runtime connector", () => {
     const missingScope = JSON.stringify({ ...JSON.parse(authorization), scopes: ["openid", "email"] });
     expect(() => environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: missingScope })).toThrow("missing");
   });
+
+  it("cancels an oversized chunked Workspace response before buffering it", async () => {
+    let cancelled = false;
+    const reader = {
+      read: async () => ({
+        done: false,
+        value: { byteLength: 256_001 } as Uint8Array,
+      }),
+      cancel: async () => {
+        cancelled = true;
+      },
+      releaseLock: () => undefined,
+    };
+    const fetcher: typeof fetch = async (input) => {
+      if (String(input) === "https://oauth2.googleapis.com/token")
+        return new Response(
+          JSON.stringify({
+            access_token: "runtime-access-token-that-is-long-enough",
+            expires_in: 3600,
+            token_type: "Bearer",
+          }),
+          { status: 200 },
+        );
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: new Headers({ "content-type": "application/json" }),
+        body: { getReader: () => reader },
+      } as unknown as Response;
+    };
+    const client = environmentGoogleWorkspaceClient(
+      { KESTREL_GOOGLE_WORKSPACE_OAUTH: authorization },
+      fetcher,
+    );
+
+    await expect(
+      client!.listEvents({
+        timeMin: "2026-07-23T00:00:00.000Z",
+        maxResults: 10,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Google Workspace response exceeds its size limit.");
+    expect(cancelled).toBe(true);
+  });
 });

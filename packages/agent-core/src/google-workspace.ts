@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AgentRuntime } from "./runtime";
 import { NativeChannelAdapter } from "./channels";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const CALENDAR_EVENTS_ENDPOINT = "https://www.googleapis.com/calendar/v3/calendars/primary/events";
@@ -30,8 +31,11 @@ function parseRecord(raw: string): StoredGoogleWorkspaceAuthorization {
 }
 
 async function responseJson(response: Response, limit = 256_000): Promise<Record<string, unknown>> {
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > limit) throw new Error("Google Workspace response exceeds its size limit.");
+  const bytes = await readBoundedResponseBytes(
+    response,
+    limit,
+    "Google Workspace response exceeds its size limit.",
+  );
   try {
     const value = JSON.parse(Buffer.from(bytes).toString("utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
