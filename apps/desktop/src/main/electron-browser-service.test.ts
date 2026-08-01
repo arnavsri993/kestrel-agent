@@ -63,4 +63,21 @@ describe("Electron browser action cancellation", () => {
     });
     expect(insertText).not.toHaveBeenCalled();
   });
+
+  it("returns an actionable error when a browser operation is cancelled with a null reason", async () => {
+    const service = new ElectronBrowserService();
+    const sessions = (service as unknown as { sessions: Map<string, unknown> }).sessions;
+    sessions.set("browser-test", {
+      window: { isDestroyed: () => false },
+      partition: {},
+      allowedOrigins: new Set<string>(),
+      diagnostics: [],
+      downloads: [],
+      downloadDirectory: "/tmp/browser-test",
+    });
+    const controller = new AbortController();
+    controller.abort(null);
+
+    await expect(service.handle({ operation: "diagnostics", sessionId: "browser-test" }, controller.signal)).rejects.toThrow("Browser operation cancelled.");
+  });
 });
