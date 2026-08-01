@@ -64,6 +64,7 @@ import {
   PetOverlayRequestAccess,
   petOverlayActivityForRuntimeEvent,
 } from "./pet-overlay-security";
+import { writeTextFileAtomically } from "./atomic-file";
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
@@ -189,12 +190,11 @@ async function writeRuntimePreferences(
   preferences: RuntimePreferences,
 ): Promise<void> {
   const path = runtimePreferencesPath();
-  const temporary = `${path}.new`;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  await writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  await rename(temporary, path);
+  await writeTextFileAtomically(
+    path,
+    `${JSON.stringify(preferences, null, 2)}\n`,
+  );
 }
 
 function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
@@ -766,9 +766,7 @@ async function savePetOverlayPosition(window: BrowserWindow): Promise<void> {
   if (window.isDestroyed()) return;
   const { x, y } = window.getBounds();
   const path = join(app.getPath("userData"), "pet-overlay-position.json");
-  const temporary = `${path}.new`;
-  await writeFile(temporary, `${JSON.stringify({ x, y })}\n`, { mode: 0o600 });
-  await rename(temporary, path);
+  await writeTextFileAtomically(path, `${JSON.stringify({ x, y })}\n`);
 }
 
 function releasePetOverlayAccess(window: BrowserWindow): void {
