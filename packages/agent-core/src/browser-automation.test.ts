@@ -75,6 +75,20 @@ describe("isolated browser automation and visual validation", () => {
     database.close();
   });
 
+  it("rejects accessibility trees that cannot be serialized", async () => {
+    const backend = new FakeBrowser();
+    backend.snapshot = async () => ({ url: "https://example.test/", title: "Example", accessibilityTree: undefined });
+    const controller = new BrowserController(backend);
+    const session = await controller.create("owner", ["https://example.test"]);
+
+    await expect(controller.snapshot("owner", session.browserSessionId, new AbortController().signal)).rejects.toThrow("exceeds 2 MB");
+
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    backend.snapshot = async () => ({ url: "https://example.test/", title: "Example", accessibilityTree: circular });
+    await expect(controller.snapshot("owner", session.browserSessionId, new AbortController().signal)).rejects.toThrow("exceeds 2 MB");
+  });
+
   it("records deterministic pixel comparisons with encrypted metadata", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const validator = new VisualValidator(database, () => new Date("2026-07-22T23:00:00.000Z"));
