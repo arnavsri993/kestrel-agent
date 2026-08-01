@@ -107,7 +107,13 @@ export class ElectronBrowserService {
 
   private async navigate(id: string, url: string, signal: AbortSignal): Promise<void> {
     const { window, allowedOrigins } = this.require(id);
-    if (!allowedOrigins.has(new URL(url).origin)) throw new Error("Electron browser navigation is outside the origin allowlist.");
+    let requested: URL;
+    try {
+      requested = new URL(url);
+    } catch {
+      throw new Error("Electron browser navigation is outside the origin allowlist.");
+    }
+    if (!allowedOrigins.has(requested.origin)) throw new Error("Electron browser navigation is outside the origin allowlist.");
     const abort = () => window.webContents.stop();
     signal.addEventListener("abort", abort, { once: true });
     try {
