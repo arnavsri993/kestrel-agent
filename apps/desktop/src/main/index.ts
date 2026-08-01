@@ -40,7 +40,7 @@ import {
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
-import { MigrationManager, PluginInstaller } from "@kestrel/agent-core";
+import { MigrationManager, PluginInstaller, readBoundedResponseBytes } from "@kestrel/agent-core";
 import { PluginTrustStore } from "./plugin-trust-store";
 import { ElectronBrowserService } from "./electron-browser-service";
 import { LocalRuntimeManager } from "./local-runtime-manager";
@@ -471,7 +471,7 @@ async function listLocalModels(
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`Ollama returned ${response.status}.`);
-  const payload = (await response.json()) as { models?: OllamaTag[] };
+  const payload = JSON.parse(Buffer.from(await readBoundedResponseBytes(response, 1_000_000, "Ollama response exceeds 1 MB.")).toString("utf8")) as { models?: OllamaTag[] };
   return (payload.models ?? []).flatMap((item) => {
     if (typeof item.name !== "string" || !item.name.trim()) return [];
     return [
@@ -500,7 +500,7 @@ async function pullLocalModel(
   });
   if (!response.ok)
     throw new Error(`Ollama could not download ${model} (${response.status}).`);
-  await response.text();
+  await readBoundedResponseBytes(response, 1_000_000, "Ollama response exceeds 1 MB.");
   const models = await listLocalModels(5_000);
   const downloaded = models.find(
     (item) => item.name === model || item.name === `${model}:latest`,
