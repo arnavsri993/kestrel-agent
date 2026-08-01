@@ -83,6 +83,11 @@ function pageTitle(contentType: string, raw: string, url: string): string {
   return new URL(url).hostname;
 }
 
+function abortError(signal: AbortSignal, fallback: string): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  return new Error(typeof signal.reason === "string" && signal.reason ? signal.reason : fallback);
+}
+
 export class NetworkPolicyWebClient {
   private readonly hosts: Set<string>;
   private readonly maximumBytes: number;
@@ -102,10 +107,10 @@ export class NetworkPolicyWebClient {
   }
 
   async fetch(url: string, signal?: AbortSignal): Promise<{ url: string; status: number; contentType: string; content: string; trust: "untrusted_external"; citation: { title: string; url: string; retrievedAt: string }; cached: boolean }> {
-    signal?.throwIfAborted();
+    if (signal?.aborted) throw abortError(signal, "Web fetch was cancelled.");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error("Web fetch timed out.")), this.timeoutMs);
-    const relay = () => controller.abort(signal?.reason);
+    const relay = () => controller.abort(signal ? abortError(signal, "Web fetch was cancelled.") : undefined);
     if (signal?.aborted) relay();
     else signal?.addEventListener("abort", relay, { once: true });
     try {
@@ -188,7 +193,7 @@ export class BraveSearchProvider implements WebSearchProvider {
   }
 
   async search(query: string, { maximumResults, signal }: { maximumResults: number; signal: AbortSignal }): Promise<WebSearchResult[]> {
-    signal.throwIfAborted();
+    if (signal.aborted) throw abortError(signal, "Web search was cancelled.");
     if (!query.trim() || query.length > 2_000) throw new Error("Web search query is invalid.");
     const hostname = "api.search.brave.com";
     const addresses = await this.resolver(hostname);
@@ -198,7 +203,7 @@ export class BraveSearchProvider implements WebSearchProvider {
     url.searchParams.set("count", String(Math.max(1, Math.min(20, maximumResults))));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new Error("Brave Search timed out.")), this.timeoutMs);
-    const abort = () => controller.abort(signal.reason);
+    const abort = () => controller.abort(abortError(signal, "Web search was cancelled."));
     if (signal.aborted) abort();
     else signal.addEventListener("abort", abort, { once: true });
     try {
