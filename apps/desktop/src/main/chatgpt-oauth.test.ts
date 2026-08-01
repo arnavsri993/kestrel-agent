@@ -90,4 +90,24 @@ describe("ChatGPT OAuth through Codex", () => {
     ).toEqual({ type: "chatgpt" });
     expect(records.every((record) => record.leaked === null)).toBe(true);
   });
+
+  it("removes the abort listener when an account request starts already cancelled", async () => {
+    const fake = await fakeCodex();
+    const manager = new ChatGptOAuthManager({
+      executable: fake.executable,
+      openExternal: async () => undefined,
+      requestTimeoutMs: 2_000,
+      loginTimeoutMs: 2_000,
+    });
+    let removals = 0;
+    const signal = {
+      aborted: true,
+      reason: new Error("Already cancelled."),
+      addEventListener: () => undefined,
+      removeEventListener: () => { removals += 1; },
+    } as unknown as AbortSignal;
+
+    await expect(manager.status(signal)).rejects.toThrow("Already cancelled.");
+    expect(removals).toBe(1);
+  });
 });
