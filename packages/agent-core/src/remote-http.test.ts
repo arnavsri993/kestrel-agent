@@ -259,6 +259,25 @@ describe("authenticated remote HTTP transport", () => {
     database.close();
   });
 
+  it("resets protocol sessions when restarted", async () => {
+    const { database, runtime, session, remote } = fixture();
+    const pairing = remote.beginPairing("Restart client", ["read"]);
+    const device = remote.completePairing(pairing.pairingId, pairing.code);
+    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1" });
+    servers.push(server);
+    const { origin } = await server.start();
+    const headers = { authorization: `Bearer ${device.token}`, "content-type": "application/json", "x-kestrel-session-id": session.id };
+    const mcp = (message: JsonRpcMessage) => fetch(`${origin}/v1/mcp`, { method: "POST", headers, body: JSON.stringify(message) });
+    expect(await (await mcp({ jsonrpc: "2.0", id: 1, method: "initialize" })).json()).toMatchObject({ result: { protocolVersion: "2025-11-25" } });
+    expect((await mcp({ jsonrpc: "2.0", method: "notifications/initialized" })).status).toBe(202);
+
+    await server.stop();
+    const restarted = await server.start();
+    const response = await fetch(`${restarted.origin}/v1/mcp`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }) });
+    expect(await response.json()).toMatchObject({ error: { message: "MCP server is not initialized." } });
+    database.close();
+  });
+
   it("accepts a scope-capped identity only from a configured trusted loopback proxy", async () => {
     const { database, runtime, session, remote } = fixture();
     const trustedProxy = new TrustedProxyAuthorizer({
