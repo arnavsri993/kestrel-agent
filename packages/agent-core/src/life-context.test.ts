@@ -164,6 +164,35 @@ describe("unified life context", () => {
     database.close();
   });
 
+  it("rolls back a local event when its calendar record cannot be persisted", () => {
+    const { database, life } = fixture();
+    const upsertCalendarEvent = database.upsertCalendarEvent.bind(database);
+    database.upsertCalendarEvent = () => {
+      throw new Error("calendar write failed");
+    };
+
+    expect(() => life.createLocalEvent({ title: "Release review", startsAt: "2026-07-30T15:00:00.000Z", endsAt: "2026-07-30T16:00:00.000Z", origin: "explicit", confidence: 1, sourceId: "message-event" })).toThrow("calendar write failed");
+    expect(database.listMemories()).toEqual([]);
+    expect(database.listCalendarEvents()).toEqual([]);
+    database.upsertCalendarEvent = upsertCalendarEvent;
+    database.close();
+  });
+
+  it("preserves a local event when linked-memory removal fails", () => {
+    const { database, life } = fixture();
+    const event = life.createLocalEvent({ title: "Release review", startsAt: "2026-07-30T15:00:00.000Z", endsAt: "2026-07-30T16:00:00.000Z", origin: "explicit", confidence: 1, sourceId: "message-event" });
+    const upsertMemory = database.upsertMemory.bind(database);
+    database.upsertMemory = () => {
+      throw new Error("memory delete failed");
+    };
+
+    expect(() => life.deleteLocalEvent(event.id)).toThrow("memory delete failed");
+    expect(database.getCalendarEvent(event.id)).toMatchObject({ status: "confirmed" });
+    expect(database.getMemory(event.relatedMemoryIds[0]!)).toBeDefined();
+    database.upsertMemory = upsertMemory;
+    database.close();
+  });
+
   it("normalizes and idempotently refreshes Google Calendar detail", async () => {
     let calls = 0;
     const google = {
