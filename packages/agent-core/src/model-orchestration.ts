@@ -222,8 +222,15 @@ export class ModelRegistry {
 
   register(profile: ModelProfile): ModelProfile {
     const parsed = ModelProfileSchema.parse(profile);
+    const previous = this.profiles.get(parsed.id);
     this.profiles.set(parsed.id, parsed);
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      if (previous) this.profiles.set(parsed.id, previous);
+      else this.profiles.delete(parsed.id);
+      throw error;
+    }
     return parsed;
   }
 
