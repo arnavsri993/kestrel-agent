@@ -229,6 +229,7 @@ export class ModelRegistry {
 
   applyProviderHealth(health: Array<{ providerId: string; averageLatencyMs: number; attempts: number; successes: number }>): void {
     let changed = false;
+    const previous = new Map(this.profiles);
     for (const [id, profile] of this.profiles) {
       const measurement = health.find((item) => item.providerId === profile.endpointId);
       if (!measurement || measurement.attempts === 0) continue;
@@ -239,7 +240,13 @@ export class ModelRegistry {
       }));
       changed = true;
     }
-    if (changed) this.persist();
+    if (!changed) return;
+    try {
+      this.persist();
+    } catch (error) {
+      this.profiles = previous;
+      throw error;
+    }
   }
 
   recordOutcome(outcome: RoutingOutcome): ModelProfile {
