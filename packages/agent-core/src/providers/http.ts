@@ -14,24 +14,31 @@ export async function readServerSentEvents(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    let boundary = buffer.search(/\r?\n\r?\n/);
-    while (boundary >= 0) {
-      const block = buffer.slice(0, boundary);
-      const match = buffer.slice(boundary).match(/^\r?\n\r?\n/);
-      buffer = buffer.slice(boundary + (match?.[0].length ?? 2));
-      let event: string | undefined;
-      const data: string[] = [];
-      for (const line of block.split(/\r?\n/)) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      let boundary = buffer.search(/\r?\n\r?\n/);
+      while (boundary >= 0) {
+        const block = buffer.slice(0, boundary);
+        const match = buffer.slice(boundary).match(/^\r?\n\r?\n/);
+        buffer = buffer.slice(boundary + (match?.[0].length ?? 2));
+        let event: string | undefined;
+        const data: string[] = [];
+        for (const line of block.split(/\r?\n/)) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+        }
+        if (data.length > 0) onEvent({ ...(event ? { event } : {}), data: data.join("\n") });
+        boundary = buffer.search(/\r?\n\r?\n/);
       }
-      if (data.length > 0) onEvent({ ...(event ? { event } : {}), data: data.join("\n") });
-      boundary = buffer.search(/\r?\n\r?\n/);
+      if (done) break;
     }
-    if (done) break;
+  } catch (error) {
+    try { await reader.cancel(); } catch { /* Preserve the original stream or callback error. */ }
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -40,15 +47,22 @@ export async function readNdjson(response: Response, providerId: string, onValue
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) if (line.trim()) onValue(JSON.parse(line));
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) if (line.trim()) onValue(JSON.parse(line));
+      if (done) break;
+    }
+    if (buffer.trim()) onValue(JSON.parse(buffer));
+  } catch (error) {
+    try { await reader.cancel(); } catch { /* Preserve the original stream or callback error. */ }
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
-  if (buffer.trim()) onValue(JSON.parse(buffer));
 }
 
 export async function providerFetch(
