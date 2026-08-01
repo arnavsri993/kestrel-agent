@@ -61,6 +61,30 @@ describe("remote backends and scoped supervision", () => {
     database.close();
   });
 
+  it("leaves a pairing retryable when device persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const orchestrator = new TaskOrchestrator(database, runtime, new AgentLoop(database, runtime, new ProviderPool([provider])));
+    const remote = new RemoteControl(database, runtime, orchestrator);
+    const pairing = remote.beginPairing("Retry device", ["read"]);
+    const setPrivateState = database.setPrivateState.bind(database);
+    let failDevices = true;
+    database.setPrivateState = (key, value) => {
+      if (key === "remote.devices" && failDevices)
+        throw new Error("device state unavailable");
+      setPrivateState(key, value);
+    };
+
+    expect(() => remote.completePairing(pairing.pairingId, pairing.code)).toThrow(
+      "device state unavailable",
+    );
+    failDevices = false;
+    expect(remote.completePairing(pairing.pairingId, pairing.code)).toMatchObject({
+      scopes: ["read"],
+    });
+    database.close();
+  });
+
   it("runs concrete Docker, SSH, and Kubernetes CLI adapters with argv containment", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-cli-")); const bin = join(root, "bin");
     writeFileSync(join(root, "placeholder"), "workspace");
