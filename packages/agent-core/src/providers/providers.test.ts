@@ -1,5 +1,5 @@
 import { createServer, type RequestListener, type Server } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnthropicMessagesProvider } from "./anthropic-messages";
 import { OllamaChatProvider } from "./ollama-chat";
 import { OpenAIResponsesProvider } from "./openai-responses";
@@ -22,6 +22,7 @@ async function serve(handler: RequestListener): Promise<string> {
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  vi.unstubAllGlobals();
 });
 
 describe("model provider adapters", () => {
@@ -225,6 +226,37 @@ describe("model provider adapters", () => {
     expect(JSON.stringify(requestBody)).toContain('"mimeType":"video/mp4"');
     expect(JSON.stringify(requestBody)).toContain('"functionDeclarations"');
     expect(result).toMatchObject({ providerId: "gemini", responseId: "gemini-response", text: "At 00:02, ", finishReason: "tool_calls", toolCalls: [{ name: "workspace.read", arguments: { path: "notes.md" } }], usage: { inputTokens: 44, outputTokens: 7, cachedInputTokens: 3, reasoningTokens: 2 } });
+  });
+
+  it("cancels an oversized chunked Gemini response before parsing it", async () => {
+    let cancelled = false;
+    const reader = {
+      read: async () => ({ done: false, value: { byteLength: 16_000_001 } as Uint8Array }),
+      cancel: async () => {
+        cancelled = true;
+      },
+      releaseLock: () => undefined,
+    };
+    vi.stubGlobal("fetch", async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/json" }),
+      body: { getReader: () => reader },
+    }) as unknown as Response);
+    const provider = new GeminiGenerateContentProvider({ apiKey: "gemini-secret", baseUrl: "https://gemini.test/v1beta" });
+
+    await expect(
+      provider.complete({
+        model: "gemini-test",
+        messages: [{ role: "user", content: textContent("Hello") }],
+      }),
+    ).rejects.toMatchObject({
+      name: "ModelProviderError",
+      providerId: "gemini",
+      status: 200,
+      message: "Gemini response exceeds 16 MB.",
+    });
+    expect(cancelled).toBe(true);
   });
 
   it("escalates to a different endpoint after a failed strategy and records both attempts", async () => {
