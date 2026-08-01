@@ -195,6 +195,27 @@ describe("MCP extensions", () => {
     fixture.database.close();
   });
 
+  it("replays the same JSON-RPC tool request without repeating its side effect", async () => {
+    const fixture = runtimeFixture("mcp-idempotency");
+    let calls = 0;
+    fixture.runtime.registerExternalTool({
+      descriptor: { name: "connector.counter", title: "Counter", description: "Count calls", category: "connector", riskLevel: "sensitive", readOnly: false, requiresWorkspace: false, source: "connector", tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: () => ({ calls: ++calls })
+    });
+    fixture.runtime.allowTool(fixture.session.id, "connector.counter");
+    fixture.runtime.setApprovalRule({ toolName: "connector.counter", decision: "allow", scope: "session", sessionId: fixture.session.id });
+    const server = new McpRuntimeServer(fixture.runtime, fixture.session.id);
+    await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" });
+    await server.handle({ jsonrpc: "2.0", method: "notifications/initialized" });
+    const request = { jsonrpc: "2.0" as const, id: 2, method: "tools/call" as const, params: { name: "connector.counter", arguments: {} } };
+    const first = await server.handle(request);
+    const second = await server.handle(request);
+    expect(first).toEqual(second);
+    expect(calls).toBe(1);
+    fixture.database.close();
+  });
+
   it("rejects failed async sends immediately without leaking an unhandled rejection", async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
