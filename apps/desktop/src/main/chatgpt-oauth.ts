@@ -340,8 +340,13 @@ export class ChatGptOAuthManager {
       try {
         this.write({ id, method, params });
       } catch (error) {
-        abort();
-        reject(error);
+        const pending = this.pending.get(id);
+        if (pending) {
+          clearTimeout(pending.timer);
+          this.pending.delete(id);
+          signal?.removeEventListener("abort", abort);
+        }
+        reject(error instanceof Error ? error : new Error("Codex account request could not be sent."));
       }
     });
   }
