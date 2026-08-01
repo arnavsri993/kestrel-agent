@@ -69,4 +69,41 @@ describe("review-gated memory dreaming", () => {
     expect(dreaming.runIfDue()).toBeUndefined();
     database.close();
   });
+
+  it("rolls back a promotion when candidate state persistence fails", () => {
+    let now = new Date("2026-07-23T09:00:00.000Z");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const memory = new MemoryManager(database, () => now);
+    const eligible = memory.remember({
+      type: "semantic",
+      content: "The user prefers concise release evidence with exact verification.",
+      structuredData: {},
+      sourceIds: ["session:2026-07-21:a", "task:2026-07-22:b", "review:2026-07-23:c"],
+      sourceType: "agent-proposal",
+      confidence: 0.9,
+      importance: 0.85,
+      sensitivity: "personal",
+      entityIds: [],
+      userConfirmed: false,
+      inferred: true
+    });
+    const dreaming = new DreamingManager(database, () => now);
+    dreaming.configure({ enabled: true, scheduleHour: 3, minimumScore: 0.5, minimumRecallCount: 2, minimumUniqueDays: 2 });
+    const applied = dreaming.run(false);
+    const originalSetPrivateState = database.setPrivateState.bind(database);
+    database.setPrivateState = () => {
+      throw new Error("dreaming state write failed");
+    };
+
+    expect(() => dreaming.review(applied.candidates[0]!.id, "promote")).toThrow("dreaming state write failed");
+    expect(database.listMemories().find((item) => item.id === eligible.id)).toMatchObject({
+      userConfirmed: false,
+      inferred: true,
+      sourceType: "agent-proposal"
+    });
+    expect(dreaming.status().candidates[0]?.status).toBe("review");
+
+    database.setPrivateState = originalSetPrivateState;
+    database.close();
+  });
 });

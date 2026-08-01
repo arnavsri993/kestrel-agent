@@ -131,33 +131,35 @@ export class DreamingManager {
     if (!candidate) throw new Error("Dreaming candidate not found.");
     if (candidate.status !== "review") throw new Error("Dreaming candidate was already reviewed.");
     const timestamp = this.now().toISOString();
-    if (decision === "promote") {
-      const memory = this.database.listMemories().find((item) => item.id === candidate.memoryId && item.status === "active");
-      if (!memory) throw new Error("The source memory is no longer active.");
-      this.database.upsertMemory({
-        ...memory,
-        structuredData: {
-          ...memory.structuredData,
-          dreaming: {
-            reviewedAt: timestamp,
-            candidateId: candidate.id,
-            score: candidate.score,
-            sourceCount: candidate.sourceCount
-          }
-        },
-        sourceType: "dreaming-user-review",
-        confidence: Math.max(memory.confidence, candidate.score),
-        importance: Math.max(memory.importance, candidate.score),
-        userConfirmed: true,
-        inferred: false,
-        updatedAt: timestamp
+    this.database.db.transaction(() => {
+      if (decision === "promote") {
+        const memory = this.database.listMemories().find((item) => item.id === candidate.memoryId && item.status === "active");
+        if (!memory) throw new Error("The source memory is no longer active.");
+        this.database.upsertMemory({
+          ...memory,
+          structuredData: {
+            ...memory.structuredData,
+            dreaming: {
+              reviewedAt: timestamp,
+              candidateId: candidate.id,
+              score: candidate.score,
+              sourceCount: candidate.sourceCount
+            }
+          },
+          sourceType: "dreaming-user-review",
+          confidence: Math.max(memory.confidence, candidate.score),
+          importance: Math.max(memory.importance, candidate.score),
+          userConfirmed: true,
+          inferred: false,
+          updatedAt: timestamp
+        });
+      }
+      this.saveState({
+        ...state,
+        candidates: state.candidates.map((item) => item.id === id ? { ...item, status: decision === "promote" ? "promoted" : "rejected", updatedAt: timestamp } : item),
+        detail: decision === "promote" ? "Candidate promoted after explicit review." : "Candidate rejected; durable memory was not changed."
       });
-    }
-    this.saveState({
-      ...state,
-      candidates: state.candidates.map((item) => item.id === id ? { ...item, status: decision === "promote" ? "promoted" : "rejected", updatedAt: timestamp } : item),
-      detail: decision === "promote" ? "Candidate promoted after explicit review." : "Candidate rejected; durable memory was not changed."
-    });
+    })();
     return this.status();
   }
 
