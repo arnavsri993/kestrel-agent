@@ -45,18 +45,25 @@ describe("managed local runtime", () => {
     const archive = new TextEncoder().encode("archive");
     const manifest = testManifest(archive);
     const progress: LocalRuntimeProgress[] = [];
+    const downloadResponses: Response[] = [];
     let serviceReady = false;
     let modelInstalled = false;
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
-      if (url === manifest.url) return new Response(archive, { status: 200 });
+      if (url === manifest.url) {
+        const response = new Response(archive, { status: 200 });
+        downloadResponses.push(response);
+        return response;
+      }
       if (url.endsWith("/api/tags")) {
         if (!serviceReady) throw new TypeError("connection refused");
         return Response.json({ models: modelInstalled ? [{ name: "qwen:test", size: 42 }] : [] });
       }
       if (url.endsWith("/api/pull")) {
         modelInstalled = true;
-        return new Response(`${JSON.stringify({ status: "pulling manifest", completed: 1, total: 1 })}\n`, { status: 200 });
+        const response = new Response(`${JSON.stringify({ status: "pulling manifest", completed: 1, total: 1 })}\n`, { status: 200 });
+        downloadResponses.push(response);
+        return response;
       }
       if (url.endsWith("/api/chat")) return Response.json({ done: true, message: { content: "READY" } });
       throw new Error(`Unexpected URL: ${url}`);
@@ -85,6 +92,13 @@ describe("managed local runtime", () => {
     });
 
     const status = await manager.bootstrap("qwen:test");
+
+    expect(downloadResponses).toHaveLength(2);
+    for (const response of downloadResponses) {
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      reader?.releaseLock();
+    }
 
     expect(status).toMatchObject({
       automaticSupported: true,
