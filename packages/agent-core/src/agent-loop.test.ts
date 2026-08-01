@@ -222,6 +222,57 @@ describe("provider-neutral agent loop", () => {
     database.close();
   });
 
+  it("rolls back run creation when instruction state cannot persist", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Atomic run setup" });
+    database.db.exec(`
+      CREATE TRIGGER reject_agent_run_instructions
+      BEFORE INSERT ON private_runtime_state
+      WHEN NEW.key LIKE 'agent-run-instructions.%'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced agent-run instruction failure');
+      END
+    `);
+    const provider: ModelProvider = {
+      id: "atomic-setup",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => ({
+        providerId: "atomic-setup",
+        model: request.model,
+        text: "This provider must not be called.",
+        toolCalls: [],
+        usage: { inputTokens: 1, outputTokens: 1 },
+        finishReason: "stop",
+      }),
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+    );
+
+    await expect(
+      loop.run({
+        sessionId: session.id,
+        model: "atomic-setup",
+        providerIds: ["atomic-setup"],
+        userContent: textContent("This setup must roll back."),
+      }),
+    ).rejects.toThrow("forced agent-run instruction failure");
+    expect(database.listAgentRuns(session.id)).toEqual([]);
+    expect(runtime.listMessages(session.id)).toEqual([]);
+    expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
+    database.close();
+  });
+
   it("releases the session claim after provider errors and cancellation", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
