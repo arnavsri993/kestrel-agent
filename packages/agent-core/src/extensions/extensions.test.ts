@@ -82,6 +82,7 @@ function runtimeFixture(label: string) {
 
 describe("MCP extensions", () => {
   it("uses Streamable HTTP sessions and exposes resources and prompts", async () => {
+    expect(() => new StreamableHttpMcpTransport("not a URL")).toThrow("MCP HTTP endpoints");
     let sessionHeader = "";
     let deleted = false;
     const fetcher: typeof fetch = async (_input, init) => {

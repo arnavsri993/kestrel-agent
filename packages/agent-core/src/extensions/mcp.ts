@@ -42,7 +42,7 @@ export class StreamableHttpMcpTransport implements McpTransport {
   private closePromise?: Promise<void>;
 
   constructor(endpoint: string, private readonly options: { authorization?: string; fetcher?: typeof fetch } = {}) {
-    this.url = new URL(endpoint);
+    try { this.url = new URL(endpoint); } catch { throw new Error("MCP HTTP endpoints require credential-free HTTPS or loopback HTTP."); }
     const loopback = ["127.0.0.1", "localhost", "::1"].includes(this.url.hostname);
     if ((this.url.protocol !== "https:" && !(this.url.protocol === "http:" && loopback)) || this.url.username || this.url.password || this.url.hash) throw new Error("MCP HTTP endpoints require credential-free HTTPS or loopback HTTP.");
   }
