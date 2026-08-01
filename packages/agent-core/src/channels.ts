@@ -294,17 +294,31 @@ export class ChannelGateway {
   async react(channelId: string, conversationId: string, externalId: string, action: "add" | "remove" | "clear", emoji: string | undefined, signal: AbortSignal): Promise<Record<string, unknown>> {
     const adapter = this.adapters.get(channelId);
     if (!adapter?.react || adapter.kind === "gmail") throw new Error(`Channel ${channelId} does not support reactions.`);
+    const react = adapter.react;
     if (!conversationId || conversationId.length > 500 || !externalId || externalId.length > 500) throw new Error("Channel reaction target is invalid.");
     if (action !== "clear" && (!emoji || Buffer.byteLength(emoji) > 100 || /[\0\r\n]/.test(emoji))) throw new Error("A bounded emoji is required to add or remove a reaction.");
     const level = this.interactionConfiguration().reactionLevel;
     if (level === "off") throw new Error("Channel reactions are disabled by interaction policy.");
     const stateKey = `channel-reactions:${createHash("sha256").update(`${channelId}\0${conversationId}\0${externalId}`).digest("hex")}`;
+    const persist = async (tracked: string[], changedEmoji: string, removed: boolean): Promise<void> => {
+      try {
+        this.database.setPrivateState(stateKey, tracked);
+      } catch (error) {
+        try {
+          await react({ conversationId, externalId, emoji: changedEmoji, remove: !removed, signal });
+        } catch (rollbackError) {
+          throw new Error("Channel reaction tracking failed and external rollback also failed.", { cause: rollbackError });
+        }
+        throw error;
+      }
+    };
     let tracked = this.database.getPrivateState<string[]>(stateKey) ?? [];
     if (action === "clear") {
       for (const current of [...tracked]) {
-        await adapter.react({ conversationId, externalId, emoji: current, remove: true, signal });
-        tracked = tracked.filter((value) => value !== current);
-        this.database.setPrivateState(stateKey, tracked);
+        await react({ conversationId, externalId, emoji: current, remove: true, signal });
+        const next = tracked.filter((value) => value !== current);
+        await persist(next, current, true);
+        tracked = next;
       }
       return { channelId, conversationId, externalId, action, removed: true, trackedReactionCount: 0 };
     }
@@ -312,13 +326,16 @@ export class ChannelGateway {
     if (action === "add") {
       const maximum = level === "ack" ? 1 : level === "minimal" ? 2 : 8;
       if (!tracked.includes(value) && tracked.length >= maximum) throw new Error(`Channel ${level} reaction policy allows at most ${maximum} tracked reaction${maximum === 1 ? "" : "s"} per message.`);
-      await adapter.react({ conversationId, externalId, emoji: value, remove: false, signal });
-      tracked = [...new Set([...tracked, value])];
+      await react({ conversationId, externalId, emoji: value, remove: false, signal });
+      const next = [...new Set([...tracked, value])];
+      await persist(next, value, false);
+      tracked = next;
     } else {
-      await adapter.react({ conversationId, externalId, emoji: value, remove: true, signal });
-      tracked = tracked.filter((current) => current !== value);
+      await react({ conversationId, externalId, emoji: value, remove: true, signal });
+      const next = tracked.filter((current) => current !== value);
+      await persist(next, value, true);
+      tracked = next;
     }
-    this.database.setPrivateState(stateKey, tracked);
     return { channelId, conversationId, externalId, action, emoji: value, trackedReactionCount: tracked.length };
   }
 }
