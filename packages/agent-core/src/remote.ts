@@ -144,6 +144,7 @@ export class RemoteBackendManager {
     if (!target || !target.enabled) throw new Error("Remote target is not enabled.");
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(command) || !target.allowedCommands.includes(command)) throw new Error("Remote command is outside the target allowlist.");
     if (args.length > 200 || args.some((arg) => arg.length > 10_000)) throw new Error("Remote command arguments exceed limits.");
+    if (!Number.isFinite(timeoutMs)) throw new Error("Remote execution timeout must be finite.");
     const backend = this.backends.get(target.backendId)!;
     const boundedTimeout = Math.max(1_000, Math.min(300_000, timeoutMs));
     const result = await backend.execute({ target, command, args, timeoutMs: boundedTimeout, signal: AbortSignal.any([signal, AbortSignal.timeout(boundedTimeout)]), ...(onOutput ? { onOutput } : {}) });
