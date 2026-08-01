@@ -112,15 +112,24 @@ export class LanguageServerClient {
   }
 
   async diagnostics(input: { uri: string; languageId: string; text: string; version?: number }): Promise<unknown[]> {
+    let waiter!: { resolve(value: unknown[]): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> };
     const result = new Promise<unknown[]>((resolve, reject) => {
       const timer = setTimeout(() => { this.diagnosticsWaiters.set(input.uri, (this.diagnosticsWaiters.get(input.uri) ?? []).filter((item) => item.timer !== timer)); reject(new Error("Language server diagnostics timed out.")); }, this.timeoutMs);
-      const waiter = { resolve, reject, timer };
+      waiter = { resolve, reject, timer };
       this.diagnosticsWaiters.set(input.uri, [...(this.diagnosticsWaiters.get(input.uri) ?? []), waiter]);
     });
     const priorVersion = this.openDocuments.get(input.uri);
     const version = Math.max(input.version ?? 1, (priorVersion ?? 0) + 1);
-    if (priorVersion === undefined) await this.notify("textDocument/didOpen", { textDocument: { uri: input.uri, languageId: input.languageId, version, text: input.text } });
-    else await this.notify("textDocument/didChange", { textDocument: { uri: input.uri, version }, contentChanges: [{ text: input.text }] });
+    try {
+      if (priorVersion === undefined) await this.notify("textDocument/didOpen", { textDocument: { uri: input.uri, languageId: input.languageId, version, text: input.text } });
+      else await this.notify("textDocument/didChange", { textDocument: { uri: input.uri, version }, contentChanges: [{ text: input.text }] });
+    } catch (error) {
+      clearTimeout(waiter.timer);
+      const remaining = (this.diagnosticsWaiters.get(input.uri) ?? []).filter((candidate) => candidate !== waiter);
+      if (remaining.length) this.diagnosticsWaiters.set(input.uri, remaining);
+      else this.diagnosticsWaiters.delete(input.uri);
+      throw error;
+    }
     this.openDocuments.set(input.uri, version);
     return result;
   }
