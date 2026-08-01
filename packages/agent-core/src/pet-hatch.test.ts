@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -124,6 +124,44 @@ describe("two-stage pet hatch workflow", () => {
         available: false,
         reason: expect.stringContaining("Connections"),
       });
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes draft files evicted from the bounded history", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-hatch-retention-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const provider: MediaGenerationProvider = {
+      id: "fixture-image",
+      supportsReferenceImages: true,
+      async generate() {
+        return {
+          data: await fixtureImage(),
+          mediaType: "image/png",
+          model: "fixture-image-v1",
+        };
+      },
+    };
+    try {
+      const pets = new PetManager(database, join(root, "pets"));
+      const manager = new PetHatchManager(
+        database,
+        join(root, "hatch"),
+        [provider],
+        pets,
+      );
+      for (let index = 0; index < 4; index += 1)
+        await manager.generateDrafts(
+          { concept: "a blue paper bird", count: 4 },
+          new AbortController().signal,
+        );
+
+      expect(manager.drafts()).toHaveLength(12);
+      const files = readdirSync(join(root, "hatch"));
+      expect(files.filter((filename) => filename.endsWith(".png"))).toHaveLength(12);
+      expect(files.filter((filename) => filename.endsWith(".partial"))).toEqual([]);
     } finally {
       database.close();
       rmSync(root, { recursive: true, force: true });
