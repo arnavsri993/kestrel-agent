@@ -35,6 +35,35 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("keeps tool registration and session permissions consistent when unregistering fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    let now = "2026-07-22T16:00:00.000Z";
+    const runtime = new AgentRuntime(database, [], () => now);
+    const toolName = "fixture.unregister-atomic";
+    runtime.registerExternalTool({
+      descriptor: { name: toolName, title: "Unregister atomic", description: "Exercise atomic external-tool removal.", category: "extension", riskLevel: "low", readOnly: true, requiresWorkspace: false, source: "plugin", tags: ["test"] },
+      inputSchema: { type: "object", additionalProperties: false },
+      execute: async () => ({ ok: true })
+    });
+    const rejected = runtime.createSession({ title: "Reject" });
+    now = "2026-07-22T16:01:00.000Z";
+    const persisted = runtime.createSession({ title: "Persist" });
+    database.db.exec(`
+      CREATE TRIGGER reject_external_tool_removal
+      BEFORE UPDATE ON runtime_sessions
+      WHEN json_extract(NEW.payload, '$.title') = 'Reject'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced external-tool removal failure');
+      END
+    `);
+
+    expect(() => runtime.unregisterExternalTool(toolName)).toThrow("forced external-tool removal failure");
+    expect(runtime.getSession(rejected.id).allowedTools).toContain(toolName);
+    expect(runtime.getSession(persisted.id).allowedTools).toContain(toolName);
+    expect(runtime.discoverTools(persisted.id).some((tool) => tool.name === toolName)).toBe(true);
+    database.close();
+  });
+
   it("persists message activity as session recency without allowing stale clocks to move it backward", () => {
     const directory = mkdtempSync(join(tmpdir(), "kestrel-session-recency-"));
     temporaryDirectories.push(directory);

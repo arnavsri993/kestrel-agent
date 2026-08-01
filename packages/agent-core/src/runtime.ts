@@ -759,11 +759,13 @@ export class AgentRuntime extends EventEmitter {
     const definition = this.tools.get(toolName);
     if (!definition) return;
     if (definition.descriptor.source === "builtin") throw new Error("Built-in runtime tools cannot be unregistered.");
+    this.database.db.transaction(() => {
+      for (const session of this.listSessions()) {
+        if (!session.allowedTools.includes(toolName)) continue;
+        this.saveSession({ ...session, allowedTools: session.allowedTools.filter((name) => name !== toolName), updatedAt: this.now() });
+      }
+    })();
     this.tools.delete(toolName);
-    for (const session of this.listSessions()) {
-      if (!session.allowedTools.includes(toolName)) continue;
-      this.saveSession({ ...session, allowedTools: session.allowedTools.filter((name) => name !== toolName), updatedAt: this.now() });
-    }
   }
 
   allowTool(sessionId: string, toolName: string): RuntimeSession {
