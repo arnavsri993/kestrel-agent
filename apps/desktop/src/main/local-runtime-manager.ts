@@ -365,19 +365,30 @@ export class LocalRuntimeManager {
     });
     this.child = child;
     child.once("exit", () => { if (this.child === child) this.child = null; });
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      signal.throwIfAborted();
-      if (child.exitCode !== null) throw new Error(`The managed local model service exited with code ${child.exitCode}.`);
-      try {
-        await this.listModels(750, signal);
-        return;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 250));
+    try {
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        signal.throwIfAborted();
+        if (child.exitCode !== null) throw new Error(`The managed local model service exited with code ${child.exitCode}.`);
+        try {
+          await this.listModels(750, signal);
+          return;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
       }
+      throw new Error("The managed local model service did not become ready in time.");
+    } catch (error) {
+      await this.stopChild(child);
+      throw error;
     }
+  }
+
+  private async stopChild(child: ChildProcess): Promise<void> {
+    if (child.exitCode !== null) return;
     child.kill("SIGTERM");
-    throw new Error("The managed local model service did not become ready in time.");
+    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+    if (child.exitCode === null) child.kill("SIGKILL");
   }
 
   private async pullModel(model: string, signal: AbortSignal): Promise<void> {
@@ -447,10 +458,7 @@ export class LocalRuntimeManager {
     this.cancel();
     const child = this.child;
     this.child = null;
-    if (!child || child.exitCode !== null) return;
-    child.kill("SIGTERM");
-    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 2_000))]);
-    if (child.exitCode === null) child.kill("SIGKILL");
+    if (child) await this.stopChild(child);
   }
 
   async startManagedIfInstalled(): Promise<void> {

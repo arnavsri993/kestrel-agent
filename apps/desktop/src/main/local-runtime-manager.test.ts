@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -185,5 +185,53 @@ describe("managed local runtime", () => {
       ollamaAvailable: false,
     });
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
+  });
+
+  it("stops the managed service when startup is cancelled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    const manifest = testManifest(new TextEncoder().encode("archive"));
+    const installRoot = join(root, "local-runtime", "ollama", manifest.version);
+    await mkdir(installRoot, { recursive: true });
+    await writeFile(join(installRoot, manifest.binaryPath), "verified binary", { mode: 0o700 });
+    await writeFile(join(installRoot, "workstrand-install.json"), JSON.stringify({
+      runtime: manifest.runtime,
+      version: manifest.version,
+      sha256: manifest.sha256,
+      binaryPath: manifest.binaryPath
+    }));
+    let spawned: EventEmitter & { exitCode: number | null; kill(signal?: NodeJS.Signals): boolean } | undefined;
+    let spawnReady!: () => void;
+    const spawnedPromise = new Promise<void>((resolve) => { spawnReady = resolve; });
+    const child = fakeChild();
+    const kill = child.kill;
+    let killCount = 0;
+    child.kill = ((signal?: NodeJS.Signals) => {
+      killCount += 1;
+      return kill.call(child, signal);
+    }) as typeof child.kill;
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: (async (input) => {
+        if (String(input).endsWith("/api/tags")) throw new TypeError("connection refused");
+        throw new Error(`Unexpected URL: ${String(input)}`);
+      }) as typeof fetch,
+      platform: "darwin",
+      architecture: "arm64",
+      manifest,
+      spawn: (() => {
+        spawned = child;
+        spawnReady();
+        return child;
+      }) as unknown as typeof import("node:child_process").spawn
+    });
+
+    const bootstrap = manager.bootstrap("qwen:test");
+    await spawnedPromise;
+    manager.cancel();
+
+    await expect(bootstrap).rejects.toMatchObject({ name: "AbortError" });
+    expect(spawned).toBe(child);
+    expect(killCount).toBe(1);
+    expect(child.exitCode).toBe(0);
   });
 });
