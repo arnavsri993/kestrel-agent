@@ -31,6 +31,7 @@ describe("authenticated channel gateway", () => {
 
   it("delivers through a bounded HTTPS webhook adapter and rejects private DNS targets", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
+    expect(() => new WebhookChannelAdapter({ id: "invalid-url", url: "not a URL" })).toThrow("HTTPS");
     const adapter = new WebhookChannelAdapter({
       id: "production-webhook",
       url: "https://hooks.example.test/kestrel",
