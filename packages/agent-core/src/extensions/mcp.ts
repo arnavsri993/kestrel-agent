@@ -69,7 +69,11 @@ export class StreamableHttpMcpTransport implements McpTransport {
     const payloads = contentType.includes("text/event-stream")
       ? text.split(/\r?\n\r?\n/).flatMap((event) => event.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim())).filter((value) => value && value !== "[DONE]")
       : [text];
-    for (const payload of payloads) this.events.emit("message", JSON.parse(payload) as JsonRpcMessage);
+    for (const payload of payloads) {
+      let parsed: JsonRpcMessage;
+      try { parsed = JSON.parse(payload) as JsonRpcMessage; } catch { throw new Error("MCP HTTP response contained invalid JSON."); }
+      this.events.emit("message", parsed);
+    }
   }
 
   onMessage(listener: (message: JsonRpcMessage) => void): () => void { this.events.on("message", listener); return () => this.events.off("message", listener); }
