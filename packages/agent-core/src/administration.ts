@@ -184,9 +184,9 @@ export class MigrationManager {
   apply(plan: MigrationPlan, options: { approved: boolean; overwrite?: boolean }): { imported: string[]; skipped: string[] } {
     if (!options.approved) throw new Error("Migration import requires explicit approval.");
     const target = resolve(plan.targetRoot);
-    mkdirSync(target, { recursive: true, mode: 0o700 });
     const imported: string[] = [];
     const skipped: string[] = [];
+    const writes: Array<{ destination: string; destinationPath: string; data: Buffer }> = [];
     for (const item of plan.items) {
       const sourceRoot = realpathSync(item.sourceRoot);
       const source = realpathSync(resolve(sourceRoot, item.sourcePath));
@@ -200,9 +200,7 @@ export class MigrationManager {
         skipped.push(item.destinationPath);
         continue;
       }
-      mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-      writeFileSync(destination, data, { mode: 0o600 });
-      imported.push(item.destinationPath);
+      writes.push({ destination, destinationPath: item.destinationPath, data });
     }
     for (const translation of plan.translations ?? []) {
       const destination = resolve(target, translation.destinationPath);
@@ -210,9 +208,13 @@ export class MigrationManager {
       const payload = JSON.stringify({ schemaVersion: 1, sourceProduct: translation.product, sourcePath: translation.sourcePath, values: translation.values }, null, 2) + "\n";
       if (createHash("sha256").update(payload).digest("hex") !== translation.sha256) throw new Error(`Migration translation changed after planning: ${translation.sourcePath}`);
       if (existsSync(destination) && !options.overwrite) { skipped.push(translation.destinationPath); continue; }
-      mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-      writeFileSync(destination, payload, { mode: 0o600 });
-      imported.push(translation.destinationPath);
+      writes.push({ destination, destinationPath: translation.destinationPath, data: Buffer.from(payload, "utf8") });
+    }
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    for (const write of writes) {
+      mkdirSync(dirname(write.destination), { recursive: true, mode: 0o700 });
+      writeFileSync(write.destination, write.data, { mode: 0o600 });
+      imported.push(write.destinationPath);
     }
     return { imported, skipped };
   }
