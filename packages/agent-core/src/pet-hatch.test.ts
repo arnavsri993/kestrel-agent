@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -124,6 +124,48 @@ describe("two-stage pet hatch workflow", () => {
         available: false,
         reason: expect.stringContaining("Connections"),
       });
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("removes generated draft files when draft persistence fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-hatch-rollback-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const provider: MediaGenerationProvider = {
+      id: "fixture-image",
+      supportsReferenceImages: true,
+      async generate() {
+        return {
+          data: await fixtureImage(),
+          mediaType: "image/png",
+          model: "fixture-image-v1",
+        };
+      },
+    };
+    try {
+      const pets = new PetManager(database, join(root, "pets"));
+      const manager = new PetHatchManager(
+        database,
+        join(root, "hatch"),
+        [provider],
+        pets,
+      );
+      const setPrivateState = database.setPrivateState.bind(database);
+      database.setPrivateState = (key, value) => {
+        if (key === "display.pet-hatch-drafts")
+          throw new Error("draft state unavailable");
+        setPrivateState(key, value);
+      };
+
+      await expect(
+        manager.generateDrafts(
+          { concept: "a blue paper bird", count: 2 },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("draft state unavailable");
+      expect(readdirSync(join(root, "hatch"))).toEqual([]);
     } finally {
       database.close();
       rmSync(root, { recursive: true, force: true });

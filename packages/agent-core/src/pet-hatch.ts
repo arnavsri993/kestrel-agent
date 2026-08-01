@@ -428,8 +428,16 @@ export class PetHatchManager {
         const id = `draft-${randomUUID()}`;
         const filename = `${id}.png`;
         const temporary = join(this.root, `.${id}.partial`);
-        writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
-        renameSync(temporary, this.draftPath(filename));
+        try {
+          writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
+          renameSync(temporary, this.draftPath(filename));
+        } finally {
+          try {
+            rmSync(temporary, { force: true });
+          } catch {
+            // The rename normally consumes the temporary path.
+          }
+        }
         return {
           id,
           concept,
@@ -454,7 +462,18 @@ export class PetHatchManager {
           : "Image provider returned no usable pet drafts.",
       );
     }
-    this.persist([...this.records(), ...records].slice(-12));
+    try {
+      this.persist([...this.records(), ...records].slice(-12));
+    } catch (error) {
+      for (const record of records) {
+        try {
+          rmSync(this.draftPath(record.filename), { force: true });
+        } catch {
+          // Preserve the original persistence error if cleanup also fails.
+        }
+      }
+      throw error;
+    }
     return this.drafts().filter((draft) =>
       records.some((record) => record.id === draft.id),
     );
