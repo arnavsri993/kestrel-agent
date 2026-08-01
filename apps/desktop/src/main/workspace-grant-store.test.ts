@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -85,5 +85,16 @@ describe("workspace grant store", () => {
     expect(await store.statusList()).toEqual([
       { path: addedLaterPath, name: "added-later", available: true },
     ]);
+  });
+
+  it("rejects oversized grant state before parsing it", async () => {
+    const storage = mkdtempSync(join(tmpdir(), "kestrel-grants-"));
+    directories.push(storage);
+    const privateRoot = join(storage, "private");
+    mkdirSync(privateRoot);
+    const filename = join(privateRoot, "workspace-grants.json");
+    writeFileSync(filename, Buffer.alloc(1_000_001));
+
+    await expect(new WorkspaceGrantStore(filename).configuredPaths()).rejects.toThrow("Workspace grant configuration exceeds 1 MB.");
   });
 });

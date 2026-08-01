@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { basename, dirname, parse, resolve } from "node:path";
 import { WorkspaceGrantSchema, type WorkspaceGrant } from "@kestrel/shared-types";
 
+const MAX_GRANT_FILE_BYTES = 1_000_000;
+
 export class WorkspaceGrantStore {
   constructor(private readonly filename: string) {}
 
@@ -70,6 +72,8 @@ export class WorkspaceGrantStore {
   private async configuredGrants(): Promise<WorkspaceGrant[]> {
     let values: unknown;
     try {
+      if ((await stat(this.filename)).size > MAX_GRANT_FILE_BYTES)
+        throw new Error("Workspace grant configuration exceeds 1 MB.");
       values = JSON.parse(await readFile(this.filename, "utf8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
