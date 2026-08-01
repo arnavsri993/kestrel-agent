@@ -9,6 +9,7 @@ import type { LocalModelSummary, LocalRuntimeProgress, LocalRuntimeStatus } from
 
 const execFileAsync = promisify(execFile);
 const OLLAMA_ORIGIN = "http://127.0.0.1:11434";
+const MAX_PROGRESS_BUFFER_BYTES = 1_000_000;
 
 export interface LocalRuntimeManifest {
   runtime: "ollama";
@@ -392,28 +393,44 @@ export class LocalRuntimeManager {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let pending = "";
-    while (true) {
-      signal.throwIfAborted();
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      pending += decoder.decode(chunk.value, { stream: true });
-      const lines = pending.split("\n");
-      pending = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const update = JSON.parse(line) as { status?: unknown; completed?: unknown; total?: unknown; error?: unknown };
-        if (typeof update.error === "string") throw new Error(update.error);
-        const completed = typeof update.completed === "number" ? Math.max(0, update.completed) : undefined;
-        const total = typeof update.total === "number" && update.total > 0 ? update.total : undefined;
-        this.progress({
-          stage: "downloading-model",
-          message: typeof update.status === "string" ? update.status : `Downloading ${model}.`,
-          model,
-          ...(completed !== undefined ? { downloadedBytes: completed } : {}),
-          ...(total !== undefined ? { totalBytes: total } : {}),
-          ...(completed !== undefined && total !== undefined ? { percent: Math.min(100, Math.floor(completed / total * 100)) } : {})
-        });
+    const processLine = (line: string): void => {
+      if (Buffer.byteLength(line, "utf8") > MAX_PROGRESS_BUFFER_BYTES) throw new Error("The local model service progress stream exceeded 1 MB.");
+      if (!line.trim()) return;
+      const update = JSON.parse(line) as { status?: unknown; completed?: unknown; total?: unknown; error?: unknown };
+      if (typeof update.error === "string") throw new Error(update.error);
+      const completed = typeof update.completed === "number" ? Math.max(0, update.completed) : undefined;
+      const total = typeof update.total === "number" && update.total > 0 ? update.total : undefined;
+      this.progress({
+        stage: "downloading-model",
+        message: typeof update.status === "string" ? update.status : `Downloading ${model}.`,
+        model,
+        ...(completed !== undefined ? { downloadedBytes: completed } : {}),
+        ...(total !== undefined ? { totalBytes: total } : {}),
+        ...(completed !== undefined && total !== undefined ? { percent: Math.min(100, Math.floor(completed / total * 100)) } : {})
+      });
+    };
+    try {
+      while (true) {
+        signal.throwIfAborted();
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        pending += decoder.decode(chunk.value, { stream: true });
+        if (Buffer.byteLength(pending, "utf8") > MAX_PROGRESS_BUFFER_BYTES) throw new Error("The local model service progress stream exceeded 1 MB.");
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
+        for (const line of lines) processLine(line);
       }
+      pending += decoder.decode();
+      processLine(pending);
+    } catch (error) {
+      try {
+        await reader.cancel();
+      } catch {
+        // Preserve the original download or parsing error.
+      }
+      throw error;
+    } finally {
+      reader.releaseLock();
     }
     const installed = await this.listModels(5_000, signal);
     if (!installed.some((item) => item.name === model || item.name === `${model}:latest`)) {
