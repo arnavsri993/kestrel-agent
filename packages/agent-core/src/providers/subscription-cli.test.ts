@@ -1,4 +1,5 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -49,5 +50,19 @@ describe("vendor subscription CLI providers", () => {
     expect(capture.leaked).toBeUndefined();
     expect(result).toMatchObject({ providerId: "claude-subscription", responseId: "claude-session", text: "Claude subscription answer", usage: { inputTokens: 9, outputTokens: 3, cachedInputTokens: 2 }, toolCalls: [] });
     expect(deltas).toEqual(["Claude ", "subscription answer"]);
+  });
+
+  it("does not start the vendor CLI for an already-cancelled probe", async () => {
+    const root = await mkdtemp(join(tmpdir(), "kestrel-claude-cancelled-"));
+    roots.push(root);
+    const executable = join(root, "claude");
+    const marker = join(root, "started");
+    await writeFile(executable, `#!/bin/sh\nprintf started > '${marker}'\n`, { mode: 0o700 });
+    await chmod(executable, 0o700);
+    const controller = new AbortController();
+    controller.abort(null);
+
+    await expect(new ClaudeSubscriptionProvider({ executable }).probe(controller.signal)).rejects.toThrow("Provider request was cancelled.");
+    expect(existsSync(marker)).toBe(false);
   });
 });

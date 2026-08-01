@@ -26,7 +26,13 @@ function safeEnvironment(source: NodeJS.ProcessEnv, additions: NodeJS.ProcessEnv
   return { ...environment, ...additions };
 }
 
+function abortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  return new Error(typeof signal.reason === "string" && signal.reason ? signal.reason : "Provider request was cancelled.");
+}
+
 function runCli(executable: string, args: string[], input: string, options: { cwd: string; environment: NodeJS.ProcessEnv; signal: AbortSignal | undefined; timeoutMs: number; onLine?: (line: string) => void }): Promise<CliRunResult> {
+  if (options.signal?.aborted) return Promise.reject(abortError(options.signal));
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { cwd: options.cwd, env: options.environment, shell: false, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -45,7 +51,7 @@ function runCli(executable: string, args: string[], input: string, options: { cw
       child.kill("SIGTERM");
       finish(reason);
     };
-    const abort = () => stop(options.signal?.reason instanceof Error ? options.signal.reason : new Error("Provider request was cancelled."));
+    const abort = () => stop(options.signal ? abortError(options.signal) : new Error("Provider request was cancelled."));
     const timer = setTimeout(() => stop(new Error("Provider CLI timed out.")), options.timeoutMs);
     options.signal?.addEventListener("abort", abort, { once: true });
     if (options.signal?.aborted) return abort();
