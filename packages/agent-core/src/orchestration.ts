@@ -551,9 +551,11 @@ export class TaskOrchestrator {
     const team = teams[index];
     if (!team || !team.memberSessionIds.includes(fromSessionId) || !team.memberSessionIds.includes(toSessionId) || fromSessionId === toSessionId || !text.trim() || text.length > 20_000) throw new Error("Peer message is invalid for this team.");
     const message: TeamMessage = { id: `team-message-${randomUUID()}`, fromSessionId, toSessionId, text: text.trim(), createdAt: this.now().toISOString() };
-    this.runtime.appendMessage({ sessionId: toSessionId, role: "system", content: `[Team peer message from ${fromSessionId}; provenance ${message.id}]\n${message.text}` });
-    teams[index] = { ...team, messages: [...team.messages, message].slice(-1_000), updatedAt: message.createdAt };
-    this.database.setPrivateState(this.teamsKey, teams);
+    this.database.db.transaction(() => {
+      this.runtime.appendMessage({ sessionId: toSessionId, role: "system", content: `[Team peer message from ${fromSessionId}; provenance ${message.id}]\n${message.text}` });
+      teams[index] = { ...team, messages: [...team.messages, message].slice(-1_000), updatedAt: message.createdAt };
+      this.database.setPrivateState(this.teamsKey, teams);
+    })();
     return message;
   }
 

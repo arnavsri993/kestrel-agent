@@ -327,6 +327,25 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("rolls back the runtime message when team ledger persistence fails", () => {
+    const item = fixture(finalProvider());
+    const first = item.runtime.createSession({ title: "First", parentSessionId: item.parent.id, workspaceRoot: item.root });
+    const second = item.runtime.createSession({ title: "Second", parentSessionId: item.parent.id, workspaceRoot: item.root });
+    const team = item.orchestrator.createTeam(item.parent.id, "Release team", [first.id, second.id]);
+    const originalSetPrivateState = item.database.setPrivateState.bind(item.database);
+    item.database.setPrivateState = (key, value) => {
+      if (key === "orchestrator.teams") throw new Error("team ledger write failed");
+      originalSetPrivateState(key, value);
+    };
+
+    expect(() => item.orchestrator.sendPeerMessage(team.id, first.id, second.id, "Do not duplicate this message.")).toThrow("team ledger write failed");
+    expect(item.runtime.listMessages(second.id)).toEqual([]);
+    expect(item.orchestrator.listTeams()[0]?.messages).toEqual([]);
+
+    item.database.setPrivateState = originalSetPrivateState;
+    item.database.close();
+  });
+
   it("persists encrypted schedules and advances recurring jobs", async () => {
     let instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(finalProvider(), () => instant);
