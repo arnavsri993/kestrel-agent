@@ -200,7 +200,7 @@ export class RemoteControl {
   constructor(private readonly database: KestrelDatabase, private readonly runtime: AgentRuntime, private readonly orchestrator: TaskOrchestrator, private readonly now: () => Date = () => new Date()) {}
 
   beginPairing(label: string, scopes: RemoteScope[], lifetimeMs = 300_000): { pairingId: string; code: string; expiresAt: string } {
-    if (!label.trim() || scopes.length === 0) throw new Error("Remote pairing requires a label and scopes.");
+    if (!label.trim() || label.length > 200 || scopes.length === 0) throw new Error("Remote pairing requires a bounded label and scopes.");
     if (scopes.some((scope) => !["read", "tasks", "approve"].includes(scope))) throw new Error("Remote pairing scope is invalid.");
     const code = randomBytes(6).toString("base64url");
     const pairing: PairingRecord = { id: `pair-${randomUUID()}`, label, codeHash: digest(code), scopes: [...new Set(scopes)], expiresAt: new Date(this.now().getTime() + Math.max(30_000, Math.min(lifetimeMs, 600_000))).toISOString(), attempts: 0, status: "pending" };
