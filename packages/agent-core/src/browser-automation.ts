@@ -239,7 +239,7 @@ export class VisualValidator {
       id: `visual-${randomUUID()}`, baselineSha256: createHash("sha256").update(baseline.rgba).digest("hex"), actualSha256: createHash("sha256").update(actual.rgba).digest("hex"),
       width: actual.width, height: actual.height, changedPixels, differenceRatio, passed: differenceRatio <= threshold, threshold, createdAt: this.now().toISOString()
     };
-    this.database.setPrivateState(this.key, [...this.list(), comparison]);
+    this.database.setPrivateState(this.key, [...this.list(), comparison].slice(-200));
     return comparison;
   }
   list(): VisualComparison[] { return this.database.getPrivateState<VisualComparison[]>(this.key) ?? []; }
@@ -276,7 +276,7 @@ export class VisualValidator {
     const consoleErrors = diagnostics.filter((item) => item.kind === "console" && item.level === "error").length;
     const networkErrors = diagnostics.filter((item) => item.kind === "network" && item.level === "error").length;
     const result: VisualValidationResult = { ...comparison, suite: safeSegment(suiteValue, "Visual suite"), viewport, consoleErrors, networkErrors, passed: comparison.passed && (!gates.consoleErrors || consoleErrors === 0) && (!gates.networkErrors || networkErrors === 0), baselinePath: resolve(directory, "baseline.png"), actualPath, diffPath, diagnosticsPath };
-    this.database.setPrivateState(`${this.key}.results`, [...this.results(), result]);
+    this.database.setPrivateState(`${this.key}.results`, [...this.results(), result].slice(-200));
     return result;
   }
 

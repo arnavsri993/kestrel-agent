@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
@@ -83,6 +83,22 @@ describe("isolated browser automation and visual validation", () => {
     expect(validator.compare(baseline, actual, 0.4)).toMatchObject({ changedPixels: 1, differenceRatio: 0.5, passed: false });
     expect(validator.list()).toHaveLength(1);
     database.close();
+  });
+
+  it("bounds encrypted visual comparison and validation history", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const root = mkdtempSync(join(tmpdir(), "kestrel-visual-retention-"));
+    const validator = new VisualValidator(database, root);
+    const frame = { width: 1, height: 1, rgba: Uint8Array.from([0, 0, 0, 255]) };
+    const viewport = { name: "mobile", width: 320, height: 240 };
+    validator.baseline("homepage", viewport, frame);
+    for (let index = 0; index < 201; index += 1)
+      validator.validate("homepage", viewport, frame, []);
+
+    expect(validator.list()).toHaveLength(200);
+    expect(validator.results()).toHaveLength(200);
+    database.close();
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("persists responsive baseline, actual, diff, and diagnostics artifacts and gates browser errors", async () => {
