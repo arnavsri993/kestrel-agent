@@ -12,6 +12,7 @@ export class ProviderAuthMonitor {
   private initialTimer: NodeJS.Timeout | undefined;
   private intervalTimer: NodeJS.Timeout | undefined;
   private checking = false;
+  private generation = 0;
 
   constructor(private readonly options: ProviderAuthMonitorOptions) {}
 
@@ -29,6 +30,7 @@ export class ProviderAuthMonitor {
   }
 
   stop(): void {
+    this.generation += 1;
     if (this.initialTimer) clearTimeout(this.initialTimer);
     if (this.intervalTimer) clearInterval(this.intervalTimer);
     this.initialTimer = undefined;
@@ -37,17 +39,21 @@ export class ProviderAuthMonitor {
 
   async check(): Promise<ProviderVerification[]> {
     if (this.checking) return [];
+    const generation = this.generation;
     this.checking = true;
     try {
       const listed = await this.options.request({ type: "runtime-list-providers" });
+      if (generation !== this.generation) return [];
       if (!listed.ok) return [];
       const providers = (listed.providers ?? []).filter((provider) => provider.id !== "auto");
       const verifications: ProviderVerification[] = [];
       for (const provider of providers) {
         const response = await this.options.request({ type: "runtime-verify-provider", providerId: provider.id });
+        if (generation !== this.generation) return [];
         if (!response.ok) continue;
         verifications.push(...(response.providerVerifications ?? []));
       }
+      if (generation !== this.generation) return [];
       const observed = new Set<string>();
       for (const verification of verifications) {
         const key = verification.providerId;
