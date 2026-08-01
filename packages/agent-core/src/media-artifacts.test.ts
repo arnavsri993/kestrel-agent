@@ -27,6 +27,8 @@ describe("media artifact workflow", () => {
       OPENAI_API_KEY: "key",
       KESTREL_ALLOW_HOSTED_TRANSCRIPTION: "true",
     })?.id).toBe("openai-transcription");
+    expect(() => new OpenAiMediaProvider({ apiKey: "key", baseUrl: "not-a-url" })).toThrow("valid URL");
+    expect(() => new OpenAiTranscriptionProvider({ apiKey: "key", baseUrl: "not-a-url" })).toThrow("valid URL");
   });
 
   it("approval-gates generation, writes verified bytes, and records provenance privately", async () => {
