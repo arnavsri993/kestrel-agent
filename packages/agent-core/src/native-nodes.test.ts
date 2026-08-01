@@ -24,4 +24,17 @@ describe("native node manager", () => {
     expect(manager.setVoiceWake([])).toEqual(["openclaw", "claude", "computer"]);
     expect(() => manager.setVoiceWake(Array.from({ length: 33 }, (_, i) => `wake ${i}`))).toThrow("32");
   });
+
+  it("accepts a command result only from the node that received the command", () => {
+    const manager = new NativeNodeManager();
+    manager.beacon({ nodeId: "phone-1", label: "Phone 1", platform: "ios", capabilities: ["location"] });
+    manager.beacon({ nodeId: "phone-2", label: "Phone 2", platform: "ios", capabilities: ["location"] });
+    const command = manager.enqueueLocation("phone-1", {});
+    manager.poll("phone-1");
+
+    expect(() => manager.complete("phone-2", { commandId: command.id, ok: true, output: {} })).toThrow("does not belong");
+    manager.complete("phone-1", { commandId: command.id, ok: true, output: {} });
+    expect(manager.result(command.id)).toMatchObject({ ok: true });
+    expect(() => manager.complete("phone-1", { commandId: command.id, ok: true, output: {} })).toThrow("does not belong");
+  });
 });
