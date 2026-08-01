@@ -268,15 +268,19 @@ export class CodexAppServerProvider {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
-    child.stdout.on("data", (chunk: Buffer) => this.readStdout(chunk));
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (this.child === child) this.readStdout(chunk);
+    });
     child.stderr.on("data", (chunk: Buffer) => {
+      if (this.child !== child) return;
       this.stderrTail = (this.stderrTail + chunk.toString("utf8")).slice(
         -MAX_STDERR_BYTES,
       );
     });
-    child.once("error", (error) => this.processEnded(error));
+    child.once("error", (error) => this.processEnded(child, error));
     child.once("close", (code, signal) => {
       this.processEnded(
+        child,
         new Error(
           `Codex app-server exited ${
             signal ? `on ${signal}` : `with code ${code ?? "unknown"}`
@@ -284,23 +288,36 @@ export class CodexAppServerProvider {
         ),
       );
     });
-    await new Promise<void>((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
-    });
-    await this.request("initialize", {
-      clientInfo: {
-        name: "kestrel_desktop",
-        title: "Kestrel Desktop",
-        version: "0.1.0",
-      },
-      capabilities: null,
-    });
-    this.notify("initialized", {});
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
+      });
+      await this.request("initialize", {
+        clientInfo: {
+          name: "kestrel_desktop",
+          title: "Kestrel Desktop",
+          version: "0.1.0",
+        },
+        capabilities: null,
+      });
+      this.notify("initialized", {});
+    } catch (error) {
+      // Do not let a live but uninitialized child block the next retry.
+      if (this.child === child) {
+        this.child = undefined;
+        if (child.exitCode === null) child.kill("SIGTERM");
+      }
+      throw error;
+    }
   }
 
-  private processEnded(error: Error): void {
-    if (this.child?.exitCode !== null) this.child = undefined;
+  private processEnded(
+    child: ChildProcessWithoutNullStreams,
+    error: Error,
+  ): void {
+    if (this.child !== child) return;
+    this.child = undefined;
     this.failAll(error);
     if (!this.closing) this.startPromise = undefined;
   }
