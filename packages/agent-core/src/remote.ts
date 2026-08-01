@@ -220,11 +220,21 @@ export class RemoteControl {
       this.database.setPrivateState(this.pairingKey, pairings);
       throw new Error("Remote pairing code is invalid.");
     }
-    pairings[index] = { ...pairing, status: "used" };
-    this.database.setPrivateState(this.pairingKey, pairings);
     const token = randomBytes(32).toString("base64url");
     const device: DeviceRecord = { id: `device-${randomUUID()}`, label: pairing.label, tokenHash: digest(token), scopes: pairing.scopes, createdAt: this.now().toISOString() };
-    this.database.setPrivateState(this.devicesKey, [...this.devices(), device]);
+    const devices = this.devices();
+    this.database.setPrivateState(this.devicesKey, [...devices, device]);
+    pairings[index] = { ...pairing, status: "used" };
+    try {
+      this.database.setPrivateState(this.pairingKey, pairings);
+    } catch (error) {
+      try {
+        this.database.setPrivateState(this.devicesKey, devices);
+      } catch {
+        // Preserve the original pairing persistence error if rollback fails.
+      }
+      throw error;
+    }
     return { deviceId: device.id, token, scopes: device.scopes };
   }
 
