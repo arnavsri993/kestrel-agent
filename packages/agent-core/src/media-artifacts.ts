@@ -209,6 +209,7 @@ export class ArtifactManager {
     },
     signal: AbortSignal,
   ): Promise<ArtifactRecord> {
+    signal.throwIfAborted();
     const provider = this.providers.get(input.providerId);
     if (!provider)
       throw new Error(`Media provider ${input.providerId} is not configured.`);
@@ -223,6 +224,7 @@ export class ArtifactManager {
       ...(input.format ? { format: input.format } : {}),
       signal,
     });
+    signal.throwIfAborted();
     const maximum = input.maximumBytes ?? 100_000_000;
     if (generated.data.byteLength === 0 || generated.data.byteLength > maximum)
       throw new Error("Generated artifact violates the byte limit.");
