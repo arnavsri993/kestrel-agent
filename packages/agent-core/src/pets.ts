@@ -10,7 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import sharp from "sharp";
 import type { KestrelDatabase } from "@kestrel/database";
 import {
@@ -39,6 +39,20 @@ type Fetcher = (
 
 function within(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${sep}`);
+}
+
+function writePetAssetAtomically(destination: string, data: Uint8Array): void {
+  const temporary = join(dirname(destination), `.sprite-${randomUUID()}.partial`);
+  try {
+    writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
+    renameSync(temporary, destination);
+  } finally {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {
+      // The rename normally consumes the temporary path.
+    }
+  }
 }
 
 function checkedAssetUrl(
@@ -308,37 +322,55 @@ export class PetManager {
     }
     const safeMetadata = metadata(parsedMetadata, entry);
     const directory = this.petDirectory(slug);
+    const assetPath = this.assetPath(slug);
+    const directoryExisted = existsSync(directory);
     if (
-      existsSync(directory) &&
+      directoryExisted &&
       (!lstatSync(directory).isDirectory() ||
         lstatSync(directory).isSymbolicLink())
     )
       throw new Error("Pet destination is unsafe.");
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const temporary = join(directory, `.sprite-${randomUUID()}.partial`);
-    writeFileSync(temporary, sprite, { mode: 0o600, flag: "wx" });
-    renameSync(temporary, this.assetPath(slug));
-    const installed = InstalledPetSchema.parse({
-      slug,
-      displayName: safeMetadata.displayName,
-      description: safeMetadata.description,
-      kind: entry.kind,
-      submittedBy: entry.submittedBy,
-      sha256: createHash("sha256").update(sprite).digest("hex"),
-      bytes: sprite.byteLength,
-      ...dimensions,
-      installedAt: this.now().toISOString(),
-    });
-    const records = [
-      ...this.installed().filter((pet) => pet.slug !== slug),
-      installed,
-    ];
-    const current = this.configuration();
-    this.persist(
-      select ? { ...current, enabled: true, selectedSlug: slug } : current,
-      records,
-    );
-    return this.status();
+    if (!existing && existsSync(assetPath))
+      throw new Error("Pet destination is occupied.");
+    const previousAsset = existing ? readFileSync(assetPath) : undefined;
+    let persisted = false;
+    try {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      writePetAssetAtomically(assetPath, sprite);
+      const installed = InstalledPetSchema.parse({
+        slug,
+        displayName: safeMetadata.displayName,
+        description: safeMetadata.description,
+        kind: entry.kind,
+        submittedBy: entry.submittedBy,
+        sha256: createHash("sha256").update(sprite).digest("hex"),
+        bytes: sprite.byteLength,
+        ...dimensions,
+        installedAt: this.now().toISOString(),
+      });
+      const records = [
+        ...this.installed().filter((pet) => pet.slug !== slug),
+        installed,
+      ];
+      const current = this.configuration();
+      this.persist(
+        select ? { ...current, enabled: true, selectedSlug: slug } : current,
+        records,
+      );
+      persisted = true;
+      return this.status();
+    } catch (error) {
+      if (!persisted) {
+        try {
+          if (previousAsset) writePetAssetAtomically(assetPath, previousAsset);
+          else if (directoryExisted) rmSync(assetPath, { force: true });
+          else rmSync(directory, { recursive: true, force: true });
+        } catch {
+          // Preserve the original persistence error if rollback also fails.
+        }
+      }
+      throw error;
+    }
   }
 
   installGenerated(input: {
