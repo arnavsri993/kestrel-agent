@@ -54,7 +54,12 @@ function safeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 function safeAuthUrl(raw: string): string {
-  const url = new URL(raw);
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("Codex returned an unexpected ChatGPT sign-in URL.");
+  }
   const allowedHost =
     url.hostname === "chatgpt.com" ||
     url.hostname.endsWith(".chatgpt.com") ||
