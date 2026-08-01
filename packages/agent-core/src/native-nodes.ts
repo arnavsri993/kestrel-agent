@@ -78,7 +78,7 @@ export class NativeNodeManager {
 
   list(): NativeNodeRecord[] {
     const cutoff = this.now().getTime() - 300_000;
-    for (const [id, node] of this.nodes) if (new Date(node.lastSeenAt).getTime() < cutoff) this.nodes.delete(id);
+    for (const [id, node] of this.nodes) if (new Date(node.lastSeenAt).getTime() <= cutoff) this.nodes.delete(id);
     return [...this.nodes.values()].map((node) => ({ ...node, status: (node.idleSeconds ?? 0) >= 60 ? "idle" as const : "active" as const }));
   }
 
