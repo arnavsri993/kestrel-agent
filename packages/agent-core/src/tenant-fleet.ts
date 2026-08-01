@@ -1,8 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { chmod, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+
+const MAX_REGISTRY_BYTES = 1_000_000;
 
 export interface TenantCell {
   tenant: string;
@@ -39,6 +41,7 @@ export class TenantFleet {
 
   async list(): Promise<TenantCell[]> {
     try {
+      if ((await stat(this.registryPath)).size > MAX_REGISTRY_BYTES) throw new Error("Tenant fleet registry exceeds 1 MB.");
       const parsed = JSON.parse(await readFile(this.registryPath, "utf8")) as TenantCell[];
       return Array.isArray(parsed) ? parsed : [];
     } catch (error) {
