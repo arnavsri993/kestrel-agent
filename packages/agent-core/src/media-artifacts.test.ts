@@ -178,6 +178,26 @@ describe("media artifact workflow", () => {
     ).toContain("local-markdown");
   });
 
+  it("bounds OpenAI transcription response bodies before parsing them", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ text: "safe" })));
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    const provider = new OpenAiTranscriptionProvider({
+      apiKey: "voice-secret",
+      fetcher: async () => new Response(body, { status: 200, headers: { "content-length": "2000001", "content-type": "application/json" } })
+    });
+
+    await expect(provider.transcribe({ data: Uint8Array.from([1]), mediaType: "audio/wav", signal: new AbortController().signal })).rejects.toThrow("OpenAI transcription response exceeds 2 MB");
+    expect(cancelled).toBe(true);
+  });
+
   it("creates retained opaque-origin widgets through an approval-gated tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-widgets-"));
     directories.push(root);
