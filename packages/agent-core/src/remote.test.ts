@@ -79,6 +79,22 @@ describe("remote backends and scoped supervision", () => {
     } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; rmSync(root, { recursive: true, force: true }); }
   });
 
+  it("does not spawn a CLI when execution is already cancelled", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-remote-abort-")); const bin = join(root, "bin");
+    await import("node:fs/promises").then(({ mkdir }) => mkdir(bin));
+    const executable = join(bin, "docker");
+    writeFileSync(executable, "#!/bin/sh\nprintf spawned > \"$0.spawned\"\n"); chmodSync(executable, 0o700);
+    const previousPath = process.env.PATH; process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    const controller = new AbortController(); controller.abort(new Error("already cancelled"));
+    try {
+      await expect(new DockerCliRemoteBackend().execute({
+        target: { id: "container", kind: "docker", backendId: "docker-cli", allowedCommands: ["node"], enabled: true, configuration: { image: "node:24" } },
+        command: "node", args: [], timeoutMs: 5_000, signal: controller.signal,
+      })).rejects.toThrow("already cancelled");
+      expect(existsSync(`${executable}.spawned`)).toBe(false);
+    } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; rmSync(root, { recursive: true, force: true }); }
+  });
+
   it("uses authenticated HTTPS serverless execution and stores only hash-verified artifacts", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-artifacts-"));
     const database = new KestrelDatabase(":memory:", createEncryptionKey()); const bytes = Buffer.from("verified remote artifact"); const sha256 = createHash("sha256").update(bytes).digest("hex");
