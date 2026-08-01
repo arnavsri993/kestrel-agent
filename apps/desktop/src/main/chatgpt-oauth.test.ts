@@ -90,4 +90,15 @@ describe("ChatGPT OAuth through Codex", () => {
     ).toEqual({ type: "chatgpt" });
     expect(records.every((record) => record.leaked === null)).toBe(true);
   });
+
+  it("preserves child write failures instead of reporting cancellation", async () => {
+    const manager = new ChatGptOAuthManager({ executable: "unused", openExternal: async () => undefined });
+    const internals = manager as unknown as {
+      child: { exitCode: null; stdin: { write(value: string): void } };
+      request(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+    };
+    internals.child = { exitCode: null, stdin: { write: () => { throw new Error("pipe closed"); } } };
+
+    await expect(internals.request("account/read", {})).rejects.toThrow("pipe closed");
+  });
 });
