@@ -164,4 +164,16 @@ describe("SandboxedCommandRunner", () => {
 
     await expect(handle.completion).rejects.toThrow("aborted manually");
   });
+
+  it("does not spawn when the command is already cancelled", async () => {
+    vi.mocked(fs.accessSync).mockImplementation(() => {});
+    const controller = new AbortController();
+    controller.abort(new Error("already cancelled"));
+
+    const handle = runner.start(defaultInput, { signal: controller.signal, onProgress: vi.fn() });
+
+    expect(child_process.spawn).not.toHaveBeenCalled();
+    expect(handle.snapshot()).toMatchObject({ running: false, stdout: "", stderr: "" });
+    await expect(handle.completion).rejects.toThrow("already cancelled");
+  });
 });

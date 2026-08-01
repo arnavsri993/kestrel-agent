@@ -91,6 +91,24 @@ function sandboxProfile(root: string, mode: SandboxedCommandInput["mode"]): stri
   return `(version 1) (allow default) ${mode === "workspace_write" ? "(deny network*)" : ""} ${userReadBoundary} (deny file-write* (require-all (require-not (subpath "${escapedRoot}")) (require-not (literal "/dev/null")) (require-not (literal "/dev/ptmx")) ${ptyDevices}))`;
 }
 
+function cancelledHandle(signal: AbortSignal): SandboxedCommandHandle {
+  const completion = Promise.reject<SandboxedCommandResult>(
+    signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Command execution was cancelled."),
+  );
+  void completion.catch(() => undefined);
+  return {
+    pid: 0,
+    completion,
+    write: () => {
+      throw new Error("Background process is no longer running.");
+    },
+    stop: () => undefined,
+    snapshot: () => ({ running: false, stdout: "", stderr: "", durationMs: 0 }),
+  };
+}
+
 export class SandboxedCommandRunner {
   start(
     input: SandboxedCommandInput,
@@ -101,6 +119,7 @@ export class SandboxedCommandRunner {
     const startedAt = Date.now();
     const profile = sandboxProfile(input.workspaceRoot, input.mode);
     const launch = options.interactive ? [resolveExecutable("python3"), "-u", "-c", ptyBridge, executable, ...input.args] : [executable, ...input.args];
+    if (options.signal?.aborted) return cancelledHandle(options.signal);
     const child = spawn("/usr/bin/sandbox-exec", ["-p", profile, ...launch], {
       cwd: input.cwd,
       env: {
