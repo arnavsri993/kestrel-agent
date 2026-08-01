@@ -205,13 +205,23 @@ export class HonchoMemoryProvider {
       throw new Error(
         "Save a protected Honcho API key before enabling the managed cloud service.",
       );
-    this.database.setPrivateState(this.configurationKey, configuration);
+    const priorState = this.storedState();
     const {
       lastError: _lastError,
       lastVerifiedAt: _lastVerifiedAt,
       ...remainingState
-    } = this.storedState();
+    } = priorState;
     this.database.setPrivateState(this.stateKey, remainingState);
+    try {
+      this.database.setPrivateState(this.configurationKey, configuration);
+    } catch (error) {
+      try {
+        this.database.setPrivateState(this.stateKey, priorState);
+      } catch {
+        // Preserve the original configuration persistence error if rollback fails.
+      }
+      throw error;
+    }
     this.clientCache = undefined;
     this.sessionCache.clear();
     return this.status();
