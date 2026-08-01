@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -20,6 +20,7 @@ const execFileAsync = promisify(execFile);
 const CONFIGURATION_SECRET_ID = "external-secret-configuration";
 const ONEPASSWORD_TOKEN_SECRET_ID = "external-secret-onepassword-token";
 const BITWARDEN_TOKEN_SECRET_ID = "external-secret-bitwarden-token";
+const MAX_MANAGED_TOOL_MARKER_BYTES = 64_000;
 
 const BWS_MANIFEST = {
   version: "2.0.0",
@@ -443,7 +444,11 @@ export class ExternalSecretManager {
 
   private async hasManagedBitwarden(): Promise<boolean> {
     try {
-      const marker = JSON.parse(await readFile(join(this.managedBitwardenRoot(), "workstrand-install.json"), "utf8")) as Record<string, unknown>;
+      const markerPath = join(this.managedBitwardenRoot(), "workstrand-install.json");
+      if ((await stat(markerPath)).size > MAX_MANAGED_TOOL_MARKER_BYTES) return false;
+      const contents = await readFile(markerPath, "utf8");
+      if (Buffer.byteLength(contents, "utf8") > MAX_MANAGED_TOOL_MARKER_BYTES) return false;
+      const marker = JSON.parse(contents) as Record<string, unknown>;
       const binary = await lstat(this.managedBitwardenPath());
       return binary.isFile() && (binary.mode & 0o111) !== 0 && marker.version === BWS_MANIFEST.version && marker.sha256 === BWS_MANIFEST.sha256;
     } catch {
