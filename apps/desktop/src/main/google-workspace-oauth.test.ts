@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialBroker } from "./credential-broker";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
 
@@ -74,5 +74,51 @@ describe("Google Workspace desktop OAuth", () => {
     const { broker } = fixture();
     const manager = new GoogleWorkspaceOAuthManager({ broker, openExternal: async () => {} });
     await expect(manager.connect("not-a-desktop-client")).rejects.toThrow("Desktop app");
+  });
+
+  it("cancels while the external browser launch is still pending", async () => {
+    const { broker } = fixture();
+    const controller = new AbortController();
+    const openExternal = vi.fn(() => new Promise<void>(() => undefined));
+    const manager = new GoogleWorkspaceOAuthManager({ broker, openExternal });
+    const running = manager.connect("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com", controller.signal);
+
+    await vi.waitFor(() => expect(openExternal).toHaveBeenCalledOnce());
+    controller.abort(new Error("cancelled while opening browser"));
+
+    await expect(running).rejects.toThrow("cancelled while opening browser");
+  });
+
+  it("passes cancellation through token exchange before credentials are stored", async () => {
+    const { broker } = fixture();
+    const controller = new AbortController();
+    let tokenSignal: AbortSignal | null | undefined;
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input) === "https://oauth2.googleapis.com/token") {
+        tokenSignal = init?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("cancelled")), { once: true });
+        });
+      }
+      return fetch(input, init);
+    };
+    const manager = new GoogleWorkspaceOAuthManager({
+      broker,
+      fetcher,
+      openExternal: async (url) => {
+        const authorization = new URL(url);
+        const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+        callback.searchParams.set("state", authorization.searchParams.get("state")!);
+        callback.searchParams.set("code", "one-time-code");
+        await fetch(callback);
+      }
+    });
+    const running = manager.connect("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com", controller.signal);
+
+    await vi.waitFor(() => expect(tokenSignal).toBe(controller.signal));
+    controller.abort(new Error("cancelled during token exchange"));
+
+    await expect(running).rejects.toThrow("cancelled during token exchange");
+    await expect(broker.getOpaqueSecret("google-workspace-oauth")).resolves.toBeUndefined();
   });
 });
