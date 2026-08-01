@@ -41,4 +41,12 @@ describe("plugin publisher trust store", () => {
     writeFileSync(document, JSON.stringify({ keyId: "publisher.test", publicKey: second.export({ type: "spki", format: "pem" }).toString() }));
     await expect(store.importDocument(document)).rejects.toThrow("different key");
   });
+
+  it("rejects oversized persisted trust state before reading its contents", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-plugin-trust-state-large-"));
+    directories.push(root);
+    writeFileSync(join(root, "trust.json"), Buffer.alloc(1_000_001));
+
+    await expect(new PluginTrustStore(join(root, "trust.json")).list()).rejects.toThrow("trust store exceeds 1 MB");
+  });
 });
