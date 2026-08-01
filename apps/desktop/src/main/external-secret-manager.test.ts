@@ -159,6 +159,31 @@ describe("external secret manager", () => {
     expect(safeExternalSecretArchiveEntries("bws\n")).toEqual(["bws"]);
   });
 
+  it("cancels and releases an oversized managed Bitwarden download", async () => {
+    const item = fixture();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(12_371_244));
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    const response = new Response(body);
+    const manager = new ExternalSecretManager(item.root, item.broker, {
+      platform: "darwin",
+      architecture: "arm64",
+      fetch: async () => response
+    });
+
+    await expect(manager.installBitwarden()).rejects.toThrow("exceeded the pinned size");
+    expect(cancelled).toBe(true);
+    const reader = response.body?.getReader();
+    expect(reader).toBeDefined();
+    reader?.releaseLock();
+  });
+
   it("removes provider configuration and its encrypted bootstrap token without touching other sources", async () => {
     const item = fixture();
     const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
