@@ -45,6 +45,7 @@ const relevantNames = new Map<string, MigrationCategory>([
   ["config.toml", "settings"], ["config.yaml", "settings"], ["config.yml", "settings"],
   ["SKILL.md", "skill"]
 ]);
+const MAX_MIGRATION_FILE_BYTES = 1_000_000;
 
 function contained(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${sep}`);
@@ -150,7 +151,7 @@ export class MigrationManager {
         const category = categoryFor(canonical);
         if (!category) continue;
         const size = statSync(canonical).size;
-        if (size > 1_000_000) {
+        if (size > MAX_MIGRATION_FILE_BYTES) {
           warnings.push(`${source.product}: skipped ${relative(root, canonical)} because it exceeds 1 MB.`);
           continue;
         }
@@ -193,7 +194,10 @@ export class MigrationManager {
       if (!contained(sourceRoot, source)) throw new Error("Migration source escaped its declared root.");
       const destination = resolve(target, item.destinationPath);
       if (!contained(target, destination)) throw new Error("Migration destination escaped its target root.");
+      const sourceMetadata = statSync(source);
+      if (!sourceMetadata.isFile() || sourceMetadata.size > MAX_MIGRATION_FILE_BYTES) throw new Error(`Migration source changed after planning: ${item.sourcePath}`);
       const data = readFileSync(source);
+      if (data.byteLength > MAX_MIGRATION_FILE_BYTES) throw new Error(`Migration source changed after planning: ${item.sourcePath}`);
       const checksum = createHash("sha256").update(data).digest("hex");
       if (checksum !== item.sha256) throw new Error(`Migration source changed after planning: ${item.sourcePath}`);
       if (existsSync(destination) && !options.overwrite) {
