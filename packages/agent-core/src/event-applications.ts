@@ -66,7 +66,13 @@ export class EventApplicationManager {
     const current = applications[index]!;
     if (patch.answers && (patch.answers.length > 100 || patch.answers.some((answer) => !answer.id || answer.label.length > 300 || answer.value.length > 20_000 || !["public", "personal", "sensitive"].includes(answer.sensitivity)))) throw new Error("Event application answers are invalid.");
     if (patch.eligibility && (patch.eligibility.length > 100 || patch.eligibility.some((item) => !item.id || item.label.length > 500 || (item.evidence?.length ?? 0) > 2_000))) throw new Error("Event eligibility is invalid.");
+    const contentChanged = patch.answers !== undefined || patch.eligibility !== undefined;
+    if (contentChanged && current.status === "submitted") throw new Error("Submitted event applications cannot be edited.");
     const next: EventApplication = { ...current, ...patch, updatedAt: this.now().toISOString() };
+    if (contentChanged && current.status === "approved" && patch.status === undefined) {
+      next.status = "ready";
+      delete next.approvedAt;
+    }
     if (patch.status && patch.status !== "approved") delete next.approvedAt;
     if (patch.status === "approved") {
       const unresolved = (patch.eligibility ?? current.eligibility).some((item) => item.met !== true);
