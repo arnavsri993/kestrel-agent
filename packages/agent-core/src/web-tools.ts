@@ -137,11 +137,13 @@ export class NetworkPolicyWebClient {
   }
 
   async search(query: string, maximumResults: number, signal: AbortSignal): Promise<{ results: WebSearchResult[]; trust: "untrusted_external"; cached: boolean }> {
+    signal.throwIfAborted();
     if (!this.options.searchProvider) throw new Error("Web search provider is not configured.");
     const cacheKey = `search:${createHash("sha256").update(`${query}\0${maximumResults}`).digest("hex")}`;
     const cached = this.options.cache?.get<{ results: WebSearchResult[]; trust: "untrusted_external"; cached: boolean }>(cacheKey);
     if (cached) return { ...cached, cached: true };
     const results = await this.options.searchProvider.search(query, { maximumResults, signal });
+    signal.throwIfAborted();
     const retrievedAt = this.now().toISOString();
     const validated: WebSearchResult[] = await Promise.all(
       results.slice(0, maximumResults).map(async (result) => {
@@ -150,6 +152,7 @@ export class NetworkPolicyWebClient {
         return { title, url, snippet: result.snippet.slice(0, 2_000), citation: { title, url, retrievedAt } };
       })
     );
+    signal.throwIfAborted();
     const output = { results: validated, trust: "untrusted_external" as const, cached: false };
     this.options.cache?.set(cacheKey, output, this.options.cacheTtlMs ?? 15 * 60_000);
     return output;
