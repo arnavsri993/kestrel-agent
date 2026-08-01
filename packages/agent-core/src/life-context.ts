@@ -226,25 +226,27 @@ export class LifeContextService {
         updatedAt: timestamp,
       })),
     };
-    this.database.upsertPerson(deleted);
-    for (const memory of this.memory.list()) {
-      if (
-        memory.entityIds.includes(id) ||
-        (memory.relatedPersonIds ?? []).includes(id)
-      )
-        this.memory.forget(memory.id);
-    }
-    for (const event of this.database.listCalendarEvents()) {
-      if (!event.relatedPersonIds.includes(id)) continue;
-      this.database.upsertCalendarEvent({
-        ...event,
-        relatedPersonIds: event.relatedPersonIds.filter(
-          (personId) => personId !== id,
-        ),
-        updatedAt: timestamp,
-      });
-    }
-    return deleted;
+    return this.database.db.transaction(() => {
+      this.database.upsertPerson(deleted);
+      for (const memory of this.memory.list()) {
+        if (
+          memory.entityIds.includes(id) ||
+          (memory.relatedPersonIds ?? []).includes(id)
+        )
+          this.memory.forget(memory.id);
+      }
+      for (const event of this.database.listCalendarEvents()) {
+        if (!event.relatedPersonIds.includes(id)) continue;
+        this.database.upsertCalendarEvent({
+          ...event,
+          relatedPersonIds: event.relatedPersonIds.filter(
+            (personId) => personId !== id,
+          ),
+          updatedAt: timestamp,
+        });
+      }
+      return deleted;
+    })();
   }
 
   listCalendar(startsAt: string, endsAt: string): UnifiedCalendarEvent[] {
