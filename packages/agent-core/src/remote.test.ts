@@ -69,6 +69,9 @@ describe("remote backends and scoped supervision", () => {
     const previousPath = process.env.PATH; process.env.PATH = `${bin}:${previousPath ?? ""}`;
     try {
       const signal = new AbortController().signal;
+      const preAborted = new AbortController();
+      preAborted.abort(new Error("remote request was already cancelled"));
+      await expect(new SshCliRemoteBackend().execute({ target: { id: "host", kind: "ssh", backendId: "ssh-cli", allowedCommands: ["git"], enabled: true, configuration: { host: "build.example.com" } }, command: "git", args: ["status"], timeoutMs: 5_000, signal: preAborted.signal })).rejects.toThrow("already cancelled");
       const docker = await new DockerCliRemoteBackend().execute({ target: { id: "container", kind: "docker", backendId: "docker-cli", allowedCommands: ["node"], enabled: true, configuration: { image: "node:24", workspaceRoot: root } }, command: "node", args: ["--version"], timeoutMs: 5_000, signal });
       expect(docker.stdout).toContain("--network\nnone\nnode:24\nnode\n--version");
       expect(docker.stdout).toContain(`type=bind,src=${realpathSync(root)},dst=/workspace`);

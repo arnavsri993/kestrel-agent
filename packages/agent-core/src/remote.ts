@@ -22,6 +22,10 @@ interface ProcessResult { exitCode: number; stdout: string; stderr: string; }
 
 async function runBounded(executable: string, args: string[], timeoutMs: number, signal: AbortSignal, onOutput?: (stream: "stdout" | "stderr", chunk: string) => void): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new Error("Remote execution cancelled."));
+      return;
+    }
     const environment = Object.fromEntries(["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "SSH_AUTH_SOCK", "KUBECONFIG", "DOCKER_HOST", "DOCKER_CONTEXT"].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]));
     const child = spawn(executable, args, { shell: false, stdio: ["ignore", "pipe", "pipe"], env: environment });
     const stdout: Buffer[] = []; const stderr: Buffer[] = []; let stdoutBytes = 0; let stderrBytes = 0; let settled = false;
