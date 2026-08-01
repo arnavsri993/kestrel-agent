@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { readBoundedResponseBytes } from "../bounded-http";
 import { providerFetch } from "./http";
 import { ModelProviderError, contentText, type ModelCallOptions, type ModelContentPart, type ModelFinishReason, type ModelMessage, type ModelProvider, type ModelRequest, type ModelResult, type ModelToolCall } from "./types";
+
+const MAX_GEMINI_RESPONSE_BYTES = 16_000_000;
 
 export interface GeminiGenerateContentProviderOptions {
   apiKey: string;
@@ -62,8 +65,14 @@ export class GeminiGenerateContentProvider implements ModelProvider {
     const model = encodeURIComponent(request.model || this.defaultModel);
     const response = await providerFetch(this.id, `${this.baseUrl}/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": this.options.apiKey, "content-type": "application/json" }, body: JSON.stringify(body), ...(options.signal ? { signal: options.signal } : {}) });
     let payload: Record<string, unknown>;
-    try { payload = await response.json() as Record<string, unknown>; }
-    catch { throw new ModelProviderError("Gemini returned malformed JSON.", this.id, false); }
+    try {
+      const bytes = await readBoundedResponseBytes(response, MAX_GEMINI_RESPONSE_BYTES, "Gemini response exceeds 16 MB.");
+      payload = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+    } catch (error) {
+      if (error instanceof Error && error.message === "Gemini response exceeds 16 MB.")
+        throw new ModelProviderError(error.message, this.id, false, response.status);
+      throw new ModelProviderError("Gemini returned malformed JSON.", this.id, false);
+    }
     const candidate = Array.isArray(payload.candidates) ? payload.candidates[0] as Record<string, unknown> | undefined : undefined;
     const candidateContent = candidate?.content as Record<string, unknown> | undefined;
     const responseParts = Array.isArray(candidateContent?.parts) ? candidateContent.parts as Array<Record<string, unknown>> : [];
