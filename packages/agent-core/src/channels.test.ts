@@ -130,6 +130,32 @@ describe("authenticated channel gateway", () => {
     expect(requests.every((request) => request.authorization.includes("token"))).toBe(true);
   });
 
+  it("rejects cancelled native actions before loading credentials or making requests", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("native action cancelled before start"));
+    let tokenCalls = 0;
+    let requestCalls = 0;
+    const adapter = new NativeChannelAdapter({
+      id: "cancelled-native",
+      kind: "discord",
+      tokenProvider: async () => {
+        tokenCalls += 1;
+        return "discord-token";
+      },
+      fetcher: async () => {
+        requestCalls += 1;
+        return new Response(null, { status: 204 });
+      },
+    });
+
+    await expect(adapter.send({ conversationId: "room", text: "Hello", idempotencyKey: "cancelled-send", signal: controller.signal })).rejects.toThrow("native action cancelled before start");
+    await expect(adapter.edit!({ conversationId: "room", externalId: "message", text: "Updated", signal: controller.signal })).rejects.toThrow("native action cancelled before start");
+    await expect(adapter.typing!({ conversationId: "room", signal: controller.signal })).rejects.toThrow("native action cancelled before start");
+    await expect(adapter.react!({ conversationId: "room", externalId: "message", emoji: "thumbsup", remove: false, signal: controller.signal })).rejects.toThrow("native action cancelled before start");
+    expect(tokenCalls).toBe(0);
+    expect(requestCalls).toBe(0);
+  });
+
   it("bounds every native provider JSON path before parsing or taking follow-up actions", async () => {
     const oversizedResponse = () => {
       const state = { pulls: 0, cancellations: 0 };
