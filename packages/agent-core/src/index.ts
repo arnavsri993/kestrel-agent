@@ -1047,8 +1047,8 @@ export class AgentCore {
 
   setPersonality(personalityId: string): WorkspaceSnapshot {
     this.personalities.get(personalityId);
-    this.selectedPersonalityId = personalityId;
     this.deps.database.setState("selectedPersonality", personalityId);
+    this.selectedPersonalityId = personalityId;
     return this.snapshot();
   }
 
