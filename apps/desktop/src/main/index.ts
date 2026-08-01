@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
@@ -52,6 +52,7 @@ import {
 import { ProviderAuthMonitor } from "./provider-auth-monitor";
 import { ExternalSecretManager } from "./external-secret-manager";
 import type { ResolvedExternalCredentials } from "./credential-broker";
+import { fileDigest } from "./file-digest";
 import { shouldCheckForUpdates, updaterFeedChannel } from "./update-channel";
 import {
   isTrustedRendererFrame,
@@ -295,12 +296,6 @@ async function subscriptionCliStatuses() {
     };
   }));
   return statuses;
-}
-
-async function fileDigest(path: string): Promise<string> {
-  return createHash("sha256")
-    .update(await readFile(path))
-    .digest("hex");
 }
 
 async function copyBackupEntry(
