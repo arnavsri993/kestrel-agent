@@ -202,6 +202,7 @@ export class RemoteControl {
   beginPairing(label: string, scopes: RemoteScope[], lifetimeMs = 300_000): { pairingId: string; code: string; expiresAt: string } {
     if (!label.trim() || scopes.length === 0) throw new Error("Remote pairing requires a label and scopes.");
     if (scopes.some((scope) => !["read", "tasks", "approve"].includes(scope))) throw new Error("Remote pairing scope is invalid.");
+    if (!Number.isFinite(lifetimeMs)) throw new Error("Remote pairing lifetime must be finite.");
     const code = randomBytes(6).toString("base64url");
     const pairing: PairingRecord = { id: `pair-${randomUUID()}`, label, codeHash: digest(code), scopes: [...new Set(scopes)], expiresAt: new Date(this.now().getTime() + Math.max(30_000, Math.min(lifetimeMs, 600_000))).toISOString(), attempts: 0, status: "pending" };
     this.database.setPrivateState(this.pairingKey, [...this.pairings(), pairing]);
