@@ -27,6 +27,13 @@ class LoopbackLanguageServer implements LanguageServerTransport {
   private emit(message: LspMessage): void { for (const listener of this.listeners) listener(message); }
 }
 
+class DiagnosticsFailureLanguageServer extends LoopbackLanguageServer {
+  send(message: LspMessage): Promise<void> {
+    if (message.method === "textDocument/didOpen") return Promise.reject(new Error("forced diagnostics notification failure"));
+    return super.send(message);
+  }
+}
+
 describe("language server code intelligence", () => {
   it("negotiates LSP and serves approval-gated diagnostics, definitions, and references", async () => {
     const transport = new LoopbackLanguageServer();
@@ -60,5 +67,14 @@ describe("language server code intelligence", () => {
       expect(await configured?.client.definition(pathToFileURL(join(root, "a.ts")).toString(), { line: 0, character: 0 })).toEqual([]);
       await configured?.client.close();
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("removes a diagnostics waiter when document notification fails", async () => {
+    const transport = new DiagnosticsFailureLanguageServer();
+    const client = new LanguageServerClient(transport);
+    await client.initialize("file:///project");
+    await expect(client.diagnostics({ uri: "file:///project/a.ts", languageId: "typescript", text: "bad" })).rejects.toThrow("forced diagnostics notification failure");
+    expect((client as unknown as { diagnosticsWaiters: Map<string, unknown[]> }).diagnosticsWaiters.size).toBe(0);
+    await client.close();
   });
 });
