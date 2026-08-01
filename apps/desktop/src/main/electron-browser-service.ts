@@ -30,6 +30,11 @@ function origin(value: string): string | undefined {
   } catch { return "invalid"; }
 }
 
+function abortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  return new Error(typeof signal.reason === "string" && signal.reason ? signal.reason : "Browser operation cancelled.");
+}
+
 export class ElectronBrowserService {
   private readonly sessions = new Map<string, BrowserRecord>();
 
@@ -112,7 +117,7 @@ export class ElectronBrowserService {
     signal.addEventListener("abort", abort, { once: true });
     try {
       await window.loadURL(url);
-      if (signal.aborted) throw signal.reason;
+      if (signal.aborted) throw abortError(signal);
     } finally { signal.removeEventListener("abort", abort); }
   }
 
@@ -166,10 +171,10 @@ export class ElectronBrowserService {
 
   private async act(id: string, action: BrowserAction, signal: AbortSignal): Promise<void> {
     const { window } = this.require(id);
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     if (action.type === "click") {
       const point = await this.targetPoint(window, action.target);
-      if (signal.aborted) throw signal.reason;
+      if (signal.aborted) throw abortError(signal);
       // BrowserWindow sessions stay hidden, so Electron's window-level input
       // dispatch can be dropped by a headless runner. CDP input dispatch keeps
       // the action semantic (real mouse events and default activation) without
@@ -177,12 +182,12 @@ export class ElectronBrowserService {
       if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
       const pointer = { x: point.x, y: point.y, modifiers: 0, pointerType: "mouse" };
       await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { ...pointer, type: "mouseMoved", button: "none", buttons: 0, clickCount: 0 });
-      if (signal.aborted) throw signal.reason;
+      if (signal.aborted) throw abortError(signal);
       let pressed = false;
       try {
         await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { ...pointer, type: "mousePressed", button: "left", buttons: 1, clickCount: 1 });
         pressed = true;
-        if (signal.aborted) throw signal.reason;
+        if (signal.aborted) throw abortError(signal);
         await window.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { ...pointer, type: "mouseReleased", button: "left", buttons: 0, clickCount: 1 });
         pressed = false;
       } finally {
@@ -195,7 +200,7 @@ export class ElectronBrowserService {
       await window.webContents.executeJavaScript("new Promise((resolve) => requestAnimationFrame(resolve))", true);
     } else if (action.type === "type") {
       await this.targetPoint(window, action.target, true);
-      if (signal.aborted) throw signal.reason;
+      if (signal.aborted) throw abortError(signal);
       window.webContents.insertText(action.text);
     } else if (action.type === "key") {
       if (!/^[A-Za-z0-9]{1,20}$/.test(action.key) && !["Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(action.key)) throw new Error("Browser key is not allowed.");
@@ -204,12 +209,12 @@ export class ElectronBrowserService {
     } else {
       window.webContents.sendInputEvent({ type: "mouseWheel", x: 0, y: 0, deltaX: Math.trunc(action.x), deltaY: Math.trunc(action.y), canScroll: true });
     }
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
   }
 
   private async snapshot(id: string, signal: AbortSignal): Promise<BrowserSnapshot> {
     const { window } = this.require(id);
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
     const result = await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree") as { nodes?: unknown[] };
     return { url: window.webContents.getURL(), title: window.webContents.getTitle(), accessibilityTree: { nodes: (result.nodes ?? []).slice(0, 5_000) } };
@@ -217,7 +222,7 @@ export class ElectronBrowserService {
 
   private async screenshot(id: string, signal: AbortSignal): Promise<ScreenshotFrame> {
     const { window } = this.require(id);
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     const image = await window.webContents.capturePage();
     const { width, height } = image.getSize();
     const bgra = image.toBitmap();
@@ -233,7 +238,7 @@ export class ElectronBrowserService {
 
   private async setViewport(id: string, viewport: BrowserViewport, signal: AbortSignal): Promise<void> {
     const { window } = this.require(id);
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     window.setContentSize(viewport.width, viewport.height, false);
     if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
     await window.webContents.debugger.sendCommand("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: viewport.height, deviceScaleFactor: viewport.deviceScaleFactor ?? 1, mobile: viewport.width < 768 });
@@ -241,20 +246,20 @@ export class ElectronBrowserService {
 
   private diagnostics(id: string, signal: AbortSignal): BrowserDiagnostic[] {
     const record = this.require(id);
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     return record.diagnostics.map((item) => ({ ...item }));
   }
 
   private authHandoff(id: string, visible: boolean, signal: AbortSignal): void {
     const { window } = this.require(id);
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     if (visible) { window.show(); window.focus(); }
     else window.hide();
   }
 
   private async upload(id: string, selector: string, paths: string[], signal: AbortSignal): Promise<void> {
     const { window } = this.require(id);
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
     const document = await window.webContents.debugger.sendCommand("DOM.getDocument", { depth: 0 }) as { root: { nodeId: number } };
     const selected = await window.webContents.debugger.sendCommand("DOM.querySelector", { nodeId: document.root.nodeId, selector }) as { nodeId: number };
@@ -264,12 +269,12 @@ export class ElectronBrowserService {
 
   private downloads(id: string, signal: AbortSignal): BrowserDownload[] {
     const record = this.require(id);
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     return record.downloads.map((download) => ({ ...download }));
   }
 
   private async desktopScreenshot(signal: AbortSignal): Promise<ScreenshotFrame> {
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     if (systemPreferences.getMediaAccessStatus("screen") === "denied") throw new Error("macOS Screen Recording permission is required for whole-desktop capture.");
     const displays = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 1920, height: 1080 }, fetchWindowIcons: false });
     const source = displays[0]; if (!source) throw new Error("No desktop display is available for capture.");
@@ -279,7 +284,7 @@ export class ElectronBrowserService {
   }
 
   private async desktopAct(action: DesktopAction, signal: AbortSignal): Promise<void> {
-    if (signal.aborted) throw signal.reason;
+    if (signal.aborted) throw abortError(signal);
     if (!systemPreferences.isTrustedAccessibilityClient(true)) throw new Error("macOS Accessibility permission is required for whole-desktop control.");
     const keyCodes: Record<Extract<DesktopAction, { type: "key" }>["key"], number> = { Enter: 36, Escape: 53, Tab: 48, Backspace: 51, ArrowUp: 126, ArrowDown: 125, ArrowLeft: 123, ArrowRight: 124 };
     const script = action.type === "click" ? `tell application "System Events" to click at {${action.x}, ${action.y}}` : action.type === "type" ? "tell application \"System Events\" to keystroke (system attribute \"KESTREL_COMPUTER_TEXT\")" : `tell application "System Events" to key code ${keyCodes[action.key]}`;
