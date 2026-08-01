@@ -186,4 +186,35 @@ describe("managed local runtime", () => {
     });
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
   });
+
+  it("cancels an oversized verification response before parsing it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    let cancelled = false;
+    const reader = {
+      read: async () => ({ done: false, value: { byteLength: 1_000_001 } as Uint8Array }),
+      cancel: async () => {
+        cancelled = true;
+      },
+      releaseLock: () => undefined,
+    };
+    const manifest = testManifest(new TextEncoder().encode("archive"));
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: async (input) => {
+        if (String(input).endsWith("/api/tags")) return Response.json({ models: [{ name: "qwen:test" }] });
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/json" }),
+          body: { getReader: () => reader },
+        } as unknown as Response;
+      },
+      platform: "darwin",
+      architecture: "arm64",
+      manifest,
+    });
+
+    await expect(manager.bootstrap("qwen:test")).rejects.toThrow("The local model verification response exceeds 1 MB.");
+    expect(cancelled).toBe(true);
+  });
 });

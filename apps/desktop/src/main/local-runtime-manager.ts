@@ -5,6 +5,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { once } from "node:events";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
+import { readBoundedResponseBytes } from "@kestrel/agent-core";
 import type { LocalModelSummary, LocalRuntimeProgress, LocalRuntimeStatus } from "@kestrel/shared-types";
 
 const execFileAsync = promisify(execFile);
@@ -436,7 +437,13 @@ export class LocalRuntimeManager {
       signal
     });
     if (!response.ok) throw new Error(`The local model verification returned ${response.status}.`);
-    const result = await response.json() as { done?: unknown; message?: { content?: unknown }; error?: unknown };
+    const bytes = await readBoundedResponseBytes(response, 1_000_000, "The local model verification response exceeds 1 MB.");
+    let result: { done?: unknown; message?: { content?: unknown }; error?: unknown };
+    try {
+      result = JSON.parse(new TextDecoder().decode(bytes)) as { done?: unknown; message?: { content?: unknown }; error?: unknown };
+    } catch {
+      throw new Error("The local model verification returned invalid JSON.");
+    }
     if (typeof result.error === "string") throw new Error(result.error);
     if (result.done !== true || typeof result.message?.content !== "string" || !result.message.content.trim()) {
       throw new Error("The local model started but did not complete a verification response.");
