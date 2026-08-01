@@ -53,6 +53,7 @@ function cleanTriggers(input: unknown): string[] {
 export class NativeNodeManager {
   private readonly nodes = new Map<string, Omit<NativeNodeRecord, "status">>();
   private readonly commands = new Map<string, NativeNodeCommand[]>();
+  private readonly issuedCommands = new Map<string, { nodeId: string; expiresAt: number }>();
   private readonly results = new Map<string, NativeNodeResult>();
   private triggers = DEFAULT_TRIGGERS;
 
@@ -77,8 +78,10 @@ export class NativeNodeManager {
   }
 
   list(): NativeNodeRecord[] {
-    const cutoff = this.now().getTime() - 300_000;
+    const now = this.now().getTime();
+    const cutoff = now - 300_000;
     for (const [id, node] of this.nodes) if (new Date(node.lastSeenAt).getTime() < cutoff) this.nodes.delete(id);
+    for (const [commandId, command] of this.issuedCommands) if (command.expiresAt <= now || !this.nodes.has(command.nodeId)) this.issuedCommands.delete(commandId);
     return [...this.nodes.values()].map((node) => ({ ...node, status: (node.idleSeconds ?? 0) >= 60 ? "idle" as const : "active" as const }));
   }
 
@@ -101,7 +104,9 @@ export class NativeNodeManager {
   poll(nodeId: string): { commands: NativeNodeCommand[]; voiceWake: string[] } {
     if (!this.nodes.has(nodeId)) throw new Error("Node must beacon before polling.");
     const now = this.now().getTime();
-    const pending = (this.commands.get(nodeId) ?? []).filter((command) => new Date(command.expiresAt).getTime() > now).slice(0, 20);
+    const queued = this.commands.get(nodeId) ?? [];
+    const pending = queued.filter((command) => new Date(command.expiresAt).getTime() > now).slice(0, 20);
+    for (const command of queued) if (new Date(command.expiresAt).getTime() <= now) this.issuedCommands.delete(command.id);
     this.commands.set(nodeId, []);
     return { commands: pending, voiceWake: [...this.triggers] };
   }
@@ -109,7 +114,10 @@ export class NativeNodeManager {
   complete(nodeId: string, result: NativeNodeResult): void {
     if (!this.nodes.has(nodeId)) throw new Error("Node is not registered.");
     if (!/^node-command-[A-Za-z0-9-]+$/.test(result.commandId)) throw new Error("Node command ID is invalid.");
+    const issued = this.issuedCommands.get(result.commandId);
+    if (!issued || issued.nodeId !== nodeId || issued.expiresAt <= this.now().getTime()) throw new Error("Node command is not assigned to this node or has expired.");
     if (JSON.stringify(result).length > 100_000) throw new Error("Node result exceeds limits.");
+    this.issuedCommands.delete(result.commandId);
     this.results.set(result.commandId, structuredClone(result));
     if (this.results.size > 500) this.results.delete(this.results.keys().next().value!);
   }
@@ -131,6 +139,7 @@ export class NativeNodeManager {
     if (pending.length >= 20) throw new Error("Node command queue is full.");
     pending.push(command);
     this.commands.set(nodeId, pending);
+    this.issuedCommands.set(command.id, { nodeId, expiresAt: new Date(command.expiresAt).getTime() });
     return command;
   }
 }
