@@ -55,7 +55,7 @@ export class PresenceManager {
   private prune(): void {
     const cutoff = this.now().getTime() - EXPIRE_AFTER_MS;
     for (const [instanceId, entry] of this.entries) {
-      if (new Date(entry.lastSeenAt).getTime() < cutoff) this.entries.delete(instanceId);
+      if (new Date(entry.lastSeenAt).getTime() <= cutoff) this.entries.delete(instanceId);
     }
   }
 }

@@ -13,7 +13,7 @@ describe("ephemeral client presence", () => {
 
     now = new Date("2026-07-23T10:01:31.000Z");
     expect(presence.list()[0]?.status).toBe("idle");
-    now = new Date("2026-07-23T10:05:31.000Z");
+    now = new Date("2026-07-23T10:05:30.000Z");
     expect(presence.list()).toEqual([]);
   });
 
