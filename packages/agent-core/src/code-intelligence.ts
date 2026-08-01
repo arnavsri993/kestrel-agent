@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
+import { readBoundedFile } from "./bounded-file";
 import type { AgentRuntime } from "./runtime";
 
 export type LspMessage = { jsonrpc: "2.0"; id?: number; method?: string; params?: unknown; result?: unknown; error?: { code: number; message: string } };
@@ -87,7 +88,10 @@ export async function environmentLanguageServerClient(environment: NodeJS.Proces
   if (!path) return undefined;
   const metadata = lstatSync(path);
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 1_000_000 || (metadata.mode & 0o077) !== 0) throw new Error("KESTREL_LSP_CONFIG must be an owner-only regular file no larger than 1 MB.");
-  const parsed = JSON.parse(readFileSync(realpathSync(path), "utf8")) as Record<string, unknown>;
+  const resolved = realpathSync(path);
+  const resolvedMetadata = lstatSync(resolved);
+  if (!resolvedMetadata.isFile() || resolvedMetadata.isSymbolicLink() || resolvedMetadata.size > 1_000_000 || (resolvedMetadata.mode & 0o077) !== 0 || resolvedMetadata.dev !== metadata.dev || resolvedMetadata.ino !== metadata.ino) throw new Error("KESTREL_LSP_CONFIG must be an owner-only regular file no larger than 1 MB.");
+  const parsed = JSON.parse(readBoundedFile(resolved, 1_000_000, "KESTREL_LSP_CONFIG must be an owner-only regular file no larger than 1 MB.").toString("utf8")) as Record<string, unknown>;
   if (parsed.version !== 1 || typeof parsed.command !== "string" || typeof parsed.cwd !== "string" || typeof parsed.rootUri !== "string" || !Array.isArray(parsed.args) || parsed.args.some((arg) => typeof arg !== "string")) throw new Error("Language server configuration is invalid.");
   const client = new LanguageServerClient(new StdioLanguageServerTransport({ command: parsed.command, args: parsed.args as string[], cwd: parsed.cwd }));
   await client.initialize(parsed.rootUri);
