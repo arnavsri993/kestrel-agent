@@ -40,15 +40,22 @@ export async function readNdjson(response: Response, providerId: string, onValue
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const parse = (line: string): unknown => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      throw new ModelProviderError(`${providerId} returned malformed NDJSON.`, providerId, false);
+    }
+  };
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value, { stream: !done });
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
-    for (const line of lines) if (line.trim()) onValue(JSON.parse(line));
+    for (const line of lines) if (line.trim()) onValue(parse(line));
     if (done) break;
   }
-  if (buffer.trim()) onValue(JSON.parse(buffer));
+  if (buffer.trim()) onValue(parse(buffer));
 }
 
 export async function providerFetch(
