@@ -159,6 +159,7 @@ export class PluginInstaller {
     const signatureFile = files.find((file) => file.relativePath === signatureRelativePath);
     if (!manifestFile) throw new Error("Plugin bundle is missing .codex-plugin/plugin.json.");
     if (!signatureFile || signatureFile.bytes > 64_000) throw new Error("Plugin bundle is missing a bounded signature file.");
+    if (manifestFile.bytes > 256_000) throw new Error("Plugin manifest exceeds 256 KB.");
     const manifest = JSON.parse(readFileSync(manifestFile.absolutePath, "utf8")) as Record<string, unknown>;
     const name = typeof manifest.name === "string" ? manifest.name : "";
     const version = typeof manifest.version === "string" ? manifest.version : "";

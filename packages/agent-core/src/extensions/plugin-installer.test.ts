@@ -68,4 +68,12 @@ describe("signed plugin installer", () => {
     symlinkSync("/etc/hosts", join(trusted, "linked-hosts"));
     expect(() => installer.inspect(trusted)).toThrow("cannot contain symbolic links");
   });
+
+  it("rejects an oversized manifest before parsing signed bundles", () => {
+    const { installer, createBundle } = fixture();
+    const bundle = createBundle("1.0.2", "Large manifest fixture.");
+    writeFileSync(join(bundle, ".codex-plugin", "plugin.json"), Buffer.alloc(256_001));
+
+    expect(() => installer.inspect(bundle)).toThrow("Plugin manifest exceeds 256 KB.");
+  });
 });
