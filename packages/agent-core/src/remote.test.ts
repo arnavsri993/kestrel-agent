@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -92,6 +92,32 @@ describe("remote backends and scoped supervision", () => {
     const artifact = (result.artifacts as Array<{ path: string }>)[0]!; expect(existsSync(artifact.path)).toBe(true); expect(readFileSync(artifact.path)).toEqual(bytes); expect(JSON.stringify(result)).not.toContain(bytes.toString("base64"));
     const ciphertext = database.db.prepare("SELECT value_ciphertext FROM private_runtime_state WHERE key = ?").get("providers.remote-targets") as { value_ciphertext: string }; expect(ciphertext.value_ciphertext).not.toContain("serverless-secret");
     database.close(); rmSync(root, { recursive: true, force: true });
+  });
+
+  it("rolls back earlier artifacts when a later artifact fails validation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-remote-artifact-rollback-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const first = Buffer.from("first artifact");
+    const second = Buffer.from("second artifact");
+    const manager = new RemoteBackendManager(database, [{
+      id: "fixture",
+      execute: async () => ({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        remoteExecutionId: "fixture-1",
+        artifacts: [
+          { filename: "first.txt", mediaType: "text/plain", dataBase64: first.toString("base64"), sha256: createHash("sha256").update(first).digest("hex") },
+          { filename: "second.txt", mediaType: "text/plain", dataBase64: second.toString("base64"), sha256: "0".repeat(64) }
+        ]
+      })
+    }], root);
+    manager.setTargets([{ id: "fixture", kind: "serverless", backendId: "fixture", allowedCommands: ["build"], enabled: true }]);
+
+    await expect(manager.execute("fixture", "build", [], 5_000, new AbortController().signal)).rejects.toThrow("hash verification");
+    expect(readdirSync(root)).toEqual([]);
+    database.close();
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("cancels chunked oversized serverless responses before parsing or emitting output", async () => {
