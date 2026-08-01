@@ -5,6 +5,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { once } from "node:events";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
+import { readBoundedResponseBytes } from "@kestrel/agent-core";
 import type { LocalModelSummary, LocalRuntimeProgress, LocalRuntimeStatus } from "@kestrel/shared-types";
 
 const execFileAsync = promisify(execFile);
@@ -155,7 +156,14 @@ export class LocalRuntimeManager {
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
     });
     if (!response.ok) throw new Error(`The local model service returned ${response.status}.`);
-    return modelSummaries(await response.json() as { models?: OllamaTag[] });
+    let payload: { models?: OllamaTag[] };
+    const bytes = await readBoundedResponseBytes(response, 1_000_000, "The local model service response exceeds 1 MB.");
+    try {
+      payload = JSON.parse(new TextDecoder().decode(bytes)) as { models?: OllamaTag[] };
+    } catch {
+      throw new Error("The local model service returned invalid JSON.");
+    }
+    return modelSummaries(payload);
   }
 
   private async hasManagedInstall(): Promise<boolean> {

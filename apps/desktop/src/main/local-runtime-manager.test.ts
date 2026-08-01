@@ -186,4 +186,31 @@ describe("managed local runtime", () => {
     });
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
   });
+
+  it("cancels an oversized model-list response before parsing it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    let cancelled = false;
+    const reader = {
+      read: async () => ({ done: false, value: { byteLength: 1_000_001 } as Uint8Array }),
+      cancel: async () => {
+        cancelled = true;
+      },
+      releaseLock: () => undefined,
+    };
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        body: { getReader: () => reader },
+      }) as unknown as Response,
+      platform: "darwin",
+      architecture: "arm64",
+      manifest: testManifest(new TextEncoder().encode("archive")),
+    });
+
+    await expect(manager.listModels()).rejects.toThrow("The local model service response exceeds 1 MB.");
+    expect(cancelled).toBe(true);
+  });
 });

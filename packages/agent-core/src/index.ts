@@ -2984,3 +2984,4 @@ export {
   type ReferenceProduct,
 } from "./capability-catalog";
 export * from "./fixtures";
+export { readBoundedResponseBytes } from "./bounded-http";
