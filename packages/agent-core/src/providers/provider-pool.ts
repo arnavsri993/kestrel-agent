@@ -64,16 +64,20 @@ export class ProviderPool {
   }
 
   async verify(providerId: string, signal?: AbortSignal): Promise<ProviderVerification[]> {
+    signal?.throwIfAborted();
     const selected = providerId === "auto" ? [...this.providers.values()] : this.candidates([providerId], false, undefined, undefined, "auto");
     if (selected.length === 0) throw new Error(`Provider ${providerId} is not configured.`);
     const output: ProviderVerification[] = [];
     for (const provider of selected) {
+      signal?.throwIfAborted();
       const started = this.now().getTime();
       try {
         if (!provider.probe) throw new Error("Provider does not expose a credential probe.");
         await provider.probe(signal);
+        signal?.throwIfAborted();
         output.push({ providerId: provider.id, ...(provider.poolId ? { poolId: provider.poolId } : {}), ok: true, latencyMs: Math.max(0, this.now().getTime() - started) });
       } catch (error) {
+        if (signal?.aborted) throw error;
         output.push({ providerId: provider.id, ...(provider.poolId ? { poolId: provider.poolId } : {}), ok: false, latencyMs: Math.max(0, this.now().getTime() - started), error: error instanceof Error ? error.message.slice(0, 500) : "Provider verification failed." });
       }
     }
