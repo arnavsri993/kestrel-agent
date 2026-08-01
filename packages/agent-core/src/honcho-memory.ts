@@ -65,7 +65,9 @@ function safeError(error: unknown): string {
 }
 
 function checkedBaseUrl(value: string): string {
-  const url = new URL(value);
+  let url: URL;
+  try { url = new URL(value); }
+  catch { throw new Error("Honcho base URL must be a valid URL."); }
   const loopback = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
   if (
     (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||

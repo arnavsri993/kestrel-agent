@@ -107,6 +107,12 @@ describe("opt-in Honcho memory provider", () => {
         baseUrl: "http://192.168.1.2:8000",
       }),
     ).toThrow("HTTPS");
+    expect(() =>
+      provider.configure({
+        ...enabledConfiguration(),
+        baseUrl: "not-a-url",
+      }),
+    ).toThrow("valid URL");
     expect(provider.configure(enabledConfiguration())).toMatchObject({
       state: "ready",
     });
