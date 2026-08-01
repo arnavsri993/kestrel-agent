@@ -63,6 +63,7 @@ describe("isolated browser automation and visual validation", () => {
     const created = await runtime.callTool(session.id, "browser.create", { allowedOrigins: ["https://example.test"] }, { approvalStatus: "approved", idempotencyKey: "browser" });
     const browserSessionId = String(created.output?.browserSessionId);
     await expect(controller.navigate(session.id, browserSessionId, "https://evil.test/", new AbortController().signal)).rejects.toThrow("outside");
+    await expect(controller.navigate(session.id, browserSessionId, "not-a-url", new AbortController().signal)).rejects.toThrow("Browser navigation URL is invalid.");
     expect((await runtime.callTool(session.id, "browser.navigate", { browserSessionId, url: "https://example.test/page" }, { idempotencyKey: "nav" })).status).toBe("blocked");
     expect((await runtime.callTool(session.id, "browser.navigate", { browserSessionId, url: "https://example.test/page" }, { approvalStatus: "approved", idempotencyKey: "nav" })).status).toBe("verified");
     const snapshot = await runtime.callTool(session.id, "browser.snapshot", { browserSessionId }, { approvalStatus: "approved" });
