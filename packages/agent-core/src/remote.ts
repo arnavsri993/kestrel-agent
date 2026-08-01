@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdirSync, realpathSync, statSync } from "node:fs";
-import { chmod, rename, writeFile } from "node:fs/promises";
+import { chmod, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import type { RuntimeSession } from "@kestrel/shared-types";
@@ -154,16 +154,26 @@ export class RemoteBackendManager {
     if (artifacts.length > 20) throw new Error("Remote execution returned more than 20 artifacts.");
     if (artifacts.length && !this.artifactRoot) throw new Error("Remote artifact storage is not configured.");
     const output: Array<{ filename: string; mediaType: string; bytes: number; sha256: string; path: string }> = []; let total = 0;
-    for (const artifact of artifacts) {
-      const filename = basename(artifact.filename); if (filename !== artifact.filename || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) throw new Error("Remote artifact filename is invalid.");
-      if (typeof artifact.mediaType !== "string" || artifact.mediaType.length > 200 || !artifact.sha256?.match(/^[a-f0-9]{64}$/)) throw new Error("Remote artifact metadata is invalid.");
-      const data = Buffer.from(artifact.dataBase64, "base64"); if (!data.byteLength || data.toString("base64").replace(/=+$/, "") !== artifact.dataBase64.replace(/=+$/, "")) throw new Error("Remote artifact data is invalid.");
-      total += data.byteLength; if (data.byteLength > 25_000_000 || total > 100_000_000) throw new Error("Remote artifacts exceed size limits.");
-      const sha256 = createHash("sha256").update(data).digest("hex"); if (sha256 !== artifact.sha256) throw new Error("Remote artifact hash verification failed.");
-      const path = join(this.artifactRoot!, `${randomUUID()}-${filename}`); const temporary = `${path}.new`; await writeFile(temporary, data, { mode: 0o600, flag: "wx" }); await chmod(temporary, 0o600); await rename(temporary, path);
-      output.push({ filename, mediaType: artifact.mediaType, bytes: data.byteLength, sha256, path });
+    try {
+      for (const artifact of artifacts) {
+        const filename = basename(artifact.filename); if (filename !== artifact.filename || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(filename)) throw new Error("Remote artifact filename is invalid.");
+        if (typeof artifact.mediaType !== "string" || artifact.mediaType.length > 200 || !artifact.sha256?.match(/^[a-f0-9]{64}$/)) throw new Error("Remote artifact metadata is invalid.");
+        const data = Buffer.from(artifact.dataBase64, "base64"); if (!data.byteLength || data.toString("base64").replace(/=+$/, "") !== artifact.dataBase64.replace(/=+$/, "")) throw new Error("Remote artifact data is invalid.");
+        total += data.byteLength; if (data.byteLength > 25_000_000 || total > 100_000_000) throw new Error("Remote artifacts exceed size limits.");
+        const sha256 = createHash("sha256").update(data).digest("hex"); if (sha256 !== artifact.sha256) throw new Error("Remote artifact hash verification failed.");
+        const path = join(this.artifactRoot!, `${randomUUID()}-${filename}`); const temporary = `${path}.new`;
+        try {
+          await writeFile(temporary, data, { mode: 0o600, flag: "wx" }); await chmod(temporary, 0o600); await rename(temporary, path);
+        } finally {
+          await rm(temporary, { force: true }).catch(() => undefined);
+        }
+        output.push({ filename, mediaType: artifact.mediaType, bytes: data.byteLength, sha256, path });
+      }
+      return output;
+    } catch (error) {
+      await Promise.allSettled(output.map((artifact) => rm(artifact.path, { force: true })));
+      throw error;
     }
-    return output;
   }
 }
 
