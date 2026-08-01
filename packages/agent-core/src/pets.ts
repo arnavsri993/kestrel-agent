@@ -427,8 +427,6 @@ export class PetManager {
     const directory = this.petDirectory(slug);
     if (!within(this.root, directory) || directory === this.root)
       throw new Error("Pet removal target escapes the pet root.");
-    if (existsSync(directory))
-      rmSync(directory, { recursive: true, force: false });
     const nextRecords = records.filter((pet) => pet.slug !== slug);
     const current = this.configuration();
     const configuration =
@@ -436,6 +434,8 @@ export class PetManager {
         ? { ...current, enabled: false, selectedSlug: undefined }
         : current;
     this.persist(configuration, nextRecords);
+    if (existsSync(directory))
+      rmSync(directory, { recursive: true, force: false });
     return this.status();
   }
 
