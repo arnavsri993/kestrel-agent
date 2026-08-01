@@ -228,8 +228,10 @@ export class VisualValidator {
   }
   private readonly now: () => Date;
   compare(baseline: ScreenshotFrame, actual: ScreenshotFrame, threshold = 0): VisualComparison {
+    const expectedBytes = baseline.width * baseline.height * 4;
+    if (!Number.isInteger(baseline.width) || !Number.isInteger(baseline.height) || baseline.width < 1 || baseline.height < 1 || !Number.isSafeInteger(expectedBytes) || baseline.rgba.byteLength !== expectedBytes || actual.rgba.byteLength !== expectedBytes) throw new Error("Screenshot frames must contain exactly width × height × 4 RGBA bytes.");
     if (baseline.width !== actual.width || baseline.height !== actual.height) throw new Error("Screenshot dimensions differ; normalize the viewport before comparison.");
-    if (threshold < 0 || threshold > 1) throw new Error("Visual threshold must be between 0 and 1.");
+    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new Error("Visual threshold must be between 0 and 1.");
     let changedPixels = 0;
     for (let offset = 0; offset < baseline.rgba.length; offset += 4) {
       if (baseline.rgba[offset] !== actual.rgba[offset] || baseline.rgba[offset + 1] !== actual.rgba[offset + 1] || baseline.rgba[offset + 2] !== actual.rgba[offset + 2] || baseline.rgba[offset + 3] !== actual.rgba[offset + 3]) changedPixels += 1;
