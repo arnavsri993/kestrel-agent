@@ -18,10 +18,30 @@ const browserPending = new Map<string, { resolve(value: unknown): void; reject(e
 
 function browserRequest<T>(request: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const requestId = `browser-wire-${randomUUID()}`;
+  const requestSignal = signal;
   return new Promise<T>((resolve, reject) => {
-    const abort = signal ? () => { port.postMessage({ type: "browser-backend-cancel", requestId }); reject(signal.reason instanceof Error ? signal.reason : new Error("Browser operation cancelled.")); browserPending.delete(requestId); } : undefined;
-    if (abort) signal!.addEventListener("abort", abort, { once: true });
-    browserPending.set(requestId, { resolve, reject, ...(abort && signal ? { abort, signal } : {}) });
+    let sent = false;
+    let abort: (() => void) | undefined;
+    if (requestSignal) {
+      abort = () => {
+        if (!browserPending.has(requestId)) return;
+        if (sent) port.postMessage({ type: "browser-backend-cancel", requestId });
+        requestSignal.removeEventListener("abort", abort!);
+        browserPending.delete(requestId);
+        reject(requestSignal.reason instanceof Error ? requestSignal.reason : new Error("Browser operation cancelled."));
+      };
+    }
+    browserPending.set(requestId, { resolve, reject, ...(abort ? { abort, signal: requestSignal! } : {}) });
+    if (requestSignal?.aborted) {
+      abort?.();
+      return;
+    }
+    if (requestSignal && abort) requestSignal.addEventListener("abort", abort, { once: true });
+    if (requestSignal?.aborted || !browserPending.has(requestId)) {
+      abort?.();
+      return;
+    }
+    sent = true;
     port.postMessage({ type: "browser-backend-request", requestId, request });
   });
 }
