@@ -65,7 +65,7 @@ describe("network-policy web tools", () => {
 
   it("rejects an already-aborted fetch before validation or network access", async () => {
     const controller = new AbortController();
-    controller.abort(new Error("Fetch cancelled before start."));
+    controller.abort(null);
     let resolutions = 0;
     let requests = 0;
     const client = new NetworkPolicyWebClient({
@@ -80,7 +80,7 @@ describe("network-policy web tools", () => {
       },
     });
 
-    await expect(client.fetch("https://safe.example.test/", controller.signal)).rejects.toThrow("Fetch cancelled before start.");
+    await expect(client.fetch("https://safe.example.test/", controller.signal)).rejects.toThrow("Web fetch was cancelled.");
     expect(resolutions).toBe(0);
     expect(requests).toBe(0);
   });
@@ -130,8 +130,8 @@ describe("network-policy web tools", () => {
       KESTREL_ALLOW_EXTERNAL_SEARCH: "true",
     })?.searchProvider).toBeInstanceOf(BraveSearchProvider);
     const aborted = new AbortController();
-    aborted.abort(new Error("Search cancelled before start."));
-    await expect(provider.search("kestrel", { maximumResults: 5, signal: aborted.signal })).rejects.toThrow("Search cancelled before start.");
+    aborted.abort(null);
+    await expect(provider.search("kestrel", { maximumResults: 5, signal: aborted.signal })).rejects.toThrow("Web search was cancelled.");
     expect(resolutions).toBe(1);
     expect(fetches).toBe(1);
   });
