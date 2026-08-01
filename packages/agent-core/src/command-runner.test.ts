@@ -55,6 +55,14 @@ describe("SandboxedCommandRunner", () => {
     expect(() => runner.start(defaultInput, { onProgress: vi.fn() })).toThrow("Allowed command ls is not installed");
   });
 
+  it("does not spawn when the command is already cancelled", () => {
+    const controller = new AbortController();
+    controller.abort(new Error("already cancelled"));
+
+    expect(() => runner.start(defaultInput, { signal: controller.signal, onProgress: vi.fn() })).toThrow("already cancelled");
+    expect(child_process.spawn).not.toHaveBeenCalled();
+  });
+
   function mockSpawn() {
     const child: any = new EventEmitter();
     child.stdout = new EventEmitter();
