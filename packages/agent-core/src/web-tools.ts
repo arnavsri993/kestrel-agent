@@ -53,10 +53,35 @@ export interface WebAccessOptions {
   now?: () => Date;
 }
 
+function mappedIpv4Address(address: string): string | undefined {
+  const normalized = address.toLowerCase();
+  const dotted = normalized.match(/^(.*:)(\d{1,3}(?:\.\d{1,3}){3})$/);
+  let candidate = normalized;
+  if (dotted && isIP(dotted[2]!) === 4) {
+    const octets = dotted[2]!.split(".").map(Number);
+    candidate = `${dotted[1]}${((octets[0]! << 8) | octets[1]!).toString(16)}:${((octets[2]! << 8) | octets[3]!).toString(16)}`;
+  }
+  const halves = candidate.split("::");
+  if (halves.length > 2) return undefined;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = halves.length === 2 ? 8 - left.length - right.length : 0;
+  if ((halves.length === 2 && missing < 1) || (halves.length === 1 && left.length !== 8)) return undefined;
+  const groups = [...left, ...(halves.length === 2 ? Array.from({ length: missing }, () => "0") : []), ...right];
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return undefined;
+  if (groups.slice(0, 5).some((group) => Number.parseInt(group, 16) !== 0) || Number.parseInt(groups[5]!, 16) !== 0xffff) return undefined;
+  const high = Number.parseInt(groups[6]!, 16);
+  const low = Number.parseInt(groups[7]!, 16);
+  return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+}
+
 export function isPrivateNetworkAddress(address: string): boolean {
-  if (address === "::1" || address === "::" || address.startsWith("fe80:") || address.startsWith("fc") || address.startsWith("fd")) return true;
-  if (isIP(address) !== 4) return false;
-  const octets = address.split(".").map(Number);
+  const normalized = address.toLowerCase();
+  const mapped = mappedIpv4Address(normalized);
+  if (mapped) return isPrivateNetworkAddress(mapped);
+  if (normalized === "::1" || normalized === "::" || normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
+  if (isIP(normalized) !== 4) return false;
+  const octets = normalized.split(".").map(Number);
   const [a = 0, b = 0] = octets;
   return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
 }
