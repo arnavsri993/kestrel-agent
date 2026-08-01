@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -20,6 +20,7 @@ const execFileAsync = promisify(execFile);
 const CONFIGURATION_SECRET_ID = "external-secret-configuration";
 const ONEPASSWORD_TOKEN_SECRET_ID = "external-secret-onepassword-token";
 const BITWARDEN_TOKEN_SECRET_ID = "external-secret-bitwarden-token";
+const MAX_VERIFICATION_STATE_BYTES = 1_000_000;
 
 const BWS_MANIFEST = {
   version: "2.0.0",
@@ -510,7 +511,10 @@ export class ExternalSecretManager {
 
   private async readVerification(): Promise<VerificationState> {
     try {
-      const parsed = JSON.parse(await readFile(this.statusPath, "utf8")) as VerificationState;
+      if ((await stat(this.statusPath)).size > MAX_VERIFICATION_STATE_BYTES) return {};
+      const contents = await readFile(this.statusPath, "utf8");
+      if (Buffer.byteLength(contents, "utf8") > MAX_VERIFICATION_STATE_BYTES) return {};
+      const parsed = JSON.parse(contents) as VerificationState;
       return parsed && typeof parsed === "object" ? parsed : {};
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return {};
