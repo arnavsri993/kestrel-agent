@@ -108,6 +108,11 @@ describe("MCP extensions", () => {
     expect(deleted).toBe(true);
   });
 
+  it("normalizes malformed Streamable HTTP JSON responses", async () => {
+    const transport = new StreamableHttpMcpTransport("https://mcp.example.test/rpc", { fetcher: async () => new Response("not-json", { headers: { "content-type": "application/json" } }) });
+    await expect(transport.send({ jsonrpc: "2.0", id: 1, method: "initialize" })).rejects.toThrow("invalid JSON");
+  });
+
   it("negotiates the current lifecycle, lists tools, and calls a runtime tool", async () => {
     const fixture = runtimeFixture("mcp-server");
     const client = new McpClient(new LoopbackTransport(new McpRuntimeServer(fixture.runtime, fixture.session.id)));
