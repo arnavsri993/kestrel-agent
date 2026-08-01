@@ -34,6 +34,7 @@ function within(root: string, candidate: string): boolean {
 }
 
 function parseConfig(path: string, pluginRoot: string): Map<string, PluginMcpServerConfig> {
+  if (statSync(path).size > 256_000) throw new Error("Plugin MCP configuration exceeds 256 KB.");
   const bytes = readFileSync(path);
   if (bytes.byteLength > 256_000) throw new Error("Plugin MCP configuration exceeds 256 KB.");
   const parsed = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;

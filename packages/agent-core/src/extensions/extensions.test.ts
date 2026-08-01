@@ -590,6 +590,24 @@ describe("Codex-compatible plugin manifests", () => {
     database.close();
   });
 
+  it("rejects oversized plugin MCP configuration before reading it", async () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-mcp-large-"));
+    directories.push(container);
+    const pluginRoot = join(container, "large", "1.0.0");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "large", version: "1.0.0", description: "Large MCP configuration.", mcpServers: "./.mcp.json" }));
+    writeFileSync(join(pluginRoot, ".mcp.json"), JSON.stringify({ mcpServers: {}, padding: "x".repeat(256_001) }));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const registry = new PluginRegistry([container], database);
+    registry.discover();
+    registry.setEnabled("large", true);
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Large plugin MCP" });
+
+    await expect(new PluginMcpManager(registry, runtime).connect("large", session.id)).rejects.toThrow("Plugin MCP configuration exceeds 256 KB");
+    database.close();
+  });
+
   it("rejects plugin-controlled process loader environment variables", async () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-mcp-env-"));
     directories.push(container);
