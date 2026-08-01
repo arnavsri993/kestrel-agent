@@ -52,6 +52,7 @@ import {
 import { ProviderAuthMonitor } from "./provider-auth-monitor";
 import { ExternalSecretManager } from "./external-secret-manager";
 import type { ResolvedExternalCredentials } from "./credential-broker";
+import { readLocalBackupMetadata } from "./backup-metadata";
 import { shouldCheckForUpdates, updaterFeedChannel } from "./update-channel";
 import {
   isTrustedRendererFrame,
@@ -1281,20 +1282,14 @@ function registerIpc(): void {
       );
       let backupDetail = "No verified local backup has been recorded.";
       let backupStatus: "pass" | "warning" = "warning";
-      try {
-        const metadata = JSON.parse(
-          await readFile(backupMetadataPath, "utf8"),
-        ) as { path?: unknown; createdAt?: unknown };
-        if (
-          typeof metadata.path === "string" &&
-          typeof metadata.createdAt === "string" &&
-          existsSync(metadata.path)
-        ) {
-          backupStatus = "pass";
-          backupDetail = `Verified backup created ${new Date(metadata.createdAt).toLocaleString()}.`;
-        }
-      } catch {
-        // A first-run system has no backup metadata.
+      const metadata = await readLocalBackupMetadata(backupMetadataPath);
+      if (
+        typeof metadata?.path === "string" &&
+        typeof metadata.createdAt === "string" &&
+        existsSync(metadata.path)
+      ) {
+        backupStatus = "pass";
+        backupDetail = `Verified backup created ${new Date(metadata.createdAt).toLocaleString()}.`;
       }
       checks.push({
         id: "backup",
