@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { readBoundedResponseBytes } from "@kestrel/agent-core";
 import type { CredentialBroker } from "./credential-broker";
 
 const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -50,6 +51,15 @@ function boundedJson(bytes: Uint8Array, limit: number, label: string): Record<st
   } catch {
     throw new Error(`${label} returned an invalid JSON response.`);
   }
+}
+
+async function boundedResponseJson(response: Response, limit: number, label: string): Promise<Record<string, unknown>> {
+  const bytes = await readBoundedResponseBytes(
+    response,
+    limit,
+    `${label} response exceeds ${Math.round(limit / 1024)} KB.`,
+  );
+  return boundedJson(bytes, limit, label);
 }
 
 function validClientId(clientId: string): boolean {
@@ -225,7 +235,7 @@ export class GoogleWorkspaceOAuthManager {
         grant_type: "authorization_code"
       })
     });
-    const body = boundedJson(new Uint8Array(await response.arrayBuffer()), 64_000, "Google token exchange");
+    const body = await boundedResponseJson(response, 64_000, "Google token exchange");
     if (!response.ok) throw new Error(`Google token exchange failed (${String(body.error ?? response.status).slice(0, 200)}).`);
     return body;
   }
@@ -233,12 +243,12 @@ export class GoogleWorkspaceOAuthManager {
   private async verifyIdentityAndCalendar(accessToken: string): Promise<string> {
     const headers = { accept: "application/json", authorization: `Bearer ${accessToken}` };
     const identityResponse = await this.fetcher(GOOGLE_USERINFO_ENDPOINT, { redirect: "error", headers });
-    const identity = boundedJson(new Uint8Array(await identityResponse.arrayBuffer()), 64_000, "Google identity verification");
+    const identity = await boundedResponseJson(identityResponse, 64_000, "Google identity verification");
     if (!identityResponse.ok || typeof identity.email !== "string" || !identity.email.includes("@")) throw new Error("Google identity verification failed.");
     const calendarUrl = new URL(GOOGLE_CALENDAR_PROBE_ENDPOINT);
     calendarUrl.search = new URLSearchParams({ maxResults: "1", singleEvents: "true", timeMin: this.now().toISOString() }).toString();
     const calendarResponse = await this.fetcher(calendarUrl, { redirect: "error", headers });
-    const calendar = boundedJson(new Uint8Array(await calendarResponse.arrayBuffer()), 256_000, "Google Calendar verification");
+    const calendar = await boundedResponseJson(calendarResponse, 256_000, "Google Calendar verification");
     if (!calendarResponse.ok || !Array.isArray(calendar.items)) throw new Error("Google Calendar verification failed.");
     return identity.email;
   }

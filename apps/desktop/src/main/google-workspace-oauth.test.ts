@@ -75,4 +75,48 @@ describe("Google Workspace desktop OAuth", () => {
     const manager = new GoogleWorkspaceOAuthManager({ broker, openExternal: async () => {} });
     await expect(manager.connect("not-a-desktop-client")).rejects.toThrow("Desktop app");
   });
+
+  it("cancels an oversized chunked token response before buffering it", async () => {
+    const { broker } = fixture();
+    let cancelled = false;
+    const reader = {
+      read: async () => ({
+        done: false,
+        value: { byteLength: 64_001 } as Uint8Array,
+      }),
+      cancel: async () => {
+        cancelled = true;
+      },
+      releaseLock: () => undefined,
+    };
+    const fetcher: typeof fetch = async (input, init) => {
+      if (String(input) === "https://oauth2.googleapis.com/token")
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: new Headers({ "content-type": "application/json" }),
+          body: { getReader: () => reader },
+        } as unknown as Response;
+      return fetch(input, init);
+    };
+    const manager = new GoogleWorkspaceOAuthManager({
+      broker,
+      fetcher,
+      openExternal: async (url) => {
+        const authorization = new URL(url);
+        const callback = new URL(authorization.searchParams.get("redirect_uri")!);
+        callback.searchParams.set("state", authorization.searchParams.get("state")!);
+        callback.searchParams.set("code", "one-time-code");
+        await fetch(callback);
+      },
+    });
+
+    await expect(
+      manager.connect(
+        "1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com",
+      ),
+    ).rejects.toThrow("Google token exchange response exceeds 63 KB.");
+    expect(cancelled).toBe(true);
+  });
 });
