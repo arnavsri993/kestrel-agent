@@ -470,13 +470,20 @@ export class ExternalSecretManager {
       let bytes = 0;
       try {
         const reader = response.body.getReader();
-        while (true) {
-          const chunk = await reader.read();
-          if (chunk.done) break;
-          bytes += chunk.value.byteLength;
-          if (bytes > BWS_MANIFEST.bytes) throw new Error("The Bitwarden CLI download exceeded the pinned size.");
-          digest.update(chunk.value);
-          await file.write(chunk.value);
+        try {
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            bytes += chunk.value.byteLength;
+            if (bytes > BWS_MANIFEST.bytes) throw new Error("The Bitwarden CLI download exceeded the pinned size.");
+            digest.update(chunk.value);
+            await file.write(chunk.value);
+          }
+        } catch (error) {
+          try { await reader.cancel(); } catch { /* Preserve the original Bitwarden download error. */ }
+          throw error;
+        } finally {
+          reader.releaseLock();
         }
       } finally {
         await file.close();
