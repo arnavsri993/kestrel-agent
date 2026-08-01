@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -31,5 +31,14 @@ describe("tenant fleet", () => {
     await expect(fleet.create({ tenant: "../escape", port: 18790 })).rejects.toThrow("name");
     await expect(fleet.create({ tenant: "acme", port: 80 })).rejects.toThrow("port");
     await expect(fleet.create({ tenant: "acme", port: 18790, blockEgress: true })).rejects.toThrow("firewall");
+  });
+
+  it("rejects an oversized registry before reading it into memory", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-fleet-"));
+    const runner: TenantFleetRunner = { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    const fleet = new TenantFleet(root, runner);
+    writeFileSync(join(root, "fleet", "cells.json"), Buffer.alloc(1_000_001));
+
+    await expect(fleet.list()).rejects.toThrow("Tenant fleet registry exceeds 1 MB.");
   });
 });
