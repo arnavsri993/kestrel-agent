@@ -110,7 +110,12 @@ function validateConfiguration(configuration: ExternalSecretConfiguration): Exte
     throw new Error("The Bitwarden project ID must be a UUID.");
   }
   if (parsed.bitwarden.serverUrl) {
-    const server = new URL(parsed.bitwarden.serverUrl);
+    let server: URL;
+    try {
+      server = new URL(parsed.bitwarden.serverUrl);
+    } catch {
+      throw new Error("The Bitwarden server must be a credential-free HTTPS URL.");
+    }
     if (server.protocol !== "https:" || server.username || server.password || server.hash) {
       throw new Error("The Bitwarden server must be a credential-free HTTPS URL.");
     }
