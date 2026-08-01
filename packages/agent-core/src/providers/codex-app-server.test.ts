@@ -71,7 +71,9 @@ describe("persistent Codex app-server provider", () => {
         HOME: process.env.HOME,
         OPENAI_API_KEY: "must-not-leak",
       },
-      requestTimeoutMs: 2_000,
+      // Vitest starts many fake providers in parallel; allow the child Node
+      // process to start without weakening the provider's production default.
+      requestTimeoutMs: 10_000,
       turnTimeoutMs: 2_000,
     });
     await provider.probe();
