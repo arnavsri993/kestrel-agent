@@ -86,6 +86,28 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("rolls back a child session when task journal persistence fails", async () => {
+    const item = fixture(finalProvider());
+    const originalSetPrivateState = item.database.setPrivateState.bind(item.database);
+    item.database.setPrivateState = (key, value) => {
+      if (key.startsWith("orchestrator.task.")) throw new Error("task journal write failed");
+      originalSetPrivateState(key, value);
+    };
+
+    await expect(item.orchestrator.delegate({
+      parentSessionId: item.parent.id,
+      title: "Orphan-free worker",
+      prompt: "This worker must not survive journal failure.",
+      model: "fake",
+      providerIds: ["fake"]
+    })).rejects.toThrow("task journal write failed");
+    expect(item.runtime.listSessions()).toHaveLength(1);
+    expect((item.database.db.prepare("SELECT COUNT(*) AS count FROM private_runtime_state WHERE key LIKE 'orchestrator.task.%'").get() as { count: number }).count).toBe(0);
+
+    item.database.setPrivateState = originalSetPrivateState;
+    item.database.close();
+  });
+
   it("caps delegated and scheduled runs at the active workflow turn limit", async () => {
     let instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(

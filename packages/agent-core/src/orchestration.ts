@@ -212,15 +212,18 @@ export class TaskOrchestrator {
       if (worktree.status !== "verified" || typeof worktree.output?.path !== "string") throw new Error(worktree.error ?? "Delegated worktree creation failed.");
       workspaceRoot = resolve(parent.workspaceRoot, worktree.output.path);
     }
-    const session = this.runtime.createSession({
-      title: input.title,
-      parentSessionId: parent.id,
-      ...(workspaceRoot ? { workspaceRoot } : {}),
-      allowedTools: input.allowedTools ?? parent.allowedTools
-    });
-    this.database.setPrivateState(`orchestrator.task.${taskId}`, {
-      taskId, sessionId: session.id, parentSessionId: parent.id, title: input.title, status: "running", createdAt: this.now().toISOString()
-    });
+    const session = this.database.db.transaction(() => {
+      const created = this.runtime.createSession({
+        title: input.title,
+        parentSessionId: parent.id,
+        ...(workspaceRoot ? { workspaceRoot } : {}),
+        allowedTools: input.allowedTools ?? parent.allowedTools
+      });
+      this.database.setPrivateState(`orchestrator.task.${taskId}`, {
+        taskId, sessionId: created.id, parentSessionId: parent.id, title: input.title, status: "running", createdAt: this.now().toISOString()
+      });
+      return created;
+    })();
     let selected: Awaited<ReturnType<TaskOrchestrator["selectWorker"]>> | undefined;
     try {
       selected = input.model === "auto" || input.providerIds.includes("auto")
