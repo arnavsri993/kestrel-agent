@@ -451,6 +451,34 @@ describe("Codex-compatible plugin manifests", () => {
     database.close();
   });
 
+  it("keeps the previous plugin catalog when discovery fails", () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-discovery-rollback-"));
+    directories.push(container);
+    const validRoot = join(container, "valid");
+    mkdirSync(join(validRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(join(validRoot, ".codex-plugin", "plugin.json"), JSON.stringify({
+      name: "valid",
+      version: "1.0.0",
+      description: "A valid plugin",
+    }));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const registry = new PluginRegistry([container], database);
+    expect(registry.discover()).toMatchObject([{ name: "valid" }]);
+
+    const invalidRoot = join(container, "invalid");
+    mkdirSync(join(invalidRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(join(invalidRoot, ".codex-plugin", "plugin.json"), JSON.stringify({
+      name: "Not Valid",
+      version: "1.0.0",
+      description: "An invalid plugin",
+    }));
+
+    expect(() => registry.discover()).toThrow("Plugin name is invalid");
+    expect(registry.list()).toMatchObject([{ name: "valid" }]);
+    expect(() => registry.get("valid")).not.toThrow();
+    database.close();
+  });
+
   it("loads strict declarative dashboard panels without executable renderer code", () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-dashboard-"));
     directories.push(container);
