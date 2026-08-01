@@ -35,6 +35,26 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("rolls back main-session creation when pointer persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database, [], () => "2026-07-22T16:00:00.000Z");
+    const events: RuntimeEvent[] = [];
+    runtime.on("event", (event: RuntimeEvent) => events.push(event));
+    database.db.exec(`
+      CREATE TRIGGER reject_main_session_pointer
+      BEFORE INSERT ON runtime_state
+      WHEN NEW.key = 'runtimeMainSessionId'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced main-session pointer failure');
+      END
+    `);
+
+    expect(() => runtime.ensureMainSession()).toThrow("forced main-session pointer failure");
+    expect(runtime.listSessions()).toEqual([]);
+    expect(events).toEqual([]);
+    database.close();
+  });
+
   it("persists message activity as session recency without allowing stale clocks to move it backward", () => {
     const directory = mkdtempSync(join(tmpdir(), "kestrel-session-recency-"));
     temporaryDirectories.push(directory);

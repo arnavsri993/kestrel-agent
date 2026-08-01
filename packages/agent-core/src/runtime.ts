@@ -334,15 +334,25 @@ export class AgentRuntime extends EventEmitter {
     const storedId = this.database.getState<string>("runtimeMainSessionId");
     const existing = storedId ? this.database.getRuntimeSession(storedId) : undefined;
     if (existing) return existing;
-    const session = this.createSession({
-      title: "Main session",
-      ...(this.workspaceRoots[0] ? { workspaceRoot: this.workspaceRoots[0] } : {})
-    });
-    this.database.setState("runtimeMainSessionId", session.id);
+    const session = this.database.db.transaction(() => {
+      const created = this.createSessionRecord({
+        title: "Main session",
+        ...(this.workspaceRoots[0] ? { workspaceRoot: this.workspaceRoots[0] } : {})
+      });
+      this.database.setState("runtimeMainSessionId", created.id);
+      return created;
+    })();
+    this.emitRuntimeEvent("session.created", session.id, { title: session.title });
     return session;
   }
 
   createSession(input: { title: string; workspaceRoot?: string; parentSessionId?: string; allowedTools?: string[] }): RuntimeSession {
+    const session = this.createSessionRecord(input);
+    this.emitRuntimeEvent("session.created", session.id, { title: session.title });
+    return session;
+  }
+
+  private createSessionRecord(input: { title: string; workspaceRoot?: string; parentSessionId?: string; allowedTools?: string[] }): RuntimeSession {
     const workspaceRoot = input.workspaceRoot ? this.resolveGrantedRoot(input.workspaceRoot) : undefined;
     const timestamp = this.now();
     const session = RuntimeSessionSchema.parse({
@@ -357,7 +367,6 @@ export class AgentRuntime extends EventEmitter {
       updatedAt: timestamp
     });
     this.database.saveRuntimeSession(session);
-    this.emitRuntimeEvent("session.created", session.id, { title: session.title });
     return session;
   }
 
