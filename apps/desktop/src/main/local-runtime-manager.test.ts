@@ -168,6 +168,27 @@ describe("managed local runtime", () => {
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
   });
 
+  it("does not continue setup after cancellation during service detection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    const requests: string[] = [];
+    let manager!: LocalRuntimeManager;
+    manager = new LocalRuntimeManager(root, (event) => {
+      if (event.stage === "detecting") manager.cancel();
+    }, {
+      fetch: (async (input) => {
+        requests.push(String(input));
+        throw new Error("network request started after cancellation");
+      }) as typeof fetch,
+      platform: "darwin",
+      architecture: "arm64",
+      manifest: testManifest(new TextEncoder().encode("archive"))
+    });
+
+    await expect(manager.bootstrap("qwen:test")).rejects.toThrow("Local setup was cancelled.");
+    expect(requests).toEqual([]);
+  });
+
   it("does not offer the managed runtime on Intel Macs", async () => {
     const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
     roots.push(root);

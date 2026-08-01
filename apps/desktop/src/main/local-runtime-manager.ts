@@ -65,6 +65,11 @@ function isAbort(error: unknown): boolean {
   return error instanceof Error && (error.name === "AbortError" || /aborted|cancelled/i.test(error.message));
 }
 
+function cancellationError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  return new Error(typeof signal.reason === "string" && signal.reason ? signal.reason : "Local setup was cancelled.");
+}
+
 function safeArchiveEntries(stdout: string): string[] {
   const entries = stdout.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
   if (entries.length === 0 || entries.length > 10_000) throw new Error("The local runtime archive has an invalid file list.");
@@ -151,9 +156,11 @@ export class LocalRuntimeManager {
   }
 
   async listModels(timeoutMs = 1_500, signal?: AbortSignal): Promise<LocalModelSummary[]> {
+    if (signal?.aborted) throw cancellationError(signal);
     const response = await this.fetcher(`${OLLAMA_ORIGIN}/api/tags`, {
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
     });
+    if (signal?.aborted) throw cancellationError(signal);
     if (!response.ok) throw new Error(`The local model service returned ${response.status}.`);
     return modelSummaries(await response.json() as { models?: OllamaTag[] });
   }
@@ -217,6 +224,7 @@ export class LocalRuntimeManager {
         await this.listModels(1_500, operation.signal);
         serviceReady = true;
       } catch {
+        if (operation.signal.aborted) throw cancellationError(operation.signal);
         // Continue into the managed installation path.
       }
       if (!serviceReady) {
