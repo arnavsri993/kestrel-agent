@@ -56,4 +56,20 @@ describe("durable memory manager", () => {
     expect(manager.userModel.promptContext()).toBe("");
     database.close();
   });
+
+  it("rolls back conflict history when replacement persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new MemoryManager(database, () => new Date("2026-07-22T22:00:00.000Z"));
+    const prior = manager.remember({ type: "project", content: "Old release plan", structuredData: { conflictKey: "release-plan" }, sourceIds: ["message-1"], sourceType: "explicit-user-command", confidence: 1, importance: 0.8, sensitivity: "personal", entityIds: [], userConfirmed: true, inferred: false });
+    const upsertMemory = database.upsertMemory.bind(database);
+    database.upsertMemory = (memory) => {
+      if (memory.content === "New release plan") throw new Error("replacement write failed");
+      upsertMemory(memory);
+    };
+
+    expect(() => manager.remember({ type: "project", content: "New release plan", structuredData: { conflictKey: "release-plan" }, sourceIds: ["message-2"], sourceType: "explicit-user-command", confidence: 1, importance: 0.8, sensitivity: "personal", entityIds: [], userConfirmed: true, inferred: false })).toThrow("replacement write failed");
+    expect(database.getMemory(prior.id)).toMatchObject({ status: "active", version: 1 });
+    expect(manager.versions(prior.id)).toEqual([]);
+    database.close();
+  });
 });

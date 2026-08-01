@@ -45,19 +45,21 @@ export class MemoryManager {
       conflictingMemoryIds: prior.map((memory) => memory.id),
       version: 1,
     };
-    for (const conflict of prior) {
-      this.saveVersion(conflict, "agent");
-      this.database.upsertMemory({
-        ...conflict,
-        status: obviousUpdate ? "superseded" : "contradicted",
-        conflictingMemoryIds: [
-          ...new Set([...(conflict.conflictingMemoryIds ?? []), record.id]),
-        ],
-        updatedAt: timestamp,
-        version: (conflict.version ?? 1) + 1,
-      });
-    }
-    this.database.upsertMemory(record);
+    this.database.db.transaction(() => {
+      for (const conflict of prior) {
+        this.saveVersion(conflict, "agent");
+        this.database.upsertMemory({
+          ...conflict,
+          status: obviousUpdate ? "superseded" : "contradicted",
+          conflictingMemoryIds: [
+            ...new Set([...(conflict.conflictingMemoryIds ?? []), record.id]),
+          ],
+          updatedAt: timestamp,
+          version: (conflict.version ?? 1) + 1,
+        });
+      }
+      this.database.upsertMemory(record);
+    })();
     return record;
   }
 
