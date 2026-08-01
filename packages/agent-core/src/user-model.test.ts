@@ -7,6 +7,7 @@ describe("reviewable user model", () => {
   it("keeps inferences out of context until confirmed and preserves provenance", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const store = new UserModelStore(database, () => new Date("2026-07-22T22:00:00.000Z"));
+    expect(() => store.propose({ kind: "preference", key: "invalid", value: "NaN", sourceIds: ["message-0"], confidence: Number.NaN, sensitivity: "normal" })).toThrow("between 0 and 1");
     const proposed = store.propose({ kind: "preference", key: "response_style", value: "Lead with the outcome", sourceIds: ["message-1"], confidence: 0.9, sensitivity: "normal" });
     expect(store.promptContext()).toBe("");
     expect(store.review(proposed.id, "confirm").sourceIds).toEqual(["message-1"]);
