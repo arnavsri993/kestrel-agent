@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -74,6 +74,39 @@ describe("Petdex cosmetic pet manager", () => {
       const manager = new PetManager(database, root, fixtureFetch(spritesheet(100, 100)));
       await expect(manager.install("paperclip")).rejects.toThrow("8-column");
       expect(manager.status().installed).toEqual([]);
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the previous asset when a forced reinstall cannot persist", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-pets-reinstall-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    let image = spritesheet();
+    try {
+      const manager = new PetManager(
+        database,
+        root,
+        (input) => fixtureFetch(image)(input),
+      );
+      await manager.install("paperclip");
+      const previous = manager.asset("paperclip");
+      const setPrivateState = database.setPrivateState.bind(database);
+      database.setPrivateState = (key, value) => {
+        if (key === "display.installed-pets")
+          throw new Error("private pet state unavailable");
+        setPrivateState(key, value);
+      };
+      image = spritesheet(1536, 1664);
+
+      await expect(
+        manager.install("paperclip", true, undefined, true),
+      ).rejects.toThrow("private pet state unavailable");
+      expect(manager.asset("paperclip").dataBase64).toBe(previous.dataBase64);
+      expect(readdirSync(join(root, "paperclip"))).toEqual([
+        "spritesheet.webp",
+      ]);
     } finally {
       database.close();
       rmSync(root, { recursive: true, force: true });
