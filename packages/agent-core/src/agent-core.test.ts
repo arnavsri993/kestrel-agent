@@ -231,6 +231,25 @@ describe("core agent request path", () => {
     core.close();
   });
 
+  it("keeps a custom personality registered when removal persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
+    core.createPersonality({ id: "fixture", name: "Fixture", description: "A fixture personality.", instructions: "Use fixture instructions.", memoryScope: "shared" });
+    database.db.exec(`
+      CREATE TRIGGER reject_custom_personality_removal
+      BEFORE UPDATE ON private_runtime_state
+      WHEN NEW.key = 'runtime.custom-personalities'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced custom personality removal failure');
+      END
+    `);
+
+    expect(() => core.removePersonality("fixture")).toThrow("forced custom personality removal failure");
+    expect(core.snapshot().personality.available.some((personality) => personality.id === "fixture")).toBe(true);
+    expect(database.getPrivateState<Array<{ id: string }>>("runtime.custom-personalities")).toEqual([{ id: "fixture", name: "Fixture", description: "A fixture personality.", instructions: "Use fixture instructions.", memoryScope: "shared" }]);
+    core.close();
+  });
+
   it("persists custom agents and enforces their model, provider, tool, and memory scopes", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-custom-agent-"));
     writeFileSync(join(root, "README.md"), "custom agent fixture\n");
