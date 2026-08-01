@@ -60,14 +60,16 @@ export class DreamingManager {
 
   configure(configuration: DreamingConfiguration): DreamingStatus {
     const parsed = DreamingConfigurationSchema.parse(configuration);
-    this.database.setPrivateState(CONFIGURATION_KEY, parsed);
     const current = this.storedState();
-    this.saveState({
-      ...current,
-      detail: parsed.enabled
-        ? "Memory consolidation is enabled. Automatic runs stage private candidates for review."
-        : "Memory consolidation is off. Preview remains available and no automatic run will occur."
-    });
+    this.database.db.transaction(() => {
+      this.database.setPrivateState(CONFIGURATION_KEY, parsed);
+      this.saveState({
+        ...current,
+        detail: parsed.enabled
+          ? "Memory consolidation is enabled. Automatic runs stage private candidates for review."
+          : "Memory consolidation is off. Preview remains available and no automatic run will occur."
+      });
+    })();
     return this.status();
   }
 
