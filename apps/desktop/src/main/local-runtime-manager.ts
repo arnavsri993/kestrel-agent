@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
@@ -257,10 +257,14 @@ export class LocalRuntimeManager {
 
   private async recordVerification(model: string): Promise<void> {
     const path = this.verificationPath();
-    const temporary = `${path}.new`;
+    const temporary = `${path}.new-${randomUUID()}`;
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(temporary, `${JSON.stringify({ model, verifiedAt: this.now().toISOString() }, null, 2)}\n`, { mode: 0o600 });
-    await rename(temporary, path);
+    try {
+      await writeFile(temporary, `${JSON.stringify({ model, verifiedAt: this.now().toISOString() }, null, 2)}\n`, { mode: 0o600 });
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
   }
 
   private async install(signal: AbortSignal): Promise<void> {
