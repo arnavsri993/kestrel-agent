@@ -999,7 +999,7 @@ export class AgentCore {
   }
 
   troubleshoot(message: string): string {
-    this.currentRouting = {
+    const routing: ModelRoutingDecision = {
       taskId: "chat-device-troubleshooting",
       model: "local-rules",
       reasoningEffort: "none",
@@ -1010,7 +1010,8 @@ export class AgentCore {
       confidence: 1,
       selectedAt: this.now(),
     };
-    this.deps.database.setState("modelRouting", this.currentRouting);
+    this.deps.database.setState("modelRouting", routing);
+    this.currentRouting = routing;
     const categories = this.context.categoriesFor(message);
     const resolved = this.context.resolve({
       userMessage: message,

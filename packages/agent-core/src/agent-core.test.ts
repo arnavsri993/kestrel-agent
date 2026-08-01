@@ -72,6 +72,26 @@ describe("teacher scheduling vertical slice", () => {
 
 
 describe("core agent request path", () => {
+  it("keeps the troubleshooting route unchanged when persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
+    const priorDecision = core.snapshot().modelRouting.currentDecision;
+    const priorPersisted = database.getState("modelRouting");
+    database.db.exec(`
+      CREATE TRIGGER reject_troubleshooting_route
+      BEFORE UPDATE ON runtime_state
+      WHEN NEW.key = 'modelRouting'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced troubleshooting route failure');
+      END
+    `);
+
+    expect(() => core.troubleshoot("The controller is not connected.")).toThrow("forced troubleshooting route failure");
+    expect(core.snapshot().modelRouting.currentDecision).toEqual(priorDecision);
+    expect(database.getState("modelRouting")).toEqual(priorPersisted);
+    core.close();
+  });
+
   it("turns model and provider auto-selection into an audited routed run", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     let received: { model: string; reasoningEffort?: string; serviceTier?: string } | undefined;
