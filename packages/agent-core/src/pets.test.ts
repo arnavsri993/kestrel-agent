@@ -80,6 +80,29 @@ describe("Petdex cosmetic pet manager", () => {
     }
   });
 
+  it("preserves a pet asset when removal state persistence fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-pets-remove-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    try {
+      const manager = new PetManager(database, root, fixtureFetch());
+      await manager.install("paperclip");
+      const setPrivateState = database.setPrivateState.bind(database);
+      database.setPrivateState = (key, value) => {
+        if (key === "display.installed-pets")
+          throw new Error("private pet state unavailable");
+        setPrivateState(key, value);
+      };
+
+      expect(() => manager.remove("paperclip")).toThrow(
+        "private pet state unavailable",
+      );
+      expect(manager.asset("paperclip").mediaType).toBe("image/webp");
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("renders verified frames through Unicode, iTerm2, and Kitty protocols", async () => {
     const image = await sharp({ create: { width: 1536, height: 1872, channels: 4, background: { r: 190, g: 80, b: 40, alpha: 1 } } }).webp().toBuffer();
     const root = mkdtempSync(join(tmpdir(), "workstrand-pets-render-"));
