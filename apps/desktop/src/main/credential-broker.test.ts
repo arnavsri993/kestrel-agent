@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -80,5 +80,29 @@ describe("desktop credential broker", () => {
     const broker = new CredentialBroker(root, { isEncryptionAvailable: () => false, encryptString: async () => Buffer.alloc(0), decryptString: async () => "" });
     await expect(broker.setCredential("anthropic", "test-secret-value")).rejects.toThrow("secure storage is unavailable");
     await expect(broker.getDatabaseKey()).rejects.toThrow("secure storage is unavailable");
+  });
+
+  it("bounds encrypted credential reads and probes file state without buffering it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-bounded-"));
+    roots.push(root);
+    const protection = {
+      isEncryptionAvailable: () => true,
+      encryptString: async (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+      decryptString: async (value: Buffer) => value.toString()
+    };
+    const credentialRoot = join(root, "secure", "credentials");
+    mkdirSync(credentialRoot, { recursive: true });
+    mkdirSync(join(credentialRoot, "openai.bin"));
+    expect(await new CredentialBroker(root, protection).listCredentials()).toContainEqual({ id: "openai", label: "OpenAI API key", configured: false });
+
+    rmSync(join(credentialRoot, "openai.bin"), { recursive: true, force: true });
+    writeFileSync(join(credentialRoot, "openai.bin"), Buffer.alloc(512_001));
+    await expect(new CredentialBroker(root, protection).providerEnvironment({})).rejects.toThrow("Encrypted credential exceeds 512 KB");
+
+    writeFileSync(join(credentialRoot, "opaque-google-workspace-oauth.bin"), Buffer.alloc(512_001));
+    await expect(new CredentialBroker(root, protection).getOpaqueSecret("google-workspace-oauth")).rejects.toThrow("Encrypted opaque credential exceeds 512 KB");
+
+    writeFileSync(join(root, "secure", "database-key.bin"), Buffer.alloc(512_001));
+    await expect(new CredentialBroker(root, protection).getDatabaseKey()).rejects.toThrow("Encrypted database key exceeds 512 KB");
   });
 });

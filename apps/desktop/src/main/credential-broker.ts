@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 interface ElectronSafeStorage {
@@ -53,6 +53,14 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
 
 const DATABASE_STORAGE_UNAVAILABLE =
   "macOS secure storage is unavailable; Agent Core will not start with an unprotected key.";
+const MAX_ENCRYPTED_SECRET_BYTES = 512_000;
+
+async function readEncryptedSecret(path: string, limitError: string): Promise<Buffer> {
+  if ((await stat(path)).size > MAX_ENCRYPTED_SECRET_BYTES) throw new Error(limitError);
+  const encrypted = await readFile(path);
+  if (encrypted.byteLength > MAX_ENCRYPTED_SECRET_BYTES) throw new Error(limitError);
+  return encrypted;
+}
 
 export interface ResolvedExternalCredentials {
   values: Partial<Record<BrokeredCredentialId, string>>;
@@ -264,7 +272,7 @@ export class CredentialBroker {
   }
 
   private async hasCredential(id: BrokeredCredentialId): Promise<boolean> {
-    try { await readFile(this.credentialPath(id)); return true; }
+    try { return (await stat(this.credentialPath(id))).isFile(); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
   }
 
@@ -285,7 +293,7 @@ export class CredentialBroker {
   private async loadDatabaseKey(): Promise<Buffer> {
     const protection = await this.availableProtection(DATABASE_STORAGE_UNAVAILABLE);
     try {
-      const encrypted = await readFile(this.keyPath);
+      const encrypted = await readEncryptedSecret(this.keyPath, "Encrypted database key exceeds 512 KB.");
       return Buffer.from(await protection.decryptString(encrypted), "base64");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -306,7 +314,7 @@ export class CredentialBroker {
   ): Promise<string | undefined> {
     let encrypted: Buffer;
     try {
-      encrypted = await readFile(this.credentialPath(id));
+      encrypted = await readEncryptedSecret(this.credentialPath(id), "Encrypted credential exceeds 512 KB.");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
@@ -317,7 +325,7 @@ export class CredentialBroker {
   private async loadOpaqueSecret(id: string): Promise<string | undefined> {
     let encrypted: Buffer;
     try {
-      encrypted = await readFile(this.opaquePath(id));
+      encrypted = await readEncryptedSecret(this.opaquePath(id), "Encrypted opaque credential exceeds 512 KB.");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
