@@ -934,6 +934,24 @@ describe("agent runtime", () => {
     } finally { globalThis.fetch = originalFetch; runtime.close(); database.close(); }
   });
 
+  it.skipIf(process.platform !== "darwin")("bounds oversized GitHub API error responses", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-github-bounded-")); temporaryDirectories.push(root);
+    writeFileSync(join(root, "README.md"), "# GitHub\n"); execFileSync("/usr/bin/git", ["init", "-q"], { cwd: root }); execFileSync("/usr/bin/git", ["remote", "add", "origin", "git@github.com:example/kestrel.git"], { cwd: root });
+    const database = new KestrelDatabase(":memory:", createEncryptionKey()); const runtime = new AgentRuntime(database, [root], () => "2026-07-22T16:00:00.000Z", "github-secret"); const session = runtime.createSession({ title: "GitHub bounded", workspaceRoot: root });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array([1])); controller.close(); },
+      cancel() { cancelled = true; }
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(body, { status: 500, headers: { "content-length": "1000001" } });
+    try {
+      const result = await runtime.callTool(session.id, "github.ci-checks", { ref: "main" });
+      expect(result).toMatchObject({ status: "failed", error: "GitHub response exceeds 1 MB." });
+      expect(cancelled).toBe(true);
+    } finally { globalThis.fetch = originalFetch; runtime.close(); database.close(); }
+  });
+
   it("runs deterministic pre-tool hooks and blocks prompt-injected external content", async () => {
     const { database, runtime, session } = fixture();
     runtime.registerHook({
