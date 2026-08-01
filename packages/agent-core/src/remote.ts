@@ -109,7 +109,9 @@ export class ServerlessHttpRemoteBackend implements RemoteExecutionBackend {
   constructor(private readonly fetcher: typeof fetch = fetch) {}
   async execute({ target, command, args, timeoutMs, signal, onOutput }: Parameters<RemoteExecutionBackend["execute"]>[0]): Promise<RemoteExecutionResult> {
     if (target.kind !== "serverless") throw new Error("Serverless backend received a non-serverless target.");
-    const endpoint = new URL(stringConfig(target, "endpoint")!); if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.hash) throw new Error("Serverless endpoint must be credential-free HTTPS.");
+    let endpoint: URL;
+    try { endpoint = new URL(stringConfig(target, "endpoint")!); } catch { throw new Error("Serverless endpoint must be a valid URL."); }
+    if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || endpoint.hash) throw new Error("Serverless endpoint must be credential-free HTTPS.");
     const bearerToken = stringConfig(target, "bearerToken", false);
     const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
     const response = await this.fetcher(endpoint, { method: "POST", signal: boundedSignal, headers: { "content-type": "application/json", accept: "application/json", ...(bearerToken ? { authorization: `Bearer ${bearerToken}` } : {}) }, body: JSON.stringify({ executionId: `kestrel-${randomUUID()}`, command, args, timeoutMs }) });
