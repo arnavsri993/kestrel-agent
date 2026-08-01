@@ -97,6 +97,7 @@ export class SandboxedCommandRunner {
     options: { signal?: AbortSignal; interactive?: boolean; onProgress(payload: { stream: "stdout" | "stderr"; chunk: string }): void }
   ): SandboxedCommandHandle {
     if (process.platform !== "darwin") throw new Error("The current Kestrel command sandbox is implemented only for macOS.");
+    if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new Error("Command execution was cancelled.");
     const executable = resolveExecutable(input.command);
     const startedAt = Date.now();
     const profile = sandboxProfile(input.workspaceRoot, input.mode);
