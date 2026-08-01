@@ -391,6 +391,9 @@ describe("Kestrel CLI arguments", () => {
       parseCliArguments(["remote", "serve", "--tailscale", "funnel"]),
     ).toThrow("requires --tailscale-public-ack public");
     expect(() =>
+      parseCliArguments(["remote", "serve", "--allowed-origins", "not a URL"]),
+    ).toThrow("--allowed-origins must contain exact HTTP(S) origins.");
+    expect(() =>
       parseCliArguments([
         "remote",
         "serve",
