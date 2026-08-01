@@ -1,4 +1,5 @@
 import { ModelProviderError } from "./types";
+import { readBoundedResponseBytes } from "../bounded-http";
 
 export interface ServerSentEvent {
   event?: string;
@@ -68,7 +69,15 @@ export async function providerFetch(
     );
   }
   if (!response.ok) {
-    const body = (await response.text()).slice(0, 2_000).replace(/[\r\n]+/g, " ");
+    let body = "";
+    try {
+      body = new TextDecoder()
+        .decode(await readBoundedResponseBytes(response, 8_000, "Provider error response exceeds 8 KB."))
+        .slice(0, 2_000)
+        .replace(/[\r\n]+/g, " ");
+    } catch {
+      // Preserve the provider status when an error body is too large or unreadable.
+    }
     const retryable = response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500;
     throw new ModelProviderError(`Provider returned HTTP ${response.status}${body ? `: ${body}` : ""}`, providerId, retryable, response.status);
   }
