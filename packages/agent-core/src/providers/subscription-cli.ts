@@ -28,6 +28,10 @@ function safeEnvironment(source: NodeJS.ProcessEnv, additions: NodeJS.ProcessEnv
 
 function runCli(executable: string, args: string[], input: string, options: { cwd: string; environment: NodeJS.ProcessEnv; signal: AbortSignal | undefined; timeoutMs: number; onLine?: (line: string) => void }): Promise<CliRunResult> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(options.signal.reason instanceof Error ? options.signal.reason : new Error("Provider request was cancelled."));
+      return;
+    }
     const child = spawn(executable, args, { cwd: options.cwd, env: options.environment, shell: false, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
