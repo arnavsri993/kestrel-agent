@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { PluginTrustKey } from "@kestrel/agent-core";
 
@@ -28,7 +28,10 @@ export class PluginTrustStore {
 
   private async stored(): Promise<StoredPublisher[]> {
     let bytes: Buffer;
-    try { bytes = await readFile(this.path); }
+    try {
+      if ((await stat(this.path)).size > 1_000_000) throw new Error("Plugin publisher trust store exceeds 1 MB.");
+      bytes = await readFile(this.path);
+    }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
