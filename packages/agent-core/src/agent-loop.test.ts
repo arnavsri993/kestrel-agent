@@ -315,6 +315,29 @@ describe("provider-neutral agent loop", () => {
     database.close();
   });
 
+  it("returns an actionable error when a run is cancelled with a null reason", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Null cancellation reason" });
+    const provider: ModelProvider = {
+      id: "never-called",
+      capabilities: { streaming: false, tools: false, images: false, audio: false, documents: false, local: true },
+      complete: async () => { throw new Error("must not run"); }
+    };
+    const controller = new AbortController();
+    controller.abort(null);
+
+    await expect(new AgentLoop(database, runtime, new ProviderPool([provider])).run({
+      sessionId: session.id,
+      model: "never-called",
+      providerIds: ["never-called"],
+      userContent: textContent("cancel"),
+      signal: controller.signal
+    })).rejects.toThrow("Agent execution was cancelled.");
+    expect(database.listAgentRuns(session.id)).toMatchObject([{ status: "cancelled", error: "Cancelled by the user." }]);
+    database.close();
+  });
+
   it("releases at approval boundaries while preventing run and resume overlap", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
