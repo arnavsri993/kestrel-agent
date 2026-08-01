@@ -162,4 +162,23 @@ describe("persistent Codex app-server provider", () => {
       ),
     ).toBe(false);
   });
+
+  it("removes the abort listener when a request starts already cancelled", async () => {
+    const fake = await fakeAppServer();
+    const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: 2_000, turnTimeoutMs: 2_000 });
+    let removals = 0;
+    const signal = {
+      aborted: true,
+      reason: new Error("Already cancelled."),
+      addEventListener: () => undefined,
+      removeEventListener: () => { removals += 1; }
+    } as unknown as AbortSignal;
+
+    try {
+      await expect(provider.probe(signal)).rejects.toThrow("Already cancelled.");
+      expect(removals).toBe(1);
+    } finally {
+      await provider.close();
+    }
+  });
 });
