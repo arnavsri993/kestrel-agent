@@ -168,8 +168,13 @@ export class PluginRegistry {
       if (dependent) throw new Error(`Disable dependent plugin ${dependent.name} before ${name}.`);
     }
     const updated = { ...plugin, enabled };
-    this.plugins.set(name, updated);
-    this.database?.setState(`plugin.enabled.${name}`, enabled);
+    try {
+      this.database?.setState(`plugin.enabled.${name}`, enabled);
+      this.plugins.set(name, updated);
+    } catch (error) {
+      this.plugins.set(name, plugin);
+      throw error;
+    }
     return updated;
   }
 
