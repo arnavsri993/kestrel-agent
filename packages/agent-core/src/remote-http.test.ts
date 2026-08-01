@@ -136,6 +136,9 @@ describe("authenticated remote HTTP transport", () => {
     expect(paired.status).toBe(200);
     const device = await paired.json() as { token: string };
     const headers = { authorization: `Bearer ${device.token}` };
+    const malformed = await fetch(`${origin}/v1/presence`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: "not-json" });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: "JSON request body is invalid." });
     expect((await fetch(`${origin}/v1/diagnostics/prometheus`)).status).toBe(401);
     const metrics = await fetch(`${origin}/v1/diagnostics/prometheus`, { headers });
     expect(metrics.status).toBe(200);

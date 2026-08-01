@@ -122,7 +122,9 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
     if (bytes > 1_000_000) throw new Error("Request body exceeds 1 MB.");
     chunks.push(buffer);
   }
-  const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  let parsed: unknown;
+  try { parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+  catch { throw new Error("JSON request body is invalid."); }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("JSON request body must be an object.");
   return parsed as Record<string, unknown>;
 }
