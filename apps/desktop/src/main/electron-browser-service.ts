@@ -284,8 +284,37 @@ export class ElectronBrowserService {
     const keyCodes: Record<Extract<DesktopAction, { type: "key" }>["key"], number> = { Enter: 36, Escape: 53, Tab: 48, Backspace: 51, ArrowUp: 126, ArrowDown: 125, ArrowLeft: 123, ArrowRight: 124 };
     const script = action.type === "click" ? `tell application "System Events" to click at {${action.x}, ${action.y}}` : action.type === "type" ? "tell application \"System Events\" to keystroke (system attribute \"KESTREL_COMPUTER_TEXT\")" : `tell application "System Events" to key code ${keyCodes[action.key]}`;
     await new Promise<void>((resolvePromise, reject) => {
-      const child = execFile("/usr/bin/osascript", ["-e", script], { timeout: 30_000, env: { PATH: "/usr/bin:/bin", ...(action.type === "type" ? { KESTREL_COMPUTER_TEXT: action.text } : {}) } }, (error) => error ? reject(error) : resolvePromise());
-      const abort = () => child.kill("SIGTERM"); signal.addEventListener("abort", abort, { once: true }); child.once("exit", () => signal.removeEventListener("abort", abort));
+      let child: ReturnType<typeof execFile> | undefined;
+      let cancelled = false;
+      let settled = false;
+      let cleanup: () => void = () => undefined;
+      const cancellationError = () => signal.reason instanceof Error ? signal.reason : new Error("Desktop action cancelled.");
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolvePromise();
+      };
+      const abort = () => {
+        cancelled = true;
+        child?.kill("SIGTERM");
+        finish(cancellationError());
+      };
+      cleanup = () => signal.removeEventListener("abort", abort);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) {
+        abort();
+        return;
+      }
+      child = execFile("/usr/bin/osascript", ["-e", script], { timeout: 30_000, env: { PATH: "/usr/bin:/bin", ...(action.type === "type" ? { KESTREL_COMPUTER_TEXT: action.text } : {}) } }, (error) => {
+        if (cancelled || signal.aborted) {
+          finish(cancellationError());
+          return;
+        }
+        finish(error ?? undefined);
+      });
+      if (cancelled) child.kill("SIGTERM");
     });
   }
 

@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
+const { execFile } = vi.hoisted(() => ({ execFile: vi.fn() }));
+
 vi.mock("electron", () => ({
   app: {},
   BrowserWindow: class {},
   desktopCapturer: {},
   session: {},
-  systemPreferences: {},
+  systemPreferences: { isTrustedAccessibilityClient: vi.fn(() => true) },
 }));
+vi.mock("node:child_process", () => ({ execFile }));
 
 import { ElectronBrowserService } from "./electron-browser-service";
 
@@ -62,5 +65,25 @@ describe("Electron browser action cancellation", () => {
       error: expect.objectContaining({ message: "cancelled before typing" }),
     });
     expect(insertText).not.toHaveBeenCalled();
+  });
+
+  it("kills a desktop action when cancellation races process launch", async () => {
+    const controller = new AbortController();
+    const kill = vi.fn();
+    const once = vi.fn();
+    execFile.mockImplementationOnce(() => {
+      controller.abort(new Error("cancelled during launch"));
+      return { kill, once };
+    });
+
+    const service = new ElectronBrowserService();
+    const outcome = service.handle(
+      { operation: "desktop-act", action: { type: "click", x: 10, y: 20 } },
+      controller.signal,
+    );
+
+    await expect(outcome).rejects.toThrow("cancelled during launch");
+    expect(execFile).toHaveBeenCalledOnce();
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
   });
 });
