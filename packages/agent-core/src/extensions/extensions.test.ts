@@ -355,6 +355,16 @@ describe("Agent Skills extensions", () => {
     fixture.database.close();
   });
 
+  it("rejects oversized skill instructions before reading them", () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-skills-large-"));
+    directories.push(container);
+    const skillRoot = join(container, "large-skill");
+    mkdirSync(skillRoot, { recursive: true });
+    writeFileSync(join(skillRoot, "SKILL.md"), `---\nname: large-skill\ndescription: A deliberately oversized skill.\n---\n\n${"x".repeat(512_001)}`);
+
+    expect(() => new SkillRegistry([container]).discover()).toThrow("SKILL.md exceeds the 512 KB safety limit");
+  });
+
   it("turns provenance-backed experience into reviewable, validated, feedback-informed learned skills", () => {
     const learnedRoot = mkdtempSync(join(tmpdir(), "kestrel-learned-skills-"));
     directories.push(learnedRoot);

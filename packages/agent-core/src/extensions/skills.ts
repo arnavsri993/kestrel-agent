@@ -27,6 +27,7 @@ function unquote(value: string): string {
 }
 
 function parseSkill(path: string): ActivatedSkill {
+  if (statSync(path).size > 512_000) throw new Error("SKILL.md exceeds the 512 KB safety limit.");
   const content = readFileSync(path, "utf8");
   if (Buffer.byteLength(content) > 512_000) throw new Error("SKILL.md exceeds the 512 KB safety limit.");
   if (!content.startsWith("---\n") && !content.startsWith("---\r\n")) throw new Error("SKILL.md must begin with YAML frontmatter.");
