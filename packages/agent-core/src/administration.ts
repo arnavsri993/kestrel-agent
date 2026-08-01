@@ -314,8 +314,14 @@ export class ManagedPolicyStore {
     if (!policy?.sso) throw new Error("Managed SSO is not configured.");
     const parts = token.split(".");
     if (parts.length !== 3 || parts.some((part) => !part)) throw new Error("SSO identity token is malformed.");
-    const header = JSON.parse(Buffer.from(parts[0]!, "base64url").toString("utf8")) as Record<string, unknown>;
-    const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+    let header: Record<string, unknown>;
+    let payload: Record<string, unknown>;
+    try {
+      header = JSON.parse(Buffer.from(parts[0]!, "base64url").toString("utf8")) as Record<string, unknown>;
+      payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+    } catch {
+      throw new Error("SSO identity token is malformed.");
+    }
     if (header.alg !== "EdDSA" || !verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), createPublicKey(policy.sso.publicKeyPem), Buffer.from(parts[2]!, "base64url"))) throw new Error("SSO identity signature verification failed.");
     const audience = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
     if (payload.iss !== policy.sso.issuer || !audience.includes(policy.sso.audience) || typeof payload.sub !== "string" || typeof payload.email !== "string" || typeof payload.exp !== "number" || payload.exp * 1_000 <= this.now().getTime()) throw new Error("SSO identity claims are invalid or expired.");
