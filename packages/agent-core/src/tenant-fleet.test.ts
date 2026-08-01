@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -31,5 +31,17 @@ describe("tenant fleet", () => {
     await expect(fleet.create({ tenant: "../escape", port: 18790 })).rejects.toThrow("name");
     await expect(fleet.create({ tenant: "acme", port: 80 })).rejects.toThrow("port");
     await expect(fleet.create({ tenant: "acme", port: 18790, blockEgress: true })).rejects.toThrow("firewall");
+  });
+
+  it("cleans the registry temporary file when the final rename fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-fleet-"));
+    const runner: TenantFleetRunner = { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    const fleet = new TenantFleet(root, runner);
+    const registryPath = join(root, "fleet", "cells.json");
+    mkdirSync(registryPath);
+
+    await expect(fleet.create({ tenant: "acme", port: 18790 })).rejects.toThrow();
+    expect(existsSync(`${registryPath}.new`)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
   });
 });

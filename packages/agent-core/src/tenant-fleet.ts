@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { chmod, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 export interface TenantCell {
@@ -97,8 +97,12 @@ export class TenantFleet {
 
   private async save(cells: TenantCell[]): Promise<void> {
     const temporary = `${this.registryPath}.new`;
-    await writeFile(temporary, `${JSON.stringify(cells, null, 2)}\n`, { mode: 0o600 });
-    await chmod(temporary, 0o600);
-    await rename(temporary, this.registryPath);
+    try {
+      await writeFile(temporary, `${JSON.stringify(cells, null, 2)}\n`, { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, this.registryPath);
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
   }
 }
