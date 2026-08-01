@@ -205,10 +205,18 @@ export class BraveSearchProvider implements WebSearchProvider {
       const response = await this.fetcher(url, { redirect: "error", signal: controller.signal, headers: { accept: "application/json", "x-subscription-token": this.options.apiKey } });
       const bytes = await readBoundedResponseBytes(response, 2_000_000, "Brave Search response exceeds 2 MB.");
       if (!response.ok) throw new Error(`Brave Search failed with status ${response.status}.`);
-      const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { web?: { results?: Array<{ title?: unknown; url?: unknown; description?: unknown }> } };
-      return (parsed.web?.results ?? []).slice(0, maximumResults).flatMap((result) => typeof result.title === "string" && typeof result.url === "string"
-        ? [{ title: result.title, url: result.url, snippet: typeof result.description === "string" ? result.description : "" }]
-        : []);
+      let parsed: unknown;
+      try { parsed = JSON.parse(new TextDecoder().decode(bytes)); }
+      catch { throw new Error("Brave Search returned malformed JSON."); }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Brave Search returned an invalid response.");
+      const results = (parsed as { web?: { results?: unknown } }).web?.results;
+      return (Array.isArray(results) ? results : []).slice(0, maximumResults).flatMap((result) => {
+        if (!result || typeof result !== "object" || Array.isArray(result)) return [];
+        const record = result as { title?: unknown; url?: unknown; description?: unknown };
+        return typeof record.title === "string" && typeof record.url === "string"
+          ? [{ title: record.title, url: record.url, snippet: typeof record.description === "string" ? record.description : "" }]
+          : [];
+      });
     } finally {
       clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
