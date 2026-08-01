@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -80,5 +80,23 @@ describe("desktop credential broker", () => {
     const broker = new CredentialBroker(root, { isEncryptionAvailable: () => false, encryptString: async () => Buffer.alloc(0), decryptString: async () => "" });
     await expect(broker.setCredential("anthropic", "test-secret-value")).rejects.toThrow("secure storage is unavailable");
     await expect(broker.getDatabaseKey()).rejects.toThrow("secure storage is unavailable");
+  });
+
+  it("cleans encrypted temporary files when a credential replacement fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-rollback-"));
+    roots.push(root);
+    const protection = {
+      isEncryptionAvailable: () => true,
+      encryptString: async (value: string) => Buffer.from(`sealed:${value}`),
+      decryptString: async (value: Buffer) => value.toString().slice("sealed:".length)
+    };
+    const credentialRoot = join(root, "secure", "credentials");
+    mkdirSync(join(credentialRoot, "openai.bin"), { recursive: true });
+    mkdirSync(join(credentialRoot, "opaque-google-workspace-oauth.bin"), { recursive: true });
+    const broker = new CredentialBroker(root, protection);
+
+    await expect(broker.setCredential("openai", "sk-test-secret-value")).rejects.toThrow();
+    await expect(broker.setOpaqueSecret("google-workspace-oauth", "refresh-secret-value")).rejects.toThrow();
+    expect(readdirSync(credentialRoot).filter((name) => name.includes(".new-")).length).toBe(0);
   });
 });

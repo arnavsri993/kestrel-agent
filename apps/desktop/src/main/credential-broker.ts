@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -172,11 +172,15 @@ export class CredentialBroker {
     const secret = value.trim();
     if (secret.length < 8 || secret.length > 20_000 || /[\r\n\0]/.test(secret)) throw new Error("Credential value is invalid.");
     const path = this.credentialPath(id);
-    const temporary = `${path}.new`;
+    const temporary = `${path}.new-${randomUUID()}`;
     await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
-    await writeFile(temporary, await protection.encryptString(secret), { mode: 0o600 });
-    await chmod(temporary, 0o600);
-    await rename(temporary, path);
+    try {
+      await writeFile(temporary, await protection.encryptString(secret), { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, path);
+    } finally {
+      await unlink(temporary).catch((error) => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
+    }
     await chmod(path, 0o600);
     this.credentialCache.set(id, Promise.resolve(secret));
   }
@@ -193,11 +197,15 @@ export class CredentialBroker {
     const protection = await this.availableProtection();
     if (value.length < 8 || value.length > 100_000 || value.includes("\0")) throw new Error("Opaque credential value is invalid.");
     const path = this.opaquePath(id);
-    const temporary = `${path}.new`;
+    const temporary = `${path}.new-${randomUUID()}`;
     await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
-    await writeFile(temporary, await protection.encryptString(value), { mode: 0o600 });
-    await chmod(temporary, 0o600);
-    await rename(temporary, path);
+    try {
+      await writeFile(temporary, await protection.encryptString(value), { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, path);
+    } finally {
+      await unlink(temporary).catch((error) => { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; });
+    }
     await chmod(path, 0o600);
     this.opaqueSecretCache.set(id, Promise.resolve(value));
   }
