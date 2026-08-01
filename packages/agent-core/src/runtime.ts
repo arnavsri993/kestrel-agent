@@ -750,8 +750,14 @@ export class AgentRuntime extends EventEmitter {
     const descriptor = RuntimeToolDescriptorSchema.parse(tool.descriptor);
     if (JSON.stringify(descriptor) !== JSON.stringify(entry.descriptor)) throw new Error("Activated tool metadata does not match its deferred catalog descriptor.");
     this.registerExternalTool(tool);
-    this.deferredTools.delete(name);
-    this.allowTool(sessionId, name);
+    try {
+      this.allowTool(sessionId, name);
+      this.deferredTools.delete(name);
+    } catch (error) {
+      this.tools.delete(name);
+      this.deferredTools.set(name, entry);
+      throw error;
+    }
     return descriptor;
   }
 
