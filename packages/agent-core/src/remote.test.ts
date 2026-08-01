@@ -61,6 +61,19 @@ describe("remote backends and scoped supervision", () => {
     database.close();
   });
 
+  it("rejects a pairing at its exact expiration timestamp", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const orchestrator = new TaskOrchestrator(database, runtime, new AgentLoop(database, runtime, new ProviderPool([provider])));
+    let now = new Date("2026-07-23T00:00:00.000Z");
+    const remote = new RemoteControl(database, runtime, orchestrator, () => now);
+    const pairing = remote.beginPairing("Expiring device", ["read"], 30_000);
+    now = new Date(pairing.expiresAt);
+
+    expect(() => remote.completePairing(pairing.pairingId, pairing.code)).toThrow("invalid or expired");
+    database.close();
+  });
+
   it("runs concrete Docker, SSH, and Kubernetes CLI adapters with argv containment", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-cli-")); const bin = join(root, "bin");
     writeFileSync(join(root, "placeholder"), "workspace");
