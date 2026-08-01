@@ -231,6 +231,31 @@ describe("authenticated channel gateway", () => {
     database.close();
   });
 
+  it("compensates an external reaction when tracking persistence fails", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const calls: Array<{ emoji: string; remove: boolean }> = [];
+    const gateway = new ChannelGateway(database, runtime, [{
+      id: "chat",
+      kind: "discord",
+      send: async () => ({ externalId: "message-1", deliveredAt: "2026-07-23T12:00:00.000Z" }),
+      react: async ({ emoji, remove }) => { calls.push({ emoji, remove }); }
+    }], {});
+    gateway.configureInteraction({ progressMode: "progress", typingMode: "thinking", typingIntervalSeconds: 6, reactionLevel: "minimal" });
+    database.db.exec(`
+      CREATE TRIGGER reject_reaction_tracking
+      BEFORE INSERT ON private_runtime_state
+      WHEN NEW.key LIKE 'channel-reactions:%'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced reaction tracking persistence failure');
+      END
+    `);
+
+    await expect(gateway.react("chat", "room-1", "message-1", "add", "👍", new AbortController().signal)).rejects.toThrow("forced reaction tracking persistence failure");
+    expect(calls).toEqual([{ emoji: "👍", remove: false }, { emoji: "👍", remove: true }]);
+    database.close();
+  });
+
   it("uses one editable content-free progress draft and supported typing signals", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
