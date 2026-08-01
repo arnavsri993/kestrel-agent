@@ -2,6 +2,7 @@ import type {
   GeneratedMedia,
   MediaGenerationProvider,
 } from "./media-artifacts";
+import { readBoundedResponseBytes } from "./bounded-http";
 import { createFalClient, type FalClient } from "@fal-ai/client";
 
 export interface OpenAiMediaProviderOptions {
@@ -235,7 +236,11 @@ export class OpenAiMediaProvider implements MediaGenerationProvider {
     const declared = Number(response.headers.get("content-length") ?? 0);
     if (declared > 100_000_000)
       throw new Error("OpenAI speech response exceeds 100 MB.");
-    const data = new Uint8Array(await response.arrayBuffer());
+    const data = await readBoundedResponseBytes(
+      response,
+      100_000_000,
+      "OpenAI speech response exceeds 100 MB.",
+    );
     if (data.byteLength === 0 || data.byteLength > 100_000_000)
       throw new Error("OpenAI speech response is empty or exceeds 100 MB.");
     return {

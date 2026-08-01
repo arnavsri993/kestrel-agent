@@ -178,6 +178,38 @@ describe("media artifact workflow", () => {
     ).toContain("local-markdown");
   });
 
+  it("cancels an oversized chunked OpenAI speech response before buffering it", async () => {
+    let cancelled = false;
+    const reader = {
+      read: async () => ({
+        done: false,
+        value: { byteLength: 100_000_001 } as Uint8Array,
+      }),
+      cancel: async () => {
+        cancelled = true;
+      },
+      releaseLock: () => undefined,
+    };
+    const provider = new OpenAiMediaProvider({
+      apiKey: "speech-limit-secret",
+      fetcher: async () =>
+        ({
+          ok: true,
+          headers: new Headers({ "content-type": "audio/mpeg" }),
+          body: { getReader: () => reader },
+        }) as unknown as Response,
+    });
+
+    await expect(
+      provider.generate({
+        prompt: "a bounded voice line",
+        kind: "audio",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("OpenAI speech response exceeds 100 MB.");
+    expect(cancelled).toBe(true);
+  });
+
   it("creates retained opaque-origin widgets through an approval-gated tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-widgets-"));
     directories.push(root);
