@@ -176,4 +176,29 @@ describe("external secret manager", () => {
     expect((await manager.configuration()).bitwarden).toEqual(DEFAULT_EXTERNAL_SECRET_CONFIGURATION.bitwarden);
     expect(await item.broker.getOpaqueSecret("external-secret-bitwarden-token")).toBeUndefined();
   });
+
+  it("ignores oversized verification state instead of trusting it", async () => {
+    const item = fixture();
+    const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+    configuration.onepassword = {
+      enabled: true,
+      binaryPath: item.paths.op,
+      account: "",
+      mappings: { openai: "op://Private/OpenAI/api-key" },
+      overrideStored: true
+    };
+    const manager = new ExternalSecretManager(item.root, item.broker);
+    await manager.save(configuration);
+    writeFileSync(join(item.root, "secure", "external-secret-status.json"), JSON.stringify({
+      onepassword: {
+        state: "error",
+        detail: "stale".repeat(250_001),
+        resolvedCredentialIds: [],
+        lastSyncedAt: "2026-07-23T08:00:00.000Z"
+      }
+    }));
+
+    const source = (await manager.status()).sources.find((entry) => entry.id === "onepassword");
+    expect(source).toMatchObject({ state: "ready", detail: "Configured for the 1Password desktop or CLI session." });
+  });
 });
