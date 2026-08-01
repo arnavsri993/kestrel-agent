@@ -206,6 +206,19 @@ describe("model provider adapters", () => {
     expect(requestBody.think).toBe(false);
   });
 
+  it("normalizes malformed Ollama NDJSON responses", async () => {
+    const baseUrl = await serve((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "application/x-ndjson" });
+        response.end("not-json\n");
+      });
+    });
+    const provider = new OllamaChatProvider({ baseUrl });
+    await expect(provider.complete({ model: "local-test", messages: [{ role: "user", content: textContent("hello") }] }))
+      .rejects.toMatchObject({ name: "ModelProviderError", providerId: "ollama", retryable: false, message: "ollama returned malformed NDJSON." });
+  });
+
   it("maps Gemini video input, tools, and measured usage through the production REST contract", async () => {
     let requestBody: Record<string, unknown> = {};
     let apiKey = "";
