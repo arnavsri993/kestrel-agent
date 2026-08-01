@@ -85,6 +85,49 @@ describe("network-policy web tools", () => {
     expect(requests).toBe(0);
   });
 
+  it("rejects cancelled searches before cache or provider work", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Search cancelled before start."));
+    let cacheReads = 0;
+    let providerCalls = 0;
+    const client = new NetworkPolicyWebClient({
+      allowedHosts: ["safe.example.test"],
+      searchProvider: {
+        search: async () => {
+          providerCalls += 1;
+          return [{ title: "Unexpected", url: "https://safe.example.test/", snippet: "Unexpected" }];
+        },
+      },
+      cache: {
+        get: <T>() => {
+          cacheReads += 1;
+          return undefined as T | undefined;
+        },
+        set: () => undefined,
+      },
+    });
+
+    await expect(client.search("safe", 1, controller.signal)).rejects.toThrow("Search cancelled before start.");
+    expect(cacheReads).toBe(0);
+    expect(providerCalls).toBe(0);
+
+    const duringProvider = new AbortController();
+    let cacheWrites = 0;
+    const providerClient = new NetworkPolicyWebClient({
+      allowedHosts: ["safe.example.test"],
+      searchProvider: {
+        search: async () => {
+          duringProvider.abort(new Error("Search cancelled after provider response."));
+          return [{ title: "Unexpected", url: "https://safe.example.test/", snippet: "Unexpected" }];
+        },
+      },
+      resolveHost: async () => ["203.0.113.21"],
+      cache: { get: () => undefined, set: () => { cacheWrites += 1; } },
+    });
+    await expect(providerClient.search("safe", 1, duringProvider.signal)).rejects.toThrow("Search cancelled after provider response.");
+    expect(cacheWrites).toBe(0);
+  });
+
   it("exposes approval-gated runtime fetch and search tools", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
