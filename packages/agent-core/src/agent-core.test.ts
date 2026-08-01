@@ -72,6 +72,33 @@ describe("teacher scheduling vertical slice", () => {
 
 
 describe("core agent request path", () => {
+  it("keeps automatic routing unchanged when route persistence fails", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const provider: ModelProvider = {
+      id: "automatic-route",
+      defaultModel: "automatic-route-model",
+      capabilities: { streaming: false, tools: false, images: false, audio: false, documents: false, local: true },
+      complete: async (request) => ({ providerId: "automatic-route", model: request.model, text: "unused", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }),
+    };
+    const core = new AgentCore({ database, modelProviders: [provider], now: () => "2026-07-22T15:00:00.000Z" });
+    const priorDecision = core.snapshot().modelRouting.currentDecision;
+    const priorPersisted = database.getState("modelRouting");
+    database.db.exec(`
+      CREATE TRIGGER reject_automatic_route
+      BEFORE UPDATE ON runtime_state
+      WHEN NEW.key = 'modelRouting'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced automatic route failure');
+      END
+    `);
+    const session = core.runtime.ensureMainSession();
+
+    await expect(core.handle({ type: "runtime-run-agent", sessionId: session.id, message: "Route this request.", model: "auto", providerIds: ["auto"] })).resolves.toMatchObject({ ok: false, error: "forced automatic route failure" });
+    expect(core.snapshot().modelRouting.currentDecision).toEqual(priorDecision);
+    expect(database.getState("modelRouting")).toEqual(priorPersisted);
+    await core.close();
+  });
+
   it("turns model and provider auto-selection into an audited routed run", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     let received: { model: string; reasoningEffort?: string; serviceTier?: string } | undefined;
