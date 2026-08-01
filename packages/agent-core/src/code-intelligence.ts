@@ -139,13 +139,16 @@ export class LanguageServerClient {
       this.openDocuments.clear();
       await this.request("shutdown", null);
     } finally {
-      await this.notify("exit");
-      this.unsubscribe();
-      for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("Language server client closed.")); }
-      this.pending.clear();
-      for (const waiters of this.diagnosticsWaiters.values()) for (const waiter of waiters) { clearTimeout(waiter.timer); waiter.reject(new Error("Language server client closed.")); }
-      this.diagnosticsWaiters.clear();
-      await this.transport.close();
+      try {
+        await this.notify("exit");
+      } finally {
+        this.unsubscribe();
+        for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("Language server client closed.")); }
+        this.pending.clear();
+        for (const waiters of this.diagnosticsWaiters.values()) for (const waiter of waiters) { clearTimeout(waiter.timer); waiter.reject(new Error("Language server client closed.")); }
+        this.diagnosticsWaiters.clear();
+        await this.transport.close();
+      }
     }
   }
 

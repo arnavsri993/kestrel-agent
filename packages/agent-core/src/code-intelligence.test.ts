@@ -27,6 +27,18 @@ class LoopbackLanguageServer implements LanguageServerTransport {
   private emit(message: LspMessage): void { for (const listener of this.listeners) listener(message); }
 }
 
+class ExitFailureLanguageServer extends LoopbackLanguageServer {
+  closed = false;
+  send(message: LspMessage): Promise<void> {
+    if (message.method === "exit") return Promise.reject(new Error("forced exit notification failure"));
+    return super.send(message);
+  }
+  close(): void {
+    this.closed = true;
+    super.close();
+  }
+}
+
 describe("language server code intelligence", () => {
   it("negotiates LSP and serves approval-gated diagnostics, definitions, and references", async () => {
     const transport = new LoopbackLanguageServer();
@@ -60,5 +72,13 @@ describe("language server code intelligence", () => {
       expect(await configured?.client.definition(pathToFileURL(join(root, "a.ts")).toString(), { line: 0, character: 0 })).toEqual([]);
       await configured?.client.close();
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("closes the transport when the exit notification fails", async () => {
+    const transport = new ExitFailureLanguageServer();
+    const client = new LanguageServerClient(transport);
+    await client.initialize("file:///project");
+    await expect(client.close()).rejects.toThrow("forced exit notification failure");
+    expect(transport.closed).toBe(true);
   });
 });
