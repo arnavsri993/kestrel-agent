@@ -382,6 +382,30 @@ describe("Agent Skills extensions", () => {
     database.close();
   });
 
+  it("rolls back a learned skill when install persistence fails", () => {
+    const learnedRoot = mkdtempSync(join(tmpdir(), "kestrel-learned-skill-rollback-"));
+    directories.push(learnedRoot);
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const source = runtime.createSession({ title: "Learning source" });
+    const sourceMessage = runtime.appendMessage({ sessionId: source.id, role: "user", content: "Remember the release verification steps." });
+    const manager = new SkillLearningManager(database, learnedRoot, new SkillRegistry([learnedRoot]), () => new Date("2026-07-22T23:00:00.000Z"));
+    const proposal = manager.propose({ name: "release-check", description: "Verify a release before publishing.", instructions: "Run the build and verify its checksums before publishing.", sourceSessionId: source.id, sourceMessageIds: [sourceMessage.id] });
+    database.db.exec(`
+      CREATE TRIGGER reject_learned_skill_install_persistence
+      BEFORE UPDATE ON private_runtime_state
+      WHEN NEW.key = 'skills.learning.proposals'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced learned skill persistence failure');
+      END
+    `);
+
+    expect(() => manager.review(proposal.id, "install")).toThrow("forced learned skill persistence failure");
+    expect(existsSync(join(learnedRoot, "release-check"))).toBe(false);
+    expect(manager.list()[0]).toMatchObject({ id: proposal.id, status: "proposed" });
+    database.close();
+  });
+
   it("turns a completed session into a reviewable workflow proposal without copying tool output", () => {
     const learnedRoot = mkdtempSync(join(tmpdir(), "kestrel-learned-skill-suggestion-"));
     directories.push(learnedRoot);

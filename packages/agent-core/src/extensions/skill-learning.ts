@@ -28,6 +28,11 @@ function within(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);
 }
 
+interface SkillInstallation {
+  finalize(): void;
+  rollback(): void;
+}
+
 export class SkillLearningManager {
   private readonly proposalKey = "skills.learning.proposals";
   private readonly feedbackKey = "skills.learning.feedback";
@@ -140,11 +145,18 @@ export class SkillLearningManager {
       this.saveProposals(proposals);
       return rejected;
     }
+    let installation: SkillInstallation | undefined;
     try {
-      this.install(current);
+      installation = this.install(current);
       const installed = { ...current, status: "installed" as const, updatedAt: this.now().toISOString() };
       proposals[index] = installed;
-      this.saveProposals(proposals);
+      try {
+        this.saveProposals(proposals);
+        installation.finalize();
+      } catch (error) {
+        installation.rollback();
+        throw error;
+      }
       this.registry.discover();
       return installed;
     } catch (error) {
@@ -180,7 +192,7 @@ export class SkillLearningManager {
     }
   }
 
-  private install(proposal: SkillLearningProposal): void {
+  private install(proposal: SkillLearningProposal): SkillInstallation {
     this.validatePackage(proposal.name, proposal.description, proposal.instructions);
     const container = resolve(this.root, `.install-${randomUUID()}`);
     const staged = resolve(container, proposal.name);
@@ -198,7 +210,6 @@ export class SkillLearningManager {
         backedUp = true;
       }
       renameSync(staged, target);
-      if (backedUp) rmSync(backup, { recursive: true, force: true });
     } catch (error) {
       if (existsSync(target)) rmSync(target, { recursive: true, force: true });
       if (backedUp && existsSync(backup)) renameSync(backup, target);
@@ -206,6 +217,20 @@ export class SkillLearningManager {
     } finally {
       if (existsSync(container)) rmSync(container, { recursive: true, force: true });
     }
+    let settled = false;
+    return {
+      finalize: () => {
+        if (settled) return;
+        settled = true;
+        if (backedUp) rmSync(backup, { recursive: true, force: true });
+      },
+      rollback: () => {
+        if (settled) return;
+        settled = true;
+        if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+        if (backedUp && existsSync(backup)) renameSync(backup, target);
+      },
+    };
   }
 
   private saveProposals(proposals: SkillLearningProposal[]): void { this.database.setPrivateState(this.proposalKey, proposals); }
