@@ -6,6 +6,24 @@ import { ChatGptOAuthManager } from "./chatgpt-oauth";
 
 const roots: string[] = [];
 
+class TrackedAbortSignal {
+  aborted = false;
+  reason: unknown;
+  added = 0;
+  removed = 0;
+  private readonly listeners = new Set<EventListenerOrEventListenerObject>();
+
+  addEventListener(_type: string, listener: EventListenerOrEventListenerObject): void {
+    this.added += 1;
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(_type: string, listener: EventListenerOrEventListenerObject): void {
+    this.removed += 1;
+    this.listeners.delete(listener);
+  }
+}
+
 async function fakeCodex(): Promise<{ executable: string; capture: string }> {
   const root = await mkdtemp(join(tmpdir(), "kestrel-chatgpt-oauth-test-"));
   roots.push(root);
@@ -61,7 +79,7 @@ describe("ChatGPT OAuth through Codex", () => {
         HOME: process.env.HOME,
         OPENAI_API_KEY: "must-not-leak",
       },
-      requestTimeoutMs: 2_000,
+      requestTimeoutMs: 5_000,
       loginTimeoutMs: 2_000,
     });
 
@@ -89,5 +107,23 @@ describe("ChatGPT OAuth through Codex", () => {
         ?.message.params,
     ).toEqual({ type: "chatgpt" });
     expect(records.every((record) => record.leaked === null)).toBe(true);
+  });
+
+  it("removes the caller abort listener when a request times out", async () => {
+    const manager = new ChatGptOAuthManager({
+      executable: "unused",
+      openExternal: async () => undefined,
+      requestTimeoutMs: 20,
+    });
+    const internals = manager as unknown as {
+      child: { exitCode: null; stdin: { write(value: string): void } };
+      request(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+    };
+    internals.child = { exitCode: null, stdin: { write: () => undefined } };
+    const signal = new TrackedAbortSignal();
+
+    await expect(internals.request("account/read", {}, signal as unknown as AbortSignal)).rejects.toThrow("account/read request timed out");
+    expect(signal.added).toBe(1);
+    expect(signal.removed).toBe(1);
   });
 });

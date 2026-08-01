@@ -322,6 +322,7 @@ export class ChatGptOAuthManager {
       };
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        signal?.removeEventListener("abort", abort);
         reject(new Error(`Codex ${method} request timed out.`));
       }, this.options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS);
       this.pending.set(id, {
