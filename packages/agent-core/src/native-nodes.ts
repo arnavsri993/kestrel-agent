@@ -53,6 +53,7 @@ function cleanTriggers(input: unknown): string[] {
 export class NativeNodeManager {
   private readonly nodes = new Map<string, Omit<NativeNodeRecord, "status">>();
   private readonly commands = new Map<string, NativeNodeCommand[]>();
+  private readonly commandOwners = new Map<string, { nodeId: string; expiresAt: string }>();
   private readonly results = new Map<string, NativeNodeResult>();
   private triggers = DEFAULT_TRIGGERS;
 
@@ -101,6 +102,7 @@ export class NativeNodeManager {
   poll(nodeId: string): { commands: NativeNodeCommand[]; voiceWake: string[] } {
     if (!this.nodes.has(nodeId)) throw new Error("Node must beacon before polling.");
     const now = this.now().getTime();
+    this.pruneCommandOwners(now);
     const pending = (this.commands.get(nodeId) ?? []).filter((command) => new Date(command.expiresAt).getTime() > now).slice(0, 20);
     this.commands.set(nodeId, []);
     return { commands: pending, voiceWake: [...this.triggers] };
@@ -109,7 +111,17 @@ export class NativeNodeManager {
   complete(nodeId: string, result: NativeNodeResult): void {
     if (!this.nodes.has(nodeId)) throw new Error("Node is not registered.");
     if (!/^node-command-[A-Za-z0-9-]+$/.test(result.commandId)) throw new Error("Node command ID is invalid.");
-    if (JSON.stringify(result).length > 100_000) throw new Error("Node result exceeds limits.");
+    this.pruneCommandOwners(this.now().getTime());
+    if (this.commandOwners.get(result.commandId)?.nodeId !== nodeId) throw new Error("Node result does not belong to this node command.");
+    let serializedLength: number;
+    try {
+      const serialized = JSON.stringify(result);
+      serializedLength = typeof serialized === "string" ? serialized.length : Number.POSITIVE_INFINITY;
+    } catch {
+      serializedLength = Number.POSITIVE_INFINITY;
+    }
+    if (serializedLength > 100_000) throw new Error("Node result exceeds limits.");
+    this.commandOwners.delete(result.commandId);
     this.results.set(result.commandId, structuredClone(result));
     if (this.results.size > 500) this.results.delete(this.results.keys().next().value!);
   }
@@ -131,6 +143,13 @@ export class NativeNodeManager {
     if (pending.length >= 20) throw new Error("Node command queue is full.");
     pending.push(command);
     this.commands.set(nodeId, pending);
+    this.commandOwners.set(command.id, { nodeId, expiresAt: command.expiresAt });
     return command;
+  }
+
+  private pruneCommandOwners(now: number): void {
+    for (const [commandId, owner] of this.commandOwners) {
+      if (new Date(owner.expiresAt).getTime() <= now) this.commandOwners.delete(commandId);
+    }
   }
 }
