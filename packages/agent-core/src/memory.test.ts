@@ -17,6 +17,7 @@ describe("durable memory manager", () => {
     manager.userModel.review(proposed.id, "confirm");
     expect(manager.userModel.promptContext()).toContain("compact status updates");
     expect(manager.search("deployment note")).toMatchObject([{ id: captured.memory?.id }]);
+    expect(manager.search("deployment note", Number.NaN)).toMatchObject([{ id: captured.memory?.id }]);
     expect(manager.correct(captured.memory!.id, { content: "Deployment notes belong in RELEASE.md", type: "project", sensitivity: "sensitive" })).toMatchObject({
       content: "Deployment notes belong in RELEASE.md", type: "project", sensitivity: "sensitive", userConfirmed: true, inferred: false, sourceType: "user-correction"
     });
