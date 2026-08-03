@@ -186,4 +186,25 @@ describe("managed local runtime", () => {
     });
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
   });
+
+  it("rejects an oversized model list response while cancelling its body", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    let cancelled = false;
+    const oversizedPayload = new Uint8Array(1_000_001).fill(120);
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: (async () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(oversizedPayload);
+        },
+        cancel() {
+          cancelled = true;
+        }
+      }), { status: 200 })) as typeof fetch,
+      manifest: testManifest(new TextEncoder().encode("archive"))
+    });
+
+    await expect(manager.listModels()).rejects.toThrow("local model service response exceeds 1 MB");
+    expect(cancelled).toBe(true);
+  });
 });

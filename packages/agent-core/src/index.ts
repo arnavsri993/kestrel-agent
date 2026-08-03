@@ -2975,6 +2975,7 @@ export {
   type WebSearchResult,
 } from "./web-tools";
 export { createKestrelAcpAgent, type KestrelAcpOptions } from "./acp";
+export { readBoundedResponseBytes } from "./bounded-http";
 export {
   CAPABILITY_CATALOG,
   PARITY_SOURCE_SNAPSHOT,
