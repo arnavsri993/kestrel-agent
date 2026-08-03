@@ -12,6 +12,8 @@ interface StoredPublisher extends TrustedPluginPublisher {
   publicKey: string;
 }
 
+const trustMutationQueues = new Map<string, Promise<void>>();
+
 function parsePublisher(value: unknown): StoredPublisher {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Plugin publisher key document is invalid.");
   const record = value as Record<string, unknown>;
@@ -66,16 +68,37 @@ export class PluginTrustStore {
     const bytes = await readFile(path);
     if (bytes.byteLength > 64_000) throw new Error("Plugin publisher key document exceeds 64 KB.");
     const publisher = parsePublisher(JSON.parse(bytes.toString("utf8")) as unknown);
-    const publishers = await this.stored();
-    const existing = publishers.find((item) => item.keyId === publisher.keyId);
-    if (existing && existing.fingerprint !== publisher.fingerprint) throw new Error(`Publisher key ID ${publisher.keyId} is already trusted with a different key.`);
-    if (!existing) await this.save([...publishers, publisher].sort((left, right) => left.keyId.localeCompare(right.keyId)));
-    return { keyId: publisher.keyId, fingerprint: publisher.fingerprint };
+    return this.mutate(async () => {
+      const publishers = await this.stored();
+      const existing = publishers.find((item) => item.keyId === publisher.keyId);
+      if (existing && existing.fingerprint !== publisher.fingerprint) throw new Error(`Publisher key ID ${publisher.keyId} is already trusted with a different key.`);
+      if (!existing) await this.save([...publishers, publisher].sort((left, right) => left.keyId.localeCompare(right.keyId)));
+      return { keyId: publisher.keyId, fingerprint: publisher.fingerprint };
+    });
   }
 
   async remove(keyId: string): Promise<void> {
-    const publishers = await this.stored();
-    if (!publishers.some((publisher) => publisher.keyId === keyId)) throw new Error(`Plugin publisher key ${keyId} is not trusted.`);
-    await this.save(publishers.filter((publisher) => publisher.keyId !== keyId));
+    await this.mutate(async () => {
+      const publishers = await this.stored();
+      if (!publishers.some((publisher) => publisher.keyId === keyId)) throw new Error(`Plugin publisher key ${keyId} is not trusted.`);
+      await this.save(publishers.filter((publisher) => publisher.keyId !== keyId));
+    });
+  }
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = trustMutationQueues.get(this.path) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.catch(() => undefined).then(() => current);
+    trustMutationQueues.set(this.path, queued);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (trustMutationQueues.get(this.path) === queued) trustMutationQueues.delete(this.path);
+    }
   }
 }

@@ -41,4 +41,24 @@ describe("plugin publisher trust store", () => {
     writeFileSync(document, JSON.stringify({ keyId: "publisher.test", publicKey: second.export({ type: "spki", format: "pem" }).toString() }));
     await expect(store.importDocument(document)).rejects.toThrow("different key");
   });
+
+  it("preserves concurrent imports from separate store instances", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-plugin-trust-concurrent-"));
+    directories.push(root);
+    const firstDocument = join(root, "first.json");
+    const secondDocument = join(root, "second.json");
+    const firstKey = generateKeyPairSync("ed25519").publicKey;
+    const secondKey = generateKeyPairSync("ed25519").publicKey;
+    writeFileSync(firstDocument, JSON.stringify({ keyId: "first.publisher", publicKey: firstKey.export({ type: "spki", format: "pem" }).toString() }));
+    writeFileSync(secondDocument, JSON.stringify({ keyId: "second.publisher", publicKey: secondKey.export({ type: "spki", format: "pem" }).toString() }));
+    const first = new PluginTrustStore(join(root, "trust.json"));
+    const second = new PluginTrustStore(join(root, "trust.json"));
+
+    await Promise.all([first.importDocument(firstDocument), second.importDocument(secondDocument)]);
+
+    expect(await first.list()).toEqual([
+      expect.objectContaining({ keyId: "first.publisher" }),
+      expect.objectContaining({ keyId: "second.publisher" })
+    ]);
+  });
 });
