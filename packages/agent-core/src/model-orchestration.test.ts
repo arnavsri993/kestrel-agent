@@ -353,6 +353,21 @@ describe("adaptive model orchestration", () => {
     item.database.close();
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("fails closed on malformed reviewer confidence: %s", (reviewerConfidence) => {
+    const item = fixture([provider({ id: "cheap", model: "one" })]);
+
+    expect(() => item.registry.recordOutcome({
+      modelId: "cheap:one",
+      capabilities: { coding: 1 },
+      succeeded: true,
+      validationPassed: true,
+      reviewerConfidence,
+      observedAt: "2026-07-29T12:00:00.000Z",
+    })).not.toThrow();
+    expect(item.registry.get("cheap:one").observations).toBe(1);
+    item.database.close();
+  });
+
   it("stores concise inspectable traces with bounded fallbacks", () => {
     const item = fixture([
       provider({ id: "cheap", model: "one" }),
