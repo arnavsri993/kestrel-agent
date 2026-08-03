@@ -45,6 +45,8 @@ describe("authenticated channel gateway", () => {
     expect(await adapter.send({ conversationId: "room-1", text: "Hello", idempotencyKey: "send-1", signal: new AbortController().signal })).toEqual({ externalId: "delivery-123", deliveredAt: "2026-07-23T01:00:00.000Z" });
     expect(requests[0]).toMatchObject({ url: "https://hooks.example.test/kestrel", init: { method: "POST", redirect: "error", headers: { authorization: "Bearer connector-token", "idempotency-key": "send-1" } } });
     expect(String(requests[0]?.init?.body)).toContain("room-1");
+    await expect(adapter.send({ conversationId: "room-1", text: "Hello", attachments: [{ filename: "report.txt", mediaType: "text/plain", data: new Uint8Array([1]) }], idempotencyKey: "send-2", signal: new AbortController().signal })).rejects.toThrow("attachments are not supported");
+    expect(requests).toHaveLength(1);
 
     const unsafe = new WebhookChannelAdapter({ id: "unsafe", url: "https://internal.example/hook", resolveHost: async () => ["127.0.0.1"], fetcher: async () => new Response(null, { status: 200 }) });
     await expect(unsafe.send({ conversationId: "room", text: "text", idempotencyKey: "unsafe", signal: new AbortController().signal })).rejects.toThrow("private or unsafe");
