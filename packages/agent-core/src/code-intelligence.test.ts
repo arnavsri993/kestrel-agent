@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { LanguageServerClient, environmentLanguageServerClient, installCodeIntelligenceTools, type LanguageServerTransport, type LspMessage } from "./code-intelligence";
+import { LanguageServerClient, environmentLanguageServerClient, installCodeIntelligenceTools, normalizeLanguageServerMessageBytes, type LanguageServerTransport, type LspMessage } from "./code-intelligence";
 import { AgentRuntime } from "./runtime";
 
 class LoopbackLanguageServer implements LanguageServerTransport {
@@ -28,6 +28,13 @@ class LoopbackLanguageServer implements LanguageServerTransport {
 }
 
 describe("language server code intelligence", () => {
+  it("normalizes malformed language-server message limits", () => {
+    expect(normalizeLanguageServerMessageBytes(Number.NaN)).toBe(2_000_000);
+    expect(normalizeLanguageServerMessageBytes(Number.POSITIVE_INFINITY)).toBe(2_000_000);
+    expect(normalizeLanguageServerMessageBytes(2_048.9)).toBe(2_048);
+    expect(normalizeLanguageServerMessageBytes(0)).toBe(1_024);
+  });
+
   it("negotiates LSP and serves approval-gated diagnostics, definitions, and references", async () => {
     const transport = new LoopbackLanguageServer();
     const client = new LanguageServerClient(transport);
