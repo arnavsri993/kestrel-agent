@@ -213,6 +213,7 @@ export class RemoteControl {
     const index = pairings.findIndex((pairing) => pairing.id === pairingId);
     const pairing = pairings[index];
     if (!pairing || pairing.status !== "pending" || pairing.attempts >= 5 || new Date(pairing.expiresAt).getTime() < this.now().getTime()) throw new Error("Remote pairing is invalid or expired.");
+    if (typeof pairing.codeHash !== "string" || !/^[a-f0-9]{64}$/.test(pairing.codeHash)) throw new Error("Remote pairing is invalid or expired.");
     const supplied = Buffer.from(digest(code), "hex");
     const expected = Buffer.from(pairing.codeHash, "hex");
     if (!timingSafeEqual(supplied, expected)) {
