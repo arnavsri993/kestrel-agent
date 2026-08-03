@@ -41,6 +41,13 @@ interface GoogleWorkspaceOAuthManagerOptions {
   timeoutMs?: number;
 }
 
+const MAX_TIMER_MS = 2_147_483_647;
+
+function boundedTimeout(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return 5 * 60_000;
+  return Math.min(MAX_TIMER_MS, Math.max(30_000, Math.trunc(value)));
+}
+
 function boundedJson(bytes: Uint8Array, limit: number, label: string): Record<string, unknown> {
   if (bytes.byteLength > limit) throw new Error(`${label} response exceeds ${Math.round(limit / 1024)} KB.`);
   try {
@@ -84,7 +91,7 @@ export class GoogleWorkspaceOAuthManager {
   constructor(private readonly options: GoogleWorkspaceOAuthManagerOptions) {
     this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? (() => new Date());
-    this.timeoutMs = Math.max(30_000, Math.min(10 * 60_000, options.timeoutMs ?? 5 * 60_000));
+    this.timeoutMs = boundedTimeout(options.timeoutMs);
   }
 
   async status(): Promise<GoogleWorkspaceOAuthStatus> {

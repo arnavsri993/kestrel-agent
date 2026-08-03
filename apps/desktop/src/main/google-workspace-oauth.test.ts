@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialBroker } from "./credential-broker";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
 
@@ -74,5 +74,23 @@ describe("Google Workspace desktop OAuth", () => {
     const { broker } = fixture();
     const manager = new GoogleWorkspaceOAuthManager({ broker, openExternal: async () => {} });
     await expect(manager.connect("not-a-desktop-client")).rejects.toThrow("Desktop app");
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("does not turn malformed OAuth timeout %s into an immediate rejection", async (timeoutMs) => {
+    vi.useFakeTimers();
+    const { broker } = fixture();
+    const controller = new AbortController();
+    let resolveOpened!: () => void;
+    const opened = new Promise<void>((resolve) => { resolveOpened = resolve; });
+    const manager = new GoogleWorkspaceOAuthManager({ broker, timeoutMs, openExternal: async () => { resolveOpened(); } });
+    const pending = manager.connect("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com", controller.signal);
+    await opened;
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    controller.abort(new Error("stop test"));
+    await expect(pending).rejects.toThrow("stop test");
+    vi.useRealTimers();
   });
 });
