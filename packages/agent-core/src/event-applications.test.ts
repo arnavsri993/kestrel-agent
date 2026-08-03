@@ -33,4 +33,14 @@ describe("event application manager", () => {
     expect(() => manager.update(draft.id, { status: "approved" })).toThrow("Review");
     database.close();
   });
+
+  it("recovers from malformed persisted application state", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new EventApplicationManager(database);
+    database.setPrivateState("event-applications.v1", { corrupted: true });
+    expect(manager.list()).toEqual([]);
+    database.setPrivateState("event-applications.v1", [null, { id: "incomplete", updatedAt: "2026-07-23T14:00:00.000Z" }]);
+    expect(manager.list()).toEqual([]);
+    database.close();
+  });
 });

@@ -31,6 +31,14 @@ export interface EventApplication {
 }
 
 const KEY = "event-applications.v1";
+const APPLICATION_STATUSES = new Set<EventApplicationStatus>(["draft", "preparing", "ready", "approved", "submitted", "needs_attention"]);
+
+function isEventApplication(value: unknown): value is EventApplication {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === "string" && typeof record.title === "string" && typeof record.organizer === "string" && typeof record.url === "string" && APPLICATION_STATUSES.has(record.status as EventApplicationStatus) && Array.isArray(record.eligibility) && Array.isArray(record.answers) && typeof record.createdAt === "string" && typeof record.updatedAt === "string";
+}
+
 function validHttps(value: string): string {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.hash) throw new Error("Event URL must be credential-free HTTPS.");
@@ -44,7 +52,11 @@ function clean(value: string, maximum: number, label: string): string {
 
 export class EventApplicationManager {
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
-  list(): EventApplication[] { return (this.database.getPrivateState<EventApplication[]>(KEY) ?? []).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+  list(): EventApplication[] {
+    const stored = this.database.getPrivateState<unknown>(KEY);
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(isEventApplication).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
   create(input: { title: string; organizer: string; url: string; deadline?: string }): EventApplication {
     const timestamp = this.now().toISOString();
     const deadline = input.deadline?.trim();
