@@ -1,5 +1,7 @@
 import { ModelProviderError } from "./types";
 
+const MAX_PROVIDER_STREAM_EVENT_BYTES = 1_000_000;
+
 export interface ServerSentEvent {
   event?: string;
   data: string;
@@ -14,12 +16,17 @@ export async function readServerSentEvents(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const oversized = () => new ModelProviderError("Provider streaming event exceeds 1 MB.", providerId, true, response.status);
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value, { stream: !done });
     let boundary = buffer.search(/\r?\n\r?\n/);
     while (boundary >= 0) {
       const block = buffer.slice(0, boundary);
+      if (Buffer.byteLength(block, "utf8") > MAX_PROVIDER_STREAM_EVENT_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw oversized();
+      }
       const match = buffer.slice(boundary).match(/^\r?\n\r?\n/);
       buffer = buffer.slice(boundary + (match?.[0].length ?? 2));
       let event: string | undefined;
@@ -30,6 +37,10 @@ export async function readServerSentEvents(
       }
       if (data.length > 0) onEvent({ ...(event ? { event } : {}), data: data.join("\n") });
       boundary = buffer.search(/\r?\n\r?\n/);
+    }
+    if (Buffer.byteLength(buffer, "utf8") > MAX_PROVIDER_STREAM_EVENT_BYTES) {
+      if (!done) await reader.cancel().catch(() => undefined);
+      throw oversized();
     }
     if (done) break;
   }
