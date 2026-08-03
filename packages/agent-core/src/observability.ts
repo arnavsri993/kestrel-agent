@@ -382,7 +382,12 @@ export class ObservabilityManager {
   private scanModelCalls(): void {
     if (!this.tracerProvider) return;
     const tracer = this.tracerProvider.getTracer("workstrand.model", "0.1.0");
-    for (const call of this.database.listAllModelCallAudits()) {
+    const calls = this.database.listAllModelCallAudits();
+    const liveIds = new Set(calls.map((call) => call.id));
+    for (const id of this.seenModelCalls) {
+      if (!liveIds.has(id)) this.seenModelCalls.delete(id);
+    }
+    for (const call of calls) {
       if (this.seenModelCalls.has(call.id)) continue;
       this.seenModelCalls.add(call.id);
       const span = tracer.startSpan("workstrand.model.call", {
