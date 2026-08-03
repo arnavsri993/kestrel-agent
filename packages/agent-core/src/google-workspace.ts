@@ -41,6 +41,12 @@ async function responseJson(response: Response, limit = 256_000): Promise<Record
   }
 }
 
+function calendarDate(value: string): string {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) throw new Error("Google Calendar time range is invalid.");
+  return parsed.toISOString();
+}
+
 export class GoogleWorkspaceClient {
   readonly email: string;
   readonly gmailAdapter: NativeChannelAdapter;
@@ -55,8 +61,8 @@ export class GoogleWorkspaceClient {
   async listEvents(input: { timeMin: string; timeMax?: string; maxResults: number; signal: AbortSignal }): Promise<Record<string, unknown>> {
     const url = new URL(CALENDAR_EVENTS_ENDPOINT);
     url.search = new URLSearchParams({
-      timeMin: new Date(input.timeMin).toISOString(),
-      ...(input.timeMax ? { timeMax: new Date(input.timeMax).toISOString() } : {}),
+      timeMin: calendarDate(input.timeMin),
+      ...(input.timeMax ? { timeMax: calendarDate(input.timeMax) } : {}),
       maxResults: String(Math.max(1, Math.min(100, input.maxResults))),
       singleEvents: "true",
       orderBy: "startTime"
