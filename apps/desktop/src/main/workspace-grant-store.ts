@@ -73,6 +73,8 @@ export class WorkspaceGrantStore {
       values = JSON.parse(await readFile(this.filename, "utf8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      if (error instanceof SyntaxError)
+        throw new Error("Workspace grant store is invalid.");
       throw error;
     }
     if (!Array.isArray(values)) return [];
