@@ -66,4 +66,21 @@ describe("Google Workspace runtime connector", () => {
     const missingScope = JSON.stringify({ ...JSON.parse(authorization), scopes: ["openid", "email"] });
     expect(() => environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: missingScope })).toThrow("missing");
   });
+
+  it("cancels an oversized token response while reading it", async () => {
+    let cancelled = false;
+    const oversizedBody = new Uint8Array(64_001).fill(120);
+    const fetcher: typeof fetch = async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(oversizedBody);
+      },
+      cancel() {
+        cancelled = true;
+      }
+    }), { status: 200 });
+    const client = environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: authorization }, fetcher);
+
+    await expect(client!.listEvents({ timeMin: "2026-07-23T00:00:00.000Z", maxResults: 10, signal: new AbortController().signal })).rejects.toThrow("Google Workspace response exceeds its size limit");
+    expect(cancelled).toBe(true);
+  });
 });
