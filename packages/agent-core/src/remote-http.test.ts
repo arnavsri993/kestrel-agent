@@ -259,6 +259,22 @@ describe("authenticated remote HTTP transport", () => {
     database.close();
   });
 
+  it("normalizes the SSE client limit before admitting connections", async () => {
+    const { database, runtime, remote } = fixture();
+    const pairing = remote.beginPairing("SSE limit client", ["read"]);
+    const device = remote.completePairing(pairing.pairingId, pairing.code);
+    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1", maximumSseClients: 1.9 });
+    servers.push(server);
+    const { origin } = await server.start();
+    const headers = { authorization: `Bearer ${device.token}` };
+    const first = await fetch(`${origin}/v1/events`, { headers });
+    expect(first.status).toBe(200);
+    const second = await fetch(`${origin}/v1/events`, { headers });
+    expect(second.status).toBe(429);
+    await first.body?.cancel();
+    database.close();
+  });
+
   it("accepts a scope-capped identity only from a configured trusted loopback proxy", async () => {
     const { database, runtime, session, remote } = fixture();
     const trustedProxy = new TrustedProxyAuthorizer({

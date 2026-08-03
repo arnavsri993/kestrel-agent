@@ -182,8 +182,13 @@ export class RemoteHttpServer {
   private readonly rates = new Map<string, RateRecord>();
   private readonly sse = new Set<ServerResponse>();
   private readonly mcpSessions = new Map<string, McpRuntimeServer>();
+  private readonly maximumSseClients: number;
 
-  constructor(private readonly options: RemoteHttpServerOptions) {}
+  constructor(private readonly options: RemoteHttpServerOptions) {
+    this.maximumSseClients = options.maximumSseClients === undefined || !Number.isFinite(options.maximumSseClients)
+      ? 8
+      : Math.max(1, Math.floor(options.maximumSseClients));
+  }
 
   async start(): Promise<{ origin: string }> {
     if (this.server) throw new Error("Remote HTTP server is already running.");
@@ -391,14 +396,14 @@ export class RemoteHttpServer {
     } catch (error) {
       if (response.headersSent) { response.end(); return; }
       const message = error instanceof Error ? error.message : "Remote request failed.";
-      const status = /token|bearer|scope|trusted proxy|identity|untrusted source|not allowed/i.test(message) ? 401 : /rate limit/i.test(message) ? 429 : /invalid|requires|exceeds|must|field|schedule/i.test(message) ? 400 : 500;
+      const status = /token|bearer|scope|trusted proxy|identity|untrusted source|not allowed/i.test(message) ? 401 : /(?:rate|client) limit/i.test(message) ? 429 : /invalid|requires|exceeds|must|field|schedule/i.test(message) ? 400 : 500;
       json(response, status, { error: status === 500 ? "Remote request failed." : message });
     }
   }
 
   private openEvents(token: RemoteCredential, request: IncomingMessage, response: ServerResponse): void {
     this.options.remote.assertAuthorized(token, "read" satisfies RemoteScope);
-    if (this.sse.size >= (this.options.maximumSseClients ?? 8)) throw new Error("Remote event client limit exceeded.");
+    if (this.sse.size >= this.maximumSseClients) throw new Error("Remote event client limit exceeded.");
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", connection: "keep-alive", "x-accel-buffering": "no" });
     response.write(": connected\n\n");
     this.sse.add(response);
