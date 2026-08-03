@@ -14,6 +14,15 @@ export async function readServerSentEvents(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const emitBlock = (block: string) => {
+    let event: string | undefined;
+    const data: string[] = [];
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
+    }
+    if (data.length > 0) onEvent({ ...(event ? { event } : {}), data: data.join("\n") });
+  };
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value, { stream: !done });
@@ -22,17 +31,12 @@ export async function readServerSentEvents(
       const block = buffer.slice(0, boundary);
       const match = buffer.slice(boundary).match(/^\r?\n\r?\n/);
       buffer = buffer.slice(boundary + (match?.[0].length ?? 2));
-      let event: string | undefined;
-      const data: string[] = [];
-      for (const line of block.split(/\r?\n/)) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
-      }
-      if (data.length > 0) onEvent({ ...(event ? { event } : {}), data: data.join("\n") });
+      emitBlock(block);
       boundary = buffer.search(/\r?\n\r?\n/);
     }
     if (done) break;
   }
+  if (buffer) emitBlock(buffer);
 }
 
 export async function readNdjson(response: Response, providerId: string, onValue: (value: unknown) => void): Promise<void> {
