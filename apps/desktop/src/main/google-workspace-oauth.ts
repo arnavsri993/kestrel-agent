@@ -121,7 +121,14 @@ export class GoogleWorkspaceOAuthManager {
         response.end("Forbidden");
         return;
       }
-      const url = new URL(request.url, "http://127.0.0.1");
+      let url: URL;
+      try {
+        url = new URL(request.url, "http://127.0.0.1");
+      } catch {
+        response.writeHead(400, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+        response.end("Invalid OAuth callback. Return to Kestrel and try again.");
+        return;
+      }
       if (url.pathname !== "/oauth/google/callback" || url.searchParams.get("state") !== state) {
         response.writeHead(400, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
         response.end("Invalid OAuth callback. Return to Kestrel and try again.");
