@@ -49,7 +49,9 @@ export class OllamaChatProvider implements ModelProvider {
     if (options.poolId) this.poolId = options.poolId;
     if (options.defaultModel) this.defaultModel = options.defaultModel;
     this.baseUrl = (options.baseUrl ?? "http://127.0.0.1:11434").replace(/\/$/, "");
-    this.contextWindow = Math.max(16_384, Math.min(131_072, Math.floor(options.contextWindow ?? 32_768)));
+    const configuredContextWindow = options.contextWindow ?? 32_768;
+    const contextWindow = Number.isFinite(configuredContextWindow) ? configuredContextWindow : 32_768;
+    this.contextWindow = Math.max(16_384, Math.min(131_072, Math.floor(contextWindow)));
   }
 
   async probe(signal?: AbortSignal): Promise<void> {

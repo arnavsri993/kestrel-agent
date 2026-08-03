@@ -206,6 +206,22 @@ describe("model provider adapters", () => {
     expect(requestBody.think).toBe(false);
   });
 
+  it("normalizes a non-finite Ollama context window before sending it", async () => {
+    let requestBody: Record<string, unknown> = {};
+    const baseUrl = await serve((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        requestBody = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+        response.writeHead(200, { "content-type": "application/x-ndjson" });
+        response.end(JSON.stringify({ message: { content: "" }, done: true }) + "\n");
+      });
+    });
+    const provider = new OllamaChatProvider({ baseUrl, contextWindow: Number.NaN });
+    await provider.complete({ model: "local-test", messages: [{ role: "user", content: textContent("Check") }] });
+    expect(requestBody.options).toMatchObject({ num_ctx: 32_768 });
+  });
+
   it("maps Gemini video input, tools, and measured usage through the production REST contract", async () => {
     let requestBody: Record<string, unknown> = {};
     let apiKey = "";
