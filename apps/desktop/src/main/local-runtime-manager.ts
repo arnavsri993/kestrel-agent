@@ -403,8 +403,8 @@ export class LocalRuntimeManager {
         if (!line.trim()) continue;
         const update = JSON.parse(line) as { status?: unknown; completed?: unknown; total?: unknown; error?: unknown };
         if (typeof update.error === "string") throw new Error(update.error);
-        const completed = typeof update.completed === "number" ? Math.max(0, update.completed) : undefined;
-        const total = typeof update.total === "number" && update.total > 0 ? update.total : undefined;
+        const completed = typeof update.completed === "number" && Number.isFinite(update.completed) ? Math.max(0, Math.floor(update.completed)) : undefined;
+        const total = typeof update.total === "number" && Number.isFinite(update.total) && update.total > 0 ? Math.floor(update.total) : undefined;
         this.progress({
           stage: "downloading-model",
           message: typeof update.status === "string" ? update.status : `Downloading ${model}.`,
