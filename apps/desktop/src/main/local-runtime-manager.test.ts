@@ -152,6 +152,28 @@ describe("managed local runtime", () => {
     await expect(readFile(join(root, "local-runtime", "ollama", "test", "workstrand-install.json"), "utf8")).rejects.toThrow();
   });
 
+  it("rejects malformed runtime redirect URLs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    const archive = new TextEncoder().encode("archive");
+    const manifest = testManifest(archive);
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: (async (input) => {
+        if (String(input).endsWith("/api/tags")) throw new TypeError("connection refused");
+        const response = new Response(archive, { status: 200 });
+        Object.defineProperty(response, "url", { value: "not a URL" });
+        return response;
+      }) as typeof fetch,
+      platform: "darwin",
+      architecture: "arm64",
+      manifest,
+    });
+
+    await expect(manager.bootstrap("qwen:test")).rejects.toThrow(
+      "redirected to an untrusted host",
+    );
+  });
+
   it("fails closed to manual setup on unsupported platforms", async () => {
     const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
     roots.push(root);
