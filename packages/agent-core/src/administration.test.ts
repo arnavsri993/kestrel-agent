@@ -42,6 +42,7 @@ describe("managed organization policy", () => {
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     const store = new ManagedPolicyStore(database, () => now);
     store.set({ organizationId: "org-enterprise", version: 1, deniedTools: [], maximumWorkers: 4, retentionDays: 30, analyticsEnabled: true, sso: { issuer: "https://identity.example.test", audience: "kestrel", publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(), allowedDomains: ["example.test"] } });
+    expect(() => store.set({ organizationId: "org-enterprise", version: 2, deniedTools: [], maximumWorkers: 4, sso: { issuer: "https://identity.example.test", audience: "kestrel", publicKeyPem: "not a public key" } })).toThrow("Managed SSO public key is invalid.");
     store.provisionMember({ externalId: "user-1", email: "admin@example.test", displayName: "Admin", role: "admin" });
     const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
     const header = encode({ alg: "EdDSA", typ: "JWT" });
