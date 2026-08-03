@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -85,5 +85,17 @@ describe("workspace grant store", () => {
     expect(await store.statusList()).toEqual([
       { path: addedLaterPath, name: "added-later", available: true },
     ]);
+  });
+
+  it("normalizes malformed persisted grant documents", async () => {
+    const storage = mkdtempSync(join(tmpdir(), "kestrel-grants-"));
+    directories.push(storage);
+    const filename = join(storage, "workspace-grants.json");
+    writeFileSync(filename, "not json");
+    const store = new WorkspaceGrantStore(filename);
+
+    await expect(store.statusList()).rejects.toThrow(
+      "Workspace grant store is invalid.",
+    );
   });
 });
