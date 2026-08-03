@@ -85,6 +85,11 @@ describe("network-policy web tools", () => {
     expect(requests).toBe(0);
   });
 
+  it("normalizes a non-finite web fetch timeout", () => {
+    const client = new NetworkPolicyWebClient({ allowedHosts: ["safe.example.test"], timeoutMs: Number.NaN });
+    expect((client as unknown as { timeoutMs: number }).timeoutMs).toBe(20_000);
+  });
+
   it("exposes approval-gated runtime fetch and search tools", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
