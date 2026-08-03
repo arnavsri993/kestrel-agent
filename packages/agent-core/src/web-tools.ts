@@ -24,15 +24,20 @@ export class EncryptedDatabaseWebCache implements WebResultCache {
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
   get<T>(key: string): T | undefined {
     const timestamp = this.now().getTime();
-    const records = (this.database.getPrivateState<WebCacheRecord[]>(this.stateKey) ?? []).filter((record) => new Date(record.expiresAt).getTime() > timestamp);
+    const records = this.records().filter((record) => new Date(record.expiresAt).getTime() > timestamp);
     this.database.setPrivateState(this.stateKey, records);
     return records.find((record) => record.key === key)?.value as T | undefined;
   }
   set<T>(key: string, value: T, ttlMs: number): void {
     const timestamp = this.now().getTime();
-    const records = (this.database.getPrivateState<WebCacheRecord[]>(this.stateKey) ?? []).filter((record) => record.key !== key && new Date(record.expiresAt).getTime() > timestamp).slice(-99);
+    const records = this.records().filter((record) => record.key !== key && new Date(record.expiresAt).getTime() > timestamp).slice(-99);
     records.push({ key, value, expiresAt: new Date(timestamp + ttlMs).toISOString() });
     this.database.setPrivateState(this.stateKey, records);
+  }
+  private records(): WebCacheRecord[] {
+    const raw = this.database.getPrivateState<unknown>(this.stateKey);
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((record): record is WebCacheRecord => Boolean(record) && typeof record === "object" && typeof (record as { key?: unknown }).key === "string" && typeof (record as { expiresAt?: unknown }).expiresAt === "string" && Number.isFinite(Date.parse((record as { expiresAt: string }).expiresAt)));
   }
 }
 
