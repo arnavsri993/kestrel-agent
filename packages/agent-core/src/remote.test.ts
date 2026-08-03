@@ -61,6 +61,17 @@ describe("remote backends and scoped supervision", () => {
     database.close();
   });
 
+  it("rejects corrupted pairing hashes before constant-time comparison", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const orchestrator = new TaskOrchestrator(database, runtime, new AgentLoop(database, runtime, new ProviderPool([provider])));
+    const remote = new RemoteControl(database, runtime, orchestrator, () => new Date("2026-07-23T00:00:00.000Z"));
+    database.setPrivateState("remote.pairings", [{ id: "pair-corrupt", label: "Corrupt", codeHash: "short", scopes: ["read"], expiresAt: "2026-07-23T00:05:00.000Z", attempts: 0, status: "pending" }]);
+
+    expect(() => remote.completePairing("pair-corrupt", "anything")).toThrow("Remote pairing is invalid or expired.");
+    database.close();
+  });
+
   it("runs concrete Docker, SSH, and Kubernetes CLI adapters with argv containment", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-cli-")); const bin = join(root, "bin");
     writeFileSync(join(root, "placeholder"), "workspace");
