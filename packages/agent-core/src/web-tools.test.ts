@@ -31,6 +31,18 @@ describe("network-policy web tools", () => {
     await expect(client.fetch("https://safe.example.test/")).rejects.toThrow("byte limit");
   });
 
+  it("recovers from malformed encrypted cache state", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const cache = new EncryptedDatabaseWebCache(database, () => new Date("2026-07-22T23:30:00.000Z"));
+    database.setPrivateState("web.result-cache", { corrupted: true });
+
+    expect(cache.get("missing")).toBeUndefined();
+    expect(database.getPrivateState("web.result-cache")).toEqual([]);
+    cache.set("fresh", { ok: true }, 60_000);
+    expect(cache.get<{ ok: boolean }>("fresh")).toEqual({ ok: true });
+    database.close();
+  });
+
   it("cancels chunked oversized pages before parsing or caching them", async () => {
     let pulls = 0;
     let cancellations = 0;
