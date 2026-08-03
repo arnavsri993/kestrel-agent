@@ -13,17 +13,19 @@ function fixture() {
     metadata: 0,
     chats: [] as string[],
     messages: [] as Array<{ content: string; peerId: string }>,
+    searchLimits: [] as number[],
   };
   const user = {
     id: "user",
     message: (content: string) => ({ content, peerId: "user" }),
-    search: async (query: string) => [
-      {
+    search: async (query: string, options?: { limit?: number }) => {
+      calls.searchLimits.push(options?.limit ?? 0);
+      return [{
         id: "message-remote",
         content: `Result for ${query}`,
         createdAt: "2026-07-23T12:00:00.000Z",
-      },
-    ],
+      }];
+    },
   };
   const agent = {
     id: "workstrand",
@@ -136,6 +138,8 @@ describe("opt-in Honcho memory provider", () => {
     expect(context).toContain("This session is about release readiness.");
     expect(context).toContain("The user prefers concise release evidence.");
     expect(calls.chats).toHaveLength(2);
+    await expect(provider.search("release", Number.NaN)).resolves.toMatchObject([{ content: "Result for release" }]);
+    expect(calls.searchLimits).toEqual([10]);
     provider.captureMessage({
       id: "message-1",
       sessionId: "session-1",

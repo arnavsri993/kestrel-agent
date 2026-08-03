@@ -401,8 +401,11 @@ export class HonchoMemoryProvider {
 
   async search(query: string, limit = 10) {
     const remote = await this.remoteSession("workstrand-tools");
+    const searchLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(50, Math.trunc(limit)))
+      : 10;
     const messages = await remote.user.search(query, {
-      limit: Math.max(1, Math.min(50, limit)),
+      limit: searchLimit,
     });
     return messages.map((message) => ({
       id: message.id,
