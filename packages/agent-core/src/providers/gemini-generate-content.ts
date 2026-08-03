@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { providerFetch } from "./http";
+import { readBoundedResponseBytes } from "../bounded-http";
 import { ModelProviderError, contentText, type ModelCallOptions, type ModelContentPart, type ModelFinishReason, type ModelMessage, type ModelProvider, type ModelRequest, type ModelResult, type ModelToolCall } from "./types";
+
+const MAX_GEMINI_RESPONSE_BYTES = 1_000_000;
 
 export interface GeminiGenerateContentProviderOptions {
   apiKey: string;
@@ -62,8 +65,14 @@ export class GeminiGenerateContentProvider implements ModelProvider {
     const model = encodeURIComponent(request.model || this.defaultModel);
     const response = await providerFetch(this.id, `${this.baseUrl}/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": this.options.apiKey, "content-type": "application/json" }, body: JSON.stringify(body), ...(options.signal ? { signal: options.signal } : {}) });
     let payload: Record<string, unknown>;
-    try { payload = await response.json() as Record<string, unknown>; }
-    catch { throw new ModelProviderError("Gemini returned malformed JSON.", this.id, false); }
+    let bytes: Uint8Array;
+    try {
+      bytes = await readBoundedResponseBytes(response, MAX_GEMINI_RESPONSE_BYTES, "Gemini response exceeds 1 MB.");
+    } catch (error) {
+      throw new ModelProviderError(error instanceof Error ? error.message : "Gemini response exceeded 1 MB.", this.id, false, response.status);
+    }
+    try { payload = JSON.parse(Buffer.from(bytes).toString("utf8")) as Record<string, unknown>; }
+    catch { throw new ModelProviderError("Gemini returned malformed JSON.", this.id, false, response.status); }
     const candidate = Array.isArray(payload.candidates) ? payload.candidates[0] as Record<string, unknown> | undefined : undefined;
     const candidateContent = candidate?.content as Record<string, unknown> | undefined;
     const responseParts = Array.isArray(candidateContent?.parts) ? candidateContent.parts as Array<Record<string, unknown>> : [];
