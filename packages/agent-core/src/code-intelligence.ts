@@ -87,7 +87,12 @@ export async function environmentLanguageServerClient(environment: NodeJS.Proces
   if (!path) return undefined;
   const metadata = lstatSync(path);
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 1_000_000 || (metadata.mode & 0o077) !== 0) throw new Error("KESTREL_LSP_CONFIG must be an owner-only regular file no larger than 1 MB.");
-  const parsed = JSON.parse(readFileSync(realpathSync(path), "utf8")) as Record<string, unknown>;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(readFileSync(realpathSync(path), "utf8")) as Record<string, unknown>;
+  } catch {
+    throw new Error("Language server configuration is invalid.");
+  }
   if (parsed.version !== 1 || typeof parsed.command !== "string" || typeof parsed.cwd !== "string" || typeof parsed.rootUri !== "string" || !Array.isArray(parsed.args) || parsed.args.some((arg) => typeof arg !== "string")) throw new Error("Language server configuration is invalid.");
   const client = new LanguageServerClient(new StdioLanguageServerTransport({ command: parsed.command, args: parsed.args as string[], cwd: parsed.cwd }));
   await client.initialize(parsed.rootUri);
