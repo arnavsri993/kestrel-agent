@@ -135,6 +135,30 @@ describe("MCP extensions", () => {
     await client.close();
   });
 
+  it("stops MCP listings that never finish pagination", async () => {
+    class EndlessPaginationTransport extends ControlledTransport {
+      private page = 0;
+
+      override send(message: JsonRpcMessage): void {
+        super.send(message);
+        if ("method" in message && "id" in message && message.method === "resources/list") {
+          queueMicrotask(() => this.emit({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { resources: [], nextCursor: `page-${this.page++}` }
+          }));
+        }
+      }
+    }
+
+    const transport = new EndlessPaginationTransport();
+    const client = new McpClient(transport);
+    await client.initialize();
+    await expect(client.listResources()).rejects.toThrow("pagination exceeded 100 pages");
+    expect(transport.sent.filter((message) => "method" in message && message.method === "resources/list")).toHaveLength(100);
+    await client.close();
+  });
+
   it("rejects an aborted tool request locally and cancels its exact request id", async () => {
     const transport = new ControlledTransport();
     const client = new McpClient(transport);
