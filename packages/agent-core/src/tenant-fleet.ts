@@ -13,6 +13,7 @@ export interface TenantCell {
   createdAt: string;
 }
 export interface TenantFleetRunner { run(executable: string, args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }>; }
+const fleetMutationQueues = new Map<string, Promise<void>>();
 
 class ProcessFleetRunner implements TenantFleetRunner {
   run(executable: string, args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -51,30 +52,32 @@ export class TenantFleet {
     const tenant = input.tenant.trim().toLowerCase();
     if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(tenant)) throw new Error("Tenant cell name is invalid.");
     if (!Number.isInteger(input.port) || input.port < 1024 || input.port > 65_535) throw new Error("Tenant cell port is invalid.");
-    const cells = await this.list();
-    if (cells.some((cell) => cell.tenant === tenant || cell.port === input.port)) throw new Error("Tenant cell or loopback port already exists.");
     const runtime = input.runtime ?? "docker";
     if (runtime === "docker" && input.blockEgress) throw new Error("Docker internal networking breaks the published gateway port; use host firewall policy.");
     const image = input.image ?? "ghcr.io/kestrel-ai/kestrel:latest";
     if (!/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,500}$/.test(image)) throw new Error("Tenant cell image is invalid.");
-    const state = join(this.root, "cells", tenant);
-    const auth = join(this.root, "auth-profile-secrets", tenant);
-    mkdirSync(state, { recursive: false, mode: 0o700 });
-    mkdirSync(auth, { recursive: false, mode: 0o700 });
-    const token = randomBytes(32).toString("base64url");
-    const container = `kestrel-cell-${tenant}`;
-    const network = `kestrel-cell-${tenant}`;
-    const networkResult = await this.runner.run(runtime, ["network", "create", ...(runtime === "podman" && input.blockEgress ? ["--internal"] : []), network]);
-    if (networkResult.exitCode !== 0) throw new Error(`Could not create tenant network: ${networkResult.stderr.slice(0, 500)}`);
-    const args = ["run", "-d", "--name", container, "--network", network, "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=512", "--memory=4g", "--cpus=2", "--read-only", "--tmpfs=/tmp:rw,noexec,nosuid,size=256m", "-p", `127.0.0.1:${input.port}:18789`, "-v", `${state}:/home/node/.kestrel`, "-v", `${auth}:/home/node/.config/kestrel`, "-e", `KESTREL_GATEWAY_TOKEN=${token}`, image];
-    const result = await this.runner.run(runtime, args);
-    if (result.exitCode !== 0) {
-      await this.runner.run(runtime, ["network", "rm", network]);
-      throw new Error(`Could not start tenant cell: ${result.stderr.slice(0, 500)}`);
-    }
-    const cell: TenantCell = { tenant, container, port: input.port, image, runtime, createdAt: this.now().toISOString() };
-    await this.save([...cells, cell]);
-    return { cell, gatewayToken: token };
+    return this.mutate(async () => {
+      const cells = await this.list();
+      if (cells.some((cell) => cell.tenant === tenant || cell.port === input.port)) throw new Error("Tenant cell or loopback port already exists.");
+      const state = join(this.root, "cells", tenant);
+      const auth = join(this.root, "auth-profile-secrets", tenant);
+      mkdirSync(state, { recursive: false, mode: 0o700 });
+      mkdirSync(auth, { recursive: false, mode: 0o700 });
+      const token = randomBytes(32).toString("base64url");
+      const container = `kestrel-cell-${tenant}`;
+      const network = `kestrel-cell-${tenant}`;
+      const networkResult = await this.runner.run(runtime, ["network", "create", ...(runtime === "podman" && input.blockEgress ? ["--internal"] : []), network]);
+      if (networkResult.exitCode !== 0) throw new Error(`Could not create tenant network: ${networkResult.stderr.slice(0, 500)}`);
+      const args = ["run", "-d", "--name", container, "--network", network, "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=512", "--memory=4g", "--cpus=2", "--read-only", "--tmpfs=/tmp:rw,noexec,nosuid,size=256m", "-p", `127.0.0.1:${input.port}:18789`, "-v", `${state}:/home/node/.kestrel`, "-v", `${auth}:/home/node/.config/kestrel`, "-e", `KESTREL_GATEWAY_TOKEN=${token}`, image];
+      const result = await this.runner.run(runtime, args);
+      if (result.exitCode !== 0) {
+        await this.runner.run(runtime, ["network", "rm", network]);
+        throw new Error(`Could not start tenant cell: ${result.stderr.slice(0, 500)}`);
+      }
+      const cell: TenantCell = { tenant, container, port: input.port, image, runtime, createdAt: this.now().toISOString() };
+      await this.save([...cells, cell]);
+      return { cell, gatewayToken: token };
+    });
   }
 
   async status(tenant: string): Promise<{ cell: TenantCell; running: boolean }> {
@@ -85,14 +88,33 @@ export class TenantFleet {
   }
 
   async remove(tenant: string): Promise<TenantCell> {
-    const cells = await this.list();
-    const cell = cells.find((candidate) => candidate.tenant === tenant);
-    if (!cell) throw new Error("Tenant cell was not found.");
-    const result = await this.runner.run(cell.runtime, ["rm", "-f", cell.container]);
-    if (result.exitCode !== 0) throw new Error(`Could not remove tenant cell: ${result.stderr.slice(0, 500)}`);
-    await this.runner.run(cell.runtime, ["network", "rm", `kestrel-cell-${cell.tenant}`]);
-    await this.save(cells.filter((candidate) => candidate.tenant !== tenant));
-    return cell;
+    return this.mutate(async () => {
+      const cells = await this.list();
+      const cell = cells.find((candidate) => candidate.tenant === tenant);
+      if (!cell) throw new Error("Tenant cell was not found.");
+      const result = await this.runner.run(cell.runtime, ["rm", "-f", cell.container]);
+      if (result.exitCode !== 0) throw new Error(`Could not remove tenant cell: ${result.stderr.slice(0, 500)}`);
+      await this.runner.run(cell.runtime, ["network", "rm", `kestrel-cell-${cell.tenant}`]);
+      await this.save(cells.filter((candidate) => candidate.tenant !== tenant));
+      return cell;
+    });
+  }
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = fleetMutationQueues.get(this.registryPath) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.catch(() => undefined).then(() => current);
+    fleetMutationQueues.set(this.registryPath, queued);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (fleetMutationQueues.get(this.registryPath) === queued) fleetMutationQueues.delete(this.registryPath);
+    }
   }
 
   private async save(cells: TenantCell[]): Promise<void> {

@@ -32,4 +32,18 @@ describe("tenant fleet", () => {
     await expect(fleet.create({ tenant: "acme", port: 80 })).rejects.toThrow("port");
     await expect(fleet.create({ tenant: "acme", port: 18790, blockEgress: true })).rejects.toThrow("firewall");
   });
+
+  it("preserves cells created concurrently by separate fleet instances", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-fleet-concurrent-"));
+    const runner: TenantFleetRunner = { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    const first = new TenantFleet(root, runner);
+    const second = new TenantFleet(root, runner);
+
+    await Promise.all([
+      first.create({ tenant: "first", port: 18790 }),
+      second.create({ tenant: "second", port: 18791 })
+    ]);
+
+    expect((await first.list()).map((cell) => cell.tenant)).toEqual(["first", "second"]);
+  });
 });
