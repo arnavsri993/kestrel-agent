@@ -9,6 +9,12 @@ const REQUIRED_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events"
 ] as const;
 
+function boundedCalendarResultCount(value: number): number {
+  return Number.isFinite(value)
+    ? Math.max(1, Math.min(100, Math.trunc(value)))
+    : 20;
+}
+
 interface StoredGoogleWorkspaceAuthorization {
   version: 1;
   clientId: string;
@@ -53,16 +59,17 @@ export class GoogleWorkspaceClient {
   }
 
   async listEvents(input: { timeMin: string; timeMax?: string; maxResults: number; signal: AbortSignal }): Promise<Record<string, unknown>> {
+    const maxResults = boundedCalendarResultCount(input.maxResults);
     const url = new URL(CALENDAR_EVENTS_ENDPOINT);
     url.search = new URLSearchParams({
       timeMin: new Date(input.timeMin).toISOString(),
       ...(input.timeMax ? { timeMax: new Date(input.timeMax).toISOString() } : {}),
-      maxResults: String(Math.max(1, Math.min(100, input.maxResults))),
+      maxResults: String(maxResults),
       singleEvents: "true",
       orderBy: "startTime"
     }).toString();
     const body = await this.authorizedJson(url, { signal: input.signal });
-    const items = Array.isArray(body.items) ? body.items.slice(0, input.maxResults).map((raw) => {
+    const items = Array.isArray(body.items) ? body.items.slice(0, maxResults).map((raw) => {
       const event = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
       const start = event.start && typeof event.start === "object" ? event.start as Record<string, unknown> : {};
       const end = event.end && typeof event.end === "object" ? event.end as Record<string, unknown> : {};

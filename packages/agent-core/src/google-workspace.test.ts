@@ -51,6 +51,12 @@ describe("Google Workspace runtime connector", () => {
     installGoogleWorkspaceTools(runtime, client!, session.id);
     const listed = await runtime.callTool(session.id, "google.calendar.list-events", { timeMin: "2026-07-23T00:00:00.000Z", maxResults: 10 });
     expect(listed.output).toMatchObject({ calendar: "primary", items: [{ id: "existing-1", title: "Existing" }] });
+    const malformedCount = await client!.listEvents({ timeMin: "2026-07-23T00:00:00.000Z", maxResults: Number.NaN, signal: new AbortController().signal });
+    expect(malformedCount).toMatchObject({ items: [{ id: "existing-1" }] });
+    expect(new URL(requests.at(-1)!.url).searchParams.get("maxResults")).toBe("20");
+    const fractionalCount = await client!.listEvents({ timeMin: "2026-07-23T00:00:00.000Z", maxResults: 1.9, signal: new AbortController().signal });
+    expect(fractionalCount).toMatchObject({ items: [{ id: "existing-1" }] });
+    expect(new URL(requests.at(-1)!.url).searchParams.get("maxResults")).toBe("1");
     const createInput = { operationId: "calendar-operation-1", title: "Project review", startsAt: "2026-07-24T16:00:00.000Z", endsAt: "2026-07-24T17:00:00.000Z" };
     expect((await runtime.callTool(session.id, "google.calendar.create-event", createInput, { idempotencyKey: "calendar-operation-1" })).status).toBe("blocked");
     const created = await runtime.callTool(session.id, "google.calendar.create-event", createInput, { approvalStatus: "approved", idempotencyKey: "calendar-operation-1" });
