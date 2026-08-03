@@ -461,7 +461,12 @@ export class ExternalSecretManager {
     try {
       const response = await this.fetcher(BWS_MANIFEST.url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
       if (!response.ok || !response.body) throw new Error(`The Bitwarden CLI download returned ${response.status}.`);
-      const finalUrl = new URL(response.url || BWS_MANIFEST.url);
+      let finalUrl: URL;
+      try {
+        finalUrl = new URL(response.url || BWS_MANIFEST.url);
+      } catch {
+        throw new Error("The Bitwarden CLI download redirected to an untrusted host.");
+      }
       if (finalUrl.protocol !== "https:" || !["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"].includes(finalUrl.hostname)) {
         throw new Error("The Bitwarden CLI download redirected to an untrusted host.");
       }

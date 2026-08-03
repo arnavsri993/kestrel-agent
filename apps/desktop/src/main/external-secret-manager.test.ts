@@ -159,6 +159,23 @@ describe("external secret manager", () => {
     expect(safeExternalSecretArchiveEntries("bws\n")).toEqual(["bws"]);
   });
 
+  it("rejects malformed managed Bitwarden redirect URLs", async () => {
+    const item = fixture();
+    const manager = new ExternalSecretManager(item.root, item.broker, {
+      platform: "darwin",
+      architecture: "arm64",
+      fetch: async () => {
+        const response = new Response("archive", { status: 200 });
+        Object.defineProperty(response, "url", { value: "not a URL" });
+        return response;
+      },
+    });
+
+    await expect(manager.installBitwarden()).rejects.toThrow(
+      "redirected to an untrusted host",
+    );
+  });
+
   it("removes provider configuration and its encrypted bootstrap token without touching other sources", async () => {
     const item = fixture();
     const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
