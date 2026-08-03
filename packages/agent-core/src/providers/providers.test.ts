@@ -206,6 +206,16 @@ describe("model provider adapters", () => {
     expect(requestBody.think).toBe(false);
   });
 
+  it("normalizes malformed Ollama usage metadata", async () => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "application/x-ndjson" });
+      response.end(`${JSON.stringify({ message: { role: "assistant", content: "ok" }, done: true, prompt_eval_count: "not-a-number", eval_count: -4 })}\n`);
+    });
+    const provider = new OllamaChatProvider({ baseUrl });
+    const result = await provider.complete({ model: "local-test", messages: [{ role: "user", content: textContent("hello") }] });
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
   it("maps Gemini video input, tools, and measured usage through the production REST contract", async () => {
     let requestBody: Record<string, unknown> = {};
     let apiKey = "";

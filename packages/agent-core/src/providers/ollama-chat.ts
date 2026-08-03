@@ -36,6 +36,11 @@ function ollamaMessages(messages: ModelMessage[]): Array<Record<string, unknown>
   });
 }
 
+function usageCount(value: unknown): number {
+  const count = Number(value);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+}
+
 export class OllamaChatProvider implements ModelProvider {
   readonly id: string;
   readonly poolId?: string;
@@ -106,8 +111,8 @@ export class OllamaChatProvider implements ModelProvider {
         options.onEvent?.({ type: "tool_call_delta", callId: call.id, name: call.name, argumentsDelta: JSON.stringify(call.arguments) });
       }
       if (chunk.done === true) {
-        inputTokens = Number(chunk.prompt_eval_count ?? 0);
-        outputTokens = Number(chunk.eval_count ?? 0);
+        inputTokens = usageCount(chunk.prompt_eval_count);
+        outputTokens = usageCount(chunk.eval_count);
         doneReason = String(chunk.done_reason ?? "stop");
       }
     });
