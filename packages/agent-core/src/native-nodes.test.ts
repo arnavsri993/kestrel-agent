@@ -24,4 +24,14 @@ describe("native node manager", () => {
     expect(manager.setVoiceWake([])).toEqual(["openclaw", "claude", "computer"]);
     expect(() => manager.setVoiceWake(Array.from({ length: 33 }, (_, i) => `wake ${i}`))).toThrow("32");
   });
+
+  it("normalizes non-finite location bounds", () => {
+    const manager = new NativeNodeManager(() => new Date("2026-07-23T12:00:00.000Z"));
+    manager.beacon({ nodeId: "phone-1", label: "Phone", platform: "ios", capabilities: ["location"] });
+
+    const command = manager.enqueueLocation("phone-1", { timeoutMs: Number.NaN, maxAgeMs: Number.POSITIVE_INFINITY });
+
+    expect(command.input).toMatchObject({ timeoutMs: 10_000, maxAgeMs: 0 });
+    expect(Number.isFinite(new Date(command.expiresAt).getTime())).toBe(true);
+  });
 });
