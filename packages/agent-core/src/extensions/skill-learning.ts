@@ -28,6 +28,8 @@ function within(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);
 }
 
+const MAX_FEEDBACK_RECORDS = 500;
+
 export class SkillLearningManager {
   private readonly proposalKey = "skills.learning.proposals";
   private readonly feedbackKey = "skills.learning.feedback";
@@ -158,7 +160,7 @@ export class SkillLearningManager {
   feedback(input: Omit<SkillLearningFeedback, "id" | "createdAt">): SkillLearningFeedback {
     if (!input.feedback.trim() || input.sourceIds.length === 0) throw new Error("Skill feedback and provenance are required.");
     const record: SkillLearningFeedback = { ...input, feedback: input.feedback.trim(), id: `skill-feedback-${randomUUID()}`, createdAt: this.now().toISOString() };
-    this.database.setPrivateState(this.feedbackKey, [...this.listFeedback(), record]);
+    this.database.setPrivateState(this.feedbackKey, [...this.listFeedback(), record].slice(-MAX_FEEDBACK_RECORDS));
     return record;
   }
 
