@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { KestrelDatabase } from "@kestrel/database";
-import { AgentCore, DevelopmentCalendarConnector, DevelopmentEmailConnector, OpportunityEngine, teacherOpportunity, type ModelProvider } from "./index";
+import { AgentCore, DevelopmentCalendarConnector, DevelopmentEmailConnector, OpportunityEngine, PersonalityRegistry, teacherOpportunity, type ModelProvider } from "./index";
 
 function createCore() {
   const database = new KestrelDatabase(":memory:", createEncryptionKey());
@@ -30,6 +30,19 @@ describe("fresh application state", () => {
       requiredApprovalLevel: 0,
     });
     core.close();
+  });
+});
+
+describe("custom personality bounds", () => {
+  it("limits custom personality registrations while retaining built-ins", () => {
+    const registry = new PersonalityRegistry();
+    const personality = (index: number) => ({ id: `custom-${index}`, name: `Custom ${index}`, description: "A bounded custom personality.", instructions: "Keep the task within scope.", memoryScope: "shared" as const });
+    for (let index = 0; index < 100; index += 1) registry.register(personality(index));
+
+    expect(registry.list()).toHaveLength(103);
+    expect(() => registry.register(personality(100))).toThrow("100 custom personalities");
+    registry.remove("custom-0");
+    expect(registry.register(personality(100)).id).toBe("custom-100");
   });
 });
 
