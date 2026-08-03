@@ -87,6 +87,11 @@ describe("media artifact workflow", () => {
       height: 1,
       sha256: generated.output?.sha256,
     });
+    expect(manager.preview(manager.list()[0]!.id, Number.NaN)).toMatchObject({
+      dataBase64: Buffer.from(png).toString("base64"),
+      truncated: false,
+    });
+    await expect(manager.generate({ providerId: "fake-media", prompt: "one pixel", kind: "image", maximumBytes: Number.NaN }, new AbortController().signal)).rejects.toThrow("byte limit is invalid");
     expect(manager.list()).toHaveLength(1);
     const ciphertext = database.db
       .prepare(
