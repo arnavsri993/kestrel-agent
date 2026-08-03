@@ -75,6 +75,8 @@ describe("persistent Codex app-server provider", () => {
       turnTimeoutMs: 2_000,
     });
     await provider.probe();
+    const write = (provider as unknown as { write(message: Record<string, unknown>): void }).write.bind(provider);
+    expect(() => write({ method: "turn/start", params: { prompt: "x".repeat(8 * 1024 * 1024) } })).toThrow("outbound message exceeded the safety limit");
     const deltas: string[] = [];
     const first = await provider.complete(
       {
