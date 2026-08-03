@@ -28,6 +28,8 @@ function within(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);
 }
 
+const MAX_PROPOSALS = 200;
+
 export class SkillLearningManager {
   private readonly proposalKey = "skills.learning.proposals";
   private readonly feedbackKey = "skills.learning.feedback";
@@ -73,7 +75,7 @@ export class SkillLearningManager {
       createdAt: timestamp,
       updatedAt: timestamp
     };
-    this.saveProposals([...this.list(), proposal]);
+    this.saveProposals([...this.list(), proposal].slice(-MAX_PROPOSALS));
     return proposal;
   }
 
