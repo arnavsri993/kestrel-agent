@@ -327,6 +327,32 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("bounds terminal scheduled job history without evicting active jobs", () => {
+    const item = fixture(finalProvider());
+    const previous = Array.from({ length: 200 }, (_, index) => ({
+      id: `job-${index}`,
+      title: index === 0 ? "Keep scheduled" : `Completed job ${index}`,
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      prompt: index === 0 ? "Keep this recurring job." : "Already completed.",
+      schedule: { kind: "once" as const, nextRunAt: "2026-07-22T21:00:00.000Z" },
+      status: index === 0 ? "pending" as const : "completed" as const,
+      createdAt: "2026-07-22T20:00:00.000Z",
+      updatedAt: "2026-07-22T20:00:00.000Z",
+    }));
+    item.database.setPrivateState("orchestrator.scheduled-jobs", previous);
+
+    const latest = item.orchestrator.schedule({ title: "Current", sessionId: item.parent.id, model: "fake", providerIds: ["fake"], prompt: "Run the current job.", schedule: { kind: "once", nextRunAt: "2026-07-22T21:00:00.000Z" } });
+
+    const jobs = item.orchestrator.listJobs();
+    expect(jobs).toHaveLength(200);
+    expect(jobs).toContainEqual(expect.objectContaining({ id: "job-0", status: "pending" }));
+    expect(jobs.some((job) => job.id === "job-1")).toBe(false);
+    expect(jobs).toContainEqual(latest);
+    item.database.close();
+  });
+
   it("persists encrypted schedules and advances recurring jobs", async () => {
     let instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(finalProvider(), () => instant);
