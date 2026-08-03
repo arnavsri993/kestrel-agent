@@ -227,6 +227,18 @@ describe("model provider adapters", () => {
     expect(result).toMatchObject({ providerId: "gemini", responseId: "gemini-response", text: "At 00:02, ", finishReason: "tool_calls", toolCalls: [{ name: "workspace.read", arguments: { path: "notes.md" } }], usage: { inputTokens: 44, outputTokens: 7, cachedInputTokens: 3, reasoningTokens: 2 } });
   });
 
+  it("bounds oversized Gemini JSON responses before parsing", async () => {
+    const baseUrl = await serve((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(Buffer.alloc(1_100_000, "x"));
+      });
+    });
+    const provider = new GeminiGenerateContentProvider({ apiKey: "gemini-secret", baseUrl });
+    await expect(provider.complete({ model: "gemini-test", messages: [{ role: "user", content: textContent("Hello") }] })).rejects.toThrow("Gemini response exceeds 1 MB");
+  });
+
   it("escalates to a different endpoint after a failed strategy and records both attempts", async () => {
     const failing: ModelProvider = {
       id: "failing",
