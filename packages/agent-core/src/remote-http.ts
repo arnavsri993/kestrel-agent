@@ -46,6 +46,7 @@ interface RemoteRuntimeEvent {
 const remoteToolStatuses = new Set<RuntimeToolExecution["status"]>(["running", "verified", "blocked", "failed", "cancelled"]);
 const remoteProgressStates = new Set<NonNullable<RemoteRuntimeEvent["payload"]["state"]>>(["running", "completed", "failed", "stopped"]);
 const remoteToolNamePattern = /^[a-z][a-z0-9_.-]{0,99}$/;
+const RATE_WINDOW_MS = 60_000;
 
 function isLoopback(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
@@ -180,6 +181,7 @@ function channelEnvelope(body: Record<string, unknown>): ChannelEnvelope {
 export class RemoteHttpServer {
   private server: HttpServer | HttpsServer | undefined;
   private readonly rates = new Map<string, RateRecord>();
+  private nextRateCleanupAt = 0;
   private readonly sse = new Set<ServerResponse>();
   private readonly mcpSessions = new Map<string, McpRuntimeServer>();
 
@@ -215,9 +217,13 @@ export class RemoteHttpServer {
 
   private checkRate(request: IncomingMessage): void {
     const now = Date.now();
+    if (now >= this.nextRateCleanupAt) {
+      for (const [key, record] of this.rates) if (record.resetAt <= now) this.rates.delete(key);
+      this.nextRateCleanupAt = now + RATE_WINDOW_MS;
+    }
     const key = request.socket.remoteAddress ?? "unknown";
     const record = this.rates.get(key);
-    if (!record || record.resetAt <= now) { this.rates.set(key, { count: 1, resetAt: now + 60_000 }); return; }
+    if (!record || record.resetAt <= now) { this.rates.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS }); return; }
     record.count += 1;
     if (record.count > (this.options.maximumRequestsPerMinute ?? 120)) throw new Error("Remote request rate limit exceeded.");
   }
