@@ -28,6 +28,13 @@ class LoopbackLanguageServer implements LanguageServerTransport {
 }
 
 describe("language server code intelligence", () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, 1.5])("rejects invalid client timeout %s before subscribing", (timeoutMs) => {
+    const transport = new LoopbackLanguageServer();
+
+    expect(() => new LanguageServerClient(transport, timeoutMs)).toThrow("finite positive integer");
+    expect(transport.sent).toEqual([]);
+  });
+
   it("negotiates LSP and serves approval-gated diagnostics, definitions, and references", async () => {
     const transport = new LoopbackLanguageServer();
     const client = new LanguageServerClient(transport);
