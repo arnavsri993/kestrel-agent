@@ -399,6 +399,38 @@ describe("Agent Skills extensions", () => {
     expect(proposal.instructions).not.toContain("PRIVATE_TOOL_OUTPUT_SHOULD_NOT_BE_COPIED");
     database.close();
   });
+
+  it("bounds learned skill proposal history", () => {
+    const learnedRoot = mkdtempSync(join(tmpdir(), "kestrel-learned-skill-proposals-"));
+    directories.push(learnedRoot);
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const source = runtime.createSession({ title: "Learning source" });
+    const sourceMessage = runtime.appendMessage({ sessionId: source.id, role: "user", content: "Prepare the release verification steps." });
+    const previous = Array.from({ length: 200 }, (_, index) => ({
+      id: `skill-proposal-${index}`,
+      name: `workflow-${index}`,
+      description: `Previous workflow ${index}`,
+      instructions: "Verify the result before reporting completion.",
+      sourceSessionId: source.id,
+      sourceMessageIds: [sourceMessage.id],
+      status: "rejected" as const,
+      evaluation: { valid: true, checks: [] },
+      createdAt: "2026-07-22T23:00:00.000Z",
+      updatedAt: "2026-07-22T23:00:00.000Z",
+    }));
+    database.setPrivateState("skills.learning.proposals", previous);
+    const manager = new SkillLearningManager(database, learnedRoot, new SkillRegistry([learnedRoot]), () => new Date("2026-07-22T23:00:00.000Z"));
+
+    const latest = manager.propose({ name: "release-check", description: "Verify the release.", instructions: "Run the release checks and verify the result.", sourceSessionId: source.id, sourceMessageIds: [sourceMessage.id] });
+
+    const proposals = manager.list();
+    expect(proposals).toHaveLength(200);
+    expect(proposals[0]?.id).toBe("skill-proposal-1");
+    expect(proposals.some((proposal) => proposal.id === "skill-proposal-0")).toBe(false);
+    expect(proposals.at(-1)).toEqual(latest);
+    database.close();
+  });
 });
 
 describe("Codex-compatible plugin manifests", () => {
