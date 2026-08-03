@@ -104,6 +104,10 @@ import {
   EventApplicationManager,
   installEventApplicationTools,
 } from "./event-applications";
+import {
+  OutreachManager,
+  installOutreachTools,
+} from "./outreach";
 import { SkinManager } from "./skins";
 import { PetManager } from "./pets";
 import { PetHatchManager } from "./pet-hatch";
@@ -184,6 +188,7 @@ export class AgentCore {
   readonly presence: PresenceManager;
   readonly nativeNodes: NativeNodeManager;
   readonly eventApplications: EventApplicationManager;
+  readonly outreach: OutreachManager;
   readonly skins: SkinManager;
   readonly pets: PetManager | undefined;
   readonly petHatch: PetHatchManager | undefined;
@@ -301,6 +306,12 @@ export class AgentCore {
       this.eventApplications,
       mainSession.id,
     );
+    this.outreach = new OutreachManager(
+      deps.database,
+      this.email,
+      () => new Date(this.now()),
+    );
+    installOutreachTools(this.runtime, this.outreach, mainSession.id);
     this.skins = new SkinManager(deps.database);
     this.pets = deps.petRoot
       ? new PetManager(deps.database, deps.petRoot)
@@ -2940,6 +2951,16 @@ export {
   type EventAnswerSensitivity,
   type EventEligibilityItem,
 } from "./event-applications";
+export {
+  OutreachManager,
+  OUTREACH_TOOL_NAMES,
+  installOutreachTools,
+  type OutreachContact,
+  type OutreachContactStatus,
+  type OutreachDraft,
+  type OutreachDraftPurpose,
+  type OutreachDraftStatus,
+} from "./outreach";
 export { BUILTIN_SKINS, SkinManager, contrast } from "./skins";
 export { PetManager, checkedAssetUrl, webpDimensions } from "./pets";
 export {
