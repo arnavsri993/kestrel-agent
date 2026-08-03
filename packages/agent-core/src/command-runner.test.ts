@@ -43,6 +43,13 @@ describe("SandboxedCommandRunner", () => {
     expect(() => runner.start(defaultInput, { onProgress: vi.fn() })).toThrow("implemented only for macOS");
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, 1.5])("rejects invalid timeout %s before spawning", (timeoutMs) => {
+    vi.mocked(fs.accessSync).mockImplementation(() => {});
+
+    expect(() => runner.start({ ...defaultInput, timeoutMs }, { onProgress: vi.fn() })).toThrow("finite positive integer");
+    expect(child_process.spawn).not.toHaveBeenCalled();
+  });
+
   it("throws error if command is not in allowlist", () => {
     const input = { ...defaultInput, command: "rm" };
     expect(() => runner.start(input, { onProgress: vi.fn() })).toThrow("not in the Kestrel executable allowlist");
