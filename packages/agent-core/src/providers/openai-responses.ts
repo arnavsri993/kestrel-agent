@@ -71,6 +71,11 @@ function finishReason(response: Record<string, unknown>, toolCalls: ModelToolCal
   return "unknown";
 }
 
+function usageCount(value: unknown): number {
+  const count = Number(value ?? 0);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+}
+
 export class OpenAIResponsesProvider implements ModelProvider {
   readonly id: string;
   readonly poolId?: string;
@@ -177,10 +182,10 @@ export class OpenAIResponsesProvider implements ModelProvider {
       text,
       toolCalls: calls,
       usage: {
-        inputTokens: Number(usage.input_tokens ?? 0),
-        outputTokens: Number(usage.output_tokens ?? 0),
-        cachedInputTokens: Number(inputDetails.cached_tokens ?? 0),
-        reasoningTokens: Number(outputDetails.reasoning_tokens ?? 0)
+        inputTokens: usageCount(usage.input_tokens),
+        outputTokens: usageCount(usage.output_tokens),
+        cachedInputTokens: usageCount(inputDetails.cached_tokens),
+        reasoningTokens: usageCount(outputDetails.reasoning_tokens)
       },
       finishReason: finishReason(completed, calls)
     };
