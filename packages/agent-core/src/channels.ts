@@ -203,7 +203,10 @@ export class WebhookChannelAdapter implements ChannelAdapter {
     }
     this.fetcher = options.fetcher ?? fetch;
     this.resolver = options.resolveHost ?? (async (hostname) => (await lookup(hostname, { all: true })).map((entry) => entry.address));
-    this.timeoutMs = Math.max(1_000, Math.min(60_000, options.timeoutMs ?? 15_000));
+    const configuredTimeout = options.timeoutMs ?? 15_000;
+    this.timeoutMs = Number.isFinite(configuredTimeout)
+      ? Math.max(1_000, Math.min(60_000, Math.trunc(configuredTimeout)))
+      : 15_000;
     this.now = options.now ?? (() => new Date());
   }
 
