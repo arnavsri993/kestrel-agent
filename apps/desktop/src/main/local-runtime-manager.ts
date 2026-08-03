@@ -280,7 +280,12 @@ export class LocalRuntimeManager {
       });
       const response = await this.fetcher(this.manifest.url, { redirect: "follow", signal });
       if (!response.ok || !response.body) throw new Error(`The local runtime download returned ${response.status}.`);
-      const finalUrl = new URL(response.url || this.manifest.url);
+      let finalUrl: URL;
+      try {
+        finalUrl = new URL(response.url || this.manifest.url);
+      } catch {
+        throw new Error("The local runtime download redirected to an untrusted host.");
+      }
       if (finalUrl.protocol !== "https:" || !["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"].includes(finalUrl.hostname)) {
         throw new Error("The local runtime download redirected to an untrusted host.");
       }
