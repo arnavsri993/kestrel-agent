@@ -176,4 +176,36 @@ describe("external secret manager", () => {
     expect((await manager.configuration()).bitwarden).toEqual(DEFAULT_EXTERNAL_SECRET_CONFIGURATION.bitwarden);
     expect(await item.broker.getOpaqueSecret("external-secret-bitwarden-token")).toBeUndefined();
   });
+
+  it("preserves verification records when separate managers sync providers concurrently", async () => {
+    const item = fixture();
+    const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+    configuration.onepassword = {
+      enabled: true,
+      binaryPath: item.paths.op,
+      account: "",
+      mappings: { openai: "op://Private/OpenAI/api-key" },
+      overrideStored: true
+    };
+    configuration.command = {
+      enabled: true,
+      executablePath: item.paths.helper,
+      arguments: [],
+      timeoutMs: 3_000,
+      overrideStored: false
+    };
+    await new ExternalSecretManager(item.root, item.broker).save(configuration);
+    const execute = async (file: string) => ({
+      stdout: file.endsWith("/op") ? "onepassword-secret" : "GITHUB_TOKEN=command-secret\n"
+    });
+    const first = new ExternalSecretManager(item.root, item.broker, { execute });
+    const second = new ExternalSecretManager(item.root, item.broker, { execute });
+
+    await Promise.all([first.sync("onepassword"), second.sync("command")]);
+
+    expect((await first.status()).sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "onepassword", state: "verified" }),
+      expect.objectContaining({ id: "command", state: "verified" })
+    ]));
+  });
 });

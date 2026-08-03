@@ -20,6 +20,7 @@ const execFileAsync = promisify(execFile);
 const CONFIGURATION_SECRET_ID = "external-secret-configuration";
 const ONEPASSWORD_TOKEN_SECRET_ID = "external-secret-onepassword-token";
 const BITWARDEN_TOKEN_SECRET_ID = "external-secret-bitwarden-token";
+const verificationQueues = new Map<string, Promise<void>>();
 
 const BWS_MANIFEST = {
   version: "2.0.0",
@@ -196,9 +197,9 @@ export class ExternalSecretManager {
     await this.broker.setOpaqueSecret(CONFIGURATION_SECRET_ID, JSON.stringify(next));
     if (providerId === "onepassword") await this.broker.removeOpaqueSecret(ONEPASSWORD_TOKEN_SECRET_ID);
     if (providerId === "bitwarden") await this.broker.removeOpaqueSecret(BITWARDEN_TOKEN_SECRET_ID);
-    const verification = await this.readVerification();
-    delete verification[providerId];
-    await this.writeVerification(verification);
+    await this.updateVerification((verification) => {
+      delete verification[providerId];
+    });
   }
 
   async status(): Promise<{ configuration: ExternalSecretConfiguration; sources: ExternalSecretProviderStatus[] }> {
@@ -534,14 +535,34 @@ export class ExternalSecretManager {
     await chmod(this.statusPath, 0o600);
   }
 
+  private async updateVerification(update: (verification: VerificationState) => void): Promise<void> {
+    const previous = verificationQueues.get(this.statusPath) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.catch(() => undefined).then(() => current);
+    verificationQueues.set(this.statusPath, queued);
+    await previous.catch(() => undefined);
+    try {
+      const verification = await this.readVerification();
+      update(verification);
+      await this.writeVerification(verification);
+    } finally {
+      release();
+      if (verificationQueues.get(this.statusPath) === queued)
+        verificationQueues.delete(this.statusPath);
+    }
+  }
+
   private async recordVerification(
     providerId: ExternalSecretProviderId,
     state: SourceVerification["state"],
     resolvedCredentialIds: BrokeredCredentialId[],
     detail: string
   ): Promise<void> {
-    const verification = await this.readVerification();
-    verification[providerId] = { state, detail, resolvedCredentialIds, lastSyncedAt: this.now().toISOString() };
-    await this.writeVerification(verification);
+    await this.updateVerification((verification) => {
+      verification[providerId] = { state, detail, resolvedCredentialIds, lastSyncedAt: this.now().toISOString() };
+    });
   }
 }
