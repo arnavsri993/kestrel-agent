@@ -97,4 +97,10 @@ describe("Bonjour gateway discovery", () => {
     expect(await new BonjourAdvertiser({ mode: "off", displayName: "Kestrel", tlsEnabled: false }, runner, "linux").start("http://127.0.0.1:1")).toMatchObject({ active: false });
     await expect(new BonjourAdvertiser({ mode: "minimal", displayName: "Kestrel", tlsEnabled: false }, runner, "linux").start("http://127.0.0.1:1")).rejects.toThrow("requires macOS");
   });
+
+  it("rejects malformed gateway origins before starting discovery", async () => {
+    const start = async () => undefined as never;
+    const advertiser = new BonjourAdvertiser({ mode: "minimal", displayName: "Kestrel", tlsEnabled: false }, { start }, "darwin");
+    await expect(advertiser.start("not a URL")).rejects.toThrow("Bonjour gateway origin is invalid.");
+  });
 });
