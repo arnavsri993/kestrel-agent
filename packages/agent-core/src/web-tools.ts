@@ -83,6 +83,10 @@ function pageTitle(contentType: string, raw: string, url: string): string {
   return new URL(url).hostname;
 }
 
+function boundedSearchResultCount(value: number): number {
+  return Number.isFinite(value) ? Math.max(1, Math.min(20, Math.trunc(value))) : 5;
+}
+
 export class NetworkPolicyWebClient {
   private readonly hosts: Set<string>;
   private readonly maximumBytes: number;
@@ -194,8 +198,9 @@ export class BraveSearchProvider implements WebSearchProvider {
     const addresses = await this.resolver(hostname);
     if (addresses.length === 0 || addresses.some(isPrivateNetworkAddress)) throw new Error("Brave Search resolved to a private or unsafe address.");
     const url = new URL("https://api.search.brave.com/res/v1/web/search");
+    const resultCount = boundedSearchResultCount(maximumResults);
     url.searchParams.set("q", query);
-    url.searchParams.set("count", String(Math.max(1, Math.min(20, maximumResults))));
+    url.searchParams.set("count", String(resultCount));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new Error("Brave Search timed out.")), this.timeoutMs);
     const abort = () => controller.abort(signal.reason);
@@ -206,7 +211,7 @@ export class BraveSearchProvider implements WebSearchProvider {
       const bytes = await readBoundedResponseBytes(response, 2_000_000, "Brave Search response exceeds 2 MB.");
       if (!response.ok) throw new Error(`Brave Search failed with status ${response.status}.`);
       const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { web?: { results?: Array<{ title?: unknown; url?: unknown; description?: unknown }> } };
-      return (parsed.web?.results ?? []).slice(0, maximumResults).flatMap((result) => typeof result.title === "string" && typeof result.url === "string"
+      return (parsed.web?.results ?? []).slice(0, resultCount).flatMap((result) => typeof result.title === "string" && typeof result.url === "string"
         ? [{ title: result.title, url: result.url, snippet: typeof result.description === "string" ? result.description : "" }]
         : []);
     } finally {

@@ -123,6 +123,8 @@ describe("network-policy web tools", () => {
     expect(await provider.search("kestrel", { maximumResults: 5, signal: new AbortController().signal })).toEqual([{ title: "Official", url: "https://docs.example/guide", snippet: "A result" }]);
     expect(request?.url).toContain("api.search.brave.com/res/v1/web/search?q=kestrel");
     expect(request?.headers.get("x-subscription-token")).toBe("search-secret");
+    await provider.search("kestrel", { maximumResults: Number.NaN, signal: new AbortController().signal });
+    expect(request?.url).toContain("count=5");
     expect(environmentWebAccessOptions({ KESTREL_WEB_ALLOW_PUBLIC: "true", BRAVE_SEARCH_API_KEY: "key" })).toMatchObject({ allowPublicHosts: true });
     expect(environmentWebAccessOptions({ BRAVE_SEARCH_API_KEY: "key" })).toBeUndefined();
     expect(environmentWebAccessOptions({
@@ -132,7 +134,7 @@ describe("network-policy web tools", () => {
     const aborted = new AbortController();
     aborted.abort(new Error("Search cancelled before start."));
     await expect(provider.search("kestrel", { maximumResults: 5, signal: aborted.signal })).rejects.toThrow("Search cancelled before start.");
-    expect(resolutions).toBe(1);
-    expect(fetches).toBe(1);
+    expect(resolutions).toBe(2);
+    expect(fetches).toBe(2);
   });
 });
