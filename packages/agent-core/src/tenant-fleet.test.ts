@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -31,5 +31,16 @@ describe("tenant fleet", () => {
     await expect(fleet.create({ tenant: "../escape", port: 18790 })).rejects.toThrow("name");
     await expect(fleet.create({ tenant: "acme", port: 80 })).rejects.toThrow("port");
     await expect(fleet.create({ tenant: "acme", port: 18790, blockEgress: true })).rejects.toThrow("firewall");
+  });
+
+  it("rejects corrupted registry cells before invoking a persisted runtime", async () => {
+    const calls: string[][] = [];
+    const runner: TenantFleetRunner = { run: async (_executable, args) => { calls.push(args); return { exitCode: 0, stdout: "", stderr: "" }; } };
+    const root = mkdtempSync(join(tmpdir(), "kestrel-fleet-"));
+    const fleet = new TenantFleet(root, runner);
+    writeFileSync(join(root, "fleet", "cells.json"), JSON.stringify([{ tenant: "acme", container: "attacker-container", port: 18790, image: "ghcr.io/kestrel-ai/kestrel:latest", runtime: "arbitrary-executable", createdAt: "2026-07-23T12:00:00.000Z" }]));
+
+    await expect(fleet.status("acme")).rejects.toThrow("Tenant fleet registry is invalid.");
+    expect(calls).toEqual([]);
   });
 });
