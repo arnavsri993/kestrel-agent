@@ -37,6 +37,11 @@ export interface NativeNodeResult {
 const DEFAULT_TRIGGERS = ["openclaw", "claude", "computer"];
 const CAPABILITIES = new Set<NativeNodeCapability>(["location", "talk", "voiceWake", "activePresence"]);
 
+function boundedDuration(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
+  const candidate = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.max(minimum, Math.min(maximum, Math.trunc(candidate)));
+}
+
 function cleanTriggers(input: unknown): string[] {
   if (!Array.isArray(input)) throw new Error("Voice-wake triggers must be an array.");
   const raw = input.length === 0 ? DEFAULT_TRIGGERS : input;
@@ -84,8 +89,8 @@ export class NativeNodeManager {
 
   enqueueLocation(nodeId: string, input: { timeoutMs?: number; maxAgeMs?: number; desiredAccuracy?: LocationAccuracy }): NativeNodeCommand {
     const node = this.requireCapability(nodeId, "location");
-    const timeoutMs = Math.max(1_000, Math.min(input.timeoutMs ?? 10_000, 60_000));
-    const maxAgeMs = Math.max(0, Math.min(input.maxAgeMs ?? 0, 3_600_000));
+    const timeoutMs = boundedDuration(input.timeoutMs, 10_000, 1_000, 60_000);
+    const maxAgeMs = boundedDuration(input.maxAgeMs, 0, 0, 3_600_000);
     const desiredAccuracy = input.desiredAccuracy ?? "balanced";
     if (!["coarse", "balanced", "precise"].includes(desiredAccuracy)) throw new Error("Location accuracy is invalid.");
     return this.enqueue(node.nodeId, "location.get", { timeoutMs, maxAgeMs, desiredAccuracy }, timeoutMs + 10_000);
