@@ -86,6 +86,15 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+  it("recovers from malformed persisted model registry state", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setPrivateState("orchestration.model-registry.v1", { corrupted: true });
+    const registry = new ModelRegistry(database, [provider({ id: "safe", model: "small" })]);
+
+    expect(registry.list()).toHaveLength(1);
+    database.close();
+  });
+
   it("routes simple verifiable work to the cheaper adequate endpoint", () => {
     const item = fixture([
       provider({
