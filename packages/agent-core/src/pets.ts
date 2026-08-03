@@ -96,6 +96,7 @@ async function pinnedFetch(
   maximum: number,
   signal?: AbortSignal,
 ): Promise<Buffer> {
+  signal?.throwIfAborted();
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error("Petdex request timed out.")),
@@ -103,6 +104,7 @@ async function pinnedFetch(
   );
   const abort = () => controller.abort(signal?.reason);
   signal?.addEventListener("abort", abort, { once: true });
+  signal?.throwIfAborted();
   try {
     const response = await fetcher(url, {
       method: "GET",
