@@ -31,4 +31,15 @@ describe("provider authentication monitor", () => {
     expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
   });
+
+  it("does not schedule malformed timer values as immediate polling", async () => {
+    vi.useFakeTimers();
+    const request = vi.fn(async () => ({ ok: false, error: "offline" }));
+    const monitor = new ProviderAuthMonitor({ request, notify: vi.fn(), initialDelayMs: Number.NaN, intervalMs: Number.POSITIVE_INFINITY });
+    monitor.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(request).not.toHaveBeenCalled();
+    monitor.stop();
+    vi.useRealTimers();
+  });
 });

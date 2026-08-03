@@ -7,6 +7,13 @@ interface ProviderAuthMonitorOptions {
   intervalMs?: number;
 }
 
+const MAX_TIMER_MS = 2_147_483_647;
+
+function boundedTimer(value: number | undefined, fallback: number, minimum: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(MAX_TIMER_MS, Math.max(minimum, Math.trunc(value)));
+}
+
 export class ProviderAuthMonitor {
   private readonly status = new Map<string, boolean>();
   private initialTimer: NodeJS.Timeout | undefined;
@@ -17,8 +24,8 @@ export class ProviderAuthMonitor {
 
   start(): void {
     if (this.initialTimer || this.intervalTimer) return;
-    const initialDelay = Math.max(1_000, this.options.initialDelayMs ?? 2 * 60_000);
-    const interval = Math.max(60_000, this.options.intervalMs ?? 6 * 60 * 60_000);
+    const initialDelay = boundedTimer(this.options.initialDelayMs, 2 * 60_000, 1_000);
+    const interval = boundedTimer(this.options.intervalMs, 6 * 60 * 60_000, 60_000);
     this.initialTimer = setTimeout(() => {
       this.initialTimer = undefined;
       void this.check();
