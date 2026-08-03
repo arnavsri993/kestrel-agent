@@ -183,7 +183,11 @@ export class RemoteHttpServer {
   private readonly sse = new Set<ServerResponse>();
   private readonly mcpSessions = new Map<string, McpRuntimeServer>();
 
-  constructor(private readonly options: RemoteHttpServerOptions) {}
+  constructor(private readonly options: RemoteHttpServerOptions) {
+    for (const [name, value] of [["maximumRequestsPerMinute", options.maximumRequestsPerMinute], ["maximumSseClients", options.maximumSseClients]] as const) {
+      if (value !== undefined && (!Number.isFinite(value) || !Number.isInteger(value) || value < 1)) throw new Error(`${name} must be a finite positive integer.`);
+    }
+  }
 
   async start(): Promise<{ origin: string }> {
     if (this.server) throw new Error("Remote HTTP server is already running.");
