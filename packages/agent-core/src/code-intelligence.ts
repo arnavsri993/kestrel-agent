@@ -14,6 +14,13 @@ export interface TextPosition { line: number; character: number }
 
 export interface StdioLanguageServerOptions { command: string; args?: string[]; cwd: string; environment?: Record<string, string>; maximumMessageBytes?: number; }
 
+const DEFAULT_MAXIMUM_MESSAGE_BYTES = 2_000_000;
+
+export function normalizeLanguageServerMessageBytes(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_MAXIMUM_MESSAGE_BYTES;
+  return Math.max(1_024, Math.min(10_000_000, Math.floor(value)));
+}
+
 export class StdioLanguageServerTransport implements LanguageServerTransport {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly listeners = new Set<(message: LspMessage) => void>();
@@ -28,7 +35,7 @@ export class StdioLanguageServerTransport implements LanguageServerTransport {
     if (!metadata.isFile() || metadata.isSymbolicLink() || !(metadata.mode & 0o111)) throw new Error("Language server command must be an executable regular file.");
     if ((options.args ?? []).length > 100 || (options.args ?? []).some((arg) => arg.length > 10_000 || /[\0\r\n]/.test(arg))) throw new Error("Language server arguments are invalid.");
     if (Object.entries(options.environment ?? {}).some(([name, value]) => !/^[A-Z_][A-Z0-9_]{0,99}$/.test(name) || value.length > 20_000 || /\0/.test(value))) throw new Error("Language server environment is invalid.");
-    this.maximumMessageBytes = Math.max(1_024, Math.min(10_000_000, options.maximumMessageBytes ?? 2_000_000));
+    this.maximumMessageBytes = normalizeLanguageServerMessageBytes(options.maximumMessageBytes);
     this.child = spawn(command, options.args ?? [], { cwd, shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: process.env.LANG ?? "C.UTF-8", ...(options.environment ?? {}) } });
     this.child.stdout.on("data", (chunk: Buffer) => this.receive(chunk));
     let stderrBytes = 0;
