@@ -35,6 +35,25 @@ function fixture() {
 }
 
 describe("authenticated remote HTTP transport", () => {
+  it("removes expired rate-limit clients during request processing", () => {
+    const { database, runtime, remote } = fixture();
+    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1" });
+    const internals = server as unknown as {
+      rates: Map<string, { count: number; resetAt: number }>;
+      nextRateCleanupAt: number;
+      checkRate: (request: { socket: { remoteAddress?: string } }) => void;
+    };
+    const now = Date.now();
+    internals.rates.set("expired-client", { count: 1, resetAt: now - 1 });
+    internals.rates.set("active-client", { count: 1, resetAt: now + 60_000 });
+    internals.nextRateCleanupAt = 0;
+
+    internals.checkRate({ socket: { remoteAddress: "new-client" } });
+
+    expect([...internals.rates.keys()]).toEqual(["active-client", "new-client"]);
+    database.close();
+  });
+
   it("keeps read-only MCP sessions non-mutating and rechecks task scope after initialization", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-mcp-"));
     directories.push(root);
