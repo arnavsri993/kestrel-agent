@@ -572,8 +572,11 @@ export class AgentRuntime extends EventEmitter {
   }
 
   searchMessages(query: string, limit = 20): RuntimeMessage[] {
-    const exact = this.database.searchRuntimeMessages(query, limit);
-    if (exact.length >= limit) return exact;
+    const searchLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(100, Math.trunc(limit)))
+      : 20;
+    const exact = this.database.searchRuntimeMessages(query, searchLimit);
+    if (exact.length >= searchLimit) return exact;
     const queryTerms = [...new Set(query.toLowerCase().normalize("NFKC").match(/[\p{L}\p{N}]{2,}/gu) ?? [])];
     if (!queryTerms.length) return exact;
     const queryEmbedding = localSemanticEmbedding(query);
@@ -584,7 +587,7 @@ export class AgentRuntime extends EventEmitter {
       const semantic = semanticSimilarity(queryEmbedding, localSemanticEmbedding(message.content));
       return { message, score: lexical + semantic * 3, semantic };
     }).filter(({ score, semantic }) => score > 0.55 || semantic >= 0.18).sort((left, right) => right.score - left.score || right.message.createdAt.localeCompare(left.message.createdAt));
-    return [...exact, ...ranked.map(({ message }) => message)].slice(0, limit);
+    return [...exact, ...ranked.map(({ message }) => message)].slice(0, searchLimit);
   }
 
   cancelExecution(executionId: string): boolean {
