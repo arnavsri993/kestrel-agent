@@ -29,6 +29,10 @@ describe("trusted proxy gateway authentication", () => {
     const allowed = new TrustedProxyAuthorizer({ ...configuration, trustedSources: ["127.0.0.1"], allowLoopback: true, maximumScopes: [...configuration.maximumScopes] });
     expect(allowed.authorize({ remoteAddress: "127.0.0.1", headers })).toMatchObject({ identity: "operator@example.test", scopes: ["read", "tasks"] });
   });
+
+  it.each([["10.0.0.0/"], ["10.0.0.0/24/extra"], ["10.0.0.0/ 24"]])("rejects malformed trusted source CIDR %s", (trustedSource) => {
+    expect(() => new TrustedProxyAuthorizer({ ...configuration, trustedSources: [trustedSource], maximumScopes: [...configuration.maximumScopes] })).toThrow(/CIDR prefix|source/);
+  });
 });
 
 describe("managed Tailscale exposure", () => {
