@@ -16,7 +16,12 @@ function parsePublisher(value: unknown): StoredPublisher {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Plugin publisher key document is invalid.");
   const record = value as Record<string, unknown>;
   if (typeof record.keyId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(record.keyId) || typeof record.publicKey !== "string" || record.publicKey.length > 32_000) throw new Error("Plugin publisher key document is invalid.");
-  const key = createPublicKey(record.publicKey);
+  let key: ReturnType<typeof createPublicKey>;
+  try {
+    key = createPublicKey(record.publicKey);
+  } catch {
+    throw new Error("Plugin publisher key document is invalid.");
+  }
   if (key.asymmetricKeyType !== "ed25519") throw new Error("Plugin publisher key must be Ed25519.");
   const publicKey = key.export({ type: "spki", format: "pem" }).toString();
   const fingerprint = createHash("sha256").update(key.export({ type: "spki", format: "der" })).digest("hex");
@@ -34,7 +39,12 @@ export class PluginTrustStore {
       throw error;
     }
     if (bytes.byteLength > 1_000_000) throw new Error("Plugin publisher trust store exceeds 1 MB.");
-    const parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+    } catch {
+      throw new Error("Plugin publisher trust store is invalid.");
+    }
     if (!Array.isArray(parsed)) throw new Error("Plugin publisher trust store is invalid.");
     const publishers = parsed.map(parsePublisher);
     if (new Set(publishers.map((publisher) => publisher.keyId)).size !== publishers.length) throw new Error("Plugin publisher trust store contains duplicate key IDs.");
@@ -65,7 +75,13 @@ export class PluginTrustStore {
   async importDocument(path: string): Promise<TrustedPluginPublisher> {
     const bytes = await readFile(path);
     if (bytes.byteLength > 64_000) throw new Error("Plugin publisher key document exceeds 64 KB.");
-    const publisher = parsePublisher(JSON.parse(bytes.toString("utf8")) as unknown);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+    } catch {
+      throw new Error("Plugin publisher key document is invalid.");
+    }
+    const publisher = parsePublisher(parsed);
     const publishers = await this.stored();
     const existing = publishers.find((item) => item.keyId === publisher.keyId);
     if (existing && existing.fingerprint !== publisher.fingerprint) throw new Error(`Publisher key ID ${publisher.keyId} is already trusted with a different key.`);
