@@ -28,6 +28,22 @@ describe("remote backends and scoped supervision", () => {
     database.close();
   });
 
+  it("normalizes malformed remote execution timeouts", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    let receivedTimeout = 0;
+    const manager = new RemoteBackendManager(database, [{ id: "ssh-adapter", execute: async ({ timeoutMs }) => {
+      receivedTimeout = timeoutMs;
+      return { exitCode: 0, stdout: "ok", stderr: "", remoteExecutionId: "remote-1" };
+    } }]);
+    manager.setTargets([{ id: "build-host", kind: "ssh", backendId: "ssh-adapter", allowedCommands: ["git"], enabled: true }]);
+    const signal = new AbortController().signal;
+    await manager.execute("build-host", "git", [], Number.NaN, signal);
+    expect(receivedTimeout).toBe(120_000);
+    await manager.execute("build-host", "git", [], 1_250.9, signal);
+    expect(receivedTimeout).toBe(1_250);
+    database.close();
+  });
+
   it("pairs scoped devices, returns redacted remote state, and supports revocation", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
