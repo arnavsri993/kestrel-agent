@@ -185,6 +185,7 @@ export class TaskOrchestrator {
   private readonly jobsKey = "orchestrator.scheduled-jobs";
   private readonly goalsKey = "orchestrator.goals";
   private readonly teamsKey = "orchestrator.teams";
+  private readonly maximumStoredJobs = 200;
 
   constructor(
     private readonly database: KestrelDatabase,
@@ -744,7 +745,14 @@ export class TaskOrchestrator {
   }
 
   private saveJobs(jobs: ScheduledAgentJob[]): void {
-    this.database.setPrivateState(this.jobsKey, jobs);
+    const active = jobs.filter((job) => job.status === "pending" || job.status === "running" || job.status === "waiting_approval");
+    if (active.length > this.maximumStoredJobs) throw new Error("Active scheduled job history exceeds the storage limit.");
+    const terminal = jobs.filter((job) => job.status === "completed" || job.status === "failed" || job.status === "cancelled");
+    const terminalLimit = Math.max(0, this.maximumStoredJobs - active.length);
+    const retainedTerminal = terminal.slice(Math.max(0, terminal.length - terminalLimit));
+    const retainedIds = new Set(retainedTerminal.map((job) => job.id));
+    const value = jobs.filter((job) => job.status === "pending" || job.status === "running" || job.status === "waiting_approval" || retainedIds.has(job.id));
+    this.database.setPrivateState(this.jobsKey, value);
   }
 
   private replaceJob(job: ScheduledAgentJob): void {
