@@ -1069,9 +1069,7 @@ export class AgentConfigurationManager {
       string,
       { verified: number; failed: number; cancelled: number }
     >();
-    for (const execution of this.database
-      .listAllToolExecutions()
-      .filter((item) => Date.parse(item.startedAt) >= cutoff)) {
+    for (const execution of this.database.listAllToolExecutions(new Date(cutoff).toISOString())) {
       if (execution.toolName.startsWith("agent.config.")) continue;
       const group = groups.get(execution.toolName) ?? {
         verified: 0,

@@ -130,6 +130,45 @@ describe("configuration history recovery", () => {
   });
 });
 
+describe("tool execution history queries", () => {
+  it("filters tool executions at the database boundary", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const sessionId = "session-tool-history";
+    const common = {
+      sessionId,
+      toolName: "fixture.tool",
+      status: "verified" as const,
+      riskLevel: "low" as const,
+      input: {},
+      output: { ok: true },
+    };
+    database.saveRuntimeSession({
+      id: sessionId,
+      title: "Tool history",
+      allowedTools: ["fixture.tool"],
+      status: "active",
+      checkpoints: [],
+      createdAt: "2026-07-29T10:00:00.000Z",
+      updatedAt: "2026-07-29T10:00:00.000Z",
+    });
+    database.saveToolExecution({
+      ...common,
+      id: "tool-old",
+      startedAt: "2026-07-29T10:00:00.000Z",
+      completedAt: "2026-07-29T10:00:01.000Z",
+    });
+    database.saveToolExecution({
+      ...common,
+      id: "tool-recent",
+      startedAt: "2026-07-29T11:00:00.000Z",
+      completedAt: "2026-07-29T11:00:01.000Z",
+    });
+
+    expect(database.listAllToolExecutions("2026-07-29T11:00:00.000Z").map((item) => item.id)).toEqual(["tool-recent"]);
+    database.close();
+  });
+});
+
 describe("runtime history retirement", () => {
   it("atomically retires active runs and their approval executions without releasing an in-flight idempotency claim", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
