@@ -44,6 +44,12 @@ export interface CoreSupervisorOptions {
 const DEFAULT_RESTART_DELAYS_MS = [250, 1_000, 5_000] as const;
 const DEFAULT_STABILITY_WINDOW_MS = 60_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
+const MAX_TIMER_MS = 2_147_483_647;
+
+function boundedTimer(value: number | undefined, fallback: number, minimum: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(MAX_TIMER_MS, Math.max(minimum, Math.trunc(value)));
+}
 
 function cloneBootstrapConfig(config: CoreBootstrapConfig): CoreBootstrapConfig {
   return {
@@ -138,12 +144,10 @@ export class CoreSupervisor extends EventEmitter {
             ),
           ) as Record<string, string>,
         }));
-    this.restartDelaysMs =
-      options.restartDelaysMs ?? DEFAULT_RESTART_DELAYS_MS;
-    this.stabilityWindowMs =
-      options.stabilityWindowMs ?? DEFAULT_STABILITY_WINDOW_MS;
-    this.startupTimeoutMs =
-      options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+    const restartDelays = options.restartDelaysMs ?? DEFAULT_RESTART_DELAYS_MS;
+    this.restartDelaysMs = restartDelays.map((delay, index) => boundedTimer(delay, DEFAULT_RESTART_DELAYS_MS[index] ?? DEFAULT_RESTART_DELAYS_MS.at(-1)!, 0));
+    this.stabilityWindowMs = boundedTimer(options.stabilityWindowMs, DEFAULT_STABILITY_WINDOW_MS, 0);
+    this.startupTimeoutMs = boundedTimer(options.startupTimeoutMs, DEFAULT_STARTUP_TIMEOUT_MS, 1);
   }
 
   async start(config: CoreBootstrapConfig): Promise<void> {
