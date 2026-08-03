@@ -1,5 +1,7 @@
 import { ModelProviderError } from "./types";
 
+const MAX_PROVIDER_NDJSON_RECORD_BYTES = 1_000_000;
+
 export interface ServerSentEvent {
   event?: string;
   data: string;
@@ -40,15 +42,29 @@ export async function readNdjson(response: Response, providerId: string, onValue
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const oversized = () => new ModelProviderError("Provider NDJSON record exceeds 1 MB.", providerId, true, response.status);
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value, { stream: !done });
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() ?? "";
-    for (const line of lines) if (line.trim()) onValue(JSON.parse(line));
+    for (const line of lines) {
+      if (Buffer.byteLength(line, "utf8") > MAX_PROVIDER_NDJSON_RECORD_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw oversized();
+      }
+      if (line.trim()) onValue(JSON.parse(line));
+    }
+    if (Buffer.byteLength(buffer, "utf8") > MAX_PROVIDER_NDJSON_RECORD_BYTES) {
+      if (!done) await reader.cancel().catch(() => undefined);
+      throw oversized();
+    }
     if (done) break;
   }
-  if (buffer.trim()) onValue(JSON.parse(buffer));
+  if (buffer.trim()) {
+    if (Buffer.byteLength(buffer, "utf8") > MAX_PROVIDER_NDJSON_RECORD_BYTES) throw oversized();
+    onValue(JSON.parse(buffer));
+  }
 }
 
 export async function providerFetch(
