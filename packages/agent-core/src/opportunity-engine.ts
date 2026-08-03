@@ -10,7 +10,8 @@ export interface ResourceLimits {
 export class OpportunityEngine {
   score(input: Pick<TaskOpportunity, "expectedUtility" | "confidence" | "urgency" | "importance" | "estimatedInterruptionCost" | "estimatedComputeCost" | "riskLevel">): number {
     const riskPenalty = ({ read_only: 0, low: 0.4, external: 1.2, sensitive: 2.5, high_consequence: 5 } as const)[input.riskLevel];
-    return Number((input.expectedUtility * input.confidence * input.urgency * input.importance - input.estimatedInterruptionCost - input.estimatedComputeCost - riskPenalty).toFixed(2));
+    const score = input.expectedUtility * input.confidence * input.urgency * input.importance - input.estimatedInterruptionCost - input.estimatedComputeCost - riskPenalty;
+    return Number.isFinite(score) ? Number(score.toFixed(2)) : 0;
   }
 
   canLaunch(opportunity: TaskOpportunity, limits: ResourceLimits, currentDepth: number): { allowed: boolean; reason: string } {
