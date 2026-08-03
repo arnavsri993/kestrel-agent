@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { chmod, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -59,17 +59,35 @@ export class TenantFleet {
     if (!/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,500}$/.test(image)) throw new Error("Tenant cell image is invalid.");
     const state = join(this.root, "cells", tenant);
     const auth = join(this.root, "auth-profile-secrets", tenant);
-    mkdirSync(state, { recursive: false, mode: 0o700 });
-    mkdirSync(auth, { recursive: false, mode: 0o700 });
+    let stateCreated = false;
+    let authCreated = false;
+    try {
+      mkdirSync(state, { recursive: false, mode: 0o700 });
+      stateCreated = true;
+      mkdirSync(auth, { recursive: false, mode: 0o700 });
+      authCreated = true;
+    } catch (error) {
+      if (authCreated) rmSync(auth, { recursive: true, force: true });
+      if (stateCreated) rmSync(state, { recursive: true, force: true });
+      throw error;
+    }
+    const cleanupData = () => {
+      if (authCreated) rmSync(auth, { recursive: true, force: true });
+      if (stateCreated) rmSync(state, { recursive: true, force: true });
+    };
     const token = randomBytes(32).toString("base64url");
     const container = `kestrel-cell-${tenant}`;
     const network = `kestrel-cell-${tenant}`;
     const networkResult = await this.runner.run(runtime, ["network", "create", ...(runtime === "podman" && input.blockEgress ? ["--internal"] : []), network]);
-    if (networkResult.exitCode !== 0) throw new Error(`Could not create tenant network: ${networkResult.stderr.slice(0, 500)}`);
+    if (networkResult.exitCode !== 0) {
+      cleanupData();
+      throw new Error(`Could not create tenant network: ${networkResult.stderr.slice(0, 500)}`);
+    }
     const args = ["run", "-d", "--name", container, "--network", network, "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=512", "--memory=4g", "--cpus=2", "--read-only", "--tmpfs=/tmp:rw,noexec,nosuid,size=256m", "-p", `127.0.0.1:${input.port}:18789`, "-v", `${state}:/home/node/.kestrel`, "-v", `${auth}:/home/node/.config/kestrel`, "-e", `KESTREL_GATEWAY_TOKEN=${token}`, image];
     const result = await this.runner.run(runtime, args);
     if (result.exitCode !== 0) {
-      await this.runner.run(runtime, ["network", "rm", network]);
+      await this.runner.run(runtime, ["network", "rm", network]).catch(() => undefined);
+      cleanupData();
       throw new Error(`Could not start tenant cell: ${result.stderr.slice(0, 500)}`);
     }
     const cell: TenantCell = { tenant, container, port: input.port, image, runtime, createdAt: this.now().toISOString() };
