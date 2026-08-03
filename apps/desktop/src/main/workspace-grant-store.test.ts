@@ -86,4 +86,23 @@ describe("workspace grant store", () => {
       { path: addedLaterPath, name: "added-later", available: true },
     ]);
   });
+
+  it("serializes concurrent mutations from separate store instances", async () => {
+    const storage = mkdtempSync(join(tmpdir(), "kestrel-grants-"));
+    directories.push(storage);
+    const first = join(storage, "first");
+    const second = join(storage, "second");
+    const filename = join(storage, "private", "workspace-grants.json");
+    mkdirSync(first);
+    mkdirSync(second);
+    const firstStore = new WorkspaceGrantStore(filename);
+    const secondStore = new WorkspaceGrantStore(filename);
+
+    await Promise.all([firstStore.add(first), secondStore.add(second)]);
+
+    expect(await firstStore.configuredPaths()).toEqual([
+      realpathSync(first),
+      realpathSync(second),
+    ]);
+  });
 });

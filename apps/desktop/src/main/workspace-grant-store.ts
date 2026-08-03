@@ -4,6 +4,8 @@ import { homedir } from "node:os";
 import { basename, dirname, parse, resolve } from "node:path";
 import { WorkspaceGrantSchema, type WorkspaceGrant } from "@kestrel/shared-types";
 
+const mutationQueues = new Map<string, Promise<void>>();
+
 export class WorkspaceGrantStore {
   constructor(private readonly filename: string) {}
 
@@ -46,10 +48,12 @@ export class WorkspaceGrantStore {
     const canonical = this.validateRoot(path);
     if (!(await stat(canonical)).isDirectory())
       throw new Error("Workspace grants require a directory.");
-    const grants = await this.configuredGrants();
-    if (!grants.some((grant) => grant.path === canonical))
-      grants.push({ path: canonical, name: basename(canonical) });
-    await this.save(grants);
+    await this.mutate(async () => {
+      const grants = await this.configuredGrants();
+      if (!grants.some((grant) => grant.path === canonical))
+        grants.push({ path: canonical, name: basename(canonical) });
+      await this.save(grants);
+    });
     return this.list();
   }
 
@@ -60,11 +64,31 @@ export class WorkspaceGrantStore {
     } catch {
       // A missing stored path can still be removed by its exact value.
     }
-    const grants = (await this.configuredGrants()).filter(
-      (grant) => grant.path !== canonical && grant.path !== path,
-    );
-    await this.save(grants);
+    await this.mutate(async () => {
+      const grants = (await this.configuredGrants()).filter(
+        (grant) => grant.path !== canonical && grant.path !== path,
+      );
+      await this.save(grants);
+    });
     return this.list();
+  }
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = mutationQueues.get(this.filename) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.catch(() => undefined).then(() => current);
+    mutationQueues.set(this.filename, queued);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (mutationQueues.get(this.filename) === queued)
+        mutationQueues.delete(this.filename);
+    }
   }
 
   private async configuredGrants(): Promise<WorkspaceGrant[]> {
