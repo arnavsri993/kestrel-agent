@@ -14,6 +14,36 @@ export interface TenantCell {
 }
 export interface TenantFleetRunner { run(executable: string, args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }>; }
 
+const TENANT_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,500}$/;
+
+function parseTenantCell(value: unknown): TenantCell | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.tenant !== "string" ||
+    !TENANT_NAME_PATTERN.test(record.tenant) ||
+    record.container !== `kestrel-cell-${record.tenant}` ||
+    typeof record.port !== "number" ||
+    !Number.isInteger(record.port) ||
+    record.port < 1024 ||
+    record.port > 65_535 ||
+    typeof record.image !== "string" ||
+    !IMAGE_PATTERN.test(record.image) ||
+    (record.runtime !== "docker" && record.runtime !== "podman") ||
+    typeof record.createdAt !== "string" ||
+    Number.isNaN(Date.parse(record.createdAt))
+  ) return undefined;
+  return {
+    tenant: record.tenant,
+    container: record.container,
+    port: record.port,
+    image: record.image,
+    runtime: record.runtime,
+    createdAt: record.createdAt,
+  };
+}
+
 class ProcessFleetRunner implements TenantFleetRunner {
   run(executable: string, args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     return new Promise((resolvePromise, reject) => {
@@ -39,24 +69,27 @@ export class TenantFleet {
 
   async list(): Promise<TenantCell[]> {
     try {
-      const parsed = JSON.parse(await readFile(this.registryPath, "utf8")) as TenantCell[];
-      return Array.isArray(parsed) ? parsed : [];
+      const parsed = JSON.parse(await readFile(this.registryPath, "utf8")) as unknown;
+      if (!Array.isArray(parsed)) throw new Error();
+      const cells = parsed.map(parseTenantCell);
+      if (cells.some((cell) => !cell) || new Set(cells.map((cell) => cell!.tenant)).size !== cells.length || new Set(cells.map((cell) => cell!.port)).size !== cells.length) throw new Error();
+      return cells as TenantCell[];
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-      throw error;
+      throw new Error("Tenant fleet registry is invalid.");
     }
   }
 
   async create(input: { tenant: string; port: number; runtime?: "docker" | "podman"; image?: string; blockEgress?: boolean }): Promise<{ cell: TenantCell; gatewayToken: string }> {
     const tenant = input.tenant.trim().toLowerCase();
-    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(tenant)) throw new Error("Tenant cell name is invalid.");
+    if (!TENANT_NAME_PATTERN.test(tenant)) throw new Error("Tenant cell name is invalid.");
     if (!Number.isInteger(input.port) || input.port < 1024 || input.port > 65_535) throw new Error("Tenant cell port is invalid.");
     const cells = await this.list();
     if (cells.some((cell) => cell.tenant === tenant || cell.port === input.port)) throw new Error("Tenant cell or loopback port already exists.");
     const runtime = input.runtime ?? "docker";
     if (runtime === "docker" && input.blockEgress) throw new Error("Docker internal networking breaks the published gateway port; use host firewall policy.");
     const image = input.image ?? "ghcr.io/kestrel-ai/kestrel:latest";
-    if (!/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,500}$/.test(image)) throw new Error("Tenant cell image is invalid.");
+    if (!IMAGE_PATTERN.test(image)) throw new Error("Tenant cell image is invalid.");
     const state = join(this.root, "cells", tenant);
     const auth = join(this.root, "auth-profile-secrets", tenant);
     mkdirSync(state, { recursive: false, mode: 0o700 });
