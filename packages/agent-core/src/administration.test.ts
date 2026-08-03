@@ -48,6 +48,10 @@ describe("managed organization policy", () => {
     const payload = encode({ iss: "https://identity.example.test", aud: "kestrel", sub: "user-1", email: "admin@example.test", exp: Math.floor(now.getTime() / 1_000) + 3_600 });
     const signature = sign(null, Buffer.from(`${header}.${payload}`), privateKey).toString("base64url");
     expect(store.verifyIdentityToken(`${header}.${payload}.${signature}`)).toMatchObject({ subject: "user-1", role: "admin", email: "admin@example.test" });
+    const malformed = Buffer.from("not json").toString("base64url");
+    expect(() => store.verifyIdentityToken(`${malformed}.${payload}.${signature}`)).toThrow("SSO identity token is malformed.");
+    const nullPayload = Buffer.from("null").toString("base64url");
+    expect(() => store.verifyIdentityToken(`${header}.${nullPayload}.${signature}`)).toThrow("SSO identity token is malformed.");
     expect(store.analytics()).toMatchObject({ sessions: 0, modelCalls: 0, estimatedCostUsd: 0 });
     database.addActivity({ id: "old", title: "Old", detail: "expired", timestamp: "2026-01-01T00:00:00.000Z", status: "verified", sourceIds: [] });
     database.addActivity({ id: "new", title: "New", detail: "retained", timestamp: "2026-07-22T20:00:00.000Z", status: "verified", sourceIds: [] });
