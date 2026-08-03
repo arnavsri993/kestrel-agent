@@ -66,4 +66,10 @@ describe("Google Workspace runtime connector", () => {
     const missingScope = JSON.stringify({ ...JSON.parse(authorization), scopes: ["openid", "email"] });
     expect(() => environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: missingScope })).toThrow("missing");
   });
+
+  it("normalizes invalid Calendar list time bounds", async () => {
+    const client = environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: authorization });
+    await expect(client!.listEvents({ timeMin: "not a date", maxResults: 10, signal: new AbortController().signal })).rejects.toThrow("Google Calendar time range is invalid.");
+    await expect(client!.listEvents({ timeMin: "2026-07-23T00:00:00.000Z", timeMax: "not a date", maxResults: 10, signal: new AbortController().signal })).rejects.toThrow("Google Calendar time range is invalid.");
+  });
 });
