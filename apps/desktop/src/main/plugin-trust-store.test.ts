@@ -41,4 +41,21 @@ describe("plugin publisher trust store", () => {
     writeFileSync(document, JSON.stringify({ keyId: "publisher.test", publicKey: second.export({ type: "spki", format: "pem" }).toString() }));
     await expect(store.importDocument(document)).rejects.toThrow("different key");
   });
+
+  it("normalizes malformed trust-store and publisher documents", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-plugin-trust-invalid-"));
+    directories.push(root);
+    const trustPath = join(root, "trust.json");
+    const store = new PluginTrustStore(trustPath);
+    writeFileSync(trustPath, "not json");
+    await expect(store.list()).rejects.toThrow("Plugin publisher trust store is invalid.");
+
+    const malformed = join(root, "malformed.json");
+    writeFileSync(malformed, "not json");
+    await expect(store.importDocument(malformed)).rejects.toThrow("Plugin publisher key document is invalid.");
+
+    const invalidKey = join(root, "invalid-key.json");
+    writeFileSync(invalidKey, JSON.stringify({ keyId: "publisher.test", publicKey: "not a public key" }));
+    await expect(store.importDocument(invalidKey)).rejects.toThrow("Plugin publisher key document is invalid.");
+  });
 });
