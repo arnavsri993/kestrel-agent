@@ -129,4 +129,25 @@ describe("two-stage pet hatch workflow", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("defaults malformed draft counts to the bounded maximum", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-hatch-count-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const provider: MediaGenerationProvider = {
+      id: "fixture-image",
+      supportsReferenceImages: true,
+      async generate() {
+        return { data: await fixtureImage(), mediaType: "image/png", model: "fixture-image-v1" };
+      },
+    };
+    try {
+      const pets = new PetManager(database, join(root, "pets"));
+      const manager = new PetHatchManager(database, join(root, "pets", ".hatch"), [provider], pets);
+      const drafts = await manager.generateDrafts({ concept: "a blue paper bird", count: Number.NaN }, new AbortController().signal);
+      expect(drafts).toHaveLength(4);
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
