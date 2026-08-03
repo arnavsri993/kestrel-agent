@@ -14,6 +14,16 @@ import { AgentRuntime } from "./runtime";
 const provider: ModelProvider = { id: "fake", capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: true }, complete: async (request) => ({ providerId: "fake", model: request.model, text: "done", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }) };
 
 describe("remote backends and scoped supervision", () => {
+  it("recovers from malformed persisted remote target state", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new RemoteBackendManager(database, []);
+    database.setPrivateState("providers.remote-targets", { corrupted: true });
+    expect(manager.listTargets()).toEqual([]);
+    database.setPrivateState("providers.remote-targets", [null, { id: "incomplete" }]);
+    expect(manager.listTargets()).toEqual([]);
+    database.close();
+  });
+
   it("approval-gates argv-only allowlisted remote execution", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const manager = new RemoteBackendManager(database, [{ id: "ssh-adapter", execute: async ({ command }) => ({ exitCode: 0, stdout: command, stderr: "", remoteExecutionId: "remote-1" }) }]);
