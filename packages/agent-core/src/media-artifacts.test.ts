@@ -29,6 +29,18 @@ describe("media artifact workflow", () => {
     })?.id).toBe("openai-transcription");
   });
 
+  it("recovers from malformed persisted artifact state", () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-artifacts-"));
+    directories.push(root);
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new ArtifactManager(database, root);
+    database.setPrivateState("media.artifacts", { corrupted: true });
+    expect(manager.list()).toEqual([]);
+    database.setPrivateState("media.artifacts", [null, { id: "incomplete" }]);
+    expect(manager.list()).toEqual([]);
+    database.close();
+  });
+
   it("approval-gates generation, writes verified bytes, and records provenance privately", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-artifacts-"));
     directories.push(root);

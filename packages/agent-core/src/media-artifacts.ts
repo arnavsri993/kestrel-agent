@@ -58,6 +58,12 @@ export interface ArtifactRecord {
   createdAt: string;
 }
 
+function isArtifactRecord(value: unknown): value is ArtifactRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === "string" && typeof record.filename === "string" && typeof record.path === "string" && typeof record.mediaType === "string" && typeof record.bytes === "number" && Number.isSafeInteger(record.bytes) && record.bytes >= 0 && typeof record.sha256 === "string" && typeof record.createdAt === "string";
+}
+
 function within(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);
 }
@@ -154,7 +160,8 @@ export class ArtifactManager {
   }
 
   list(): ArtifactRecord[] {
-    return this.database.getPrivateState<ArtifactRecord[]>(this.stateKey) ?? [];
+    const stored = this.database.getPrivateState<unknown>(this.stateKey);
+    return Array.isArray(stored) ? stored.filter(isArtifactRecord) : [];
   }
 
   preview(
