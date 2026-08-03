@@ -66,6 +66,9 @@ export interface ScheduledAgentJob {
   updatedAt: string;
 }
 
+const MIN_SCHEDULE_INTERVAL_MS = 60_000;
+const MAX_SCHEDULE_INTERVAL_MS = 31_536_000_000;
+
 function cronField(value: string, minimum: number, maximum: number): (candidate: number) => boolean {
   if (value === "*") return () => true;
   const step = value.match(/^\*\/(\d+)$/);
@@ -94,7 +97,7 @@ export function parseScheduleExpression(expression: string, now = new Date()): S
   if (every) {
     const unit = every[2]!.startsWith("second") ? 1_000 : every[2]!.startsWith("minute") ? 60_000 : every[2]!.startsWith("hour") ? 3_600_000 : 86_400_000;
     const intervalMs = Number(every[1]) * unit;
-    if (intervalMs < 60_000 || intervalMs > 31_536_000_000) throw new Error("Natural-language interval is outside supported bounds.");
+    if (intervalMs < MIN_SCHEDULE_INTERVAL_MS || intervalMs > MAX_SCHEDULE_INTERVAL_MS) throw new Error("Natural-language interval is outside supported bounds.");
     return { kind: "interval", intervalMs, nextRunAt: new Date(now.getTime() + intervalMs).toISOString() };
   }
   const tomorrow = value.match(/^tomorrow\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
@@ -568,7 +571,7 @@ export class TaskOrchestrator {
   schedule(input: Omit<ScheduledAgentJob, "id" | "status" | "createdAt" | "updatedAt">): ScheduledAgentJob {
     if (input.providerIds.length === 0) throw new Error("Scheduled jobs need at least one provider.");
     if (!Number.isFinite(new Date(input.schedule.nextRunAt).getTime())) throw new Error("Scheduled next run is invalid.");
-    if (input.schedule.kind === "interval" && input.schedule.intervalMs < 60_000) throw new Error("Scheduled intervals must be at least one minute.");
+    if (input.schedule.kind === "interval" && (!Number.isSafeInteger(input.schedule.intervalMs) || input.schedule.intervalMs < MIN_SCHEDULE_INTERVAL_MS || input.schedule.intervalMs > MAX_SCHEDULE_INTERVAL_MS)) throw new Error("Scheduled intervals must be whole milliseconds between one minute and one year.");
     if (input.schedule.kind === "cron") {
       const expected = nextCronOccurrence(input.schedule.expression, new Date(new Date(input.schedule.nextRunAt).getTime() - 60_000));
       if (expected.toISOString() !== input.schedule.nextRunAt) throw new Error("Cron next run does not match its expression.");

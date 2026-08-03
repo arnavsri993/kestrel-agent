@@ -343,6 +343,23 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("rejects invalid recurring schedule intervals before persisting them", () => {
+    const item = fixture(finalProvider());
+    const invalidIntervals = [Number.NaN, Number.POSITIVE_INFINITY, 59_999, 60_000.5, 31_536_000_001];
+    for (const intervalMs of invalidIntervals) {
+      expect(() => item.orchestrator.schedule({
+        title: "Invalid interval",
+        sessionId: item.parent.id,
+        model: "fake",
+        providerIds: ["fake"],
+        prompt: "Should not persist",
+        schedule: { kind: "interval", nextRunAt: "2026-07-22T20:00:00.000Z", intervalMs }
+      })).toThrow("whole milliseconds between one minute and one year");
+    }
+    expect(item.orchestrator.listJobs()).toHaveLength(0);
+    item.database.close();
+  });
+
   it("fails closed when recovering a scheduled job interrupted by restart", async () => {
     const instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(finalProvider(), () => instant);
