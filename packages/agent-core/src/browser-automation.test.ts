@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
@@ -83,6 +83,22 @@ describe("isolated browser automation and visual validation", () => {
     expect(validator.compare(baseline, actual, 0.4)).toMatchObject({ changedPixels: 1, differenceRatio: 0.5, passed: false });
     expect(validator.list()).toHaveLength(1);
     database.close();
+  });
+
+  it("bounds persisted visual comparison and validation history", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const frame = { width: 1, height: 1, rgba: Uint8Array.from([0, 0, 0, 255]) };
+    const comparisonValidator = new VisualValidator(database);
+    for (let index = 0; index < 201; index += 1) comparisonValidator.compare(frame, frame);
+    expect(comparisonValidator.list()).toHaveLength(200);
+
+    const root = mkdtempSync(join(tmpdir(), "kestrel-visual-history-"));
+    const validator = new VisualValidator(database, root);
+    validator.baseline("history", { name: "tiny", width: 1, height: 1 }, frame);
+    for (let index = 0; index < 201; index += 1) validator.validate("history", { name: "tiny", width: 1, height: 1 }, frame, []);
+    expect(validator.results()).toHaveLength(200);
+    database.close();
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("persists responsive baseline, actual, diff, and diagnostics artifacts and gates browser errors", async () => {
