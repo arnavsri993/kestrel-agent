@@ -4,6 +4,7 @@ const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
+const MAX_TIMER_MS = 2_147_483_647;
 
 type JsonObject = Record<string, unknown>;
 
@@ -26,6 +27,11 @@ interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: NodeJS.Timeout;
+}
+
+function boundedTimeout(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(MAX_TIMER_MS, Math.max(1, Math.trunc(value)));
 }
 
 function object(value: unknown): JsonObject | undefined {
@@ -104,8 +110,13 @@ export class ChatGptOAuthManager {
         timer: NodeJS.Timeout;
       }
     | undefined;
+  private readonly requestTimeoutMs: number;
+  private readonly loginTimeoutMs: number;
 
-  constructor(private readonly options: ChatGptOAuthManagerOptions) {}
+  constructor(private readonly options: ChatGptOAuthManagerOptions) {
+    this.requestTimeoutMs = boundedTimeout(options.requestTimeoutMs, REQUEST_TIMEOUT_MS);
+    this.loginTimeoutMs = boundedTimeout(options.loginTimeoutMs, LOGIN_TIMEOUT_MS);
+  }
 
   async status(signal?: AbortSignal): Promise<ChatGptOAuthStatus> {
     await this.start();
@@ -289,7 +300,7 @@ export class ChatGptOAuthManager {
         );
       const timer = setTimeout(
         () => finish(new Error("ChatGPT sign-in timed out.")),
-        this.options.loginTimeoutMs ?? LOGIN_TIMEOUT_MS,
+        this.loginTimeoutMs,
       );
       this.login = {
         loginId,
@@ -323,7 +334,7 @@ export class ChatGptOAuthManager {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Codex ${method} request timed out.`));
-      }, this.options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS);
+      }, this.requestTimeoutMs);
       this.pending.set(id, {
         resolve: (value) => {
           signal?.removeEventListener("abort", abort);

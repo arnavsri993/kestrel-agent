@@ -90,4 +90,16 @@ describe("ChatGPT OAuth through Codex", () => {
     ).toEqual({ type: "chatgpt" });
     expect(records.every((record) => record.leaked === null)).toBe(true);
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("uses safe OAuth timeouts for malformed value %s", async (timeoutMs) => {
+    const fake = await fakeCodex();
+    const manager = new ChatGptOAuthManager({
+      executable: fake.executable,
+      openExternal: async () => undefined,
+      requestTimeoutMs: timeoutMs,
+      loginTimeoutMs: timeoutMs
+    });
+
+    await expect(manager.connect()).resolves.toMatchObject({ connected: true, accountType: "chatgpt" });
+  });
 });
