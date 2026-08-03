@@ -80,6 +80,12 @@ function durationMs(startedAt: string, completedAt: string): number {
   return Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
 }
 
+function boundedMaximumTurns(value: number | undefined, fallback = 12): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(1, Math.min(50, Math.trunc(value)))
+    : fallback;
+}
+
 function isManagedInstructionMessage(message: RuntimeMessage): boolean {
   return (
     message.role === "system" &&
@@ -137,6 +143,7 @@ export class AgentLoop {
     const messageCountBefore = this.runtime.listMessages(session.id).length;
     const mutationIdsBefore = this.database.listWorkspaceMutationIds(session.id);
     const createdAt = this.now().toISOString();
+    const maximumTurns = boundedMaximumTurns(input.maximumTurns);
     let run: AgentRun = {
       id: `run-${randomUUID()}`,
       sessionId: session.id,
@@ -145,7 +152,7 @@ export class AgentLoop {
       ...(input.providerModels ? { providerModels: input.providerModels } : {}),
       ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
       ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
-      maximumTurns: input.maximumTurns ?? 12,
+      maximumTurns,
       ...(input.maximumContextCharacters
         ? { maximumContextCharacters: input.maximumContextCharacters }
         : {}),
@@ -211,7 +218,7 @@ export class AgentLoop {
     }
     if (lastUser >= 0) modelMessages[lastUser] = { role: "user", content: input.userContent };
     return this.continueRun(run, modelMessages, compacted.removedMessages, {
-      maximumTurns: input.maximumTurns ?? 12,
+      maximumTurns,
       approvalStatus: input.approvalStatus ?? "pending",
       ...(input.maximumOutputTokens ? { maximumOutputTokens: input.maximumOutputTokens } : {}),
       ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
@@ -297,11 +304,11 @@ export class AgentLoop {
       );
       const priorCompaction = this.database.getPrivateState<{ removedMessages: number }>(`agent-run-compaction.${run.id}`);
       this.database.setPrivateState(`agent-run-compaction.${run.id}`, { sessionId: run.sessionId, removedMessages: Math.max(priorCompaction?.removedMessages ?? 0, compacted.removedMessages), estimatedCharacters: compacted.estimatedCharacters });
-      const storedMaximumTurns = run.maximumTurns ?? 12;
+      const storedMaximumTurns = boundedMaximumTurns(run.maximumTurns);
       const configuredMaximumTurns =
         input.maximumTurns === undefined
           ? storedMaximumTurns
-          : Math.min(storedMaximumTurns, input.maximumTurns);
+          : Math.min(storedMaximumTurns, boundedMaximumTurns(input.maximumTurns));
       const modelMessages: ModelMessage[] = [
         ...(instructionState?.instructions
           ? [{ role: "system" as const, content: textContent(instructionState.instructions) }]

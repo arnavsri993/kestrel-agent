@@ -25,6 +25,20 @@ afterEach(() => {
 });
 
 describe("provider-neutral agent loop", () => {
+  it("normalizes a non-finite maximum turn setting", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Finite turns" });
+    const provider: ModelProvider = {
+      id: "finite-turns",
+      capabilities: { streaming: false, tools: false, images: false, audio: false, documents: false, local: true },
+      complete: async (request) => ({ providerId: "finite-turns", model: request.model, text: "Completed safely.", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }),
+    };
+    const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+    await expect(loop.run({ sessionId: session.id, model: "finite", providerIds: ["finite-turns"], userContent: textContent("Run once"), maximumTurns: Number.NaN })).resolves.toMatchObject({ run: { status: "completed", maximumTurns: 12, turn: 1 } });
+    database.close();
+  });
+
   it("rejects a reverse-completion race across database connections before the competing run mutates history", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-loop-single-flight-"));
     directories.push(root);
