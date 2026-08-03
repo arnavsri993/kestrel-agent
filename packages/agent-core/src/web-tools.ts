@@ -19,6 +19,13 @@ export interface WebResultCache {
 
 interface WebCacheRecord { key: string; expiresAt: string; value: unknown }
 
+const DEFAULT_WEB_CACHE_TTL_MS = 15 * 60_000;
+
+function boundedCacheTtl(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_WEB_CACHE_TTL_MS;
+  return Math.max(1_000, Math.min(24 * 60 * 60_000, Math.floor(value)));
+}
+
 export class EncryptedDatabaseWebCache implements WebResultCache {
   private readonly stateKey = "web.result-cache";
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
@@ -90,6 +97,7 @@ export class NetworkPolicyWebClient {
   private readonly fetcher: typeof fetch;
   private readonly resolver: (hostname: string) => Promise<string[]>;
   private readonly now: () => Date;
+  private readonly cacheTtlMs: number;
 
   constructor(private readonly options: WebAccessOptions) {
     this.hosts = new Set(options.allowedHosts.map((host) => host.toLowerCase()));
@@ -99,6 +107,7 @@ export class NetworkPolicyWebClient {
     this.fetcher = options.fetcher ?? fetch;
     this.resolver = options.resolveHost ?? (async (hostname) => (await lookup(hostname, { all: true })).map((entry) => entry.address));
     this.now = options.now ?? (() => new Date());
+    this.cacheTtlMs = boundedCacheTtl(options.cacheTtlMs);
   }
 
   async fetch(url: string, signal?: AbortSignal): Promise<{ url: string; status: number; contentType: string; content: string; trust: "untrusted_external"; citation: { title: string; url: string; retrievedAt: string }; cached: boolean }> {
@@ -126,7 +135,7 @@ export class NetworkPolicyWebClient {
         const bytes = await readBoundedResponseBytes(response, this.maximumBytes, "Web response exceeds the configured byte limit.");
         const raw = new TextDecoder().decode(bytes);
         const result = { url: current, status: response.status, contentType, content: readableText(contentType, raw), trust: "untrusted_external" as const, citation: { title: pageTitle(contentType, raw, current), url: current, retrievedAt: this.now().toISOString() }, cached: false };
-        this.options.cache?.set(cacheKey, result, this.options.cacheTtlMs ?? 15 * 60_000);
+        this.options.cache?.set(cacheKey, result, this.cacheTtlMs);
         return result;
       }
       throw new Error("Web fetch failed.");
@@ -151,7 +160,7 @@ export class NetworkPolicyWebClient {
       })
     );
     const output = { results: validated, trust: "untrusted_external" as const, cached: false };
-    this.options.cache?.set(cacheKey, output, this.options.cacheTtlMs ?? 15 * 60_000);
+    this.options.cache?.set(cacheKey, output, this.cacheTtlMs);
     return output;
   }
 

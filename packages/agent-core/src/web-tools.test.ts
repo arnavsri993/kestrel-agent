@@ -85,6 +85,19 @@ describe("network-policy web tools", () => {
     expect(requests).toBe(0);
   });
 
+  it("normalizes malformed web cache lifetimes", async () => {
+    let ttlMs = 0;
+    const client = new NetworkPolicyWebClient({
+      allowedHosts: ["safe.example.test"],
+      resolveHost: async () => ["203.0.113.21"],
+      fetcher: async () => new Response("safe", { headers: { "content-type": "text/plain" } }),
+      cacheTtlMs: Number.NaN,
+      cache: { get: () => undefined, set: (_key, _value, ttl) => { ttlMs = ttl; } },
+    });
+    await client.fetch("https://safe.example.test/");
+    expect(ttlMs).toBe(15 * 60_000);
+  });
+
   it("exposes approval-gated runtime fetch and search tools", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
