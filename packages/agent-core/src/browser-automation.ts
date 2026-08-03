@@ -259,8 +259,17 @@ export class VisualValidator {
     const metadataPath = resolve(directory, "baseline.json");
     const rgbaPath = resolve(directory, "baseline.rgba");
     if (!existsSync(metadataPath) || !existsSync(rgbaPath)) throw new Error(`Visual baseline is missing for ${suiteValue}/${viewport.name}. Capture an approved baseline first.`);
-    const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as { width: number; height: number };
+    let metadata: { width: number; height: number };
+    try {
+      const parsed = JSON.parse(readFileSync(metadataPath, "utf8")) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Number.isInteger((parsed as { width?: unknown }).width) || !Number.isInteger((parsed as { height?: unknown }).height) || (parsed as { width: number }).width < 1 || (parsed as { height: number }).height < 1) throw new Error();
+      metadata = { width: (parsed as { width: number }).width, height: (parsed as { height: number }).height };
+    } catch {
+      throw new Error("Visual baseline metadata is invalid.");
+    }
     const baselineRgba = readFileSync(rgbaPath);
+    const expectedBytes = metadata.width * metadata.height * 4;
+    if (!Number.isSafeInteger(expectedBytes) || expectedBytes !== baselineRgba.byteLength) throw new Error("Visual baseline pixel data is invalid.");
     const baseline: ScreenshotFrame = { width: metadata.width, height: metadata.height, rgba: baselineRgba };
     const comparison = this.compare(baseline, actual, threshold);
     const diff = new Uint8Array(actual.rgba.byteLength);

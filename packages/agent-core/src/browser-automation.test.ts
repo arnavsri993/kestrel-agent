@@ -106,4 +106,20 @@ describe("isolated browser automation and visual validation", () => {
     expect(backend.viewport).toEqual({ name: "mobile", width: 320, height: 240 });
     database.close();
   });
+
+  it("rejects corrupted visual baseline metadata and pixel data", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const root = mkdtempSync(join(tmpdir(), "kestrel-visual-corrupt-"));
+    const validator = new VisualValidator(database, root, () => new Date("2026-07-22T23:00:00.000Z"));
+    const viewport = { name: "mobile", width: 2, height: 1 };
+    const frame = { width: 2, height: 1, rgba: Uint8Array.from([0, 0, 0, 255, 255, 255, 255, 255]) };
+    validator.baseline("homepage", viewport, frame);
+    const directory = join(root, "visual-validation", "homepage", "mobile");
+    writeFileSync(join(directory, "baseline.json"), "not json");
+    expect(() => validator.validate("homepage", viewport, frame, [])).toThrow("Visual baseline metadata is invalid.");
+    validator.baseline("homepage", viewport, frame);
+    writeFileSync(join(directory, "baseline.rgba"), Buffer.alloc(0));
+    expect(() => validator.validate("homepage", viewport, frame, [])).toThrow("Visual baseline pixel data is invalid.");
+    database.close();
+  });
 });
