@@ -245,12 +245,25 @@ export function loadSignedManagedPolicy(envelopePath: string, publicKeyPath: str
   const keyMetadata = lstatSync(publicKeyPath);
   if (!envelopeMetadata.isFile() || envelopeMetadata.isSymbolicLink() || envelopeMetadata.size > 1_000_000 || (envelopeMetadata.mode & 0o077) !== 0) throw new Error("Managed policy envelope must be an owner-only regular file no larger than 1 MB.");
   if (!keyMetadata.isFile() || keyMetadata.isSymbolicLink() || keyMetadata.size > 100_000) throw new Error("Managed policy public key must be a bounded regular file.");
-  const envelope = JSON.parse(readFileSync(realpathSync(envelopePath), "utf8")) as { algorithm?: unknown; policy?: unknown; signatureBase64?: unknown };
+  let envelope: { algorithm?: unknown; policy?: unknown; signatureBase64?: unknown };
+  try {
+    const parsed = JSON.parse(readFileSync(realpathSync(envelopePath), "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    envelope = parsed as { algorithm?: unknown; policy?: unknown; signatureBase64?: unknown };
+  } catch {
+    throw new Error("Managed policy signature envelope is invalid.");
+  }
   if (envelope.algorithm !== "Ed25519" || !envelope.policy || typeof envelope.policy !== "object" || typeof envelope.signatureBase64 !== "string") throw new Error("Managed policy signature envelope is invalid.");
   const signature = Buffer.from(envelope.signatureBase64, "base64");
   if (signature.byteLength !== 64 || signature.toString("base64") !== envelope.signatureBase64) throw new Error("Managed policy signature is invalid.");
   const payload = envelope.policy as Omit<ManagedPolicy, "updatedAt">;
-  if (!verify(null, Buffer.from(canonical(payload)), createPublicKey(readFileSync(realpathSync(publicKeyPath))), signature)) throw new Error("Managed policy signature verification failed.");
+  let publicKey: ReturnType<typeof createPublicKey>;
+  try {
+    publicKey = createPublicKey(readFileSync(realpathSync(publicKeyPath)));
+  } catch {
+    throw new Error("Managed policy public key is invalid.");
+  }
+  if (!verify(null, Buffer.from(canonical(payload)), publicKey, signature)) throw new Error("Managed policy signature verification failed.");
   return payload;
 }
 
