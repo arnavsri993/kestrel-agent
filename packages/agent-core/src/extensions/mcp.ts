@@ -90,6 +90,7 @@ export class StreamableHttpMcpTransport implements McpTransport {
 }
 
 export class StdioMcpTransport implements McpTransport {
+  private static readonly MAX_MESSAGE_BYTES = 1_000_000;
   private static readonly MAX_STDERR_RECORD_BYTES = 1_000_000;
   private static readonly MAX_STDERR_BURST_BYTES = 1_000_000;
   private static readonly STDERR_BURST_WINDOW_MS = 1_000;
@@ -113,7 +114,7 @@ export class StdioMcpTransport implements McpTransport {
     this.child.stdout.on("data", (chunk: Buffer) => {
       if (this.failure) return;
       this.buffer += chunk.toString("utf8");
-      if (Buffer.byteLength(this.buffer) > 1_000_000) {
+      if (Buffer.byteLength(this.buffer) > StdioMcpTransport.MAX_MESSAGE_BYTES) {
         this.child.kill("SIGTERM");
         this.reportError(new Error("MCP stdio message exceeded 1 MB."));
         return;
@@ -180,6 +181,7 @@ export class StdioMcpTransport implements McpTransport {
     if (this.failure) throw this.failure;
     if (this.closing || this.child.stdin.destroyed || !this.child.stdin.writable) throw new Error("MCP stdio transport is closed.");
     const encoded = JSON.stringify(message);
+    if (Buffer.byteLength(encoded, "utf8") > StdioMcpTransport.MAX_MESSAGE_BYTES) throw new Error("MCP stdio message exceeds 1 MB.");
     if (encoded.includes("\n")) throw new Error("MCP stdio messages must be newline-delimited single-line JSON.");
     await new Promise<void>((resolvePromise, reject) => {
       this.child.stdin.write(`${encoded}\n`, (error) => error ? reject(error) : resolvePromise());
