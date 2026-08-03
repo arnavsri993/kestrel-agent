@@ -443,7 +443,7 @@ export class TaskOrchestrator {
   }
 
   async runTeam(inputs: DelegatedTaskInput[], maximumConcurrency = this.maximumWorkers): Promise<Array<DelegatedTaskResult | Error>> {
-    if (maximumConcurrency < 1 || maximumConcurrency > this.maximumWorkers) throw new Error(`Team concurrency must be between 1 and ${this.maximumWorkers}.`);
+    if (!Number.isInteger(maximumConcurrency) || maximumConcurrency < 1 || maximumConcurrency > this.maximumWorkers) throw new Error(`Team concurrency must be between 1 and ${this.maximumWorkers}.`);
     const results: Array<DelegatedTaskResult | Error> = new Array(inputs.length);
     let cursor = 0;
     const worker = async () => {
