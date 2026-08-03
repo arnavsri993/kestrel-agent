@@ -39,6 +39,9 @@ describe("language server code intelligence", () => {
     expect((await runtime.callTool(session.id, "code.diagnostics", { uri: "file:///project/a.ts", languageId: "typescript", text: "bad" })).status).toBe("blocked");
     const diagnostics = await runtime.callTool(session.id, "code.diagnostics", { uri: "file:///project/a.ts", languageId: "typescript", text: "bad" }, { approvalStatus: "approved" });
     expect(diagnostics).toMatchObject({ status: "verified", output: { diagnostics: [{ message: "Example error" }], trust: "untrusted_language_server" } });
+    await client.diagnostics({ uri: "file:///project/a.ts", languageId: "typescript", text: "malformed version", version: Number.NaN });
+    const malformedVersionChange = [...transport.sent].reverse().find((message) => message.method === "textDocument/didChange");
+    expect((malformedVersionChange?.params as { textDocument: { version: number } }).textDocument.version).toBe(2);
     await runtime.callTool(session.id, "code.diagnostics", { uri: "file:///project/a.ts", languageId: "typescript", text: "still bad", version: 2 }, { approvalStatus: "approved" });
     expect(transport.sent.some((message) => message.method === "textDocument/didChange")).toBe(true);
     const definition = await runtime.callTool(session.id, "code.definition", { uri: "file:///project/a.ts", line: 1, character: 2 }, { approvalStatus: "approved" });

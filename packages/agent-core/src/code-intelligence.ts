@@ -118,7 +118,10 @@ export class LanguageServerClient {
       this.diagnosticsWaiters.set(input.uri, [...(this.diagnosticsWaiters.get(input.uri) ?? []), waiter]);
     });
     const priorVersion = this.openDocuments.get(input.uri);
-    const version = Math.max(input.version ?? 1, (priorVersion ?? 0) + 1);
+    const requestedVersion = typeof input.version === "number" && Number.isFinite(input.version)
+      ? Math.floor(input.version)
+      : 1;
+    const version = Math.max(requestedVersion, (priorVersion ?? 0) + 1);
     if (priorVersion === undefined) await this.notify("textDocument/didOpen", { textDocument: { uri: input.uri, languageId: input.languageId, version, text: input.text } });
     else await this.notify("textDocument/didChange", { textDocument: { uri: input.uri, version }, contentChanges: [{ text: input.text }] });
     this.openDocuments.set(input.uri, version);
