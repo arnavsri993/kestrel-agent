@@ -9,6 +9,7 @@ import type { LocalModelSummary, LocalRuntimeProgress, LocalRuntimeStatus } from
 
 const execFileAsync = promisify(execFile);
 const OLLAMA_ORIGIN = "http://127.0.0.1:11434";
+const MAX_MODEL_PULL_RECORD_BYTES = 1_000_000;
 
 export interface LocalRuntimeManifest {
   runtime: "ollama";
@@ -413,6 +414,10 @@ export class LocalRuntimeManager {
           ...(total !== undefined ? { totalBytes: total } : {}),
           ...(completed !== undefined && total !== undefined ? { percent: Math.min(100, Math.floor(completed / total * 100)) } : {})
         });
+      }
+      if (new TextEncoder().encode(pending).byteLength > MAX_MODEL_PULL_RECORD_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("The local model download update exceeds 1 MB.");
       }
     }
     const installed = await this.listModels(5_000, signal);

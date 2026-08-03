@@ -186,4 +186,40 @@ describe("managed local runtime", () => {
     });
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
   });
+
+  it("cancels an oversized model-pull update before buffering it indefinitely", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    let cancelled = false;
+    let tagRequests = 0;
+    const oversizedUpdate = new Uint8Array(1_000_001).fill(120);
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: (async (input) => {
+        const url = String(input);
+        if (url.endsWith("/api/tags")) {
+          tagRequests += 1;
+          return Response.json({ models: [] });
+        }
+        if (url.endsWith("/api/pull")) {
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(oversizedUpdate);
+            },
+            cancel() {
+              cancelled = true;
+            }
+          });
+          return new Response(body, { status: 200 });
+        }
+        throw new Error(`Unexpected URL: ${url}`);
+      }) as typeof fetch,
+      platform: "win32",
+      architecture: "x64",
+      manifest: testManifest(new TextEncoder().encode("archive"))
+    });
+
+    await expect(manager.bootstrap("qwen:test")).rejects.toThrow("download update exceeds 1 MB");
+    expect(cancelled).toBe(true);
+    expect(tagRequests).toBe(2);
+  });
 });
