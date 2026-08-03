@@ -68,4 +68,19 @@ describe("signed plugin installer", () => {
     symlinkSync("/etc/hosts", join(trusted, "linked-hosts"));
     expect(() => installer.inspect(trusted)).toThrow("cannot contain symbolic links");
   });
+
+  it("rejects invalid bundle safety limits", () => {
+    const { managedRoot } = fixture();
+    const { publicKey } = generateKeyPairSync("ed25519");
+    for (const field of ["maximumFiles", "maximumTotalBytes", "maximumFileBytes"] as const) {
+      for (const value of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const options: ConstructorParameters<typeof PluginInstaller>[0] = {
+          managedRoot,
+          trustKeys: [{ keyId: "publisher.test", publicKey }],
+          [field]: value
+        };
+        expect(() => new PluginInstaller(options)).toThrow("Plugin bundle limits must be positive safe integers");
+      }
+    }
+  });
 });
