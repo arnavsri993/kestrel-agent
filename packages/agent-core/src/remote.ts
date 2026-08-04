@@ -214,8 +214,44 @@ export interface RemoteSessionSummary { id: string; title: string; status: Runti
 
 const MAX_REMOTE_PAIRINGS = 200;
 const MAX_REMOTE_PAIRING_LABEL_LENGTH = 100;
+const REMOTE_SCOPES = new Set<RemoteScope>(["read", "tasks", "approve"]);
 
 function digest(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+
+function isInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+function isRemoteScope(value: unknown): value is RemoteScope {
+  return typeof value === "string" && REMOTE_SCOPES.has(value as RemoteScope);
+}
+
+function isPairingRecord(value: unknown): value is PairingRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const pairing = value as Record<string, unknown>;
+  return (
+    typeof pairing.id === "string" && pairing.id.length > 0 &&
+    typeof pairing.label === "string" && pairing.label.length > 0 && pairing.label.length <= MAX_REMOTE_PAIRING_LABEL_LENGTH &&
+    typeof pairing.codeHash === "string" && /^[a-f0-9]{64}$/.test(pairing.codeHash) &&
+    Array.isArray(pairing.scopes) && pairing.scopes.length > 0 && pairing.scopes.every(isRemoteScope) &&
+    typeof pairing.expiresAt === "string" && Number.isFinite(Date.parse(pairing.expiresAt)) &&
+    isInteger(pairing.attempts) && pairing.attempts >= 0 && pairing.attempts <= 5 &&
+    ["pending", "used", "locked"].includes(String(pairing.status))
+  );
+}
+
+function isDeviceRecord(value: unknown): value is DeviceRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const device = value as Record<string, unknown>;
+  return (
+    typeof device.id === "string" && device.id.length > 0 &&
+    typeof device.label === "string" && device.label.length > 0 && device.label.length <= MAX_REMOTE_PAIRING_LABEL_LENGTH &&
+    typeof device.tokenHash === "string" && /^[a-f0-9]{64}$/.test(device.tokenHash) &&
+    Array.isArray(device.scopes) && device.scopes.length > 0 && device.scopes.every(isRemoteScope) &&
+    typeof device.createdAt === "string" && Number.isFinite(Date.parse(device.createdAt)) &&
+    (device.revokedAt === undefined || (typeof device.revokedAt === "string" && Number.isFinite(Date.parse(device.revokedAt))))
+  );
+}
 
 export class RemoteControl {
   private readonly pairingKey = "remote.pairings";
@@ -304,6 +340,12 @@ export class RemoteControl {
     if (active.length !== pairings.length) this.database.setPrivateState(this.pairingKey, active);
     return active;
   }
-  private pairings(): PairingRecord[] { return this.database.getPrivateState<PairingRecord[]>(this.pairingKey) ?? []; }
-  private devices(): DeviceRecord[] { return this.database.getPrivateState<DeviceRecord[]>(this.devicesKey) ?? []; }
+  private pairings(): PairingRecord[] {
+    const stored: unknown = this.database.getPrivateState<unknown>(this.pairingKey);
+    return Array.isArray(stored) ? stored.filter(isPairingRecord) : [];
+  }
+  private devices(): DeviceRecord[] {
+    const stored: unknown = this.database.getPrivateState<unknown>(this.devicesKey);
+    return Array.isArray(stored) ? stored.filter(isDeviceRecord) : [];
+  }
 }
