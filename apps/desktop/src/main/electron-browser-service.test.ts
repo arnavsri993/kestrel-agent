@@ -63,4 +63,34 @@ describe("Electron browser action cancellation", () => {
     });
     expect(insertText).not.toHaveBeenCalled();
   });
+
+  it("does not start navigation after cancellation", async () => {
+    const loadURL = vi.fn(async () => undefined);
+    const service = new ElectronBrowserService();
+    const sessions = (
+      service as unknown as {
+        sessions: Map<string, unknown>;
+      }
+    ).sessions;
+    sessions.set("navigation-test", {
+      window: {
+        isDestroyed: () => false,
+        webContents: { loadURL, stop: vi.fn() },
+      },
+      partition: {},
+      allowedOrigins: new Set(["https://example.test"]),
+      diagnostics: [],
+      downloads: [],
+      downloadDirectory: "/tmp/navigation-test",
+    });
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled before navigation"));
+
+    await expect(service.handle({
+      operation: "navigate",
+      sessionId: "navigation-test",
+      url: "https://example.test/start",
+    }, controller.signal)).rejects.toThrow("cancelled before navigation");
+    expect(loadURL).not.toHaveBeenCalled();
+  });
 });
