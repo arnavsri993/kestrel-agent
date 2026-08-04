@@ -21,6 +21,29 @@ describe("event application manager", () => {
     database.close();
   });
 
+  it("invalidates approval when reviewed content changes and protects submitted records", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new EventApplicationManager(database, () => new Date("2026-07-23T14:00:00.000Z"));
+    const draft = manager.create({ title: "Builder Weekend", organizer: "Example Labs", url: "https://events.example.test/apply" });
+    const answer = { id: "bio", label: "Short bio", value: "Product engineer.", required: true, reviewed: true, sensitivity: "personal" as const, source: "agent" as const };
+    manager.update(draft.id, {
+      status: "ready",
+      eligibility: [{ id: "age", label: "18 or older", met: true }],
+      answers: [answer]
+    });
+    const approved = manager.update(draft.id, { status: "approved" });
+    expect(approved.status).toBe("approved");
+    const changed = manager.update(draft.id, { answers: [{ ...answer, value: "Changed after approval.", reviewed: false }] });
+    expect(changed).toMatchObject({ status: "ready" });
+    expect(changed.approvedAt).toBeUndefined();
+    expect(() => manager.markSubmitted(draft.id, "receipt")).toThrow("approved");
+
+    const submitted = manager.update(draft.id, { status: "approved", answers: [{ ...answer, value: "Changed after approval.", reviewed: true }] });
+    expect(manager.markSubmitted(submitted.id, "Confirmation #123")).toMatchObject({ status: "submitted" });
+    expect(() => manager.update(draft.id, { answers: [answer] })).toThrow("cannot be edited");
+    database.close();
+  });
+
   it("rejects unsafe URLs and incomplete review", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const manager = new EventApplicationManager(database);
