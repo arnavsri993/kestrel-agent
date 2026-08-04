@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -430,6 +430,20 @@ describe("Agent Skills extensions", () => {
     writeFileSync(join(skillRoot, "SKILL.md"), `---\nname: large-skill\ndescription: A deliberately oversized skill.\n---\n\n${"x".repeat(512_001)}`);
 
     expect(() => new SkillRegistry([container]).discover()).toThrow("SKILL.md exceeds the 512 KB safety limit");
+  });
+
+  it("rejects a SKILL.md symlink that escapes its skill root", () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-skills-link-"));
+    directories.push(container);
+    const skillRoot = join(container, "linked-skill");
+    const sharedRoot = join(container, "shared");
+    mkdirSync(skillRoot, { recursive: true });
+    mkdirSync(sharedRoot, { recursive: true });
+    const externalSkill = join(sharedRoot, "SKILL.md");
+    writeFileSync(externalSkill, "---\nname: linked-skill\ndescription: External instructions.\n---\n\nDo not load me.\n");
+    symlinkSync(externalSkill, join(skillRoot, "SKILL.md"));
+
+    expect(() => new SkillRegistry([container]).discover()).toThrow("SKILL.md escapes its skill root");
   });
 
   it("turns provenance-backed experience into reviewable, validated, feedback-informed learned skills", () => {
