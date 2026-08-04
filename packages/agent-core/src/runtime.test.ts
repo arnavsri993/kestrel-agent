@@ -756,6 +756,7 @@ describe("agent runtime", () => {
     const message = runtime.appendMessage({ sessionId: session.id, role: "user", content: "Remember the cobalt launch checklist." });
     expect(runtime.listMessages(session.id)).toEqual([message]);
     expect(runtime.searchMessages("cobalt checklist")).toEqual([message]);
+    expect(runtime.searchMessages("cobalt checklist", Number.NaN)).toEqual([message]);
     expect(runtime.searchMessages("missing phrase")).toEqual([]);
     const row = database.db.prepare("SELECT content_ciphertext FROM runtime_messages WHERE id = ?").get(message.id) as { content_ciphertext: string };
     expect(row.content_ciphertext).not.toContain("cobalt");
