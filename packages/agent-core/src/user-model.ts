@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
-import type { UserModelFact, UserModelKind, UserModelStatus } from "@kestrel/shared-types";
+import { UserModelFactSchema, type UserModelFact, type UserModelKind, type UserModelStatus } from "@kestrel/shared-types";
 export type { UserModelFact, UserModelKind, UserModelStatus } from "@kestrel/shared-types";
 
 export class UserModelStore {
@@ -9,7 +9,12 @@ export class UserModelStore {
 
   list(status?: UserModelStatus): UserModelFact[] {
     const stored = this.database.getPrivateState<unknown>(this.key);
-    const records = Array.isArray(stored) ? stored as UserModelFact[] : [];
+    const records = Array.isArray(stored)
+      ? stored.flatMap((value) => {
+          const parsed = UserModelFactSchema.safeParse(value);
+          return parsed.success ? [parsed.data] : [];
+        })
+      : [];
     return status ? records.filter((record) => record.status === status) : records;
   }
 
