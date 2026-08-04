@@ -116,6 +116,20 @@ describe("context usage", () => {
   });
 });
 
+describe("persisted state recovery", () => {
+  it("treats malformed plaintext and encrypted state rows as absent", () => {
+    const key = createEncryptionKey();
+    const database = new KestrelDatabase(":memory:", key);
+    const encrypted = encryptText("not json", key);
+    database.db.prepare("INSERT INTO runtime_state (key, value, updated_at) VALUES (?, ?, ?)").run("malformed-plain", "not json", "2026-08-03T00:00:00.000Z");
+    database.db.prepare("INSERT INTO private_runtime_state (key, value_ciphertext, value_iv, value_auth_tag, updated_at) VALUES (?, ?, ?, ?, ?)").run("malformed-private", encrypted.ciphertext, encrypted.iv, encrypted.authTag, "2026-08-03T00:00:00.000Z");
+
+    expect(database.getState("malformed-plain")).toBeUndefined();
+    expect(database.getPrivateState("malformed-private")).toBeUndefined();
+    database.close();
+  });
+});
+
 describe("configuration history recovery", () => {
   it("skips malformed encrypted versions in the recovery view", () => {
     const key = createEncryptionKey();
