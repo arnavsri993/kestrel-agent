@@ -300,6 +300,7 @@ describe("task orchestration", () => {
     expect(result).toHaveLength(5);
     expect(peak).toBe(2);
     expect(new Set(result.map((entry) => entry instanceof Error ? "error" : entry.sessionId)).size).toBe(5);
+    await expect(item.orchestrator.runTeam([], Number.NaN)).rejects.toThrow("Team concurrency must be between 1 and 3");
     item.database.close();
   });
 
