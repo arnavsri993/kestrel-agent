@@ -3,6 +3,7 @@ import type {
   MediaGenerationProvider,
 } from "./media-artifacts";
 import { createFalClient, type FalClient } from "@fal-ai/client";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 export interface OpenAiMediaProviderOptions {
   apiKey: string;
@@ -30,7 +31,7 @@ export interface OpenAiTranscriptionProviderOptions {
 }
 
 async function boundedError(response: Response): Promise<string> {
-  const text = (await response.text()).slice(0, 8_000);
+  const text = new TextDecoder().decode(await readBoundedResponseBytes(response, 8_000, "OpenAI media error response exceeds 8 KB."));
   try {
     const parsed = JSON.parse(text) as {
       error?: { message?: unknown; code?: unknown };

@@ -197,6 +197,26 @@ describe("media artifact workflow", () => {
     ).toContain("local-markdown");
   });
 
+  it("bounds OpenAI media error responses before buffering them", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      }
+    });
+    const provider = new OpenAiMediaProvider({
+      apiKey: "media-secret",
+      fetcher: async () => new Response(body, { status: 500, headers: { "content-length": "1000000" } })
+    });
+
+    await expect(provider.generate({ prompt: "a kestrel", kind: "image", signal: new AbortController().signal })).rejects.toThrow("OpenAI media error response exceeds 8 KB");
+    expect(cancelled).toBe(true);
+  });
+
   it("creates retained opaque-origin widgets through an approval-gated tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-widgets-"));
     directories.push(root);
