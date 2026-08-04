@@ -117,6 +117,24 @@ describe("managed organization policy", () => {
     database.close();
   });
 
+  it("filters malformed persisted organization member records", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const store = new ManagedPolicyStore(database, () => new Date("2026-07-22T21:00:00.000Z"));
+    store.set({ organizationId: "org-test", version: 1, deniedTools: [], maximumWorkers: 2 });
+    const valid = {
+      externalId: "user-1",
+      email: "user@example.test",
+      displayName: "User",
+      role: "member",
+      active: true,
+      updatedAt: "2026-07-22T21:00:00.000Z",
+    };
+    database.setPrivateState("enterprise.members", [null, { ...valid, role: "owner" }, valid]);
+
+    expect(store.listMembers()).toEqual([valid]);
+    database.close();
+  });
+
   it("loads only correctly signed monotonic policy envelopes", () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-signed-policy-"));
     directories.push(root);
