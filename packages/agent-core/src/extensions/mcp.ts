@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { AgentRuntime } from "../runtime";
+import { readBoundedResponseBytes } from "../bounded-http";
 
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
 
@@ -70,8 +71,8 @@ export class StreamableHttpMcpTransport implements McpTransport {
     if (!response.ok) throw new Error(`MCP HTTP request failed with ${response.status}.`);
     this.sessionId = response.headers.get("mcp-session-id") ?? this.sessionId;
     if (response.status === 202 || !response.body) return;
-    const text = await response.text();
-    if (Buffer.byteLength(text) > 1_000_000) throw new Error("MCP HTTP response exceeded 1 MB.");
+    const bytes = await readBoundedResponseBytes(response, 1_000_000, "MCP HTTP response exceeded 1 MB.");
+    const text = Buffer.from(bytes).toString("utf8");
     const contentType = response.headers.get("content-type") ?? "";
     const payloads = contentType.includes("text/event-stream")
       ? text.split(/\r?\n\r?\n/).flatMap((event) => event.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim())).filter((value) => value && value !== "[DONE]")
