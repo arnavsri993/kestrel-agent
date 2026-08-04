@@ -22,6 +22,27 @@ export type BrowserBackendWireRequest =
 
 interface BrowserRecord { window: BrowserWindow; partition: Session; allowedOrigins: Set<string>; diagnostics: BrowserDiagnostic[]; downloads: BrowserDownload[]; downloadDirectory: string; }
 
+export const MAX_BROWSER_DOWNLOAD_RECORDS = 200;
+
+export function retainRecentBrowserDownloads(downloads: BrowserDownload[]): void {
+  if (downloads.length <= MAX_BROWSER_DOWNLOAD_RECORDS) return;
+  const active = downloads.filter((download) => download.status === "progressing");
+  const retained = new Set<BrowserDownload>(
+    active.slice(-MAX_BROWSER_DOWNLOAD_RECORDS),
+  );
+  const terminalSlots = Math.max(
+    0,
+    MAX_BROWSER_DOWNLOAD_RECORDS - retained.size,
+  );
+  for (const download of downloads
+    .filter((candidate) => candidate.status !== "progressing")
+    .slice(-terminalSlots))
+    retained.add(download);
+  for (let index = downloads.length - 1; index >= 0; index -= 1) {
+    if (!retained.has(downloads[index]!)) downloads.splice(index, 1);
+  }
+}
+
 function origin(value: string): string | undefined {
   try {
     const url = new URL(value);
@@ -75,7 +96,7 @@ export class ElectronBrowserService {
       const filename = item.getFilename().replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120) || `${id}.bin`;
       const destination = join(downloadDirectory, filename);
       const record: BrowserDownload = { id, filename, bytes: 0, status: "progressing", createdAt: new Date().toISOString() };
-      downloads.push(record); item.setSavePath(destination);
+      downloads.push(record); retainRecentBrowserDownloads(downloads); item.setSavePath(destination);
       item.on("updated", () => { record.bytes = item.getReceivedBytes(); if (item.getTotalBytes() > 100_000_000 || record.bytes > 100_000_000) item.cancel(); });
       item.once("done", (_doneEvent, state) => {
         record.bytes = item.getReceivedBytes();

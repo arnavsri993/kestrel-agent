@@ -8,7 +8,39 @@ vi.mock("electron", () => ({
   systemPreferences: {},
 }));
 
-import { ElectronBrowserService } from "./electron-browser-service";
+import {
+  ElectronBrowserService,
+  MAX_BROWSER_DOWNLOAD_RECORDS,
+  retainRecentBrowserDownloads,
+} from "./electron-browser-service";
+
+function download(id: string, status: "completed" | "progressing") {
+  return {
+    id,
+    filename: `${id}.txt`,
+    bytes: 1,
+    status,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+describe("Electron browser download history", () => {
+  it("retains active downloads and the newest terminal records", () => {
+    const downloads = Array.from({ length: MAX_BROWSER_DOWNLOAD_RECORDS }, (_, index) =>
+      download(`old-${index}`, "completed"),
+    );
+    const active = download("active", "progressing");
+    const newest = download("newest", "completed");
+    downloads.push(active, newest);
+
+    retainRecentBrowserDownloads(downloads);
+
+    expect(downloads).toHaveLength(MAX_BROWSER_DOWNLOAD_RECORDS);
+    expect(downloads).toContain(active);
+    expect(downloads).toContain(newest);
+    expect(downloads.some((candidate) => candidate.id === "old-0")).toBe(false);
+  });
+});
 
 describe("Electron browser action cancellation", () => {
   it("does not type after cancellation while resolving the target", async () => {
