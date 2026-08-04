@@ -97,7 +97,14 @@ export class BrowserController {
   async snapshot(ownerSessionId: string, id: string, signal: AbortSignal): Promise<BrowserSnapshot & { trust: "untrusted_browser" }> {
     const session = this.require(ownerSessionId, id);
     const snapshot = await this.backend.snapshot(session.backendSessionId, signal);
-    if (JSON.stringify(snapshot.accessibilityTree).length > 2_000_000) throw new Error("Browser accessibility snapshot exceeds 2 MB.");
+    let serializedTree: string | undefined;
+    try {
+      const value = JSON.stringify(snapshot.accessibilityTree);
+      serializedTree = typeof value === "string" ? value : undefined;
+    } catch {
+      serializedTree = undefined;
+    }
+    if (!serializedTree || serializedTree.length > 2_000_000) throw new Error("Browser accessibility snapshot exceeds 2 MB.");
     return { ...snapshot, trust: "untrusted_browser" };
   }
 
