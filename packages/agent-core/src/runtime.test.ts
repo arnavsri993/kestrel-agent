@@ -710,6 +710,36 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("falls back safely when a run baseline is malformed", () => {
+    const { database, runtime, session } = fixture();
+    const user = runtime.appendMessage({
+      sessionId: session.id,
+      role: "user",
+      content: "Retry this request",
+    });
+    database.saveAgentRun({
+      id: "run-malformed-baseline",
+      sessionId: session.id,
+      model: "model",
+      providerIds: ["provider"],
+      status: "completed",
+      turn: 1,
+      createdAt: "2026-07-22T15:00:00.000Z",
+      updatedAt: "2026-07-22T15:00:00.000Z",
+    });
+    database.setPrivateState(`agent-run-baseline.run-malformed-baseline`, {
+      sessionId: session.id,
+      userMessageId: user.id,
+      messageCount: "before",
+      mutationIds: null,
+    });
+
+    expect(runtime.rewindLastTurn(session.id)).toEqual({
+      message: "Retry this request",
+    });
+    database.close();
+  });
+
   it("persists encrypted transcripts and searches them through blind term hashes", () => {
     const { database, runtime, session } = fixture();
     const message = runtime.appendMessage({ sessionId: session.id, role: "user", content: "Remember the cobalt launch checklist." });
