@@ -49,7 +49,9 @@ export class OpenAiMediaProvider implements MediaGenerationProvider {
   constructor(private readonly options: OpenAiMediaProviderOptions) {
     if (!options.apiKey || options.apiKey.length > 1_000)
       throw new Error("OpenAI media provider API key is invalid.");
-    const url = new URL(options.baseUrl ?? "https://api.openai.com/v1");
+    let url: URL;
+    try { url = new URL(options.baseUrl ?? "https://api.openai.com/v1"); }
+    catch { throw new Error("OpenAI media provider base URL must be a valid URL."); }
     if (
       url.protocol !== "https:" ||
       url.username ||
@@ -400,7 +402,9 @@ export class OpenAiTranscriptionProvider implements VoiceTranscriptionProvider {
   constructor(private readonly options: OpenAiTranscriptionProviderOptions) {
     if (!options.apiKey || options.apiKey.length > 1_000)
       throw new Error("OpenAI transcription provider API key is invalid.");
-    const url = new URL(options.baseUrl ?? "https://api.openai.com/v1");
+    let url: URL;
+    try { url = new URL(options.baseUrl ?? "https://api.openai.com/v1"); }
+    catch { throw new Error("OpenAI transcription provider base URL must be a valid URL."); }
     if (
       url.protocol !== "https:" ||
       url.username ||
