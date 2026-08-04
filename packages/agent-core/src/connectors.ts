@@ -13,7 +13,12 @@ export class DevelopmentEmailConnector implements EmailConnector {
 
   sendDraft(input: { operationId: string; to: string; subject: string; body: string }): { messageId: string } {
     const existing = this.sent.get(input.operationId);
-    if (existing) return { messageId: existing.messageId };
+    if (existing) {
+      if (existing.to !== input.to || existing.subject !== input.subject || existing.body !== input.body) {
+        throw new Error("Email operation ID was already used with different content.");
+      }
+      return { messageId: existing.messageId };
+    }
     const messageId = `mock-message-${this.sent.size + 1}`;
     this.sent.set(input.operationId, { messageId, to: input.to, subject: input.subject, body: input.body });
     return { messageId };
@@ -29,7 +34,12 @@ export class DevelopmentCalendarConnector implements CalendarConnector {
 
   createEvent(input: { operationId: string; title: string; startsAt: string; durationMinutes: number }): { eventId: string } {
     const existing = this.events.get(input.operationId);
-    if (existing) return { eventId: existing.eventId };
+    if (existing) {
+      if (existing.title !== input.title || existing.startsAt !== input.startsAt || existing.durationMinutes !== input.durationMinutes) {
+        throw new Error("Calendar operation ID was already used with different details.");
+      }
+      return { eventId: existing.eventId };
+    }
     const eventId = `mock-event-${this.events.size + 1}`;
     this.events.set(input.operationId, { eventId, title: input.title, startsAt: input.startsAt, durationMinutes: input.durationMinutes });
     return { eventId };
