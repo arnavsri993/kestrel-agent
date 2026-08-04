@@ -1257,7 +1257,8 @@ export class KestrelDatabase {
 
   getState<T>(key: string): T | undefined {
     const row = this.db.prepare("SELECT value FROM runtime_state WHERE key = ?").get(key) as { value: string } | undefined;
-    return row ? JSON.parse(row.value) as T : undefined;
+    if (!row) return undefined;
+    try { return JSON.parse(row.value) as T; } catch { return undefined; }
   }
 
   setPrivateState(key: string, value: unknown): void {
@@ -1273,7 +1274,7 @@ export class KestrelDatabase {
       .get(key) as { value_ciphertext: string; value_iv: string; value_auth_tag: string } | undefined;
     if (!row) return undefined;
     const value = decryptText({ ciphertext: row.value_ciphertext, iv: row.value_iv, authTag: row.value_auth_tag }, this.encryptionKey);
-    return JSON.parse(value) as T;
+    try { return JSON.parse(value) as T; } catch { return undefined; }
   }
 
   private writeAgentConfigurationRecord(
