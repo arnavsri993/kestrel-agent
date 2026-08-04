@@ -130,6 +130,22 @@ describe("configuration history recovery", () => {
   });
 });
 
+describe("retention cleanup", () => {
+  it("removes expired completed idempotency results without touching newer entries or active claims", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.saveIdempotentResult("old-result", { accepted: true });
+    database.saveIdempotentResult("new-result", { accepted: true });
+    database.claimIdempotentResult("active-claim", "owner", process.pid, { status: "running" });
+    database.db.prepare("UPDATE idempotency_keys SET created_at = ? WHERE key = ?").run("2026-01-01T00:00:00.000Z", "old-result");
+    database.db.prepare("UPDATE idempotency_keys SET created_at = ? WHERE key = ?").run("2026-07-01T00:00:00.000Z", "new-result");
+    expect(database.enforceRetention("2026-06-01T00:00:00.000Z")).toMatchObject({ idempotencyKeys: 1 });
+    expect(database.getIdempotentResult("old-result")).toBeUndefined();
+    expect(database.getIdempotentResult("new-result")).toEqual({ accepted: true });
+    expect(database.getIdempotentClaim("active-claim")).toMatchObject({ ownerToken: "owner" });
+    database.close();
+  });
+});
+
 describe("runtime history retirement", () => {
   it("atomically retires active runs and their approval executions without releasing an in-flight idempotency claim", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());

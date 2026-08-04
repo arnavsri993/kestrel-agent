@@ -818,7 +818,7 @@ export class KestrelDatabase {
     };
   }
 
-  enforceRetention(cutoff: string): Record<"messages" | "memories" | "workspaceMutations" | "toolExecutions" | "modelCalls" | "runs" | "activity", number> {
+  enforceRetention(cutoff: string): Record<"messages" | "memories" | "workspaceMutations" | "toolExecutions" | "modelCalls" | "runs" | "activity" | "idempotencyKeys", number> {
     if (!Number.isFinite(Date.parse(cutoff))) throw new Error("Retention cutoff is invalid.");
     return this.db.transaction(() => {
       const remove = (sql: string) => this.db.prepare(sql).run(cutoff).changes;
@@ -829,7 +829,8 @@ export class KestrelDatabase {
       const modelCalls = remove("DELETE FROM model_call_audits WHERE started_at < ?");
       const runs = remove("DELETE FROM agent_runs WHERE updated_at < ?");
       const activity = remove("DELETE FROM audit_events WHERE created_at < ?");
-      return { messages, memories, workspaceMutations, toolExecutions, modelCalls, runs, activity };
+      const idempotencyKeys = remove("DELETE FROM idempotency_keys WHERE created_at < ?");
+      return { messages, memories, workspaceMutations, toolExecutions, modelCalls, runs, activity, idempotencyKeys };
     })();
   }
 
