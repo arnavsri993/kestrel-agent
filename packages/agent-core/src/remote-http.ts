@@ -21,6 +21,7 @@ export interface RemoteHttpServerOptions {
   allowedOrigins?: string[];
   maximumRequestsPerMinute?: number;
   maximumSseClients?: number;
+  maximumMcpSessions?: number;
   channelGateway?: ChannelGateway;
   resolveChannelSession?: (envelope: ChannelEnvelope) => string;
   prometheusMetrics?: () => string;
@@ -32,6 +33,8 @@ export interface RemoteHttpServerOptions {
 }
 
 interface RateRecord { count: number; resetAt: number; }
+
+const MAX_REMOTE_MCP_SESSIONS = 200;
 
 interface RemoteRuntimeEvent {
   type: RuntimeEvent["type"];
@@ -182,8 +185,13 @@ export class RemoteHttpServer {
   private readonly rates = new Map<string, RateRecord>();
   private readonly sse = new Set<ServerResponse>();
   private readonly mcpSessions = new Map<string, McpRuntimeServer>();
+  private readonly maximumMcpSessions: number;
 
-  constructor(private readonly options: RemoteHttpServerOptions) {}
+  constructor(private readonly options: RemoteHttpServerOptions) {
+    this.maximumMcpSessions = Number.isInteger(options.maximumMcpSessions) && options.maximumMcpSessions! > 0
+      ? Math.min(options.maximumMcpSessions!, MAX_REMOTE_MCP_SESSIONS)
+      : MAX_REMOTE_MCP_SESSIONS;
+  }
 
   async start(): Promise<{ origin: string }> {
     if (this.server) throw new Error("Remote HTTP server is already running.");
@@ -374,7 +382,9 @@ export class RemoteHttpServer {
             this.options.remote.assertAuthorized(token, "tasks");
         }
         const key = `${credentialKey(token)}:${sessionHeader}`;
-        const server = this.mcpSessions.get(key) ?? new McpRuntimeServer(this.options.runtime, sessionHeader);
+        const existing = this.mcpSessions.get(key);
+        if (!existing && this.mcpSessions.size >= this.maximumMcpSessions) throw new Error("Remote MCP session limit exceeded.");
+        const server = existing ?? new McpRuntimeServer(this.options.runtime, sessionHeader);
         this.mcpSessions.set(key, server);
         const result = await server.handle(body as JsonRpcMessage, { allowMutatingTools });
         if (!result) { response.writeHead(202, { "cache-control": "no-store" }); response.end(); }
@@ -391,7 +401,7 @@ export class RemoteHttpServer {
     } catch (error) {
       if (response.headersSent) { response.end(); return; }
       const message = error instanceof Error ? error.message : "Remote request failed.";
-      const status = /token|bearer|scope|trusted proxy|identity|untrusted source|not allowed/i.test(message) ? 401 : /rate limit/i.test(message) ? 429 : /invalid|requires|exceeds|must|field|schedule/i.test(message) ? 400 : 500;
+      const status = /token|bearer|scope|trusted proxy|identity|untrusted source|not allowed/i.test(message) ? 401 : /rate limit|MCP session limit/i.test(message) ? 429 : /invalid|requires|exceeds|must|field|schedule/i.test(message) ? 400 : 500;
       json(response, status, { error: status === 500 ? "Remote request failed." : message });
     }
   }

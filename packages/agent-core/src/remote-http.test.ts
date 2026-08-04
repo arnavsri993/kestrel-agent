@@ -117,6 +117,32 @@ describe("authenticated remote HTTP transport", () => {
     database.close();
   });
 
+  it("bounds new remote MCP session state without evicting established clients", async () => {
+    const { database, runtime, session, remote } = fixture();
+    const pairing = remote.beginPairing("MCP client", ["read"]);
+    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1", maximumMcpSessions: 1 });
+    servers.push(server);
+    const { origin } = await server.start();
+    const device = await (await fetch(`${origin}/v1/pairings/complete`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pairingId: pairing.pairingId, code: pairing.code }),
+    })).json() as { token: string };
+    const mcp = (sessionId: string, message: JsonRpcMessage) => fetch(`${origin}/v1/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${device.token}`, "content-type": "application/json", "x-kestrel-session-id": sessionId },
+      body: JSON.stringify(message),
+    });
+    expect((await mcp(session.id, { jsonrpc: "2.0", id: 1, method: "initialize" })).status).toBe(200);
+    expect((await mcp(session.id, { jsonrpc: "2.0", method: "notifications/initialized" })).status).toBe(202);
+    const second = runtime.createSession({ title: "Second MCP session" });
+    const rejected = await mcp(second.id, { jsonrpc: "2.0", id: 2, method: "initialize" });
+    expect(rejected.status).toBe(429);
+    expect(await rejected.json()).toMatchObject({ error: "Remote MCP session limit exceeded." });
+    expect((await mcp(session.id, { jsonrpc: "2.0", id: 3, method: "tools/list" })).status).toBe(200);
+    database.close();
+  });
+
   it("pairs a device, enforces bearer scopes, redacts jobs, and streams runtime events", async () => {
     const { database, runtime, session, remote } = fixture();
     const pairing = remote.beginPairing("Browser client", ["read", "tasks"]);
