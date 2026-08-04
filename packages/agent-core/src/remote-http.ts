@@ -213,6 +213,8 @@ export class RemoteHttpServer {
   async stop(): Promise<void> {
     for (const response of this.sse) response.end();
     this.sse.clear();
+    this.rates.clear();
+    this.mcpSessions.clear();
     const server = this.server;
     this.server = undefined;
     if (!server) return;
