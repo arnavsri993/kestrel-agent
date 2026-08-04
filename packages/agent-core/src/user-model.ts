@@ -8,7 +8,8 @@ export class UserModelStore {
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
 
   list(status?: UserModelStatus): UserModelFact[] {
-    const records = this.database.getPrivateState<UserModelFact[]>(this.key) ?? [];
+    const stored = this.database.getPrivateState<unknown>(this.key);
+    const records = Array.isArray(stored) ? stored as UserModelFact[] : [];
     return status ? records.filter((record) => record.status === status) : records;
   }
 
