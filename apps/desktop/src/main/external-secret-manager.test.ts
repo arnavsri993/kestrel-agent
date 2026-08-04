@@ -228,4 +228,27 @@ describe("external secret manager", () => {
       expect.objectContaining({ id: "command", state: "verified" })
     ]));
   });
+
+  it("recovers verification state when its persisted root is an array", async () => {
+    const item = fixture();
+    const configuration = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+    configuration.onepassword = {
+      enabled: true,
+      binaryPath: item.paths.op,
+      account: "",
+      mappings: { openai: "op://Private/OpenAI/api-key" },
+      overrideStored: true
+    };
+    await new ExternalSecretManager(item.root, item.broker).save(configuration);
+    writeFileSync(join(item.root, "secure", "external-secret-status.json"), "[]");
+    const manager = new ExternalSecretManager(item.root, item.broker, {
+      execute: async () => ({ stdout: "onepassword-secret" })
+    });
+
+    await manager.sync("onepassword");
+
+    expect((await manager.status()).sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "onepassword", state: "verified", resolvedCredentialIds: ["openai"] })
+    ]));
+  });
 });
