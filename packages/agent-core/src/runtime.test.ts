@@ -351,6 +351,26 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("restores a deferred tool when activation persistence fails", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Deferred activation rollback" });
+    const descriptor = { name: "deferred.echo", title: "Deferred echo", description: "Echo text from a lazily loaded fixture.", category: "extension" as const, riskLevel: "read_only" as const, readOnly: true, requiresWorkspace: false, source: "plugin" as const, tags: ["echo", "lazy"] };
+    runtime.registerDeferredCatalog({ id: "fixture", list: () => [descriptor], activate: async () => ({ descriptor, inputSchema: { type: "object" }, execute: async () => ({}) }) });
+    database.db.exec(`
+      CREATE TRIGGER reject_deferred_tool_activation
+      BEFORE UPDATE ON runtime_sessions
+      BEGIN
+        SELECT RAISE(ABORT, 'forced deferred tool activation persistence failure');
+      END
+    `);
+
+    await expect(runtime.activateDeferredTool(session.id, descriptor.name)).rejects.toThrow("forced deferred tool activation persistence failure");
+    expect(runtime.discoverDeferredTools()).toMatchObject([{ name: descriptor.name }]);
+    expect(runtime.modelTools(session.id).some((tool) => tool.descriptor.name === descriptor.name)).toBe(false);
+    database.close();
+  });
+
   it("journals uncertain mutation failures and never replays the side effect", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
