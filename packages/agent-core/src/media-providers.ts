@@ -3,6 +3,7 @@ import type {
   MediaGenerationProvider,
 } from "./media-artifacts";
 import { createFalClient, type FalClient } from "@fal-ai/client";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 export interface OpenAiMediaProviderOptions {
   apiKey: string;
@@ -461,7 +462,7 @@ export class OpenAiTranscriptionProvider implements VoiceTranscriptionProvider {
       throw new Error(
         `OpenAI transcription failed (${await boundedError(response)}).`,
       );
-    const body = (await response.json()) as { text?: unknown };
+    const body = JSON.parse(new TextDecoder().decode(await readBoundedResponseBytes(response, 2_000_000, "OpenAI transcription response exceeds 2 MB."))) as { text?: unknown };
     if (
       typeof body.text !== "string" ||
       body.text.trim().length === 0 ||
