@@ -1,5 +1,8 @@
 import type { ModelCallOptions, ModelProvider, ModelRequest, ModelResult } from "./types";
 
+const DEFAULT_HEALTH_BACKOFF_MS = 30_000;
+const MAX_HEALTH_BACKOFF_MS = 24 * 60 * 60_000;
+
 export interface ProviderAttempt {
   providerId: string;
   startedAt: string;
@@ -31,6 +34,11 @@ export class ProviderPoolError extends Error {
     super(message, { cause });
     this.name = "ProviderPoolError";
   }
+}
+
+function boundedHealthBackoff(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_HEALTH_BACKOFF_MS;
+  return Math.max(0, Math.min(MAX_HEALTH_BACKOFF_MS, Math.trunc(value)));
 }
 
 export class ProviderPool {
@@ -176,7 +184,7 @@ export class ProviderPool {
           error: error instanceof Error ? error.message : "Provider call failed."
         });
         this.measured(provider, startedAt, false);
-        this.unhealthyUntil.set(providerId, this.now().getTime() + (options.healthBackoffMs ?? 30_000));
+        this.unhealthyUntil.set(providerId, this.now().getTime() + boundedHealthBackoff(options.healthBackoffMs));
         const next = candidates[index + 1];
         if (!next) break;
       }

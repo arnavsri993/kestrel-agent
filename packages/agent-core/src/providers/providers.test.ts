@@ -314,6 +314,18 @@ describe("model provider adapters", () => {
     expect(calls).toBe(2);
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])("normalizes malformed provider health backoffs: %s", async (healthBackoffMs) => {
+    const provider: ModelProvider = {
+      id: "only",
+      capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false },
+      complete: async () => { throw new ModelProviderError("temporary", "only", true, 503); }
+    };
+    const pool = new ProviderPool([provider], () => new Date("2026-07-29T12:00:00.000Z"));
+
+    await expect(pool.complete({ model: "test", messages: [{ role: "user", content: textContent("retry") }] }, { healthBackoffMs })).rejects.toBeInstanceOf(Error);
+    expect(pool.health()[0]).toMatchObject({ unhealthyUntil: "2026-07-29T12:00:30.000Z" });
+  });
+
   it("routes multimodal automatic requests only to capable providers", async () => {
     const incapable: ModelProvider = { id: "text-only", capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: false }, complete: async () => { throw new Error("must not run"); } };
     const capable: ModelProvider = { id: "vision", capabilities: { ...incapable.capabilities, images: true }, complete: async (request) => ({ providerId: "vision", model: request.model, text: "seen", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }) };
