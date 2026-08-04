@@ -327,6 +327,15 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("rejects new teams once the durable team registry reaches its cap", () => {
+    const item = fixture(finalProvider());
+    const worker = item.runtime.createSession({ title: "Worker", parentSessionId: item.parent.id, workspaceRoot: item.root });
+    item.database.setPrivateState("orchestrator.teams", Array.from({ length: 200 }, (_, index) => ({ id: `team-${index}`, parentSessionId: item.parent.id, title: "Existing team", memberSessionIds: [worker.id], sharedPlan: [], messages: [], createdAt: "2026-07-22T20:00:00.000Z", updatedAt: "2026-07-22T20:00:00.000Z" })));
+    expect(() => item.orchestrator.createTeam(item.parent.id, "Another team", [worker.id])).toThrow("Team limit");
+    expect(item.orchestrator.listTeams()).toHaveLength(200);
+    item.database.close();
+  });
+
   it("persists encrypted schedules and advances recurring jobs", async () => {
     let instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(finalProvider(), () => instant);

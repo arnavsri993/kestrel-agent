@@ -136,6 +136,7 @@ export interface GoalTask { id: string; title: string; status: "pending" | "in_p
 export interface GoalRecord { id: string; sessionId: string; title: string; objective: string; status: "active" | "completed" | "cancelled"; tasks: GoalTask[]; sourceOpportunityId?: string; deadline?: string; createdAt: string; updatedAt: string; }
 export interface TeamMessage { id: string; fromSessionId: string; toSessionId: string; text: string; createdAt: string; }
 export interface TeamRecord { id: string; parentSessionId: string; title: string; memberSessionIds: string[]; sharedPlan: string[]; messages: TeamMessage[]; createdAt: string; updatedAt: string; }
+const MAX_TEAMS = 200;
 
 function resolveReference(reference: string, results: Record<string, RuntimeToolExecution>): unknown {
   if (!reference.startsWith("$")) return reference;
@@ -512,10 +513,12 @@ export class TaskOrchestrator {
     this.runtime.getSession(parentSessionId);
     const members = [...new Set(memberSessionIds)];
     if (!title.trim() || members.length === 0 || members.length > this.maximumWorkers || sharedPlan.length > 200) throw new Error("Team input is invalid.");
+    const teams = this.listTeams();
+    if (teams.length >= MAX_TEAMS) throw new Error("Team limit exceeded.");
     for (const member of members) { const session = this.runtime.getSession(member); if (session.parentSessionId !== parentSessionId) throw new Error("Team members must be child sessions of the parent."); }
     const timestamp = this.now().toISOString();
     const team: TeamRecord = { id: `team-${randomUUID()}`, parentSessionId, title: title.trim().slice(0, 200), memberSessionIds: members, sharedPlan: sharedPlan.map((item) => item.slice(0, 1_000)), messages: [], createdAt: timestamp, updatedAt: timestamp };
-    this.database.setPrivateState(this.teamsKey, [...this.listTeams(), team]);
+    this.database.setPrivateState(this.teamsKey, [...teams, team]);
     return team;
   }
 
