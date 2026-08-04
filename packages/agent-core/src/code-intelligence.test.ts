@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { LanguageServerClient, environmentLanguageServerClient, installCodeIntelligenceTools, type LanguageServerTransport, type LspMessage } from "./code-intelligence";
+import { LanguageServerClient, StdioLanguageServerTransport, environmentLanguageServerClient, installCodeIntelligenceTools, type LanguageServerTransport, type LspMessage } from "./code-intelligence";
 import { AgentRuntime } from "./runtime";
 
 class LoopbackLanguageServer implements LanguageServerTransport {
@@ -70,6 +70,20 @@ describe("language server code intelligence", () => {
       expect(await configured?.client.definition(pathToFileURL(join(root, "a.ts")).toString(), { line: 0, character: 0 })).toEqual([]);
       await configured?.client.close();
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it.each(["null", "[]"])("terminates instead of throwing on a non-object language server message: %s", async (body) => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-lsp-message-"));
+    const serverPath = join(root, "server.mjs");
+    writeFileSync(serverPath, "process.stdin.resume();", { mode: 0o700 });
+    const transport = new StdioLanguageServerTransport({ command: process.execPath, args: [serverPath], cwd: root });
+    const receive = (transport as unknown as { receive(chunk: Buffer): void }).receive.bind(transport);
+    try {
+      expect(() => receive(Buffer.from(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`))).not.toThrow();
+    } finally {
+      await transport.close();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("normalizes malformed language server configuration JSON", async () => {
