@@ -55,6 +55,45 @@ input.on("line", line => {
   return { executable, capture };
 }
 
+async function retryableFakeAppServer(): Promise<{ executable: string }> {
+  const root = await mkdtemp(join(tmpdir(), "kestrel-codex-app-server-retry-test-"));
+  roots.push(root);
+  const executable = join(root, "codex");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const readline = require("node:readline");
+const attemptsPath = process.argv[1] + ".initialize-attempts";
+let initialized = false;
+function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+function attempts() {
+  const current = Number(fs.existsSync(attemptsPath) ? fs.readFileSync(attemptsPath, "utf8") : "0") + 1;
+  fs.writeFileSync(attemptsPath, String(current));
+  return current;
+}
+const input = readline.createInterface({ input: process.stdin });
+input.on("line", line => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    if (attempts() === 1) {
+      return send({ id: message.id, error: { code: -32000, message: "fake initialize failed" } });
+    }
+    initialized = true;
+    return send({ id: message.id, result: { userAgent: "fake", codexHome: "/fake", platformFamily: "unix", platformOs: "macos" } });
+  }
+  if (message.method === "initialized") return;
+  if (message.method === "account/read" && initialized) {
+    return send({ id: message.id, result: { account: { type: "chatgpt" }, requiresOpenaiAuth: true } });
+  }
+});
+`,
+    { mode: 0o700 },
+  );
+  await chmod(executable, 0o700);
+  return { executable };
+}
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -62,6 +101,22 @@ afterEach(async () => {
 });
 
 describe("persistent Codex app-server provider", () => {
+  it("restarts after initialization failure instead of reusing an uninitialized process", async () => {
+    const fake = await retryableFakeAppServer();
+    const provider = new CodexAppServerProvider({
+      executable: fake.executable,
+      environment: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+      },
+      requestTimeoutMs: 2_000,
+    });
+
+    await expect(provider.probe()).rejects.toThrow("fake initialize failed");
+    await expect(provider.probe()).resolves.toBeUndefined();
+    await provider.close();
+  });
+
   it("initializes once, preserves a durable thread, streams turns, and declines vendor-side execution", async () => {
     const fake = await fakeAppServer();
     const provider = new CodexAppServerProvider({
