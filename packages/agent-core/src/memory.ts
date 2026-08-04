@@ -78,14 +78,16 @@ export class MemoryManager {
   forget(id: string): MemoryRecord {
     const memory = this.database.getMemory(id);
     if (!memory) throw new Error("Memory not found.");
-    this.saveVersion(memory, "user");
     const deleted = {
       ...memory,
       status: "deleted" as const,
       updatedAt: this.now().toISOString(),
       version: (memory.version ?? 1) + 1,
     };
-    this.database.upsertMemory(deleted);
+    this.database.db.transaction(() => {
+      this.saveVersion(memory, "user");
+      this.database.upsertMemory(deleted);
+    })();
     return deleted;
   }
 
@@ -94,7 +96,6 @@ export class MemoryManager {
     if (!memory) throw new Error("Memory not found.");
     const content = input.content.trim();
     if (!content || content.length > 100_000) throw new Error("Corrected memory content is required.");
-    this.saveVersion(memory, "user");
     const corrected: MemoryRecord = {
       ...memory,
       type: input.type ?? memory.type,
@@ -119,7 +120,10 @@ export class MemoryManager {
       relevanceScore: Math.max(memory.relevanceScore ?? memory.importance, 0.8),
       version: (memory.version ?? 1) + 1,
     };
-    this.database.upsertMemory(corrected);
+    this.database.db.transaction(() => {
+      this.saveVersion(memory, "user");
+      this.database.upsertMemory(corrected);
+    })();
     return corrected;
   }
 

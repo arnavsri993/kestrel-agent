@@ -57,4 +57,62 @@ describe("durable memory manager", () => {
     expect(manager.userModel.promptContext()).toBe("");
     database.close();
   });
+
+  it("rolls back forget history when the live memory write fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new MemoryManager(database);
+    const memory = manager.remember({
+      type: "semantic",
+      content: "The release checklist lives in RELEASE.md.",
+      structuredData: {},
+      sourceIds: ["message-1"],
+      sourceType: "explicit-user-command",
+      confidence: 1,
+      importance: 0.8,
+      sensitivity: "personal",
+      entityIds: [],
+      userConfirmed: true,
+      inferred: false
+    });
+    const originalUpsertMemory = database.upsertMemory.bind(database);
+    database.upsertMemory = () => {
+      throw new Error("memory write failed");
+    };
+
+    expect(() => manager.forget(memory.id)).toThrow("memory write failed");
+    expect(manager.list().find((item) => item.id === memory.id)).toBeDefined();
+    expect(manager.versions(memory.id)).toEqual([]);
+
+    database.upsertMemory = originalUpsertMemory;
+    database.close();
+  });
+
+  it("rolls back correction history when the live memory write fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new MemoryManager(database);
+    const memory = manager.remember({
+      type: "semantic",
+      content: "The release checklist lives in RELEASE.md.",
+      structuredData: {},
+      sourceIds: ["message-1"],
+      sourceType: "explicit-user-command",
+      confidence: 1,
+      importance: 0.8,
+      sensitivity: "personal",
+      entityIds: [],
+      userConfirmed: true,
+      inferred: false
+    });
+    const originalUpsertMemory = database.upsertMemory.bind(database);
+    database.upsertMemory = () => {
+      throw new Error("memory write failed");
+    };
+
+    expect(() => manager.correct(memory.id, { content: "The release checklist lives in ops.md." })).toThrow("memory write failed");
+    expect(manager.list().find((item) => item.id === memory.id)?.content).toBe(memory.content);
+    expect(manager.versions(memory.id)).toEqual([]);
+
+    database.upsertMemory = originalUpsertMemory;
+    database.close();
+  });
 });
