@@ -564,6 +564,34 @@ describe("Codex-compatible plugin manifests", () => {
     database.close();
   });
 
+  it("keeps plugin enablement unchanged when persistence fails", () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-enable-rollback-"));
+    directories.push(container);
+    const pluginRoot = join(container, "camarade");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), JSON.stringify({
+      name: "camarade",
+      version: "1.0.0",
+      description: "A test plugin",
+    }));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const registry = new PluginRegistry([container], database);
+    registry.discover();
+    database.db.exec(`
+      CREATE TRIGGER reject_plugin_enablement
+      BEFORE INSERT ON runtime_state
+      WHEN NEW.key = 'plugin.enabled.camarade'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced plugin enablement persistence failure');
+      END
+    `);
+
+    expect(() => registry.setEnabled("camarade", true)).toThrow("forced plugin enablement persistence failure");
+    expect(registry.get("camarade").enabled).toBe(false);
+    expect(database.getState("plugin.enabled.camarade")).toBeUndefined();
+    database.close();
+  });
+
   it("loads strict declarative dashboard panels without executable renderer code", () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-dashboard-"));
     directories.push(container);
