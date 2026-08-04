@@ -1534,8 +1534,14 @@ describe("provider-neutral agent loop", () => {
     };
     const loop = new AgentLoop(database, runtime, new ProviderPool([provider]), () => new Date("2026-07-22T18:00:00.000Z"));
     const waiting = await loop.run({ sessionId: session.id, model: "fake", providerIds: ["fake"], userContent: textContent("Delete it") });
+    database.setPrivateState(`agent-run-compaction.${waiting.run.id}`, {
+      sessionId: session.id,
+      removedMessages: "many",
+      estimatedCharacters: 0,
+    });
     const resumed = await loop.resume({ runId: waiting.run.id, approvalDecision: "rejected" });
     expect(resumed).toMatchObject({ run: { status: "completed" }, assistantMessage: { content: "I kept the file because you rejected deletion." } });
+    expect(database.getPrivateState(`agent-run-compaction.${waiting.run.id}`)).toMatchObject({ removedMessages: 0 });
     expect(existsSync(join(root, "keep.txt"))).toBe(true);
     expect(database.listToolExecutions(session.id)).toMatchObject([{ status: "cancelled", error: "The user denied this tool call." }]);
     database.close();

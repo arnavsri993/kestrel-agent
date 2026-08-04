@@ -87,6 +87,14 @@ function isManagedInstructionMessage(message: RuntimeMessage): boolean {
   );
 }
 
+function persistedCompactionCount(value: unknown): number {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+  const count = (value as { removedMessages?: unknown }).removedMessages;
+  return typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+    ? count
+    : 0;
+}
+
 function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -295,8 +303,12 @@ export class AgentLoop {
           120_000,
         },
       );
-      const priorCompaction = this.database.getPrivateState<{ removedMessages: number }>(`agent-run-compaction.${run.id}`);
-      this.database.setPrivateState(`agent-run-compaction.${run.id}`, { sessionId: run.sessionId, removedMessages: Math.max(priorCompaction?.removedMessages ?? 0, compacted.removedMessages), estimatedCharacters: compacted.estimatedCharacters });
+      const priorCompaction = persistedCompactionCount(
+        this.database.getPrivateState<unknown>(
+          `agent-run-compaction.${run.id}`,
+        ),
+      );
+      this.database.setPrivateState(`agent-run-compaction.${run.id}`, { sessionId: run.sessionId, removedMessages: Math.max(priorCompaction, compacted.removedMessages), estimatedCharacters: compacted.estimatedCharacters });
       const storedMaximumTurns = run.maximumTurns ?? 12;
       const configuredMaximumTurns =
         input.maximumTurns === undefined
