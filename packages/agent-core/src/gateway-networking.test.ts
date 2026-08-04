@@ -74,6 +74,7 @@ describe("managed Tailscale exposure", () => {
     await runStatus(JSON.stringify({ BackendState: "Stopped", Self: { Online: true, DNSName: "agent.example.ts.net." } }));
     await runStatus(JSON.stringify({ BackendState: "Running", Self: { Online: false, DNSName: "agent.example.ts.net." } }));
     await runStatus(JSON.stringify({ BackendState: "Running", Self: { Online: true, DNSName: null } }));
+    await runStatus(JSON.stringify({ BackendState: "Running", Self: { Online: true, DNSName: "" } }));
     await runStatus(JSON.stringify({ BackendState: "Running" }));
   });
 });
