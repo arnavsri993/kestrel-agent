@@ -360,7 +360,8 @@ export class LifeContextService {
     const timestamp = this.now().toISOString();
     const seen = new Set<string>();
     const synced: UnifiedCalendarEvent[] = [];
-    for (const raw of rawItems) {
+    this.database.db.transaction(() => {
+      for (const raw of rawItems) {
       if (!raw || typeof raw !== "object") continue;
       const item = raw as Record<string, unknown>;
       const externalId = String(item.id ?? "").slice(0, 1_024);
@@ -444,29 +445,30 @@ export class LifeContextService {
       });
       this.database.upsertCalendarEvent(event);
       synced.push(event);
-    }
-    const rangeStart = Date.parse(startsAt);
-    const rangeEnd = Date.parse(endsAt);
-    for (const existing of this.database.listCalendarEvents()) {
-      if (
-        existing.providerId !== "google" ||
-        seen.has(existing.id) ||
-        !this.eventTouchesRange(existing, rangeStart, rangeEnd)
-      )
-        continue;
-      this.database.upsertCalendarEvent({
-        ...existing,
-        status: "cancelled",
-        updatedAt: timestamp,
+      }
+      const rangeStart = Date.parse(startsAt);
+      const rangeEnd = Date.parse(endsAt);
+      for (const existing of this.database.listCalendarEvents()) {
+        if (
+          existing.providerId !== "google" ||
+          seen.has(existing.id) ||
+          !this.eventTouchesRange(existing, rangeStart, rangeEnd)
+        )
+          continue;
+        this.database.upsertCalendarEvent({
+          ...existing,
+          status: "cancelled",
+          updatedAt: timestamp,
+          lastSyncedAt: timestamp,
+        });
+      }
+      this.database.setCalendarSyncState("google", {
         lastSyncedAt: timestamp,
+        startsAt,
+        endsAt,
+        eventCount: synced.length,
       });
-    }
-    this.database.setCalendarSyncState("google", {
-      lastSyncedAt: timestamp,
-      startsAt,
-      endsAt,
-      eventCount: synced.length,
-    });
+    })();
     return synced;
   }
 

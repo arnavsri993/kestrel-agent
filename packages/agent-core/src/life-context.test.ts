@@ -312,4 +312,32 @@ describe("unified life context", () => {
     expect(database.getMemory(unrelated.id)).toBeDefined();
     database.close();
   });
+
+  it("rolls back imported events when the Google sync checkpoint fails", async () => {
+    const google = {
+      email: "owner@example.com",
+      listEvents: async () => ({
+        calendar: "primary",
+        items: [{
+          id: "provider-event",
+          title: "Project review",
+          start: "2026-07-30T15:00:00.000Z",
+          end: "2026-07-30T16:00:00.000Z",
+          status: "confirmed",
+        }],
+      }),
+    } as unknown as GoogleWorkspaceClient;
+    const { database, life } = fixture(new Date("2026-07-29T14:00:00.000Z"), google);
+    const originalSetCalendarSyncState = database.setCalendarSyncState.bind(database);
+    database.setCalendarSyncState = () => {
+      throw new Error("calendar sync checkpoint failed");
+    };
+
+    await expect(life.syncGoogle("2026-07-29T00:00:00.000Z", "2026-08-05T00:00:00.000Z")).rejects.toThrow("calendar sync checkpoint failed");
+    expect(database.listCalendarEvents()).toEqual([]);
+    expect(database.getCalendarSyncState("google")).toBeUndefined();
+
+    database.setCalendarSyncState = originalSetCalendarSyncState;
+    database.close();
+  });
 });
