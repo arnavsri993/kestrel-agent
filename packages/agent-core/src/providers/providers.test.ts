@@ -116,6 +116,35 @@ describe("model provider adapters", () => {
     expect(authorization).toBe("Bearer probe-secret");
   });
 
+  it("stops provider verification when cancellation wins", async () => {
+    const capabilities = { streaming: false, tools: false, images: false, audio: false, documents: false, local: true } as const;
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const provider = (id: string, probe: (signal?: AbortSignal) => Promise<void>): ModelProvider => ({
+      id,
+      capabilities,
+      probe,
+      complete: async () => { throw new Error("not used"); },
+    });
+    const pool = new ProviderPool([
+      provider("first", async () => {
+        calls.push("first");
+        controller.abort(new Error("verification cancelled"));
+      }),
+      provider("second", async () => {
+        calls.push("second");
+      }),
+    ]);
+
+    await expect(pool.verify("auto", controller.signal)).rejects.toThrow("verification cancelled");
+    expect(calls).toEqual(["first"]);
+
+    const before = new AbortController();
+    before.abort(new Error("verification cancelled before start"));
+    await expect(pool.verify("auto", before.signal)).rejects.toThrow("verification cancelled before start");
+    expect(calls).toEqual(["first"]);
+  });
+
 
   it("maps OpenAI Responses streaming text, multimodal input, tool calls, and usage", async () => {
     let requestBody: Record<string, unknown> = {};
