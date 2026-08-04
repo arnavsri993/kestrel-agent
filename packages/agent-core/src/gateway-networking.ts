@@ -181,8 +181,8 @@ export class TailscaleExposureManager {
     if (!this.configuration.resetOnExit || this.appliedMode === "off") return;
     const executable = this.configuration.executable ?? "tailscale";
     const result = await this.runner.run(executable, [this.appliedMode, "reset"], 15_000);
-    this.appliedMode = "off";
     if (result.exitCode !== 0) throw new Error(`Tailscale reset failed: ${result.stderr.slice(0, 500)}`);
+    this.appliedMode = "off";
   }
 }
 
