@@ -44,7 +44,9 @@ export class BrowserController {
   async create(ownerSessionId: string, allowedOrigins: string[]): Promise<{ browserSessionId: string }> {
     if (allowedOrigins.length === 0) throw new Error("Browser sessions require at least one allowed origin.");
     const origins = [...new Set(allowedOrigins.map((value) => {
-      const url = new URL(value);
+      let url: URL;
+      try { url = new URL(value); }
+      catch { throw new Error("Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials."); }
       const loopbackHttp =
         url.protocol === "http:" &&
         ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);

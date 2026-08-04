@@ -43,6 +43,7 @@ describe("isolated browser automation and visual validation", () => {
       "data://localhost/text/plain,private",
       "ftp://localhost/private",
       "ws://localhost/socket",
+      "not-a-url",
       "http://localhost.evil.example",
       "https://user:secret@example.test",
     ])
