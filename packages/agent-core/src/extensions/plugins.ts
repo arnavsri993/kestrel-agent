@@ -77,6 +77,7 @@ export class PluginRegistry {
       if (!existsSync(configuredRoot)) continue;
       const root = realpathSync(configuredRoot);
       for (const manifestPath of findManifests(root)) {
+        if (statSync(manifestPath).size > 256_000) throw new Error("Plugin manifest exceeds 256 KB.");
         const manifestBytes = readFileSync(manifestPath);
         if (manifestBytes.byteLength > 256_000) throw new Error("Plugin manifest exceeds 256 KB.");
         const manifest = JSON.parse(manifestBytes.toString("utf8")) as Record<string, unknown>;
