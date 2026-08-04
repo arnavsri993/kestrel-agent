@@ -48,6 +48,16 @@ function boundedLabel(value: string | undefined): string {
   return clean;
 }
 
+function storedHeaderValue(value: unknown): string | undefined {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value.length > 20_000 ||
+    /[\r\n\0]/.test(value)
+  ) return undefined;
+  return value;
+}
+
 function validateEndpoint(value: string): URL {
   let endpoint: URL;
   try {
@@ -224,7 +234,9 @@ export class ObservabilityManager {
   status(): ObservabilityStatus {
     const configuration = this.configuration();
     const exported = this.database.getState<StoredExportStatus>(STATUS_KEY);
-    const hasHeaderValue = Boolean(this.database.getPrivateState<string>(HEADER_VALUE_KEY));
+    const hasHeaderValue = Boolean(
+      storedHeaderValue(this.database.getPrivateState<unknown>(HEADER_VALUE_KEY)),
+    );
     return {
       running: Boolean(configuration.enabled && ((configuration.otlp.enabled && (this.meterProvider || this.tracerProvider)) || configuration.prometheus.enabled)),
       otlpConfigured: Boolean(configuration.otlp.enabled && configuration.otlp.endpoint),
@@ -291,7 +303,9 @@ export class ObservabilityManager {
     const configuration = this.configuration();
     if (!configuration.enabled || !configuration.otlp.enabled) return;
     const endpoint = validateEndpoint(configuration.otlp.endpoint);
-    const headerValue = this.database.getPrivateState<string>(HEADER_VALUE_KEY);
+    const headerValue = storedHeaderValue(
+      this.database.getPrivateState<unknown>(HEADER_VALUE_KEY),
+    );
     const headers = headerValue ? { [configuration.otlp.headerName]: headerValue } : {};
     const resource = resourceFromAttributes({ [ATTR_SERVICE_NAME]: configuration.otlp.serviceName });
     if (configuration.otlp.metrics) {

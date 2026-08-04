@@ -157,4 +157,15 @@ describe("privacy-safe external observability", () => {
       prometheus: { enabled: false }
     })).rejects.toThrow("Enable OTLP or Prometheus");
   });
+
+  it("ignores malformed persisted OTLP header values", () => {
+    const { database, runtime } = fixture();
+    database.setPrivateState("observability.otlp-header-value", {
+      value: "Bearer malformed",
+    });
+    const manager = new ObservabilityManager(database, runtime);
+    cleanup.push(() => manager.shutdown());
+
+    expect(manager.status()).toMatchObject({ hasHeaderValue: false });
+  });
 });
