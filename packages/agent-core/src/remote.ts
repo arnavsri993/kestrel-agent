@@ -195,8 +195,10 @@ export class RemoteBackendManager {
 export interface RemoteExecutionConfiguration { backends: RemoteExecutionBackend[]; targets: RemoteTarget[]; artifactRoot?: string; }
 export function environmentRemoteExecutionConfiguration(environment: NodeJS.ProcessEnv = process.env, artifactRoot?: string): RemoteExecutionConfiguration | undefined {
   if (!environment.KESTREL_REMOTE_TARGETS) return undefined;
-  let targets: RemoteTarget[]; try { targets = JSON.parse(environment.KESTREL_REMOTE_TARGETS) as RemoteTarget[]; } catch { throw new Error("KESTREL_REMOTE_TARGETS must be valid JSON."); }
-  if (!Array.isArray(targets) || targets.length > 100) throw new Error("KESTREL_REMOTE_TARGETS must contain at most 100 targets.");
+  let parsed: unknown; try { parsed = JSON.parse(environment.KESTREL_REMOTE_TARGETS); } catch { throw new Error("KESTREL_REMOTE_TARGETS must be valid JSON."); }
+  if (!Array.isArray(parsed) || parsed.length > 100) throw new Error("KESTREL_REMOTE_TARGETS must contain at most 100 targets.");
+  if (parsed.some((target) => !isRemoteTarget(target))) throw new Error("KESTREL_REMOTE_TARGETS must contain valid target records.");
+  const targets = parsed.filter(isRemoteTarget);
   const backends: RemoteExecutionBackend[] = [new DockerCliRemoteBackend(), new SshCliRemoteBackend(), new KubernetesCliRemoteBackend(), new ServerlessHttpRemoteBackend()];
   return { backends, targets, ...(artifactRoot ? { artifactRoot } : {}) };
 }
