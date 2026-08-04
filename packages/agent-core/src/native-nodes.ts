@@ -119,7 +119,10 @@ export class NativeNodeManager {
     if (this.results.size > 500) this.results.delete(this.results.keys().next().value!);
   }
 
-  result(commandId: string): NativeNodeResult | undefined { return this.results.get(commandId); }
+  result(commandId: string): NativeNodeResult | undefined {
+    const result = this.results.get(commandId);
+    return result ? structuredClone(result) : undefined;
+  }
   getVoiceWake(): string[] { return [...this.triggers]; }
   setVoiceWake(input: unknown): string[] { this.triggers = cleanTriggers(input); return this.getVoiceWake(); }
 
