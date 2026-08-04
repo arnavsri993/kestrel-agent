@@ -18,6 +18,14 @@ export interface RemoteExecutionBackend {
   execute(input: { target: RemoteTarget; command: string; args: string[]; timeoutMs: number; signal: AbortSignal; onOutput?: (stream: "stdout" | "stderr", chunk: string) => void }): Promise<RemoteExecutionResult>;
 }
 
+const REMOTE_BACKEND_KINDS = new Set<RemoteBackendKind>(["docker", "ssh", "cluster", "serverless"]);
+
+function isRemoteTarget(value: unknown): value is RemoteTarget {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const target = value as Record<string, unknown>;
+  return typeof target.id === "string" && typeof target.kind === "string" && REMOTE_BACKEND_KINDS.has(target.kind as RemoteBackendKind) && typeof target.backendId === "string" && Array.isArray(target.allowedCommands) && target.allowedCommands.every((command) => typeof command === "string") && typeof target.enabled === "boolean" && (target.configuration === undefined || (typeof target.configuration === "object" && target.configuration !== null && !Array.isArray(target.configuration)));
+}
+
 interface ProcessResult { exitCode: number; stdout: string; stderr: string; }
 
 const DEFAULT_REMOTE_TIMEOUT_MS = 120_000;
@@ -138,7 +146,10 @@ export class RemoteBackendManager {
   private readonly key = "providers.remote-targets";
   private readonly artifactRoot?: string;
   constructor(private readonly database: KestrelDatabase, backends: RemoteExecutionBackend[], artifactRoot?: string) { for (const backend of backends) this.backends.set(backend.id, backend); if (artifactRoot) { mkdirSync(artifactRoot, { recursive: true, mode: 0o700 }); this.artifactRoot = realpathSync(artifactRoot); } }
-  listTargets(): RemoteTarget[] { return this.database.getPrivateState<RemoteTarget[]>(this.key) ?? []; }
+  listTargets(): RemoteTarget[] {
+    const stored = this.database.getPrivateState<unknown>(this.key);
+    return Array.isArray(stored) ? stored.filter(isRemoteTarget) : [];
+  }
   setTargets(targets: RemoteTarget[]): void {
     if (targets.length > 100 || Buffer.byteLength(JSON.stringify(targets), "utf8") > 1_000_000) throw new Error("Remote target configuration exceeds limits.");
     if (new Set(targets.map((target) => target.id)).size !== targets.length) throw new Error("Remote target IDs must be unique.");
