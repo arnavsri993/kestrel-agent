@@ -421,6 +421,7 @@ describe("Codex-compatible plugin manifests", () => {
       interface: { displayName: "Camarade", capabilities: ["Read"], defaultPrompt: ["Improve this request."] }
     }));
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setState("plugin.enabled.camarade", { enabled: true });
     const registry = new PluginRegistry([container], database);
     expect(registry.discover()).toMatchObject([{ name: "camarade", version: "0.1.0-test", enabled: false, interface: { displayName: "Camarade" } }]);
     expect(registry.summary()).toMatchObject([{ name: "camarade", hasSkills: true, hasMcpServers: true }]);

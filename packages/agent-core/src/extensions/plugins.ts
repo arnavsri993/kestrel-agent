@@ -134,7 +134,7 @@ export class PluginRegistry {
               defaultPrompt: Array.isArray(ui.defaultPrompt) ? ui.defaultPrompt.filter((value): value is string => typeof value === "string") : []
             }
           } : {}),
-          enabled: this.database?.getState<boolean>(`plugin.enabled.${name}`) ?? false,
+          enabled: this.database?.getState<unknown>(`plugin.enabled.${name}`) === true,
           managed: this.managedRoots.some((managedRoot) => within(managedRoot, pluginRoot))
         };
         this.plugins.set(name, descriptor);
