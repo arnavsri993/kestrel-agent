@@ -84,4 +84,13 @@ describe("visual skin registry", () => {
     ).toThrow("primary button hover contrast");
     database.close();
   });
+
+  it("recovers when the persisted custom-skin state is not an array", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setPrivateState("display.custom-skins", { corrupted: true });
+    const manager = new SkinManager(database);
+    expect(manager.status()).toMatchObject({ selectedId: "workstrand", skins: expect.arrayContaining([expect.objectContaining({ id: "workstrand" })]) });
+    expect(manager.all()).toHaveLength(BUILTIN_SKINS.length);
+    database.close();
+  });
 });

@@ -109,7 +109,8 @@ export class SkinManager {
   private selectedId: string;
 
   constructor(private readonly database: KestrelDatabase) {
-    const stored = database.getPrivateState<unknown[]>(this.customKey) ?? [];
+    const storedValue = database.getPrivateState<unknown>(this.customKey);
+    const stored = Array.isArray(storedValue) ? storedValue : [];
     const custom: SkinDefinition[] = [];
     const quarantined: unknown[] = [];
     for (const value of stored) {
