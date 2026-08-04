@@ -52,6 +52,7 @@ import {
 import { ProviderAuthMonitor } from "./provider-auth-monitor";
 import { ExternalSecretManager } from "./external-secret-manager";
 import type { ResolvedExternalCredentials } from "./credential-broker";
+import { readRuntimePreferencesFile, type RuntimePreferences } from "./runtime-preferences";
 import { shouldCheckForUpdates, updaterFeedChannel } from "./update-channel";
 import {
   isTrustedRendererFrame,
@@ -135,11 +136,6 @@ interface BackupManifestFile {
 }
 
 type SubscriptionCliId = "codex" | "claude";
-interface RuntimePreferences {
-  subscriptions?: Partial<
-    Record<SubscriptionCliId, { enabled: boolean; path: string }>
-  >;
-}
 
 function runtimePreferencesPath(): string {
   return join(app.getPath("userData"), "runtime-preferences.json");
@@ -168,21 +164,7 @@ function googleWorkspaceOAuthManager(): GoogleWorkspaceOAuthManager {
 }
 
 async function readRuntimePreferences(): Promise<RuntimePreferences> {
-  try {
-    const value: unknown = JSON.parse(
-      await readFile(runtimePreferencesPath(), "utf8"),
-    );
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? (value as RuntimePreferences)
-      : {};
-  } catch (error) {
-    if (
-      (error as NodeJS.ErrnoException).code === "ENOENT" ||
-      error instanceof SyntaxError
-    )
-      return {};
-    throw error;
-  }
+  return readRuntimePreferencesFile(runtimePreferencesPath());
 }
 
 async function writeRuntimePreferences(
