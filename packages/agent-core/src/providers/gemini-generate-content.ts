@@ -66,9 +66,12 @@ export class GeminiGenerateContentProvider implements ModelProvider {
     };
     const model = encodeURIComponent(request.model || this.defaultModel);
     const response = await providerFetch(this.id, `${this.baseUrl}/models/${model}:generateContent`, { method: "POST", headers: { "x-goog-api-key": this.options.apiKey, "content-type": "application/json" }, body: JSON.stringify(body), ...(options.signal ? { signal: options.signal } : {}) });
-    let payload: Record<string, unknown>;
-    try { payload = await response.json() as Record<string, unknown>; }
+    let parsed: unknown;
+    try { parsed = await response.json(); }
     catch { throw new ModelProviderError("Gemini returned malformed JSON.", this.id, false); }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new ModelProviderError("Gemini returned an invalid response.", this.id, false);
+    const payload = parsed as Record<string, unknown>;
     const candidate = Array.isArray(payload.candidates) ? payload.candidates[0] as Record<string, unknown> | undefined : undefined;
     const candidateContent = candidate?.content as Record<string, unknown> | undefined;
     const responseParts = Array.isArray(candidateContent?.parts) ? candidateContent.parts as Array<Record<string, unknown>> : [];
