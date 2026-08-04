@@ -330,6 +330,17 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("recovers approval lookup when persisted rule state is malformed", () => {
+    const { database, runtime } = fixture();
+    const valid = { id: "approval-rule-valid", toolName: "workspace.delete", decision: "deny" as const, scope: "global" as const, createdAt: "2026-07-22T16:00:00.000Z", updatedAt: "2026-07-22T16:00:00.000Z" };
+    database.setPrivateState("runtime.approval-rules", [valid, { ...valid, decision: "maybe" }, null]);
+    expect(runtime.listApprovalRules()).toEqual([valid]);
+
+    database.setPrivateState("runtime.approval-rules", { corrupted: true });
+    expect(runtime.listApprovalRules()).toEqual([]);
+    database.close();
+  });
+
   it("searches and approval-loads deferred tools without eagerly exposing their schemas", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
