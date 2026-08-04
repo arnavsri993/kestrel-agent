@@ -157,4 +157,78 @@ describe("privacy-safe external observability", () => {
       prometheus: { enabled: false }
     })).rejects.toThrow("Enable OTLP or Prometheus");
   });
+
+  it("releases exported audit IDs after database retention removes them", async () => {
+    const { database, runtime } = fixture();
+    const session = runtime.createSession({ title: "Observability retention" });
+    database.saveAgentRun({
+      id: "run-retention",
+      sessionId: session.id,
+      model: "fixture",
+      providerIds: ["fixture"],
+      status: "completed",
+      turn: 1,
+      createdAt: "2026-07-23T08:00:00.000Z",
+      updatedAt: "2026-07-23T08:00:01.000Z"
+    });
+    database.saveModelCallAudit({
+      id: "audit-retained",
+      runId: "run-retention",
+      sessionId: session.id,
+      providerId: "fixture",
+      model: "fixture",
+      status: "completed",
+      inputTokens: 1,
+      outputTokens: 1,
+      estimatedCostUsd: 0,
+      durationMs: 1,
+      startedAt: "2026-07-23T08:00:00.000Z",
+      completedAt: "2026-07-23T08:00:01.000Z"
+    });
+    const manager = new ObservabilityManager(database, runtime);
+    cleanup.push(() => manager.shutdown());
+    const spans: string[] = [];
+    const internals = manager as unknown as {
+      tracerProvider: { getTracer(): { startSpan(_name: string): { end(): void } }; shutdown(): Promise<void> };
+      seenModelCalls: Set<string>;
+      scanModelCalls(): void;
+    };
+    internals.tracerProvider = {
+      getTracer: () => ({ startSpan: (name: string) => { spans.push(name); return { end: () => undefined }; } }),
+      shutdown: async () => undefined
+    };
+
+    internals.scanModelCalls();
+    expect(internals.seenModelCalls).toContain("audit-retained");
+    database.enforceRetention("2026-07-24T00:00:00.000Z");
+    internals.scanModelCalls();
+    expect(internals.seenModelCalls).not.toContain("audit-retained");
+    database.saveAgentRun({
+      id: "run-new",
+      sessionId: session.id,
+      model: "fixture",
+      providerIds: ["fixture"],
+      status: "completed",
+      turn: 2,
+      createdAt: "2026-07-24T01:00:00.000Z",
+      updatedAt: "2026-07-24T01:00:01.000Z"
+    });
+    database.saveModelCallAudit({
+      id: "audit-new",
+      runId: "run-new",
+      sessionId: session.id,
+      providerId: "fixture",
+      model: "fixture",
+      status: "completed",
+      inputTokens: 1,
+      outputTokens: 1,
+      estimatedCostUsd: 0,
+      durationMs: 1,
+      startedAt: "2026-07-24T01:00:00.000Z",
+      completedAt: "2026-07-24T01:00:01.000Z"
+    });
+    internals.scanModelCalls();
+    expect(spans).toHaveLength(1);
+    expect(internals.seenModelCalls).toContain("audit-new");
+  });
 });
