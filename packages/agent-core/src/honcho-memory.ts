@@ -29,6 +29,8 @@ const DEFAULT_CONFIGURATION: HonchoMemoryConfiguration = {
   dialecticMaxChars: 600,
 };
 
+const MAX_HONCHO_SESSION_STATES = 200;
+
 const DISCLOSURE =
   "When enabled, selected user and assistant message text, stable pseudonymous peer/session IDs, and provider queries leave this device for the configured Honcho server. API keys remain protected and are never included in messages, prompts, logs, or status responses.";
 
@@ -309,8 +311,12 @@ export class HonchoMemoryProvider {
           configuration.dialecticMaxChars,
         );
       }
+      delete states[input.sessionId];
       states[input.sessionId] = next;
-      this.database.setPrivateState(this.sessionsKey, states);
+      const retainedStates = Object.fromEntries(
+        Object.entries(states).slice(-MAX_HONCHO_SESSION_STATES),
+      );
+      this.database.setPrivateState(this.sessionsKey, retainedStates);
       this.saveState(clearError(this.storedState()));
     } catch (error) {
       this.saveState({
