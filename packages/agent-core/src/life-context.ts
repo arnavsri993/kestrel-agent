@@ -268,7 +268,9 @@ export class LifeContextService {
     sourceId: string;
   }): UnifiedCalendarEvent {
     const timestamp = this.now().toISOString();
-    if (Date.parse(input.endsAt) <= Date.parse(input.startsAt))
+    const startsAt = Date.parse(input.startsAt);
+    const endsAt = Date.parse(input.endsAt);
+    if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt) || endsAt <= startsAt)
       throw new Error("Calendar event must end after it starts.");
     const eventId = `calendar-event-${randomUUID()}`;
     const memory = this.memory.remember({
@@ -305,8 +307,8 @@ export class LifeContextService {
       status: input.origin === "suggested" ? "suggested" : "confirmed",
       title: input.title.trim(),
       ...(input.description ? { description: input.description } : {}),
-      startsAt: new Date(input.startsAt).toISOString(),
-      endsAt: new Date(input.endsAt).toISOString(),
+      startsAt: new Date(startsAt).toISOString(),
+      endsAt: new Date(endsAt).toISOString(),
       ...(input.location ? { location: input.location } : {}),
       confidence: input.confidence,
       confidenceReason:
