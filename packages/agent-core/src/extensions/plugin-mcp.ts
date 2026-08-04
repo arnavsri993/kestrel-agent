@@ -36,8 +36,11 @@ function within(root: string, candidate: string): boolean {
 function parseConfig(path: string, pluginRoot: string): Map<string, PluginMcpServerConfig> {
   const bytes = readFileSync(path);
   if (bytes.byteLength > 256_000) throw new Error("Plugin MCP configuration exceeds 256 KB.");
-  const parsed = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
-  const servers = parsed.mcpServers;
+  let parsed: unknown;
+  try { parsed = JSON.parse(bytes.toString("utf8")); }
+  catch { throw new Error("Plugin MCP configuration is invalid."); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Plugin MCP configuration is invalid.");
+  const servers = (parsed as Record<string, unknown>).mcpServers;
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) throw new Error("Plugin MCP configuration requires an mcpServers object.");
   const output = new Map<string, PluginMcpServerConfig>();
   for (const [serverName, raw] of Object.entries(servers as Record<string, unknown>)) {
