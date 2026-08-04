@@ -465,6 +465,31 @@ describe("Agent Skills extensions", () => {
     expect(proposal.instructions).not.toContain("PRIVATE_TOOL_OUTPUT_SHOULD_NOT_BE_COPIED");
     database.close();
   });
+
+  it("bounds learned skill feedback history", () => {
+    const learnedRoot = mkdtempSync(join(tmpdir(), "kestrel-learned-skill-feedback-"));
+    directories.push(learnedRoot);
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const previous = Array.from({ length: 500 }, (_, index) => ({
+      id: `skill-feedback-${index}`,
+      skillName: "release-check",
+      succeeded: true,
+      feedback: `Previous feedback ${index}`,
+      sourceIds: [`run-${index}`],
+      createdAt: "2026-07-22T23:00:00.000Z",
+    }));
+    database.setPrivateState("skills.learning.feedback", previous);
+    const manager = new SkillLearningManager(database, learnedRoot, new SkillRegistry([learnedRoot]), () => new Date("2026-07-22T23:00:00.000Z"));
+
+    const latest = manager.feedback({ skillName: "release-check", succeeded: false, feedback: "Review the packaged executable too.", sourceIds: ["run-latest"] });
+
+    const records = manager.listFeedback();
+    expect(records).toHaveLength(500);
+    expect(records[0]?.id).toBe("skill-feedback-1");
+    expect(records.some((record) => record.id === "skill-feedback-0")).toBe(false);
+    expect(records.at(-1)).toEqual(latest);
+    database.close();
+  });
 });
 
 describe("Codex-compatible plugin manifests", () => {
