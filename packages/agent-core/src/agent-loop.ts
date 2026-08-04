@@ -412,7 +412,7 @@ export class AgentLoop {
     let untrustedExternalContent = "";
     try {
       for (let turn = run.turn + 1; turn <= options.maximumTurns; turn += 1) {
-        if (options.signal?.aborted) throw options.signal.reason;
+        if (options.signal?.aborted) throw options.signal.reason ?? new Error("Agent execution was cancelled.");
         run = { ...run, turn, updatedAt: this.now().toISOString() };
         this.saveActiveRun(run);
         const workspaceRoot = this.runtime.activeWorkspaceRoot(session.id);
@@ -468,7 +468,7 @@ export class AgentLoop {
         }
 
         for (const call of result.toolCalls) {
-          if (options.signal?.aborted) throw options.signal.reason;
+          if (options.signal?.aborted) throw options.signal.reason ?? new Error("Agent execution was cancelled.");
           const descriptor = descriptors.get(call.name);
           if (!descriptor) {
             const content = JSON.stringify({ status: "failed", error: `Tool ${call.name} is unavailable.` });
