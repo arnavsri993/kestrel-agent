@@ -101,6 +101,22 @@ describe("model provider adapters", () => {
     expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
   });
 
+  it.each(["null", "[]"])("rejects a non-object OpenAI-compatible SSE frame: %s", async (body) => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(`data: ${body}\n\n`);
+    });
+    const provider = new OpenAIChatCompletionsProvider({ id: "free", apiKey: "secret", defaultModel: "free-model", baseUrl });
+
+    await expect(
+      provider.complete({ model: "free-model", messages: [{ role: "user", content: textContent("hello") }] }),
+    ).rejects.toMatchObject({
+      message: "free returned invalid streaming JSON.",
+      providerId: "free",
+      retryable: false,
+    });
+  });
+
   it("verifies live provider credentials without sending a model prompt", async () => {
     let method = "";
     let authorization = "";

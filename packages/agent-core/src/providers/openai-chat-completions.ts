@@ -122,9 +122,12 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
     const calls = new Map<number, { id: string; name: string; arguments: string }>();
     await readServerSentEvents(response, this.id, ({ data }) => {
       if (data === "[DONE]") return;
-      let event: Record<string, unknown>;
-      try { event = JSON.parse(data) as Record<string, unknown>; }
+      let parsed: unknown;
+      try { parsed = JSON.parse(data); }
       catch { throw new ModelProviderError(`${this.id} returned malformed streaming JSON.`, this.id, false); }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new ModelProviderError(`${this.id} returned invalid streaming JSON.`, this.id, false);
+      const event = parsed as Record<string, unknown>;
       if (typeof event.id === "string") responseId = event.id;
       if (typeof event.model === "string") model = event.model;
       if (event.usage && typeof event.usage === "object") usage = event.usage as Record<string, unknown>;
