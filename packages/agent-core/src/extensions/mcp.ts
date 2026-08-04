@@ -245,6 +245,7 @@ export class StdioMcpTransport implements McpTransport {
 }
 
 export class McpClient {
+  private static readonly MAX_PAGINATION_PAGES = 100;
   private readonly pending = new Map<JsonRpcId, {
     resolve(value: unknown): void;
     reject(error: Error): void;
@@ -283,7 +284,10 @@ export class McpClient {
     this.requireInitialized();
     const tools: McpTool[] = [];
     let cursor: string | undefined;
+    let pages = 0;
     do {
+      pages += 1;
+      if (pages > McpClient.MAX_PAGINATION_PAGES) throw new Error("MCP tools/list pagination exceeded 100 pages.");
       const result = await this.request("tools/list", cursor ? { cursor } : {}) as Record<string, unknown>;
       if (!Array.isArray(result.tools)) throw new Error("MCP tools/list returned an invalid tool array.");
       for (const raw of result.tools) {
@@ -365,7 +369,10 @@ export class McpClient {
     this.requireInitialized();
     const items: Array<Record<string, unknown>> = [];
     let cursor: string | undefined;
+    let pages = 0;
     do {
+      pages += 1;
+      if (pages > McpClient.MAX_PAGINATION_PAGES) throw new Error(`MCP ${method} pagination exceeded 100 pages.`);
       const result = await this.request(method, cursor ? { cursor } : {}) as Record<string, unknown>;
       const page = result[field];
       if (!Array.isArray(page) || page.some((item) => !item || typeof item !== "object")) throw new Error(`MCP ${method} returned an invalid ${field} array.`);
