@@ -2,9 +2,16 @@ import { describe, expect, it } from "vitest";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { AgentRuntime } from "./runtime";
-import { BraveSearchProvider, EncryptedDatabaseWebCache, NetworkPolicyWebClient, environmentWebAccessOptions, installWebTools } from "./web-tools";
+import { BraveSearchProvider, EncryptedDatabaseWebCache, NetworkPolicyWebClient, environmentWebAccessOptions, installWebTools, isPrivateNetworkAddress } from "./web-tools";
 
 describe("network-policy web tools", () => {
+  it("classifies mapped and uppercase private network addresses correctly", () => {
+    expect(isPrivateNetworkAddress("::ffff:127.0.0.1")).toBe(true);
+    expect(isPrivateNetworkAddress("::ffff:7f00:1")).toBe(true);
+    expect(isPrivateNetworkAddress("FD00::1")).toBe(true);
+    expect(isPrivateNetworkAddress("::ffff:203.0.113.20")).toBe(false);
+  });
+
   it("fetches bounded readable text and labels it untrusted", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     let fetches = 0;
