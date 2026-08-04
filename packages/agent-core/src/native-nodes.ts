@@ -84,8 +84,10 @@ export class NativeNodeManager {
 
   enqueueLocation(nodeId: string, input: { timeoutMs?: number; maxAgeMs?: number; desiredAccuracy?: LocationAccuracy }): NativeNodeCommand {
     const node = this.requireCapability(nodeId, "location");
-    const timeoutMs = Math.max(1_000, Math.min(input.timeoutMs ?? 10_000, 60_000));
-    const maxAgeMs = Math.max(0, Math.min(input.maxAgeMs ?? 0, 3_600_000));
+    const timeoutInput = typeof input.timeoutMs === "number" && Number.isFinite(input.timeoutMs) ? input.timeoutMs : 10_000;
+    const maxAgeInput = typeof input.maxAgeMs === "number" && Number.isFinite(input.maxAgeMs) ? input.maxAgeMs : 0;
+    const timeoutMs = Math.max(1_000, Math.min(Math.floor(timeoutInput), 60_000));
+    const maxAgeMs = Math.max(0, Math.min(Math.floor(maxAgeInput), 3_600_000));
     const desiredAccuracy = input.desiredAccuracy ?? "balanced";
     if (!["coarse", "balanced", "precise"].includes(desiredAccuracy)) throw new Error("Location accuracy is invalid.");
     return this.enqueue(node.nodeId, "location.get", { timeoutMs, maxAgeMs, desiredAccuracy }, timeoutMs + 10_000);
