@@ -80,7 +80,16 @@ export class PluginRegistry {
         if (statSync(manifestPath).size > 256_000) throw new Error("Plugin manifest exceeds 256 KB.");
         const manifestBytes = readFileSync(manifestPath);
         if (manifestBytes.byteLength > 256_000) throw new Error("Plugin manifest exceeds 256 KB.");
-        const manifest = JSON.parse(manifestBytes.toString("utf8")) as Record<string, unknown>;
+        let parsedManifest: unknown;
+        try {
+          parsedManifest = JSON.parse(manifestBytes.toString("utf8"));
+        } catch {
+          throw new Error("Plugin manifest is invalid.");
+        }
+        if (!parsedManifest || typeof parsedManifest !== "object" || Array.isArray(parsedManifest)) {
+          throw new Error("Plugin manifest is invalid.");
+        }
+        const manifest = parsedManifest as Record<string, unknown>;
         const name = String(manifest.name ?? "");
         const version = String(manifest.version ?? "");
         const description = String(manifest.description ?? "");

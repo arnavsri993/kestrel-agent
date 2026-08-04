@@ -544,6 +544,16 @@ describe("Codex-compatible plugin manifests", () => {
     expect(() => new PluginRegistry([container]).discover()).toThrow("Plugin manifest exceeds 256 KB.");
   });
 
+  it.each(["not-json", "null", "[]"])("rejects a malformed plugin manifest root: %s", (contents) => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugins-malformed-"));
+    directories.push(container);
+    const pluginRoot = join(container, "malformed-plugin");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), contents);
+
+    expect(() => new PluginRegistry([container]).discover()).toThrow("Plugin manifest is invalid.");
+  });
+
   it("enforces declared plugin dependency versions and enable order", () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-dependencies-"));
     directories.push(container);
