@@ -123,6 +123,11 @@ describe("authenticated channel gateway", () => {
     expect(requests).toBe(0);
   });
 
+  it("normalizes a non-finite webhook timeout", () => {
+    const adapter = new WebhookChannelAdapter({ id: "invalid-timeout", url: "https://hooks.example.test/kestrel", timeoutMs: Number.NaN });
+    expect((adapter as unknown as { timeoutMs: number }).timeoutMs).toBe(15_000);
+  });
+
   it("loads channel credentials only from an owner-only bounded configuration file", () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-channel-config-"));
     const path = join(root, "channels.json");
