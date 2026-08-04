@@ -182,6 +182,18 @@ describe("remote backends and scoped supervision", () => {
     })).rejects.toThrow("Serverless endpoint must be a valid URL.");
   });
 
+  it.each([null, {}])("rejects malformed serverless artifact records: %s", async (artifact) => {
+    const backend = new ServerlessHttpRemoteBackend(async () => new Response(JSON.stringify({ exitCode: 0, stdout: "", stderr: "", artifacts: [artifact] }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    await expect(backend.execute({
+      target: { id: "function", kind: "serverless", backendId: "serverless-http", allowedCommands: ["build"], enabled: true, configuration: { endpoint: "https://functions.example.test/run" } },
+      command: "build",
+      args: [],
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+    })).rejects.toThrow("Serverless backend response artifacts are invalid.");
+  });
+
   it("cancels chunked oversized serverless responses before parsing or emitting output", async () => {
     let pulls = 0;
     let cancellations = 0;

@@ -73,6 +73,12 @@ function stringConfig(target: RemoteTarget, key: string, required = true): strin
 
 function commandResult(result: ProcessResult): RemoteExecutionResult { return { ...result, remoteExecutionId: `remote-${randomUUID()}` }; }
 
+function isRemoteArtifact(value: unknown): value is RemoteArtifact {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const artifact = value as Record<string, unknown>;
+  return typeof artifact.filename === "string" && typeof artifact.mediaType === "string" && typeof artifact.dataBase64 === "string" && typeof artifact.sha256 === "string";
+}
+
 export class DockerCliRemoteBackend implements RemoteExecutionBackend {
   readonly id = "docker-cli";
   async execute({ target, command, args, timeoutMs, signal, onOutput }: Parameters<RemoteExecutionBackend["execute"]>[0]): Promise<RemoteExecutionResult> {
@@ -141,7 +147,9 @@ export class ServerlessHttpRemoteBackend implements RemoteExecutionBackend {
     let body: Record<string, unknown>; try { body = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error("Serverless backend returned malformed JSON."); }
     if (!Number.isInteger(body.exitCode) || typeof body.stdout !== "string" || typeof body.stderr !== "string") throw new Error("Serverless backend response is invalid.");
     if (body.stdout) onOutput?.("stdout", body.stdout.slice(0, 16_000)); if (body.stderr) onOutput?.("stderr", body.stderr.slice(0, 16_000));
-    const artifacts = Array.isArray(body.artifacts) ? body.artifacts as RemoteArtifact[] : undefined;
+    if (body.artifacts !== undefined && !Array.isArray(body.artifacts)) throw new Error("Serverless backend response artifacts are invalid.");
+    const artifacts = Array.isArray(body.artifacts) ? body.artifacts : undefined;
+    if (artifacts?.some((artifact) => !isRemoteArtifact(artifact))) throw new Error("Serverless backend response artifacts are invalid.");
     return { exitCode: Number(body.exitCode), stdout: body.stdout, stderr: body.stderr, remoteExecutionId: typeof body.remoteExecutionId === "string" ? body.remoteExecutionId.slice(0, 200) : `remote-${randomUUID()}`, ...(artifacts ? { artifacts } : {}) };
   }
 }
