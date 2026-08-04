@@ -1069,8 +1069,13 @@ export class AgentCore {
   createPersonality(
     personality: Omit<AgentPersonality, "builtin">,
   ): WorkspaceSnapshot {
-    this.personalities.register(personality);
-    this.persistCustomPersonalities();
+    const created = this.personalities.register(personality);
+    try {
+      this.persistCustomPersonalities();
+    } catch (error) {
+      this.personalities.remove(created.id);
+      throw error;
+    }
     return this.snapshot();
   }
 
