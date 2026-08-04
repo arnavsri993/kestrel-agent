@@ -47,6 +47,18 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("recovers from malformed persisted main-session identity", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setState("runtimeMainSessionId", { id: "not-a-session-id" });
+    const runtime = new AgentRuntime(database);
+
+    const session = runtime.ensureMainSession();
+
+    expect(session.title).toBe("Main session");
+    expect(database.getState("runtimeMainSessionId")).toBe(session.id);
+    database.close();
+  });
+
   it("persists message activity as session recency without allowing stale clocks to move it backward", () => {
     const directory = mkdtempSync(join(tmpdir(), "kestrel-session-recency-"));
     temporaryDirectories.push(directory);

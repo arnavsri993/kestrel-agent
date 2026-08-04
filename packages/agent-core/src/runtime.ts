@@ -362,7 +362,8 @@ export class AgentRuntime extends EventEmitter {
   }
 
   ensureMainSession(): RuntimeSession {
-    const storedId = this.database.getState<string>("runtimeMainSessionId");
+    const storedValue = this.database.getState<unknown>("runtimeMainSessionId");
+    const storedId = typeof storedValue === "string" && storedValue ? storedValue : undefined;
     const existing = storedId ? this.database.getRuntimeSession(storedId) : undefined;
     if (existing) return existing;
     const session = this.createSession({
