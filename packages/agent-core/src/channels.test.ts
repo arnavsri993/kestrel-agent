@@ -135,6 +135,9 @@ describe("authenticated channel gateway", () => {
     try {
       writeFileSync(path, JSON.stringify({ version: 1, channels: [{ id: "chat", outbound: { url: "https://hooks.example.test/send", authorizationHeader: "Bearer secret" }, inboundSecretBase64: secret, sessionId: "session-1" }] }), { mode: 0o600 });
       expect(environmentChannelConfiguration({ KESTREL_CHANNEL_CONFIG: path })).toMatchObject({ sessionRoutes: { chat: "session-1" }, adapters: [{ id: "chat" }] });
+      const malformedPath = join(root, "malformed.json");
+      writeFileSync(malformedPath, "null", { mode: 0o600 });
+      expect(() => environmentChannelConfiguration({ KESTREL_CHANNEL_CONFIG: malformedPath })).toThrow("version 1");
       chmodSync(path, 0o644);
       expect(() => environmentChannelConfiguration({ KESTREL_CHANNEL_CONFIG: path })).toThrow("owner-only");
     } finally { rmSync(root, { recursive: true, force: true }); }
