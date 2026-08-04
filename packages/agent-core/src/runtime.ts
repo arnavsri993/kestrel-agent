@@ -175,6 +175,7 @@ const backgroundCommandInputSchema = commandInputSchema.extend({
 });
 const processIdInputSchema = z.object({ processId: z.string().min(1) });
 const processWriteInputSchema = processIdInputSchema.extend({ data: z.string().min(1).max(65_536) });
+const MAX_BACKGROUND_PROCESSES = 200;
 const gitDiffInputSchema = z.object({
   staged: z.boolean().default(false),
   pathspec: z.array(z.string().min(1).max(1_000)).max(100).default([])
@@ -1653,6 +1654,7 @@ export class AgentRuntime extends EventEmitter {
         const parsed = backgroundCommandInputSchema.parse(input);
         const cwd = resolveExistingPath(workspaceRoot, parsed.cwd);
         if (!statSync(cwd).isDirectory()) throw new Error("Command cwd must be a directory.");
+        this.ensureBackgroundProcessCapacity();
         const processId = `process-${randomUUID()}`;
         const handle = this.commandRunner.start({ ...parsed, cwd, workspaceRoot, mode: "workspace_write" }, {
           interactive: parsed.interactive,
@@ -2174,6 +2176,16 @@ export class AgentRuntime extends EventEmitter {
     const process = this.backgroundProcesses.get(processId);
     if (!process || process.sessionId !== sessionId) throw new Error("Background process not found in this session.");
     return process;
+  }
+
+  private ensureBackgroundProcessCapacity(): void {
+    if (this.backgroundProcesses.size < MAX_BACKGROUND_PROCESSES) return;
+    for (const [processId, process] of this.backgroundProcesses) {
+      if (process.status === "running") continue;
+      this.backgroundProcesses.delete(processId);
+      if (this.backgroundProcesses.size < MAX_BACKGROUND_PROCESSES) return;
+    }
+    throw new Error(`At most ${MAX_BACKGROUND_PROCESSES} background processes can run at once.`);
   }
 
   private backgroundProcessSnapshot(sessionId: string, processId: string) {
