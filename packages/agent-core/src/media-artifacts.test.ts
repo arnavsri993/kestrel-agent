@@ -197,6 +197,24 @@ describe("media artifact workflow", () => {
     ).toContain("local-markdown");
   });
 
+  it.each([
+    ["malformed JSON", new Response("not-json", { status: 200 }), "malformed"],
+    ["a non-object JSON value", new Response("null", { status: 200 }), "invalid"],
+  ])("rejects OpenAI image responses containing %s", async (_label, response, error) => {
+    const provider = new OpenAiMediaProvider({
+      apiKey: "media-secret",
+      fetcher: async () => response,
+    });
+
+    await expect(
+      provider.generate({
+        prompt: "a kestrel",
+        kind: "image",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(`OpenAI image response was ${error}.`);
+  });
+
   it("creates retained opaque-origin widgets through an approval-gated tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-widgets-"));
     directories.push(root);
