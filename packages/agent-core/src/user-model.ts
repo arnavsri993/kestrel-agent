@@ -15,7 +15,7 @@ export class UserModelStore {
 
   propose(input: Omit<UserModelFact, "id" | "status" | "createdAt" | "updatedAt">): UserModelFact {
     if (!input.key.trim() || !input.value.trim()) throw new Error("User-model facts require a key and value.");
-    if (input.confidence < 0 || input.confidence > 1) throw new Error("User-model confidence must be between 0 and 1.");
+    if (!Number.isFinite(input.confidence) || input.confidence < 0 || input.confidence > 1) throw new Error("User-model confidence must be between 0 and 1.");
     if (input.sourceIds.length === 0) throw new Error("User-model proposals require provenance.");
     const timestamp = this.now().toISOString();
     const fact: UserModelFact = { ...input, id: `user-fact-${randomUUID()}`, status: "proposed", createdAt: timestamp, updatedAt: timestamp };
