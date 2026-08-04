@@ -35,6 +35,19 @@ function fixture() {
 }
 
 describe("authenticated remote HTTP transport", () => {
+  it("rejects malformed request and SSE rate limits", () => {
+    const { database, remote, runtime } = fixture();
+    for (const option of [
+      { maximumRequestsPerMinute: Number.NaN },
+      { maximumRequestsPerMinute: Number.POSITIVE_INFINITY },
+      { maximumSseClients: 0 },
+      { maximumSseClients: 1.5 }
+    ]) {
+      expect(() => new RemoteHttpServer({ remote, runtime, ...option })).toThrow("finite positive integer");
+    }
+    database.close();
+  });
+
   it("keeps read-only MCP sessions non-mutating and rechecks task scope after initialization", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-mcp-"));
     directories.push(root);
