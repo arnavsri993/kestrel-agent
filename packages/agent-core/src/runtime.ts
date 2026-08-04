@@ -629,7 +629,14 @@ export class AgentRuntime extends EventEmitter {
     return true;
   }
 
-  listApprovalRules(): ApprovalRule[] { return this.database.getPrivateState<ApprovalRule[]>(this.approvalRulesKey) ?? []; }
+  listApprovalRules(): ApprovalRule[] {
+    const stored: unknown = this.database.getPrivateState<unknown>(this.approvalRulesKey);
+    if (!Array.isArray(stored)) return [];
+    return stored.flatMap((value) => {
+      const parsed = ApprovalRuleSchema.safeParse(value);
+      return parsed.success ? [parsed.data] : [];
+    });
+  }
 
   setApprovalRule(input: Pick<ApprovalRule, "toolName" | "decision" | "scope"> & { sessionId?: string }): ApprovalRule {
     const definition = this.tools.get(input.toolName);
