@@ -300,7 +300,10 @@ export class ChannelGateway {
     const level = this.interactionConfiguration().reactionLevel;
     if (level === "off") throw new Error("Channel reactions are disabled by interaction policy.");
     const stateKey = `channel-reactions:${createHash("sha256").update(`${channelId}\0${conversationId}\0${externalId}`).digest("hex")}`;
-    let tracked = this.database.getPrivateState<string[]>(stateKey) ?? [];
+    const storedTracked = this.database.getPrivateState<unknown>(stateKey);
+    let tracked = Array.isArray(storedTracked)
+      ? [...new Set(storedTracked.filter((value): value is string => typeof value === "string" && Buffer.byteLength(value) <= 100))].slice(-8)
+      : [];
     if (action === "clear") {
       for (const current of [...tracked]) {
         await adapter.react({ conversationId, externalId, emoji: current, remove: true, signal });
