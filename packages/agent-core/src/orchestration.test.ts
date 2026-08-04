@@ -97,6 +97,23 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("ignores malformed persisted teams", () => {
+    const item = fixture(finalProvider());
+    const member = item.runtime.createSession({ title: "Member", parentSessionId: item.parent.id, workspaceRoot: item.root });
+    const team = item.orchestrator.createTeam(item.parent.id, "Release team", [member.id], ["Inspect"]);
+    item.database.setPrivateState("orchestrator.teams", [
+      team,
+      { ...team, messages: "malformed" },
+      "malformed",
+    ]);
+
+    expect(item.orchestrator.listTeams()).toEqual([team]);
+
+    item.database.setPrivateState("orchestrator.teams", { malformed: true });
+    expect(item.orchestrator.listTeams()).toEqual([]);
+    item.database.close();
+  });
+
   it("caps delegated and scheduled runs at the active workflow turn limit", async () => {
     let instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(
