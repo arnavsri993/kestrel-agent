@@ -26,6 +26,7 @@ describe("trusted proxy gateway authentication", () => {
     const headers = { "x-auth-user": "operator@example.test", "x-forwarded-proto": "https", "x-forwarded-host": "workstrand.example" };
     const denied = new TrustedProxyAuthorizer({ ...configuration, trustedSources: ["127.0.0.1"], maximumScopes: [...configuration.maximumScopes] });
     expect(() => denied.authorize({ remoteAddress: "127.0.0.1", headers })).toThrow("loopback source");
+    expect(() => denied.authorize({ remoteAddress: "::FFFF:127.0.0.1", headers })).toThrow("loopback source");
     const allowed = new TrustedProxyAuthorizer({ ...configuration, trustedSources: ["127.0.0.1"], allowLoopback: true, maximumScopes: [...configuration.maximumScopes] });
     expect(allowed.authorize({ remoteAddress: "127.0.0.1", headers })).toMatchObject({ identity: "operator@example.test", scopes: ["read", "tasks"] });
   });

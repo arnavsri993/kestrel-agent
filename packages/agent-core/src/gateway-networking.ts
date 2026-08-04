@@ -26,7 +26,7 @@ function headerName(value: string): string {
 
 function normalizedAddress(value: string): string {
   const zoneIndex = value.indexOf("%");
-  const withoutZone = zoneIndex >= 0 ? value.slice(0, zoneIndex) : value;
+  const withoutZone = (zoneIndex >= 0 ? value.slice(0, zoneIndex) : value).toLowerCase();
   return withoutZone.startsWith("::ffff:") && isIP(withoutZone.slice(7)) === 4 ? withoutZone.slice(7) : withoutZone;
 }
 
