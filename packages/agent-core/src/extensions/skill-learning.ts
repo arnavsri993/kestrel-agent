@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
-import type { SkillLearningFeedback, SkillLearningProposal } from "@kestrel/shared-types";
+import {
+  SkillLearningFeedbackSchema,
+  SkillLearningProposalSchema,
+  type SkillLearningFeedback,
+  type SkillLearningProposal,
+} from "@kestrel/shared-types";
 import type { AgentRuntime } from "../runtime";
 import { SkillRegistry } from "./skills";
 
@@ -28,6 +33,22 @@ function within(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);
 }
 
+function parseProposals(value: unknown): SkillLearningProposal[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const parsed = SkillLearningProposalSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+function parseFeedback(value: unknown): SkillLearningFeedback[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const parsed = SkillLearningFeedbackSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 export class SkillLearningManager {
   private readonly proposalKey = "skills.learning.proposals";
   private readonly feedbackKey = "skills.learning.feedback";
@@ -46,9 +67,11 @@ export class SkillLearningManager {
     this.root = resolve(learnedRoot);
   }
 
-  list(): SkillLearningProposal[] { return this.database.getPrivateState<SkillLearningProposal[]>(this.proposalKey) ?? []; }
+  list(): SkillLearningProposal[] {
+    return parseProposals(this.database.getPrivateState<unknown>(this.proposalKey));
+  }
   listFeedback(skillName?: string): SkillLearningFeedback[] {
-    const records = this.database.getPrivateState<SkillLearningFeedback[]>(this.feedbackKey) ?? [];
+    const records = parseFeedback(this.database.getPrivateState<unknown>(this.feedbackKey));
     return skillName ? records.filter((record) => record.skillName === skillName) : records;
   }
 

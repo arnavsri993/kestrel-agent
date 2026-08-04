@@ -318,6 +318,44 @@ describe("MCP extensions", () => {
 });
 
 describe("Agent Skills extensions", () => {
+  it("recovers malformed learned-skill persistence", () => {
+    const learnedRoot = mkdtempSync(join(tmpdir(), "kestrel-learned-skills-state-"));
+    directories.push(learnedRoot);
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new SkillLearningManager(database, learnedRoot, new SkillRegistry([learnedRoot]));
+    const proposal = {
+      id: "skill-proposal-1",
+      name: "release-check",
+      description: "Verify a release.",
+      instructions: "Run the release checks.",
+      sourceSessionId: "session-1",
+      sourceMessageIds: ["message-1"],
+      status: "proposed" as const,
+      evaluation: { valid: true, checks: ["valid"] },
+      createdAt: "2026-07-22T23:00:00.000Z",
+      updatedAt: "2026-07-22T23:00:00.000Z",
+    };
+    const feedback = {
+      id: "skill-feedback-1",
+      skillName: "release-check",
+      succeeded: true,
+      feedback: "The checks were useful.",
+      sourceIds: ["run-1"],
+      createdAt: "2026-07-22T23:00:00.000Z",
+    };
+    database.setPrivateState("skills.learning.proposals", [proposal, { ...proposal, status: "invalid" }]);
+    database.setPrivateState("skills.learning.feedback", [feedback, { ...feedback, sourceIds: [] }]);
+
+    expect(manager.list()).toEqual([proposal]);
+    expect(manager.listFeedback()).toEqual([feedback]);
+
+    database.setPrivateState("skills.learning.proposals", { malformed: true });
+    database.setPrivateState("skills.learning.feedback", { malformed: true });
+    expect(manager.list()).toEqual([]);
+    expect(manager.listFeedback()).toEqual([]);
+    database.close();
+  });
+
   it("uses metadata-first discovery, full activation, and contained resource reads", async () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-skills-"));
     directories.push(container);
