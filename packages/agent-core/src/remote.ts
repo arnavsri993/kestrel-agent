@@ -190,6 +190,7 @@ export interface RemoteTrustedIdentity { kind: "trusted-proxy"; identity: string
 export type RemoteCredential = string | RemoteTrustedIdentity;
 interface PairingRecord { id: string; label: string; codeHash: string; scopes: RemoteScope[]; expiresAt: string; attempts: number; status: "pending" | "used" | "locked"; }
 interface DeviceRecord { id: string; label: string; tokenHash: string; scopes: RemoteScope[]; createdAt: string; revokedAt?: string; }
+const MAX_REMOTE_DEVICES = 200;
 export interface RemoteSessionSummary { id: string; title: string; status: RuntimeSession["status"]; parentSessionId?: string; updatedAt: string; }
 
 function digest(value: string): string { return createHash("sha256").update(value).digest("hex"); }
@@ -220,11 +221,13 @@ export class RemoteControl {
       this.database.setPrivateState(this.pairingKey, pairings);
       throw new Error("Remote pairing code is invalid.");
     }
+    const devices = this.devices();
+    if (devices.length >= MAX_REMOTE_DEVICES) throw new Error("Remote device limit exceeded.");
     pairings[index] = { ...pairing, status: "used" };
     this.database.setPrivateState(this.pairingKey, pairings);
     const token = randomBytes(32).toString("base64url");
     const device: DeviceRecord = { id: `device-${randomUUID()}`, label: pairing.label, tokenHash: digest(token), scopes: pairing.scopes, createdAt: this.now().toISOString() };
-    this.database.setPrivateState(this.devicesKey, [...this.devices(), device]);
+    this.database.setPrivateState(this.devicesKey, [...devices, device]);
     return { deviceId: device.id, token, scopes: device.scopes };
   }
 

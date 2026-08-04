@@ -61,6 +61,18 @@ describe("remote backends and scoped supervision", () => {
     database.close();
   });
 
+  it("does not consume a valid pairing when the device record cap is full", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const orchestrator = new TaskOrchestrator(database, runtime, new AgentLoop(database, runtime, new ProviderPool([provider])));
+    const remote = new RemoteControl(database, runtime, orchestrator);
+    database.setPrivateState("remote.devices", Array.from({ length: 200 }, (_, index) => ({ id: `device-${index}`, label: "Device", tokenHash: createHash("sha256").update(`token-${index}`).digest("hex"), scopes: ["read"], createdAt: "2026-07-23T00:00:00.000Z" })));
+    const pairing = remote.beginPairing("New device", ["read"]);
+    expect(() => remote.completePairing(pairing.pairingId, pairing.code)).toThrow("device limit");
+    expect(database.getPrivateState<Array<{ id: string; status: string }>>("remote.pairings")?.find((item) => item.id === pairing.pairingId)?.status).toBe("pending");
+    database.close();
+  });
+
   it("runs concrete Docker, SSH, and Kubernetes CLI adapters with argv containment", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-cli-")); const bin = join(root, "bin");
     writeFileSync(join(root, "placeholder"), "workspace");
