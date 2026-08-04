@@ -314,6 +314,22 @@ describe("model provider adapters", () => {
     expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 2 });
   });
 
+  it.each(["null", "[]"])("rejects a non-object Gemini response root: %s", async (body) => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(body);
+    });
+    const provider = new GeminiGenerateContentProvider({ apiKey: "gemini-secret", baseUrl });
+
+    await expect(
+      provider.complete({ model: "gemini-test", messages: [{ role: "user", content: textContent("hello") }] }),
+    ).rejects.toMatchObject({
+      message: "Gemini returned an invalid response.",
+      providerId: "gemini",
+      retryable: false,
+    });
+  });
+
   it("escalates to a different endpoint after a failed strategy and records both attempts", async () => {
     const failing: ModelProvider = {
       id: "failing",
