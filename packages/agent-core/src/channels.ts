@@ -354,7 +354,7 @@ export class ChannelProgressSession {
   }
 
   async update(input: { phase: ChannelProgressPhase; completed?: number; total?: number }): Promise<void> {
-    if (this.signal.aborted) throw this.signal.reason;
+    if (this.signal.aborted) throw this.signal.reason ?? new Error("Channel progress was cancelled.");
     if (this.shouldType(input.phase)) await this.pulseTyping();
     if (!this.adapter.edit || this.adapter.kind === "gmail" || !this.shouldDraft(input.phase)) return;
     const progress = input.completed !== undefined && input.total !== undefined && input.total > 0
