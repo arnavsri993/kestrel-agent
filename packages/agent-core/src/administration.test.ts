@@ -33,6 +33,19 @@ describe("reference-product migration", () => {
     expect(JSON.parse(readFileSync(join(target, plan.translations[0]!.destinationPath), "utf8"))).toMatchObject({ schemaVersion: 1, values: { preferredModel: "gpt-test", approvalMode: "on-request" } });
     expect(manager.apply(plan, { approved: true }).skipped).toHaveLength(4);
   });
+
+  it("rejects a migration source that grows beyond the plan limit", () => {
+    const source = mkdtempSync(join(tmpdir(), "kestrel-codex-import-large-"));
+    const target = mkdtempSync(join(tmpdir(), "kestrel-import-target-large-"));
+    directories.push(source, target);
+    const sourcePath = join(source, "AGENTS.md");
+    writeFileSync(sourcePath, "Inspect before editing.\n");
+    const manager = new MigrationManager();
+    const plan = manager.plan([{ product: "codex", root: source }], target);
+    writeFileSync(sourcePath, Buffer.alloc(1_000_001));
+
+    expect(() => manager.apply(plan, { approved: true })).toThrow("source changed after planning");
+  });
 });
 
 describe("managed organization policy", () => {
