@@ -18,7 +18,9 @@ export class UsageGovernor {
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
 
   getPolicy(): UsagePolicy {
-    return UsagePolicySchema.parse(this.database.getPrivateState<UsagePolicy>(this.key) ?? DEFAULT_USAGE_POLICY);
+    const stored = this.database.getPrivateState<unknown>(this.key);
+    const parsed = UsagePolicySchema.safeParse(stored);
+    return parsed.success ? parsed.data : DEFAULT_USAGE_POLICY;
   }
 
   setPolicy(policy: UsagePolicy): UsagePolicy {
