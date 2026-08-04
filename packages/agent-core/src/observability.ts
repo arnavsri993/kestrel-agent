@@ -6,6 +6,7 @@ import { resourceFromAttributes } from "@opentelemetry/resources";
 import { MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { BasicTracerProvider, BatchSpanProcessor, TraceIdRatioBasedSampler } from "@opentelemetry/sdk-trace-base";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
+import { z } from "zod";
 import type { KestrelDatabase } from "@kestrel/database";
 import {
   ObservabilityConfigurationSchema,
@@ -26,6 +27,11 @@ interface StoredExportStatus {
   state: "success" | "error";
   at: string;
 }
+
+const StoredExportStatusSchema = z.object({
+  state: z.enum(["success", "error"]),
+  at: z.string().datetime(),
+});
 
 export const DEFAULT_OBSERVABILITY_CONFIGURATION: ObservabilityConfiguration = {
   enabled: false,
@@ -223,7 +229,9 @@ export class ObservabilityManager {
 
   status(): ObservabilityStatus {
     const configuration = this.configuration();
-    const exported = this.database.getState<StoredExportStatus>(STATUS_KEY);
+    const storedExportStatus = this.database.getState<unknown>(STATUS_KEY);
+    const parsedExportStatus = StoredExportStatusSchema.safeParse(storedExportStatus);
+    const exported = parsedExportStatus.success ? parsedExportStatus.data : undefined;
     const hasHeaderValue = Boolean(this.database.getPrivateState<string>(HEADER_VALUE_KEY));
     return {
       running: Boolean(configuration.enabled && ((configuration.otlp.enabled && (this.meterProvider || this.tracerProvider)) || configuration.prometheus.enabled)),
