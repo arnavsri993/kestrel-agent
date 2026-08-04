@@ -188,6 +188,7 @@ export class TaskOrchestrator {
   private readonly jobsKey = "orchestrator.scheduled-jobs";
   private readonly goalsKey = "orchestrator.goals";
   private readonly teamsKey = "orchestrator.teams";
+  private readonly maximumStoredGoals = 200;
 
   constructor(
     private readonly database: KestrelDatabase,
@@ -468,7 +469,7 @@ export class TaskOrchestrator {
     const timestamp = this.now().toISOString();
     if (options.deadline && !Number.isFinite(new Date(options.deadline).getTime())) throw new Error("Goal deadline is invalid.");
     const goal: GoalRecord = { id: `goal-${randomUUID()}`, sessionId, title: title.trim(), objective: objective.trim(), status: "active", tasks: tasks.map((task) => ({ id: `goal-task-${randomUUID()}`, title: task.slice(0, 500), status: "pending" })), ...(options.sourceOpportunityId ? { sourceOpportunityId: options.sourceOpportunityId } : {}), ...(options.deadline ? { deadline: new Date(options.deadline).toISOString() } : {}), createdAt: timestamp, updatedAt: timestamp };
-    this.database.setPrivateState(this.goalsKey, [...this.listGoals(), goal]);
+    this.saveGoals([...this.listGoals(), goal]);
     return goal;
   }
 
@@ -507,7 +508,7 @@ export class TaskOrchestrator {
     }
     const updated = { ...current, ...(input.status ? { status: input.status } : {}), tasks, updatedAt: this.now().toISOString() };
     goals[index] = updated;
-    this.database.setPrivateState(this.goalsKey, goals);
+    this.saveGoals(goals);
     return updated;
   }
 
@@ -748,6 +749,17 @@ export class TaskOrchestrator {
 
   private saveJobs(jobs: ScheduledAgentJob[]): void {
     this.database.setPrivateState(this.jobsKey, jobs);
+  }
+
+  private saveGoals(goals: GoalRecord[]): void {
+    const active = goals.filter((goal) => goal.status === "active");
+    if (active.length > this.maximumStoredGoals) throw new Error("Active goal history exceeds the storage limit.");
+    const terminal = goals.filter((goal) => goal.status !== "active");
+    const terminalLimit = Math.max(0, this.maximumStoredGoals - active.length);
+    const retainedTerminal = terminal.slice(Math.max(0, terminal.length - terminalLimit));
+    const retainedIds = new Set(retainedTerminal.map((goal) => goal.id));
+    const value = goals.filter((goal) => goal.status === "active" || retainedIds.has(goal.id));
+    this.database.setPrivateState(this.goalsKey, value);
   }
 
   private replaceJob(job: ScheduledAgentJob): void {

@@ -328,6 +328,30 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("bounds terminal goal history without evicting active goals", () => {
+    const item = fixture(finalProvider());
+    const previous = Array.from({ length: 200 }, (_, index) => ({
+      id: `goal-${index}`,
+      sessionId: item.parent.id,
+      title: index === 0 ? "Keep active" : `Completed goal ${index}`,
+      objective: index === 0 ? "Keep this plan." : "Already completed.",
+      status: index === 0 ? "active" as const : "completed" as const,
+      tasks: [],
+      createdAt: "2026-07-22T20:00:00.000Z",
+      updatedAt: "2026-07-22T20:00:00.000Z",
+    }));
+    item.database.setPrivateState("orchestrator.goals", previous);
+
+    const latest = item.orchestrator.createGoal(item.parent.id, "Current", "Keep this active.");
+
+    const goals = item.orchestrator.listGoals();
+    expect(goals).toHaveLength(200);
+    expect(goals).toContainEqual(expect.objectContaining({ id: "goal-0", status: "active" }));
+    expect(goals.some((goal) => goal.id === "goal-1")).toBe(false);
+    expect(goals).toContainEqual(latest);
+    item.database.close();
+  });
+
   it("persists encrypted schedules and advances recurring jobs", async () => {
     let instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(finalProvider(), () => instant);
