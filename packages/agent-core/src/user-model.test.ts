@@ -23,4 +23,14 @@ describe("reviewable user model", () => {
     expect(ciphertext.value_ciphertext).not.toContain("Lead with the outcome");
     database.close();
   });
+
+  it("recovers when persisted user-model facts are not an array", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const store = new UserModelStore(database);
+    database.setPrivateState("memory.user-model", { corrupted: true });
+    expect(store.list()).toEqual([]);
+    expect(store.promptContext()).toBe("");
+    expect(store.propose({ kind: "profile", key: "name", value: "User", sourceIds: ["message-1"], confidence: 0.9, sensitivity: "normal" })).toMatchObject({ status: "proposed" });
+    database.close();
+  });
 });
