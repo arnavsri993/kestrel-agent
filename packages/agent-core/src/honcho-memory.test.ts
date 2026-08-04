@@ -125,6 +125,27 @@ describe("opt-in Honcho memory provider", () => {
     database.close();
   });
 
+  it("does not apply a new configuration when resetting state fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const provider = new HonchoMemoryProvider(database);
+    provider.configure(enabledConfiguration());
+    const setPrivateState = database.setPrivateState.bind(database);
+    database.setPrivateState = (key, value) => {
+      if (key === "memory.honcho.state")
+        throw new Error("Honcho state unavailable");
+      setPrivateState(key, value);
+    };
+
+    expect(() => provider.configure({
+      ...enabledConfiguration(),
+      workspaceId: "new-workspace",
+    })).toThrow("Honcho state unavailable");
+    expect(provider.status().configuration.workspaceId).toBe(
+      "workstrand-test",
+    );
+    database.close();
+  });
+
   it("verifies, assembles bounded two-layer context, and syncs attributed messages once", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const { calls, client } = fixture();
