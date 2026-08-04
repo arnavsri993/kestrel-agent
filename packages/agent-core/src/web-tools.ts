@@ -187,7 +187,8 @@ export class NetworkPolicyWebClient {
   }
 
   private async validate(value: string): Promise<string> {
-    const url = new URL(value);
+    let url: URL;
+    try { url = new URL(value); } catch { throw new Error("Web access only permits HTTPS URLs."); }
     if (url.protocol !== "https:") throw new Error("Web access only permits HTTPS URLs.");
     const hostname = url.hostname.toLowerCase();
     if (!this.options.allowPublicHosts && !this.hosts.has(hostname)) throw new Error(`Web host ${hostname} is not allowlisted.`);
