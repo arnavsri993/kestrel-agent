@@ -84,15 +84,19 @@ async function boundedBytes(
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  while (true) {
-    const part = await reader.read();
-    if (part.done) break;
-    total += part.value.byteLength;
-    if (total > maximum) {
-      await reader.cancel();
-      throw new Error("Petdex response exceeds the byte limit.");
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      total += part.value.byteLength;
+      if (total > maximum) throw new Error("Petdex response exceeds the byte limit.");
+      chunks.push(part.value);
     }
-    chunks.push(part.value);
+  } catch (error) {
+    try { await reader.cancel(); } catch { /* Preserve the original download error. */ }
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
   return Buffer.concat(chunks, total);
 }
