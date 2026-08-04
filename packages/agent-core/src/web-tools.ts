@@ -125,7 +125,10 @@ export class NetworkPolicyWebClient {
     this.hosts = new Set(options.allowedHosts.map((host) => host.toLowerCase()));
     if (this.hosts.size === 0 && !options.allowPublicHosts) throw new Error("Web access requires an explicit host allowlist or public-host opt-in.");
     this.maximumBytes = options.maximumBytes ?? 1_000_000;
-    this.timeoutMs = options.timeoutMs ?? 20_000;
+    const configuredTimeout = options.timeoutMs ?? 20_000;
+    this.timeoutMs = Number.isFinite(configuredTimeout)
+      ? Math.max(1_000, Math.min(60_000, Math.trunc(configuredTimeout)))
+      : 20_000;
     this.fetcher = options.fetcher ?? fetch;
     this.resolver = options.resolveHost ?? (async (hostname) => (await lookup(hostname, { all: true })).map((entry) => entry.address));
     this.now = options.now ?? (() => new Date());
