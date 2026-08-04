@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -196,6 +196,27 @@ describe("managed local runtime", () => {
     const status = await manager.status();
     expect(status).toMatchObject({ automaticSupported: false, ollamaAvailable: false, source: "none" });
     await expect(manager.bootstrap("qwen:test")).rejects.toThrow("manual setup");
+  });
+
+  it("removes a staged verification file when persistence fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    const destination = join(root, "local-runtime", "last-verification.json");
+    await mkdir(destination, { recursive: true });
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      manifest: testManifest(new TextEncoder().encode("archive")),
+    });
+
+    await expect(
+      (
+        manager as unknown as {
+          recordVerification(model: string): Promise<void>;
+        }
+      ).recordVerification("qwen:test"),
+    ).rejects.toThrow();
+    await expect(readdir(join(root, "local-runtime"))).resolves.toEqual([
+      "last-verification.json",
+    ]);
   });
 
   it("does not offer the managed runtime on Intel Macs", async () => {
