@@ -24,6 +24,7 @@ describe("event application manager", () => {
   it("rejects unsafe URLs and incomplete review", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const manager = new EventApplicationManager(database);
+    expect(() => manager.create({ title: "Event", organizer: "Host", url: "not a URL" })).toThrow("HTTPS");
     expect(() => manager.create({ title: "Event", organizer: "Host", url: "http://events.example.test" })).toThrow("HTTPS");
     const draft = manager.create({ title: "Event", organizer: "Host", url: "https://events.example.test" });
     manager.update(draft.id, {

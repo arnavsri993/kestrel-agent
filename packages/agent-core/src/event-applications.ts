@@ -33,7 +33,8 @@ export interface EventApplication {
 
 const KEY = "event-applications.v1";
 function validHttps(value: string): string {
-  const url = new URL(value);
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error("Event URL must be credential-free HTTPS."); }
   if (url.protocol !== "https:" || url.username || url.password || url.hash) throw new Error("Event URL must be credential-free HTTPS.");
   return url.toString();
 }
