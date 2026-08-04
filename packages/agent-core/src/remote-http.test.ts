@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -272,6 +273,26 @@ describe("authenticated remote HTTP transport", () => {
     const { origin } = await server.start();
     expect((await fetch(`${origin}/health`, { headers: { origin: "https://blocked.example" } })).status).toBe(403);
     await expect(new RemoteHttpServer({ remote, runtime, host: "0.0.0.0" }).start()).rejects.toThrow("requires TLS");
+    database.close();
+  });
+
+  it("can retry after a listen failure", async () => {
+    const { database, runtime, remote } = fixture();
+    const blocker = createServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = blocker.address();
+    if (!address || typeof address === "string") throw new Error("The test server did not expose a TCP address.");
+
+    const server = new RemoteHttpServer({ remote, runtime, host: "127.0.0.1", port: address.port });
+    servers.push(server);
+    await expect(server.start()).rejects.toThrow();
+    await new Promise<void>((resolve, reject) => blocker.close((error) => error ? reject(error) : resolve()));
+
+    const started = await server.start();
+    expect(started.origin).toContain(`:${address.port}`);
     database.close();
   });
 

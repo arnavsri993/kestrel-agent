@@ -197,14 +197,20 @@ export class RemoteHttpServer {
     if (!isLoopback(host) && !this.options.tls && !(this.options.trustedProxy && this.options.allowProxyTerminatedTls)) throw new Error("Non-loopback remote transport requires TLS or explicit trusted-proxy TLS termination.");
     if (this.options.allowProxyTerminatedTls && !this.options.trustedProxy) throw new Error("Proxy-terminated TLS requires trusted-proxy authentication.");
     const handler = (request: IncomingMessage, response: ServerResponse) => { void this.handle(request, response); };
-    this.server = this.options.tls ? createHttpsServer(this.options.tls, handler) : createHttpServer(handler);
-    this.server.requestTimeout = 15_000;
-    this.server.headersTimeout = 10_000;
-    this.server.keepAliveTimeout = 5_000;
-    await new Promise<void>((resolve, reject) => {
-      this.server!.once("error", reject);
-      this.server!.listen(this.options.port ?? 0, host, () => { this.server!.off("error", reject); resolve(); });
-    });
+    const server = this.options.tls ? createHttpsServer(this.options.tls, handler) : createHttpServer(handler);
+    this.server = server;
+    server.requestTimeout = 15_000;
+    server.headersTimeout = 10_000;
+    server.keepAliveTimeout = 5_000;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(this.options.port ?? 0, host, () => { server.off("error", reject); resolve(); });
+      });
+    } catch (error) {
+      if (this.server === server) this.server = undefined;
+      throw error;
+    }
     const address = this.server.address() as AddressInfo;
     const displayHost = address.family === "IPv6" ? `[${address.address}]` : address.address;
     return { origin: `${this.options.tls ? "https" : "http"}://${displayHost}:${address.port}` };
