@@ -151,6 +151,18 @@ describe("model provider adapters", () => {
     expect(deltas).toEqual(["Checking "]);
   });
 
+  it("bounds malformed OpenAI Responses usage counts", async () => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: { status: "completed", usage: { input_tokens: "not-a-number", output_tokens: -2, input_tokens_details: { cached_tokens: "Infinity" }, output_tokens_details: { reasoning_tokens: 3.9 } } } })}\n\n`);
+    });
+    const provider = new OpenAIResponsesProvider({ apiKey: "not-a-real-key", baseUrl });
+
+    const result = await provider.complete({ model: "test-openai", messages: [{ role: "user", content: textContent("Count this") }] });
+
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 3 });
+  });
+
   it("maps Anthropic Messages streaming tool input and usage", async () => {
     let apiVersion = "";
     const baseUrl = await serve((request, response) => {
