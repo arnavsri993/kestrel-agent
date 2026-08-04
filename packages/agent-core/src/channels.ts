@@ -251,7 +251,9 @@ export class ChannelGateway {
   list(): Array<{ id: string; kind: NonNullable<ChannelAdapter["kind"]>; inbound: boolean; editableProgress: boolean; typingSignals: boolean; reactions: boolean }> { return [...new Set([...this.adapters.keys(), ...Object.keys(this.signingSecrets)])].map((id) => { const adapter = this.adapters.get(id); return { id, kind: adapter?.kind ?? "webhook", inbound: Boolean(this.signingSecrets[id]), editableProgress: Boolean(adapter?.edit && adapter.kind !== "gmail"), typingSignals: Boolean(adapter?.typing && adapter.kind === "discord"), reactions: Boolean(adapter?.react && adapter.kind !== "gmail") }; }); }
 
   interactionConfiguration(): ChannelInteractionConfiguration {
-    return ChannelInteractionConfigurationSchema.parse(this.database.getPrivateState("channels.interaction") ?? { progressMode: "progress", typingMode: "thinking", typingIntervalSeconds: 6, reactionLevel: "minimal" });
+    const stored = this.database.getPrivateState<unknown>("channels.interaction");
+    const parsed = ChannelInteractionConfigurationSchema.safeParse(stored);
+    return parsed.success ? parsed.data : { progressMode: "progress", typingMode: "thinking", typingIntervalSeconds: 6, reactionLevel: "minimal" };
   }
 
   configureInteraction(configuration: ChannelInteractionConfiguration): ChannelInteractionConfiguration {
