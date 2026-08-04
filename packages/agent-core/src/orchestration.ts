@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
-import { GoalRecordSchema, type ModelCapability, type RuntimeToolExecution, type TaskOpportunity } from "@kestrel/shared-types";
+import { GoalRecordSchema, ScheduledJobSummarySchema, type ModelCapability, type RuntimeToolExecution, type TaskOpportunity } from "@kestrel/shared-types";
 import { AgentLoop, SessionRunBusyError, type AgentLoopResult } from "./agent-loop";
 import { ProviderPool, textContent } from "./providers";
 import { AdaptiveModelRouter, ModelRegistry, TaskRequirementAnalyzer } from "./model-orchestration";
@@ -186,6 +186,24 @@ function substituteItem(value: unknown, item: unknown): unknown {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isScheduledAgentJob(value: unknown): value is ScheduledAgentJob {
+  if (!isRecord(value)) return false;
+  const parsed = ScheduledJobSummarySchema.safeParse(value);
+  if (!parsed.success || !parsed.data.id || parsed.data.providerIds.length === 0 || typeof value.prompt !== "string") return false;
+  if (value.instructions !== undefined && typeof value.instructions !== "string") return false;
+  if (value.providerModels !== undefined && (!isRecord(value.providerModels) || Object.values(value.providerModels).some((model) => typeof model !== "string"))) return false;
+  if (parsed.data.schedule.kind === "interval" && (parsed.data.schedule.intervalMs < MIN_SCHEDULE_INTERVAL_MS || parsed.data.schedule.intervalMs > MAX_SCHEDULE_INTERVAL_MS)) return false;
+  if (parsed.data.schedule.kind === "cron") {
+    try {
+      const expected = nextCronOccurrence(parsed.data.schedule.expression, new Date(new Date(parsed.data.schedule.nextRunAt).getTime() - 60_000));
+      if (expected.toISOString() !== parsed.data.schedule.nextRunAt) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isWorkflowRecord(value: unknown): value is WorkflowRecord {
@@ -626,7 +644,8 @@ export class TaskOrchestrator {
   }
 
   listJobs(): ScheduledAgentJob[] {
-    return this.database.getPrivateState<ScheduledAgentJob[]>(this.jobsKey) ?? [];
+    const stored: unknown = this.database.getPrivateState<unknown>(this.jobsKey);
+    return Array.isArray(stored) ? stored.filter(isScheduledAgentJob) : [];
   }
 
   cancelJob(id: string): ScheduledAgentJob {
