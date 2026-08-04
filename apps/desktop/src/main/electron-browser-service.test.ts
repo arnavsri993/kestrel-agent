@@ -130,4 +130,50 @@ describe("Electron browser action cancellation", () => {
     );
     expect(loadURL).not.toHaveBeenCalled();
   });
+
+  it("rejects malformed browser protocol responses", async () => {
+    const executeJavaScript = vi.fn(() => null);
+    const sendCommand = vi.fn(async (method: string) => method === "Accessibility.getFullAXTree" ? { nodes: "invalid" } : null);
+    const service = new ElectronBrowserService();
+    const sessions = (
+      service as unknown as {
+        sessions: Map<string, unknown>;
+      }
+    ).sessions;
+    sessions.set("browser-test", {
+      window: {
+        isDestroyed: () => false,
+        webContents: {
+          executeJavaScript,
+          debugger: { isAttached: () => true, sendCommand },
+          getURL: () => "https://example.test",
+          getTitle: () => "Example",
+        },
+      },
+      partition: {},
+      allowedOrigins: new Set<string>(),
+      diagnostics: [],
+      downloads: [],
+      downloadDirectory: "/tmp/browser-test",
+    });
+
+    await expect(
+      service.handle(
+        { operation: "act", sessionId: "browser-test", action: { type: "type", target: "#prompt", text: "hello" } },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Electron browser returned an invalid target bounds response.");
+    await expect(
+      service.handle(
+        { operation: "snapshot", sessionId: "browser-test" },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Electron browser returned an invalid accessibility tree.");
+    await expect(
+      service.handle(
+        { operation: "upload", sessionId: "browser-test", selector: "input[type=file]", paths: [] },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Electron browser returned an invalid DOM document response.");
+  });
 });
