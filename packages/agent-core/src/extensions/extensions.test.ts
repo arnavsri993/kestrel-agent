@@ -703,6 +703,28 @@ describe("Codex-compatible plugin manifests", () => {
     database.close();
   });
 
+  it("rejects malformed plugin MCP configuration before spawning a server", async () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-mcp-invalid-"));
+    directories.push(container);
+    const pluginRoot = join(container, "invalid", "1.0.0");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "invalid", version: "1.0.0", description: "Malformed MCP configuration.", mcpServers: "./.mcp.json" }));
+    const mcpPath = join(pluginRoot, ".mcp.json");
+    writeFileSync(mcpPath, "null");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const registry = new PluginRegistry([container], database);
+    registry.discover();
+    registry.setEnabled("invalid", true);
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Invalid plugin MCP" });
+    const manager = new PluginMcpManager(registry, runtime);
+
+    await expect(manager.connect("invalid", session.id)).rejects.toThrow("Plugin MCP configuration is invalid.");
+    writeFileSync(mcpPath, "not-json");
+    await expect(manager.connect("invalid", session.id)).rejects.toThrow("Plugin MCP configuration is invalid.");
+    database.close();
+  });
+
   it("rejects plugin-controlled process loader environment variables", async () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-mcp-env-"));
     directories.push(container);
