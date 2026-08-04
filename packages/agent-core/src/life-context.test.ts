@@ -312,4 +312,21 @@ describe("unified life context", () => {
     expect(database.getMemory(unrelated.id)).toBeDefined();
     database.close();
   });
+
+  it("rolls back a person deletion when linked-memory removal fails", () => {
+    const { database, life } = fixture();
+    const person = life.upsertPerson({ displayName: "Morgan", relationship: "Former teammate", sourceId: "message-person", sensitivity: "personal" });
+    const memory = life.memory.remember({ type: "relationship", content: "Morgan prefers review notes in email.", structuredData: { category: "people" }, sourceIds: ["message-related"], sourceType: "direct-user-statement", confidence: 1, importance: 0.7, sensitivity: "personal", entityIds: [person.id], relatedPersonIds: [person.id], userConfirmed: true, inferred: false });
+    const upsertMemory = database.upsertMemory.bind(database);
+    database.upsertMemory = () => {
+      throw new Error("memory delete failed");
+    };
+
+    expect(() => life.deletePerson(person.id)).toThrow("memory delete failed");
+    expect(database.getPerson(person.id)).toMatchObject({ status: "active" });
+    expect(database.getMemory(memory.id)).toBeDefined();
+    expect(life.memory.versions(memory.id)).toEqual([]);
+    database.upsertMemory = upsertMemory;
+    database.close();
+  });
 });
