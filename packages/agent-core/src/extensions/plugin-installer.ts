@@ -81,6 +81,14 @@ function normalizedRelativePath(root: string, path: string): string {
   return value.normalize("NFC");
 }
 
+function readJsonObject(path: string, errorMessage: string): Record<string, unknown> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(readFileSync(path, "utf8")); }
+  catch { throw new Error(errorMessage); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(errorMessage);
+  return parsed as Record<string, unknown>;
+}
+
 export class PluginInstaller {
   private readonly managedRoot: string;
   private readonly trustKeys = new Map<string, KeyObject>();
@@ -165,14 +173,14 @@ export class PluginInstaller {
     const signatureFile = files.find((file) => file.relativePath === signatureRelativePath);
     if (!manifestFile) throw new Error("Plugin bundle is missing .codex-plugin/plugin.json.");
     if (!signatureFile || signatureFile.bytes > 64_000) throw new Error("Plugin bundle is missing a bounded signature file.");
-    const manifest = JSON.parse(readFileSync(manifestFile.absolutePath, "utf8")) as Record<string, unknown>;
+    const manifest = readJsonObject(manifestFile.absolutePath, "Plugin manifest is invalid.");
     const name = typeof manifest.name === "string" ? manifest.name : "";
     const version = typeof manifest.version === "string" ? manifest.version : "";
     const description = typeof manifest.description === "string" ? manifest.description : "";
     validatePluginName(name);
     if (!/^[A-Za-z0-9][A-Za-z0-9.+_-]{0,99}$/.test(version)) throw new Error("Plugin version is invalid.");
     if (!description || description.length > 2_000) throw new Error("Plugin description is invalid.");
-    const signature = JSON.parse(readFileSync(signatureFile.absolutePath, "utf8")) as Record<string, unknown>;
+    const signature = readJsonObject(signatureFile.absolutePath, "Plugin signature metadata is invalid.");
     if (signature.algorithm !== "ed25519" || typeof signature.keyId !== "string" || typeof signature.digest !== "string" || typeof signature.signature !== "string") throw new Error("Plugin signature metadata is invalid.");
     const publicKey = this.trustKeys.get(signature.keyId);
     if (!publicKey) throw new Error(`Plugin signature key ${signature.keyId} is not trusted.`);
