@@ -503,6 +503,19 @@ describe("chat configuration manager", () => {
     expect(manager.improvements()[0]?.status).toBe("staged");
     database.close();
   });
+
+  it("treats malformed improvement scan timestamps as due", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new AgentConfigurationManager(
+      database,
+      () => new Date("2026-07-29T12:00:00.000Z"),
+    );
+    database.setPrivateState("agent.configuration.last-improvement-scan", { malformed: true });
+
+    expect(manager.runImprovementScanIfDue()).toEqual([]);
+    expect(database.getPrivateState("agent.configuration.last-improvement-scan")).toBe("2026-07-29T12:00:00.000Z");
+    database.close();
+  });
 });
 
 describe("chat configuration runtime approval boundary", () => {
