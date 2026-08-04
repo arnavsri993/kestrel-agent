@@ -88,4 +88,21 @@ describe("review-gated memory dreaming", () => {
     expect(dreaming.runIfDue()).toBeUndefined();
     database.close();
   });
+
+  it("rolls back configuration when status persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const dreaming = new DreamingManager(database);
+    const originalSetPrivateState = database.setPrivateState.bind(database);
+    database.setPrivateState = (key, value) => {
+      if (key === "memory.dreaming.state") throw new Error("dreaming status write failed");
+      originalSetPrivateState(key, value);
+    };
+
+    expect(() => dreaming.configure({ enabled: true, scheduleHour: 3, minimumScore: 0.5, minimumRecallCount: 2, minimumUniqueDays: 2 })).toThrow("dreaming status write failed");
+    expect(dreaming.configuration().enabled).toBe(false);
+    expect(dreaming.status().detail).toContain("off");
+
+    database.setPrivateState = originalSetPrivateState;
+    database.close();
+  });
 });
