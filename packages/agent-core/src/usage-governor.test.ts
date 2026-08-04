@@ -29,6 +29,7 @@ describe("usage governor", () => {
       rates: {}
     });
     expect(governor.estimateCost("provider", "model", { inputTokens: 1_000_000, outputTokens: 100_000, cachedInputTokens: 200_000, reasoningTokens: 50_000 })).toBe(2.9);
+    expect(governor.estimateCost("provider", "model", { inputTokens: 100, outputTokens: -100, cachedInputTokens: 500, reasoningTokens: Number.NaN })).toBe(0.00005);
     const lease = governor.acquire();
     expect(() => governor.acquire()).toThrow("concurrency limit");
     lease.release();
