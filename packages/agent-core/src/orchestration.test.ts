@@ -113,6 +113,29 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("ignores malformed persisted scheduled jobs", () => {
+    const item = fixture(finalProvider());
+    const job = item.orchestrator.schedule({
+      title: "Recoverable schedule",
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      prompt: "Run safely.",
+      schedule: { kind: "once", nextRunAt: "2026-07-22T20:00:00.000Z" },
+    });
+    item.database.setPrivateState("orchestrator.scheduled-jobs", [
+      job,
+      { ...job, prompt: 42 },
+      { ...job, schedule: { kind: "interval", nextRunAt: job.schedule.nextRunAt, intervalMs: 1 } },
+      null,
+    ]);
+    expect(item.orchestrator.listJobs()).toEqual([job]);
+
+    item.database.setPrivateState("orchestrator.scheduled-jobs", { malformed: true });
+    expect(item.orchestrator.listJobs()).toEqual([]);
+    item.database.close();
+  });
+
   it("caps delegated and scheduled runs at the active workflow turn limit", async () => {
     let instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(
