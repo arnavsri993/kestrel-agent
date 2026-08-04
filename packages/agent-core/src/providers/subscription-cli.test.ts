@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ async function fakeCli(): Promise<{ executable: string; capture: string }> {
   const body = `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
+fs.writeFileSync(process.argv[1] + ".started", "started");
 if (args[0] === "auth") { process.stdout.write(JSON.stringify({ loggedIn: true, subscriptionType: "max" }) + "\\n"); process.exit(0); }
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -36,6 +38,16 @@ afterEach(async () => {
 });
 
 describe("vendor subscription CLI providers", () => {
+  it("does not spawn the provider CLI when the request is already cancelled", async () => {
+    const fake = await fakeCli();
+    const provider = new ClaudeSubscriptionProvider({ executable: fake.executable });
+    const controller = new AbortController();
+    controller.abort(new Error("already cancelled"));
+
+    await expect(provider.probe(controller.signal)).rejects.toThrow("already cancelled");
+    expect(existsSync(`${fake.executable}.started`)).toBe(false);
+  });
+
   it("delegates to Claude subscription auth with customizations and tools disabled", async () => {
     const fake = await fakeCli();
     const provider = new ClaudeSubscriptionProvider({ executable: fake.executable, environment: { PATH: process.env.PATH, HOME: process.env.HOME, ANTHROPIC_API_KEY: "must-not-leak" } });
