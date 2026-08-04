@@ -19,18 +19,27 @@ export interface WebResultCache {
 
 interface WebCacheRecord { key: string; expiresAt: string; value: unknown }
 
+function isWebCacheRecord(value: unknown): value is WebCacheRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.key === "string" && record.key.length <= 4_000
+    && typeof record.expiresAt === "string" && Number.isFinite(Date.parse(record.expiresAt));
+}
+
 export class EncryptedDatabaseWebCache implements WebResultCache {
   private readonly stateKey = "web.result-cache";
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
   get<T>(key: string): T | undefined {
     const timestamp = this.now().getTime();
-    const records = (this.database.getPrivateState<WebCacheRecord[]>(this.stateKey) ?? []).filter((record) => new Date(record.expiresAt).getTime() > timestamp);
+    const stored = this.database.getPrivateState<unknown>(this.stateKey);
+    const records = (Array.isArray(stored) ? stored.filter(isWebCacheRecord) : []).filter((record) => Date.parse(record.expiresAt) > timestamp);
     this.database.setPrivateState(this.stateKey, records);
     return records.find((record) => record.key === key)?.value as T | undefined;
   }
   set<T>(key: string, value: T, ttlMs: number): void {
     const timestamp = this.now().getTime();
-    const records = (this.database.getPrivateState<WebCacheRecord[]>(this.stateKey) ?? []).filter((record) => record.key !== key && new Date(record.expiresAt).getTime() > timestamp).slice(-99);
+    const stored = this.database.getPrivateState<unknown>(this.stateKey);
+    const records = (Array.isArray(stored) ? stored.filter(isWebCacheRecord) : []).filter((record) => record.key !== key && Date.parse(record.expiresAt) > timestamp).slice(-99);
     records.push({ key, value, expiresAt: new Date(timestamp + ttlMs).toISOString() });
     this.database.setPrivateState(this.stateKey, records);
   }

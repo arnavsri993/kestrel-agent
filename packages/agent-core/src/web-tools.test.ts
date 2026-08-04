@@ -5,6 +5,26 @@ import { AgentRuntime } from "./runtime";
 import { BraveSearchProvider, EncryptedDatabaseWebCache, NetworkPolicyWebClient, environmentWebAccessOptions, installWebTools } from "./web-tools";
 
 describe("network-policy web tools", () => {
+  it("ignores malformed encrypted web cache state", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const now = new Date("2026-07-22T23:30:00.000Z");
+    const cache = new EncryptedDatabaseWebCache(database, () => now);
+    const valid = { key: "valid", value: { result: "ok" }, expiresAt: "2026-07-22T23:45:00.000Z" };
+    database.setPrivateState("web.result-cache", [
+      valid,
+      { ...valid, expiresAt: "invalid" },
+      { ...valid, key: { malformed: true } },
+      "malformed",
+    ]);
+
+    expect(cache.get("valid")).toEqual({ result: "ok" });
+
+    database.setPrivateState("web.result-cache", { malformed: true });
+    cache.set("new", { result: "new" }, 60_000);
+    expect(cache.get("new")).toEqual({ result: "new" });
+    database.close();
+  });
+
   it("fetches bounded readable text and labels it untrusted", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     let fetches = 0;
