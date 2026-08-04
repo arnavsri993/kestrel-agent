@@ -152,6 +152,36 @@ describe("managed local runtime", () => {
     await expect(readFile(join(root, "local-runtime", "ollama", "test", "workstrand-install.json"), "utf8")).rejects.toThrow();
   });
 
+  it("drops non-finite model progress values", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    const progress: LocalRuntimeProgress[] = [];
+    let modelInstalled = false;
+    const manager = new LocalRuntimeManager(root, (event) => progress.push(event), {
+      fetch: (async (input) => {
+        const url = String(input);
+        if (url.endsWith("/api/tags")) return Response.json({ models: modelInstalled ? [{ name: "qwen:test" }] : [] });
+        if (url.endsWith("/api/pull")) {
+          modelInstalled = true;
+          return new Response('{"status":"pulling","completed":1e400,"total":1e400}\n', { status: 200 });
+        }
+        if (url.endsWith("/api/chat")) return Response.json({ done: true, message: { content: "READY" } });
+        throw new Error(`Unexpected URL: ${url}`);
+      }) as typeof fetch,
+      platform: "darwin",
+      architecture: "arm64",
+      manifest: testManifest(new TextEncoder().encode("archive"))
+    });
+
+    await manager.bootstrap("qwen:test");
+
+    const malformed = progress.find((event) => event.stage === "downloading-model" && event.message === "pulling");
+    expect(malformed).toMatchObject({ stage: "downloading-model" });
+    expect(malformed).not.toHaveProperty("downloadedBytes");
+    expect(malformed).not.toHaveProperty("totalBytes");
+    expect(malformed).not.toHaveProperty("percent");
+  });
+
   it("fails closed to manual setup on unsupported platforms", async () => {
     const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
     roots.push(root);
