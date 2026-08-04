@@ -62,6 +62,19 @@ function within(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}${sep}`);
 }
 
+const MAX_GENERATED_ARTIFACT_BYTES = 100_000_000;
+
+function previewLimit(value: number): number {
+  if (!Number.isSafeInteger(value)) return 5_000_000;
+  return Math.max(1, Math.min(10_000_000, value));
+}
+
+function generationLimit(value: number | undefined): number {
+  if (value === undefined) return MAX_GENERATED_ARTIFACT_BYTES;
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_GENERATED_ARTIFACT_BYTES) throw new Error("Generated artifact byte limit is invalid.");
+  return value;
+}
+
 function extension(mediaType: string): string {
   return (
     (
@@ -167,7 +180,7 @@ export class ArtifactManager {
     if (!within(this.root, path) || !statSync(path).isFile())
       throw new Error("Artifact preview path escapes the artifact root.");
     const data = readFileSync(path);
-    const limit = Math.max(1, Math.min(10_000_000, maximumBytes));
+    const limit = previewLimit(maximumBytes);
     return {
       id,
       mediaType: artifact.mediaType,
@@ -212,6 +225,7 @@ export class ArtifactManager {
     const provider = this.providers.get(input.providerId);
     if (!provider)
       throw new Error(`Media provider ${input.providerId} is not configured.`);
+    const maximum = generationLimit(input.maximumBytes);
     const generated = await provider.generate({
       prompt: input.prompt,
       kind: input.kind,
@@ -223,7 +237,6 @@ export class ArtifactManager {
       ...(input.format ? { format: input.format } : {}),
       signal,
     });
-    const maximum = input.maximumBytes ?? 100_000_000;
     if (generated.data.byteLength === 0 || generated.data.byteLength > maximum)
       throw new Error("Generated artifact violates the byte limit.");
     const detected = sniff(generated.data);
