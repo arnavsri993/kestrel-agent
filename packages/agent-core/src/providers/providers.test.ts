@@ -245,6 +245,22 @@ describe("model provider adapters", () => {
     expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 });
   });
 
+  it.each(["null", "[]"])("rejects a non-object Anthropic Messages SSE frame: %s", async (body) => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(`data: ${body}\n\n`);
+    });
+    const provider = new AnthropicMessagesProvider({ apiKey: "test", baseUrl });
+
+    await expect(
+      provider.complete({ model: "test-claude", messages: [{ role: "user", content: textContent("hello") }] }),
+    ).rejects.toMatchObject({
+      message: "Anthropic returned invalid streaming JSON.",
+      providerId: "anthropic",
+      retryable: false,
+    });
+  });
+
   it("maps Ollama NDJSON streaming responses and local tool calls", async () => {
     let requestBody: Record<string, unknown> = {};
     const baseUrl = await serve((request, response) => {
