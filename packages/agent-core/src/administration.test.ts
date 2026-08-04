@@ -116,6 +116,12 @@ describe("managed organization policy", () => {
     const signatureBase64 = sign(null, Buffer.from(canonical(policy)), privateKey).toString("base64");
     writeFileSync(envelopePath, JSON.stringify({ algorithm: "Ed25519", policy, signatureBase64 }), { mode: 0o600 });
     expect(loadSignedManagedPolicy(envelopePath, keyPath)).toEqual(policy);
+    writeFileSync(envelopePath, "not json", { mode: 0o600 });
+    expect(() => loadSignedManagedPolicy(envelopePath, keyPath)).toThrow("Managed policy signature envelope is invalid.");
+    writeFileSync(envelopePath, JSON.stringify({ algorithm: "Ed25519", policy, signatureBase64 }), { mode: 0o600 });
+    writeFileSync(keyPath, "not a public key");
+    expect(() => loadSignedManagedPolicy(envelopePath, keyPath)).toThrow("Managed policy public key is invalid.");
+    writeFileSync(keyPath, publicKey.export({ type: "spki", format: "pem" }));
     writeFileSync(envelopePath, JSON.stringify({ algorithm: "Ed25519", policy: { ...policy, maximumWorkers: 9 }, signatureBase64 }), { mode: 0o600 });
     expect(() => loadSignedManagedPolicy(envelopePath, keyPath)).toThrow("verification failed");
   });
