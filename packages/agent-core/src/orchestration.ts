@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
-import type { ModelCapability, RuntimeToolExecution, TaskOpportunity } from "@kestrel/shared-types";
+import { TeamRecordSchema, type ModelCapability, type RuntimeToolExecution, type TaskOpportunity } from "@kestrel/shared-types";
 import { AgentLoop, SessionRunBusyError, type AgentLoopResult } from "./agent-loop";
 import { ProviderPool, textContent } from "./providers";
 import { AdaptiveModelRouter, ModelRegistry, TaskRequirementAnalyzer } from "./model-orchestration";
@@ -136,6 +136,14 @@ export interface GoalTask { id: string; title: string; status: "pending" | "in_p
 export interface GoalRecord { id: string; sessionId: string; title: string; objective: string; status: "active" | "completed" | "cancelled"; tasks: GoalTask[]; sourceOpportunityId?: string; deadline?: string; createdAt: string; updatedAt: string; }
 export interface TeamMessage { id: string; fromSessionId: string; toSessionId: string; text: string; createdAt: string; }
 export interface TeamRecord { id: string; parentSessionId: string; title: string; memberSessionIds: string[]; sharedPlan: string[]; messages: TeamMessage[]; createdAt: string; updatedAt: string; }
+
+function parseStoredTeams(value: unknown): TeamRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const parsed = TeamRecordSchema.safeParse(item);
+    return parsed.success ? [parsed.data as TeamRecord] : [];
+  });
+}
 
 function resolveReference(reference: string, results: Record<string, RuntimeToolExecution>): unknown {
   if (!reference.startsWith("$")) return reference;
@@ -519,7 +527,9 @@ export class TaskOrchestrator {
     return team;
   }
 
-  listTeams(): TeamRecord[] { return this.database.getPrivateState<TeamRecord[]>(this.teamsKey) ?? []; }
+  listTeams(): TeamRecord[] {
+    return parseStoredTeams(this.database.getPrivateState<unknown>(this.teamsKey));
+  }
 
   teamUsage(teamId: string): { runs: number; inputTokens: number; outputTokens: number } {
     const team = this.listTeams().find((candidate) => candidate.id === teamId);
