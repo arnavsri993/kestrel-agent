@@ -236,7 +236,12 @@ export class BonjourAdvertiser {
     if (this.configuration.mode === "off") return { active: false, mode: "off", serviceType: "_workstrand-gw._tcp", detail: "Bonjour advertising is off." };
     if (this.platform !== "darwin") throw new Error("Built-in Bonjour advertising currently requires macOS dns-sd.");
     if (this.handle) throw new Error("Bonjour advertising is already active.");
-    const url = new URL(origin);
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch {
+      throw new Error("Bonjour gateway origin is invalid.");
+    }
     const port = Number(url.port);
     if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("Bonjour gateway port is invalid.");
     const records = [
