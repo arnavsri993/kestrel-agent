@@ -117,6 +117,14 @@ import {
   installAgentConfigurationTools,
 } from "./configuration";
 
+function persistedCompactionCount(value: unknown): number {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+  const count = (value as { removedMessages?: unknown }).removedMessages;
+  return typeof count === "number" && Number.isSafeInteger(count) && count >= 0
+    ? count
+    : 0;
+}
+
 export interface AgentCoreDependencies {
   database: KestrelDatabase;
   /** Seed the deterministic teacher-scheduling data used by preview and test surfaces. */
@@ -1510,9 +1518,11 @@ export class AgentCore {
               compactedMessages: runs.reduce(
                 (sum, run) =>
                   sum +
-                  (this.deps.database.getPrivateState<{
-                    removedMessages: number;
-                  }>(`agent-run-compaction.${run.id}`)?.removedMessages ?? 0),
+                  persistedCompactionCount(
+                    this.deps.database.getPrivateState<unknown>(
+                      `agent-run-compaction.${run.id}`,
+                    ),
+                  ),
                 0,
               ),
             },

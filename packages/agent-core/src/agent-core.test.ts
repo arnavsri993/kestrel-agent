@@ -223,6 +223,28 @@ describe("core agent request path", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it("ignores malformed persisted compaction counts in session usage", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
+    const session = core.runtime.ensureMainSession();
+    database.saveAgentRun({
+      id: "run-malformed-compaction",
+      sessionId: session.id,
+      model: "model",
+      providerIds: ["provider"],
+      status: "completed",
+      turn: 1,
+      createdAt: "2026-07-22T15:00:00.000Z",
+      updatedAt: "2026-07-22T15:00:00.000Z",
+    });
+    database.setPrivateState("agent-run-compaction.run-malformed-compaction", { removedMessages: "many" });
+
+    const response = await core.handle({ type: "runtime-session-usage", sessionId: session.id });
+
+    expect(response).toMatchObject({ ok: true, usage: { compactedMessages: 0 } });
+    await core.close();
+  });
+
   it("persists a user-selected communication personality without changing safety policy", async () => {
     const { core } = createCore();
     const response = await core.handle({ type: "set-personality", personalityId: "concise" });
