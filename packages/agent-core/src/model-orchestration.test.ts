@@ -86,6 +86,16 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+  it("ignores malformed persisted routing traces", () => {
+    const item = fixture([provider({ id: "local", model: "private" })]);
+    item.database.setPrivateState("orchestration.routing-traces.v1", {
+      corrupted: true,
+    });
+
+    expect(item.router.traces()).toEqual([]);
+    item.database.close();
+  });
+
   it("routes simple verifiable work to the cheaper adequate endpoint", () => {
     const item = fixture([
       provider({
