@@ -199,6 +199,9 @@ interface PairingRecord { id: string; label: string; codeHash: string; scopes: R
 interface DeviceRecord { id: string; label: string; tokenHash: string; scopes: RemoteScope[]; createdAt: string; revokedAt?: string; }
 export interface RemoteSessionSummary { id: string; title: string; status: RuntimeSession["status"]; parentSessionId?: string; updatedAt: string; }
 
+const MAX_REMOTE_PAIRINGS = 200;
+const MAX_REMOTE_PAIRING_LABEL_LENGTH = 100;
+
 function digest(value: string): string { return createHash("sha256").update(value).digest("hex"); }
 
 export class RemoteControl {
@@ -207,16 +210,18 @@ export class RemoteControl {
   constructor(private readonly database: KestrelDatabase, private readonly runtime: AgentRuntime, private readonly orchestrator: TaskOrchestrator, private readonly now: () => Date = () => new Date()) {}
 
   beginPairing(label: string, scopes: RemoteScope[], lifetimeMs = 300_000): { pairingId: string; code: string; expiresAt: string } {
-    if (!label.trim() || scopes.length === 0) throw new Error("Remote pairing requires a label and scopes.");
+    if (!label.trim() || label.length > MAX_REMOTE_PAIRING_LABEL_LENGTH || scopes.length === 0) throw new Error("Remote pairing requires a valid label and scopes.");
     if (scopes.some((scope) => !["read", "tasks", "approve"].includes(scope))) throw new Error("Remote pairing scope is invalid.");
+    const pairings = this.prunePairings();
+    if (pairings.length >= MAX_REMOTE_PAIRINGS) throw new Error("Remote pairing limit reached.");
     const code = randomBytes(6).toString("base64url");
     const pairing: PairingRecord = { id: `pair-${randomUUID()}`, label, codeHash: digest(code), scopes: [...new Set(scopes)], expiresAt: new Date(this.now().getTime() + Math.max(30_000, Math.min(lifetimeMs, 600_000))).toISOString(), attempts: 0, status: "pending" };
-    this.database.setPrivateState(this.pairingKey, [...this.pairings(), pairing]);
+    this.database.setPrivateState(this.pairingKey, [...pairings, pairing]);
     return { pairingId: pairing.id, code, expiresAt: pairing.expiresAt };
   }
 
   completePairing(pairingId: string, code: string): { deviceId: string; token: string; scopes: RemoteScope[] } {
-    const pairings = this.pairings();
+    const pairings = this.prunePairings();
     const index = pairings.findIndex((pairing) => pairing.id === pairingId);
     const pairing = pairings[index];
     if (!pairing || pairing.status !== "pending" || pairing.attempts >= 5 || new Date(pairing.expiresAt).getTime() < this.now().getTime()) throw new Error("Remote pairing is invalid or expired.");
@@ -275,6 +280,16 @@ export class RemoteControl {
     const device = this.devices().find((candidate) => candidate.tokenHash === hash && !candidate.revokedAt);
     if (!device || !device.scopes.includes(scope)) throw new Error("Remote token is invalid or lacks the required scope.");
     return device;
+  }
+  private prunePairings(): PairingRecord[] {
+    const pairings = this.pairings();
+    const now = this.now().getTime();
+    const active = pairings.filter((pairing) => {
+      const expiresAt = Date.parse(pairing.expiresAt);
+      return pairing.status === "pending" && Number.isFinite(expiresAt) && expiresAt > now;
+    });
+    if (active.length !== pairings.length) this.database.setPrivateState(this.pairingKey, active);
+    return active;
   }
   private pairings(): PairingRecord[] { return this.database.getPrivateState<PairingRecord[]>(this.pairingKey) ?? []; }
   private devices(): DeviceRecord[] { return this.database.getPrivateState<DeviceRecord[]>(this.devicesKey) ?? []; }
