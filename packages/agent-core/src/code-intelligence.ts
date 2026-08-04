@@ -96,7 +96,9 @@ export async function environmentLanguageServerClient(environment: NodeJS.Proces
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 1_000_000 || (metadata.mode & 0o077) !== 0) throw new Error("KESTREL_LSP_CONFIG must be an owner-only regular file no larger than 1 MB.");
   let parsed: Record<string, unknown>;
   try {
-    parsed = JSON.parse(readFileSync(realpathSync(path), "utf8")) as Record<string, unknown>;
+    const value = JSON.parse(readFileSync(realpathSync(path), "utf8")) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+    parsed = value as Record<string, unknown>;
   } catch {
     throw new Error("Language server configuration is invalid.");
   }
