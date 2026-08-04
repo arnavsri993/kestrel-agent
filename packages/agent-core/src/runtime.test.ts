@@ -27,6 +27,18 @@ afterEach(() => {
 });
 
 describe("agent runtime", () => {
+  it("recovers from a malformed persisted background-process journal", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setPrivateState("runtime.background-processes", {
+      corrupted: true,
+    });
+
+    const runtime = new AgentRuntime(database, [], () => "2026-07-22T16:00:00.000Z");
+    expect(runtime.ensureMainSession()).toBeDefined();
+    runtime.close();
+    database.close();
+  });
+
   it("does not advertise workspace tools until a root has been granted", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database, [], () => "2026-07-22T16:00:00.000Z");

@@ -65,6 +65,10 @@ export interface DeclarativeRuntimeHook {
   action: { kind: "block"; reason: string } | { kind: "notice"; message: string };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function globPattern(value: string): RegExp {
   if (!value || value.length > 200) throw new Error("Hook tool glob is invalid.");
   return new RegExp(`^${value.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`);
@@ -323,7 +327,7 @@ export class AgentRuntime extends EventEmitter {
     ];
     this.reconcilePersistedWorkspaceRoots();
     this.reconcileIdempotencyClaims();
-    const previousProcesses = this.database.getPrivateState<Array<Record<string, unknown>>>(this.processJournalKey) ?? [];
+    const previousProcesses = this.processJournalRecords();
     if (previousProcesses.some((process) => process.status === "running")) this.database.setPrivateState(this.processJournalKey, previousProcesses.map((process) => process.status === "running" ? { ...process, status: "interrupted", error: "The host restarted while this process was running.", updatedAt: this.now() } : process));
     this.registerWorkspaceTools();
     this.registerExecutionTools();
@@ -2200,10 +2204,17 @@ export class AgentRuntime extends EventEmitter {
     };
   }
 
-  private processJournal(processId: string): Record<string, unknown> | undefined { return (this.database.getPrivateState<Array<Record<string, unknown>>>(this.processJournalKey) ?? []).find((process) => process.processId === processId); }
+  private processJournal(processId: string): Record<string, unknown> | undefined { return this.processJournalRecords().find((process) => process.processId === processId); }
+
+  private processJournalRecords(): Array<Record<string, unknown>> {
+    const stored = this.database.getPrivateState<unknown>(this.processJournalKey);
+    return Array.isArray(stored)
+      ? stored.filter(isRecord).slice(-200)
+      : [];
+  }
 
   private saveProcessJournal(record: Record<string, unknown>): void {
-    const records = this.database.getPrivateState<Array<Record<string, unknown>>>(this.processJournalKey) ?? [];
+    const records = this.processJournalRecords();
     this.database.setPrivateState(this.processJournalKey, [...records.filter((process) => process.processId !== record.processId), record].slice(-200));
   }
 
