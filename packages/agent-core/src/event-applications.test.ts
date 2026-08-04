@@ -33,4 +33,22 @@ describe("event application manager", () => {
     expect(() => manager.update(draft.id, { status: "approved" })).toThrow("Review");
     database.close();
   });
+
+  it("ignores malformed persisted applications without retaining unsafe records", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new EventApplicationManager(database, () => new Date("2026-07-23T14:00:00.000Z"));
+    const valid = manager.create({ title: "Event", organizer: "Host", url: "https://events.example.test" });
+    database.setPrivateState("event-applications.v1", [
+      valid,
+      { ...valid, id: "not-an-event-application" },
+      { ...valid, url: "http://events.example.test" },
+      "malformed",
+    ]);
+
+    expect(manager.list()).toEqual([valid]);
+
+    database.setPrivateState("event-applications.v1", { malformed: true });
+    expect(manager.list()).toEqual([]);
+    database.close();
+  });
 });

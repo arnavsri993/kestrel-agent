@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
+import { EventApplicationSchema } from "@kestrel/shared-types";
 import type { AgentRuntime } from "./runtime";
 
 export type EventApplicationStatus = "draft" | "preparing" | "ready" | "approved" | "submitted" | "needs_attention";
@@ -42,9 +43,43 @@ function clean(value: string, maximum: number, label: string): string {
   return result;
 }
 
+function parseStored(value: unknown): EventApplication | undefined {
+  const parsed = EventApplicationSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  try {
+    const application: EventApplication = {
+      id: parsed.data.id,
+      title: parsed.data.title,
+      organizer: parsed.data.organizer,
+      url: validHttps(parsed.data.url),
+      status: parsed.data.status,
+      eligibility: parsed.data.eligibility,
+      answers: parsed.data.answers,
+      createdAt: parsed.data.createdAt,
+      updatedAt: parsed.data.updatedAt,
+    };
+    if (parsed.data.deadline !== undefined) application.deadline = parsed.data.deadline;
+    if (parsed.data.approvedAt !== undefined) application.approvedAt = parsed.data.approvedAt;
+    if (parsed.data.submittedAt !== undefined) application.submittedAt = parsed.data.submittedAt;
+    if (parsed.data.receipt !== undefined) application.receipt = parsed.data.receipt;
+    return application;
+  } catch {
+    return undefined;
+  }
+}
+
 export class EventApplicationManager {
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
-  list(): EventApplication[] { return (this.database.getPrivateState<EventApplication[]>(KEY) ?? []).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+  list(): EventApplication[] {
+    const stored = this.database.getPrivateState<unknown>(KEY);
+    const applications = Array.isArray(stored)
+      ? stored.flatMap((value) => {
+        const parsed = parseStored(value);
+        return parsed ? [parsed] : [];
+      })
+      : [];
+    return applications.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
   create(input: { title: string; organizer: string; url: string; deadline?: string }): EventApplication {
     const timestamp = this.now().toISOString();
     const deadline = input.deadline?.trim();
