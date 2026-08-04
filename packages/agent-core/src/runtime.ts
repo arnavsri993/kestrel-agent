@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { IdempotencyClaim, KestrelDatabase } from "@kestrel/database";
 import { assessExternalContent, mayExecute } from "@kestrel/policy-engine";
@@ -300,7 +301,7 @@ export class AgentRuntime extends EventEmitter {
     string,
     { controller: AbortController; sessionId: string }
   >();
-  private readonly inFlightIdempotentExecutions = new Map<string, Promise<RuntimeToolExecution>>();
+  private readonly inFlightIdempotentExecutions = new Map<string, { input: Record<string, unknown>; promise: Promise<RuntimeToolExecution> }>();
   private readonly idempotencyOwnerToken = `runtime-${randomUUID()}`;
   private readonly commandRunner = new SandboxedCommandRunner();
   private readonly backgroundProcesses = new Map<string, {
@@ -861,31 +862,39 @@ export class AgentRuntime extends EventEmitter {
     if (definition.descriptor.requiresWorkspace && !workspaceRoot) throw new Error("This tool requires a user-granted workspace root.");
     if (!definition.descriptor.readOnly && !options.idempotencyKey) throw new Error("Mutating tools require an idempotency key.");
 
+    const parsedInput = definition.inputSchema.parse(rawInput);
     const idempotencyKey = options.idempotencyKey ? `runtime-tool:${sessionId}:${toolName}:${options.idempotencyKey}` : undefined;
     const repeated = idempotencyKey ? this.database.getIdempotentResult<RuntimeToolExecution>(idempotencyKey) : undefined;
-    if (repeated) return RuntimeToolExecutionSchema.parse(repeated);
+    if (repeated) {
+      const repeatedExecution = RuntimeToolExecutionSchema.parse(repeated);
+      if (!isDeepStrictEqual(repeatedExecution.input, parsedInput)) throw new Error("Idempotency key was already used with different input.");
+      return repeatedExecution;
+    }
 
     const activeExecution = idempotencyKey
       ? this.inFlightIdempotentExecutions.get(idempotencyKey)
       : undefined;
-    if (activeExecution) return this.waitForPromise(activeExecution, options.signal);
+    if (activeExecution) {
+      if (!isDeepStrictEqual(activeExecution.input, parsedInput)) throw new Error("Idempotency key is already running with different input.");
+      return this.waitForPromise(activeExecution.promise, options.signal);
+    }
 
     const pendingExecution = this.executeToolCall(
       session,
       workspaceRoot,
       definition,
       toolName,
-      rawInput,
+      parsedInput,
       options,
       idempotencyKey,
     );
     if (!idempotencyKey) return pendingExecution;
 
-    this.inFlightIdempotentExecutions.set(idempotencyKey, pendingExecution);
+    this.inFlightIdempotentExecutions.set(idempotencyKey, { input: parsedInput, promise: pendingExecution });
     try {
       return await pendingExecution;
     } finally {
-      if (this.inFlightIdempotentExecutions.get(idempotencyKey) === pendingExecution) {
+      if (this.inFlightIdempotentExecutions.get(idempotencyKey)?.promise === pendingExecution) {
         this.inFlightIdempotentExecutions.delete(idempotencyKey);
       }
     }
@@ -896,11 +905,10 @@ export class AgentRuntime extends EventEmitter {
     workspaceRoot: string | undefined,
     definition: RuntimeToolDefinition,
     toolName: string,
-    rawInput: Record<string, unknown>,
+    input: Record<string, unknown>,
     options: ToolCallOptions,
     idempotencyKey: string | undefined,
   ): Promise<RuntimeToolExecution> {
-    const input = definition.inputSchema.parse(rawInput);
     const assessment = options.externalContent ? assessExternalContent(options.externalContent) : undefined;
     const configuredPolicy = this.toolPolicyResolver?.({
       session,

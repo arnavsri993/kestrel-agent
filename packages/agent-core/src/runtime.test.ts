@@ -785,15 +785,17 @@ describe("agent runtime", () => {
     await expect(runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "one\n" }))
       .rejects.toThrow("idempotency key");
     const first = await runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "one\n" }, { idempotencyKey: "write-new" });
-    const repeated = await runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "two\n" }, { idempotencyKey: "write-new" });
+    const repeated = await runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "one\n" }, { idempotencyKey: "write-new" });
     expect(repeated.id).toBe(first.id);
+    await expect(runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "two\n" }, { idempotencyKey: "write-new" })).rejects.toThrow("different input");
     expect(first.verification).toMatchObject({ method: "filesystem-content-readback", evidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/) });
     expect(readFileSync(join(root, "src", "new.ts"), "utf8")).toBe("one\n");
 
     const stale = await runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "two\n", expectedContent: "stale\n" }, { idempotencyKey: "stale-write" });
     expect(stale).toMatchObject({ status: "failed", error: expect.stringContaining("changed since it was read") });
-    const repeatedFailure = await runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "three\n" }, { idempotencyKey: "stale-write" });
+    const repeatedFailure = await runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "two\n", expectedContent: "stale\n" }, { idempotencyKey: "stale-write" });
     expect(repeatedFailure).toEqual(stale);
+    await expect(runtime.callTool(session.id, "workspace.write", { path: "src/new.ts", content: "three\n", expectedContent: "stale\n" }, { idempotencyKey: "stale-write" })).rejects.toThrow("different input");
     expect(readFileSync(join(root, "src", "new.ts"), "utf8")).toBe("one\n");
 
     const mutationId = first.output?.mutationId;
