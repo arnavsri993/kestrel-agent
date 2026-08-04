@@ -122,12 +122,15 @@ export class AnthropicMessagesProvider implements ModelProvider {
     let stopReason: unknown;
     const blocks = new Map<number, { id: string; name: string; json: string }>();
     await readServerSentEvents(response, this.id, ({ data }) => {
-      let event: Record<string, unknown>;
+      let parsed: unknown;
       try {
-        event = JSON.parse(data) as Record<string, unknown>;
+        parsed = JSON.parse(data);
       } catch {
         throw new ModelProviderError("Anthropic returned malformed streaming JSON.", this.id, false);
       }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new ModelProviderError("Anthropic returned invalid streaming JSON.", this.id, false);
+      const event = parsed as Record<string, unknown>;
       if (event.type === "message_start") {
         const message = (event.message as Record<string, unknown> | undefined) ?? {};
         if (typeof message.id === "string") responseId = message.id;
