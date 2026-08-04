@@ -57,4 +57,25 @@ describe("durable memory manager", () => {
     expect(manager.userModel.promptContext()).toBe("");
     database.close();
   });
+
+  it("recovers malformed correction counters during user edits", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new MemoryManager(database);
+    const memory = manager.remember({
+      type: "semantic",
+      content: "A memory with an old counter.",
+      structuredData: { correctionCount: "not-a-number" },
+      sourceIds: ["message-counter"],
+      sourceType: "direct-user-statement",
+      confidence: 1,
+      importance: 0.5,
+      sensitivity: "personal",
+      entityIds: [],
+      userConfirmed: true,
+      inferred: false,
+    });
+
+    expect(manager.correct(memory.id, { content: "The corrected memory." }).structuredData).toMatchObject({ correctionCount: 1 });
+    database.close();
+  });
 });
