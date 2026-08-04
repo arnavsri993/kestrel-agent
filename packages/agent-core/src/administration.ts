@@ -291,7 +291,10 @@ export class ManagedPolicyStore {
     return { cutoff, deleted: this.database.enforceRetention(cutoff) };
   }
 
-  listMembers(): OrganizationMember[] { return this.database.getPrivateState<OrganizationMember[]>(this.membersKey) ?? []; }
+  listMembers(): OrganizationMember[] {
+    const stored = this.database.getPrivateState<unknown>(this.membersKey);
+    return Array.isArray(stored) ? stored as OrganizationMember[] : [];
+  }
 
   provisionMember(input: Omit<OrganizationMember, "active" | "updatedAt"> & { active?: boolean }): OrganizationMember {
     if (!this.get()) throw new Error("Organization policy is not configured.");
