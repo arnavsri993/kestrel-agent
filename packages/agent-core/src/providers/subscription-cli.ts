@@ -140,7 +140,11 @@ export class ClaudeSubscriptionProvider implements ModelProvider {
 
   async probe(signal?: AbortSignal): Promise<void> {
     const root = await mkdtemp(join(tmpdir(), "kestrel-claude-probe-"));
-    try { await runCli(this.executable, ["auth", "status"], "", { cwd: root, environment: this.environment, signal, timeoutMs: 15_000 }); }
+    try {
+      const result = await runCli(this.executable, ["auth", "status"], "", { cwd: root, environment: this.environment, signal, timeoutMs: 15_000 });
+      const status = result.stdout.split(/\r?\n/).map((line) => parseObject(line.trim())).reverse().find((value) => value !== undefined);
+      if (status?.loggedIn === false) throw new Error("Claude subscription is not authenticated.");
+    }
     catch (error) { throw new ModelProviderError(error instanceof Error ? error.message : "Claude subscription authentication failed.", this.id, false); }
     finally { await rm(root, { recursive: true, force: true }); }
   }
