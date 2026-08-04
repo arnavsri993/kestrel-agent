@@ -258,6 +258,26 @@ describe("adaptive model orchestration", () => {
     item.database.close();
   });
 
+  it("rolls back model registration when persistence fails", () => {
+    const item = fixture([provider({ id: "fixture", model: "base" })]);
+    const before = item.registry.list();
+    const base = item.registry.get("fixture:base");
+    item.database.db.exec(`
+      CREATE TRIGGER reject_model_registry_persistence
+      BEFORE UPDATE ON private_runtime_state
+      WHEN NEW.key = 'orchestration.model-registry.v1'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced model registry persistence failure');
+      END
+    `);
+
+    expect(() => item.registry.register({ ...base, id: "fixture:extra", model: "extra", displayName: "Extra" })).toThrow("forced model registry persistence failure");
+    expect(() => item.registry.get("fixture:extra")).toThrow("Model profile fixture:extra is not registered.");
+    expect(item.registry.list()).toEqual(before);
+    expect(item.database.getPrivateState("orchestration.model-registry.v1")).toEqual(before);
+    item.database.close();
+  });
+
   it("applies local preference independently of the routing mode", () => {
     const item = fixture([
       provider({
