@@ -2037,8 +2037,11 @@ export class AgentRuntime extends EventEmitter {
     if (!this.githubToken) throw new Error("GitHub workflows require a protected GitHub token.");
     const response = await fetch(`https://api.github.com${path}`, { ...init, signal, redirect: "error", headers: { accept: "application/vnd.github+json", authorization: `Bearer ${this.githubToken}`, "content-type": "application/json", "x-github-api-version": "2022-11-28", ...(init.headers ?? {}) } });
     const text = (await response.text()).slice(0, 1_000_000); if (!response.ok) { let message = response.statusText; try { message = String((JSON.parse(text) as { message?: unknown }).message ?? message); } catch {} throw new Error(`GitHub request failed (${response.status}: ${message.slice(0, 2_000)}).`); }
-    try { return JSON.parse(text) as T; }
+    let parsed: unknown;
+    try { parsed = JSON.parse(text) as unknown; }
     catch { throw new Error("GitHub returned malformed JSON."); }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("GitHub returned an invalid JSON response.");
+    return parsed as T;
   }
 
   private registerTool(definition: RuntimeToolDefinition): void {
