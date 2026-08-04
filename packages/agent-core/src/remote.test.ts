@@ -76,6 +76,26 @@ describe("remote backends and scoped supervision", () => {
     database.close();
   });
 
+  it("recovers pairing and device authorization when persisted records are malformed", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const orchestrator = new TaskOrchestrator(database, runtime, new AgentLoop(database, runtime, new ProviderPool([provider])));
+    const remote = new RemoteControl(database, runtime, orchestrator, () => new Date("2026-07-23T00:00:00.000Z"));
+    const pairing = remote.beginPairing("Recovery device", ["read"]);
+    const storedPairing = database.getPrivateState<unknown[]>("remote.pairings")?.[0];
+    database.setPrivateState("remote.pairings", [storedPairing, { id: "malformed", codeHash: "short" }, null]);
+    const device = remote.completePairing(pairing.pairingId, pairing.code);
+    const storedDevice = database.getPrivateState<unknown[]>("remote.devices")?.[0];
+    database.setPrivateState("remote.devices", [storedDevice, { id: "malformed", tokenHash: "short" }, null]);
+    expect(remote.hasAuthorizedScope(device.token, "read")).toBe(true);
+
+    database.setPrivateState("remote.pairings", { corrupted: true });
+    expect(() => remote.beginPairing("Replacement", ["read"])).not.toThrow();
+    database.setPrivateState("remote.devices", { corrupted: true });
+    expect(remote.hasAuthorizedScope(device.token, "read")).toBe(false);
+    database.close();
+  });
+
   it("locks a pairing after five failed guesses", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
