@@ -165,6 +165,20 @@ describe("opt-in Honcho memory provider", () => {
     database.close();
   });
 
+  it("bounds persisted per-session context snapshots while retaining the newest session", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const { client } = fixture();
+    const provider = new HonchoMemoryProvider(database, undefined, undefined, () => client);
+    provider.configure(enabledConfiguration());
+    database.setPrivateState("memory.honcho.sessions", Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`session-${index}`, { turn: 1, baseContext: "old", dialectic: "old" }])));
+    await provider.contextFor({ sessionId: "session-new", query: "What matters?" });
+    const states = database.getPrivateState<Record<string, unknown>>("memory.honcho.sessions") ?? {};
+    expect(Object.keys(states)).toHaveLength(200);
+    expect(states).not.toHaveProperty("session-0");
+    expect(states).toHaveProperty("session-new");
+    database.close();
+  });
+
   it("registers five remote-memory tools and keeps mutating reasoning behind approval", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const { client } = fixture();
