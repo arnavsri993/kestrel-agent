@@ -712,8 +712,8 @@ export class AgentCore {
       reviewRequired: decision.settings.reviewRequired,
       selectedAt: decision.selectedAt,
     };
-    this.currentRouting = route;
     this.deps.database.setState("modelRouting", route);
+    this.currentRouting = route;
     const orchestrationInstructions = requirements.parallelizable
       ? [
           "This request has independent specialist work. You are the accountable orchestrator.",
