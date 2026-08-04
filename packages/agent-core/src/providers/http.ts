@@ -1,4 +1,7 @@
 import { ModelProviderError } from "./types";
+import { readBoundedResponseBytes } from "../bounded-http";
+
+const MAX_PROVIDER_ERROR_BYTES = 64_000;
 
 export interface ServerSentEvent {
   event?: string;
@@ -68,7 +71,13 @@ export async function providerFetch(
     );
   }
   if (!response.ok) {
-    const body = (await response.text()).slice(0, 2_000).replace(/[\r\n]+/g, " ");
+    let body = "";
+    try {
+      const bytes = await readBoundedResponseBytes(response, MAX_PROVIDER_ERROR_BYTES, "Provider error response exceeds 64 KB.");
+      body = Buffer.from(bytes).toString("utf8").slice(0, 2_000).replace(/[\r\n]+/g, " ");
+    } catch {
+      body = "error body exceeded the 64 KB safety limit";
+    }
     const retryable = response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500;
     throw new ModelProviderError(`Provider returned HTTP ${response.status}${body ? `: ${body}` : ""}`, providerId, retryable, response.status);
   }
