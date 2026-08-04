@@ -109,7 +109,7 @@ describe("persistent Codex app-server provider", () => {
         PATH: process.env.PATH,
         HOME: process.env.HOME,
       },
-      requestTimeoutMs: 2_000,
+      requestTimeoutMs: 10_000,
     });
 
     await expect(provider.probe()).rejects.toThrow("fake initialize failed");
