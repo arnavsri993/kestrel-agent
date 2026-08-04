@@ -66,6 +66,17 @@ function finalProvider(onCall?: () => Promise<void>): ModelProvider {
 }
 
 describe("task orchestration", () => {
+  it("rejects malformed persisted workflows before execution", () => {
+    const item = fixture(finalProvider());
+    item.database.setPrivateState("orchestrator.workflow.corrupted", {
+      id: "corrupted",
+      status: "running",
+    });
+
+    expect(() => item.orchestrator.resumeWorkflow("corrupted")).toThrow("Workflow not found");
+    item.database.close();
+  });
+
   it("parses bounded natural-language, ISO, and cron schedules", () => {
     const now = new Date("2026-07-22T20:07:30.000Z");
     expect(parseScheduleExpression("every 15 minutes", now)).toEqual({ kind: "interval", intervalMs: 900_000, nextRunAt: "2026-07-22T20:22:30.000Z" });

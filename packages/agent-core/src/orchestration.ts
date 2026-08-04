@@ -176,6 +176,36 @@ function substituteItem(value: unknown, item: unknown): unknown {
   return value;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isWorkflowRecord(value: unknown): value is WorkflowRecord {
+  if (!isRecord(value)) return false;
+  const steps = value.steps;
+  const results = value.results;
+  const validSteps = Array.isArray(steps) && steps.length <= 200 && steps.every((step) => {
+    if (!isRecord(step) || typeof step.id !== "string" || typeof step.toolName !== "string" || !isRecord(step.input)) return false;
+    if (step.approvalStatus !== undefined && !["pending", "approved"].includes(String(step.approvalStatus))) return false;
+    if (step.when !== undefined && (!isRecord(step.when) || typeof step.when.reference !== "string")) return false;
+    return step.forEach === undefined || (Array.isArray(step.forEach) && step.forEach.length <= 20);
+  });
+  return typeof value.id === "string" &&
+    typeof value.sessionId === "string" &&
+    typeof value.title === "string" &&
+    validSteps &&
+    Number.isInteger(value.nextStep) &&
+    Number(value.nextStep) >= 0 &&
+    Number(value.nextStep) <= steps.length &&
+    ["running", "waiting_approval", "completed", "failed", "cancelled"].includes(String(value.status)) &&
+    isRecord(results) &&
+    Object.values(results).every(isRecord) &&
+    typeof value.createdAt === "string" &&
+    !Number.isNaN(Date.parse(value.createdAt)) &&
+    typeof value.updatedAt === "string" &&
+    !Number.isNaN(Date.parse(value.updatedAt));
+}
+
 function workflowConditionMatches(condition: WorkflowStep["when"], results: Record<string, RuntimeToolExecution>): boolean {
   if (!condition) return true;
   if (!condition.reference.startsWith("$")) throw new Error("Workflow conditions require a result reference.");
@@ -709,8 +739,9 @@ export class TaskOrchestrator {
   }
 
   resumeWorkflow(id: string, approvedStepIds: string[] = []): Promise<WorkflowRecord> {
-    const workflow = this.database.getPrivateState<WorkflowRecord>(`orchestrator.workflow.${id}`);
-    if (!workflow) throw new Error("Workflow not found.");
+    const stored = this.database.getPrivateState<unknown>(`orchestrator.workflow.${id}`);
+    if (!isWorkflowRecord(stored)) throw new Error("Workflow not found.");
+    const workflow = stored;
     if (workflow.status !== "waiting_approval" && workflow.status !== "running") throw new Error(`Workflow is ${workflow.status}.`);
     return this.continueWorkflow({ ...workflow, status: "running" }, new Set(approvedStepIds));
   }
