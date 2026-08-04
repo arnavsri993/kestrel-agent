@@ -207,10 +207,14 @@ export class AgentCore {
     this.state =
       deps.database.getState<AgentState>("agentState") ??
       (seedDevelopmentFixtures ? "waiting_approval" : "idle");
-    const storedPersonalities =
-      deps.database.getPrivateState<Array<Omit<AgentPersonality, "builtin">>>(
-        this.customPersonalitiesKey,
-      ) ?? [];
+    const storedPersonalitiesValue = deps.database.getPrivateState<unknown>(
+      this.customPersonalitiesKey,
+    );
+    const storedPersonalities = Array.isArray(storedPersonalitiesValue)
+      ? (storedPersonalitiesValue as Array<
+          Omit<AgentPersonality, "builtin">
+        >)
+      : [];
     const customPersonalities = [
       ...new Map(
         [...(deps.customPersonalities ?? []), ...storedPersonalities].map(
