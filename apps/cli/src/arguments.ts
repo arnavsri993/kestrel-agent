@@ -528,7 +528,14 @@ function parseRemoteCommand(args: string[]): CliCommand {
       .map((value) => value.trim())
       .filter(Boolean);
     for (const value of allowedOrigins) {
-      const parsed = new URL(value);
+      let parsed: URL;
+      try {
+        parsed = new URL(value);
+      } catch {
+        throw new Error(
+          "--allowed-origins must contain exact HTTP(S) origins.",
+        );
+      }
       if (
         parsed.origin !== value ||
         !["https:", "http:"].includes(parsed.protocol)
