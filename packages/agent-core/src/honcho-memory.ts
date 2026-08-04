@@ -148,7 +148,15 @@ export class HonchoMemoryProvider {
     const parsed = HonchoMemoryConfigurationSchema.safeParse(
       this.database.getPrivateState(this.configurationKey),
     );
-    return parsed.success ? parsed.data : DEFAULT_CONFIGURATION;
+    if (!parsed.success) return structuredClone(DEFAULT_CONFIGURATION);
+    try {
+      return {
+        ...parsed.data,
+        baseUrl: checkedBaseUrl(parsed.data.baseUrl),
+      };
+    } catch {
+      return structuredClone(DEFAULT_CONFIGURATION);
+    }
   }
 
   status(): HonchoMemoryStatus {
