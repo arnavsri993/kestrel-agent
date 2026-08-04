@@ -258,6 +258,25 @@ describe("adaptive model orchestration", () => {
     item.database.close();
   });
 
+  it("rolls back provider-health learning when persistence fails", () => {
+    const item = fixture([provider({ id: "fixture", model: "base" })]);
+    const before = item.registry.get("fixture:base");
+    const persistedBefore = item.database.getPrivateState("orchestration.model-registry.v1");
+    item.database.db.exec(`
+      CREATE TRIGGER reject_model_health_persistence
+      BEFORE UPDATE ON private_runtime_state
+      WHEN NEW.key = 'orchestration.model-registry.v1'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced model health persistence failure');
+      END
+    `);
+
+    expect(() => item.registry.applyProviderHealth([{ providerId: "fixture", averageLatencyMs: 42, attempts: 3, successes: 1 }])).toThrow("forced model health persistence failure");
+    expect(item.registry.get("fixture:base")).toEqual(before);
+    expect(item.database.getPrivateState("orchestration.model-registry.v1")).toEqual(persistedBefore);
+    item.database.close();
+  });
+
   it("applies local preference independently of the routing mode", () => {
     const item = fixture([
       provider({
