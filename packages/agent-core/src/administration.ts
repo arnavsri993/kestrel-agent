@@ -234,6 +234,38 @@ export interface ManagedPolicy {
 export interface OrganizationMember { externalId: string; email: string; displayName: string; role: "member" | "admin"; active: boolean; updatedAt: string }
 export interface OrganizationIdentity { subject: string; email: string; role: OrganizationMember["role"]; issuer: string; expiresAt: string }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isStoredManagedPolicy(value: unknown): value is ManagedPolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const policy = value as Record<string, unknown>;
+  if (
+    typeof policy.organizationId !== "string" ||
+    !policy.organizationId.trim() ||
+    !Number.isInteger(policy.version) ||
+    Number(policy.version) < 1 ||
+    !isStringArray(policy.deniedTools) ||
+    !Number.isInteger(policy.maximumWorkers) ||
+    Number(policy.maximumWorkers) < 1 ||
+    Number(policy.maximumWorkers) > 64 ||
+    typeof policy.updatedAt !== "string" ||
+    !Number.isFinite(Date.parse(policy.updatedAt))
+  ) return false;
+  if (policy.allowedProviders !== undefined && !isStringArray(policy.allowedProviders)) return false;
+  if (policy.allowedTools !== undefined && !isStringArray(policy.allowedTools)) return false;
+  if (policy.retentionDays !== undefined && (!Number.isInteger(policy.retentionDays) || Number(policy.retentionDays) < 1 || Number(policy.retentionDays) > 3_650)) return false;
+  if (policy.analyticsEnabled !== undefined && typeof policy.analyticsEnabled !== "boolean") return false;
+  if (policy.sso === undefined) return true;
+  if (!policy.sso || typeof policy.sso !== "object" || Array.isArray(policy.sso)) return false;
+  const sso = policy.sso as Record<string, unknown>;
+  return typeof sso.issuer === "string" && URL.canParse(sso.issuer) && sso.issuer.startsWith("https://")
+    && typeof sso.audience === "string" && Boolean(sso.audience.trim())
+    && typeof sso.publicKeyPem === "string" && Boolean(sso.publicKeyPem.trim())
+    && (sso.allowedDomains === undefined || isStringArray(sso.allowedDomains));
+}
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
@@ -259,7 +291,10 @@ export class ManagedPolicyStore {
   private readonly membersKey = "enterprise.members";
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
 
-  get(): ManagedPolicy | undefined { return this.database.getPrivateState<ManagedPolicy>(this.key); }
+  get(): ManagedPolicy | undefined {
+    const stored = this.database.getPrivateState<unknown>(this.key);
+    return isStoredManagedPolicy(stored) ? stored : undefined;
+  }
 
   set(policy: Omit<ManagedPolicy, "updatedAt">): ManagedPolicy {
     if (!policy.organizationId.trim()) throw new Error("Managed policy requires an organization ID.");

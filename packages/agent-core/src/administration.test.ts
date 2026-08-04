@@ -36,6 +36,27 @@ describe("reference-product migration", () => {
 });
 
 describe("managed organization policy", () => {
+  it("ignores malformed persisted managed policy state", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const store = new ManagedPolicyStore(database);
+    const valid = {
+      organizationId: "org-test",
+      version: 1,
+      deniedTools: ["workspace.read"],
+      maximumWorkers: 2,
+      updatedAt: "2026-07-22T21:00:00.000Z",
+    };
+    database.setPrivateState("enterprise.managed-policy", { malformed: true });
+    expect(store.get()).toBeUndefined();
+
+    database.setPrivateState("enterprise.managed-policy", valid);
+    expect(store.get()).toEqual(valid);
+
+    database.setPrivateState("enterprise.managed-policy", { ...valid, deniedTools: [null] });
+    expect(store.get()).toBeUndefined();
+    database.close();
+  });
+
   it("enforces retention, exposes content-free analytics, and verifies provisioned SSO identities", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const now = new Date("2026-07-22T21:00:00.000Z");
