@@ -404,7 +404,9 @@ export class PetHatchManager {
   ): Promise<PetHatchDraft[]> {
     const concept = input.concept.trim();
     const style = input.style?.trim() || "auto";
-    const count = Math.max(1, Math.min(4, input.count ?? 4));
+    const count = input.count === undefined || !Number.isFinite(input.count)
+      ? 4
+      : Math.max(1, Math.min(4, Math.floor(input.count)));
     if (!concept || concept.length > 500 || style.length > 80)
       throw new Error("Pet concept or style exceeds its bounds.");
     const provider = this.provider();
