@@ -63,6 +63,11 @@ function finishReason(value: unknown, calls: ModelToolCall[]): ModelFinishReason
   return "unknown";
 }
 
+function usageCount(value: unknown): number {
+  const count = Number(value);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+}
+
 export class OpenAIChatCompletionsProvider implements ModelProvider {
   readonly id: string;
   readonly defaultModel: string;
@@ -151,7 +156,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
       ...(responseId ? { responseId } : {}),
       text,
       toolCalls,
-      usage: { inputTokens: Number(usage.prompt_tokens ?? 0), outputTokens: Number(usage.completion_tokens ?? 0) },
+      usage: { inputTokens: usageCount(usage.prompt_tokens), outputTokens: usageCount(usage.completion_tokens) },
       finishReason: finishReason(stopped, toolCalls)
     };
   }

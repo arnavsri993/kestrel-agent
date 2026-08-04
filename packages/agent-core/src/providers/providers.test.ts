@@ -91,6 +91,16 @@ describe("model provider adapters", () => {
     });
   });
 
+  it("normalizes malformed OpenAI-compatible usage metadata", async () => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: "not-a-number", completion_tokens: -4 } })}\n\ndata: [DONE]\n\n`);
+    });
+    const provider = new OpenAIChatCompletionsProvider({ id: "free", apiKey: "secret", defaultModel: "free-model", baseUrl });
+    const result = await provider.complete({ model: "free-model", messages: [{ role: "user", content: textContent("hello") }] });
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
   it("verifies live provider credentials without sending a model prompt", async () => {
     let method = "";
     let authorization = "";
