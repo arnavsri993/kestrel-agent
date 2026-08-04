@@ -270,58 +270,60 @@ export class LifeContextService {
     const timestamp = this.now().toISOString();
     if (Date.parse(input.endsAt) <= Date.parse(input.startsAt))
       throw new Error("Calendar event must end after it starts.");
-    const eventId = `calendar-event-${randomUUID()}`;
-    const memory = this.memory.remember({
-      type: "episodic",
-      subject: input.title.trim(),
-      content: `${input.title.trim()} from ${input.startsAt} to ${input.endsAt}`,
-      structuredData: {
-        category: "schedule",
-        eventId,
-        conflictKey: `calendar:${normalized(input.title)}:${input.startsAt}`,
-      },
-      sourceIds: [input.sourceId],
-      sourceType:
-        input.origin === "explicit"
-          ? "explicit-user-control"
-          : "agent-inference",
-      confidence: input.confidence,
-      importance: 0.7,
-      sensitivity: "personal",
-      entityIds: [],
-      userConfirmed: input.origin === "explicit",
-      inferred: input.origin === "inferred",
-      confirmationStatus:
-        input.origin === "explicit" ? "explicit" : input.origin,
-      layer: "mid_term",
-      relatedEventIds: [eventId],
-      validFrom: input.startsAt,
-      validUntil: input.endsAt,
-    });
-    const event = UnifiedCalendarEventSchema.parse({
-      id: eventId,
-      providerId: input.origin === "explicit" ? "local" : "agent",
-      origin: input.origin,
-      status: input.origin === "suggested" ? "suggested" : "confirmed",
-      title: input.title.trim(),
-      ...(input.description ? { description: input.description } : {}),
-      startsAt: new Date(input.startsAt).toISOString(),
-      endsAt: new Date(input.endsAt).toISOString(),
-      ...(input.location ? { location: input.location } : {}),
-      confidence: input.confidence,
-      confidenceReason:
-        input.origin === "explicit"
-          ? "Created directly by the user."
-          : "Proposed by the agent and not promoted to a provider event.",
-      sourceIds: [input.sourceId],
-      relatedMemoryIds: [memory.id],
-      userConfirmed: input.origin === "explicit",
-      externalReadOnly: false,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    });
-    this.database.upsertCalendarEvent(event);
-    return event;
+    return this.database.db.transaction(() => {
+      const eventId = `calendar-event-${randomUUID()}`;
+      const memory = this.memory.remember({
+        type: "episodic",
+        subject: input.title.trim(),
+        content: `${input.title.trim()} from ${input.startsAt} to ${input.endsAt}`,
+        structuredData: {
+          category: "schedule",
+          eventId,
+          conflictKey: `calendar:${normalized(input.title)}:${input.startsAt}`,
+        },
+        sourceIds: [input.sourceId],
+        sourceType:
+          input.origin === "explicit"
+            ? "explicit-user-control"
+            : "agent-inference",
+        confidence: input.confidence,
+        importance: 0.7,
+        sensitivity: "personal",
+        entityIds: [],
+        userConfirmed: input.origin === "explicit",
+        inferred: input.origin === "inferred",
+        confirmationStatus:
+          input.origin === "explicit" ? "explicit" : input.origin,
+        layer: "mid_term",
+        relatedEventIds: [eventId],
+        validFrom: input.startsAt,
+        validUntil: input.endsAt,
+      });
+      const event = UnifiedCalendarEventSchema.parse({
+        id: eventId,
+        providerId: input.origin === "explicit" ? "local" : "agent",
+        origin: input.origin,
+        status: input.origin === "suggested" ? "suggested" : "confirmed",
+        title: input.title.trim(),
+        ...(input.description ? { description: input.description } : {}),
+        startsAt: new Date(input.startsAt).toISOString(),
+        endsAt: new Date(input.endsAt).toISOString(),
+        ...(input.location ? { location: input.location } : {}),
+        confidence: input.confidence,
+        confidenceReason:
+          input.origin === "explicit"
+            ? "Created directly by the user."
+            : "Proposed by the agent and not promoted to a provider event.",
+        sourceIds: [input.sourceId],
+        relatedMemoryIds: [memory.id],
+        userConfirmed: input.origin === "explicit",
+        externalReadOnly: false,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      this.database.upsertCalendarEvent(event);
+      return event;
+    })();
   }
 
   deleteLocalEvent(id: string): UnifiedCalendarEvent {
@@ -336,11 +338,13 @@ export class LifeContextService {
       status: "deleted" as const,
       updatedAt: this.now().toISOString(),
     };
-    this.database.upsertCalendarEvent(deleted);
-    for (const memoryId of event.relatedMemoryIds) {
-      if (this.database.getMemory(memoryId)) this.memory.forget(memoryId);
-    }
-    return deleted;
+    return this.database.db.transaction(() => {
+      this.database.upsertCalendarEvent(deleted);
+      for (const memoryId of event.relatedMemoryIds) {
+        if (this.database.getMemory(memoryId)) this.memory.forget(memoryId);
+      }
+      return deleted;
+    })();
   }
 
   async syncGoogle(
