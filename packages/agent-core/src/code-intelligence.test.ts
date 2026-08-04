@@ -71,4 +71,13 @@ describe("language server code intelligence", () => {
       await configured?.client.close();
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+
+  it("normalizes malformed language server configuration JSON", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-lsp-invalid-"));
+    const configPath = join(root, "lsp.json");
+    writeFileSync(configPath, "not json", { mode: 0o600 });
+    try {
+      await expect(environmentLanguageServerClient({ KESTREL_LSP_CONFIG: configPath })).rejects.toThrow("Language server configuration is invalid.");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 });
