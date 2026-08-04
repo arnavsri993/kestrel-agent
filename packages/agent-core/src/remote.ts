@@ -20,6 +20,34 @@ export interface RemoteExecutionBackend {
 
 interface ProcessResult { exitCode: number; stdout: string; stderr: string; }
 
+const REMOTE_COMMAND_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function isPersistedRemoteTarget(
+  value: unknown,
+  backends: ReadonlyMap<string, RemoteExecutionBackend>,
+): value is RemoteTarget {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const target = value as Record<string, unknown>;
+  if (
+    typeof target.id !== "string" ||
+    !target.id.trim() ||
+    target.id.length > 200 ||
+    !["docker", "ssh", "cluster", "serverless"].includes(target.kind as string) ||
+    typeof target.backendId !== "string" ||
+    !backends.has(target.backendId) ||
+    typeof target.enabled !== "boolean" ||
+    !Array.isArray(target.allowedCommands) ||
+    target.allowedCommands.length === 0 ||
+    target.allowedCommands.length > 200 ||
+    target.allowedCommands.some((command) => typeof command !== "string" || !REMOTE_COMMAND_PATTERN.test(command))
+  ) return false;
+  return target.configuration === undefined || (
+    typeof target.configuration === "object" &&
+    target.configuration !== null &&
+    !Array.isArray(target.configuration)
+  );
+}
+
 async function runBounded(executable: string, args: string[], timeoutMs: number, signal: AbortSignal, onOutput?: (stream: "stdout" | "stderr", chunk: string) => void): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const environment = Object.fromEntries(["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "SSH_AUTH_SOCK", "KUBECONFIG", "DOCKER_HOST", "DOCKER_CONTEXT"].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]));
@@ -129,7 +157,12 @@ export class RemoteBackendManager {
   private readonly key = "providers.remote-targets";
   private readonly artifactRoot?: string;
   constructor(private readonly database: KestrelDatabase, backends: RemoteExecutionBackend[], artifactRoot?: string) { for (const backend of backends) this.backends.set(backend.id, backend); if (artifactRoot) { mkdirSync(artifactRoot, { recursive: true, mode: 0o700 }); this.artifactRoot = realpathSync(artifactRoot); } }
-  listTargets(): RemoteTarget[] { return this.database.getPrivateState<RemoteTarget[]>(this.key) ?? []; }
+  listTargets(): RemoteTarget[] {
+    const stored = this.database.getPrivateState<unknown>(this.key);
+    return Array.isArray(stored)
+      ? stored.filter((value) => isPersistedRemoteTarget(value, this.backends))
+      : [];
+  }
   setTargets(targets: RemoteTarget[]): void {
     if (targets.length > 100 || Buffer.byteLength(JSON.stringify(targets), "utf8") > 1_000_000) throw new Error("Remote target configuration exceeds limits.");
     if (new Set(targets.map((target) => target.id)).size !== targets.length) throw new Error("Remote target IDs must be unique.");

@@ -14,6 +14,26 @@ import { AgentRuntime } from "./runtime";
 const provider: ModelProvider = { id: "fake", capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: true }, complete: async (request) => ({ providerId: "fake", model: request.model, text: "done", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }) };
 
 describe("remote backends and scoped supervision", () => {
+  it("ignores malformed persisted remote targets", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const backend = { id: "ssh-adapter", execute: async () => ({ exitCode: 0, stdout: "", stderr: "", remoteExecutionId: "remote-1" }) };
+    const manager = new RemoteBackendManager(database, [backend]);
+    const valid = { id: "build-host", kind: "ssh" as const, backendId: "ssh-adapter", allowedCommands: ["git"], enabled: true };
+    database.setPrivateState("providers.remote-targets", [
+      valid,
+      { ...valid, backendId: "missing" },
+      { ...valid, allowedCommands: ["git;rm"] },
+      { ...valid, configuration: [] },
+      "malformed",
+    ]);
+
+    expect(manager.listTargets()).toEqual([valid]);
+
+    database.setPrivateState("providers.remote-targets", { malformed: true });
+    expect(manager.listTargets()).toEqual([]);
+    database.close();
+  });
+
   it("approval-gates argv-only allowlisted remote execution", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const manager = new RemoteBackendManager(database, [{ id: "ssh-adapter", execute: async ({ command }) => ({ exitCode: 0, stdout: command, stderr: "", remoteExecutionId: "remote-1" }) }]);
