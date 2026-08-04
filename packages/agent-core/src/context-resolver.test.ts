@@ -20,4 +20,19 @@ describe("pre-response context resolver", () => {
 
     expect(resolved.confirmed).toHaveLength(expected);
   });
+
+  it("treats malformed memory expiries as stale instead of silently dropping them", () => {
+    const malformed = { ...fixtureMemories[0]!, id: "memory-malformed-expiry", validUntil: "not-a-date" };
+    const resolver = new PreResponseContextResolver(() => [malformed]);
+    const resolved = resolver.resolve({
+      userMessage: "",
+      detectedIntent: "",
+      detectedEntities: [],
+      possibleContextCategories: ["schedule"],
+      maximumRetrievedItems: 1,
+    });
+
+    expect(resolved.confirmed).toEqual([]);
+    expect(resolved.possiblyStale).toEqual([malformed]);
+  });
 });
