@@ -724,6 +724,21 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("rejects malformed checkpoint restoration state", () => {
+    const { database, runtime, session } = fixture();
+    const checkpoint = runtime.checkpoint(session.id, "Safe baseline").checkpoints[0]!;
+    database.setPrivateState(`session.checkpoint.${checkpoint.id}`, {
+      sessionId: session.id,
+      messageCount: "all",
+      mutationIds: null,
+    });
+
+    expect(() => runtime.restoreCheckpoint(session.id, checkpoint.id)).toThrow(
+      "Checkpoint restoration state is unavailable.",
+    );
+    database.close();
+  });
+
   it("persists encrypted transcripts and searches them through blind term hashes", () => {
     const { database, runtime, session } = fixture();
     const message = runtime.appendMessage({ sessionId: session.id, role: "user", content: "Remember the cobalt launch checklist." });
