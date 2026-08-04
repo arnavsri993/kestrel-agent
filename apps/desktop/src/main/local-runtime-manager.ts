@@ -52,13 +52,18 @@ interface ManagerDependencies {
   now?: () => Date;
 }
 
-function modelSummaries(payload: { models?: OllamaTag[] }): LocalModelSummary[] {
-  return (payload.models ?? []).flatMap((item) => {
-    if (typeof item.name !== "string" || !item.name.trim()) return [];
+function modelSummaries(payload: unknown): LocalModelSummary[] {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+  const models = (payload as { models?: unknown }).models;
+  if (!Array.isArray(models)) return [];
+  return models.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const model = item as OllamaTag;
+    if (typeof model.name !== "string" || !model.name.trim()) return [];
     return [{
-      name: item.name,
-      size: typeof item.size === "number" && Number.isFinite(item.size) ? Math.max(0, Math.floor(item.size)) : 0,
-      ...(typeof item.modified_at === "string" ? { modifiedAt: item.modified_at } : {})
+      name: model.name,
+      size: typeof model.size === "number" && Number.isFinite(model.size) ? Math.max(0, Math.floor(model.size)) : 0,
+      ...(typeof model.modified_at === "string" ? { modifiedAt: model.modified_at } : {})
     }];
   });
 }
@@ -158,7 +163,7 @@ export class LocalRuntimeManager {
     });
     if (!response.ok) throw new Error(`The local model service returned ${response.status}.`);
     const bytes = await readBoundedResponseBytes(response, MAX_LOCAL_MODEL_RESPONSE_BYTES, "The local model service response exceeds 1 MB.");
-    return modelSummaries(JSON.parse(new TextDecoder().decode(bytes)) as { models?: OllamaTag[] });
+    return modelSummaries(JSON.parse(new TextDecoder().decode(bytes)) as unknown);
   }
 
   private async hasManagedInstall(): Promise<boolean> {

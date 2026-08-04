@@ -182,6 +182,20 @@ describe("managed local runtime", () => {
     expect(malformed).not.toHaveProperty("percent");
   });
 
+  it("recovers from malformed local model list payloads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    let payload: unknown = null;
+    const manager = new LocalRuntimeManager(root, () => undefined, {
+      fetch: (async () => Response.json(payload)) as typeof fetch,
+      manifest: testManifest(new TextEncoder().encode("archive")),
+    });
+
+    await expect(manager.listModels()).resolves.toEqual([]);
+    payload = { models: [null, { name: "", size: "large" }, { name: "qwen:test", size: 42 }] };
+    await expect(manager.listModels()).resolves.toEqual([{ name: "qwen:test", size: 42 }]);
+  });
+
   it("fails closed to manual setup on unsupported platforms", async () => {
     const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
     roots.push(root);
