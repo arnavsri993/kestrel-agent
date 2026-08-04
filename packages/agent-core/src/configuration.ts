@@ -1371,12 +1371,13 @@ export class AgentConfigurationManager {
     at: Date,
     configuration: AgentConfigurationDocument,
   ): boolean {
-    const last = this.database.getPrivateState<string>(
+    const last = this.database.getPrivateState<unknown>(
       this.lastImprovementScanKey,
     );
+    const lastAt = typeof last === "string" ? Date.parse(last) : Number.NaN;
     return (
-      !last ||
-      at.getTime() - Date.parse(last) >=
+      !Number.isFinite(lastAt) ||
+      at.getTime() - lastAt >=
         configuration.settings.improvementReviewCadenceHours * 60 * 60 * 1_000
     );
   }

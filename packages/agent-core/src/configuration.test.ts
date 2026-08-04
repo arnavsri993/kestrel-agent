@@ -140,6 +140,21 @@ describe("chat configuration manager", () => {
     database.close();
   });
 
+  it("treats malformed improvement scan timestamps as due", () => {
+    const now = new Date("2026-07-29T12:00:00.000Z");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new AgentConfigurationManager(database, () => now);
+    database.setPrivateState("agent.configuration.last-improvement-scan", {
+      timestamp: "not-a-date",
+    });
+
+    expect(manager.runImprovementScanIfDue(now)).toEqual([]);
+    expect(
+      database.getPrivateState("agent.configuration.last-improvement-scan"),
+    ).toBe(now.toISOString());
+    database.close();
+  });
+
   it("rejects secrets, protected paths, safety overrides, and attempts to hide recovery tools", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const manager = new AgentConfigurationManager(database);
