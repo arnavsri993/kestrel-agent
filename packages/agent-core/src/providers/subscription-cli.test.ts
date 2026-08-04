@@ -8,7 +8,7 @@ import { textContent } from "./types";
 
 const roots: string[] = [];
 
-async function fakeCli(): Promise<{ executable: string; capture: string }> {
+async function fakeCli(authenticated = true): Promise<{ executable: string; capture: string }> {
   const root = await mkdtemp(join(tmpdir(), "kestrel-claude-fake-"));
   roots.push(root);
   const executable = join(root, "claude");
@@ -17,7 +17,7 @@ async function fakeCli(): Promise<{ executable: string; capture: string }> {
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 fs.writeFileSync(process.argv[1] + ".started", "started");
-if (args[0] === "auth") { process.stdout.write(JSON.stringify({ loggedIn: true, subscriptionType: "max" }) + "\\n"); process.exit(0); }
+if (args[0] === "auth") { process.stdout.write(JSON.stringify({ loggedIn: ${authenticated}, subscriptionType: "max" }) + "\\n"); process.exit(0); }
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", chunk => input += chunk);
@@ -46,6 +46,13 @@ describe("vendor subscription CLI providers", () => {
 
     await expect(provider.probe(controller.signal)).rejects.toThrow("already cancelled");
     expect(existsSync(`${fake.executable}.started`)).toBe(false);
+  });
+
+  it("does not report an explicitly logged-out CLI as authenticated", async () => {
+    const fake = await fakeCli(false);
+    const provider = new ClaudeSubscriptionProvider({ executable: fake.executable });
+
+    await expect(provider.probe()).rejects.toThrow("Claude subscription is not authenticated.");
   });
 
   it("delegates to Claude subscription auth with customizations and tools disabled", async () => {
