@@ -33,6 +33,11 @@ function finishReason(value: unknown, calls: ModelToolCall[]): ModelFinishReason
   return "unknown";
 }
 
+function usageCount(value: unknown): number {
+  const count = Number(value);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+}
+
 export class GeminiGenerateContentProvider implements ModelProvider {
   readonly id: string;
   readonly defaultModel: string;
@@ -80,7 +85,7 @@ export class GeminiGenerateContentProvider implements ModelProvider {
       ...(typeof payload.responseId === "string" ? { responseId: payload.responseId } : {}),
       text,
       toolCalls,
-      usage: { inputTokens: Number(usage.promptTokenCount ?? 0), outputTokens: Number(usage.candidatesTokenCount ?? 0), cachedInputTokens: Number(usage.cachedContentTokenCount ?? 0), reasoningTokens: Number(usage.thoughtsTokenCount ?? 0) },
+      usage: { inputTokens: usageCount(usage.promptTokenCount), outputTokens: usageCount(usage.candidatesTokenCount), cachedInputTokens: usageCount(usage.cachedContentTokenCount), reasoningTokens: usageCount(usage.thoughtsTokenCount) },
       finishReason: finishReason(candidate?.finishReason, toolCalls)
     };
     if (text) options.onEvent?.({ type: "text_delta", delta: text });

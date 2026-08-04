@@ -255,6 +255,16 @@ describe("model provider adapters", () => {
     expect(result).toMatchObject({ providerId: "gemini", responseId: "gemini-response", text: "At 00:02, ", finishReason: "tool_calls", toolCalls: [{ name: "workspace.read", arguments: { path: "notes.md" } }], usage: { inputTokens: 44, outputTokens: 7, cachedInputTokens: 3, reasoningTokens: 2 } });
   });
 
+  it("normalizes malformed Gemini usage metadata", async () => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "ok" }] } }], usageMetadata: { promptTokenCount: "not-a-number", candidatesTokenCount: -4, cachedContentTokenCount: "Infinity", thoughtsTokenCount: "2.9" } }));
+    });
+    const provider = new GeminiGenerateContentProvider({ apiKey: "gemini-secret", baseUrl });
+    const result = await provider.complete({ model: "gemini-test", messages: [{ role: "user", content: textContent("hello") }] });
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 2 });
+  });
+
   it("escalates to a different endpoint after a failed strategy and records both attempts", async () => {
     const failing: ModelProvider = {
       id: "failing",
