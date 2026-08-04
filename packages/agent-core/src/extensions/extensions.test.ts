@@ -133,6 +133,16 @@ describe("MCP extensions", () => {
     await transport.close();
   });
 
+  it.each(["null", "[]"])("rejects a non-object Streamable HTTP MCP response: %s", async (body) => {
+    const transport = new StreamableHttpMcpTransport("https://mcp.example.test/rpc", {
+      fetcher: async () => new Response(body, { status: 200, headers: { "content-type": "application/json" } }),
+    });
+    const client = new McpClient(transport, 100);
+
+    await expect(client.initialize()).rejects.toThrow("non-object JSON-RPC message");
+    await client.close();
+  });
+
   it("negotiates the current lifecycle, lists tools, and calls a runtime tool", async () => {
     const fixture = runtimeFixture("mcp-server");
     const client = new McpClient(new LoopbackTransport(new McpRuntimeServer(fixture.runtime, fixture.session.id)));
@@ -311,6 +321,7 @@ describe("MCP extensions", () => {
 
   it.each([
     ["malformed stdout", "process.stdout.write('not-json\\n');setTimeout(()=>{},10000)", "invalid JSON"],
+    ["non-object stdout", "process.stdout.write('null\\n');setTimeout(()=>{},10000)", "non-object JSON-RPC message"],
     ["oversized stderr record", "process.stderr.write('x'.repeat(1000001));setTimeout(()=>{},10000)", "stderr record exceeded 1 MB"],
     ["abusive stderr burst", "process.stderr.write(('x'.repeat(999) + '\\n').repeat(2100));setTimeout(()=>{},10000)", "stderr burst exceeded 1 MB"]
   ])("turns %s from a stdio server into a bounded client error", async (_label, source, expected) => {
