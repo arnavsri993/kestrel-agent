@@ -1209,13 +1209,16 @@ export class KestrelDatabase {
   }
 
   listContextUsage(limit = 100): AgentContextBundle[] {
+    const normalizedLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(1_000, Math.floor(limit)))
+      : 100;
     return (
       this.db
         .prepare(
           `SELECT payload_ciphertext, payload_iv, payload_auth_tag
            FROM context_usage ORDER BY created_at DESC LIMIT ?`,
         )
-        .all(Math.max(1, Math.min(1_000, limit))) as EncryptedPayloadRow[]
+        .all(normalizedLimit) as EncryptedPayloadRow[]
     ).map((row) => AgentContextBundleSchema.parse(this.decryptPayload(row)));
   }
 

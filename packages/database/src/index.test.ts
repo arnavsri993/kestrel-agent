@@ -101,6 +101,21 @@ describe("idempotency claims", () => {
   });
 });
 
+describe("context usage", () => {
+  it("normalizes malformed list limits before binding the SQL LIMIT", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const bundle = (id: string, createdAt: string) => ({ id, query: "query", memories: [], people: [], events: [], influences: [], prompt: "prompt", createdAt });
+    try {
+      database.saveContextUsage(bundle("context-1", "2026-07-23T00:00:00.000Z"));
+      database.saveContextUsage(bundle("context-2", "2026-07-23T00:01:00.000Z"));
+      expect(database.listContextUsage(Number.NaN)).toHaveLength(2);
+      expect(database.listContextUsage(1.9)).toHaveLength(1);
+    } finally {
+      database.close();
+    }
+  });
+});
+
 describe("configuration history recovery", () => {
   it("skips malformed encrypted versions in the recovery view", () => {
     const key = createEncryptionKey();
