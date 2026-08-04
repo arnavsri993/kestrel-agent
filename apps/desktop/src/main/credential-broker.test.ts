@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -80,6 +80,22 @@ describe("desktop credential broker", () => {
     const broker = new CredentialBroker(root, { isEncryptionAvailable: () => false, encryptString: async () => Buffer.alloc(0), decryptString: async () => "" });
     await expect(broker.setCredential("anthropic", "test-secret-value")).rejects.toThrow("secure storage is unavailable");
     await expect(broker.getDatabaseKey()).rejects.toThrow("secure storage is unavailable");
+  });
+
+  it("rejects a decrypted database key with the wrong length", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-invalid-key-"));
+    roots.push(root);
+    mkdirSync(join(root, "secure"), { recursive: true });
+    writeFileSync(
+      join(root, "secure", "database-key.bin"),
+      `sealed:${Buffer.from("too-short").toString("base64")}`,
+    );
+    const broker = new CredentialBroker(root, {
+      isEncryptionAvailable: () => true,
+      encryptString: async (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+      decryptString: async (value: Buffer) => Buffer.from(value.toString().slice("sealed:".length), "base64").toString(),
+    });
+    await expect(broker.getDatabaseKey()).rejects.toThrow("database key is invalid");
   });
 
   it("serializes concurrent writes to the same secret across broker instances", async () => {
