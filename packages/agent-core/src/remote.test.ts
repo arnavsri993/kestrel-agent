@@ -217,5 +217,6 @@ describe("remote backends and scoped supervision", () => {
     const config = environmentRemoteExecutionConfiguration({ KESTREL_REMOTE_TARGETS: JSON.stringify([{ id: "docker", kind: "docker", backendId: "docker-cli", allowedCommands: ["node"], enabled: true, configuration: { image: "node:24" } }]) });
     expect(config?.backends.map((backend) => backend.id)).toEqual(["docker-cli", "ssh-cli", "kubernetes-cli", "serverless-http"]); expect(config?.targets).toHaveLength(1);
     expect(() => environmentRemoteExecutionConfiguration({ KESTREL_REMOTE_TARGETS: "not-json" })).toThrow("valid JSON");
+    expect(() => environmentRemoteExecutionConfiguration({ KESTREL_REMOTE_TARGETS: "[null]" })).toThrow("valid target records");
   });
 });
