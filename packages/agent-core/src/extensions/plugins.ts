@@ -72,7 +72,7 @@ export class PluginRegistry {
   private readonly managedRoots: string[];
 
   discover(): PluginDescriptor[] {
-    this.plugins.clear();
+    const discovered = new Map<string, PluginDescriptor>();
     for (const configuredRoot of this.roots) {
       if (!existsSync(configuredRoot)) continue;
       const root = realpathSync(configuredRoot);
@@ -87,7 +87,7 @@ export class PluginRegistry {
         if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) throw new Error("Plugin name is invalid.");
         if (!version || version.length > 100) throw new Error("Plugin version is invalid.");
         if (!description || description.length > 2_000) throw new Error("Plugin description is invalid.");
-        if (this.plugins.has(name)) throw new Error(`Duplicate plugin ${name}.`);
+        if (discovered.has(name)) throw new Error(`Duplicate plugin ${name}.`);
         const pluginRoot = realpathSync(resolve(manifestPath, "../.."));
         const author = manifest.author && typeof manifest.author === "object" ? manifest.author as Record<string, unknown> : undefined;
         const ui = manifest.interface && typeof manifest.interface === "object" ? manifest.interface as Record<string, unknown> : undefined;
@@ -138,9 +138,11 @@ export class PluginRegistry {
           enabled: this.database?.getState<unknown>(`plugin.enabled.${name}`) === true,
           managed: this.managedRoots.some((managedRoot) => within(managedRoot, pluginRoot))
         };
-        this.plugins.set(name, descriptor);
+        discovered.set(name, descriptor);
       }
     }
+    this.plugins.clear();
+    for (const [name, descriptor] of discovered) this.plugins.set(name, descriptor);
     return this.list();
   }
 
