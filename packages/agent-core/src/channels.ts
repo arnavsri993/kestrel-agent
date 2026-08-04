@@ -279,11 +279,13 @@ export class ChannelGateway {
     try { supplied = Buffer.from(signatureHex, "hex"); } catch { throw new Error("Invalid channel signature."); }
     if (supplied.byteLength !== expected.byteLength || !timingSafeEqual(supplied, expected)) throw new Error("Invalid channel signature.");
     const key = `channel-inbound:${payload.channelId}:${payload.externalId}`;
-    if (this.database.getIdempotentResult(key)) return { accepted: true, duplicate: true };
-    if (payload.text.length > 100_000) throw new Error("Inbound channel message exceeds the size limit.");
-    this.runtime.appendMessage({ sessionId, role: "user", content: `[Untrusted ${payload.channelId} message from ${payload.senderId}]\n${payload.text}` });
-    this.database.saveIdempotentResult(key, { acceptedAt: new Date().toISOString() });
-    return { accepted: true, duplicate: false };
+    return this.database.db.transaction(() => {
+      if (this.database.getIdempotentResult(key)) return { accepted: true, duplicate: true };
+      if (payload.text.length > 100_000) throw new Error("Inbound channel message exceeds the size limit.");
+      this.runtime.appendMessage({ sessionId, role: "user", content: `[Untrusted ${payload.channelId} message from ${payload.senderId}]\n${payload.text}` });
+      this.database.saveIdempotentResult(key, { acceptedAt: new Date().toISOString() });
+      return { accepted: true, duplicate: false };
+    })();
   }
 
   async send(channelId: string, conversationId: string, text: string, idempotencyKey: string, signal: AbortSignal, attachments: ChannelAttachment[] = []): Promise<Record<string, unknown>> {
