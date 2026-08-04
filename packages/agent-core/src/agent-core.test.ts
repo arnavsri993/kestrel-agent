@@ -275,6 +275,25 @@ describe("core agent request path", () => {
     core.close();
   });
 
+  it("keeps the selected personality unchanged when persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setState("selectedPersonality", "pragmatic");
+    const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
+    database.db.exec(`
+      CREATE TRIGGER reject_personality_selection
+      BEFORE UPDATE ON runtime_state
+      WHEN NEW.key = 'selectedPersonality'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced personality persistence failure');
+      END
+    `);
+
+    expect(() => core.setPersonality("concise")).toThrow("forced personality persistence failure");
+    expect(core.snapshot().personality.selectedId).toBe("pragmatic");
+    expect(database.getState("selectedPersonality")).toBe("pragmatic");
+    core.close();
+  });
+
   it("persists custom agents and enforces their model, provider, tool, and memory scopes", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-custom-agent-"));
     writeFileSync(join(root, "README.md"), "custom agent fixture\n");
