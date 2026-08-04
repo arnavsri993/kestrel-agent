@@ -764,6 +764,33 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("bounds retained background process supervisors", () => {
+    const { database, runtime } = fixture();
+    const processes = (runtime as unknown as {
+      backgroundProcesses: Map<string, { status: "running" | "completed" }>;
+    }).backgroundProcesses;
+    for (let index = 0; index < 200; index += 1)
+      processes.set(`process-${index}`, { status: "completed" });
+
+    (runtime as unknown as {
+      ensureBackgroundProcessCapacity: () => void;
+    }).ensureBackgroundProcessCapacity();
+
+    expect(processes.has("process-0")).toBe(false);
+    expect(processes.size).toBe(199);
+
+    processes.clear();
+    for (let index = 0; index < 200; index += 1)
+      processes.set(`running-${index}`, { status: "running" });
+    expect(() =>
+      (runtime as unknown as {
+        ensureBackgroundProcessCapacity: () => void;
+      }).ensureBackgroundProcessCapacity(),
+    ).toThrow("At most 200 background processes");
+    processes.clear();
+    database.close();
+  });
+
   it("refuses undo when a file changed after the recorded mutation", async () => {
     const { root, database, runtime, session } = fixture();
     const written = await runtime.callTool(session.id, "workspace.write", { path: "src/conflict.ts", content: "agent\n" }, { idempotencyKey: "conflict-write" });
