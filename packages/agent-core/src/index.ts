@@ -1075,10 +1075,26 @@ export class AgentCore {
   }
 
   removePersonality(personalityId: string): WorkspaceSnapshot {
+    const personality = this.personalities.get(personalityId);
+    if (personality.builtin)
+      throw new Error("Built-in personalities cannot be removed.");
+    const selected = this.selectedPersonalityId === personalityId;
+    const customPersonalities = this.personalities
+      .list()
+      .filter(
+        (candidate) => !candidate.builtin && candidate.id !== personalityId,
+      )
+      .map(({ builtin: _builtin, ...candidate }) => candidate);
+    this.deps.database.db.transaction(() => {
+      this.deps.database.setPrivateState(
+        this.customPersonalitiesKey,
+        customPersonalities,
+      );
+      if (selected)
+        this.deps.database.setState("selectedPersonality", "pragmatic");
+    })();
     this.personalities.remove(personalityId);
-    if (this.selectedPersonalityId === personalityId)
-      this.setPersonality("pragmatic");
-    this.persistCustomPersonalities();
+    if (selected) this.selectedPersonalityId = "pragmatic";
     return this.snapshot();
   }
 
