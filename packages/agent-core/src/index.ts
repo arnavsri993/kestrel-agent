@@ -315,9 +315,14 @@ export class AgentCore {
             () => new Date(this.now()),
           )
         : undefined;
+    const storedCoreInstanceId = deps.database.getPrivateState<unknown>(
+      "presence.core-instance-id",
+    );
     this.coreInstanceId =
-      deps.database.getPrivateState<string>("presence.core-instance-id") ??
-      `node-${randomUUID()}`;
+      typeof storedCoreInstanceId === "string" &&
+      /^[A-Za-z0-9._-]{1,128}$/.test(storedCoreInstanceId)
+        ? storedCoreInstanceId
+        : `node-${randomUUID()}`;
     deps.database.setPrivateState(
       "presence.core-instance-id",
       this.coreInstanceId,
