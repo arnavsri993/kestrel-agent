@@ -20,6 +20,13 @@ export interface RemoteExecutionBackend {
 
 interface ProcessResult { exitCode: number; stdout: string; stderr: string; }
 
+const DEFAULT_REMOTE_TIMEOUT_MS = 120_000;
+
+function boundedRemoteTimeout(timeoutMs: number): number {
+  if (!Number.isFinite(timeoutMs)) return DEFAULT_REMOTE_TIMEOUT_MS;
+  return Math.max(1_000, Math.min(300_000, Math.floor(timeoutMs)));
+}
+
 async function runBounded(executable: string, args: string[], timeoutMs: number, signal: AbortSignal, onOutput?: (stream: "stdout" | "stderr", chunk: string) => void): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const environment = Object.fromEntries(["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "SSH_AUTH_SOCK", "KUBECONFIG", "DOCKER_HOST", "DOCKER_CONTEXT"].flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]));
@@ -145,7 +152,7 @@ export class RemoteBackendManager {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(command) || !target.allowedCommands.includes(command)) throw new Error("Remote command is outside the target allowlist.");
     if (args.length > 200 || args.some((arg) => arg.length > 10_000)) throw new Error("Remote command arguments exceed limits.");
     const backend = this.backends.get(target.backendId)!;
-    const boundedTimeout = Math.max(1_000, Math.min(300_000, timeoutMs));
+    const boundedTimeout = boundedRemoteTimeout(timeoutMs);
     const result = await backend.execute({ target, command, args, timeoutMs: boundedTimeout, signal: AbortSignal.any([signal, AbortSignal.timeout(boundedTimeout)]), ...(onOutput ? { onOutput } : {}) });
     const artifacts = await this.storeArtifacts(result.artifacts ?? []);
     return { ...result, artifacts, stdout: result.stdout.slice(0, 1_000_000), stderr: result.stderr.slice(0, 1_000_000), targetId, backendKind: target.kind, attestedBy: backend.id };
