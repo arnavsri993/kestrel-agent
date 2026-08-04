@@ -253,6 +253,26 @@ describe("CoreSupervisor recovery", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("does not treat a malformed startup timeout as immediate", async () => {
+    vi.useFakeTimers();
+    const child = new FakeCoreProcess();
+    const supervisor = new CoreSupervisor(undefined, undefined, {
+      processFactory: () => child,
+      startupTimeoutMs: Number.NaN,
+      stabilityWindowMs: Number.POSITIVE_INFINITY,
+      restartDelaysMs: [Number.POSITIVE_INFINITY]
+    });
+    const started = supervisor.start(config);
+    let settled = false;
+    void started.then(() => { settled = true; }, () => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    child.ready();
+    await started;
+    child.exitOnShutdown = true;
+    await supervisor.stop();
+  });
+
   it("does not restart after stop while crash cleanup is still pending", async () => {
     vi.useFakeTimers();
     const processes: FakeCoreProcess[] = [];
