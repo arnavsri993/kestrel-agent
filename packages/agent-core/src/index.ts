@@ -973,19 +973,25 @@ export class AgentCore {
       throw new Error(
         "A verified completed action cannot be retroactively rejected.",
       );
-    this.updateApproval({ ...approval, status: "rejected" });
-    this.opportunity = { ...this.opportunity, status: "ignored" };
-    this.state = "idle";
-    this.deps.database.setState("teacherOpportunity", this.opportunity);
-    this.deps.database.setState("agentState", this.state);
-    this.deps.database.addActivity({
+    const rejected = { ...approval, status: "rejected" as const };
+    const ignoredOpportunity = { ...this.opportunity, status: "ignored" as const };
+    const nextState: AgentState = "idle";
+    const activity = {
       id: "activity-plan-rejected",
       title: "Plan rejected",
       detail: "No email or calendar action was executed.",
       timestamp: this.now(),
-      status: "blocked",
+      status: "blocked" as const,
       sourceIds: [approvalId],
-    });
+    };
+    this.deps.database.db.transaction(() => {
+      this.updateApproval(rejected);
+      this.deps.database.setState("teacherOpportunity", ignoredOpportunity);
+      this.deps.database.setState("agentState", nextState);
+      this.deps.database.addActivity(activity);
+    })();
+    this.opportunity = ignoredOpportunity;
+    this.state = nextState;
     return this.snapshot();
   }
 

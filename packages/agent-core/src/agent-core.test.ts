@@ -81,6 +81,28 @@ describe("teacher scheduling vertical slice", () => {
     core.close();
   });
 
+  it("rolls back approval rejection when a state write fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const core = new AgentCore({ database, seedDevelopmentFixtures: true, now: () => "2026-07-22T15:00:00.000Z" });
+    database.db.exec(`
+      CREATE TRIGGER reject_agent_state_transition
+      BEFORE INSERT ON runtime_state
+      WHEN NEW.key = 'agentState'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced agent rejection state failure');
+      END
+    `);
+
+    expect(() => core.reject("approval-teacher-monday")).toThrow("forced agent rejection state failure");
+    expect(database.listApprovals().find((approval) => approval.id === "approval-teacher-monday")?.status).toBe("pending");
+    expect(core.snapshot().agentState).toBe("waiting_approval");
+    expect(core.snapshot().opportunity.status).toBe("awaiting_approval");
+    expect(database.getState<{ status: string }>("teacherOpportunity")?.status).toBe("awaiting_approval");
+    expect(database.getState("agentState")).toBeUndefined();
+    expect(database.listActivity().some((item) => item.id === "activity-plan-rejected")).toBe(false);
+    core.close();
+  });
+
   it("retrieves prior DJI context and does not repeat failed basics", () => {
     const { core } = createCore();
     const response = core.troubleshoot("RC not connected to mobile device.");
