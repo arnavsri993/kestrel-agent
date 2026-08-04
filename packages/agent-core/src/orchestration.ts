@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
-import type { ModelCapability, RuntimeToolExecution, TaskOpportunity } from "@kestrel/shared-types";
+import { GoalRecordSchema, type ModelCapability, type RuntimeToolExecution, type TaskOpportunity } from "@kestrel/shared-types";
 import { AgentLoop, SessionRunBusyError, type AgentLoopResult } from "./agent-loop";
 import { ProviderPool, textContent } from "./providers";
 import { AdaptiveModelRouter, ModelRegistry, TaskRequirementAnalyzer } from "./model-orchestration";
@@ -139,6 +139,14 @@ export interface GoalTask { id: string; title: string; status: "pending" | "in_p
 export interface GoalRecord { id: string; sessionId: string; title: string; objective: string; status: "active" | "completed" | "cancelled"; tasks: GoalTask[]; sourceOpportunityId?: string; deadline?: string; createdAt: string; updatedAt: string; }
 export interface TeamMessage { id: string; fromSessionId: string; toSessionId: string; text: string; createdAt: string; }
 export interface TeamRecord { id: string; parentSessionId: string; title: string; memberSessionIds: string[]; sharedPlan: string[]; messages: TeamMessage[]; createdAt: string; updatedAt: string; }
+
+function parseStoredGoals(value: unknown): GoalRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const parsed = GoalRecordSchema.safeParse(item);
+    return parsed.success ? [parsed.data as GoalRecord] : [];
+  });
+}
 
 function resolveReference(reference: string, results: Record<string, RuntimeToolExecution>): unknown {
   if (!reference.startsWith("$")) return reference;
@@ -503,7 +511,10 @@ export class TaskOrchestrator {
     return goal;
   }
 
-  listGoals(sessionId?: string): GoalRecord[] { const goals = this.database.getPrivateState<GoalRecord[]>(this.goalsKey) ?? []; return sessionId ? goals.filter((goal) => goal.sessionId === sessionId) : goals; }
+  listGoals(sessionId?: string): GoalRecord[] {
+    const goals = parseStoredGoals(this.database.getPrivateState<unknown>(this.goalsKey));
+    return sessionId ? goals.filter((goal) => goal.sessionId === sessionId) : goals;
+  }
 
   goalFromOpportunity(sessionId: string, opportunity: TaskOpportunity): GoalRecord {
     const existing = this.listGoals(sessionId).find((goal) => goal.sourceOpportunityId === opportunity.id && goal.status === "active");
