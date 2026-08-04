@@ -306,4 +306,43 @@ describe("CoreSupervisor recovery", () => {
 
     expect(processes).toHaveLength(1);
   });
+
+  it("continues recovery when browser cleanup throws synchronously", async () => {
+    vi.useFakeTimers();
+    const processes: FakeCoreProcess[] = [];
+    const cleanupError = new Error("browser cleanup failed synchronously");
+    let cleanupCalls = 0;
+    const supervisor = new CoreSupervisor(
+      undefined,
+      () => {
+        if (cleanupCalls++ === 0) throw cleanupError;
+        return Promise.resolve();
+      },
+      {
+        processFactory: () => {
+          const child = new FakeCoreProcess();
+          processes.push(child);
+          return child;
+        },
+        restartDelaysMs: [10, 20],
+        startupTimeoutMs: 500,
+      },
+    );
+    const started = supervisor.start(config);
+    processes[0]!.ready();
+    await started;
+
+    const cleanupFailure = once(supervisor, "automation-error");
+    const recovered = once(supervisor, "recovered");
+    processes[0]!.crash();
+    const [error] = await cleanupFailure;
+    expect(error).toBe(cleanupError);
+
+    await vi.advanceTimersByTimeAsync(30);
+    expect(processes).toHaveLength(2);
+    processes[1]!.ready();
+    await recovered;
+    processes[1]!.exitOnShutdown = true;
+    await supervisor.stop();
+  });
 });
