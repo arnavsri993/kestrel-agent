@@ -15,6 +15,7 @@ import type {
   WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import {
+  AgentStateSchema,
   PRODUCT_IDENTITY,
   WorkspaceSnapshotSchema,
 } from "@kestrel/shared-types";
@@ -204,9 +205,14 @@ export class AgentCore {
     const seedDevelopmentFixtures = deps.seedDevelopmentFixtures === true;
     this.email = deps.email ?? new DevelopmentEmailConnector();
     this.calendar = deps.calendar ?? new DevelopmentCalendarConnector();
-    this.state =
-      deps.database.getState<AgentState>("agentState") ??
-      (seedDevelopmentFixtures ? "waiting_approval" : "idle");
+    const storedState = AgentStateSchema.safeParse(
+      deps.database.getState<unknown>("agentState"),
+    );
+    this.state = storedState.success
+      ? storedState.data
+      : seedDevelopmentFixtures
+        ? "waiting_approval"
+        : "idle";
     const storedPersonalities =
       deps.database.getPrivateState<Array<Omit<AgentPersonality, "builtin">>>(
         this.customPersonalitiesKey,
