@@ -15,6 +15,18 @@ function createCore() {
 }
 
 describe("fresh application state", () => {
+  it("ignores malformed entries in persisted custom personalities", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setPrivateState("runtime.custom-personalities", [
+      null,
+      { id: "broken" },
+    ]);
+    const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
+
+    expect(core.snapshot().personality.available).toHaveLength(3);
+    core.close();
+  });
+
   it("starts idle without importing development fixtures", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
