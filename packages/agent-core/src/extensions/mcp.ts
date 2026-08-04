@@ -1,6 +1,5 @@
 import { EventEmitter } from "node:events";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { AgentRuntime } from "../runtime";
 import { readBoundedResponseBytes } from "../bounded-http";
 
@@ -484,7 +483,7 @@ export class McpRuntimeServer {
         const args = message.params?.arguments;
         const execution = await this.runtime.callTool(this.sessionId, name, args && typeof args === "object" ? args as Record<string, unknown> : {}, {
           approvalStatus: "pending",
-          idempotencyKey: `mcp-server:${randomUUID()}`
+          idempotencyKey: `mcp-server:${typeof message.id}:${String(message.id)}`
         });
         return {
           jsonrpc: "2.0", id: message.id, result: {
