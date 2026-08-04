@@ -195,7 +195,7 @@ export class WebhookChannelAdapter implements ChannelAdapter {
   constructor(private readonly options: WebhookChannelAdapterOptions) {
     this.id = options.id;
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(this.id)) throw new Error("Webhook channel ID is invalid.");
-    this.url = new URL(options.url);
+    try { this.url = new URL(options.url); } catch { throw new Error("Webhook channel URL must be credential-free HTTPS."); }
     if (this.url.protocol !== "https:" || this.url.username || this.url.password || this.url.hash) throw new Error("Webhook channel URL must be credential-free HTTPS.");
     if (options.authorizationHeader && options.authorizationHeader.length > 8_000) throw new Error("Webhook authorization header is too large.");
     for (const [name, value] of Object.entries(options.headers ?? {})) {
