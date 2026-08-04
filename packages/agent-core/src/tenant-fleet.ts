@@ -14,6 +14,13 @@ export interface TenantCell {
 }
 export interface TenantFleetRunner { run(executable: string, args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }>; }
 const fleetMutationQueues = new Map<string, Promise<void>>();
+const tenantNamePattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+function normalizeTenantName(value: string): string {
+  const tenant = value.trim().toLowerCase();
+  if (!tenantNamePattern.test(tenant)) throw new Error("Tenant cell name is invalid.");
+  return tenant;
+}
 
 class ProcessFleetRunner implements TenantFleetRunner {
   run(executable: string, args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -49,8 +56,7 @@ export class TenantFleet {
   }
 
   async create(input: { tenant: string; port: number; runtime?: "docker" | "podman"; image?: string; blockEgress?: boolean }): Promise<{ cell: TenantCell; gatewayToken: string }> {
-    const tenant = input.tenant.trim().toLowerCase();
-    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(tenant)) throw new Error("Tenant cell name is invalid.");
+    const tenant = normalizeTenantName(input.tenant);
     if (!Number.isInteger(input.port) || input.port < 1024 || input.port > 65_535) throw new Error("Tenant cell port is invalid.");
     const runtime = input.runtime ?? "docker";
     if (runtime === "docker" && input.blockEgress) throw new Error("Docker internal networking breaks the published gateway port; use host firewall policy.");
@@ -81,7 +87,8 @@ export class TenantFleet {
   }
 
   async status(tenant: string): Promise<{ cell: TenantCell; running: boolean }> {
-    const cell = (await this.list()).find((candidate) => candidate.tenant === tenant);
+    const normalizedTenant = normalizeTenantName(tenant);
+    const cell = (await this.list()).find((candidate) => candidate.tenant === normalizedTenant);
     if (!cell) throw new Error("Tenant cell was not found.");
     const result = await this.runner.run(cell.runtime, ["inspect", "-f", "{{.State.Running}}", cell.container]);
     return { cell, running: result.exitCode === 0 && result.stdout.trim() === "true" };
@@ -89,13 +96,14 @@ export class TenantFleet {
 
   async remove(tenant: string): Promise<TenantCell> {
     return this.mutate(async () => {
+      const normalizedTenant = normalizeTenantName(tenant);
       const cells = await this.list();
-      const cell = cells.find((candidate) => candidate.tenant === tenant);
+      const cell = cells.find((candidate) => candidate.tenant === normalizedTenant);
       if (!cell) throw new Error("Tenant cell was not found.");
       const result = await this.runner.run(cell.runtime, ["rm", "-f", cell.container]);
       if (result.exitCode !== 0) throw new Error(`Could not remove tenant cell: ${result.stderr.slice(0, 500)}`);
       await this.runner.run(cell.runtime, ["network", "rm", `kestrel-cell-${cell.tenant}`]);
-      await this.save(cells.filter((candidate) => candidate.tenant !== tenant));
+      await this.save(cells.filter((candidate) => candidate.tenant !== normalizedTenant));
       return cell;
     });
   }

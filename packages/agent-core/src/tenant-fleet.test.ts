@@ -19,8 +19,8 @@ describe("tenant fleet", () => {
     const run = calls.find((args) => args[0] === "run")!;
     expect(run).toEqual(expect.arrayContaining(["--cap-drop=ALL", "--security-opt=no-new-privileges", "--read-only", "127.0.0.1:18790:18789"]));
     expect(run.join(" ")).not.toContain("0.0.0.0");
-    expect(await fleet.status("acme")).toMatchObject({ running: true, cell: { tenant: "acme" } });
-    await fleet.remove("acme");
+    expect(await fleet.status(" ACME ")).toMatchObject({ running: true, cell: { tenant: "acme" } });
+    await fleet.remove(" ACME ");
     expect(await fleet.list()).toEqual([]);
   });
 
