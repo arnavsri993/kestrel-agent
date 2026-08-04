@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
 import {
   DreamingConfigurationSchema,
+  DreamingCandidateSchema,
+  DreamDiaryEntrySchema,
   DreamingStatusSchema,
   type DreamDiaryEntry,
   type DreamingCandidate,
@@ -245,8 +247,42 @@ export class DreamingManager {
   }
 
   private storedState(): StoredDreamingState {
-    const stored = this.database.getPrivateState<StoredDreamingState>(STATE_KEY);
-    return stored ?? {
+    const stored = this.database.getPrivateState<unknown>(STATE_KEY);
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      const value = stored as Record<string, unknown>;
+      const candidates = value.candidates;
+      const diary = value.diary;
+      if (
+        ["idle", "light", "rem", "deep", "error"].includes(
+          String(value.phase),
+        ) &&
+        Array.isArray(candidates) &&
+        candidates.length <= 500 &&
+        candidates.every((candidate) =>
+          DreamingCandidateSchema.safeParse(candidate).success,
+        ) &&
+        Array.isArray(diary) &&
+        diary.length <= 100 &&
+        diary.every((entry) => DreamDiaryEntrySchema.safeParse(entry).success) &&
+        (value.lastRunAt === undefined ||
+          (typeof value.lastRunAt === "string" &&
+            !Number.isNaN(Date.parse(value.lastRunAt)))) &&
+        typeof value.detail === "string" &&
+        value.detail.length >= 1 &&
+        value.detail.length <= 1_000
+      ) {
+        return {
+          phase: value.phase as StoredDreamingState["phase"],
+          candidates: candidates as DreamingCandidate[],
+          diary: diary as DreamDiaryEntry[],
+          ...(typeof value.lastRunAt === "string"
+            ? { lastRunAt: value.lastRunAt }
+            : {}),
+          detail: value.detail,
+        };
+      }
+    }
+    return {
       phase: "idle",
       candidates: [],
       diary: [],
