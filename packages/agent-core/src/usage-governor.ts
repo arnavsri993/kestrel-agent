@@ -11,6 +11,11 @@ export const DEFAULT_USAGE_POLICY: UsagePolicy = UsagePolicySchema.parse({
   rates: {}
 });
 
+function tokenCount(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(value)));
+}
+
 export class UsageGovernor {
   private readonly key = "runtime.usage-policy";
   private activeCalls = 0;
@@ -44,12 +49,14 @@ export class UsageGovernor {
   estimateCost(providerId: string, model: string, usage: ModelUsage): number {
     const policy = this.getPolicy();
     const rate = policy.rates[`${providerId}:${model}`] ?? policy.rates[model] ?? policy.defaultRate;
-    const uncachedInput = Math.max(0, usage.inputTokens - (usage.cachedInputTokens ?? 0));
+    const inputTokens = tokenCount(usage.inputTokens);
+    const cachedInputTokens = Math.min(inputTokens, tokenCount(usage.cachedInputTokens));
+    const uncachedInput = inputTokens - cachedInputTokens;
     const amount = (
       uncachedInput * rate.inputPerMillionUsd
-      + (usage.cachedInputTokens ?? 0) * rate.cachedInputPerMillionUsd
-      + usage.outputTokens * rate.outputPerMillionUsd
-      + (usage.reasoningTokens ?? 0) * rate.reasoningPerMillionUsd
+      + cachedInputTokens * rate.cachedInputPerMillionUsd
+      + tokenCount(usage.outputTokens) * rate.outputPerMillionUsd
+      + tokenCount(usage.reasoningTokens) * rate.reasoningPerMillionUsd
     ) / 1_000_000;
     return Math.round(amount * 100_000_000) / 100_000_000;
   }
