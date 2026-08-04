@@ -5,6 +5,8 @@ import { isAbsolute, join, resolve } from "node:path";
 import { AgentCore, createEnvironmentMediaProviders, createEnvironmentTranscriptionProvider, environmentChannelConfiguration, environmentRemoteExecutionConfiguration, environmentWebAccessOptions, loadSignedManagedPolicy } from "@kestrel/agent-core";
 import { KestrelDatabase } from "@kestrel/database";
 
+const MAX_ENCRYPTION_KEY_FILE_BYTES = 128;
+
 export function dataDirectory(): string {
   return resolve(process.env.KESTREL_DATA_DIR ?? join(homedir(), ".kestrel"));
 }
@@ -14,6 +16,7 @@ function encryptionKey(directory: string): Buffer {
   if (existsSync(path)) {
     const metadata = lstatSync(path);
     if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("Kestrel data key must be a regular non-symlink file.");
+    if (metadata.size > MAX_ENCRYPTION_KEY_FILE_BYTES) throw new Error("Kestrel data key is invalid.");
     chmodSync(path, 0o600);
     const key = Buffer.from(readFileSync(path, "utf8").trim(), "base64");
     if (key.byteLength !== 32) throw new Error("Kestrel data key is invalid.");
