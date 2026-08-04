@@ -521,8 +521,8 @@ export class ExternalSecretManager {
 
   private async readVerification(): Promise<VerificationState> {
     try {
-      const parsed = JSON.parse(await readFile(this.statusPath, "utf8")) as VerificationState;
-      return parsed && typeof parsed === "object" ? parsed : {};
+      const parsed = JSON.parse(await readFile(this.statusPath, "utf8")) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as VerificationState : {};
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return {};
       throw error;
