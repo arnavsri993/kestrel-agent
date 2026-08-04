@@ -83,6 +83,11 @@ function pageTitle(contentType: string, raw: string, url: string): string {
   return new URL(url).hostname;
 }
 
+function boundedSearchResultCount(value: number): number {
+  if (!Number.isFinite(value)) throw new Error("Web search result count must be finite.");
+  return Math.max(1, Math.min(20, Math.trunc(value)));
+}
+
 export class NetworkPolicyWebClient {
   private readonly hosts: Set<string>;
   private readonly maximumBytes: number;
@@ -138,13 +143,14 @@ export class NetworkPolicyWebClient {
 
   async search(query: string, maximumResults: number, signal: AbortSignal): Promise<{ results: WebSearchResult[]; trust: "untrusted_external"; cached: boolean }> {
     if (!this.options.searchProvider) throw new Error("Web search provider is not configured.");
-    const cacheKey = `search:${createHash("sha256").update(`${query}\0${maximumResults}`).digest("hex")}`;
+    const resultLimit = boundedSearchResultCount(maximumResults);
+    const cacheKey = `search:${createHash("sha256").update(`${query}\0${resultLimit}`).digest("hex")}`;
     const cached = this.options.cache?.get<{ results: WebSearchResult[]; trust: "untrusted_external"; cached: boolean }>(cacheKey);
     if (cached) return { ...cached, cached: true };
-    const results = await this.options.searchProvider.search(query, { maximumResults, signal });
+    const results = await this.options.searchProvider.search(query, { maximumResults: resultLimit, signal });
     const retrievedAt = this.now().toISOString();
     const validated: WebSearchResult[] = await Promise.all(
-      results.slice(0, maximumResults).map(async (result) => {
+      results.slice(0, resultLimit).map(async (result) => {
         const url = await this.validate(result.url);
         const title = result.title.slice(0, 500);
         return { title, url, snippet: result.snippet.slice(0, 2_000), citation: { title, url, retrievedAt } };
@@ -190,12 +196,13 @@ export class BraveSearchProvider implements WebSearchProvider {
   async search(query: string, { maximumResults, signal }: { maximumResults: number; signal: AbortSignal }): Promise<WebSearchResult[]> {
     signal.throwIfAborted();
     if (!query.trim() || query.length > 2_000) throw new Error("Web search query is invalid.");
+    const resultLimit = boundedSearchResultCount(maximumResults);
     const hostname = "api.search.brave.com";
     const addresses = await this.resolver(hostname);
     if (addresses.length === 0 || addresses.some(isPrivateNetworkAddress)) throw new Error("Brave Search resolved to a private or unsafe address.");
     const url = new URL("https://api.search.brave.com/res/v1/web/search");
     url.searchParams.set("q", query);
-    url.searchParams.set("count", String(Math.max(1, Math.min(20, maximumResults))));
+    url.searchParams.set("count", String(resultLimit));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(new Error("Brave Search timed out.")), this.timeoutMs);
     const abort = () => controller.abort(signal.reason);
@@ -206,7 +213,7 @@ export class BraveSearchProvider implements WebSearchProvider {
       const bytes = await readBoundedResponseBytes(response, 2_000_000, "Brave Search response exceeds 2 MB.");
       if (!response.ok) throw new Error(`Brave Search failed with status ${response.status}.`);
       const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { web?: { results?: Array<{ title?: unknown; url?: unknown; description?: unknown }> } };
-      return (parsed.web?.results ?? []).slice(0, maximumResults).flatMap((result) => typeof result.title === "string" && typeof result.url === "string"
+      return (parsed.web?.results ?? []).slice(0, resultLimit).flatMap((result) => typeof result.title === "string" && typeof result.url === "string"
         ? [{ title: result.title, url: result.url, snippet: typeof result.description === "string" ? result.description : "" }]
         : []);
     } finally {

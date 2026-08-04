@@ -31,6 +31,16 @@ describe("network-policy web tools", () => {
     await expect(client.fetch("https://safe.example.test/")).rejects.toThrow("byte limit");
   });
 
+  it("rejects non-finite search result counts before invoking the provider", async () => {
+    let searches = 0;
+    const client = new NetworkPolicyWebClient({
+      allowedHosts: ["safe.example.test"],
+      searchProvider: { search: async () => { searches += 1; return []; } }
+    });
+    await expect(client.search("safe", Number.NaN, new AbortController().signal)).rejects.toThrow("finite");
+    expect(searches).toBe(0);
+  });
+
   it("cancels chunked oversized pages before parsing or caching them", async () => {
     let pulls = 0;
     let cancellations = 0;
@@ -123,6 +133,9 @@ describe("network-policy web tools", () => {
     expect(await provider.search("kestrel", { maximumResults: 5, signal: new AbortController().signal })).toEqual([{ title: "Official", url: "https://docs.example/guide", snippet: "A result" }]);
     expect(request?.url).toContain("api.search.brave.com/res/v1/web/search?q=kestrel");
     expect(request?.headers.get("x-subscription-token")).toBe("search-secret");
+    await expect(provider.search("kestrel", { maximumResults: Number.NaN, signal: new AbortController().signal })).rejects.toThrow("finite");
+    expect(resolutions).toBe(1);
+    expect(fetches).toBe(1);
     expect(environmentWebAccessOptions({ KESTREL_WEB_ALLOW_PUBLIC: "true", BRAVE_SEARCH_API_KEY: "key" })).toMatchObject({ allowPublicHosts: true });
     expect(environmentWebAccessOptions({ BRAVE_SEARCH_API_KEY: "key" })).toBeUndefined();
     expect(environmentWebAccessOptions({
