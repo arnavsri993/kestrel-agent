@@ -242,6 +242,26 @@ const MAX_ORGANIZATION_MEMBER_EXTERNAL_ID_LENGTH = 500;
 const MAX_ORGANIZATION_MEMBER_EMAIL_LENGTH = 320;
 const MAX_ORGANIZATION_MEMBER_DISPLAY_NAME_LENGTH = 200;
 
+function isOrganizationMember(value: unknown): value is OrganizationMember {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const member = value as Record<string, unknown>;
+  return (
+    typeof member.externalId === "string" &&
+    member.externalId.trim().length > 0 &&
+    member.externalId.length <= MAX_ORGANIZATION_MEMBER_EXTERNAL_ID_LENGTH &&
+    typeof member.email === "string" &&
+    member.email.length <= MAX_ORGANIZATION_MEMBER_EMAIL_LENGTH &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(member.email) &&
+    typeof member.displayName === "string" &&
+    member.displayName.trim().length > 0 &&
+    member.displayName.length <= MAX_ORGANIZATION_MEMBER_DISPLAY_NAME_LENGTH &&
+    (member.role === "member" || member.role === "admin") &&
+    typeof member.active === "boolean" &&
+    typeof member.updatedAt === "string" &&
+    Number.isFinite(Date.parse(member.updatedAt))
+  );
+}
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
@@ -318,7 +338,7 @@ export class ManagedPolicyStore {
 
   listMembers(): OrganizationMember[] {
     const stored = this.database.getPrivateState<unknown>(this.membersKey);
-    return Array.isArray(stored) ? stored as OrganizationMember[] : [];
+    return Array.isArray(stored) ? stored.filter(isOrganizationMember) : [];
   }
 
   provisionMember(input: Omit<OrganizationMember, "active" | "updatedAt"> & { active?: boolean }): OrganizationMember {
