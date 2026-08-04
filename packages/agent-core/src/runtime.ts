@@ -540,32 +540,34 @@ export class AgentRuntime extends EventEmitter {
   forkSession(sessionId: string, title?: string): RuntimeSession {
     const parent = this.requireSession(sessionId);
     const activeWorkspaceRoot = this.resolveActiveWorkspaceRoot(parent);
-    let child = this.createSession({
-      title: title ?? `${parent.title} (fork)`,
-      parentSessionId: parent.id,
-      ...(activeWorkspaceRoot ? { workspaceRoot: activeWorkspaceRoot } : {}),
-      allowedTools: parent.allowedTools
-    });
-    if (!activeWorkspaceRoot && parent.workspaceRoot) {
-      child = this.saveSession({
-        ...child,
-        workspaceRoot: parent.workspaceRoot,
+    const { child, messageIds } = this.database.db.transaction(() => {
+      let created = this.createSession({
+        title: title ?? `${parent.title} (fork)`,
+        parentSessionId: parent.id,
+        ...(activeWorkspaceRoot ? { workspaceRoot: activeWorkspaceRoot } : {}),
+        allowedTools: parent.allowedTools
       });
-    }
-    const messageIds = new Map<string, string>();
-    for (const message of this.listMessages(parent.id)) {
-      const cloned = this.appendMessage({
-        sessionId: child.id,
-        role: message.role,
-        content: message.content,
-        ...(message.parentMessageId && messageIds.has(message.parentMessageId) ? { parentMessageId: messageIds.get(message.parentMessageId)! } : {}),
-        ...(message.modelToolCalls ? { modelToolCalls: message.modelToolCalls } : {}),
-        ...(message.providerToolCallId ? { providerToolCallId: message.providerToolCallId } : {}),
-        ...(message.toolName ? { toolName: message.toolName } : {})
-      });
-      messageIds.set(message.id, cloned.id);
-    }
-    child = this.requireSession(child.id);
+      if (!activeWorkspaceRoot && parent.workspaceRoot) {
+        created = this.saveSession({
+          ...created,
+          workspaceRoot: parent.workspaceRoot,
+        });
+      }
+      const clonedIds = new Map<string, string>();
+      for (const message of this.listMessages(parent.id)) {
+        const cloned = this.appendMessage({
+          sessionId: created.id,
+          role: message.role,
+          content: message.content,
+          ...(message.parentMessageId && clonedIds.has(message.parentMessageId) ? { parentMessageId: clonedIds.get(message.parentMessageId)! } : {}),
+          ...(message.modelToolCalls ? { modelToolCalls: message.modelToolCalls } : {}),
+          ...(message.providerToolCallId ? { providerToolCallId: message.providerToolCallId } : {}),
+          ...(message.toolName ? { toolName: message.toolName } : {})
+        });
+        clonedIds.set(message.id, cloned.id);
+      }
+      return { child: this.requireSession(created.id), messageIds: clonedIds };
+    })();
     this.emitRuntimeEvent("session.updated", child.id, {
       action: "fork",
       parentSessionId: parent.id,

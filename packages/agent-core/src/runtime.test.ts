@@ -210,6 +210,24 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("rolls back a fork when transcript cloning fails", () => {
+    const { database, runtime, session } = fixture();
+    runtime.appendMessage({ sessionId: session.id, role: "user", content: "First fork message." });
+    runtime.appendMessage({ sessionId: session.id, role: "assistant", content: "Second fork message." });
+    const originalSaveRuntimeMessage = database.saveRuntimeMessage.bind(database);
+    let clonedMessages = 0;
+    database.saveRuntimeMessage = (message) => {
+      if (message.sessionId !== session.id && ++clonedMessages === 2) throw new Error("fork transcript write failed");
+      return originalSaveRuntimeMessage(message);
+    };
+
+    expect(() => runtime.forkSession(session.id, "Failed fork")).toThrow("fork transcript write failed");
+    expect(runtime.listSessions()).toHaveLength(1);
+
+    database.saveRuntimeMessage = originalSaveRuntimeMessage;
+    database.close();
+  });
+
   it("preserves configured sessions while their workspace is unavailable without exposing workspace tools", async () => {
     const { root, database, runtime, session } = fixture();
     runtime.appendMessage({
