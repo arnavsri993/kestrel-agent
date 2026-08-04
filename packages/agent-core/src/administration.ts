@@ -272,7 +272,11 @@ export class ManagedPolicyStore {
     if (policy.retentionDays !== undefined && (!Number.isInteger(policy.retentionDays) || policy.retentionDays < 1 || policy.retentionDays > 3_650)) throw new Error("retentionDays must be between 1 and 3650.");
     if (policy.sso) {
       if (!URL.canParse(policy.sso.issuer) || !policy.sso.issuer.startsWith("https://") || !policy.sso.audience.trim()) throw new Error("Managed SSO issuer or audience is invalid.");
-      createPublicKey(policy.sso.publicKeyPem);
+      try {
+        createPublicKey(policy.sso.publicKeyPem);
+      } catch {
+        throw new Error("Managed SSO public key is invalid.");
+      }
     }
     const current = this.get();
     if (current && policy.version <= current.version) throw new Error("Managed policy updates require a newer version.");
