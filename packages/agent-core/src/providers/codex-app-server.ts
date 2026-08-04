@@ -414,7 +414,10 @@ export class CodexAppServerProvider {
     const child = this.child;
     if (!child || child.exitCode !== null)
       throw new Error("Codex app-server is not running.");
-    child.stdin.write(`${JSON.stringify(message)}\n`);
+    const encoded = JSON.stringify(message);
+    if (Buffer.byteLength(encoded, "utf8") + 1 > MAX_LINE_BYTES)
+      throw new Error("Codex app-server outbound message exceeded the safety limit.");
+    child.stdin.write(`${encoded}\n`);
   }
 
   private notify(method: string, params: JsonObject): void {
