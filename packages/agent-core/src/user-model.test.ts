@@ -34,4 +34,24 @@ describe("reviewable user model", () => {
     expect(store.propose({ kind: "profile", key: "name", value: "User", sourceIds: ["message-1"], confidence: 0.9, sensitivity: "normal" })).toMatchObject({ status: "proposed" });
     database.close();
   });
+
+  it("filters malformed facts from persisted user-model arrays", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const store = new UserModelStore(database);
+    database.setPrivateState("memory.user-model", [null, { id: "broken", status: "confirmed" }, {
+      id: "valid",
+      kind: "profile",
+      key: "name",
+      value: "User",
+      sourceIds: ["message-1"],
+      confidence: 0.9,
+      sensitivity: "normal",
+      status: "confirmed",
+      createdAt: "2026-07-22T22:00:00.000Z",
+      updatedAt: "2026-07-22T22:00:00.000Z",
+    }]);
+    expect(store.list()).toMatchObject([{ id: "valid" }]);
+    expect(store.promptContext()).toContain("User");
+    database.close();
+  });
 });
