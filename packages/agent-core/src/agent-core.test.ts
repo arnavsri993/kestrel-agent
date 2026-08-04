@@ -578,4 +578,10 @@ describe("opportunity governance", () => {
     const scored = { ...teacherOpportunity, priority: engine.score(teacherOpportunity) };
     expect(engine.canLaunch(scored, { dailyModelCostRemaining: 2, maximumAutonomousDepth: 2, activeTasks: 0, maximumConcurrentTasks: 2 }, 2).allowed).toBe(false);
   });
+
+  it("fails closed when an opportunity score is non-finite", () => {
+    const engine = new OpportunityEngine();
+    expect(engine.score({ ...teacherOpportunity, expectedUtility: Number.NaN })).toBe(0);
+    expect(engine.score({ ...teacherOpportunity, expectedUtility: Number.POSITIVE_INFINITY })).toBe(0);
+  });
 });
