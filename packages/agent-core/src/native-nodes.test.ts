@@ -14,6 +14,9 @@ describe("native node manager", () => {
     expect(manager.poll("phone-1").commands).toEqual([]);
     manager.complete("phone-1", { commandId: location.id, ok: false, error: { code: "LOCATION_PERMISSION_DENIED", message: "Location permission is off." } });
     expect(manager.result(location.id)?.error?.code).toBe("LOCATION_PERMISSION_DENIED");
+    const exposed = manager.result(location.id)!;
+    exposed.error!.message = "tampered";
+    expect(manager.result(location.id)?.error?.message).toBe("Location permission is off.");
     now = new Date("2026-07-23T12:06:00.000Z");
     expect(manager.list()).toEqual([]);
     expect((manager as unknown as { commands: Map<string, unknown> }).commands.has("phone-1")).toBe(false);
