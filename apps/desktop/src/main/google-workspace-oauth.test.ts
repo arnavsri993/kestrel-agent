@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -74,5 +75,32 @@ describe("Google Workspace desktop OAuth", () => {
     const { broker } = fixture();
     const manager = new GoogleWorkspaceOAuthManager({ broker, openExternal: async () => {} });
     await expect(manager.connect("not-a-desktop-client")).rejects.toThrow("Desktop app");
+  });
+
+  it("rejects malformed callback URLs without losing the OAuth listener", async () => {
+    const { broker } = fixture();
+    let malformedStatus = 0;
+    const manager = new GoogleWorkspaceOAuthManager({
+      broker,
+      timeoutMs: 30_000,
+      openExternal: async (url) => {
+        const authorization = new URL(url);
+        const redirect = new URL(authorization.searchParams.get("redirect_uri")!);
+        malformedStatus = await new Promise<number>((resolve, reject) => {
+          const request = httpRequest({ hostname: redirect.hostname, port: Number(redirect.port), path: "/%ZZ", method: "GET" }, (response) => {
+            response.resume();
+            response.once("end", () => resolve(response.statusCode ?? 0));
+          });
+          request.once("error", reject);
+          request.end();
+        });
+        redirect.searchParams.set("state", authorization.searchParams.get("state")!);
+        redirect.searchParams.set("error", "access_denied");
+        await fetch(redirect);
+      },
+    });
+
+    await expect(manager.connect("1234567890-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com")).rejects.toThrow("did not complete");
+    expect(malformedStatus).toBe(400);
   });
 });
