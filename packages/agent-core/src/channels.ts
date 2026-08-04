@@ -52,6 +52,7 @@ export class NativeChannelAdapter implements ChannelAdapter {
   private readonly fetcher: typeof fetch; private readonly now: () => Date;
   constructor(private readonly options: NativeChannelAdapterOptions) { this.id = options.id; this.kind = options.kind; this.fetcher = options.fetcher ?? fetch; this.now = options.now ?? (() => new Date()); if (Boolean(options.token) === Boolean(options.tokenProvider) || (options.token?.length ?? 0) > 20_000) throw new Error("Native channel token source is invalid."); }
   async send(input: { conversationId: string; text: string; attachments?: ChannelAttachment[]; idempotencyKey: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }> {
+    input.signal.throwIfAborted();
     const attachments = input.attachments ?? []; if (attachments.length > 10 || attachments.some((file) => file.data.byteLength > 25_000_000)) throw new Error("Channel attachments exceed provider limits.");
     if (this.kind === "slack") return this.slack(input, attachments);
     if (this.kind === "discord") return this.discord(input, attachments);
@@ -60,6 +61,7 @@ export class NativeChannelAdapter implements ChannelAdapter {
     return this.json(`https://graph.microsoft.com/v1.0/chats/${encodeURIComponent(input.conversationId)}/messages`, { body: { contentType: "text", content: input.text } }, input, "id");
   }
   async edit(input: { conversationId: string; externalId: string; text: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }> {
+    input.signal.throwIfAborted();
     if (this.kind === "gmail") throw new Error("Gmail does not support editable progress messages.");
     if (this.kind === "slack") return this.json("https://slack.com/api/chat.update", { channel: input.conversationId, ts: input.externalId, text: input.text }, { idempotencyKey: `edit-${input.externalId}`, signal: input.signal }, "ts", true);
     const url = this.kind === "discord"
@@ -70,11 +72,13 @@ export class NativeChannelAdapter implements ChannelAdapter {
     return this.response(response, "id");
   }
   async typing(input: { conversationId: string; signal: AbortSignal }): Promise<void> {
+    input.signal.throwIfAborted();
     if (this.kind !== "discord") throw new Error(`${this.kind} does not expose a supported typing signal.`);
     const response = await this.fetcher(`https://discord.com/api/v10/channels/${encodeURIComponent(input.conversationId)}/typing`, { method: "POST", signal: input.signal, headers: { authorization: `Bot ${await this.accessToken()}` } });
     if (!response.ok) throw new Error(`Discord typing signal failed with status ${response.status}.`);
   }
   async react(input: { conversationId: string; externalId: string; emoji: string; remove: boolean; signal: AbortSignal }): Promise<void> {
+    input.signal.throwIfAborted();
     if (this.kind === "gmail") throw new Error("Gmail does not support message reactions.");
     if (!input.conversationId || input.conversationId.length > 500 || !input.externalId || input.externalId.length > 500 || !input.emoji || Buffer.byteLength(input.emoji) > 100 || /[\0\r\n]/.test(input.emoji)) throw new Error("Channel reaction input is invalid.");
     const token = await this.accessToken();
