@@ -16,6 +16,7 @@ import type {
 } from "@kestrel/shared-types";
 import {
   PRODUCT_IDENTITY,
+  TaskOpportunitySchema,
   WorkspaceSnapshotSchema,
 } from "@kestrel/shared-types";
 import { KestrelDatabase } from "@kestrel/database";
@@ -222,9 +223,14 @@ export class AgentCore {
     this.selectedPersonalityId =
       deps.database.getState<string>("selectedPersonality") ?? "pragmatic";
     this.personalities.get(this.selectedPersonalityId);
-    this.opportunity =
-      deps.database.getState<TaskOpportunity>("teacherOpportunity") ??
-      (seedDevelopmentFixtures ? teacherOpportunity : emptyOpportunity(this.now()));
+    const storedOpportunity = TaskOpportunitySchema.safeParse(
+      deps.database.getState<unknown>("teacherOpportunity"),
+    );
+    this.opportunity = storedOpportunity.success
+      ? storedOpportunity.data
+      : seedDevelopmentFixtures
+        ? teacherOpportunity
+        : emptyOpportunity(this.now());
     this.currentRouting =
       deps.database.getState<ModelRoutingDecision>("modelRouting") ?? {
         taskId: this.opportunity.id,
