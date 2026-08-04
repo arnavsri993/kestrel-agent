@@ -80,6 +80,20 @@ describe("Petdex cosmetic pet manager", () => {
     }
   });
 
+  it("recovers when the persisted installed-pet state is not an array", () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-pets-corrupt-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    try {
+      database.setPrivateState("display.installed-pets", { corrupted: true });
+      const manager = new PetManager(database, root, fixtureFetch());
+      expect(manager.installed()).toEqual([]);
+      expect(manager.status().configuration.enabled).toBe(false);
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("renders verified frames through Unicode, iTerm2, and Kitty protocols", async () => {
     const image = await sharp({ create: { width: 1536, height: 1872, channels: 4, background: { r: 190, g: 80, b: 40, alpha: 1 } } }).webp().toBuffer();
     const root = mkdtempSync(join(tmpdir(), "workstrand-pets-render-"));

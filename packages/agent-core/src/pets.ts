@@ -225,8 +225,8 @@ export class PetManager {
   }
 
   installed(): InstalledPet[] {
-    const stored =
-      this.database.getPrivateState<unknown[]>(this.recordsKey) ?? [];
+    const storedValue = this.database.getPrivateState<unknown>(this.recordsKey);
+    const stored = Array.isArray(storedValue) ? storedValue : [];
     return stored
       .flatMap((value) => {
         const parsed = InstalledPetSchema.safeParse(value);
