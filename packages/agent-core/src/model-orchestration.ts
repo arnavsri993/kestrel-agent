@@ -423,7 +423,8 @@ export class AdaptiveModelRouter {
   }
 
   traces(): RoutingTrace[] {
-    return (this.database.getPrivateState<RoutingTrace[]>(this.tracesKey) ?? [])
+    const stored = this.database.getPrivateState<unknown>(this.tracesKey);
+    return (Array.isArray(stored) ? stored.slice(-200) : [])
       .flatMap((trace) => {
         const parsed = RoutingTraceSchema.safeParse(trace);
         return parsed.success ? [parsed.data] : [];
