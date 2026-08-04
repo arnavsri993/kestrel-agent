@@ -95,4 +95,39 @@ describe("Electron browser action cancellation", () => {
     });
     expect(insertText).not.toHaveBeenCalled();
   });
+
+  it("rejects malformed navigation URLs without invoking the window", async () => {
+    const loadURL = vi.fn();
+    const service = new ElectronBrowserService();
+    const sessions = (
+      service as unknown as {
+        sessions: Map<string, unknown>;
+      }
+    ).sessions;
+    sessions.set("browser-test", {
+      window: {
+        isDestroyed: () => false,
+        webContents: { loadURL },
+      },
+      partition: {},
+      allowedOrigins: new Set(["https://example.test"]),
+      diagnostics: [],
+      downloads: [],
+      downloadDirectory: "/tmp/browser-test",
+    });
+
+    await expect(
+      service.handle(
+        {
+          operation: "navigate",
+          sessionId: "browser-test",
+          url: "not a URL",
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(
+      "Electron browser navigation is outside the origin allowlist.",
+    );
+    expect(loadURL).not.toHaveBeenCalled();
+  });
 });
