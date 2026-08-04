@@ -383,6 +383,10 @@ export class McpClient {
   }
 
   private receive(message: JsonRpcMessage): void {
+    if (!message || typeof message !== "object" || Array.isArray(message)) {
+      this.fail(new Error("MCP transport emitted a non-object JSON-RPC message."));
+      return;
+    }
     if (!("id" in message) || !("result" in message || "error" in message) || message.id === null) return;
     const pending = this.pending.get(message.id);
     if (!pending) return;
