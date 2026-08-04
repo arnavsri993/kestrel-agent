@@ -217,8 +217,15 @@ export class ObservabilityManager {
   }
 
   configuration(): ObservabilityConfiguration {
-    const stored = this.database.getPrivateState<ObservabilityConfiguration>(CONFIGURATION_KEY);
-    return stored ? validateConfiguration(stored) : structuredClone(DEFAULT_OBSERVABILITY_CONFIGURATION);
+    const stored = this.database.getPrivateState<unknown>(CONFIGURATION_KEY);
+    if (stored === undefined) return structuredClone(DEFAULT_OBSERVABILITY_CONFIGURATION);
+    const parsed = ObservabilityConfigurationSchema.safeParse(stored);
+    if (!parsed.success) return structuredClone(DEFAULT_OBSERVABILITY_CONFIGURATION);
+    try {
+      return validateConfiguration(parsed.data);
+    } catch {
+      return structuredClone(DEFAULT_OBSERVABILITY_CONFIGURATION);
+    }
   }
 
   status(): ObservabilityStatus {
