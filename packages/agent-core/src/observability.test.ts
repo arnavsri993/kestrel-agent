@@ -157,4 +157,14 @@ describe("privacy-safe external observability", () => {
       prometheus: { enabled: false }
     })).rejects.toThrow("Enable OTLP or Prometheus");
   });
+
+  it("ignores malformed persisted export status", () => {
+    const { database, runtime } = fixture();
+    database.setState("observability.status", { state: "complete", at: { invalid: true } });
+    const manager = new ObservabilityManager(database, runtime);
+    cleanup.push(() => manager.shutdown());
+
+    expect(manager.status()).not.toHaveProperty("lastExportAt");
+    expect(manager.status()).not.toHaveProperty("lastExportState");
+  });
 });
