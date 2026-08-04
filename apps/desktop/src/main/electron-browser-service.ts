@@ -51,6 +51,12 @@ function origin(value: string): string | undefined {
   } catch { return "invalid"; }
 }
 
+function browserResponse(value: unknown, operation: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error(`Electron browser returned an invalid ${operation} response.`);
+  return value as Record<string, unknown>;
+}
+
 export class ElectronBrowserService {
   private readonly sessions = new Map<string, BrowserRecord>();
 
@@ -145,7 +151,7 @@ export class ElectronBrowserService {
 
   private async targetPoint(window: BrowserWindow, selector: string, focus = false): Promise<{ x: number; y: number }> {
     if (!selector || selector.length > 2_000) throw new Error("Browser selector is invalid.");
-    const result = await window.webContents.executeJavaScript(`(async () => {
+    const result = browserResponse(await window.webContents.executeJavaScript(`(async () => {
       const node = document.querySelector(${JSON.stringify(selector)});
       if (!(node instanceof Element)) throw new Error("Browser target was not found.");
       node.scrollIntoView({ behavior: "instant", block: "center", inline: "center" });
@@ -186,9 +192,9 @@ export class ElectronBrowserService {
       }
       ${focus ? "if (typeof node.focus === \"function\") node.focus({ preventScroll: true });" : ""}
       return { x, y };
-    })()`, true) as { x: number; y: number };
-    if (!Number.isFinite(result.x) || !Number.isFinite(result.y)) throw new Error("Browser target bounds are invalid.");
-    return result;
+    })()`, true), "target bounds");
+    if (typeof result.x !== "number" || typeof result.y !== "number" || !Number.isFinite(result.x) || !Number.isFinite(result.y)) throw new Error("Browser target bounds are invalid.");
+    return { x: result.x, y: result.y };
   }
 
   private async act(id: string, action: BrowserAction, signal: AbortSignal): Promise<void> {
@@ -238,7 +244,8 @@ export class ElectronBrowserService {
     const { window } = this.require(id);
     if (signal.aborted) throw signal.reason;
     if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
-    const result = await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree") as { nodes?: unknown[] };
+    const result = browserResponse(await window.webContents.debugger.sendCommand("Accessibility.getFullAXTree"), "accessibility tree");
+    if (result.nodes !== undefined && !Array.isArray(result.nodes)) throw new Error("Electron browser returned an invalid accessibility tree.");
     return { url: window.webContents.getURL(), title: window.webContents.getTitle(), accessibilityTree: { nodes: (result.nodes ?? []).slice(0, 5_000) } };
   }
 
@@ -283,9 +290,11 @@ export class ElectronBrowserService {
     const { window } = this.require(id);
     if (signal.aborted) throw signal.reason;
     if (!window.webContents.debugger.isAttached()) window.webContents.debugger.attach("1.3");
-    const document = await window.webContents.debugger.sendCommand("DOM.getDocument", { depth: 0 }) as { root: { nodeId: number } };
-    const selected = await window.webContents.debugger.sendCommand("DOM.querySelector", { nodeId: document.root.nodeId, selector }) as { nodeId: number };
-    if (!selected.nodeId) throw new Error("Browser upload target was not found.");
+    const document = browserResponse(await window.webContents.debugger.sendCommand("DOM.getDocument", { depth: 0 }), "DOM document");
+    const root = browserResponse(document.root, "DOM document root");
+    if (typeof root.nodeId !== "number" || !Number.isInteger(root.nodeId) || root.nodeId < 1) throw new Error("Electron browser returned an invalid DOM document root.");
+    const selected = browserResponse(await window.webContents.debugger.sendCommand("DOM.querySelector", { nodeId: root.nodeId, selector }), "DOM selector");
+    if (typeof selected.nodeId !== "number" || !Number.isInteger(selected.nodeId) || selected.nodeId < 1) throw new Error("Browser upload target was not found.");
     await window.webContents.debugger.sendCommand("DOM.setFileInputFiles", { nodeId: selected.nodeId, files: paths });
   }
 
