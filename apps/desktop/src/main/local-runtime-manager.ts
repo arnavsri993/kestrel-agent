@@ -5,10 +5,12 @@ import { dirname, join, relative, sep } from "node:path";
 import { once } from "node:events";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
+import { readBoundedResponseBytes } from "@kestrel/agent-core";
 import type { LocalModelSummary, LocalRuntimeProgress, LocalRuntimeStatus } from "@kestrel/shared-types";
 
 const execFileAsync = promisify(execFile);
 const OLLAMA_ORIGIN = "http://127.0.0.1:11434";
+const MAX_LOCAL_MODEL_RESPONSE_BYTES = 1_000_000;
 
 export interface LocalRuntimeManifest {
   runtime: "ollama";
@@ -155,7 +157,8 @@ export class LocalRuntimeManager {
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
     });
     if (!response.ok) throw new Error(`The local model service returned ${response.status}.`);
-    return modelSummaries(await response.json() as { models?: OllamaTag[] });
+    const bytes = await readBoundedResponseBytes(response, MAX_LOCAL_MODEL_RESPONSE_BYTES, "The local model service response exceeds 1 MB.");
+    return modelSummaries(JSON.parse(new TextDecoder().decode(bytes)) as { models?: OllamaTag[] });
   }
 
   private async hasManagedInstall(): Promise<boolean> {
@@ -436,7 +439,8 @@ export class LocalRuntimeManager {
       signal
     });
     if (!response.ok) throw new Error(`The local model verification returned ${response.status}.`);
-    const result = await response.json() as { done?: unknown; message?: { content?: unknown }; error?: unknown };
+    const bytes = await readBoundedResponseBytes(response, MAX_LOCAL_MODEL_RESPONSE_BYTES, "The local model verification response exceeds 1 MB.");
+    const result = JSON.parse(new TextDecoder().decode(bytes)) as { done?: unknown; message?: { content?: unknown }; error?: unknown };
     if (typeof result.error === "string") throw new Error(result.error);
     if (result.done !== true || typeof result.message?.content !== "string" || !result.message.content.trim()) {
       throw new Error("The local model started but did not complete a verification response.");
