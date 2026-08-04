@@ -97,6 +97,8 @@ describe("isolated browser automation and visual validation", () => {
     const baseline = { width: 2, height: 1, rgba: Uint8Array.from([0,0,0,255, 255,255,255,255]) };
     const actual = { width: 2, height: 1, rgba: Uint8Array.from([0,0,0,255, 250,255,255,255]) };
     expect(validator.compare(baseline, actual, 0.4)).toMatchObject({ changedPixels: 1, differenceRatio: 0.5, passed: false });
+    expect(() => validator.compare(baseline, { ...actual, rgba: new Uint8Array(4) })).toThrow("exactly width");
+    expect(() => validator.compare(baseline, actual, Number.NaN)).toThrow("between 0 and 1");
     expect(validator.list()).toHaveLength(1);
     database.close();
   });
