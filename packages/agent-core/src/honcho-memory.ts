@@ -338,8 +338,15 @@ export class HonchoMemoryProvider {
       !["user", "assistant"].includes(message.role)
     )
       return;
+    const storedSynced = this.database.getPrivateState<unknown>(
+      this.syncedIdsKey,
+    );
     const synced = new Set(
-      this.database.getPrivateState<string[]>(this.syncedIdsKey) ?? [],
+      Array.isArray(storedSynced)
+        ? storedSynced
+            .filter((id): id is string => typeof id === "string")
+            .slice(-5_000)
+        : [],
     );
     if (synced.has(message.id) || this.pendingMessageIds.has(message.id))
       return;

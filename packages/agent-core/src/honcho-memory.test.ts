@@ -165,6 +165,39 @@ describe("opt-in Honcho memory provider", () => {
     database.close();
   });
 
+  it("recovers when persisted synced-message state is malformed", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const { calls, client } = fixture();
+    const provider = new HonchoMemoryProvider(
+      database,
+      undefined,
+      undefined,
+      () => client,
+    );
+    provider.configure(enabledConfiguration());
+    database.setPrivateState("memory.honcho.synced-message-ids", {
+      corrupted: true,
+    });
+
+    provider.captureMessage({
+      id: "message-recovery",
+      sessionId: "session-1",
+      role: "user",
+      content: "Recover this message after malformed local state.",
+      createdAt: "2026-07-23T12:00:00.000Z",
+    });
+    await provider.flush();
+
+    expect(calls.messages).toEqual([
+      {
+        content: "Recover this message after malformed local state.",
+        peerId: "user",
+      },
+    ]);
+    expect(provider.status()).toMatchObject({ syncedMessages: 1 });
+    database.close();
+  });
+
   it("registers five remote-memory tools and keeps mutating reasoning behind approval", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const { client } = fixture();
