@@ -6,6 +6,7 @@ import { contentText, ModelProviderError, type ModelCallOptions, type ModelMessa
 
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 5 * 60_000;
+const MAX_TIMER_MS = 2_147_483_647;
 
 interface CliRunResult {
   stdout: string;
@@ -94,6 +95,11 @@ function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
+function boundedTimeout(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return DEFAULT_TIMEOUT_MS;
+  return Math.max(1, Math.min(MAX_TIMER_MS, Math.trunc(value)));
+}
+
 function usageFrom(value: unknown): ModelUsage {
   const usage = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
@@ -125,7 +131,7 @@ export class ClaudeSubscriptionProvider implements ModelProvider {
     this.executable = options.executable ?? "claude";
     this.defaultModel = options.defaultModel ?? "sonnet";
     this.environment = safeEnvironment(options.environment ?? process.env, { CLAUDE_CODE_SKIP_PROMPT_HISTORY: "1" });
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.timeoutMs = boundedTimeout(options.timeoutMs);
   }
 
   async probe(signal?: AbortSignal): Promise<void> {

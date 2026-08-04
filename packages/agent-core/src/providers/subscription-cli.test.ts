@@ -50,4 +50,14 @@ describe("vendor subscription CLI providers", () => {
     expect(result).toMatchObject({ providerId: "claude-subscription", responseId: "claude-session", text: "Claude subscription answer", usage: { inputTokens: 9, outputTokens: 3, cachedInputTokens: 2 }, toolCalls: [] });
     expect(deltas).toEqual(["Claude ", "subscription answer"]);
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("normalizes malformed provider timeouts: %s", async (timeoutMs) => {
+    const fake = await fakeCli();
+    const provider = new ClaudeSubscriptionProvider({ executable: fake.executable, timeoutMs });
+
+    await expect(provider.complete({ model: "sonnet", messages: [{ role: "user", content: textContent("Summarize this") }] })).resolves.toMatchObject({
+      providerId: "claude-subscription",
+      text: "Claude subscription answer"
+    });
+  });
 });
