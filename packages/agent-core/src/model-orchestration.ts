@@ -176,7 +176,8 @@ export class ModelRegistry {
     configuredProfiles: ModelProfile[] = [],
     private readonly now: () => Date = () => new Date(),
   ) {
-    const stored = database.getPrivateState<ModelProfile[]>(this.key) ?? [];
+    const storedValue = database.getPrivateState<unknown>(this.key);
+    const stored = Array.isArray(storedValue) ? storedValue : [];
     const storedById = new Map(stored.flatMap((profile) => {
       const parsed = ModelProfileSchema.safeParse(profile);
       return parsed.success ? [[parsed.data.id, parsed.data] as const] : [];

@@ -86,6 +86,17 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+  it("recovers when the persisted model registry is not an array", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setPrivateState("orchestration.model-registry.v1", { malformed: true });
+
+    const registry = new ModelRegistry(database, [provider({ id: "local", model: "private", local: true })]);
+
+    expect(registry.list()).toHaveLength(1);
+    expect(registry.get("local:private").model).toBe("private");
+    database.close();
+  });
+
   it("routes simple verifiable work to the cheaper adequate endpoint", () => {
     const item = fixture([
       provider({
