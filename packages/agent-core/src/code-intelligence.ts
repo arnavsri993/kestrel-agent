@@ -81,8 +81,10 @@ export class StdioLanguageServerTransport implements LanguageServerTransport {
       if (this.buffer.byteLength < end) return;
       const body = this.buffer.subarray(boundary + 4, end);
       this.buffer = this.buffer.subarray(end);
-      let message: LspMessage;
-      try { message = JSON.parse(body.toString("utf8")) as LspMessage; } catch { this.child.kill("SIGKILL"); return; }
+      let parsed: unknown;
+      try { parsed = JSON.parse(body.toString("utf8")) as unknown; } catch { this.child.kill("SIGKILL"); return; }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) { this.child.kill("SIGKILL"); return; }
+      const message = parsed as LspMessage;
       if (message.jsonrpc !== "2.0") { this.child.kill("SIGKILL"); return; }
       for (const listener of this.listeners) listener(message);
     }
