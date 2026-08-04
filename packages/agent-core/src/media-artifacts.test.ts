@@ -418,4 +418,24 @@ describe("media artifact workflow", () => {
     expect(captured?.file).toBeInstanceOf(Blob);
     expect((captured?.file as Blob).type).toBe("audio/webm");
   });
+
+  it("rejects oversized hosted media responses before buffering them", async () => {
+    const oversizedImage = new OpenAiMediaProvider({
+      apiKey: "image-secret",
+      fetcher: async () => new Response("{}", { status: 200, headers: { "content-length": "150000001" } }),
+    });
+    await expect(oversizedImage.generate({ prompt: "image", kind: "image", signal: new AbortController().signal })).rejects.toThrow("exceeds 150 MB");
+
+    const oversizedSpeech = new OpenAiMediaProvider({
+      apiKey: "speech-secret",
+      fetcher: async () => new Response("audio", { status: 200, headers: { "content-length": "100000001" } }),
+    });
+    await expect(oversizedSpeech.generate({ prompt: "speech", kind: "audio", signal: new AbortController().signal })).rejects.toThrow("exceeds 100 MB");
+
+    const oversizedTranscription = new OpenAiTranscriptionProvider({
+      apiKey: "transcription-secret",
+      fetcher: async () => new Response("{}", { status: 200, headers: { "content-length": "2000001" } }),
+    });
+    await expect(oversizedTranscription.transcribe({ data: Uint8Array.of(1), mediaType: "audio/mpeg", signal: new AbortController().signal })).rejects.toThrow("exceeds 2 MB");
+  });
 });
