@@ -23,6 +23,12 @@ function boundedRetrievedItems(value: number): number {
   return Math.max(0, Math.min(MAX_RETRIEVED_ITEMS, Math.trunc(value)));
 }
 
+function expirationTimestamp(item: MemoryRecord): number {
+  if (!item.validUntil) return Number.POSITIVE_INFINITY;
+  const timestamp = Date.parse(item.validUntil);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
 export class PreResponseContextResolver {
   constructor(private readonly memoryProvider: () => MemoryRecord[]) {}
 
@@ -44,9 +50,9 @@ export class PreResponseContextResolver {
       .sort((a, b) => (b.userConfirmed ? 1 : 0) - (a.userConfirmed ? 1 : 0) || b.importance - a.importance)
       .slice(0, boundedRetrievedItems(request.maximumRetrievedItems));
     return {
-      confirmed: matches.filter((item) => item.userConfirmed && (!item.validUntil || Date.parse(item.validUntil) >= now)),
+      confirmed: matches.filter((item) => item.userConfirmed && expirationTimestamp(item) >= now),
       inferred: matches.filter((item) => item.inferred),
-      possiblyStale: matches.filter((item) => Boolean(item.validUntil && Date.parse(item.validUntil) < now))
+      possiblyStale: matches.filter((item) => item.validUntil !== undefined && expirationTimestamp(item) < now)
     };
   }
 }
