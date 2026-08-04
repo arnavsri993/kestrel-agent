@@ -63,6 +63,12 @@ function validatePluginName(name: string): void {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) throw new Error("Plugin name is invalid.");
 }
 
+function positiveSafeInteger(value: number | undefined, fallback: number): number {
+  const resolved = value ?? fallback;
+  if (!Number.isSafeInteger(resolved) || resolved <= 0) throw new Error("Plugin bundle limits must be positive safe integers.");
+  return resolved;
+}
+
 function lengthPrefix(value: number): Buffer {
   const bytes = Buffer.allocUnsafe(8);
   bytes.writeBigUInt64BE(BigInt(value));
@@ -84,9 +90,9 @@ export class PluginInstaller {
 
   constructor(options: PluginInstallerOptions) {
     this.managedRoot = resolve(options.managedRoot);
-    this.maximumFiles = options.maximumFiles ?? 10_000;
-    this.maximumTotalBytes = options.maximumTotalBytes ?? 100 * 1024 * 1024;
-    this.maximumFileBytes = options.maximumFileBytes ?? 20 * 1024 * 1024;
+    this.maximumFiles = positiveSafeInteger(options.maximumFiles, 10_000);
+    this.maximumTotalBytes = positiveSafeInteger(options.maximumTotalBytes, 100 * 1024 * 1024);
+    this.maximumFileBytes = positiveSafeInteger(options.maximumFileBytes, 20 * 1024 * 1024);
     for (const trustKey of options.trustKeys) {
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(trustKey.keyId) || this.trustKeys.has(trustKey.keyId)) throw new Error("Plugin trust key ID is invalid or duplicated.");
       const publicKey = trustKey.publicKey instanceof KeyObject ? trustKey.publicKey : createPublicKey(trustKey.publicKey);
