@@ -3,6 +3,7 @@ import type {
   MediaGenerationProvider,
 } from "./media-artifacts";
 import { createFalClient, type FalClient } from "@fal-ai/client";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 export interface OpenAiMediaProviderOptions {
   apiKey: string;
@@ -136,7 +137,7 @@ export class OpenAiMediaProvider implements MediaGenerationProvider {
       throw new Error(
         `OpenAI image generation failed (${await boundedError(response)}).`,
       );
-    const body = (await response.json()) as {
+    const body = JSON.parse(new TextDecoder().decode(await readBoundedResponseBytes(response, 150_000_000, "OpenAI image response exceeds 150 MB."))) as {
       data?: Array<{ b64_json?: unknown }>;
     };
     const encoded = body.data?.[0]?.b64_json;
