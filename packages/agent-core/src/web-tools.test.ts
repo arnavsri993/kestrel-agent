@@ -135,4 +135,14 @@ describe("network-policy web tools", () => {
     expect(resolutions).toBe(1);
     expect(fetches).toBe(1);
   });
+
+  it("normalizes malformed Brave Search JSON responses", async () => {
+    const provider = new BraveSearchProvider({
+      apiKey: "search-secret",
+      resolveHost: async () => ["203.0.113.44"],
+      fetcher: async () => new Response("not-json", { headers: { "content-type": "application/json" } })
+    });
+    await expect(provider.search("kestrel", { maximumResults: 5, signal: new AbortController().signal }))
+      .rejects.toThrow("Brave Search returned malformed JSON.");
+  });
 });
