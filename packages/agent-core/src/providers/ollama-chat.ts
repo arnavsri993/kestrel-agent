@@ -1,6 +1,7 @@
 import { providerFetch, readNdjson } from "./http";
 import {
   contentText,
+  ModelProviderError,
   type ModelCallOptions,
   type ModelMessage,
   type ModelProvider,
@@ -93,6 +94,8 @@ export class OllamaChatProvider implements ModelProvider {
     let doneReason = "";
     const toolCalls: ModelToolCall[] = [];
     await readNdjson(response, this.id, (raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw))
+        throw new ModelProviderError(`${this.id} returned invalid NDJSON.`, this.id, false);
       const chunk = raw as Record<string, unknown>;
       const message = (chunk.message as Record<string, unknown> | undefined) ?? {};
       if (typeof message.content === "string" && message.content) {

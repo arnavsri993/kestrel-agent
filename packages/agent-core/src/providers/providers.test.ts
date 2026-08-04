@@ -283,6 +283,22 @@ describe("model provider adapters", () => {
     expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
   });
 
+  it.each(["null", "[]"])("rejects a non-object Ollama NDJSON record: %s", async (body) => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "application/x-ndjson" });
+      response.end(`${body}\n`);
+    });
+    const provider = new OllamaChatProvider({ baseUrl });
+
+    await expect(
+      provider.complete({ model: "local-test", messages: [{ role: "user", content: textContent("hello") }] }),
+    ).rejects.toMatchObject({
+      message: "ollama returned invalid NDJSON.",
+      providerId: "ollama",
+      retryable: false,
+    });
+  });
+
   it("maps Gemini video input, tools, and measured usage through the production REST contract", async () => {
     let requestBody: Record<string, unknown> = {};
     let apiKey = "";
