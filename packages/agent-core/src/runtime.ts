@@ -259,6 +259,35 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+interface PersistedRunBaseline {
+  sessionId: string;
+  userMessageId: string;
+  messageCount: number;
+  mutationIds: string[];
+}
+
+function parsePersistedRunBaseline(value: unknown): PersistedRunBaseline | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.sessionId !== "string" ||
+    !record.sessionId ||
+    typeof record.userMessageId !== "string" ||
+    !record.userMessageId ||
+    typeof record.messageCount !== "number" ||
+    !Number.isSafeInteger(record.messageCount) ||
+    record.messageCount < 0 ||
+    !Array.isArray(record.mutationIds) ||
+    !record.mutationIds.every((id) => typeof id === "string" && id.length > 0)
+  ) return undefined;
+  return {
+    sessionId: record.sessionId,
+    userMessageId: record.userMessageId,
+    messageCount: record.messageCount,
+    mutationIds: record.mutationIds,
+  };
+}
+
 export class AgentRuntime extends EventEmitter {
   private readonly tools = new Map<string, RuntimeToolDefinition>();
   private readonly deferredCatalogs = new Map<string, DeferredToolCatalog>();
@@ -438,11 +467,17 @@ export class AgentRuntime extends EventEmitter {
     const session = this.requireSession(sessionId);
     const { index, user } = this.retryableUserTurn(sessionId);
     const matchingRun = [...this.database.listAgentRuns(sessionId)].reverse().find((run) => {
-      const baseline = this.database.getPrivateState<{ userMessageId?: string }>(`agent-run-baseline.${run.id}`);
+      const baseline = parsePersistedRunBaseline(
+        this.database.getPrivateState<unknown>(`agent-run-baseline.${run.id}`),
+      );
       return baseline?.userMessageId === user.id;
     });
     const baseline = matchingRun
-      ? this.database.getPrivateState<{ sessionId: string; userMessageId: string; messageCount: number; mutationIds: string[] }>(`agent-run-baseline.${matchingRun.id}`)
+      ? parsePersistedRunBaseline(
+          this.database.getPrivateState<unknown>(
+            `agent-run-baseline.${matchingRun.id}`,
+          ),
+        )
       : undefined;
     const keepMessageCount =
       baseline?.sessionId === sessionId ? baseline.messageCount : index;
