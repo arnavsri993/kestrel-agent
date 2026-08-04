@@ -152,6 +152,46 @@ export interface AgentCoreDependencies {
   remoteExecution?: RemoteExecutionConfiguration;
 }
 
+function isStoredCustomPersonality(
+  value: unknown,
+): value is Omit<AgentPersonality, "builtin"> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const providerIds = candidate.providerIds;
+  const toolNames = candidate.toolNames;
+  return (
+    typeof candidate.id === "string" &&
+    /^[a-z][a-z0-9-]{0,63}$/.test(candidate.id) &&
+    !["pragmatic", "friendly", "concise"].includes(candidate.id) &&
+    typeof candidate.name === "string" &&
+    candidate.name.trim().length > 0 &&
+    candidate.name.length <= 100 &&
+    typeof candidate.description === "string" &&
+    candidate.description.trim().length > 0 &&
+    candidate.description.length <= 500 &&
+    typeof candidate.instructions === "string" &&
+    candidate.instructions.trim().length > 0 &&
+    candidate.instructions.length <= 20_000 &&
+    (candidate.preferredModel === undefined ||
+      (typeof candidate.preferredModel === "string" &&
+        candidate.preferredModel.length <= 200)) &&
+    (providerIds === undefined ||
+      (Array.isArray(providerIds) &&
+        providerIds.length <= 8 &&
+        providerIds.every(
+          (id) => typeof id === "string" && id.length > 0 && id.length <= 100,
+        ))) &&
+    (toolNames === undefined ||
+      (Array.isArray(toolNames) &&
+        toolNames.length <= 200 &&
+        toolNames.every(
+          (name) =>
+            typeof name === "string" && /^[a-z][a-z0-9_.-]+$/.test(name),
+        ))) &&
+    (candidate.memoryScope === "shared" || candidate.memoryScope === "isolated")
+  );
+}
+
 export class AgentCore {
   readonly email: EmailConnector;
   readonly calendar: CalendarConnector;
@@ -207,10 +247,12 @@ export class AgentCore {
     this.state =
       deps.database.getState<AgentState>("agentState") ??
       (seedDevelopmentFixtures ? "waiting_approval" : "idle");
-    const storedPersonalities =
-      deps.database.getPrivateState<Array<Omit<AgentPersonality, "builtin">>>(
-        this.customPersonalitiesKey,
-      ) ?? [];
+    const storedPersonalitiesValue = deps.database.getPrivateState<unknown>(
+      this.customPersonalitiesKey,
+    );
+    const storedPersonalities = Array.isArray(storedPersonalitiesValue)
+      ? storedPersonalitiesValue.filter(isStoredCustomPersonality)
+      : [];
     const customPersonalities = [
       ...new Map(
         [...(deps.customPersonalities ?? []), ...storedPersonalities].map(
