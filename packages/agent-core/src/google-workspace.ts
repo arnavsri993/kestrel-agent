@@ -26,10 +26,12 @@ interface StoredGoogleWorkspaceAuthorization {
 
 function parseRecord(raw: string): StoredGoogleWorkspaceAuthorization {
   if (raw.length > 100_000) throw new Error("Google Workspace authorization record is too large.");
-  let record: Partial<StoredGoogleWorkspaceAuthorization>;
-  try { record = JSON.parse(raw) as Partial<StoredGoogleWorkspaceAuthorization>; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(raw); }
   catch { throw new Error("Google Workspace authorization record is invalid."); }
-  if (record.version !== 1 || typeof record.clientId !== "string" || typeof record.refreshToken !== "string" || typeof record.email !== "string" || !Array.isArray(record.scopes) || typeof record.connectedAt !== "string") throw new Error("Google Workspace authorization record is invalid.");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Google Workspace authorization record is invalid.");
+  const record = parsed as Partial<StoredGoogleWorkspaceAuthorization>;
+  if (record.version !== 1 || typeof record.clientId !== "string" || typeof record.refreshToken !== "string" || typeof record.email !== "string" || !Array.isArray(record.scopes) || record.scopes.some((scope) => typeof scope !== "string") || typeof record.connectedAt !== "string") throw new Error("Google Workspace authorization record is invalid.");
   if (!/^[0-9]+-[A-Za-z0-9_-]{20,200}\.apps\.googleusercontent\.com$/.test(record.clientId) || record.refreshToken.length < 20 || record.refreshToken.length > 20_000) throw new Error("Google Workspace authorization record is invalid.");
   for (const scope of REQUIRED_SCOPES) if (!record.scopes.includes(scope)) throw new Error(`Google Workspace authorization is missing ${scope}.`);
   return record as StoredGoogleWorkspaceAuthorization;
