@@ -149,9 +149,9 @@ export class SkinManager {
 
   select(id: string): SkinStatus {
     if (!this.all().some((skin) => skin.id === id)) throw new Error(`Skin ${id} is not installed.`);
-    this.selectedId = id;
-    this.persist();
-    return this.status();
+    return this.transaction(() => {
+      this.selectedId = id;
+    });
   }
 
   import(source: string): SkinStatus {
@@ -174,29 +174,56 @@ export class SkinManager {
     validateContrast(skin);
     const exists = this.custom.some((candidate) => candidate.id === skin.id);
     if (!exists && this.custom.length >= 20) throw new Error("At most 20 custom skins can be installed.");
-    this.custom = [...this.custom.filter((candidate) => candidate.id !== skin.id), skin];
-    this.unsafeCustomIds.delete(skin.id);
-    this.selectedId = skin.id;
-    this.persist();
-    return this.status();
+    return this.transaction(() => {
+      this.custom = [...this.custom.filter((candidate) => candidate.id !== skin.id), skin];
+      this.unsafeCustomIds.delete(skin.id);
+      this.selectedId = skin.id;
+    });
   }
 
   remove(id: string): SkinStatus {
     if (BUILTIN_SKINS.some((skin) => skin.id === id)) throw new Error("Built-in skins cannot be removed.");
     if (!this.custom.some((skin) => skin.id === id)) throw new Error(`Custom skin ${id} is not installed.`);
-    this.custom = this.custom.filter((skin) => skin.id !== id);
-    this.unsafeCustomIds.delete(id);
-    if (this.selectedId === id) this.selectedId = "workstrand";
-    this.persist();
-    return this.status();
+    return this.transaction(() => {
+      this.custom = this.custom.filter((skin) => skin.id !== id);
+      this.unsafeCustomIds.delete(id);
+      if (this.selectedId === id) this.selectedId = "workstrand";
+    });
   }
 
   private persist(): void {
-    this.database.setPrivateState(this.customKey, [
-      ...this.custom,
-      ...this.quarantined,
-    ]);
+    const previousSelected = this.database.getPrivateState<string>(this.selectedKey) ?? "workstrand";
     this.database.setPrivateState(this.selectedKey, this.selectedId);
+    try {
+      this.database.setPrivateState(this.customKey, [
+        ...this.custom,
+        ...this.quarantined,
+      ]);
+    } catch (error) {
+      try {
+        this.database.setPrivateState(this.selectedKey, previousSelected);
+      } catch {
+        // Preserve the original skin persistence error if rollback fails.
+      }
+      throw error;
+    }
+  }
+
+  private transaction(mutator: () => void): SkinStatus {
+    const previousCustom = this.custom;
+    const previousSelected = this.selectedId;
+    const previousUnsafe = new Set(this.unsafeCustomIds);
+    try {
+      mutator();
+      this.persist();
+      return this.status();
+    } catch (error) {
+      this.custom = previousCustom;
+      this.selectedId = previousSelected;
+      this.unsafeCustomIds.clear();
+      for (const id of previousUnsafe) this.unsafeCustomIds.add(id);
+      throw error;
+    }
   }
 
   private renderableSkin(skin: SkinDefinition): SkinDefinition {

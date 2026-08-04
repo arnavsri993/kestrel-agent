@@ -43,6 +43,41 @@ describe("visual skin registry", () => {
     database.close();
   });
 
+  it("restores the prior skin state when persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const manager = new SkinManager(database);
+    manager.import(JSON.stringify({
+      version: 1,
+      id: "field-notes",
+      name: "Field Notes",
+      description: "A personal paper-like variant.",
+      base: "daylight",
+    }));
+    const setPrivateState = database.setPrivateState.bind(database);
+    database.setPrivateState = (key, value) => {
+      if (key === "display.custom-skins")
+        throw new Error("skin state unavailable");
+      setPrivateState(key, value);
+    };
+
+    expect(() => manager.import(JSON.stringify({
+      version: 1,
+      id: "second-notes",
+      name: "Second Notes",
+      description: "Another paper-like variant.",
+      base: "daylight",
+    }))).toThrow("skin state unavailable");
+    expect(manager.status()).toMatchObject({
+      selectedId: "field-notes",
+      skins: expect.arrayContaining([
+        expect.objectContaining({ id: "field-notes" }),
+      ]),
+    });
+    expect(manager.status().skins.some((skin) => skin.id === "second-notes")).toBe(false);
+    expect(new SkinManager(database).status().selectedId).toBe("field-notes");
+    database.close();
+  });
+
   it("retains legacy custom skins and selection while rendering unsafe definitions through a safe fallback", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const daylight = BUILTIN_SKINS.find((skin) => skin.id === "daylight")!;
