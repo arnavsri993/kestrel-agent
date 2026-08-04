@@ -994,13 +994,15 @@ describe("agent runtime", () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-github-")); temporaryDirectories.push(root);
     writeFileSync(join(root, "README.md"), "# GitHub\n"); execFileSync("/usr/bin/git", ["init", "-q"], { cwd: root }); execFileSync("/usr/bin/git", ["remote", "add", "origin", "git@github.com:example/kestrel.git"], { cwd: root });
     const database = new KestrelDatabase(":memory:", createEncryptionKey()); const runtime = new AgentRuntime(database, [root], () => "2026-07-22T16:00:00.000Z", "github-secret"); const session = runtime.createSession({ title: "GitHub", workspaceRoot: root });
-    const originalFetch = globalThis.fetch; const requests: string[] = []; let malformed = false;
-    globalThis.fetch = async (input, init) => { requests.push(`${String(init?.method ?? "GET")} ${String(input)} ${String(new Headers(init?.headers).get("authorization"))}`); if (malformed) return new Response("not-json", { status: 200 }); return String(input).includes("check-runs") ? new Response(JSON.stringify({ check_runs: [{ name: "test", status: "completed", conclusion: "success", html_url: "https://github.com/example/kestrel/actions", output: { title: "Green", summary: "All tests passed" } }] }), { status: 200 }) : new Response(JSON.stringify({ number: 7, html_url: "https://github.com/example/kestrel/pull/7", title: "Ship", state: "open", draft: true }), { status: 200 }); };
+    const originalFetch = globalThis.fetch; const requests: string[] = []; let responseShape: "valid" | "malformed" | "non-object" = "valid";
+    globalThis.fetch = async (input, init) => { requests.push(`${String(init?.method ?? "GET")} ${String(input)} ${String(new Headers(init?.headers).get("authorization"))}`); if (responseShape === "malformed") return new Response("not-json", { status: 200 }); if (responseShape === "non-object") return new Response("null", { status: 200 }); return String(input).includes("check-runs") ? new Response(JSON.stringify({ check_runs: [{ name: "test", status: "completed", conclusion: "success", html_url: "https://github.com/example/kestrel/actions", output: { title: "Green", summary: "All tests passed" } }] }), { status: 200 }) : new Response(JSON.stringify({ number: 7, html_url: "https://github.com/example/kestrel/pull/7", title: "Ship", state: "open", draft: true }), { status: 200 }); };
     try {
       expect(await runtime.callTool(session.id, "github.pr-create", { title: "Ship", head: "codex/ship", base: "main", draft: true }, { approvalStatus: "approved", idempotencyKey: "pr-7" })).toMatchObject({ status: "verified", output: { number: 7, draft: true } });
       expect(await runtime.callTool(session.id, "github.ci-checks", { ref: "codex/ship" })).toMatchObject({ status: "verified", output: { checks: [{ name: "test", conclusion: "success", summary: "All tests passed" }] } });
-      malformed = true;
+      responseShape = "malformed";
       expect(await runtime.callTool(session.id, "github.ci-checks", { ref: "codex/ship" })).toMatchObject({ status: "failed", error: "GitHub returned malformed JSON." });
+      responseShape = "non-object";
+      expect(await runtime.callTool(session.id, "github.ci-checks", { ref: "codex/ship" })).toMatchObject({ status: "failed", error: "GitHub returned an invalid JSON response." });
       expect(requests).toEqual(expect.arrayContaining([expect.stringContaining("Bearer github-secret")]));
     } finally { globalThis.fetch = originalFetch; runtime.close(); database.close(); }
   });
