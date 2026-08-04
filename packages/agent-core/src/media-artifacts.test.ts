@@ -418,4 +418,22 @@ describe("media artifact workflow", () => {
     expect(captured?.file).toBeInstanceOf(Blob);
     expect((captured?.file as Blob).type).toBe("audio/webm");
   });
+
+  it.each([
+    ["malformed JSON", new Response("not-json", { status: 200 }), "malformed"],
+    ["a non-object JSON value", new Response("null", { status: 200 }), "invalid"],
+  ])("rejects OpenAI transcription responses containing %s", async (_label, response, error) => {
+    const provider = new OpenAiTranscriptionProvider({
+      apiKey: "voice-secret",
+      fetcher: async () => response,
+    });
+
+    await expect(
+      provider.transcribe({
+        data: Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3]),
+        mediaType: "audio/webm",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(`OpenAI transcription response was ${error}.`);
+  });
 });
