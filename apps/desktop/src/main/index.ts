@@ -40,6 +40,7 @@ import {
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
+import { normalizeOllamaModels } from "./ollama-models";
 import { MigrationManager, PluginInstaller, readBoundedResponseBytes } from "@kestrel/agent-core";
 import { PluginTrustStore } from "./plugin-trust-store";
 import { ElectronBrowserService } from "./electron-browser-service";
@@ -121,12 +122,6 @@ function trustedRendererUrl(value: string): boolean {
     RENDERER_ENTRY_PATH,
     DEVELOPMENT_RENDERER_URL,
   );
-}
-
-interface OllamaTag {
-  name?: unknown;
-  size?: unknown;
-  modified_at?: unknown;
 }
 
 interface BackupManifestFile {
@@ -467,22 +462,7 @@ async function listLocalModels(
   });
   if (!response.ok) throw new Error(`Ollama returned ${response.status}.`);
   const bytes = await readBoundedResponseBytes(response, 1_000_000, "Ollama model list response exceeds 1 MB.");
-  const payload = JSON.parse(new TextDecoder().decode(bytes)) as { models?: OllamaTag[] };
-  return (payload.models ?? []).flatMap((item) => {
-    if (typeof item.name !== "string" || !item.name.trim()) return [];
-    return [
-      {
-        name: item.name,
-        size:
-          typeof item.size === "number" && Number.isFinite(item.size)
-            ? Math.max(0, Math.floor(item.size))
-            : 0,
-        ...(typeof item.modified_at === "string"
-          ? { modifiedAt: item.modified_at }
-          : {}),
-      },
-    ];
-  });
+  return normalizeOllamaModels(JSON.parse(new TextDecoder().decode(bytes)) as unknown);
 }
 
 async function pullLocalModel(
