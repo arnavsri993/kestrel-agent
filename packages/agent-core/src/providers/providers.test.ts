@@ -202,6 +202,22 @@ describe("model provider adapters", () => {
     expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, reasoningTokens: 3 });
   });
 
+  it.each(["null", "[]"])("rejects a non-object OpenAI Responses SSE frame: %s", async (body) => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(`data: ${body}\n\n`);
+    });
+    const provider = new OpenAIResponsesProvider({ apiKey: "not-a-real-key", baseUrl });
+
+    await expect(
+      provider.complete({ model: "test-openai", messages: [{ role: "user", content: textContent("hello") }] }),
+    ).rejects.toMatchObject({
+      message: "OpenAI returned invalid streaming JSON.",
+      providerId: "openai",
+      retryable: false,
+    });
+  });
+
   it("maps Anthropic Messages streaming tool input and usage", async () => {
     let apiVersion = "";
     const baseUrl = await serve((request, response) => {
