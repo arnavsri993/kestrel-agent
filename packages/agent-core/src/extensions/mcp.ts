@@ -19,6 +19,13 @@ export interface McpTransport {
   close(): void | Promise<void>;
 }
 
+function validateTimeout(timeoutMs: number): number {
+  if (!Number.isFinite(timeoutMs) || !Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error("MCP client timeout must be a finite positive integer.");
+  }
+  return timeoutMs;
+}
+
 export interface McpTool {
   name: string;
   title?: string;
@@ -248,8 +255,10 @@ export class McpClient {
   private failure?: Error;
   private closed = false;
   private closePromise?: Promise<void>;
+  private readonly timeoutMs: number;
 
-  constructor(private readonly transport: McpTransport, private readonly timeoutMs = 30_000) {
+  constructor(private readonly transport: McpTransport, timeoutMs = 30_000) {
+    this.timeoutMs = validateTimeout(timeoutMs);
     this.unsubscribeMessage = transport.onMessage((message) => this.receive(message));
     this.unsubscribeError = transport.onError((error) => this.fail(error));
   }

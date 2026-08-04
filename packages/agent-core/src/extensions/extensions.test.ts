@@ -81,6 +81,10 @@ function runtimeFixture(label: string) {
 }
 
 describe("MCP extensions", () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0, 1.5])("rejects invalid client timeout %s before subscribing", (timeoutMs) => {
+    expect(() => new McpClient(new ControlledTransport(), timeoutMs)).toThrow("finite positive integer");
+  });
+
   it("uses Streamable HTTP sessions and exposes resources and prompts", async () => {
     let sessionHeader = "";
     let deleted = false;
