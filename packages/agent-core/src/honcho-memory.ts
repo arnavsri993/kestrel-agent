@@ -525,11 +525,35 @@ export class HonchoMemoryProvider {
   }
 
   private storedState(): StoredState {
-    return (
-      this.database.getPrivateState<StoredState>(this.stateKey) ?? {
-        syncedMessages: 0,
+    const stored = this.database.getPrivateState<unknown>(this.stateKey);
+    if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+      const value = stored as Record<string, unknown>;
+      const validTimestamp = (candidate: unknown) =>
+        candidate === undefined ||
+        (typeof candidate === "string" && !Number.isNaN(Date.parse(candidate)));
+      if (
+        Number.isSafeInteger(value.syncedMessages) &&
+        Number(value.syncedMessages) >= 0 &&
+        validTimestamp(value.lastVerifiedAt) &&
+        validTimestamp(value.lastSyncedAt) &&
+        (value.lastError === undefined ||
+          (typeof value.lastError === "string" && value.lastError.length <= 800))
+      ) {
+        return {
+          syncedMessages: value.syncedMessages as number,
+          ...(typeof value.lastVerifiedAt === "string"
+            ? { lastVerifiedAt: value.lastVerifiedAt }
+            : {}),
+          ...(typeof value.lastSyncedAt === "string"
+            ? { lastSyncedAt: value.lastSyncedAt }
+            : {}),
+          ...(typeof value.lastError === "string"
+            ? { lastError: value.lastError }
+            : {}),
+        };
       }
-    );
+    }
+    return { syncedMessages: 0 };
   }
 
   private saveState(state: StoredState): void {
