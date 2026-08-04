@@ -53,6 +53,7 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
 
 const DATABASE_STORAGE_UNAVAILABLE =
   "macOS secure storage is unavailable; Agent Core will not start with an unprotected key.";
+const fileMutationQueues = new Map<string, Promise<void>>();
 
 export interface ResolvedExternalCredentials {
   values: Partial<Record<BrokeredCredentialId, string>>;
@@ -167,39 +168,45 @@ export class CredentialBroker {
   }
 
   async setCredential(id: BrokeredCredentialId, value: string): Promise<void> {
-    const protection = await this.availableProtection();
     if (!BROKERED_CREDENTIALS[id]) throw new Error("Credential type is not supported.");
     const secret = value.trim();
     if (secret.length < 8 || secret.length > 20_000 || /[\r\n\0]/.test(secret)) throw new Error("Credential value is invalid.");
     const path = this.credentialPath(id);
-    const temporary = `${path}.new`;
-    await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
-    await writeFile(temporary, await protection.encryptString(secret), { mode: 0o600 });
-    await chmod(temporary, 0o600);
-    await rename(temporary, path);
-    await chmod(path, 0o600);
-    this.credentialCache.set(id, Promise.resolve(secret));
+    await this.mutateFile(path, async () => {
+      const protection = await this.availableProtection();
+      const temporary = `${path}.new`;
+      await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
+      await writeFile(temporary, await protection.encryptString(secret), { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, path);
+      await chmod(path, 0o600);
+      this.credentialCache.set(id, Promise.resolve(secret));
+    });
   }
 
   async removeCredential(id: BrokeredCredentialId): Promise<void> {
     if (!BROKERED_CREDENTIALS[id]) throw new Error("Credential type is not supported.");
-    try { await unlink(this.credentialPath(id)); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    this.credentialCache.delete(id);
+    await this.mutateFile(this.credentialPath(id), async () => {
+      try { await unlink(this.credentialPath(id)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      this.credentialCache.delete(id);
+    });
   }
 
   async setOpaqueSecret(id: string, value: string): Promise<void> {
     this.assertOpaqueId(id);
-    const protection = await this.availableProtection();
     if (value.length < 8 || value.length > 100_000 || value.includes("\0")) throw new Error("Opaque credential value is invalid.");
     const path = this.opaquePath(id);
-    const temporary = `${path}.new`;
-    await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
-    await writeFile(temporary, await protection.encryptString(value), { mode: 0o600 });
-    await chmod(temporary, 0o600);
-    await rename(temporary, path);
-    await chmod(path, 0o600);
-    this.opaqueSecretCache.set(id, Promise.resolve(value));
+    await this.mutateFile(path, async () => {
+      const protection = await this.availableProtection();
+      const temporary = `${path}.new`;
+      await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
+      await writeFile(temporary, await protection.encryptString(value), { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, path);
+      await chmod(path, 0o600);
+      this.opaqueSecretCache.set(id, Promise.resolve(value));
+    });
   }
 
   async getOpaqueSecret(id: string): Promise<string | undefined> {
@@ -219,9 +226,11 @@ export class CredentialBroker {
 
   async removeOpaqueSecret(id: string): Promise<void> {
     this.assertOpaqueId(id);
-    try { await unlink(this.opaquePath(id)); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    this.opaqueSecretCache.delete(id);
+    await this.mutateFile(this.opaquePath(id), async () => {
+      try { await unlink(this.opaquePath(id)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      this.opaqueSecretCache.delete(id);
+    });
   }
 
   async providerEnvironment(base: NodeJS.ProcessEnv = process.env, external?: ResolvedExternalCredentials): Promise<NodeJS.ProcessEnv> {
@@ -339,5 +348,22 @@ export class CredentialBroker {
     if (!protection.isEncryptionAvailable())
       throw new Error(unavailableMessage);
     return protection;
+  }
+
+  private async mutateFile<T>(path: string, operation: () => Promise<T>): Promise<T> {
+    const previous = fileMutationQueues.get(path) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = previous.catch(() => undefined).then(() => current);
+    fileMutationQueues.set(path, queued);
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (fileMutationQueues.get(path) === queued) fileMutationQueues.delete(path);
+    }
   }
 }

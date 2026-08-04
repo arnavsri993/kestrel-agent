@@ -81,4 +81,32 @@ describe("desktop credential broker", () => {
     await expect(broker.setCredential("anthropic", "test-secret-value")).rejects.toThrow("secure storage is unavailable");
     await expect(broker.getDatabaseKey()).rejects.toThrow("secure storage is unavailable");
   });
+
+  it("serializes concurrent writes to the same secret across broker instances", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-concurrent-"));
+    roots.push(root);
+    const first = new CredentialBroker(root, {
+      isEncryptionAvailable: () => true,
+      encryptString: async (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+      decryptString: async (value: Buffer) => Buffer.from(value.toString().slice("sealed:".length), "base64").toString()
+    });
+    const second = new CredentialBroker(root, {
+      isEncryptionAvailable: () => true,
+      encryptString: async (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+      decryptString: async (value: Buffer) => Buffer.from(value.toString().slice("sealed:".length), "base64").toString()
+    });
+
+    await Promise.all([
+      first.setCredential("openai", "first-secret-value"),
+      second.setCredential("openai", "second-secret-value")
+    ]);
+
+    expect(["first-secret-value", "second-secret-value"]).toContain(
+      await new CredentialBroker(root, {
+        isEncryptionAvailable: () => true,
+        encryptString: async (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+        decryptString: async (value: Buffer) => Buffer.from(value.toString().slice("sealed:".length), "base64").toString()
+      }).providerEnvironment().then((environment) => environment.OPENAI_API_KEY)
+    );
+  });
 });
