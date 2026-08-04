@@ -207,8 +207,9 @@ export class WebhookChannelAdapter implements ChannelAdapter {
     this.now = options.now ?? (() => new Date());
   }
 
-  async send(input: { conversationId: string; text: string; idempotencyKey: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }> {
+  async send(input: { conversationId: string; text: string; attachments?: ChannelAttachment[]; idempotencyKey: string; signal: AbortSignal }): Promise<{ externalId: string; deliveredAt: string }> {
     input.signal.throwIfAborted();
+    if (input.attachments?.length) throw new Error("Webhook channel attachments are not supported.");
     const addresses = await this.resolver(this.url.hostname);
     if (addresses.length === 0 || addresses.some(isPrivateNetworkAddress)) throw new Error("Webhook channel resolved to a private or unsafe address.");
     const controller = new AbortController();
