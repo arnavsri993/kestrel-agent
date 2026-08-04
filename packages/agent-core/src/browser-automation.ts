@@ -76,7 +76,9 @@ export class BrowserController {
 
   async navigate(ownerSessionId: string, id: string, urlValue: string, signal: AbortSignal): Promise<{ url: string; trust: "untrusted_browser" }> {
     const session = this.require(ownerSessionId, id);
-    const url = new URL(urlValue);
+    let url: URL;
+    try { url = new URL(urlValue); }
+    catch { throw new Error("Browser navigation URL is invalid."); }
     if (!session.allowedOrigins.includes(url.origin)) throw new Error(`Browser navigation to ${url.origin} is outside this session's origin allowlist.`);
     url.username = ""; url.password = ""; url.hash = "";
     await this.backend.navigate(session.backendSessionId, url.toString(), signal);
