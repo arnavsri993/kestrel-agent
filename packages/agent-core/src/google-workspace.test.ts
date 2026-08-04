@@ -72,4 +72,51 @@ describe("Google Workspace runtime connector", () => {
     const missingScope = JSON.stringify({ ...JSON.parse(authorization), scopes: ["openid", "email"] });
     expect(() => environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: missingScope })).toThrow("missing");
   });
+
+  it("bounds ignored not-found Workspace bodies before treating them as absent", async () => {
+    let cancelled = false;
+    const reader = {
+      read: async () => ({
+        done: false,
+        value: { byteLength: 256_001 } as Uint8Array,
+      }),
+      cancel: async () => {
+        cancelled = true;
+      },
+      releaseLock: () => undefined,
+    };
+    const fetcher: typeof fetch = async (input) => {
+      if (String(input) === "https://oauth2.googleapis.com/token")
+        return new Response(
+          JSON.stringify({
+            access_token: "runtime-access-token-that-is-long-enough",
+            expires_in: 3600,
+            token_type: "Bearer",
+          }),
+          { status: 200 },
+        );
+      return {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        headers: new Headers({ "content-type": "application/json" }),
+        body: { getReader: () => reader },
+      } as unknown as Response;
+    };
+    const client = environmentGoogleWorkspaceClient(
+      { KESTREL_GOOGLE_WORKSPACE_OAUTH: authorization },
+      fetcher,
+    );
+
+    await expect(
+      client!.createEvent({
+        operationId: "calendar-overlimit-404",
+        title: "Project review",
+        startsAt: "2026-07-24T16:00:00.000Z",
+        endsAt: "2026-07-24T17:00:00.000Z",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("Google Workspace response exceeds its size limit.");
+    expect(cancelled).toBe(true);
+  });
 });
