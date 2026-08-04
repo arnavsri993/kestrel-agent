@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -150,4 +151,35 @@ describe("two-stage pet hatch workflow", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 15_000);
+
+  it("filters malformed persisted draft records before cleanup", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workstrand-hatch-state-"));
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    try {
+      const pets = new PetManager(database, join(root, "pets"));
+      const hatchRoot = join(root, "pets", ".hatch");
+      const manager = new PetHatchManager(database, hatchRoot, [], pets, () => new Date("2026-07-23T12:00:00.000Z"));
+      const data = await fixtureImage();
+      const id = "draft-12345678-1234-1234-1234-123456789abc";
+      const valid = {
+        id,
+        concept: "a blue paper bird",
+        style: "auto",
+        filename: `${id}.png`,
+        sha256: createHash("sha256").update(data).digest("hex"),
+        bytes: data.byteLength,
+        providerId: "fixture-image",
+        model: "fixture-image-v1",
+        createdAt: "2026-07-23T12:00:00.000Z",
+      };
+      mkdirSync(hatchRoot, { recursive: true });
+      writeFileSync(join(hatchRoot, valid.filename), data);
+      database.setPrivateState("display.pet-hatch-drafts", [null, { ...valid, bytes: "bad" }, valid]);
+
+      expect(manager.drafts()).toMatchObject([{ id, concept: "a blue paper bird" }]);
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -95,6 +95,22 @@ interface StoredDraft {
   createdAt: string;
 }
 
+function isStoredDraft(value: unknown): value is StoredDraft {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const draft = value as Record<string, unknown>;
+  return (
+    typeof draft.id === "string" && /^draft-[a-f0-9-]{36}$/.test(draft.id) &&
+    typeof draft.concept === "string" && draft.concept.length > 0 && draft.concept.length <= 500 &&
+    typeof draft.style === "string" && draft.style.length > 0 && draft.style.length <= 80 &&
+    draft.filename === `${draft.id}.png` &&
+    typeof draft.sha256 === "string" && /^[a-f0-9]{64}$/.test(draft.sha256) &&
+    typeof draft.bytes === "number" && Number.isInteger(draft.bytes) && draft.bytes > 0 && draft.bytes <= MAX_DRAFT_BYTES &&
+    typeof draft.providerId === "string" && draft.providerId.length > 0 && draft.providerId.length <= 200 &&
+    typeof draft.model === "string" && draft.model.length > 0 && draft.model.length <= 200 &&
+    typeof draft.createdAt === "string" && Number.isFinite(Date.parse(draft.createdAt))
+  );
+}
+
 export interface PetHatchDraft {
   id: string;
   concept: string;
@@ -568,7 +584,7 @@ export class PetHatchManager {
 
   private records(): StoredDraft[] {
     const value = this.database.getPrivateState<StoredDraft[]>(this.stateKey);
-    return Array.isArray(value) ? value.slice(0, 12) : [];
+    return Array.isArray(value) ? value.filter(isStoredDraft).slice(0, 12) : [];
   }
 
   private persist(records: StoredDraft[]): void {
