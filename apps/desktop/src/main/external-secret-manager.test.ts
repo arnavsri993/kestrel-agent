@@ -154,6 +154,9 @@ describe("external secret manager", () => {
     const badCommand = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
     badCommand.command.executablePath = "helper.sh";
     await expect(manager.save(badCommand)).rejects.toThrow("must be absolute");
+    const badServer = structuredClone(DEFAULT_EXTERNAL_SECRET_CONFIGURATION);
+    badServer.bitwarden.serverUrl = "not a URL";
+    await expect(manager.save(badServer)).rejects.toThrow("credential-free HTTPS URL");
     expect(() => safeExternalSecretArchiveEntries("../bws\n")).toThrow("unexpected file list");
     expect(() => safeExternalSecretArchiveEntries("bws\nextra\n")).toThrow("unexpected file list");
     expect(safeExternalSecretArchiveEntries("bws\n")).toEqual(["bws"]);
