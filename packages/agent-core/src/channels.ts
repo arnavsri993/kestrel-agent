@@ -145,13 +145,17 @@ export function environmentChannelConfiguration(environment: NodeJS.ProcessEnv =
   const sourceMetadata = lstatSync(configuredPath);
   if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink() || sourceMetadata.size > 1_000_000 || (sourceMetadata.mode & 0o077) !== 0) throw new Error("KESTREL_CHANNEL_CONFIG must be an owner-only regular file no larger than 1 MB.");
   const resolved = realpathSync(configuredPath);
-  const parsed = JSON.parse(readFileSync(resolved, "utf8")) as { version?: unknown; channels?: unknown };
-  if (parsed.version !== 1 || !Array.isArray(parsed.channels) || parsed.channels.length > 50) throw new Error("Channel configuration must use version 1 with at most 50 channels.");
+  let parsed: unknown;
+  try { parsed = JSON.parse(readFileSync(resolved, "utf8")); }
+  catch { throw new Error("Channel configuration must use version 1 with at most 50 channels."); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Channel configuration must use version 1 with at most 50 channels.");
+  const config = parsed as { version?: unknown; channels?: unknown };
+  if (config.version !== 1 || !Array.isArray(config.channels) || config.channels.length > 50) throw new Error("Channel configuration must use version 1 with at most 50 channels.");
   const adapters: ChannelAdapter[] = [];
   const signingSecrets: Record<string, Buffer> = {};
   const sessionRoutes: Record<string, string> = {};
   const ids = new Set<string>();
-  for (const raw of parsed.channels) {
+  for (const raw of config.channels) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Channel configuration entry is invalid.");
     const entry = raw as Record<string, unknown>;
     const id = entry.id;
