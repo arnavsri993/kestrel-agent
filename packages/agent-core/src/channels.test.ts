@@ -9,6 +9,22 @@ import { AgentRuntime } from "./runtime";
 import { ChannelGateway, NativeChannelAdapter, WebhookChannelAdapter, environmentChannelConfiguration, installChannelTools, signChannelEnvelope, type ChannelEnvelope } from "./channels";
 
 describe("authenticated channel gateway", () => {
+  it("recovers to default interaction settings when persisted state is malformed", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const gateway = new ChannelGateway(database, runtime, [], {});
+    database.setPrivateState("channels.interaction", { progressMode: "invalid" });
+
+    expect(gateway.interactionConfiguration()).toEqual({
+      progressMode: "progress",
+      typingMode: "thinking",
+      typingIntervalSeconds: 6,
+      reactionLevel: "minimal",
+    });
+    runtime.close();
+    database.close();
+  });
+
   it("verifies and deduplicates untrusted inbound messages and approval-gates outbound sends", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);
