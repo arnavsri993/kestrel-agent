@@ -15,6 +15,15 @@ function createCore() {
 }
 
 describe("fresh application state", () => {
+  it("recovers to the pragmatic personality when selection is malformed", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setState("selectedPersonality", { corrupted: true });
+    const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
+
+    expect(core.snapshot().personality.selectedId).toBe("pragmatic");
+    core.close();
+  });
+
   it("starts idle without importing development fixtures", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });

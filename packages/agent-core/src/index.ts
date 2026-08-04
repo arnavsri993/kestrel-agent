@@ -219,9 +219,18 @@ export class AgentCore {
       ).values(),
     ];
     this.personalities = new PersonalityRegistry(customPersonalities);
+    const storedPersonalityId = deps.database.getState<unknown>(
+      "selectedPersonality",
+    );
     this.selectedPersonalityId =
-      deps.database.getState<string>("selectedPersonality") ?? "pragmatic";
-    this.personalities.get(this.selectedPersonalityId);
+      typeof storedPersonalityId === "string"
+        ? storedPersonalityId
+        : "pragmatic";
+    try {
+      this.personalities.get(this.selectedPersonalityId);
+    } catch {
+      this.selectedPersonalityId = "pragmatic";
+    }
     this.opportunity =
       deps.database.getState<TaskOpportunity>("teacherOpportunity") ??
       (seedDevelopmentFixtures ? teacherOpportunity : emptyOpportunity(this.now()));
