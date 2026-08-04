@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
@@ -228,6 +229,24 @@ describe("authenticated channel gateway", () => {
     await expect(gateway.react("chat", "room-1", "message-1", "add", "🎉", new AbortController().signal)).rejects.toThrow("at most 1");
     expect(await gateway.react("chat", "room-1", "message-1", "clear", undefined, new AbortController().signal)).toMatchObject({ removed: true, trackedReactionCount: 0 });
     expect(calls).toEqual([{ emoji: "👍", remove: false }, { emoji: "👍", remove: true }]);
+    database.close();
+  });
+
+  it("recovers malformed persisted reaction tracking before applying a reaction", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const calls: Array<{ emoji: string; remove: boolean }> = [];
+    const gateway = new ChannelGateway(database, runtime, [{
+      id: "chat",
+      kind: "discord",
+      send: async () => ({ externalId: "message-1", deliveredAt: "2026-07-23T12:00:00.000Z" }),
+      react: async ({ emoji, remove }) => { calls.push({ emoji, remove }); }
+    }], {});
+    gateway.configureInteraction({ progressMode: "progress", typingMode: "thinking", typingIntervalSeconds: 6, reactionLevel: "ack" });
+    const stateKey = `channel-reactions:${createHash("sha256").update("chat\0room-1\0message-1").digest("hex")}`;
+    database.setPrivateState(stateKey, { corrupted: true });
+    expect(await gateway.react("chat", "room-1", "message-1", "add", "👍", new AbortController().signal)).toMatchObject({ trackedReactionCount: 1 });
+    expect(calls).toEqual([{ emoji: "👍", remove: false }]);
     database.close();
   });
 
