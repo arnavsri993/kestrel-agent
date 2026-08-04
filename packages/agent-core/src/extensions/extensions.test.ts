@@ -703,6 +703,44 @@ describe("Codex-compatible plugin manifests", () => {
     database.close();
   });
 
+  it("preserves existing plugin MCP connections when a later connection fails", async () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-mcp-rollback-"));
+    directories.push(container);
+    const pluginRoot = join(container, "example", "1.0.0");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    mkdirSync(join(pluginRoot, "mcp"), { recursive: true });
+    const configPath = join(pluginRoot, ".mcp.json");
+    writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "example", version: "1.0.0", description: "Example MCP plugin.", mcpServers: "./.mcp.json" }));
+    writeFileSync(configPath, JSON.stringify({ mcpServers: { good: { command: "node", args: ["./mcp/good.mjs"], cwd: "." } } }));
+    writeFileSync(join(pluginRoot, "mcp", "good.mjs"), [
+      "import readline from 'node:readline';",
+      "const lines = readline.createInterface({ input: process.stdin });",
+      "lines.on('line', (line) => {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{protocolVersion:'2025-11-25',capabilities:{},serverInfo:{name:'good',version:'1'}}})+'\\n');",
+      "  else if (message.method === 'tools/list') process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{tools:[]}})+'\\n');",
+      "});",
+    ].join("\n"));
+    writeFileSync(join(pluginRoot, "mcp", "broken.mjs"), "process.exit(1);\n");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const registry = new PluginRegistry([container], database);
+    registry.discover();
+    registry.setEnabled("example", true);
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Plugin MCP rollback" });
+    const manager = new PluginMcpManager(registry, runtime);
+    await manager.connect("example", session.id);
+    writeFileSync(configPath, JSON.stringify({ mcpServers: {
+      good: { command: "node", args: ["./mcp/good.mjs"], cwd: "." },
+      broken: { command: "node", args: ["./mcp/broken.mjs"], cwd: "." },
+    } }));
+
+    await expect(manager.connect("example", session.id)).rejects.toThrow();
+    expect(manager.list()).toMatchObject([{ pluginName: "example", serverName: "good" }]);
+    await manager.disconnect("example");
+    database.close();
+  });
+
   it("rejects plugin-controlled process loader environment variables", async () => {
     const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-mcp-env-"));
     directories.push(container);

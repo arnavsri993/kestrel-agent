@@ -87,6 +87,8 @@ export class PluginMcpManager {
     if (!plugin.mcpServersPath || !existsSync(plugin.mcpServersPath)) throw new Error("Plugin does not declare MCP servers.");
     const servers = parseConfig(plugin.mcpServersPath, plugin.root);
     const connected: PluginMcpConnection[] = [];
+    const createdKeys: string[] = [];
+    const pendingClients = new Set<McpClient>();
     try {
       for (const [serverName, config] of servers) {
         const key = `${pluginName}:${serverName}`;
@@ -97,21 +99,32 @@ export class PluginMcpManager {
           continue;
         }
         const client = new McpClient(new StdioMcpTransport(config));
+        pendingClients.add(client);
         const toolNames = await bridgeMcpTools(client, this.runtime, sessionId, `${pluginName}.${serverName}`);
         const connection = { pluginName, serverName, toolNames, connectedAt: this.now().toISOString() };
         this.active.set(key, { client, connection });
+        pendingClients.delete(client);
+        createdKeys.push(key);
         connected.push(connection);
       }
       return connected;
     } catch (error) {
-      await this.disconnect(pluginName);
+      await this.disconnectKeys(createdKeys);
+      for (const client of pendingClients) await client.close();
       throw error;
     }
   }
 
   async disconnect(pluginName: string): Promise<void> {
-    const matches = [...this.active.entries()].filter(([, value]) => value.connection.pluginName === pluginName);
-    for (const [key, value] of matches) {
+    await this.disconnectKeys([...this.active.entries()]
+      .filter(([, value]) => value.connection.pluginName === pluginName)
+      .map(([key]) => key));
+  }
+
+  private async disconnectKeys(keys: Iterable<string>): Promise<void> {
+    for (const key of keys) {
+      const value = this.active.get(key);
+      if (!value) continue;
       for (const toolName of value.connection.toolNames) this.runtime.unregisterExternalTool(toolName);
       await value.client.close();
       this.active.delete(key);
