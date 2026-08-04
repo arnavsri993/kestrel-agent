@@ -18,6 +18,14 @@ const builtins: AgentPersonality[] = [
 
 const MAX_CUSTOM_PERSONALITIES = 100;
 
+function clonePersonality(personality: AgentPersonality): AgentPersonality {
+  return {
+    ...personality,
+    ...(personality.providerIds ? { providerIds: [...personality.providerIds] } : {}),
+    ...(personality.toolNames ? { toolNames: [...personality.toolNames] } : {}),
+  };
+}
+
 export class PersonalityRegistry {
   private readonly personalities = new Map<string, AgentPersonality>();
 
@@ -36,19 +44,19 @@ export class PersonalityRegistry {
     if (personality.toolNames && (personality.toolNames.length > 200 || personality.toolNames.some((name) => !/^[a-z][a-z0-9_.-]+$/.test(name)))) throw new Error("Personality tool scope is invalid.");
     if (this.personalities.has(personality.id)) throw new Error(`Personality ${personality.id} already exists.`);
     if ([...this.personalities.values()].filter((candidate) => !candidate.builtin).length >= MAX_CUSTOM_PERSONALITIES) throw new Error("At most 100 custom personalities can be registered.");
-    const value = { ...personality, builtin: false };
+    const value = clonePersonality({ ...personality, builtin: false });
     this.personalities.set(value.id, value);
-    return value;
+    return clonePersonality(value);
   }
 
   list(): AgentPersonality[] {
-    return [...this.personalities.values()];
+    return [...this.personalities.values()].map(clonePersonality);
   }
 
   get(id: string): AgentPersonality {
     const personality = this.personalities.get(id);
     if (!personality) throw new Error(`Personality ${id} is unavailable.`);
-    return personality;
+    return clonePersonality(personality);
   }
 
   remove(id: string): AgentPersonality {
