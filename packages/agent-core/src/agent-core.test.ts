@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEncryptionKey } from "@kestrel/encryption";
@@ -90,6 +90,81 @@ describe("core agent request path", () => {
     expect(response).toMatchObject({ ok: true, routing: { model: "routed-model", providerId: "routed-provider", reasoningEffort: "medium" }, run: { model: "routed-model", providerIds: ["routed-provider"], reasoningEffort: "medium", status: "completed" } });
     expect(received).toMatchObject({ model: "routed-model", reasoningEffort: "medium" });
     await core.close();
+  });
+
+  it("ignores malformed persisted automatic routing during approval resume", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-core-routing-state-"));
+    writeFileSync(join(root, "keep.txt"), "keep me\n");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    let calls = 0;
+    const provider: ModelProvider = {
+      id: "routing-state-provider",
+      defaultModel: "routing-state-model",
+      capabilities: {
+        streaming: false,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        calls += 1;
+        return calls === 1
+          ? {
+              providerId: "routing-state-provider",
+              model: request.model,
+              text: "",
+              toolCalls: [
+                {
+                  id: "call-delete-routing-state",
+                  name: "workspace.delete",
+                  arguments: { path: "keep.txt" },
+                },
+              ],
+              usage: { inputTokens: 2, outputTokens: 1 },
+              finishReason: "tool_calls" as const,
+            }
+          : {
+              providerId: "routing-state-provider",
+              model: request.model,
+              text: "Resumed without the malformed route.",
+              toolCalls: [],
+              usage: { inputTokens: 2, outputTokens: 1 },
+              finishReason: "stop" as const,
+            };
+      },
+    };
+    const core = new AgentCore({
+      database,
+      workspaceRoots: [root],
+      modelProviders: [provider],
+      now: () => "2026-07-22T15:00:00.000Z",
+    });
+    const session = core.runtime.ensureMainSession();
+    const waiting = await core.handle({
+      type: "runtime-run-agent",
+      sessionId: session.id,
+      message: "Delete keep.txt",
+      model: "auto",
+      providerIds: ["auto"],
+    });
+    if (!waiting.ok || !waiting.run) throw new Error("Expected an approval-bound automatic run.");
+    expect(waiting.run.status).toBe("waiting_approval");
+    database.setPrivateState(`agent-run-routing.${waiting.run.id}`, {});
+
+    const resumed = await core.handle({
+      type: "runtime-resume-agent",
+      runId: waiting.run.id,
+      approvalDecision: "rejected",
+    });
+
+    expect(resumed).toMatchObject({ ok: true, run: { status: "completed" } });
+    expect(calls).toBe(2);
+    expect(existsSync(join(root, "keep.txt"))).toBe(true);
+    expect(database.getPrivateState(`agent-run-routing.${waiting.run.id}`)).toBeNull();
+    await core.close();
+    rmSync(root, { recursive: true, force: true });
   });
 
   it("routes automatic image work only to providers with image capability", async () => {

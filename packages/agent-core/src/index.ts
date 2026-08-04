@@ -117,6 +117,10 @@ import {
   installAgentConfigurationTools,
 } from "./configuration";
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export interface AgentCoreDependencies {
   database: KestrelDatabase;
   /** Seed the deterministic teacher-scheduling data used by preview and test surfaces. */
@@ -775,6 +779,44 @@ export class AgentCore {
         escalated: modelId !== automatic.decision.selectedModelId,
       });
     }
+  }
+
+  private persistedAutomaticRoute(
+    runId: string,
+  ): ReturnType<AgentCore["automaticRoute"]> | undefined {
+    const value = this.deps.database.getPrivateState<unknown>(
+      `agent-run-routing.${runId}`,
+    );
+    if (!isObjectRecord(value)) return undefined;
+    const route = value.route;
+    const execution = value.execution;
+    const decision = value.decision;
+    const requirements = value.requirements;
+    if (
+      !isObjectRecord(route) ||
+      typeof route.reviewRequired !== "boolean" ||
+      !isObjectRecord(execution) ||
+      !Array.isArray(execution.providerIds) ||
+      execution.providerIds.length === 0 ||
+      !execution.providerIds.every(
+        (providerId) => typeof providerId === "string" && providerId.length > 0,
+      ) ||
+      !isObjectRecord(decision) ||
+      typeof decision.selectedModelId !== "string" ||
+      !decision.selectedModelId ||
+      (decision.traceId !== undefined &&
+        (typeof decision.traceId !== "string" || !decision.traceId)) ||
+      !isObjectRecord(requirements) ||
+      !isObjectRecord(requirements.capabilities) ||
+      !Object.values(requirements.capabilities).every(
+        (score) =>
+          typeof score === "number" &&
+          Number.isFinite(score) &&
+          score >= 0 &&
+          score <= 1,
+      )
+    ) return undefined;
+    return value as ReturnType<AgentCore["automaticRoute"]>;
   }
 
   private recordAutomaticFailure(
@@ -2513,9 +2555,7 @@ export class AgentCore {
             this.activeStreams.set(request.streamId, active);
           try {
             const configuration = this.configuration.current();
-            const automatic = this.deps.database.getPrivateState<
-              ReturnType<AgentCore["automaticRoute"]>
-            >(`agent-run-routing.${request.runId}`);
+            const automatic = this.persistedAutomaticRoute(request.runId);
             const result = await this.agentLoop.resume({
               runId: request.runId,
               approvalDecision: request.approvalDecision,
@@ -2538,13 +2578,15 @@ export class AgentCore {
                 ? { takeSteering: () => active.steering.splice(0) }
                 : {}),
             });
-            if (automatic && result.run.status !== "waiting_approval") {
-              await this.ensureIndependentReview(
-                automatic,
-                result.run.sessionId,
-                result,
-              );
-              this.recordAutomaticOutcome(automatic, result);
+            if (result.run.status !== "waiting_approval") {
+              if (automatic) {
+                await this.ensureIndependentReview(
+                  automatic,
+                  result.run.sessionId,
+                  result,
+                );
+                this.recordAutomaticOutcome(automatic, result);
+              }
               this.deps.database.setPrivateState(
                 `agent-run-routing.${request.runId}`,
                 null,
