@@ -53,6 +53,7 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
 
 const DATABASE_STORAGE_UNAVAILABLE =
   "macOS secure storage is unavailable; Agent Core will not start with an unprotected key.";
+const DATABASE_KEY_INVALID = "The encrypted database key is invalid.";
 const fileMutationQueues = new Map<string, Promise<void>>();
 
 export interface ResolvedExternalCredentials {
@@ -295,7 +296,9 @@ export class CredentialBroker {
     const protection = await this.availableProtection(DATABASE_STORAGE_UNAVAILABLE);
     try {
       const encrypted = await readFile(this.keyPath);
-      return Buffer.from(await protection.decryptString(encrypted), "base64");
+      const key = Buffer.from(await protection.decryptString(encrypted), "base64");
+      if (key.byteLength !== 32) throw new Error(DATABASE_KEY_INVALID);
+      return key;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const key = randomBytes(32);
