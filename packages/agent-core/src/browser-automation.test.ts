@@ -85,6 +85,18 @@ describe("isolated browser automation and visual validation", () => {
     database.close();
   });
 
+  it("caps browser sessions per owner", async () => {
+    const backend = new FakeBrowser();
+    const controller = new BrowserController(backend);
+    const sessions = await Promise.all(Array.from({ length: 8 }, () => controller.create("owner", ["https://example.test"])));
+
+    await expect(controller.create("owner", ["https://example.test"])).rejects.toThrow("at most 8 sessions");
+    const other = await controller.create("another-owner", ["https://example.test"]);
+    expect(other.browserSessionId).toEqual(expect.any(String));
+    for (const session of sessions) await controller.close("owner", session.browserSessionId);
+    await controller.close("another-owner", other.browserSessionId);
+  });
+
   it("persists responsive baseline, actual, diff, and diagnostics artifacts and gates browser errors", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const root = mkdtempSync(join(tmpdir(), "kestrel-visual-"));

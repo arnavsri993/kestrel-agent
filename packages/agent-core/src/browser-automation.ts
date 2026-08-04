@@ -35,6 +35,7 @@ export interface BrowserAutomationBackend {
 }
 
 interface BrowserSessionRecord { id: string; backendSessionId: string; ownerSessionId: string; allowedOrigins: string[]; createdAt: string; }
+const MAX_BROWSER_SESSIONS_PER_OWNER = 8;
 
 export class BrowserController {
   private readonly sessions = new Map<string, BrowserSessionRecord>();
@@ -58,7 +59,14 @@ export class BrowserController {
         );
       return url.origin;
     }))];
+    if ([...this.sessions.values()].filter((session) => session.ownerSessionId === ownerSessionId).length >= MAX_BROWSER_SESSIONS_PER_OWNER) {
+      throw new Error(`A browser owner can have at most ${MAX_BROWSER_SESSIONS_PER_OWNER} sessions.`);
+    }
     const backendSessionId = await this.backend.createSession({ allowedOrigins: origins, isolated: true });
+    if ([...this.sessions.values()].filter((session) => session.ownerSessionId === ownerSessionId).length >= MAX_BROWSER_SESSIONS_PER_OWNER) {
+      await this.backend.close(backendSessionId).catch(() => undefined);
+      throw new Error(`A browser owner can have at most ${MAX_BROWSER_SESSIONS_PER_OWNER} sessions.`);
+    }
     const id = `browser-${randomUUID()}`;
     this.sessions.set(id, { id, backendSessionId, ownerSessionId, allowedOrigins: origins, createdAt: this.now().toISOString() });
     return { browserSessionId: id };
