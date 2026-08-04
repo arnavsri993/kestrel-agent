@@ -13,11 +13,11 @@ import {
   parseScheduleExpression,
   textContent,
   type MigrationPlan,
-  type TrustedProxyConfiguration,
 } from "@kestrel/agent-core";
 import { parseCliArguments } from "./arguments";
 import { runAcpStdio } from "./acp-stdio";
 import { dataDirectory, openKestrel } from "./state";
+import { trustedProxyConfiguration } from "./trusted-proxy-config";
 import { runTui } from "./tui";
 
 const help = `Kestrel CLI
@@ -92,38 +92,6 @@ function boundedTlsFile(path: string): Buffer {
       "TLS credentials must be regular files no larger than 1 MB.",
     );
   return readFileSync(resolved);
-}
-
-function trustedProxyConfiguration(path: string): TrustedProxyConfiguration {
-  const source = lstatSync(path);
-  if (
-    !source.isFile() ||
-    source.isSymbolicLink() ||
-    source.size > 1_000_000 ||
-    (source.mode & 0o077) !== 0
-  )
-    throw new Error(
-      "Trusted proxy configuration must be an owner-only regular file no larger than 1 MB.",
-    );
-  const resolved = realpathSync(path);
-  const metadata = lstatSync(resolved);
-  if (!metadata.isFile())
-    throw new Error(
-      "Trusted proxy configuration must resolve to a regular file.",
-    );
-  const value = JSON.parse(
-    readFileSync(resolved, "utf8"),
-  ) as Partial<TrustedProxyConfiguration>;
-  if (
-    !Array.isArray(value.trustedSources) ||
-    !Array.isArray(value.requiredHeaders) ||
-    !Array.isArray(value.allowUsers) ||
-    !Array.isArray(value.maximumScopes) ||
-    typeof value.userHeader !== "string" ||
-    typeof value.allowLoopback !== "boolean"
-  )
-    throw new Error("Trusted proxy configuration is invalid.");
-  return value as TrustedProxyConfiguration;
 }
 
 async function waitForShutdown(): Promise<void> {
