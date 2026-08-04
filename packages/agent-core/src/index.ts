@@ -15,6 +15,7 @@ import type {
   WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import {
+  ModelRoutingDecisionSchema,
   PRODUCT_IDENTITY,
   WorkspaceSnapshotSchema,
 } from "@kestrel/shared-types";
@@ -225,8 +226,12 @@ export class AgentCore {
     this.opportunity =
       deps.database.getState<TaskOpportunity>("teacherOpportunity") ??
       (seedDevelopmentFixtures ? teacherOpportunity : emptyOpportunity(this.now()));
-    this.currentRouting =
-      deps.database.getState<ModelRoutingDecision>("modelRouting") ?? {
+    const storedRouting = ModelRoutingDecisionSchema.safeParse(
+      deps.database.getState<unknown>("modelRouting"),
+    );
+    this.currentRouting = storedRouting.success
+      ? storedRouting.data
+      : {
         taskId: this.opportunity.id,
         model: "local-rules",
         reasoningEffort: "none",
