@@ -7641,7 +7641,10 @@ export function App() {
   useEffect(() => {
     let active = true;
     const unsubscribe = window.kestrel.onSnapshot((next) => {
-      if (active) setSnapshot(next);
+      if (active) {
+        setError(null);
+        setSnapshot(next);
+      }
     });
     void loadInitialDesktopState((request) => window.kestrel.request(request))
       .then((initial) => {
