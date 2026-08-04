@@ -236,6 +236,72 @@ describe("provider-neutral agent loop", () => {
     database.close();
   });
 
+  it("rolls back partial provider-attempt audit batches", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Atomic audit batch" });
+    database.db.exec(`
+      CREATE TRIGGER reject_second_model_call_audit
+      BEFORE INSERT ON model_call_audits
+      WHEN (SELECT COUNT(*) FROM model_call_audits) >= 1
+      BEGIN
+        SELECT RAISE(ABORT, 'forced second audit failure');
+      END
+    `);
+    const first: ModelProvider = {
+      id: "audit-first",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async () => {
+        throw new Error("first provider failed");
+      },
+    };
+    const second: ModelProvider = {
+      id: "audit-second",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => ({
+        providerId: "audit-second",
+        model: request.model,
+        text: "The fallback completed.",
+        toolCalls: [],
+        usage: { inputTokens: 2, outputTokens: 2 },
+        finishReason: "stop",
+      }),
+    };
+    const loop = new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([first, second]),
+    );
+
+    await expect(
+      loop.run({
+        sessionId: session.id,
+        model: "audit-model",
+        providerIds: ["audit-first", "audit-second"],
+        userContent: textContent("Audit this fallback."),
+      }),
+    ).rejects.toThrow("forced second audit failure");
+    const [run] = database.listAgentRuns(session.id);
+    expect(run?.status).toBe("failed");
+    expect(run ? database.listModelCallAudits(run.id) : []).toEqual([]);
+    expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
+    database.close();
+  });
+
   it("releases the session claim after provider errors and cancellation", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);

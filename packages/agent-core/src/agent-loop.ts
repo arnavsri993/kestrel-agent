@@ -581,26 +581,28 @@ export class AgentLoop {
   }
 
   private saveAttemptAudits(run: AgentRun, model: string, attempts: ProviderAttempt[], result?: ModelResult): void {
-    for (const attempt of attempts) {
-      const winning = attempt.status === "completed" && attempt.providerId === result?.providerId;
-      const audit: ModelCallAudit = {
-        id: `model-call-${randomUUID()}`,
-        runId: run.id,
-        sessionId: run.sessionId,
-        providerId: attempt.providerId,
-        model: winning ? result.model : model,
-        status: attempt.status,
-        inputTokens: winning ? result.usage.inputTokens : 0,
-        outputTokens: winning ? result.usage.outputTokens : 0,
-        ...(winning && result.usage.cachedInputTokens !== undefined ? { cachedInputTokens: result.usage.cachedInputTokens } : {}),
-        ...(winning && result.usage.reasoningTokens !== undefined ? { reasoningTokens: result.usage.reasoningTokens } : {}),
-        estimatedCostUsd: winning ? this.usageGovernor.estimateCost(attempt.providerId, result.model, result.usage) : 0,
-        durationMs: durationMs(attempt.startedAt, attempt.completedAt),
-        ...(attempt.status === "failed" ? { error: "Provider attempt failed." } : {}),
-        startedAt: attempt.startedAt,
-        completedAt: attempt.completedAt
-      };
-      this.database.saveModelCallAudit(audit);
-    }
+    this.database.db.transaction(() => {
+      for (const attempt of attempts) {
+        const winning = attempt.status === "completed" && attempt.providerId === result?.providerId;
+        const audit: ModelCallAudit = {
+          id: `model-call-${randomUUID()}`,
+          runId: run.id,
+          sessionId: run.sessionId,
+          providerId: attempt.providerId,
+          model: winning ? result.model : model,
+          status: attempt.status,
+          inputTokens: winning ? result.usage.inputTokens : 0,
+          outputTokens: winning ? result.usage.outputTokens : 0,
+          ...(winning && result.usage.cachedInputTokens !== undefined ? { cachedInputTokens: result.usage.cachedInputTokens } : {}),
+          ...(winning && result.usage.reasoningTokens !== undefined ? { reasoningTokens: result.usage.reasoningTokens } : {}),
+          estimatedCostUsd: winning ? this.usageGovernor.estimateCost(attempt.providerId, result.model, result.usage) : 0,
+          durationMs: durationMs(attempt.startedAt, attempt.completedAt),
+          ...(attempt.status === "failed" ? { error: "Provider attempt failed." } : {}),
+          startedAt: attempt.startedAt,
+          completedAt: attempt.completedAt
+        };
+        this.database.saveModelCallAudit(audit);
+      }
+    })();
   }
 }
