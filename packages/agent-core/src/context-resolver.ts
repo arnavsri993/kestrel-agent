@@ -16,6 +16,13 @@ export interface ResolvedContext {
   possiblyStale: MemoryRecord[];
 }
 
+const MAX_RETRIEVED_ITEMS = 100;
+
+function boundedRetrievedItems(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(MAX_RETRIEVED_ITEMS, Math.trunc(value)));
+}
+
 export class PreResponseContextResolver {
   constructor(private readonly memoryProvider: () => MemoryRecord[]) {}
 
@@ -35,7 +42,7 @@ export class PreResponseContextResolver {
       .filter((item) => allowed.has(String(item.structuredData.category) as ContextCategory))
       .filter((item) => item.status === "active")
       .sort((a, b) => (b.userConfirmed ? 1 : 0) - (a.userConfirmed ? 1 : 0) || b.importance - a.importance)
-      .slice(0, request.maximumRetrievedItems);
+      .slice(0, boundedRetrievedItems(request.maximumRetrievedItems));
     return {
       confirmed: matches.filter((item) => item.userConfirmed && (!item.validUntil || Date.parse(item.validUntil) >= now)),
       inferred: matches.filter((item) => item.inferred),
