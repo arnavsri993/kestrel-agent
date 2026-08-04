@@ -63,6 +63,11 @@ function mapStopReason(value: unknown, hasTools: boolean): ModelFinishReason {
   return "unknown";
 }
 
+function usageCount(value: unknown, fallback = 0): number {
+  const count = Number(value ?? fallback);
+  return Number.isFinite(count) ? Math.max(0, Math.floor(count)) : fallback;
+}
+
 export class AnthropicMessagesProvider implements ModelProvider {
   readonly id: string;
   readonly poolId?: string;
@@ -128,8 +133,8 @@ export class AnthropicMessagesProvider implements ModelProvider {
         if (typeof message.id === "string") responseId = message.id;
         if (typeof message.model === "string") responseModel = message.model;
         const usage = (message.usage as Record<string, unknown> | undefined) ?? {};
-        inputTokens = Number(usage.input_tokens ?? 0);
-        cachedInputTokens = Number(usage.cache_read_input_tokens ?? 0);
+        inputTokens = usageCount(usage.input_tokens);
+        cachedInputTokens = usageCount(usage.cache_read_input_tokens);
       }
       if (event.type === "content_block_start") {
         const block = (event.content_block as Record<string, unknown> | undefined) ?? {};
@@ -155,7 +160,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
         const delta = (event.delta as Record<string, unknown> | undefined) ?? {};
         const usage = (event.usage as Record<string, unknown> | undefined) ?? {};
         stopReason = delta.stop_reason;
-        outputTokens = Number(usage.output_tokens ?? outputTokens);
+        outputTokens = usageCount(usage.output_tokens, outputTokens);
       }
       if (event.type === "error") {
         const error = (event.error as Record<string, unknown> | undefined) ?? {};

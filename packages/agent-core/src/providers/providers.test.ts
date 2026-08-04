@@ -190,6 +190,22 @@ describe("model provider adapters", () => {
     });
   });
 
+  it("bounds malformed Anthropic Messages usage counts", async () => {
+    const baseUrl = await serve((_request, response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end([
+        `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { usage: { input_tokens: "not-a-number", cache_read_input_tokens: -2 } } })}\n\n`,
+        `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: "Infinity" } })}\n\n`,
+        "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+      ].join(""));
+    });
+    const provider = new AnthropicMessagesProvider({ apiKey: "test", baseUrl });
+
+    const result = await provider.complete({ model: "test-claude", messages: [{ role: "user", content: textContent("Count this") }] });
+
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 });
+  });
+
   it("maps Ollama NDJSON streaming responses and local tool calls", async () => {
     let requestBody: Record<string, unknown> = {};
     const baseUrl = await serve((request, response) => {
