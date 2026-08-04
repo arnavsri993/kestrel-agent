@@ -64,12 +64,15 @@ export class MemoryManager {
   search(query: string, limit = 20): MemoryRecord[] {
     const queryTerms = terms(query);
     if (!queryTerms.length) return [];
+    const searchLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(100, Math.trunc(limit)))
+      : 20;
     return this.list().map((memory) => {
       const body = terms(`${memory.content} ${JSON.stringify(memory.structuredData)} ${memory.entityIds.join(" ")}`);
       const exact = queryTerms.filter((term) => body.includes(term)).length;
       const related = queryTerms.filter((term) => body.some((candidate) => candidate.startsWith(term) || term.startsWith(candidate))).length;
       return { memory, score: exact * 4 + related + memory.importance + memory.confidence };
-    }).filter(({ score }) => score > 0).sort((left, right) => right.score - left.score).slice(0, Math.max(1, Math.min(100, limit))).map(({ memory }) => memory);
+    }).filter(({ score }) => score > 0).sort((left, right) => right.score - left.score).slice(0, searchLimit).map(({ memory }) => memory);
   }
 
   forget(id: string): MemoryRecord {
