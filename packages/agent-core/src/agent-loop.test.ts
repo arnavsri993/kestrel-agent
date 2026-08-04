@@ -1541,6 +1541,54 @@ describe("provider-neutral agent loop", () => {
     database.close();
   });
 
+  it("ignores malformed persisted instructions when resuming", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-loop-instructions-"));
+    directories.push(root);
+    writeFileSync(join(root, "keep.txt"), "keep me\n");
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database, [root], () => "2026-07-22T18:00:00.000Z");
+    const session = runtime.createSession({ title: "Malformed instructions", workspaceRoot: root });
+    let calls = 0;
+    let resumedMessagePartsAreStrings = false;
+    const provider: ModelProvider = {
+      id: "fake",
+      capabilities: { streaming: true, tools: true, images: false, audio: false, documents: false, local: true },
+      complete: async (request) => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            providerId: "fake",
+            model: request.model,
+            text: "",
+            toolCalls: [{ id: "call-delete", name: "workspace.delete", arguments: { path: "keep.txt" } }],
+            usage: { inputTokens: 3, outputTokens: 2 },
+            finishReason: "tool_calls" as const,
+          };
+        }
+        resumedMessagePartsAreStrings = request.messages.every((message) =>
+          message.content.every((part) => part.type !== "text" || typeof part.text === "string"),
+        );
+        return {
+          providerId: "fake",
+          model: request.model,
+          text: "Resumed safely.",
+          toolCalls: [],
+          usage: { inputTokens: 5, outputTokens: 4 },
+          finishReason: "stop" as const,
+        };
+      },
+    };
+    const loop = new AgentLoop(database, runtime, new ProviderPool([provider]), () => new Date("2026-07-22T18:00:00.000Z"));
+    const waiting = await loop.run({ sessionId: session.id, model: "fake", providerIds: ["fake"], userContent: textContent("Delete it") });
+    database.setPrivateState(`agent-run-instructions.${waiting.run.id}`, { instructions: { invalid: true } });
+
+    const resumed = await loop.resume({ runId: waiting.run.id, approvalDecision: "rejected" });
+
+    expect(resumed).toMatchObject({ run: { status: "completed" }, assistantMessage: { content: "Resumed safely." } });
+    expect(resumedMessagePartsAreStrings).toBe(true);
+    database.close();
+  });
+
   it("compacts older turns while retaining system context and recent messages", () => {
     const messages = Array.from({ length: 20 }, (_, index) => ({
       id: `message-${index}`,

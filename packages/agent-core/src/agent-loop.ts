@@ -87,6 +87,12 @@ function isManagedInstructionMessage(message: RuntimeMessage): boolean {
   );
 }
 
+function persistedInstructionText(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const instructions = (value as { instructions?: unknown }).instructions;
+  return typeof instructions === "string" && instructions ? instructions : undefined;
+}
+
 function processIsAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -280,9 +286,11 @@ export class AgentLoop {
       run = { ...base, status: "running", updatedAt: this.now().toISOString() };
       this.saveActiveRun(run);
       const session = this.runtime.getSession(run.sessionId);
-      const instructionState = this.database.getPrivateState<{
-        instructions?: string;
-      }>(`agent-run-instructions.${run.id}`);
+      const instructionText = persistedInstructionText(
+        this.database.getPrivateState<unknown>(
+          `agent-run-instructions.${run.id}`,
+        ),
+      );
       const compacted = this.compactor.compact(
         this.runtime
           .listMessages(run.sessionId)
@@ -303,8 +311,8 @@ export class AgentLoop {
           ? storedMaximumTurns
           : Math.min(storedMaximumTurns, input.maximumTurns);
       const modelMessages: ModelMessage[] = [
-        ...(instructionState?.instructions
-          ? [{ role: "system" as const, content: textContent(instructionState.instructions) }]
+        ...(instructionText
+          ? [{ role: "system" as const, content: textContent(instructionText) }]
           : []),
         ...compacted.messages,
       ];
