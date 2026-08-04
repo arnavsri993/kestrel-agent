@@ -281,7 +281,12 @@ export class ModelRegistry {
       lastEvaluatedAt: outcome.observedAt,
     });
     this.profiles.set(updated.id, updated);
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      this.profiles.set(updated.id, profile);
+      throw error;
+    }
     return updated;
   }
 
