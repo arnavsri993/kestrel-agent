@@ -83,6 +83,13 @@ function quoteProfilePath(path: string): string {
   return path.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
+function validateTimeout(timeoutMs: number): number {
+  if (!Number.isFinite(timeoutMs) || !Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error("Command timeout must be a finite positive integer.");
+  }
+  return timeoutMs;
+}
+
 function sandboxProfile(root: string, mode: SandboxedCommandInput["mode"]): string {
   const escapedRoot = quoteProfilePath(root);
   const userReadBoundary = `(deny file-read* (require-all (subpath "/Users") (require-not (subpath "${escapedRoot}"))))`;
@@ -97,6 +104,7 @@ export class SandboxedCommandRunner {
     options: { signal?: AbortSignal; interactive?: boolean; onProgress(payload: { stream: "stdout" | "stderr"; chunk: string }): void }
   ): SandboxedCommandHandle {
     if (process.platform !== "darwin") throw new Error("The current Kestrel command sandbox is implemented only for macOS.");
+    const timeoutMs = validateTimeout(input.timeoutMs);
     const executable = resolveExecutable(input.command);
     const startedAt = Date.now();
     const profile = sandboxProfile(input.workspaceRoot, input.mode);
@@ -142,7 +150,7 @@ export class SandboxedCommandRunner {
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
-    }, input.timeoutMs);
+    }, timeoutMs);
 
     let running = true;
     const completion = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveCompletion, reject) => {
@@ -152,7 +160,7 @@ export class SandboxedCommandRunner {
       running = false;
       if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new Error("Command execution was cancelled.");
       if (overflowed) throw new Error("Command output exceeded the 1 MB safety limit.");
-      if (timedOut) throw new Error(`Command exceeded its ${input.timeoutMs} ms timeout.`);
+      if (timedOut) throw new Error(`Command exceeded its ${timeoutMs} ms timeout.`);
       return {
         command: input.command,
         args: input.args,
