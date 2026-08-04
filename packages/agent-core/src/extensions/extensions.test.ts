@@ -322,6 +322,24 @@ describe("MCP extensions", () => {
     await transport.close();
   });
 
+  it("rejects oversized outbound stdio messages before writing them", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-mcp-stdio-outbound-"));
+    directories.push(root);
+    const transport = new StdioMcpTransport({
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => {}, 10000)"],
+      cwd: root,
+    });
+
+    await expect(transport.send({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { payload: "x".repeat(1_000_000) }
+    })).rejects.toThrow("MCP stdio message exceeds 1 MB");
+    await transport.close();
+  });
+
   it("bridges remote MCP tools into a session as sensitive untrusted tools", async () => {
     const source = runtimeFixture("source");
     const target = runtimeFixture("target");
