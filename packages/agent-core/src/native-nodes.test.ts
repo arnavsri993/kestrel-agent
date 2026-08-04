@@ -16,6 +16,7 @@ describe("native node manager", () => {
     expect(manager.result(location.id)?.error?.code).toBe("LOCATION_PERMISSION_DENIED");
     now = new Date("2026-07-23T12:06:00.000Z");
     expect(manager.list()).toEqual([]);
+    expect((manager as unknown as { commands: Map<string, unknown> }).commands.has("phone-1")).toBe(false);
   });
 
   it("normalizes gateway-owned voice-wake phrases", () => {
