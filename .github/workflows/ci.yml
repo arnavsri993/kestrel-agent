@@ -60,6 +60,7 @@ jobs:
       - run: corepack pnpm test:desktop-readiness
       - run: corepack pnpm test:desktop-external-secrets
       - run: corepack pnpm test:desktop-observability
+      - run: corepack pnpm test:desktop-life-context
       - run: corepack pnpm test:desktop-ambient
       - run: corepack pnpm test:desktop-skins
       - run: corepack pnpm test:desktop-dashboard-extensions
