@@ -413,7 +413,9 @@ export class AdaptiveModelRouter {
   ) {}
 
   policy(): RoutingPolicy {
-    return RoutingPolicySchema.parse(this.database.getPrivateState<RoutingPolicy>(this.policyKey) ?? DEFAULT_POLICY);
+    const stored = this.database.getPrivateState<unknown>(this.policyKey);
+    const parsed = RoutingPolicySchema.safeParse(stored);
+    return parsed.success ? parsed.data : DEFAULT_POLICY;
   }
 
   setPolicy(policy: RoutingPolicy): RoutingPolicy {

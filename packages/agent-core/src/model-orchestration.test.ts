@@ -86,6 +86,24 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+  it("falls back to the default policy when persisted routing state is malformed", () => {
+    const item = fixture([provider({ id: "local", model: "private" })]);
+    item.database.setPrivateState("orchestration.routing-policy.v1", {
+      mode: "unsupported",
+    });
+
+    expect(item.router.policy()).toMatchObject({
+      mode: "balanced",
+      maximumParallelism: 4,
+      maximumRetries: 2,
+    });
+    expect(item.router.route(
+      item.analyzer.analyze("recovery", "Summarize this note."),
+      { role: "worker" },
+    ).selectedModelId).toBe("local:private");
+    item.database.close();
+  });
+
   it("routes simple verifiable work to the cheaper adequate endpoint", () => {
     const item = fixture([
       provider({
