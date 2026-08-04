@@ -125,6 +125,17 @@ describe("remote backends and scoped supervision", () => {
     database.close(); rmSync(root, { recursive: true, force: true });
   });
 
+  it("normalizes malformed serverless endpoint URLs", async () => {
+    const backend = new ServerlessHttpRemoteBackend();
+    await expect(backend.execute({
+      target: { id: "function", kind: "serverless", backendId: "serverless-http", allowedCommands: ["build"], enabled: true, configuration: { endpoint: "not a URL" } },
+      command: "build",
+      args: [],
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+    })).rejects.toThrow("Serverless endpoint must be a valid URL.");
+  });
+
   it("cancels chunked oversized serverless responses before parsing or emitting output", async () => {
     let pulls = 0;
     let cancellations = 0;
