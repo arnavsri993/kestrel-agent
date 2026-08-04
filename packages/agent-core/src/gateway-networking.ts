@@ -167,6 +167,7 @@ export class TailscaleExposureManager {
       const parsed = JSON.parse(status.stdout) as { BackendState?: unknown; Self?: { DNSName?: unknown; Online?: unknown } };
       if (parsed.BackendState !== "Running" || parsed.Self?.Online !== true || typeof parsed.Self.DNSName !== "string") throw new Error();
       dnsName = parsed.Self.DNSName.replace(/\.$/, "");
+      if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(dnsName)) throw new Error();
     } catch { throw new Error("Tailscale status did not report an online device with MagicDNS."); }
     const action = this.configuration.mode;
     const args = [action, "--bg", "--yes", ...(this.configuration.serviceName ? [`--service=${this.configuration.serviceName}`] : []), target.toString().replace(/\/$/, "")];
