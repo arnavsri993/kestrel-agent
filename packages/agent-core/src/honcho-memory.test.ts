@@ -87,6 +87,21 @@ function enabledConfiguration() {
 }
 
 describe("opt-in Honcho memory provider", () => {
+  it("recovers to zeroed status when persisted state is malformed", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const provider = new HonchoMemoryProvider(database);
+    database.setPrivateState("memory.honcho.state", {
+      syncedMessages: "many",
+      lastVerifiedAt: 42,
+    });
+
+    expect(provider.status()).toMatchObject({
+      state: "disabled",
+      syncedMessages: 0,
+    });
+    database.close();
+  });
+
   it("keeps local memory default, requires a protected cloud key, and permits explicit loopback self-hosting", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const provider = new HonchoMemoryProvider(database);
