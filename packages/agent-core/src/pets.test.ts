@@ -67,6 +67,7 @@ describe("Petdex cosmetic pet manager", () => {
 
   it("rejects untrusted asset hosts and malformed atlas dimensions", async () => {
     expect(() => checkedAssetUrl("https://example.com/pets/a/sprite.webp", "sprite.webp")).toThrow("pinned");
+    expect(() => checkedAssetUrl("not a URL", "sprite.webp")).toThrow("pinned");
     expect(webpDimensions(spritesheet())).toEqual({ width: 1536, height: 1872 });
     const root = mkdtempSync(join(tmpdir(), "workstrand-pets-invalid-"));
     const database = new KestrelDatabase(":memory:", createEncryptionKey());

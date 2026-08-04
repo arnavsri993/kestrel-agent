@@ -45,7 +45,14 @@ function checkedAssetUrl(
   value: string,
   filename: "sprite.webp" | "petjson.json",
 ): URL {
-  const url = new URL(value);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      "Petdex asset URL is outside the pinned public asset host.",
+    );
+  }
   if (
     url.protocol !== "https:" ||
     url.hostname !== "assets.petdex.dev" ||
