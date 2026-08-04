@@ -183,6 +183,59 @@ export interface VisualValidationResult extends VisualComparison {
   diagnosticsPath: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+function isVisualComparison(value: unknown): value is VisualComparison {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.id === "string" && value.id.length > 0 && value.id.length <= 200 &&
+    typeof value.baselineSha256 === "string" && /^[a-f0-9]{64}$/.test(value.baselineSha256) &&
+    typeof value.actualSha256 === "string" && /^[a-f0-9]{64}$/.test(value.actualSha256) &&
+    isInteger(value.width) && value.width > 0 &&
+    isInteger(value.height) && value.height > 0 &&
+    isInteger(value.changedPixels) && value.changedPixels >= 0 && value.changedPixels <= value.width * value.height &&
+    isFiniteNumber(value.differenceRatio) && value.differenceRatio >= 0 && value.differenceRatio <= 1 &&
+    typeof value.passed === "boolean" &&
+    isFiniteNumber(value.threshold) && value.threshold >= 0 && value.threshold <= 1 &&
+    typeof value.createdAt === "string" && Number.isFinite(Date.parse(value.createdAt))
+  );
+}
+
+function isBrowserViewport(value: unknown): value is BrowserViewport {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.name === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.name) &&
+    isInteger(value.width) && value.width >= 240 && value.width <= 3840 &&
+    isInteger(value.height) && value.height >= 240 && value.height <= 2160 &&
+    (value.deviceScaleFactor === undefined || (isFiniteNumber(value.deviceScaleFactor) && value.deviceScaleFactor >= 0.5 && value.deviceScaleFactor <= 4))
+  );
+}
+
+function isVisualValidationResult(value: unknown): value is VisualValidationResult {
+  if (!isRecord(value)) return false;
+  return (
+    isVisualComparison(value) &&
+    typeof value.suite === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value.suite) &&
+    isBrowserViewport(value.viewport) &&
+    isInteger(value.consoleErrors) && value.consoleErrors >= 0 &&
+    isInteger(value.networkErrors) && value.networkErrors >= 0 &&
+    typeof value.baselinePath === "string" && value.baselinePath.length > 0 &&
+    typeof value.actualPath === "string" && value.actualPath.length > 0 &&
+    typeof value.diffPath === "string" && value.diffPath.length > 0 &&
+    typeof value.diagnosticsPath === "string" && value.diagnosticsPath.length > 0
+  );
+}
+
 function crc32(buffer: Uint8Array): number {
   let crc = 0xffffffff;
   for (const byte of buffer) {
@@ -242,7 +295,10 @@ export class VisualValidator {
     this.database.setPrivateState(this.key, [...this.list(), comparison]);
     return comparison;
   }
-  list(): VisualComparison[] { return this.database.getPrivateState<VisualComparison[]>(this.key) ?? []; }
+  list(): VisualComparison[] {
+    const stored: unknown = this.database.getPrivateState<unknown>(this.key);
+    return Array.isArray(stored) ? stored.filter(isVisualComparison) : [];
+  }
 
   baseline(suiteValue: string, viewport: BrowserViewport, frame: ScreenshotFrame): { baselinePath: string; sha256: string } {
     const directory = this.validationDirectory(suiteValue, viewport.name);
@@ -280,7 +336,10 @@ export class VisualValidator {
     return result;
   }
 
-  results(): VisualValidationResult[] { return this.database.getPrivateState<VisualValidationResult[]>(`${this.key}.results`) ?? []; }
+  results(): VisualValidationResult[] {
+    const stored: unknown = this.database.getPrivateState<unknown>(`${this.key}.results`);
+    return Array.isArray(stored) ? stored.filter(isVisualValidationResult) : [];
+  }
 
   private validationDirectory(suiteValue: string, viewportValue: string): string {
     if (!this.root) throw new Error("Visual artifact storage is not configured.");

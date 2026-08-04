@@ -85,6 +85,35 @@ describe("isolated browser automation and visual validation", () => {
     database.close();
   });
 
+  it("recovers visual history when persisted comparison or result state is malformed", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const validator = new VisualValidator(database, () => new Date("2026-07-22T23:00:00.000Z"));
+    const frame = { width: 2, height: 1, rgba: Uint8Array.from([0, 0, 0, 255, 255, 255, 255, 255]) };
+    const comparison = validator.compare(frame, frame);
+    database.setPrivateState("engineering.visual-comparisons", [comparison, { ...comparison, actualSha256: "corrupt" }, null]);
+    expect(validator.list()).toEqual([comparison]);
+
+    const result = {
+      ...comparison,
+      suite: "homepage",
+      viewport: { name: "mobile", width: 320, height: 240 },
+      consoleErrors: 0,
+      networkErrors: 0,
+      baselinePath: "/tmp/baseline.png",
+      actualPath: "/tmp/actual.png",
+      diffPath: "/tmp/diff.png",
+      diagnosticsPath: "/tmp/diagnostics.json",
+    };
+    database.setPrivateState("engineering.visual-comparisons.results", [result, { ...result, viewport: { name: "bad viewport", width: 1, height: 1 } }]);
+    expect(validator.results()).toEqual([result]);
+
+    database.setPrivateState("engineering.visual-comparisons", { corrupt: true });
+    database.setPrivateState("engineering.visual-comparisons.results", "corrupt");
+    expect(validator.list()).toEqual([]);
+    expect(validator.results()).toEqual([]);
+    database.close();
+  });
+
   it("persists responsive baseline, actual, diff, and diagnostics artifacts and gates browser errors", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const root = mkdtempSync(join(tmpdir(), "kestrel-visual-"));
