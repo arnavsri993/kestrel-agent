@@ -201,6 +201,22 @@ describe("authenticated channel gateway", () => {
     expect(uploadActions).toBe(1);
   });
 
+  it("normalizes malformed native attachment allocation responses", async () => {
+    const adapter = new NativeChannelAdapter({
+      id: "malformed-allocation",
+      kind: "slack",
+      token: "slack-token",
+      fetcher: async () => new Response("not-json", { status: 200, headers: { "content-type": "application/json" } })
+    });
+    await expect(adapter.send({
+      conversationId: "room",
+      text: "Hello",
+      idempotencyKey: "attachment",
+      signal: new AbortController().signal,
+      attachments: [{ filename: "report.txt", mediaType: "text/plain", data: new Uint8Array([1]) }]
+    })).rejects.toThrow("Channel provider returned malformed JSON.");
+  });
+
   it("adds and removes reactions through Slack, Discord, and Teams provider APIs", async () => {
     const requests: Array<{ url: string; method: string; authorization: string; body: unknown }> = [];
     const fetcher: typeof fetch = async (input, init) => {
