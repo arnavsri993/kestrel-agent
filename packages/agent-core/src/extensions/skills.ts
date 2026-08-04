@@ -27,8 +27,11 @@ function unquote(value: string): string {
 }
 
 function parseSkill(path: string): ActivatedSkill {
-  if (statSync(path).size > 512_000) throw new Error("SKILL.md exceeds the 512 KB safety limit.");
-  const content = readFileSync(path, "utf8");
+  const root = realpathSync(resolve(path, ".."));
+  const resolvedPath = realpathSync(path);
+  if (!within(root, resolvedPath)) throw new Error("SKILL.md escapes its skill root.");
+  if (statSync(resolvedPath).size > 512_000) throw new Error("SKILL.md exceeds the 512 KB safety limit.");
+  const content = readFileSync(resolvedPath, "utf8");
   if (Buffer.byteLength(content) > 512_000) throw new Error("SKILL.md exceeds the 512 KB safety limit.");
   if (!content.startsWith("---\n") && !content.startsWith("---\r\n")) throw new Error("SKILL.md must begin with YAML frontmatter.");
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
@@ -53,7 +56,6 @@ function parseSkill(path: string): ActivatedSkill {
   const name = values.name ?? "";
   const description = values.description ?? "";
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) || name.length > 64) throw new Error("Skill name does not satisfy the Agent Skills naming rules.");
-  const root = realpathSync(resolve(path, ".."));
   if (basename(root) !== name) throw new Error("Skill name must match its parent directory.");
   if (!description || description.length > 1_024) throw new Error("Skill description must be 1-1024 characters.");
   if (values.compatibility && values.compatibility.length > 500) throw new Error("Skill compatibility exceeds 500 characters.");
