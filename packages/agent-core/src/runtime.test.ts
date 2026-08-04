@@ -299,6 +299,8 @@ describe("agent runtime", () => {
     expect(existsSync(join(root, "approval.txt"))).toBe(false);
     expect(runtime.removeApprovalRule(allowed.id).id).toBe(allowed.id);
     expect(runtime.removeApprovalRule(denied.id).id).toBe(denied.id);
+    database.setPrivateState("runtime.approval-rules", Array.from({ length: 500 }, (_, index) => ({ id: `seeded-${index}`, toolName: "workspace.delete", decision: "deny", scope: "global", createdAt: "2026-07-23T00:00:00.000Z", updatedAt: "2026-07-23T00:00:00.000Z" })));
+    expect(() => runtime.setApprovalRule({ toolName: "workspace.delete", decision: "deny", scope: "session", sessionId: session.id })).toThrow("limit");
     const encrypted = database.db.prepare("SELECT value_ciphertext FROM private_runtime_state WHERE key = ?").get("runtime.approval-rules") as { value_ciphertext: string };
     expect(encrypted.value_ciphertext).not.toContain("workspace.delete");
     database.close();

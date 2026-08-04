@@ -285,6 +285,7 @@ export class AgentRuntime extends EventEmitter {
   }>();
   private readonly approvalRulesKey = "runtime.approval-rules";
   private readonly processJournalKey = "runtime.background-processes";
+  private static readonly MAX_APPROVAL_RULES = 500;
   private toolPolicyResolver:
     | ((
         context: RuntimeToolPolicyContext,
@@ -614,6 +615,7 @@ export class AgentRuntime extends EventEmitter {
     const timestamp = this.now();
     const records = this.listApprovalRules();
     const existing = records.find((rule) => rule.toolName === input.toolName && rule.scope === input.scope && rule.sessionId === input.sessionId);
+    if (!existing && records.length >= AgentRuntime.MAX_APPROVAL_RULES) throw new Error("Approval rule limit reached.");
     const rule = ApprovalRuleSchema.parse({ id: existing?.id ?? `approval-rule-${randomUUID()}`, ...input, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp });
     this.database.setPrivateState(this.approvalRulesKey, [...records.filter((candidate) => candidate.id !== rule.id), rule]);
     return rule;
