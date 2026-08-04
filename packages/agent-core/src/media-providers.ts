@@ -3,6 +3,7 @@ import type {
   MediaGenerationProvider,
 } from "./media-artifacts";
 import { createFalClient, type FalClient } from "@fal-ai/client";
+import { readBoundedResponseBytes } from "./bounded-http";
 
 export interface OpenAiMediaProviderOptions {
   apiKey: string;
@@ -30,7 +31,7 @@ export interface OpenAiTranscriptionProviderOptions {
 }
 
 async function boundedError(response: Response): Promise<string> {
-  const text = (await response.text()).slice(0, 8_000);
+  const text = new TextDecoder().decode(await readBoundedResponseBytes(response, 8_000, "Media provider error response exceeds 8 KB."));
   try {
     const parsed = JSON.parse(text) as {
       error?: { message?: unknown; code?: unknown };
@@ -136,7 +137,7 @@ export class OpenAiMediaProvider implements MediaGenerationProvider {
       throw new Error(
         `OpenAI image generation failed (${await boundedError(response)}).`,
       );
-    const body = (await response.json()) as {
+    const body = JSON.parse(new TextDecoder().decode(await readBoundedResponseBytes(response, 150_000_000, "OpenAI image response exceeds 150 MB."))) as {
       data?: Array<{ b64_json?: unknown }>;
     };
     const encoded = body.data?.[0]?.b64_json;
@@ -234,10 +235,7 @@ export class OpenAiMediaProvider implements MediaGenerationProvider {
       throw new Error(
         `OpenAI speech generation failed (${await boundedError(response)}).`,
       );
-    const declared = Number(response.headers.get("content-length") ?? 0);
-    if (declared > 100_000_000)
-      throw new Error("OpenAI speech response exceeds 100 MB.");
-    const data = new Uint8Array(await response.arrayBuffer());
+    const data = await readBoundedResponseBytes(response, 100_000_000, "OpenAI speech response exceeds 100 MB.");
     if (data.byteLength === 0 || data.byteLength > 100_000_000)
       throw new Error("OpenAI speech response is empty or exceeds 100 MB.");
     return {
@@ -382,7 +380,7 @@ export class FalMusicProvider implements MediaGenerationProvider {
       .trim();
     if (!["audio/mpeg", "audio/wav", "audio/x-wav"].includes(contentType))
       throw new Error("fal music download returned an unexpected media type.");
-    const data = new Uint8Array(await response.arrayBuffer());
+    const data = await readBoundedResponseBytes(response, 100_000_000, "fal music download exceeds 100 MB.");
     if (data.byteLength === 0 || data.byteLength > 100_000_000)
       throw new Error("fal music download is empty or exceeds 100 MB.");
     return {
@@ -461,7 +459,7 @@ export class OpenAiTranscriptionProvider implements VoiceTranscriptionProvider {
       throw new Error(
         `OpenAI transcription failed (${await boundedError(response)}).`,
       );
-    const body = (await response.json()) as { text?: unknown };
+    const body = JSON.parse(new TextDecoder().decode(await readBoundedResponseBytes(response, 2_000_000, "OpenAI transcription response exceeds 2 MB."))) as { text?: unknown };
     if (
       typeof body.text !== "string" ||
       body.text.trim().length === 0 ||
