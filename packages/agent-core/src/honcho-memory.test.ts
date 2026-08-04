@@ -11,6 +11,7 @@ import {
 function fixture() {
   const calls = {
     metadata: 0,
+    sessions: 0,
     chats: [] as string[],
     messages: [] as Array<{ content: string; peerId: string }>,
   };
@@ -60,7 +61,10 @@ function fixture() {
       return { source: "fixture" };
     },
     peer: async (id: string) => (id === "user" ? user : agent),
-    session: async () => session,
+    session: async () => {
+      calls.sessions += 1;
+      return session;
+    },
   } as unknown as Honcho;
   return { calls, client };
 }
@@ -162,6 +166,39 @@ describe("opt-in Honcho memory provider", () => {
       lastSyncedAt: "2026-07-23T12:00:00.000Z",
     });
     expect(calls.metadata).toBe(1);
+    database.close();
+  });
+
+  it("bounds the per-session Honcho client cache and evicts the least-recently-used session", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const { calls, client } = fixture();
+    const provider = new HonchoMemoryProvider(
+      database,
+      undefined,
+      undefined,
+      () => client,
+    );
+    provider.configure(enabledConfiguration());
+    for (let index = 0; index <= 200; index += 1) {
+      provider.captureMessage({
+        id: `message-${index}`,
+        sessionId: `session-${index}`,
+        role: "user",
+        content: "A bounded Honcho cache should retain recent sessions.",
+        createdAt: "2026-07-23T12:00:00.000Z",
+      });
+    }
+    await provider.flush();
+    expect(calls.sessions).toBe(201);
+    provider.captureMessage({
+      id: "message-revisit",
+      sessionId: "session-0",
+      role: "user",
+      content: "The oldest session was evicted and must be recreated.",
+      createdAt: "2026-07-23T12:00:00.000Z",
+    });
+    await provider.flush();
+    expect(calls.sessions).toBe(202);
     database.close();
   });
 

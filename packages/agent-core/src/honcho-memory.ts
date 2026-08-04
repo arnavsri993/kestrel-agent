@@ -31,6 +31,7 @@ const DEFAULT_CONFIGURATION: HonchoMemoryConfiguration = {
 
 const DISCLOSURE =
   "When enabled, selected user and assistant message text, stable pseudonymous peer/session IDs, and provider queries leave this device for the configured Honcho server. API keys remain protected and are never included in messages, prompts, logs, or status responses.";
+const MAX_HONCHO_SESSION_CACHE = 200;
 
 interface StoredState {
   lastVerifiedAt?: string;
@@ -499,7 +500,11 @@ export class HonchoMemoryProvider {
     const configuration = this.requireEnabled();
     const id = remoteSessionId(configuration, sessionId, workspaceRoot);
     const existing = this.sessionCache.get(id);
-    if (existing) return existing;
+    if (existing) {
+      this.sessionCache.delete(id);
+      this.sessionCache.set(id, existing);
+      return existing;
+    }
     const creating = (async () => {
       const client = this.client();
       const [user, agent] = await Promise.all([
@@ -519,8 +524,12 @@ export class HonchoMemoryProvider {
       });
       return { session, user, agent };
     })();
+    while (this.sessionCache.size >= MAX_HONCHO_SESSION_CACHE)
+      this.sessionCache.delete(this.sessionCache.keys().next().value!);
     this.sessionCache.set(id, creating);
-    void creating.catch(() => this.sessionCache.delete(id));
+    void creating.catch(() => {
+      if (this.sessionCache.get(id) === creating) this.sessionCache.delete(id);
+    });
     return creating;
   }
 
