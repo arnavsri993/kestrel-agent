@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
 import { AgentRuntime } from "./runtime";
-import { ObservabilityManager, renderPrometheusMetrics } from "./observability";
+import {
+  DEFAULT_OBSERVABILITY_CONFIGURATION,
+  ObservabilityManager,
+  renderPrometheusMetrics,
+} from "./observability";
 
 const cleanup: Array<() => Promise<void> | void> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -17,6 +21,18 @@ function fixture() {
 }
 
 describe("privacy-safe external observability", () => {
+  it("recovers to disabled defaults when persisted configuration is malformed", () => {
+    const { database, runtime } = fixture();
+    database.setPrivateState("observability.configuration", {
+      enabled: "yes",
+    });
+    const manager = new ObservabilityManager(database, runtime);
+    cleanup.push(() => manager.shutdown());
+
+    expect(manager.configuration()).toEqual(DEFAULT_OBSERVABILITY_CONFIGURATION);
+    expect(manager.status()).toMatchObject({ running: false });
+  });
+
   it("renders bounded Prometheus text without content, paths, session IDs, or secret values", () => {
     const { database, runtime } = fixture();
     const session = runtime.createSession({ title: "private project title" });
