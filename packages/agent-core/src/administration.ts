@@ -234,6 +234,10 @@ export interface ManagedPolicy {
 export interface OrganizationMember { externalId: string; email: string; displayName: string; role: "member" | "admin"; active: boolean; updatedAt: string }
 export interface OrganizationIdentity { subject: string; email: string; role: OrganizationMember["role"]; issuer: string; expiresAt: string }
 
+const MAX_ORGANIZATION_MEMBER_EXTERNAL_ID_LENGTH = 500;
+const MAX_ORGANIZATION_MEMBER_EMAIL_LENGTH = 320;
+const MAX_ORGANIZATION_MEMBER_DISPLAY_NAME_LENGTH = 200;
+
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
@@ -295,7 +299,7 @@ export class ManagedPolicyStore {
 
   provisionMember(input: Omit<OrganizationMember, "active" | "updatedAt"> & { active?: boolean }): OrganizationMember {
     if (!this.get()) throw new Error("Organization policy is not configured.");
-    if (!input.externalId.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email) || !input.displayName.trim()) throw new Error("Organization member is invalid.");
+    if (typeof input.externalId !== "string" || typeof input.email !== "string" || typeof input.displayName !== "string" || !input.externalId.trim() || input.externalId.length > MAX_ORGANIZATION_MEMBER_EXTERNAL_ID_LENGTH || input.email.length > MAX_ORGANIZATION_MEMBER_EMAIL_LENGTH || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email) || !input.displayName.trim() || input.displayName.length > MAX_ORGANIZATION_MEMBER_DISPLAY_NAME_LENGTH || !["member", "admin"].includes(input.role) || (input.active !== undefined && typeof input.active !== "boolean")) throw new Error("Organization member is invalid.");
     const members = this.listMembers();
     const existing = members.find((member) => member.externalId === input.externalId);
     const member: OrganizationMember = { externalId: input.externalId, email: input.email.toLowerCase(), displayName: input.displayName, role: input.role, active: input.active ?? true, updatedAt: this.now().toISOString() };

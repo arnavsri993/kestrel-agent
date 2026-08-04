@@ -58,6 +58,19 @@ describe("managed organization policy", () => {
     database.close();
   });
 
+  it("bounds organization member identity fields and rejects invalid runtime values", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const store = new ManagedPolicyStore(database);
+    store.set({ organizationId: "org-members", version: 1, deniedTools: [], maximumWorkers: 2 });
+    const valid = { externalId: "user-1", email: "user@example.test", displayName: "User", role: "member" as const };
+    expect(() => store.provisionMember({ ...valid, externalId: "x".repeat(501) })).toThrow("invalid");
+    expect(() => store.provisionMember({ ...valid, email: `${"x".repeat(310)}@example.test` })).toThrow("invalid");
+    expect(() => store.provisionMember({ ...valid, displayName: "x".repeat(201) })).toThrow("invalid");
+    expect(() => store.provisionMember({ ...valid, role: "owner" as never })).toThrow("invalid");
+    expect(() => store.provisionMember({ ...valid, active: "yes" as never })).toThrow("invalid");
+    database.close();
+  });
+
   it("persists encrypted versioned policy and blocks tools and providers", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-policy-"));
     directories.push(root);
