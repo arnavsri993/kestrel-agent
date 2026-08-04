@@ -86,6 +86,22 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("ignores malformed persisted goals", () => {
+    const item = fixture(finalProvider());
+    const goal = item.orchestrator.createGoal(item.parent.id, "Ship", "Finish the release", ["Test"]);
+    item.database.setPrivateState("orchestrator.goals", [
+      goal,
+      { ...goal, tasks: "malformed" },
+      "malformed",
+    ]);
+
+    expect(item.orchestrator.listGoals()).toEqual([goal]);
+
+    item.database.setPrivateState("orchestrator.goals", { malformed: true });
+    expect(item.orchestrator.listGoals()).toEqual([]);
+    item.database.close();
+  });
+
   it("caps delegated and scheduled runs at the active workflow turn limit", async () => {
     let instant = new Date("2026-07-22T20:00:00.000Z");
     const item = fixture(
