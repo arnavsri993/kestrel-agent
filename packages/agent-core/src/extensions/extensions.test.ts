@@ -19,6 +19,7 @@ import { SkillRegistry, installSkillTools } from "./skills";
 import { SkillLearningManager } from "./skill-learning";
 import { PluginRegistry } from "./plugins";
 import { PluginMcpManager } from "./plugin-mcp";
+import { PluginInstaller } from "./plugin-installer";
 import { AgentCore } from "../index";
 
 const directories: string[] = [];
@@ -721,6 +722,20 @@ describe("Codex-compatible plugin manifests", () => {
     const manager = new PluginMcpManager(registry, runtime);
     await expect(manager.connect("unsafe", session.id)).rejects.toThrow("NODE_OPTIONS is not allowed");
     database.close();
+  });
+
+  it("normalizes malformed signed plugin metadata", () => {
+    const container = mkdtempSync(join(tmpdir(), "kestrel-plugin-metadata-invalid-"));
+    directories.push(container);
+    const pluginRoot = join(container, "bundle");
+    mkdirSync(join(pluginRoot, ".codex-plugin"), { recursive: true });
+    const installer = new PluginInstaller({ managedRoot: join(container, "managed"), trustKeys: [] });
+    writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), "null");
+    writeFileSync(join(pluginRoot, ".codex-plugin", "signature.json"), "{}");
+    expect(() => installer.inspect(pluginRoot)).toThrow("Plugin manifest is invalid.");
+    writeFileSync(join(pluginRoot, ".codex-plugin", "plugin.json"), JSON.stringify({ name: "bundle", version: "1.0.0", description: "Invalid signature fixture." }));
+    writeFileSync(join(pluginRoot, ".codex-plugin", "signature.json"), "not-json");
+    expect(() => installer.inspect(pluginRoot)).toThrow("Plugin signature metadata is invalid.");
   });
 
   it("enables a discovered Camarade bundle through the core and refreshes skills without restart", async () => {
