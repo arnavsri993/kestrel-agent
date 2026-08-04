@@ -79,9 +79,9 @@ describe("stable ACP v1 editor bridge", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey()); const runtime = new AgentRuntime(database, [root]);
     const provider: ModelProvider = { id: "fake", capabilities: { streaming: false, tools: false, images: false, audio: false, documents: false, local: true }, complete: async (request) => ({ providerId: "fake", model: request.model, text: "unused", toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, finishReason: "stop" }) };
     const app = createKestrelAcpAgent({ runtime, loop: new AgentLoop(database, runtime, new ProviderPool([provider])), model: "fake", providerIds: ["fake"] });
-    const written: string[] = []; const terminalRequests: string[] = [];
+    const written: string[] = []; const terminalRequests: string[] = []; let malformedRead = false;
     const editor = client({ name: "Delegating editor" })
-      .onRequest("fs/read_text_file", ({ params }) => ({ content: readFileSync(params.path, "utf8") }))
+      .onRequest("fs/read_text_file", ({ params }) => malformedRead ? null as never : { content: readFileSync(params.path, "utf8") })
       .onRequest("fs/write_text_file", ({ params }) => { written.push(`${params.path}:${params.content}`); return {}; })
       .onRequest("terminal/create", ({ params }) => { terminalRequests.push(`${params.command} ${(params.args ?? []).join(" ")}`); return { terminalId: "editor-terminal-1" }; })
       .onRequest("terminal/wait_for_exit", () => ({ exitCode: 0 }))
@@ -91,6 +91,8 @@ describe("stable ACP v1 editor bridge", () => {
       await acp.request("initialize", { protocolVersion: PROTOCOL_VERSION, clientInfo: { name: "Delegating editor", version: "1" }, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: true } });
       const session = await acp.request("session/new", { cwd: root, mcpServers: [] });
       expect(await runtime.callTool(session.sessionId, "editor.fs.read_text", { path })).toMatchObject({ status: "verified", output: { content: "editor-owned content\n" } });
+      malformedRead = true;
+      expect(await runtime.callTool(session.sessionId, "editor.fs.read_text", { path })).toMatchObject({ status: "failed", error: "ACP editor returned an invalid response." });
       expect(await runtime.callTool(session.sessionId, "editor.fs.write_text", { path, content: "replacement" }, { approvalStatus: "approved", idempotencyKey: "editor-write" })).toMatchObject({ status: "verified", output: { delegated: true } });
       expect(await runtime.callTool(session.sessionId, "editor.terminal.run", { command: "git", args: ["status"], cwd: root }, { approvalStatus: "approved", idempotencyKey: "editor-terminal" })).toMatchObject({ status: "verified", output: { exitCode: 0, output: "editor terminal output", delegated: true } });
       expect(written).toEqual([`${realpathSync(path)}:replacement`]); expect(terminalRequests).toEqual(["git status"]);

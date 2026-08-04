@@ -37,6 +37,12 @@ function acpToolKind(name: string): "read" | "edit" | "delete" | "move" | "searc
   return "other";
 }
 
+function editorResponse(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("ACP editor returned an invalid response.");
+  return value as Record<string, unknown>;
+}
+
 export function createKestrelAcpAgent(options: KestrelAcpOptions): AgentApp {
   const active = new Map<string, AbortController>();
   const editorClients = new Map<string, { request<Response = unknown, Params = unknown>(method: string, params?: Params): Promise<Response> }>();
@@ -55,7 +61,7 @@ export function createKestrelAcpAgent(options: KestrelAcpOptions): AgentApp {
       options.runtime.registerExternalTool({ descriptor: { name: "editor.fs.read_text", title: "Read text through editor", description: "Read a workspace text file through the connected ACP editor client.", category: "workspace", riskLevel: "read_only", readOnly: true, requiresWorkspace: true, source: "connector", tags: ["editor", "acp", "filesystem"] }, inputSchema: { type: "object", properties: { path: { type: "string" }, line: { type: "integer" }, limit: { type: "integer" } }, required: ["path"] }, execute: async ({ session }, input) => {
         const editor = editorClients.get(session.id); if (!editor) throw new Error("The ACP editor client is no longer connected.");
         const path = editorPath(session.id, String(input.path));
-        const result = await editor.request<{ content: string }>("fs/read_text_file", { sessionId: session.id, path, ...(typeof input.line === "number" ? { line: input.line } : {}), ...(typeof input.limit === "number" ? { limit: input.limit } : {}) });
+        const result = editorResponse(await editor.request("fs/read_text_file", { sessionId: session.id, path, ...(typeof input.line === "number" ? { line: input.line } : {}), ...(typeof input.limit === "number" ? { limit: input.limit } : {}) }));
         if (typeof result.content !== "string" || result.content.length > 1_000_000) throw new Error("ACP editor returned invalid or oversized file content."); return { path, content: result.content };
       } });
       options.runtime.registerExternalTool({ descriptor: { name: "editor.fs.write_text", title: "Write text through editor", description: "Write a workspace text file through the connected ACP editor client.", category: "workspace", riskLevel: "sensitive", readOnly: false, requiresWorkspace: true, source: "connector", tags: ["editor", "acp", "filesystem", "write"] }, inputSchema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] }, execute: async ({ session }, input) => {
@@ -65,9 +71,17 @@ export function createKestrelAcpAgent(options: KestrelAcpOptions): AgentApp {
       options.runtime.registerExternalTool({ descriptor: { name: "editor.terminal.run", title: "Run in editor terminal", description: "Run an argv-only command in the ACP editor terminal and return bounded output.", category: "execution", riskLevel: "high_consequence", readOnly: false, requiresWorkspace: true, source: "connector", tags: ["editor", "acp", "terminal"] }, inputSchema: { type: "object", properties: { command: { type: "string" }, args: { type: "array", items: { type: "string" } }, cwd: { type: "string" } }, required: ["command"] }, execute: async ({ session, signal }, input) => {
         const editor = editorClients.get(session.id); if (!editor) throw new Error("The ACP editor client is no longer connected."); const command = String(input.command); const args = Array.isArray(input.args) ? input.args.map(String) : [];
         if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(command) || args.length > 200 || args.some((arg) => arg.length > 10_000)) throw new Error("Editor terminal command is invalid."); const cwd = editorPath(session.id, typeof input.cwd === "string" ? input.cwd : options.runtime.getSession(session.id).workspaceRoot!);
-        const created = await editor.request<{ terminalId: string }>("terminal/create", { sessionId: session.id, command, args, cwd, outputByteLimit: 1_000_000 }); const abort = () => { void editor.request("terminal/kill", { sessionId: session.id, terminalId: created.terminalId }); }; signal.addEventListener("abort", abort, { once: true });
-        try { const exit = await editor.request<{ exitCode?: number | null; signal?: string | null }>("terminal/wait_for_exit", { sessionId: session.id, terminalId: created.terminalId }); const output = await editor.request<{ output: string; truncated: boolean }>("terminal/output", { sessionId: session.id, terminalId: created.terminalId }); return { ...exit, output: output.output.slice(0, 1_000_000), truncated: output.truncated, delegated: true }; }
-        finally { signal.removeEventListener("abort", abort); await editor.request("terminal/release", { sessionId: session.id, terminalId: created.terminalId }).catch(() => undefined); }
+        const created = editorResponse(await editor.request("terminal/create", { sessionId: session.id, command, args, cwd, outputByteLimit: 1_000_000 }));
+        if (typeof created.terminalId !== "string" || !created.terminalId) throw new Error("ACP editor returned an invalid terminal ID.");
+        const terminalId = created.terminalId;
+        const abort = () => { void editor.request("terminal/kill", { sessionId: session.id, terminalId }); }; signal.addEventListener("abort", abort, { once: true });
+        try {
+          const exit = editorResponse(await editor.request("terminal/wait_for_exit", { sessionId: session.id, terminalId }));
+          const output = editorResponse(await editor.request("terminal/output", { sessionId: session.id, terminalId }));
+          if (typeof output.output !== "string" || typeof output.truncated !== "boolean") throw new Error("ACP editor returned invalid terminal output.");
+          return { ...exit, output: output.output.slice(0, 1_000_000), truncated: output.truncated, delegated: true };
+        }
+        finally { signal.removeEventListener("abort", abort); await editor.request("terminal/release", { sessionId: session.id, terminalId }).catch(() => undefined); }
       } });
       editorToolsRegistered = true;
     }
