@@ -14,6 +14,13 @@ export interface TextPosition { line: number; character: number }
 
 export interface StdioLanguageServerOptions { command: string; args?: string[]; cwd: string; environment?: Record<string, string>; maximumMessageBytes?: number; }
 
+function validateTimeout(timeoutMs: number): number {
+  if (!Number.isFinite(timeoutMs) || !Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error("Language server timeout must be a finite positive integer.");
+  }
+  return timeoutMs;
+}
+
 export class StdioLanguageServerTransport implements LanguageServerTransport {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly listeners = new Set<(message: LspMessage) => void>();
@@ -100,8 +107,10 @@ export class LanguageServerClient {
   private readonly diagnosticsWaiters = new Map<string, Array<{ resolve(value: unknown[]): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>>();
   private readonly openDocuments = new Map<string, number>();
   private readonly unsubscribe: () => void;
+  private readonly timeoutMs: number;
 
-  constructor(private readonly transport: LanguageServerTransport, private readonly timeoutMs = 10_000) {
+  constructor(private readonly transport: LanguageServerTransport, timeoutMs = 10_000) {
+    this.timeoutMs = validateTimeout(timeoutMs);
     this.unsubscribe = transport.onMessage((message) => this.receive(message));
   }
 
