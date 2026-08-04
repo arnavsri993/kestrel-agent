@@ -145,12 +145,15 @@ export class OpenAIResponsesProvider implements ModelProvider {
     const toolCalls = new Map<string, ModelToolCall>();
     await readServerSentEvents(response, this.id, ({ data }) => {
       if (data === "[DONE]") return;
-      let event: Record<string, unknown>;
+      let parsed: unknown;
       try {
-        event = JSON.parse(data) as Record<string, unknown>;
+        parsed = JSON.parse(data);
       } catch {
         throw new ModelProviderError("OpenAI returned malformed streaming JSON.", this.id, false);
       }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+        throw new ModelProviderError("OpenAI returned invalid streaming JSON.", this.id, false);
+      const event = parsed as Record<string, unknown>;
       if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
         text += event.delta;
         options.onEvent?.({ type: "text_delta", delta: event.delta });
