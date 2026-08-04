@@ -138,7 +138,14 @@ export class ServerlessHttpRemoteBackend implements RemoteExecutionBackend {
     const bytes = await readBoundedResponseBytes(response, 36_000_000, "Serverless response exceeds 36 MB.");
     const text = new TextDecoder().decode(bytes);
     if (!response.ok) throw new Error(`Serverless backend returned HTTP ${response.status}: ${text.slice(0, 2_000)}`);
-    let body: Record<string, unknown>; try { body = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error("Serverless backend returned malformed JSON."); }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      throw new Error("Serverless backend returned malformed JSON.");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Serverless backend response is invalid.");
+    const body = parsed as Record<string, unknown>;
     if (!Number.isInteger(body.exitCode) || typeof body.stdout !== "string" || typeof body.stderr !== "string") throw new Error("Serverless backend response is invalid.");
     if (body.stdout) onOutput?.("stdout", body.stdout.slice(0, 16_000)); if (body.stderr) onOutput?.("stderr", body.stderr.slice(0, 16_000));
     const artifacts = Array.isArray(body.artifacts) ? body.artifacts as RemoteArtifact[] : undefined;
