@@ -723,6 +723,22 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("rolls back the checkpoint list when checkpoint payload persistence fails", () => {
+    const { database, runtime, session } = fixture();
+    const originalSetPrivateState = database.setPrivateState.bind(database);
+    database.setPrivateState = (key, value) => {
+      if (key.startsWith("session.checkpoint.")) throw new Error("checkpoint payload write failed");
+      originalSetPrivateState(key, value);
+    };
+
+    expect(() => runtime.checkpoint(session.id, "This checkpoint must not become orphaned.")).toThrow("checkpoint payload write failed");
+    expect(runtime.getSession(session.id).checkpoints).toEqual([]);
+    expect((database.db.prepare("SELECT COUNT(*) AS count FROM private_runtime_state WHERE key LIKE 'session.checkpoint.%'").get() as { count: number }).count).toBe(0);
+
+    database.setPrivateState = originalSetPrivateState;
+    database.close();
+  });
+
   it("restores checkpoint transcript and post-checkpoint filesystem mutations", async () => {
     const { root, database, runtime, session } = fixture();
     runtime.appendMessage({ sessionId: session.id, role: "user", content: "Keep this message" });

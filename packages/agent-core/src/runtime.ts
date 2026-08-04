@@ -420,8 +420,11 @@ export class AgentRuntime extends EventEmitter {
       summary,
       createdAt: this.now()
     };
-    const updated = this.saveSession({ ...session, checkpoints: [...session.checkpoints, checkpoint], updatedAt: checkpoint.createdAt });
-    this.database.setPrivateState(`session.checkpoint.${checkpoint.id}`, { sessionId, messageCount: this.listMessages(sessionId).length, mutationIds: this.database.listWorkspaceMutationIds(sessionId) });
+    const updated = this.database.db.transaction(() => {
+      const saved = this.saveSession({ ...session, checkpoints: [...session.checkpoints, checkpoint], updatedAt: checkpoint.createdAt });
+      this.database.setPrivateState(`session.checkpoint.${checkpoint.id}`, { sessionId, messageCount: this.listMessages(sessionId).length, mutationIds: this.database.listWorkspaceMutationIds(sessionId) });
+      return saved;
+    })();
     this.emitRuntimeEvent("session.updated", sessionId, { action: "checkpoint", checkpointId: checkpoint.id });
     return updated;
   }
