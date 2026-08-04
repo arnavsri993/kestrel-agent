@@ -229,6 +229,21 @@ describe("unified life context", () => {
     database.close();
   });
 
+  it("rejects invalid local calendar timestamps with a deterministic error", () => {
+    const { database, life } = fixture();
+
+    expect(() => life.createLocalEvent({
+      title: "Invalid event",
+      startsAt: "not-a-date",
+      endsAt: "also-not-a-date",
+      origin: "explicit",
+      confidence: 1,
+      sourceId: "message-invalid-event",
+    })).toThrow("Calendar event must end after it starts.");
+
+    database.close();
+  });
+
   it("decays and archives stale context instead of deleting it", () => {
     const { database, life } = fixture(
       new Date("2025-01-01T12:00:00.000Z"),
