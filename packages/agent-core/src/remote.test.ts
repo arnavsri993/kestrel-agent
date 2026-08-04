@@ -61,6 +61,21 @@ describe("remote backends and scoped supervision", () => {
     database.close();
   });
 
+  it("bounds active pairings, removes expired records, and rejects oversized labels", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const orchestrator = new TaskOrchestrator(database, runtime, new AgentLoop(database, runtime, new ProviderPool([provider])));
+    let now = Date.parse("2026-07-23T00:00:00.000Z");
+    const remote = new RemoteControl(database, runtime, orchestrator, () => new Date(now));
+    expect(() => remote.beginPairing("x".repeat(101), ["read"])).toThrow("valid label");
+    for (let index = 0; index < 200; index += 1) remote.beginPairing(`Pending ${index}`, ["read"], 30_000);
+    expect(() => remote.beginPairing("Overflow", ["read"])).toThrow("limit");
+    now += 31_000;
+    remote.beginPairing("Replacement", ["read"]);
+    expect(database.getPrivateState<unknown[]>("remote.pairings")).toHaveLength(1);
+    database.close();
+  });
+
   it("runs concrete Docker, SSH, and Kubernetes CLI adapters with argv containment", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-remote-cli-")); const bin = join(root, "bin");
     writeFileSync(join(root, "placeholder"), "workspace");
