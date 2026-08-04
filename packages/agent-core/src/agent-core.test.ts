@@ -40,6 +40,25 @@ describe("fresh application state", () => {
     });
     core.close();
   });
+
+  it("keeps the agent state unchanged when pause persistence fails", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setState("agentState", "idle");
+    const core = new AgentCore({ database, now: () => "2026-07-22T15:00:00.000Z" });
+    database.db.exec(`
+      CREATE TRIGGER reject_agent_pause_state
+      BEFORE UPDATE ON runtime_state
+      WHEN NEW.key = 'agentState'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced agent pause persistence failure');
+      END
+    `);
+
+    expect(() => core.setPaused(true)).toThrow("forced agent pause persistence failure");
+    expect(core.snapshot().agentState).toBe("idle");
+    expect(database.getState("agentState")).toBe("idle");
+    core.close();
+  });
 });
 
 describe("custom personality bounds", () => {

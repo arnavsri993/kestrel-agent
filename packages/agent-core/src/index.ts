@@ -1048,14 +1048,15 @@ export class AgentCore {
   }
 
   setPaused(paused: boolean): WorkspaceSnapshot {
-    this.state = paused
+    const nextState = paused
       ? "paused"
       : this.deps.database
             .listApprovals()
             .some((item) => item.status === "pending")
         ? "waiting_approval"
         : "idle";
-    this.deps.database.setState("agentState", this.state);
+    this.deps.database.setState("agentState", nextState);
+    this.state = nextState;
     return this.snapshot();
   }
 
