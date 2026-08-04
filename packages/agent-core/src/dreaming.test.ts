@@ -24,6 +24,20 @@ describe("review-gated memory dreaming", () => {
     database.close();
   });
 
+  it("recovers to the safe default when persisted configuration is malformed", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setPrivateState("memory.dreaming.configuration", { enabled: "yes", scheduleHour: -1 });
+    const dreaming = new DreamingManager(database);
+
+    expect(dreaming.configuration()).toMatchObject({
+      enabled: false,
+      scheduleHour: 3,
+      minimumScore: 0.55,
+    });
+    expect(dreaming.status().phase).toBe("idle");
+    database.close();
+  });
+
   it("keeps preview non-mutating, excludes restricted memory, and promotes only after review", () => {
     let now = new Date("2026-07-23T09:00:00.000Z");
     const database = new KestrelDatabase(":memory:", createEncryptionKey());

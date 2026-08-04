@@ -57,7 +57,10 @@ export class DreamingManager {
   constructor(private readonly database: KestrelDatabase, private readonly now: () => Date = () => new Date()) {}
 
   configuration(): DreamingConfiguration {
-    return DreamingConfigurationSchema.parse(this.database.getPrivateState(CONFIGURATION_KEY) ?? DEFAULT_DREAMING_CONFIGURATION);
+    const parsed = DreamingConfigurationSchema.safeParse(
+      this.database.getPrivateState(CONFIGURATION_KEY) ?? DEFAULT_DREAMING_CONFIGURATION,
+    );
+    return parsed.success ? parsed.data : DEFAULT_DREAMING_CONFIGURATION;
   }
 
   configure(configuration: DreamingConfiguration): DreamingStatus {
