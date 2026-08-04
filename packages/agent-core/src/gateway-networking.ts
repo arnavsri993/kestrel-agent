@@ -38,7 +38,9 @@ function blockList(values: string[]): BlockList {
   if (values.length === 0 || values.length > 64) throw new Error("Trusted proxy sources must contain 1 to 64 addresses or CIDRs.");
   const output = new BlockList();
   for (const value of values) {
-    const [rawAddress, rawPrefix] = value.split("/");
+    const parts = value.split("/");
+    if (parts.length > 2) throw new Error("Trusted proxy CIDR prefix is invalid.");
+    const [rawAddress, rawPrefix] = parts;
     const address = normalizedAddress(rawAddress ?? "");
     const family = isIP(address);
     if (!family) throw new Error("Trusted proxy source must be an IP address or CIDR.");
@@ -46,7 +48,7 @@ function blockList(values: string[]): BlockList {
     else {
       const prefix = Number(rawPrefix);
       const maximum = family === 4 ? 32 : 128;
-      if (!Number.isInteger(prefix) || prefix < 0 || prefix > maximum) throw new Error("Trusted proxy CIDR prefix is invalid.");
+      if (!/^\d+$/.test(rawPrefix) || !Number.isInteger(prefix) || prefix < 0 || prefix > maximum) throw new Error("Trusted proxy CIDR prefix is invalid.");
       output.addSubnet(address, prefix, family === 4 ? "ipv4" : "ipv6");
     }
   }
