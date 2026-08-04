@@ -162,4 +162,18 @@ describe("persistent Codex app-server provider", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("normalizes malformed request and turn timeouts: %s", async (timeoutMs) => {
+    const fake = await fakeAppServer();
+    const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: timeoutMs, turnTimeoutMs: timeoutMs });
+    try {
+      await provider.probe();
+      await expect(provider.complete({ model: "gpt-test", messages: [{ role: "user", content: textContent("First prompt") }] })).resolves.toMatchObject({
+        providerId: "codex-subscription",
+        text: "Persistent answer 1"
+      });
+    } finally {
+      await provider.close();
+    }
+  });
 });

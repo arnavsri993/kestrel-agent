@@ -17,6 +17,7 @@ const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const TURN_TIMEOUT_MS = 30 * 60_000;
+const MAX_TIMER_MS = 2_147_483_647;
 
 type JsonObject = Record<string, unknown>;
 
@@ -116,6 +117,11 @@ function usageFrom(value: unknown): ModelUsage {
   };
 }
 
+function boundedTimeout(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(MAX_TIMER_MS, Math.trunc(value)));
+}
+
 function errorMessage(value: unknown): string {
   const error = object(value);
   return typeof error?.message === "string"
@@ -165,8 +171,8 @@ export class CodexAppServerProvider {
     this.executable = options.executable ?? "codex";
     this.defaultModel = options.defaultModel ?? "gpt-5.4";
     this.environment = safeEnvironment(options.environment ?? process.env);
-    this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
-    this.turnTimeoutMs = options.turnTimeoutMs ?? TURN_TIMEOUT_MS;
+    this.requestTimeoutMs = boundedTimeout(options.requestTimeoutMs, REQUEST_TIMEOUT_MS);
+    this.turnTimeoutMs = boundedTimeout(options.turnTimeoutMs, TURN_TIMEOUT_MS);
   }
 
   async probe(signal?: AbortSignal): Promise<void> {
