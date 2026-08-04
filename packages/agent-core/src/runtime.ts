@@ -259,6 +259,31 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+interface PersistedCheckpointState {
+  sessionId: string;
+  messageCount: number;
+  mutationIds: string[];
+}
+
+function parsePersistedCheckpointState(value: unknown): PersistedCheckpointState | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.sessionId !== "string" ||
+    !record.sessionId ||
+    typeof record.messageCount !== "number" ||
+    !Number.isSafeInteger(record.messageCount) ||
+    record.messageCount < 0 ||
+    !Array.isArray(record.mutationIds) ||
+    !record.mutationIds.every((id) => typeof id === "string" && id.length > 0)
+  ) return undefined;
+  return {
+    sessionId: record.sessionId,
+    messageCount: record.messageCount,
+    mutationIds: record.mutationIds,
+  };
+}
+
 export class AgentRuntime extends EventEmitter {
   private readonly tools = new Map<string, RuntimeToolDefinition>();
   private readonly deferredCatalogs = new Map<string, DeferredToolCatalog>();
@@ -401,7 +426,9 @@ export class AgentRuntime extends EventEmitter {
     );
     if (checkpointIndex < 0)
       throw new Error("Checkpoint does not belong to this session.");
-    const state = this.database.getPrivateState<{ sessionId: string; messageCount: number; mutationIds: string[] }>(`session.checkpoint.${checkpointId}`);
+    const state = parsePersistedCheckpointState(
+      this.database.getPrivateState<unknown>(`session.checkpoint.${checkpointId}`),
+    );
     if (!state || state.sessionId !== sessionId) throw new Error("Checkpoint restoration state is unavailable.");
     const completedAt = this.now();
     const reason =
@@ -460,10 +487,11 @@ export class AgentRuntime extends EventEmitter {
     }
     const prunedCheckpointIds = session.checkpoints
       .filter((checkpoint) => {
-        const checkpointState = this.database.getPrivateState<{
-          sessionId: string;
-          messageCount: number;
-        }>(`session.checkpoint.${checkpoint.id}`);
+        const checkpointState = parsePersistedCheckpointState(
+          this.database.getPrivateState<unknown>(
+            `session.checkpoint.${checkpoint.id}`,
+          ),
+        );
         return (
           checkpointState?.sessionId === sessionId &&
           checkpointState.messageCount > keepMessageCount
