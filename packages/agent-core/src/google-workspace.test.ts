@@ -72,4 +72,10 @@ describe("Google Workspace runtime connector", () => {
     const missingScope = JSON.stringify({ ...JSON.parse(authorization), scopes: ["openid", "email"] });
     expect(() => environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: missingScope })).toThrow("missing");
   });
+
+  it("rejects non-object and non-string scope records", () => {
+    expect(() => environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: "null" })).toThrow("invalid");
+    const malformedScopes = JSON.stringify({ ...JSON.parse(authorization), scopes: ["openid", null] });
+    expect(() => environmentGoogleWorkspaceClient({ KESTREL_GOOGLE_WORKSPACE_OAUTH: malformedScopes })).toThrow("invalid");
+  });
 });
