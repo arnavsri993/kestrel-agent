@@ -5,6 +5,25 @@ import { DreamingManager } from "./dreaming";
 import { MemoryManager } from "./memory";
 
 describe("review-gated memory dreaming", () => {
+  it("recovers to an idle ledger when persisted state is malformed", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    database.setPrivateState("memory.dreaming.state", {
+      phase: "idle",
+      candidates: { corrupted: true },
+      diary: [],
+      detail: "corrupted",
+    });
+    const dreaming = new DreamingManager(database);
+
+    expect(dreaming.status()).toMatchObject({
+      phase: "idle",
+      candidates: [],
+      diary: [],
+      detail: "Memory consolidation is off by default. Preview performs local scoring without storing changes.",
+    });
+    database.close();
+  });
+
   it("keeps preview non-mutating, excludes restricted memory, and promotes only after review", () => {
     let now = new Date("2026-07-23T09:00:00.000Z");
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
