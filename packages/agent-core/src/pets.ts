@@ -278,7 +278,10 @@ export class PetManager {
           ),
         )
       : entries;
-    return matches.slice(0, Math.max(1, Math.min(100, limit)));
+    const galleryLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(100, Math.trunc(limit)))
+      : 24;
+    return matches.slice(0, galleryLimit);
   }
 
   async install(

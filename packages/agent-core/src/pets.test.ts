@@ -54,6 +54,7 @@ describe("Petdex cosmetic pet manager", () => {
       });
       expect(manager.status()).toMatchObject({ configuration: { enabled: false, scale: 0.33 }, installed: [] });
       expect(await manager.gallery("clip", 10)).toMatchObject([{ slug: "paperclip", submittedBy: "Fixture" }]);
+      expect(await manager.gallery("clip", Number.NaN)).toMatchObject([{ slug: "paperclip", submittedBy: "Fixture" }]);
       expect(await manager.install("paperclip", true)).toMatchObject({ configuration: { enabled: true, selectedSlug: "paperclip" }, installed: [{ width: 1536, height: 1872 }] });
       expect(manager.asset("paperclip")).toMatchObject({ slug: "paperclip", mediaType: "image/webp" });
       expect(manager.configure({ scale: 0.5, renderMode: "unicode" })).toMatchObject({ configuration: { scale: 0.5, renderMode: "unicode" } });
