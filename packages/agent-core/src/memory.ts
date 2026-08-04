@@ -95,6 +95,11 @@ export class MemoryManager {
     const content = input.content.trim();
     if (!content || content.length > 100_000) throw new Error("Corrected memory content is required.");
     this.saveVersion(memory, "user");
+    const correctionCount =
+      typeof memory.structuredData.correctionCount === "number" &&
+      Number.isFinite(memory.structuredData.correctionCount)
+        ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(memory.structuredData.correctionCount)))
+        : 0;
     const corrected: MemoryRecord = {
       ...memory,
       type: input.type ?? memory.type,
@@ -103,8 +108,7 @@ export class MemoryManager {
       layer: input.layer ?? memory.layer ?? this.defaultLayer(memory),
       structuredData: {
         ...memory.structuredData,
-        correctionCount:
-          Number(memory.structuredData.correctionCount ?? 0) + 1,
+        correctionCount: Math.min(Number.MAX_SAFE_INTEGER, correctionCount + 1),
       },
       sourceIds: [...new Set([...memory.sourceIds, `correction:${id}`])],
       sourceType: "user-correction",
