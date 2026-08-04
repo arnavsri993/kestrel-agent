@@ -136,9 +136,15 @@ export class OpenAiMediaProvider implements MediaGenerationProvider {
       throw new Error(
         `OpenAI image generation failed (${await boundedError(response)}).`,
       );
-    const body = (await response.json()) as {
-      data?: Array<{ b64_json?: unknown }>;
-    };
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      throw new Error("OpenAI image response was malformed.");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error("OpenAI image response was invalid.");
+    const body = parsed as { data?: Array<{ b64_json?: unknown }> };
     const encoded = body.data?.[0]?.b64_json;
     if (typeof encoded !== "string" || encoded.length > 140_000_000)
       throw new Error(
