@@ -461,7 +461,15 @@ export class OpenAiTranscriptionProvider implements VoiceTranscriptionProvider {
       throw new Error(
         `OpenAI transcription failed (${await boundedError(response)}).`,
       );
-    const body = (await response.json()) as { text?: unknown };
+    let parsed: unknown;
+    try {
+      parsed = await response.json();
+    } catch {
+      throw new Error("OpenAI transcription response was malformed.");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error("OpenAI transcription response was invalid.");
+    const body = parsed as { text?: unknown };
     if (
       typeof body.text !== "string" ||
       body.text.trim().length === 0 ||
