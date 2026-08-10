@@ -33,7 +33,10 @@ Never launch the real demo with Chromium's `--use-mock-keychain` test flag.
 In Kestrel, open **Tools → Readiness** and confirm the protected store,
 database, local runtime, model route, and packaged app are ready. Open one new
 chat and ask the local model to answer a short prompt once; this warms the model
-before the audience arrives.
+before the audience arrives. On the presentation Mac, the first tool-enabled
+9B turn took about 71 seconds and a resident follow-up took about 6 seconds.
+Send the warm-up within 10 minutes of going onstage, and repeat it if the slot
+is delayed, so Ollama's configured keep-alive does not expire.
 
 ## Ten-minute live path
 
