@@ -1,4 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalRuntimeManager } from "../apps/desktop/src/main/local-runtime-manager";
@@ -13,12 +14,28 @@ if (process.platform !== "darwin" || process.arch !== "arm64") {
 }
 
 const root = await mkdtemp(join(tmpdir(), "kestrel-real-local-ai-"));
+const port = await new Promise<number>((resolve, reject) => {
+  const server = createServer();
+  server.unref();
+  server.once("error", reject);
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      reject(new Error("Could not reserve an isolated local model port."));
+      return;
+    }
+    server.close((error) =>
+      error ? reject(error) : resolve(address.port),
+    );
+  });
+});
 const seenStages = new Set<string>();
 const manager = new LocalRuntimeManager(root, (progress) => {
   if (seenStages.has(progress.stage)) return;
   seenStages.add(progress.stage);
   process.stdout.write(`${progress.stage}: ${progress.message}\n`);
-});
+}, { origin: `http://127.0.0.1:${port}` });
 
 try {
   const status = await manager.bootstrap("smollm2:135m");

@@ -9,7 +9,7 @@ import { readBoundedResponseBytes } from "@kestrel/agent-core";
 import type { LocalModelSummary, LocalRuntimeProgress, LocalRuntimeStatus } from "@kestrel/shared-types";
 
 const execFileAsync = promisify(execFile);
-const OLLAMA_ORIGIN = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_ORIGIN = "http://127.0.0.1:11434";
 const MAX_LOCAL_MODEL_RESPONSE_BYTES = 1_000_000;
 
 export interface LocalRuntimeManifest {
@@ -50,6 +50,23 @@ interface ManagerDependencies {
   architecture?: string;
   manifest?: LocalRuntimeManifest;
   now?: () => Date;
+  origin?: string;
+}
+
+function loopbackOllamaOrigin(value: string): URL {
+  const parsed = new URL(value);
+  if (
+    parsed.protocol !== "http:" ||
+    !["127.0.0.1", "[::1]"].includes(parsed.hostname) ||
+    !parsed.port ||
+    parsed.username ||
+    parsed.password ||
+    parsed.pathname !== "/" ||
+    parsed.search ||
+    parsed.hash
+  )
+    throw new Error("The local model service origin must be an explicit loopback HTTP port.");
+  return parsed;
 }
 
 function modelSummaries(payload: { models?: OllamaTag[] }): LocalModelSummary[] {
@@ -105,6 +122,8 @@ export class LocalRuntimeManager {
   private readonly currentArchitecture: string;
   private readonly manifest: LocalRuntimeManifest;
   private readonly now: () => Date;
+  private readonly ollamaOrigin: string;
+  private readonly ollamaHost: string;
   private child: ChildProcess | null = null;
   private operation: AbortController | null = null;
 
@@ -123,6 +142,11 @@ export class LocalRuntimeManager {
     this.currentArchitecture = dependencies.architecture ?? process.arch;
     this.manifest = dependencies.manifest ?? MANAGED_OLLAMA_MANIFEST;
     this.now = dependencies.now ?? (() => new Date());
+    const origin = loopbackOllamaOrigin(
+      dependencies.origin ?? DEFAULT_OLLAMA_ORIGIN,
+    );
+    this.ollamaOrigin = origin.origin;
+    this.ollamaHost = origin.host;
   }
 
   private installRoot(): string {
@@ -153,7 +177,7 @@ export class LocalRuntimeManager {
   }
 
   async listModels(timeoutMs = 1_500, signal?: AbortSignal): Promise<LocalModelSummary[]> {
-    const response = await this.fetcher(`${OLLAMA_ORIGIN}/api/tags`, {
+    const response = await this.fetcher(`${this.ollamaOrigin}/api/tags`, {
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
     });
     if (!response.ok) throw new Error(`The local model service returned ${response.status}.`);
@@ -359,7 +383,7 @@ export class LocalRuntimeManager {
         PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
         HOME: managedHome,
         TMPDIR: process.env.TMPDIR ?? "/tmp",
-        OLLAMA_HOST: "127.0.0.1:11434",
+        OLLAMA_HOST: this.ollamaHost,
         OLLAMA_MODELS: modelsRoot,
         OLLAMA_KEEP_ALIVE: "10m",
         OLLAMA_CONTEXT_LENGTH: "32768",
@@ -385,7 +409,7 @@ export class LocalRuntimeManager {
 
   private async pullModel(model: string, signal: AbortSignal): Promise<void> {
     this.progress({ stage: "downloading-model", message: `Downloading ${model}. This is the larger part of setup.`, model, percent: 0 });
-    const response = await this.fetcher(`${OLLAMA_ORIGIN}/api/pull`, {
+    const response = await this.fetcher(`${this.ollamaOrigin}/api/pull`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model, stream: true }),
@@ -426,7 +450,7 @@ export class LocalRuntimeManager {
 
   private async verifyModel(model: string, signal: AbortSignal): Promise<void> {
     this.progress({ stage: "verifying-model", message: `Asking ${model} for one real local response before marking setup complete.`, model });
-    const response = await this.fetcher(`${OLLAMA_ORIGIN}/api/chat`, {
+    const response = await this.fetcher(`${this.ollamaOrigin}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
