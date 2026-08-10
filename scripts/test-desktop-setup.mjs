@@ -19,7 +19,10 @@ let application;
 
 try {
   application = await electron.launch({
-    args: [resolve("apps/desktop/out/main/index.js")],
+    args: [
+      resolve("apps/desktop/out/main/index.js"),
+      ...(process.platform === "darwin" ? ["--use-mock-keychain"] : []),
+    ],
     env: {
       ...testEnvironment,
       HOME: testHome,
