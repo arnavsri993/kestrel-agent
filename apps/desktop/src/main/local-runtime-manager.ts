@@ -228,6 +228,21 @@ export class LocalRuntimeManager {
     }
   }
 
+  async preferredModel(
+    models: readonly LocalModelSummary[],
+  ): Promise<string | undefined> {
+    const verification = await this.readVerification(models);
+    if ("verifiedModel" in verification) {
+      const verified = models.find(
+        (model) =>
+          model.name === verification.verifiedModel ||
+          model.name === `${verification.verifiedModel}:latest`,
+      );
+      if (verified) return verified.name;
+    }
+    return models[0]?.name;
+  }
+
   cancel(): void {
     this.operation?.abort(new DOMException("Local setup was cancelled.", "AbortError"));
   }
@@ -271,7 +286,7 @@ export class LocalRuntimeManager {
     }
   }
 
-  private async readVerification(models: LocalModelSummary[]): Promise<{ verifiedModel: string; verifiedAt: string } | Record<string, never>> {
+  private async readVerification(models: readonly LocalModelSummary[]): Promise<{ verifiedModel: string; verifiedAt: string } | Record<string, never>> {
     try {
       const value = JSON.parse(await readFile(this.verificationPath(), "utf8")) as { model?: unknown; verifiedAt?: unknown };
       if (typeof value.model !== "string" || typeof value.verifiedAt !== "string" || !Number.isFinite(Date.parse(value.verifiedAt))) return {};

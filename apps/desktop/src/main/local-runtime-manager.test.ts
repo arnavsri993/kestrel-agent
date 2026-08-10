@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -153,6 +153,28 @@ describe("managed local runtime", () => {
           origin: "https://models.example.com:443",
         }),
     ).toThrow("explicit loopback HTTP port");
+  });
+
+  it("prefers the recorded verified model over the first listed tag", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    await mkdir(join(root, "local-runtime"), { recursive: true });
+    await writeFile(
+      join(root, "local-runtime", "last-verification.json"),
+      JSON.stringify({
+        model: "huihui_ai/qwen3.5-abliterated:9b",
+        verifiedAt: "2026-08-10T00:00:00.000Z",
+      }),
+    );
+    const manager = new LocalRuntimeManager(root, () => undefined);
+    const models = [
+      { name: "smollm2:135m", size: 258_000_000 },
+      { name: "huihui_ai/qwen3.5-abliterated:9b", size: 6_600_000_000 },
+    ];
+
+    await expect(manager.preferredModel(models)).resolves.toBe(
+      "huihui_ai/qwen3.5-abliterated:9b",
+    );
   });
 
   it("removes a partial install when the signed checksum does not match", async () => {

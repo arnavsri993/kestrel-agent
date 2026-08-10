@@ -966,11 +966,13 @@ async function initializeCore(
     secureEnvironment.KESTREL_CLAUDE_PATH = claudePath;
   }
   try {
-    await localRuntimeManager().startManagedIfInstalled();
+    const localRuntime = localRuntimeManager();
+    await localRuntime.startManagedIfInstalled();
     const localModels = await listLocalModels(700);
     if (localModels.length > 0) {
       secureEnvironment.KESTREL_ENABLE_OLLAMA = "1";
-      secureEnvironment.KESTREL_OLLAMA_MODEL ??= localModels[0]!.name;
+      secureEnvironment.KESTREL_OLLAMA_MODEL ??=
+        (await localRuntime.preferredModel(localModels)) ?? localModels[0]!.name;
     }
   } catch {
     // A local model server is optional and must not delay or block startup.
