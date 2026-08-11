@@ -3,7 +3,7 @@ export async function openKestrelDestination(page, label) {
   await page.getByRole("heading", { name: "Kestrel", exact: true }).waitFor();
   const destination = page
     .locator(".command-groups button")
-    .filter({ hasText: label })
+    .filter({ has: page.getByText(label, { exact: true }) })
     .first();
   await destination.waitFor();
   await destination.click();

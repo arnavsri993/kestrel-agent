@@ -46,7 +46,7 @@ export function NewTabPage({
         </button>
         <button type="button" onClick={onNewAgent}>
           <Icon name="agent" />
-          <span><strong>New Agent</strong><small>Start a fresh conversation</small></span>
+          <span><strong>New task</strong><small>Ask Kestrel to get something done</small></span>
         </button>
       </div>
       <div className="new-tab-center">

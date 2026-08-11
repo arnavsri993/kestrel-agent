@@ -323,7 +323,7 @@ try {
   await application.close();
   application = undefined;
   page = await launch();
-  await page.getByRole("button", { name: "Agent history" }).click();
+  await page.getByRole("button", { name: "Task history" }).click();
   await page
     .locator(".agent-history-popover")
     .getByRole("button", { name: session.title })

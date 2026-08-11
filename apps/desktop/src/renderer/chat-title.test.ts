@@ -40,6 +40,6 @@ describe("chatTitleFromPrompt", () => {
     expect(
       sessionTitleForDisplay("Help me finish setting up Workstrand."),
     ).toBe("Help me finish setting up Kestrel.");
-    expect(sessionTitleForDisplay("Main session")).toBe("Main session");
+    expect(sessionTitleForDisplay("Main session")).toBe("General");
   });
 });

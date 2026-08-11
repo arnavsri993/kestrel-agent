@@ -10,7 +10,9 @@ let application;
 async function openCommand(page, label) {
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("heading", { name: "Kestrel", exact: true }).waitFor();
-  const entry = page.locator(".command-groups button").filter({ hasText: label });
+  const entry = page
+    .locator(".command-groups button")
+    .filter({ has: page.getByText(label, { exact: true }) });
   await entry.first().click();
 }
 

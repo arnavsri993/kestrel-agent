@@ -23,7 +23,7 @@ export function AgentSidebar({
   activeDestination: string;
   onNewAgent(): void;
   onOpenSession(sessionId: string): void;
-  onNavigate(destination: "browser" | "history" | "downloads" | "settings" | "commands"): void;
+  onNavigate(destination: "browser" | "agent" | "history" | "downloads" | "settings" | "commands"): void;
 }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyRef = useRef<HTMLDivElement | null>(null);
@@ -53,19 +53,19 @@ export function AgentSidebar({
         <div className="agent-sidebar-drag" />
         <Brand />
         <div className="agent-sidebar-actions" ref={historyRef}>
-          <button type="button" className="agent-new-button" aria-label="New Agent" aria-keyshortcuts="Meta+N" onClick={onNewAgent}>
+          <button type="button" className="agent-new-button" aria-label="New task" aria-keyshortcuts="Meta+N" onClick={onNewAgent}>
             <Icon name="agent" />
-            <span>New Agent</span>
+            <span>New task</span>
             <kbd>⌘ N</kbd>
           </button>
-          <button type="button" className="agent-history-button" aria-label="Agent history" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}>
+          <button type="button" className="agent-history-button" aria-label="Task history" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}>
             <Icon name="chat" />
           </button>
           {historyOpen && (
-            <div className="agent-history-popover" aria-label="Agent history">
-              <header><strong>Agent history</strong><small>{sessions.length} conversation{sessions.length === 1 ? "" : "s"}</small></header>
+            <div className="agent-history-popover" aria-label="Task history">
+              <header><strong>Task history</strong><small>{sortedSessions.length} task{sortedSessions.length === 1 ? "" : "s"}</small></header>
               {sortedSessions.length === 0 ? (
-                <p>No conversations yet.</p>
+                <p>No tasks yet.</p>
               ) : (
                 <div>
                   {sortedSessions.slice(0, 30).map((session) => (
@@ -98,6 +98,7 @@ export function AgentSidebar({
         <nav aria-label="Kestrel destinations">
           {([
             ["browser", "Browser", "browser"],
+            ["agent", "Agent", "agent"],
             ["history", "History", "history"],
             ["downloads", "Downloads", "downloads"],
             ["settings", "Settings", "settings"],

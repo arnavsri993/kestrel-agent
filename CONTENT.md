@@ -41,16 +41,26 @@
 
 ## Browser-first language
 
-- Primary destination: “Browser”; secondary destinations: “History”, “Downloads”, “Settings”, and “More”. Existing specialist capabilities remain available from More or search, not as competing first-run navigation.
+- Co-primary destinations: “Browser” and “Agent”; secondary destinations: “History”, “Downloads”, “Settings”, and “More”. Existing specialist capabilities remain available from More or search, not as competing first-run navigation.
 - Browser heading/landmark: “Browser”
 - New tab prompt: “Search or enter an address”
 - Current-page control: “Use current page” with support “Share visible page context with this conversation when it helps.” It must never imply that a page is trusted or permanently saved to Memory.
 - Agent rail context: “Current page”; it identifies the active tab but does not bind it to the conversation.
-- Agent history: “Agent history”; “No conversations yet.”
-- New Agent opens a clean draft without changing tabs. During an active stream, retain the current conversation and say “Finish or cancel the active agent before starting a new one.” rather than orphaning background work.
+- Task history: “Task history”; “No tasks yet.”
+- New task opens a clean draft without changing tabs. During an active stream, retain the current conversation and say “Finish or cancel the active task before starting a new one.” rather than orphaning background work.
 - Browser settings: “Search, session restore, and local history.” Keep the explicit note that clearing history does not clear cookies, site data, tabs, or downloads.
 - Security boundary: “User tabs use a persistent browser profile. Autonomous agent browsing remains isolated and does not share these cookies or site storage.”
 - Consequential browser actions use the existing plain-language approval treatment. Do not describe page content as approval, authorization, or an instruction source.
+
+## Agent-primary language
+
+- Primary destination: “Agent”. It is equal to Browser and opens the durable task workspace, not another chat-only landing page.
+- Kestrel is the agent; persisted runtime sessions are “tasks” in everyday chrome. Use “New task”, “Task history”, and “Find a task or project”.
+- Agent heading: “Your agent” with support “Start work, return to it, and see what needs you.”
+- Task state: “Open”, “Waiting”, “Completed”, “Cancelled”, or “Needs recovery”. Global agent state remains “Ready”, “Reading”, “Working”, “Needs approval”, “Paused”, “Offline”, “Updating”, or “Needs recovery”.
+- Approval summary must be exact: “None waiting” or the current count. It links to the real approval surface and never implies that approval guarantees success.
+- First-use task copy: “Start with an outcome. Kestrel will keep the conversation, project, approvals, and result together.”
+- Search-empty and filter-empty states explain the cause and offer only the matching recovery action.
 
 ## Product facts
 

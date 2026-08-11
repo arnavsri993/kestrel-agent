@@ -252,7 +252,7 @@ try {
   await page.locator("#runtime-prompt").fill("Draft that must be cleared");
   await page
     .locator(".new-tab-primary-actions button")
-    .filter({ hasText: "New Agent" })
+    .filter({ hasText: "New task" })
     .click();
   const clearedDraft = await page.waitForFunction(() => {
     const prompt = document.querySelector("#runtime-prompt");
@@ -325,6 +325,23 @@ try {
   const tabId = state.activeTabId;
   assert(tabId);
   const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
+  await page.getByRole("button", { name: "Agent", exact: true }).last().click();
+  await page.getByRole("heading", { name: "Your agent", exact: true }).waitFor();
+  await waitForNativeView(
+    (value) => value.views.length === 0,
+    "Native page remained attached over Agent",
+  );
+  const taskRow = page.getByRole("button", {
+    name: /Visible browser test, Open, Conversation only/,
+  });
+  await taskRow.waitFor();
+  await taskRow.click();
+  assert.equal(await taskRow.getAttribute("aria-current"), "page");
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/one`,
+    "Native page did not return after leaving Agent",
+  );
   const blocked = await callTool(
     runtimeSessionId,
     "browser.visible-act",
@@ -549,7 +566,7 @@ try {
 
   assert.deepEqual(runtimeErrors, []);
   process.stdout.write(
-    "Visible browser smoke passed: independent tabs/agents, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, downloads, hidden-view routing, settings, and restart restore.\n",
+    "Visible browser smoke passed: independent tabs/tasks, agent task resume, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, downloads, hidden-view routing, settings, and restart restore.\n",
   );
 } finally {
   await application?.close();

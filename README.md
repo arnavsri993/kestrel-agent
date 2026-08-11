@@ -51,9 +51,9 @@ The packaged development build is Apple Silicon and ad-hoc signed. It is useful 
 
 Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, and a public download URL. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
 
-## Browser-first workspace
+## Browser and agent workspace
 
-Kestrel’s default desktop destination is a local user browser beside a stable agent conversation. Tabs, History, Downloads, session restore, configurable local history retention, address/search navigation, and browser settings are implemented. The optional **Use current page** handoff sends bounded visible-page reference material to the conversation; page content remains untrusted and cannot authorize actions. User tabs use their own persistent browser profile, while autonomous agent browser sessions are isolated and origin-scoped. Consequential browser actions continue through Kestrel’s existing policy/approval path. See [AI-native browser](docs/ai-native-browser.md) for implemented boundaries and follow-up scope.
+Kestrel’s default desktop destination is a local user browser beside a stable agent conversation. Browser and Agent are equal top-level destinations: the Browser owns tabs and pages, while the Agent workspace starts, finds, filters, and resumes durable tasks with project, status, approval, and recovery context. Tabs, History, Downloads, session restore, configurable local history retention, address/search navigation, and browser settings are implemented. The optional **Use current page** handoff sends bounded visible-page reference material to the conversation; page content remains untrusted and cannot authorize actions. User tabs use their own persistent browser profile, while autonomous agent browser sessions are isolated and origin-scoped. Consequential browser actions continue through Kestrel’s existing policy/approval path. See [AI-native browser](docs/ai-native-browser.md) for implemented boundaries and follow-up scope.
 
 ## Architecture and research evidence
 
