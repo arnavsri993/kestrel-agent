@@ -1,9 +1,9 @@
-import { randomBytes } from "node:crypto";
+import { hkdfSync, randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { decryptText, encryptText } from "@kestrel/encryption";
 
-interface ElectronSafeStorage {
-  isEncryptionAvailable(): boolean;
+export interface ElectronSafeStorage {
   isAsyncEncryptionAvailable(): Promise<boolean>;
   encryptStringAsync(value: string): Promise<Buffer>;
   decryptStringAsync(value: Buffer): Promise<{
@@ -53,6 +53,11 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
 
 const DATABASE_STORAGE_UNAVAILABLE =
   "macOS secure storage is unavailable; Agent Core will not start with an unprotected key.";
+const SECRET_ENVELOPE_PREFIX = Buffer.from("kestrel-secret-v1\n", "utf8");
+const SECRET_KEY_SALT = Buffer.from(
+  "kestrel-credential-broker-v1",
+  "utf8",
+);
 const fileMutationQueues = new Map<string, Promise<void>>();
 
 export interface ResolvedExternalCredentials {
@@ -60,33 +65,39 @@ export interface ResolvedExternalCredentials {
   overrideStoredIds: BrokeredCredentialId[];
 }
 
-interface SecretProtection {
-  isEncryptionAvailable(): boolean;
-  encryptString(value: string): Promise<Buffer>;
-  decryptString(value: Buffer): Promise<string>;
+export interface ProtectedDecryption {
+  result: string;
+  shouldReEncrypt: boolean;
 }
 
-class ElectronSecretProtection implements SecretProtection {
+interface SecretProtection {
+  isEncryptionAvailable?(): boolean;
+  prepare?(): Promise<void>;
+  encryptString(value: string): Promise<Buffer>;
+  decryptString(value: Buffer): Promise<string | ProtectedDecryption>;
+}
+
+export class ElectronSecretProtection implements SecretProtection {
   private availability: Promise<void> | undefined;
   private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly safeStorage: ElectronSafeStorage) {}
 
-  isEncryptionAvailable(): boolean {
-    return this.safeStorage.isEncryptionAvailable();
+  prepare(): Promise<void> {
+    return this.ensureAvailable();
   }
 
   encryptString(value: string): Promise<Buffer> {
     return this.withEncryption(() => this.safeStorage.encryptStringAsync(value));
   }
 
-  decryptString(value: Buffer): Promise<string> {
-    return this.withEncryption(async () => {
-      let decrypted = await this.safeStorage.decryptStringAsync(value);
-      while (decrypted.shouldReEncrypt)
-        decrypted = await this.safeStorage.decryptStringAsync(value);
-      return decrypted.result;
-    });
+  decryptString(value: Buffer): Promise<ProtectedDecryption> {
+    // shouldReEncrypt is a persistence instruction, not a retry signal. Calling
+    // decrypt again with the same legacy ciphertext can return the same flag
+    // forever and repeatedly fall back to the macOS Keychain implementation.
+    return this.withEncryption(() =>
+      this.safeStorage.decryptStringAsync(value),
+    );
   }
 
   private async withEncryption<T>(operation: () => Promise<T>): Promise<T> {
@@ -97,7 +108,7 @@ class ElectronSecretProtection implements SecretProtection {
     });
     await previous;
     try {
-      await this.ensureAvailable();
+      await this.prepare();
       return await operation();
     } finally {
       release();
@@ -173,13 +184,12 @@ export class CredentialBroker {
     if (secret.length < 8 || secret.length > 20_000 || /[\r\n\0]/.test(secret)) throw new Error("Credential value is invalid.");
     const path = this.credentialPath(id);
     await this.mutateFile(path, async () => {
-      const protection = await this.availableProtection();
-      const temporary = `${path}.new`;
-      await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
-      await writeFile(temporary, await protection.encryptString(secret), { mode: 0o600 });
-      await chmod(temporary, 0o600);
-      await rename(temporary, path);
-      await chmod(path, 0o600);
+      await this.writeSecret(
+        path,
+        `credential:${id}`,
+        secret,
+        await this.getDatabaseKey(),
+      );
       this.credentialCache.set(id, Promise.resolve(secret));
     });
   }
@@ -198,13 +208,12 @@ export class CredentialBroker {
     if (value.length < 8 || value.length > 100_000 || value.includes("\0")) throw new Error("Opaque credential value is invalid.");
     const path = this.opaquePath(id);
     await this.mutateFile(path, async () => {
-      const protection = await this.availableProtection();
-      const temporary = `${path}.new`;
-      await mkdir(this.credentialRoot, { recursive: true, mode: 0o700 });
-      await writeFile(temporary, await protection.encryptString(value), { mode: 0o600 });
-      await chmod(temporary, 0o600);
-      await rename(temporary, path);
-      await chmod(path, 0o600);
+      await this.writeSecret(
+        path,
+        `opaque:${id}`,
+        value,
+        await this.getDatabaseKey(),
+      );
       this.opaqueSecretCache.set(id, Promise.resolve(value));
     });
   }
@@ -292,46 +301,163 @@ export class CredentialBroker {
   }
 
   private async loadDatabaseKey(): Promise<Buffer> {
-    const protection = await this.availableProtection(DATABASE_STORAGE_UNAVAILABLE);
-    try {
-      const encrypted = await readFile(this.keyPath);
-      return Buffer.from(await protection.decryptString(encrypted), "base64");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const key = randomBytes(32);
-      await mkdir(dirname(this.keyPath), { recursive: true, mode: 0o700 });
-      await writeFile(
-        this.keyPath,
-        await protection.encryptString(key.toString("base64")),
-        { mode: 0o600 },
+    return this.mutateFile(this.keyPath, async () => {
+      const protection = await this.availableProtection(
+        DATABASE_STORAGE_UNAVAILABLE,
       );
-      await chmod(this.keyPath, 0o600);
-      return key;
-    }
+      try {
+        const encrypted = await readFile(this.keyPath);
+        const decrypted = this.normalizedDecryption(
+          await protection.decryptString(encrypted),
+        );
+        const key = Buffer.from(decrypted.result, "base64");
+        if (
+          key.length !== 32 ||
+          key.toString("base64") !== decrypted.result
+        )
+          throw new Error("The protected database key is invalid.");
+        if (decrypted.shouldReEncrypt)
+          await this.writeProtectedFile(
+            this.keyPath,
+            await protection.encryptString(decrypted.result),
+          );
+        return key;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const key = randomBytes(32);
+        await this.writeProtectedFile(
+          this.keyPath,
+          await protection.encryptString(key.toString("base64")),
+        );
+        return key;
+      }
+    });
   }
 
   private async loadCredential(
     id: BrokeredCredentialId,
   ): Promise<string | undefined> {
-    let encrypted: Buffer;
-    try {
-      encrypted = await readFile(this.credentialPath(id));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
-    return (await this.availableProtection()).decryptString(encrypted);
+    return this.loadSecret(this.credentialPath(id), `credential:${id}`);
   }
 
   private async loadOpaqueSecret(id: string): Promise<string | undefined> {
-    let encrypted: Buffer;
+    return this.loadSecret(this.opaquePath(id), `opaque:${id}`);
+  }
+
+  private async loadSecret(
+    path: string,
+    purpose: string,
+  ): Promise<string | undefined> {
+    return this.mutateFile(path, async () => {
+      let encrypted: Buffer;
+      try {
+        encrypted = await readFile(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      }
+      const databaseKey = await this.getDatabaseKey();
+      if (encrypted.subarray(0, SECRET_ENVELOPE_PREFIX.length).equals(SECRET_ENVELOPE_PREFIX))
+        return this.decryptSecret(encrypted, purpose, databaseKey);
+
+      // Files written by older Kestrel versions were protected individually by
+      // safeStorage. Read each one once, then migrate it to the root-key format
+      // so future setup and restart flows never revisit Keychain for it.
+      const legacy = this.normalizedDecryption(
+        await (await this.availableProtection()).decryptString(encrypted),
+      ).result;
+      await this.writeSecret(path, purpose, legacy, databaseKey);
+      return legacy;
+    });
+  }
+
+  private decryptSecret(
+    encrypted: Buffer,
+    purpose: string,
+    databaseKey: Buffer,
+  ): string {
+    let envelope: unknown;
     try {
-      encrypted = await readFile(this.opaquePath(id));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
+      envelope = JSON.parse(
+        encrypted.subarray(SECRET_ENVELOPE_PREFIX.length).toString("utf8"),
+      );
+    } catch {
+      throw new Error("A protected credential file is malformed.");
     }
-    return (await this.availableProtection()).decryptString(encrypted);
+    if (
+      !envelope ||
+      typeof envelope !== "object" ||
+      (envelope as { version?: unknown }).version !== 1 ||
+      (envelope as { algorithm?: unknown }).algorithm !== "aes-256-gcm" ||
+      typeof (envelope as { ciphertext?: unknown }).ciphertext !== "string" ||
+      typeof (envelope as { iv?: unknown }).iv !== "string" ||
+      typeof (envelope as { authTag?: unknown }).authTag !== "string"
+    )
+      throw new Error("A protected credential file is malformed.");
+    const payload = envelope as {
+      ciphertext: string;
+      iv: string;
+      authTag: string;
+    };
+    return decryptText(payload, this.secretKey(databaseKey, purpose));
+  }
+
+  private async writeSecret(
+    path: string,
+    purpose: string,
+    value: string,
+    databaseKey: Buffer,
+  ): Promise<void> {
+    const payload = encryptText(value, this.secretKey(databaseKey, purpose));
+    await this.writeProtectedFile(
+      path,
+      Buffer.concat([
+        SECRET_ENVELOPE_PREFIX,
+        Buffer.from(
+          JSON.stringify({
+            version: 1,
+            algorithm: "aes-256-gcm",
+            ...payload,
+          }),
+          "utf8",
+        ),
+      ]),
+    );
+  }
+
+  private secretKey(databaseKey: Buffer, purpose: string): Buffer {
+    return Buffer.from(
+      hkdfSync(
+        "sha256",
+        databaseKey,
+        SECRET_KEY_SALT,
+        Buffer.from(purpose, "utf8"),
+        32,
+      ),
+    );
+  }
+
+  private normalizedDecryption(
+    decrypted: string | ProtectedDecryption,
+  ): ProtectedDecryption {
+    return typeof decrypted === "string"
+      ? { result: decrypted, shouldReEncrypt: false }
+      : decrypted;
+  }
+
+  private async writeProtectedFile(path: string, value: Buffer): Promise<void> {
+    const temporary = `${path}.new`;
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    try {
+      await writeFile(temporary, value, { mode: 0o600 });
+      await chmod(temporary, 0o600);
+      await rename(temporary, path);
+      await chmod(path, 0o600);
+    } finally {
+      await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    }
   }
 
   private credentialPath(id: BrokeredCredentialId): string { return join(this.credentialRoot, `${id}.bin`); }
@@ -345,7 +471,8 @@ export class CredentialBroker {
       "macOS secure storage is unavailable; credentials will not be stored or loaded unprotected.",
   ): Promise<SecretProtection> {
     const protection = await this.protection;
-    if (!protection.isEncryptionAvailable())
+    if (protection.prepare) await protection.prepare();
+    else if (!protection.isEncryptionAvailable?.())
       throw new Error(unavailableMessage);
     return protection;
   }

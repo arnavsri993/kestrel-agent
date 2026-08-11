@@ -13,7 +13,7 @@ const fail = (message) => {
   process.exitCode = 1;
 };
 
-const [builder, developmentBuilder, inheritedEntitlements, developmentInheritedEntitlements, desktopPackage, desktopMain, productIdentity, workflow, websiteWorkflow, privacy, support, rootPackage, developmentVerifier, desktopSmoke] = await Promise.all([
+const [builder, developmentBuilder, inheritedEntitlements, developmentInheritedEntitlements, desktopPackage, desktopMain, productIdentity, workflow, websiteWorkflow, privacy, support, rootPackage, developmentVerifier, desktopSmoke, desktopSetup] = await Promise.all([
   read("apps/desktop/electron-builder.yml"),
   read("apps/desktop/electron-builder.dev.yml"),
   read("apps/desktop/build/entitlements.mac.inherit.plist"),
@@ -28,6 +28,7 @@ const [builder, developmentBuilder, inheritedEntitlements, developmentInheritedE
   read("package.json"),
   read("scripts/verify-development-macos-app.mjs"),
   read("scripts/smoke-desktop.mjs"),
+  read("scripts/test-desktop-setup.mjs"),
 ]);
 
 for (const [name, source] of [["privacy", privacy], ["support", support]]) {
@@ -59,6 +60,7 @@ if (!developmentInheritedEntitlements.includes("com.apple.security.cs.disable-li
 if (!desktopPackage.includes("KESTREL_RELEASE_CHANNEL=development") || !desktopPackage.includes("CSC_FOR_PULL_REQUEST=true") || !desktopPackage.includes("electron-builder.dev.yml")) fail("desktop development packaging must persist and sign its isolated development identity.");
 if (!desktopPackage.includes("verify-development-macos-app.mjs")) fail("desktop development packaging must verify its documented ad-hoc signature.");
 if (!desktopSmoke.includes("--use-mock-keychain")) fail("packaged desktop smoke must isolate its test-only keychain from production Safe Storage.");
+if (!desktopSetup.includes("--use-mock-keychain")) fail("desktop setup smoke must isolate its test-only keychain from production Safe Storage.");
 if (!desktopMain.includes("app.setName(PRODUCT_IDENTITY.runtimeApplicationName)")) fail("desktop startup must preserve its compatibility runtime name for safeStorage.");
 for (const marker of ['runtimeApplicationName = "Kestrel"', 'keychainService: `${runtimeApplicationName} Safe Storage`', "userDataDirectoryName: runtimeApplicationName"]) {
   if (!productIdentity.includes(marker)) fail(`product identity is missing ${marker}.`);

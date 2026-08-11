@@ -1,8 +1,18 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { CredentialBroker } from "./credential-broker";
+import {
+  CredentialBroker,
+  ElectronSecretProtection,
+} from "./credential-broker";
 
 const roots: string[] = [];
 
@@ -14,10 +24,14 @@ describe("desktop credential broker", () => {
   it("stores scoped credentials encrypted, exports only the core environment, and revokes them", async () => {
     const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-"));
     roots.push(root);
+    let encryptCalls = 0;
     let decryptCalls = 0;
     const protection = {
       isEncryptionAvailable: () => true,
-      encryptString: async (value: string) => Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+      encryptString: async (value: string) => {
+        encryptCalls += 1;
+        return Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`);
+      },
       decryptString: async (value: Buffer) => {
         decryptCalls += 1;
         return Buffer.from(value.toString().slice("sealed:".length), "base64").toString();
@@ -62,16 +76,124 @@ describe("desktop credential broker", () => {
       KESTREL_GOOGLE_WORKSPACE_OAUTH: "{\"refreshToken\":\"refresh-secret\"}"
     });
     expect(await broker.providerEnvironment(baseEnvironment)).toEqual(environment);
+    expect(encryptCalls).toBe(1);
+    expect(decryptCalls).toBe(0);
     const reopened = new CredentialBroker(root, protection);
     expect(await reopened.providerEnvironment(baseEnvironment)).toEqual(environment);
     expect(await reopened.providerEnvironment(baseEnvironment)).toEqual(environment);
-    expect(decryptCalls).toBe(4);
+    expect(decryptCalls).toBe(1);
     const storedPath = join(root, "secure", "credentials", "openai.bin");
     expect(readFileSync(storedPath, "utf8")).not.toContain("sk-test-secret-value");
     expect(statSync(storedPath).mode & 0o777).toBe(0o600);
     expect(readFileSync(join(root, "secure", "credentials", "opaque-google-workspace-oauth.bin"), "utf8")).not.toContain("refresh-secret");
     await broker.removeCredential("openai");
     expect(await broker.listCredentials()).toContainEqual({ id: "openai", label: "OpenAI API key", configured: false });
+  });
+
+  it("initializes Electron secure storage once and never retries the same rotating ciphertext", async () => {
+    let syncAvailabilityCalls = 0;
+    let availabilityCalls = 0;
+    let decryptCalls = 0;
+    let encryptCalls = 0;
+    const safeStorage = {
+      isEncryptionAvailable: () => {
+        syncAvailabilityCalls += 1;
+        return true;
+      },
+      isAsyncEncryptionAvailable: async () => {
+        availabilityCalls += 1;
+        return true;
+      },
+      encryptStringAsync: async (value: string) => {
+        encryptCalls += 1;
+        return Buffer.from(`current:${value}`);
+      },
+      decryptStringAsync: async () => {
+        decryptCalls += 1;
+        return { result: "decrypted", shouldReEncrypt: true };
+      },
+    };
+    const protection = new ElectronSecretProtection(safeStorage);
+
+    await expect(protection.decryptString(Buffer.from("legacy"))).resolves.toEqual({
+      result: "decrypted",
+      shouldReEncrypt: true,
+    });
+    await protection.encryptString("decrypted");
+
+    expect(syncAvailabilityCalls).toBe(0);
+    expect(availabilityCalls).toBe(1);
+    expect(decryptCalls).toBe(1);
+    expect(encryptCalls).toBe(1);
+  });
+
+  it("persists a rotated database-key ciphertext without repeating decryption", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-rotate-"));
+    roots.push(root);
+    const key = Buffer.alloc(32, 7);
+    const keyPath = join(root, "secure", "database-key.bin");
+    mkdirSync(join(root, "secure"), { recursive: true });
+    writeFileSync(keyPath, "legacy-key");
+    let decryptCalls = 0;
+    let encryptCalls = 0;
+    const broker = new CredentialBroker(root, {
+      isEncryptionAvailable: () => true,
+      decryptString: async () => {
+        decryptCalls += 1;
+        return { result: key.toString("base64"), shouldReEncrypt: true };
+      },
+      encryptString: async (value) => {
+        encryptCalls += 1;
+        return Buffer.from(`current:${value}`);
+      },
+    });
+
+    expect(await broker.getDatabaseKey()).toEqual(key);
+    expect(await broker.getDatabaseKey()).toEqual(key);
+    expect(decryptCalls).toBe(1);
+    expect(encryptCalls).toBe(1);
+    expect(readFileSync(keyPath, "utf8")).toBe(
+      `current:${key.toString("base64")}`,
+    );
+  });
+
+  it("migrates individually protected legacy credentials to the one-root-key format", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-migrate-"));
+    roots.push(root);
+    const key = Buffer.alloc(32, 11);
+    const credentialRoot = join(root, "secure", "credentials");
+    mkdirSync(credentialRoot, { recursive: true });
+    const seal = (value: string) =>
+      Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`);
+    writeFileSync(join(root, "secure", "database-key.bin"), seal(key.toString("base64")));
+    writeFileSync(join(credentialRoot, "openai.bin"), seal("sk-legacy-secret-value"));
+    let decryptCalls = 0;
+    const protection = {
+      isEncryptionAvailable: () => true,
+      encryptString: async (value: string) => seal(value),
+      decryptString: async (value: Buffer) => {
+        decryptCalls += 1;
+        return Buffer.from(
+          value.toString().slice("sealed:".length),
+          "base64",
+        ).toString();
+      },
+    };
+
+    const first = new CredentialBroker(root, protection);
+    expect((await first.providerEnvironment()).OPENAI_API_KEY).toBe(
+      "sk-legacy-secret-value",
+    );
+    expect(decryptCalls).toBe(2);
+    expect(readFileSync(join(credentialRoot, "openai.bin"), "utf8")).toMatch(
+      /^kestrel-secret-v1\n/,
+    );
+
+    const reopened = new CredentialBroker(root, protection);
+    expect((await reopened.providerEnvironment()).OPENAI_API_KEY).toBe(
+      "sk-legacy-secret-value",
+    );
+    expect(decryptCalls).toBe(3);
   });
 
   it("refuses to load or store secrets without OS encryption", async () => {
