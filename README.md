@@ -105,6 +105,16 @@ corepack pnpm test:e2e
 corepack pnpm assets:verify
 ```
 
+For the full Apple Silicon live-demo gate, including a real managed local-model
+response and a freshly built packaged-app smoke test, run:
+
+```bash
+corepack pnpm verify:meetup
+```
+
+The event-day sequence and offline fallback are in the
+[AI Tinkerers live-demo runbook](docs/ai-tinkerers-demo.md).
+
 Build an ad-hoc-signed development app (not Developer ID signed or notarized).
 Its `com.kestrel.desktop.dev` bundle identity and disabled-update channel are
 distinct. It intentionally keeps the existing `Kestrel` data directory and
