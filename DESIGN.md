@@ -96,6 +96,21 @@ product name conflicts with this section, this section wins.
   motifs. The product must not resemble a generic AI dashboard, developer
   console, Apple clone, or card catalog.
 
+### Browser workspace chrome — August 2026
+
+- The workspace is intentionally browser-shaped: a tab strip names the current
+  Kestrel surface, a compact navigation row exposes back/forward/reload, and a
+  read-only `kestrel://workspace/...` route makes the current context legible.
+- This is navigation chrome, not a fake web browser. It does not imply external
+  web navigation or expose an editable URL field; the existing local agent,
+  approvals, tools, and settings remain the actual product surfaces.
+- Back and forward operate on the real Kestrel page history. Reload restarts the
+  current Electron renderer. The local-status marker keeps the browser metaphor
+  grounded in Kestrel's on-device execution boundary.
+- The browser shell is matte graphite with one active tab and a restrained
+  address field. No browser-themed gradients, decorative web content, or dead
+  toolbar controls are introduced.
+
 ### Tokens and geometry
 
 - Type: SF Pro Display for setup headlines, page titles, and the Kestrel name;

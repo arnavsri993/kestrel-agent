@@ -8663,3 +8663,245 @@ select {
     font-size: 34px;
   }
 }
+
+/* Browser workspace chrome: Kestrel keeps its local agent surfaces, but the
+   workspace now reads as a place you move through rather than a static app. */
+.main-plane {
+  position: relative;
+}
+
+.browser-chrome {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-rows: 40px 48px;
+  min-width: 0;
+  background: #151517;
+  border-bottom: 1px solid var(--line);
+}
+
+.browser-tab-strip {
+  display: flex;
+  align-items: end;
+  gap: 5px;
+  min-width: 0;
+  padding: 0 12px;
+  -webkit-app-region: drag;
+}
+
+.browser-tab,
+.browser-tab-new,
+.browser-control {
+  -webkit-app-region: no-drag;
+}
+
+.browser-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(270px, 42vw);
+  min-width: 140px;
+  height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 9px 9px 0 0;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.browser-tab-active {
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.browser-tab:hover,
+.browser-tab:focus-visible {
+  color: var(--ink);
+}
+
+.browser-tab-mark {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--brand);
+}
+
+.browser-tab > span:not(.browser-tab-close) {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-tab-close {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.browser-tab-new {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-bottom: 2px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.browser-tab-new:hover {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+.browser-tab-new svg {
+  width: 15px;
+  height: 15px;
+}
+
+.browser-tab-spacer {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+}
+
+.browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 16px;
+  background: var(--canvas);
+}
+
+.browser-navigation {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.browser-control {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.browser-control:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.browser-control:disabled {
+  color: var(--line-strong);
+  cursor: default;
+}
+
+.browser-control svg {
+  width: 16px;
+  height: 16px;
+}
+
+.browser-address {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 32px;
+  flex: 1;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--faint);
+}
+
+.browser-address:focus-within {
+  border-color: color-mix(in srgb, var(--signal) 58%, var(--line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 12%, transparent);
+}
+
+.browser-address > svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--signal-deep);
+}
+
+.browser-address input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.browser-toolbar-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.browser-local-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 12%, transparent);
+}
+
+.browser-deep-link-notice {
+  position: absolute;
+  top: 52px;
+  right: 24px;
+  z-index: 6;
+  max-width: min(520px, 55vw);
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--line));
+  border-radius: 7px;
+  background: var(--warning-soft);
+}
+
+@media (max-width: 720px) {
+  .browser-toolbar {
+    gap: 7px;
+    padding: 0 9px;
+  }
+
+  .browser-toolbar-status {
+    display: none;
+  }
+
+  .browser-address {
+    padding: 0 9px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-control,
+  .browser-tab,
+  .browser-tab-new {
+    transition: none;
+  }
+}

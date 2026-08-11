@@ -1694,6 +1694,103 @@ function Brand() {
   );
 }
 
+function BrowserChrome({
+  title,
+  page,
+  canGoBack,
+  canGoForward,
+  onBack,
+  onForward,
+  onReload,
+  onNewChat,
+  onOpenHome,
+}: {
+  title: string;
+  page: Page;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  onBack(): void;
+  onForward(): void;
+  onReload(): void;
+  onNewChat(): void;
+  onOpenHome(): void;
+}) {
+  const route = page === "home" ? "chat" : page;
+  return (
+    <header className="browser-chrome" aria-label="Kestrel browser workspace">
+      <div className="browser-tab-strip">
+        <button
+          type="button"
+          className="browser-tab browser-tab-active"
+          onClick={onOpenHome}
+          aria-label={`Kestrel workspace tab: ${title}`}
+          aria-current={page === "home" ? "page" : undefined}
+        >
+          <BrandMark className="browser-tab-mark" />
+          <span>{title}</span>
+          <span className="browser-tab-close" aria-hidden="true">×</span>
+        </button>
+        <button
+          type="button"
+          className="browser-tab-new"
+          onClick={onNewChat}
+          aria-label="Open new Kestrel chat"
+          title="New chat"
+        >
+          <Icon name="plus" />
+        </button>
+        <span className="browser-tab-spacer" aria-hidden="true" />
+      </div>
+      <div className="browser-toolbar">
+        <div className="browser-navigation" aria-label="Workspace history">
+          <button
+            type="button"
+            className="browser-control"
+            onClick={onBack}
+            disabled={!canGoBack}
+            aria-label="Back"
+            title="Back"
+          >
+            <Icon name="back" />
+          </button>
+          <button
+            type="button"
+            className="browser-control"
+            onClick={onForward}
+            disabled={!canGoForward}
+            aria-label="Forward"
+            title="Forward"
+          >
+            <Icon name="forward" />
+          </button>
+          <button
+            type="button"
+            className="browser-control"
+            onClick={onReload}
+            aria-label="Reload workspace"
+            title="Reload workspace"
+          >
+            <Icon name="reload" />
+          </button>
+        </div>
+        <label className="browser-address">
+          <Icon name="lock" />
+          <span className="sr-only">Current Kestrel workspace route</span>
+          <input
+            readOnly
+            value={`kestrel://workspace/${route}`}
+            aria-label="Current Kestrel workspace route"
+          />
+        </label>
+        <div className="browser-toolbar-status" aria-label="Local workspace status">
+          <span className="browser-local-dot" />
+          <span>On this Mac</span>
+        </div>
+      </div>
+    </header>
+  );
+}
+
 function Loading() {
   const reduced = useReducedMotion();
   return (
@@ -7585,6 +7682,12 @@ export function App() {
   const [petActivity, setPetActivity] = useState<PetActivityState>("idle");
   const petActivityTimer = useRef<number | null>(null);
   const [page, setPage] = useState<Page>("home");
+  const pageHistoryRef = useRef<Page[]>(["home"]);
+  const pageHistoryIndexRef = useRef(0);
+  const [pageHistoryState, setPageHistoryState] = useState({
+    canGoBack: false,
+    canGoForward: false,
+  });
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsContainerRef = useRef<HTMLElement | null>(null);
   const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -7602,11 +7705,43 @@ export function App() {
       new URLSearchParams(location.search).has("preview"),
   );
   const reduced = useReducedMotion();
+  const navigateToPage = useCallback((nextPage: Page) => {
+    const currentPage = pageHistoryRef.current[pageHistoryIndexRef.current];
+    if (currentPage === nextPage) {
+      setPage(nextPage);
+      return;
+    }
+    const nextHistory = pageHistoryRef.current.slice(
+      0,
+      pageHistoryIndexRef.current + 1,
+    );
+    nextHistory.push(nextPage);
+    pageHistoryRef.current = nextHistory;
+    pageHistoryIndexRef.current = nextHistory.length - 1;
+    setPageHistoryState({
+      canGoBack: pageHistoryIndexRef.current > 0,
+      canGoForward: false,
+    });
+    setPage(nextPage);
+  }, []);
+  const navigateHistory = useCallback((direction: -1 | 1) => {
+    const nextIndex = pageHistoryIndexRef.current + direction;
+    if (nextIndex < 0 || nextIndex >= pageHistoryRef.current.length) return;
+    pageHistoryIndexRef.current = nextIndex;
+    setPageHistoryState({
+      canGoBack: nextIndex > 0,
+      canGoForward: nextIndex < pageHistoryRef.current.length - 1,
+    });
+    setPage(pageHistoryRef.current[nextIndex]!);
+  }, []);
+  const reloadWorkspace = useCallback(() => {
+    window.location.reload();
+  }, []);
   const openRuntimeSession = useCallback((sessionId: string | null) => {
     setToolsOpen(false);
     setActiveRuntimeSessionId(sessionId);
-    setPage("home");
-  }, []);
+    navigateToPage("home");
+  }, [navigateToPage]);
   useEffect(
     () =>
       window.kestrel.onDeepLink((deepLink) => {
@@ -7619,14 +7754,14 @@ export function App() {
         if (action === "settings") {
           setDeepLinkNotice("");
           setToolsOpen(false);
-          setPage("settings");
+          navigateToPage("settings");
           return;
         }
         setDeepLinkNotice(
           "This Kestrel link is not supported. Open New chat or Settings from the sidebar.",
         );
       }),
-    [openRuntimeSession],
+    [navigateToPage, openRuntimeSession],
   );
   useEffect(() => {
     if (!deepLinkNotice) return;
@@ -7885,7 +8020,7 @@ export function App() {
           );
           return session ? sessionTitleForDisplay(session.title) : "New chat";
         })()
-      : pages.find(([id]) => id === page)?.[1];
+      : pages.find(([id]) => id === page)?.[1] ?? "Kestrel";
   async function popOutPet() {
     const response = (await window.kestrel.request({
       type: "pet-overlay-open",
@@ -8007,7 +8142,7 @@ export function App() {
                                 if (page !== id) {
                                   pendingToolRouteFocusRef.current = id;
                                   setToolsOpen(false);
-                                  setPage(id);
+                                  navigateToPage(id);
                                 }
                               }}
                             >
@@ -8035,7 +8170,7 @@ export function App() {
                 className={page === id ? "active" : ""}
                 onClick={() => {
                   setToolsOpen(false);
-                  setPage(id);
+                  navigateToPage(id);
                 }}
               >
                 <Icon name={id} />
@@ -8056,14 +8191,22 @@ export function App() {
         </div>
       </aside>
       <main className="main-plane">
-        <div className="topbar">
-          <span>{currentTitle}</span>
-          {deepLinkNotice && (
-            <small className="deep-link-notice" role="status">
-              {deepLinkNotice}
-            </small>
-          )}
-        </div>
+        <BrowserChrome
+          title={currentTitle}
+          page={page}
+          canGoBack={pageHistoryState.canGoBack}
+          canGoForward={pageHistoryState.canGoForward}
+          onBack={() => navigateHistory(-1)}
+          onForward={() => navigateHistory(1)}
+          onReload={reloadWorkspace}
+          onNewChat={() => openRuntimeSession(null)}
+          onOpenHome={() => navigateToPage("home")}
+        />
+        {deepLinkNotice && (
+          <small className="deep-link-notice browser-deep-link-notice" role="status">
+            {deepLinkNotice}
+          </small>
+        )}
         <div className="page-stack">
           {/* Keep the conversation mounted so navigating to Settings or a
               dashboard does not orphan an active stream or its cancel state. */}
@@ -8113,7 +8256,7 @@ export function App() {
                     snapshot={snapshot}
                     sessions={runtimeSessions}
                     onNavigate={(destination) =>
-                      setPage(
+                      navigateToPage(
                         destination === "connections"
                           ? "settings"
                           : destination,
@@ -8141,7 +8284,7 @@ export function App() {
         activity={petActivity}
         onOpen={() => {
           setToolsOpen(false);
-          setPage("settings");
+          navigateToPage("settings");
         }}
         onPopOut={() => void popOutPet()}
       />
