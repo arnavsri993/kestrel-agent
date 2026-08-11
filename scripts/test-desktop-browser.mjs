@@ -114,6 +114,17 @@ async function browserState() {
   return response.browserState;
 }
 
+async function waitForBrowserState(predicate, label) {
+  const deadline = Date.now() + 30_000;
+  let latest;
+  while (Date.now() < deadline) {
+    latest = await browserState();
+    if (predicate(latest)) return latest;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+  }
+  throw new Error(`${label}: ${JSON.stringify(latest)}`);
+}
+
 async function nativeViewState() {
   return application.evaluate(({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find(
@@ -411,16 +422,11 @@ try {
     },
   );
   assert.equal(openedPopup?.status, "verified");
-  const popupState = await page.waitForFunction(
-    async () => {
-      const response = await window.kestrel.request({ type: "browser-get-state" });
-      if (!response.ok || !("browserState" in response)) return false;
-      return response.browserState.tabs.length === 2 &&
-        response.browserState.tabs.some((tab) => tab.url.endsWith("/popup"));
-    },
+  state = await waitForBrowserState(
+    (value) => value.tabs.length === 2 &&
+      value.tabs.some((tab) => tab.url.endsWith("/popup")),
+    "Popup tab did not open",
   );
-  await popupState.dispose();
-  state = await browserState();
   const popupTab = state.tabs.find((tab) => tab.url.endsWith("/popup"));
   assert(popupTab);
   assert.equal((await nativeViewState()).browserWindowCount, 1);
@@ -440,14 +446,17 @@ try {
   );
 
   await activeViewScript("document.querySelector('#download').click() ");
-  const downloadHandle = await page.waitForFunction(async () => {
-    const response = await window.kestrel.request({ type: "browser-get-state" });
-    if (!response.ok || !("browserState" in response)) return false;
-    return response.browserState.downloads.at(-1)?.status === "completed";
-  });
-  await downloadHandle.dispose();
-  state = await browserState();
-  const download = state.downloads.at(-1);
+  state = await waitForBrowserState(
+    (value) => value.downloads.some(
+      (download) =>
+        download.filename === "kestrel-browser.txt" &&
+        download.status === "completed",
+    ),
+    "Visible browser download did not complete",
+  );
+  const download = state.downloads.find(
+    (item) => item.filename === "kestrel-browser.txt",
+  );
   assert(download);
   assert.equal(download.status, "completed");
   assert.equal(download.filename, "kestrel-browser.txt");

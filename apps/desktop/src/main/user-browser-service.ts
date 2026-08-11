@@ -89,6 +89,7 @@ interface ViewRecord {
   navigatingTo?: string;
   popupGestureAt?: number;
   popupAllowance: number;
+  popupActionInFlight?: boolean;
   popupResetTimer?: ReturnType<typeof setTimeout>;
 }
 
@@ -536,25 +537,69 @@ export class UserBrowserService {
     action: BrowserAction,
     signal: AbortSignal,
   ): Promise<void> {
-    const webContents = this.ensureView(this.requireTab(tabId)).view.webContents;
+    const record = this.ensureView(this.requireTab(tabId));
+    const webContents = record.view.webContents;
     if (signal.aborted) throw signal.reason;
     if (action.type === "click") {
       const point = await this.targetPoint(webContents, action.target, false);
       if (signal.aborted) throw signal.reason;
-      webContents.sendInputEvent({
-        type: "mouseDown",
+      if (!webContents.debugger.isAttached())
+        webContents.debugger.attach("1.3");
+      const pointer = {
         x: point.x,
         y: point.y,
-        button: "left",
-        clickCount: 1,
+        modifiers: 0,
+        pointerType: "mouse",
+      };
+      await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+        ...pointer,
+        type: "mouseMoved",
+        button: "none",
+        buttons: 0,
+        clickCount: 0,
       });
-      webContents.sendInputEvent({
-        type: "mouseUp",
-        x: point.x,
-        y: point.y,
-        button: "left",
-        clickCount: 1,
-      });
+      if (signal.aborted) throw signal.reason;
+      record.popupActionInFlight = true;
+      this.grantPopupAllowance(record);
+      try {
+        let pressed = false;
+        try {
+          await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+            ...pointer,
+            type: "mousePressed",
+            button: "left",
+            buttons: 1,
+            clickCount: 1,
+          });
+          pressed = true;
+          if (signal.aborted) throw signal.reason;
+          await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+            ...pointer,
+            type: "mouseReleased",
+            button: "left",
+            buttons: 0,
+            clickCount: 1,
+          });
+          pressed = false;
+        } finally {
+          if (pressed)
+            await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+              ...pointer,
+              type: "mouseReleased",
+              button: "left",
+              buttons: 0,
+              clickCount: 1,
+            }).catch(() => undefined);
+        }
+        // CDP can acknowledge input before the renderer-side window-open event
+        // reaches the main process. Keep this approved allowance one-shot for
+        // one main-process turn without depending on a document that may have
+        // navigated or been destroyed by the click.
+        await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
+      } finally {
+        delete record.popupActionInFlight;
+        this.clearPopupAllowance(record);
+      }
     } else if (action.type === "type") {
       await this.targetPoint(webContents, action.target, true);
       if (signal.aborted) throw signal.reason;
@@ -831,7 +876,7 @@ export class UserBrowserService {
     });
     webContents.on("before-mouse-event", (_event, mouse) => {
       if (mouse.type === "mouseDown") this.grantPopupAllowance(record);
-      else if (mouse.type === "mouseUp")
+      else if (mouse.type === "mouseUp" && !record.popupActionInFlight)
         this.schedulePopupAllowanceReset(record);
     });
   }

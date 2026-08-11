@@ -251,6 +251,86 @@ describe("UserBrowserService", () => {
     expect(service.getState().tabs).toHaveLength(2);
   });
 
+  it("awaits CDP clicks and scopes one popup to the approved action", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.executeJavaScript.mockResolvedValueOnce({ x: 24, y: 36 });
+    let popupResult: { action: string } | undefined;
+    contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+      if ((params as { type?: string }).type === "mouseReleased")
+        setImmediate(() => {
+          popupResult = contents.windowOpenHandler?.({
+            url: "https://opened.example/path",
+            disposition: "foreground-tab",
+          });
+        });
+    });
+
+    await service.act(
+      tab.id,
+      { type: "click", target: "#continue" },
+      new AbortController().signal,
+    );
+
+    expect(contents.debugger.attach).toHaveBeenCalledWith("1.3");
+    expect(contents.debugger.sendCommand.mock.calls).toEqual([
+      ["Input.dispatchMouseEvent", expect.objectContaining({
+        type: "mouseMoved",
+        x: 24,
+        y: 36,
+        button: "none",
+        buttons: 0,
+      })],
+      ["Input.dispatchMouseEvent", expect.objectContaining({
+        type: "mousePressed",
+        x: 24,
+        y: 36,
+        button: "left",
+        buttons: 1,
+      })],
+      ["Input.dispatchMouseEvent", expect.objectContaining({
+        type: "mouseReleased",
+        x: 24,
+        y: 36,
+        button: "left",
+        buttons: 0,
+      })],
+    ]);
+    expect(contents.executeJavaScript).toHaveBeenCalledTimes(1);
+    expect(popupResult).toEqual({ action: "deny" });
+    await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
+    expect(service.getState().tabs.at(-1)).toMatchObject({
+      url: "https://opened.example/path",
+    });
+    expect(contents.windowOpenHandler?.({
+      url: "https://spam.example/path",
+      disposition: "foreground-tab",
+    })).toEqual({ action: "deny" });
+    expect(service.getState().tabs).toHaveLength(2);
+  });
+
+  it("settles an approved click after the source document is destroyed", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.executeJavaScript.mockResolvedValueOnce({ x: 12, y: 18 });
+    contents.debugger.sendCommand.mockImplementation(async (_method, params) => {
+      if ((params as { type?: string }).type === "mouseReleased")
+        contents.destroyed = true;
+    });
+
+    await expect(service.act(
+      tab.id,
+      { type: "click", target: "a.navigate" },
+      new AbortController().signal,
+    )).resolves.toBeUndefined();
+    expect(contents.debugger.sendCommand).toHaveBeenCalledTimes(3);
+    expect(contents.executeJavaScript).toHaveBeenCalledTimes(1);
+  });
+
   it("discards the least-recent inactive live view once more than eight are open", async () => {
     let tick = 0;
     const { service } = createService({ now: () => new Date(`2026-08-11T12:00:${String(tick++).padStart(2, "0")}.000Z`) });

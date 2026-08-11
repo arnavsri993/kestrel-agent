@@ -50,10 +50,9 @@ try {
   );
   await page.keyboard.press("Escape");
   await page.getByRole("heading", { name: "Where to?" }).waitFor();
-  assert.equal(
-    await more.evaluate((button) => document.activeElement === button),
-    true,
-    "Escape did not restore focus to More",
+  await page.waitForFunction(
+    (button) => document.activeElement === button,
+    await more.elementHandle(),
   );
 
   await more.press("Enter");

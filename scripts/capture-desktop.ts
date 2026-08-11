@@ -307,6 +307,8 @@ try {
   }
 
   await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await page.getByRole("heading", { name: "Where to?" }).waitFor();
   await page.setViewportSize({ width: 640, height: 760 });
   await page
     .getByRole("heading", { name: "How can I help?" })
