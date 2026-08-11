@@ -69,6 +69,7 @@ import {
   PetOverlayRequestAccess,
   petOverlayActivityForRuntimeEvent,
 } from "./pet-overlay-security";
+import { acquireSingleInstanceLock } from "./single-instance";
 import { canShowMainWindow } from "./startup-window";
 
 let mainWindow: BrowserWindow | null = null;
@@ -642,13 +643,13 @@ app.setPath(
     join(app.getPath("appData"), PRODUCT_IDENTITY.userDataDirectoryName),
 );
 
-const singleInstance = app.requestSingleInstanceLock();
-if (!singleInstance) app.quit();
+const singleInstance = acquireSingleInstanceLock(app);
 
 for (const deepLink of deepLinksFromArgv(process.argv))
   pendingDeepLinks.enqueue(deepLink);
 
 function showMainWindow(): void {
+  if (!singleInstance) return;
   if (!canShowMainWindow(app.isReady(), coreStartupComplete)) return;
   if (mainWindow?.isDestroyed()) {
     mainWindow = null;
@@ -2143,6 +2144,7 @@ app.on("window-all-closed", () => {
 void app
   .whenReady()
   .then(async () => {
+    if (!singleInstance) return;
     app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
     registerIpc();
     if (!(await initializeCoreForStartup())) {

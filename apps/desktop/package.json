@@ -7,7 +7,7 @@
   "author": "Kestrel contributors",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "KESTREL_RELEASE_CHANNEL=development electron-vite dev",
+    "dev": "KESTREL_RELEASE_CHANNEL=development electron-vite dev --watch",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "preview": "KESTREL_RELEASE_CHANNEL=development electron-vite preview",

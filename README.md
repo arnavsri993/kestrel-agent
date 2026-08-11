@@ -14,6 +14,12 @@ corepack pnpm install
 corepack pnpm dev:desktop
 ```
 
+The desktop development command owns one Electron instance and watches the
+main/preload sources. Main-process changes restart Electron automatically;
+renderer changes use Vite HMR, so the running app always reflects the latest
+source without starting another copy. The app also enforces a single-instance
+lock and focuses the existing window when a second launch is attempted.
+
 On first launch, Kestrel checks the local runtime, lets you connect a model only when needed, and opens a clean conversation. Choose **Add project** for folder-scoped work, or describe a question directly. Read-only work can proceed automatically; sending, publishing, deleting, purchasing, and permission changes pause with a plain-language review.
 
 The packaged development build is Apple Silicon and ad-hoc signed. It is useful for local testing, but it is not a public release: Developer ID signing, notarization, update hosting, and a public download are still external release requirements.
