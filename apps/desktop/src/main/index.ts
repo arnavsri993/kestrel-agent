@@ -65,6 +65,7 @@ import {
   PetOverlayRequestAccess,
   petOverlayActivityForRuntimeEvent,
 } from "./pet-overlay-security";
+import { canShowMainWindow } from "./startup-window";
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
@@ -77,6 +78,7 @@ const pendingDeepLinks = new DeepLinkQueue();
 let mainRendererDeepLinkReady = false;
 let tray: Tray | null = null;
 let quitting = false;
+let coreStartupComplete = false;
 let agentState: AgentState = "idle";
 const browserService = new ElectronBrowserService();
 const supervisor = new CoreSupervisor(
@@ -635,6 +637,7 @@ for (const deepLink of deepLinksFromArgv(process.argv))
   pendingDeepLinks.enqueue(deepLink);
 
 function showMainWindow(): void {
+  if (!canShowMainWindow(app.isReady(), coreStartupComplete)) return;
   if (mainWindow?.isDestroyed()) {
     mainWindow = null;
     mainRendererDeepLinkReady = false;
@@ -963,11 +966,13 @@ async function initializeCore(
     secureEnvironment.KESTREL_CLAUDE_PATH = claudePath;
   }
   try {
-    await localRuntimeManager().startManagedIfInstalled();
+    const localRuntime = localRuntimeManager();
+    await localRuntime.startManagedIfInstalled();
     const localModels = await listLocalModels(700);
     if (localModels.length > 0) {
       secureEnvironment.KESTREL_ENABLE_OLLAMA = "1";
-      secureEnvironment.KESTREL_OLLAMA_MODEL ??= localModels[0]!.name;
+      secureEnvironment.KESTREL_OLLAMA_MODEL ??=
+        (await localRuntime.preferredModel(localModels)) ?? localModels[0]!.name;
     }
   } catch {
     // A local model server is optional and must not delay or block startup.
@@ -1997,6 +2002,7 @@ void app
       app.quit();
       return;
     }
+    coreStartupComplete = true;
     providerAuthMonitor.start();
     updateTray();
     const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;

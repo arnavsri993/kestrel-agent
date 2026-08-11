@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -47,9 +47,13 @@ describe("managed local runtime", () => {
     const progress: LocalRuntimeProgress[] = [];
     let serviceReady = false;
     let modelInstalled = false;
+    const isolatedOrigin = "http://127.0.0.1:43123";
+    let spawnedHost = "";
     const fetcher: typeof fetch = async (input) => {
       const url = String(input);
       if (url === manifest.url) return new Response(archive, { status: 200 });
+      if (!url.startsWith(isolatedOrigin))
+        throw new Error(`Unexpected local model origin: ${url}`);
       if (url.endsWith("/api/tags")) {
         if (!serviceReady) throw new TypeError("connection refused");
         return Response.json({ models: modelInstalled ? [{ name: "qwen:test", size: 42 }] : [] });
@@ -78,7 +82,13 @@ describe("managed local runtime", () => {
       platform: "darwin",
       architecture: "arm64",
       manifest,
-      spawn: (() => {
+      origin: isolatedOrigin,
+      spawn: ((
+        _file: string,
+        _args: readonly string[],
+        options: import("node:child_process").SpawnOptions,
+      ) => {
+        spawnedHost = String(options?.env?.OLLAMA_HOST ?? "");
         serviceReady = true;
         return fakeChild();
       }) as unknown as typeof import("node:child_process").spawn
@@ -105,6 +115,7 @@ describe("managed local runtime", () => {
       "verifying-model",
       "ready"
     ]));
+    expect(spawnedHost).toBe("127.0.0.1:43123");
     const marker = JSON.parse(await readFile(join(root, "local-runtime", "ollama", "test", "workstrand-install.json"), "utf8"));
     expect(marker).toMatchObject({ version: "test", sha256: manifest.sha256, binaryPath: "ollama" });
     const verification = JSON.parse(await readFile(join(root, "local-runtime", "last-verification.json"), "utf8"));
@@ -118,6 +129,7 @@ describe("managed local runtime", () => {
       platform: "darwin",
       architecture: "arm64",
       manifest,
+      origin: isolatedOrigin,
       spawn: (() => {
         serviceReady = true;
         return fakeChild();
@@ -129,6 +141,40 @@ describe("managed local runtime", () => {
       { name: "qwen:test", size: 42 },
     ]);
     await relaunched.stop();
+  });
+
+  it("rejects a managed runtime origin outside the loopback interface", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+
+    expect(
+      () =>
+        new LocalRuntimeManager(root, () => undefined, {
+          origin: "https://models.example.com:443",
+        }),
+    ).toThrow("explicit loopback HTTP port");
+  });
+
+  it("prefers the recorded verified model over the first listed tag", async () => {
+    const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+    roots.push(root);
+    await mkdir(join(root, "local-runtime"), { recursive: true });
+    await writeFile(
+      join(root, "local-runtime", "last-verification.json"),
+      JSON.stringify({
+        model: "huihui_ai/qwen3.5-abliterated:9b",
+        verifiedAt: "2026-08-10T00:00:00.000Z",
+      }),
+    );
+    const manager = new LocalRuntimeManager(root, () => undefined);
+    const models = [
+      { name: "smollm2:135m", size: 258_000_000 },
+      { name: "huihui_ai/qwen3.5-abliterated:9b", size: 6_600_000_000 },
+    ];
+
+    await expect(manager.preferredModel(models)).resolves.toBe(
+      "huihui_ai/qwen3.5-abliterated:9b",
+    );
   });
 
   it("removes a partial install when the signed checksum does not match", async () => {
