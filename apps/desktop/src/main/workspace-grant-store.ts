@@ -46,9 +46,9 @@ export class WorkspaceGrantStore {
 
   async add(path: string): Promise<WorkspaceGrant[]> {
     const canonical = this.validateRoot(path);
-    if (!(await stat(canonical)).isDirectory())
-      throw new Error("Workspace grants require a directory.");
     await this.mutate(async () => {
+      if (!(await stat(canonical)).isDirectory())
+        throw new Error("Workspace grants require a directory.");
       const grants = await this.configuredGrants();
       if (!grants.some((grant) => grant.path === canonical))
         grants.push({ path: canonical, name: basename(canonical) });

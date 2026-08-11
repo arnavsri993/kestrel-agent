@@ -201,7 +201,7 @@ try {
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("heading", { name: /Kestrel is ready|Your model route is configured\.|Your workspace is ready\./ }).waitFor();
   await page.getByRole("button", { name: "Finish with setup help" }).click();
-  await page.getByRole("button", { name: "New chat" }).waitFor();
+  await page.getByRole("button", { name: "New Agent", exact: true }).first().waitFor();
   assert.equal(
     await page.locator(".conversation-view > [role=\"status\"]").count(),
     1,
@@ -275,27 +275,27 @@ try {
   assert.match(setupAssistantPrompt, /Project access, tools\/MCP, skills\/plugins, channels, and automations/);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:setup-coach-context")), null);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), "yes");
-  await page.getByRole("button", { name: "New chat" }).click();
-  const newChatButton = page.getByRole("button", { name: "New chat" });
-  assert.equal(await newChatButton.getAttribute("aria-current"), "page");
-  assert.equal(await newChatButton.getAttribute("aria-keyshortcuts"), "Meta+N");
+  const newAgentButton = page
+    .getByRole("button", { name: "New Agent", exact: true })
+    .first();
+  await newAgentButton.click();
+  assert.equal(await newAgentButton.getAttribute("aria-keyshortcuts"), "Meta+N");
   await page.getByRole("button", { name: "Add project" }).waitFor();
-  await page.getByText("Choose a folder and find the next useful step.").waitFor();
-  await page.getByText("Turn an outcome into a clear, reviewable sequence.").waitFor();
+  await page.getByRole("button", { name: /Review a project/ }).waitFor();
+  await page.getByRole("button", { name: /Plan a task/ }).waitFor();
   const preservedDraft = "Keep this draft while I check Settings.";
   await page.getByLabel("Message Kestrel").fill(preservedDraft);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("heading", { name: "Settings" }).waitFor();
-  await page.getByRole("button", { name: "New chat" }).click();
   assert.equal(
     await page.getByLabel("Message Kestrel").inputValue(),
     preservedDraft,
   );
   await page.getByLabel("Message Kestrel").fill("");
   await page.setViewportSize({ width: 640, height: 760 });
-  await newChatButton.getByText("New chat", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Tools" }).getByText("Tools", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Settings" }).getByText("Settings", { exact: true }).waitFor();
+  await newAgentButton.getByText("New Agent", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "More", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Settings", exact: true }).waitFor();
   assert.equal(
     await page.evaluate(
       () =>
@@ -304,9 +304,10 @@ try {
     ),
     false,
   );
-  await page.getByRole("button", { name: "Tools" }).click();
-  await page.getByLabel("Kestrel tools").waitFor();
-  const compactTools = await page.locator(".tools-disclosure").evaluate((element) => {
+  const moreButton = page.getByRole("button", { name: "More", exact: true });
+  await moreButton.click();
+  await page.getByLabel("Search Kestrel").waitFor();
+  const compactCommands = await page.locator(".command-center").evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     return {
       bottom: bounds.bottom,
@@ -314,17 +315,12 @@ try {
       scrollable: element.scrollHeight >= element.clientHeight,
     };
   });
-  assert.ok(compactTools.bottom <= compactTools.viewport - 64);
-  assert.equal(compactTools.scrollable, true);
-  await page.getByRole("button", { name: "Readiness" }).click();
-  await page.locator(".tools-disclosure").waitFor({ state: "detached" });
-  assert.equal(
-    await page.getByRole("button", { name: "Tools" }).getAttribute("aria-current"),
-    "page",
-  );
+  assert.ok(compactCommands.bottom <= compactCommands.viewport);
+  assert.equal(compactCommands.scrollable, true);
+  await page.locator(".command-groups button").filter({ hasText: "Readiness" }).click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.locator(".tools-disclosure").waitFor({ state: "detached" });
-  assert.equal(await page.locator(".tools-disclosure").count(), 0);
+  await page.locator(".command-center").waitFor({ state: "detached" });
+  assert.equal(await page.locator(".command-center").count(), 0);
   await page.setViewportSize({ width: 1320, height: 860 });
   await page.getByRole("heading", { name: "Settings" }).waitFor();
   assert.equal(
@@ -369,8 +365,7 @@ try {
     .evaluateAll((buttons) => buttons.map((button) => getComputedStyle(button).boxShadow));
   assert.equal(selectedButtonShadows.some((shadow) => shadow.includes("inset 3px 0")), false);
   await page.keyboard.press("Meta+N");
-  await page.getByRole("heading", { name: "What should we get done?" }).waitFor();
-  assert.equal(await newChatButton.getAttribute("aria-current"), "page");
+  await page.getByRole("heading", { name: "How can I help?" }).waitFor();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: /General/ }).click();
   await page.getByRole("button", { name: "Open setup guide" }).click();

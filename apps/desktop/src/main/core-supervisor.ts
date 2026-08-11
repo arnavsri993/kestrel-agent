@@ -9,7 +9,12 @@ import {
   type CoreRequest,
   type CoreResponse,
 } from "@kestrel/shared-types";
-import type { BrowserBackendWireRequest } from "./electron-browser-service";
+import type { AutomationBrowserBackendWireRequest } from "./electron-browser-service";
+import type { UserBrowserBackendWireRequest } from "./user-browser-service";
+
+type BrowserBackendWireRequest =
+  | AutomationBrowserBackendWireRequest
+  | UserBrowserBackendWireRequest;
 import {
   coreRequestTimeoutMs,
   timedOutAgentStreamId,

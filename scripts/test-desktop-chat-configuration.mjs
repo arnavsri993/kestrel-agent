@@ -184,7 +184,7 @@ try {
   let page = await launch();
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
-  await page.getByRole("heading", { name: "What should we get done?" }).waitFor();
+  await page.getByRole("heading", { name: "How can I help?" }).waitFor();
   await page.evaluate(async () => {
     const snapshot = await window.kestrel.request({ type: "snapshot" });
     if (!snapshot.ok || !snapshot.snapshot)
@@ -200,10 +200,10 @@ try {
     }
   });
   await page.reload();
-  await page.getByRole("heading", { name: "What should we get done?" }).waitFor();
+  await page.getByRole("heading", { name: "How can I help?" }).waitFor();
   assert.equal(
-    (await page.locator(".sidebar-status strong").textContent())?.trim(),
-    "idle",
+    (await page.locator(".agent-quiet-status span:last-child").textContent())?.trim(),
+    "Ready",
   );
 
   await page.locator('summary[aria-label="Task settings"]').click();
@@ -284,7 +284,7 @@ try {
   assert.equal(inspection.current.behavior.responseStyle, "concise");
   assert.equal(inspection.current.ui.density, "compact");
   assert.equal(
-    await page.locator(".app-shell.configuration-density-compact").count(),
+    await page.locator(".ai-browser-app.configuration-density-compact").count(),
     1,
   );
 
@@ -302,15 +302,15 @@ try {
     await composer.evaluate((element) => document.activeElement === element),
     true,
   );
-  await page.locator(".page-content").evaluate((element) => {
+  await page.locator(".agent-conversation-host .message-list").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
   await page.waitForFunction(
     () =>
       document
-        .querySelector(".sidebar-status strong")
+        .querySelector(".agent-quiet-status span:last-child")
         ?.textContent?.trim()
-        .toLowerCase() === "idle",
+        .toLowerCase() === "ready",
   );
   await page.screenshot({ path: appliedScreenshot });
 
@@ -323,20 +323,22 @@ try {
   await application.close();
   application = undefined;
   page = await launch();
+  await page.getByRole("button", { name: "Agent history" }).click();
   await page
-    .getByRole("button", { name: session.title, exact: true })
+    .locator(".agent-history-popover")
+    .getByRole("button", { name: session.title })
     .click();
   await page
     .locator(".configuration-applied")
     .getByText("Configuration verified and active", { exact: true })
     .waitFor();
   assert.equal(
-    await page.locator(".app-shell.configuration-density-compact").count(),
+    await page.locator(".ai-browser-app.configuration-density-compact").count(),
     1,
   );
   assert.equal(
-    (await page.locator(".sidebar-status strong").textContent())?.trim(),
-    "idle",
+    (await page.locator(".agent-quiet-status span:last-child").textContent())?.trim(),
+    "Ready",
   );
   await page
     .locator(".configuration-applied")

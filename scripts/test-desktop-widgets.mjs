@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "workstrand-widgets-"));
 const screenshotPath = resolve(
@@ -54,8 +55,7 @@ try {
   assert.equal(artifact.sandbox.opaqueOrigin, true);
   assert.equal(artifact.sandbox.network, false);
 
-  await page.getByRole("button", { name: /Tools/ }).click();
-  await page.getByRole("button", { name: "Artifacts", exact: true }).click();
+  await openKestrelDestination(page, "Artifacts");
   await page.getByText("Release confidence", { exact: true }).waitFor();
   const iframe = page.locator(".artifact-widget iframe");
   await iframe.waitFor();

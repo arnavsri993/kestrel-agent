@@ -98,6 +98,7 @@ import {
 import { UsageGovernor } from "./usage-governor";
 import type { VoiceTranscriptionProvider } from "./media-providers";
 import { ObservabilityManager } from "./observability";
+import { selectBrowserContext } from "./browser-context";
 import { DreamingManager } from "./dreaming";
 import { PresenceManager } from "./presence";
 import { NativeNodeManager } from "./native-nodes";
@@ -2435,6 +2436,13 @@ export class AgentCore {
                 ...textContent(request.message),
                 ...this.attachmentParts(request.sessionId, request.attachments),
               ],
+              ...(request.browserContext
+                ? {
+                    ephemeralContext: textContent(
+                      selectBrowserContext(request.browserContext),
+                    ),
+                  }
+                : {}),
               instructions: [
                 personality.instructions,
                 route?.orchestrationInstructions,

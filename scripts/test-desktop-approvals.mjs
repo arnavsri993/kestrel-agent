@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-approvals-test-"));
 let application;
@@ -25,10 +26,9 @@ try {
   await page.waitForLoadState("domcontentloaded");
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
-  await page.getByRole("heading", { name: "What should we get done?" }).waitFor();
+  await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 
-  await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByRole("button", { name: "Approvals", exact: true }).click();
+  await openKestrelDestination(page, "Approvals");
   await page.getByRole("heading", { name: "Review this action" }).waitFor();
 
   const edit = page.getByRole("button", { name: "Edit", exact: true });

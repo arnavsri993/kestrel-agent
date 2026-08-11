@@ -28,6 +28,7 @@ export interface AgentLoopInput {
   serviceTier?: "standard" | "priority";
   allowedTools?: string[];
   userContent: ModelContentPart[];
+  ephemeralContext?: ModelContentPart[];
   instructions?: string;
   targetPath?: string;
   maximumTurns?: number;
@@ -216,7 +217,11 @@ export class AgentLoop {
         break;
       }
     }
-    if (lastUser >= 0) modelMessages[lastUser] = { role: "user", content: input.userContent };
+    if (lastUser >= 0)
+      modelMessages[lastUser] = {
+        role: "user",
+        content: [...input.userContent, ...(input.ephemeralContext ?? [])],
+      };
     return this.continueRun(run, modelMessages, compacted.removedMessages, {
       maximumTurns,
       approvalStatus: input.approvalStatus ?? "pending",

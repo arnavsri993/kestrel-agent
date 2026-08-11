@@ -8,6 +8,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const temporaryRoot = mkdtempSync(
   join(tmpdir(), "workstrand-dashboard-extensions-"),
@@ -93,8 +94,7 @@ try {
   await pluginSetting.getByRole("button", { name: "Enable" }).click();
   await pluginSetting.getByText("Dashboard panels active").waitFor();
 
-  await page.getByRole("button", { name: /Tools/ }).click();
-  await page.getByRole("button", { name: "Extensions", exact: true }).click();
+  await openKestrelDestination(page, "Extensions");
   await page.getByRole("heading", { name: "Release operations" }).waitFor();
   await page.getByText("Declarative only", { exact: true }).waitFor();
   await page.getByText("Delivery boundary", { exact: true }).waitFor();
@@ -112,8 +112,7 @@ try {
       name: /Ready for work|Needs attention/,
     })
     .waitFor();
-  await page.getByRole("button", { name: /Tools/ }).click();
-  await page.getByRole("button", { name: "Extensions", exact: true }).click();
+  await openKestrelDestination(page, "Extensions");
   await page.getByRole("heading", { name: "Release operations" }).waitFor();
 
   await page.setViewportSize({ width: 1320, height: 900 });

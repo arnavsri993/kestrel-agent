@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "workstrand-kanban-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -23,8 +24,7 @@ try {
   await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
   await page.reload();
   const openWork = async () => {
-    await page.getByRole("button", { name: /Tools/ }).click();
-    await page.getByRole("button", { name: "Work", exact: true }).click();
+    await openKestrelDestination(page, "Work");
   };
   await openWork();
   await page.getByRole("heading", { name: "Goal board" }).waitFor();

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "kestrel-life-context-"));
 const screenshotRoot = resolve(
@@ -118,9 +119,8 @@ try {
   await page.reload();
 
   await page.setViewportSize({ width: 1320, height: 900 });
-  await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByRole("button", { name: "Life", exact: true }).click();
-  const life = page.locator(".page-content:not([hidden])");
+  await openKestrelDestination(page, "Life Context");
+  const life = page.locator(".legacy-product-surface");
   await life.getByRole("heading", { name: "Life", exact: true }).waitFor();
 
   await life.getByText("Deep work · Kestrel", { exact: true }).waitFor();

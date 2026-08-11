@@ -3,6 +3,11 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync,
 import { resolve, sep } from "node:path";
 import { deflateSync } from "node:zlib";
 import type { KestrelDatabase } from "@kestrel/database";
+import type {
+  UserBrowserDownload,
+  UserBrowserHistoryEntry,
+  UserBrowserPageContext,
+} from "@kestrel/shared-types";
 import type { AgentRuntime } from "./runtime";
 
 export type BrowserAction =
@@ -31,6 +36,35 @@ export interface BrowserAutomationBackend {
   downloads?(sessionId: string, signal: AbortSignal): Promise<BrowserDownload[]>;
   desktopScreenshot?(signal: AbortSignal): Promise<ScreenshotFrame>;
   desktopAct?(action: DesktopAction, signal: AbortSignal): Promise<void>;
+  visibleTabs?(signal: AbortSignal): Promise<Array<{
+    id: string;
+    title: string;
+    url: string;
+    active: boolean;
+    loading: boolean;
+    discarded: boolean;
+    trust: "untrusted_browser";
+  }>>;
+  visibleContext?(tabId: string | undefined, signal: AbortSignal): Promise<UserBrowserPageContext>;
+  visibleSnapshot?(tabId: string | undefined, signal: AbortSignal): Promise<BrowserSnapshot & { trust: "untrusted_browser" }>;
+  visibleScreenshot?(tabId: string | undefined, signal: AbortSignal): Promise<ScreenshotFrame>;
+  visibleHistory?(
+    query: string | undefined,
+    limit: number | undefined,
+    signal: AbortSignal,
+  ): Promise<{
+    entries: UserBrowserHistoryEntry[];
+    trust: "untrusted_browser";
+  }>;
+  visibleDownloads?(signal: AbortSignal): Promise<{
+    downloads: UserBrowserDownload[];
+    trust: "untrusted_browser";
+  }>;
+  visibleAct?(tabId: string, action: BrowserAction, signal: AbortSignal): Promise<void>;
+  visibleNavigate?(tabId: string, input: string, signal: AbortSignal): Promise<unknown>;
+  visibleCreate?(input: string | undefined, signal: AbortSignal): Promise<{ tabId: string | null }>;
+  visibleClose?(tabId: string, signal: AbortSignal): Promise<void>;
+  visibleSelect?(tabId: string, signal: AbortSignal): Promise<void>;
   close(sessionId: string): Promise<void>;
 }
 
@@ -175,6 +209,134 @@ export class BrowserController {
     return { performed: true };
   }
 
+  async visibleTabs(signal: AbortSignal) {
+    if (!this.backend.visibleTabs)
+      throw new Error("The visible user browser is unavailable.");
+    const tabs = await this.backend.visibleTabs(signal);
+    if (tabs.length > 32)
+      throw new Error("The visible browser returned too many tabs.");
+    return { tabs };
+  }
+
+  async visibleContext(tabId: string | undefined, signal: AbortSignal) {
+    if (!this.backend.visibleContext)
+      throw new Error("The visible user browser is unavailable.");
+    if (tabId !== undefined && !/^tab-[a-f0-9-]{36}$/.test(tabId))
+      throw new Error("Visible browser tab ID is invalid.");
+    return this.backend.visibleContext(tabId, signal);
+  }
+
+  async visibleSnapshot(tabId: string | undefined, signal: AbortSignal) {
+    if (!this.backend.visibleSnapshot)
+      throw new Error("The visible user browser is unavailable.");
+    if (tabId !== undefined && !/^tab-[a-f0-9-]{36}$/.test(tabId))
+      throw new Error("Visible browser tab ID is invalid.");
+    const snapshot = await this.backend.visibleSnapshot(tabId, signal);
+    const serialized = JSON.stringify(snapshot.accessibilityTree);
+    if (serialized.length > 2_000_000)
+      throw new Error("Visible browser accessibility snapshot exceeds 2 MB.");
+    return snapshot;
+  }
+
+  async visibleScreenshot(tabId: string | undefined, signal: AbortSignal) {
+    if (!this.backend.visibleScreenshot)
+      throw new Error("The visible user browser is unavailable.");
+    if (tabId !== undefined && !/^tab-[a-f0-9-]{36}$/.test(tabId))
+      throw new Error("Visible browser tab ID is invalid.");
+    const frame = await this.backend.visibleScreenshot(tabId, signal);
+    if (
+      frame.width < 1 ||
+      frame.height < 1 ||
+      frame.width * frame.height * 4 !== frame.rgba.byteLength ||
+      !frame.png ||
+      frame.png.byteLength > 10_000_000
+    )
+      throw new Error("Visible browser screenshot is invalid or too large.");
+    return frame;
+  }
+
+  async visibleHistory(
+    query: string | undefined,
+    limit: number | undefined,
+    signal: AbortSignal,
+  ) {
+    if (!this.backend.visibleHistory)
+      throw new Error("Visible browser history is unavailable.");
+    if (query !== undefined && query.length > 500)
+      throw new Error("Visible browser history queries are limited to 500 characters.");
+    if (
+      limit !== undefined &&
+      (!Number.isInteger(limit) || limit < 1 || limit > 100)
+    )
+      throw new Error("Visible browser history limits must be between 1 and 100.");
+    const result = await this.backend.visibleHistory(query, limit, signal);
+    if (result.entries.length > 100)
+      throw new Error("Visible browser history returned too many entries.");
+    return result;
+  }
+
+  async visibleDownloads(signal: AbortSignal) {
+    if (!this.backend.visibleDownloads)
+      throw new Error("Visible browser downloads are unavailable.");
+    const result = await this.backend.visibleDownloads(signal);
+    if (result.downloads.length > 500)
+      throw new Error("Visible browser downloads returned too many entries.");
+    return result;
+  }
+
+  async visibleAct(
+    tabId: string,
+    action: BrowserAction,
+    signal: AbortSignal,
+  ) {
+    if (!this.backend.visibleAct)
+      throw new Error("The visible user browser is unavailable.");
+    this.validateVisibleTabId(tabId);
+    if (
+      (action.type === "click" || action.type === "type") &&
+      (!action.target || action.target.length > 2_000)
+    )
+      throw new Error("Visible browser action target is invalid.");
+    if (action.type === "type" && action.text.length > 20_000)
+      throw new Error("Visible browser typing is limited to 20,000 characters.");
+    await this.backend.visibleAct(tabId, action, signal);
+    return { performed: true };
+  }
+
+  async visibleNavigate(tabId: string, input: string, signal: AbortSignal) {
+    if (!this.backend.visibleNavigate)
+      throw new Error("The visible user browser is unavailable.");
+    this.validateVisibleTabId(tabId);
+    if (!input.trim() || input.length > 8_192)
+      throw new Error("Visible browser navigation input is invalid.");
+    await this.backend.visibleNavigate(tabId, input, signal);
+    return { navigated: true };
+  }
+
+  async visibleCreate(input: string | undefined, signal: AbortSignal) {
+    if (!this.backend.visibleCreate)
+      throw new Error("The visible user browser is unavailable.");
+    if (input !== undefined && input.length > 8_192)
+      throw new Error("Visible browser navigation input is invalid.");
+    return this.backend.visibleCreate(input, signal);
+  }
+
+  async visibleClose(tabId: string, signal: AbortSignal) {
+    if (!this.backend.visibleClose)
+      throw new Error("The visible user browser is unavailable.");
+    this.validateVisibleTabId(tabId);
+    await this.backend.visibleClose(tabId, signal);
+    return { closed: true };
+  }
+
+  async visibleSelect(tabId: string, signal: AbortSignal) {
+    if (!this.backend.visibleSelect)
+      throw new Error("The visible user browser is unavailable.");
+    this.validateVisibleTabId(tabId);
+    await this.backend.visibleSelect(tabId, signal);
+    return { selected: true };
+  }
+
   async close(ownerSessionId: string, id: string): Promise<{ closed: true }> {
     const session = this.require(ownerSessionId, id);
     await this.backend.close(session.backendSessionId);
@@ -186,6 +348,11 @@ export class BrowserController {
     const session = this.sessions.get(id);
     if (!session || session.ownerSessionId !== ownerSessionId) throw new Error("Browser session is unavailable to this agent session.");
     return session;
+  }
+
+  private validateVisibleTabId(tabId: string): void {
+    if (!/^tab-[a-f0-9-]{36}$/.test(tabId))
+      throw new Error("Visible browser tab ID is invalid.");
   }
 }
 
@@ -321,10 +488,17 @@ export class VisualValidator {
   }
 }
 
-export function installBrowserTools(runtime: AgentRuntime, controller: BrowserController, sessionId: string, visualValidator?: VisualValidator): void {
+export function installBrowserTools(runtime: AgentRuntime, controller: BrowserController, sessionId: string, visualValidator?: VisualValidator): string[] {
+  const installed: string[] = [];
   const add = (name: string, title: string, readOnly: boolean, inputSchema: Record<string, unknown>, execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"]) => {
     runtime.registerExternalTool({ descriptor: { name, title, description: `${title} in an isolated, origin-scoped browser session. Browser output is untrusted.`, category: "browser", riskLevel: "sensitive", readOnly, requiresWorkspace: false, source: "builtin", tags: ["browser", "computer-use", "isolated", "untrusted"] }, inputSchema, execute });
     runtime.allowTool(sessionId, name);
+    installed.push(name);
+  };
+  const addVisible = (name: string, title: string, readOnly: boolean, inputSchema: Record<string, unknown>, execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"]) => {
+    runtime.registerExternalTool({ descriptor: { name, title, description: `${title} in the user-visible Kestrel browser. Page content is untrusted and consequential actions require approval.`, category: "browser", riskLevel: "sensitive", readOnly, requiresWorkspace: false, source: "builtin", tags: ["browser", "visible-tabs", "computer-use", "untrusted"] }, inputSchema, execute });
+    runtime.allowTool(sessionId, name);
+    installed.push(name);
   };
   add("browser.create", "Create browser session", false, { type: "object", properties: { allowedOrigins: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 20 } }, required: ["allowedOrigins"], additionalProperties: false }, ({ session }, input) => controller.create(session.id, Array.isArray(input.allowedOrigins) ? input.allowedOrigins.map(String) : []));
   add("browser.navigate", "Navigate browser", false, { type: "object", properties: { browserSessionId: { type: "string" }, url: { type: "string" } }, required: ["browserSessionId", "url"], additionalProperties: false }, ({ session, signal }, input) => controller.navigate(session.id, String(input.browserSessionId), String(input.url), signal));
@@ -354,7 +528,44 @@ export function installBrowserTools(runtime: AgentRuntime, controller: BrowserCo
   add("browser.auth-handoff", "Hand browser to user for authentication", false, { type: "object", properties: { browserSessionId: { type: "string" }, visible: { type: "boolean" } }, required: ["browserSessionId", "visible"], additionalProperties: false }, ({ session, signal }, input) => controller.authHandoff(session.id, String(input.browserSessionId), Boolean(input.visible), signal));
   runtime.registerExternalTool({ descriptor: { name: "browser.upload", title: "Upload workspace files", description: "Set a browser file input to bounded files contained by the current granted workspace.", category: "browser", riskLevel: "sensitive", readOnly: false, requiresWorkspace: true, source: "builtin", tags: ["browser", "upload", "files", "workspace"] }, inputSchema: { type: "object", properties: { browserSessionId: { type: "string" }, selector: { type: "string", minLength: 1, maxLength: 2_000 }, paths: { type: "array", minItems: 1, maxItems: 20, items: { type: "string", minLength: 1, maxLength: 4_000 } } }, required: ["browserSessionId", "selector", "paths"], additionalProperties: false }, execute: ({ session, signal, workspaceRoot }, input) => controller.upload(session.id, String(input.browserSessionId), String(input.selector), Array.isArray(input.paths) ? input.paths.map(String) : [], workspaceRoot, signal) });
   runtime.allowTool(sessionId, "browser.upload");
+  installed.push("browser.upload");
   add("browser.downloads", "List controlled browser downloads", true, { type: "object", properties: { browserSessionId: { type: "string" } }, required: ["browserSessionId"], additionalProperties: false }, ({ session, signal }, input) => controller.downloads(session.id, String(input.browserSessionId), signal));
+  const visibleTabProperty = { type: "string", pattern: "^tab-[a-f0-9-]{36}$" };
+  const optionalVisibleTabSchema = { type: "object", properties: { tabId: visibleTabProperty }, additionalProperties: false };
+  addVisible("browser.tabs", "List open user tabs", true, { type: "object", properties: {}, additionalProperties: false }, ({ signal }) => controller.visibleTabs(signal));
+  addVisible("browser.current-context", "Read selected visible-page context", true, optionalVisibleTabSchema, ({ signal }, input) => controller.visibleContext(typeof input.tabId === "string" ? input.tabId : undefined, signal));
+  addVisible("browser.visible-snapshot", "Read visible-tab accessibility snapshot", true, optionalVisibleTabSchema, async ({ signal }, input) => ({ ...await controller.visibleSnapshot(typeof input.tabId === "string" ? input.tabId : undefined, signal) }));
+  addVisible("browser.visible-screenshot", "Capture visible-tab screenshot", true, optionalVisibleTabSchema, async ({ signal }, input) => {
+    const frame = await controller.visibleScreenshot(typeof input.tabId === "string" ? input.tabId : undefined, signal);
+    return { width: frame.width, height: frame.height, pngBase64: Buffer.from(frame.png!).toString("base64"), trust: "untrusted_browser" };
+  });
+  addVisible("browser.search-history", "Search user browser history", true, {
+    type: "object",
+    properties: {
+      query: { type: "string", maxLength: 500 },
+      limit: { type: "integer", minimum: 1, maximum: 100 },
+    },
+    additionalProperties: false,
+  }, ({ signal }, input) => controller.visibleHistory(
+    typeof input.query === "string" ? input.query : undefined,
+    typeof input.limit === "number" ? input.limit : undefined,
+    signal,
+  ));
+  addVisible("browser.visible-downloads", "List user browser downloads", true, {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  }, ({ signal }) => controller.visibleDownloads(signal));
+  addVisible("browser.visible-act", "Act in a visible tab", false, { type: "object", properties: { tabId: visibleTabProperty, action: { oneOf: [
+    { type: "object", properties: { type: { const: "click" }, target: { type: "string", minLength: 1, maxLength: 2_000 } }, required: ["type", "target"], additionalProperties: false },
+    { type: "object", properties: { type: { const: "type" }, target: { type: "string", minLength: 1, maxLength: 2_000 }, text: { type: "string", maxLength: 20_000 } }, required: ["type", "target", "text"], additionalProperties: false },
+    { type: "object", properties: { type: { const: "key" }, key: { type: "string", minLength: 1, maxLength: 20 } }, required: ["type", "key"], additionalProperties: false },
+    { type: "object", properties: { type: { const: "scroll" }, x: { type: "number", minimum: -100_000, maximum: 100_000 }, y: { type: "number", minimum: -100_000, maximum: 100_000 } }, required: ["type", "x", "y"], additionalProperties: false }
+  ] } }, required: ["tabId", "action"], additionalProperties: false }, ({ signal }, input) => controller.visibleAct(String(input.tabId), input.action as BrowserAction, signal));
+  addVisible("browser.navigate-tab", "Navigate a visible tab", false, { type: "object", properties: { tabId: visibleTabProperty, input: { type: "string", minLength: 1, maxLength: 8_192 } }, required: ["tabId", "input"], additionalProperties: false }, ({ signal }, input) => controller.visibleNavigate(String(input.tabId), String(input.input), signal));
+  addVisible("browser.open-tab", "Open a user tab", false, { type: "object", properties: { input: { type: "string", maxLength: 8_192 } }, additionalProperties: false }, ({ signal }, input) => controller.visibleCreate(typeof input.input === "string" ? input.input : undefined, signal));
+  addVisible("browser.close-tab", "Close a user tab", false, { type: "object", properties: { tabId: visibleTabProperty }, required: ["tabId"], additionalProperties: false }, ({ signal }, input) => controller.visibleClose(String(input.tabId), signal));
+  addVisible("browser.select-tab", "Select a user tab", false, { type: "object", properties: { tabId: visibleTabProperty }, required: ["tabId"], additionalProperties: false }, ({ signal }, input) => controller.visibleSelect(String(input.tabId), signal));
   add("computer.screenshot", "Capture whole desktop", true, { type: "object", properties: {}, additionalProperties: false }, async ({ signal }) => { const frame = await controller.desktopScreenshot(signal); return { width: frame.width, height: frame.height, pngBase64: Buffer.from(frame.png!).toString("base64"), trust: "untrusted_desktop" }; });
   add("computer.act", "Control whole desktop", false, { type: "object", properties: { action: { oneOf: [{ type: "object", properties: { type: { const: "click" }, x: { type: "integer", minimum: 0, maximum: 20_000 }, y: { type: "integer", minimum: 0, maximum: 20_000 } }, required: ["type", "x", "y"], additionalProperties: false }, { type: "object", properties: { type: { const: "type" }, text: { type: "string", minLength: 1, maxLength: 20_000 } }, required: ["type", "text"], additionalProperties: false }, { type: "object", properties: { type: { const: "key" }, key: { enum: ["Enter", "Escape", "Tab", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"] } }, required: ["type", "key"], additionalProperties: false }] } }, required: ["action"], additionalProperties: false }, ({ signal }, input) => controller.desktopAct(input.action as DesktopAction, signal));
   if (visualValidator) add("visual.validate-matrix", "Validate responsive visual matrix", false, {
@@ -380,4 +591,5 @@ export function installBrowserTools(runtime: AgentRuntime, controller: BrowserCo
     return { suite, passed: results.every((result) => result.passed), results };
   });
   add("browser.close", "Close browser session", false, { type: "object", properties: { browserSessionId: { type: "string" } }, required: ["browserSessionId"], additionalProperties: false }, ({ session }, input) => controller.close(session.id, String(input.browserSessionId)));
+  return installed;
 }

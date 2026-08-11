@@ -2110,6 +2110,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
     personalityId: z.string().min(1).max(64).optional(),
     streamId: z.string().min(1).max(100).optional(),
     attachments: z.array(SelectedAttachmentSchema).max(8).optional(),
+    browserContext: z.lazy(() => UserBrowserPageContextSchema).optional(),
   }),
   z.object({
     type: z.literal("runtime-resume-agent"),
@@ -2346,6 +2347,125 @@ export type ExternalSecretProviderStatus = z.infer<
   typeof ExternalSecretProviderStatusSchema
 >;
 
+export const UserBrowserTabSchema = z.object({
+  id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+  title: z.string().min(1).max(500),
+  url: z.string().max(8_192),
+  faviconDataUrl: z
+    .string()
+    .max(200_000)
+    .refine((value) => value.startsWith("data:image/"), {
+      message: "Browser favicons must be image data URLs.",
+    })
+    .optional(),
+  loading: z.boolean(),
+  canGoBack: z.boolean(),
+  canGoForward: z.boolean(),
+  discarded: z.boolean(),
+  crashed: z.boolean(),
+  error: z.string().min(1).max(500).optional(),
+  createdAt: z.string().datetime(),
+  lastActiveAt: z.string().datetime(),
+});
+export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
+
+export const UserBrowserHistoryEntrySchema = z.object({
+  id: z.string().regex(/^visit-[a-f0-9-]{36}$/),
+  tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+  url: z.string().url().max(8_192),
+  title: z.string().min(1).max(500),
+  visitedAt: z.string().datetime(),
+});
+export type UserBrowserHistoryEntry = z.infer<
+  typeof UserBrowserHistoryEntrySchema
+>;
+
+export const UserBrowserDownloadSchema = z.object({
+  id: z.string().regex(/^download-[a-f0-9-]{36}$/),
+  tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/).optional(),
+  filename: z.string().min(1).max(255),
+  sourceUrl: z.string().url().max(8_192),
+  receivedBytes: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  status: z.enum(["progressing", "completed", "cancelled", "failed"]),
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime().optional(),
+  canReveal: z.boolean(),
+});
+export type UserBrowserDownload = z.infer<typeof UserBrowserDownloadSchema>;
+
+export const UserBrowserSettingsSchema = z.object({
+  searchEngine: z.enum(["duckduckgo", "google", "bing", "brave"]),
+  restoreSession: z.boolean(),
+  historyRetentionDays: z.union([
+    z.literal(0),
+    z.literal(7),
+    z.literal(30),
+    z.literal(90),
+    z.literal(365),
+  ]),
+});
+export type UserBrowserSettings = z.infer<typeof UserBrowserSettingsSchema>;
+
+export const UserBrowserStateSchema = z.object({
+  tabs: z.array(UserBrowserTabSchema).max(32),
+  activeTabId: z.string().regex(/^tab-[a-f0-9-]{36}$/).nullable(),
+  history: z.array(UserBrowserHistoryEntrySchema).max(5_000),
+  downloads: z.array(UserBrowserDownloadSchema).max(500),
+  settings: UserBrowserSettingsSchema,
+});
+export type UserBrowserState = z.infer<typeof UserBrowserStateSchema>;
+
+export const UserBrowserPageContextSchema = z.object({
+  tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+  url: z.string().url().max(8_192),
+  title: z.string().min(1).max(500),
+  description: z.string().max(2_000).optional(),
+  selectedText: z.string().max(20_000),
+  visibleText: z.string().max(40_000),
+  headings: z.array(z.string().min(1).max(500)).max(60),
+  links: z
+    .array(
+      z.object({
+        text: z.string().max(500),
+        url: z.string().url().max(8_192),
+      }),
+    )
+    .max(100),
+  forms: z
+    .array(
+      z.object({
+        label: z.string().max(500),
+        type: z.string().max(100),
+        name: z.string().max(500),
+      }),
+    )
+    .max(60),
+  viewport: z.object({
+    width: z.number().int().positive().max(10_000),
+    height: z.number().int().positive().max(10_000),
+    scrollX: z.number().finite(),
+    scrollY: z.number().finite(),
+  }),
+  capturedAt: z.string().datetime(),
+  trust: z.literal("untrusted_browser"),
+});
+export type UserBrowserPageContext = z.infer<
+  typeof UserBrowserPageContextSchema
+>;
+
+export const UserBrowserEventSchema = z.object({
+  type: z.literal("state"),
+  state: UserBrowserStateSchema,
+});
+export type UserBrowserEvent = z.infer<typeof UserBrowserEventSchema>;
+export const UserBrowserCommandSchema = z.enum([
+  "focus-address",
+  "new-agent",
+  "open-commands",
+]);
+export type UserBrowserCommand = z.infer<typeof UserBrowserCommandSchema>;
+
 export const KestrelDeepLinkSchema = z
   .string()
   .min(1)
@@ -2369,6 +2489,54 @@ export type KestrelDeepLink = z.infer<typeof KestrelDeepLinkSchema>;
 
 export const RendererRequestSchema = z.union([
   CoreRequestSchema,
+  z.object({ type: z.literal("browser-get-state") }),
+  z.object({
+    type: z.literal("browser-create-tab"),
+    input: z.string().max(8_192).optional(),
+    active: z.boolean().default(true),
+  }),
+  z.object({
+    type: z.literal("browser-close-tab"),
+    tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+  }),
+  z.object({
+    type: z.literal("browser-select-tab"),
+    tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+  }),
+  z.object({
+    type: z.literal("browser-navigate"),
+    tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+    input: z.string().min(1).max(8_192),
+  }),
+  z.object({
+    type: z.enum([
+      "browser-back",
+      "browser-forward",
+      "browser-reload",
+      "browser-stop",
+      "browser-get-context",
+    ]),
+    tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+  }),
+  z.object({
+    type: z.literal("browser-set-content-bounds"),
+    bounds: z.object({
+      x: z.number().int().min(0).max(20_000),
+      y: z.number().int().min(0).max(20_000),
+      width: z.number().int().min(0).max(20_000),
+      height: z.number().int().min(0).max(20_000),
+    }),
+    visible: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("browser-update-settings"),
+    settings: UserBrowserSettingsSchema,
+  }),
+  z.object({ type: z.literal("browser-clear-history") }),
+  z.object({
+    type: z.literal("browser-reveal-download"),
+    downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
+  }),
   z.object({ type: z.literal("get-system-state") }),
   z.object({ type: z.literal("set-launch-at-login"), enabled: z.boolean() }),
   z.object({ type: z.literal("get-workspace-grants") }),
@@ -2666,6 +2834,8 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 
 export type RendererResponse =
   | CoreResponse
+  | { ok: true; browserState: UserBrowserState }
+  | { ok: true; browserContext: UserBrowserPageContext }
   | { ok: true; launchAtLogin: boolean; launchStatus: string }
   | {
       ok: true;
@@ -2712,6 +2882,8 @@ export type RendererResponse =
 
 export interface RendererBridge {
   request(request: RendererRequest): Promise<RendererResponse>;
+  onBrowserEvent(callback: (event: UserBrowserEvent) => void): () => void;
+  onBrowserCommand(callback: (command: UserBrowserCommand) => void): () => void;
   onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
   onSnapshot(callback: (snapshot: WorkspaceSnapshot) => void): () => void;
   onPetStatus(callback: (status: PetStatus) => void): () => void;

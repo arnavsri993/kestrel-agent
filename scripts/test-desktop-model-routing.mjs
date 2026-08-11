@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-model-routing-test-"));
 const screenshotPath = process.env.KESTREL_ROUTING_SCREENSHOT;
@@ -77,8 +78,7 @@ try {
     "3",
   );
 
-  await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByRole("button", { name: "Work", exact: true }).click();
+  await openKestrelDestination(page, "Work");
   await page.getByText("Override automatic routing", { exact: true }).waitFor();
   assert.match(
     await page.locator(".work-card-note").first().innerText(),

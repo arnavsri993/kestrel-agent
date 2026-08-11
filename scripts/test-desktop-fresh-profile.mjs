@@ -31,7 +31,7 @@ async function launch() {
 }
 
 async function assertFresh(page) {
-  await page.getByRole("heading", { name: "What should we get done?" }).waitFor();
+  await page.getByRole("heading", { name: "How can I help?" }).waitFor();
   const response = await page.evaluate(() => window.kestrel.request({ type: "snapshot" }));
   assert.equal(response.ok, true);
   assert.equal(response.snapshot?.agentState, "idle");
