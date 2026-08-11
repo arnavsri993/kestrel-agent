@@ -70,7 +70,7 @@ try {
   await page.reload();
   await page.getByRole("heading", { name: "How can I help?" }).waitFor();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("heading", { name: "Settings" }).waitFor();
+  await page.getByRole("heading", { name: "Preferences" }).waitFor();
   await page
     .locator(".settings-nav button")
     .filter({ hasText: "Advanced" })

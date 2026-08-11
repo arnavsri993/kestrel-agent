@@ -42,11 +42,11 @@ export function NewTabPage({
       <div className="new-tab-primary-actions" aria-label="Create new">
         <button type="button" onClick={onNewTab}>
           <Icon name="plus" />
-          <span><strong>New Tab</strong><small>Browse or search</small></span>
+          <span><strong>Open another tab</strong><small>Browse or search</small></span>
         </button>
         <button type="button" onClick={onNewAgent}>
           <Icon name="agent" />
-          <span><strong>New task</strong><small>Ask Kestrel to get something done</small></span>
+          <span><strong>Start another agent</strong><small>Fresh conversation</small></span>
         </button>
       </div>
       <div className="new-tab-center">

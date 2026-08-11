@@ -35,7 +35,7 @@ export function BrowserHistory({
   return (
     <main className="browser-library" aria-labelledby="history-title">
       <header>
-        <div><span className="library-icon"><Icon name="history" /></span><h1 id="history-title">History</h1></div>
+        <div><span className="library-icon"><Icon name="history" /></span><h1 id="history-title">Pages you visited</h1></div>
         <label>
           <Icon name="search" />
           <span className="sr-only">Search history</span>
@@ -75,7 +75,7 @@ export function BrowserDownloads({ browser }: { browser: UserBrowserController }
   return (
     <main className="browser-library" aria-labelledby="downloads-title">
       <header>
-        <div><span className="library-icon"><Icon name="downloads" /></span><h1 id="downloads-title">Downloads</h1></div>
+        <div><span className="library-icon"><Icon name="downloads" /></span><h1 id="downloads-title">Files from the web</h1></div>
       </header>
       {downloads.length === 0 ? (
         <section className="library-empty">

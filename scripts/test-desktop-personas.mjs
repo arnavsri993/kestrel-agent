@@ -9,10 +9,8 @@ let application;
 
 async function openCommand(page, label) {
   await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.getByRole("heading", { name: "Kestrel", exact: true }).waitFor();
-  const entry = page
-    .locator(".command-groups button")
-    .filter({ has: page.getByText(label, { exact: true }) });
+  await page.getByRole("heading", { name: "Capabilities", exact: true }).waitFor();
+  const entry = page.locator(".command-groups button").filter({ hasText: label });
   await entry.first().click();
 }
 
@@ -74,12 +72,12 @@ try {
 
   const surfaces = [
     ["Approvals", /Review this action|No approvals waiting/],
-    ["Life Context", "Life"],
-    ["Research", "Research"],
-    ["Artifacts", "Artifacts"],
-    ["Work", "Work"],
+    ["Life Context", "Your context"],
+    ["Research", "Search with sources"],
+    ["Artifacts", "Verified results"],
+    ["Work", "Plan and track"],
     ["Opportunities", /Apply with your agent\. Send with your consent\./],
-    ["Activity", "Activity"],
+    ["Activity", "What happened"],
     ["Extensions", "Useful surfaces, without hidden code."],
   ];
   for (const [label, heading] of surfaces) {
@@ -99,10 +97,10 @@ try {
   }
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Preferences", exact: true }).waitFor();
   const settings = [
     ["Connections", "Accounts and access"],
-    ["Browser", "Browser"],
+    ["Browser", "Tabs, search, and history"],
     ["General", "General settings"],
     ["Models", "Model and routing settings"],
     ["Memory", "Memory and behavior settings"],
@@ -149,7 +147,7 @@ try {
     .filter({ hasText: "History" })
     .first()
     .click();
-  await page.getByRole("heading", { name: "History", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Pages you visited", exact: true }).waitFor();
 
   assert.deepEqual(runtimeErrors, []);
   process.stdout.write(

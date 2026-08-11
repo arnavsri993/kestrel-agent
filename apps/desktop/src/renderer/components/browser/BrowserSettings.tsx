@@ -14,8 +14,7 @@ export function BrowserSettings({
   return (
     <section className="settings-stack browser-settings-panel">
       <header className="settings-panel-header">
-        <h2>Browser</h2>
-        <p>Search, session restore, and local history.</p>
+        <h2>Tabs, search, and history</h2>
       </header>
       <div className="setting-row browser-setting-row">
         <div className="browser-setting-copy">

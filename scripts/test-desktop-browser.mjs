@@ -236,7 +236,7 @@ try {
   const initialTabs = (await browserState()).tabs.length;
   await page
     .locator(".new-tab-primary-actions button")
-    .filter({ hasText: "New Tab" })
+    .filter({ hasText: "Open another tab" })
     .click();
   let state = await browserState();
   assert.equal(state.tabs.length, initialTabs + 1);
@@ -252,7 +252,7 @@ try {
   await page.locator("#runtime-prompt").fill("Draft that must be cleared");
   await page
     .locator(".new-tab-primary-actions button")
-    .filter({ hasText: "New task" })
+    .filter({ hasText: "Start another agent" })
     .click();
   const clearedDraft = await page.waitForFunction(() => {
     const prompt = document.querySelector("#runtime-prompt");
@@ -504,7 +504,7 @@ try {
   assert.equal(downloadsTool?.output?.downloads?.at(-1)?.filename, "kestrel-browser.txt");
 
   await page.getByRole("button", { name: "History", exact: true }).last().click();
-  await page.getByRole("heading", { name: "History", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Pages you visited", exact: true }).waitFor();
   await waitForNativeView(
     (value) => value.views.length === 0,
     "Native page remained attached over History",
@@ -513,16 +513,16 @@ try {
   await page.getByRole("button", { name: /Page one/ }).first().waitFor();
 
   await page.getByRole("button", { name: "Downloads", exact: true }).last().click();
-  await page.getByRole("heading", { name: "Downloads", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Files from the web", exact: true }).waitFor();
   await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Preferences", exact: true }).waitFor();
   const browserSettings = page
     .locator(".settings-nav")
     .getByRole("button", { name: /^Browser/ });
   await browserSettings.click();
   assert.equal(await browserSettings.getAttribute("aria-current"), "page");
-  await page.getByRole("heading", { name: "Browser", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Tabs, search, and history", exact: true }).waitFor();
   await page.getByLabel("Search engine").selectOption("brave");
   assert.equal((await browserState()).settings.searchEngine, "brave");
   const useCurrentPage = page.getByRole("checkbox", {

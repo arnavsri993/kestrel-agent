@@ -110,7 +110,7 @@ const pages = [
   ["agent", "Agent"],
   ["history", "History"],
   ["downloads", "Downloads"],
-  ["commands", "Kestrel"],
+  ["commands", "Capabilities"],
   ["readiness", "Readiness"],
   ["approvals", "Approvals"],
   ["memory", "Life"],
@@ -132,7 +132,7 @@ const commandDestinations: CommandDestination[] = [
   { id: "work", label: "Work", detail: "Goals, delegates, and schedules", icon: "work", group: "Agent" },
   { id: "events", label: "Opportunities", detail: "Review event applications", icon: "events", group: "Agent" },
   { id: "memory", label: "Life Context", detail: "Calendar, people, and memory", icon: "memory", group: "Context" },
-  { id: "research", label: "Research", detail: "Saved research and sources", icon: "research", group: "Context" },
+  { id: "research", label: "Research", detail: "Saved sources and web findings", icon: "research", group: "Context" },
   { id: "artifacts", label: "Artifacts", detail: "Files and generated results", icon: "artifacts", group: "Context" },
   { id: "activity", label: "Activity", detail: "Runs, evidence, and audit trail", icon: "activity", group: "Context" },
   { id: "extensions", label: "Extensions", detail: "Plugin-provided capabilities", icon: "extensions", group: "Build" },
@@ -327,6 +327,9 @@ function compactBytes(value: number): string {
 function Onboarding({ onDone }: { onDone(): void }) {
   const reduced = useReducedMotion();
   const [step, setStep] = useState(() => readPersistedSetupStep());
+  const setupStageRef = useRef<HTMLElement | null>(null);
+  const activeSetupStepRef = useRef(step);
+  const focusSetupHeadingRef = useRef(false);
   const [warningAccepted, setWarningAccepted] = useState(
     () => localStorage.getItem("kestrel:setup-warning") === "yes",
   );
@@ -431,6 +434,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
   function go(next: number) {
     const bounded = Math.min(finalSetupStep, Math.max(0, next));
+    activeSetupStepRef.current = bounded;
+    focusSetupHeadingRef.current = bounded !== step;
     localStorage.setItem("kestrel:setup-step", setupSteps[bounded]!.id);
     setStep(bounded);
   }
@@ -703,21 +708,22 @@ function Onboarding({ onDone }: { onDone(): void }) {
           <ol>
             {setupSteps.map((item, index) => (
               <li
-                key={item.label}
+                key={item.id}
                 className={`${index === step ? "current" : ""} ${index < step ? "complete" : ""}`}
               >
                 <button
                   onClick={() => index < step && go(index)}
-                  disabled={index > step}
+                  disabled={index >= step}
                   aria-current={index === step ? "step" : undefined}
-                  >
+                  aria-label={`${item.label}${index < step ? ", completed" : index === step ? ", current step" : ", upcoming"}`}
+                >
                   <span>
                     <Icon name={index < step ? "check" : item.icon} />
                   </span>
-                    <span>
-                      <strong>{item.label}</strong>
-                    </span>
-                  </button>
+                  <span>
+                    <strong>{item.label}</strong>
+                  </span>
+                </button>
               </li>
             ))}
           </ol>
@@ -726,24 +732,30 @@ function Onboarding({ onDone }: { onDone(): void }) {
       <div className="setup-body">
         <ProductAnchor
           className="setup-product-anchor"
-          detail={
-            step === finalSetupStep
-              ? "Ready on this Mac"
-              : `Setup · ${setupSteps[step]!.label}`
-          }
+          detail={`Step ${step + 1} of ${setupSteps.length}`}
         />
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
+            ref={setupStageRef}
             key={step}
             className={`setup-stage setup-stage-${step}`}
             initial={reduced ? false : { opacity: 0, x: 10 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: reduced ? 1 : 0, x: reduced ? 0 : -8 }}
             transition={{ duration: reduced ? 0 : 0.16 }}
+            onAnimationComplete={() => {
+              if (
+                activeSetupStepRef.current !== step ||
+                !focusSetupHeadingRef.current
+              )
+                return;
+              setupStageRef.current?.querySelector<HTMLElement>("h1")?.focus();
+              focusSetupHeadingRef.current = false;
+            }}
           >
             {step === 0 && (
               <div className="setup-welcome">
-                <h1>
+                <h1 tabIndex={-1}>
                   Your AI answers.
                   <br />
                   Kestrel gets it done.
@@ -771,7 +783,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
             {step === 1 && (
               <div className="setup-warning">
-                <h1>Know what leaves this Mac.</h1>
+                <h1 tabIndex={-1}>Know what leaves this Mac.</h1>
                 <p>
                   Models and connections determine where task data goes.
                 </p>
@@ -862,9 +874,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
             {(step === 2 || step === 3) && (
               <div className="setup-models">
                 <header>
-                  <h1>
+                  <h1 tabIndex={-1}>
                     {step === 2
-                      ? "Choose a model."
+                      ? "Where should answers come from?"
                       : modelView === "accounts"
                         ? "Connect an account."
                         : modelView === "local"
@@ -893,7 +905,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     <small>
                       Sign in or add an API key.
                     </small>
-                    <b>{configuredCredentials.length ? `${configuredCredentials.length} connected` : "Choose a provider"}</b>
+                    <span className="source-action">
+                      <b>{configuredCredentials.length ? `${configuredCredentials.length} connected` : "Choose a provider"}</b>
+                      <Icon name="arrow" />
+                    </span>
                   </button>
                   <button
                     onClick={() => chooseModelAccess("local")}
@@ -905,7 +920,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     <small>
                       Private and offline-capable.
                     </small>
-                    <b>{localModels.length ? `${localModels.length} installed` : "No account needed"}</b>
+                    <span className="source-action">
+                      <b>{localModels.length ? `${localModels.length} installed` : "No account needed"}</b>
+                      <Icon name="arrow" />
+                    </span>
                   </button>
                   <button
                     onClick={() => chooseModelAccess("open")}
@@ -917,7 +935,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
                     <small>
                       Current terms and limits apply.
                     </small>
-                    <b>Four supported options</b>
+                    <span className="source-action">
+                      <b>Four supported options</b>
+                      <Icon name="arrow" />
+                    </span>
                   </button>
                 </div>
                 )}
@@ -1518,7 +1539,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
             {step === finalSetupStep && (
               <div className="setup-finish">
-                <h1>{finishHeading}</h1>
+                <h1 tabIndex={-1}>{finishHeading}</h1>
                 <p>{finishDescription}</p>
                 <div className="finish-checks">
                   <div className={verifiedModelReady ? "done" : "attention"}>
@@ -1764,8 +1785,8 @@ function Artifacts() {
   }, []);
   return (
     <PageFrame
-      title="Artifacts"
-      text="Verified outputs, kept locally with their provenance."
+      title="Verified results"
+      text="Files stay local with their provenance."
     >
       <div className="artifact-toolbar">
         <span>
@@ -1789,7 +1810,7 @@ function Artifacts() {
       {error && <p role="alert">{error}</p>}
       {artifacts.length === 0 ? (
         <Empty
-          title="No artifacts yet"
+          title="Nothing saved yet"
           text="Verified files and interactive results will appear here."
         />
       ) : (
@@ -4016,8 +4037,8 @@ function Memory({
 function Activity({ snapshot }: { snapshot: WorkspaceSnapshot }) {
   return (
     <PageFrame
-      title="Activity"
-      text="Every step keeps its source and status."
+      title="What happened"
+      text="Each step keeps its source and status."
     >
       <ol className="activity-list">
         {snapshot.activity.map((item, index) => (
@@ -4397,7 +4418,7 @@ function Research() {
   }
   return (
     <PageFrame
-      title="Research"
+      title="Search with sources"
       text="HTTPS sources remain cited and untrusted."
     >
       <form
@@ -4630,8 +4651,8 @@ function Work({
 
   return (
     <PageFrame
-      title="Work"
-      text="Goals, delegates, and scheduled work stay inspectable."
+      title="Plan and track"
+      text="Goals, delegates, and schedules stay inspectable."
     >
       {routedTask && (
         <section
@@ -5340,7 +5361,6 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
   return (
     <section className="settings-panel" aria-labelledby="settings-connections-title">
       <header className="settings-panel-header">
-        <span className="eyebrow">Connections</span>
         <h2 id="settings-connections-title">Accounts and access</h2>
         <p>
           Sign-ins stay with their providers. Project folders and external
@@ -7209,14 +7229,14 @@ function Settings({
     ["browser", "Browser", "Search, tabs, and history"],
     ["general", "General", "Appearance and behavior"],
     ["models", "Models", "Choice, routing, and limits"],
-    ["intelligence", "Memory", "Memory, presence, and learning"],
+    ["intelligence", "Memory", "Recall, presence, and learning"],
     ["extensions", "Extensions", "Plugins and publishers"],
     ["privacy", "Privacy", "Approvals and recovery"],
     ["advanced", "Advanced", "Diagnostics and organization"],
   ] as const;
   return (
     <PageFrame
-      title="Settings"
+      title="Preferences"
     >
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings sections">

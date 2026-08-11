@@ -54,7 +54,7 @@ try {
   await page.screenshot({ path: memoryScreenshot });
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Preferences", exact: true }).waitFor();
   await page
     .getByRole("navigation", { name: "Settings sections" })
     .getByRole("button", { name: /^Memory/ })

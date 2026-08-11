@@ -65,7 +65,26 @@ try {
     await page.locator(".setup-rail li strong").allTextContents(),
     ["Welcome", "Before you begin", "Choose a model", "Model setup", "Ready"],
   );
+  assert.equal(
+    await page.getByRole("button", { name: "Welcome, current step" }).isDisabled(),
+    true,
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "Before you begin, upcoming" }).isDisabled(),
+    true,
+  );
   await page.getByRole("button", { name: "Get started" }).click();
+  await page.waitForFunction(() => document.activeElement?.tagName === "H1");
+  assert.equal(
+    await page.getByRole("heading", { name: "Know what leaves this Mac." }).evaluate(
+      (heading) => document.activeElement === heading,
+    ),
+    true,
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "Welcome, completed" }).isEnabled(),
+    true,
+  );
   const continueButton = page.getByRole("button", { name: "Continue" });
   assert.equal(await continueButton.isDisabled(), true);
   const firstBoundary = page.locator(".warning-panel details").first();
@@ -81,7 +100,7 @@ try {
   assert.equal(await page.getByLabel("I understand these boundaries").isChecked(), true);
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await page.getByRole("heading", { name: "Choose a model." }).waitFor();
+  await page.getByRole("heading", { name: "Where should answers come from?" }).waitFor();
   await page.getByRole("button", { name: /Use an account/ }).click();
   await page.getByRole("heading", { name: "Connect an account." }).waitFor();
   await page.getByText("Choose a paid provider", { exact: true }).waitFor();
@@ -286,7 +305,7 @@ try {
   const preservedDraft = "Keep this draft while I check Settings.";
   await page.getByLabel("Message Kestrel").fill(preservedDraft);
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("heading", { name: "Settings" }).waitFor();
+  await page.getByRole("heading", { name: "Preferences" }).waitFor();
   assert.equal(
     await page.getByLabel("Message Kestrel").inputValue(),
     preservedDraft,
@@ -322,7 +341,7 @@ try {
   await page.locator(".command-center").waitFor({ state: "detached" });
   assert.equal(await page.locator(".command-center").count(), 0);
   await page.setViewportSize({ width: 1320, height: 860 });
-  await page.getByRole("heading", { name: "Settings" }).waitFor();
+  await page.getByRole("heading", { name: "Preferences" }).waitFor();
   assert.equal(
     await page.getByRole("button", { name: "Settings", exact: true }).getAttribute("aria-current"),
     "page",
