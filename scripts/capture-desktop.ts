@@ -116,13 +116,14 @@ async function assertNoPageOverflow(page: Page, label: string) {
 }
 
 async function openTool(page: Page, label: string) {
-  if ((await page.locator(".tools-disclosure").count()) === 0)
-    await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("heading", { name: "Kestrel", exact: true }).waitFor();
   await page
-    .locator(".tools-disclosure")
-    .getByRole("button", { name: label, exact: true })
+    .locator(".command-groups button")
+    .filter({ hasText: label })
+    .first()
     .click();
-  await page.locator(".page-content:not([hidden])").waitFor();
+  await page.locator(".legacy-product-surface").waitFor();
 }
 
 const launchOutput: string[] = [];
@@ -219,26 +220,28 @@ try {
     })
     .click();
   await page
-    .getByRole("heading", { name: "What should we get done?" })
+    .getByRole("heading", { name: "How can I help?" })
     .waitFor();
-  await capture(page, "workspace-new-chat.png", 360);
+  await page.getByRole("heading", { name: "Where to?" }).waitFor();
+  await capture(page, "workspace-new-agent-and-tab.png", 360);
 
   await page.getByLabel("Task settings").click();
   await page.getByText("Task settings", { exact: true }).waitFor();
   await capture(page, "workspace-task-settings.png", 120);
   await page.getByLabel("Task settings").click();
 
-  const firstSession = page.locator(".recent-section button").first();
+  await page.getByRole("button", { name: "Agent history" }).click();
+  const firstSession = page.locator(".agent-history-popover > div > button").first();
   if (await firstSession.count()) {
     await firstSession.click();
     await page.locator(".conversation-view").waitFor();
     await capture(page, "workspace-conversation.png");
   }
-  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
 
-  await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByLabel("Kestrel tools").waitFor();
-  await capture(page, "workspace-tools.png", 160);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByLabel("Search Kestrel").waitFor();
+  await capture(page, "workspace-command-center.png", 160);
 
   await openTool(page, "Readiness");
   await page
@@ -287,6 +290,7 @@ try {
   await capture(page, "settings-connections.png");
 
   const settingsSections = [
+    ["Browser", "settings-browser.png"],
     ["General", "settings-general.png"],
     ["Models", "settings-models.png"],
     ["Memory", "settings-memory.png"],
@@ -302,18 +306,18 @@ try {
     await capture(page, filename, 120);
   }
 
-  await page.getByRole("button", { name: "New chat", exact: true }).click();
+  await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
   await page.setViewportSize({ width: 640, height: 760 });
   await page
-    .getByRole("heading", { name: "What should we get done?" })
+    .getByRole("heading", { name: "How can I help?" })
     .waitFor();
-  await capture(page, "compact-new-chat.png");
+  await capture(page, "compact-new-agent.png");
   await assertNoPageOverflow(page, "Compact workspace");
 
-  await page.getByRole("button", { name: "Tools", exact: true }).click();
-  await page.getByLabel("Kestrel tools").waitFor();
-  await capture(page, "compact-tools.png", 160);
-  const toolsBounds = await page.locator(".tools-disclosure").evaluate((element) => {
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByLabel("Search Kestrel").waitFor();
+  await capture(page, "compact-command-center.png", 160);
+  const commandBounds = await page.locator(".command-center").evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     return {
       top: bounds.top,
@@ -321,18 +325,21 @@ try {
       viewportHeight: window.innerHeight,
     };
   });
-  if (toolsBounds.top < 0 || toolsBounds.bottom > toolsBounds.viewportHeight - 64)
-    throw new Error("Compact Tools disclosure is outside the usable viewport.");
+  if (commandBounds.top < 0 || commandBounds.bottom > commandBounds.viewportHeight)
+    throw new Error("Compact command center is outside the usable viewport.");
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.locator(".tools-disclosure").waitFor({ state: "detached" });
-  if ((await page.locator(".tools-disclosure").count()) !== 0)
-    throw new Error("Tools disclosure stayed open after Settings navigation.");
+  await page.locator(".command-center").waitFor({ state: "detached" });
+  if ((await page.locator(".command-center").count()) !== 0)
+    throw new Error("Command center stayed open after Settings navigation.");
   await capture(page, "compact-settings.png");
   await assertNoPageOverflow(page, "Compact Settings");
 
-  const toolsTrigger = page.getByRole("button", { name: "Tools", exact: true });
-  await page.getByRole("button", { name: "New chat", exact: true }).focus();
+  const moreTrigger = page.getByRole("button", { name: "More", exact: true });
+  // Verify focus the way a keyboard user reaches this control. Programmatic
+  // focus intentionally does not always match :focus-visible in Chromium.
+  await moreTrigger.focus();
+  await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Tab");
   const focusStyle = await page.evaluate(() => {
     const element = document.activeElement as HTMLElement | null;
@@ -347,7 +354,7 @@ try {
     };
   });
   if (
-    focusStyle.label !== "Tools" ||
+    focusStyle.label !== "More" ||
     focusStyle.outline === "none" ||
     focusStyle.width === "0px"
   )
@@ -356,11 +363,11 @@ try {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
   await page.waitForLoadState("domcontentloaded");
-  await page.getByRole("button", { name: "New chat", exact: true }).waitFor();
-  await toolsTrigger.click();
+  await page.getByRole("button", { name: "New Agent", exact: true }).first().waitFor();
+  await moreTrigger.click();
   await page
-    .locator(".tools-disclosure")
-    .getByRole("button", { name: "Approvals", exact: true })
+    .locator(".command-groups button")
+    .filter({ hasText: "Approvals" })
     .click();
   await settle(page, 30);
   const runningAnimations = await page.locator("body").evaluate(() =>
@@ -400,12 +407,12 @@ try {
       { name: "prefers-reduced-transparency", value: "reduce" },
     ],
   });
-  await page.getByRole("button", { name: "Tools", exact: true }).click();
+  await page.getByRole("button", { name: "Agent history" }).click();
   const transparency = await page
-    .locator(".tools-disclosure")
+    .locator(".agent-history-popover")
     .evaluate((element) => getComputedStyle(element).backdropFilter);
   if (transparency !== "none")
-    throw new Error("Reduced transparency did not remove disclosure blur.");
+    throw new Error("Reduced transparency did not remove history blur.");
   await capture(page, "compact-reduced-transparency.png", 20);
 
   if (runtimeErrors.length > 0)

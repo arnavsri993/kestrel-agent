@@ -45,6 +45,10 @@ The packaged development build is Apple Silicon and ad-hoc signed. It is useful 
 
 Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, and a public download URL. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
 
+## Browser-first workspace
+
+Kestrel’s default desktop destination is a local user browser beside a stable agent conversation. Tabs, History, Downloads, session restore, configurable local history retention, address/search navigation, and browser settings are implemented. The optional **Use current page** handoff sends bounded visible-page reference material to the conversation; page content remains untrusted and cannot authorize actions. User tabs use their own persistent browser profile, while autonomous agent browser sessions are isolated and origin-scoped. Consequential browser actions continue through Kestrel’s existing policy/approval path. See [AI-native browser](docs/ai-native-browser.md) for implemented boundaries and follow-up scope.
+
 ## Architecture and research evidence
 
 Kestrel is the finalized human-visible product name. Privileged runtime compatibility identity—app ID, protocol, Keychain service, storage directory, and update channel—is centralized in `packages/shared-types/src/identity.ts` and intentionally remains stable so existing encrypted data, credentials, integrations, and update behavior continue to work.

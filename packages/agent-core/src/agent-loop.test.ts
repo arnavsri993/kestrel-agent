@@ -25,6 +25,60 @@ afterEach(() => {
 });
 
 describe("provider-neutral agent loop", () => {
+  it("uses ephemeral browser context for the model without persisting it in conversation history", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Ephemeral page context" });
+    let modelInput = "";
+    const provider: ModelProvider = {
+      id: "ephemeral-context",
+      capabilities: {
+        streaming: false,
+        tools: false,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        modelInput = request.messages
+          .map((message) => contentText(message.content))
+          .join("\n");
+        return {
+          providerId: "ephemeral-context",
+          model: request.model,
+          text: "Used the current page safely.",
+          toolCalls: [],
+          usage: { inputTokens: 5, outputTokens: 4 },
+          finishReason: "stop",
+        };
+      },
+    };
+
+    await new AgentLoop(
+      database,
+      runtime,
+      new ProviderPool([provider]),
+    ).run({
+      sessionId: session.id,
+      model: "fixture",
+      providerIds: [provider.id],
+      userContent: textContent("Summarize this page."),
+      ephemeralContext: textContent("BROWSER-ONLY-CONTEXT"),
+    });
+
+    expect(modelInput).toContain("BROWSER-ONLY-CONTEXT");
+    expect(
+      runtime.listMessages(session.id).map((message) => message.content),
+    ).toEqual(["Summarize this page.", "Used the current page safely."]);
+    expect(
+      runtime
+        .listMessages(session.id)
+        .some((message) => message.content.includes("BROWSER-ONLY-CONTEXT")),
+    ).toBe(false);
+    database.close();
+  });
+
   it("normalizes a non-finite maximum turn setting", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     const runtime = new AgentRuntime(database);

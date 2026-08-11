@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-readiness-test-"));
 const userData = join(root, "user-data");
@@ -57,8 +58,7 @@ try {
   const readinessPlugin = page.locator("article.setting-row").filter({ hasText: "Readiness Test" });
   await readinessPlugin.getByRole("button", { name: "Enable" }).click();
   await readinessPlugin.getByText("Dashboard panels active").waitFor();
-  await page.getByRole("button", { name: /Tools/ }).click();
-  await page.getByRole("button", { name: "Extensions", exact: true }).click();
+  await openKestrelDestination(page, "Extensions");
   await page.getByRole("button", { name: "Open readiness", exact: true }).click();
   await page.getByRole("heading", { name: /Needs attention|Ready for work/ }).waitFor();
   await page.getByRole("heading", { name: "What can work right now" }).waitFor();
@@ -76,8 +76,7 @@ try {
   await subscriptionSetting.getByText("ChatGPT plan through Codex", { exact: true }).waitFor();
   await subscriptionSetting.getByRole("button", { name: "Enable" }).click();
   await subscriptionSetting.getByRole("button", { name: "Disable" }).waitFor();
-  await page.getByRole("button", { name: /Tools/ }).click();
-  await page.getByRole("button", { name: "Extensions", exact: true }).click();
+  await openKestrelDestination(page, "Extensions");
   await page.getByRole("button", { name: "Open readiness", exact: true }).click();
   await page.getByRole("heading", { name: "Ready for work" }).waitFor();
   await page.getByRole("button", { name: "Verify model access" }).click();

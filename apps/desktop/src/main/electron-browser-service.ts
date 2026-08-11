@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { app, BrowserWindow, desktopCapturer, session as electronSession, systemPreferences, type Session } from "electron";
 import type { BrowserAction, BrowserDiagnostic, BrowserDownload, BrowserSnapshot, BrowserViewport, DesktopAction, ScreenshotFrame } from "@kestrel/agent-core";
 
-export type BrowserBackendWireRequest =
+export type AutomationBrowserBackendWireRequest =
   | { operation: "create"; allowedOrigins: string[] }
   | { operation: "navigate"; sessionId: string; url: string }
   | { operation: "act"; sessionId: string; action: BrowserAction }
@@ -54,7 +54,7 @@ function origin(value: string): string | undefined {
 export class ElectronBrowserService {
   private readonly sessions = new Map<string, BrowserRecord>();
 
-  async handle(request: BrowserBackendWireRequest, signal: AbortSignal): Promise<unknown> {
+  async handle(request: AutomationBrowserBackendWireRequest, signal: AbortSignal): Promise<unknown> {
     if (request.operation === "create") return this.create(request.allowedOrigins);
     if (request.operation === "navigate") return this.navigate(request.sessionId, request.url, signal);
     if (request.operation === "act") return this.act(request.sessionId, request.action, signal);
@@ -67,7 +67,9 @@ export class ElectronBrowserService {
     if (request.operation === "downloads") return this.downloads(request.sessionId, signal);
     if (request.operation === "desktop-screenshot") return this.desktopScreenshot(signal);
     if (request.operation === "desktop-act") return this.desktopAct(request.action, signal);
-    return this.close(request.sessionId);
+    if (request.operation === "close") return this.close(request.sessionId);
+    const unsupported: never = request;
+    throw new Error(`Unsupported browser operation: ${String(unsupported)}`);
   }
 
   async closeAll(): Promise<void> {

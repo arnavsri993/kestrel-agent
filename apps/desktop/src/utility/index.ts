@@ -54,6 +54,20 @@ const browserBackend: BrowserAutomationBackend = {
   downloads: (sessionId, signal) => browserRequest<BrowserDownload[]>({ operation: "downloads", sessionId }, signal),
   desktopScreenshot: async (signal) => { const result = await browserRequest<ScreenshotFrame>({ operation: "desktop-screenshot" }, signal); return { ...result, rgba: new Uint8Array(result.rgba), ...(result.png ? { png: new Uint8Array(result.png) } : {}) }; },
   desktopAct: async (action: DesktopAction, signal) => { await browserRequest({ operation: "desktop-act", action }, signal); },
+  visibleTabs: (signal) => browserRequest({ operation: "visible-tabs" }, signal),
+  visibleContext: (tabId, signal) => browserRequest({ operation: "visible-context", ...(tabId ? { tabId } : {}) }, signal),
+  visibleSnapshot: (tabId, signal) => browserRequest({ operation: "visible-snapshot", ...(tabId ? { tabId } : {}) }, signal),
+  visibleScreenshot: async (tabId, signal) => {
+    const result = await browserRequest<ScreenshotFrame>({ operation: "visible-screenshot", ...(tabId ? { tabId } : {}) }, signal);
+    return { ...result, rgba: new Uint8Array(result.rgba), ...(result.png ? { png: new Uint8Array(result.png) } : {}) };
+  },
+  visibleHistory: (query, limit, signal) => browserRequest({ operation: "visible-history", ...(query ? { query } : {}), ...(limit !== undefined ? { limit } : {}) }, signal),
+  visibleDownloads: (signal) => browserRequest({ operation: "visible-downloads" }, signal),
+  visibleAct: async (tabId, action, signal) => { await browserRequest({ operation: "visible-act", tabId, action }, signal); },
+  visibleNavigate: async (tabId, input, signal) => { await browserRequest({ operation: "visible-navigate", tabId, input }, signal); },
+  visibleCreate: (input, signal) => browserRequest({ operation: "visible-create", ...(input ? { input } : {}) }, signal),
+  visibleClose: async (tabId, signal) => { await browserRequest({ operation: "visible-close", tabId }, signal); },
+  visibleSelect: async (tabId, signal) => { await browserRequest({ operation: "visible-select", tabId }, signal); },
   close: async (sessionId) => { await browserRequest({ operation: "close", sessionId }); }
 };
 
@@ -111,7 +125,20 @@ port.on("message", async ({ data }) => {
       for (const key of Object.keys(message.config.secureEnvironment)) delete message.config.secureEnvironment[key];
       const mainSession = core.runtime.ensureMainSession();
       if (googleWorkspace) installGoogleWorkspaceTools(core.runtime, googleWorkspace, mainSession.id);
-      installBrowserTools(core.runtime, new BrowserController(browserBackend), mainSession.id, new VisualValidator(database, artifactRoot));
+      const browserToolNames = installBrowserTools(
+        core.runtime,
+        new BrowserController(browserBackend),
+        mainSession.id,
+        new VisualValidator(database, artifactRoot),
+      );
+      // Sessions created after registration inherit these tools automatically.
+      // Preserve conversation timestamps while making the new browser layer
+      // available to conversations that already existed before this release.
+      for (const session of core.runtime.listSessions())
+        if (session.id !== mainSession.id)
+          core.runtime.allowTools(session.id, browserToolNames, {
+            preserveUpdatedAt: true,
+          });
       const configuredLanguageServer = await environmentLanguageServerClient();
       if (configuredLanguageServer) {
         languageServer = configuredLanguageServer.client;

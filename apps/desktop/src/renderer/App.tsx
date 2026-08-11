@@ -57,6 +57,7 @@ import type {
   TrustedPluginPublisher,
   UsagePolicy,
   UserModelFact,
+  UserBrowserPageContext,
   WebFetchResult,
   WebSearchResultContract,
   WorkspaceGrant,
@@ -95,9 +96,18 @@ import {
   loadInitialDesktopState,
   startupFailureMessage,
 } from "./startup-state";
+import { useUserBrowser, type UserBrowserController } from "./browser/useUserBrowser";
+import { AgentSidebar } from "./components/browser/AgentSidebar";
+import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
+import { BrowserDownloads, BrowserHistory } from "./components/browser/BrowserLibrary";
+import { BrowserSettings } from "./components/browser/BrowserSettings";
+import { CommandCenter, type CommandDestination } from "./components/browser/CommandCenter";
 
 const pages = [
-  ["home", "New chat"],
+  ["browser", "Browser"],
+  ["history", "History"],
+  ["downloads", "Downloads"],
+  ["commands", "Kestrel"],
   ["readiness", "Readiness"],
   ["approvals", "Approvals"],
   ["memory", "Life"],
@@ -110,22 +120,20 @@ const pages = [
   ["settings", "Settings"],
 ] as const;
 type Page = (typeof pages)[number][0];
-const toolGroups: ReadonlyArray<{
-  label: string;
-  pages: ReadonlyArray<Page>;
-}> = [
-  {
-    label: "Act",
-    pages: ["readiness", "approvals", "work", "events"],
-  },
-  {
-    label: "Inspect",
-    pages: ["memory", "research", "artifacts", "activity"],
-  },
-  {
-    label: "Extend",
-    pages: ["extensions"],
-  },
+const commandDestinations: CommandDestination[] = [
+  { id: "browser", label: "Browser", detail: "Open tabs and browse the web", icon: "browser", group: "Browse" },
+  { id: "history", label: "History", detail: "Find pages you visited", icon: "history", group: "Browse" },
+  { id: "downloads", label: "Downloads", detail: "Track files from browser tabs", icon: "downloads", group: "Browse" },
+  { id: "approvals", label: "Approvals", detail: "Review consequential agent actions", icon: "approvals", group: "Agent" },
+  { id: "work", label: "Work", detail: "Goals, delegates, and schedules", icon: "work", group: "Agent" },
+  { id: "events", label: "Opportunities", detail: "Review event applications", icon: "events", group: "Agent" },
+  { id: "memory", label: "Life Context", detail: "Calendar, people, and memory", icon: "memory", group: "Context" },
+  { id: "research", label: "Research", detail: "Saved research and sources", icon: "research", group: "Context" },
+  { id: "artifacts", label: "Artifacts", detail: "Files and generated results", icon: "artifacts", group: "Context" },
+  { id: "activity", label: "Activity", detail: "Runs, evidence, and audit trail", icon: "activity", group: "Context" },
+  { id: "extensions", label: "Extensions", detail: "Plugin-provided capabilities", icon: "extensions", group: "Build" },
+  { id: "readiness", label: "Readiness", detail: "Runtime and provider health", icon: "readiness", group: "System" },
+  { id: "settings", label: "Settings", detail: "Browser, agent, models, and privacy", icon: "settings", group: "System" },
 ];
 type Thread = "new" | "teacher" | "dji";
 type ExecutionMode = "automatic" | "manual";
@@ -1685,15 +1693,6 @@ function ProductShellTransition({ children }: { children: ReactNode }) {
   );
 }
 
-function Brand() {
-  return (
-    <div className="brand">
-      <BrandMark />
-      <strong>Kestrel</strong>
-    </div>
-  );
-}
-
 function Loading() {
   const reduced = useReducedMotion();
   return (
@@ -1997,11 +1996,7 @@ function Home({
           <div className="welcome-mark" aria-hidden="true">
             <BrandMark />
           </div>
-          <h1 id="new-task-title">What should we work on?</h1>
-          <p>
-            Ask normally. Kestrel will bring in relevant local context when
-            it can help.
-          </p>
+          <h1 id="new-task-title">What can I help with?</h1>
           <Composer
             value={input}
             onChange={setInput}
@@ -2207,6 +2202,9 @@ function RuntimeConversation({
   onSessions,
   onSnapshot,
   configurationUi,
+  browserContext,
+  newAgentRequestId,
+  onNewAgent,
 }: {
   visible: boolean;
   activeSessionId: string | null;
@@ -2215,6 +2213,9 @@ function RuntimeConversation({
   onSessions(sessions: RuntimeSession[]): void;
   onSnapshot(snapshot: WorkspaceSnapshot): void;
   configurationUi: WorkspaceSnapshot["configuration"]["ui"];
+  browserContext?(): Promise<UserBrowserPageContext | undefined>;
+  newAgentRequestId: number;
+  onNewAgent(): void;
 }) {
   const [messages, setMessages] = useState<RuntimeMessage[]>([]);
   const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
@@ -2258,6 +2259,7 @@ function RuntimeConversation({
   const streamIdRef = useRef<string | null>(null);
   const streamSessionIdRef = useRef<string | null>(null);
   const activeSessionIdRef = useRef(activeSessionId);
+  const previousNewAgentRequestIdRef = useRef(newAgentRequestId);
   const sessionLoadSequenceRef = useRef(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
@@ -2287,6 +2289,23 @@ function RuntimeConversation({
     prompt.style.height = `${nextHeight}px`;
     prompt.style.overflowY = prompt.scrollHeight > 180 ? "auto" : "hidden";
   }, [input]);
+
+  useEffect(() => {
+    if (previousNewAgentRequestIdRef.current === newAgentRequestId) return;
+    previousNewAgentRequestIdRef.current = newAgentRequestId;
+    if (busy) {
+      setError("Finish or cancel the active agent before starting a new one.");
+      window.setTimeout(() => promptRef.current?.focus(), 0);
+      return;
+    }
+    activeSessionIdRef.current = null;
+    onActiveSession(null);
+    setInput("");
+    setAttachments([]);
+    setCheckpointSummary("");
+    setError("");
+    window.setTimeout(() => promptRef.current?.focus(), 0);
+  }, [busy, newAgentRequestId, onActiveSession]);
 
   async function refreshSessions() {
     const response = (await window.kestrel.request({
@@ -2747,6 +2766,7 @@ function RuntimeConversation({
       localStorage.setItem("kestrel:execution-mode", executionMode);
       if (executionMode === "manual")
         localStorage.setItem("kestrel:model", model.trim());
+      const activeBrowserContext = await browserContext?.();
       const response = (await window.kestrel.request({
         type: "runtime-run-agent",
         sessionId,
@@ -2755,6 +2775,9 @@ function RuntimeConversation({
         providerIds: executionMode === "automatic" ? ["auto"] : [providerId],
         streamId,
         attachments,
+        ...(activeBrowserContext
+          ? { browserContext: activeBrowserContext }
+          : {}),
       })) as CoreResponse;
       if (!response.ok) throw new Error(response.error);
       if (activeSessionIdRef.current === sessionId) {
@@ -3127,13 +3150,9 @@ function RuntimeConversation({
           <h1>
             {activeSessionId
               ? "Continue this chat."
-              : "What should we get done?"}
+              : "How can I help?"}
           </h1>
-          <p>
-            {activeSessionId
-              ? "Describe the next useful step."
-              : "Bring a project or ask a question. The plan, approvals, and results stay together."}
-          </p>
+          {activeSessionId && <p>Describe the next useful step.</p>}
           <ProductAnchor
             className="workspace-product-anchor"
             detail={activeSessionId ? "This chat is ready" : "Ready on this Mac"}
@@ -3146,7 +3165,6 @@ function RuntimeConversation({
               >
                 <span>
                   <strong>Review a project</strong>
-                  <small>Choose a folder and find the next useful step.</small>
                 </span>
                 <Icon name="arrow" />
               </button>
@@ -3159,9 +3177,6 @@ function RuntimeConversation({
               >
                 <span>
                   <strong>Plan a task</strong>
-                  <small>
-                    Turn an outcome into a clear, reviewable sequence.
-                  </small>
                 </span>
                 <Icon name="arrow" />
               </button>
@@ -3174,7 +3189,7 @@ function RuntimeConversation({
               <button
                 type="button"
                 className="quiet-link"
-                onClick={() => onActiveSession(null)}
+                onClick={onNewAgent}
               >
                 Start a new chat
               </button>
@@ -6976,6 +6991,9 @@ function Settings({
   onSkinStatus,
   petStatus,
   onPetStatus,
+  browser,
+  browserContextEnabled,
+  onToggleBrowserContext,
 }: {
   snapshot: WorkspaceSnapshot;
   update(next: WorkspaceSnapshot): void;
@@ -6983,6 +7001,9 @@ function Settings({
   onSkinStatus(next: SkinStatus): void;
   petStatus: PetStatus | null;
   onPetStatus(next: PetStatus): void;
+  browser: UserBrowserController;
+  browserContextEnabled: boolean;
+  onToggleBrowserContext(): void;
 }) {
   const [login, setLogin] = useState<{
     enabled: boolean;
@@ -6992,6 +7013,7 @@ function Settings({
   const [resetError, setResetError] = useState("");
   const [section, setSection] = useState<
     | "connections"
+    | "browser"
     | "general"
     | "models"
     | "intelligence"
@@ -7173,6 +7195,7 @@ function Settings({
   const route = snapshot.modelRouting.currentDecision;
   const settingsSections = [
     ["connections", "Connections", "Accounts and folders"],
+    ["browser", "Browser", "Search, tabs, and history"],
     ["general", "General", "Appearance and behavior"],
     ["models", "Models", "Choice, routing, and limits"],
     ["intelligence", "Memory", "Memory, presence, and learning"],
@@ -7199,6 +7222,13 @@ function Settings({
           ))}
         </nav>
         <div className="settings-content">
+        {section === "browser" && (
+          <BrowserSettings
+            browser={browser}
+            contextEnabled={browserContextEnabled}
+            onToggleContext={onToggleBrowserContext}
+          />
+        )}
         {section === "connections" && (
           <>
             <Connections snapshot={snapshot} />
@@ -7579,21 +7609,23 @@ function Empty({ title, text }: { title: string; text: string }) {
 }
 
 export function App() {
+  const browser = useUserBrowser();
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
   const [skinStatus, setSkinStatus] = useState<SkinStatus | null>(null);
   const [petStatus, setPetStatus] = useState<PetStatus | null>(null);
   const [petActivity, setPetActivity] = useState<PetActivityState>("idle");
   const petActivityTimer = useRef<number | null>(null);
-  const [page, setPage] = useState<Page>("home");
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const toolsContainerRef = useRef<HTMLElement | null>(null);
-  const toolsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const [page, setPage] = useState<Page>("browser");
+  const [browserContextEnabled, setBrowserContextEnabled] = useState(
+    () => localStorage.getItem("kestrel:browser-context") !== "off",
+  );
   const pendingToolRouteFocusRef = useRef<Page | null>(null);
   const routeFocusFrameRef = useRef<number | null>(null);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState<
     string | null
   >(null);
+  const [newAgentRequestId, setNewAgentRequestId] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [deepLinkNotice, setDeepLinkNotice] = useState("");
   const [onboarded, setOnboarded] = useState(
@@ -7603,10 +7635,32 @@ export function App() {
   );
   const reduced = useReducedMotion();
   const openRuntimeSession = useCallback((sessionId: string | null) => {
-    setToolsOpen(false);
     setActiveRuntimeSessionId(sessionId);
-    setPage("home");
   }, []);
+  const startNewAgent = useCallback(() => {
+    setNewAgentRequestId((current) => current + 1);
+  }, []);
+  const openBrowser = useCallback(() => setPage("browser"), []);
+  const openBrowserHistory = useCallback(() => setPage("history"), []);
+  const openBrowserDownloads = useCallback(() => setPage("downloads"), []);
+  const openCommandCenter = useCallback(() => setPage("commands"), []);
+  const closeCommandCenter = useCallback(() => {
+    setPage("browser");
+    window.requestAnimationFrame(() =>
+      document.getElementById("kestrel-more")?.focus(),
+    );
+  }, []);
+  const openPrimaryDestination = useCallback(
+    (
+      destination:
+        | "browser"
+        | "history"
+        | "downloads"
+        | "settings"
+        | "commands",
+    ) => setPage(destination),
+    [],
+  );
   useEffect(
     () =>
       window.kestrel.onDeepLink((deepLink) => {
@@ -7618,12 +7672,11 @@ export function App() {
         }
         if (action === "settings") {
           setDeepLinkNotice("");
-          setToolsOpen(false);
           setPage("settings");
           return;
         }
         setDeepLinkNotice(
-          "This Kestrel link is not supported. Open New chat or Settings from the sidebar.",
+          "This Kestrel link is not supported. Open New Agent or Settings from the sidebar.",
         );
       }),
     [openRuntimeSession],
@@ -7759,9 +7812,6 @@ export function App() {
     const timer = window.setInterval(beacon, 45_000);
     return () => window.clearInterval(timer);
   }, []);
-  useEffect(() => {
-    setToolsOpen(false);
-  }, [page]);
   const focusToolRoute = useCallback(
     (node: HTMLDivElement | null) => {
       if (!node || pendingToolRouteFocusRef.current !== page) return;
@@ -7798,48 +7848,21 @@ export function App() {
   );
   useEffect(() => {
     if (!onboarded) return;
-    const openNewChat = (event: KeyboardEvent) => {
-      if (
-        event.key.toLowerCase() !== "n" ||
-        !event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.shiftKey
-      )
+    const workspaceShortcuts = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey)
         return;
-      event.preventDefault();
-      openRuntimeSession(null);
+      const key = event.key.toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        startNewAgent();
+      } else if (key === "k") {
+        event.preventDefault();
+        setPage("commands");
+      }
     };
-    document.addEventListener("keydown", openNewChat);
-    return () => document.removeEventListener("keydown", openNewChat);
-  }, [onboarded, openRuntimeSession]);
-  useEffect(() => {
-    if (!toolsOpen) return;
-    const focusTimer = window.setTimeout(() => {
-      toolsContainerRef.current
-        ?.querySelector<HTMLButtonElement>(".tools-disclosure button")
-        ?.focus();
-    }, 0);
-    const closeOnPointer = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        !toolsContainerRef.current?.contains(event.target)
-      )
-        setToolsOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setToolsOpen(false);
-      window.setTimeout(() => toolsTriggerRef.current?.focus(), 0);
-    };
-    document.addEventListener("pointerdown", closeOnPointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.clearTimeout(focusTimer);
-      document.removeEventListener("pointerdown", closeOnPointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [toolsOpen]);
+    document.addEventListener("keydown", workspaceShortcuts);
+    return () => document.removeEventListener("keydown", workspaceShortcuts);
+  }, [onboarded, startNewAgent]);
   if (!onboarded)
     return (
       <ProductShellTransition>
@@ -7877,270 +7900,164 @@ export function App() {
         <Loading key="loading" />
       </ProductShellTransition>
     );
-  const currentTitle =
-    page === "home"
-      ? (() => {
-          const session = runtimeSessions.find(
-            (item) => item.id === activeRuntimeSessionId,
-          );
-          return session ? sessionTitleForDisplay(session.title) : "New chat";
-        })()
-      : pages.find(([id]) => id === page)?.[1];
   async function popOutPet() {
     const response = (await window.kestrel.request({
       type: "pet-overlay-open",
     })) as CoreResponse;
     if (response.ok && response.petStatus) setPetStatus(response.petStatus);
   }
-  const toolPageActive = !["home", "settings"].includes(page);
+  const activeBrowserTab = browser.state?.tabs.find(
+    (tab) => tab.id === browser.state?.activeTabId,
+  );
+  const legacyPage = ![
+    "browser",
+    "history",
+    "downloads",
+    "commands",
+    "settings",
+  ].includes(page);
+  function navigate(destination: string) {
+    if (!pages.some(([id]) => id === destination)) return;
+    const next = destination as Page;
+    if (
+      !["browser", "history", "downloads", "commands", "settings"].includes(
+        next,
+      )
+    )
+      pendingToolRouteFocusRef.current = next;
+    setPage(next);
+  }
+  function toggleBrowserContext() {
+    const enabled = !browserContextEnabled;
+    setBrowserContextEnabled(enabled);
+    localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
+  }
   return (
     <ProductShellTransition>
     <motion.div
       key="workspace"
-      className={`app-shell unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+      className={`ai-browser-app unified-ui configuration-density-${snapshot.configuration.ui.density}`}
       initial={reduced ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: reduced ? 1 : 0 }}
       transition={{ duration: reduced ? 0 : 0.16 }}
     >
-      <aside className="sidebar">
-        <div className="drag-region" />
-        <Brand />
-        <button
-          className={`new-task-button ${
-            page === "home" && !activeRuntimeSessionId ? "active" : ""
-          }`}
-          aria-label="New chat"
-          aria-keyshortcuts="Meta+N"
-          aria-current={
-            page === "home" && !activeRuntimeSessionId ? "page" : undefined
-          }
-          onClick={() => openRuntimeSession(null)}
-        >
-          <Icon name="plus" />
-          <span>New chat</span>
-          <kbd>⌘ N</kbd>
-        </button>
-        <nav aria-label="Conversations and tools">
-          <section
-            className="nav-section recent-section"
-            aria-labelledby="chats-label"
-          >
-            <h2 id="chats-label">Chats</h2>
-            {runtimeSessions
-              .slice()
-              .sort((left, right) =>
-                right.updatedAt.localeCompare(left.updatedAt),
-              )
-              .slice(0, 12)
-              .map((session) => (
-                <button
-                  aria-label={sessionTitleForDisplay(session.title)}
-                  title={sessionTitleForDisplay(session.title)}
-                  aria-current={
-                    page === "home" && activeRuntimeSessionId === session.id
-                      ? "page"
-                      : undefined
-                  }
-                  key={session.id}
-                  className={
-                    page === "home" && activeRuntimeSessionId === session.id
-                      ? "active"
-                      : ""
-                  }
-                  onClick={() => openRuntimeSession(session.id)}
-                >
-                  <Icon name="chat" />
-                  <span>{sessionTitleForDisplay(session.title)}</span>
-                </button>
-              ))}
-          </section>
-          <section
-            className="nav-section tools-section"
-            aria-labelledby="tools-label"
-            ref={toolsContainerRef}
-          >
-            <button
-              id="tools-label"
-              ref={toolsTriggerRef}
-              aria-expanded={toolsOpen}
-              aria-controls="tools-disclosure"
-              aria-current={toolPageActive ? "page" : undefined}
-              className={toolPageActive ? "active" : ""}
-              onClick={() => setToolsOpen((open) => !open)}
-            >
-              <Icon name="extensions" />
-              <span>Tools</span>
-              <Icon name="chevron" />
-            </button>
-            <AnimatePresence>
-              {toolsOpen && (
-                <motion.div
-                  id="tools-disclosure"
-                  className="tools-disclosure"
-                  aria-label="Kestrel tools"
-                  initial={reduced ? false : { opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: reduced ? 1 : 0, y: reduced ? 0 : -4 }}
-                  transition={{ duration: reduced ? 0 : 0.14 }}
-                >
-                  <header>
-                    <strong>Tools</strong>
-                    <small>Open when the task needs them.</small>
-                  </header>
-                  {toolGroups.map((group) => (
-                    <section key={group.label}>
-                      <h3>{group.label}</h3>
-                      <div>
-                        {group.pages.map((id) => {
-                          const label = pages.find(
-                            ([pageId]) => pageId === id,
-                          )?.[1];
-                          if (!label) return null;
-                          return (
-                            <button
-                              key={id}
-                              aria-label={label}
-                              aria-current={page === id ? "page" : undefined}
-                              className={page === id ? "active" : ""}
-                              onClick={() => {
-                                if (page !== id) {
-                                  pendingToolRouteFocusRef.current = id;
-                                  setToolsOpen(false);
-                                  setPage(id);
-                                }
-                              }}
-                            >
-                              <Icon name={id} />
-                              <span>{label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </section>
-        </nav>
-        <div className="sidebar-bottom">
-          {pages
-            .filter(([id]) => id === "settings")
-            .map(([id, label]) => (
-              <button
-                key={id}
-                aria-label={label}
-                aria-current={page === id ? "page" : undefined}
-                className={page === id ? "active" : ""}
-                onClick={() => {
-                  setToolsOpen(false);
-                  setPage(id);
-                }}
-              >
-                <Icon name={id} />
-                <span>{label}</span>
-              </button>
-            ))}
-          <div className="sidebar-status">
-            <span className={`agent-dot ${snapshot.agentState}`} />
-            <div>
-              <strong>
-                {snapshot.agentState === "waiting_approval"
-                  ? "Needs your approval"
-                  : snapshot.agentState.replace("_", " ")}
-              </strong>
-              <small>Working on this Mac</small>
-            </div>
-          </div>
-        </div>
-      </aside>
-      <main className="main-plane">
-        <div className="topbar">
-          <span>{currentTitle}</span>
-          {deepLinkNotice && (
-            <small className="deep-link-notice" role="status">
-              {deepLinkNotice}
-            </small>
-          )}
-        </div>
-        <div className="page-stack">
-          {/* Keep the conversation mounted so navigating to Settings or a
-              dashboard does not orphan an active stream or its cancel state. */}
-          <div className="page-content" hidden={page !== "home"}>
-            <RuntimeConversation
-              visible={page === "home"}
-              activeSessionId={activeRuntimeSessionId}
-              sessions={runtimeSessions}
-              onActiveSession={setActiveRuntimeSessionId}
-              onSessions={setRuntimeSessions}
-              onSnapshot={setSnapshot}
-              configurationUi={snapshot.configuration.ui}
+      <AgentSidebar
+        sessions={runtimeSessions}
+        activeSessionId={activeRuntimeSessionId}
+        {...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
+        agentState={snapshot.agentState}
+        activeDestination={page}
+        onNewAgent={startNewAgent}
+        onOpenSession={openRuntimeSession}
+        onNavigate={openPrimaryDestination}
+      >
+        {/* Conversation state stays mounted across browser and settings routes so
+            streams, steering, cancellation, and approval boundaries remain intact. */}
+        <RuntimeConversation
+          visible
+          activeSessionId={activeRuntimeSessionId}
+          sessions={runtimeSessions}
+          onActiveSession={setActiveRuntimeSessionId}
+          onSessions={setRuntimeSessions}
+          onSnapshot={setSnapshot}
+          configurationUi={snapshot.configuration.ui}
+          newAgentRequestId={newAgentRequestId}
+          onNewAgent={startNewAgent}
+          {...(browserContextEnabled
+            ? { browserContext: () => browser.pageContext() }
+            : {})}
+        />
+      </AgentSidebar>
+      <section className="browser-main-plane">
+        {deepLinkNotice && (
+          <small className="browser-notice" role="status">{deepLinkNotice}</small>
+        )}
+        {page === "browser" && (
+          <BrowserWorkspace
+            browser={browser}
+            contextEnabled={browserContextEnabled}
+            onToggleContext={toggleBrowserContext}
+            onNewAgent={startNewAgent}
+            onOpenHistory={openBrowserHistory}
+            onOpenDownloads={openBrowserDownloads}
+            onOpenMenu={openCommandCenter}
+          />
+        )}
+        {page === "history" && (
+          <BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
+        )}
+        {page === "downloads" && <BrowserDownloads browser={browser} />}
+        {page === "commands" && (
+          <CommandCenter
+            destinations={commandDestinations}
+            onSelect={navigate}
+            onClose={closeCommandCenter}
+          />
+        )}
+        {page === "settings" && (
+          <div className="browser-secondary-surface">
+            <Settings
+              snapshot={snapshot}
+              update={setSnapshot}
+              skinStatus={skinStatus}
+              onSkinStatus={updateSkinStatus}
+              petStatus={petStatus}
+              onPetStatus={setPetStatus}
+              browser={browser}
+              browserContextEnabled={browserContextEnabled}
+              onToggleBrowserContext={toggleBrowserContext}
             />
           </div>
-          <AnimatePresence mode="wait" initial={false}>
-            {page !== "home" && (
-              <motion.div
-                key={page}
-                ref={focusToolRoute}
-                className="page-content"
-                initial={reduced ? false : { opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: reduced ? 1 : 0 }}
-                transition={{ duration: reduced ? 0 : 0.12 }}
-              >
-                {page === "readiness" && <Readiness />}
-                {page === "approvals" && (
-                  <Approvals snapshot={snapshot} update={setSnapshot} />
-                )}
-                {page === "memory" && (
-                  <LifeContext snapshot={snapshot} update={setSnapshot} />
-                )}
-                {page === "research" && <Research />}
-                {page === "artifacts" && <Artifacts />}
-                {page === "work" && (
-                  <Work
-                    sessions={runtimeSessions}
-                    onSessions={setRuntimeSessions}
-                  />
-                )}
-                {page === "events" && (
-                  <EventApplications onOpenSession={openRuntimeSession} />
-                )}
-                {page === "activity" && <Activity snapshot={snapshot} />}
-                {page === "extensions" && (
-                  <DashboardExtensions
-                    snapshot={snapshot}
-                    sessions={runtimeSessions}
-                    onNavigate={(destination) =>
-                      setPage(
-                        destination === "connections"
-                          ? "settings"
-                          : destination,
-                      )
-                    }
-                  />
-                )}
-                {page === "settings" && (
-                  <Settings
-                    snapshot={snapshot}
-                    update={setSnapshot}
-                    skinStatus={skinStatus}
-                    onSkinStatus={updateSkinStatus}
-                    petStatus={petStatus}
-                    onPetStatus={setPetStatus}
-                  />
-                )}
-              </motion.div>
+        )}
+        {legacyPage && (
+          <motion.div
+            key={page}
+            ref={focusToolRoute}
+            className="browser-secondary-surface legacy-product-surface"
+            initial={reduced ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: reduced ? 0 : 0.12 }}
+          >
+            <div className="secondary-surface-bar">
+              <button type="button" onClick={() => setPage("browser")}>
+                <Icon name="back" />
+                Browser
+              </button>
+              <strong>{pages.find(([id]) => id === page)?.[1]}</strong>
+            </div>
+            {page === "readiness" && <Readiness />}
+            {page === "approvals" && (
+              <Approvals snapshot={snapshot} update={setSnapshot} />
             )}
-          </AnimatePresence>
-        </div>
-      </main>
+            {page === "memory" && (
+              <LifeContext snapshot={snapshot} update={setSnapshot} />
+            )}
+            {page === "research" && <Research />}
+            {page === "artifacts" && <Artifacts />}
+            {page === "work" && (
+              <Work sessions={runtimeSessions} onSessions={setRuntimeSessions} />
+            )}
+            {page === "events" && (
+              <EventApplications onOpenSession={openRuntimeSession} />
+            )}
+            {page === "activity" && <Activity snapshot={snapshot} />}
+            {page === "extensions" && (
+              <DashboardExtensions
+                snapshot={snapshot}
+                sessions={runtimeSessions}
+                onNavigate={(destination) =>
+                  setPage(destination === "connections" ? "settings" : destination)
+                }
+              />
+            )}
+          </motion.div>
+        )}
+      </section>
       <FloatingPet
         status={petStatus}
         activity={petActivity}
         onOpen={() => {
-          setToolsOpen(false);
           setPage("settings");
         }}
         onPopOut={() => void popOutPet()}

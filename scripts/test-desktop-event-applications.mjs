@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "kestrel-event-applications-"));
 const userData = join(temporaryRoot, "user-data");
@@ -37,8 +38,7 @@ try {
     return id;
   });
 
-  await page.getByRole("button", { name: /Tools/ }).click();
-  await page.getByRole("button", { name: "Opportunities", exact: true }).click();
+  await openKestrelDestination(page, "Opportunities");
   await page.getByRole("heading", { name: "Apply with your agent. Send with your consent." }).waitFor();
   await page.getByRole("heading", { name: "Neighborhood Build Weekend" }).waitFor();
   await page.getByText("Submission stays locked", { exact: true }).waitFor();
@@ -59,9 +59,9 @@ try {
   assert.ok(stored?.approvedAt);
 
   await page.setViewportSize({ width: 1320, height: 900 });
-  await page.locator(".page-content:not([hidden])").evaluate((element) => { element.scrollTop = 0; });
+  await page.locator(".legacy-product-surface").evaluate((element) => { element.scrollTop = 0; });
   await page.screenshot({ path: importScreenshotPath });
-  await page.locator(".page-content:not([hidden])").evaluate((element) => { element.scrollTop = 520; });
+  await page.locator(".legacy-product-surface").evaluate((element) => { element.scrollTop = 520; });
   await page.screenshot({ path: screenshotPath });
   await page.setViewportSize({ width: 620, height: 760 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false);

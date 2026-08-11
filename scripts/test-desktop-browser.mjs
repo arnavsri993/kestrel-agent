@@ -1,0 +1,549 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { createRequire } from "node:module";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { _electron as electron } from "@playwright/test";
+
+const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
+const userData = join(root, "user-data");
+const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
+const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
+const executablePath = packagedExecutable
+  ? resolve(packagedExecutable)
+  : requireFromDesktop("electron");
+const launchArgs = packagedExecutable
+  ? ["--use-mock-keychain"]
+  : [resolve("apps/desktop")];
+
+const server = createServer((request, response) => {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (url.pathname === "/download") {
+    const body = Buffer.from("Kestrel visible browser download\n", "utf8");
+    response.writeHead(200, {
+      "content-type": "text/plain; charset=utf-8",
+      "content-length": String(body.byteLength),
+      "content-disposition": 'attachment; filename="kestrel-browser.txt"',
+      "cache-control": "no-store",
+    });
+    response.end(body);
+    return;
+  }
+  const pageName =
+    url.pathname === "/two"
+      ? "Page two"
+      : url.pathname === "/popup"
+        ? "Popup page"
+        : "Page one";
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(`<!doctype html>
+    <html>
+      <head>
+        <title>${pageName}</title>
+        <meta name="description" content="Visible browser integration fixture">
+      </head>
+      <body>
+        <main>
+          <h1>${pageName}</h1>
+          <p id="copy">A robotics reference visible in the current viewport.</p>
+          <label>Name <input id="name" name="name" autocomplete="off"></label>
+          <button id="submit" type="button">Submit</button>
+          <output id="result">Waiting</output>
+          <a id="next" href="/two">Next page</a>
+          <a id="download" href="/download">Download fixture</a>
+          <button id="popup" type="button">Open popup</button>
+        </main>
+        <script>
+          document.querySelector("#submit").addEventListener("click", () => {
+            document.querySelector("#result").textContent =
+              "Hello " + document.querySelector("#name").value;
+          });
+          document.querySelector("#popup").addEventListener("click", () => {
+            window.open("/popup", "_blank");
+          });
+        </script>
+      </body>
+    </html>`);
+});
+
+await new Promise((resolveListen, rejectListen) => {
+  server.once("error", rejectListen);
+  server.listen(0, "127.0.0.1", resolveListen);
+});
+const serverAddress = server.address();
+assert(serverAddress && typeof serverAddress === "object");
+const origin = `http://127.0.0.1:${serverAddress.port}`;
+
+let application;
+let page;
+const runtimeErrors = [];
+
+async function launch() {
+  application = await electron.launch({
+    executablePath,
+    args: launchArgs,
+    env: {
+      ...process.env,
+      KESTREL_DISABLE_UPDATES: "1",
+      KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
+      KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+      KESTREL_TEST_USER_DATA: userData,
+      KESTREL_REAL_USER_PROFILE: "1",
+    },
+  });
+  page = await application.firstWindow();
+  page.setDefaultTimeout(30_000);
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => runtimeErrors.push(error.message));
+  await page.waitForLoadState("domcontentloaded");
+  return page;
+}
+
+async function browserState() {
+  const response = await page.evaluate(() =>
+    window.kestrel.request({ type: "browser-get-state" }),
+  );
+  assert.equal(response.ok, true);
+  assert("browserState" in response);
+  return response.browserState;
+}
+
+async function nativeViewState() {
+  return application.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find(
+      (candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+    );
+    if (!window) throw new Error("Kestrel main window is unavailable.");
+    const views = window.contentView.children
+      .filter((child) => "webContents" in child)
+      .map((child) => ({
+        url: child.webContents.getURL(),
+        title: child.webContents.getTitle(),
+        bounds: child.getBounds(),
+        destroyed: child.webContents.isDestroyed(),
+      }));
+    return {
+      browserWindowCount: BrowserWindow.getAllWindows().length,
+      views,
+    };
+  });
+}
+
+async function waitForNativeView(predicate, label) {
+  const deadline = Date.now() + 30_000;
+  let latest;
+  while (Date.now() < deadline) {
+    latest = await nativeViewState();
+    if (predicate(latest)) return latest;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+  }
+  throw new Error(`${label}: ${JSON.stringify(latest)}`);
+}
+
+async function activeViewScript(source) {
+  return application.evaluate(
+    async ({ BrowserWindow }, script) => {
+      const window = BrowserWindow.getAllWindows().find(
+        (candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+      );
+      const view = window?.contentView.children.find(
+        (child) => "webContents" in child,
+      );
+      if (!view || !("webContents" in view))
+        throw new Error("No active user browser view is attached.");
+      return view.webContents.executeJavaScript(script);
+    },
+    source,
+  );
+}
+
+async function createRuntimeSessionWithVisibleBrowser() {
+  return page.evaluate(async () => {
+    const created = await window.kestrel.request({
+      type: "runtime-create-session",
+      title: "Visible browser test",
+    });
+    if (!created.ok || !("session" in created) || !created.session)
+      throw new Error("A fresh runtime session could not be created.");
+    const tools = await window.kestrel.request({
+      type: "runtime-discover-tools",
+      sessionId: created.session.id,
+      query: "browser",
+    });
+    if (!tools.ok || !("tools" in tools))
+      throw new Error("Fresh-session browser tools are unavailable.");
+    const names = new Set((tools.tools ?? []).map((tool) => tool.name));
+    for (const name of [
+      "browser.tabs",
+      "browser.visible-act",
+      "browser.search-history",
+      "browser.visible-downloads",
+    ])
+      if (!names.has(name)) throw new Error(`${name} was not installed.`);
+    return created.session.id;
+  });
+}
+
+async function callTool(sessionId, toolName, input, options = {}) {
+  return page.evaluate(
+    async ({ sessionId, toolName, input, options }) => {
+      const response = await window.kestrel.request({
+        type: "runtime-call-tool",
+        sessionId,
+        toolName,
+        input,
+        ...options,
+      });
+      if (!response.ok) throw new Error(response.error);
+      return response.execution;
+    },
+    { sessionId, toolName, input, options },
+  );
+}
+
+try {
+  await launch();
+  await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
+  await page.reload();
+  await page.getByRole("heading", { name: "Where to?" }).waitFor();
+  await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+
+  const initialSessions = await page.evaluate(async () => {
+    const response = await window.kestrel.request({
+      type: "runtime-list-sessions",
+    });
+    return response.ok && "sessions" in response
+      ? (response.sessions ?? []).length
+      : -1;
+  });
+  const initialTabs = (await browserState()).tabs.length;
+  await page
+    .locator(".new-tab-primary-actions button")
+    .filter({ hasText: "New Tab" })
+    .click();
+  let state = await browserState();
+  assert.equal(state.tabs.length, initialTabs + 1);
+  const addedBlankTab = state.activeTabId;
+  assert(addedBlankTab);
+  await page.evaluate(async (tabId) => {
+    await window.kestrel.request({ type: "browser-close-tab", tabId });
+  }, addedBlankTab);
+  await waitForNativeView(
+    (value) => value.views.length === 0,
+    "Native page remained attached over the New Tab page",
+  );
+  await page.locator("#runtime-prompt").fill("Draft that must be cleared");
+  await page
+    .locator(".new-tab-primary-actions button")
+    .filter({ hasText: "New Agent" })
+    .click();
+  const clearedDraft = await page.waitForFunction(() => {
+    const prompt = document.querySelector("#runtime-prompt");
+    return (
+      prompt instanceof HTMLTextAreaElement &&
+      prompt.value === "" &&
+      prompt === document.activeElement
+    );
+  });
+  await clearedDraft.dispose();
+  assert.equal(await page.locator("#runtime-prompt").inputValue(), "");
+  assert.equal(await page.locator("#runtime-prompt").evaluate((node) => node === document.activeElement), true);
+  assert.equal((await browserState()).tabs.length, initialTabs);
+  const sessionsAfterIndependentActions = await page.evaluate(async () => {
+    const response = await window.kestrel.request({
+      type: "runtime-list-sessions",
+    });
+    return response.ok && "sessions" in response
+      ? (response.sessions ?? []).length
+      : -1;
+  });
+  assert.equal(sessionsAfterIndependentActions, initialSessions);
+
+  const search = page.locator("#new-tab-search");
+  await search.fill(`${origin}/one`);
+  await search.press("Enter");
+  const loaded = await waitForNativeView(
+    (value) =>
+      value.views.length === 1 &&
+      value.views[0]?.url === `${origin}/one` &&
+      value.views[0]?.title === "Page one",
+    "Visible page did not load",
+  );
+  assert.equal(loaded.browserWindowCount, 1);
+  assert.equal(loaded.views[0].title, "Page one");
+  assert.equal(loaded.views[0].destroyed, false);
+  const viewport = await page.locator("#browser-viewport").boundingBox();
+  assert(viewport);
+  assert.deepEqual(loaded.views[0].bounds, {
+    x: Math.round(viewport.x),
+    y: Math.round(viewport.y),
+    width: Math.round(viewport.width),
+    height: Math.round(viewport.height),
+  });
+  await application.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find(
+      (candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+    );
+    const view = window?.contentView.children.find(
+      (child) => "webContents" in child,
+    );
+    if (!view || !("webContents" in view))
+      throw new Error("No active user browser view is attached.");
+    view.webContents.sendInputEvent({
+      type: "keyDown",
+      keyCode: "L",
+      modifiers: ["meta"],
+    });
+    view.webContents.sendInputEvent({
+      type: "keyUp",
+      keyCode: "L",
+      modifiers: ["meta"],
+    });
+  });
+  await page.waitForFunction(
+    () => document.activeElement?.id === "browser-address-input",
+  );
+
+  state = await browserState();
+  const tabId = state.activeTabId;
+  assert(tabId);
+  const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
+  const blocked = await callTool(
+    runtimeSessionId,
+    "browser.visible-act",
+    { tabId, action: { type: "click", target: "#submit" } },
+    { idempotencyKey: "visible-browser-blocked-click" },
+  );
+  assert.equal(blocked?.status, "blocked");
+  assert.equal(await activeViewScript("document.querySelector('#result').textContent"), "Waiting");
+
+  const typed = await callTool(
+    runtimeSessionId,
+    "browser.visible-act",
+    { tabId, action: { type: "type", target: "#name", text: "Kestrel" } },
+    {
+      approvalStatus: "approved",
+      idempotencyKey: "visible-browser-approved-type",
+    },
+  );
+  assert.equal(typed?.status, "verified");
+  const clicked = await callTool(
+    runtimeSessionId,
+    "browser.visible-act",
+    { tabId, action: { type: "click", target: "#submit" } },
+    {
+      approvalStatus: "approved",
+      idempotencyKey: "visible-browser-approved-click",
+    },
+  );
+  assert.equal(clicked?.status, "verified");
+  assert.equal(
+    await activeViewScript("document.querySelector('#result').textContent"),
+    "Hello Kestrel",
+  );
+
+  const contextResponse = await page.evaluate(async (activeTabId) =>
+    window.kestrel.request({
+      type: "browser-get-context",
+      tabId: activeTabId,
+    }), tabId);
+  assert.equal(contextResponse.ok, true);
+  assert("browserContext" in contextResponse);
+  assert.equal(contextResponse.browserContext.trust, "untrusted_browser");
+  assert.match(contextResponse.browserContext.visibleText, /robotics reference/);
+  assert(contextResponse.browserContext.forms.some((form) => form.name === "name"));
+
+  const snapshot = await callTool(
+    runtimeSessionId,
+    "browser.visible-snapshot",
+    { tabId },
+    { approvalStatus: "approved" },
+  );
+  assert.equal(snapshot?.status, "verified");
+  assert.equal(snapshot?.output?.trust, "untrusted_browser");
+  const screenshot = await callTool(
+    runtimeSessionId,
+    "browser.visible-screenshot",
+    { tabId },
+    { approvalStatus: "approved" },
+  );
+  assert.equal(screenshot?.status, "verified");
+  assert.match(String(screenshot?.output?.pngBase64 ?? ""), /^iVBOR/);
+
+  const address = page.locator("#browser-address-input");
+  await address.fill(`${origin}/two`);
+  await address.press("Enter");
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/two`,
+    "Second page did not load",
+  );
+  await page.getByRole("button", { name: "Back" }).click();
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/one`,
+    "Back navigation failed",
+  );
+  await page.getByRole("button", { name: "Forward" }).click();
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/two`,
+    "Forward navigation failed",
+  );
+  await page.getByRole("button", { name: "Back" }).click();
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/one`,
+    "Return to fixture failed",
+  );
+
+  await activeViewScript("document.querySelector('#popup').click() ");
+  assert.equal((await browserState()).tabs.length, 1);
+  const openedPopup = await callTool(
+    runtimeSessionId,
+    "browser.visible-act",
+    { tabId, action: { type: "click", target: "#popup" } },
+    {
+      approvalStatus: "approved",
+      idempotencyKey: "visible-browser-approved-popup",
+    },
+  );
+  assert.equal(openedPopup?.status, "verified");
+  const popupState = await page.waitForFunction(
+    async () => {
+      const response = await window.kestrel.request({ type: "browser-get-state" });
+      if (!response.ok || !("browserState" in response)) return false;
+      return response.browserState.tabs.length === 2 &&
+        response.browserState.tabs.some((tab) => tab.url.endsWith("/popup"));
+    },
+  );
+  await popupState.dispose();
+  state = await browserState();
+  const popupTab = state.tabs.find((tab) => tab.url.endsWith("/popup"));
+  assert(popupTab);
+  assert.equal((await nativeViewState()).browserWindowCount, 1);
+  await page.evaluate(async ({ popupTabId, originalTabId }) => {
+    await window.kestrel.request({
+      type: "browser-close-tab",
+      tabId: popupTabId,
+    });
+    await window.kestrel.request({
+      type: "browser-select-tab",
+      tabId: originalTabId,
+    });
+  }, { popupTabId: popupTab.id, originalTabId: tabId });
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/one`,
+    "Original tab was not restored after popup close",
+  );
+
+  await activeViewScript("document.querySelector('#download').click() ");
+  const downloadHandle = await page.waitForFunction(async () => {
+    const response = await window.kestrel.request({ type: "browser-get-state" });
+    if (!response.ok || !("browserState" in response)) return false;
+    return response.browserState.downloads.at(-1)?.status === "completed";
+  });
+  await downloadHandle.dispose();
+  state = await browserState();
+  const download = state.downloads.at(-1);
+  assert(download);
+  assert.equal(download.status, "completed");
+  assert.equal(download.filename, "kestrel-browser.txt");
+  assert.equal(download.canReveal, true);
+  assert.equal(
+    existsSync(join(userData, "browser-downloads", download.filename)),
+    true,
+  );
+  const historyTool = await callTool(
+    runtimeSessionId,
+    "browser.search-history",
+    { query: "Page one", limit: 10 },
+    { approvalStatus: "approved" },
+  );
+  assert.equal(historyTool?.status, "verified");
+  assert.equal(historyTool?.output?.trust, "untrusted_browser");
+  assert(
+    historyTool?.output?.entries?.some((entry) => entry.title === "Page one"),
+  );
+  const downloadsTool = await callTool(
+    runtimeSessionId,
+    "browser.visible-downloads",
+    {},
+    { approvalStatus: "approved" },
+  );
+  assert.equal(downloadsTool?.status, "verified");
+  assert.equal(downloadsTool?.output?.trust, "untrusted_browser");
+  assert.equal(downloadsTool?.output?.downloads?.at(-1)?.filename, "kestrel-browser.txt");
+
+  await page.getByRole("button", { name: "History", exact: true }).last().click();
+  await page.getByRole("heading", { name: "History", exact: true }).waitFor();
+  await waitForNativeView(
+    (value) => value.views.length === 0,
+    "Native page remained attached over History",
+  );
+  await page.getByPlaceholder("Search history").fill("Page one");
+  await page.getByRole("button", { name: /Page one/ }).first().waitFor();
+
+  await page.getByRole("button", { name: "Downloads", exact: true }).last().click();
+  await page.getByRole("heading", { name: "Downloads", exact: true }).waitFor();
+  await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  const browserSettings = page
+    .locator(".settings-nav")
+    .getByRole("button", { name: /^Browser/ });
+  await browserSettings.click();
+  assert.equal(await browserSettings.getAttribute("aria-current"), "page");
+  await page.getByRole("heading", { name: "Browser", exact: true }).waitFor();
+  await page.getByLabel("Search engine").selectOption("brave");
+  assert.equal((await browserState()).settings.searchEngine, "brave");
+  const useCurrentPage = page.getByRole("checkbox", {
+    name: /Use current page/,
+  });
+  await useCurrentPage.uncheck();
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("kestrel:browser-context")),
+    "off",
+  );
+  await useCurrentPage.check();
+
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/one`,
+    "Native page did not return after leaving Settings",
+  );
+  await page.screenshot({
+    path: join(root, "browser-shell.png"),
+    fullPage: false,
+  });
+
+  await application.close();
+  application = undefined;
+  page = undefined;
+
+  await launch();
+  await page.getByRole("tab", { name: /Page one/ }).waitFor();
+  state = await browserState();
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.tabs[0]?.url, `${origin}/one`);
+  assert(state.history.some((entry) => entry.title === "Page one"));
+  assert(state.history.some((entry) => entry.title === "Page two"));
+  assert.equal(state.settings.searchEngine, "brave");
+  assert.equal(state.downloads.at(-1)?.status, "completed");
+  assert.equal(state.downloads.at(-1)?.canReveal, false);
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/one`,
+    "Restored tab did not reload",
+  );
+
+  assert.deepEqual(runtimeErrors, []);
+  process.stdout.write(
+    "Visible browser smoke passed: independent tabs/agents, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, downloads, hidden-view routing, settings, and restart restore.\n",
+  );
+} finally {
+  await application?.close();
+  await new Promise((resolveClose) => server.close(resolveClose));
+  rmSync(root, { recursive: true, force: true });
+}

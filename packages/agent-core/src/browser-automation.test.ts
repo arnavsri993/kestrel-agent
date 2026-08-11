@@ -12,6 +12,8 @@ class FakeBrowser implements BrowserAutomationBackend {
   viewport?: { name: string; width: number; height: number };
   uploaded: string[] = [];
   desktopActions: Array<{ type: string }> = [];
+  visibleActions: BrowserAction[] = [];
+  readonly visibleTabId = "tab-00000000-0000-4000-8000-000000000000";
   async createSession(input: { allowedOrigins: string[]; isolated: true }): Promise<string> { expect(input.isolated).toBe(true); return "backend-1"; }
   async navigate(_id: string, _url: string): Promise<void> {}
   async act(_id: string, action: BrowserAction): Promise<void> { this.actions.push(action); }
@@ -23,6 +25,17 @@ class FakeBrowser implements BrowserAutomationBackend {
   async downloads(): Promise<Array<{ id: string; filename: string; bytes: number; status: "completed"; createdAt: string }>> { return [{ id: "download-1", filename: "report.pdf", bytes: 100, status: "completed", createdAt: "2026-07-22T23:00:00.000Z" }]; }
   async desktopScreenshot(): Promise<ScreenshotFrame> { return { width: 1, height: 1, rgba: Uint8Array.from([0, 0, 0, 255]), png: Uint8Array.from([137, 80, 78, 71]) }; }
   async desktopAct(action: { type: string }): Promise<void> { this.desktopActions.push(action); }
+  async visibleTabs() { return [{ id: this.visibleTabId, title: "Visible", url: "https://example.test/", active: true, loading: false, discarded: false, trust: "untrusted_browser" as const }]; }
+  async visibleContext() { return { tabId: this.visibleTabId, url: "https://example.test/", title: "Visible", selectedText: "", visibleText: "Visible page", headings: ["Visible"], links: [], forms: [], viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0 }, capturedAt: "2026-08-11T12:00:00.000Z", trust: "untrusted_browser" as const }; }
+  async visibleSnapshot() { return { url: "https://example.test/", title: "Visible", accessibilityTree: { role: "document" }, trust: "untrusted_browser" as const }; }
+  async visibleScreenshot() { return { width: 1, height: 1, rgba: Uint8Array.from([0, 0, 0, 255]), png: Uint8Array.from([137, 80, 78, 71]) }; }
+  async visibleHistory() { return { entries: [{ id: "visit-00000000-0000-4000-8000-000000000000", tabId: this.visibleTabId, url: "https://example.test/notes", title: "Research notes", visitedAt: "2026-08-11T12:00:00.000Z" }], trust: "untrusted_browser" as const }; }
+  async visibleDownloads() { return { downloads: [{ id: "download-00000000-0000-4000-8000-000000000000", tabId: this.visibleTabId, filename: "notes.pdf", sourceUrl: "https://example.test/notes.pdf", receivedBytes: 100, totalBytes: 100, status: "completed" as const, startedAt: "2026-08-11T12:00:00.000Z", completedAt: "2026-08-11T12:00:01.000Z", canReveal: true }], trust: "untrusted_browser" as const }; }
+  async visibleAct(_tabId: string, action: BrowserAction) { this.visibleActions.push(action); }
+  async visibleNavigate() {}
+  async visibleCreate() { return { tabId: this.visibleTabId }; }
+  async visibleClose() {}
+  async visibleSelect() {}
   async close(): Promise<void> {}
 }
 
@@ -74,6 +87,98 @@ describe("isolated browser automation and visual validation", () => {
     expect(await runtime.callTool(session.id, "browser.downloads", { browserSessionId }, { approvalStatus: "approved" })).toMatchObject({ output: { downloads: [{ filename: "report.pdf", status: "completed" }] } });
     expect((await runtime.callTool(session.id, "computer.act", { action: { type: "click", x: 10, y: 20 } }, { approvalStatus: "approved", idempotencyKey: "desktop-click" })).status).toBe("verified");
     expect(backend.desktopActions).toEqual([{ type: "click", x: 10, y: 20 }]);
+    database.close();
+  });
+
+  it("keeps visible tabs separate from autonomous sessions and approval-gates mutations", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const backend = new FakeBrowser();
+    const runtime = new AgentRuntime(database);
+    const session = runtime.createSession({ title: "Visible browser" });
+    installBrowserTools(runtime, new BrowserController(backend), session.id);
+
+    const listed = await runtime.callTool(
+      session.id,
+      "browser.tabs",
+      {},
+      { approvalStatus: "approved" },
+    );
+    expect(listed).toMatchObject({
+      status: "verified",
+      output: {
+        tabs: [
+          {
+            id: backend.visibleTabId,
+            active: true,
+            trust: "untrusted_browser",
+          },
+        ],
+      },
+    });
+    await expect(
+      runtime.callTool(
+        session.id,
+        "browser.search-history",
+        { query: "research", limit: 10 },
+        { approvalStatus: "approved" },
+      ),
+    ).resolves.toMatchObject({
+      status: "verified",
+      output: {
+        trust: "untrusted_browser",
+        entries: [{ title: "Research notes" }],
+      },
+    });
+    await expect(
+      runtime.callTool(
+        session.id,
+        "browser.visible-downloads",
+        {},
+        { approvalStatus: "approved" },
+      ),
+    ).resolves.toMatchObject({
+      status: "verified",
+      output: {
+        trust: "untrusted_browser",
+        downloads: [{ filename: "notes.pdf" }],
+      },
+    });
+
+    const action = {
+      tabId: backend.visibleTabId,
+      action: { type: "click" as const, target: "#buy" },
+    };
+    expect(
+      (
+        await runtime.callTool(session.id, "browser.visible-act", action, {
+          idempotencyKey: "visible-click",
+        })
+      ).status,
+    ).toBe("blocked");
+    expect(backend.visibleActions).toEqual([]);
+    expect(
+      (
+        await runtime.callTool(session.id, "browser.visible-act", action, {
+          approvalStatus: "approved",
+          idempotencyKey: "visible-click",
+        })
+      ).status,
+    ).toBe("verified");
+    expect(backend.visibleActions).toEqual([
+      { type: "click", target: "#buy" },
+    ]);
+
+    const autonomous = await new BrowserController(backend).create(
+      session.id,
+      ["https://example.test"],
+    );
+    await expect(
+      new BrowserController(backend).visibleAct(
+        autonomous.browserSessionId,
+        { type: "click", target: "#buy" },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("tab ID is invalid");
     database.close();
   });
 

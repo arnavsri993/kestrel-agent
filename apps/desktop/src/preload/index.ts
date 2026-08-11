@@ -7,6 +7,8 @@ import {
   PetStatusSchema,
   RendererRequestSchema,
   RuntimeEventSchema,
+  UserBrowserCommandSchema,
+  UserBrowserEventSchema,
   type RendererBridge,
   WorkspaceSnapshotSchema,
 } from "@kestrel/shared-types";
@@ -14,6 +16,18 @@ import {
 const bridge: RendererBridge = {
   request: (request) =>
     ipcRenderer.invoke("kestrel:request", RendererRequestSchema.parse(request)),
+  onBrowserEvent(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
+      callback(UserBrowserEventSchema.parse(value));
+    ipcRenderer.on("kestrel:browser-event", listener);
+    return () => ipcRenderer.off("kestrel:browser-event", listener);
+  },
+  onBrowserCommand(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
+      callback(UserBrowserCommandSchema.parse(value));
+    ipcRenderer.on("kestrel:browser-command", listener);
+    return () => ipcRenderer.off("kestrel:browser-command", listener);
+  },
   onDeepLink(callback) {
     const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
       callback(KestrelDeepLinkSchema.parse(value));

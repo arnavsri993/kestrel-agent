@@ -806,10 +806,27 @@ export class AgentRuntime extends EventEmitter {
   }
 
   allowTool(sessionId: string, toolName: string): RuntimeSession {
+    return this.allowTools(sessionId, [toolName]);
+  }
+
+  allowTools(
+    sessionId: string,
+    toolNames: string[],
+    options: { preserveUpdatedAt?: boolean } = {},
+  ): RuntimeSession {
     const session = this.requireSession(sessionId);
-    if (!this.tools.has(toolName)) throw new Error(`Tool ${toolName} is not registered.`);
-    if (session.allowedTools.includes(toolName)) return session;
-    return this.saveSession({ ...session, allowedTools: [...session.allowedTools, toolName], updatedAt: this.now() });
+    const additions = [...new Set(toolNames)].filter(
+      (toolName) => !session.allowedTools.includes(toolName),
+    );
+    for (const toolName of additions)
+      if (!this.tools.has(toolName))
+        throw new Error(`Tool ${toolName} is not registered.`);
+    if (additions.length === 0) return session;
+    return this.saveSession({
+      ...session,
+      allowedTools: [...session.allowedTools, ...additions],
+      updatedAt: options.preserveUpdatedAt ? session.updatedAt : this.now(),
+    });
   }
 
   discoverTools(sessionId: string, query?: string): RuntimeToolDescriptor[] {

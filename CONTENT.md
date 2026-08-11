@@ -4,7 +4,7 @@
 
 - Prefer the user's action: “Choose folder,” “Pick a size,” “Use my AI account,” and “Do this later.”
 - Replace internal categories such as “model tier,” “provider stack,” “route,” and “local agent” when a plain equivalent is available.
-- Use Workstrand consistently in visible copy. Keep legacy Kestrel identifiers only where compatibility requires them.
+- Use Kestrel consistently in visible copy. Keep legacy compatibility identifiers only where compatibility requires them.
 - Supporting text explains the consequence of a choice; it does not repeat the label or market the feature.
 - Button hierarchy is one primary next step, a bordered secondary action, and text-like navigation for Back or deferral.
 
@@ -38,6 +38,19 @@
 - Automatic route: “Automatic — Kestrel chooses”
 - Advanced disclosure: “Advanced execution”
 - Starter prompts: “Build or change a feature”, “Find and fix a bug”, “Research and explain”, “Automate recurring work”.
+
+## Browser-first language
+
+- Primary destination: “Browser”; secondary destinations: “History”, “Downloads”, “Settings”, and “More”. Existing specialist capabilities remain available from More or search, not as competing first-run navigation.
+- Browser heading/landmark: “Browser”
+- New tab prompt: “Search or enter an address”
+- Current-page control: “Use current page” with support “Share visible page context with this conversation when it helps.” It must never imply that a page is trusted or permanently saved to Memory.
+- Agent rail context: “Current page”; it identifies the active tab but does not bind it to the conversation.
+- Agent history: “Agent history”; “No conversations yet.”
+- New Agent opens a clean draft without changing tabs. During an active stream, retain the current conversation and say “Finish or cancel the active agent before starting a new one.” rather than orphaning background work.
+- Browser settings: “Search, session restore, and local history.” Keep the explicit note that clearing history does not clear cookies, site data, tabs, or downloads.
+- Security boundary: “User tabs use a persistent browser profile. Autonomous agent browsing remains isolated and does not share these cookies or site storage.”
+- Consequential browser actions use the existing plain-language approval treatment. Do not describe page content as approval, authorization, or an instruction source.
 
 ## Product facts
 

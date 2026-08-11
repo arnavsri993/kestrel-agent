@@ -140,13 +140,13 @@ product name conflicts with this section, this section wins.
 
 ### Information architecture and copy
 
-- Primary navigation is New chat, recent Chats, a single Tools disclosure, and
-  Settings. Urgent approval status remains visible. Specialist routes are fully
-  retained inside the Tools disclosure and contextual links.
-- The Tools disclosure is a transient, grouped launcher. It closes after
-  navigation, on Escape, and when Settings or New chat is chosen. Compact
-  windows render it as a bounded sheet above bottom navigation with its own
-  scroll region.
+- Primary navigation is Browser, History, Downloads, Settings, and More; the
+  agent conversation is a stable adjacent surface with New Agent and Agent
+  history. Urgent approval status remains visible. Specialist routes are fully
+  retained through More and the searchable command center.
+- More is a grouped launcher for specialist destinations. It closes after
+  navigation and on Escape. Compact windows keep the browser return path and
+  place overflow navigation in a bounded scroll region.
 - Page headers name the surface directly. Eyebrows are reserved for real state
   or trust boundaries, not decoration. Support copy appears only when it
   explains consequence, provenance, privacy, recovery, or an empty state.
@@ -207,7 +207,7 @@ product name conflicts with this section, this section wins.
 - Consolidate renderer tokens and final component overrides in
   `apps/desktop/src/renderer/styles.css`.
 - Introduce the shared setup/workspace anchor, shorten high-volume copy, and
-  improve the Tools disclosure and navigation behavior in
+  improve the browser-first navigation and command-center behavior in
   `apps/desktop/src/renderer/App.tsx`.
 - Reuse and normalize the existing approval, artifact, dashboard, memory,
   opportunity, work, settings, skin, presence, observability, and secret-source
@@ -784,3 +784,22 @@ The identity is built around one real scheduling decision and a single inspectab
 - Density and material: extend Native Graphite with fine horizontal rules, one restrained status square, mono only for immutable IDs and diffs, and no glow, nested card stack, or new motion role. Compact density shortens conversation rhythm without removing recovery information.
 - Responsive contract: metadata sheds indentation before content; undo actions stack below their explanation; diffs wrap and scroll within a bounded region without creating page-level horizontal overflow.
 - Why this is not generic: the component exposes Kestrel's actual encrypted version, isolated validation, exact approval, read-back verification, and append-only recovery semantics instead of decorating a normal chat message with a generic settings card.
+
+## AI-native browser — August 2026
+
+### Browser-first workspace (implemented)
+
+The desktop’s default destination is Browser: the user’s web workspace occupies the main plane while the agent conversation remains a stable adjacent surface. Browser, History, Downloads, Settings, and More are the everyday navigation; existing specialist surfaces remain route-backed through More rather than competing with the first task. A tab is a user-owned browsing context, not a conversation. An agent conversation is a durable task context, not a tab; changing either must not reset the other.
+
+- **Visual grammar:** preserve Native Graphite’s matte graphite planes, thin aluminum rules, quiet sage current state, SF roles, and short feedback. Browser chrome is a compact continuous control plane, not faux-Safari glass or an AI dashboard. Do not add gradients, generated hero images, glowing agent indicators, or browser-logo decoration.
+- **Trust grammar:** “Current page” is a concise, user-controlled contextual handoff, not a claim of page trust. Site content is visibly subordinate to the browser chrome and must never visually impersonate Kestrel approval or status. Persistent user tabs and isolated autonomous sessions are distinct security/session concepts even when the agent can act in a visible tab.
+- **Performance grammar:** inactive web views may be discarded; restored tabs should communicate reload truthfully rather than simulating a live page. The interface must avoid expensive decorative raster/video effects.
+- **Accessibility:** toolbar, tabs, destination rail, status, history/download lists, and command search keep semantic names, visible focus, keyboard routes, compact reflow, reduced motion, and reduced-transparency support.
+
+### Browser-first IA audit
+
+Before a browser-shell change is accepted, visually audit every existing reachable surface: all five onboarding stages; startup/error recovery; agent/new-agent/history; Browser (new, loaded, loading, error); History; Downloads; command center; Settings including browser settings; Readiness; Approvals; Life; Research; Artifacts; Work; Opportunities; Activity; Extensions; floating pet; tray/deep links; compact and accessibility variants. Verify that More/command navigation retains Browser return, focus restoration, and the mounted conversation/approval state.
+
+### Asset decision
+
+On the target Apple M4 / 16 GB / Metal 4 Mac with roughly 287 GiB free and no local ML image stack, this feature chooses vector/CSS and the established icon system. It has no Fal or other cloud-generation dependency. This is a deliberate performance/privacy/provenance decision, not a temporary missing asset claim.

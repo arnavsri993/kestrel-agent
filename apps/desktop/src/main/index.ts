@@ -43,6 +43,10 @@ import { WorkspaceGrantStore } from "./workspace-grant-store";
 import { MigrationManager, PluginInstaller, readBoundedResponseBytes } from "@kestrel/agent-core";
 import { PluginTrustStore } from "./plugin-trust-store";
 import { ElectronBrowserService } from "./electron-browser-service";
+import {
+  UserBrowserService,
+  isUserBrowserBackendWireRequest,
+} from "./user-browser-service";
 import { LocalRuntimeManager } from "./local-runtime-manager";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
 import {
@@ -79,8 +83,16 @@ let tray: Tray | null = null;
 let quitting = false;
 let agentState: AgentState = "idle";
 const browserService = new ElectronBrowserService();
+let userBrowserService: UserBrowserService | null = null;
 const supervisor = new CoreSupervisor(
-  (request, signal) => browserService.handle(request, signal),
+  (request, signal) => {
+    if (isUserBrowserBackendWireRequest(request)) {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return userBrowserService.handleAgentRequest(request, signal);
+    }
+    return browserService.handle(request, signal);
+  },
   () => browserService.closeAll(),
 );
 const providerAuthMonitor = new ProviderAuthMonitor({
@@ -691,6 +703,27 @@ function createMainWindow(): BrowserWindow {
       devTools: !app.isPackaged,
     },
   });
+  userBrowserService?.dispose();
+  userBrowserService = new UserBrowserService({
+    window,
+    statePath: join(app.getPath("userData"), "browser", "state.json"),
+    downloadDirectory: process.env.KESTREL_TEST_USER_DATA
+      ? join(app.getPath("userData"), "browser-downloads")
+      : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+    onEvent: (event) => {
+      if (!window.isDestroyed())
+        window.webContents.send("kestrel:browser-event", event);
+    },
+    onCommand: (command) => {
+      if (!window.isDestroyed()) {
+        // Native WebContentsView pages own focus while the user is browsing.
+        // Return focus to the trusted renderer before asking it to focus the
+        // address field, composer, or command center.
+        window.webContents.focus();
+        window.webContents.send("kestrel:browser-command", command);
+      }
+    },
+  });
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -725,6 +758,8 @@ function createMainWindow(): BrowserWindow {
   });
   window.on("closed", () => {
     if (mainWindow === window) {
+      userBrowserService?.dispose();
+      userBrowserService = null;
       mainWindow = null;
       mainRendererDeepLinkReady = false;
     }
@@ -1134,6 +1169,117 @@ function registerIpc(): void {
       if (!overlayAccess)
         throw new Error("Kestrel rejected a stale pet overlay request.");
       overlayAccess.assertAllowed(request);
+    }
+    if (request.type === "browser-get-state") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return { ok: true, browserState: userBrowserService.getState() };
+    }
+    if (request.type === "browser-create-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.createTab(
+          request.input,
+          request.active,
+        ),
+      };
+    }
+    if (request.type === "browser-close-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.closeTab(request.tabId),
+      };
+    }
+    if (request.type === "browser-select-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.selectTab(request.tabId),
+      };
+    }
+    if (request.type === "browser-navigate") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.navigate(
+          request.tabId,
+          request.input,
+        ),
+      };
+    }
+    if (request.type === "browser-back") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.back(request.tabId),
+      };
+    }
+    if (request.type === "browser-forward") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.forward(request.tabId),
+      };
+    }
+    if (request.type === "browser-reload") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.reload(request.tabId),
+      };
+    }
+    if (request.type === "browser-stop") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.stop(request.tabId),
+      };
+    }
+    if (request.type === "browser-get-context") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserContext: await userBrowserService.pageContext(request.tabId),
+      };
+    }
+    if (request.type === "browser-set-content-bounds") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      await userBrowserService.setContentBounds(request.bounds, request.visible);
+      return { ok: true };
+    }
+    if (request.type === "browser-update-settings") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.updateSettings(request.settings),
+      };
+    }
+    if (request.type === "browser-clear-history") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.clearHistory(),
+      };
+    }
+    if (request.type === "browser-reveal-download") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      userBrowserService.revealDownload(request.downloadId);
+      return { ok: true };
     }
     if (request.type === "get-system-state") {
       const state = app.getLoginItemSettings();
@@ -1975,6 +2121,8 @@ app.on("before-quit", () => {
 });
 app.on("will-quit", () => {
   providerAuthMonitor.stop();
+  userBrowserService?.dispose();
+  userBrowserService = null;
   void Promise.all([
     supervisor.stop(),
     managedLocalRuntime?.stop() ?? Promise.resolve(),

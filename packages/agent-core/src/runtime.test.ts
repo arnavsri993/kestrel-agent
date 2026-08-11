@@ -47,6 +47,37 @@ describe("agent runtime", () => {
     database.close();
   });
 
+  it("can migrate newly registered tools onto existing sessions without changing conversation recency", () => {
+    let now = "2026-07-22T16:00:00.000Z";
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const runtime = new AgentRuntime(database, [], () => now);
+    const session = runtime.createSession({ title: "Existing conversation" });
+    now = "2026-07-22T18:00:00.000Z";
+    runtime.registerExternalTool({
+      descriptor: {
+        name: "browser.fixture",
+        title: "Browser fixture",
+        description: "Fixture browser capability.",
+        category: "browser",
+        riskLevel: "read_only",
+        readOnly: true,
+        requiresWorkspace: false,
+        source: "builtin",
+        tags: ["browser"],
+      },
+      inputSchema: { type: "object", properties: {} },
+      execute: async () => ({ ok: true }),
+    });
+
+    const migrated = runtime.allowTools(session.id, ["browser.fixture"], {
+      preserveUpdatedAt: true,
+    });
+
+    expect(migrated.allowedTools).toContain("browser.fixture");
+    expect(migrated.updatedAt).toBe("2026-07-22T16:00:00.000Z");
+    database.close();
+  });
+
   it("recovers from malformed persisted main-session identity", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     database.setState("runtimeMainSessionId", { id: "not-a-session-id" });
