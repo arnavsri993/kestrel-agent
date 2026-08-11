@@ -133,10 +133,14 @@ export function BrowserWorkspace({
   }
 
   return (
-    <main className="browser-workspace" aria-label="Browser">
+    <main
+      className={`browser-workspace browser-workspace-${state.settings.tabLayout}`}
+      aria-label="Browser"
+    >
       <TabStrip
         tabs={state.tabs}
         activeTabId={state.activeTabId}
+        orientation={state.settings.tabLayout}
         onSelect={(tabId) => void selectTab(tabId)}
         onClose={(tabId) => void closeTab(tabId)}
         onCreate={() => void createTab()}

@@ -1,4 +1,23 @@
 import type { UserBrowserController } from "../../browser/useUserBrowser";
+import type { UserBrowserSettings } from "@kestrel/shared-types";
+
+const SEARCH_ENGINE_OPTIONS = [
+  { value: "duckduckgo", label: "DuckDuckGo" },
+  { value: "google", label: "Google" },
+  { value: "bing", label: "Bing" },
+  { value: "brave", label: "Brave Search" },
+  { value: "ecosia", label: "Ecosia" },
+  { value: "startpage", label: "Startpage" },
+  { value: "yahoo", label: "Yahoo Search" },
+  { value: "kagi", label: "Kagi" },
+  { value: "qwant", label: "Qwant" },
+  { value: "mojeek", label: "Mojeek" },
+  { value: "baidu", label: "Baidu" },
+  { value: "yandex", label: "Yandex" },
+] as const satisfies ReadonlyArray<{
+  value: UserBrowserSettings["searchEngine"];
+  label: string;
+}>;
 
 export function BrowserSettings({
   browser,
@@ -18,6 +37,25 @@ export function BrowserSettings({
       </header>
       <div className="setting-row browser-setting-row">
         <div className="browser-setting-copy">
+          <strong>Tab layout</strong>
+          <small>Place tabs above the page or in a scrollable side rail.</small>
+        </div>
+        <select
+          aria-label="Tab layout"
+          value={settings.tabLayout}
+          onChange={(event) =>
+            void browser.updateSettings({
+              ...settings,
+              tabLayout: event.target.value as typeof settings.tabLayout,
+            })
+          }
+        >
+          <option value="horizontal">Horizontal tabs</option>
+          <option value="vertical">Vertical tabs</option>
+        </select>
+      </div>
+      <div className="setting-row browser-setting-row">
+        <div className="browser-setting-copy">
           <strong>Search engine</strong>
           <small>Used when the address bar contains a search.</small>
         </div>
@@ -26,10 +64,11 @@ export function BrowserSettings({
           value={settings.searchEngine}
           onChange={(event) => void browser.updateSettings({ ...settings, searchEngine: event.target.value as typeof settings.searchEngine })}
         >
-          <option value="duckduckgo">DuckDuckGo</option>
-          <option value="google">Google</option>
-          <option value="brave">Brave Search</option>
-          <option value="bing">Bing</option>
+          {SEARCH_ENGINE_OPTIONS.map((engine) => (
+            <option key={engine.value} value={engine.value}>
+              {engine.label}
+            </option>
+          ))}
         </select>
       </div>
       <label className="setting-row browser-setting-row">

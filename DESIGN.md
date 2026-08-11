@@ -800,6 +800,8 @@ The desktop’s default destination is Browser: the user’s web workspace occup
 - **Trust grammar:** “Current page” is a concise, user-controlled contextual handoff, not a claim of page trust. Site content is visibly subordinate to the browser chrome and must never visually impersonate Kestrel approval or status. Persistent user tabs and isolated autonomous sessions are distinct security/session concepts even when the agent can act in a visible tab.
 - **Performance grammar:** inactive web views may be discarded; restored tabs should communicate reload truthfully rather than simulating a live page. The interface must avoid expensive decorative raster/video effects.
 - **Accessibility:** toolbar, tabs, destination rail, status, history/download lists, and command search keep semantic names, visible focus, keyboard routes, compact reflow, reduced motion, and reduced-transparency support.
+- **Tab layout:** horizontal tabs remain the familiar default; vertical tabs are a persistent, user-selected alternate composition with a scrollable left rail. Both use the same tab lifecycle, selected-state hierarchy, and close/new-tab controls. Horizontal lists use Left/Right while vertical lists use Up/Down; Home and End work in both orientations.
+- **Search choice:** address-bar searches support a broad explicit set of mainstream general, privacy-focused, paid, and regional engines. The selected engine is local browser state, direct host/URL navigation remains unchanged, and arbitrary custom templates are intentionally excluded so renderer input cannot become a navigation-template injection path.
 
 ### Browser-first IA audit
 

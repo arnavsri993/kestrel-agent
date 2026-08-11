@@ -234,6 +234,8 @@ try {
       : -1;
   });
   const initialTabs = (await browserState()).tabs.length;
+  const tabList = page.getByRole("tablist", { name: "Browser tabs" });
+  assert.equal(await tabList.getAttribute("aria-orientation"), "horizontal");
   await page
     .locator(".new-tab-primary-actions button")
     .filter({ hasText: "Open another tab" })
@@ -242,6 +244,14 @@ try {
   assert.equal(state.tabs.length, initialTabs + 1);
   const addedBlankTab = state.activeTabId;
   assert(addedBlankTab);
+  const horizontalTabs = page.getByRole("tab");
+  await horizontalTabs.nth(1).waitFor();
+  await horizontalTabs.first().focus();
+  await horizontalTabs.first().press("ArrowRight");
+  assert.equal(
+    await horizontalTabs.nth(1).evaluate((node) => node === document.activeElement),
+    true,
+  );
   await page.evaluate(async (tabId) => {
     await window.kestrel.request({ type: "browser-close-tab", tabId });
   }, addedBlankTab);
@@ -523,8 +533,11 @@ try {
   await browserSettings.click();
   assert.equal(await browserSettings.getAttribute("aria-current"), "page");
   await page.getByRole("heading", { name: "Tabs, search, and history", exact: true }).waitFor();
-  await page.getByLabel("Search engine").selectOption("brave");
-  assert.equal((await browserState()).settings.searchEngine, "brave");
+  await page.getByLabel("Search engine").selectOption("ecosia");
+  await page.getByLabel("Tab layout").selectOption("vertical");
+  state = await browserState();
+  assert.equal(state.settings.searchEngine, "ecosia");
+  assert.equal(state.settings.tabLayout, "vertical");
   const useCurrentPage = page.getByRole("checkbox", {
     name: /Use current page/,
   });
@@ -536,12 +549,52 @@ try {
   await useCurrentPage.check();
 
   await page.getByRole("button", { name: "Browser", exact: true }).click();
+  await page.getByRole("tablist", { name: "Browser tabs" }).waitFor();
+  assert.equal(
+    await page
+      .getByRole("tablist", { name: "Browser tabs" })
+      .getAttribute("aria-orientation"),
+    "vertical",
+  );
   await waitForNativeView(
     (value) => value.views[0]?.url === `${origin}/one`,
     "Native page did not return after leaving Settings",
   );
+  const verticalViewport = await page.locator("#browser-viewport").boundingBox();
+  assert(verticalViewport);
+  await waitForNativeView(
+    (value) =>
+      value.views[0]?.bounds.x === Math.round(verticalViewport.x) &&
+      value.views[0]?.bounds.y === Math.round(verticalViewport.y) &&
+      value.views[0]?.bounds.width === Math.round(verticalViewport.width) &&
+      value.views[0]?.bounds.height === Math.round(verticalViewport.height),
+    "Native page did not resize for the vertical tab rail",
+  );
+  const inactiveVerticalTabId = await page.evaluate(async () => {
+    const response = await window.kestrel.request({
+      type: "browser-create-tab",
+      active: false,
+    });
+    if (!response.ok || !("browserState" in response))
+      throw new Error("An inactive vertical tab could not be created.");
+    return response.browserState.tabs.at(-1)?.id;
+  });
+  assert(inactiveVerticalTabId);
+  const verticalTabs = page.getByRole("tab");
+  await verticalTabs.nth(1).waitFor();
+  await verticalTabs.first().focus();
+  await verticalTabs.first().press("ArrowDown");
+  assert.equal(
+    await verticalTabs.nth(1).evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page.evaluate(
+    async (tabId) =>
+      window.kestrel.request({ type: "browser-close-tab", tabId }),
+    inactiveVerticalTabId,
+  );
   await page.screenshot({
-    path: join(root, "browser-shell.png"),
+    path: process.env.KESTREL_BROWSER_SCREENSHOT ?? join(root, "browser-shell.png"),
     fullPage: false,
   });
 
@@ -556,7 +609,14 @@ try {
   assert.equal(state.tabs[0]?.url, `${origin}/one`);
   assert(state.history.some((entry) => entry.title === "Page one"));
   assert(state.history.some((entry) => entry.title === "Page two"));
-  assert.equal(state.settings.searchEngine, "brave");
+  assert.equal(state.settings.searchEngine, "ecosia");
+  assert.equal(state.settings.tabLayout, "vertical");
+  assert.equal(
+    await page
+      .getByRole("tablist", { name: "Browser tabs" })
+      .getAttribute("aria-orientation"),
+    "vertical",
+  );
   assert.equal(state.downloads.at(-1)?.status, "completed");
   assert.equal(state.downloads.at(-1)?.canReveal, false);
   await waitForNativeView(
@@ -566,7 +626,7 @@ try {
 
   assert.deepEqual(runtimeErrors, []);
   process.stdout.write(
-    "Visible browser smoke passed: independent tabs/tasks, agent task resume, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, downloads, hidden-view routing, settings, and restart restore.\n",
+    "Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, downloads, search settings, hidden-view routing, and restart restore.\n",
   );
 } finally {
   await application?.close();
