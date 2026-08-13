@@ -38,6 +38,7 @@ const lockOwnerPath = join(lockDirectory, "owner.json");
 
 let child;
 let shuttingDown = false;
+let parentMonitor;
 
 const delay = (milliseconds) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -76,6 +77,7 @@ function removeStaleLock() {
 }
 
 async function acquireLock() {
+  const waitStartedAt = Date.now();
   while (true) {
     try {
       mkdirSync(lockDirectory);
@@ -91,6 +93,10 @@ async function acquireLock() {
       if (ownerPidValue !== null && processIsAlive(ownerPidValue)) {
         if (owner?.parentPid !== process.ppid) {
           console.error("Kestrel desktop development session is already running.");
+          process.exit(0);
+        }
+        if (!owner?.stopping && Date.now() - waitStartedAt >= 5_000) {
+          console.error("Kestrel desktop development restart was superseded.");
           process.exit(0);
         }
         await delay(50);
@@ -113,6 +119,7 @@ function releaseLock() {
 function stop(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
+  if (parentMonitor) clearInterval(parentMonitor);
   if (ownerPid() === process.pid)
     writeFileSync(
       lockOwnerPath,
@@ -142,6 +149,10 @@ if (shuttingDown) {
 child = spawn(electronExecutable, process.argv.slice(2), {
   stdio: "inherit",
 });
+const launcherParentPid = process.ppid;
+parentMonitor = setInterval(() => {
+  if (process.ppid !== launcherParentPid) stop("SIGTERM");
+}, 250);
 child.once("error", (error) => {
   console.error(error);
   releaseLock();
