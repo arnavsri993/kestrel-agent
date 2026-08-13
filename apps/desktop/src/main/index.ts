@@ -69,10 +69,7 @@ import {
   PetOverlayRequestAccess,
   petOverlayActivityForRuntimeEvent,
 } from "./pet-overlay-security";
-import {
-  acquireSingleInstanceLock,
-  terminateForSignal,
-} from "./single-instance";
+import { acquireSingleInstanceLock } from "./single-instance";
 import { canShowMainWindow } from "./startup-window";
 
 let mainWindow: BrowserWindow | null = null;
@@ -647,10 +644,6 @@ app.setPath(
 );
 
 const singleInstance = acquireSingleInstanceLock(app);
-const isDevelopmentProcess =
-  process.env.NODE_ENV_ELECTRON_VITE === "development";
-process.on("SIGTERM", () => terminateForSignal(app, isDevelopmentProcess));
-process.on("SIGINT", () => terminateForSignal(app, isDevelopmentProcess));
 
 for (const deepLink of deepLinksFromArgv(process.argv))
   pendingDeepLinks.enqueue(deepLink);
