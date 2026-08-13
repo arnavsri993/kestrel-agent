@@ -39,6 +39,7 @@ const lockOwnerPath = join(lockDirectory, "owner.json");
 let child;
 let shuttingDown = false;
 let heartbeat;
+let parentMonitor;
 
 const delay = (milliseconds) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -60,7 +61,11 @@ function ownerPid() {
 function writeOwner() {
   writeFileSync(
     lockOwnerPath,
-    JSON.stringify({ pid: process.pid, childPid: child?.pid }),
+    JSON.stringify({
+      pid: process.pid,
+      parentPid: process.ppid,
+      ...(child?.pid ? { childPid: child.pid } : {}),
+    }),
   );
 }
 
@@ -102,7 +107,7 @@ async function acquireLock() {
           console.error("Kestrel desktop development session is already running.");
           process.exit(0);
         }
-        if (!owner?.stopping && Date.now() - waitStartedAt >= 5_000) {
+        if (Date.now() - waitStartedAt >= 5_000) {
           console.error("Kestrel desktop development restart was superseded.");
           process.exit(0);
         }
@@ -127,12 +132,12 @@ function stop(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   if (heartbeat) clearInterval(heartbeat);
+  if (parentMonitor) clearInterval(parentMonitor);
   if (!child) {
     releaseLock();
     process.exit(0);
   }
-  if (child.exitCode === null && child.signalCode === null)
-    child.kill("SIGKILL");
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 }
 
 process.on("SIGTERM", () => stop("SIGTERM"));
@@ -153,6 +158,10 @@ child = spawn(electronExecutable, process.argv.slice(2), {
   },
 });
 writeOwner();
+const launcherParentPid = process.ppid;
+parentMonitor = setInterval(() => {
+  if (process.ppid !== launcherParentPid) stop("SIGTERM");
+}, 250);
 heartbeat = setInterval(() => {
   try {
     writeOwner();
@@ -162,12 +171,14 @@ heartbeat = setInterval(() => {
 }, 100);
 child.once("error", (error) => {
   if (heartbeat) clearInterval(heartbeat);
+  if (parentMonitor) clearInterval(parentMonitor);
   console.error(error);
   releaseLock();
   process.exit(1);
 });
 child.once("close", (code, signal) => {
   if (heartbeat) clearInterval(heartbeat);
+  if (parentMonitor) clearInterval(parentMonitor);
   releaseLock();
   process.exit(code ?? (signal ? 1 : 0));
 });
