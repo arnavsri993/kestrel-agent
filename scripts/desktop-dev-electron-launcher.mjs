@@ -38,7 +38,7 @@ const lockOwnerPath = join(lockDirectory, "owner.json");
 
 let child;
 let shuttingDown = false;
-let parentMonitor;
+let heartbeat;
 
 const delay = (milliseconds) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -57,6 +57,13 @@ function ownerPid() {
   return Number.isInteger(owner?.pid) ? owner.pid : null;
 }
 
+function writeOwner() {
+  writeFileSync(
+    lockOwnerPath,
+    JSON.stringify({ pid: process.pid, childPid: child?.pid }),
+  );
+}
+
 function processIsAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -68,7 +75,10 @@ function processIsAlive(pid) {
 
 function removeStaleLock() {
   const pid = ownerPid();
-  if (pid !== null) return !processIsAlive(pid);
+  if (pid !== null && processIsAlive(pid)) return false;
+  const childPid = readOwner()?.childPid;
+  if (Number.isInteger(childPid) && processIsAlive(childPid)) return false;
+  if (pid !== null) return true;
   try {
     return Date.now() - statSync(lockDirectory).mtimeMs > 10_000;
   } catch {
@@ -81,10 +91,7 @@ async function acquireLock() {
   while (true) {
     try {
       mkdirSync(lockDirectory);
-      writeFileSync(
-        lockOwnerPath,
-        JSON.stringify({ pid: process.pid, parentPid: process.ppid }),
-      );
+      writeOwner();
       return;
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
@@ -119,26 +126,18 @@ function releaseLock() {
 function stop(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
-  if (parentMonitor) clearInterval(parentMonitor);
-  if (ownerPid() === process.pid)
-    writeFileSync(
-      lockOwnerPath,
-      JSON.stringify({ pid: process.pid, parentPid: process.ppid }),
-    );
+  if (heartbeat) clearInterval(heartbeat);
   if (!child) {
     releaseLock();
     process.exit(0);
   }
-  if (child.exitCode === null && child.signalCode === null) child.kill(signal);
-  const forceKillTimer = setTimeout(() => {
-    if (child?.exitCode === null && child.signalCode === null)
-      child.kill("SIGKILL");
-  }, 5_000);
-  forceKillTimer.unref();
+  if (child.exitCode === null && child.signalCode === null)
+    child.kill("SIGKILL");
 }
 
 process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
+process.on("SIGHUP", () => stop("SIGHUP"));
 
 await acquireLock();
 if (shuttingDown) {
@@ -148,17 +147,27 @@ if (shuttingDown) {
 
 child = spawn(electronExecutable, process.argv.slice(2), {
   stdio: "inherit",
+  env: {
+    ...process.env,
+    KESTREL_DEV_ELECTRON_HEARTBEAT: lockOwnerPath,
+  },
 });
-const launcherParentPid = process.ppid;
-parentMonitor = setInterval(() => {
-  if (process.ppid !== launcherParentPid) stop("SIGTERM");
-}, 250);
+writeOwner();
+heartbeat = setInterval(() => {
+  try {
+    writeOwner();
+  } catch {
+    stop("SIGTERM");
+  }
+}, 100);
 child.once("error", (error) => {
+  if (heartbeat) clearInterval(heartbeat);
   console.error(error);
   releaseLock();
   process.exit(1);
 });
 child.once("close", (code, signal) => {
+  if (heartbeat) clearInterval(heartbeat);
   releaseLock();
   process.exit(code ?? (signal ? 1 : 0));
 });
