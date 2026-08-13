@@ -3,6 +3,11 @@ export interface SingleInstanceApplication {
   quit(): void;
 }
 
+export interface TerminatingApplication {
+  quit(): void;
+  exit(code?: number): void;
+}
+
 /**
  * Acquire the desktop app lock before registering startup work.
  *
@@ -16,4 +21,18 @@ export function acquireSingleInstanceLock(
   const ownsLock = application.requestSingleInstanceLock();
   if (!ownsLock) application.quit();
   return ownsLock;
+}
+
+/**
+ * Electron does not reliably terminate a macOS GUI process for the default
+ * SIGTERM handling. The electron-vite watcher sends SIGTERM before starting
+ * the rebuilt process, so development restarts must exit synchronously or the
+ * new process can overlap the old one and create another app instance.
+ */
+export function terminateForSignal(
+  application: TerminatingApplication,
+  isDevelopment: boolean,
+): void {
+  if (isDevelopment) application.exit(0);
+  else application.quit();
 }
