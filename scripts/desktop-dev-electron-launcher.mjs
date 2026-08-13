@@ -123,7 +123,7 @@ function stop(signal) {
   if (ownerPid() === process.pid)
     writeFileSync(
       lockOwnerPath,
-      JSON.stringify({ pid: process.pid, parentPid: process.ppid, stopping: true }),
+      JSON.stringify({ pid: process.pid, parentPid: process.ppid }),
     );
   if (!child) {
     releaseLock();
