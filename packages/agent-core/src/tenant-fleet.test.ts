@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -45,5 +45,37 @@ describe("tenant fleet", () => {
     ]);
 
     expect((await first.list()).map((cell) => cell.tenant)).toEqual(["first", "second"]);
+  });
+
+  it("throws an error if cell creation fails and cleans up the network", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-fleet-error-"));
+    const calls: string[][] = [];
+    const runner: TenantFleetRunner = {
+      run: async (_executable, args) => {
+        calls.push(args);
+        // Fail the container run but pass network creation
+        if (args[0] === "run") return { exitCode: 1, stdout: "", stderr: "container failed" };
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      }
+    };
+    const fleet = new TenantFleet(root, runner);
+    await expect(fleet.create({ tenant: "broken", port: 18792 })).rejects.toThrow("Could not start tenant cell");
+    
+    // It should have tried to remove the network
+    const networkRm = calls.find(args => args[0] === "network" && args[1] === "rm");
+    expect(networkRm).toBeDefined();
+    expect(networkRm).toContain("kestrel-cell-broken");
+  });
+
+  it("throws the original error when reading the cell registry fails for reasons other than ENOENT", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-fleet-error-registry-"));
+    const runner: TenantFleetRunner = { run: async () => ({ exitCode: 0, stdout: "", stderr: "" }) };
+    const fleet = new TenantFleet(root, runner);
+    
+    // Create an invalid cells.json by making it a directory or similar to cause EISDIR or EACCES
+    const registryPath = join(root, "fleet", "cells.json");
+    mkdirSync(registryPath);
+
+    await expect(fleet.list()).rejects.toThrow();
   });
 });
