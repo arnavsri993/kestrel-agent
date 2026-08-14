@@ -114,14 +114,21 @@ export interface ModelProvider {
   close?(): Promise<void>;
 }
 
-export class ModelProviderError extends Error {
+import { KestrelError } from "@kestrel/error-handling";
+
+export class ModelProviderError extends KestrelError {
   constructor(
     message: string,
     readonly providerId: string,
-    readonly retryable: boolean,
+    retryable: boolean,
     readonly status?: number
   ) {
-    super(message);
+    super({
+      code: "model_provider_error",
+      message,
+      retryable,
+      metadata: { providerId, status },
+    });
     this.name = "ModelProviderError";
   }
 }
