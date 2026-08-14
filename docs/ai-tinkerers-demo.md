@@ -19,11 +19,18 @@ assets, downloads and verifies the pinned managed Ollama runtime, requires a
 real local model response, builds the Apple Silicon app, validates its
 development signature, and exercises the packaged executable.
 
-Open the exact artifact produced by the gate:
+Install the exact artifact produced by the gate into the one canonical app
+location, then open it:
 
 ```bash
-open release/mac-arm64/Kestrel.app
+corepack pnpm install:mac:dev
+open -a Kestrel
 ```
+
+Do not copy the bundle to the Desktop or rename it. The installer keeps
+`/Applications/Kestrel.app` as the only user-facing development app and moves
+stale copies in common install locations to Trash; the `release/` bundle stays
+the build artifact.
 
 On the first launch of a rebuilt development app, macOS may ask for access to
 `Kestrel Safe Storage`. Unlock the login keychain and choose **Always Allow**
