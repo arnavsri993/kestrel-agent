@@ -1,4 +1,8 @@
-export interface RemoteWebAsset { contentType: string; body: string; cacheControl: string; }
+export interface RemoteWebAsset {
+	contentType: string;
+	body: string;
+	cacheControl: string;
+}
 
 const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#111510"><meta name="description" content="Securely supervise Kestrel tasks from a paired browser or mobile device."><title>Kestrel Remote</title><link rel="manifest" href="/app/manifest.webmanifest"><link rel="icon" href="/app/icon.svg" type="image/svg+xml"><link rel="stylesheet" href="/app/app.css"></head>
@@ -13,18 +17,64 @@ const css = `:root{color-scheme:dark;--bg:#0d100d;--panel:#151a14;--line:#2a3327
 
 const script = `(()=>{const q=s=>document.querySelector(s);let token=sessionStorage.getItem('kestrel-token')||'';const auth=()=>({authorization:'Bearer '+token});const request=async(path,init={})=>{const r=await fetch(path,{...init,headers:{...(init.body?{'content-type':'application/json'}:{}),...auth(),...(init.headers||{})}});const body=await r.json().catch(()=>({error:'Invalid server response'}));if(!r.ok)throw new Error(body.error||('Request failed: '+r.status));return body};const paired=on=>{q('#pairing').hidden=on;q('#workspace').hidden=!on;q('#status').textContent=on?'Paired · live':'Not paired';q('#status').classList.toggle('live',on)};const escape=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));async function refresh(){const [sessions,jobs]=await Promise.all([request('/v1/sessions'),request('/v1/jobs')]);q('#session').innerHTML=sessions.sessions.map(s=>'<option value="'+escape(s.id)+'">'+escape(s.title)+'</option>').join('');q('#jobs').innerHTML=jobs.jobs.length?jobs.jobs.map(j=>'<article class="card"><div><span class="pill">'+escape(j.status)+'</span><h3>'+escape(j.title)+'</h3><div class="meta">'+escape(j.updatedAt)+'</div></div>'+(j.status==='waiting_approval'?'<button data-resume="'+escape(j.id)+'">Resume approved</button>':'')+'</article>').join(''):'<p class="meta">No scheduled tasks yet.</p>';q('#jobs').querySelectorAll('[data-resume]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await request('/v1/jobs/'+encodeURIComponent(b.dataset.resume)+'/resume',{method:'POST',body:'{}'});await refresh()}catch(e){alert(e.message)}finally{b.disabled=false}})}async function events(){while(token){try{const r=await fetch('/v1/events',{headers:auth()});if(!r.ok)throw new Error('Event stream unavailable');const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='';while(token){const x=await reader.read();if(x.done)break;buffer+=decoder.decode(x.value,{stream:true});const blocks=buffer.split('\n\n');buffer=blocks.pop()||'';for(const block of blocks){const line=block.split('\n').find(v=>v.startsWith('data: '));if(!line)continue;const event=JSON.parse(line.slice(6));const li=document.createElement('li');li.textContent=new Date().toLocaleTimeString()+' · '+(event.type||'runtime update');q('#events').prepend(li);while(q('#events').children.length>30)q('#events').lastChild.remove();await refresh()}}}catch{await new Promise(r=>setTimeout(r,2500))}}}q('#pair-form').onsubmit=async e=>{e.preventDefault();q('#pair-error').textContent='';try{const r=await fetch('/v1/pairings/complete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pairingId:q('#pairing-id').value,code:q('#pairing-code').value})});const body=await r.json();if(!r.ok)throw new Error(body.error||'Pairing failed');token=body.token;sessionStorage.setItem('kestrel-token',token);paired(true);await refresh();void events()}catch(x){q('#pair-error').textContent=x.message}};q('#task-form').onsubmit=async e=>{e.preventDefault();q('#task-error').textContent='';try{const now=new Date(Date.now()+1000).toISOString();await request('/v1/jobs',{method:'POST',body:JSON.stringify({title:q('#title').value,sessionId:q('#session').value,model:q('#model').value,providerIds:q('#providers').value.split(',').map(v=>v.trim()).filter(Boolean),prompt:q('#prompt').value,schedule:{kind:'once',nextRunAt:now}})});q('#title').value='';q('#prompt').value='';await refresh()}catch(x){q('#task-error').textContent=x.message}};q('#refresh').onclick=()=>refresh().catch(x=>alert(x.message));q('#forget').onclick=()=>{token='';sessionStorage.removeItem('kestrel-token');paired(false)};if('serviceWorker'in navigator)navigator.serviceWorker.register('/app/sw.js').catch(()=>{});paired(Boolean(token));if(token){refresh().then(events).catch(()=>{token='';sessionStorage.removeItem('kestrel-token');paired(false)})}})();`;
 
-const manifest = JSON.stringify({ name: "Kestrel Remote", short_name: "Kestrel", description: "Secure remote task supervision", start_url: "/app/", display: "standalone", background_color: "#0d100d", theme_color: "#111510", icons: [{ src: "/app/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }] });
+const manifest = JSON.stringify({
+	name: "Kestrel Remote",
+	short_name: "Kestrel",
+	description: "Secure remote task supervision",
+	start_url: "/app/",
+	display: "standalone",
+	background_color: "#0d100d",
+	theme_color: "#111510",
+	icons: [
+		{
+			src: "/app/icon.svg",
+			sizes: "any",
+			type: "image/svg+xml",
+			purpose: "any maskable",
+		},
+	],
+});
 const serviceWorker = `const CACHE='kestrel-remote-v1',ASSETS=['/','/app/app.css','/app/app.js','/app/manifest.webmanifest','/app/icon.svg'];self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS))));self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(xs=>Promise.all(xs.filter(x=>x!==CACHE).map(x=>caches.delete(x))))));self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||new URL(e.request.url).pathname.startsWith('/v1/'))return;e.respondWith(fetch(e.request).then(r=>{const x=r.clone();caches.open(CACHE).then(c=>c.put(e.request,x));return r}).catch(()=>caches.match(e.request)))})`;
 const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#111510"/><path d="M112 100h84v126l112-126h100L266 254l150 158H308L196 284v128h-84z" fill="#c9ff52"/></svg>`;
 
 const assets: Record<string, RemoteWebAsset> = {
-  "/": { contentType: "text/html; charset=utf-8", body: html, cacheControl: "no-store" },
-  "/app/": { contentType: "text/html; charset=utf-8", body: html, cacheControl: "no-store" },
-  "/app/app.css": { contentType: "text/css; charset=utf-8", body: css, cacheControl: "public, max-age=3600" },
-  "/app/app.js": { contentType: "text/javascript; charset=utf-8", body: script, cacheControl: "no-store" },
-  "/app/manifest.webmanifest": { contentType: "application/manifest+json; charset=utf-8", body: manifest, cacheControl: "public, max-age=3600" },
-  "/app/sw.js": { contentType: "text/javascript; charset=utf-8", body: serviceWorker, cacheControl: "no-cache" },
-  "/app/icon.svg": { contentType: "image/svg+xml; charset=utf-8", body: icon, cacheControl: "public, max-age=86400" }
+	"/": {
+		contentType: "text/html; charset=utf-8",
+		body: html,
+		cacheControl: "no-store",
+	},
+	"/app/": {
+		contentType: "text/html; charset=utf-8",
+		body: html,
+		cacheControl: "no-store",
+	},
+	"/app/app.css": {
+		contentType: "text/css; charset=utf-8",
+		body: css,
+		cacheControl: "public, max-age=3600",
+	},
+	"/app/app.js": {
+		contentType: "text/javascript; charset=utf-8",
+		body: script,
+		cacheControl: "no-store",
+	},
+	"/app/manifest.webmanifest": {
+		contentType: "application/manifest+json; charset=utf-8",
+		body: manifest,
+		cacheControl: "public, max-age=3600",
+	},
+	"/app/sw.js": {
+		contentType: "text/javascript; charset=utf-8",
+		body: serviceWorker,
+		cacheControl: "no-cache",
+	},
+	"/app/icon.svg": {
+		contentType: "image/svg+xml; charset=utf-8",
+		body: icon,
+		cacheControl: "public, max-age=86400",
+	},
 };
 
-export function remoteWebAsset(pathname: string): RemoteWebAsset | undefined { return assets[pathname]; }
+export function remoteWebAsset(pathname: string): RemoteWebAsset | undefined {
+	return assets[pathname];
+}

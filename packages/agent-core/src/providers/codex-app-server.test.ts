@@ -8,16 +8,16 @@ import { textContent } from "./types";
 const roots: string[] = [];
 
 async function fakeAppServer(): Promise<{
-  executable: string;
-  capture: string;
+	executable: string;
+	capture: string;
 }> {
-  const root = await mkdtemp(join(tmpdir(), "kestrel-codex-app-server-test-"));
-  roots.push(root);
-  const executable = join(root, "codex");
-  const capture = `${executable}.capture.jsonl`;
-  await writeFile(
-    executable,
-    `#!/usr/bin/env node
+	const root = await mkdtemp(join(tmpdir(), "kestrel-codex-app-server-test-"));
+	roots.push(root);
+	const executable = join(root, "codex");
+	const capture = `${executable}.capture.jsonl`;
+	await writeFile(
+		executable,
+		`#!/usr/bin/env node
 const fs = require("node:fs");
 const readline = require("node:readline");
 const capture = process.argv[1] + ".capture.jsonl";
@@ -49,19 +49,21 @@ input.on("line", line => {
   }
 });
 `,
-    { mode: 0o700 },
-  );
-  await chmod(executable, 0o700);
-  return { executable, capture };
+		{ mode: 0o700 },
+	);
+	await chmod(executable, 0o700);
+	return { executable, capture };
 }
 
 async function retryableFakeAppServer(): Promise<{ executable: string }> {
-  const root = await mkdtemp(join(tmpdir(), "kestrel-codex-app-server-retry-test-"));
-  roots.push(root);
-  const executable = join(root, "codex");
-  await writeFile(
-    executable,
-    `#!/usr/bin/env node
+	const root = await mkdtemp(
+		join(tmpdir(), "kestrel-codex-app-server-retry-test-"),
+	);
+	roots.push(root);
+	const executable = join(root, "codex");
+	await writeFile(
+		executable,
+		`#!/usr/bin/env node
 const fs = require("node:fs");
 const readline = require("node:readline");
 const attemptsPath = process.argv[1] + ".initialize-attempts";
@@ -88,151 +90,165 @@ input.on("line", line => {
   }
 });
 `,
-    { mode: 0o700 },
-  );
-  await chmod(executable, 0o700);
-  return { executable };
+		{ mode: 0o700 },
+	);
+	await chmod(executable, 0o700);
+	return { executable };
 }
 
 afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
+	await Promise.all(
+		roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+	);
 });
 
 describe("persistent Codex app-server provider", () => {
-  it("restarts after initialization failure instead of reusing an uninitialized process", async () => {
-    const fake = await retryableFakeAppServer();
-    const provider = new CodexAppServerProvider({
-      executable: fake.executable,
-      environment: {
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-      },
-      requestTimeoutMs: 2_000,
-    });
+	it("restarts after initialization failure instead of reusing an uninitialized process", async () => {
+		const fake = await retryableFakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+			environment: {
+				PATH: process.env.PATH,
+				HOME: process.env.HOME,
+			},
+			requestTimeoutMs: 2_000,
+		});
 
-    await expect(provider.probe()).rejects.toThrow("fake initialize failed");
-    await expect(provider.probe()).resolves.toBeUndefined();
-    await provider.close();
-  });
+		await expect(provider.probe()).rejects.toThrow("fake initialize failed");
+		await expect(provider.probe()).resolves.toBeUndefined();
+		await provider.close();
+	});
 
-  it("initializes once, preserves a durable thread, streams turns, and declines vendor-side execution", async () => {
-    const fake = await fakeAppServer();
-    const provider = new CodexAppServerProvider({
-      executable: fake.executable,
-      environment: {
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-        OPENAI_API_KEY: "must-not-leak",
-      },
-      // Vitest starts many fake providers in parallel; allow the child Node
-      // process to start without weakening the provider's production default.
-      requestTimeoutMs: 10_000,
-      turnTimeoutMs: 2_000,
-    });
-    await provider.probe();
-    const write = (provider as unknown as { write(message: Record<string, unknown>): void }).write.bind(provider);
-    expect(() => write({ method: "turn/start", params: { prompt: "x".repeat(8 * 1024 * 1024) } })).toThrow("outbound message exceeded the safety limit");
-    const deltas: string[] = [];
-    const first = await provider.complete(
-      {
-        model: "gpt-test",
-        metadata: { session_id: "session-1", workspace_root: process.cwd() },
-        messages: [
-          { role: "system", content: textContent("Private system context") },
-          { role: "user", content: textContent("First prompt") },
-        ],
-      },
-      {
-        onEvent: (event) => {
-          if (event.type === "text_delta") deltas.push(event.delta);
-        },
-      },
-    );
-    const second = await provider.complete({
-      model: "gpt-test",
-      metadata: { session_id: "session-1", workspace_root: process.cwd() },
-      messages: [
-        { role: "system", content: textContent("Private system context") },
-        { role: "user", content: textContent("First prompt") },
-        { role: "assistant", content: textContent("Persistent answer 1") },
-        { role: "user", content: textContent("Second prompt") },
-      ],
-    });
-    await provider.close();
+	it("initializes once, preserves a durable thread, streams turns, and declines vendor-side execution", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+			environment: {
+				PATH: process.env.PATH,
+				HOME: process.env.HOME,
+				OPENAI_API_KEY: "must-not-leak",
+			},
+			// Vitest starts many fake providers in parallel; allow the child Node
+			// process to start without weakening the provider's production default.
+			requestTimeoutMs: 10_000,
+			turnTimeoutMs: 2_000,
+		});
+		await provider.probe();
+		const write = (
+			provider as unknown as { write(message: Record<string, unknown>): void }
+		).write.bind(provider);
+		expect(() =>
+			write({
+				method: "turn/start",
+				params: { prompt: "x".repeat(8 * 1024 * 1024) },
+			}),
+		).toThrow("outbound message exceeded the safety limit");
+		const deltas: string[] = [];
+		const first = await provider.complete(
+			{
+				model: "gpt-test",
+				metadata: { session_id: "session-1", workspace_root: process.cwd() },
+				messages: [
+					{ role: "system", content: textContent("Private system context") },
+					{ role: "user", content: textContent("First prompt") },
+				],
+			},
+			{
+				onEvent: (event) => {
+					if (event.type === "text_delta") deltas.push(event.delta);
+				},
+			},
+		);
+		const second = await provider.complete({
+			model: "gpt-test",
+			metadata: { session_id: "session-1", workspace_root: process.cwd() },
+			messages: [
+				{ role: "system", content: textContent("Private system context") },
+				{ role: "user", content: textContent("First prompt") },
+				{ role: "assistant", content: textContent("Persistent answer 1") },
+				{ role: "user", content: textContent("Second prompt") },
+			],
+		});
+		await provider.close();
 
-    expect(first).toMatchObject({
-      responseId: "turn-1",
-      text: "Persistent answer 1",
-      usage: { inputTokens: 12, outputTokens: 3, reasoningTokens: 1 },
-    });
-    expect(second).toMatchObject({
-      responseId: "turn-2",
-      text: "Persistent answer 2",
-      usage: { cachedInputTokens: 5 },
-    });
-    expect(deltas.join("")).toBe("Persistent answer 1");
+		expect(first).toMatchObject({
+			responseId: "turn-1",
+			text: "Persistent answer 1",
+			usage: { inputTokens: 12, outputTokens: 3, reasoningTokens: 1 },
+		});
+		expect(second).toMatchObject({
+			responseId: "turn-2",
+			text: "Persistent answer 2",
+			usage: { cachedInputTokens: 5 },
+		});
+		expect(deltas.join("")).toBe("Persistent answer 1");
 
-    const records = (await readFile(fake.capture, "utf8"))
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            pid: number;
-            value: Record<string, unknown> & {
-              params?: Record<string, unknown>;
-              result?: Record<string, unknown>;
-            };
-          },
-      );
-    expect(new Set(records.map((record) => record.pid))).toHaveLength(1);
-    expect(
-      records.filter((record) => record.value.method === "initialize"),
-    ).toHaveLength(1);
-    expect(
-      records.filter((record) => record.value.method === "thread/start"),
-    ).toHaveLength(1);
-    const turns = records.filter(
-      (record) => record.value.method === "turn/start",
-    );
-    expect(turns).toHaveLength(2);
-    expect(
-      (
-        (turns[0]!.value.params!.input as Array<{ text: string }>)[0]!.text
-      ),
-    ).toContain("Private system context");
-    expect(
-      (
-        (turns[1]!.value.params!.input as Array<{ text: string }>)[0]!.text
-      ),
-    ).toBe("Second prompt");
-    expect(
-      records.filter(
-        (record) =>
-          record.value.result &&
-          record.value.result.decision === "decline",
-      ),
-    ).toHaveLength(2);
-    expect(
-      records.some((record) =>
-        JSON.stringify(record.value).includes("must-not-leak"),
-      ),
-    ).toBe(false);
-  });
+		const records = (await readFile(fake.capture, "utf8"))
+			.trim()
+			.split("\n")
+			.map(
+				(line) =>
+					JSON.parse(line) as {
+						pid: number;
+						value: Record<string, unknown> & {
+							params?: Record<string, unknown>;
+							result?: Record<string, unknown>;
+						};
+					},
+			);
+		expect(new Set(records.map((record) => record.pid))).toHaveLength(1);
+		expect(
+			records.filter((record) => record.value.method === "initialize"),
+		).toHaveLength(1);
+		expect(
+			records.filter((record) => record.value.method === "thread/start"),
+		).toHaveLength(1);
+		const turns = records.filter(
+			(record) => record.value.method === "turn/start",
+		);
+		expect(turns).toHaveLength(2);
+		expect(
+			(turns[0]!.value.params!.input as Array<{ text: string }>)[0]!.text,
+		).toContain("Private system context");
+		expect(
+			(turns[1]!.value.params!.input as Array<{ text: string }>)[0]!.text,
+		).toBe("Second prompt");
+		expect(
+			records.filter(
+				(record) =>
+					record.value.result && record.value.result.decision === "decline",
+			),
+		).toHaveLength(2);
+		expect(
+			records.some((record) =>
+				JSON.stringify(record.value).includes("must-not-leak"),
+			),
+		).toBe(false);
+	});
 
-  it.each([Number.NaN, Number.POSITIVE_INFINITY])("normalizes malformed request and turn timeouts: %s", async (timeoutMs) => {
-    const fake = await fakeAppServer();
-    const provider = new CodexAppServerProvider({ executable: fake.executable, requestTimeoutMs: timeoutMs, turnTimeoutMs: timeoutMs });
-    try {
-      await provider.probe();
-      await expect(provider.complete({ model: "gpt-test", messages: [{ role: "user", content: textContent("First prompt") }] })).resolves.toMatchObject({
-        providerId: "codex-subscription",
-        text: "Persistent answer 1"
-      });
-    } finally {
-      await provider.close();
-    }
-  });
+	it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+		"normalizes malformed request and turn timeouts: %s",
+		async (timeoutMs) => {
+			const fake = await fakeAppServer();
+			const provider = new CodexAppServerProvider({
+				executable: fake.executable,
+				requestTimeoutMs: timeoutMs,
+				turnTimeoutMs: timeoutMs,
+			});
+			try {
+				await provider.probe();
+				await expect(
+					provider.complete({
+						model: "gpt-test",
+						messages: [{ role: "user", content: textContent("First prompt") }],
+					}),
+				).resolves.toMatchObject({
+					providerId: "codex-subscription",
+					text: "Persistent answer 1",
+				});
+			} finally {
+				await provider.close();
+			}
+		},
+	);
 });

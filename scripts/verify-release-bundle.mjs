@@ -6,22 +6,22 @@ import { verifyLocalReleaseBundle } from "./release-distribution-verifier.mjs";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
 const desktopPackage = JSON.parse(
-  await readFile(
-    resolve(repositoryRoot, "apps", "desktop", "package.json"),
-    "utf8",
-  ),
+	await readFile(
+		resolve(repositoryRoot, "apps", "desktop", "package.json"),
+		"utf8",
+	),
 );
 const version = resolveReleaseVersion(
-  desktopPackage.version,
-  process.env.GITHUB_REF_NAME,
+	desktopPackage.version,
+	process.env.GITHUB_REF_NAME,
 );
 const releaseDirectory = resolve(process.argv[2] ?? "release");
 
 const result = await verifyLocalReleaseBundle({
-  releaseDirectory,
-  version,
-  expectedCommit: process.env.GITHUB_SHA ?? "",
+	releaseDirectory,
+	version,
+	expectedCommit: process.env.GITHUB_SHA ?? "",
 });
 console.log(
-  `Verified ${result.artifacts.length} Kestrel ${result.version} artifacts from ${result.commit}.`,
+	`Verified ${result.artifacts.length} Kestrel ${result.version} artifacts from ${result.commit}.`,
 );
