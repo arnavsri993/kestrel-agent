@@ -389,6 +389,9 @@ describe("UserBrowserService", () => {
     service.updateSettings({ ...service.getState().settings, historyRetentionDays: 7 });
     expect(service.getState().history).toEqual([]);
 
+    service.updateSettings({ ...service.getState().settings, newTabBackground: "meadow" });
+    expect(service.getState().settings.newTabBackground).toBe("meadow");
+
     view.emit("did-navigate", {}, "https://new.example/", 200, "OK");
     expect(service.getState().history).toHaveLength(1);
     service.updateSettings({ ...service.getState().settings, historyRetentionDays: 0 });
