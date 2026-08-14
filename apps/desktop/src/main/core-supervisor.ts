@@ -144,6 +144,7 @@ export class CoreSupervisor extends EventEmitter {
                   "HONCHO_API_KEY",
                   "FAL_KEY",
                   "KESTREL_REMOTE_TARGETS",
+                  "KESTREL_CHANNEL_CONFIG",
                   "KESTREL_GOOGLE_WORKSPACE_OAUTH",
                 ].includes(key),
             ),

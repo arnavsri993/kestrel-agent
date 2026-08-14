@@ -86,7 +86,11 @@ port.on("message", async ({ data }) => {
     try {
       const database = new KestrelDatabase(message.config.databasePath, Buffer.from(message.config.encryptionKeyBase64, "base64"));
       const webAccess = environmentWebAccessOptions(message.config.secureEnvironment);
-      const configuredChannels = environmentChannelConfiguration();
+      // Channel credentials live in the owner-only config file referenced by
+      // the brokered runtime environment. Do not fall back to the utility
+      // process environment: packaged launches intentionally receive only the
+      // allowlisted secure environment from the main process.
+      const configuredChannels = environmentChannelConfiguration(message.config.secureEnvironment);
       const googleWorkspace = environmentGoogleWorkspaceClient(message.config.secureEnvironment);
       const channels = googleWorkspace ? {
         adapters: [...(configuredChannels?.adapters ?? []), googleWorkspace.gmailAdapter],

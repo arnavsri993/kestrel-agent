@@ -55,6 +55,7 @@ describe("desktop credential broker", () => {
       KESTREL_OPENAI_SPEECH_MODEL: "gpt-4o-mini-tts",
       KESTREL_OPENAI_VOICE: "alloy",
       KESTREL_OLLAMA_CONTEXT_WINDOW: "32768",
+      KESTREL_CHANNEL_CONFIG: "/Users/example/.config/kestrel/channels.json",
       UNRELATED_SECRET: "do-not-forward"
     };
     const environment = await broker.providerEnvironment(baseEnvironment);
@@ -73,6 +74,7 @@ describe("desktop credential broker", () => {
       KESTREL_OPENAI_SPEECH_MODEL: "gpt-4o-mini-tts",
       KESTREL_OPENAI_VOICE: "alloy",
       KESTREL_OLLAMA_CONTEXT_WINDOW: "32768",
+      KESTREL_CHANNEL_CONFIG: "/Users/example/.config/kestrel/channels.json",
       KESTREL_GOOGLE_WORKSPACE_OAUTH: "{\"refreshToken\":\"refresh-secret\"}"
     });
     expect(await broker.providerEnvironment(baseEnvironment)).toEqual(environment);

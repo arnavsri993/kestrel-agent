@@ -265,7 +265,8 @@ export class CredentialBroker {
       ...(base.KESTREL_CLAUDE_SUBSCRIPTION_MODEL ? { KESTREL_CLAUDE_SUBSCRIPTION_MODEL: base.KESTREL_CLAUDE_SUBSCRIPTION_MODEL } : {}),
       ...(base.KESTREL_WEB_ALLOW_PUBLIC ? { KESTREL_WEB_ALLOW_PUBLIC: base.KESTREL_WEB_ALLOW_PUBLIC } : {}),
       ...Object.fromEntries(BROKERED_NON_SECRET_ENVIRONMENT_KEYS.flatMap((key) => base[key] ? [[key, base[key]]] : [])),
-      ...(base.KESTREL_REMOTE_TARGETS ? { KESTREL_REMOTE_TARGETS: base.KESTREL_REMOTE_TARGETS } : {})
+      ...(base.KESTREL_REMOTE_TARGETS ? { KESTREL_REMOTE_TARGETS: base.KESTREL_REMOTE_TARGETS } : {}),
+      ...(base.KESTREL_CHANNEL_CONFIG ? { KESTREL_CHANNEL_CONFIG: base.KESTREL_CHANNEL_CONFIG } : {})
     };
     for (const id of Object.keys(BROKERED_CREDENTIALS) as BrokeredCredentialId[]) {
       const stored = await this.getCredential(id);
