@@ -99,7 +99,6 @@ import { UsageGovernor } from "./usage-governor";
 import type { VoiceTranscriptionProvider } from "./media-providers";
 import { ObservabilityManager } from "./observability";
 import { selectBrowserContext } from "./browser-context";
-import { DreamingManager } from "./dreaming";
 import { PresenceManager } from "./presence";
 import { NativeNodeManager } from "./native-nodes";
 import {
@@ -190,7 +189,6 @@ export class AgentCore {
   readonly artifacts?: ArtifactManager;
   readonly managedPolicy: ManagedPolicyStore;
   readonly observability: ObservabilityManager;
-  readonly dreaming: DreamingManager;
   readonly presence: PresenceManager;
   readonly nativeNodes: NativeNodeManager;
   readonly eventApplications: EventApplicationManager;
@@ -300,10 +298,6 @@ export class AgentCore {
     this.honchoMemory = new HonchoMemoryProvider(
       deps.database,
       deps.honchoApiKey,
-    );
-    this.dreaming = new DreamingManager(
-      deps.database,
-      () => new Date(this.now()),
     );
     this.presence = new PresenceManager(() => new Date(this.now()));
     this.nativeNodes = new NativeNodeManager(() => new Date(this.now()));
@@ -1705,23 +1699,6 @@ export class AgentCore {
             ok: true,
             honchoMemoryStatus: await this.honchoMemory.verify(),
           };
-        case "dreaming-get":
-          return { ok: true, dreamingStatus: this.dreaming.status() };
-        case "dreaming-set":
-          return {
-            ok: true,
-            dreamingStatus: this.dreaming.configure(request.configuration),
-          };
-        case "dreaming-run":
-          return {
-            ok: true,
-            dreamingStatus: this.dreaming.run(request.preview),
-          };
-        case "dreaming-review":
-          return {
-            ok: true,
-            dreamingStatus: this.dreaming.review(request.id, request.decision),
-          };
         case "presence-list":
           this.presence.beacon({
             instanceId: this.coreInstanceId,
@@ -2697,7 +2674,6 @@ export class AgentCore {
       mode: "node",
       reason: "isolated agent core",
     });
-    this.dreaming.runIfDue(at);
     this.configuration.runImprovementScanIfDue(at);
     this.lifeContext.maintain();
     await this.lifeContext.syncGoogleIfStale(at);
@@ -2943,7 +2919,6 @@ export {
   ObservabilityManager,
   renderPrometheusMetrics,
 } from "./observability";
-export { DEFAULT_DREAMING_CONFIGURATION, DreamingManager } from "./dreaming";
 export {
   CONFIGURATION_TOOL_NAMES,
   DEFAULT_AGENT_CONFIGURATION,
