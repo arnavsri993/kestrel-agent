@@ -25,3 +25,11 @@ export function developmentHeartbeatIsStale(
 ): boolean {
 	return now - lastHeartbeatAt > maxAgeMs;
 }
+
+export function developmentHeartbeatIsStale(
+  lastHeartbeatAt: number,
+  now: number,
+  maxAgeMs: number,
+): boolean {
+  return now - lastHeartbeatAt > maxAgeMs;
+}

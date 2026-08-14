@@ -1,40 +1,40 @@
 {
-	"name": "@kestrel/desktop",
-	"version": "0.1.0",
-	"private": true,
-	"type": "module",
-	"description": "A local-first personal agent with visible approvals and verified actions.",
-	"author": "Kestrel contributors",
-	"main": "out/main/index.js",
-	"scripts": {
-		"dev": "KESTREL_RELEASE_CHANNEL=development ELECTRON_EXEC_PATH=../../scripts/desktop-dev-electron-launcher.mjs electron-vite dev --watch",
-		"build": "electron-vite build",
-		"typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
-		"preview": "KESTREL_RELEASE_CHANNEL=development electron-vite preview",
-		"package:mac:dev": "KESTREL_RELEASE_CHANNEL=development pnpm build && CSC_FOR_PULL_REQUEST=true KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac dir --arm64 --config electron-builder.dev.yml && node ../../scripts/verify-development-macos-app.mjs ../../release/mac-arm64/Kestrel.app",
-		"package:mac:mdm": "pnpm build && KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac pkg --arm64 --config electron-builder.yml"
-	},
-	"dependencies": {
-		"@kestrel/agent-core": "workspace:*",
-		"@kestrel/database": "workspace:*",
-		"@kestrel/encryption": "workspace:*",
-		"@kestrel/shared-types": "workspace:*",
-		"better-sqlite3": "13.0.1",
-		"electron-updater": "6.8.9",
-		"motion": "12.42.2",
-		"react": "19.2.8",
-		"react-dom": "19.2.8",
-		"sharp": "0.35.3",
-		"zod": "4.4.3"
-	},
-	"devDependencies": {
-		"@types/react": "19.2.14",
-		"@types/react-dom": "19.2.3",
-		"@vitejs/plugin-react": "5.2.0",
-		"electron": "43.2.0",
-		"electron-builder": "26.15.3",
-		"electron-vite": "5.0.0",
-		"typescript": "5.9.3",
-		"vite": "7.3.6"
-	}
+  "name": "@kestrel/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local-first personal agent with visible approvals and verified actions.",
+  "author": "Kestrel contributors",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "KESTREL_RELEASE_CHANNEL=development ELECTRON_EXEC_PATH=../../scripts/desktop-dev-electron-launcher.mjs electron-vite dev --watch",
+    "build": "electron-vite build",
+    "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
+    "preview": "KESTREL_RELEASE_CHANNEL=development electron-vite preview",
+    "package:mac:dev": "KESTREL_RELEASE_CHANNEL=development pnpm build && CSC_FOR_PULL_REQUEST=true KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac dir --arm64 --config electron-builder.dev.yml && node ../../scripts/verify-development-macos-app.mjs ../../release/mac-arm64/Kestrel.app",
+    "package:mac:mdm": "pnpm build && KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac pkg --arm64 --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@kestrel/agent-core": "workspace:*",
+    "@kestrel/database": "workspace:*",
+    "@kestrel/encryption": "workspace:*",
+    "@kestrel/shared-types": "workspace:*",
+    "better-sqlite3": "13.0.1",
+    "electron-updater": "6.8.9",
+    "motion": "12.42.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "sharp": "0.35.3",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  }
 }

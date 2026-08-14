@@ -5,23 +5,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const electron = vi.hoisted(() => {
   class Emitter {
-    handlers = new Map<string, Array<(...args: any[]) => void>>();
-    on(name: string, handler: (...args: any[]) => void) {
+    handlers = new Map<string, Array<(...args: unknown[]) => void>>();
+    on(name: string, handler: (...args: unknown[]) => void) {
       this.handlers.set(name, [...(this.handlers.get(name) ?? []), handler]);
       return this;
     }
-    once(name: string, handler: (...args: any[]) => void) {
-      const once = (...args: any[]) => {
+    once(name: string, handler: (...args: unknown[]) => void) {
+      const once = (...args: unknown[]) => {
         this.off(name, once);
         handler(...args);
       };
       return this.on(name, once);
     }
-    off(name: string, handler: (...args: any[]) => void) {
+    off(name: string, handler: (...args: unknown[]) => void) {
       this.handlers.set(name, (this.handlers.get(name) ?? []).filter((item) => item !== handler));
       return this;
     }
-    emit(name: string, ...args: any[]) {
+    emit(name: string, ...args: unknown[]) {
       for (const handler of this.handlers.get(name) ?? []) handler(...args);
     }
   }
@@ -187,7 +187,10 @@ describe("UserBrowserService", () => {
 
   it("denies permission checks and requests by default", () => {
     const { service } = createService();
-    const partition = electron.state.partitions[0]!.instance as any;
+    const partition = electron.state.partitions[0]!.instance as MockSession & {
+      permissionCheckHandler: (webContents: unknown, permission: string, requestingOrigin: string) => boolean;
+      permissionRequestHandler: (webContents: unknown, permission: string, callback: (isAllowed: boolean) => void) => void;
+    };
     expect(partition.permissionCheckHandler({}, "notifications", "https://example.com")).toBe(false);
     const callback = vi.fn();
     partition.permissionRequestHandler({}, "media", callback);
