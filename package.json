@@ -10,7 +10,6 @@
   },
   "scripts": {
     "dev": "pnpm --filter @kestrel/desktop dev",
-    "dev:desktop": "pnpm --filter @kestrel/desktop dev",
     "dev:website": "pnpm --filter @kestrel/website dev",
     "cli": "tsx apps/cli/src/index.ts",
     "build": "pnpm -r --if-present build",
