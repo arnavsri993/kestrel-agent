@@ -69,7 +69,10 @@ import {
   PetOverlayRequestAccess,
   petOverlayActivityForRuntimeEvent,
 } from "./pet-overlay-security";
-import { acquireSingleInstanceLock } from "./single-instance";
+import {
+  acquireSingleInstanceLock,
+  developmentHeartbeatIsStale,
+} from "./single-instance";
 import { canShowMainWindow } from "./startup-window";
 
 let mainWindow: BrowserWindow | null = null;
@@ -644,6 +647,23 @@ app.setPath(
 );
 
 const singleInstance = acquireSingleInstanceLock(app);
+const developmentHeartbeatPath = process.env.KESTREL_DEV_ELECTRON_HEARTBEAT;
+if (process.env.NODE_ENV_ELECTRON_VITE === "development" && developmentHeartbeatPath) {
+  const heartbeatMonitor = setInterval(() => {
+    let lastHeartbeatAt: number;
+    try {
+      lastHeartbeatAt = statSync(developmentHeartbeatPath).mtimeMs;
+    } catch {
+      clearInterval(heartbeatMonitor);
+      process.exit(0);
+      return;
+    }
+    if (!developmentHeartbeatIsStale(lastHeartbeatAt, Date.now(), 1_000)) return;
+    clearInterval(heartbeatMonitor);
+    process.exit(0);
+  }, 250);
+  app.on("will-quit", () => clearInterval(heartbeatMonitor));
+}
 
 for (const deepLink of deepLinksFromArgv(process.argv))
   pendingDeepLinks.enqueue(deepLink);

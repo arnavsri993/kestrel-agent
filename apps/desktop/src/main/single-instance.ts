@@ -17,3 +17,11 @@ export function acquireSingleInstanceLock(
   if (!ownsLock) application.quit();
   return ownsLock;
 }
+
+export function developmentHeartbeatIsStale(
+  lastHeartbeatAt: number,
+  now: number,
+  maxAgeMs: number,
+): boolean {
+  return now - lastHeartbeatAt > maxAgeMs;
+}
