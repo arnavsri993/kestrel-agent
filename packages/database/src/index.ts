@@ -533,9 +533,9 @@ export class KestrelDatabase {
   truncateRuntimeMessages(sessionId: string, keepCount: number): void {
     if (!Number.isInteger(keepCount) || keepCount < 0) throw new Error("Message truncation count is invalid.");
     this.db.transaction(() => {
-      const ids = this.db.prepare("SELECT message_id FROM runtime_message_order WHERE session_id = ? AND sequence > ? ORDER BY sequence DESC").all(sessionId, keepCount) as Array<{ message_id: string }>;
-      const remove = this.db.prepare("DELETE FROM runtime_messages WHERE id = ? AND session_id = ?");
-      for (const { message_id } of ids) remove.run(message_id, sessionId);
+      
+      this.db.prepare("DELETE FROM runtime_messages WHERE session_id = ? AND id IN (SELECT message_id FROM runtime_message_order WHERE session_id = ? AND sequence > ?)").run(sessionId, sessionId, keepCount);
+      
     })();
   }
 

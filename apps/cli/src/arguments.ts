@@ -8,6 +8,9 @@ export type CliCommand =
   | { name: "session-resume"; sessionId: string }
   | { name: "session-cancel"; sessionId: string }
   | { name: "session-messages"; sessionId: string }
+  | { name: "memory-list" }
+  | { name: "memory-search"; query: string }
+  | { name: "memory-forget"; memoryId: string }
   | { name: "tools"; sessionId: string; query?: string }
   | {
       name: "run";
