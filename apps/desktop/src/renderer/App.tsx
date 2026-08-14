@@ -4724,7 +4724,7 @@ function Work({
         goals={goals}
         sessions={sessions}
         busy={busy}
-        onTaskUpdate={({ goalId, taskId, taskStatus, assigneeSessionId }) =>
+        onTaskUpdate={({ goalId, taskId, taskStatus, assigneeSessionId }: any) =>
           mutate({
             type: "orchestration-goal-update",
             goalId,
@@ -4733,7 +4733,7 @@ function Work({
             ...(assigneeSessionId !== undefined ? { assigneeSessionId } : {}),
           })
         }
-        onCompleteGoal={(goalId) =>
+        onCompleteGoal={(goalId: any) =>
           mutate({
             type: "orchestration-goal-update",
             goalId,
@@ -8102,7 +8102,7 @@ export function App() {
               <DashboardExtensions
                 snapshot={snapshot}
                 sessions={runtimeSessions}
-                onNavigate={(destination) =>
+                onNavigate={(destination: any) =>
                   setPage(destination === "connections" ? "settings" : destination)
                 }
               />
