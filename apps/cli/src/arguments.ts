@@ -617,23 +617,6 @@ function parseRemoteCommand(args: string[]): CliCommand {
 	throw new Error("Unknown remote command.");
 }
 
-function parseMemoryCommand(args: string[]): CliCommand {
-	const action = args[1];
-	if (action === "list") {
-		options(args.slice(2), []);
-		return { name: "memory-list" };
-	}
-	if (action === "search") {
-		const values = options(args.slice(2), ["query"]);
-		return { name: "memory-search", query: required(values, "query") };
-	}
-	if (action === "forget") {
-		const values = options(args.slice(2), ["memory"]);
-		return { name: "memory-forget", memoryId: required(values, "memory") };
-	}
-	throw new Error("Unknown memory command.");
-}
-
 export function parseCliArguments(input: string[]): CliCommand {
 	let args = input;
 	if (args[0] === "--") args = args.slice(1);
@@ -646,9 +629,6 @@ export function parseCliArguments(input: string[]): CliCommand {
 		return { name: "help" };
 	if (args[0] === "session") {
 		return parseSessionCommand(args);
-	}
-	if (args[0] === "memory") {
-		return parseMemoryCommand(args);
 	}
 	if (args[0] === "tools") {
 		const values = options(args.slice(1), ["session", "query"]);

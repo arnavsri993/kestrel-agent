@@ -271,16 +271,6 @@ export async function runCli(args: string[]): Promise<void> {
 			process.stdout.write(
 				`${JSON.stringify(core.runtime.listMessages(command.sessionId), null, 2)}\n`,
 			);
-		else if (command.name === "memory-list")
-			process.stdout.write(`${JSON.stringify(core.memory.list(), null, 2)}\n`);
-		else if (command.name === "memory-search")
-			process.stdout.write(
-				`${JSON.stringify(core.memory.search(command.query), null, 2)}\n`,
-			);
-		else if (command.name === "memory-forget")
-			process.stdout.write(
-				`${JSON.stringify(core.memory.forget(command.memoryId), null, 2)}\n`,
-			);
 		else if (command.name === "tools")
 			process.stdout.write(
 				`${JSON.stringify(core.runtime.discoverTools(command.sessionId, command.query), null, 2)}\n`,
