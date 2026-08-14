@@ -1,6 +1,6 @@
 export function canShowMainWindow(
-  appReady: boolean,
-  coreStartupComplete: boolean,
+	appReady: boolean,
+	coreStartupComplete: boolean,
 ): boolean {
-  return appReady && coreStartupComplete;
+	return appReady && coreStartupComplete;
 }
