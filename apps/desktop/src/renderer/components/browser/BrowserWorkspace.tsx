@@ -14,17 +14,25 @@ import { TabStrip } from "./TabStrip";
 
 export function BrowserWorkspace({
   browser,
+  agentName,
+  agentOpen,
   contextEnabled,
   onToggleContext,
+  onToggleAgent,
   onNewAgent,
+  onOpenSettings,
   onOpenHistory,
   onOpenDownloads,
   onOpenMenu,
 }: {
   browser: UserBrowserController;
+  agentName: string;
+  agentOpen: boolean;
   contextEnabled: boolean;
   onToggleContext(): void;
-  onNewAgent(): void;
+  onToggleAgent(): void;
+  onNewAgent(prompt?: string): void;
+  onOpenSettings(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
   onOpenMenu(): void;
@@ -147,9 +155,12 @@ export function BrowserWorkspace({
       />
       <BrowserToolbar
         tab={activeTab}
+        agentName={agentName}
+        agentOpen={agentOpen}
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
         contextEnabled={contextEnabled}
         onToggleContext={onToggleContext}
+        onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}
         onBack={() => void back(activeTab.id)}
         onForward={() => void forward(activeTab.id)}
@@ -172,9 +183,11 @@ export function BrowserWorkspace({
         {!activeTab.url && (
           <NewTabPage
             history={state.history}
+            background={state.settings.newTabBackground}
             onNavigate={(input) => void navigate(activeTab.id, input)}
             onNewTab={() => void createTab()}
             onNewAgent={onNewAgent}
+            onOpenSettings={onOpenSettings}
           />
         )}
         {activeTab.error && (

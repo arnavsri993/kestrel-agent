@@ -123,6 +123,15 @@ const pages = [
   ["settings", "Settings"],
 ] as const;
 type Page = (typeof pages)[number][0];
+type SettingsSection =
+  | "connections"
+  | "browser"
+  | "general"
+  | "models"
+  | "intelligence"
+  | "extensions"
+  | "privacy"
+  | "advanced";
 const commandDestinations: CommandDestination[] = [
   { id: "browser", label: "Browser", detail: "Open tabs and browse the web", icon: "browser", group: "Browse" },
   { id: "agent", label: "Agent", detail: "Start, find, and resume your work", icon: "agent", group: "Agent" },
@@ -2230,6 +2239,7 @@ function RuntimeConversation({
   configurationUi,
   browserContext,
   newAgentRequestId,
+  newAgentPrompt,
   onNewAgent,
 }: {
   visible: boolean;
@@ -2242,6 +2252,7 @@ function RuntimeConversation({
   configurationUi: WorkspaceSnapshot["configuration"]["ui"];
   browserContext?(): Promise<UserBrowserPageContext | undefined>;
   newAgentRequestId: number;
+  newAgentPrompt: string;
   onNewAgent(): void;
 }) {
   const [messages, setMessages] = useState<RuntimeMessage[]>([]);
@@ -2332,12 +2343,12 @@ function RuntimeConversation({
     }
     activeSessionIdRef.current = null;
     onActiveSession(null);
-    setInput("");
+    setInput(newAgentPrompt);
     setAttachments([]);
     setCheckpointSummary("");
     setError("");
     window.setTimeout(() => promptRef.current?.focus(), 0);
-  }, [busy, newAgentRequestId, onActiveSession]);
+  }, [busy, newAgentPrompt, newAgentRequestId, onActiveSession]);
 
   async function refreshSessions() {
     const response = (await window.kestrel.request({
@@ -7018,6 +7029,7 @@ function ApprovalRulesSettings() {
 function Settings({
   snapshot,
   update,
+  initialSection,
   skinStatus,
   onSkinStatus,
   petStatus,
@@ -7028,6 +7040,7 @@ function Settings({
 }: {
   snapshot: WorkspaceSnapshot;
   update(next: WorkspaceSnapshot): void;
+  initialSection?: SettingsSection;
   skinStatus: SkinStatus | null;
   onSkinStatus(next: SkinStatus): void;
   petStatus: PetStatus | null;
@@ -7042,16 +7055,9 @@ function Settings({
   } | null>(null);
   const [confirmation, setConfirmation] = useState("");
   const [resetError, setResetError] = useState("");
-  const [section, setSection] = useState<
-    | "connections"
-    | "browser"
-    | "general"
-    | "models"
-    | "intelligence"
-    | "extensions"
-    | "privacy"
-    | "advanced"
-  >("connections");
+  const [section, setSection] = useState<SettingsSection>(
+    initialSection ?? "connections",
+  );
   useEffect(() => {
     void window.kestrel
       .request({ type: "get-system-state" })
@@ -7647,6 +7653,11 @@ export function App() {
   const [petActivity, setPetActivity] = useState<PetActivityState>("idle");
   const petActivityTimer = useRef<number | null>(null);
   const [page, setPage] = useState<Page>("browser");
+  const [agentSidebarOpen, setAgentSidebarOpen] = useState(
+    () => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
+  );
+  const [settingsSectionRequest, setSettingsSectionRequest] =
+    useState<SettingsSection | null>(null);
   const [browserContextEnabled, setBrowserContextEnabled] = useState(
     () => localStorage.getItem("kestrel:browser-context") !== "off",
   );
@@ -7659,6 +7670,7 @@ export function App() {
     string | null
   >(null);
   const [newAgentRequestId, setNewAgentRequestId] = useState(0);
+  const [newAgentPrompt, setNewAgentPrompt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deepLinkNotice, setDeepLinkNotice] = useState("");
   const [onboarded, setOnboarded] = useState(
@@ -7670,14 +7682,33 @@ export function App() {
   const openRuntimeSession = useCallback((sessionId: string | null) => {
     setActiveRuntimeSessionId(sessionId);
   }, []);
-  const startNewAgent = useCallback(() => {
+  const startNewAgent = useCallback((prompt = "") => {
+    setNewAgentPrompt(prompt);
     setNewAgentRequestId((current) => current + 1);
+    setAgentSidebarOpen(true);
+    localStorage.setItem("kestrel:agent-sidebar", "open");
+  }, []);
+  const toggleAgentSidebar = useCallback(() => {
+    setAgentSidebarOpen((current) => {
+      const next = !current;
+      localStorage.setItem("kestrel:agent-sidebar", next ? "open" : "collapsed");
+      window.requestAnimationFrame(() => {
+        document
+          .getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
+          ?.focus();
+      });
+      return next;
+    });
   }, []);
   const openBrowser = useCallback(() => setPage("browser"), []);
   const openAgent = useCallback(() => setPage("agent"), []);
   const openBrowserHistory = useCallback(() => setPage("history"), []);
   const openBrowserDownloads = useCallback(() => setPage("downloads"), []);
   const openCommandCenter = useCallback(() => setPage("commands"), []);
+  const openSettings = useCallback((section?: SettingsSection) => {
+    setSettingsSectionRequest(section ?? null);
+    setPage("settings");
+  }, []);
   const closeCommandCenter = useCallback(() => {
     setPage("browser");
     window.requestAnimationFrame(() =>
@@ -7693,7 +7724,10 @@ export function App() {
         | "downloads"
         | "settings"
         | "commands",
-    ) => setPage(destination),
+    ) => {
+      if (destination === "settings") setSettingsSectionRequest(null);
+      setPage(destination);
+    },
     [],
   );
   useEffect(
@@ -7707,6 +7741,7 @@ export function App() {
         }
         if (action === "settings") {
           setDeepLinkNotice("");
+          setSettingsSectionRequest(null);
           setPage("settings");
           return;
         }
@@ -7945,6 +7980,10 @@ export function App() {
     (tab) => tab.id === browser.state?.activeTabId,
   );
   const effectiveAgentState = runtimeAgentState ?? snapshot.agentState;
+  const activeAgentName =
+    snapshot.personality.available.find(
+      (personality) => personality.id === snapshot.personality.selectedId,
+    )?.name ?? "Kestrel";
   const pendingApprovalCount =
     snapshot.approvals.filter((approval) => approval.status === "pending")
       .length + (runtimeAgentState === "waiting_approval" ? 1 : 0);
@@ -7976,7 +8015,7 @@ export function App() {
     <ProductShellTransition>
     <motion.div
       key="workspace"
-      className={`ai-browser-app unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+      className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
       initial={reduced ? false : { opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: reduced ? 1 : 0 }}
@@ -7986,9 +8025,12 @@ export function App() {
         sessions={runtimeSessions}
         activeSessionId={activeRuntimeSessionId}
         {...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
+        agentName={activeAgentName}
+        collapsed={!agentSidebarOpen}
         agentState={effectiveAgentState}
         activeDestination={page}
         onNewAgent={startNewAgent}
+        onToggleAgent={toggleAgentSidebar}
         onOpenSession={openRuntimeSession}
         onNavigate={openPrimaryDestination}
       >
@@ -8004,6 +8046,7 @@ export function App() {
           onRuntimeAgentState={setRuntimeAgentState}
           configurationUi={snapshot.configuration.ui}
           newAgentRequestId={newAgentRequestId}
+          newAgentPrompt={newAgentPrompt}
           onNewAgent={startNewAgent}
           {...(browserContextEnabled
             ? { browserContext: () => browser.pageContext() }
@@ -8017,9 +8060,13 @@ export function App() {
         {page === "browser" && (
           <BrowserWorkspace
             browser={browser}
+            agentName={activeAgentName}
+            agentOpen={agentSidebarOpen}
             contextEnabled={browserContextEnabled}
             onToggleContext={toggleBrowserContext}
+            onToggleAgent={toggleAgentSidebar}
             onNewAgent={startNewAgent}
+            onOpenSettings={() => openSettings("browser")}
             onOpenHistory={openBrowserHistory}
             onOpenDownloads={openBrowserDownloads}
             onOpenMenu={openCommandCenter}
@@ -8056,6 +8103,9 @@ export function App() {
             <Settings
               snapshot={snapshot}
               update={setSnapshot}
+              {...(settingsSectionRequest
+                ? { initialSection: settingsSectionRequest }
+                : {})}
               skinStatus={skinStatus}
               onSkinStatus={updateSkinStatus}
               petStatus={petStatus}

@@ -17,6 +17,7 @@ import {
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
   searchEngine: "duckduckgo",
   tabLayout: "horizontal",
+  newTabBackground: "graphite",
   restoreSession: true,
   historyRetentionDays: 90,
 };

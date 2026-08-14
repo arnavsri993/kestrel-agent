@@ -4,9 +4,12 @@ import { Icon } from "../Icon";
 
 export function BrowserToolbar({
   tab,
+  agentName,
+  agentOpen,
   addressRef,
   contextEnabled,
   onToggleContext,
+  onToggleAgent,
   onNavigate,
   onBack,
   onForward,
@@ -17,9 +20,12 @@ export function BrowserToolbar({
   onOpenMenu,
 }: {
   tab: UserBrowserTab;
+  agentName: string;
+  agentOpen: boolean;
   addressRef: RefObject<HTMLInputElement | null>;
   contextEnabled: boolean;
   onToggleContext(): void;
+  onToggleAgent(): void;
   onNavigate(input: string): void;
   onBack(): void;
   onForward(): void;
@@ -101,6 +107,18 @@ export function BrowserToolbar({
         <span>{contextEnabled ? "Page on" : "Page off"}</span>
       </button>
       <div className="browser-toolbar-actions">
+        <button
+          id="browser-agent-toggle"
+          type="button"
+          className={`browser-agent-toggle ${agentOpen ? "active" : ""}`}
+          aria-label={agentOpen ? `Minimize ${agentName}` : `Open ${agentName}`}
+          aria-expanded={agentOpen}
+          title={agentOpen ? `Minimize ${agentName}` : `Chat with ${agentName}`}
+          onClick={onToggleAgent}
+        >
+          <Icon name="chat" />
+          <span>{agentOpen ? agentName : `Chat with ${agentName}`}</span>
+        </button>
         <button type="button" aria-label="History" onClick={onOpenHistory}>
           <Icon name="history" />
         </button>

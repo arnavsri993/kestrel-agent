@@ -71,7 +71,9 @@ describe("browser address normalization", () => {
       restoreSession: true,
       historyRetentionDays: 90,
     };
-    expect(UserBrowserSettingsSchema.safeParse(base).success).toBe(true);
+    const parsed = UserBrowserSettingsSchema.safeParse(base);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.newTabBackground).toBe("graphite");
     expect(
       UserBrowserSettingsSchema.safeParse({ ...base, tabLayout: "stacked" })
         .success,
@@ -156,6 +158,7 @@ describe("browser tab persistence", () => {
     expect(store.load().settings).toMatchObject({
       tabLayout: "horizontal",
       searchEngine: "ecosia",
+      newTabBackground: "graphite",
     });
   });
 

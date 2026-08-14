@@ -1,5 +1,6 @@
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import type { UserBrowserSettings } from "@kestrel/shared-types";
+import { NEW_TAB_BACKGROUND_OPTIONS } from "./new-tab";
 
 const SEARCH_ENGINE_OPTIONS = [
   { value: "duckduckgo", label: "DuckDuckGo" },
@@ -120,7 +121,51 @@ export function BrowserSettings({
         </div>
         <button type="button" className="button secondary" onClick={() => void browser.clearHistory()} disabled={!browser.state?.history.length}>Clear history</button>
       </div>
+      <NewTabPersonalization browser={browser} />
       <p className="browser-security-note">User tabs use a persistent browser profile. Autonomous agent browsing remains isolated and does not share these cookies or site storage.</p>
     </section>
+  );
+}
+
+export function NewTabPersonalization({
+  browser,
+}: {
+  browser: UserBrowserController;
+}) {
+  const settings = browser.state?.settings;
+  return (
+    <article className="setting-row new-tab-personalization-setting">
+      <div>
+        <strong>Personalization</strong>
+        <p>
+          Choose the local backdrop behind Kestrel home, frequent tabs, and
+          recommendations. This changes appearance only.
+        </p>
+        <fieldset className="new-tab-background-picker" disabled={!settings}>
+          <legend className="sr-only">New tab background</legend>
+          {NEW_TAB_BACKGROUND_OPTIONS.map((option) => (
+            <button
+              type="button"
+              key={option.value}
+              className={`new-tab-background-option new-tab-background-option-${option.value} ${settings?.newTabBackground === option.value ? "selected" : ""}`}
+              aria-pressed={settings?.newTabBackground === option.value}
+              onClick={() => {
+                if (!settings) return;
+                void browser.updateSettings({
+                  ...settings,
+                  newTabBackground: option.value,
+                });
+              }}
+            >
+              <span className="new-tab-background-preview" aria-hidden="true" />
+              <span>
+                <strong>{option.label}</strong>
+                <small>{option.detail}</small>
+              </span>
+            </button>
+          ))}
+        </fieldset>
+      </div>
+    </article>
   );
 }
