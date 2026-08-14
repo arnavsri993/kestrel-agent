@@ -249,7 +249,7 @@ try {
 		})
 		.click();
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
-	await page.getByRole("heading", { name: "Where to?" }).waitFor();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await capture(page, "workspace-new-agent-and-tab.png", 360);
 
 	await page
@@ -282,7 +282,7 @@ try {
 		.locator(".agent-sidebar-footer")
 		.getByRole("button", { name: "Browser", exact: true })
 		.click();
-	await page.getByRole("heading", { name: "Where to?" }).waitFor();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 
 	await page.getByLabel("Task settings").click();
 	await page.getByText("Task settings", { exact: true }).waitFor();
@@ -401,7 +401,7 @@ try {
 		.first()
 		.click();
 	await page.getByRole("button", { name: "Browser", exact: true }).click();
-	await page.getByRole("heading", { name: "Where to?" }).waitFor();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await page.setViewportSize({ width: 640, height: 760 });
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 	await capture(page, "compact-new-agent.png");

@@ -3599,7 +3599,7 @@ button:disabled {
   height: 58px;
   background: linear-gradient(145deg, #292e30, #151718);
 }
-.new-tab-background-option-meadow .new-tab-background-preview { background: linear-gradient(160deg, #355c52 0 40%, #1e4037 40% 65%, #10241f 65%); }
+.new-tab-background-option-meadow .new-tab-background-preview { background: #1b3c31 url("./assets/new-tab-meadow.svg") center / cover no-repeat; }
 .new-tab-background-option-dawn .new-tab-background-preview { background: linear-gradient(145deg, #efd8bb, #dfb294 46%, #b87968); }
 .new-tab-background-option-paper .new-tab-background-preview { background: linear-gradient(145deg, #f0eee7, #d9ddd9 52%, #b9c5c4); }
 .new-tab-background-option > span:last-child { display: grid; gap: 3px; padding: 0 9px 10px; }

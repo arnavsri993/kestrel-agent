@@ -8,7 +8,7 @@ export const NEW_TAB_BACKGROUND_OPTIONS: ReadonlyArray<{
   detail: string;
 }> = [
   { value: "graphite", label: "Graphite", detail: "Quiet and focused" },
-  { value: "meadow", label: "Meadow", detail: "Deep green terrain" },
+  { value: "meadow", label: "Meadow", detail: "Terraced green landscape" },
   { value: "dawn", label: "Dawn", detail: "Warm morning light" },
   { value: "paper", label: "Paper", detail: "Bright and minimal" },
 ];

@@ -184,6 +184,7 @@ export function BrowserWorkspace({
           <NewTabPage
             history={state.history}
             background={state.settings.newTabBackground}
+            agentName={agentName}
             onNavigate={(input) => void navigate(activeTab.id, input)}
             onNewTab={() => void createTab()}
             onNewAgent={onNewAgent}

@@ -1,6 +1,7 @@
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import type { UserBrowserSettings } from "@kestrel/shared-types";
 import { NEW_TAB_BACKGROUND_OPTIONS } from "./new-tab";
+import meadowLandscape from "../../assets/new-tab-meadow.svg";
 
 const SEARCH_ENGINE_OPTIONS = [
   { value: "duckduckgo", label: "DuckDuckGo" },
@@ -139,7 +140,8 @@ export function NewTabPersonalization({
         <strong>Personalization</strong>
         <p>
           Choose the local backdrop behind Kestrel home, frequent tabs, and
-          recommendations. This changes appearance only.
+          recommendations. This changes appearance only and never changes
+          browser data or agent behavior.
         </p>
         <fieldset className="new-tab-background-picker" disabled={!settings}>
           <legend className="sr-only">New tab background</legend>
@@ -157,7 +159,15 @@ export function NewTabPersonalization({
                 });
               }}
             >
-              <span className="new-tab-background-preview" aria-hidden="true" />
+              <span
+                className="new-tab-background-preview"
+                aria-hidden="true"
+                style={
+                  option.value === "meadow"
+                    ? { backgroundImage: `url("${meadowLandscape}")` }
+                    : undefined
+                }
+              />
               <span>
                 <strong>{option.label}</strong>
                 <small>{option.detail}</small>
