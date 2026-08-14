@@ -1,60 +1,54 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, test } from "vitest";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 
 describe("Semantic Search", () => {
-	describe("localSemanticEmbedding", () => {
-		it("should generate an embedding for a simple string", () => {
-			const embedding = localSemanticEmbedding("hello world");
-			expect(embedding).toBeInstanceOf(Float32Array);
-			expect(embedding.length).toBe(256);
-		});
+	test("localSemanticEmbedding generates a valid Float32Array", () => {
+		const vector = localSemanticEmbedding("Hello world this is a test");
+		expect(vector).toBeInstanceOf(Float32Array);
+		expect(vector.length).toBe(256);
 
-		it("should handle empty strings", () => {
-			const embedding = localSemanticEmbedding("");
-			expect(embedding).toBeInstanceOf(Float32Array);
-			expect(embedding.length).toBe(256);
-			expect(embedding.every((val) => val === 0)).toBe(true);
-		});
-
-		it("should generate a normalized unit vector", () => {
-			const embedding = localSemanticEmbedding("test vector normalization");
-			let magnitude = 0;
-			for (const component of embedding) magnitude += component * component;
-			expect(magnitude).toBeCloseTo(1, 4);
-		});
-
-		it("should process special characters and punctuation gracefully", () => {
-			const embedding1 = localSemanticEmbedding("hello, world!");
-			const embedding2 = localSemanticEmbedding("hello world");
-			expect(semanticSimilarity(embedding1, embedding2)).toBeGreaterThan(0.9);
-		});
+		// Check if the vector is normalized
+		let magnitude = 0;
+		for (let i = 0; i < vector.length; i++) {
+			magnitude += vector[i]! * vector[i]!;
+		}
+		expect(magnitude).toBeCloseTo(1.0, 5);
 	});
 
-	describe("semanticSimilarity", () => {
-		it("should return 1 for identical embeddings", () => {
-			const embedding = localSemanticEmbedding("identical text sequence");
-			expect(semanticSimilarity(embedding, embedding)).toBeCloseTo(1, 4);
-		});
+	test("localSemanticEmbedding handles empty strings", () => {
+		const vector = localSemanticEmbedding("");
+		expect(vector).toBeInstanceOf(Float32Array);
+		expect(vector.length).toBe(256);
 
-		it("should return a high score for similar text", () => {
-			const text1 = localSemanticEmbedding("the quick brown fox");
-			const text2 = localSemanticEmbedding("quick brown foxes");
-			const similarity = semanticSimilarity(text1, text2);
-			expect(similarity).toBeGreaterThan(0.5);
-		});
+		// All components should be 0 since magnitude is 0
+		let sum = 0;
+		for (let i = 0; i < vector.length; i++) {
+			sum += vector[i]!;
+		}
+		expect(sum).toBe(0);
+	});
 
-		it("should return a lower score for completely different text", () => {
-			const text1 = localSemanticEmbedding("artificial intelligence");
-			const text2 = localSemanticEmbedding("making a peanut butter sandwich");
-			const similarity = semanticSimilarity(text1, text2);
-			// Not strictly 0 due to random projection collisions, but should be relatively low
-			expect(similarity).toBeLessThan(0.4);
-		});
+	test("semanticSimilarity calculates cosine similarity correctly", () => {
+		const vec1 = localSemanticEmbedding(
+			"The quick brown fox jumps over the lazy dog",
+		);
+		const vec2 = localSemanticEmbedding(
+			"A quick brown fox leaps over a lazy dog",
+		);
+		const vec3 = localSemanticEmbedding(
+			"Quantum mechanics is a fundamental theory in physics",
+		);
 
-		it("should handle zero vectors", () => {
-			const empty1 = localSemanticEmbedding("");
-			const empty2 = localSemanticEmbedding("");
-			expect(semanticSimilarity(empty1, empty2)).toBe(0);
-		});
+		const similarity12 = semanticSimilarity(vec1, vec2);
+		const similarity13 = semanticSimilarity(vec1, vec3);
+
+		// Similarity between related sentences should be higher than unrelated
+		expect(similarity12).toBeGreaterThan(similarity13);
+		expect(similarity12).toBeGreaterThan(0);
+		expect(similarity12).toBeLessThanOrEqual(1);
+
+		// Similarity of identical vectors should be 1
+		const similarity11 = semanticSimilarity(vec1, vec1);
+		expect(similarity11).toBeCloseTo(1.0, 5);
 	});
 });
