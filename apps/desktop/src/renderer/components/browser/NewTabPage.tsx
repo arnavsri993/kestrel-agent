@@ -1,8 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import type {
-  UserBrowserHistoryEntry,
-  UserBrowserSettings,
-} from "@kestrel/shared-types";
+import type { UserBrowserHistoryEntry } from "@kestrel/shared-types";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import {
@@ -193,8 +190,4 @@ export function NewTabPage({
       </div>
     </section>
   );
-}
-
-export function isNewTabBackground(value: string): value is UserBrowserSettings["newTabBackground"] {
-  return ["graphite", "meadow", "dawn", "paper"].includes(value);
 }
