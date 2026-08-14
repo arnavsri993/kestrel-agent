@@ -1,7 +1,11 @@
 import type { ApprovalLevel, RiskLevel } from "@kestrel/shared-types";
 
 const injectionPatterns = [
-  /ignore (all|any|the) (previous|prior|user|system) instructions/i,
+  /(ignore|forget|disregard)\s*(?:(?:all|any|the)\s+)?(?:previous|prior|user|system)\s+instructions/i,
+  /do not follow(?: the)? (?:previous|prior|user|system) instructions/i,
+  /bypass(?: all)?(?: security)? guardrails/i,
+  /(?:extract|dump|reveal|print|return|show).{0,30}system prompt/i,
+  /system prompt(:|\s)/i,
   /(upload|send|exfiltrate).{0,30}(all|every).{0,20}(file|document|secret)/i,
   /(reveal|print|return).{0,20}(api key|password|token|secret)/i,
   /you are now (?:the )?(?:system|administrator|developer)/i
