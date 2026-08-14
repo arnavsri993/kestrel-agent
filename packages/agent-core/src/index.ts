@@ -1313,6 +1313,7 @@ export class AgentCore {
             ),
           };
         case "runtime-retry-agent": {
+          this.runtime.getSessionForExecution(request.sessionId);
           this.abortActiveStreamsForHistoryRollback(request.sessionId);
           const priorMessage = this.runtime.retryLastTurnMessage(
             request.sessionId,
@@ -1455,6 +1456,16 @@ export class AgentCore {
           return {
             ok: true,
             session: this.runtime.cancelSession(request.sessionId),
+          };
+        case "runtime-set-session-archived":
+          if (request.archived)
+            this.assertSessionCanArchive(request.sessionId);
+          return {
+            ok: true,
+            session: this.runtime.setSessionArchived(
+              request.sessionId,
+              request.archived,
+            ),
           };
         case "runtime-append-message":
           return {
@@ -2328,6 +2339,7 @@ export class AgentCore {
             ),
           };
         case "runtime-run-agent": {
+          this.runtime.getSessionForExecution(request.sessionId);
           if (request.streamId && this.activeStreams.has(request.streamId))
             throw new Error("Agent stream ID is already active.");
           const controller = new AbortController();
@@ -2510,6 +2522,8 @@ export class AgentCore {
             throw new Error("Agent stream ID is already active.");
           const controller = new AbortController();
           const waitingRun = this.deps.database.getAgentRun(request.runId);
+          if (waitingRun)
+            this.runtime.getSessionForExecution(waitingRun.sessionId);
           const rejectedConfigurationProposalId =
             request.approvalDecision === "rejected" &&
             waitingRun?.pendingToolName === "agent.config.apply" &&
@@ -2712,6 +2726,48 @@ export class AgentCore {
           ),
         );
     }
+  }
+
+  private assertSessionCanArchive(sessionId: string): void {
+    this.runtime.assertSessionTreeCanArchive(sessionId);
+    const relatedSessionIds = new Set([sessionId]);
+    let foundDescendant = true;
+    while (foundDescendant) {
+      foundDescendant = false;
+      for (const session of this.runtime.listSessions()) {
+        if (
+          session.parentSessionId &&
+          relatedSessionIds.has(session.parentSessionId) &&
+          !relatedSessionIds.has(session.id)
+        ) {
+          relatedSessionIds.add(session.id);
+          foundDescendant = true;
+        }
+      }
+    }
+    if (
+      [...this.activeStreams.values()].some((active) =>
+        relatedSessionIds.has(active.sessionId),
+      )
+    )
+      throw new Error(
+        "Finish or cancel this task and its delegated work before archiving it.",
+      );
+    const activeJob = this.orchestrator
+      .listJobs()
+      .find(
+        (job) =>
+          relatedSessionIds.has(job.sessionId) &&
+          (job.status === "running" || job.status === "waiting_approval"),
+      );
+    if (activeJob?.status === "waiting_approval")
+      throw new Error(
+        "Resolve the pending approval before archiving this task.",
+      );
+    if (activeJob)
+      throw new Error(
+        "Finish or cancel this task and its delegated work before archiving it.",
+      );
   }
 
   async close(): Promise<void> {

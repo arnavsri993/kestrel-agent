@@ -4496,13 +4496,23 @@ function Work({
   sessions: RuntimeSession[];
   onSessions(sessions: RuntimeSession[]): void;
 }) {
+  const currentSessions = useMemo(
+    () => sessions.filter((session) => !session.archivedAt),
+    [sessions],
+  );
+  const currentSessionIds = useMemo(
+    () => new Set(currentSessions.map((session) => session.id)),
+    [currentSessions],
+  );
   const [goals, setGoals] = useState<GoalRecordContract[]>([]);
   const [teams, setTeams] = useState<TeamRecordContract[]>([]);
   const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
   const [routingTraces, setRoutingTraces] = useState<RoutingTrace[]>([]);
   const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
   const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
-  const [parentSessionId, setParentSessionId] = useState(sessions[0]?.id ?? "");
+  const [parentSessionId, setParentSessionId] = useState(
+    currentSessions[0]?.id ?? "",
+  );
   const [providerId, setProviderId] = useState("auto");
   const [model, setModel] = useState(
     () => localStorage.getItem("kestrel:model") ?? "auto",
@@ -4523,22 +4533,25 @@ function Work({
   const [handoffSummary, setHandoffSummary] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const children = sessions.filter(
+  const children = currentSessions.filter(
     (session) => session.parentSessionId === parentSessionId,
+  );
+  const currentGoals = goals.filter((goal) =>
+    currentSessionIds.has(goal.sessionId),
   );
 
   useEffect(() => {
-    if (sessions.length === 0) {
+    if (currentSessions.length === 0) {
       if (parentSessionId) setParentSessionId("");
       return;
     }
     if (
       !parentSessionId ||
-      !sessions.some((session) => session.id === parentSessionId)
+      !currentSessions.some((session) => session.id === parentSessionId)
     ) {
-      setParentSessionId(sessions[0]!.id);
+      setParentSessionId(currentSessions[0]!.id);
     }
-  }, [parentSessionId, sessions]);
+  }, [currentSessions, parentSessionId]);
 
   async function load() {
     const [state, providerState, sessionState, localModelState, traceState] = await Promise.all([
@@ -4721,8 +4734,8 @@ function Work({
         </button>
       </div>
       <GoalKanban
-        goals={goals}
-        sessions={sessions}
+        goals={currentGoals}
+        sessions={currentSessions}
         busy={busy}
         onTaskUpdate={({ goalId, taskId, taskStatus, assigneeSessionId }) =>
           mutate({
@@ -4778,7 +4791,7 @@ function Work({
                 setTeamMembers([]);
               }}
             >
-              {sessions.map((session) => (
+              {currentSessions.map((session) => (
                 <option key={session.id} value={session.id}>
                   {sessionTitleForDisplay(session.title)}
                 </option>
@@ -5074,7 +5087,7 @@ function Work({
               onChange={(event) => setHandoffChild(event.target.value)}
             >
               <option value="">Choose child</option>
-              {sessions
+              {currentSessions
                 .filter((session) => session.parentSessionId)
                 .map((session) => (
                   <option key={session.id} value={session.id}>
@@ -5122,48 +5135,54 @@ function Work({
         {jobs.length === 0 ? (
           <p>No scheduled jobs yet.</p>
         ) : (
-          jobs.map((job) => (
-            <article className="work-row" key={job.id}>
-              <div>
-                <strong>{job.title}</strong>
-                <p>
-                  {job.status} · next{" "}
-                  {new Date(job.schedule.nextRunAt).toLocaleString()}
-                </p>
-                {job.error && <small>{job.error}</small>}
-              </div>
-              <div className="button-row">
-                {job.status === "waiting_approval" && (
-                  <button
-                    className="button primary"
-                    disabled={busy}
-                    onClick={() =>
-                      void mutate({
-                        type: "orchestration-job-resume",
-                        jobId: job.id,
-                      })
-                    }
-                  >
-                    Approve & resume
-                  </button>
-                )}
-                {job.status === "pending" && (
-                  <button
-                    className="button secondary"
-                    disabled={busy}
-                    onClick={() =>
-                      void mutate({
-                        type: "orchestration-job-cancel",
-                        jobId: job.id,
-                      })
-                    }
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </article>
-          ))
+          jobs.map((job) => {
+            const paused = Boolean(
+              sessions.find((session) => session.id === job.sessionId)
+                ?.archivedAt,
+            );
+            return (
+              <article className="work-row" key={job.id}>
+                <div>
+                  <strong>{job.title}</strong>
+                  <p>
+                    {paused ? "paused while task is archived" : job.status} ·
+                    next {new Date(job.schedule.nextRunAt).toLocaleString()}
+                  </p>
+                  {job.error && <small>{job.error}</small>}
+                </div>
+                <div className="button-row">
+                  {job.status === "waiting_approval" && (
+                    <button
+                      className="button primary"
+                      disabled={busy}
+                      onClick={() =>
+                        void mutate({
+                          type: "orchestration-job-resume",
+                          jobId: job.id,
+                        })
+                      }
+                    >
+                      Approve & resume
+                    </button>
+                  )}
+                  {job.status === "pending" && (
+                    <button
+                      className="button secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        void mutate({
+                          type: "orchestration-job-cancel",
+                          jobId: job.id,
+                        })
+                      }
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })
         )}
       </section>
       {error && (
@@ -7972,6 +7991,29 @@ export function App() {
     setBrowserContextEnabled(enabled);
     localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
   }
+  async function setRuntimeSessionArchived(
+    sessionId: string,
+    archived: boolean,
+  ): Promise<void> {
+    const response = (await window.kestrel.request({
+      type: "runtime-set-session-archived",
+      sessionId,
+      archived,
+    })) as CoreResponse;
+    if (!response.ok) throw new Error(response.error);
+    const updatedSession = response.session;
+    if (!updatedSession)
+      throw new Error("Kestrel did not return the updated task.");
+    setRuntimeSessions((current) =>
+      current.map((session) =>
+        session.id === updatedSession.id ? updatedSession : session,
+      ),
+    );
+    if (archived)
+      setActiveRuntimeSessionId((current) =>
+        current === sessionId ? null : current,
+      );
+  }
   return (
     <ProductShellTransition>
     <motion.div
@@ -8036,6 +8078,7 @@ export function App() {
               openAgent();
             }}
             onOpenSession={openRuntimeSession}
+            onSetSessionArchived={setRuntimeSessionArchived}
             onOpenApprovals={() => navigate("approvals")}
             onOpenWork={() => navigate("work")}
           />

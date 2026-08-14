@@ -345,6 +345,48 @@ try {
     name: /Visible browser test, Open, Conversation only/,
   });
   await taskRow.waitFor();
+  await page
+    .getByRole("button", { name: "Archive Visible browser test" })
+    .click();
+  await taskRow.waitFor({ state: "detached" });
+  const archivedFilter = page.getByRole("button", {
+    name: "Archived",
+    exact: true,
+  });
+  await page.waitForFunction(
+    () => document.activeElement?.textContent?.trim() === "Archived",
+  );
+  assert.equal(
+    await archivedFilter.evaluate((element) =>
+      element === element.ownerDocument.activeElement,
+    ),
+    true,
+  );
+  await archivedFilter.click();
+  const archivedTaskRow = page.getByRole("button", {
+    name: /Visible browser test, Archived, Conversation only/,
+  });
+  await archivedTaskRow.waitFor();
+  assert.equal(await archivedTaskRow.isDisabled(), true);
+  await page
+    .getByRole("button", { name: "Restore Visible browser test" })
+    .click();
+  await archivedTaskRow.waitFor({ state: "detached" });
+  const allTasksFilter = page.getByRole("button", {
+    name: "All",
+    exact: true,
+  });
+  await page.waitForFunction(
+    () => document.activeElement?.textContent?.trim() === "All",
+  );
+  assert.equal(
+    await allTasksFilter.evaluate((element) =>
+      element === element.ownerDocument.activeElement,
+    ),
+    true,
+  );
+  await allTasksFilter.click();
+  await taskRow.waitFor();
   await taskRow.click();
   assert.equal(await taskRow.getAttribute("aria-current"), "page");
   await page.getByRole("button", { name: "Browser", exact: true }).click();
@@ -534,8 +576,23 @@ try {
   assert.equal(await browserSettings.getAttribute("aria-current"), "page");
   await page.getByRole("heading", { name: "Tabs, search, and history", exact: true }).waitFor();
   await page.getByLabel("Search engine").selectOption("ecosia");
+  await waitForBrowserState(
+    (value) => value.settings.searchEngine === "ecosia",
+    "Search engine setting did not persist",
+  );
+  await page
+    .locator(".settings-nav")
+    .getByRole("button", { name: /^General/ })
+    .click();
+  await browserSettings.click();
+  await page.getByRole("heading", { name: "Tabs, search, and history", exact: true }).waitFor();
   await page.getByLabel("Tab layout").selectOption("vertical");
-  state = await browserState();
+  state = await waitForBrowserState(
+    (value) =>
+      value.settings.searchEngine === "ecosia" &&
+      value.settings.tabLayout === "vertical",
+    "Browser settings did not persist",
+  );
   assert.equal(state.settings.searchEngine, "ecosia");
   assert.equal(state.settings.tabLayout, "vertical");
   const useCurrentPage = page.getByRole("checkbox", {
@@ -626,7 +683,7 @@ try {
 
   assert.deepEqual(runtimeErrors, []);
   process.stdout.write(
-    "Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, downloads, search settings, hidden-view routing, and restart restore.\n",
+    "Visible browser smoke passed: independent tabs/tasks, local task archive/restore, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, downloads, search settings, hidden-view routing, and restart restore.\n",
   );
 } finally {
   await application?.close();

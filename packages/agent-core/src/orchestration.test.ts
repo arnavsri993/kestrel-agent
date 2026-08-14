@@ -418,6 +418,51 @@ describe("task orchestration", () => {
     item.database.close();
   });
 
+  it("pauses scheduled work while its task is archived and resumes it after restore", async () => {
+    const instant = new Date("2026-07-22T20:00:00.000Z");
+    let providerCalls = 0;
+    const item = fixture(
+      finalProvider(async () => {
+        providerCalls += 1;
+      }),
+      () => instant,
+    );
+    const job = item.orchestrator.schedule({
+      title: "Paused schedule",
+      sessionId: item.parent.id,
+      model: "fake",
+      providerIds: ["fake"],
+      prompt: "Run only after restore.",
+      schedule: {
+        kind: "once",
+        nextRunAt: instant.toISOString(),
+      },
+    });
+
+    item.runtime.setSessionArchived(item.parent.id, true);
+    expect(await item.orchestrator.runDue(instant)).toEqual([]);
+    expect(item.orchestrator.listJobs()).toContainEqual(job);
+    expect(providerCalls).toBe(0);
+    expect(() =>
+      item.orchestrator.schedule({
+        title: "Hidden schedule",
+        sessionId: item.parent.id,
+        model: "fake",
+        providerIds: ["fake"],
+        prompt: "Do not create this.",
+        schedule: {
+          kind: "once",
+          nextRunAt: instant.toISOString(),
+        },
+      }),
+    ).toThrow("Restore this task before continuing work");
+
+    item.runtime.setSessionArchived(item.parent.id, false);
+    expect(await item.orchestrator.runDue(instant)).toHaveLength(1);
+    expect(providerCalls).toBe(1);
+    item.database.close();
+  });
+
   it("rejects invalid recurring schedule intervals before persisting them", () => {
     const item = fixture(finalProvider());
     const invalidIntervals = [Number.NaN, Number.POSITIVE_INFINITY, 59_999, 60_000.5, 31_536_000_001];

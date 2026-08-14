@@ -94,7 +94,9 @@ export async function runTui(options: TuiOptions): Promise<void> {
   ];
   const completer = (line: string): [string[], string] => {
     const candidates = line.startsWith("/use ")
-      ? core.runtime.listSessions().map((item) => `/use ${item.id}`)
+      ? core.runtime.listSessions()
+          .filter((item) => !item.archivedAt)
+          .map((item) => `/use ${item.id}`)
       : line.startsWith("/tools ")
         ? core.runtime
             .discoverTools(session.id)
@@ -375,7 +377,7 @@ export async function runTui(options: TuiOptions): Promise<void> {
           pendingRunId = undefined;
           write(`Using ${session.id}.\n`);
         } else if (line.startsWith("/use ")) {
-          session = core.runtime.getSession(line.slice(5).trim());
+          session = core.runtime.getSessionForExecution(line.slice(5).trim());
           pendingRunId = undefined;
           write(`Using ${session.id}.\n`);
         } else if (line === "/messages")

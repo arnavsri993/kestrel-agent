@@ -44,9 +44,9 @@ export function AgentSidebar({
     };
   }, [historyOpen]);
 
-  const sortedSessions = [...sessions].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  );
+  const sortedSessions = sessions
+    .filter((session) => !session.archivedAt)
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   return (
     <aside className="agent-sidebar" aria-label="Kestrel agent">
       <div className="agent-sidebar-header">

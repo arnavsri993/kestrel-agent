@@ -262,7 +262,7 @@ export class TaskOrchestrator {
   }
 
   async delegate(input: DelegatedTaskInput): Promise<DelegatedTaskResult> {
-    const parent = this.runtime.getSession(input.parentSessionId);
+    const parent = this.runtime.getSessionForExecution(input.parentSessionId);
     const taskId = `task-${randomUUID()}`;
     let workspaceRoot = parent.workspaceRoot;
     if (input.isolateWorktree) {
@@ -520,7 +520,7 @@ export class TaskOrchestrator {
   }
 
   createGoal(sessionId: string, title: string, objective: string, tasks: string[] = [], options: { sourceOpportunityId?: string; deadline?: string } = {}): GoalRecord {
-    this.runtime.getSession(sessionId);
+    this.runtime.getSessionForExecution(sessionId);
     if (!title.trim() || !objective.trim() || title.length > 200 || objective.length > 20_000 || tasks.length > 200) throw new Error("Goal input is invalid.");
     const timestamp = this.now().toISOString();
     if (options.deadline && !Number.isFinite(new Date(options.deadline).getTime())) throw new Error("Goal deadline is invalid.");
@@ -535,6 +535,7 @@ export class TaskOrchestrator {
   }
 
   goalFromOpportunity(sessionId: string, opportunity: TaskOpportunity): GoalRecord {
+    this.runtime.getSessionForExecution(sessionId);
     const existing = this.listGoals(sessionId).find((goal) => goal.sourceOpportunityId === opportunity.id && goal.status === "active");
     if (existing) return existing;
     return this.createGoal(sessionId, opportunity.title, opportunity.proposedGoal, opportunity.expectedOutputs.map((output) => `${output.type}: ${output.description}`), { sourceOpportunityId: opportunity.id, ...(opportunity.expiresAt ? { deadline: opportunity.expiresAt } : {}) });
@@ -545,12 +546,13 @@ export class TaskOrchestrator {
     const index = goals.findIndex((goal) => goal.id === goalId);
     const current = goals[index];
     if (!current) throw new Error("Goal not found.");
+    this.runtime.getSessionForExecution(current.sessionId);
     let tasks = current.tasks;
     if (input.taskId) {
       if (!tasks.some((task) => task.id === input.taskId)) throw new Error("Goal task not found.");
       if (input.taskStatus === undefined && input.assigneeSessionId === undefined) throw new Error("Task status or worker lane is required.");
       if (input.assigneeSessionId) {
-        const assignee = this.runtime.getSession(input.assigneeSessionId);
+        const assignee = this.runtime.getSessionForExecution(input.assigneeSessionId);
         if (assignee.parentSessionId !== current.sessionId) throw new Error("Worker lane must be a child session of the goal session.");
       }
       tasks = tasks.map((task) => {
@@ -572,10 +574,10 @@ export class TaskOrchestrator {
   }
 
   createTeam(parentSessionId: string, title: string, memberSessionIds: string[], sharedPlan: string[] = []): TeamRecord {
-    this.runtime.getSession(parentSessionId);
+    this.runtime.getSessionForExecution(parentSessionId);
     const members = [...new Set(memberSessionIds)];
     if (!title.trim() || members.length === 0 || members.length > this.maximumWorkers || sharedPlan.length > 200) throw new Error("Team input is invalid.");
-    for (const member of members) { const session = this.runtime.getSession(member); if (session.parentSessionId !== parentSessionId) throw new Error("Team members must be child sessions of the parent."); }
+    for (const member of members) { const session = this.runtime.getSessionForExecution(member); if (session.parentSessionId !== parentSessionId) throw new Error("Team members must be child sessions of the parent."); }
     const timestamp = this.now().toISOString();
     const team: TeamRecord = { id: `team-${randomUUID()}`, parentSessionId, title: title.trim().slice(0, 200), memberSessionIds: members, sharedPlan: sharedPlan.map((item) => item.slice(0, 1_000)), messages: [], createdAt: timestamp, updatedAt: timestamp };
     this.database.setPrivateState(this.teamsKey, [...this.listTeams(), team]);
@@ -597,9 +599,10 @@ export class TaskOrchestrator {
     const index = teams.findIndex((team) => team.id === teamId);
     const current = teams[index];
     if (!current) throw new Error("Team not found.");
+    this.runtime.getSessionForExecution(current.parentSessionId);
     const members = input.memberSessionIds ? [...new Set(input.memberSessionIds)] : current.memberSessionIds;
     if (members.length === 0 || members.length > this.maximumWorkers) throw new Error("Team member count is invalid.");
-    for (const member of members) { const session = this.runtime.getSession(member); if (session.parentSessionId !== current.parentSessionId) throw new Error("Team members must be child sessions of the parent."); }
+    for (const member of members) { const session = this.runtime.getSessionForExecution(member); if (session.parentSessionId !== current.parentSessionId) throw new Error("Team members must be child sessions of the parent."); }
     const plan = input.sharedPlan ?? current.sharedPlan;
     if (plan.length > 200) throw new Error("Team plan is too large.");
     const updated = { ...current, memberSessionIds: members, sharedPlan: plan.map((item) => item.slice(0, 1_000)), updatedAt: this.now().toISOString() };
@@ -613,6 +616,8 @@ export class TaskOrchestrator {
     const index = teams.findIndex((team) => team.id === teamId);
     const team = teams[index];
     if (!team || !team.memberSessionIds.includes(fromSessionId) || !team.memberSessionIds.includes(toSessionId) || fromSessionId === toSessionId || !text.trim() || text.length > 20_000) throw new Error("Peer message is invalid for this team.");
+    this.runtime.getSessionForExecution(fromSessionId);
+    this.runtime.getSessionForExecution(toSessionId);
     const message: TeamMessage = { id: `team-message-${randomUUID()}`, fromSessionId, toSessionId, text: text.trim(), createdAt: this.now().toISOString() };
     this.runtime.appendMessage({ sessionId: toSessionId, role: "system", content: `[Team peer message from ${fromSessionId}; provenance ${message.id}]\n${message.text}` });
     teams[index] = { ...team, messages: [...team.messages, message].slice(-1_000), updatedAt: message.createdAt };
@@ -621,8 +626,9 @@ export class TaskOrchestrator {
   }
 
   handoff(childSessionId: string, summary: string): ReturnType<AgentRuntime["appendMessage"]> {
-    const child = this.runtime.getSession(childSessionId);
+    const child = this.runtime.getSessionForExecution(childSessionId);
     if (!child.parentSessionId) throw new Error("Only a delegated child session can hand work back.");
+    this.runtime.getSessionForExecution(child.parentSessionId);
     if (!summary.trim() || summary.length > 100_000) throw new Error("Handoff summary is invalid.");
     const evidence = this.runtime.listMessages(child.id).filter((message) => message.role === "assistant" || message.role === "tool").slice(-8).map((message) => message.id);
     return this.runtime.appendMessage({ sessionId: child.parentSessionId, role: "system", content: `[Delegated handoff from ${child.id}; evidence ${evidence.join(", ") || "none"}]\n${summary.trim()}` });
@@ -636,7 +642,7 @@ export class TaskOrchestrator {
       const expected = nextCronOccurrence(input.schedule.expression, new Date(new Date(input.schedule.nextRunAt).getTime() - 60_000));
       if (expected.toISOString() !== input.schedule.nextRunAt) throw new Error("Cron next run does not match its expression.");
     }
-    this.runtime.getSession(input.sessionId);
+    this.runtime.getSessionForExecution(input.sessionId);
     const timestamp = this.now().toISOString();
     const job: ScheduledAgentJob = { ...input, id: `job-${randomUUID()}`, status: "pending", createdAt: timestamp, updatedAt: timestamp };
     this.saveJobs([...this.listJobs(), job]);
@@ -662,6 +668,7 @@ export class TaskOrchestrator {
   async resumeJob(id: string): Promise<ScheduledAgentJob> {
     const job = this.listJobs().find((candidate) => candidate.id === id);
     if (!job) throw new Error("Scheduled job not found.");
+    this.runtime.getSessionForExecution(job.sessionId);
     if (job.status !== "waiting_approval" || !job.lastRunId) throw new Error("Scheduled job is not waiting for approval.");
     let updated: ScheduledAgentJob = { ...job, status: "running", updatedAt: this.now().toISOString() };
     this.replaceJob(updated);
@@ -687,10 +694,11 @@ export class TaskOrchestrator {
     const output: ScheduledAgentJob[] = [];
     for (const job of due) {
       if (signal?.aborted) break;
+      if (this.runtime.getSession(job.sessionId).archivedAt) continue;
       let current: ScheduledAgentJob = { ...job, status: "running", updatedAt: this.now().toISOString() };
       this.replaceJob(current);
       try {
-        const session = this.runtime.getSession(job.sessionId);
+        const session = this.runtime.getSessionForExecution(job.sessionId);
         const selected = job.model === "auto" || job.providerIds.includes("auto")
           ? await this.selectWorker(
               {
@@ -741,6 +749,8 @@ export class TaskOrchestrator {
               error: "Scheduled agent run was interrupted and will not be retried automatically.",
               updatedAt: this.now().toISOString()
             }
+          : this.runtime.getSession(job.sessionId).archivedAt
+            ? { ...job, status: "pending", error: undefined, updatedAt: this.now().toISOString() }
           : error instanceof SessionRunBusyError
             ? { ...job, status: "pending", error: error.message, updatedAt: this.now().toISOString() }
             : { ...current, status: "failed", error: "Scheduled agent run failed.", updatedAt: this.now().toISOString() };
@@ -752,6 +762,7 @@ export class TaskOrchestrator {
   }
 
   startWorkflow(sessionId: string, title: string, steps: WorkflowStep[]): Promise<WorkflowRecord> {
+    this.runtime.getSessionForExecution(sessionId);
     if (steps.length === 0 || new Set(steps.map((step) => step.id)).size !== steps.length) throw new Error("Workflow steps require unique IDs.");
     const expanded = steps.flatMap((step) => {
       if (!step.forEach) return [step];
@@ -772,6 +783,7 @@ export class TaskOrchestrator {
     const stored = this.database.getPrivateState<unknown>(`orchestrator.workflow.${id}`);
     if (!isWorkflowRecord(stored)) throw new Error("Workflow not found.");
     const workflow = stored;
+    this.runtime.getSessionForExecution(workflow.sessionId);
     if (workflow.status !== "waiting_approval" && workflow.status !== "running") throw new Error(`Workflow is ${workflow.status}.`);
     return this.continueWorkflow({ ...workflow, status: "running" }, new Set(approvedStepIds));
   }

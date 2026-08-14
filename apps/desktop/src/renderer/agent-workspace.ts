@@ -4,7 +4,7 @@ import type {
   RuntimeSessionStatus,
 } from "@kestrel/shared-types";
 
-export type AgentSessionFilter = "all" | "open" | "done";
+export type AgentSessionFilter = "all" | "open" | "done" | "archived";
 
 const OPEN_SESSION_STATUSES = new Set<RuntimeSessionStatus>([
   "active",
@@ -70,6 +70,9 @@ export function agentSessionsForWorkspace(
   const needle = query.trim().toLocaleLowerCase();
   return [...sessions]
     .filter((session) => {
+      if (filter === "archived") {
+        if (!session.archivedAt) return false;
+      } else if (session.archivedAt) return false;
       if (filter === "open" && !OPEN_SESSION_STATUSES.has(session.status))
         return false;
       if (filter === "done" && OPEN_SESSION_STATUSES.has(session.status))

@@ -10,6 +10,8 @@ const paths: Record<string, string[]> = {
   context: ["M5 6h14v12H5z", "M8 9h8M8 12h5M16 15h1"],
   browser: ["M4 5h16v14H4z", "M4 9h16", "M7 7h.01M10 7h.01"],
   history: ["M4 12a8 8 0 108-8 8.2 8.2 0 00-6 2.6L4 9", "M4 4v5h5", "M12 8v4l3 2"],
+  archive: ["M4 7h16v13H4z", "M3 4h18v3H3z", "M9 11h6"],
+  restore: ["M4 12a8 8 0 108-8 8.2 8.2 0 00-6 2.6L4 9", "M4 4v5h5"],
   downloads: ["M12 3v12", "M7 10l5 5 5-5", "M5 20h14"],
   more: ["M6 12h.01M12 12h.01M18 12h.01"],
   agent: ["M12 3l2.2 4.8L19 10l-4.8 2.2L12 17l-2.2-4.8L5 10l4.8-2.2z", "M19 16v5M16.5 18.5h5"],

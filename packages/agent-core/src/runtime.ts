@@ -365,7 +365,7 @@ export class AgentRuntime extends EventEmitter {
     const storedValue = this.database.getState<unknown>("runtimeMainSessionId");
     const storedId = typeof storedValue === "string" && storedValue ? storedValue : undefined;
     const existing = storedId ? this.database.getRuntimeSession(storedId) : undefined;
-    if (existing) return existing;
+    if (existing && !existing.archivedAt) return existing;
     const session = this.createSession({
       title: "Main session",
       ...(this.workspaceRoots[0] ? { workspaceRoot: this.workspaceRoots[0] } : {})
@@ -375,6 +375,8 @@ export class AgentRuntime extends EventEmitter {
   }
 
   createSession(input: { title: string; workspaceRoot?: string; parentSessionId?: string; allowedTools?: string[] }): RuntimeSession {
+    if (input.parentSessionId)
+      this.getSessionForExecution(input.parentSessionId);
     const workspaceRoot = input.workspaceRoot ? this.resolveGrantedRoot(input.workspaceRoot) : undefined;
     const timestamp = this.now();
     const session = RuntimeSessionSchema.parse({
@@ -401,6 +403,13 @@ export class AgentRuntime extends EventEmitter {
     return this.requireSession(sessionId);
   }
 
+  getSessionForExecution(sessionId: string): RuntimeSession {
+    const session = this.requireSession(sessionId);
+    if (session.archivedAt)
+      throw new Error("Restore this task before continuing work.");
+    return session;
+  }
+
   workspaceInstructions(sessionId: string, targetPath?: string): Array<{ path: string; content: string; precedence: number }> {
     const session = this.requireSession(sessionId);
     const workspaceRoot = this.resolveActiveWorkspaceRoot(session);
@@ -413,7 +422,7 @@ export class AgentRuntime extends EventEmitter {
   }
 
   checkpoint(sessionId: string, summary: string): RuntimeSession {
-    const session = this.requireSession(sessionId);
+    const session = this.getSessionForExecution(sessionId);
     const checkpoint = {
       id: `checkpoint-${randomUUID()}`,
       sequence: session.checkpoints.length + 1,
@@ -427,7 +436,7 @@ export class AgentRuntime extends EventEmitter {
   }
 
   restoreCheckpoint(sessionId: string, checkpointId: string): RuntimeSession {
-    const session = this.requireSession(sessionId);
+    const session = this.getSessionForExecution(sessionId);
     const checkpointIndex = session.checkpoints.findIndex(
       (checkpoint) => checkpoint.id === checkpointId,
     );
@@ -465,11 +474,12 @@ export class AgentRuntime extends EventEmitter {
   }
 
   retryLastTurnMessage(sessionId: string): string {
+    this.getSessionForExecution(sessionId);
     return this.retryableUserTurn(sessionId).user.content;
   }
 
   rewindLastTurn(sessionId: string): { message: string } {
-    const session = this.requireSession(sessionId);
+    const session = this.getSessionForExecution(sessionId);
     const { index, user } = this.retryableUserTurn(sessionId);
     const matchingRun = [...this.database.listAgentRuns(sessionId)].reverse().find((run) => {
       const baseline = this.database.getPrivateState<{ userMessageId?: string }>(`agent-run-baseline.${run.id}`);
@@ -538,7 +548,7 @@ export class AgentRuntime extends EventEmitter {
   }
 
   forkSession(sessionId: string, title?: string): RuntimeSession {
-    const parent = this.requireSession(sessionId);
+    const parent = this.getSessionForExecution(sessionId);
     const activeWorkspaceRoot = this.resolveActiveWorkspaceRoot(parent);
     let child = this.createSession({
       title: title ?? `${parent.title} (fork)`,
@@ -576,7 +586,7 @@ export class AgentRuntime extends EventEmitter {
   }
 
   resumeSession(sessionId: string): RuntimeSession {
-    const session = this.requireSession(sessionId);
+    const session = this.getSessionForExecution(sessionId);
     if (session.status === "cancelled") throw new Error("A cancelled session cannot be resumed.");
     const updated = this.saveSession({ ...session, status: "active", updatedAt: this.now() });
     this.emitRuntimeEvent("session.updated", sessionId, { action: "resume" });
@@ -584,14 +594,107 @@ export class AgentRuntime extends EventEmitter {
   }
 
   cancelSession(sessionId: string): RuntimeSession {
-    const session = this.requireSession(sessionId);
+    const session = this.getSessionForExecution(sessionId);
     const updated = this.saveSession({ ...session, status: "cancelled", updatedAt: this.now() });
     this.emitRuntimeEvent("session.updated", sessionId, { action: "cancel" });
     return updated;
   }
 
+  setSessionArchived(sessionId: string, archived: boolean): RuntimeSession {
+    const session = this.requireSession(sessionId);
+    if (Boolean(session.archivedAt) === archived) {
+      if (
+        archived &&
+        this.database.getState<unknown>("runtimeMainSessionId") === sessionId
+      )
+        this.ensureMainSession();
+      return session;
+    }
+    if (archived) this.assertSessionTreeCanArchive(sessionId);
+    const timestamp = this.now();
+    const updatedAt =
+      Date.parse(timestamp) > Date.parse(session.updatedAt)
+        ? timestamp
+        : session.updatedAt;
+    const updated: RuntimeSession = {
+      ...session,
+      updatedAt,
+      ...(archived ? { archivedAt: timestamp } : {}),
+    };
+    if (!archived) delete updated.archivedAt;
+    const saved = this.saveSession(updated);
+    this.emitRuntimeEvent("session.updated", sessionId, {
+      action: archived ? "archive" : "restore",
+      archivedAt: saved.archivedAt ?? null,
+      sessionUpdatedAt: saved.updatedAt,
+    });
+    if (
+      archived &&
+      this.database.getState<unknown>("runtimeMainSessionId") === sessionId
+    )
+      this.ensureMainSession();
+    return saved;
+  }
+
+  assertSessionTreeCanArchive(sessionId: string): void {
+    this.requireSession(sessionId);
+    const relatedSessionIds = new Set([sessionId]);
+    let foundDescendant = true;
+    while (foundDescendant) {
+      foundDescendant = false;
+      for (const session of this.listSessions()) {
+        if (
+          session.parentSessionId &&
+          relatedSessionIds.has(session.parentSessionId) &&
+          !relatedSessionIds.has(session.id)
+        ) {
+          relatedSessionIds.add(session.id);
+          foundDescendant = true;
+        }
+      }
+    }
+    const executions = [...relatedSessionIds].flatMap((id) =>
+      this.database.listToolExecutions(id),
+    );
+    const runs = [...relatedSessionIds].flatMap((id) =>
+      this.database.listAgentRuns(id),
+    );
+    const awaitingApproval =
+      runs.some((run) => run.status === "waiting_approval") ||
+      executions.some(
+        (execution) =>
+          execution.status === "blocked" &&
+          execution.output?.approvalRequired === true,
+      );
+    if (awaitingApproval)
+      throw new Error(
+        "Resolve the pending approval before archiving this task.",
+      );
+    const hasRunningWork =
+      runs.some((run) => run.status === "running") ||
+      executions.some((execution) => execution.status === "running") ||
+      [...this.activeExecutions.values()].some((execution) =>
+        relatedSessionIds.has(execution.sessionId),
+      ) ||
+      [...this.backgroundProcesses.values()].some(
+        (process) =>
+          process.status === "running" &&
+          relatedSessionIds.has(process.sessionId),
+      ) ||
+      this.processJournalRecords().some(
+        (process) =>
+          process.status === "running" &&
+          typeof process.sessionId === "string" &&
+          relatedSessionIds.has(process.sessionId),
+      );
+    if (hasRunningWork)
+      throw new Error(
+        "Finish or cancel this task and its delegated work before archiving it.",
+      );
+  }
+
   appendMessage(input: Omit<RuntimeMessage, "id" | "createdAt">): RuntimeMessage {
-    this.requireSession(input.sessionId);
+    this.getSessionForExecution(input.sessionId);
     const message = RuntimeMessageSchema.parse({ ...input, id: `message-${randomUUID()}`, createdAt: this.now() });
     const session = this.database.saveRuntimeMessage(message);
     this.emitRuntimeEvent("message.appended", message.sessionId, {
@@ -646,7 +749,7 @@ export class AgentRuntime extends EventEmitter {
       );
     if (input.scope === "session") {
       if (!input.sessionId) throw new Error("Session-scoped approval rules require a session.");
-      this.requireSession(input.sessionId);
+      this.getSessionForExecution(input.sessionId);
     }
     const timestamp = this.now();
     const records = this.listApprovalRules();
@@ -666,7 +769,7 @@ export class AgentRuntime extends EventEmitter {
   }
 
   undoWorkspaceMutation(sessionId: string, mutationId?: string): { mutationId: string; path: string; restored: boolean } {
-    const session = this.requireSession(sessionId);
+    const session = this.getSessionForExecution(sessionId);
     if (!session.workspaceRoot) throw new Error("Workspace root is unavailable.");
     const mutation = mutationId ? this.database.getWorkspaceMutation(mutationId) : this.database.listWorkspaceMutations(session.id).find((item) => !item.undoneAt);
     if (!mutation || mutation.sessionId !== session.id) throw new Error("Undoable workspace mutation not found in this session.");
@@ -781,6 +884,7 @@ export class AgentRuntime extends EventEmitter {
   }
 
   async activateDeferredTool(sessionId: string, name: string): Promise<RuntimeToolDescriptor> {
+    this.getSessionForExecution(sessionId);
     const entry = this.deferredTools.get(name);
     if (!entry) throw new Error(`Deferred tool ${name} was not discovered.`);
     const catalog = this.deferredCatalogs.get(entry.catalogId);
@@ -870,7 +974,7 @@ export class AgentRuntime extends EventEmitter {
   }
 
   async callTool(sessionId: string, toolName: string, rawInput: Record<string, unknown>, options: ToolCallOptions = {}): Promise<RuntimeToolExecution> {
-    const session = this.requireSession(sessionId);
+    const session = this.getSessionForExecution(sessionId);
     const workspaceRoot = this.resolveActiveWorkspaceRoot(session);
     const definition = this.tools.get(toolName);
     if (!definition || !session.allowedTools.includes(toolName)) throw new Error(`Tool ${toolName} is unavailable in this session.`);

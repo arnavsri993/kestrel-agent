@@ -29,6 +29,16 @@ const sessions: RuntimeSession[] = [
     createdAt: "2026-08-10T12:00:00.000Z",
     updatedAt: "2026-08-11T13:00:00.000Z",
   },
+  {
+    id: "session-archived",
+    title: "Archived launch notes",
+    allowedTools: [],
+    status: "completed",
+    checkpoints: [],
+    archivedAt: "2026-08-11T14:00:00.000Z",
+    createdAt: "2026-08-08T12:00:00.000Z",
+    updatedAt: "2026-08-11T14:00:00.000Z",
+  },
 ];
 
 describe("agent workspace presentation", () => {
@@ -46,6 +56,14 @@ describe("agent workspace presentation", () => {
     expect(agentSessionsForWorkspace(sessions, "store", "open")).toHaveLength(1);
     expect(agentSessionsForWorkspace(sessions, "", "done").map(({ id }) => id))
       .toEqual(["session-old"]);
+    expect(
+      agentSessionsForWorkspace(sessions, "", "archived").map(({ id }) => id),
+    ).toEqual(["session-archived"]);
+    expect(
+      agentSessionsForWorkspace(sessions, "launch", "archived").map(
+        ({ id }) => id,
+      ),
+    ).toEqual(["session-archived"]);
   });
 
   it("keeps project and recency labels compact", () => {

@@ -240,6 +240,7 @@ export class AgentLoop {
     try {
       const run = this.database.getAgentRun(input.runId);
       if (!run) throw new Error("Agent run not found.");
+      this.runtime.getSessionForExecution(run.sessionId);
       return await this.withSessionRunClaim(run.sessionId, () =>
         this.resumeClaimed(input),
       );
@@ -254,6 +255,7 @@ export class AgentLoop {
     try {
       let run = this.database.getAgentRun(input.runId);
       if (!run) throw new Error("Agent run not found.");
+      this.runtime.getSessionForExecution(run.sessionId);
       if (run.status !== "waiting_approval" || !run.pendingToolExecutionId || !run.pendingProviderToolCallId || !run.pendingToolName) {
         throw new Error("Agent run is not waiting at an approval boundary.");
       }
@@ -359,7 +361,7 @@ export class AgentLoop {
     sessionId: string,
     providerIds: string[],
   ): RuntimeSession {
-    const session = this.runtime.getSession(sessionId);
+    const session = this.runtime.getSessionForExecution(sessionId);
     if (session.status !== "active")
       throw new Error(`Session ${session.id} is ${session.status}.`);
     if (providerIds.length === 0)
@@ -406,7 +408,7 @@ export class AgentLoop {
   ): Promise<AgentLoopResult> {
     let run = initialRun;
     let modelMessages = initialMessages;
-    const session = this.runtime.getSession(run.sessionId);
+    const session = this.runtime.getSessionForExecution(run.sessionId);
     const modelToolDefinitions = this.runtime.modelTools(session.id).filter(({ descriptor }) => !run.toolScope || run.toolScope.includes(descriptor.name));
     const tools = modelToolDefinitions.map(({ descriptor, inputSchema }) => ({
       name: descriptor.name,
@@ -418,6 +420,7 @@ export class AgentLoop {
     try {
       for (let turn = run.turn + 1; turn <= options.maximumTurns; turn += 1) {
         if (options.signal?.aborted) throw options.signal.reason;
+        this.runtime.getSessionForExecution(session.id);
         run = { ...run, turn, updatedAt: this.now().toISOString() };
         this.saveActiveRun(run);
         const workspaceRoot = this.runtime.activeWorkspaceRoot(session.id);

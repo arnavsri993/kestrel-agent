@@ -32,6 +32,18 @@ describe("stable ACP v1 editor bridge", () => {
       expect(await acp.request("session/list", { cwd: root })).toMatchObject({ sessions: [{ sessionId: session.sessionId, cwd: realpathSync(root) }] });
       expect(await acp.request("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "Inspect this project" }] })).toMatchObject({ stopReason: "end_turn" });
       expect(updates).toEqual(["Editor result"]);
+      runtime.setSessionArchived(session.sessionId, true);
+      expect(await acp.request("session/list", { cwd: root })).toEqual({
+        sessions: [],
+      });
+      await expect(
+        acp.request("session/resume", {
+          sessionId: session.sessionId,
+          cwd: root,
+          mcpServers: [],
+        }),
+      ).rejects.toThrow("Restore this task before continuing work");
+      runtime.setSessionArchived(session.sessionId, false);
       await acp.request("session/close", { sessionId: session.sessionId });
       expect(runtime.getSession(session.sessionId).status).toBe("cancelled");
     });

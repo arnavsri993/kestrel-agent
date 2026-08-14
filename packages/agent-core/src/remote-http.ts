@@ -370,7 +370,7 @@ export class RemoteHttpServer {
         const allowMutatingTools = this.options.remote.hasAuthorizedScope(token, "tasks");
         const sessionHeader = request.headers["x-kestrel-session-id"];
         if (typeof sessionHeader !== "string" || sessionHeader.length > 200) throw new Error("MCP session header is required.");
-        this.options.runtime.getSession(sessionHeader);
+        this.options.runtime.getSessionForExecution(sessionHeader);
         const body = await readJson(request);
         if (body.jsonrpc !== "2.0" || (typeof body.method !== "string" && !("result" in body) && !("error" in body))) throw new Error("MCP JSON-RPC message is invalid.");
         if (body.method === "tools/call" && !allowMutatingTools) {
@@ -397,7 +397,7 @@ export class RemoteHttpServer {
     } catch (error) {
       if (response.headersSent) { response.end(); return; }
       const message = error instanceof Error ? error.message : "Remote request failed.";
-      const status = /token|bearer|scope|trusted proxy|identity|untrusted source|not allowed/i.test(message) ? 401 : /rate limit/i.test(message) ? 429 : /invalid|requires|exceeds|must|field|schedule/i.test(message) ? 400 : 500;
+      const status = /token|bearer|scope|trusted proxy|identity|untrusted source|not allowed/i.test(message) ? 401 : /rate limit/i.test(message) ? 429 : /restore this task/i.test(message) ? 409 : /invalid|requires|exceeds|must|field|schedule/i.test(message) ? 400 : 500;
       json(response, status, { error: status === 500 ? "Remote request failed." : message });
     }
   }

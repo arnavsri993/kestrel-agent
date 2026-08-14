@@ -166,6 +166,66 @@ describe("agent runtime", () => {
     reopenedDatabase.close();
   });
 
+  it("archives and restores a session without deleting its local history", () => {
+    const directory = mkdtempSync(join(tmpdir(), "kestrel-session-archive-"));
+    temporaryDirectories.push(directory);
+    const databasePath = join(directory, "runtime.sqlite");
+    const encryptionKey = createEncryptionKey();
+    let now = "2026-07-22T16:00:00.000Z";
+    const database = new KestrelDatabase(databasePath, encryptionKey);
+    const runtime = new AgentRuntime(database, [], () => now);
+    const session = runtime.createSession({ title: "Keep this task" });
+    runtime.appendMessage({
+      sessionId: session.id,
+      role: "user",
+      content: "This transcript must survive archival.",
+    });
+    const events: RuntimeEvent[] = [];
+    runtime.on("event", (event: RuntimeEvent) => events.push(event));
+
+    now = "2026-07-22T16:05:00.000Z";
+    const archived = runtime.setSessionArchived(session.id, true);
+
+    expect(archived.archivedAt).toBe(now);
+    expect(database.getRuntimeSession(session.id)?.archivedAt).toBe(now);
+    expect(runtime.listMessages(session.id).map((message) => message.content))
+      .toEqual(["This transcript must survive archival."]);
+    expect(events.at(-1)).toMatchObject({
+      type: "session.updated",
+      sessionId: session.id,
+      payload: { action: "archive", archivedAt: now },
+    });
+    runtime.close();
+    database.close();
+
+    const reopenedDatabase = new KestrelDatabase(databasePath, encryptionKey);
+    const restarted = new AgentRuntime(reopenedDatabase, [], () => now);
+    expect(restarted.getSession(session.id).archivedAt).toBe(now);
+    expect(
+      restarted.listMessages(session.id).map((message) => message.content),
+    ).toEqual(["This transcript must survive archival."]);
+    const restartedEvents: RuntimeEvent[] = [];
+    restarted.on("event", (event: RuntimeEvent) =>
+      restartedEvents.push(event),
+    );
+
+    now = "2026-07-22T16:06:00.000Z";
+    const restored = restarted.setSessionArchived(session.id, false);
+
+    expect(restored.archivedAt).toBeUndefined();
+    expect(
+      reopenedDatabase.getRuntimeSession(session.id)?.archivedAt,
+    ).toBeUndefined();
+    expect(restarted.listMessages(session.id)).toHaveLength(1);
+    expect(restartedEvents.at(-1)).toMatchObject({
+      type: "session.updated",
+      sessionId: session.id,
+      payload: { action: "restore", archivedAt: null },
+    });
+    restarted.close();
+    reopenedDatabase.close();
+  });
+
   it("rolls back the message when its session recency cannot commit", () => {
     const { database, runtime, session } = fixture();
     const events: RuntimeEvent[] = [];

@@ -65,6 +65,12 @@ describe("remote backends and scoped supervision", () => {
     const device = remote.completePairing(pairing.pairingId, pairing.code);
     expect(remote.listSessions(device.token)).toMatchObject([{ id: session.id }]);
     expect(remote.listSessions(device.token)[0]).not.toHaveProperty("workspaceRoot");
+    runtime.setSessionArchived(session.id, true);
+    expect(remote.listSessions(device.token)).toMatchObject([
+      { id: session.id, archivedAt: expect.any(String) },
+    ]);
+    expect(() => remote.submitJob(device.token, { title: "Hidden remote task", sessionId: session.id, model: "fake", providerIds: ["fake"], prompt: "must wait for restore", schedule: { kind: "once", nextRunAt: "2026-07-23T00:00:00.000Z" } })).toThrow("Restore this task before continuing work");
+    runtime.setSessionArchived(session.id, false);
     const job = remote.submitJob(device.token, { title: "Remote task", sessionId: session.id, model: "fake", providerIds: ["fake"], prompt: "private remote prompt", schedule: { kind: "once", nextRunAt: "2026-07-23T00:00:00.000Z" } });
     expect(job).not.toHaveProperty("prompt");
     expect(remote.listJobs(device.token)).toMatchObject([{ id: job.id, title: "Remote task" }]);

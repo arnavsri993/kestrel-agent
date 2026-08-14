@@ -118,6 +118,18 @@ describe("authenticated remote HTTP transport", () => {
     expect(await written.json()).toMatchObject({ result: { isError: false } });
     expect(readFileSync(join(root, "allowed.txt"), "utf8")).toBe("task scope");
 
+    runtime.setSessionArchived(session.id, true);
+    expect(
+      (
+        await mcp(readOnly.token, {
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/list",
+        })
+      ).status,
+    ).toBe(409);
+    runtime.setSessionArchived(session.id, false);
+
     remote.revoke(taskDevice.deviceId);
     const revoked = await mcp(taskDevice.token, {
       jsonrpc: "2.0",

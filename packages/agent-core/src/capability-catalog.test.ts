@@ -7,7 +7,7 @@ describe("parity capability catalog", () => {
   it("uses stable unique IDs and evidence for every non-planned claim", () => {
     const ids = CAPABILITY_CATALOG.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(CAPABILITY_CATALOG).toHaveLength(58);
+    expect(CAPABILITY_CATALOG).toHaveLength(59);
     for (const item of CAPABILITY_CATALOG) {
       if (item.status !== "planned") expect(item.evidence.length, item.id).toBeGreaterThan(0);
       if (item.status !== "implemented") expect(item.gap, item.id).toBeTruthy();
@@ -34,7 +34,7 @@ describe("parity capability catalog", () => {
   it("reports an honest status summary", () => {
     const summary = capabilitySummary();
     expect(summary.implemented + summary.partial + summary.planned).toBe(CAPABILITY_CATALOG.length);
-    expect(summary).toEqual({ implemented: 58, partial: 0, planned: 0 });
+    expect(summary).toEqual({ implemented: 59, partial: 0, planned: 0 });
     for (const item of CAPABILITY_CATALOG) {
       expect(item.status, item.id).toBe("implemented");
       expect(item.gap, item.id).toBeUndefined();

@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION, agent, type AgentApp, type ContentBlock, type RequestPermissionResponse } from "@agentclientprotocol/sdk";
+import { PROTOCOL_VERSION, RequestError, agent, type AgentApp, type ContentBlock, type RequestPermissionResponse } from "@agentclientprotocol/sdk";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { AgentLoop, type AgentLoopResult } from "./agent-loop";
@@ -24,6 +24,16 @@ function modelParts(blocks: ContentBlock[]): ModelContentPart[] {
     else if (block.type === "resource") parts.push(...textContent(`[Embedded resource: ${block.resource.uri}]`));
   }
   return parts.length ? parts : textContent("[Empty ACP prompt]");
+}
+
+function executionSession(runtime: AgentRuntime, sessionId: string) {
+  try {
+    return runtime.getSessionForExecution(sessionId);
+  } catch (cause) {
+    const message =
+      cause instanceof Error ? cause.message : "Session is unavailable.";
+    throw RequestError.invalidParams({ sessionId }, message);
+  }
 }
 
 function acpToolKind(name: string): "read" | "edit" | "delete" | "move" | "search" | "execute" | "fetch" | "other" {
@@ -105,11 +115,11 @@ export function createKestrelAcpAgent(options: KestrelAcpOptions): AgentApp {
     })
     .onRequest("session/list", ({ params }) => ({
       sessions: options.runtime.listSessions()
-        .filter((session) => session.workspaceRoot && (!params.cwd || session.workspaceRoot === realpathSync(params.cwd)))
+        .filter((session) => !session.archivedAt && session.workspaceRoot && (!params.cwd || session.workspaceRoot === realpathSync(params.cwd)))
         .map((session) => ({ sessionId: session.id, cwd: session.workspaceRoot!, title: session.title, updatedAt: session.updatedAt }))
     }))
     .onRequest("session/resume", ({ params }) => {
-      const session = options.runtime.getSession(params.sessionId);
+      const session = executionSession(options.runtime, params.sessionId);
       if (session.status !== "active") options.runtime.resumeSession(session.id);
       return {};
     })
@@ -122,6 +132,7 @@ export function createKestrelAcpAgent(options: KestrelAcpOptions): AgentApp {
       return {};
     })
     .onRequest("session/prompt", async ({ params, client, signal }) => {
+      executionSession(options.runtime, params.sessionId);
       const controller = new AbortController();
       active.set(params.sessionId, controller);
       const abort = () => controller.abort(signal.reason);

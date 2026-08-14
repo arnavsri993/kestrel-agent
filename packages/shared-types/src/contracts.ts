@@ -622,6 +622,7 @@ export const RuntimeSessionSchema = z.object({
   allowedTools: z.array(z.string().min(1)),
   status: RuntimeSessionStatusSchema,
   checkpoints: z.array(RuntimeCheckpointSchema),
+  archivedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -1682,6 +1683,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("runtime-cancel-session"),
     sessionId: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("runtime-set-session-archived"),
+    sessionId: z.string().min(1),
+    archived: z.boolean(),
   }),
   z.object({
     type: z.literal("runtime-append-message"),

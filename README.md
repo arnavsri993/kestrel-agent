@@ -63,7 +63,7 @@ The pinned documentation audit maps all 1,117 Hermes and OpenClaw pages with zer
 
 The repository also contains a separate, static marketing website. It has no agent endpoint, database, authentication, or fal credential in its public runtime.
 
-The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 58 broad catalog families have repository evidence. A separate immutable [1,117-page source audit](docs/reference-page-audit.json) distinguishes native behavior, signed extension contracts, and operational material with zero known unmapped pages; it prevents broad families from being mistaken for proof that every vendor-specific feature is bundled.
+The scoped capability union across OpenClaw, Hermes Agent, Codex, and Claude Code is tracked in [docs/parity-matrix.md](docs/parity-matrix.md). All 59 broad catalog families have repository evidence. A separate immutable [1,117-page source audit](docs/reference-page-audit.json) distinguishes native behavior, signed extension contracts, and operational material with zero known unmapped pages; it prevents broad families from being mistaken for proof that every vendor-specific feature is bundled.
 
 Google Workspace setup and its public-release boundary are documented in [docs/google-workspace-oauth.md](docs/google-workspace-oauth.md).
 The incremental calendar, people, memory, retrieval, lifecycle, and provider architecture is documented in [docs/unified-life-context.md](docs/unified-life-context.md).

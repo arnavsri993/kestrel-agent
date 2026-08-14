@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { AgentState, RuntimeSession } from "@kestrel/shared-types";
 import {
   agentSessionRecency,
@@ -16,6 +16,7 @@ const filters: Array<{ id: AgentSessionFilter; label: string }> = [
   { id: "all", label: "All" },
   { id: "open", label: "Open" },
   { id: "done", label: "Done" },
+  { id: "archived", label: "Archived" },
 ];
 
 export function AgentWorkspace({
@@ -25,6 +26,7 @@ export function AgentWorkspace({
   pendingApprovals,
   onNewTask,
   onOpenSession,
+  onSetSessionArchived,
   onOpenApprovals,
   onOpenWork,
 }: {
@@ -34,18 +36,47 @@ export function AgentWorkspace({
   pendingApprovals: number;
   onNewTask(): void;
   onOpenSession(sessionId: string): void;
+  onSetSessionArchived(sessionId: string, archived: boolean): Promise<void>;
   onOpenApprovals(): void;
   onOpenWork(): void;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AgentSessionFilter>("all");
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState("");
+  const allFilterRef = useRef<HTMLButtonElement>(null);
+  const archivedFilterRef = useRef<HTMLButtonElement>(null);
   const visibleSessions = useMemo(
     () => agentSessionsForWorkspace(sessions, query, filter),
     [filter, query, sessions],
   );
-  const openCount = sessions.filter((session) =>
+  const currentSessions = sessions.filter((session) => !session.archivedAt);
+  const archivedCount = sessions.length - currentSessions.length;
+  const openCount = currentSessions.filter((session) =>
     ["active", "waiting"].includes(session.status),
   ).length;
+
+  async function setSessionArchived(
+    session: RuntimeSession,
+    archived: boolean,
+  ) {
+    const previousFocus = document.activeElement;
+    (archived ? archivedFilterRef : allFilterRef).current?.focus();
+    setArchiveBusyId(session.id);
+    setArchiveError("");
+    try {
+      await onSetSessionArchived(session.id, archived);
+    } catch (cause) {
+      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+      setArchiveError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not update the task archive.",
+      );
+    } finally {
+      setArchiveBusyId(null);
+    }
+  }
 
   return (
     <main className="agent-workspace" aria-labelledby="agent-workspace-title">
@@ -96,7 +127,10 @@ export function AgentWorkspace({
         <header>
           <div>
             <h2 id="agent-task-library-title">Tasks</h2>
-            <span>{sessions.length} total</span>
+            <span>
+              {currentSessions.length} current
+              {archivedCount ? ` · ${archivedCount} archived` : ""}
+            </span>
           </div>
           <label className="agent-task-search">
             <Icon name="search" />
@@ -113,6 +147,13 @@ export function AgentWorkspace({
               <button
                 type="button"
                 key={item.id}
+                ref={
+                  item.id === "all"
+                    ? allFilterRef
+                    : item.id === "archived"
+                      ? archivedFilterRef
+                      : undefined
+                }
                 aria-pressed={filter === item.id}
                 onClick={() => setFilter(item.id)}
               >
@@ -120,19 +161,29 @@ export function AgentWorkspace({
               </button>
             ))}
           </div>
+          <p className="sr-only" id="agent-task-archive-description">
+            Archiving hides a task without deleting its history and pauses its
+            scheduled work until the task is restored.
+          </p>
         </header>
 
         {visibleSessions.length ? (
           <ul className="agent-task-list">
             {visibleSessions.map((session) => {
               const active = session.id === activeSessionId;
+              const archived = Boolean(session.archivedAt);
+              const statusLabel = archived
+                ? "Archived"
+                : agentSessionStatusLabel(session.status);
               return (
                 <li key={session.id}>
                   <button
                     type="button"
-                    className={active ? "active" : ""}
+                    className={`agent-task-open ${active ? "active" : ""}`}
                     aria-current={active ? "page" : undefined}
-                    aria-label={`${sessionTitleForDisplay(session.title)}, ${agentSessionStatusLabel(session.status)}, ${agentWorkspaceName(session.workspaceRoot)}`}
+                    aria-label={`${sessionTitleForDisplay(session.title)}, ${statusLabel}, ${agentWorkspaceName(session.workspaceRoot)}`}
+                    disabled={archived}
+                    title={archived ? "Restore this task before opening it" : undefined}
                     onClick={() => onOpenSession(session.id)}
                   >
                     <span className={`agent-task-state ${session.status}`} aria-hidden="true" />
@@ -141,10 +192,27 @@ export function AgentWorkspace({
                       <small>{agentWorkspaceName(session.workspaceRoot)}</small>
                     </span>
                     <span className="agent-task-meta">
-                      <strong>{agentSessionStatusLabel(session.status)}</strong>
+                      <strong>{statusLabel}</strong>
                       <time dateTime={session.updatedAt}>{agentSessionRecency(session.updatedAt)}</time>
                     </span>
                     <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    className="agent-task-archive"
+                    disabled={archiveBusyId === session.id}
+                    aria-label={`${archived ? "Restore" : "Archive"} ${sessionTitleForDisplay(session.title)}`}
+                    aria-describedby="agent-task-archive-description"
+                    title={
+                      archived
+                        ? "Restore this task to the main list"
+                        : "Hide this task without deleting its history and pause scheduled work"
+                    }
+                    onClick={() =>
+                      void setSessionArchived(session, !archived)
+                    }
+                  >
+                    <Icon name={archived ? "restore" : "archive"} />
                   </button>
                 </li>
               );
@@ -161,6 +229,11 @@ export function AgentWorkspace({
               <button type="button" className="button primary" onClick={onNewTask}>Start a task</button>
             ) : null}
           </div>
+        )}
+        {archiveError && (
+          <p className="agent-task-error" role="alert">
+            {archiveError}
+          </p>
         )}
       </section>
     </main>

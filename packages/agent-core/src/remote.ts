@@ -215,7 +215,7 @@ export interface RemoteTrustedIdentity { kind: "trusted-proxy"; identity: string
 export type RemoteCredential = string | RemoteTrustedIdentity;
 interface PairingRecord { id: string; label: string; codeHash: string; scopes: RemoteScope[]; expiresAt: string; attempts: number; status: "pending" | "used" | "locked"; }
 interface DeviceRecord { id: string; label: string; tokenHash: string; scopes: RemoteScope[]; createdAt: string; revokedAt?: string; }
-export interface RemoteSessionSummary { id: string; title: string; status: RuntimeSession["status"]; parentSessionId?: string; updatedAt: string; }
+export interface RemoteSessionSummary { id: string; title: string; status: RuntimeSession["status"]; parentSessionId?: string; archivedAt?: string; updatedAt: string; }
 
 const MAX_REMOTE_PAIRINGS = 200;
 const MAX_REMOTE_PAIRING_LABEL_LENGTH = 100;
@@ -296,7 +296,7 @@ export class RemoteControl {
 
   listSessions(token: RemoteCredential): RemoteSessionSummary[] {
     this.authorize(token, "read");
-    return this.runtime.listSessions().map(({ id, title, status, parentSessionId, updatedAt }) => ({ id, title, status, ...(parentSessionId ? { parentSessionId } : {}), updatedAt }));
+    return this.runtime.listSessions().map(({ id, title, status, parentSessionId, archivedAt, updatedAt }) => ({ id, title, status, ...(parentSessionId ? { parentSessionId } : {}), ...(archivedAt ? { archivedAt } : {}), updatedAt }));
   }
   listJobs(token: RemoteCredential): Array<Omit<ScheduledAgentJob, "prompt" | "instructions">> {
     this.authorize(token, "read");

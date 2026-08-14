@@ -94,6 +94,146 @@ describe("teacher scheduling vertical slice", () => {
 
 
 describe("core agent request path", () => {
+  it("keeps running and approval-blocked task trees visible until they are safe to archive", async () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const now = "2026-07-22T15:00:00.000Z";
+    const core = new AgentCore({ database, now: () => now });
+    const parent = core.runtime.ensureMainSession();
+    const child = core.runtime.forkSession(parent.id, "Delegated child");
+    const childRun = {
+      id: "run-archive-child",
+      sessionId: child.id,
+      model: "test-model",
+      providerIds: ["test-provider"],
+      status: "running" as const,
+      turn: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    database.saveAgentRun(childRun);
+
+    expect(
+      await core.handle({
+        type: "runtime-set-session-archived",
+        sessionId: parent.id,
+        archived: true,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error:
+        "Finish or cancel this task and its delegated work before archiving it.",
+    });
+
+    database.saveAgentRun({ ...childRun, status: "completed" });
+    const waitingRun = {
+      ...childRun,
+      id: "run-archive-parent",
+      sessionId: parent.id,
+      status: "waiting_approval" as const,
+    };
+    database.saveAgentRun(waitingRun);
+    expect(
+      await core.handle({
+        type: "runtime-set-session-archived",
+        sessionId: parent.id,
+        archived: true,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: "Resolve the pending approval before archiving this task.",
+    });
+
+    database.saveAgentRun({ ...waitingRun, status: "completed" });
+    expect(
+      await core.handle({
+        type: "runtime-set-session-archived",
+        sessionId: parent.id,
+        archived: true,
+      }),
+    ).toMatchObject({ ok: true, session: { archivedAt: now } });
+    const replacementMain = core.runtime.ensureMainSession();
+    expect(replacementMain.id).not.toBe(parent.id);
+    expect(replacementMain.archivedAt).toBeUndefined();
+    expect(
+      await core.handle({
+        type: "runtime-set-session-archived",
+        sessionId: parent.id,
+        archived: false,
+      }),
+    ).toMatchObject({ ok: true, session: { id: parent.id } });
+    expect(core.runtime.getSession(parent.id).archivedAt).toBeUndefined();
+    await core.close();
+  });
+
+  it("requires an explicit restore before archived tasks can execute or mutate", async () => {
+    let providerCalls = 0;
+    const provider: ModelProvider = {
+      id: "archive-provider",
+      capabilities: {
+        streaming: true,
+        tools: true,
+        images: false,
+        audio: false,
+        documents: false,
+        local: true,
+      },
+      complete: async (request) => {
+        providerCalls += 1;
+        return {
+          providerId: "archive-provider",
+          model: request.model,
+          text: "Unexpected run",
+          toolCalls: [],
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: "stop",
+        };
+      },
+    };
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const core = new AgentCore({
+      database,
+      modelProviders: [provider],
+      now: () => "2026-07-22T15:00:00.000Z",
+    });
+    const session = core.runtime.createSession({ title: "Archived task" });
+    core.runtime.appendMessage({
+      sessionId: session.id,
+      role: "user",
+      content: "Do not run while archived.",
+    });
+    core.runtime.setSessionArchived(session.id, true);
+
+    expect(
+      await core.handle({
+        type: "runtime-run-agent",
+        sessionId: session.id,
+        message: "Run invisibly",
+        model: "archive-model",
+        providerIds: ["archive-provider"],
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: "Restore this task before continuing work.",
+    });
+    expect(
+      await core.handle({
+        type: "runtime-append-message",
+        sessionId: session.id,
+        role: "user",
+        content: "Hidden mutation",
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: "Restore this task before continuing work.",
+    });
+    await expect(
+      core.runtime.callTool(session.id, "tools.search", {}),
+    ).rejects.toThrow("Restore this task before continuing work");
+    expect(providerCalls).toBe(0);
+    expect(core.runtime.listMessages(session.id)).toHaveLength(1);
+    await core.close();
+  });
+
   it("turns model and provider auto-selection into an audited routed run", async () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
     let received: { model: string; reasoningEffort?: string; serviceTier?: string } | undefined;
