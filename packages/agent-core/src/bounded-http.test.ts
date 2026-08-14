@@ -46,4 +46,27 @@ describe("bounded HTTP response reads", () => {
 		expect(cancellations).toBe(1);
 		expect(reads).toBeLessThanOrEqual(1);
 	});
+
+	it("reconstructs multiple chunks into a single byte array", async () => {
+		const body = new ReadableStream<Uint8Array>({
+			pull(controller) {
+				controller.enqueue(new Uint8Array([1, 2]));
+				controller.enqueue(new Uint8Array([3, 4]));
+				controller.close();
+			},
+		});
+
+		const result = await readBoundedResponseBytes(
+			new Response(body),
+			5,
+			"Response is too large.",
+		);
+		expect(result).toEqual(new Uint8Array([1, 2, 3, 4]));
+	});
+
+	it("rejects invalid maximumBytes", async () => {
+		await expect(
+			readBoundedResponseBytes(new Response(), -1, "Error"),
+		).rejects.toThrow("HTTP response byte limit must be a non-negative safe integer.");
+	});
 });

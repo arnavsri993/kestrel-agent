@@ -77,13 +77,15 @@ export class UsageGovernor {
 			0,
 			usage.inputTokens - (usage.cachedInputTokens ?? 0),
 		);
+		const TOKENS_PER_MILLION = 1_000_000;
+		const COST_PRECISION_MULTIPLIER = 100_000_000;
 		const amount =
 			(uncachedInput * rate.inputPerMillionUsd +
 				(usage.cachedInputTokens ?? 0) * rate.cachedInputPerMillionUsd +
 				usage.outputTokens * rate.outputPerMillionUsd +
 				(usage.reasoningTokens ?? 0) * rate.reasoningPerMillionUsd) /
-			1_000_000;
-		return Math.round(amount * 100_000_000) / 100_000_000;
+			TOKENS_PER_MILLION;
+		return Math.round(amount * COST_PRECISION_MULTIPLIER) / COST_PRECISION_MULTIPLIER;
 	}
 
 	routingCostScore(providerId: string, model: string): number {
