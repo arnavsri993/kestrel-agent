@@ -90,7 +90,7 @@ export function AgentSidebar({
         </div>
         <div className="agent-browser-context" title={activeTab?.url || "No page open"}>
           <Icon name="context" />
-          <span><small>Current page</small><strong>{activeTab?.url ? activeTab.title : "New Tab"}</strong></span>
+          <span><small>Current page</small><strong>{activeTab?.url ? activeTab.title : "No page open"}</strong></span>
         </div>
       </div>
       <div className="agent-conversation-host">{children}</div>

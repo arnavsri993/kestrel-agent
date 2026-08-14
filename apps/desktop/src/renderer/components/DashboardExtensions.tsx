@@ -81,7 +81,6 @@ export function DashboardExtensions({
   return (
     <div className="page-frame dashboard-extensions">
       <header className="page-header">
-        <span className="eyebrow">Extensions</span>
         <h1>Useful surfaces, without hidden code.</h1>
         <p>
           Enabled plugins can contribute bounded operational panels. Kestrel

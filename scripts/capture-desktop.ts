@@ -115,15 +115,44 @@ async function assertNoPageOverflow(page: Page, label: string) {
   if (overflow) throw new Error(`${label} has page-level horizontal overflow.`);
 }
 
+function normalizeVisibleCopy(value: string) {
+  return value.trim().toLocaleLowerCase().replace(/[.?!:]+$/g, "");
+}
+
+async function assertDistinctVisibleCopy(
+  page: Page,
+  label: string,
+  selectors: string[],
+) {
+  const values = (
+    await Promise.all(
+      selectors.map(async (selector) => {
+        const element = page.locator(selector).first();
+        return (await element.count()) && (await element.isVisible())
+          ? normalizeVisibleCopy((await element.innerText()) ?? "")
+          : "";
+      }),
+    )
+  ).filter(Boolean);
+  const duplicate = values.find((value, index) => values.indexOf(value) !== index);
+  if (duplicate)
+    throw new Error(`${label} repeats visible copy: ${JSON.stringify(duplicate)}.`);
+}
+
 async function openTool(page: Page, label: string) {
   await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.getByRole("heading", { name: "Kestrel", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Capabilities", exact: true }).waitFor();
   await page
     .locator(".command-groups button")
     .filter({ has: page.getByText(label, { exact: true }) })
     .first()
     .click();
   await page.locator(".legacy-product-surface").waitFor();
+  await assertDistinctVisibleCopy(page, `${label} surface`, [
+    ".secondary-surface-bar > strong",
+    ".legacy-product-surface .page-header h1",
+    ".legacy-product-surface .page-header .eyebrow",
+  ]);
 }
 
 const launchOutput: string[] = [];
@@ -172,7 +201,12 @@ try {
   await page.getByLabel("I understand these boundaries").check();
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await page.getByRole("heading", { name: "Choose a model." }).waitFor();
+  await page.getByRole("heading", { name: "Where should answers come from?" }).waitFor();
+  await assertDistinctVisibleCopy(page, "Choose-model setup", [
+    ".setup-rail li.current strong",
+    ".setup-product-anchor small",
+    ".setup-stage h1",
+  ]);
   await capture(page, "setup-03-choose-model.png");
 
   await page.getByRole("button", { name: /Use an account/ }).click();
@@ -225,6 +259,34 @@ try {
   await page.getByRole("heading", { name: "Where to?" }).waitFor();
   await capture(page, "workspace-new-agent-and-tab.png", 360);
 
+  await page
+    .locator(".agent-sidebar-footer")
+    .getByRole("button", { name: "History", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "Pages you visited", exact: true }).waitFor();
+  await assertDistinctVisibleCopy(page, "History surface", [
+    ".agent-sidebar-footer button[aria-current='page'] span",
+    ".browser-library h1",
+  ]);
+  await capture(page, "surface-history.png");
+
+  await page
+    .locator(".agent-sidebar-footer")
+    .getByRole("button", { name: "Downloads", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "Files from the web", exact: true }).waitFor();
+  await assertDistinctVisibleCopy(page, "Downloads surface", [
+    ".agent-sidebar-footer button[aria-current='page'] span",
+    ".browser-library h1",
+  ]);
+  await capture(page, "surface-downloads.png");
+
+  await page
+    .locator(".agent-sidebar-footer")
+    .getByRole("button", { name: "Browser", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "Where to?" }).waitFor();
+
   await page.getByLabel("Task settings").click();
   await page.getByText("Task settings", { exact: true }).waitFor();
   await capture(page, "workspace-task-settings.png", 120);
@@ -256,21 +318,21 @@ try {
   await capture(page, "surface-approvals.png");
 
   await openTool(page, "Life");
-  await page.getByRole("heading", { name: "Life", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Your context", exact: true }).waitFor();
   await capture(page, "surface-life-calendar.png");
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   await capture(page, "surface-life-memory.png");
 
   await openTool(page, "Research");
-  await page.getByRole("heading", { name: "Research", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Search with sources", exact: true }).waitFor();
   await capture(page, "surface-research.png");
 
   await openTool(page, "Artifacts");
-  await page.getByRole("heading", { name: "Artifacts", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Verified results", exact: true }).waitFor();
   await capture(page, "surface-artifacts.png");
 
   await openTool(page, "Work");
-  await page.getByRole("heading", { name: "Work", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Plan and track", exact: true }).waitFor();
   await capture(page, "surface-work.png");
 
   await openTool(page, "Opportunities");
@@ -278,7 +340,7 @@ try {
   await capture(page, "surface-opportunities.png");
 
   await openTool(page, "Activity");
-  await page.getByRole("heading", { name: "Activity", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "What happened", exact: true }).waitFor();
   await capture(page, "surface-activity.png");
 
   await openTool(page, "Extensions");
@@ -286,7 +348,16 @@ try {
   await capture(page, "surface-extensions.png");
 
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Preferences", exact: true }).waitFor();
+  await assertDistinctVisibleCopy(page, "Settings shell", [
+    ".agent-sidebar-footer button[aria-current='page'] span",
+    ".page-header h1",
+  ]);
+  await assertDistinctVisibleCopy(page, "Connections settings", [
+    ".settings-nav button[aria-current='page'] > span",
+    ".settings-content .settings-panel-header h2",
+    ".settings-content .settings-panel-header .eyebrow",
+  ]);
   await capture(page, "settings-connections.png");
 
   const settingsSections = [
@@ -303,6 +374,11 @@ try {
       .locator(".settings-nav")
       .getByRole("button", { name: new RegExp(`^${label}`) })
       .click();
+    await assertDistinctVisibleCopy(page, `${label} settings`, [
+      ".settings-nav button[aria-current='page'] > span",
+      ".settings-content .settings-panel-header h2",
+      ".settings-content .settings-panel-header .eyebrow",
+    ]);
     await capture(page, filename, 120);
   }
 

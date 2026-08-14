@@ -121,7 +121,7 @@ try {
   await page.setViewportSize({ width: 1320, height: 900 });
   await openKestrelDestination(page, "Life Context");
   const life = page.locator(".legacy-product-surface");
-  await life.getByRole("heading", { name: "Life", exact: true }).waitFor();
+  await life.getByRole("heading", { name: "Your context", exact: true }).waitFor();
 
   await life.getByText("Deep work · Kestrel", { exact: true }).waitFor();
   await life.getByText("Inferred · 76%", { exact: true }).waitFor();

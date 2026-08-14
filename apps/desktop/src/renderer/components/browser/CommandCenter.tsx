@@ -39,7 +39,7 @@ export function CommandCenter({
     <main className="command-center" aria-labelledby="command-center-title">
       <header>
         <span className="command-mark"><Icon name="command" /></span>
-        <div><h1 id="command-center-title">Kestrel</h1><p>Open a capability when you need it.</p></div>
+        <div><h1 id="command-center-title">Capabilities</h1></div>
       </header>
       <label className="command-search">
         <Icon name="search" />

@@ -75,7 +75,7 @@ export function EventApplications({ onOpenSession }: { onOpenSession: (sessionId
 
   return <section className="page-frame event-applications-page">
     <header className="event-applications-hero">
-      <div><span className="eyebrow">Opportunities</span><h1>Apply with your agent. Send with your consent.</h1><p>Import an official event or hackathon page, let the local agent prepare a review workspace, then approve each answer before any external submission.</p></div>
+      <div><h1>Apply with your agent. Send with your consent.</h1><p>Import an official event or hackathon page, let the local agent prepare a review workspace, then approve each answer before any external submission.</p></div>
       <div className="event-safety-note"><strong>Submission stays locked</strong><span>The agent may research and draft. It cannot turn a draft into a submitted application from this screen.</span></div>
     </header>
     <div className="event-applications-layout">

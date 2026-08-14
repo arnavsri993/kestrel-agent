@@ -1213,11 +1213,9 @@ export function LifeContext({
   return (
     <div className="life-page">
       <header className="page-header life-header">
-        <span className="eyebrow">Local life context</span>
-        <h1>Life</h1>
+        <h1>Your context</h1>
         <p>
-          Your time, people, and memory are one explainable model—not three
-          disconnected features.
+          Time, people, and memory stay connected and explainable.
         </p>
       </header>
       <nav className="life-switcher" aria-label="Life views">
