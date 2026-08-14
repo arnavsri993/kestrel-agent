@@ -145,6 +145,94 @@ describe("configuration history recovery", () => {
   });
 });
 
+describe("runtime messages", () => {
+  it("truncates messages correctly by keeping the most recent count", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const sessionId = "session-trunc";
+    database.saveRuntimeSession({ id: sessionId, title: "Test", allowedTools: [], status: "active", checkpoints: [], createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" });
+    
+    for (let i = 1; i <= 5; i++) {
+      database.saveRuntimeMessage({ id: `msg-${i}`, sessionId, role: "user", content: `Message ${i}`, createdAt: `2026-07-29T10:0${i}:00.000Z` });
+    }
+    
+    expect(database.listRuntimeMessages(sessionId)).toHaveLength(5);
+    
+    database.truncateRuntimeMessages(sessionId, 2);
+    
+    const remaining = database.listRuntimeMessages(sessionId);
+    expect(remaining).toHaveLength(2);
+    expect(remaining.map(m => m.id)).toEqual(["msg-4", "msg-5"]);
+    database.close();
+  });
+
+  it("searches runtime messages by term matching", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const sessionId = "session-search";
+    database.saveRuntimeSession({ id: sessionId, title: "Test", allowedTools: [], status: "active", checkpoints: [], createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" });
+    
+    database.saveRuntimeMessage({ id: "msg-a", sessionId, role: "user", content: "hello world specialterm", createdAt: "2026-07-29T10:00:00.000Z" });
+    database.saveRuntimeMessage({ id: "msg-b", sessionId, role: "assistant", content: "some other text without the term", createdAt: "2026-07-29T10:01:00.000Z" });
+    
+    const results = database.searchRuntimeMessages("specialterm");
+    expect(results).toHaveLength(1);
+    expect(results[0].id).toBe("msg-a");
+    database.close();
+  });
+});
+
+describe("analytics queries", () => {
+  it("aggregates tool execution stats correctly", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const sessionId = "session-stats";
+    database.saveRuntimeSession({ id: sessionId, title: "Test", allowedTools: [], status: "active", checkpoints: [], createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" });
+    const createExecution = (id: string, tool: string, status: "verified" | "blocked" | "failed" | "running") => {
+      database.saveToolExecution({ id, sessionId, toolName: tool, status, riskLevel: "low", input: {}, output: {}, startedAt: "2026-07-29T10:00:00.000Z", completedAt: "2026-07-29T10:00:01.000Z" });
+    };
+    createExecution("t1", "fs.read", "verified");
+    createExecution("t2", "fs.read", "verified");
+    createExecution("t3", "fs.write", "blocked");
+    createExecution("t4", "fs.write", "failed");
+    createExecution("t5", "shell.run", "running");
+
+    const stats = database.aggregateToolExecutionStats();
+    expect(stats).toEqual(expect.arrayContaining([
+      { tool: "fs.read", outcome: "success", count: 2 },
+      { tool: "fs.write", outcome: "blocked", count: 1 },
+      { tool: "fs.write", outcome: "error", count: 1 },
+      { tool: "shell.run", outcome: "pending", count: 1 },
+    ]));
+    database.close();
+  });
+
+  it("calculates spending and model call stats correctly", () => {
+    const database = new KestrelDatabase(":memory:", createEncryptionKey());
+    const sessionId = "session-spend";
+    const runId = "run-spend";
+    database.saveRuntimeSession({ id: sessionId, title: "Test", allowedTools: [], status: "active", checkpoints: [], createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" });
+    database.saveAgentRun({ id: runId, sessionId, model: "gpt-4", providerIds: ["test"], status: "completed", turn: 1, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" });
+    
+    database.saveModelCallAudit({
+      id: "call-1", runId, sessionId, status: "completed", startedAt: "2026-07-29T10:00:00.000Z", completedAt: "2026-07-29T10:00:01.000Z",
+      providerId: "openai", model: "gpt-4", inputTokens: 100, outputTokens: 50, estimatedCostUsd: 0.004, durationMs: 1000
+    });
+    database.saveModelCallAudit({
+      id: "call-2", runId, sessionId, status: "failed", startedAt: "2026-07-29T10:00:02.000Z", completedAt: "2026-07-29T10:00:03.000Z",
+      providerId: "openai", model: "gpt-4", inputTokens: 10, outputTokens: 0, estimatedCostUsd: 0.0004, durationMs: 1000
+    });
+
+    const spend = database.calculateSpending("2026-07-29T00:00:00.000Z", "2026-07-01T00:00:00.000Z");
+    expect(spend.dailyUsd).toBeCloseTo(0.0044);
+    expect(spend.monthlyUsd).toBeCloseTo(0.0044);
+
+    const stats = database.aggregateModelCallStats();
+    expect(stats).toEqual(expect.arrayContaining([
+      { provider: "openai", model: "gpt-4", outcome: "success", calls: 1, inputTokens: 100, outputTokens: 50, costUsd: 0.004, durations: [1] },
+      { provider: "openai", model: "gpt-4", outcome: "error", calls: 1, inputTokens: 10, outputTokens: 0, costUsd: 0.0004, durations: [1] }
+    ]));
+    database.close();
+  });
+});
+
 describe("tool execution history queries", () => {
   it("filters tool executions at the database boundary", () => {
     const database = new KestrelDatabase(":memory:", createEncryptionKey());
