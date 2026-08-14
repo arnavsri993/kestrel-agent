@@ -1,6 +1,6 @@
 export interface SingleInstanceApplication {
-  requestSingleInstanceLock(): boolean;
-  quit(): void;
+	requestSingleInstanceLock(): boolean;
+	quit(): void;
 }
 
 /**
@@ -11,17 +11,17 @@ export interface SingleInstanceApplication {
  * that losing process instead of briefly creating a second window/core.
  */
 export function acquireSingleInstanceLock(
-  application: SingleInstanceApplication,
+	application: SingleInstanceApplication,
 ): boolean {
-  const ownsLock = application.requestSingleInstanceLock();
-  if (!ownsLock) application.quit();
-  return ownsLock;
+	const ownsLock = application.requestSingleInstanceLock();
+	if (!ownsLock) application.quit();
+	return ownsLock;
 }
 
 export function developmentHeartbeatIsStale(
-  lastHeartbeatAt: number,
-  now: number,
-  maxAgeMs: number,
+	lastHeartbeatAt: number,
+	now: number,
+	maxAgeMs: number,
 ): boolean {
-  return now - lastHeartbeatAt > maxAgeMs;
+	return now - lastHeartbeatAt > maxAgeMs;
 }

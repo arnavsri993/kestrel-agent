@@ -7,13 +7,13 @@ import { ChatGptOAuthManager } from "./chatgpt-oauth";
 const roots: string[] = [];
 
 async function fakeCodex(): Promise<{ executable: string; capture: string }> {
-  const root = await mkdtemp(join(tmpdir(), "kestrel-chatgpt-oauth-test-"));
-  roots.push(root);
-  const executable = join(root, "codex");
-  const capture = `${executable}.capture.jsonl`;
-  await writeFile(
-    executable,
-    `#!/usr/bin/env node
+	const root = await mkdtemp(join(tmpdir(), "kestrel-chatgpt-oauth-test-"));
+	roots.push(root);
+	const executable = join(root, "codex");
+	const capture = `${executable}.capture.jsonl`;
+	await writeFile(
+		executable,
+		`#!/usr/bin/env node
 const fs = require("node:fs");
 const readline = require("node:readline");
 const capture = process.argv[1] + ".capture.jsonl";
@@ -35,71 +35,75 @@ input.on("line", line => {
   }
 });
 `,
-    { mode: 0o700 },
-  );
-  await chmod(executable, 0o700);
-  return { executable, capture };
+		{ mode: 0o700 },
+	);
+	await chmod(executable, 0o700);
+	return { executable, capture };
 }
 
 afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
+	await Promise.all(
+		roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+	);
 });
 
 describe("ChatGPT OAuth through Codex", () => {
-  it("opens the official URL, reports the account, and never forwards provider secrets", async () => {
-    const fake = await fakeCodex();
-    const opened: string[] = [];
-    const manager = new ChatGptOAuthManager({
-      executable: fake.executable,
-      openExternal: async (url) => {
-        opened.push(url);
-      },
-      environment: {
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-        OPENAI_API_KEY: "must-not-leak",
-      },
-      requestTimeoutMs: 2_000,
-      loginTimeoutMs: 2_000,
-    });
+	it("opens the official URL, reports the account, and never forwards provider secrets", async () => {
+		const fake = await fakeCodex();
+		const opened: string[] = [];
+		const manager = new ChatGptOAuthManager({
+			executable: fake.executable,
+			openExternal: async (url) => {
+				opened.push(url);
+			},
+			environment: {
+				PATH: process.env.PATH,
+				HOME: process.env.HOME,
+				OPENAI_API_KEY: "must-not-leak",
+			},
+			requestTimeoutMs: 2_000,
+			loginTimeoutMs: 2_000,
+		});
 
-    await expect(manager.connect()).resolves.toEqual({
-      connected: true,
-      accountType: "chatgpt",
-      email: "owner@example.com",
-      planType: "plus",
-    });
-    expect(opened).toEqual([
-      "https://auth.openai.com/oauth/authorize?test=1",
-    ]);
-    const records = (await readFile(fake.capture, "utf8"))
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            message: { method?: string; params?: unknown };
-            leaked: string | null;
-          },
-      );
-    expect(
-      records.find((record) => record.message.method === "account/login/start")
-        ?.message.params,
-    ).toEqual({ type: "chatgpt" });
-    expect(records.every((record) => record.leaked === null)).toBe(true);
-  });
+		await expect(manager.connect()).resolves.toEqual({
+			connected: true,
+			accountType: "chatgpt",
+			email: "owner@example.com",
+			planType: "plus",
+		});
+		expect(opened).toEqual(["https://auth.openai.com/oauth/authorize?test=1"]);
+		const records = (await readFile(fake.capture, "utf8"))
+			.trim()
+			.split("\n")
+			.map(
+				(line) =>
+					JSON.parse(line) as {
+						message: { method?: string; params?: unknown };
+						leaked: string | null;
+					},
+			);
+		expect(
+			records.find((record) => record.message.method === "account/login/start")
+				?.message.params,
+		).toEqual({ type: "chatgpt" });
+		expect(records.every((record) => record.leaked === null)).toBe(true);
+	});
 
-  it.each([Number.NaN, Number.POSITIVE_INFINITY])("uses safe OAuth timeouts for malformed value %s", async (timeoutMs) => {
-    const fake = await fakeCodex();
-    const manager = new ChatGptOAuthManager({
-      executable: fake.executable,
-      openExternal: async () => undefined,
-      requestTimeoutMs: timeoutMs,
-      loginTimeoutMs: timeoutMs
-    });
+	it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+		"uses safe OAuth timeouts for malformed value %s",
+		async (timeoutMs) => {
+			const fake = await fakeCodex();
+			const manager = new ChatGptOAuthManager({
+				executable: fake.executable,
+				openExternal: async () => undefined,
+				requestTimeoutMs: timeoutMs,
+				loginTimeoutMs: timeoutMs,
+			});
 
-    await expect(manager.connect()).resolves.toMatchObject({ connected: true, accountType: "chatgpt" });
-  });
+			await expect(manager.connect()).resolves.toMatchObject({
+				connected: true,
+				accountType: "chatgpt",
+			});
+		},
+	);
 });
