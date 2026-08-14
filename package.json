@@ -70,5 +70,10 @@
     "typescript": "5.9.3",
     "vitest": "4.1.0",
     "zod": "4.4.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "fast-uri": "^3.1.5"
+    }
   }
 }

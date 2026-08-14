@@ -2,6 +2,8 @@ import type { MemoryRecord } from "@kestrel/shared-types";
 
 export type ContextCategory = "devices" | "software_versions" | "hardware" | "prior_errors" | "prior_attempts" | "schedule" | "people" | "projects" | "preferences" | "location" | "subscriptions" | "purchases" | "deadlines" | "documents";
 
+import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
+
 export interface ContextResolutionRequest {
   userMessage: string;
   detectedIntent: string;
@@ -38,11 +40,27 @@ export class PreResponseContextResolver {
   resolve(request: ContextResolutionRequest): ResolvedContext {
     const allowed = new Set(request.possibleContextCategories);
     const now = Date.now();
+    const queryEmbedding = localSemanticEmbedding(request.userMessage);
+
     const matches = this.memoryProvider()
       .filter((item) => allowed.has(String(item.structuredData.category) as ContextCategory))
       .filter((item) => item.status === "active")
-      .sort((a, b) => (b.userConfirmed ? 1 : 0) - (a.userConfirmed ? 1 : 0) || b.importance - a.importance)
-      .slice(0, boundedRetrievedItems(request.maximumRetrievedItems));
+      .map((item) => {
+        const itemText = `${item.content} ${JSON.stringify(item.structuredData)}`;
+        const similarity = semanticSimilarity(queryEmbedding, localSemanticEmbedding(itemText));
+        return { item, similarity };
+      })
+      .sort((a, b) => {
+        if (a.item.userConfirmed !== b.item.userConfirmed) {
+          return a.item.userConfirmed ? -1 : 1;
+        }
+        if (Math.abs(a.similarity - b.similarity) > 0.1) {
+          return b.similarity - a.similarity;
+        }
+        return b.item.importance - a.item.importance;
+      })
+      .slice(0, boundedRetrievedItems(request.maximumRetrievedItems))
+      .map(({ item }) => item);
     return {
       confirmed: matches.filter((item) => item.userConfirmed && (!item.validUntil || Date.parse(item.validUntil) >= now)),
       inferred: matches.filter((item) => item.inferred),
