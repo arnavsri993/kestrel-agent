@@ -45,3 +45,62 @@ export function semanticSimilarity(left: Float32Array, right: Float32Array): num
   for (let index = 0; index < Math.min(left.length, right.length); index += 1) score += left[index]! * right[index]!;
   return Math.max(0, Math.min(1, score));
 }
+
+export interface BM25Document {
+  id: string;
+  content: string;
+}
+
+export class BM25 {
+  private readonly k1 = 1.2;
+  private readonly b = 0.75;
+  private readonly documents: BM25Document[] = [];
+  private readonly documentTokens = new Map<string, string[]>();
+  private readonly documentLengths = new Map<string, number>();
+  private readonly termDocumentFrequencies = new Map<string, number>();
+  private averageDocumentLength = 0;
+
+  constructor(documents: BM25Document[] = []) {
+    for (const doc of documents) this.addDocument(doc);
+  }
+
+  addDocument(doc: BM25Document): void {
+    const docTokens = tokens(doc.content).map(stem);
+    this.documents.push(doc);
+    this.documentTokens.set(doc.id, docTokens);
+    this.documentLengths.set(doc.id, docTokens.length);
+
+    const uniqueTokens = new Set(docTokens);
+    for (const token of uniqueTokens) {
+      this.termDocumentFrequencies.set(token, (this.termDocumentFrequencies.get(token) ?? 0) + 1);
+    }
+    
+    const totalLength = Array.from(this.documentLengths.values()).reduce((sum, len) => sum + len, 0);
+    this.averageDocumentLength = totalLength / this.documents.length;
+  }
+
+  score(query: string): Array<{ id: string; score: number }> {
+    const queryTokens = tokens(query).map(stem);
+    const N = this.documents.length;
+    
+    return this.documents.map((doc) => {
+      const docTokens = this.documentTokens.get(doc.id) ?? [];
+      const docLength = this.documentLengths.get(doc.id) ?? 0;
+      
+      let score = 0;
+      for (const token of queryTokens) {
+        const n_q = this.termDocumentFrequencies.get(token) ?? 0;
+        const idf = Math.log(1 + (N - n_q + 0.5) / (n_q + 0.5));
+        
+        let f_q_D = 0;
+        for (const t of docTokens) if (t === token) f_q_D += 1;
+        
+        const numerator = f_q_D * (this.k1 + 1);
+        const denominator = f_q_D + this.k1 * (1 - this.b + this.b * (docLength / this.averageDocumentLength));
+        score += idf * (numerator / denominator);
+      }
+      
+      return { id: doc.id, score };
+    }).sort((a, b) => b.score - a.score);
+  }
+}
