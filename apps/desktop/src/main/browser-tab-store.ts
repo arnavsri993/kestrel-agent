@@ -16,6 +16,7 @@ import {
 
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
   searchEngine: "duckduckgo",
+  tabLayout: "horizontal",
   restoreSession: true,
   historyRetentionDays: 90,
 };
@@ -25,6 +26,14 @@ const SEARCH_ENGINES: Record<UserBrowserSettings["searchEngine"], string> = {
   google: "https://www.google.com/search?q=",
   bing: "https://www.bing.com/search?q=",
   brave: "https://search.brave.com/search?q=",
+  ecosia: "https://www.ecosia.org/search?q=",
+  startpage: "https://www.startpage.com/sp/search?query=",
+  yahoo: "https://search.yahoo.com/search?p=",
+  kagi: "https://kagi.com/search?q=",
+  qwant: "https://www.qwant.com/?q=",
+  mojeek: "https://www.mojeek.com/search?q=",
+  baidu: "https://www.baidu.com/s?wd=",
+  yandex: "https://yandex.com/search/?text=",
 };
 
 const EXPLICIT_SCHEME = /^[A-Za-z][A-Za-z\d+.-]*:/;

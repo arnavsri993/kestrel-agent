@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
 import {
   BrowserTabStore,
   freshBrowserState,
@@ -39,9 +40,46 @@ describe("browser address normalization", () => {
   });
 
   it("respects the selected search engine", () => {
-    expect(normalizeBrowserAddress("kestrel", "brave").url).toBe(
-      "https://search.brave.com/search?q=kestrel",
-    );
+    const searches = {
+      duckduckgo: "https://duckduckgo.com/?q=kestrel%20browser",
+      google: "https://www.google.com/search?q=kestrel%20browser",
+      bing: "https://www.bing.com/search?q=kestrel%20browser",
+      brave: "https://search.brave.com/search?q=kestrel%20browser",
+      ecosia: "https://www.ecosia.org/search?q=kestrel%20browser",
+      startpage: "https://www.startpage.com/sp/search?query=kestrel%20browser",
+      yahoo: "https://search.yahoo.com/search?p=kestrel%20browser",
+      kagi: "https://kagi.com/search?q=kestrel%20browser",
+      qwant: "https://www.qwant.com/?q=kestrel%20browser",
+      mojeek: "https://www.mojeek.com/search?q=kestrel%20browser",
+      baidu: "https://www.baidu.com/s?wd=kestrel%20browser",
+      yandex: "https://yandex.com/search/?text=kestrel%20browser",
+    } as const;
+
+    for (const [engine, url] of Object.entries(searches))
+      expect(
+        normalizeBrowserAddress(
+          "kestrel browser",
+          engine as keyof typeof searches,
+        ).url,
+      ).toBe(url);
+  });
+
+  it("accepts only supported search engines and tab layouts", () => {
+    const base = {
+      searchEngine: "duckduckgo",
+      tabLayout: "horizontal",
+      restoreSession: true,
+      historyRetentionDays: 90,
+    };
+    expect(UserBrowserSettingsSchema.safeParse(base).success).toBe(true);
+    expect(
+      UserBrowserSettingsSchema.safeParse({ ...base, tabLayout: "stacked" })
+        .success,
+    ).toBe(false);
+    expect(
+      UserBrowserSettingsSchema.safeParse({ ...base, searchEngine: "unknown" })
+        .success,
+    ).toBe(false);
   });
 
   it("blocks privileged protocols and credential-bearing URLs", () => {
@@ -96,6 +134,28 @@ describe("browser tab persistence", () => {
       canGoBack: false,
       discarded: true,
       error: undefined,
+    });
+  });
+
+  it("persists the selected tab layout and migrates legacy settings", () => {
+    const path = storePath();
+    const store = new BrowserTabStore(path);
+    const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+    state.settings.tabLayout = "vertical";
+    state.settings.searchEngine = "ecosia";
+    store.save(state);
+
+    expect(store.load().settings).toMatchObject({
+      tabLayout: "vertical",
+      searchEngine: "ecosia",
+    });
+
+    const legacy = JSON.parse(readFileSync(path, "utf8"));
+    delete legacy.settings.tabLayout;
+    writeFileSync(path, `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
+    expect(store.load().settings).toMatchObject({
+      tabLayout: "horizontal",
+      searchEngine: "ecosia",
     });
   });
 

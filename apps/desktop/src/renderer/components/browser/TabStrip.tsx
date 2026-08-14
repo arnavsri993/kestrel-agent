@@ -8,15 +8,19 @@ export function TabStrip({
   onSelect,
   onClose,
   onCreate,
+  orientation,
 }: {
   tabs: UserBrowserTab[];
   activeTabId: string | null;
   onSelect(tabId: string): void;
   onClose(tabId: string): void;
   onCreate(): void;
+  orientation: "horizontal" | "vertical";
 }) {
   function moveFocus(event: KeyboardEvent<HTMLDivElement>) {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const previousKey = orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
+    const nextKey = orientation === "vertical" ? "ArrowDown" : "ArrowRight";
+    if (![previousKey, nextKey, "Home", "End"].includes(event.key)) return;
     const buttons = Array.from(
       event.currentTarget.querySelectorAll<HTMLButtonElement>("[role='tab']"),
     );
@@ -28,17 +32,20 @@ export function TabStrip({
         ? 0
         : event.key === "End"
           ? buttons.length - 1
-          : (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) %
+          : (index + (event.key === nextKey ? 1 : -1) + buttons.length) %
             buttons.length;
     buttons[next]?.focus();
   }
 
   return (
-    <div className="browser-tab-row drag-region-browser">
+    <div
+      className={`browser-tab-row browser-tab-row-${orientation} drag-region-browser`}
+    >
       <div
         className="browser-tabs no-drag"
         role="tablist"
         aria-label="Browser tabs"
+        aria-orientation={orientation}
         onKeyDown={moveFocus}
       >
         {tabs.map((tab) => {
@@ -85,6 +92,7 @@ export function TabStrip({
         onClick={onCreate}
       >
         <Icon name="plus" />
+        <span>New Tab</span>
       </button>
       <div className="browser-tab-drag-fill" />
     </div>

@@ -2395,7 +2395,21 @@ export const UserBrowserDownloadSchema = z.object({
 export type UserBrowserDownload = z.infer<typeof UserBrowserDownloadSchema>;
 
 export const UserBrowserSettingsSchema = z.object({
-  searchEngine: z.enum(["duckduckgo", "google", "bing", "brave"]),
+  searchEngine: z.enum([
+    "duckduckgo",
+    "google",
+    "bing",
+    "brave",
+    "ecosia",
+    "startpage",
+    "yahoo",
+    "kagi",
+    "qwant",
+    "mojeek",
+    "baidu",
+    "yandex",
+  ]),
+  tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),
   restoreSession: z.boolean(),
   historyRetentionDays: z.union([
     z.literal(0),
