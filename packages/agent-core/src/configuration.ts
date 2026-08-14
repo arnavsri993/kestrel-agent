@@ -400,9 +400,12 @@ function patchBetween(
 }
 
 function riskForPath(path: string): RiskLevel {
-  if (path.startsWith("/tools/") || path.startsWith("/permissions/"))
+  if (
+    path.startsWith("/tools/") ||
+    path.startsWith("/permissions/") ||
+    path.startsWith("/integrations/")
+  )
     return "high_consequence";
-  if (path.startsWith("/integrations/")) return "high_consequence";
   if (
     path.startsWith("/prompts/") ||
     path.startsWith("/memory/") ||
