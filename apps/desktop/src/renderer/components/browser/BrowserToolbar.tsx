@@ -6,7 +6,12 @@ export function BrowserToolbar({
   tab,
   addressRef,
   contextEnabled,
+  isBookmarked,
   onToggleContext,
+  onToggleBookmark,
+  onAskAgent,
+  onOpenBookmarks,
+  onOpenDevTools,
   onNavigate,
   onBack,
   onForward,
@@ -19,7 +24,12 @@ export function BrowserToolbar({
   tab: UserBrowserTab;
   addressRef: RefObject<HTMLInputElement | null>;
   contextEnabled: boolean;
+  isBookmarked: boolean;
   onToggleContext(): void;
+  onToggleBookmark(): void;
+  onAskAgent(): void;
+  onOpenBookmarks(): void;
+  onOpenDevTools(): void;
   onNavigate(input: string): void;
   onBack(): void;
   onForward(): void;
@@ -88,6 +98,17 @@ export function BrowserToolbar({
       </form>
       <button
         type="button"
+        className={`browser-bookmark-toggle ${isBookmarked ? "active" : ""}`}
+        aria-label={isBookmarked ? "Remove bookmark" : "Bookmark this page"}
+        aria-pressed={isBookmarked}
+        disabled={!tab.url || tab.mode === "private"}
+        title={tab.mode === "private" ? "Private tabs cannot save bookmarks" : isBookmarked ? "Remove bookmark" : "Bookmark this page"}
+        onClick={onToggleBookmark}
+      >
+        <Icon name="bookmark" />
+      </button>
+      <button
+        type="button"
         className={`browser-context-toggle ${contextEnabled ? "active" : ""}`}
         aria-pressed={contextEnabled}
         title={
@@ -101,6 +122,15 @@ export function BrowserToolbar({
         <span>{contextEnabled ? "Page on" : "Page off"}</span>
       </button>
       <div className="browser-toolbar-actions">
+        <button type="button" aria-label="Ask Kestrel about this page" disabled={!tab.url} onClick={onAskAgent}>
+          <Icon name="agent" />
+        </button>
+        <button type="button" aria-label="Bookmarks" onClick={onOpenBookmarks}>
+          <Icon name="bookmark" />
+        </button>
+        <button type="button" aria-label="Developer tools" disabled={!tab.url} onClick={onOpenDevTools}>
+          <Icon name="devtools" />
+        </button>
         <button type="button" aria-label="History" onClick={onOpenHistory}>
           <Icon name="history" />
         </button>

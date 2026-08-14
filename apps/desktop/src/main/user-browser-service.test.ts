@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +36,7 @@ const electron = vi.hoisted(() => {
     close = vi.fn(() => { this.destroyed = true; });
     reload = vi.fn();
     stop = vi.fn();
+    openDevTools = vi.fn();
     focus = vi.fn();
     executeJavaScript = vi.fn();
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = handler; });
@@ -66,6 +67,8 @@ const electron = vi.hoisted(() => {
     permissionRequestHandler: unknown;
     setPermissionCheckHandler = vi.fn((handler) => { this.permissionCheckHandler = handler; });
     setPermissionRequestHandler = vi.fn((handler) => { this.permissionRequestHandler = handler; });
+    loadExtension = vi.fn(async (path: string) => ({ id: `extension-${path}`, name: "Test extension", version: "1.0.0" }));
+    removeExtension = vi.fn();
     fetch = vi.fn();
   }
   const state: {
@@ -86,6 +89,7 @@ const electron = vi.hoisted(() => {
 });
 
 vi.mock("electron", () => ({
+  app: { isPackaged: false },
   BrowserWindow: class {},
   WebContentsView: electron.MockView,
   session: { fromPartition: electron.fromPartition },
@@ -131,7 +135,7 @@ function createService(options: { partitionName?: string; now?: () => Date } = {
     onCommand: (command) => commands.push(command),
     ...options,
   });
-  return { service, window, events, commands };
+  return { service, window, events, commands, directory };
 }
 
 async function navigateNewTab(service: UserBrowserService, url: string) {
@@ -556,5 +560,54 @@ describe("UserBrowserService", () => {
       "open-commands",
     ]);
     expect(inputEvent.preventDefault).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps private tabs in an ephemeral partition and out of history and restore state", async () => {
+    const { service, directory } = createService();
+    const tab = (await service.createTab(undefined, true, "private")).tabs.at(-1)!;
+    expect(tab.mode).toBe("private");
+    await service.navigate(tab.id, "https://private.example");
+    expect(electron.state.partitions).toContainEqual(
+      expect.objectContaining({ options: { cache: false } }),
+    );
+    expect(service.getState().history).toEqual([]);
+    const persisted = JSON.parse(readFileSync(`${directory}/state.json`, "utf8")) as { tabs: Array<{ id: string }> };
+    expect(persisted.tabs.some((candidate) => candidate.id === tab.id)).toBe(false);
+  });
+
+  it("toggles bookmarks and applies explicit site permission decisions", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://permissions.example");
+    expect(service.toggleBookmark(tab.id).bookmarks).toHaveLength(1);
+    expect(service.toggleBookmark(tab.id).bookmarks).toHaveLength(0);
+
+    const partition = electron.state.partitions[0]!.instance as any;
+    const contents = electron.state.views[0]!.webContents;
+    const blocked = vi.fn();
+    partition.permissionRequestHandler(contents, "notifications", blocked, {});
+    expect(blocked).toHaveBeenCalledWith(false);
+    service.setPermission("https://permissions.example", "notifications", "allow");
+    const allowed = vi.fn();
+    partition.permissionRequestHandler(contents, "notifications", allowed, {});
+    expect(allowed).toHaveBeenCalledWith(true);
+  });
+
+  it("round-trips user-owned browser data without importing tabs or enabling extensions", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://transfer.example");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://transfer.example/";
+    contents.title = "Transfer page";
+    contents.emit("did-navigate", {}, contents.url, 200, "OK");
+    service.toggleBookmark(tab.id);
+    const transfer = service.exportData();
+    const second = createService().service;
+    const imported = second.importData(JSON.stringify(transfer));
+    expect(imported.bookmarks).toHaveLength(1);
+    expect(imported.history).toHaveLength(1);
+    expect(imported.tabs).toHaveLength(1);
+    expect(imported.extensions).toEqual([]);
   });
 });

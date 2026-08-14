@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import {
+  app,
   BrowserWindow,
   Menu,
   clipboard,
@@ -16,11 +17,14 @@ import {
 import {
   UserBrowserPageContextSchema,
   UserBrowserStateSchema,
+  UserBrowserTransferSchema,
   type UserBrowserEvent,
   type UserBrowserCommand,
   type UserBrowserDownload,
+  type UserBrowserExtension,
   type UserBrowserHistoryEntry,
   type UserBrowserPageContext,
+  type UserBrowserPermission,
   type UserBrowserSettings,
   type UserBrowserState,
   type UserBrowserTab,
@@ -86,6 +90,7 @@ export interface UserBrowserServiceOptions {
 
 interface ViewRecord {
   view: WebContentsView;
+  partition: Session;
   navigatingTo?: string;
   popupGestureAt?: number;
   popupAllowance: number;
@@ -117,6 +122,36 @@ function hostnameTitle(value: string): string {
   }
 }
 
+function safeOrigin(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function permissionNames(
+  permission: string,
+  details: { mediaTypes?: string[] } | undefined,
+): UserBrowserPermission["permission"][] {
+  if (permission === "media") {
+    const names: UserBrowserPermission["permission"][] = [];
+    if (details?.mediaTypes?.includes("video")) names.push("camera");
+    if (details?.mediaTypes?.includes("audio")) names.push("microphone");
+    return names;
+  }
+  const mapped: Record<string, UserBrowserPermission["permission"] | undefined> = {
+    geolocation: "geolocation",
+    notifications: "notifications",
+    "clipboard-read": "clipboard-read",
+    fullscreen: "fullscreen",
+    "display-capture": "display-capture",
+  };
+  const name = mapped[permission];
+  return name ? [name] : [];
+}
+
 const ACCESSIBILITY_URL_VALUE =
   /\b(?:https?|file|ftp|data|javascript|blob):[^\s<>"'{}\[\]]+/gi;
 
@@ -143,6 +178,11 @@ export class UserBrowserService {
   private readonly window: BrowserWindow;
   private readonly store: BrowserTabStore;
   private readonly partition: Session;
+  private readonly privatePartitions = new Map<
+    string,
+    { session: Session; name: string }
+  >();
+  private readonly downloadHandlers = new Map<Session, Parameters<Session["on"]>[1]>();
   private readonly views = new Map<string, ViewRecord>();
   private readonly downloadPaths = new Map<string, string>();
   private readonly webContentsToTab = new Map<number, string>();
@@ -151,7 +191,6 @@ export class UserBrowserService {
   private readonly partitionName: string;
   private readonly onEvent: UserBrowserServiceOptions["onEvent"];
   private readonly onCommand?: UserBrowserServiceOptions["onCommand"];
-  private readonly onWillDownload: Parameters<Session["on"]>[1];
   private state: UserBrowserState;
   private contentBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
   private contentVisible = false;
@@ -173,80 +212,26 @@ export class UserBrowserService {
       this.partitionName,
       { cache: true },
     );
-    this.partition.setPermissionCheckHandler(() => false);
-    this.partition.setPermissionRequestHandler(
-      (_webContents, _permission, callback) => callback(false),
-    );
-    this.onWillDownload = (_event, item, webContents) => {
-      const tabId = this.webContentsToTab.get(webContents.id);
-      if (!tabId) {
-        item.cancel();
-        return;
-      }
-      const id = `download-${randomUUID()}`;
-      const filename = this.availableDownloadName(item.getFilename(), id);
-      const path = join(this.downloadDirectory, filename);
-      const startedAt = this.now().toISOString();
-      item.setSavePath(path);
-      this.downloadPaths.set(id, path);
-      this.state.downloads.push({
-        id,
-        tabId,
-        filename,
-        sourceUrl:
-          sanitizeBrowserUrl(item.getURL()) || "https://invalid.local/",
-        receivedBytes: 0,
-        totalBytes: Math.max(0, item.getTotalBytes()),
-        status: "progressing",
-        startedAt,
-        canReveal: false,
-      });
-      this.state.downloads.splice(
-        0,
-        Math.max(0, this.state.downloads.length - MAX_DOWNLOAD_ENTRIES),
-      );
-      this.commit();
-      item.on("updated", () => {
-        const record = this.state.downloads.find(
-          (download) => download.id === id,
-        );
-        if (!record) return;
-        record.receivedBytes = Math.max(0, item.getReceivedBytes());
-        record.totalBytes = Math.max(0, item.getTotalBytes());
-        this.emit();
-      });
-      item.once("done", (_doneEvent, status) => {
-        const record = this.state.downloads.find(
-          (download) => download.id === id,
-        );
-        if (!record) return;
-        record.receivedBytes = Math.max(0, item.getReceivedBytes());
-        record.totalBytes = Math.max(0, item.getTotalBytes());
-        record.status =
-          status === "completed"
-            ? "completed"
-            : status === "cancelled"
-              ? "cancelled"
-              : "failed";
-        record.completedAt = this.now().toISOString();
-        record.canReveal = status === "completed" && existsSync(path);
-        this.commit();
-      });
-    };
-    this.partition.on("will-download", this.onWillDownload);
+    this.configurePartition(this.partition, false);
+    void this.restoreExtensions();
   }
 
   getState(): UserBrowserState {
     return cloneState(this.state);
   }
 
-  async createTab(input?: string, active = true): Promise<UserBrowserState> {
+  async createTab(
+    input?: string,
+    active = true,
+    mode: UserBrowserTab["mode"] = "standard",
+  ): Promise<UserBrowserState> {
     this.assertAvailable();
     if (this.state.tabs.length >= 32)
       throw new Error("Kestrel supports up to 32 open tabs.");
     const timestamp = this.now().toISOString();
     const tab: UserBrowserTab = {
       id: `tab-${randomUUID()}`,
+      mode,
       title: "New Tab",
       url: "",
       loading: false,
@@ -276,15 +261,16 @@ export class UserBrowserService {
   }
 
   async closeTab(tabId: string): Promise<UserBrowserState> {
-    this.requireTab(tabId);
+    const tab = this.requireTab(tabId);
     const index = this.state.tabs.findIndex((tab) => tab.id === tabId);
-    this.closeView(tabId);
+    this.closeView(tabId, true, tab.mode === "private");
     this.state.tabs.splice(index, 1);
     if (this.state.tabs.length === 0) {
       const timestamp = this.now().toISOString();
       const id = `tab-${randomUUID()}`;
       this.state.tabs.push({
         id,
+        mode: "standard",
         title: "New Tab",
         url: "",
         loading: false,
@@ -399,6 +385,187 @@ export class UserBrowserService {
     this.state.history = [];
     for (const record of this.views.values())
       record.view.webContents.navigationHistory.clear();
+    this.commit();
+    return this.getState();
+  }
+
+  toggleBookmark(tabId: string): UserBrowserState {
+    const tab = this.requireTab(tabId);
+    const url = sanitizeBrowserUrl(tab.url);
+    if (!url) throw new Error("Only a loaded HTTP(S) page can be bookmarked.");
+    const existing = this.state.bookmarks.find((bookmark) => bookmark.url === url);
+    if (existing) {
+      this.state.bookmarks = this.state.bookmarks.filter(
+        (bookmark) => bookmark.id !== existing.id,
+      );
+    } else {
+      const timestamp = this.now().toISOString();
+      this.state.bookmarks.push({
+        id: `bookmark-${randomUUID()}`,
+        url,
+        title: tab.title || hostnameTitle(url),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      this.state.bookmarks = this.state.bookmarks.slice(-2_000);
+    }
+    this.commit();
+    return this.getState();
+  }
+
+  removeBookmark(bookmarkId: string): UserBrowserState {
+    this.state.bookmarks = this.state.bookmarks.filter(
+      (bookmark) => bookmark.id !== bookmarkId,
+    );
+    this.commit();
+    return this.getState();
+  }
+
+  setPermission(
+    origin: string,
+    permission: UserBrowserPermission["permission"],
+    decision: UserBrowserPermission["decision"],
+  ): UserBrowserState {
+    const normalizedOrigin = safeOrigin(origin);
+    if (!normalizedOrigin) throw new Error("Site permissions require an HTTP(S) origin.");
+    const existing = this.state.permissions.find(
+      (entry) =>
+        entry.origin === normalizedOrigin && entry.permission === permission,
+    );
+    const next = {
+      origin: normalizedOrigin,
+      permission,
+      decision,
+      updatedAt: this.now().toISOString(),
+    } satisfies UserBrowserPermission;
+    this.state.permissions = existing
+      ? this.state.permissions.map((entry) =>
+          entry === existing ? next : entry,
+        )
+      : [...this.state.permissions, next].slice(-1_000);
+    this.commit();
+    return this.getState();
+  }
+
+  clearPermissions(): UserBrowserState {
+    this.state.permissions = [];
+    this.commit();
+    return this.getState();
+  }
+
+  openDevTools(tabId?: string): void {
+    if (app.isPackaged) throw new Error("Developer tools are available in development builds only.");
+    const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
+    this.ensureView(tab).view.webContents.openDevTools({ mode: "detach" });
+  }
+
+  exportData() {
+    return UserBrowserTransferSchema.parse({
+      version: 1,
+      exportedAt: this.now().toISOString(),
+      history: structuredClone(this.state.history),
+      bookmarks: structuredClone(this.state.bookmarks),
+      permissions: structuredClone(this.state.permissions),
+      extensions: structuredClone(this.state.extensions),
+      settings: structuredClone(this.state.settings),
+    });
+  }
+
+  importData(raw: string): UserBrowserState {
+    if (raw.length > 20_000_000) throw new Error("The browser export is too large.");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("The browser export is not valid JSON.");
+    }
+    const transfer = UserBrowserTransferSchema.parse(parsed);
+    const bookmarks = transfer.bookmarks.flatMap((bookmark) => {
+      const url = sanitizeBrowserUrl(bookmark.url);
+      return url ? [{ ...bookmark, url }] : [];
+    });
+    const history = transfer.history.flatMap((entry) => {
+      const url = sanitizeBrowserUrl(entry.url);
+      return url ? [{ ...entry, url }] : [];
+    });
+    this.state.bookmarks = [
+      ...this.state.bookmarks,
+      ...bookmarks.filter(
+        (bookmark) =>
+          !this.state.bookmarks.some((current) => current.url === bookmark.url),
+      ),
+    ].slice(-2_000);
+    this.state.history = [...this.state.history, ...history].slice(-MAX_HISTORY_ENTRIES);
+    this.state.permissions = transfer.permissions;
+    this.state.settings = transfer.settings;
+    this.state.extensions = transfer.extensions.map((extension) => ({
+      ...extension,
+      enabled: false,
+    }));
+    this.pruneHistory();
+    this.commit();
+    return this.getState();
+  }
+
+  async installExtension(path: string): Promise<UserBrowserState> {
+    if (!path || !existsSync(path) || !statSync(path).isDirectory())
+      throw new Error("Choose an unpacked browser extension folder.");
+    let manifest: { name?: unknown; version?: unknown; permissions?: unknown };
+    try {
+      manifest = JSON.parse(readFileSync(join(path, "manifest.json"), "utf8")) as typeof manifest;
+    } catch {
+      throw new Error("The selected folder does not contain a valid manifest.json.");
+    }
+    const name = typeof manifest.name === "string" ? manifest.name.trim() : "";
+    const version = typeof manifest.version === "string" ? manifest.version.trim() : "";
+    if (!name || !version) throw new Error("The extension manifest needs a name and version.");
+    const permissions = Array.isArray(manifest.permissions)
+      ? manifest.permissions.filter((item): item is string => typeof item === "string").slice(0, 200)
+      : [];
+    const extension = await this.partition.loadExtension(path, {
+      allowFileAccess: false,
+    });
+    this.state.extensions = [
+      ...this.state.extensions.filter((item) => item.id !== extension.id),
+      {
+        id: extension.id,
+        name,
+        version,
+        path,
+        enabled: true,
+        permissions,
+        installedAt: this.now().toISOString(),
+      } satisfies UserBrowserExtension,
+    ].slice(-100);
+    this.commit();
+    return this.getState();
+  }
+
+  async setExtensionEnabled(
+    extensionId: string,
+    enabled: boolean,
+  ): Promise<UserBrowserState> {
+    const extension = this.state.extensions.find((item) => item.id === extensionId);
+    if (!extension) throw new Error("Browser extension is unavailable.");
+    if (enabled) {
+      await this.partition.loadExtension(extension.path, {
+        allowFileAccess: false,
+      });
+    } else {
+      this.partition.removeExtension(extension.id);
+    }
+    extension.enabled = enabled;
+    this.commit();
+    return this.getState();
+  }
+
+  async removeExtension(extensionId: string): Promise<UserBrowserState> {
+    const extension = this.state.extensions.find((item) => item.id === extensionId);
+    if (!extension) return this.getState();
+    this.partition.removeExtension(extension.id);
+    this.state.extensions = this.state.extensions.filter(
+      (item) => item.id !== extensionId,
+    );
     this.commit();
     return this.getState();
   }
@@ -642,6 +809,7 @@ export class UserBrowserService {
       case "visible-tabs":
         return this.getState().tabs.map((tab) => ({
           id: tab.id,
+          mode: tab.mode,
           title: tab.title,
           url: sanitizeBrowserUrl(tab.url),
           active: tab.id === this.state.activeTabId,
@@ -686,28 +854,199 @@ export class UserBrowserService {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.partition.off("will-download", this.onWillDownload);
+    for (const [session, handler] of this.downloadHandlers)
+      session.off("will-download", handler);
     for (const tabId of [...this.views.keys()]) this.closeView(tabId);
+    this.privatePartitions.clear();
+  }
+
+  private configurePartition(session: Session, privateMode: boolean): void {
+    session.setPermissionCheckHandler(
+      (_webContents, permission, requestingOrigin, details) => {
+        if (privateMode) return false;
+        const origin = safeOrigin(requestingOrigin);
+        const names = permissionNames(
+          permission,
+          details as { mediaTypes?: string[] } | undefined,
+        );
+        return Boolean(
+          origin &&
+            names.length > 0 &&
+            names.every((name) =>
+              this.state.permissions.some(
+                (entry) =>
+                  entry.origin === origin &&
+                  entry.permission === name &&
+                  entry.decision === "allow",
+              ),
+            ),
+        );
+      },
+    );
+    session.setPermissionRequestHandler(
+      (webContents, permission, callback, details) => {
+        if (privateMode) {
+          callback(false);
+          return;
+        }
+        const tabId = this.webContentsToTab.get(webContents.id);
+        const origin = safeOrigin(
+          typeof webContents.getURL === "function" ? webContents.getURL() : "",
+        );
+        const names = permissionNames(
+          permission,
+          details as { mediaTypes?: string[] } | undefined,
+        );
+        const allowed = Boolean(
+          tabId &&
+            origin &&
+            names.length > 0 &&
+            names.every((name) =>
+              this.state.permissions.some(
+                (entry) =>
+                  entry.origin === origin &&
+                  entry.permission === name &&
+                  entry.decision === "allow",
+              ),
+            ),
+        );
+        callback(allowed);
+      },
+    );
+    const handler = this.createDownloadHandler(privateMode);
+    session.on("will-download", handler);
+    this.downloadHandlers.set(session, handler);
+  }
+
+  private createDownloadHandler(
+    privateMode: boolean,
+  ): Parameters<Session["on"]>[1] {
+    return (_event, item, webContents) => {
+      const tabId = this.webContentsToTab.get(webContents.id);
+      const tab = tabId
+        ? this.state.tabs.find((candidate) => candidate.id === tabId)
+        : undefined;
+      if (!tab || (tab.mode === "private") !== privateMode) {
+        item.cancel();
+        return;
+      }
+      const id = `download-${randomUUID()}`;
+      const filename = this.availableDownloadName(item.getFilename(), id);
+      const directory = privateMode
+        ? join(this.downloadDirectory, "private")
+        : this.downloadDirectory;
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      const path = join(directory, filename);
+      item.setSavePath(path);
+      if (privateMode) {
+        item.once("done", (_doneEvent, status) => {
+          if (status !== "completed") return;
+          // Private downloads are real files but are deliberately absent from
+          // persistent browser metadata and the in-app download history.
+        });
+        return;
+      }
+      const startedAt = this.now().toISOString();
+      this.downloadPaths.set(id, path);
+      this.state.downloads.push({
+        id,
+        tabId,
+        filename,
+        sourceUrl:
+          sanitizeBrowserUrl(item.getURL()) || "https://invalid.local/",
+        receivedBytes: 0,
+        totalBytes: Math.max(0, item.getTotalBytes()),
+        status: "progressing",
+        startedAt,
+        canReveal: false,
+      });
+      this.state.downloads.splice(
+        0,
+        Math.max(0, this.state.downloads.length - MAX_DOWNLOAD_ENTRIES),
+      );
+      this.commit();
+      item.on("updated", () => {
+        const record = this.state.downloads.find(
+          (download) => download.id === id,
+        );
+        if (!record) return;
+        record.receivedBytes = Math.max(0, item.getReceivedBytes());
+        record.totalBytes = Math.max(0, item.getTotalBytes());
+        this.emit();
+      });
+      item.once("done", (_doneEvent, status) => {
+        const record = this.state.downloads.find(
+          (download) => download.id === id,
+        );
+        if (!record) return;
+        record.receivedBytes = Math.max(0, item.getReceivedBytes());
+        record.totalBytes = Math.max(0, item.getTotalBytes());
+        record.status =
+          status === "completed"
+            ? "completed"
+            : status === "cancelled"
+              ? "cancelled"
+              : "failed";
+        record.completedAt = this.now().toISOString();
+        record.canReveal = status === "completed" && existsSync(path);
+        this.commit();
+      });
+    };
+  }
+
+  private privatePartitionForTab(tabId: string): { session: Session; name: string } {
+    const existing = this.privatePartitions.get(tabId);
+    if (existing) return existing;
+    const name = `kestrel-private-${randomUUID()}`;
+    const session = electronSession.fromPartition(name, { cache: false });
+    this.configurePartition(session, true);
+    const value = { session, name };
+    this.privatePartitions.set(tabId, value);
+    return value;
+  }
+
+  private async restoreExtensions(): Promise<void> {
+    let changed = false;
+    for (const extension of this.state.extensions) {
+      if (!extension.enabled) continue;
+      try {
+        await this.partition.loadExtension(extension.path, {
+          allowFileAccess: false,
+        });
+      } catch {
+        extension.enabled = false;
+        changed = true;
+      }
+    }
+    if (changed) this.commit();
   }
 
   private ensureView(tab: UserBrowserTab): ViewRecord {
     const existing = this.views.get(tab.id);
     if (existing && !existing.view.webContents.isDestroyed()) return existing;
+    const profile =
+      tab.mode === "private"
+        ? this.privatePartitionForTab(tab.id)
+        : { session: this.partition, name: this.partitionName };
     const view = new WebContentsView({
       webPreferences: {
-        partition: this.partitionName,
+        partition: profile.name,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,
         javascript: true,
-        devTools: false,
+        devTools: !app.isPackaged,
         backgroundThrottling: true,
         spellcheck: true,
       },
     });
     view.setBackgroundColor("#ffffff");
-    const record: ViewRecord = { view, popupAllowance: 0 };
+    const record: ViewRecord = {
+      view,
+      partition: profile.session,
+      popupAllowance: 0,
+    };
     this.views.set(tab.id, record);
     this.webContentsToTab.set(view.webContents.id, tab.id);
     this.configureView(tab, record);
@@ -740,7 +1079,7 @@ export class UserBrowserService {
         allowed &&
         this.state.tabs.length < 32
       ) {
-        void this.createTab(url, disposition !== "background-tab").catch(
+        void this.createTab(url, disposition !== "background-tab", tab.mode).catch(
           () => undefined,
         );
       }
@@ -764,6 +1103,13 @@ export class UserBrowserService {
     });
     webContents.on("page-title-updated", (_event, title) => {
       tab.title = title.trim().slice(0, 500) || hostnameTitle(tab.url);
+      const bookmark = this.state.bookmarks.find(
+        (candidate) => candidate.url === tab.url,
+      );
+      if (bookmark && tab.title) {
+        bookmark.title = tab.title;
+        bookmark.updatedAt = this.now().toISOString();
+      }
       const recent = [...this.state.history]
         .reverse()
         .find((entry) => entry.tabId === tab.id && entry.url === tab.url);
@@ -803,7 +1149,7 @@ export class UserBrowserService {
         template.push(
           {
             label: "Open Link in New Tab",
-            click: () => void this.createTab(params.linkURL, true),
+            click: () => void this.createTab(params.linkURL, true, tab.mode),
           },
           {
             label: "Copy Link",
@@ -856,7 +1202,7 @@ export class UserBrowserService {
         this.onCommand?.("open-commands");
       } else if (key === "t") {
         event.preventDefault();
-        void this.createTab(undefined, true);
+        void this.createTab(undefined, true, tab.mode);
       } else if (key === "w") {
         event.preventDefault();
         void this.closeTab(tab.id);
@@ -917,7 +1263,7 @@ export class UserBrowserService {
     tab.error = undefined;
     tab.discarded = false;
     this.updateNavigationState(tab, webContents, false);
-    if (this.state.settings.historyRetentionDays !== 0) {
+    if (tab.mode !== "private" && this.state.settings.historyRetentionDays !== 0) {
       const last = this.state.history.at(-1);
       if (
         last &&
@@ -988,9 +1334,16 @@ export class UserBrowserService {
     this.commit();
   }
 
-  private closeView(tabId: string, closeWebContents = true): void {
+  private closeView(
+    tabId: string,
+    closeWebContents = true,
+    destroyPrivatePartition = false,
+  ): void {
     const record = this.views.get(tabId);
-    if (!record) return;
+    if (!record) {
+      if (destroyPrivatePartition) this.releasePrivatePartition(tabId);
+      return;
+    }
     this.clearPopupAllowance(record);
     this.views.delete(tabId);
     this.webContentsToTab.delete(record.view.webContents.id);
@@ -1004,6 +1357,18 @@ export class UserBrowserService {
         record.view.webContents.debugger.detach();
       record.view.webContents.close({ waitForBeforeUnload: false });
     }
+    if (destroyPrivatePartition) this.releasePrivatePartition(tabId);
+  }
+
+  private releasePrivatePartition(tabId: string): void {
+    const privateProfile = this.privatePartitions.get(tabId);
+    if (!privateProfile) return;
+    const handler = this.downloadHandlers.get(privateProfile.session);
+    if (handler) {
+      privateProfile.session.off("will-download", handler);
+      this.downloadHandlers.delete(privateProfile.session);
+    }
+    this.privatePartitions.delete(tabId);
   }
 
   private requireTab(tabId: string): UserBrowserTab {
@@ -1068,7 +1433,8 @@ export class UserBrowserService {
 
   private async loadFavicon(tab: UserBrowserTab, value: string): Promise<void> {
     try {
-      const response = await this.partition.fetch(value, {
+      const record = this.views.get(tab.id);
+      const response = await (record?.partition ?? this.partition).fetch(value, {
         signal: AbortSignal.timeout(5_000),
       });
       const length = Number(response.headers.get("content-length") ?? 0);

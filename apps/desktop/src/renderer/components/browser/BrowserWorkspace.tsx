@@ -17,16 +17,22 @@ export function BrowserWorkspace({
   contextEnabled,
   onToggleContext,
   onNewAgent,
+  onAskAgent,
   onOpenHistory,
   onOpenDownloads,
+  onOpenBookmarks,
+  onOpenDevTools,
   onOpenMenu,
 }: {
   browser: UserBrowserController;
   contextEnabled: boolean;
   onToggleContext(): void;
   onNewAgent(): void;
+  onAskAgent(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
+  onOpenBookmarks(): void;
+  onOpenDevTools(): void;
   onOpenMenu(): void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -144,12 +150,18 @@ export function BrowserWorkspace({
         onSelect={(tabId) => void selectTab(tabId)}
         onClose={(tabId) => void closeTab(tabId)}
         onCreate={() => void createTab()}
+        onCreatePrivate={() => void createTab(undefined, "private")}
       />
       <BrowserToolbar
         tab={activeTab}
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
         contextEnabled={contextEnabled}
+        isBookmarked={state.bookmarks.some((bookmark) => bookmark.url === activeTab.url)}
         onToggleContext={onToggleContext}
+        onToggleBookmark={() => void browser.toggleBookmark(activeTab.id)}
+        onAskAgent={onAskAgent}
+        onOpenBookmarks={onOpenBookmarks}
+        onOpenDevTools={onOpenDevTools}
         onNavigate={(input) => void navigate(activeTab.id, input)}
         onBack={() => void back(activeTab.id)}
         onForward={() => void forward(activeTab.id)}
@@ -159,6 +171,29 @@ export function BrowserWorkspace({
         onOpenDownloads={onOpenDownloads}
         onOpenMenu={onOpenMenu}
       />
+      {state.settings.showBookmarksBar && (
+        <nav className="browser-bookmark-bar" aria-label="Bookmarks bar">
+          {state.bookmarks.length === 0 ? (
+            <span>Saved pages appear here</span>
+          ) : (
+            state.bookmarks.slice(-12).map((bookmark) => (
+              <button
+                type="button"
+                key={bookmark.id}
+                title={bookmark.url}
+                onClick={() => void createTab(bookmark.url)}
+              >
+                <Icon name="bookmark" />
+                <span>{bookmark.title}</span>
+              </button>
+            ))
+          )}
+          <button type="button" className="browser-bookmark-bar-more" onClick={onOpenBookmarks}>
+            <Icon name="more" />
+            <span>All bookmarks</span>
+          </button>
+        </nav>
+      )}
       {browser.error && (
         <p className="browser-inline-error" role="status">{browser.error}</p>
       )}
@@ -171,10 +206,11 @@ export function BrowserWorkspace({
       >
         {!activeTab.url && (
           <NewTabPage
-            history={state.history}
-            onNavigate={(input) => void navigate(activeTab.id, input)}
-            onNewTab={() => void createTab()}
-            onNewAgent={onNewAgent}
+          history={state.history}
+          onNavigate={(input) => void navigate(activeTab.id, input)}
+          onNewTab={() => void createTab()}
+          onNewPrivateTab={() => void createTab(undefined, "private")}
+          onNewAgent={onNewAgent}
           />
         )}
         {activeTab.error && (

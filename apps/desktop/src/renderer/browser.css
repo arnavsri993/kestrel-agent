@@ -392,8 +392,9 @@ body:has(.ai-browser-app),
   grid-template-areas:
     "tabs"
     "toolbar"
+    "bookmarks"
     "viewport";
-  grid-template-rows: 42px 48px minmax(0, 1fr);
+  grid-template-rows: 42px 48px 30px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -484,6 +485,8 @@ body:has(.ai-browser-app),
   font-weight: 650;
 }
 .browser-favicon img { width: 14px; height: 14px; object-fit: contain; }
+.browser-favicon svg { width: 13px; height: 13px; }
+.browser-tab.private .browser-favicon { color: var(--signal); background: color-mix(in srgb, var(--signal) 12%, var(--surface)); }
 
 .browser-tab-spinner {
   width: 10px;
@@ -519,6 +522,7 @@ body:has(.ai-browser-app),
 .browser-new-tab { flex: 0 0 30px; width: 30px; height: 30px; margin: 0 4px 2px; border-radius: 7px; }
 .browser-new-tab svg { width: 15px; height: 15px; }
 .browser-new-tab span { display: none; }
+.browser-private-tab { color: color-mix(in srgb, var(--signal) 72%, var(--muted)); }
 .browser-tab-drag-fill { flex: 1 1 64px; min-width: 32px; height: 34px; }
 
 .browser-toolbar {
@@ -526,7 +530,7 @@ body:has(.ai-browser-app),
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: auto minmax(180px, 1fr) auto auto;
+  grid-template-columns: auto minmax(120px, 1fr) auto auto auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -540,8 +544,10 @@ body:has(.ai-browser-app),
 .browser-navigation button,
 .browser-toolbar-actions button { width: 31px; height: 31px; border-radius: 7px; }
 .browser-navigation button:disabled { opacity: .28; cursor: default; }
+.browser-toolbar-actions button:disabled { opacity: .28; cursor: default; }
 .browser-navigation svg,
-.browser-toolbar-actions svg { width: 16px; height: 16px; }
+.browser-toolbar-actions svg,
+.browser-bookmark-toggle svg { width: 16px; height: 16px; }
 
 .browser-address {
   position: relative;
@@ -574,6 +580,53 @@ body:has(.ai-browser-app),
 }
 .browser-address-host { display: none; }
 
+.browser-bookmark-bar {
+  grid-area: bookmarks;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 9px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--canvas) 86%, var(--surface));
+}
+.browser-bookmark-bar > span { padding-inline: 5px; color: var(--faint); font-size: 9px; }
+.browser-bookmark-bar button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 190px;
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+.browser-bookmark-bar button:hover { background: var(--sidebar-hover); color: var(--ink); }
+.browser-bookmark-bar button svg { flex: 0 0 auto; width: 12px; height: 12px; color: var(--signal); }
+.browser-bookmark-bar button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-bookmark-bar .browser-bookmark-bar-more { margin-left: auto; color: var(--faint); }
+
+.browser-bookmark-toggle {
+  display: grid;
+  place-items: center;
+  width: 31px;
+  height: 31px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+.browser-bookmark-toggle:hover:not(:disabled) { background: var(--sidebar-hover); color: var(--ink); }
+.browser-bookmark-toggle.active { color: var(--signal); }
+.browser-bookmark-toggle:disabled { opacity: .3; cursor: default; }
+
 .browser-context-toggle {
   display: flex;
   align-items: center;
@@ -603,9 +656,10 @@ body:has(.ai-browser-app),
 .browser-workspace-vertical {
   grid-template-areas:
     "tabs toolbar"
+    "tabs bookmarks"
     "tabs viewport";
   grid-template-columns: 208px minmax(0, 1fr);
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: 48px 30px minmax(0, 1fr);
 }
 
 .browser-tab-row-vertical {
@@ -670,19 +724,20 @@ body:has(.ai-browser-app),
   min-height: 24px;
   height: auto;
 }
+.browser-workspace-vertical .browser-bookmark-bar { padding-inline: 8px; }
 .browser-workspace-vertical .browser-loading-line {
-  top: 47px;
+  top: 77px;
   left: 208px;
 }
 .browser-workspace-vertical .browser-inline-error {
-  top: 54px;
+  top: 84px;
   left: calc(50% + 104px);
 }
 
 .browser-loading-line {
   position: absolute;
   z-index: 4;
-  top: 89px;
+  top: 119px;
   left: 0;
   width: 35%;
   height: 1px;
@@ -700,7 +755,7 @@ body:has(.ai-browser-app),
 .browser-notice {
   position: absolute;
   z-index: 8;
-  top: 96px;
+  top: 126px;
   left: 50%;
   max-width: min(560px, calc(100% - 32px));
   margin: 0;
@@ -833,6 +888,9 @@ body:has(.ai-browser-app),
 .download-list { max-width: 1040px; margin: 0 auto; padding: 0; list-style: none; border-top: 1px solid var(--line); }
 .history-list li,
 .download-list li { border-bottom: 1px solid var(--line); }
+.bookmark-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.bookmark-row > button:first-child { min-width: 0; }
+.bookmark-row > .quiet-link { margin-right: 8px; }
 .history-list button { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 7px 6px; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .history-list button:hover { background: color-mix(in srgb, var(--surface) 34%, transparent); }
 .history-favicon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 10px; font-weight: 650; }
@@ -935,6 +993,21 @@ body:has(.ai-browser-app),
   accent-color: var(--signal);
 }
 .browser-setting-row .button { justify-self: end; }
+.browser-settings-subsection { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+.browser-settings-subsection > header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.browser-settings-subsection > header .button { flex: 0 0 auto; }
+.browser-permission-grid { display: grid; gap: 2px; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--surface) 35%, transparent); }
+.browser-permission-origin { grid-column: 1 / -1; margin: 0 0 6px; color: var(--muted); font-size: 10px; }
+.browser-permission-origin strong { color: var(--ink); font-weight: 560; }
+.browser-permission-row { display: flex; align-items: center; justify-content: space-between; min-height: 34px; color: var(--muted); font-size: 11px; }
+.browser-permission-row select { min-width: 110px; height: 28px; padding: 0 7px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--control-fill); color: var(--ink); font-size: 10px; }
+.browser-extension-list { display: grid; gap: 2px; margin: 12px 0 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.browser-extension-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 52px; border-bottom: 1px solid var(--line); }
+.browser-extension-list li > span { display: grid; gap: 3px; min-width: 0; }
+.browser-extension-list li strong { overflow: hidden; color: var(--ink); font-size: 11px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
+.browser-extension-list li small { overflow: hidden; color: var(--faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.browser-extension-list input { accent-color: var(--signal); }
+.browser-transfer-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .browser-security-note { margin: 4px 0 0; padding: 14px 0 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; line-height: 1.5; }
 
 /* Primary agent workspace ------------------------------------------------- */

@@ -299,6 +299,33 @@ try {
   assert.equal(loaded.browserWindowCount, 1);
   assert.equal(loaded.views[0].title, "Page one");
   assert.equal(loaded.views[0].destroyed, false);
+  await page.getByRole("button", { name: "Bookmark this page" }).click();
+  state = await browserState();
+  assert.equal(state.bookmarks.length, 1);
+  assert.equal(state.bookmarks[0]?.url, `${origin}/one`);
+  await page.getByRole("button", { name: "New private tab" }).click();
+  state = await waitForBrowserState(
+    (value) => value.tabs.at(-1)?.mode === "private" && value.activeTabId === value.tabs.at(-1)?.id,
+    "Private tab did not open",
+  );
+  const privateTabId = state.activeTabId;
+  assert(privateTabId);
+  await page.locator("#browser-address-input").fill(`${origin}/two`);
+  await page.locator("#browser-address-input").press("Enter");
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/two`,
+    "Private page did not load",
+  );
+  state = await browserState();
+  assert.equal(state.tabs.find((tab) => tab.id === privateTabId)?.mode, "private");
+  assert.equal(state.history.some((entry) => entry.url === `${origin}/two`), false);
+  await page.evaluate(async (tabId) => {
+    await window.kestrel.request({ type: "browser-close-tab", tabId });
+  }, privateTabId);
+  await waitForNativeView(
+    (value) => value.views[0]?.url === `${origin}/one`,
+    "Personal tab was not restored after closing private tab",
+  );
   const viewport = await page.locator("#browser-viewport").boundingBox();
   assert(viewport);
   assert.deepEqual(loaded.views[0].bounds, {

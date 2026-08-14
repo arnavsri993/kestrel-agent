@@ -17,6 +17,7 @@ import {
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
   searchEngine: "duckduckgo",
   tabLayout: "horizontal",
+  showBookmarksBar: true,
   restoreSession: true,
   historyRetentionDays: 90,
 };
@@ -135,6 +136,7 @@ export function freshBrowserState(
     tabs: [
       {
         id,
+        mode: "standard",
         title: "New Tab",
         url: "",
         loading: false,
@@ -149,6 +151,9 @@ export function freshBrowserState(
     activeTabId: id,
     history: [],
     downloads: [],
+    bookmarks: [],
+    permissions: [],
+    extensions: [],
     settings: { ...DEFAULT_BROWSER_SETTINGS },
   };
 }
@@ -164,6 +169,7 @@ export class BrowserTabStore {
       );
       const tabs = state.settings.restoreSession
         ? state.tabs
+            .filter((tab) => tab.mode !== "private")
             .filter((tab) => !tab.url || /^https?:\/\//.test(tab.url))
             .map((tab) => ({
               ...tab,
@@ -180,6 +186,9 @@ export class BrowserTabStore {
         return {
           ...freshBrowserState(now),
           history: state.history,
+          bookmarks: state.bookmarks,
+          permissions: state.permissions,
+          extensions: state.extensions,
           downloads: state.downloads.map((download) => ({
             ...download,
             status:
@@ -208,12 +217,17 @@ export class BrowserTabStore {
   }
 
   save(state: UserBrowserState): void {
+    const tabs = state.tabs.filter((tab) => tab.mode !== "private");
     const safe = UserBrowserStateSchema.parse({
       ...state,
-      tabs: state.tabs.map(({ faviconDataUrl: _faviconDataUrl, ...tab }) => ({
+      tabs: tabs.map(({ faviconDataUrl: _faviconDataUrl, ...tab }) => ({
         ...tab,
         url: tab.url ? sanitizeBrowserUrl(tab.url) : "",
       })),
+      activeTabId:
+        state.activeTabId && tabs.some((tab) => tab.id === state.activeTabId)
+          ? state.activeTabId
+          : tabs[0]?.id ?? null,
       history: state.history.flatMap((entry) => {
         const url = sanitizeBrowserUrl(entry.url);
         return url ? [{ ...entry, url }] : [];
@@ -221,6 +235,10 @@ export class BrowserTabStore {
       downloads: state.downloads.flatMap((download) => {
         const sourceUrl = sanitizeBrowserUrl(download.sourceUrl);
         return sourceUrl ? [{ ...download, sourceUrl }] : [];
+      }),
+      bookmarks: state.bookmarks.flatMap((bookmark) => {
+        const url = sanitizeBrowserUrl(bookmark.url);
+        return url ? [{ ...bookmark, url }] : [];
       }),
     });
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });

@@ -7,11 +7,13 @@ export function NewTabPage({
   history,
   onNavigate,
   onNewTab,
+  onNewPrivateTab,
   onNewAgent,
 }: {
   history: UserBrowserHistoryEntry[];
   onNavigate(input: string): void;
   onNewTab(): void;
+  onNewPrivateTab(): void;
   onNewAgent(): void;
 }) {
   const [input, setInput] = useState("");
@@ -43,6 +45,10 @@ export function NewTabPage({
         <button type="button" onClick={onNewTab}>
           <Icon name="plus" />
           <span><strong>Open another tab</strong><small>Browse or search</small></span>
+        </button>
+        <button type="button" onClick={onNewPrivateTab}>
+          <Icon name="private" />
+          <span><strong>Private tab</strong><small>Keep this session separate</small></span>
         </button>
         <button type="button" onClick={onNewAgent}>
           <Icon name="agent" />

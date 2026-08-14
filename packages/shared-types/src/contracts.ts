@@ -2349,6 +2349,7 @@ export type ExternalSecretProviderStatus = z.infer<
 
 export const UserBrowserTabSchema = z.object({
   id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+  mode: z.enum(["standard", "private"]).default("standard"),
   title: z.string().min(1).max(500),
   url: z.string().max(8_192),
   faviconDataUrl: z
@@ -2368,6 +2369,46 @@ export const UserBrowserTabSchema = z.object({
   lastActiveAt: z.string().datetime(),
 });
 export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
+
+export const UserBrowserBookmarkSchema = z.object({
+  id: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
+  url: z.string().url().max(8_192),
+  title: z.string().min(1).max(500),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export type UserBrowserBookmark = z.infer<typeof UserBrowserBookmarkSchema>;
+
+export const UserBrowserPermissionSchema = z.object({
+  origin: z.string().url().max(2_000),
+  permission: z.enum([
+    "camera",
+    "microphone",
+    "geolocation",
+    "notifications",
+    "clipboard-read",
+    "fullscreen",
+    "display-capture",
+  ]),
+  decision: z.enum(["allow", "block"]),
+  updatedAt: z.string().datetime(),
+});
+export type UserBrowserPermission = z.infer<
+  typeof UserBrowserPermissionSchema
+>;
+
+export const UserBrowserExtensionSchema = z.object({
+  id: z.string().min(1).max(500),
+  name: z.string().min(1).max(500),
+  version: z.string().min(1).max(100),
+  path: z.string().min(1).max(4_096),
+  enabled: z.boolean(),
+  permissions: z.array(z.string().min(1).max(200)).max(200),
+  installedAt: z.string().datetime(),
+});
+export type UserBrowserExtension = z.infer<
+  typeof UserBrowserExtensionSchema
+>;
 
 export const UserBrowserHistoryEntrySchema = z.object({
   id: z.string().regex(/^visit-[a-f0-9-]{36}$/),
@@ -2410,6 +2451,7 @@ export const UserBrowserSettingsSchema = z.object({
     "yandex",
   ]),
   tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),
+  showBookmarksBar: z.boolean().default(true),
   restoreSession: z.boolean(),
   historyRetentionDays: z.union([
     z.literal(0),
@@ -2426,9 +2468,23 @@ export const UserBrowserStateSchema = z.object({
   activeTabId: z.string().regex(/^tab-[a-f0-9-]{36}$/).nullable(),
   history: z.array(UserBrowserHistoryEntrySchema).max(5_000),
   downloads: z.array(UserBrowserDownloadSchema).max(500),
+  bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
+  permissions: z.array(UserBrowserPermissionSchema).max(1_000).default([]),
+  extensions: z.array(UserBrowserExtensionSchema).max(100).default([]),
   settings: UserBrowserSettingsSchema,
 });
 export type UserBrowserState = z.infer<typeof UserBrowserStateSchema>;
+
+export const UserBrowserTransferSchema = z.object({
+  version: z.literal(1),
+  exportedAt: z.string().datetime(),
+  history: z.array(UserBrowserHistoryEntrySchema).max(5_000),
+  bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000),
+  permissions: z.array(UserBrowserPermissionSchema).max(1_000),
+  extensions: z.array(UserBrowserExtensionSchema).max(100),
+  settings: UserBrowserSettingsSchema,
+});
+export type UserBrowserTransfer = z.infer<typeof UserBrowserTransferSchema>;
 
 export const UserBrowserPageContextSchema = z.object({
   tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
@@ -2508,6 +2564,7 @@ export const RendererRequestSchema = z.union([
     type: z.literal("browser-create-tab"),
     input: z.string().max(8_192).optional(),
     active: z.boolean().default(true),
+    mode: z.enum(["standard", "private"]).default("standard"),
   }),
   z.object({
     type: z.literal("browser-close-tab"),
@@ -2547,6 +2604,34 @@ export const RendererRequestSchema = z.union([
     settings: UserBrowserSettingsSchema,
   }),
   z.object({ type: z.literal("browser-clear-history") }),
+  z.object({
+    type: z.literal("browser-toggle-bookmark"),
+    tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+  }),
+  z.object({
+    type: z.literal("browser-remove-bookmark"),
+    bookmarkId: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
+  }),
+  z.object({
+    type: z.literal("browser-set-permission"),
+    origin: z.string().url().max(2_000),
+    permission: UserBrowserPermissionSchema.shape.permission,
+    decision: UserBrowserPermissionSchema.shape.decision,
+  }),
+  z.object({ type: z.literal("browser-clear-permissions") }),
+  z.object({ type: z.literal("browser-open-devtools") }),
+  z.object({ type: z.literal("browser-export-data") }),
+  z.object({ type: z.literal("browser-import-data") }),
+  z.object({ type: z.literal("browser-install-extension") }),
+  z.object({
+    type: z.literal("browser-set-extension-enabled"),
+    extensionId: z.string().min(1).max(500),
+    enabled: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("browser-remove-extension"),
+    extensionId: z.string().min(1).max(500),
+  }),
   z.object({
     type: z.literal("browser-reveal-download"),
     downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
@@ -2850,6 +2935,7 @@ export type RendererResponse =
   | CoreResponse
   | { ok: true; browserState: UserBrowserState }
   | { ok: true; browserContext: UserBrowserPageContext }
+  | { ok: true; browserTransferPath?: string; cancelled?: boolean }
   | { ok: true; launchAtLogin: boolean; launchStatus: string }
   | {
       ok: true;

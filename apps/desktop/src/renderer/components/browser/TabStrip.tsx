@@ -8,6 +8,7 @@ export function TabStrip({
   onSelect,
   onClose,
   onCreate,
+  onCreatePrivate,
   orientation,
 }: {
   tabs: UserBrowserTab[];
@@ -15,6 +16,7 @@ export function TabStrip({
   onSelect(tabId: string): void;
   onClose(tabId: string): void;
   onCreate(): void;
+  onCreatePrivate(): void;
   orientation: "horizontal" | "vertical";
 }) {
   function moveFocus(event: KeyboardEvent<HTMLDivElement>) {
@@ -51,7 +53,7 @@ export function TabStrip({
         {tabs.map((tab) => {
           const active = tab.id === activeTabId;
           return (
-            <div className={`browser-tab ${active ? "active" : ""}`} key={tab.id}>
+            <div className={`browser-tab ${active ? "active" : ""} ${tab.mode === "private" ? "private" : ""}`} key={tab.id}>
               <button
                 type="button"
                 role="tab"
@@ -62,13 +64,14 @@ export function TabStrip({
                 onClick={() => onSelect(tab.id)}
               >
                 <span className="browser-favicon" aria-hidden="true">
-                  {tab.faviconDataUrl ? (
+                  {tab.mode === "private" ? <Icon name="private" /> : null}
+                  {tab.mode !== "private" && tab.faviconDataUrl ? (
                     <img src={tab.faviconDataUrl} alt="" />
-                  ) : tab.loading ? (
+                  ) : tab.mode !== "private" && tab.loading ? (
                     <span className="browser-tab-spinner" />
-                  ) : (
+                  ) : tab.mode !== "private" ? (
                     (tab.url ? new URL(tab.url).hostname.charAt(0) : "K").toUpperCase()
-                  )}
+                  ) : null}
                 </span>
                 <span>{tab.title}</span>
               </button>
@@ -93,6 +96,16 @@ export function TabStrip({
       >
         <Icon name="plus" />
         <span>New Tab</span>
+      </button>
+      <button
+        type="button"
+        className="browser-new-tab browser-private-tab no-drag"
+        aria-label="New private tab"
+        title="New private tab"
+        onClick={onCreatePrivate}
+      >
+        <Icon name="private" />
+        <span>Private</span>
       </button>
       <div className="browser-tab-drag-fill" />
     </div>

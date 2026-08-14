@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RendererResponse,
+  UserBrowserPermission,
   UserBrowserPageContext,
   UserBrowserSettings,
   UserBrowserState,
@@ -15,7 +16,7 @@ function responseError(response: RendererResponse): string {
 export interface UserBrowserController {
   state: UserBrowserState | null;
   error: string;
-  createTab(input?: string): Promise<void>;
+  createTab(input?: string, mode?: "standard" | "private"): Promise<void>;
   closeTab(tabId: string): Promise<void>;
   selectTab(tabId: string): Promise<void>;
   navigate(tabId: string, input: string): Promise<void>;
@@ -30,6 +31,20 @@ export interface UserBrowserController {
   pageContext(tabId?: string): Promise<UserBrowserPageContext | undefined>;
   updateSettings(settings: UserBrowserSettings): Promise<void>;
   clearHistory(): Promise<void>;
+  toggleBookmark(tabId: string): Promise<void>;
+  removeBookmark(bookmarkId: string): Promise<void>;
+  setPermission(
+    origin: string,
+    permission: UserBrowserPermission["permission"],
+    decision: UserBrowserPermission["decision"],
+  ): Promise<void>;
+  clearPermissions(): Promise<void>;
+  openDevTools(): Promise<void>;
+  exportData(): Promise<string | undefined>;
+  importData(): Promise<void>;
+  installExtension(): Promise<void>;
+  setExtensionEnabled(extensionId: string, enabled: boolean): Promise<void>;
+  removeExtension(extensionId: string): Promise<void>;
   revealDownload(downloadId: string): Promise<void>;
 }
 
@@ -79,11 +94,12 @@ export function useUserBrowser(): UserBrowserController {
     };
   }, []);
 
-  const createTab = useCallback((input?: string) =>
+  const createTab = useCallback((input?: string, mode: "standard" | "private" = "standard") =>
       requestState({
         type: "browser-create-tab",
         ...(input ? { input } : {}),
         active: true,
+        mode,
       }), [requestState]);
   const closeTab = useCallback(
     (tabId: string) => requestState({ type: "browser-close-tab", tabId }),
@@ -150,6 +166,52 @@ export function useUserBrowser(): UserBrowserController {
     () => requestState({ type: "browser-clear-history" }),
     [requestState],
   );
+  const toggleBookmark = useCallback(
+    (tabId: string) => requestState({ type: "browser-toggle-bookmark", tabId }),
+    [requestState],
+  );
+  const removeBookmark = useCallback(
+    (bookmarkId: string) => requestState({ type: "browser-remove-bookmark", bookmarkId }),
+    [requestState],
+  );
+  const setPermission = useCallback(
+    (
+      origin: string,
+      permission: UserBrowserPermission["permission"],
+      decision: UserBrowserPermission["decision"],
+    ) => requestState({ type: "browser-set-permission", origin, permission, decision }),
+    [requestState],
+  );
+  const clearPermissions = useCallback(
+    () => requestState({ type: "browser-clear-permissions" }),
+    [requestState],
+  );
+  const openDevTools = useCallback(async () => {
+    const response = await window.kestrel.request({ type: "browser-open-devtools" });
+    if (!response.ok) throw new Error(responseError(response));
+  }, []);
+  const exportData = useCallback(async () => {
+    const response = await window.kestrel.request({ type: "browser-export-data" });
+    if (!response.ok) throw new Error(responseError(response));
+    return "browserTransferPath" in response ? response.browserTransferPath : undefined;
+  }, []);
+  const importData = useCallback(
+    () => requestState({ type: "browser-import-data" }),
+    [requestState],
+  );
+  const installExtension = useCallback(
+    () => requestState({ type: "browser-install-extension" }),
+    [requestState],
+  );
+  const setExtensionEnabled = useCallback(
+    (extensionId: string, enabled: boolean) =>
+      requestState({ type: "browser-set-extension-enabled", extensionId, enabled }),
+    [requestState],
+  );
+  const removeExtension = useCallback(
+    (extensionId: string) => requestState({ type: "browser-remove-extension", extensionId }),
+    [requestState],
+  );
   const revealDownload = useCallback(async (downloadId: string) => {
       const response = await window.kestrel.request({
         type: "browser-reveal-download",
@@ -174,6 +236,16 @@ export function useUserBrowser(): UserBrowserController {
       pageContext,
       updateSettings,
       clearHistory,
+      toggleBookmark,
+      removeBookmark,
+      setPermission,
+      clearPermissions,
+      openDevTools,
+      exportData,
+      importData,
+      installExtension,
+      setExtensionEnabled,
+      removeExtension,
       revealDownload,
     }),
     [
@@ -191,6 +263,16 @@ export function useUserBrowser(): UserBrowserController {
       pageContext,
       updateSettings,
       clearHistory,
+      toggleBookmark,
+      removeBookmark,
+      setPermission,
+      clearPermissions,
+      openDevTools,
+      exportData,
+      importData,
+      installExtension,
+      setExtensionEnabled,
+      removeExtension,
       revealDownload,
     ],
   );

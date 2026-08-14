@@ -1209,6 +1209,7 @@ function registerIpc(): void {
         browserState: await userBrowserService.createTab(
           request.input,
           request.active,
+          request.mode,
         ),
       };
     }
@@ -1299,6 +1300,153 @@ function registerIpc(): void {
       return {
         ok: true,
         browserState: userBrowserService.clearHistory(),
+      };
+    }
+    if (request.type === "browser-toggle-bookmark") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.toggleBookmark(request.tabId),
+      };
+    }
+    if (request.type === "browser-remove-bookmark") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.removeBookmark(request.bookmarkId),
+      };
+    }
+    if (request.type === "browser-set-permission") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.setPermission(
+          request.origin,
+          request.permission,
+          request.decision,
+        ),
+      };
+    }
+    if (request.type === "browser-clear-permissions") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.clearPermissions(),
+      };
+    }
+    if (request.type === "browser-open-devtools") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      userBrowserService.openDevTools();
+      return { ok: true };
+    }
+    if (request.type === "browser-export-data") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const options = {
+        title: "Export Kestrel browser data",
+        defaultPath: join(app.getPath("documents"), "kestrel-browser-export.json"),
+        filters: [{ name: "Kestrel browser data", extensions: ["json"] }],
+      };
+      const selection = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, options)
+        : await dialog.showSaveDialog(options);
+      if (selection.canceled || !selection.filePath)
+        return { ok: true, cancelled: true };
+      await writeFile(
+        selection.filePath,
+        `${JSON.stringify(userBrowserService.exportData(), null, 2)}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+      return { ok: true, browserTransferPath: selection.filePath };
+    }
+    if (request.type === "browser-import-data") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const options = {
+        title: "Import Kestrel browser data",
+        buttonLabel: "Import browser data",
+        properties: ["openFile"] as Array<"openFile">,
+        filters: [{ name: "Kestrel browser data", extensions: ["json"] }],
+      };
+      const selection = mainWindow
+        ? await dialog.showOpenDialog(mainWindow, options)
+        : await dialog.showOpenDialog(options);
+      if (selection.canceled || !selection.filePaths[0])
+        return { ok: true, browserState: userBrowserService.getState() };
+      return {
+        ok: true,
+        browserState: userBrowserService.importData(
+          await readFile(selection.filePaths[0], "utf8"),
+        ),
+      };
+    }
+    if (request.type === "browser-install-extension") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const options = {
+        title: "Choose an unpacked browser extension",
+        buttonLabel: "Choose extension",
+        properties: ["openDirectory"] as Array<"openDirectory">,
+      };
+      const selection = mainWindow
+        ? await dialog.showOpenDialog(mainWindow, options)
+        : await dialog.showOpenDialog(options);
+      if (selection.canceled || !selection.filePaths[0])
+        return { ok: true, browserState: userBrowserService.getState() };
+      const confirmation = mainWindow
+        ? await dialog.showMessageBox(mainWindow, {
+            type: "warning",
+            title: "Install browser extension?",
+            message: "Browser extensions can read and change web pages.",
+            detail:
+              "Only install an extension you trust. Kestrel will keep it in the personal browser profile and exclude it from private tabs.",
+            buttons: ["Cancel", "Install extension"],
+            cancelId: 0,
+            defaultId: 1,
+          })
+        : await dialog.showMessageBox({
+            type: "warning",
+            title: "Install browser extension?",
+            message: "Browser extensions can read and change web pages.",
+            detail:
+              "Only install an extension you trust. Kestrel will keep it in the personal browser profile and exclude it from private tabs.",
+            buttons: ["Cancel", "Install extension"],
+            cancelId: 0,
+            defaultId: 1,
+          });
+      if (confirmation.response !== 1)
+        return { ok: true, browserState: userBrowserService.getState() };
+      return {
+        ok: true,
+        browserState: await userBrowserService.installExtension(
+          selection.filePaths[0],
+        ),
+      };
+    }
+    if (request.type === "browser-set-extension-enabled") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.setExtensionEnabled(
+          request.extensionId,
+          request.enabled,
+        ),
+      };
+    }
+    if (request.type === "browser-remove-extension") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.removeExtension(
+          request.extensionId,
+        ),
       };
     }
     if (request.type === "browser-reveal-download") {

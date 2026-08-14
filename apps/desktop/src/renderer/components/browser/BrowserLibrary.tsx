@@ -70,6 +70,66 @@ export function BrowserHistory({
   );
 }
 
+export function BrowserBookmarks({
+  browser,
+  onOpenBrowser,
+}: {
+  browser: UserBrowserController;
+  onOpenBrowser(): void;
+}) {
+  const [query, setQuery] = useState("");
+  const bookmarks = browser.state?.bookmarks ?? [];
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return [...bookmarks]
+      .reverse()
+      .filter(
+        (bookmark) =>
+          !normalized ||
+          `${bookmark.title} ${bookmark.url}`.toLowerCase().includes(normalized),
+      );
+  }, [bookmarks, query]);
+
+  async function open(url: string) {
+    await browser.createTab(url);
+    onOpenBrowser();
+  }
+
+  return (
+    <main className="browser-library" aria-labelledby="bookmarks-title">
+      <header>
+        <div><span className="library-icon"><Icon name="bookmark" /></span><h1 id="bookmarks-title">Bookmarks</h1></div>
+        <label>
+          <Icon name="search" />
+          <span className="sr-only">Search bookmarks</span>
+          <input value={query} placeholder="Search bookmarks" onChange={(event) => setQuery(event.target.value)} />
+        </label>
+      </header>
+      {filtered.length === 0 ? (
+        <section className="library-empty">
+          <Icon name="bookmark" />
+          <h2>{query ? "No matching bookmarks" : "No bookmarks yet"}</h2>
+          <p>{query ? "Try a different search." : "Use the star in the address bar to save a page."}</p>
+        </section>
+      ) : (
+        <ol className="history-list bookmark-list">
+          {filtered.map((bookmark) => (
+            <li key={bookmark.id}>
+              <div className="bookmark-row">
+                <button type="button" onClick={() => void open(bookmark.url)}>
+                  <span className="history-favicon">{new URL(bookmark.url).hostname.charAt(0).toUpperCase()}</span>
+                  <span><strong>{bookmark.title}</strong><small>{bookmark.url}</small></span>
+                </button>
+                <button type="button" className="quiet-link" aria-label={`Remove ${bookmark.title}`} onClick={() => void browser.removeBookmark(bookmark.id)}>Remove</button>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </main>
+  );
+}
+
 export function BrowserDownloads({ browser }: { browser: UserBrowserController }) {
   const downloads = [...(browser.state?.downloads ?? [])].reverse();
   return (

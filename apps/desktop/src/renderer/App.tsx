@@ -101,7 +101,7 @@ import { useUserBrowser, type UserBrowserController } from "./browser/useUserBro
 import { AgentSidebar } from "./components/browser/AgentSidebar";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
-import { BrowserDownloads, BrowserHistory } from "./components/browser/BrowserLibrary";
+import { BrowserBookmarks, BrowserDownloads, BrowserHistory } from "./components/browser/BrowserLibrary";
 import { BrowserSettings } from "./components/browser/BrowserSettings";
 import { CommandCenter, type CommandDestination } from "./components/browser/CommandCenter";
 
@@ -109,6 +109,7 @@ const pages = [
   ["browser", "Browser"],
   ["agent", "Agent"],
   ["history", "History"],
+  ["bookmarks", "Bookmarks"],
   ["downloads", "Downloads"],
   ["commands", "Capabilities"],
   ["readiness", "Readiness"],
@@ -127,6 +128,7 @@ const commandDestinations: CommandDestination[] = [
   { id: "browser", label: "Browser", detail: "Open tabs and browse the web", icon: "browser", group: "Browse" },
   { id: "agent", label: "Agent", detail: "Start, find, and resume your work", icon: "agent", group: "Agent" },
   { id: "history", label: "History", detail: "Find pages you visited", icon: "history", group: "Browse" },
+  { id: "bookmarks", label: "Bookmarks", detail: "Open saved pages", icon: "bookmark", group: "Browse" },
   { id: "downloads", label: "Downloads", detail: "Track files from browser tabs", icon: "downloads", group: "Browse" },
   { id: "approvals", label: "Approvals", detail: "Review consequential agent actions", icon: "approvals", group: "Agent" },
   { id: "work", label: "Work", detail: "Goals, delegates, and schedules", icon: "work", group: "Agent" },
@@ -7676,7 +7678,20 @@ export function App() {
   const openBrowser = useCallback(() => setPage("browser"), []);
   const openAgent = useCallback(() => setPage("agent"), []);
   const openBrowserHistory = useCallback(() => setPage("history"), []);
+  const openBrowserBookmarks = useCallback(() => setPage("bookmarks"), []);
   const openBrowserDownloads = useCallback(() => setPage("downloads"), []);
+  const askAboutPage = useCallback(() => {
+    if (!browserContextEnabled) {
+      setBrowserContextEnabled(true);
+      localStorage.setItem("kestrel:browser-context", "on");
+    }
+    startNewAgent();
+  }, [browserContextEnabled, startNewAgent]);
+  const openBrowserDevTools = useCallback(() => {
+    void browser.openDevTools().catch((cause) =>
+      setDeepLinkNotice(cause instanceof Error ? cause.message : "Developer tools are unavailable."),
+    );
+  }, [browser]);
   const openCommandCenter = useCallback(() => setPage("commands"), []);
   const closeCommandCenter = useCallback(() => {
     setPage("browser");
@@ -7952,6 +7967,7 @@ export function App() {
     "browser",
     "agent",
     "history",
+    "bookmarks",
     "downloads",
     "commands",
     "settings",
@@ -7960,7 +7976,7 @@ export function App() {
     if (!pages.some(([id]) => id === destination)) return;
     const next = destination as Page;
     if (
-      !["browser", "agent", "history", "downloads", "commands", "settings"].includes(
+      !["browser", "agent", "history", "bookmarks", "downloads", "commands", "settings"].includes(
         next,
       )
     )
@@ -8020,8 +8036,11 @@ export function App() {
             contextEnabled={browserContextEnabled}
             onToggleContext={toggleBrowserContext}
             onNewAgent={startNewAgent}
+            onAskAgent={askAboutPage}
             onOpenHistory={openBrowserHistory}
             onOpenDownloads={openBrowserDownloads}
+            onOpenBookmarks={openBrowserBookmarks}
+            onOpenDevTools={openBrowserDevTools}
             onOpenMenu={openCommandCenter}
           />
         )}
@@ -8042,6 +8061,9 @@ export function App() {
         )}
         {page === "history" && (
           <BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
+        )}
+        {page === "bookmarks" && (
+          <BrowserBookmarks browser={browser} onOpenBrowser={openBrowser} />
         )}
         {page === "downloads" && <BrowserDownloads browser={browser} />}
         {page === "commands" && (
