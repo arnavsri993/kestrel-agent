@@ -195,6 +195,9 @@ importers:
       '@kestrel/encryption':
         specifier: workspace:*
         version: link:../encryption
+      '@kestrel/error-handling':
+        specifier: workspace:*
+        version: link:../error-handling
       '@kestrel/policy-engine':
         specifier: workspace:*
         version: link:../policy-engine
@@ -267,14 +270,14 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
-  packages/logger:
+  packages/error-handling:
     devDependencies:
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
       typescript:
         specifier: 5.9.3
         version: 5.9.3
-      vitest:
-        specifier: 4.1.0
-        version: 4.1.0(@opentelemetry/api@1.9.1)(@types/node@24.10.1)(vite@7.3.6(@types/node@24.10.1)(jiti@2.7.0)(tsx@4.21.0))
 
   packages/policy-engine:
     dependencies:
