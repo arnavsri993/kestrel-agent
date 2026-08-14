@@ -14,6 +14,7 @@ import {
 } from "motion/react";
 import type {
   AgentRun,
+  AgentState,
   ApprovalRule,
   ArtifactRecordContract,
   BrokeredCredentialSummary,
@@ -98,6 +99,7 @@ import {
 } from "./startup-state";
 import { useUserBrowser, type UserBrowserController } from "./browser/useUserBrowser";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
+import { AgentWorkspace } from "./components/browser/AgentWorkspace";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
 import { BrowserDownloads, BrowserHistory } from "./components/browser/BrowserLibrary";
 import { BrowserSettings } from "./components/browser/BrowserSettings";
@@ -105,6 +107,7 @@ import { CommandCenter, type CommandDestination } from "./components/browser/Com
 
 const pages = [
   ["browser", "Browser"],
+  ["agent", "Agent"],
   ["history", "History"],
   ["downloads", "Downloads"],
   ["commands", "Kestrel"],
@@ -122,6 +125,7 @@ const pages = [
 type Page = (typeof pages)[number][0];
 const commandDestinations: CommandDestination[] = [
   { id: "browser", label: "Browser", detail: "Open tabs and browse the web", icon: "browser", group: "Browse" },
+  { id: "agent", label: "Agent", detail: "Start, find, and resume your work", icon: "agent", group: "Agent" },
   { id: "history", label: "History", detail: "Find pages you visited", icon: "history", group: "Browse" },
   { id: "downloads", label: "Downloads", detail: "Track files from browser tabs", icon: "downloads", group: "Browse" },
   { id: "approvals", label: "Approvals", detail: "Review consequential agent actions", icon: "approvals", group: "Agent" },
@@ -2201,6 +2205,7 @@ function RuntimeConversation({
   onActiveSession,
   onSessions,
   onSnapshot,
+  onRuntimeAgentState,
   configurationUi,
   browserContext,
   newAgentRequestId,
@@ -2212,6 +2217,7 @@ function RuntimeConversation({
   onActiveSession(sessionId: string | null): void;
   onSessions(sessions: RuntimeSession[]): void;
   onSnapshot(snapshot: WorkspaceSnapshot): void;
+  onRuntimeAgentState(state: AgentState | null): void;
   configurationUi: WorkspaceSnapshot["configuration"]["ui"];
   browserContext?(): Promise<UserBrowserPageContext | undefined>;
   newAgentRequestId: number;
@@ -2263,6 +2269,11 @@ function RuntimeConversation({
   const sessionLoadSequenceRef = useRef(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    onRuntimeAgentState(pending ? "waiting_approval" : busy ? "working" : null);
+    return () => onRuntimeAgentState(null);
+  }, [busy, onRuntimeAgentState, pending]);
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
   const [voiceState, setVoiceState] = useState<
     "idle" | "recording" | "transcribing"
@@ -2294,7 +2305,7 @@ function RuntimeConversation({
     if (previousNewAgentRequestIdRef.current === newAgentRequestId) return;
     previousNewAgentRequestIdRef.current = newAgentRequestId;
     if (busy) {
-      setError("Finish or cancel the active agent before starting a new one.");
+      setError("Finish or cancel the active task before starting a new one.");
       window.setTimeout(() => promptRef.current?.focus(), 0);
       return;
     }
@@ -3139,7 +3150,7 @@ function RuntimeConversation({
       aria-label={
         activeSession
           ? sessionTitleForDisplay(activeSession.title)
-          : "New agent task"
+          : "New task"
       }
     >
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -7622,6 +7633,8 @@ export function App() {
   const pendingToolRouteFocusRef = useRef<Page | null>(null);
   const routeFocusFrameRef = useRef<number | null>(null);
   const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
+  const [runtimeAgentState, setRuntimeAgentState] =
+    useState<AgentState | null>(null);
   const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState<
     string | null
   >(null);
@@ -7641,6 +7654,7 @@ export function App() {
     setNewAgentRequestId((current) => current + 1);
   }, []);
   const openBrowser = useCallback(() => setPage("browser"), []);
+  const openAgent = useCallback(() => setPage("agent"), []);
   const openBrowserHistory = useCallback(() => setPage("history"), []);
   const openBrowserDownloads = useCallback(() => setPage("downloads"), []);
   const openCommandCenter = useCallback(() => setPage("commands"), []);
@@ -7654,6 +7668,7 @@ export function App() {
     (
       destination:
         | "browser"
+        | "agent"
         | "history"
         | "downloads"
         | "settings"
@@ -7676,7 +7691,7 @@ export function App() {
           return;
         }
         setDeepLinkNotice(
-          "This Kestrel link is not supported. Open New Agent or Settings from the sidebar.",
+          "This Kestrel link is not supported. Open New task or Settings from the sidebar.",
         );
       }),
     [openRuntimeSession],
@@ -7909,8 +7924,13 @@ export function App() {
   const activeBrowserTab = browser.state?.tabs.find(
     (tab) => tab.id === browser.state?.activeTabId,
   );
+  const effectiveAgentState = runtimeAgentState ?? snapshot.agentState;
+  const pendingApprovalCount =
+    snapshot.approvals.filter((approval) => approval.status === "pending")
+      .length + (runtimeAgentState === "waiting_approval" ? 1 : 0);
   const legacyPage = ![
     "browser",
+    "agent",
     "history",
     "downloads",
     "commands",
@@ -7920,7 +7940,7 @@ export function App() {
     if (!pages.some(([id]) => id === destination)) return;
     const next = destination as Page;
     if (
-      !["browser", "history", "downloads", "commands", "settings"].includes(
+      !["browser", "agent", "history", "downloads", "commands", "settings"].includes(
         next,
       )
     )
@@ -7946,7 +7966,7 @@ export function App() {
         sessions={runtimeSessions}
         activeSessionId={activeRuntimeSessionId}
         {...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
-        agentState={snapshot.agentState}
+        agentState={effectiveAgentState}
         activeDestination={page}
         onNewAgent={startNewAgent}
         onOpenSession={openRuntimeSession}
@@ -7961,6 +7981,7 @@ export function App() {
           onActiveSession={setActiveRuntimeSessionId}
           onSessions={setRuntimeSessions}
           onSnapshot={setSnapshot}
+          onRuntimeAgentState={setRuntimeAgentState}
           configurationUi={snapshot.configuration.ui}
           newAgentRequestId={newAgentRequestId}
           onNewAgent={startNewAgent}
@@ -7982,6 +8003,21 @@ export function App() {
             onOpenHistory={openBrowserHistory}
             onOpenDownloads={openBrowserDownloads}
             onOpenMenu={openCommandCenter}
+          />
+        )}
+        {page === "agent" && (
+          <AgentWorkspace
+            sessions={runtimeSessions}
+            activeSessionId={activeRuntimeSessionId}
+            agentState={effectiveAgentState}
+            pendingApprovals={pendingApprovalCount}
+            onNewTask={() => {
+              startNewAgent();
+              openAgent();
+            }}
+            onOpenSession={openRuntimeSession}
+            onOpenApprovals={() => navigate("approvals")}
+            onOpenWork={() => navigate("work")}
           />
         )}
         {page === "history" && (

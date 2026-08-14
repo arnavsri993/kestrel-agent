@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-**Implemented in this increment:** Kestrel has a browser-first desktop workspace with a persistent user browser, an always-mounted agent conversation, independent conversations, History, Downloads, a searchable capability launcher, browser settings, and command-routed access to existing specialist surfaces. The visible browser supports up to 32 tabs, HTTP(S) address/search navigation, back/forward/reload/stop, tab restoration, local history retention, downloads, and an optional current-page context handoff to the conversation.
+**Implemented in this increment:** Kestrel has a dual-primary Browser and Agent desktop workspace with a persistent user browser, an always-mounted agent conversation, a searchable durable-task workspace, independent conversations, History, Downloads, a searchable capability launcher, browser settings, and command-routed access to existing specialist surfaces. The visible browser supports up to 32 tabs, HTTP(S) address/search navigation, back/forward/reload/stop, tab restoration, local history retention, downloads, and an optional current-page context handoff to the conversation.
 
 **Not a claim of a general-purpose browser or unrestricted autonomy:** extensions, bookmarks, profile import/sync, site permission prompts, cross-device sync, private browsing, and a user-facing per-action browser approval UI are follow-up work. Existing Kestrel policy and approval gates remain the authority for consequential agent actions.
 
@@ -26,7 +26,9 @@ The current-page toggle controls whether a conversation receives a snapshot of t
 
 The toggle is renderer-local preference (`kestrel:browser-context`); it defaults on unless the user turns it off and is available both in browser chrome and Browser Settings. It is not a claim that page content is permanently imported into Memory. Browser context is attached only to the request when enabled, while normal conversation persistence follows the existing encrypted transcript/runtime model.
 
-Browser navigation and conversations are deliberately independent. The conversation component stays mounted while Browser, History, Downloads, Settings, and specialist destinations change, preserving streams, steering, cancellation, and pending approvals. Conversations are separately persisted runtime sessions, reachable from Agent history; opening a tab neither creates nor replaces a conversation, and starting a New Agent does not alter tabs. New Agent immediately clears and focuses a fresh draft, but intentionally avoids polluting Agent history with an empty persisted session; the runtime session is created on the first message. While the single mounted conversation is actively streaming, Kestrel retains that session and asks the user to finish or cancel it before opening a new draft rather than orphaning an unmanageable background stream.
+Browser navigation and conversations are deliberately independent. The conversation component stays mounted while Browser, Agent, History, Downloads, Settings, and specialist destinations change, preserving streams, steering, cancellation, and pending approvals. Conversations are separately persisted runtime sessions, reachable from Task history and the full Agent workspace; opening a tab neither creates nor replaces a conversation, and starting a New task does not alter tabs. New task immediately clears and focuses a fresh draft, but intentionally avoids polluting Task history with an empty persisted session; the runtime session is created on the first message. While the single mounted conversation is actively streaming, Kestrel retains that session and asks the user to finish or cancel it before opening a new draft rather than orphaning an unmanageable background stream.
+
+The Agent workspace gives those runtime sessions equal top-level standing with Browser. It exposes truthful agent state, the exact pending approval count, a route to plans and schedules, and a searchable/filterable task ledger with project, status, and recency. It does not fabricate productivity metrics, create another persistence system, or infer that a waiting task is necessarily approved. Selecting a task resumes it in the stable conversation; keyboard focus remains on the initiated control unless the user explicitly starts a fresh task, which moves focus to the composer.
 
 ## Approvals, privacy, and performance
 
@@ -37,7 +39,7 @@ Browser navigation and conversations are deliberately independent. The conversat
 
 ## Keyboard and accessibility intent
 
-The browser uses named landmarks and controls: Browser is a labelled main region, the page viewport is a labelled tab panel, sidebar destinations expose current-page state, tabs and toolbar actions have accessible names, history/download lists use semantic list structures, status/recovery messages use status roles, and command/history search inputs have labels. Focus is restored to a specialist destination heading after command navigation. Intended shortcuts are `Cmd/Ctrl+L` (address), `Cmd/Ctrl+T` (new tab), `Cmd/Ctrl+W` (close active tab), `Cmd/Ctrl+Tab` / `Cmd/Ctrl+Shift+Tab` (cycle tabs), and `Cmd+N` (New Agent). All must retain visible Native Graphite focus treatment and functional reduced-motion/reduced-transparency states.
+The browser uses named landmarks and controls: Browser is a labelled main region, the page viewport is a labelled tab panel, sidebar destinations expose current-page state, tabs and toolbar actions have accessible names, history/download lists use semantic list structures, status/recovery messages use status roles, and command/history search inputs have labels. Focus is restored to a specialist destination heading after command navigation. Intended shortcuts are `Cmd/Ctrl+L` (address), `Cmd/Ctrl+T` (new tab), `Cmd/Ctrl+W` (close active tab), `Cmd/Ctrl+Tab` / `Cmd/Ctrl+Shift+Tab` (cycle tabs), and `Cmd+N` (New task). All must retain visible Native Graphite focus treatment and functional reduced-motion/reduced-transparency states.
 
 ## Surface and IA audit checklist
 
@@ -47,7 +49,7 @@ Audit every reachable desktop surface on a fresh profile, with loaded data, empt
 | --- | --- |
 | Onboarding: Welcome, Before you begin, Choose a model, Model setup, Ready | One decision per stage; truthful local/provider state; setup-to-workspace continuity; focus and recovery. |
 | Startup and core-error recovery | No synthetic task/approval state; clear retry; no browser view overlap. |
-| Agent sidebar and New Agent | Stable current-page cue, Agent history popover, independent conversation selection, pending-approval status. |
+| Agent sidebar and New task | Stable current-page cue, Task history popover, independent conversation selection, pending-approval status. |
 | Browser: new tab, tab strip, toolbar, loaded page, loading, error | Address/search validation, tab cycling/close/create, context toggle, visible page bounds, keyboard shortcuts, page error recovery. |
 | History and Downloads | Empty/search/filter/reopen/clear; download progress/failure/completed Finder reveal; retention copy matches behavior. |
 | Kestrel command center | Every destination routes correctly, grouped search is keyboard usable, and focus lands on the destination heading. |

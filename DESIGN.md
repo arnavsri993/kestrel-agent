@@ -140,8 +140,8 @@ product name conflicts with this section, this section wins.
 
 ### Information architecture and copy
 
-- Primary navigation is Browser, History, Downloads, Settings, and More; the
-  agent conversation is a stable adjacent surface with New Agent and Agent
+- Primary navigation is Browser, Agent, History, Downloads, Settings, and More; the
+  agent conversation is a stable adjacent surface with New task and Task
   history. Urgent approval status remains visible. Specialist routes are fully
   retained through More and the searchable command center.
 - More is a grouped launcher for specialist destinations. It closes after
@@ -803,3 +803,20 @@ Before a browser-shell change is accepted, visually audit every existing reachab
 ### Asset decision
 
 On the target Apple M4 / 16 GB / Metal 4 Mac with roughly 287 GiB free and no local ML image stack, this feature chooses vector/CSS and the established icon system. It has no Fal or other cloud-generation dependency. This is a deliberate performance/privacy/provenance decision, not a temporary missing asset claim.
+
+## Primary agent workspace — August 2026
+
+### Dual-primary product thesis
+
+Kestrel is both the place where people browse and the agent they return to for daily work. Browser and Agent therefore have equal top-level standing: Browser owns tabs and pages; Agent owns durable tasks, project context, approvals, recovery, and results. The conversation remains mounted beside both so switching planes never hides or abandons active work.
+
+- **Density:** `dense-app`. The Agent plane is a continuous task ledger, not a dashboard of decorative cards. One header, one truthful status strip, and one searchable task list carry the hierarchy.
+- **Type, color, and material:** preserve Native Graphite, existing SF roles, thin aluminum rules, quiet sage current state, amber approval state, and red recovery state. No new accent, gradients, glow, illustration, metric tiles, or motion role.
+- **Primary hierarchy:** start a task; notice anything that needs the user; find or resume prior work; open plans/schedules or the approval surface. Browser history and agent task history remain distinct.
+- **Naming:** Kestrel is the primary agent. A runtime session is therefore a `task` in everyday chrome, not another “agent.” Internal protocol and component names can remain stable where renaming would add risk without improving the interface.
+- **State contract:** ready, reading, working, needs approval, paused, offline, updating, and recovery remain plain text; task rows expose open, waiting, completed, cancelled, and recovery states without relying on color. First-use, filtered-empty, search-empty, active selection, and long project/title content are explicit.
+- **Interaction contract:** native buttons, search input, and pressed filter controls are keyboard complete. Selecting a task updates the stable conversation without unexpected focus movement. Starting a task clears and focuses the composer while preserving browser tabs.
+- **Responsive contract:** the status strip reduces from four columns to two and then one; task metadata moves below the title before anything important is hidden. No task or approval action becomes hover-only.
+- **Motion contract:** none added. Existing short state feedback remains sufficient, and reduced motion is behaviorally identical.
+- **Why this is not generic:** the plane is derived from Kestrel's real encrypted runtime sessions, project grants, approval boundary, and Work system rather than fabricated productivity metrics or a generic AI dashboard.
+- **Rendered refinement:** the first 1952x1279 capture exposed a duplicate New task action, a redundant Kestrel eyebrow, and the internal `Main session` label in the user task ledger. The refined plane keeps the persistent sidebar action, removes the repeated label, and presents the durable default conversation as `General` without hiding or rewriting its stored record.

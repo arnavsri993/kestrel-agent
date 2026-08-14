@@ -120,7 +120,7 @@ async function openTool(page: Page, label: string) {
   await page.getByRole("heading", { name: "Kestrel", exact: true }).waitFor();
   await page
     .locator(".command-groups button")
-    .filter({ hasText: label })
+    .filter({ has: page.getByText(label, { exact: true }) })
     .first()
     .click();
   await page.locator(".legacy-product-surface").waitFor();
@@ -230,14 +230,14 @@ try {
   await capture(page, "workspace-task-settings.png", 120);
   await page.getByLabel("Task settings").click();
 
-  await page.getByRole("button", { name: "Agent history" }).click();
+  await page.getByRole("button", { name: "Task history" }).click();
   const firstSession = page.locator(".agent-history-popover > div > button").first();
   if (await firstSession.count()) {
     await firstSession.click();
     await page.locator(".conversation-view").waitFor();
     await capture(page, "workspace-conversation.png");
   }
-  await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
+  await page.getByRole("button", { name: "New task", exact: true }).first().click();
 
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByLabel("Search Kestrel").waitFor();
@@ -306,7 +306,7 @@ try {
     await capture(page, filename, 120);
   }
 
-  await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
+  await page.getByRole("button", { name: "New task", exact: true }).first().click();
   await page.getByRole("button", { name: "Browser", exact: true }).click();
   await page.getByRole("heading", { name: "Where to?" }).waitFor();
   await page.setViewportSize({ width: 640, height: 760 });
@@ -365,7 +365,7 @@ try {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
   await page.waitForLoadState("domcontentloaded");
-  await page.getByRole("button", { name: "New Agent", exact: true }).first().waitFor();
+  await page.getByRole("button", { name: "New task", exact: true }).first().waitFor();
   await moreTrigger.click();
   await page
     .locator(".command-groups button")
@@ -409,7 +409,7 @@ try {
       { name: "prefers-reduced-transparency", value: "reduce" },
     ],
   });
-  await page.getByRole("button", { name: "Agent history" }).click();
+  await page.getByRole("button", { name: "Task history" }).click();
   const transparency = await page
     .locator(".agent-history-popover")
     .evaluate((element) => getComputedStyle(element).backdropFilter);

@@ -201,7 +201,7 @@ try {
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("heading", { name: /Kestrel is ready|Your model route is configured\.|Your workspace is ready\./ }).waitFor();
   await page.getByRole("button", { name: "Finish with setup help" }).click();
-  await page.getByRole("button", { name: "New Agent", exact: true }).first().waitFor();
+  await page.getByRole("button", { name: "New task", exact: true }).first().waitFor();
   assert.equal(
     await page.locator(".conversation-view > [role=\"status\"]").count(),
     1,
@@ -276,7 +276,7 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:setup-coach-context")), null);
   assert.equal(await page.evaluate(() => localStorage.getItem("kestrel:onboarded")), "yes");
   const newAgentButton = page
-    .getByRole("button", { name: "New Agent", exact: true })
+    .getByRole("button", { name: "New task", exact: true })
     .first();
   await newAgentButton.click();
   assert.equal(await newAgentButton.getAttribute("aria-keyshortcuts"), "Meta+N");
@@ -293,7 +293,7 @@ try {
   );
   await page.getByLabel("Message Kestrel").fill("");
   await page.setViewportSize({ width: 640, height: 760 });
-  await newAgentButton.getByText("New Agent", { exact: true }).waitFor();
+  await newAgentButton.getByText("New task", { exact: true }).waitFor();
   await page.getByRole("button", { name: "More", exact: true }).waitFor();
   await page.getByRole("button", { name: "Settings", exact: true }).waitFor();
   assert.equal(
