@@ -1,5 +1,5 @@
 export type ReferenceProduct = "openclaw" | "hermes" | "codex" | "claude-code";
-export type ParityStatus = "implemented" | "partial" | "planned";
+export type ParityStatus = "implemented" | "partial" | "planned" | "rejected";
 
 export interface CapabilityCatalogEntry {
   id: string;
@@ -65,7 +65,7 @@ export const CAPABILITY_CATALOG: CapabilityCatalogEntry[] = [
   { id: "memory.session-search", category: "memory", capability: "Cross-session full-text and semantic transcript search", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/database/src/index.ts", "packages/database/migrations/003_runtime_history.sql", "packages/agent-core/src/runtime.ts", "packages/agent-core/src/semantic-search.ts", "packages/agent-core/src/memory.test.ts", "apps/desktop/src/renderer/App.tsx"] },
   { id: "memory.user-model", category: "memory", capability: "User profile, preference, and relationship modeling", referenceProducts: ["openclaw", "hermes"], status: "implemented", evidence: ["packages/agent-core/src/user-model.ts", "packages/agent-core/src/user-model.test.ts", "packages/agent-core/src/memory.ts", "packages/agent-core/src/memory.test.ts", "apps/desktop/src/renderer/App.tsx"] },
   { id: "memory.self-learning", category: "memory", capability: "Agent-created and self-improving skills from experience", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/extensions/skills.ts", "packages/agent-core/src/extensions/skill-learning.ts", "packages/agent-core/src/extensions/extensions.test.ts", "apps/desktop/src/renderer/App.tsx"] },
-  { id: "memory.consolidation", category: "memory", capability: "Opt-in reviewable multi-phase memory consolidation", referenceProducts: ["openclaw"], status: "implemented", evidence: ["packages/agent-core/src/dreaming.ts", "packages/agent-core/src/dreaming.test.ts", "packages/agent-core/src/index.ts", "apps/desktop/src/utility/index.ts", "apps/desktop/src/renderer/components/DreamingPanel.tsx", "docs/ambient-memory-and-presence.md"] },
+  { id: "memory.consolidation", category: "memory", capability: "Opt-in reviewable multi-phase memory consolidation", referenceProducts: ["openclaw"], status: "rejected", evidence: [] },
 
   { id: "tool.workspace-read", category: "tools", capability: "Allowlisted workspace list, read, and text search", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/runtime.ts", "packages/agent-core/src/runtime.test.ts", "apps/desktop/src/main/workspace-grant-store.ts", "apps/desktop/src/main/index.ts", "apps/desktop/src/renderer/App.tsx"] },
   { id: "tool.workspace-write", category: "tools", capability: "Create, edit, patch, move, and delete workspace files", referenceProducts: ["openclaw", "hermes", "codex", "claude-code"], status: "implemented", evidence: ["packages/agent-core/src/runtime.ts", "packages/agent-core/src/runtime.test.ts", "apps/desktop/src/main/workspace-grant-store.ts", "apps/desktop/src/renderer/App.tsx"] },
@@ -117,5 +117,5 @@ export function capabilitySummary(): Record<ParityStatus, number> {
   return CAPABILITY_CATALOG.reduce<Record<ParityStatus, number>>((summary, item) => {
     summary[item.status] += 1;
     return summary;
-  }, { implemented: 0, partial: 0, planned: 0 });
+  }, { implemented: 0, partial: 0, planned: 0, rejected: 0 });
 }
