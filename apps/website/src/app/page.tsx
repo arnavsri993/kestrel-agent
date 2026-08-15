@@ -185,6 +185,7 @@ export default function Home() {
 			</header>
 
 			<main id="content">
+				{/* ── Hero ─────────────────────────────────────────────────── */}
 				<section className="hero" id="top" aria-labelledby="hero-title">
 					<AmbientMedia asset={hero} className="hero-media" />
 					<div className="hero-copy">
@@ -201,7 +202,7 @@ export default function Home() {
 							<a className="primary-cta" href="#decision">
 								See one verified workflow <Arrow />
 							</a>
-							<a className="text-cta" href="#safety">
+							<a className="text-cta" href="#control">
 								Read the safety model
 							</a>
 						</div>
@@ -218,13 +219,14 @@ export default function Home() {
 						initial={reduced ? false : { scaleX: 0 }}
 						animate={{ scaleX: 1 }}
 						transition={{
-							duration: 1.05,
-							delay: 0.18,
+							duration: 1.1,
+							delay: 0.2,
 							ease: [0.22, 1, 0.36, 1],
 						}}
 					/>
 				</section>
 
+				{/* ── Stage Strip ──────────────────────────────────────────── */}
 				<ol className="stage-strip" aria-label="Kestrel decision path">
 					{stages.map((stage, index) => (
 						<li key={stage}>
@@ -235,6 +237,7 @@ export default function Home() {
 					))}
 				</ol>
 
+				{/* ── 01 Decision ──────────────────────────────────────────── */}
 				<section
 					className="narrative-section decision-section"
 					id="decision"
@@ -277,6 +280,7 @@ export default function Home() {
 					</div>
 				</section>
 
+				{/* ── 02 Memory ────────────────────────────────────────────── */}
 				<section
 					className="memory-section"
 					id="memory"
@@ -295,9 +299,9 @@ export default function Home() {
 							beta instead.
 						</p>
 						<blockquote>
-							“Because the phone still charges, DJI Fly launches, and another
+							"Because the phone still charges, DJI Fly launches, and another
 							cable already failed, software compatibility now outranks a dead
-							controller.”
+							controller."
 						</blockquote>
 						<div className="memory-note">
 							<span>Retrieval scope</span>
@@ -310,6 +314,7 @@ export default function Home() {
 					<ContextScene />
 				</section>
 
+				{/* ── 03 Control ───────────────────────────────────────────── */}
 				<section
 					className="control-section"
 					id="control"
@@ -372,6 +377,7 @@ export default function Home() {
 					</div>
 				</section>
 
+				{/* ── 04 Capability ────────────────────────────────────────── */}
 				<section
 					className="capability-section"
 					aria-labelledby="capability-title"
@@ -399,6 +405,7 @@ export default function Home() {
 					</div>
 				</section>
 
+				{/* ── 05 Security ──────────────────────────────────────────── */}
 				<section
 					className="security-section"
 					id="architecture"
@@ -425,6 +432,7 @@ export default function Home() {
 					</div>
 				</section>
 
+				{/* ── 06 Release ───────────────────────────────────────────── */}
 				<section
 					className="release-section"
 					id="release"
@@ -508,6 +516,7 @@ export default function Home() {
 				</section>
 			</main>
 
+			{/* ── Footer ───────────────────────────────────────────────────── */}
 			<footer className="site-footer">
 				<div className="footer-brand">
 					<Brand />
