@@ -93,6 +93,7 @@ import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
+import { applySkin } from "./components/SkinSettings";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import {
 	memoryInGb,
@@ -2753,6 +2754,7 @@ function RuntimeConversation({
 	configurationUi,
 	browserContext,
 	newAgentRequestId,
+	newAgentPrompt,
 	onNewAgent,
 }: {
 	visible: boolean;
@@ -7720,6 +7722,7 @@ function Settings({
 	}
 	async function reset() {
 		const response = await window.kestrel.request({
+			type: "reset-local-data",
 			confirmation,
 		});
 		if (!response.ok)

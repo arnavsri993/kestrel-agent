@@ -187,7 +187,7 @@ describe("UserBrowserService", () => {
 
   it("denies permission checks and requests by default", () => {
     const { service } = createService();
-    const partition = electron.state.partitions[0]!.instance as MockSession & {
+	const partition = electron.state.partitions[0]!.instance as {
       permissionCheckHandler: (webContents: unknown, permission: string, requestingOrigin: string) => boolean;
       permissionRequestHandler: (webContents: unknown, permission: string, callback: (isAllowed: boolean) => void) => void;
     };

@@ -289,7 +289,7 @@ try {
 	await capture(page, "workspace-task-settings.png", 120);
 	await page.getByLabel("Task settings").click();
 
-	await page.getByRole("button", { name: "Task history" }).click();
+	await page.getByRole("button", { name: "Task history", exact: true }).click();
 	const firstSession = page
 		.locator(".agent-history-popover > div > button")
 		.first();
@@ -319,7 +319,7 @@ try {
 		.waitFor();
 	await capture(page, "surface-approvals.png");
 
-	await openTool(page, "Life");
+	await openTool(page, "Life Context");
 	await page
 		.getByRole("heading", { name: "Your context", exact: true })
 		.waitFor();
@@ -509,7 +509,7 @@ try {
 			{ name: "prefers-reduced-transparency", value: "reduce" },
 		],
 	});
-	await page.getByRole("button", { name: "Task history" }).click();
+	await page.getByRole("button", { name: "Task history", exact: true }).click();
 	const transparency = await page
 		.locator(".agent-history-popover")
 		.evaluate((element) => getComputedStyle(element).backdropFilter);

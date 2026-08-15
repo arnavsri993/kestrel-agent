@@ -2757,6 +2757,9 @@ body:has(.ai-browser-app),
   box-shadow: 0 22px 54px rgb(0 0 0 / .24), inset 0 1px rgb(255 255 255 / .08);
   backdrop-filter: blur(22px) saturate(125%);
 }
+.new-tab-center .new-tab-chat {
+  grid-template-columns: 34px minmax(0, 1fr) 38px;
+}
 .new-tab-chat:focus-within {
   border-color: color-mix(in srgb, var(--signal) 78%, var(--new-tab-rule));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 18%, transparent), 0 22px 54px rgb(0 0 0 / .24);
@@ -3040,6 +3043,7 @@ body:has(.ai-browser-app),
 
 
 /* Edge home: responsive and accessibility refinements */
+@media (max-width: 1120px) {
   .ai-browser-app { grid-template-columns: 330px minmax(0, 1fr); }
   .browser-context-toggle span { display: none; }
   .browser-context-toggle { width: 31px; justify-content: center; padding: 0; }

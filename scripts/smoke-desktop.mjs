@@ -62,11 +62,12 @@ try {
 		true,
 	);
 	await page.getByRole("button", { name: "Settings" }).click();
-	await page.getByRole("button", { name: /^General/ }).click();
-	await page.getByText("Activity pet", { exact: true }).waitFor();
 	await page
-		.getByText("Hatch an original pet with AI", { exact: true })
-		.waitFor();
+		.locator(".settings-nav")
+		.getByRole("button", { name: /^General/ })
+		.click();
+	await page.getByText("Communication style", { exact: true }).waitFor();
+	await page.getByText("Run at login", { exact: true }).waitFor();
 
 	const petDecoder = await page.evaluate(async () => {
 		const result = await window.kestrel.request({
