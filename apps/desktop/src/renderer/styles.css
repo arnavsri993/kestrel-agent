@@ -9281,4 +9281,623 @@ select {
 	box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   KESTREL PREMIUM REDESIGN — Phase 2 Full Upgrade
+   Applied as cascade overrides. Targets every major page surface.
+   Design thesis: Industrial precision + macOS platform authenticity.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ── Shell: page-content height fix after topbar change ─────────────── */
+.page-content {
+	height: calc(100vh - 54px);
+}
+
+/* ── Sidebar: refined active state with left accent bar ─────────────── */
+.nav-section button.active,
+.sidebar-bottom > button.active {
+	position: relative;
+	background: color-mix(in srgb, var(--signal) 11%, var(--surface));
+	color: var(--ink);
+	box-shadow: inset 2px 0 0 var(--signal),
+	            0 0 0 1px color-mix(in srgb, var(--signal) 20%, transparent);
+}
+
+/* Sidebar nav section labels: subtle uppercase mono */
+.nav-section h2 {
+	margin: 0 12px 5px;
+	color: var(--faint);
+	font: 580 9px / 1 var(--mono);
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+/* Sidebar brand wordmark: tighter letter-spacing */
+.brand strong {
+	font-family: var(--display);
+	font-size: 15px;
+	font-weight: 640;
+	letter-spacing: -0.022em;
+}
+
+/* Sidebar status: cleaner agent status line */
+.sidebar-status {
+	gap: 8px;
+	margin-top: 10px;
+	padding: 8px 10px 4px;
+}
+.sidebar-status strong {
+	font-size: 10.5px;
+	font-weight: 580;
+	letter-spacing: -0.01em;
+}
+
+/* New task button: stronger presence */
+.new-task-button {
+	background: color-mix(in srgb, var(--surface) 70%, transparent);
+	border: 1px solid var(--line);
+}
+.new-task-button:hover {
+	background: var(--surface);
+	border-color: var(--line-strong);
+}
+.new-task-button span {
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+/* ── Topbar: pill agent status indicator ─────────────────────────────── */
+.topbar > span {
+	font-size: 12.5px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+.avatar {
+	width: 28px;
+	height: 28px;
+	border: 1.5px solid var(--line-strong);
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--surface) 80%, var(--signal) 20%);
+	color: var(--ink);
+	font-size: 10px;
+	font-weight: 600;
+}
+
+/* ── Chat / Message Feed ─────────────────────────────────────────────── */
+
+/* Wider message list for comfort */
+.message-list {
+	width: min(780px, calc(100% - 40px));
+	padding: 48px 0 160px;
+}
+
+/* Assistant avatar: rounder, signal-tinted with subtle depth */
+.assistant-avatar {
+	width: 28px;
+	height: 28px;
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--signal) 85%, #000 15%);
+	color: #fff;
+	font-size: 12px;
+	font-weight: 720;
+	box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 0 0 1px color-mix(in srgb, var(--signal) 60%, transparent);
+}
+
+/* Assistant message grid: align avatar with text baseline */
+.assistant-message {
+	grid-template-columns: 28px minmax(0, 1fr);
+	gap: 12px;
+	margin-bottom: 32px;
+}
+.assistant-message p {
+	font-size: 13.5px;
+	line-height: 1.7;
+	margin: 0 0 14px;
+}
+
+/* User message: refined bubble with signal tint */
+.user-message {
+	margin: 0 0 32px;
+}
+.user-message p {
+	padding: 10px 16px 11px;
+	border-radius: 20px 20px 5px 20px;
+	background: color-mix(in srgb, var(--surface-strong) 90%, var(--signal) 10%);
+	font-size: 13px;
+	line-height: 1.55;
+	box-shadow: var(--shadow-xs);
+}
+
+/* Work summary */
+.work-summary {
+	font-size: 10.5px;
+	color: var(--faint);
+	gap: 6px;
+	margin-bottom: 20px;
+}
+
+/* Configuration message: card style */
+.configuration-message {
+	margin: 2px 0 28px;
+	padding: 14px 16px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-row);
+	border-top-width: 1px;
+	border-bottom-width: 1px;
+	background: color-mix(in srgb, var(--panel) 80%, transparent);
+}
+
+/* Configuration icon: rounder */
+.configuration-message-icon {
+	width: 30px;
+	height: 30px;
+	border-radius: var(--radius-control);
+	background: var(--status-soft);
+	color: var(--status-ink);
+}
+
+/* Code blocks in chat */
+.configuration-message pre,
+.assistant-message pre {
+	border-radius: var(--radius-row);
+	background: var(--panel);
+	border-color: var(--line);
+	font-size: 10.5px;
+}
+
+/* Chat error: rounder */
+.chat-error {
+	border-radius: var(--radius-control);
+	border-left-width: 3px;
+}
+
+/* Inline action rows */
+.inline-action {
+	border-radius: var(--radius-control);
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-top: none;
+	border-bottom: none;
+	border-left: 3px solid var(--signal);
+	background: color-mix(in srgb, var(--surface) 50%, transparent);
+}
+
+/* Workflow memory action */
+.workflow-memory-action {
+	border-radius: var(--radius-row);
+	padding: 12px 16px;
+	border-color: var(--line-strong);
+	background: color-mix(in srgb, var(--surface) 70%, var(--canvas));
+}
+
+/* ── Composer: elevated polish ───────────────────────────────────────── */
+.composer textarea {
+	font-size: 13.5px;
+	line-height: 1.55;
+	padding: 18px 20px 6px;
+	min-height: 62px;
+}
+.composer-footer {
+	min-height: 44px;
+	padding: 3px 10px 8px;
+	gap: 8px;
+}
+.send-button {
+	width: 32px;
+	height: 32px;
+	border-radius: var(--radius-control);
+	background: var(--solid);
+	color: var(--solid-text);
+	box-shadow: var(--shadow-xs);
+}
+.send-button:hover:not(:disabled) {
+	background: var(--solid-hover);
+	box-shadow: var(--shadow-sm);
+}
+
+/* Prompt suggestions: ghost pills with smooth hover */
+.prompt-suggestions button,
+.text-action {
+	min-height: 30px;
+	padding: 0 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-pill);
+	background: transparent;
+	color: var(--faint);
+	font-size: 11px;
+	transition:
+		background var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback),
+		color var(--motion-feedback);
+}
+.prompt-suggestions button:hover,
+.text-action:hover {
+	background: var(--surface);
+	border-color: var(--line-strong);
+	color: var(--ink);
+}
+
+/* Attachment chips */
+.attachment-chips button {
+	padding: 5px 10px;
+	border-radius: var(--radius-pill);
+	font-size: 10px;
+	background: var(--panel);
+	border-color: var(--line-strong);
+	transition: background var(--motion-feedback);
+}
+.attachment-chips button:hover {
+	background: var(--surface);
+}
+
+/* Runtime setup summary */
+.runtime-setup[open] {
+	border-radius: var(--radius-surface);
+}
+.runtime-setup summary {
+	border-radius: var(--radius-control);
+}
+
+/* Runtime usage badge */
+.runtime-usage {
+	border-radius: var(--radius-control);
+	font-size: 9px;
+}
+
+/* ── New task / Home page ─────────────────────────────────────────────── */
+.new-task-center h1 {
+	font-family: var(--display);
+	font-size: clamp(28px, 3vw, 36px);
+	line-height: 1.12;
+	letter-spacing: -0.038em;
+	font-weight: 660;
+	color: var(--ink);
+}
+.new-task-center > p {
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1.6;
+	max-width: 600px;
+}
+.background-note {
+	border-radius: var(--radius-row);
+}
+.background-note:hover {
+	border-color: var(--line-strong);
+	background: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+/* ── Page frame headings ─────────────────────────────────────────────── */
+.page-header h1 {
+	font-size: clamp(28px, 2.8vw, 36px);
+	letter-spacing: -0.038em;
+	font-weight: 660;
+	line-height: 1.1;
+}
+.page-header p {
+	font-size: 12.5px;
+	line-height: 1.6;
+}
+.eyebrow {
+	font-size: 9.5px;
+	letter-spacing: 0.07em;
+	font-weight: 620;
+	font-family: var(--mono);
+}
+
+/* ── Approval card ───────────────────────────────────────────────────── */
+.approval-header h2 {
+	font-family: var(--display);
+	font-size: 22px;
+	letter-spacing: -0.028em;
+	font-weight: 660;
+}
+.approval-header {
+	padding: 20px 22px;
+}
+.approval-actions {
+	padding: 16px 22px;
+	gap: 12px;
+}
+.status {
+	border-radius: var(--radius-control);
+	padding: 5px 10px;
+	font-size: 9.5px;
+	font-weight: 580;
+	letter-spacing: 0.02em;
+}
+.recommendation-line {
+	padding: 16px 22px;
+}
+.proposal-block {
+	padding: 18px 22px;
+}
+.evidence-list summary {
+	padding: 14px 22px;
+}
+.evidence-row {
+	margin-inline: 22px;
+}
+.approval-error {
+	padding: 10px 22px;
+}
+
+/* ── Settings pages ──────────────────────────────────────────────────── */
+
+/* Settings nav active state: left accent, no font-weight reflow */
+.settings-nav button.active {
+	background: color-mix(in srgb, var(--signal) 11%, var(--panel));
+	color: var(--ink);
+	box-shadow: inset 2px 0 0 var(--signal),
+	            0 0 0 1px color-mix(in srgb, var(--signal) 20%, transparent);
+}
+.settings-nav button span {
+	font-size: 11.5px;
+	font-weight: 560;
+}
+.settings-nav button.active span {
+	font-weight: 620;
+}
+
+/* Settings panel header */
+.settings-panel-header h2 {
+	font-family: var(--display);
+	font-size: clamp(20px, 2.5vw, 28px);
+	letter-spacing: -0.035em;
+	font-weight: 650;
+}
+
+/* Setting rows: cleaner, more breathing room */
+.setting-row {
+	min-height: 80px;
+	padding: 18px 2px;
+	gap: 24px;
+}
+.setting-row strong {
+	font-size: 12.5px;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+.setting-row p {
+	font-size: 11px;
+	line-height: 1.55;
+	margin-top: 3px;
+}
+
+/* Danger zone setting rows */
+.setting-row.danger {
+	border-radius: var(--radius-row);
+	padding: 16px;
+	border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line));
+	background: color-mix(in srgb, var(--danger-soft) 50%, transparent);
+}
+
+/* ── Dashboard / Extensions ──────────────────────────────────────────── */
+.dashboard-contribution > header h2 {
+	font-family: var(--display);
+	font-size: 22px;
+	letter-spacing: -0.025em;
+	font-weight: 650;
+}
+.dashboard-panel h3 {
+	font-size: 13.5px;
+	font-weight: 620;
+	letter-spacing: -0.01em;
+}
+.declarative-badge {
+	border-radius: var(--radius-pill);
+	padding: 5px 10px;
+	font-size: 9px;
+	letter-spacing: 0.05em;
+}
+
+/* ── Readiness page ──────────────────────────────────────────────────── */
+.readiness-panel {
+	border-radius: var(--radius-surface);
+}
+.readiness-checks li {
+	border-radius: var(--radius-control);
+}
+.verified-label {
+	border-radius: var(--radius-pill);
+}
+.backup-result {
+	border-radius: var(--radius-row);
+}
+
+/* ── Research page ───────────────────────────────────────────────────── */
+.research-results article {
+	border-radius: var(--radius-control);
+	padding: 12px 14px;
+}
+.research-reader {
+	border-radius: var(--radius-surface);
+}
+
+/* ── Activity / Work ─────────────────────────────────────────────────── */
+.work-card {
+	border-radius: var(--radius-row);
+	border-color: var(--line);
+	transition: border-color var(--motion-feedback), box-shadow var(--motion-feedback);
+}
+.work-card:hover {
+	border-color: var(--line-strong);
+	box-shadow: var(--shadow-sm);
+}
+.kanban-card {
+	border-radius: var(--radius-row);
+}
+.kanban-column {
+	border-radius: var(--radius-surface);
+	background: color-mix(in srgb, var(--panel) 80%, transparent);
+}
+.kanban-card-stack > .kanban-card:hover {
+	box-shadow: var(--shadow-md);
+}
+
+/* Activity nodes */
+.activity-node {
+	border-radius: var(--radius-control);
+}
+.activity-node.node-verified {
+	border-left: 2px solid var(--signal);
+}
+.activity-node.node-waiting {
+	border-left: 2px solid var(--warning);
+}
+
+/* ── Memory page ─────────────────────────────────────────────────────── */
+.memory-list article {
+	border-radius: var(--radius-control);
+}
+.dreaming-panel {
+	border-radius: var(--radius-surface);
+	padding: 22px;
+	border: 1px solid var(--line);
+	background: color-mix(in srgb, var(--panel) 60%, transparent);
+}
+.dreaming-panel h2 {
+	font: 660 26px / 1.05 var(--display);
+	letter-spacing: -0.03em;
+}
+.dreaming-panel > header {
+	border-bottom: none;
+}
+
+/* ── Onboarding wizard ───────────────────────────────────────────────── */
+.setup-welcome {
+	border-radius: var(--radius-surface);
+}
+.setup-rail li {
+	border-radius: var(--radius-control);
+}
+.model-source-picker button {
+	border-radius: var(--radius-row);
+	transition: background var(--motion-feedback), border-color var(--motion-feedback), box-shadow var(--motion-feedback);
+}
+.model-source-picker button:hover:not(:disabled) {
+	box-shadow: var(--shadow-sm);
+}
+.model-tier-grid article {
+	border-radius: var(--radius-surface);
+}
+.model-tier-grid article.preferred {
+	border-color: color-mix(in srgb, var(--signal) 48%, transparent);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent), var(--shadow-sm);
+}
+.warning-panel {
+	border-radius: var(--radius-row);
+}
+.setup-warning {
+	border-radius: var(--radius-surface);
+}
+.setup-finish .finish-checks li {
+	border-radius: var(--radius-control);
+}
+
+/* ── Connection list in Settings → Connections ───────────────────────── */
+.connection-list {
+	gap: 10px;
+}
+.oauth-connection {
+	border-radius: var(--radius-row);
+	padding: 14px 16px;
+	border-color: var(--line);
+	transition: border-color var(--motion-feedback), box-shadow var(--motion-feedback);
+}
+.oauth-connection:hover {
+	border-color: var(--line-strong);
+	box-shadow: var(--shadow-sm);
+}
+.connection-monogram {
+	border-radius: var(--radius-sm);
+}
+
+/* ── GoalKanban / Work routing ───────────────────────────────────────── */
+.work-board-tools {
+	border-radius: var(--radius-surface);
+}
+.routing-setting {
+	border-radius: var(--radius-row);
+}
+
+/* ── Switch / Toggle ─────────────────────────────────────────────────── */
+.switch {
+	border-radius: var(--radius-pill);
+}
+.switch::after {
+	border-radius: 50%;
+}
+
+/* ── Segmented control ───────────────────────────────────────────────── */
+.segmented {
+	border-radius: var(--radius-control);
+}
+
+/* ── Modals and large popovers ───────────────────────────────────────── */
+.default-browser-modal {
+	border-radius: var(--radius-stage);
+}
+
+/* ── Empty states ────────────────────────────────────────────────────── */
+.empty-state {
+	border-radius: var(--radius-surface);
+}
+
+/* ── Global code block polish ────────────────────────────────────────── */
+pre, code {
+	border-radius: var(--radius-sm);
+}
+
+/* ── Scrollbar: thinner, less intrusive ─────────────────────────────── */
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+::-webkit-scrollbar-thumb {
+	background: var(--line-strong);
+	border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+	background: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+/* ── Selection color ─────────────────────────────────────────────────── */
+::selection {
+	background: color-mix(in srgb, var(--signal) 28%, transparent);
+	color: var(--ink);
+}
+
+/* ── Reduced motion: honour system preference ────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+	.new-task-button,
+	.nav-section button,
+	.sidebar-bottom > button,
+	.button,
+	.prompt-suggestions button,
+	.text-action,
+	.oauth-connection,
+	.model-source-picker button,
+	.work-card {
+		transition: none !important;
+	}
+}
+
+/* ── Agent config banner polish ──────────────────────────────────────── */
+.agent-config-banner {
+	border-radius: var(--radius-row);
+}
+.agent-config-chip {
+	border-radius: var(--radius-control);
+	font-size: 11px;
+	padding: 4px 10px;
+}
+
+/* ── DESIGN THESIS NOTE (non-rendering)
+   Industrial precision + macOS platform authenticity.
+   Signal green = one accent, used exclusively for active/focus.
+   Rounded corners throughout per user preference.
+   No purple, no gradients, no floating UI glass.
+   ═══════════════════════════════════════════════════════════════════════════ */
