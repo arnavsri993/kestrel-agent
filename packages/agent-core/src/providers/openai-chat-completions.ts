@@ -201,6 +201,14 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 				text += delta.content;
 				options.onEvent?.({ type: "text_delta", delta: delta.content });
 			}
+			if (typeof delta?.refusal === "string") {
+				text += delta.refusal;
+				stopped = "refusal";
+				options.onEvent?.({ type: "text_delta", delta: delta.refusal });
+			}
+			if (choice.refusal) {
+				stopped = "refusal";
+			}
 			for (const raw of Array.isArray(delta?.tool_calls)
 				? (delta.tool_calls as Array<Record<string, unknown>>)
 				: []) {

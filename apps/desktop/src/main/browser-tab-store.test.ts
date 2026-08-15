@@ -24,7 +24,7 @@ function storePath(): string {
 }
 
 describe("browser address normalization", () => {
-	it("navigates hosts and searches ordinary language", () => {
+	it("navigates hosts and searches ordinary language with Google as default", () => {
 		expect(normalizeBrowserAddress("example.com/docs")).toEqual({
 			kind: "url",
 			url: "https://example.com/docs",
@@ -35,7 +35,31 @@ describe("browser address normalization", () => {
 		});
 		expect(normalizeBrowserAddress("quiet browser design")).toEqual({
 			kind: "search",
-			url: "https://duckduckgo.com/?q=quiet%20browser%20design",
+			url: "https://www.google.com/search?q=quiet%20browser%20design",
+		});
+	});
+
+	it("supports custom search engine URL templates", () => {
+		expect(
+			normalizeBrowserAddress(
+				"kestrel agent",
+				"custom",
+				"https://kagi.com/search?q=%s",
+			),
+		).toEqual({
+			kind: "search",
+			url: "https://kagi.com/search?q=kestrel%20agent",
+		});
+
+		expect(
+			normalizeBrowserAddress(
+				"custom query",
+				"custom",
+				"https://myintranet.corp/find",
+			),
+		).toEqual({
+			kind: "search",
+			url: "https://myintranet.corp/find?q=custom%20query",
 		});
 	});
 

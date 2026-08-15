@@ -35,6 +35,7 @@ import {
   SelectedAttachmentSchema,
   type AgentState,
   type BackgroundJobsEvent,
+  type InstalledExtension,
   type WorkspaceGrant,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
@@ -64,7 +65,13 @@ import {
   protectRendererNavigation,
   trustedDevelopmentRendererUrl,
 } from "./renderer-security";
-import { DeepLinkQueue, deepLinksFromArgv } from "./deep-links";
+import {
+  DeepLinkQueue,
+  deepLinksFromArgv,
+  parseKestrelDeepLink,
+  parseWebUrl,
+  urlsFromArgv,
+} from "./deep-links";
 import {
   PetOverlayRequestAccess,
   petOverlayActivityForRuntimeEvent,
@@ -154,7 +161,7 @@ interface BackupManifestFile {
   sha256: string;
 }
 
-type SubscriptionCliId = "codex" | "claude";
+type SubscriptionCliId = "codex" | "claude" | "opencode";
 interface RuntimePreferences {
   subscriptions?: Partial<
     Record<SubscriptionCliId, { enabled: boolean; path: string }>
@@ -224,7 +231,9 @@ function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
   const configured =
     id === "codex"
       ? process.env.KESTREL_CODEX_PATH
-      : process.env.KESTREL_CLAUDE_PATH;
+      : id === "claude"
+        ? process.env.KESTREL_CLAUDE_PATH
+        : process.env.KESTREL_OPENCODE_PATH;
   const candidates =
     id === "codex"
       ? [
@@ -235,13 +244,22 @@ function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
           join(home, ".local", "bin", "codex"),
           join(home, ".npm-global", "bin", "codex"),
         ]
-      : [
-          configured,
-          "/opt/homebrew/bin/claude",
-          "/usr/local/bin/claude",
-          join(home, ".local", "bin", "claude"),
-          join(home, ".npm-global", "bin", "claude"),
-        ];
+      : id === "claude"
+        ? [
+            configured,
+            "/opt/homebrew/bin/claude",
+            "/usr/local/bin/claude",
+            join(home, ".local", "bin", "claude"),
+            join(home, ".npm-global", "bin", "claude"),
+          ]
+        : [
+            configured,
+            "/opt/homebrew/bin/opencode",
+            "/usr/local/bin/opencode",
+            join(home, ".local", "bin", "opencode"),
+            join(home, ".npm-global", "bin", "opencode"),
+            join(home, "bin", "opencode"),
+          ];
   for (const candidate of candidates) {
     if (!candidate || !existsSync(candidate)) continue;
     try {
@@ -257,7 +275,7 @@ function detectedSubscriptionCli(id: SubscriptionCliId): string | undefined {
 
 async function subscriptionCliStatuses() {
   const preferences = await readRuntimePreferences();
-  const statuses = await Promise.all((["codex", "claude"] as const).map(async (id) => {
+  const statuses = await Promise.all((["codex", "claude", "opencode"] as const).map(async (id) => {
     const path = detectedSubscriptionCli(id);
     const enabled = Boolean(
       path &&
@@ -267,7 +285,9 @@ async function subscriptionCliStatuses() {
     const label =
       id === "codex"
         ? "ChatGPT plan through Codex"
-        : "Claude plan through Claude Code";
+        : id === "claude"
+          ? "Claude plan through Claude Code"
+          : "OpenCode AI runtime";
     const chatGptStatus =
       id === "codex" && path
         ? await new ChatGptOAuthManager({
@@ -302,7 +322,9 @@ async function subscriptionCliStatuses() {
           ? chatGptStatus?.connected
             ? `Enabled with ChatGPT${chatGptAccount?.email ? ` as ${chatGptAccount.email}` : ""}${chatGptAccount?.planType ? ` · ${chatGptAccount.planType} plan` : ""}. Codex owns and refreshes the OAuth session.`
             : "Enabled, but Codex is not signed in with ChatGPT. Connect ChatGPT before running this route."
-          : "Enabled. Authentication remains in the vendor CLI and is checked without copying tokens."
+          : id === "claude"
+            ? "Enabled. Authentication remains in the vendor CLI and is checked without copying tokens."
+            : "Enabled. Runs prompts and tasks through your local OpenCode environment."
         : path
           ? id === "codex"
             ? chatGptStatus?.connected
@@ -310,8 +332,10 @@ async function subscriptionCliStatuses() {
               : chatGptStatus && "accountType" in chatGptStatus && chatGptStatus.accountType === "apiKey"
                 ? "Codex is using an API key. Sign in with ChatGPT to use plan access instead."
                 : "Codex found. Sign in with ChatGPT through the official browser OAuth flow."
-            : "CLI found. Enable it to use the vendor's existing on-device sign-in for text-only tasks."
-          : `Install and sign in to the official ${id === "codex" ? "Codex" : "Claude Code"} CLI to make this route available.`,
+            : id === "claude"
+              ? "CLI found. Enable it to use the vendor's existing on-device sign-in for text-only tasks."
+              : "OpenCode CLI found. Enable it to use your local OpenCode models and configuration."
+          : `Install and sign in to the official ${id === "codex" ? "Codex" : id === "claude" ? "Claude Code" : "OpenCode"} CLI to make this route available.`,
     };
   }));
   return statuses;
@@ -710,6 +734,56 @@ function deliverPendingDeepLinks(): void {
   });
 }
 
+export function isDefaultBrowser(): boolean {
+  if (process.platform !== "darwin" && process.platform !== "win32") {
+    return app.isDefaultProtocolClient("http");
+  }
+  return (
+    app.isDefaultProtocolClient("http") &&
+    app.isDefaultProtocolClient("https")
+  );
+}
+
+export function setAsDefaultBrowser(): boolean {
+  const httpOk = app.setAsDefaultProtocolClient("http");
+  const httpsOk = app.setAsDefaultProtocolClient("https");
+  return httpOk || httpsOk;
+}
+
+const pendingWebUrls: string[] = [];
+
+function openIncomingWebUrl(url: string): void {
+  if (userBrowserService && mainWindow && !mainWindow.isDestroyed()) {
+    showMainWindow();
+    void userBrowserService.createTab(url, true).catch(() => undefined);
+  } else {
+    if (!pendingWebUrls.includes(url) && pendingWebUrls.length < 32) {
+      pendingWebUrls.push(url);
+    }
+    showMainWindow();
+  }
+}
+
+function deliverPendingWebUrls(): void {
+  if (!userBrowserService || !mainWindow || mainWindow.isDestroyed()) return;
+  while (pendingWebUrls.length > 0) {
+    const nextUrl = pendingWebUrls.shift()!;
+    void userBrowserService.createTab(nextUrl, true).catch(() => undefined);
+  }
+}
+
+function handleIncomingUrl(value: string): void {
+  const deepLink = parseKestrelDeepLink(value);
+  if (deepLink) {
+    queueDeepLink(deepLink);
+    return;
+  }
+  const webUrl = parseWebUrl(value);
+  if (webUrl) {
+    openIncomingWebUrl(webUrl);
+  }
+}
+
 function queueDeepLink(value: unknown): boolean {
   if (!pendingDeepLinks.enqueue(value)) return false;
   showMainWindow();
@@ -756,6 +830,7 @@ function createMainWindow(): BrowserWindow {
       }
     },
   });
+  deliverPendingWebUrls();
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -1029,6 +1104,15 @@ async function initializeCore(
     secureEnvironment.KESTREL_ENABLE_CLAUDE_SUBSCRIPTION = "1";
     secureEnvironment.KESTREL_CLAUDE_PATH = claudePath;
   }
+  const opencodePath = detectedSubscriptionCli("opencode");
+  if (
+    opencodePath &&
+    preferences.subscriptions?.opencode?.enabled &&
+    preferences.subscriptions.opencode.path === opencodePath
+  ) {
+    secureEnvironment.KESTREL_ENABLE_OPENCODE_SUBSCRIPTION = "1";
+    secureEnvironment.KESTREL_OPENCODE_PATH = opencodePath;
+  }
   try {
     const localRuntime = localRuntimeManager();
     await localRuntime.startManagedIfInstalled();
@@ -1220,6 +1304,14 @@ function registerIpc(): void {
         ),
       };
     }
+    if (request.type === "browser-reopen-closed-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.reopenClosedTab(),
+      };
+    }
     if (request.type === "browser-close-tab") {
       if (!userBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -1268,7 +1360,34 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
-        browserState: userBrowserService.reload(request.tabId),
+        browserState: userBrowserService.reload(
+          request.tabId,
+          Boolean("ignoreCache" in request && request.ignoreCache),
+        ),
+      };
+    }
+    if (request.type === "browser-zoom-in") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.zoomIn(request.tabId),
+      };
+    }
+    if (request.type === "browser-zoom-out") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.zoomOut(request.tabId),
+      };
+    }
+    if (request.type === "browser-zoom-reset") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.zoomReset(request.tabId),
       };
     }
     if (request.type === "browser-stop") {
@@ -1315,6 +1434,81 @@ function registerIpc(): void {
       userBrowserService.revealDownload(request.downloadId);
       return { ok: true };
     }
+    if (request.type === "browser-list-extensions") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        extensions: userBrowserService.listExtensions(),
+      };
+    }
+    if (request.type === "browser-install-extension-url") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extension = await userBrowserService.installExtensionUrl(
+        request.urlOrId,
+      );
+      return { ok: true, extension };
+    }
+    if (request.type === "browser-install-extension-file") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const result = await dialog.showOpenDialog(senderWindow, {
+        title: "Install Extension",
+        properties: ["openFile", "openDirectory"],
+        filters: [{ name: "Extension Package", extensions: ["crx", "zip"] }],
+      });
+      if (result.canceled || !result.filePaths[0]) {
+        return { ok: false, error: "Installation canceled" };
+      }
+      const selectedPath = result.filePaths[0];
+      const stats = existsSync(selectedPath);
+      if (!stats) return { ok: false, error: "File not found" };
+
+      let extension: InstalledExtension;
+      if (
+        selectedPath.endsWith(".crx") ||
+        selectedPath.endsWith(".zip")
+      ) {
+        extension = await userBrowserService.installExtensionFile(selectedPath);
+      } else {
+        extension = await userBrowserService.installExtensionFolder(
+          selectedPath,
+        );
+      }
+      return { ok: true, extension };
+    }
+    if (request.type === "browser-toggle-extension") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extension = await userBrowserService.toggleExtension(
+        request.extensionId,
+        request.enabled,
+      );
+      return { ok: true, extension };
+    }
+    if (request.type === "browser-uninstall-extension") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      await userBrowserService.uninstallExtension(request.extensionId);
+      return { ok: true };
+    }
+    if (request.type === "browser-sleep-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.sleepTab(request.tabId),
+      };
+    }
+    if (request.type === "browser-sleep-inactive-tabs") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.sleepInactiveTabs(),
+      };
+    }
     if (request.type === "get-system-state") {
       const state = app.getLoginItemSettings();
       return {
@@ -1322,6 +1516,22 @@ function registerIpc(): void {
         launchAtLogin: state.openAtLogin,
         launchStatus:
           state.status ?? (state.openAtLogin ? "enabled" : "not-registered"),
+        isDefaultBrowser: isDefaultBrowser(),
+      };
+    }
+    if (request.type === "get-default-browser-status") {
+      return {
+        ok: true,
+        isDefault: isDefaultBrowser(),
+        canSetAsDefault: true,
+      };
+    }
+    if (request.type === "set-default-browser") {
+      const success = setAsDefaultBrowser();
+      return {
+        ok: true,
+        isDefault: isDefaultBrowser(),
+        success,
       };
     }
     if (request.type === "set-launch-at-login") {
@@ -1534,7 +1744,7 @@ function registerIpc(): void {
       const selected = statuses.find((status) => status.id === request.id);
       if (!selected?.path && request.enabled)
         throw new Error(
-          `${request.id === "codex" ? "Codex" : "Claude Code"} CLI was not found in a trusted local installation path.`,
+          `${request.id === "codex" ? "Codex" : request.id === "claude" ? "Claude Code" : "OpenCode"} CLI was not found in a trusted local installation path.`,
         );
       const preferences = await readRuntimePreferences();
       const subscriptions = { ...(preferences.subscriptions ?? {}) };
@@ -2157,14 +2367,17 @@ async function initializeCoreForStartup(): Promise<boolean> {
 }
 
 app.on("second-instance", (_event, argv) => {
-  const deepLinks = deepLinksFromArgv(argv);
-  if (deepLinks.length === 0) showMainWindow();
-  else for (const deepLink of deepLinks) queueDeepLink(deepLink);
+  const { deepLinks, webUrls } = urlsFromArgv(argv);
+  if (deepLinks.length === 0 && webUrls.length === 0) showMainWindow();
+  else {
+    for (const deepLink of deepLinks) queueDeepLink(deepLink);
+    for (const webUrl of webUrls) openIncomingWebUrl(webUrl);
+  }
 });
 
 app.on("open-url", (event, url) => {
   event.preventDefault();
-  queueDeepLink(url);
+  handleIncomingUrl(url);
 });
 app.on("before-quit", () => {
   quitting = true;
@@ -2211,6 +2424,7 @@ void app
     updateTray();
     const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
     if (!mainWindow) mainWindow = createMainWindow();
+    deliverPendingWebUrls();
     const startupWindow = mainWindow;
     const pet = await supervisor.request({ type: "pet-get" });
     if (

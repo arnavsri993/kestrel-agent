@@ -55,8 +55,7 @@ export function AgentWorkspace({
 						<BrandMark />
 					</span>
 					<div>
-						<h1 id="agent-workspace-title">Your agent</h1>
-						<p>Start work, return to it, and see what needs you.</p>
+						<h1 id="agent-workspace-title">Agent Workspace</h1>
 					</div>
 				</div>
 			</header>
@@ -65,25 +64,22 @@ export function AgentWorkspace({
 				<div>
 					<span className={`agent-dot ${agentState}`} aria-hidden="true" />
 					<span>
-						<small>Agent</small>
 						<strong>{agentStateLabel(agentState)}</strong>
 					</span>
 				</div>
 				<div>
 					<Icon name="work" />
 					<span>
-						<small>Open tasks</small>
-						<strong>{openCount}</strong>
+						<strong>{openCount} open</strong>
 					</span>
 				</div>
 				<button type="button" onClick={onOpenApprovals}>
 					<Icon name="approvals" />
 					<span>
-						<small>Approvals</small>
 						<strong>
 							{pendingApprovals
-								? `${pendingApprovals} need${pendingApprovals === 1 ? "s" : ""} you`
-								: "None waiting"}
+								? `${pendingApprovals} approval${pendingApprovals === 1 ? "" : "s"}`
+								: "No approvals"}
 						</strong>
 					</span>
 					<Icon name="chevron" />
@@ -91,8 +87,7 @@ export function AgentWorkspace({
 				<button type="button" onClick={onOpenWork}>
 					<Icon name="work" />
 					<span>
-						<small>Plans and schedules</small>
-						<strong>Open Work</strong>
+						<strong>Work</strong>
 					</span>
 					<Icon name="chevron" />
 				</button>
@@ -105,15 +100,14 @@ export function AgentWorkspace({
 				<header>
 					<div>
 						<h2 id="agent-task-library-title">Tasks</h2>
-						<span>{sessions.length} total</span>
 					</div>
 					<label className="agent-task-search">
 						<Icon name="search" />
-						<span className="sr-only">Find a task or project</span>
+						<span className="sr-only">Find a task</span>
 						<input
 							type="search"
 							value={query}
-							placeholder="Find a task or project"
+							placeholder="Search tasks..."
 							onChange={(event) => setQuery(event.target.value)}
 						/>
 					</label>
@@ -174,13 +168,6 @@ export function AgentWorkspace({
 									? `No ${filter} tasks`
 									: "No tasks yet"}
 						</h3>
-						<p>
-							{query
-								? "Try a title or project name."
-								: sessions.length
-									? "Choose another filter to see your work."
-									: "Start with an outcome. Kestrel will keep the conversation, project, approvals, and result together."}
-						</p>
 						{query ? (
 							<button
 								type="button"

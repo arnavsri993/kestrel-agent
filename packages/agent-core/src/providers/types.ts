@@ -78,9 +78,13 @@ export interface ModelProviderCapabilities {
   local: boolean;
 }
 
+import type { ModelTier } from "@kestrel/shared-types";
+
 export interface ModelProfileHints {
   displayName?: string;
+  tier?: ModelTier;
   capabilities?: Record<string, number>;
+  refusalResilience?: number;
   cost?: {
     inputPerMillion?: number;
     outputPerMillion?: number;
@@ -117,20 +121,40 @@ export interface ModelProvider {
 import { KestrelError } from "@kestrel/error-handling";
 
 export class ModelProviderError extends KestrelError {
+  readonly isRefusal: boolean;
+
   constructor(
     message: string,
     readonly providerId: string,
     retryable: boolean,
-    readonly status?: number
+    readonly status?: number,
+    isRefusal = false
   ) {
     super({
-      code: "model_provider_error",
+      code: isRefusal ? "model_refusal_error" : "model_provider_error",
       message,
       retryable,
-      metadata: { providerId, status },
+      metadata: { providerId, status, isRefusal },
     });
     this.name = "ModelProviderError";
+    this.isRefusal = isRefusal || isRefusalErrorMessage(message);
   }
+}
+
+export function isRefusalErrorMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("safety") ||
+    normalized.includes("content filter") ||
+    normalized.includes("content_filter") ||
+    normalized.includes("moderation") ||
+    normalized.includes("policy violation") ||
+    normalized.includes("blocked by") ||
+    normalized.includes("refusal") ||
+    normalized.includes("safety policy") ||
+    normalized.includes("terms of service violation") ||
+    normalized.includes("restricted content")
+  );
 }
 
 export function textContent(value: string): ModelContentPart[] {

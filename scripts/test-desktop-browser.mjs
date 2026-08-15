@@ -217,7 +217,10 @@ async function callTool(sessionId, toolName, input, options = {}) {
 
 try {
 	await launch();
-	await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:onboarded", "yes");
+		localStorage.setItem("kestrel:default-browser-prompted", "yes");
+	});
 	await page.reload();
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
@@ -600,7 +603,12 @@ try {
 		.waitFor();
 	await page.getByLabel("Search engine").selectOption("ecosia");
 	await page.getByLabel("Tab layout").selectOption("vertical");
-	state = await browserState();
+	state = await waitForBrowserState(
+		(candidate) =>
+			candidate.settings.searchEngine === "ecosia" &&
+			candidate.settings.tabLayout === "vertical",
+		"browser settings update",
+	);
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
 	const useCurrentPage = page.getByRole("checkbox", {

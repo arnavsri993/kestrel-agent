@@ -63,20 +63,25 @@ describe("SandboxedCommandRunner", () => {
   });
 
   function mockSpawn() {
-    const child = new EventEmitter() as child_process.ChildProcess & {
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const stdin = {
+      write: vi.fn(),
+      destroyed: false,
+    };
+    const kill = vi.fn();
+    const child = Object.assign(new EventEmitter(), {
+      stdout,
+      stderr,
+      stdin,
+      kill,
+      pid: 12345,
+    }) as unknown as child_process.ChildProcess & {
       stdout: EventEmitter;
       stderr: EventEmitter;
       stdin: { write: ReturnType<typeof vi.fn>; destroyed: boolean };
       kill: ReturnType<typeof vi.fn>;
     };
-    child.stdout = new EventEmitter();
-    child.stderr = new EventEmitter();
-    child.stdin = {
-      write: vi.fn(),
-      destroyed: false,
-    };
-    child.kill = vi.fn();
-    Object.defineProperty(child, "pid", { value: 12345 });
     vi.mocked(child_process.spawn).mockReturnValue(child);
     return child;
   }

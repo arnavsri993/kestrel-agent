@@ -58,22 +58,47 @@ export function BrowserToolbar({
   return (
     <div className="browser-toolbar" aria-label="Browser toolbar">
       <div className="browser-navigation">
-        <button type="button" aria-label="Back" disabled={!tab.canGoBack} onClick={onBack}>
+        <button
+          type="button"
+          aria-label="Back"
+          aria-keyshortcuts="Meta+["
+          title="Back (⌘[)"
+          disabled={!tab.canGoBack}
+          onClick={onBack}
+        >
           <Icon name="back" />
         </button>
-        <button type="button" aria-label="Forward" disabled={!tab.canGoForward} onClick={onForward}>
+        <button
+          type="button"
+          aria-label="Forward"
+          aria-keyshortcuts="Meta+]"
+          title="Forward (⌘])"
+          disabled={!tab.canGoForward}
+          onClick={onForward}
+        >
           <Icon name="forward" />
         </button>
         <button
           type="button"
           aria-label={tab.loading ? "Stop loading" : "Reload"}
+          aria-keyshortcuts={tab.loading ? "Escape" : "Meta+R"}
+          title={tab.loading ? "Stop loading (Esc)" : "Reload (⌘R)"}
           onClick={tab.loading ? onStop : onReload}
         >
           <Icon name={tab.loading ? "close" : "reload"} />
         </button>
       </div>
       <form className="browser-address" onSubmit={submit}>
-        <span className={`site-indicator ${secure ? "secure" : ""}`} title={secure ? "Secure connection" : tab.url ? "Connection is not secure" : "Search or address"}>
+        <span
+          className={`site-indicator ${secure ? "secure" : ""}`}
+          title={
+            secure
+              ? "Secure connection"
+              : tab.url
+                ? "Connection is not secure"
+                : "Search or address"
+          }
+        >
           <Icon name={secure ? "lock" : "search"} />
         </span>
         <label className="sr-only" htmlFor="browser-address-input">
@@ -83,14 +108,19 @@ export function BrowserToolbar({
           id="browser-address-input"
           ref={addressRef}
           value={address}
-          placeholder="Search or enter an address"
+          placeholder="Search or enter address (⌘L)"
+          aria-keyshortcuts="Meta+L"
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
           onFocus={(event) => event.currentTarget.select()}
           onChange={(event) => setAddress(event.target.value)}
         />
-        {tab.url && <span className="browser-address-host" aria-hidden="true">{host}</span>}
+        {tab.url && (
+          <span className="browser-address-host" aria-hidden="true">
+            {host}
+          </span>
+        )}
       </form>
       <button
         type="button"
@@ -113,19 +143,37 @@ export function BrowserToolbar({
           className={`browser-agent-toggle ${agentOpen ? "active" : ""}`}
           aria-label={agentOpen ? `Minimize ${agentName}` : `Open ${agentName}`}
           aria-expanded={agentOpen}
-          title={agentOpen ? `Minimize ${agentName}` : `Chat with ${agentName}`}
+          title={agentOpen ? `Minimize ${agentName}` : agentName}
           onClick={onToggleAgent}
         >
           <Icon name="chat" />
-          <span>{agentOpen ? agentName : `Chat with ${agentName}`}</span>
+          <span>{agentName}</span>
         </button>
-        <button type="button" aria-label="History" onClick={onOpenHistory}>
+        <button
+          type="button"
+          aria-label="History"
+          aria-keyshortcuts="Meta+H"
+          title="History (⌘H)"
+          onClick={onOpenHistory}
+        >
           <Icon name="history" />
         </button>
-        <button type="button" aria-label="Downloads" onClick={onOpenDownloads}>
+        <button
+          type="button"
+          aria-label="Downloads"
+          aria-keyshortcuts="Meta+J"
+          title="Downloads (⌘J)"
+          onClick={onOpenDownloads}
+        >
           <Icon name="downloads" />
         </button>
-        <button type="button" aria-label="Kestrel menu" onClick={onOpenMenu}>
+        <button
+          type="button"
+          aria-label="Capabilities and commands"
+          aria-keyshortcuts="Meta+K"
+          title="Capabilities (⌘K)"
+          onClick={onOpenMenu}
+        >
           <Icon name="more" />
         </button>
       </div>

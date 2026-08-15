@@ -13,11 +13,51 @@ export function parseKestrelDeepLink(
 	return new URL(parsed.data).toString();
 }
 
+export function parseWebUrl(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	if (!trimmed || trimmed.length > 8192 || /[\u0000-\u001f\u007f]/.test(trimmed))
+		return undefined;
+	try {
+		const parsed = new URL(trimmed);
+		if (
+			parsed.protocol === "http:" ||
+			parsed.protocol === "https:" ||
+			parsed.protocol === "file:"
+		) {
+			return parsed.toString();
+		}
+	} catch {
+		return undefined;
+	}
+	return undefined;
+}
+
 export function deepLinksFromArgv(argv: readonly string[]): KestrelDeepLink[] {
 	return argv.flatMap((value) => {
 		const parsed = parseKestrelDeepLink(value);
 		return parsed ? [parsed] : [];
 	});
+}
+
+export function urlsFromArgv(argv: readonly string[]): {
+	deepLinks: KestrelDeepLink[];
+	webUrls: string[];
+} {
+	const deepLinks: KestrelDeepLink[] = [];
+	const webUrls: string[] = [];
+	for (const arg of argv) {
+		const deepLink = parseKestrelDeepLink(arg);
+		if (deepLink) {
+			deepLinks.push(deepLink);
+			continue;
+		}
+		const webUrl = parseWebUrl(arg);
+		if (webUrl) {
+			webUrls.push(webUrl);
+		}
+	}
+	return { deepLinks, webUrls };
 }
 
 export class DeepLinkQueue {

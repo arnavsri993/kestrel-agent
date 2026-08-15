@@ -9,6 +9,10 @@ import type {
 } from "@kestrel/shared-types";
 import { ContextCompactor } from "./context-compactor";
 import {
+	detectModelRefusal,
+	reframePromptForNeutrality,
+} from "./model-orchestration";
+import {
 	contentText,
 	type ModelContentPart,
 	type ModelMessage,
@@ -33,6 +37,7 @@ export interface AgentLoopInput {
 	model: string;
 	providerIds: string[];
 	providerModels?: Record<string, string>;
+	fallbackModelIds?: string[];
 	reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
 	serviceTier?: "standard" | "priority";
 	allowedTools?: string[];
@@ -197,6 +202,9 @@ export class AgentLoop {
 				? { temperature: input.temperature }
 				: {}),
 			...(input.allowedTools ? { toolScope: input.allowedTools } : {}),
+			...(input.fallbackModelIds
+				? { fallbackModelIds: input.fallbackModelIds }
+				: {}),
 			status: "running",
 			turn: 0,
 			createdAt,
@@ -592,6 +600,49 @@ export class AgentLoop {
 				);
 				this.saveActiveRun(run);
 				const result = poolResult.result;
+
+				const refusal = detectModelRefusal(result);
+				if (
+					refusal.refused &&
+					((run.fallbackModelIds && run.fallbackModelIds.length > 0) ||
+						run.providerIds.includes("auto"))
+				) {
+					const remainingFallbacks = [...(run.fallbackModelIds ?? [])];
+					const nextFallbackId = remainingFallbacks.shift();
+					if (nextFallbackId) {
+						const [nextEndpointId, ...nextModelParts] = nextFallbackId.includes(":")
+							? nextFallbackId.split(":")
+							: [nextFallbackId, nextFallbackId];
+						const nextModel = nextModelParts.join(":") || nextFallbackId;
+						const prevModel = run.model;
+						const recoveryCount = (run.refusalRecoveryCount ?? 0) + 1;
+
+						options.onEvent?.({
+							type: "provider_progress",
+							detail: `Model ${prevModel} denied request (${refusal.reason ?? "safety constraint"}). Automatically switching to fallback tier model ${nextModel} (0% refusal policy)...`,
+						});
+
+						modelMessages = reframePromptForNeutrality(modelMessages);
+
+						run = {
+							...run,
+							model: nextModel,
+							providerIds: run.providerIds.includes("auto")
+								? ["auto"]
+								: [
+										nextEndpointId,
+										...run.providerIds.filter((p) => p !== nextEndpointId),
+									],
+							fallbackModelIds: remainingFallbacks,
+							refusalRecoveryCount: recoveryCount,
+							updatedAt: this.now().toISOString(),
+						};
+						this.saveActiveRun(run);
+						turn -= 1;
+						continue;
+					}
+				}
+
 				const assistantContent =
 					result.text.trim() ||
 					`Requested tools: ${result.toolCalls.map((call) => call.name).join(", ")}`;

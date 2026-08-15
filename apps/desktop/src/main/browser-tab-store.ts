@@ -20,10 +20,17 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	newTabBackground: "graphite",
 	restoreSession: true,
 	historyRetentionDays: 90,
+	sleepingTabsEnabled: true,
+	sleepingTabTimeoutMinutes: 30,
+	sleepingTabExcludedDomains: [],
+	memorySaverMode: true,
 };
-const SEARCH_ENGINES: Record<UserBrowserSettings["searchEngine"], string> = {
-	duckduckgo: "https://duckduckgo.com/?q=",
+const SEARCH_ENGINES: Record<
+	Exclude<UserBrowserSettings["searchEngine"], "custom">,
+	string
+> = {
 	google: "https://www.google.com/search?q=",
+	duckduckgo: "https://duckduckgo.com/?q=",
 	bing: "https://www.bing.com/search?q=",
 	brave: "https://search.brave.com/search?q=",
 	ecosia: "https://www.ecosia.org/search?q=",
@@ -90,6 +97,7 @@ export function sanitizeBrowserUrl(value: string): string {
 export function normalizeBrowserAddress(
 	value: string,
 	searchEngine: UserBrowserSettings["searchEngine"] = "duckduckgo",
+	customSearchUrl?: string,
 ): NormalizedBrowserAddress {
 	const input = value.trim();
 	if (!input || input.length > 8_192 || /[\u0000-\u001f\u007f]/.test(input))
@@ -105,9 +113,24 @@ export function normalizeBrowserAddress(
 
 	const looksLikeHost = loopback || HOST_LIKE.test(input) || IPV4.test(input);
 	if (!explicitScheme && !looksLikeHost) {
+		if (searchEngine === "custom" && customSearchUrl) {
+			const template = customSearchUrl.trim();
+			const encoded = encodeURIComponent(input);
+			const url = template.includes("%s")
+				? template.replace(/%s/g, encoded)
+				: `${template}${template.includes("?") ? "&q=" : "?q="}${encoded}`;
+			return {
+				kind: "search",
+				url,
+			};
+		}
+		const engineBase =
+			searchEngine === "custom"
+				? SEARCH_ENGINES.google
+				: SEARCH_ENGINES[searchEngine] ?? SEARCH_ENGINES.google;
 		return {
 			kind: "search",
-			url: `${SEARCH_ENGINES[searchEngine]}${encodeURIComponent(input)}`,
+			url: `${engineBase}${encodeURIComponent(input)}`,
 		};
 	}
 

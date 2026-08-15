@@ -17,7 +17,7 @@ describe("LocalDocumentProvider", () => {
     });
 
     expect(result.mediaType).toBe("text/markdown");
-    expect(result.data.toString("utf8")).toBe("# Hello");
+    expect(Buffer.from(result.data).toString("utf8")).toBe("# Hello");
   });
 
   test("throws if kind is not document", async () => {
@@ -90,7 +90,7 @@ describe("OpenAiMediaProvider", () => {
     });
 
     expect(result.mediaType).toBe("image/png");
-    expect(result.data.toString("utf8")).toBe("test-image");
+    expect(Buffer.from(result.data).toString("utf8")).toBe("test-image");
   });
 
   test("handles successful speech generation", async () => {

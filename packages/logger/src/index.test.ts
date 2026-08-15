@@ -9,7 +9,7 @@ describe("ConsoleLogger", () => {
     logger.info("Test message", { request: "123" });
 
     expect(consoleInfoSpy).toHaveBeenCalled();
-    const callArg = consoleInfoSpy.mock.calls[0][0];
+    const callArg = consoleInfoSpy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(callArg);
     
     expect(parsed.level).toBe("info");
@@ -29,7 +29,7 @@ describe("ConsoleLogger", () => {
     child.debug("Child message");
 
     expect(consoleDebugSpy).toHaveBeenCalled();
-    const callArg = consoleDebugSpy.mock.calls[0][0];
+    const callArg = consoleDebugSpy.mock.calls[0]?.[0] as string;
     const parsed = JSON.parse(callArg);
     
     expect(parsed.level).toBe("debug");

@@ -9,6 +9,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -27,7 +28,12 @@ const trashRoot = resolve(process.env.KESTREL_MACOS_TRASH_ROOT ?? join(home, ".T
 const searchRoots = uniquePaths(
   (process.env.KESTREL_MACOS_SEARCH_ROOTS
     ? process.env.KESTREL_MACOS_SEARCH_ROOTS.split(":")
-    : [installRoot, join(home, "Applications"), join(home, "Desktop")]
+    : [
+        installRoot,
+        join(home, "Applications"),
+        join(home, "Desktop"),
+        join(home, "Downloads"),
+      ]
   ).filter(Boolean),
 );
 const lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
@@ -98,6 +104,29 @@ function unregister(path) {
   }
 }
 
+function register(path) {
+  if (process.env.KESTREL_SKIP_LSREGISTER === "1" || !existsSync(lsregister)) return;
+  try {
+    execFileSync(lsregister, ["-f", path], { stdio: "ignore" });
+  } catch {
+    // LaunchServices registration is best effort.
+  }
+}
+
+function preventSpotlightIndexing() {
+  const releaseDir = join(repositoryRoot, "release");
+  if (existsSync(releaseDir)) {
+    const marker = join(releaseDir, ".metadata_never_index");
+    if (!existsSync(marker)) {
+      try {
+        writeFileSync(marker, "");
+      } catch {
+        // Spotlight exclusion marker is best effort.
+      }
+    }
+  }
+}
+
 function appCandidates(root) {
   if (!statIsDirectory(root)) return [];
   let entries;
@@ -165,6 +194,7 @@ function stageBundle() {
 
 function install() {
   validateSource(source);
+  preventSpotlightIndexing();
   mkdirSync(installRoot, { recursive: true });
   if (existsSync(destination) && !isKestrelBundle(destination)) {
     throw new Error(`Refusing to replace a non-Kestrel app at ${destination}`);
@@ -177,12 +207,15 @@ function install() {
     stageRoot = staged.stageRoot;
     if (existsSync(destination)) moved.push({ from: destination, to: moveToTrash(destination, "previous") });
     renameSync(staged.stagedBundle, destination);
+    // Unregister source build bundle so Spotlight/LaunchServices only sees the installed destination
+    unregister(source);
   }
   if (stageRoot) rmSync(stageRoot, { recursive: true, force: true });
 
   // A second pass catches duplicates that shared the canonical install root.
   moved.push(...moveDuplicatesToTrash([destination]));
   validateSource(destination);
+  register(destination);
   return { destination, moved };
 }
 

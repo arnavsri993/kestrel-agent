@@ -14,27 +14,21 @@ const recommendations = [
   {
     icon: "research",
     art: "research",
-    eyebrow: "Explore",
     title: "Make sense of a new topic",
-    detail: "Find the useful starting points, then turn them into a next step.",
     prompt:
       "Help me explore a new topic, find the useful starting points, and suggest the next step.",
   },
   {
     icon: "work",
     art: "plan",
-    eyebrow: "Get organized",
     title: "Turn an idea into a plan",
-    detail: "Start with an outcome and keep the work, context, and approvals together.",
     prompt:
       "Help me turn an idea into a clear plan with the smallest useful next step.",
   },
   {
     icon: "agent",
     art: "continue",
-    eyebrow: "Ask",
     title: "Pick up where you left off",
-    detail: "Open a fresh chat and bring the important context with you.",
     prompt:
       "Help me pick up where I left off and decide what is most useful to do next.",
   },
@@ -85,18 +79,15 @@ export function NewTabPage({
       <header className="new-tab-home-header">
         <div className="new-tab-home-identity">
           <BrandMark />
-          <span>
-            <strong>Kestrel home</strong>
-            <small>Browser + agent</small>
-          </span>
         </div>
         <button
           type="button"
           className="new-tab-personalize"
           onClick={onOpenSettings}
+          aria-label="Personalize"
+          title="Personalize"
         >
           <Icon name="settings" />
-          <span>Personalize</span>
         </button>
       </header>
 
@@ -105,11 +96,7 @@ export function NewTabPage({
           <div className="new-tab-welcome-mark" aria-hidden="true">
             <BrandMark />
           </div>
-          <p className="new-tab-eyebrow">Ready when you are</p>
           <h1 id="new-tab-title">Good to see you.</h1>
-          <p className="new-tab-support">
-            Ask {agentName} to think, plan, or get something done.
-          </p>
           <form className="new-tab-chat" onSubmit={submitChat}>
             <span className="new-tab-chat-mark" aria-hidden="true">
               <Icon name="agent" />
@@ -121,7 +108,7 @@ export function NewTabPage({
               id="new-tab-chat-input"
               autoFocus
               value={input}
-              placeholder={`Ask ${agentName} anything`}
+              placeholder={`Ask ${agentName}...`}
               autoCapitalize="sentences"
               autoCorrect="on"
               spellCheck
@@ -135,24 +122,19 @@ export function NewTabPage({
               <Icon name="arrow" />
             </button>
           </form>
-          <small className="new-tab-chat-note">
-            The address bar above is for the web. This starts a private local chat.
-          </small>
         </div>
 
         <section className="new-tab-frequent" aria-labelledby="frequent-title">
           <div className="new-tab-section-heading">
-            <div>
-              <span className="new-tab-section-kicker">From your local history</span>
-              <h2 id="frequent-title">Frequent tabs</h2>
-            </div>
+            <h2 id="frequent-title">Frequent</h2>
             <button
               type="button"
               className="new-tab-section-action"
               onClick={onNewTab}
+              aria-label="New tab"
+              title="New tab"
             >
               <Icon name="plus" />
-              <span>New tab</span>
             </button>
           </div>
           {frequent.length > 0 ? (
@@ -173,7 +155,6 @@ export function NewTabPage({
                   </span>
                   <span className="new-tab-site-copy">
                     <strong>{site.title}</strong>
-                    <small>{site.hostname}</small>
                   </span>
                 </button>
               ))}
@@ -188,8 +169,7 @@ export function NewTabPage({
                 <Icon name="plus" />
               </span>
               <span>
-                <strong>Open a site to build your shortcuts</strong>
-                <small>Only local browser history appears here.</small>
+                <strong>Open a site to start</strong>
               </span>
               <Icon name="arrow" />
             </button>
@@ -201,11 +181,7 @@ export function NewTabPage({
           aria-labelledby="recommendations-title"
         >
           <div className="new-tab-section-heading">
-            <div>
-              <span className="new-tab-section-kicker">A little inspiration</span>
-              <h2 id="recommendations-title">Start with {agentName}</h2>
-            </div>
-            <small>Three ways to begin</small>
+            <h2 id="recommendations-title">Suggestions</h2>
           </div>
           <div className="new-tab-recommendation-grid">
             {recommendations.map((recommendation) => (
@@ -220,20 +196,12 @@ export function NewTabPage({
                   </span>
                 </div>
                 <div className="new-tab-recommendation-body">
-                  <div className="new-tab-recommendation-heading">
-                    <span>
-                      {recommendation.eyebrow === "Ask"
-                        ? `Ask ${agentName}`
-                        : recommendation.eyebrow}
-                    </span>
-                  </div>
                   <h3>{recommendation.title}</h3>
-                  <p>{recommendation.detail}</p>
                   <button
                     type="button"
+                    aria-label={`Ask ${recommendation.title}`}
                     onClick={() => onNewAgent(recommendation.prompt)}
                   >
-                    Open in chat
                     <Icon name="arrow" />
                   </button>
                 </div>

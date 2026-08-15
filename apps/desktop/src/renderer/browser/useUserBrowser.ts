@@ -16,12 +16,16 @@ export interface UserBrowserController {
 	state: UserBrowserState | null;
 	error: string;
 	createTab(input?: string): Promise<void>;
+	reopenClosedTab(): Promise<void>;
 	closeTab(tabId: string): Promise<void>;
 	selectTab(tabId: string): Promise<void>;
 	navigate(tabId: string, input: string): Promise<void>;
 	back(tabId: string): Promise<void>;
 	forward(tabId: string): Promise<void>;
-	reload(tabId: string): Promise<void>;
+	reload(tabId: string, ignoreCache?: boolean): Promise<void>;
+	zoomIn(tabId?: string): Promise<void>;
+	zoomOut(tabId?: string): Promise<void>;
+	zoomReset(tabId?: string): Promise<void>;
 	stop(tabId: string): Promise<void>;
 	setContentBounds(
 		bounds: { x: number; y: number; width: number; height: number },
@@ -31,6 +35,8 @@ export interface UserBrowserController {
 	updateSettings(settings: UserBrowserSettings): Promise<void>;
 	clearHistory(): Promise<void>;
 	revealDownload(downloadId: string): Promise<void>;
+	sleepTab(tabId: string): Promise<void>;
+	sleepInactiveTabs(): Promise<void>;
 }
 
 export function useUserBrowser(): UserBrowserController {
@@ -98,6 +104,10 @@ export function useUserBrowser(): UserBrowserController {
 			}),
 		[requestState],
 	);
+	const reopenClosedTab = useCallback(
+		() => requestState({ type: "browser-reopen-closed-tab" }),
+		[requestState],
+	);
 	const closeTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-close-tab", tabId }),
 		[requestState],
@@ -120,7 +130,39 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const reload = useCallback(
-		(tabId: string) => requestState({ type: "browser-reload", tabId }),
+		(tabId: string, ignoreCache?: boolean) =>
+			requestState({
+				type: "browser-reload",
+				tabId,
+				...(ignoreCache ? { ignoreCache: true } : {}),
+			}),
+		[requestState],
+	);
+	const zoomIn = useCallback(
+		(tabId?: string) => {
+			const targetId = tabId ?? stateRef.current?.activeTabId;
+			return targetId
+				? requestState({ type: "browser-zoom-in", tabId: targetId })
+				: Promise.resolve();
+		},
+		[requestState],
+	);
+	const zoomOut = useCallback(
+		(tabId?: string) => {
+			const targetId = tabId ?? stateRef.current?.activeTabId;
+			return targetId
+				? requestState({ type: "browser-zoom-out", tabId: targetId })
+				: Promise.resolve();
+		},
+		[requestState],
+	);
+	const zoomReset = useCallback(
+		(tabId?: string) => {
+			const targetId = tabId ?? stateRef.current?.activeTabId;
+			return targetId
+				? requestState({ type: "browser-zoom-reset", tabId: targetId })
+				: Promise.resolve();
+		},
 		[requestState],
 	);
 	const stop = useCallback(
@@ -173,41 +215,61 @@ export function useUserBrowser(): UserBrowserController {
 		});
 		if (!response.ok) throw new Error(responseError(response));
 	}, []);
+	const sleepTab = useCallback(
+		(tabId: string) => requestState({ type: "browser-sleep-tab", tabId }),
+		[requestState],
+	);
+	const sleepInactiveTabs = useCallback(
+		() => requestState({ type: "browser-sleep-inactive-tabs" }),
+		[requestState],
+	);
 
 	return useMemo(
 		() => ({
 			state,
 			error,
 			createTab,
+			reopenClosedTab,
 			closeTab,
 			selectTab,
 			navigate,
 			back,
 			forward,
 			reload,
+			zoomIn,
+			zoomOut,
+			zoomReset,
 			stop,
 			setContentBounds,
 			pageContext,
 			updateSettings,
 			clearHistory,
 			revealDownload,
+			sleepTab,
+			sleepInactiveTabs,
 		}),
 		[
 			state,
 			error,
 			createTab,
+			reopenClosedTab,
 			closeTab,
 			selectTab,
 			navigate,
 			back,
 			forward,
 			reload,
+			zoomIn,
+			zoomOut,
+			zoomReset,
 			stop,
 			setContentBounds,
 			pageContext,
 			updateSettings,
 			clearHistory,
 			revealDownload,
+			sleepTab,
+			sleepInactiveTabs,
 		],
 	);
 }

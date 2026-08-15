@@ -4,7 +4,10 @@ import { GeminiGenerateContentProvider } from "./gemini-generate-content";
 import { OllamaChatProvider } from "./ollama-chat";
 import { OpenAIChatCompletionsProvider } from "./openai-chat-completions";
 import { OpenAIResponsesProvider } from "./openai-responses";
-import { ClaudeSubscriptionProvider } from "./subscription-cli";
+import {
+	ClaudeSubscriptionProvider,
+	OpenCodeSubscriptionProvider,
+} from "./subscription-cli";
 import type { ModelProvider } from "./types";
 
 export function createEnvironmentModelProviders(
@@ -277,6 +280,18 @@ export function createEnvironmentModelProviders(
 					: {}),
 				...(environment.KESTREL_CLAUDE_SUBSCRIPTION_MODEL
 					? { defaultModel: environment.KESTREL_CLAUDE_SUBSCRIPTION_MODEL }
+					: {}),
+				environment,
+			}),
+		);
+	if (environment.KESTREL_ENABLE_OPENCODE_SUBSCRIPTION === "1")
+		providers.push(
+			new OpenCodeSubscriptionProvider({
+				...(environment.KESTREL_OPENCODE_PATH
+					? { executable: environment.KESTREL_OPENCODE_PATH }
+					: {}),
+				...(environment.KESTREL_OPENCODE_SUBSCRIPTION_MODEL
+					? { defaultModel: environment.KESTREL_OPENCODE_SUBSCRIPTION_MODEL }
 					: {}),
 				environment,
 			}),

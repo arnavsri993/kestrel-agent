@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import type {
 	BrowserAction,
 	BrowserSnapshot,
@@ -17,6 +17,7 @@ import {
 	type UserBrowserState,
 	UserBrowserStateSchema,
 	type UserBrowserTab,
+	type InstalledExtension,
 } from "@kestrel/shared-types";
 import {
 	type BrowserWindow,
@@ -30,6 +31,7 @@ import {
 	type WebContents,
 	WebContentsView,
 } from "electron";
+import { BrowserExtensionManager } from "./browser-extension-manager";
 import {
 	BrowserTabStore,
 	normalizeBrowserAddress,
@@ -143,6 +145,7 @@ export class UserBrowserService {
 	private readonly window: BrowserWindow;
 	private readonly store: BrowserTabStore;
 	private readonly partition: Session;
+	private readonly extensionManager: BrowserExtensionManager;
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly downloadPaths = new Map<string, string>();
 	private readonly webContentsToTab = new Map<number, string>();
@@ -152,6 +155,8 @@ export class UserBrowserService {
 	private readonly onEvent: UserBrowserServiceOptions["onEvent"];
 	private readonly onCommand?: UserBrowserServiceOptions["onCommand"];
 	private readonly onWillDownload: Parameters<Session["on"]>[1];
+	private readonly recentlyClosedTabs: Array<{ url: string; title: string }> = [];
+	private sleepingTabsInterval?: ReturnType<typeof setInterval>;
 	private state: UserBrowserState;
 	private contentBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
 	private contentVisible = false;
@@ -166,6 +171,9 @@ export class UserBrowserService {
 		this.onEvent = options.onEvent;
 		this.onCommand = options.onCommand;
 		mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
+		this.extensionManager = new BrowserExtensionManager(
+			dirname(options.statePath),
+		);
 		this.partitionName = options.partitionName ?? USER_BROWSER_PARTITION;
 		if (!/^persist:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(this.partitionName))
 			throw new Error(
@@ -174,6 +182,8 @@ export class UserBrowserService {
 		this.partition = electronSession.fromPartition(this.partitionName, {
 			cache: true,
 		});
+		void this.extensionManager.loadAll(this.partition);
+		this.startSleepingTabsMonitor();
 		this.partition.setPermissionCheckHandler(() => false);
 		this.partition.setPermissionRequestHandler(
 			(_webContents, _permission, callback) => callback(false),
@@ -277,8 +287,14 @@ export class UserBrowserService {
 	}
 
 	async closeTab(tabId: string): Promise<UserBrowserState> {
-		this.requireTab(tabId);
-		const index = this.state.tabs.findIndex((tab) => tab.id === tabId);
+		const tab = this.requireTab(tabId);
+		if (tab.url && !tab.error) {
+			this.recentlyClosedTabs.unshift({ url: tab.url, title: tab.title });
+			if (this.recentlyClosedTabs.length > 32) {
+				this.recentlyClosedTabs.pop();
+			}
+		}
+		const index = this.state.tabs.findIndex((item) => item.id === tabId);
 		this.closeView(tabId);
 		this.state.tabs.splice(index, 1);
 		if (this.state.tabs.length === 0) {
@@ -306,11 +322,72 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
+	async reopenClosedTab(): Promise<UserBrowserState> {
+		const recent = this.recentlyClosedTabs.shift();
+		if (!recent) return this.getState();
+		return this.createTab(recent.url, true);
+	}
+
+	async selectTabByIndex(index: number): Promise<UserBrowserState> {
+		const tabs = this.state.tabs;
+		if (tabs.length === 0) return this.getState();
+		const targetIndex =
+			index < 0 ? tabs.length - 1 : Math.min(index, tabs.length - 1);
+		const target = tabs[targetIndex];
+		if (!target) return this.getState();
+		return this.selectTab(target.id);
+	}
+
+	zoomIn(tabId?: string): UserBrowserState {
+		const targetId = tabId ?? this.state.activeTabId;
+		if (!targetId) return this.getState();
+		const record = this.views.get(targetId);
+		if (record && !record.view.webContents.isDestroyed()) {
+			const current =
+				typeof record.view.webContents.getZoomLevel === "function"
+					? record.view.webContents.getZoomLevel()
+					: 0;
+			if (typeof record.view.webContents.setZoomLevel === "function") {
+				record.view.webContents.setZoomLevel(Math.min(current + 0.5, 3.0));
+			}
+		}
+		return this.getState();
+	}
+
+	zoomOut(tabId?: string): UserBrowserState {
+		const targetId = tabId ?? this.state.activeTabId;
+		if (!targetId) return this.getState();
+		const record = this.views.get(targetId);
+		if (record && !record.view.webContents.isDestroyed()) {
+			const current =
+				typeof record.view.webContents.getZoomLevel === "function"
+					? record.view.webContents.getZoomLevel()
+					: 0;
+			if (typeof record.view.webContents.setZoomLevel === "function") {
+				record.view.webContents.setZoomLevel(Math.max(current - 0.5, -3.0));
+			}
+		}
+		return this.getState();
+	}
+
+	zoomReset(tabId?: string): UserBrowserState {
+		const targetId = tabId ?? this.state.activeTabId;
+		if (!targetId) return this.getState();
+		const record = this.views.get(targetId);
+		if (record && !record.view.webContents.isDestroyed()) {
+			if (typeof record.view.webContents.setZoomLevel === "function") {
+				record.view.webContents.setZoomLevel(0);
+			}
+		}
+		return this.getState();
+	}
+
 	async navigate(tabId: string, input: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
 		const normalized = normalizeBrowserAddress(
 			input,
 			this.state.settings.searchEngine,
+			this.state.settings.customSearchUrl,
 		);
 		const record = this.ensureView(tab);
 		tab.error = undefined;
@@ -356,12 +433,19 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
-	reload(tabId: string): UserBrowserState {
+	reload(tabId: string, ignoreCache = false): UserBrowserState {
 		const tab = this.requireTab(tabId);
 		if (!tab.url) return this.getState();
 		const record = this.ensureView(tab);
 		tab.error = undefined;
-		record.view.webContents.reload();
+		if (
+			ignoreCache &&
+			typeof record.view.webContents.reloadIgnoringCache === "function"
+		) {
+			record.view.webContents.reloadIgnoringCache();
+		} else {
+			record.view.webContents.reload();
+		}
 		return this.getState();
 	}
 
@@ -704,9 +788,129 @@ export class UserBrowserService {
 		}
 	}
 
+	sleepTab(tabId: string): UserBrowserState {
+		if (tabId === this.state.activeTabId) return this.getState();
+		const tab = this.requireTab(tabId);
+		if (!tab.url) return this.getState();
+		this.closeView(tabId);
+		tab.discarded = true;
+		this.commit();
+		return this.getState();
+	}
+
+	sleepInactiveTabs(): UserBrowserState {
+		for (const tab of this.state.tabs) {
+			if (tab.id === this.state.activeTabId || !tab.url || tab.discarded) continue;
+			const record = this.views.get(tab.id);
+			if (
+				record &&
+				!record.view.webContents.isDestroyed() &&
+				record.view.webContents.isCurrentlyAudible()
+			) {
+				continue;
+			}
+			this.closeView(tab.id);
+			tab.discarded = true;
+		}
+		this.commit();
+		return this.getState();
+	}
+
+	private startSleepingTabsMonitor(): void {
+		if (this.sleepingTabsInterval) clearInterval(this.sleepingTabsInterval);
+		this.sleepingTabsInterval = setInterval(() => {
+			this.checkSleepingTabs();
+		}, 30_000);
+	}
+
+	private checkSleepingTabs(): void {
+		if (this.disposed || !this.state.settings.sleepingTabsEnabled) return;
+		const timeoutMinutes = this.state.settings.sleepingTabTimeoutMinutes || 30;
+		const timeoutMs = timeoutMinutes * 60 * 1000;
+		const nowTime = this.now().getTime();
+		let changed = false;
+
+		for (const tab of this.state.tabs) {
+			if (tab.id === this.state.activeTabId || !tab.url || tab.discarded) continue;
+			const lastActive = Date.parse(tab.lastActiveAt);
+			if (isNaN(lastActive) || nowTime - lastActive < timeoutMs) continue;
+
+			// Do not sleep tabs that are playing audio
+			const record = this.views.get(tab.id);
+			if (
+				record &&
+				!record.view.webContents.isDestroyed() &&
+				record.view.webContents.isCurrentlyAudible()
+			) {
+				continue;
+			}
+
+			// Do not sleep tabs matching excluded domains
+			try {
+				const hostname = new URL(tab.url).hostname.toLowerCase();
+				if (
+					this.state.settings.sleepingTabExcludedDomains?.some((domain) =>
+						hostname.includes(domain.toLowerCase().trim()),
+					)
+				) {
+					continue;
+				}
+			} catch {
+				// Ignore parse error
+			}
+
+			this.closeView(tab.id);
+			tab.discarded = true;
+			changed = true;
+		}
+
+		if (changed) {
+			this.commit();
+		}
+	}
+
+	listExtensions(): InstalledExtension[] {
+		return this.extensionManager.list();
+	}
+
+	async installExtensionUrl(urlOrId: string): Promise<InstalledExtension> {
+		return this.extensionManager.installFromChromeWebStore(
+			urlOrId,
+			this.partition,
+		);
+	}
+
+	async installExtensionFile(filePath: string): Promise<InstalledExtension> {
+		return this.extensionManager.installFromCrxOrZipFile(
+			filePath,
+			this.partition,
+		);
+	}
+
+	async installExtensionFolder(
+		folderPath: string,
+	): Promise<InstalledExtension> {
+		return this.extensionManager.installFromUnpacked(
+			folderPath,
+			this.partition,
+		);
+	}
+
+	async toggleExtension(
+		id: string,
+		enabled: boolean,
+	): Promise<InstalledExtension> {
+		return this.extensionManager.toggle(id, enabled, this.partition);
+	}
+
+	async uninstallExtension(id: string): Promise<void> {
+		return this.extensionManager.uninstall(id, this.partition);
+	}
+
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
+		if (this.sleepingTabsInterval) clearInterval(this.sleepingTabsInterval);
 		this.partition.off("will-download", this.onWillDownload);
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
 	}
@@ -866,36 +1070,151 @@ export class UserBrowserService {
 			}
 			if (input.type === "keyUp" && ["Enter", " "].includes(input.key))
 				this.schedulePopupAllowanceReset(record);
+
+			if (input.type !== "keyDown") return;
+
+			// Escape: Stop loading if currently loading
+			if (input.key === "Escape") {
+				if (tab.loading) {
+					event.preventDefault();
+					this.stop(tab.id);
+				}
+				return;
+			}
+
+			// F5 / Shift+F5: Reload / Hard reload
+			if (input.key === "F5") {
+				event.preventDefault();
+				this.reload(tab.id, input.shift);
+				return;
+			}
+
+			// F1: Show shortcuts
+			if (input.key === "F1") {
+				event.preventDefault();
+				this.onCommand?.("show-shortcuts");
+				return;
+			}
+
+			// Alt + Left / Alt + Right / Alt + D (Standard navigation)
+			if (input.alt && !input.meta && !input.control) {
+				if (input.key === "ArrowLeft") {
+					event.preventDefault();
+					this.back(tab.id);
+					return;
+				}
+				if (input.key === "ArrowRight") {
+					event.preventDefault();
+					this.forward(tab.id);
+					return;
+				}
+				if (input.key.toLowerCase() === "d") {
+					event.preventDefault();
+					this.onCommand?.("focus-address");
+					return;
+				}
+			}
+
 			const command = input.meta || input.control;
-			if (!command || input.type !== "keyDown") return;
+			if (!command) return;
 			const key = input.key.toLowerCase();
-			if (key === "l") {
+
+			// Tab switching: Cmd/Ctrl + 1..8, Cmd/Ctrl + 9
+			if (/^[1-8]$/.test(input.key)) {
+				event.preventDefault();
+				const index = parseInt(input.key, 10) - 1;
+				void this.selectTabByIndex(index);
+				return;
+			}
+			if (input.key === "9") {
+				event.preventDefault();
+				void this.selectTabByIndex(-1);
+				return;
+			}
+
+			// Tab cycle: Ctrl+Tab, Ctrl+Shift+Tab, Cmd+Alt+Left/Right, Cmd+Shift+[/]
+			if (
+				(key === "tab" && (input.control || input.meta) && input.shift) ||
+				(key === "pageup" && (input.control || input.meta)) ||
+				(key === "[" && input.shift) ||
+				(input.alt && input.key === "ArrowLeft")
+			) {
+				event.preventDefault();
+				void this.cycleTab(-1);
+				return;
+			}
+			if (
+				(key === "tab" && (input.control || input.meta)) ||
+				(key === "pagedown" && (input.control || input.meta)) ||
+				(key === "]" && input.shift) ||
+				(input.alt && input.key === "ArrowRight")
+			) {
+				event.preventDefault();
+				void this.cycleTab(1);
+				return;
+			}
+
+			// Zoom controls: Cmd/Ctrl + (+, =, -, _, 0)
+			if (["=", "+", "add", "numpadadd"].includes(key)) {
+				event.preventDefault();
+				this.zoomIn(tab.id);
+				return;
+			}
+			if (["-", "_", "subtract", "numpadsubtract"].includes(key)) {
+				event.preventDefault();
+				this.zoomOut(tab.id);
+				return;
+			}
+			if (["0", "numpad0"].includes(key)) {
+				event.preventDefault();
+				this.zoomReset(tab.id);
+				return;
+			}
+
+			// Primary browser & application shortcuts
+			if (key === "t") {
+				event.preventDefault();
+				if (input.shift) {
+					void this.reopenClosedTab();
+				} else {
+					void this.createTab(undefined, true);
+				}
+			} else if (key === "w" || (input.control && input.key === "F4")) {
+				event.preventDefault();
+				void this.closeTab(tab.id);
+			} else if (key === "r") {
+				event.preventDefault();
+				this.reload(tab.id, input.shift);
+			} else if (key === "l" || (input.control && key === "e")) {
 				event.preventDefault();
 				this.onCommand?.("focus-address");
 			} else if (key === "n" && !input.shift) {
 				event.preventDefault();
 				this.onCommand?.("new-agent");
-			} else if (key === "k" && !input.shift) {
+			} else if (key === "k" || (key === "p" && input.shift)) {
 				event.preventDefault();
 				this.onCommand?.("open-commands");
-			} else if (key === "t") {
+			} else if (key === "h" || key === "y") {
 				event.preventDefault();
-				void this.createTab(undefined, true);
-			} else if (key === "w") {
+				this.onCommand?.("open-history");
+			} else if (key === "j") {
 				event.preventDefault();
-				void this.closeTab(tab.id);
-			} else if (key === "r") {
+				this.onCommand?.("open-downloads");
+			} else if (key === ",") {
 				event.preventDefault();
-				this.reload(tab.id);
-			} else if (input.key === "[") {
+				this.onCommand?.("open-settings");
+			} else if (key === "/" || key === "?") {
+				event.preventDefault();
+				this.onCommand?.("show-shortcuts");
+			} else if (key === "b" || (key === "s" && input.shift)) {
+				event.preventDefault();
+				this.onCommand?.("toggle-sidebar");
+			} else if (input.key === "[" || (input.meta && input.key === "ArrowLeft")) {
 				event.preventDefault();
 				this.back(tab.id);
-			} else if (input.key === "]") {
+			} else if (input.key === "]" || (input.meta && input.key === "ArrowRight")) {
 				event.preventDefault();
 				this.forward(tab.id);
-			} else if (key === "tab" && input.control) {
-				event.preventDefault();
-				void this.cycleTab(input.shift ? -1 : 1);
 			}
 		});
 		webContents.on("before-mouse-event", (_event, mouse) => {

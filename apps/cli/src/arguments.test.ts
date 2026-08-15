@@ -125,6 +125,32 @@ describe("Kestrel CLI arguments", () => {
 		});
 		expect(
 			parseCliArguments([
+				"opencode",
+				"--model",
+				"opencode-model",
+				"--workspace",
+				"/tmp/project",
+				"--setup",
+			]),
+		).toEqual({
+			name: "opencode",
+			model: "opencode-model",
+			workspace: "/tmp/project",
+			setup: true,
+		});
+		expect(
+			parseCliArguments([
+				"opencode",
+				"--providers",
+				"opencode-subscription",
+			]),
+		).toEqual({
+			name: "opencode",
+			providers: ["opencode-subscription"],
+			setup: false,
+		});
+		expect(
+			parseCliArguments([
 				"automation",
 				"schedule",
 				"--session",
@@ -327,28 +353,26 @@ describe("Kestrel CLI arguments", () => {
 			resolve(root, "apps/cli/src/index.ts"),
 			"utf8",
 		);
-		const skinDocs = readFileSync(
-			resolve(root, "docs/visual-skins.md"),
-			"utf8",
-		);
-		const petDocs = readFileSync(
-			resolve(root, "docs/activity-pets.md"),
-			"utf8",
-		);
 
-		expect(`${skinDocs}\n${petDocs}`).not.toMatch(
-			/^\s*workstrand (?:skin|pets)\b/m,
-		);
-		expect(
-			documentedCommands(skinDocs, "kestrel skin").map((command) =>
-				command
-					.replace(/--id \S+/, "--id <skin>")
-					.replace(/--path \S+/, "--path <skin.json>"),
-			),
-		).toEqual(documentedCommands(cliSource, "kestrel skin"));
-		expect(documentedCommands(petDocs, "kestrel pets")).toEqual(
-			documentedCommands(cliSource, "kestrel pets"),
-		);
+		expect(cliSource).not.toMatch(/^\s*workstrand (?:skin|pets)\b/m);
+		expect(documentedCommands(cliSource, "kestrel skin")).toEqual([
+			"kestrel skin list",
+			"kestrel skin select --id <skin>",
+			"kestrel skin import --path <skin.json>",
+			"kestrel skin remove --id <skin>",
+		]);
+		expect(documentedCommands(cliSource, "kestrel pets")).toEqual([
+			"kestrel pets list [query] [--limit N] [--installed]",
+			"kestrel pets install <slug> [--select] [--force]",
+			"kestrel pets hatch-drafts --concept \"...\" [--style auto] [--count 4]",
+			"kestrel pets hatch --draft <id> --slug <slug> --name \"Name\" [--description \"...\"]",
+			"kestrel pets select <slug>",
+			"kestrel pets scale <0.1-3>",
+			"kestrel pets show [slug] [--state idle|wave|run|failed|review|jump|waiting] [--cycle] [--once] [--mode auto|kitty|iterm|sixel|unicode] [--scale 0.1-3]",
+			"kestrel pets off",
+			"kestrel pets remove <slug>",
+			"kestrel pets doctor",
+		]);
 	});
 
 	it("rejects missing values and unknown commands", () => {

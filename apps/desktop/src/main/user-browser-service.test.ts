@@ -35,6 +35,10 @@ const electron = vi.hoisted(() => {
     loadURL = vi.fn(async (url: string) => { this.url = url; });
     close = vi.fn(() => { this.destroyed = true; });
     reload = vi.fn();
+    reloadIgnoringCache = vi.fn();
+    zoomLevel = 0;
+    getZoomLevel = vi.fn(() => this.zoomLevel);
+    setZoomLevel = vi.fn((level: number) => { this.zoomLevel = level; });
     stop = vi.fn();
     focus = vi.fn();
     executeJavaScript = vi.fn();
@@ -187,7 +191,7 @@ describe("UserBrowserService", () => {
 
   it("denies permission checks and requests by default", () => {
     const { service } = createService();
-	const partition = electron.state.partitions[0]!.instance as {
+    const partition = electron.state.partitions[0]!.instance as unknown as {
       permissionCheckHandler: (webContents: unknown, permission: string, requestingOrigin: string) => boolean;
       permissionRequestHandler: (webContents: unknown, permission: string, callback: (isAllowed: boolean) => void) => void;
     };
@@ -552,6 +556,34 @@ describe("UserBrowserService", () => {
       type: "keyDown",
       key: "k",
     });
+    firstContents.emit("before-input-event", inputEvent, {
+      meta: true,
+      control: false,
+      shift: false,
+      type: "keyDown",
+      key: "h",
+    });
+    firstContents.emit("before-input-event", inputEvent, {
+      meta: true,
+      control: false,
+      shift: false,
+      type: "keyDown",
+      key: "j",
+    });
+    firstContents.emit("before-input-event", inputEvent, {
+      meta: true,
+      control: false,
+      shift: false,
+      type: "keyDown",
+      key: ",",
+    });
+    firstContents.emit("before-input-event", inputEvent, {
+      meta: true,
+      control: false,
+      shift: false,
+      type: "keyDown",
+      key: "/",
+    });
     await vi.waitFor(() =>
       expect(service.getState().activeTabId).toBe(first.id),
     );
@@ -560,7 +592,61 @@ describe("UserBrowserService", () => {
       "focus-address",
       "new-agent",
       "open-commands",
+      "open-history",
+      "open-downloads",
+      "open-settings",
+      "show-shortcuts",
     ]);
-    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(4);
+    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(8);
+  });
+
+  it("supports reopening closed tabs and direct tab index switching", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://first.example");
+    const second = (await service.createTab("https://second.example", true)).tabs.at(-1)!;
+    const third = (await service.createTab("https://third.example", true)).tabs.at(-1)!;
+
+    expect(service.getState().tabs.length).toBe(3);
+    expect(service.getState().activeTabId).toBe(third.id);
+
+    // Switch to tab 1 (index 0)
+    await service.selectTabByIndex(0);
+    expect(service.getState().activeTabId).toBe(first.id);
+
+    // Switch to last tab (-1)
+    await service.selectTabByIndex(-1);
+    expect(service.getState().activeTabId).toBe(third.id);
+
+    // Close third tab
+    await service.closeTab(third.id);
+    expect(service.getState().tabs.length).toBe(2);
+
+    // Reopen closed tab
+    const restored = await service.reopenClosedTab();
+    expect(restored.tabs.length).toBe(3);
+    const lastTab = restored.tabs[restored.tabs.length - 1]!;
+    expect(lastTab.url).toBe("https://third.example/");
+  });
+
+  it("supports zoom in, zoom out, and zoom reset", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://first.example");
+
+    const contents = electron.state.views[0]!.webContents;
+    expect(contents.zoomLevel).toBe(0);
+
+    service.zoomIn(first.id);
+    expect(contents.zoomLevel).toBe(0.5);
+
+    service.zoomIn(first.id);
+    expect(contents.zoomLevel).toBe(1.0);
+
+    service.zoomOut(first.id);
+    expect(contents.zoomLevel).toBe(0.5);
+
+    service.zoomReset(first.id);
+    expect(contents.zoomLevel).toBe(0);
   });
 });

@@ -2134,7 +2134,7 @@ export class AgentRuntime extends EventEmitter {
 				name: "workspace.instructions",
 				title: "Load workspace instructions",
 				description:
-					"Load root-to-leaf AGENTS.md, CLAUDE.md, HERMES.md, and Kestrel instruction files for a target path.",
+					"Load root-to-leaf AGENTS.md, CLAUDE.md, HERMES.md, OPENCODE.md, and Kestrel instruction files for a target path.",
 				category: "workspace",
 				riskLevel: "read_only",
 				readOnly: true,
@@ -3723,6 +3723,7 @@ export class AgentRuntime extends EventEmitter {
 			"AGENTS.md",
 			"CLAUDE.md",
 			"HERMES.md",
+			"OPENCODE.md",
 			".kestrel/instructions.md",
 		];
 		const instructions: Array<{

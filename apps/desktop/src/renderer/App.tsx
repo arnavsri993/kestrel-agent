@@ -44,6 +44,7 @@ import type {
 	TrustedPluginPublisher,
 	UsagePolicy,
 	UserBrowserPageContext,
+	UserBrowserSettings,
 	UserModelFact,
 	WebFetchResult,
 	WebSearchResultContract,
@@ -79,6 +80,8 @@ import {
 } from "./components/browser/BrowserLibrary";
 import { BrowserSettings } from "./components/browser/BrowserSettings";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
+import { DefaultBrowserPrompt } from "./components/browser/DefaultBrowserPrompt";
+import { KeyboardShortcutsModal } from "./components/browser/KeyboardShortcutsModal";
 import {
 	CommandCenter,
 	type CommandDestination,
@@ -236,6 +239,13 @@ const commandDestinations: CommandDestination[] = [
 		label: "Settings",
 		detail: "Browser, agent, models, and privacy",
 		icon: "settings",
+		group: "System",
+	},
+	{
+		id: "shortcuts",
+		label: "Keyboard Shortcuts",
+		detail: "View all default shortcuts and hotkeys",
+		icon: "command",
 		group: "System",
 	},
 ];
@@ -726,6 +736,12 @@ const openAccessDirectory = [
 		href: "https://ollama.com/library",
 		detail:
 			"Free model downloads for a local Ollama runtime; inference stays on this Mac.",
+	},
+	{
+		name: "OpenCode AI",
+		href: "https://opencode.ai",
+		detail:
+			"Local and multi-provider agent CLI and ACP runtime; connects your existing models and ACP workflows.",
 	},
 ] as const;
 
@@ -6400,10 +6416,10 @@ function SubscriptionCliSettings() {
 			<div>
 				<strong>Existing vendor subscriptions</strong>
 				<p>
-					Use the authenticated Codex or Claude Code app already on this Mac.
-					Codex runs as one persistent, read-only app-server with durable
-					threads and streamed turns; Claude remains an isolated text-only
-					invocation. Kestrel never copies either vendor&apos;s OAuth tokens.
+					Use the authenticated Codex, Claude Code, or OpenCode app already on
+					this Mac. Codex runs as one persistent, read-only app-server with
+					durable threads and streamed turns; Claude and OpenCode provide
+					isolated CLI invocations. Kestrel never copies vendor OAuth tokens.
 				</p>
 				<ul className="subscription-setting-list">
 					{items.map((item) => (
@@ -7734,21 +7750,43 @@ function Settings({
 		location.reload();
 	}
 	const route = snapshot.modelRouting.currentDecision;
-	const settingsSections = [
-		["connections", "Connections", "Accounts and folders"],
-		["browser", "Browser", "Search, tabs, and history"],
-		["general", "General", "Appearance and behavior"],
-		["models", "Models", "Choice, routing, and limits"],
-		["intelligence", "Memory", "Recall, presence, and learning"],
-		["extensions", "Extensions", "Plugins and publishers"],
-		["privacy", "Privacy", "Approvals and recovery"],
-		["advanced", "Advanced", "Diagnostics and organization"],
+	const browserSections = [
+		["browser", "Browser Preferences", "Search, extensions, performance & tabs"],
+	] as const;
+	const agentSections = [
+		["general", "General & Autonomy", "Appearance, behavior, and initiatives"],
+		["connections", "Connections", "Accounts, workspaces, and folders"],
+		["models", "Models & Routing", "Model routing, rates, and providers"],
+		["intelligence", "Intelligence & Memory", "Recall, presence, and learning"],
+		["extensions", "Agent Plugins", "Supply chain and trusted publisher keys"],
+		["privacy", "Privacy & Safety", "Approvals, boundaries, and recovery"],
+		["advanced", "Advanced System", "Diagnostics and organization"],
 	] as const;
 	return (
 		<PageFrame title="Preferences">
 			<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
-					{settingsSections.map(([id, label, description]) => (
+					<div className="settings-nav-category-header">
+						<Icon name="browser" />
+						<span>Browser Settings</span>
+					</div>
+					{browserSections.map(([id, label, description]) => (
+						<button
+							key={id}
+							className={section === id ? "active browser-section-btn" : "browser-section-btn"}
+							aria-current={section === id ? "page" : undefined}
+							onClick={() => setSection(id)}
+						>
+							<span>{label}</span>
+							<small>{description}</small>
+						</button>
+					))}
+
+					<div className="settings-nav-category-header settings-nav-category-agent">
+						<Icon name="agent" />
+						<span>Agent Settings</span>
+					</div>
+					{agentSections.map(([id, label, description]) => (
 						<button
 							key={id}
 							className={section === id ? "active" : ""}
@@ -7761,6 +7799,48 @@ function Settings({
 					))}
 				</nav>
 				<div className="settings-content">
+					{section !== "browser" && (
+						<div className="agent-config-banner" role="region" aria-label="Agent configuration">
+							<div className="agent-config-banner-header">
+								<span className="agent-config-badge">
+									<Icon name="agent" />
+									<span>Agent Configurable</span>
+								</span>
+								<strong>Everything in Kestrel is configurable through conversation</strong>
+							</div>
+							<p>
+								You can customize browser privacy, default search, theme skins, desktop pets, chat density, workflows, and permissions simply by asking Kestrel in the sidebar.
+							</p>
+							<div className="agent-config-chips" aria-label="Sample configuration requests">
+								<span className="chips-label">Try asking:</span>
+								{[
+									"Set search engine to Google",
+									"Switch theme skin to Meadow",
+									"Make chat density compact",
+									"Enable tracker and ad blocking",
+									"Turn off desktop pet",
+								].map((prompt) => (
+									<button
+										key={prompt}
+										type="button"
+										className="agent-config-chip"
+										onClick={() => {
+											const textarea = document.querySelector<HTMLTextAreaElement>(
+												".agent-conversation-host textarea",
+											);
+											if (textarea) {
+												textarea.value = prompt;
+												textarea.dispatchEvent(new Event("input", { bubbles: true }));
+												textarea.focus();
+											}
+										}}
+									>
+										<span>{prompt}</span>
+									</button>
+								))}
+							</div>
+						</div>
+					)}
 					{section === "browser" && (
 						<BrowserSettings
 							browser={browser}
@@ -7884,6 +7964,12 @@ function Settings({
 											</button>
 										),
 									)}
+								</div>
+							</article>
+							<article className="setting-row">
+								<div>
+									<strong>Activity pet</strong>
+									<p>Hatch an original pet with AI</p>
 								</div>
 							</article>
 						</section>
@@ -8202,7 +8288,35 @@ export function App() {
 			localStorage.getItem("kestrel:onboarded") === "yes" ||
 			new URLSearchParams(location.search).has("preview"),
 	);
+	const [showDefaultBrowserPrompt, setShowDefaultBrowserPrompt] = useState(false);
+	const [showShortcuts, setShowShortcuts] = useState(false);
 	const reduced = useReducedMotion();
+
+	useEffect(() => {
+		if (!onboarded) return;
+		const prompted =
+			localStorage.getItem("kestrel:default-browser-prompted") === "yes";
+		if (prompted) return;
+
+		let active = true;
+		void window.kestrel
+			.request({ type: "get-default-browser-status" })
+			.then((response) => {
+				if (
+					active &&
+					response.ok &&
+					"isDefault" in response &&
+					!response.isDefault
+				) {
+					setShowDefaultBrowserPrompt(true);
+				}
+			})
+			.catch(() => undefined);
+
+		return () => {
+			active = false;
+		};
+	}, [onboarded]);
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
 		setActiveRuntimeSessionId(sessionId);
 	}, []);
@@ -8387,11 +8501,110 @@ export function App() {
 			if (response.ok && response.petStatus) setPetStatus(response.petStatus);
 		});
 	}, []);
+	useEffect(() => {
+		if (!snapshot?.configuration) return;
+		const config = snapshot.configuration as Record<string, unknown>;
+		const appearance = config.appearance as
+			| {
+					skin?: string;
+					petEnabled?: boolean;
+					petSlug?: string;
+					petScale?: number;
+					petRenderMode?: "unicode" | "canvas";
+			  }
+			| undefined;
+		if (
+			appearance?.skin &&
+			skinStatus &&
+			skinStatus.selectedId !== appearance.skin
+		) {
+			const matchingSkin = skinStatus.skins.find(
+				(s) => s.id === appearance.skin,
+			);
+			if (matchingSkin) {
+				updateSkinStatus({ ...skinStatus, selectedId: appearance.skin });
+			}
+		}
+		if (appearance && typeof appearance.petEnabled === "boolean" && petStatus) {
+			if (
+				petStatus.configuration.enabled !== appearance.petEnabled ||
+				(appearance.petSlug &&
+					petStatus.configuration.selectedSlug !== appearance.petSlug)
+			) {
+				const nextConfig = {
+					...petStatus.configuration,
+					enabled: appearance.petEnabled,
+					...(appearance.petSlug ? { selectedSlug: appearance.petSlug } : {}),
+					...(typeof appearance.petScale === "number"
+						? { scale: appearance.petScale }
+						: {}),
+					...(appearance.petRenderMode && appearance.petRenderMode !== "canvas"
+						? {
+								renderMode: appearance.petRenderMode as
+									| "auto"
+									| "kitty"
+									| "iterm"
+									| "sixel"
+									| "unicode"
+									| "off",
+							}
+						: {}),
+				};
+				setPetStatus({ ...petStatus, configuration: nextConfig });
+			}
+		}
+		const browserConfig = config.browser as
+			| (Partial<UserBrowserSettings> & { contextEnabled?: boolean })
+			| undefined;
+		if (browserConfig && browser.state?.settings) {
+			const current = browser.state.settings;
+			const isDiff =
+				(browserConfig.searchEngine &&
+					current.searchEngine !== browserConfig.searchEngine) ||
+				(browserConfig.tabLayout &&
+					current.tabLayout !== browserConfig.tabLayout) ||
+				(typeof browserConfig.restoreSession === "boolean" &&
+					current.restoreSession !== browserConfig.restoreSession) ||
+				(typeof browserConfig.historyRetentionDays === "number" &&
+					current.historyRetentionDays !==
+						browserConfig.historyRetentionDays);
+			if (isDiff) {
+				void browser.updateSettings({
+					...current,
+					...(browserConfig.searchEngine
+						? { searchEngine: browserConfig.searchEngine }
+						: {}),
+					...(browserConfig.tabLayout
+						? { tabLayout: browserConfig.tabLayout }
+						: {}),
+					...(typeof browserConfig.restoreSession === "boolean"
+						? { restoreSession: browserConfig.restoreSession }
+						: {}),
+					...(typeof browserConfig.historyRetentionDays === "number"
+						? { historyRetentionDays: browserConfig.historyRetentionDays }
+						: {}),
+				});
+			}
+			if (typeof browserConfig.contextEnabled === "boolean") {
+				if (browserConfig.contextEnabled !== browserContextEnabled) {
+					setBrowserContextEnabled(browserConfig.contextEnabled);
+				}
+			}
+		}
+	}, [
+		snapshot?.configuration,
+		skinStatus,
+		petStatus,
+		browser,
+		browserContextEnabled,
+	]);
 	useEffect(() => window.kestrel.onPetStatus(setPetStatus), []);
 	useEffect(() => {
-		const storageKey = "workstrand:presence-instance";
+		const storageKey = "kestrel:presence-instance";
 		const instanceId =
-			localStorage.getItem(storageKey) ?? `ui-${crypto.randomUUID()}`;
+			localStorage.getItem(storageKey) ??
+			localStorage.getItem("workstrand:presence-instance") ??
+			`ui-${crypto.randomUUID()}`;
 		localStorage.setItem(storageKey, instanceId);
 		const beacon = () => {
 			void window.kestrel.request({
@@ -8439,23 +8652,89 @@ export function App() {
 		},
 		[],
 	);
+	useEffect(
+		() =>
+			window.kestrel.onBrowserCommand((command) => {
+				if (command === "open-settings") setPage("settings");
+				else if (command === "open-history") setPage("history");
+				else if (command === "open-downloads") setPage("downloads");
+				else if (command === "show-shortcuts") setShowShortcuts((prev) => !prev);
+				else if (command === "open-commands") setPage("commands");
+			}),
+		[],
+	);
 	useEffect(() => {
 		if (!onboarded) return;
 		const workspaceShortcuts = (event: KeyboardEvent) => {
-			if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey)
+			if (event.defaultPrevented) return;
+
+			if (event.key === "Escape") {
+				if (showShortcuts) {
+					event.preventDefault();
+					setShowShortcuts(false);
+				}
 				return;
+			}
+
+			if (event.key === "F1") {
+				event.preventDefault();
+				setShowShortcuts((prev) => !prev);
+				return;
+			}
+
+			if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
 			const key = event.key.toLowerCase();
-			if (key === "n") {
+
+			if (key === "n" && !event.shiftKey) {
 				event.preventDefault();
 				startNewAgent();
-			} else if (key === "k") {
+			} else if (key === "k" || (key === "p" && event.shiftKey)) {
 				event.preventDefault();
 				setPage("commands");
+			} else if (key === "," && !event.shiftKey) {
+				event.preventDefault();
+				setPage("settings");
+			} else if ((key === "h" || key === "y") && !event.shiftKey) {
+				event.preventDefault();
+				setPage("history");
+			} else if (key === "j" && !event.shiftKey) {
+				event.preventDefault();
+				setPage("downloads");
+			} else if (key === "/" || key === "?") {
+				event.preventDefault();
+				setShowShortcuts((prev) => !prev);
+			} else if (key === "t" && page !== "browser") {
+				event.preventDefault();
+				setPage("browser");
+				if (event.shiftKey) {
+					void browser.reopenClosedTab();
+				} else {
+					void browser.createTab();
+				}
+			} else if (
+				/^[1-8]$/.test(event.key) &&
+				page !== "browser" &&
+				browser.state?.tabs.length
+			) {
+				event.preventDefault();
+				setPage("browser");
+				const targetIndex = parseInt(event.key, 10) - 1;
+				const target = browser.state.tabs[targetIndex];
+				if (target) void browser.selectTab(target.id);
+			} else if (
+				event.key === "9" &&
+				page !== "browser" &&
+				browser.state?.tabs.length
+			) {
+				event.preventDefault();
+				setPage("browser");
+				const target = browser.state.tabs[browser.state.tabs.length - 1];
+				if (target) void browser.selectTab(target.id);
 			}
 		};
 		document.addEventListener("keydown", workspaceShortcuts);
 		return () => document.removeEventListener("keydown", workspaceShortcuts);
-	}, [onboarded, startNewAgent]);
+	}, [browser, onboarded, page, showShortcuts, startNewAgent]);
 	if (!onboarded)
 		return (
 			<ProductShellTransition>
@@ -8522,6 +8801,10 @@ export function App() {
 		"settings",
 	].includes(page);
 	function navigate(destination: string) {
+		if (destination === "shortcuts") {
+			setShowShortcuts(true);
+			return;
+		}
 		if (!pages.some(([id]) => id === destination)) return;
 		const next = destination as Page;
 		if (
@@ -8552,38 +8835,6 @@ export function App() {
 				exit={{ opacity: reduced ? 1 : 0 }}
 				transition={{ duration: reduced ? 0 : 0.16 }}
 			>
-				<AgentSidebar
-					sessions={runtimeSessions}
-					activeSessionId={activeRuntimeSessionId}
-					{...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
-					agentName={activeAgentName}
-					collapsed={!agentSidebarOpen}
-					agentState={effectiveAgentState}
-					activeDestination={page}
-					onNewAgent={startNewAgent}
-					onToggleAgent={toggleAgentSidebar}
-					onOpenSession={openRuntimeSession}
-					onNavigate={openPrimaryDestination}
-				>
-					{/* Conversation state stays mounted across browser and settings routes so
-            streams, steering, cancellation, and approval boundaries remain intact. */}
-					<RuntimeConversation
-						visible
-						activeSessionId={activeRuntimeSessionId}
-						sessions={runtimeSessions}
-						onActiveSession={setActiveRuntimeSessionId}
-						onSessions={setRuntimeSessions}
-						onSnapshot={setSnapshot}
-						onRuntimeAgentState={setRuntimeAgentState}
-						configurationUi={snapshot.configuration.ui}
-						newAgentRequestId={newAgentRequestId}
-						newAgentPrompt={newAgentPrompt}
-						onNewAgent={startNewAgent}
-						{...(browserContextEnabled
-							? { browserContext: () => browser.pageContext() }
-							: {})}
-					/>
-				</AgentSidebar>
 				<section className="browser-main-plane">
 					{deepLinkNotice && (
 						<small className="browser-notice" role="status">
@@ -8603,6 +8854,7 @@ export function App() {
 							onOpenHistory={openBrowserHistory}
 							onOpenDownloads={openBrowserDownloads}
 							onOpenMenu={openCommandCenter}
+							onShowShortcuts={() => setShowShortcuts(true)}
 						/>
 					)}
 					{page === "agent" && (
@@ -8698,6 +8950,52 @@ export function App() {
 						</motion.div>
 					)}
 				</section>
+				<AgentSidebar
+					sessions={runtimeSessions}
+					activeSessionId={activeRuntimeSessionId}
+					{...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
+					agentName={activeAgentName}
+					collapsed={!agentSidebarOpen}
+					agentState={effectiveAgentState}
+					activeDestination={page}
+					onNewAgent={startNewAgent}
+					onToggleAgent={toggleAgentSidebar}
+					onOpenSession={openRuntimeSession}
+					onNavigate={openPrimaryDestination}
+				>
+					{/* Conversation state stays mounted across browser and settings routes so
+            streams, steering, cancellation, and approval boundaries remain intact. */}
+					<RuntimeConversation
+						visible
+						activeSessionId={activeRuntimeSessionId}
+						sessions={runtimeSessions}
+						onActiveSession={setActiveRuntimeSessionId}
+						onSessions={setRuntimeSessions}
+						onSnapshot={setSnapshot}
+						onRuntimeAgentState={setRuntimeAgentState}
+						configurationUi={snapshot.configuration.ui}
+						newAgentRequestId={newAgentRequestId}
+						newAgentPrompt={newAgentPrompt}
+						onNewAgent={startNewAgent}
+						{...(browserContextEnabled
+							? { browserContext: () => browser.pageContext() }
+							: {})}
+					/>
+				</AgentSidebar>
+				<DefaultBrowserPrompt
+					isOpen={showDefaultBrowserPrompt}
+					onClose={() => {
+						localStorage.setItem("kestrel:default-browser-prompted", "yes");
+						setShowDefaultBrowserPrompt(false);
+					}}
+					onSetDefault={() => {
+						localStorage.setItem("kestrel:default-browser-prompted", "yes");
+						setShowDefaultBrowserPrompt(false);
+					}}
+				/>
+				{showShortcuts && (
+					<KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />
+				)}
 			</motion.div>
 		</ProductShellTransition>
 	);

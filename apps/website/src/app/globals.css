@@ -582,6 +582,15 @@ a, button, summary { -webkit-tap-highlight-color: transparent; }
 .demo-options button[aria-pressed="true"] {
   border-color: var(--signal); color: var(--signal);
 }
+.demo-editor {
+  padding: 20px 22px; border-bottom: 1px solid var(--line-dark);
+}
+.demo-editor small {
+  color: rgba(255,255,255,0.35);
+  font: 8px var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+}
+.demo-editor p { margin: 9px 0 0; color: rgba(255,255,255,0.55); font-size: 13px; }
+
 
 /* Capability Section */
 .capability-section { background: #f2f4ee; }

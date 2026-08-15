@@ -44,6 +44,8 @@ function safeEnvironment(
 		"TMPDIR",
 		"CODEX_HOME",
 		"CLAUDE_CONFIG_DIR",
+		"OPENCODE_CONFIG",
+		"OPENCODE_HOME",
 	] as const;
 	const environment: NodeJS.ProcessEnv = {};
 	for (const key of allowed) if (source[key]) environment[key] = source[key];
@@ -344,3 +346,153 @@ export class ClaudeSubscriptionProvider implements ModelProvider {
 		}
 	}
 }
+
+export class OpenCodeSubscriptionProvider implements ModelProvider {
+	readonly id = "opencode-subscription";
+	readonly poolId = "opencode-subscription";
+	readonly defaultModel: string;
+	readonly capabilities = {
+		streaming: true,
+		tools: false,
+		images: false,
+		audio: false,
+		documents: false,
+		video: false,
+		local: true,
+	} as const;
+	private readonly executable: string;
+	private readonly environment: NodeJS.ProcessEnv;
+	private readonly timeoutMs: number;
+
+	constructor(options: SubscriptionCliOptions = {}) {
+		this.executable = options.executable ?? "opencode";
+		this.defaultModel = options.defaultModel ?? "opencode";
+		this.environment = safeEnvironment(options.environment ?? process.env);
+		this.timeoutMs = boundedTimeout(options.timeoutMs);
+	}
+
+	async probe(signal?: AbortSignal): Promise<void> {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-opencode-probe-"));
+		try {
+			await runCli(this.executable, ["auth", "list"], "", {
+				cwd: root,
+				environment: this.environment,
+				signal,
+				timeoutMs: 15_000,
+			});
+		} catch (error) {
+			try {
+				await runCli(this.executable, ["--version"], "", {
+					cwd: root,
+					environment: this.environment,
+					signal,
+					timeoutMs: 15_000,
+				});
+			} catch {
+				throw new ModelProviderError(
+					error instanceof Error
+						? error.message
+						: "OpenCode CLI authentication check failed.",
+					this.id,
+					false,
+				);
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	}
+
+	async complete(
+		request: ModelRequest,
+		options: ModelCallOptions = {},
+	): Promise<ModelResult> {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-opencode-subscription-"));
+		let text = "";
+		let streamedText = "";
+		let responseId: string | undefined;
+		let usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
+		const prompt = promptFor(request);
+		const args = ["run", "--format", "json"];
+		if (
+			request.model &&
+			request.model !== "opencode" &&
+			request.model !== "default"
+		) {
+			args.push("-m", request.model);
+		}
+		args.push(prompt);
+
+		try {
+			await runCli(this.executable, args, "", {
+				cwd: root,
+				environment: this.environment,
+				signal: options.signal,
+				timeoutMs: this.timeoutMs,
+				onLine: (line) => {
+					const event = parseObject(line);
+					if (!event) return;
+					if (
+						typeof event.sessionID === "string" ||
+						typeof event.session_id === "string"
+					) {
+						responseId = (event.sessionID ?? event.session_id) as string;
+					}
+					const part =
+						event.part && typeof event.part === "object"
+							? (event.part as Record<string, unknown>)
+							: {};
+					if (event.type === "text" || typeof event.text === "string") {
+						const deltaText =
+							typeof event.text === "string"
+								? event.text
+								: typeof part.text === "string"
+									? part.text
+									: "";
+						if (deltaText) {
+							streamedText += deltaText;
+							options.onEvent?.({ type: "text_delta", delta: deltaText });
+						}
+					} else if (
+						event.type === "step_start" ||
+						event.type === "step_finish" ||
+						event.type === "result"
+					) {
+						if (typeof event.result === "string") {
+							text = event.result;
+						}
+						if (typeof part.result === "string") {
+							text = part.result;
+						}
+						if (event.usage) {
+							usage = usageFrom(event.usage);
+						}
+					}
+				},
+			});
+			text ||= streamedText;
+			if (!streamedText && text)
+				options.onEvent?.({ type: "text_delta", delta: text });
+			return {
+				providerId: this.id,
+				model: request.model,
+				...(responseId ? { responseId } : {}),
+				text,
+				toolCalls: [],
+				usage,
+				finishReason: "stop",
+			};
+		} catch (error) {
+			if (options.signal?.aborted) throw error;
+			throw new ModelProviderError(
+				error instanceof Error
+					? error.message
+					: "OpenCode subscription request failed.",
+				this.id,
+				true,
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	}
+}
+

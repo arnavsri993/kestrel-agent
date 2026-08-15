@@ -3,7 +3,9 @@ import { createEncryptionKey } from "@kestrel/encryption";
 import { describe, expect, it } from "vitest";
 import {
 	AdaptiveModelRouter,
+	detectModelRefusal,
 	ModelRegistry,
+	reframePromptForNeutrality,
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
 import type { ModelProvider } from "./providers";
@@ -469,6 +471,191 @@ describe("adaptive model orchestration", () => {
 				item.router.policy(),
 			).mode,
 		).toBe("best_quality");
+		item.database.close();
+	});
+
+	it("accurately classifies model tiers and constructs multi-tier fallback ladders", () => {
+		const frontierProvider = provider({
+			id: "anthropic",
+			model: "claude-3-7-sonnet",
+			capabilities: { complex_reasoning: 0.98, coding: 0.96 },
+			reasoningLevels: true,
+		});
+		const advancedProvider = provider({
+			id: "openai",
+			model: "gpt-4o",
+			capabilities: { complex_reasoning: 0.88, coding: 0.88 },
+		});
+		const standardProvider = provider({
+			id: "groq",
+			model: "gpt-oss-20b",
+			capabilities: { speed: 0.95, cost_efficiency: 0.95 },
+			fastMode: true,
+		});
+		const permissiveFallback = provider({
+			id: "nous",
+			model: "step-3.7-flash",
+			capabilities: { complex_reasoning: 0.85, coding: 0.85 },
+		});
+		const localProvider = provider({
+			id: "ollama",
+			model: "llama3.3",
+			local: true,
+		});
+
+		const item = fixture([
+			frontierProvider,
+			advancedProvider,
+			standardProvider,
+			permissiveFallback,
+			localProvider,
+		]);
+
+		const frontierProfile = item.registry.get("anthropic:claude-3-7-sonnet");
+		expect(frontierProfile.tier).toBe("frontier");
+
+		const advancedProfile = item.registry.get("openai:gpt-4o");
+		expect(advancedProfile.tier).toBe("advanced");
+
+		const standardProfile = item.registry.get("groq:gpt-oss-20b");
+		expect(standardProfile.tier).toBe("standard");
+
+		const permissiveProfile = item.registry.get("nous:step-3.7-flash");
+		expect(permissiveProfile.tier).toBe("permissive_fallback");
+
+		const localProfile = item.registry.get("ollama:llama3.3");
+		expect(localProfile.tier).toBe("local_private");
+
+		const requirements = item.analyzer.analyze(
+			"security-audit",
+			"Perform a security vulnerability assessment, exploit analysis, and hardening review of this kernel driver.",
+		);
+		expect(requirements.isSecurityOrAdminAudit).toBe(true);
+
+		const decision = item.router.route(requirements, { role: "worker" });
+		expect(decision.selectedModelId).toBe("anthropic:claude-3-7-sonnet");
+		expect(decision.tier).toBe("frontier");
+		expect(decision.reasoningLevel).toBe("high");
+		expect(decision.fallbackModelIds.length).toBeGreaterThanOrEqual(2);
+
+		item.database.close();
+	});
+
+	it("detects model refusals accurately from stop reasons, error messages, and semantic text patterns", () => {
+		// 1. Finish reason refusal
+		expect(
+			detectModelRefusal({ finishReason: "refusal", text: "" }).refused,
+		).toBe(true);
+
+		// 2. Semantic text refusal
+		expect(
+			detectModelRefusal({
+				finishReason: "stop",
+				text: "I cannot fulfill this request because it violates safety policies.",
+			}).refused,
+		).toBe(true);
+
+		expect(
+			detectModelRefusal({
+				finishReason: "stop",
+				text: "I apologize, but I am unable to assist with generating exploit code.",
+			}).refused,
+		).toBe(true);
+
+		expect(
+			detectModelRefusal({
+				finishReason: "stop",
+				text: "As an AI assistant, I cannot provide code for malicious purposes.",
+			}).refused,
+		).toBe(true);
+
+		// 3. Provider safety error message
+		expect(
+			detectModelRefusal(
+				{ text: "" },
+				"Request blocked by safety moderation filters.",
+			).refused,
+		).toBe(true);
+
+		// 4. Benign response containing 'cannot find file'
+		expect(
+			detectModelRefusal({
+				finishReason: "stop",
+				text: "I checked the repository, but cannot find the file `config.json` in the root directory. Let me inspect `src/`.",
+			}).refused,
+		).toBe(false);
+
+		// 5. Tool call response is not a refusal
+		expect(
+			detectModelRefusal({
+				finishReason: "tool_calls",
+				toolCalls: [{ id: "c1", name: "read_file", arguments: {} }],
+				text: "",
+			}).refused,
+		).toBe(false);
+	});
+
+	it("reframes prompts with defensive execution context for prompt neutrality", () => {
+		const originalMessages = [
+			{ role: "system" as const, content: [{ type: "text" as const, text: "Base agent instructions." }] },
+			{ role: "user" as const, content: [{ type: "text" as const, text: "Analyze this vulnerability." }] },
+		];
+
+		const reframed = reframePromptForNeutrality(originalMessages);
+		expect(reframed[0]?.content[1]?.type).toBe("text");
+		expect((reframed[0]?.content[1] as { text: string }).text).toMatch(/authorized development, diagnostic audit/i);
+	});
+
+	it("escalates reasoning levels dynamically upon refusal or validation retry", () => {
+		const item = fixture([
+			provider({
+				id: "strong",
+				model: "reasoner",
+				capabilities: { complex_reasoning: 0.95, coding: 0.95 },
+				reasoningLevels: true,
+			}),
+		]);
+
+		const requirements = item.analyzer.analyze(
+			"task-1",
+			"Fix the bug in the authentication handler.",
+		);
+
+		const normalDecision = item.router.route(requirements, { role: "worker" });
+		expect(normalDecision.reasoningLevel).toBe("medium");
+
+		const escalatedDecision = item.router.route(requirements, {
+			role: "fallback",
+			escalationReason: "refusal",
+		});
+		expect(escalatedDecision.reasoningLevel).toBe("high");
+		expect(escalatedDecision.refusalRecovery).toBe(true);
+
+		item.database.close();
+	});
+
+	it("records refusal outcomes and adjusts refusalRate reliability metrics", () => {
+		const item = fixture([
+			provider({
+				id: "standard",
+				model: "chat",
+				capabilities: { coding: 0.8 },
+			}),
+		]);
+
+		item.registry.recordOutcome({
+			modelId: "standard:chat",
+			capabilities: { coding: 0.8 },
+			succeeded: false,
+			refused: true,
+			refusalReason: "Semantic refusal",
+			observedAt: "2026-07-29T12:00:00.000Z",
+		});
+
+		const profile = item.registry.get("standard:chat");
+		expect(profile.reliability.refusalCount).toBe(1);
+		expect(profile.reliability.refusalRate).toBeGreaterThan(0);
+
 		item.database.close();
 	});
 });
