@@ -2415,6 +2415,17 @@ async function initializeCoreForStartup(): Promise<boolean> {
   }
 }
 
+function replaceStartupRecoveryWindow(): void {
+  const recoveryWindow = mainWindow;
+  // Detach the recovery window before destroying it. Its asynchronous `closed`
+  // handler must not clear or dispose the newly-created app window below.
+  mainWindow = null;
+  mainRendererDeepLinkReady = false;
+  startupRecoveryWindowCreated = false;
+  if (recoveryWindow && !recoveryWindow.isDestroyed()) recoveryWindow.destroy();
+  mainWindow = createMainWindow();
+}
+
 app.on("second-instance", (_event, argv) => {
   const { deepLinks, webUrls } = urlsFromArgv(argv);
   if (deepLinks.length === 0 && webUrls.length === 0) showMainWindow();
@@ -2464,10 +2475,11 @@ void app
       mainWindow &&
       !mainWindow.isDestroyed()
     ) {
-      // The recovery window's renderer saw the unavailable core. Reload it
-      // after secure storage succeeds so the user lands in the real app.
-      mainWindow.webContents.reload();
-      startupRecoveryWindowCreated = false;
+      // The recovery window may still be in its first load when the user
+      // chooses Start fresh. Reloading during that navigation can strand an
+      // Electron window on a blank page. Recreate it only after core startup
+      // succeeds so the normal renderer gets one clean load.
+      replaceStartupRecoveryWindow();
     }
     providerAuthMonitor.start();
     updateTray();
