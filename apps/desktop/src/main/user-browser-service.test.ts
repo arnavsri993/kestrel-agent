@@ -187,7 +187,7 @@ describe("UserBrowserService", () => {
 
   it("denies permission checks and requests by default", () => {
     const { service } = createService();
-    const partition = electron.state.partitions[0]!.instance as MockSession & {
+	const partition = electron.state.partitions[0]!.instance as {
       permissionCheckHandler: (webContents: unknown, permission: string, requestingOrigin: string) => boolean;
       permissionRequestHandler: (webContents: unknown, permission: string, callback: (isAllowed: boolean) => void) => void;
     };
@@ -388,6 +388,9 @@ describe("UserBrowserService", () => {
     now = new Date("2026-08-19T12:00:00.000Z");
     service.updateSettings({ ...service.getState().settings, historyRetentionDays: 7 });
     expect(service.getState().history).toEqual([]);
+
+    service.updateSettings({ ...service.getState().settings, newTabBackground: "meadow" });
+    expect(service.getState().settings.newTabBackground).toBe("meadow");
 
     view.emit("did-navigate", {}, "https://new.example/", 200, "OK");
     expect(service.getState().history).toHaveLength(1);

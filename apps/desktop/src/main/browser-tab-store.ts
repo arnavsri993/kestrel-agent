@@ -17,10 +17,10 @@ import {
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	searchEngine: "duckduckgo",
 	tabLayout: "horizontal",
+	newTabBackground: "graphite",
 	restoreSession: true,
 	historyRetentionDays: 90,
 };
-
 const SEARCH_ENGINES: Record<UserBrowserSettings["searchEngine"], string> = {
 	duckduckgo: "https://duckduckgo.com/?q=",
 	google: "https://www.google.com/search?q=",

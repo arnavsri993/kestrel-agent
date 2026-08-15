@@ -249,7 +249,7 @@ try {
 		})
 		.click();
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
-	await page.getByRole("heading", { name: "Where to?" }).waitFor();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await capture(page, "workspace-new-agent-and-tab.png", 360);
 
 	await page
@@ -282,14 +282,14 @@ try {
 		.locator(".agent-sidebar-footer")
 		.getByRole("button", { name: "Browser", exact: true })
 		.click();
-	await page.getByRole("heading", { name: "Where to?" }).waitFor();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 
 	await page.getByLabel("Task settings").click();
 	await page.getByText("Task settings", { exact: true }).waitFor();
 	await capture(page, "workspace-task-settings.png", 120);
 	await page.getByLabel("Task settings").click();
 
-	await page.getByRole("button", { name: "Task history" }).click();
+	await page.getByRole("button", { name: "Task history", exact: true }).click();
 	const firstSession = page
 		.locator(".agent-history-popover > div > button")
 		.first();
@@ -319,7 +319,7 @@ try {
 		.waitFor();
 	await capture(page, "surface-approvals.png");
 
-	await openTool(page, "Life");
+	await openTool(page, "Life Context");
 	await page
 		.getByRole("heading", { name: "Your context", exact: true })
 		.waitFor();
@@ -401,7 +401,7 @@ try {
 		.first()
 		.click();
 	await page.getByRole("button", { name: "Browser", exact: true }).click();
-	await page.getByRole("heading", { name: "Where to?" }).waitFor();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await page.setViewportSize({ width: 640, height: 760 });
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 	await capture(page, "compact-new-agent.png");
@@ -509,7 +509,7 @@ try {
 			{ name: "prefers-reduced-transparency", value: "reduce" },
 		],
 	});
-	await page.getByRole("button", { name: "Task history" }).click();
+	await page.getByRole("button", { name: "Task history", exact: true }).click();
 	const transparency = await page
 		.locator(".agent-history-popover")
 		.evaluate((element) => getComputedStyle(element).backdropFilter);

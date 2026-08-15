@@ -219,8 +219,37 @@ try {
 	await launch();
 	await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
 	await page.reload();
-	await page.getByRole("heading", { name: "Where to?" }).waitFor();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+
+	await page.getByRole("button", { name: "Personalize", exact: true }).click();
+	await page.getByRole("heading", { name: "Tabs, search, and history" }).waitFor();
+	await page.getByRole("button", { name: /Meadow Terraced green landscape/ }).click();
+	assert.equal((await browserState()).settings.newTabBackground, "meadow");
+	await page.getByRole("button", { name: "Browser", exact: true }).first().click();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+	await page.reload();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+	assert.equal((await browserState()).settings.newTabBackground, "meadow");
+
+	await page.getByRole("button", { name: "Minimize Pragmatic", exact: true }).first().click();
+	await page.getByRole("button", { name: "Open Pragmatic", exact: true }).waitFor();
+	await page.reload();
+	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+	await page.getByRole("button", { name: "Open Pragmatic", exact: true }).click();
+	await page.getByRole("button", { name: "Minimize Pragmatic", exact: true }).first().waitFor();
+	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+
+	await page.getByRole("button", { name: "Open in chat", exact: true }).first().click();
+	await page.waitForFunction(() => {
+		const prompt = document.querySelector("#runtime-prompt");
+		return (
+			prompt instanceof HTMLTextAreaElement &&
+			prompt.value ===
+				"Help me explore a new topic, find the useful starting points, and suggest the next step."
+		);
+	});
+	await page.getByRole("button", { name: "New task", exact: true }).click();
 
 	const initialSessions = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
@@ -233,10 +262,7 @@ try {
 	const initialTabs = (await browserState()).tabs.length;
 	const tabList = page.getByRole("tablist", { name: "Browser tabs" });
 	assert.equal(await tabList.getAttribute("aria-orientation"), "horizontal");
-	await page
-		.locator(".new-tab-primary-actions button")
-		.filter({ hasText: "Open another tab" })
-		.click();
+	await page.getByRole("button", { name: "New tab", exact: true }).click();
 	let state = await browserState();
 	assert.equal(state.tabs.length, initialTabs + 1);
 	const addedBlankTab = state.activeTabId;
@@ -259,10 +285,7 @@ try {
 		"Native page remained attached over the New Tab page",
 	);
 	await page.locator("#runtime-prompt").fill("Draft that must be cleared");
-	await page
-		.locator(".new-tab-primary-actions button")
-		.filter({ hasText: "Start another agent" })
-		.click();
+	await page.getByRole("button", { name: "New task", exact: true }).click();
 	const clearedDraft = await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");
 		return (
@@ -290,7 +313,7 @@ try {
 	});
 	assert.equal(sessionsAfterIndependentActions, initialSessions);
 
-	const search = page.locator("#new-tab-search");
+	const search = page.locator("#browser-address-input");
 	await search.fill(`${origin}/one`);
 	await search.press("Enter");
 	const loaded = await waitForNativeView(

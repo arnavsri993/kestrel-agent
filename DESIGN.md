@@ -154,6 +154,17 @@ product name conflicts with this section, this section wins.
   detail stays in native disclosures; primary choices and current state remain
   visible.
 
+### Edge-inspired home screen (implemented)
+
+The empty user tab is a browser home rather than a dashboard: it keeps the browser's tab strip and address bar in the foreground, gives the durable agent a calm left rail, and makes the next useful action obvious without inventing data.
+
+- **Composition:** the persistent agent rail carries the selected agent name, New task, current-page context, recent chats, the mounted composer, and destination navigation. The browser plane carries the tab strip, address bar, top-right `Chat with {agent}` control, a greeting-led local chat composer, circular Frequent tabs, and exactly three dark recommendation cards with visual thumbnails.
+- **Real data:** Frequent tabs are derived from origin-grouped local browser history only. Recommendations open the real mounted agent conversation with a prefilled prompt; they are not fabricated activity or remote personalization.
+- **Agent handoff:** the left rail can be minimized and restored from either the rail header or the toolbar button. The state is persisted locally, and focus returns to the new control so the collapse is keyboard-complete.
+- **Personalization:** Browser settings exposes four local backdrops—Graphite, Meadow, Dawn, and Paper—under Personalization. The selected `newTabBackground` is part of `UserBrowserSettings`, survives reload, and adds no remote request or runtime image dependency. Meadow uses the checked-in `apps/desktop/src/renderer/assets/new-tab-meadow.svg` landscape illustration; the other choices remain CSS-native fields. This is a scoped home-canvas exception to the browser chrome rule: the chrome stays matte and restrained while the home surface can carry a quiet terrain/paper field.
+- **Responsive and access:** the frequent row reduces from six to three, two, and one columns; recommendation cards stack on narrow windows; the home remains scrollable in short windows; controls expose names, pressed state, visible focus, reduced-transparency behavior, and reduced-motion-safe CSS.
+- **Why this is not generic:** the Edge reference supplies the familiar browser-home rhythm, but Kestrel's rail, history shortcuts, recommendations, agent identity, and personalization are bound to its actual local browser and durable runtime state rather than copied product modules or generic AI metrics.
+
 ### Setup and workspace continuity
 
 - The five stable stages remain Welcome, Before you begin, Choose a model,
@@ -275,4 +286,3 @@ product name conflicts with this section, this section wins.
   readiness, or public distribution.
 
 Reference parity is deliberately layered, not a claim that every named vendor adapter ships in core. The 1,117-page Hermes/OpenClaw audit separates bundled capability families, signed extension contracts, and operational documentation. Native-node behavior is represented by a tested paired-device extension protocol rather than a bundled mobile app; Kestrel itself is a direct-download Apple Silicon Mac application.
-

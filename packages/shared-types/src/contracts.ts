@@ -2422,6 +2422,9 @@ export const UserBrowserSettingsSchema = z.object({
 		"yandex",
 	]),
 	tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),
+	newTabBackground: z
+		.enum(["graphite", "meadow", "dawn", "paper"])
+		.default("graphite"),
 	restoreSession: z.boolean(),
 	historyRetentionDays: z.union([
 		z.literal(0),
