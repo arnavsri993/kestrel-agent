@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	CredentialBroker,
 	ElectronSecretProtection,
+	SecureStorageError,
 } from "./credential-broker";
 
 const roots: string[] = [];
@@ -252,6 +253,9 @@ describe("desktop credential broker", () => {
 		).rejects.toThrow("secure storage is unavailable");
 		await expect(broker.getDatabaseKey()).rejects.toThrow(
 			"secure storage is unavailable",
+		);
+		await expect(broker.getDatabaseKey()).rejects.toBeInstanceOf(
+			SecureStorageError,
 		);
 	});
 

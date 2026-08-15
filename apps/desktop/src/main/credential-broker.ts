@@ -117,11 +117,33 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
 	"KESTREL_OLLAMA_CONTEXT_WINDOW",
 ] as const;
 
-const DATABASE_STORAGE_UNAVAILABLE =
+export const SECURE_STORAGE_UNAVAILABLE_MESSAGE =
 	"macOS secure storage is unavailable; Agent Core will not start with an unprotected key.";
 const SECRET_ENVELOPE_PREFIX = Buffer.from("kestrel-secret-v1\n", "utf8");
 const SECRET_KEY_SALT = Buffer.from("kestrel-credential-broker-v1", "utf8");
 const fileMutationQueues = new Map<string, Promise<void>>();
+
+export class SecureStorageError extends Error {
+	readonly code = "kestrel-secure-storage-unavailable";
+
+	constructor(message: string, cause?: unknown) {
+		super(message);
+		this.name = "SecureStorageError";
+		if (cause !== undefined) this.cause = cause;
+	}
+}
+
+export function isSecureStorageError(error: unknown): error is SecureStorageError {
+	return error instanceof SecureStorageError;
+}
+
+function asSecureStorageError(error: unknown): SecureStorageError {
+	if (isSecureStorageError(error)) return error;
+	return new SecureStorageError(
+		"Kestrel could not unlock its protected data. Unlock the login keychain and choose “Always Allow” for Kestrel Safe Storage, then try again.",
+		error,
+	);
+}
 
 export interface ResolvedExternalCredentials {
 	values: Partial<Record<BrokeredCredentialId, string>>;
@@ -175,6 +197,8 @@ export class ElectronSecretProtection implements SecretProtection {
 		try {
 			await this.prepare();
 			return await operation();
+		} catch (error) {
+			throw asSecureStorageError(error);
 		} finally {
 			release();
 		}
@@ -184,7 +208,8 @@ export class ElectronSecretProtection implements SecretProtection {
 		this.availability ??= this.safeStorage
 			.isAsyncEncryptionAvailable()
 			.then((available) => {
-				if (!available) throw new Error(DATABASE_STORAGE_UNAVAILABLE);
+				if (!available)
+					throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
 			});
 		try {
 			await this.availability;
@@ -459,12 +484,12 @@ export class CredentialBroker {
 	private async loadDatabaseKey(): Promise<Buffer> {
 		return this.mutateFile(this.keyPath, async () => {
 			const protection = await this.availableProtection(
-				DATABASE_STORAGE_UNAVAILABLE,
+				SECURE_STORAGE_UNAVAILABLE_MESSAGE,
 			);
 			try {
 				const encrypted = await readFile(this.keyPath);
 				const decrypted = this.normalizedDecryption(
-					await protection.decryptString(encrypted),
+					await this.decryptWithProtection(protection, encrypted),
 				);
 				const key = Buffer.from(decrypted.result, "base64");
 				if (key.length !== 32 || key.toString("base64") !== decrypted.result)
@@ -472,7 +497,7 @@ export class CredentialBroker {
 				if (decrypted.shouldReEncrypt)
 					await this.writeProtectedFile(
 						this.keyPath,
-						await protection.encryptString(decrypted.result),
+						await this.encryptWithProtection(protection, decrypted.result),
 					);
 				return key;
 			} catch (error) {
@@ -480,7 +505,10 @@ export class CredentialBroker {
 				const key = randomBytes(32);
 				await this.writeProtectedFile(
 					this.keyPath,
-					await protection.encryptString(key.toString("base64")),
+					await this.encryptWithProtection(
+						protection,
+						key.toString("base64"),
+					),
 				);
 				return key;
 			}
@@ -522,7 +550,10 @@ export class CredentialBroker {
 			// safeStorage. Read each one once, then migrate it to the root-key format
 			// so future setup and restart flows never revisit Keychain for it.
 			const legacy = this.normalizedDecryption(
-				await (await this.availableProtection()).decryptString(encrypted),
+				await this.decryptWithProtection(
+					await this.availableProtection(),
+					encrypted,
+				),
 			).result;
 			await this.writeSecret(path, purpose, legacy, databaseKey);
 			return legacy;
@@ -633,10 +664,37 @@ export class CredentialBroker {
 		unavailableMessage = "macOS secure storage is unavailable; credentials will not be stored or loaded unprotected.",
 	): Promise<SecretProtection> {
 		const protection = await this.protection;
-		if (protection.prepare) await protection.prepare();
-		else if (!protection.isEncryptionAvailable?.())
-			throw new Error(unavailableMessage);
+		if (protection.prepare) {
+			try {
+				await protection.prepare();
+			} catch (error) {
+				throw asSecureStorageError(error);
+			}
+		} else if (!protection.isEncryptionAvailable?.())
+			throw new SecureStorageError(unavailableMessage);
 		return protection;
+	}
+
+	private async encryptWithProtection(
+		protection: SecretProtection,
+		value: string,
+	): Promise<Buffer> {
+		try {
+			return await protection.encryptString(value);
+		} catch (error) {
+			throw asSecureStorageError(error);
+		}
+	}
+
+	private async decryptWithProtection(
+		protection: SecretProtection,
+		value: Buffer,
+	): Promise<string | ProtectedDecryption> {
+		try {
+			return await protection.decryptString(value);
+		} catch (error) {
+			throw asSecureStorageError(error);
+		}
 	}
 
 	private async mutateFile<T>(

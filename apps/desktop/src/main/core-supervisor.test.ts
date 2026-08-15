@@ -211,6 +211,27 @@ describe("CoreSupervisor recovery", () => {
 		expect(processes).toHaveLength(3);
 	});
 
+	it("surfaces a bootstrap error and does not leave a dead core behind", async () => {
+		const child = new FakeCoreProcess();
+		const supervisor = new CoreSupervisor(undefined, undefined, {
+			processFactory: () => child,
+			startupTimeoutMs: 500,
+		});
+
+		const started = supervisor.start(config);
+		child.emit("message", {
+			type: "start-error",
+			error: "The active agent configuration is unavailable.",
+		});
+
+		await expect(started).rejects.toThrow(
+			"The active agent configuration is unavailable.",
+		);
+		await expect(supervisor.request({ type: "snapshot" })).rejects.toThrow(
+			"Agent Core is unavailable.",
+		);
+	});
+
 	it("cancels a scheduled recovery when the supervisor is stopped", async () => {
 		vi.useFakeTimers();
 		const processes: FakeCoreProcess[] = [];
