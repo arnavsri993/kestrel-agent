@@ -2,7 +2,6 @@
 
 import { execFileSync } from "node:child_process";
 import {
-  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -35,6 +34,18 @@ const lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks
 
 function uniquePaths(paths) {
   return [...new Set(paths.map((path) => resolve(path)))];
+}
+
+function copyBundle(sourcePath, destinationPath) {
+  // Node's cpSync rewrites the relative symlinks used by macOS framework
+  // bundles into absolute links to the build directory. The installed app
+  // then loses Electron Framework as soon as that directory is cleaned up.
+  // ditto preserves bundle symlinks and macOS metadata during the staged copy.
+  execFileSync(
+    "/usr/bin/ditto",
+    ["--rsrc", "--extattr", "--acl", sourcePath, destinationPath],
+    { stdio: "ignore" },
+  );
 }
 
 function samePath(left, right) {
@@ -122,7 +133,7 @@ function moveToTrash(appPath, reason) {
     renameSync(appPath, trashPath);
   } catch (error) {
     if (error?.code !== "EXDEV") throw error;
-    cpSync(appPath, trashPath, { recursive: true, force: true, dereference: false });
+    copyBundle(appPath, trashPath);
     rmSync(appPath, { recursive: true, force: true });
   }
   unregister(trashPath);
@@ -144,7 +155,7 @@ function stageBundle() {
   const stageRoot = mkdtempSync(join(installRoot, ".Kestrel-install-"));
   const stagedBundle = join(stageRoot, "Kestrel.app");
   try {
-    cpSync(source, stagedBundle, { recursive: true, force: true, dereference: false });
+    copyBundle(source, stagedBundle);
     return { stageRoot, stagedBundle };
   } catch (error) {
     rmSync(stageRoot, { recursive: true, force: true });
