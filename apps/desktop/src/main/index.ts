@@ -74,6 +74,7 @@ import {
   developmentHeartbeatIsStale,
 } from "./single-instance";
 import { canShowMainWindow } from "./startup-window";
+import { startupRecoveryCopy } from "./startup-recovery";
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
@@ -1054,19 +1055,30 @@ async function initializeCore(
     managedPluginRoot,
     join(app.getPath("home"), ".codex", "plugins", "cache", "camarade"),
   ];
-  await supervisor.start({
-    databasePath: join(userData, "database", "kestrel.sqlite"),
-    encryptionKeyBase64: key.toString("base64"),
-    workspaceRoots,
-    configuredWorkspaceRoots,
-    pluginRoots,
-    managedPluginRoots: [managedPluginRoot],
-    learnedSkillRoot: join(userData, "learned-skills"),
-    secureEnvironment,
-  });
-  const response = await supervisor.request({ type: "snapshot" });
-  if (response.ok && response.snapshot)
+  try {
+    await supervisor.start({
+      databasePath: join(userData, "database", "kestrel.sqlite"),
+      encryptionKeyBase64: key.toString("base64"),
+      workspaceRoots,
+      configuredWorkspaceRoots,
+      pluginRoots,
+      managedPluginRoots: [managedPluginRoot],
+      learnedSkillRoot: join(userData, "learned-skills"),
+      secureEnvironment,
+    });
+    const response = await supervisor.request({ type: "snapshot" });
+    if (!response.ok)
+      throw new Error(response.error || "Agent Core rejected its startup snapshot.");
+    if (!response.snapshot)
+      throw new Error("Agent Core returned no workspace state during startup.");
     agentState = response.snapshot.agentState;
+  } catch (error) {
+    // A bootstrap can fail after the utility process has been created. Tear it
+    // down before the recovery dialog retries, or the next attempt sees a
+    // stale supervisor and reports only “Agent Core is unavailable.”
+    await supervisor.stop().catch(() => undefined);
+    throw error;
+  }
 }
 
 function pluginTrustStore(): PluginTrustStore {
@@ -2121,10 +2133,7 @@ async function initializeCoreForStartup(): Promise<boolean> {
       await initializeCore();
       return true;
     } catch (cause) {
-      const detail =
-        cause instanceof Error
-          ? cause.message
-          : "An unknown startup error occurred.";
+      const copy = startupRecoveryCopy(cause);
       if (!mainWindow && app.isReady()) {
         // Give the native recovery dialog an owning window. Without one,
         // macOS can leave the dialog behind the app that was active when the
@@ -2141,8 +2150,8 @@ async function initializeCoreForStartup(): Promise<boolean> {
       const options: Electron.MessageBoxOptions = {
         type: "error",
         title: `${PRODUCT_IDENTITY.productName} could not start`,
-        message: "Kestrel needs access to its encrypted data.",
-        detail: `${detail}\n\nKestrel will not open your data without its encryption boundary. If you denied the Keychain prompt, unlock the login keychain and choose “Always Allow” for Kestrel Safe Storage, then try again.`,
+        message: copy.message,
+        detail: copy.detail,
         buttons: ["Try again", "Quit"],
         defaultId: 0,
         cancelId: 1,
@@ -2250,11 +2259,10 @@ void app
     }
   })
   .catch((cause) => {
-    const detail =
-      cause instanceof Error ? cause.message : "An unknown startup error occurred.";
+    const copy = startupRecoveryCopy(cause);
     dialog.showErrorBox(
       `${PRODUCT_IDENTITY.productName} could not start`,
-      `${detail}\n\nKestrel did not open your data without its encryption boundary. Unlock macOS secure storage and try again.`,
+      `${copy.message}\n\n${copy.detail}`,
     );
     quitting = true;
     app.quit();
