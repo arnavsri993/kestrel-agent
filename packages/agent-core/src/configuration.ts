@@ -1442,7 +1442,7 @@ export class AgentConfigurationManager {
 			"agent.configuration.head",
 		);
 		if (versions.length === 0) {
-			if (currentId)
+			if (currentId || this.database.hasAgentConfigurationRecords())
 				throw new ProtectedDatabaseError(
 					"Kestrel found an encrypted agent configuration history, but none of its records could be decrypted with the current profile key.",
 				);

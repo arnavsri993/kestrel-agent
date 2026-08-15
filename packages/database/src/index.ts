@@ -1371,6 +1371,20 @@ export class KestrelDatabase {
 		);
 	}
 
+	/**
+	 * Reports whether the protected configuration table has ever been
+	 * populated. Callers use this alongside decryptable records so a missing
+	 * or unreadable head pointer cannot make an existing profile look like a
+	 * first-run database.
+	 */
+	hasAgentConfigurationRecords(): boolean {
+		return (
+			this.db
+				.prepare("SELECT 1 FROM agent_configuration_records LIMIT 1")
+				.get() !== undefined
+		);
+	}
+
 	saveAgentConfigurationVersion(version: AgentConfigurationVersion): void {
 		const parsed = AgentConfigurationVersionSchema.parse(version);
 		this.writeAgentConfigurationRecord(

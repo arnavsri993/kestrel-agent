@@ -174,6 +174,34 @@ describe("chat configuration manager", () => {
 		database.close();
 	});
 
+	it("does not initialize a new profile when the protected head pointer is missing", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const wrongKey = encryptText(
+			JSON.stringify({ id: "not-a-valid-configuration-version" }),
+			createEncryptionKey(),
+		);
+		database.db
+			.prepare(
+				`INSERT INTO agent_configuration_records (
+					id, kind, status, payload_ciphertext, payload_iv, payload_auth_tag,
+					created_at, updated_at
+				) VALUES (?, 'version', 'known_good', ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				"unreadable-version",
+				wrongKey.ciphertext,
+				wrongKey.iv,
+				wrongKey.authTag,
+				"2026-08-15T12:00:00.000Z",
+				"2026-08-15T12:00:00.000Z",
+			);
+
+		expect(() => new AgentConfigurationManager(database)).toThrowError(
+			ProtectedDatabaseError,
+		);
+		database.close();
+	});
+
 	it("rejects secrets, protected paths, safety overrides, and attempts to hide recovery tools", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const manager = new AgentConfigurationManager(database);
