@@ -231,6 +231,64 @@ describe("context usage", () => {
 	});
 });
 
+describe("runtime message paging", () => {
+	it("returns the newest bounded page and walks backward by message cursor", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const sessionId = "session-paged-transcript";
+		database.saveRuntimeSession({
+			id: sessionId,
+			title: "Paged transcript",
+			allowedTools: [],
+			status: "active",
+			checkpoints: [],
+			createdAt: "2026-08-14T10:00:00.000Z",
+			updatedAt: "2026-08-14T10:00:00.000Z",
+		});
+		for (let index = 1; index <= 5; index += 1) {
+			database.saveRuntimeMessage({
+				id: `message-${index}`,
+				sessionId,
+				role: index % 2 ? "user" : "assistant",
+				content: `Message ${index}`,
+				createdAt: `2026-08-14T10:00:0${index}.000Z`,
+			});
+		}
+
+		try {
+			const latest = database.listRuntimeMessagesPage(sessionId, { limit: 2 });
+			expect(latest.messages.map((message) => message.id)).toEqual([
+				"message-4",
+				"message-5",
+			]);
+			expect(latest.hasMore).toBe(true);
+
+			const earlier = database.listRuntimeMessagesPage(sessionId, {
+				beforeMessageId: latest.messages[0]!.id,
+				limit: 2,
+			});
+			expect(earlier.messages.map((message) => message.id)).toEqual([
+				"message-2",
+				"message-3",
+			]);
+			expect(earlier.hasMore).toBe(true);
+
+			const first = database.listRuntimeMessagesPage(sessionId, {
+				beforeMessageId: earlier.messages[0]!.id,
+				limit: 2,
+			});
+			expect(first.messages.map((message) => message.id)).toEqual(["message-1"]);
+			expect(first.hasMore).toBe(false);
+			expect(() =>
+				database.listRuntimeMessagesPage(sessionId, {
+					beforeMessageId: "message-missing",
+				}),
+			).toThrow("cursor was not found");
+		} finally {
+			database.close();
+		}
+	});
+});
+
 describe("configuration history recovery", () => {
 	it("skips malformed encrypted versions in the recovery view", () => {
 		const key = createEncryptionKey();

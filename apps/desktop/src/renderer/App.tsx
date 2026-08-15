@@ -2787,6 +2787,8 @@ function RuntimeConversation({
 	onNewAgent(): void;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
+	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
+	const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
 	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
 	const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
 	const [providerId, setProviderId] = useState("");
@@ -2897,6 +2899,7 @@ function RuntimeConversation({
 				window.kestrel.request({
 					type: "runtime-list-messages",
 					sessionId,
+					limit: 100,
 				}) as Promise<CoreResponse>,
 				window.kestrel.request({
 					type: "runtime-list-runs",
@@ -2921,6 +2924,7 @@ function RuntimeConversation({
 		)
 			return false;
 		setMessages(messageResponse.messages ?? []);
+		setHasEarlierMessages(messageResponse.hasMoreMessages === true);
 		setUsage(usageResponse.usage ?? null);
 		const runs = runResponse.runs ?? [];
 		setLatestRun(runs[runs.length - 1] ?? null);
@@ -2937,6 +2941,53 @@ function RuntimeConversation({
 			: undefined;
 		setPending(waiting && execution ? { run: waiting, execution } : null);
 		return true;
+	}
+
+	async function loadEarlierMessages() {
+		if (
+			!activeSessionId ||
+			!hasEarlierMessages ||
+			loadingEarlierMessages ||
+			busy ||
+			!messages[0]
+		)
+			return;
+		const sessionId = activeSessionId;
+		const loadSequence = sessionLoadSequenceRef.current;
+		setLoadingEarlierMessages(true);
+		setError("");
+		try {
+			const response = (await window.kestrel.request({
+				type: "runtime-list-messages",
+				sessionId,
+				beforeMessageId: messages[0].id,
+				limit: 100,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (
+				activeSessionIdRef.current !== sessionId ||
+				sessionLoadSequenceRef.current !== loadSequence
+			)
+				return;
+			const earlier = response.messages ?? [];
+			setMessages((current) => {
+				const existing = new Set(current.map((message) => message.id));
+				return [
+					...earlier.filter((message) => !existing.has(message.id)),
+					...current,
+				];
+			});
+			setHasEarlierMessages(response.hasMoreMessages === true);
+		} catch (cause) {
+			if (activeSessionIdRef.current === sessionId)
+				setError(
+					cause instanceof Error
+						? cause.message
+						: "Could not load earlier messages.",
+				);
+		} finally {
+			setLoadingEarlierMessages(false);
+		}
 	}
 
 	useEffect(() => {
@@ -3020,6 +3071,8 @@ function RuntimeConversation({
 		});
 		sessionLoadSequenceRef.current += 1;
 		setMessages([]);
+		setHasEarlierMessages(false);
+		setLoadingEarlierMessages(false);
 		setAttachments([]);
 		setStreamText("");
 		if (!preserveActiveRun) {
@@ -3771,6 +3824,18 @@ function RuntimeConversation({
 				</div>
 			) : (
 				<div className="message-list">
+					{hasEarlierMessages && (
+						<button
+							type="button"
+							className="quiet-link load-earlier-messages"
+							disabled={busy || loadingEarlierMessages}
+							onClick={() => void loadEarlierMessages()}
+						>
+							{loadingEarlierMessages
+								? "Loading earlier messages…"
+								: "Load earlier messages"}
+						</button>
+					)}
 					{visibleMessages.map((message) =>
 						message.role === "user" ? (
 							<div className="user-message" key={message.id}>

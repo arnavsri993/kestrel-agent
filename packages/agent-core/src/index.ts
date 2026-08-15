@@ -1496,10 +1496,30 @@ export class AgentCore {
 						],
 					};
 				case "runtime-list-messages":
-					return {
-						ok: true,
-						messages: this.runtime.listMessages(request.sessionId),
-					};
+					{
+						if (
+							request.limit === undefined &&
+							request.beforeMessageId === undefined
+						)
+							return {
+								ok: true,
+								messages: this.runtime.listMessages(request.sessionId),
+							};
+						const page = this.runtime.listMessagesPage(
+							request.sessionId,
+							{
+								...(request.beforeMessageId
+									? { beforeMessageId: request.beforeMessageId }
+									: {}),
+								...(request.limit !== undefined ? { limit: request.limit } : {}),
+							},
+						);
+						return {
+							ok: true,
+							messages: page.messages,
+							hasMoreMessages: page.hasMore,
+						};
+					}
 				case "runtime-list-runs":
 					return {
 						ok: true,
