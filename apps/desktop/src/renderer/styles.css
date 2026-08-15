@@ -4,37 +4,47 @@
 		-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
 		sans-serif;
 	font-synthesis: none;
-	--canvas: #1c1c1e;
-	--sidebar: #151517;
-	--sidebar-hover: #29292c;
-	--surface: #2b2b2e;
-	--surface-strong: #3a3a3d;
-	--panel: #242426;
-	--ink: #f5f5f7;
-	--muted: #c0c0c5;
-	--faint: #98989e;
-	--line: #3a3a3e;
-	--line-strong: #59595f;
-	--solid: #f5f5f7;
-	--solid-hover: #ffffff;
-	--solid-text: #1c1c1e;
-	--signal: #82c68f;
-	--signal-deep: #a6d8ae;
-	--status-soft: #263a2b;
-	--status-ink: #c1e7c7;
-	--healthy: #78b986;
-	--warning: #d7b45c;
-	--warning-soft: #3b321f;
-	--warning-ink: #f5dda0;
-	--danger: #e46c75;
-	--danger-soft: #351d21;
-	--danger-ink: #f6bec3;
-	--brand: #b7d68a;
+
+	/* ── Palette ─────────────────────────────────────── */
+	--canvas:         #161618;
+	--sidebar:        #0f0f11;
+	--sidebar-hover:  #252528;
+	--surface:        #242428;
+	--surface-strong: #323237;
+	--panel:          #1c1c20;
+	--ink:            #f2f2f5;
+	--muted:          #b8b8c0;
+	--faint:          #8a8a94;
+	--line:           #2e2e34;
+	--line-strong:    #4a4a52;
+	--solid:          #eeeef2;
+	--solid-hover:    #ffffff;
+	--solid-text:     #111114;
+
+	/* ── Signal / Brand ──────────────────────────────── */
+	--signal:         #7ec98c;
+	--signal-deep:    #9ed9a8;
+	--brand:          #9ecf72;
+	--status-soft:    #1c3324;
+	--status-ink:     #b8e6c0;
+	--healthy:        #72b880;
+
+	/* ── Semantic ────────────────────────────────────── */
+	--warning:        #d4ae54;
+	--warning-soft:   #332c18;
+	--warning-ink:    #f2d898;
+	--danger:         #e06870;
+	--danger-soft:    #30181c;
+	--danger-ink:     #f4bcc0;
+
+	/* ── Typography ──────────────────────────────────── */
 	--display: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
 	--sans:
 		-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
 		sans-serif;
 	--mono: "SFMono-Regular", ui-monospace, Menlo, monospace;
+
+	/* ── Spacing ─────────────────────────────────────── */
 	--space-1: 4px;
 	--space-2: 8px;
 	--space-3: 12px;
@@ -45,16 +55,32 @@
 	--space-10: 40px;
 	--space-14: 56px;
 	--space-18: 72px;
-	--radius-control: 8px;
-	--radius-row: 12px;
-	--radius-surface: 16px;
-	--radius-stage: 22px;
-	--motion-feedback: 100ms;
-	--motion-state: 160ms;
-	--motion-focal: 220ms;
-	--ease-kestrel: cubic-bezier(0.22, 1, 0.36, 1);
+
+	/* ── Radius — generous rounded corners ───────────── */
+	--radius-xs:      6px;
+	--radius-sm:      10px;
+	--radius-control: 10px;
+	--radius-row:     14px;
+	--radius-surface: 18px;
+	--radius-stage:   24px;
+	--radius-xl:      20px;
+	--radius-pill:    999px;
+
+	/* ── Motion ──────────────────────────────────────── */
+	--motion-feedback: 90ms;
+	--motion-state:    150ms;
+	--motion-focal:    210ms;
+	--ease-kestrel:    cubic-bezier(0.22, 1, 0.36, 1);
+
+	/* ── Shadows ─────────────────────────────────────── */
+	--shadow-xs:      0 1px 2px rgba(0,0,0,0.3);
+	--shadow-sm:      0 2px 8px rgba(0,0,0,0.36), 0 1px 0 rgba(255,255,255,0.03);
+	--shadow-md:      0 4px 18px rgba(0,0,0,0.42), 0 1px 0 rgba(255,255,255,0.04);
+	--shadow-lg:      0 8px 32px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.05);
 	--shadow-composer:
-		0 1px 0 rgba(255, 255, 255, 0.035), 0 16px 36px rgba(0, 0, 0, 0.24);
+		0 1px 0 rgba(255,255,255,0.045),
+		0 12px 28px rgba(0,0,0,0.32),
+		0 2px 6px rgba(0,0,0,0.2);
 }
 
 * {
@@ -121,10 +147,12 @@ button:disabled {
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
-	padding: 0 8px 12px;
-	background: color-mix(in srgb, var(--sidebar) 92%, transparent);
-	backdrop-filter: saturate(115%) blur(24px);
-	border-right: 1px solid var(--line);
+	padding: 0 10px 14px;
+	background: color-mix(in srgb, var(--sidebar) 96%, transparent);
+	backdrop-filter: saturate(130%) blur(28px);
+	-webkit-backdrop-filter: saturate(130%) blur(28px);
+	border-right: 1px solid rgba(255,255,255,0.055);
+	box-shadow: 1px 0 0 rgba(0,0,0,0.3);
 }
 .drag-region {
 	height: 42px;
@@ -162,13 +190,14 @@ button:disabled {
 	width: 100%;
 	min-height: 42px;
 	margin: 12px 0 16px;
-	padding: 0 11px;
+	padding: 0 12px;
 	border: 0;
-	border-radius: 9px;
+	border-radius: var(--radius-row);
 	background: transparent;
 	color: var(--ink);
 	text-align: left;
 	cursor: pointer;
+	transition: background var(--motion-feedback) var(--ease-kestrel);
 }
 .new-task-button:hover {
 	background: var(--sidebar-hover);
@@ -207,14 +236,15 @@ button:disabled {
 	grid-template-columns: 18px minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 9px;
-	min-height: 35px;
-	padding: 0 9px;
+	min-height: 36px;
+	padding: 0 10px;
 	border: 0;
-	border-radius: 7px;
+	border-radius: var(--radius-control);
 	background: transparent;
 	color: var(--muted);
 	cursor: pointer;
 	text-align: left;
+	transition: background var(--motion-feedback) var(--ease-kestrel), color var(--motion-feedback);
 }
 .nav-section button:hover,
 .sidebar-bottom > button:hover {
@@ -322,15 +352,16 @@ button:disabled {
 .topbar {
 	position: relative;
 	z-index: 5;
-	height: 52px;
+	height: 54px;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	gap: 20px;
-	padding: 0 18px 0 22px;
-	border-bottom: 1px solid var(--line);
-	background: color-mix(in srgb, var(--canvas) 88%, transparent);
-	backdrop-filter: saturate(115%) blur(20px);
+	padding: 0 20px 0 24px;
+	border-bottom: 1px solid rgba(255,255,255,0.06);
+	background: color-mix(in srgb, var(--canvas) 80%, transparent);
+	backdrop-filter: saturate(130%) blur(24px);
+	-webkit-backdrop-filter: saturate(130%) blur(24px);
 	-webkit-app-region: drag;
 }
 .topbar > span {
@@ -413,15 +444,18 @@ button:disabled {
 	width: 100%;
 	overflow: visible;
 	border: 1px solid var(--line-strong);
-	border-radius: 14px;
+	border-radius: var(--radius-xl);
 	background: var(--surface);
 	box-shadow: var(--shadow-composer);
 	text-align: left;
+	transition:
+		border-color var(--motion-state) var(--ease-kestrel),
+		box-shadow var(--motion-state) var(--ease-kestrel);
 }
 .composer:focus-within {
-	border-color: color-mix(in srgb, var(--signal) 62%, transparent);
+	border-color: color-mix(in srgb, var(--signal) 68%, transparent);
 	box-shadow:
-		0 0 0 2px color-mix(in srgb, var(--signal) 13%, transparent),
+		0 0 0 3px color-mix(in srgb, var(--signal) 14%, transparent),
 		var(--shadow-composer);
 }
 .composer textarea {
@@ -508,10 +542,12 @@ button:disabled {
 	display: grid;
 	gap: 14px;
 	padding: 16px;
-	border: 1px solid var(--line-strong);
-	border-radius: 14px;
+	border: 1px solid rgba(255,255,255,0.09);
+	border-radius: var(--radius-surface);
 	background: var(--panel);
-	box-shadow: var(--shadow-composer);
+	box-shadow: var(--shadow-lg);
+	backdrop-filter: blur(12px) saturate(1.3);
+	-webkit-backdrop-filter: blur(12px) saturate(1.3);
 }
 .task-settings-panel > header {
 	display: flex;
@@ -694,8 +730,8 @@ button:disabled {
 .user-message p {
 	max-width: 72%;
 	margin: 0;
-	padding: 11px 15px;
-	border-radius: 15px 15px 4px 15px;
+	padding: 11px 16px;
+	border-radius: 18px 18px 5px 18px;
 	background: var(--surface-strong);
 	font-size: 13px;
 	line-height: 1.55;
@@ -1278,39 +1314,48 @@ button:disabled {
 	align-items: center;
 	justify-content: center;
 	gap: 8px;
-	padding: 0 15px;
+	padding: 0 16px;
 	border: 1px solid transparent;
-	border-radius: 7px;
+	border-radius: var(--radius-control);
 	color: var(--ink);
 	cursor: pointer;
 	font-size: 12px;
 	font-weight: 570;
 	text-decoration: none;
+	transition:
+		background var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback),
+		transform var(--motion-feedback);
 }
+.button:active:not(:disabled) { transform: translateY(1px); }
 .button svg {
 	width: 14px;
 }
 .button.primary {
-	border-color: color-mix(in srgb, var(--solid) 88%, var(--line));
-	background: color-mix(in srgb, var(--solid) 94%, var(--canvas));
+	border-color: color-mix(in srgb, var(--solid) 72%, var(--line));
+	background: color-mix(in srgb, var(--solid) 92%, var(--canvas));
 	color: var(--solid-text);
+	box-shadow: var(--shadow-xs);
 }
 .button.primary:hover {
 	background: var(--solid-hover);
 }
 .button.secondary {
 	border-color: var(--line-strong);
-	background: transparent;
+	background: rgba(255,255,255,0.04);
 }
 .button.secondary:hover:not(:disabled) {
 	background: var(--sidebar-hover);
+	border-color: var(--line-strong);
 }
 .button.quiet {
 	background: transparent;
 	color: var(--muted);
 }
+.button.quiet:hover { color: var(--ink); background: var(--surface); }
 .button:disabled {
-	opacity: 0.55;
+	opacity: 0.48;
+	cursor: not-allowed;
 }
 
 .dashboard-extensions {
@@ -1506,10 +1551,12 @@ button:disabled {
 
 .approval-card {
 	overflow: hidden;
-	border: 1px solid var(--line-strong);
-	border-radius: 16px;
+	border: 1px solid rgba(255,255,255,0.08);
+	border-radius: var(--radius-xl);
 	background: var(--panel);
-	box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+	box-shadow: var(--shadow-lg);
+	backdrop-filter: blur(8px);
+	-webkit-backdrop-filter: blur(8px);
 }
 .approval-header {
 	display: flex;
@@ -3002,16 +3049,19 @@ button:disabled {
 	display: grid;
 	gap: 2px;
 	padding: 6px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
-	background: color-mix(in srgb, var(--surface) 82%, transparent);
+	border: 1px solid rgba(255,255,255,0.07);
+	border-radius: var(--radius-surface);
+	background: color-mix(in srgb, var(--panel) 90%, transparent);
+	box-shadow: var(--shadow-sm);
+	backdrop-filter: blur(8px);
+	-webkit-backdrop-filter: blur(8px);
 }
 .settings-nav button {
 	display: grid;
 	gap: 3px;
 	width: 100%;
-	padding: 10px 11px;
-	border-radius: 8px;
+	padding: 10px 12px;
+	border-radius: var(--radius-control);
 	color: var(--muted);
 	text-align: left;
 }
