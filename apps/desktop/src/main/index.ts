@@ -87,6 +87,7 @@ let mainRendererDeepLinkReady = false;
 let tray: Tray | null = null;
 let quitting = false;
 let coreStartupComplete = false;
+let startupRecoveryWindowCreated = false;
 let agentState: AgentState = "idle";
 const browserService = new ElectronBrowserService();
 let userBrowserService: UserBrowserService | null = null;
@@ -670,6 +671,13 @@ for (const deepLink of deepLinksFromArgv(process.argv))
 
 function showMainWindow(): void {
   if (!singleInstance) return;
+  if (!coreStartupComplete) {
+    // During secure-storage recovery there is no main window yet. A second
+    // click on the Dock icon must bring the native Keychain/recovery dialog
+    // back to the front instead of making the app look like it exited.
+    app.focus({ steal: true });
+    return;
+  }
   if (!canShowMainWindow(app.isReady(), coreStartupComplete)) return;
   if (mainWindow?.isDestroyed()) {
     mainWindow = null;
@@ -2117,7 +2125,20 @@ async function initializeCoreForStartup(): Promise<boolean> {
         cause instanceof Error
           ? cause.message
           : "An unknown startup error occurred.";
-      const result = await dialog.showMessageBox({
+      if (!mainWindow && app.isReady()) {
+        // Give the native recovery dialog an owning window. Without one,
+        // macOS can leave the dialog behind the app that was active when the
+        // Keychain prompt was dismissed, making Kestrel look like it exited.
+        mainWindow = createMainWindow();
+        startupRecoveryWindowCreated = true;
+      }
+      mainWindow?.show();
+      mainWindow?.focus();
+      // safeStorage failures can leave the native dialog behind the app the
+      // user was using when the Keychain prompt was dismissed. Keep recovery
+      // visible and make a subsequent Dock click return here.
+      app.focus({ steal: true });
+      const options: Electron.MessageBoxOptions = {
         type: "error",
         title: `${PRODUCT_IDENTITY.productName} could not start`,
         message: "Kestrel needs access to its encrypted data.",
@@ -2126,7 +2147,10 @@ async function initializeCoreForStartup(): Promise<boolean> {
         defaultId: 0,
         cancelId: 1,
         noLink: true,
-      });
+      };
+      const result = mainWindow
+        ? await dialog.showMessageBox(mainWindow, options)
+        : await dialog.showMessageBox(options);
       if (result.response !== 0) return false;
     }
   }
@@ -2173,6 +2197,16 @@ void app
       return;
     }
     coreStartupComplete = true;
+    if (
+      startupRecoveryWindowCreated &&
+      mainWindow &&
+      !mainWindow.isDestroyed()
+    ) {
+      // The recovery window's renderer saw the unavailable core. Reload it
+      // after secure storage succeeds so the user lands in the real app.
+      mainWindow.webContents.reload();
+      startupRecoveryWindowCreated = false;
+    }
     providerAuthMonitor.start();
     updateTray();
     const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;

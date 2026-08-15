@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -81,6 +90,46 @@ testSuite("development macOS app installer", () => {
 
     expect(readdirSync(installRoot)).toEqual(["Kestrel.app"]);
     expect(readdirSync(trashRoot)).toHaveLength(1);
+  });
+
+  it("preserves relative framework symlinks when staging the app", () => {
+    const root = mkdtempSync(join(tmpdir(), "kestrel-installer-symlink-"));
+    const installRoot = join(root, "Applications");
+    const trashRoot = join(root, "Trash");
+    mkdirSync(installRoot);
+    const sourceRoot = join(root, "release");
+    mkdirSync(sourceRoot);
+    const source = createBundle(sourceRoot, "Kestrel.app");
+    const frameworkRoot = join(
+      source,
+      "Contents",
+      "Frameworks",
+      "Electron Framework.framework",
+    );
+    mkdirSync(join(frameworkRoot, "Versions", "A"), { recursive: true });
+    writeFileSync(
+      join(frameworkRoot, "Versions", "A", "Electron Framework"),
+      "framework",
+    );
+    symlinkSync("A", join(frameworkRoot, "Versions", "Current"));
+    symlinkSync(
+      "Versions/Current/Electron Framework",
+      join(frameworkRoot, "Electron Framework"),
+    );
+
+    runInstaller(source, installRoot, [installRoot], trashRoot);
+
+    const installedFramework = join(
+      installRoot,
+      "Kestrel.app",
+      "Contents",
+      "Frameworks",
+      "Electron Framework.framework",
+    );
+    expect(readlinkSync(join(installedFramework, "Versions", "Current"))).toBe("A");
+    expect(readlinkSync(join(installedFramework, "Electron Framework"))).toBe(
+      "Versions/Current/Electron Framework",
+    );
   });
 });
 
