@@ -1702,6 +1702,8 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("runtime-list-messages"),
 		sessionId: z.string().min(1),
+		beforeMessageId: z.string().min(1).optional(),
+		limit: z.number().int().positive().max(200).optional(),
 	}),
 	z.object({
 		type: z.literal("runtime-list-runs"),
@@ -2185,6 +2187,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		run: AgentRunSchema.optional(),
 		runs: z.array(AgentRunSchema).optional(),
 		messages: z.array(RuntimeMessageSchema).optional(),
+		hasMoreMessages: z.boolean().optional(),
 		executions: z.array(RuntimeToolExecutionSchema).optional(),
 		plugins: z.array(PluginSummarySchema).optional(),
 		providers: z.array(ModelProviderSummarySchema).optional(),

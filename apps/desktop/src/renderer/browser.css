@@ -2392,6 +2392,26 @@ body:has(.ai-browser-app),
   scrollbar-width: thin;
 }
 
+.agent-conversation-host .load-earlier-messages {
+  display: block;
+  margin: 0 auto 14px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.agent-conversation-host .load-earlier-messages:hover:not(:disabled) {
+  background: var(--sidebar-hover);
+  color: var(--ink);
+}
+
+.agent-conversation-host .load-earlier-messages:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .agent-conversation-host .user-message,
 .agent-conversation-host .assistant-message {
   max-width: 100%;

@@ -192,6 +192,31 @@ describe("agent runtime", () => {
 		reopenedDatabase.close();
 	});
 
+	it("pages long transcripts from the newest message without changing full history access", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(
+			database,
+			[],
+			() => "2026-08-14T10:00:00.000Z",
+		);
+		const session = runtime.createSession({ title: "Long transcript" });
+		for (let index = 1; index <= 3; index += 1)
+			runtime.appendMessage({
+				sessionId: session.id,
+				role: "user",
+				content: `Message ${index}`,
+			});
+
+		const page = runtime.listMessagesPage(session.id, { limit: 2 });
+		expect(page.messages.map((message) => message.content)).toEqual([
+			"Message 2",
+			"Message 3",
+		]);
+		expect(page.hasMore).toBe(true);
+		expect(runtime.listMessages(session.id)).toHaveLength(3);
+		database.close();
+	});
+
 	it("rolls back the message when its session recency cannot commit", () => {
 		const { database, runtime, session } = fixture();
 		const events: RuntimeEvent[] = [];

@@ -867,6 +867,14 @@ export class AgentRuntime extends EventEmitter {
 		return this.database.listRuntimeMessages(sessionId);
 	}
 
+	listMessagesPage(
+		sessionId: string,
+		options: { beforeMessageId?: string; limit?: number } = {},
+	) {
+		this.requireSession(sessionId);
+		return this.database.listRuntimeMessagesPage(sessionId, options);
+	}
+
 	searchMessages(query: string, limit = 20): RuntimeMessage[] {
 		const searchLimit = Number.isFinite(limit)
 			? Math.max(1, Math.min(100, Math.trunc(limit)))

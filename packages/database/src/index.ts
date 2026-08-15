@@ -222,6 +222,16 @@ export interface RuntimeHistoryRollbackResult extends RetiredAgentHistory {
 	session: RuntimeSession;
 }
 
+export interface RuntimeMessagePage {
+	messages: RuntimeMessage[];
+	hasMore: boolean;
+}
+
+export interface RuntimeMessagePageOptions {
+	beforeMessageId?: string;
+	limit?: number;
+}
+
 interface RuntimeMessageRow {
 	id: string;
 	session_id: string;
@@ -662,6 +672,52 @@ export class KestrelDatabase {
       WHERE m.session_id = ? ORDER BY COALESCE(o.sequence, 0) ASC, m.created_at ASC, m.id ASC`)
 				.all(sessionId) as RuntimeMessageRow[]
 		).map((row) => this.parseRuntimeMessage(row));
+	}
+
+	listRuntimeMessagesPage(
+		sessionId: string,
+		options: RuntimeMessagePageOptions = {},
+	): RuntimeMessagePage {
+		const limit = Number.isFinite(options.limit)
+			? Math.max(1, Math.min(200, Math.trunc(options.limit!)))
+			: 100;
+		let beforeSequence: number | undefined;
+		if (options.beforeMessageId) {
+			const boundary = this.db
+				.prepare(
+					"SELECT sequence FROM runtime_message_order WHERE session_id = ? AND message_id = ?",
+				)
+				.get(sessionId, options.beforeMessageId) as
+				| { sequence: number }
+				| undefined;
+			if (!boundary)
+				throw new Error("Runtime message cursor was not found in this session.");
+			beforeSequence = boundary.sequence;
+		}
+
+		const rows = (
+			beforeSequence === undefined
+				? this.db
+						.prepare(`SELECT m.* FROM runtime_messages m
+        JOIN runtime_message_order o ON o.message_id = m.id AND o.session_id = m.session_id
+        WHERE m.session_id = ?
+        ORDER BY o.sequence DESC LIMIT ?`)
+						.all(sessionId, limit + 1)
+				: this.db
+						.prepare(`SELECT m.* FROM runtime_messages m
+        JOIN runtime_message_order o ON o.message_id = m.id AND o.session_id = m.session_id
+        WHERE m.session_id = ? AND o.sequence < ?
+        ORDER BY o.sequence DESC LIMIT ?`)
+						.all(sessionId, beforeSequence, limit + 1)
+		) as RuntimeMessageRow[];
+		const hasMore = rows.length > limit;
+		return {
+			messages: rows
+				.slice(0, limit)
+				.reverse()
+				.map((row) => this.parseRuntimeMessage(row)),
+			hasMore,
+		};
 	}
 
 	truncateRuntimeMessages(sessionId: string, keepCount: number): void {
