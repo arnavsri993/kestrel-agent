@@ -17,11 +17,11 @@ export interface Logger {
 }
 
 export class NoopLogger implements Logger {
-  debug() {}
-  info() {}
-  warn() {}
-  error() {}
-  child() {
+  debug(_message: string, _context?: Record<string, unknown>) {}
+  info(_message: string, _context?: Record<string, unknown>) {}
+  warn(_message: string, _context?: Record<string, unknown>) {}
+  error(_message: string, _error?: Error, _context?: Record<string, unknown>) {}
+  child(_context: Record<string, unknown>): Logger {
     return this;
   }
 }

@@ -1,5 +1,5 @@
 const { execFileSync } = require("node:child_process");
-const { readdirSync, statSync } = require("node:fs");
+const { existsSync, readdirSync, statSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 exports.default = async function architectureAudit(context) {
@@ -28,6 +28,24 @@ exports.default = async function architectureAudit(context) {
 			execFileSync("lipo", ["-info", binary], { stdio: "pipe" });
 		} catch {
 			/* Non-Mach-O executable resources are checked by their own adapter. */
+		}
+	}
+
+	const lsregister =
+		"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+	const noindexFile = join(context.outDir, ".metadata_never_index");
+	if (!existsSync(noindexFile)) {
+		try {
+			writeFileSync(noindexFile, "");
+		} catch {
+			/* Best effort Spotlight indexing exclusion */
+		}
+	}
+	if (existsSync(lsregister)) {
+		try {
+			execFileSync(lsregister, ["-u", appPath], { stdio: "ignore" });
+		} catch {
+			/* Best effort LaunchServices unregister */
 		}
 	}
 };

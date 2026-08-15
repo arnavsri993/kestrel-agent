@@ -24,6 +24,7 @@ const help = `Kestrel CLI
 
   kestrel tui [--model <id> --providers <id,id>] [--workspace <path>]
   kestrel acp [--model <id> --providers <id,id>] [--workspace <path>]
+  kestrel opencode [--model <id> --providers <id,id>] [--workspace <path>] [--setup]
   kestrel session list
   kestrel session create --title <title> [--workspace <path>]
   kestrel session fork --session <id> [--title <title>]
@@ -214,6 +215,31 @@ export async function runCli(args: string[]): Promise<void> {
 		return;
 	}
 	if (command.name === "acp") {
+		await runAcpStdio(command);
+		return;
+	}
+	if (command.name === "opencode") {
+		if (command.setup) {
+			const config = {
+				$schema: "https://opencode.ai/schema.json",
+				agents: {
+					kestrel: {
+						name: "Kestrel",
+						description: "Kestrel local-first desktop and coding agent",
+						command: "kestrel-acp",
+						args: [
+							...(command.workspace ? ["--workspace", command.workspace] : []),
+							...(command.model ? ["--model", command.model] : []),
+							...(command.providers?.length
+								? ["--providers", command.providers.join(",")]
+								: []),
+						],
+					},
+				},
+			};
+			process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
+			return;
+		}
 		await runAcpStdio(command);
 		return;
 	}

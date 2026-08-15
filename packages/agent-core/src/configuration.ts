@@ -65,6 +65,28 @@ export const DEFAULT_AGENT_CONFIGURATION: AgentConfigurationDocument =
 			showConfigurationDiffs: true,
 			announceVerification: true,
 		},
+		browser: {
+			searchEngine: "duckduckgo",
+			blockThirdPartyCookies: true,
+			blockTrackers: true,
+			adBlocking: true,
+			contentBlocking: "standard",
+			javascriptEnabled: true,
+			doNotTrack: true,
+			newTabBackground: "graphite",
+			contextEnabled: true,
+		},
+		appearance: {
+			skin: "default",
+			petEnabled: false,
+			petSlug: "paperclip",
+			petScale: 0.5,
+			petRenderMode: "unicode",
+		},
+		system: {
+			launchAtLogin: false,
+			paused: false,
+		},
 		memory: {
 			captureExplicit: true,
 			useSharedContext: true,
@@ -93,6 +115,22 @@ const EDITABLE_PATHS = [
 	"/ui/showToolActivity",
 	"/ui/showConfigurationDiffs",
 	"/ui/announceVerification",
+	"/browser/searchEngine",
+	"/browser/blockThirdPartyCookies",
+	"/browser/blockTrackers",
+	"/browser/adBlocking",
+	"/browser/contentBlocking",
+	"/browser/javascriptEnabled",
+	"/browser/doNotTrack",
+	"/browser/newTabBackground",
+	"/browser/contextEnabled",
+	"/appearance/skin",
+	"/appearance/petEnabled",
+	"/appearance/petSlug",
+	"/appearance/petScale",
+	"/appearance/petRenderMode",
+	"/system/launchAtLogin",
+	"/system/paused",
 	"/memory/captureExplicit",
 	"/memory/useSharedContext",
 	"/memory/improvementLookbackDays",
@@ -110,7 +148,7 @@ const secretPattern =
 const protectedOverridePattern =
 	/(?:\b(?:ignore|disable|remove|bypass|override)\b.{0,80}\b(?:safety|approval|permission|authentication|security|recovery|credential|secret)\b)|(?:\b(?:ask|request|tell|instruct|collect|solicit|accept|have|prompt|require|provide|send|share|paste|enter|reveal)\b.{0,100}\b(?:api\s*key|oauth|token|password|secret|private\s*key|credential|session\s*cookie)\b)|(?:\b(?:api\s*key|oauth|token|password|secret|private\s*key|credential|session\s*cookie)\b.{0,100}\b(?:ask|request|tell|instruct|collect|solicit|accept|have|prompt|require|provide|send|share|paste|enter|reveal)\b)/i;
 const configurationRequestPattern =
-	/\b(?:configur(?:e|ation)|setting|personality|system prompt|permission|workflow|memory|integration|rollback|restore|undo)\b|\b(?:make|keep|use|be|answer|respond|reply|write|explain|speak|talk)\b.{0,80}\b(?:concise|brief|detailed|coaching|coach|friendly|formal|casual|professional|tone|style|language|locale|timezone|instruction|response)\b/i;
+	/\b(?:configur(?:e|ation)|setting|personality|system prompt|permission|workflow|memory|integration|rollback|restore|undo|browser|skin|theme|pet|appearance|search engine|background)\b|\b(?:make|keep|use|be|answer|respond|reply|write|explain|speak|talk)\b.{0,80}\b(?:concise|brief|detailed|coaching|coach|friendly|formal|casual|professional|tone|style|language|locale|timezone|instruction|response)\b/i;
 
 const riskRank: Record<RiskLevel, number> = {
 	read_only: 0,
@@ -193,6 +231,67 @@ const builtInSurfaces: AgentConfigurationSurface[] = [
 		riskLevel: "low",
 		liveEffect: "Reflected by the desktop conversation after the apply event.",
 		examples: ["Use compact chat density.", "Hide routine tool progress."],
+	},
+	{
+		id: "browser",
+		title: "Browser preferences and privacy",
+		description:
+			"Search engine selection, ad and tracker blocking, cookie protection, JavaScript toggles, new tab background, and current page context sharing.",
+		editablePaths: [
+			"/browser/searchEngine",
+			"/browser/blockThirdPartyCookies",
+			"/browser/blockTrackers",
+			"/browser/adBlocking",
+			"/browser/contentBlocking",
+			"/browser/javascriptEnabled",
+			"/browser/doNotTrack",
+			"/browser/newTabBackground",
+			"/browser/contextEnabled",
+		],
+		riskLevel: "low",
+		liveEffect:
+			"Updates browser tabs, search behavior, and navigation preferences immediately upon apply.",
+		examples: [
+			"Set search engine to Google.",
+			"Enable tracker and ad blocking.",
+			"Set new tab background to Meadow.",
+			"Enable current page context sharing.",
+		],
+	},
+	{
+		id: "appearance",
+		title: "Appearance, themes, and pets",
+		description:
+			"Theme skin selection, desktop pet status, pet scale, and animation render mode.",
+		editablePaths: [
+			"/appearance/skin",
+			"/appearance/petEnabled",
+			"/appearance/petSlug",
+			"/appearance/petScale",
+			"/appearance/petRenderMode",
+		],
+		riskLevel: "low",
+		liveEffect: "Applies the chosen theme and pet overlay immediately.",
+		examples: [
+			"Switch skin to Amber.",
+			"Turn on the paperclip desktop pet.",
+			"Hide the desktop pet.",
+		],
+	},
+	{
+		id: "system",
+		title: "System and lifecycle controls",
+		description: "Launch at login preference and agent pause status.",
+		editablePaths: [
+			"/system/launchAtLogin",
+			"/system/paused",
+		],
+		riskLevel: "low",
+		liveEffect: "Updates system startup hooks and agent pause state.",
+		examples: [
+			"Launch Kestrel automatically at login.",
+			"Pause agent background activities.",
+		],
 	},
 	{
 		id: "memory",
@@ -286,9 +385,65 @@ const protectedBoundaries: ProtectedAgentBoundary[] = [
 ].map((boundary) => ProtectedAgentBoundarySchema.parse(boundary));
 
 function canonicalDocument(
-	value: AgentConfigurationDocument,
+	value: AgentConfigurationDocument | unknown,
 ): AgentConfigurationDocument {
-	return AgentConfigurationDocumentSchema.parse(structuredClone(value));
+	const raw =
+		value && typeof value === "object" && !Array.isArray(value)
+			? (value as Record<string, unknown>)
+			: {};
+	const merged = {
+		...DEFAULT_AGENT_CONFIGURATION,
+		...raw,
+		behavior: {
+			...DEFAULT_AGENT_CONFIGURATION.behavior,
+			...((raw.behavior as object) || {}),
+		},
+		prompts: {
+			...DEFAULT_AGENT_CONFIGURATION.prompts,
+			...((raw.prompts as object) || {}),
+		},
+		tools: {
+			...DEFAULT_AGENT_CONFIGURATION.tools,
+			...((raw.tools as object) || {}),
+		},
+		permissions: {
+			...DEFAULT_AGENT_CONFIGURATION.permissions,
+			...((raw.permissions as object) || {}),
+		},
+		workflows: {
+			...DEFAULT_AGENT_CONFIGURATION.workflows,
+			...((raw.workflows as object) || {}),
+		},
+		ui: {
+			...DEFAULT_AGENT_CONFIGURATION.ui,
+			...((raw.ui as object) || {}),
+		},
+		browser: {
+			...DEFAULT_AGENT_CONFIGURATION.browser,
+			...((raw.browser as object) || {}),
+		},
+		appearance: {
+			...DEFAULT_AGENT_CONFIGURATION.appearance,
+			...((raw.appearance as object) || {}),
+		},
+		system: {
+			...DEFAULT_AGENT_CONFIGURATION.system,
+			...((raw.system as object) || {}),
+		},
+		memory: {
+			...DEFAULT_AGENT_CONFIGURATION.memory,
+			...((raw.memory as object) || {}),
+		},
+		integrations: {
+			...DEFAULT_AGENT_CONFIGURATION.integrations,
+			...((raw.integrations as object) || {}),
+		},
+		settings: {
+			...DEFAULT_AGENT_CONFIGURATION.settings,
+			...((raw.settings as object) || {}),
+		},
+	};
+	return AgentConfigurationDocumentSchema.parse(merged);
 }
 
 function documentSha256(value: AgentConfigurationDocument): string {

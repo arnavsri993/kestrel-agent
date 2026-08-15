@@ -93,7 +93,14 @@ export type CliCommand =
 			bonjourCliPath?: string;
 	  }
 	| { name: "tui"; model?: string; providers?: string[]; workspace?: string }
-	| { name: "acp"; model?: string; providers?: string[]; workspace?: string };
+	| { name: "acp"; model?: string; providers?: string[]; workspace?: string }
+	| {
+			name: "opencode";
+			model?: string;
+			providers?: string[];
+			workspace?: string;
+			setup?: boolean;
+	  };
 
 function options(args: string[], allowed: string[]): Map<string, string> {
 	const output = new Map<string, string>();
@@ -698,6 +705,16 @@ export function parseCliArguments(input: string[]): CliCommand {
 	if (args[0] === "tui" || args[0] === "acp") {
 		const values = options(args.slice(1), ["model", "providers", "workspace"]);
 		return { name: args[0], ...modelOptions(values) };
+	}
+	if (args[0] === "opencode") {
+		const isSetup = args.includes("--setup");
+		const rest = args.slice(1).filter((arg) => arg !== "--setup");
+		const values = options(rest, ["model", "providers", "workspace"]);
+		return {
+			name: "opencode",
+			setup: isSetup,
+			...modelOptions(values),
+		};
 	}
 	throw new Error("Unknown command. Run `kestrel help`.");
 }

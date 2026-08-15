@@ -59,13 +59,11 @@ try {
 	assert.equal(setupTheme.signal, "#78b986");
 	assert.equal(setupTheme.colorScheme, "dark");
 	assert.equal(setupTheme.color, "rgb(245, 245, 247)");
-	assert.equal(
-		await page.evaluate(() =>
+	await page.waitForFunction(
+		() =>
 			getComputedStyle(document.documentElement)
 				.getPropertyValue("--canvas")
-				.trim(),
-		),
-		"#f5f2ea",
+				.trim() === "#f5f2ea",
 	);
 	assert.equal(await page.locator(".setup-product-anchor").count(), 1);
 	assert.deepEqual(
@@ -375,6 +373,13 @@ try {
 		await page.evaluate(() => localStorage.getItem("kestrel:onboarded")),
 		"yes",
 	);
+	const defaultBrowserModal = page.locator(".default-browser-modal");
+	if (await defaultBrowserModal.isVisible().catch(() => false)) {
+		await page
+			.getByRole("heading", { name: "Set Kestrel as your default browser?" })
+			.waitFor();
+		await page.getByRole("button", { name: "Not Now" }).click();
+	}
 	const newAgentButton = page
 		.getByRole("button", { name: "New task", exact: true })
 		.first();

@@ -3,6 +3,8 @@ import {
 	DeepLinkQueue,
 	deepLinksFromArgv,
 	parseKestrelDeepLink,
+	parseWebUrl,
+	urlsFromArgv,
 } from "./deep-links";
 
 describe("desktop deep links", () => {
@@ -15,6 +17,22 @@ describe("desktop deep links", () => {
 			parseKestrelDeepLink("kestrel://user:secret@chat/session-1"),
 		).toBeUndefined();
 		expect(parseKestrelDeepLink("kestrel://chat/\nnext")).toBeUndefined();
+	});
+
+	it("parses valid web URLs for browser tabs", () => {
+		expect(parseWebUrl("https://example.com/page?query=1")).toBe(
+			"https://example.com/page?query=1",
+		);
+		expect(parseWebUrl("http://localhost:3000/")).toBe(
+			"http://localhost:3000/",
+		);
+		expect(parseWebUrl("file:///Users/user/index.html")).toBe(
+			"file:///Users/user/index.html",
+		);
+		expect(parseWebUrl("kestrel://chat/session-1")).toBeUndefined();
+		expect(parseWebUrl("javascript:alert(1)")).toBeUndefined();
+		expect(parseWebUrl("data:text/html,<h1>hi</h1>")).toBeUndefined();
+		expect(parseWebUrl("not a url")).toBeUndefined();
 	});
 
 	it("extracts launch URLs and queues them until delivery succeeds", () => {
@@ -41,5 +59,21 @@ describe("desktop deep links", () => {
 		expect(queue.drain((value) => delivered.push(value))).toBe(1);
 		expect(delivered).toEqual(["kestrel://chat/session-1"]);
 		expect(queue.size).toBe(0);
+	});
+
+	it("extracts both deep links and web URLs from argv", () => {
+		const result = urlsFromArgv([
+			"/Applications/Kestrel.app/Contents/MacOS/Kestrel",
+			"--flag",
+			"kestrel://chat/session-1",
+			"https://news.ycombinator.com",
+			"http://localhost:8080/dashboard",
+			"invalid-url",
+		]);
+		expect(result.deepLinks).toEqual(["kestrel://chat/session-1"]);
+		expect(result.webUrls).toEqual([
+			"https://news.ycombinator.com/",
+			"http://localhost:8080/dashboard",
+		]);
 	});
 });

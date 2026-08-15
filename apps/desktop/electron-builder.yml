@@ -12,6 +12,22 @@ asarUnpack:
   - node_modules/better-sqlite3/**/*
   - node_modules/@img/**/*
   - node_modules/**/*.node
+protocols:
+  - name: Kestrel Protocol
+    schemes:
+      - kestrel
+  - name: Web Browser Protocol
+    schemes:
+      - http
+      - https
+fileAssociations:
+  - ext:
+      - html
+      - htm
+      - shtml
+      - xhtml
+    name: HTML Document
+    role: Viewer
 mac:
   category: public.app-category.productivity
   icon: build/icon.icns

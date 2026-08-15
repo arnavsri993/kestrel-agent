@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/schema.json",
+  "agents": {
+    "kestrel": {
+      "name": "Kestrel",
+      "description": "Kestrel local-first desktop and coding agent",
+      "command": "kestrel-acp",
+      "args": ["--workspace", "."]
+    }
+  }
+}

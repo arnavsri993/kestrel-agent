@@ -40,7 +40,10 @@ try {
 		env: { ...process.env, KESTREL_TEST_USER_DATA: join(root, "user-data") },
 	});
 	const page = await application.firstWindow();
-	await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:onboarded", "yes");
+		localStorage.setItem("kestrel:default-browser-prompted", "yes");
+	});
 	await page.reload();
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 	await page.locator('summary[aria-label="Task settings"]').click();

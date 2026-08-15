@@ -408,6 +408,16 @@ export const ReasoningEffortSchema = z.enum([
 ]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 
+export const ModelTierSchema = z.enum([
+	"frontier",
+	"advanced",
+	"standard",
+	"permissive_fallback",
+	"local_private",
+	"specialized",
+]);
+export type ModelTier = z.infer<typeof ModelTierSchema>;
+
 export const ModelCapabilitySchema = z.enum([
 	"complex_reasoning",
 	"coding",
@@ -445,6 +455,7 @@ export const ModelProfileSchema = z.object({
 	displayName: z.string().min(1).max(300),
 	enabled: z.boolean(),
 	local: z.boolean(),
+	tier: ModelTierSchema.optional(),
 	capabilities: CapabilityScoresSchema,
 	cost: z.object({
 		inputPerMillion: z.number().nonnegative().optional(),
@@ -473,6 +484,9 @@ export const ModelProfileSchema = z.object({
 		successRate: z.number().min(0).max(1).optional(),
 		toolSuccessRate: z.number().min(0).max(1).optional(),
 		structuredOutputRate: z.number().min(0).max(1).optional(),
+		refusalRate: z.number().min(0).max(1).optional(),
+		refusalCount: z.number().int().nonnegative().optional(),
+		recoverySuccessRate: z.number().min(0).max(1).optional(),
 	}),
 	learnedPerformance: CapabilityScoresSchema,
 	observations: z.number().int().nonnegative().default(0),
@@ -518,8 +532,9 @@ export const RoutingDecisionSchema = z.object({
 	providerId: z.string().min(1),
 	endpointId: z.string().min(1),
 	model: z.string().min(1),
+	tier: ModelTierSchema.optional(),
 	role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]),
-	reasoningLevel: z.enum(["low", "medium", "high", "max"]),
+	reasoningLevel: ReasoningEffortSchema,
 	fastMode: z.boolean(),
 	estimatedCost: z.number().nonnegative().optional(),
 	confidence: z.number().min(0).max(1),
@@ -527,6 +542,8 @@ export const RoutingDecisionSchema = z.object({
 	fallbackModelIds: z.array(z.string().min(1)).max(8),
 	traceId: z.string().min(1).optional(),
 	validationStrategy: z.string().min(1).optional(),
+	refusalRecovery: z.boolean().optional(),
+	switchedFromModelId: z.string().min(1).optional(),
 	settings: z.object({
 		temperature: z.number().min(0).max(2),
 		maximumOutputTokens: z.number().int().positive(),
@@ -560,6 +577,7 @@ export const ModelRoutingDecisionSchema = z.object({
 	model: ExecutionModelSchema,
 	providerId: z.string().min(1).optional(),
 	selectedModelId: z.string().min(1).optional(),
+	tier: ModelTierSchema.optional(),
 	reasoningEffort: ReasoningEffortSchema,
 	fastMode: z.boolean(),
 	serviceTier: z.enum(["standard", "priority"]),
@@ -569,6 +587,7 @@ export const ModelRoutingDecisionSchema = z.object({
 	traceId: z.string().min(1).optional(),
 	fallbackModelIds: z.array(z.string().min(1)).optional(),
 	reviewRequired: z.boolean().optional(),
+	refusalRecovery: z.boolean().optional(),
 	selectedAt: z.string().datetime(),
 });
 export type ModelRoutingDecision = z.infer<typeof ModelRoutingDecisionSchema>;
@@ -577,6 +596,7 @@ export const DelegatedWorkerRouteSchema = z.object({
 	providerId: z.string().min(1),
 	model: z.string().min(1),
 	selectedModelId: z.string().min(1).optional(),
+	tier: ModelTierSchema.optional(),
 	role: z.enum(["orchestrator", "worker", "reviewer", "fallback"]).optional(),
 	reasoningEffort: ReasoningEffortSchema,
 	fastMode: z.boolean().optional(),
@@ -585,6 +605,7 @@ export const DelegatedWorkerRouteSchema = z.object({
 	estimatedCost: z.number().nonnegative().optional(),
 	fallbackModelIds: z.array(z.string().min(1)).optional(),
 	traceId: z.string().min(1).optional(),
+	refusalRecovery: z.boolean().optional(),
 	verifiedAt: z.string().datetime(),
 	verificationLatencyMs: z.number().int().nonnegative(),
 	rationale: z.string().min(1),
@@ -772,6 +793,8 @@ export const AgentRunSchema = z.object({
 		"failed",
 	]),
 	turn: z.number().int().nonnegative(),
+	fallbackModelIds: z.array(z.string().min(1)).optional(),
+	refusalRecoveryCount: z.number().int().nonnegative().optional(),
 	pendingToolExecutionId: z.string().min(1).optional(),
 	pendingProviderToolCallId: z.string().min(1).optional(),
 	pendingToolName: z.string().min(1).optional(),
@@ -2407,34 +2430,70 @@ export const UserBrowserDownloadSchema = z.object({
 export type UserBrowserDownload = z.infer<typeof UserBrowserDownloadSchema>;
 
 export const UserBrowserSettingsSchema = z.object({
-	searchEngine: z.enum([
-		"duckduckgo",
-		"google",
-		"bing",
-		"brave",
-		"ecosia",
-		"startpage",
-		"yahoo",
-		"kagi",
-		"qwant",
-		"mojeek",
-		"baidu",
-		"yandex",
-	]),
+	searchEngine: z
+		.enum([
+			"duckduckgo",
+			"google",
+			"bing",
+			"brave",
+			"ecosia",
+			"startpage",
+			"yahoo",
+			"kagi",
+			"qwant",
+			"mojeek",
+			"baidu",
+			"yandex",
+			"custom",
+		])
+		.default("duckduckgo"),
+	customSearchUrl: z.string().max(8_192).optional(),
+	customSearchName: z.string().max(100).optional(),
 	tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),
 	newTabBackground: z
 		.enum(["graphite", "meadow", "dawn", "paper"])
 		.default("graphite"),
-	restoreSession: z.boolean(),
-	historyRetentionDays: z.union([
-		z.literal(0),
-		z.literal(7),
-		z.literal(30),
-		z.literal(90),
-		z.literal(365),
-	]),
+	restoreSession: z.boolean().default(true),
+	historyRetentionDays: z
+		.union([
+			z.literal(0),
+			z.literal(7),
+			z.literal(30),
+			z.literal(90),
+			z.literal(365),
+		])
+		.default(90),
+	sleepingTabsEnabled: z.boolean().default(true),
+	sleepingTabTimeoutMinutes: z
+		.union([
+			z.literal(5),
+			z.literal(15),
+			z.literal(30),
+			z.literal(60),
+			z.literal(120),
+			z.literal(240),
+			z.literal(480),
+			z.literal(1440),
+		])
+		.default(30),
+	sleepingTabExcludedDomains: z.array(z.string().max(200)).default([]),
+	memorySaverMode: z.boolean().default(true),
 });
 export type UserBrowserSettings = z.infer<typeof UserBrowserSettingsSchema>;
+
+export const InstalledExtensionSchema = z.object({
+	id: z.string().min(1).max(100),
+	name: z.string().min(1).max(200),
+	version: z.string().min(1).max(50),
+	description: z.string().max(2000).optional(),
+	enabled: z.boolean(),
+	iconUrl: z.string().optional(),
+	homepageUrl: z.string().optional(),
+	source: z.enum(["chrome_web_store", "unpacked", "file", "other"]),
+	path: z.string().min(1),
+	installedAt: z.string().datetime(),
+});
+export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
 export const UserBrowserStateSchema = z.object({
 	tabs: z.array(UserBrowserTabSchema).max(32),
@@ -2495,6 +2554,12 @@ export const UserBrowserCommandSchema = z.enum([
 	"focus-address",
 	"new-agent",
 	"open-commands",
+	"open-history",
+	"open-downloads",
+	"open-settings",
+	"show-shortcuts",
+	"toggle-sidebar",
+	"reopen-closed-tab",
 ]);
 export type UserBrowserCommand = z.infer<typeof UserBrowserCommandSchema>;
 
@@ -2523,6 +2588,7 @@ export const RendererRequestSchema = z.union([
 		input: z.string().max(8_192).optional(),
 		active: z.boolean().default(true),
 	}),
+	z.object({ type: z.literal("browser-reopen-closed-tab") }),
 	z.object({
 		type: z.literal("browser-close-tab"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
@@ -2543,8 +2609,12 @@ export const RendererRequestSchema = z.union([
 			"browser-reload",
 			"browser-stop",
 			"browser-get-context",
+			"browser-zoom-in",
+			"browser-zoom-out",
+			"browser-zoom-reset",
 		]),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+		ignoreCache: z.boolean().optional(),
 	}),
 	z.object({
 		type: z.literal("browser-set-content-bounds"),
@@ -2565,7 +2635,29 @@ export const RendererRequestSchema = z.union([
 		type: z.literal("browser-reveal-download"),
 		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
 	}),
+	z.object({ type: z.literal("browser-list-extensions") }),
+	z.object({
+		type: z.literal("browser-install-extension-url"),
+		urlOrId: z.string().min(1).max(8_192),
+	}),
+	z.object({ type: z.literal("browser-install-extension-file") }),
+	z.object({
+		type: z.literal("browser-toggle-extension"),
+		extensionId: z.string().min(1).max(100),
+		enabled: z.boolean(),
+	}),
+	z.object({
+		type: z.literal("browser-uninstall-extension"),
+		extensionId: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("browser-sleep-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({ type: z.literal("browser-sleep-inactive-tabs") }),
 	z.object({ type: z.literal("get-system-state") }),
+	z.object({ type: z.literal("get-default-browser-status") }),
+	z.object({ type: z.literal("set-default-browser") }),
 	z.object({ type: z.literal("set-launch-at-login"), enabled: z.boolean() }),
 	z.object({ type: z.literal("get-workspace-grants") }),
 	z.object({ type: z.literal("select-workspace-folder") }),
@@ -2601,7 +2693,7 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("subscription-cli-status") }),
 	z.object({
 		type: z.literal("subscription-cli-set"),
-		id: z.enum(["codex", "claude"]),
+		id: z.enum(["codex", "claude", "opencode"]),
 		enabled: z.boolean(),
 	}),
 	z.object({ type: z.literal("oauth-chatgpt-connect") }),
@@ -2836,7 +2928,7 @@ export const LocalBackupResultSchema = z.object({
 export type LocalBackupResult = z.infer<typeof LocalBackupResultSchema>;
 
 export const SubscriptionCliStatusSchema = z.object({
-	id: z.enum(["codex", "claude"]),
+	id: z.enum(["codex", "claude", "opencode"]),
 	label: z.string().min(1),
 	detected: z.boolean(),
 	enabled: z.boolean(),

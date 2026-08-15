@@ -85,7 +85,7 @@ export function AgentSidebar({
           </button>
           {historyOpen && (
             <div className="agent-history-popover" aria-label="Task history">
-              <header><strong>Task history</strong><small>{sortedSessions.length} task{sortedSessions.length === 1 ? "" : "s"}</small></header>
+              <header><strong>Tasks</strong></header>
               {sortedSessions.length === 0 ? (
                 <p>No tasks yet.</p>
               ) : (
@@ -112,11 +112,11 @@ export function AgentSidebar({
         </div>
         <div className="agent-browser-context" title={activeTab?.url || "No page open"}>
           <Icon name="context" />
-          <span><small>Current page</small><strong>{activeTab?.url ? activeTab.title : "No page open"}</strong></span>
+          <span><strong>{activeTab?.url ? activeTab.title : "No page open"}</strong></span>
         </div>
-        <section className="agent-sidebar-history" aria-label="Recent chats">
+        <section className="agent-sidebar-history" aria-label="Recent">
           <div className="agent-sidebar-section-heading">
-            <span>Recent chats</span>
+            <span>Recent</span>
             <button
               type="button"
               aria-label="Open task history"
@@ -143,7 +143,7 @@ export function AgentSidebar({
               ))}
             </div>
           ) : (
-            <p>No chats yet. Start a task below.</p>
+            <p>No recent chats</p>
           )}
         </section>
       </div>

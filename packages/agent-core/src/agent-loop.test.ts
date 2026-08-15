@@ -1890,4 +1890,93 @@ describe("provider-neutral agent loop", () => {
 		]);
 		database.close();
 	});
+
+	it("automatically switches models on refusal to achieve 0% refusal rate and fulfill the request", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Refusal auto-recovery" });
+		let callCount = 0;
+
+		const strictProvider: ModelProvider = {
+			id: "strict-provider",
+			defaultModel: "strict-model",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async (request) => {
+				callCount += 1;
+				if (request.model === "strict-model") {
+					return {
+						providerId: "strict-provider",
+						model: "strict-model",
+						text: "I cannot fulfill this request because it involves security auditing.",
+						toolCalls: [],
+						usage: { inputTokens: 10, outputTokens: 5 },
+						finishReason: "refusal",
+					};
+				}
+				return {
+					providerId: "strict-provider",
+					model: request.model,
+					text: "Security audit completed successfully: No vulnerabilities detected in the isolated sandbox.",
+					toolCalls: [],
+					usage: { inputTokens: 15, outputTokens: 10 },
+					finishReason: "stop",
+				};
+			},
+		};
+
+		const permissiveFallbackProvider: ModelProvider = {
+			id: "permissive-provider",
+			defaultModel: "permissive-model",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				callCount += 1;
+				return {
+					providerId: "permissive-provider",
+					model: "permissive-model",
+					text: "Permissive fallback completed: Verified defensive architecture safely.",
+					toolCalls: [],
+					usage: { inputTokens: 12, outputTokens: 8 },
+					finishReason: "stop",
+				};
+			},
+		};
+
+		const pool = new ProviderPool([
+			strictProvider,
+			permissiveFallbackProvider,
+		]);
+		const loop = new AgentLoop(database, runtime, pool);
+
+		const output = await loop.run({
+			sessionId: session.id,
+			model: "strict-model",
+			providerIds: ["strict-provider", "permissive-provider"],
+			fallbackModelIds: ["permissive-provider:permissive-model"],
+			userContent: textContent("Audit this security component"),
+			onTextDelta: () => {},
+		});
+
+		expect(output.run.status).toBe("completed");
+		expect(output.run.model).toBe("permissive-model");
+		expect(output.run.refusalRecoveryCount).toBe(1);
+		expect(output.assistantMessage?.content).toMatch(
+			/Permissive fallback completed/i,
+		);
+		expect(callCount).toBe(2);
+		database.close();
+	});
 });

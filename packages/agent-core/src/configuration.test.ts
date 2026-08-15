@@ -1090,4 +1090,69 @@ describe("chat configuration runtime approval boundary", () => {
 		expect(systemPrompts[1]).not.toContain("Use balanced detail");
 		await core.close();
 	});
+
+	it("plans and applies browser, appearance, and system configuration through agent.config", () => {
+		const { path, key } = persistentDatabase();
+		const database = new KestrelDatabase(path, key);
+		const manager = new AgentConfigurationManager(database);
+		const initial = manager.currentVersion();
+
+		expect(initial.document.browser.searchEngine).toBe("duckduckgo");
+		expect(initial.document.appearance.skin).toBe("default");
+		expect(initial.document.system.launchAtLogin).toBe(false);
+
+		const proposal = manager.plan({
+			requestSummary:
+				"Set search engine to Google, skin to Meadow, and enable launch at login.",
+			sourceSessionId: "session-test",
+			patch: [
+				{
+					op: "replace",
+					path: "/browser/searchEngine",
+					value: "google",
+				},
+				{
+					op: "replace",
+					path: "/browser/newTabBackground",
+					value: "meadow",
+				},
+				{
+					op: "replace",
+					path: "/appearance/skin",
+					value: "meadow",
+				},
+				{
+					op: "replace",
+					path: "/appearance/petEnabled",
+					value: true,
+				},
+				{
+					op: "replace",
+					path: "/system/launchAtLogin",
+					value: true,
+				},
+			],
+		});
+
+		expect(proposal.riskLevel).toBe("low");
+		expect(
+			proposal.isolatedChecks.every((check) => check.status === "passed"),
+		).toBe(true);
+
+		const applied = manager.apply({
+			proposalId: proposal.id,
+			expectedBaseVersionId: proposal.baseVersionId,
+			preview: proposal.diff,
+		});
+
+		expect(applied.version.document.browser.searchEngine).toBe("google");
+		expect(applied.version.document.browser.newTabBackground).toBe("meadow");
+		expect(applied.version.document.appearance.skin).toBe("meadow");
+		expect(applied.version.document.appearance.petEnabled).toBe(true);
+		expect(applied.version.document.system.launchAtLogin).toBe(true);
+
+		const current = manager.currentVersion();
+		expect(current.document.browser.searchEngine).toBe("google");
+		expect(current.document.appearance.skin).toBe("meadow");
+	});
 });

@@ -89,6 +89,7 @@ function finishReason(
 	if (toolCalls.length > 0) return "tool_calls";
 	if (response.status === "incomplete") return "length";
 	if (response.status === "cancelled") return "cancelled";
+	if (response.status === "failed") return "refusal";
 	if (response.status === "completed") return "stop";
 	return "unknown";
 }

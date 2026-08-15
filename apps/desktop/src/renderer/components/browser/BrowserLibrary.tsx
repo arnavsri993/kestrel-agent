@@ -41,7 +41,7 @@ export function BrowserHistory({
 					<span className="library-icon">
 						<Icon name="history" />
 					</span>
-					<h1 id="history-title">Pages you visited</h1>
+					<h1 id="history-title">History</h1>
 				</div>
 				<label>
 					<Icon name="search" />
@@ -65,12 +65,7 @@ export function BrowserHistory({
 			{filtered.length === 0 ? (
 				<section className="library-empty">
 					<Icon name="history" />
-					<h2>{query ? "No matching pages" : "No browsing history"}</h2>
-					<p>
-						{query
-							? "Try a different search."
-							: "Pages you visit will appear here."}
-					</p>
+					<h2>{query ? "No matching pages" : "No history"}</h2>
 				</section>
 			) : (
 				<ol className="history-list">
@@ -112,14 +107,13 @@ export function BrowserDownloads({
 					<span className="library-icon">
 						<Icon name="downloads" />
 					</span>
-					<h1 id="downloads-title">Files from the web</h1>
+					<h1 id="downloads-title">Downloads</h1>
 				</div>
 			</header>
 			{downloads.length === 0 ? (
 				<section className="library-empty">
 					<Icon name="downloads" />
-					<h2>No downloads yet</h2>
-					<p>Files you download from browser tabs will appear here.</p>
+					<h2>No downloads</h2>
 				</section>
 			) : (
 				<ul className="download-list">

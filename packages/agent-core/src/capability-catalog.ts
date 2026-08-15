@@ -66,7 +66,7 @@ export const CAPABILITY_CATALOG: CapabilityCatalogEntry[] = [
 			"apps/desktop/src/renderer/App.tsx",
 			"apps/desktop/src/renderer/components/SkinSettings.tsx",
 			"scripts/smoke-desktop.mjs",
-			"scripts/test-desktop-skins.mjs",
+			"packages/agent-core/src/skins.test.ts",
 		],
 	},
 	{
@@ -629,8 +629,6 @@ export const CAPABILITY_CATALOG: CapabilityCatalogEntry[] = [
 			"packages/agent-core/src/event-applications.ts",
 			"packages/agent-core/src/event-applications.test.ts",
 			"apps/desktop/src/renderer/components/EventApplications.tsx",
-			"scripts/test-desktop-event-applications.mjs",
-			"docs/event-application-assistant.md",
 		],
 	},
 	{

@@ -24,6 +24,8 @@ export function BrowserWorkspace({
   onOpenHistory,
   onOpenDownloads,
   onOpenMenu,
+  onShowShortcuts,
+  onToggleSidebar,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -36,6 +38,8 @@ export function BrowserWorkspace({
   onOpenHistory(): void;
   onOpenDownloads(): void;
   onOpenMenu(): void;
+  onShowShortcuts?(): void;
+  onToggleSidebar?(): void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -45,12 +49,16 @@ export function BrowserWorkspace({
     back,
     closeTab,
     createTab,
+    reopenClosedTab,
     forward,
     navigate,
     reload,
     selectTab,
     setContentBounds,
     stop,
+    zoomIn,
+    zoomOut,
+    zoomReset,
   } = browser;
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
   const nativePageVisible = Boolean(activeTab?.url && !activeTab.error);
@@ -68,8 +76,7 @@ export function BrowserWorkspace({
     const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${nativePageVisible}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
-    void setContentBounds(bounds, nativePageVisible)
-      .catch(() => undefined);
+    void setContentBounds(bounds, nativePageVisible).catch(() => undefined);
   }, [nativePageVisible, setContentBounds]);
 
   useLayoutEffect(() => {
@@ -91,8 +98,9 @@ export function BrowserWorkspace({
       window.cancelAnimationFrame(frame);
       window.clearTimeout(settleTimer);
       lastBoundsRef.current = "";
-      void setContentBounds({ x: 0, y: 0, width: 0, height: 0 }, false)
-        .catch(() => undefined);
+      void setContentBounds({ x: 0, y: 0, width: 0, height: 0 }, false).catch(
+        () => undefined,
+      );
     };
   }, [setContentBounds, syncBounds]);
 
@@ -102,34 +110,198 @@ export function BrowserWorkspace({
         if (command === "focus-address") addressRef.current?.focus();
         else if (command === "new-agent") onNewAgent();
         else if (command === "open-commands") onOpenMenu();
+        else if (command === "open-history") onOpenHistory();
+        else if (command === "open-downloads") onOpenDownloads();
+        else if (command === "open-settings") onOpenSettings?.();
+        else if (command === "show-shortcuts") onShowShortcuts?.();
+        else if (command === "toggle-sidebar") onToggleSidebar?.();
+        else if (command === "reopen-closed-tab") void reopenClosedTab();
       }),
-    [onNewAgent, onOpenMenu],
+    [
+      onNewAgent,
+      onOpenMenu,
+      onOpenHistory,
+      onOpenDownloads,
+      onOpenSettings,
+      onShowShortcuts,
+      onToggleSidebar,
+      reopenClosedTab,
+    ],
   );
 
   useEffect(() => {
     function shortcuts(event: KeyboardEvent) {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (event.defaultPrevented) return;
+
+      if (event.key === "Escape") {
+        if (activeTab?.loading) {
+          event.preventDefault();
+          void stop(activeTab.id);
+        } else if (document.activeElement === addressRef.current) {
+          addressRef.current?.blur();
+        }
+        return;
+      }
+
+      if (event.key === "F5") {
+        event.preventDefault();
+        if (activeTab) void reload(activeTab.id, event.shiftKey);
+        return;
+      }
+
+      if (event.key === "F1") {
+        event.preventDefault();
+        onShowShortcuts?.();
+        return;
+      }
+
+      if (event.altKey && !event.metaKey && !event.ctrlKey) {
+        if (event.key === "ArrowLeft" && activeTab?.canGoBack) {
+          event.preventDefault();
+          void back(activeTab.id);
+          return;
+        }
+        if (event.key === "ArrowRight" && activeTab?.canGoForward) {
+          event.preventDefault();
+          void forward(activeTab.id);
+          return;
+        }
+        if (event.key.toLowerCase() === "d") {
+          event.preventDefault();
+          addressRef.current?.focus();
+          return;
+        }
+      }
+
+      const command = event.metaKey || event.ctrlKey;
+      if (!command) return;
       const key = event.key.toLowerCase();
-      if (key === "l") {
+
+      if (/^[1-8]$/.test(event.key) && state?.tabs.length) {
+        event.preventDefault();
+        const targetIndex = parseInt(event.key, 10) - 1;
+        const targetTab = state.tabs[targetIndex];
+        if (targetTab) void selectTab(targetTab.id);
+        return;
+      }
+      if (event.key === "9" && state?.tabs.length) {
+        event.preventDefault();
+        const lastTab = state.tabs[state.tabs.length - 1];
+        if (lastTab) void selectTab(lastTab.id);
+        return;
+      }
+
+      if (
+        ((key === "tab" ||
+          key === "pagedown" ||
+          (key === "]" && event.shiftKey)) &&
+          state?.tabs.length) ||
+        (event.altKey && event.key === "ArrowRight" && state?.tabs.length)
+      ) {
+        event.preventDefault();
+        const index = state.tabs.findIndex(
+          (tab) => tab.id === state.activeTabId,
+        );
+        const next =
+          state.tabs[(index + 1 + state.tabs.length) % state.tabs.length];
+        if (next) void selectTab(next.id);
+        return;
+      }
+      if (
+        ((key === "pageup" || (key === "[" && event.shiftKey)) &&
+          state?.tabs.length) ||
+        (key === "tab" && event.shiftKey && state?.tabs.length) ||
+        (event.altKey && event.key === "ArrowLeft" && state?.tabs.length)
+      ) {
+        event.preventDefault();
+        const index = state.tabs.findIndex(
+          (tab) => tab.id === state.activeTabId,
+        );
+        const prev =
+          state.tabs[(index - 1 + state.tabs.length) % state.tabs.length];
+        if (prev) void selectTab(prev.id);
+        return;
+      }
+
+      if (["=", "+"].includes(event.key)) {
+        event.preventDefault();
+        void zoomIn(activeTab?.id);
+        return;
+      }
+      if (["-", "_"].includes(event.key)) {
+        event.preventDefault();
+        void zoomOut(activeTab?.id);
+        return;
+      }
+      if (event.key === "0") {
+        event.preventDefault();
+        void zoomReset(activeTab?.id);
+        return;
+      }
+
+      if (key === "l" || (event.ctrlKey && key === "e")) {
         event.preventDefault();
         addressRef.current?.focus();
       } else if (key === "t") {
         event.preventDefault();
-        void createTab();
+        if (event.shiftKey) {
+          void reopenClosedTab();
+        } else {
+          void createTab();
+        }
       } else if (key === "w" && activeTab) {
         event.preventDefault();
         void closeTab(activeTab.id);
-      } else if (event.key === "Tab" && state?.tabs.length) {
+      } else if (key === "r" && activeTab) {
         event.preventDefault();
-        const index = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
-        const direction = event.shiftKey ? -1 : 1;
-        const next = state.tabs[(index + direction + state.tabs.length) % state.tabs.length];
-        if (next) void selectTab(next.id);
+        void reload(activeTab.id, event.shiftKey);
+      } else if (key === "h" || key === "y") {
+        event.preventDefault();
+        onOpenHistory();
+      } else if (key === "j") {
+        event.preventDefault();
+        onOpenDownloads();
+      } else if (key === ",") {
+        event.preventDefault();
+        onOpenSettings?.();
+      } else if (key === "/" || key === "?") {
+        event.preventDefault();
+        onShowShortcuts?.();
+      } else if (key === "b" || (key === "s" && event.shiftKey)) {
+        event.preventDefault();
+        onToggleSidebar?.();
+      } else if (event.key === "[" && activeTab?.canGoBack) {
+        event.preventDefault();
+        void back(activeTab.id);
+      } else if (event.key === "]" && activeTab?.canGoForward) {
+        event.preventDefault();
+        void forward(activeTab.id);
       }
     }
     document.addEventListener("keydown", shortcuts);
     return () => document.removeEventListener("keydown", shortcuts);
-  }, [activeTab, closeTab, createTab, selectTab, state]);
+  }, [
+    activeTab,
+    back,
+    closeTab,
+    createTab,
+    forward,
+    onNewAgent,
+    onOpenDownloads,
+    onOpenHistory,
+    onOpenMenu,
+    onOpenSettings,
+    onShowShortcuts,
+    onToggleSidebar,
+    reload,
+    reopenClosedTab,
+    selectTab,
+    state,
+    stop,
+    zoomIn,
+    zoomOut,
+    zoomReset,
+  ]);
 
   if (!state || !activeTab) {
     return (
@@ -152,6 +324,15 @@ export function BrowserWorkspace({
         onSelect={(tabId) => void selectTab(tabId)}
         onClose={(tabId) => void closeTab(tabId)}
         onCreate={() => void createTab()}
+        onToggleOrientation={() => {
+          void browser.updateSettings({
+            ...state.settings,
+            tabLayout:
+              state.settings.tabLayout === "vertical"
+                ? "horizontal"
+                : "vertical",
+          });
+        }}
       />
       <BrowserToolbar
         tab={activeTab}
@@ -171,7 +352,9 @@ export function BrowserWorkspace({
         onOpenMenu={onOpenMenu}
       />
       {browser.error && (
-        <p className="browser-inline-error" role="status">{browser.error}</p>
+        <p className="browser-inline-error" role="status">
+          {browser.error}
+        </p>
       )}
       <div
         id="browser-viewport"
@@ -193,21 +376,33 @@ export function BrowserWorkspace({
         )}
         {activeTab.error && (
           <section className="browser-error-state">
-            <span><Icon name="warning" /></span>
+            <span>
+              <Icon name="warning" />
+            </span>
             <h1>This page could not be opened.</h1>
             <p>{activeTab.error}</p>
             <div>
-              <button type="button" className="button primary" onClick={() => void reload(activeTab.id)}>
+              <button
+                type="button"
+                className="button primary"
+                onClick={() => void reload(activeTab.id)}
+              >
                 Try again
               </button>
-              <button type="button" className="button secondary" onClick={() => void createTab()}>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void createTab()}
+              >
                 New Tab
               </button>
             </div>
           </section>
         )}
       </div>
-      {activeTab.loading && <span className="browser-loading-line" aria-label="Page loading" />}
+      {activeTab.loading && (
+        <span className="browser-loading-line" aria-label="Page loading" />
+      )}
     </main>
   );
 }

@@ -80,6 +80,7 @@ import type { VoiceTranscriptionProvider } from "./media-providers";
 import { installMemoryTools, MemoryManager } from "./memory";
 import {
 	AdaptiveModelRouter,
+	detectModelRefusal,
 	ModelRegistry,
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
@@ -713,6 +714,7 @@ export class AgentCore {
 			model: decision.model,
 			providerId: decision.providerId,
 			selectedModelId: decision.selectedModelId,
+			tier: decision.tier,
 			reasoningEffort: decision.reasoningLevel,
 			fastMode: decision.fastMode,
 			serviceTier: decision.fastMode ? "priority" : "standard",
@@ -782,11 +784,16 @@ export class AgentCore {
 			: undefined;
 		const modelId = winning?.id ?? automatic.decision.selectedModelId;
 		const completed = result.run.status === "completed";
+		const refusal = detectModelRefusal(result.modelResult ?? { text: "" });
 		this.modelRegistry.recordOutcome({
 			modelId,
 			capabilities: automatic.requirements.capabilities,
 			succeeded: completed,
 			validationPassed: completed,
+			refused: refusal.refused,
+			...(refusal.reason ? { refusalReason: refusal.reason } : {}),
+			recoverySucceeded:
+				(result.run.refusalRecoveryCount ?? 0) > 0 ? completed : undefined,
 			latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
 			actualCostUsd,
 			escalated: modelId !== automatic.decision.selectedModelId,
@@ -1394,6 +1401,7 @@ export class AgentCore {
 										maximumContextCharacters: route.maximumContextCharacters,
 										maximumOutputTokens: route.maximumOutputTokens,
 										temperature: route.temperature,
+										fallbackModelIds: route.route.fallbackModelIds,
 									}
 								: {}),
 							allowedTools: this.configuration.filterToolNames(
@@ -2409,6 +2417,7 @@ export class AgentCore {
 										maximumContextCharacters: route.maximumContextCharacters,
 										maximumOutputTokens: route.maximumOutputTokens,
 										temperature: route.temperature,
+										fallbackModelIds: route.route.fallbackModelIds,
 									}
 								: {}),
 							...(personality.toolNames
