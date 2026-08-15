@@ -9901,3 +9901,540 @@ pre, code {
    Rounded corners throughout per user preference.
    No purple, no gradients, no floating UI glass.
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   KESTREL PREMIUM REDESIGN — Phase 3: Fine Detail Pass
+   All hardcoded hex colors → semantic tokens.
+   All arbitrary radius values → token system.
+   All remaining inconsistencies resolved.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Pet overlay: hardcoded hex → semantic tokens ────────────────────── */
+
+/* Speech bubble: warm ink background → panel token */
+.pet-speech,
+.pet-overlay-message {
+	border-color: color-mix(in srgb, var(--line-strong) 60%, transparent);
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--panel) 94%, transparent);
+	color: var(--ink);
+}
+
+/* Error message overlay: danger-tinted */
+.pet-overlay-message {
+	border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+	color: var(--danger-ink);
+}
+
+/* Arrow tip on speech bubble */
+.pet-speech::after {
+	background: color-mix(in srgb, var(--panel) 94%, transparent);
+	border-color: color-mix(in srgb, var(--line-strong) 60%, transparent);
+}
+
+/* Mail button: signal lime → brand token */
+.pet-mail {
+	border-color: color-mix(in srgb, var(--line-strong) 55%, transparent);
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--panel) 94%, transparent);
+	color: var(--brand);
+}
+
+/* Mini composer popup */
+.pet-mini-composer {
+	border-color: color-mix(in srgb, var(--line-strong) 55%, transparent);
+	border-radius: var(--radius-row);
+	background: color-mix(in srgb, var(--panel) 96%, transparent);
+}
+
+.pet-mini-composer textarea {
+	border-color: var(--line-strong);
+	border-radius: var(--radius-control);
+	background: var(--surface);
+	color: var(--ink);
+}
+
+.pet-mini-composer textarea:focus {
+	border-color: color-mix(in srgb, var(--signal) 62%, transparent);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 12%, transparent);
+	outline: none;
+}
+
+.pet-mini-composer button {
+	border-color: var(--line-strong);
+	border-radius: var(--radius-control);
+	color: var(--muted);
+}
+
+.pet-mini-composer button:hover:not(:disabled) {
+	background: var(--surface);
+	color: var(--ink);
+}
+
+/* Primary action button in mini composer */
+.pet-mini-composer button:last-child {
+	border-color: var(--solid);
+	background: var(--solid);
+	color: var(--solid-text);
+}
+
+/* ── Native Graphite composer: hardcoded hex → tokens ────────────────── */
+
+/* Composer background: was #303034 */
+.composer {
+	border-radius: var(--radius-surface);
+	background: color-mix(in srgb, var(--surface) 80%, var(--panel));
+}
+
+/* Send button disabled state: was #46464a / #9a9aa0 */
+.send-button:disabled {
+	background: var(--surface-strong);
+	color: var(--faint);
+	cursor: not-allowed;
+}
+
+/* Composer project button: rounder */
+.composer-project-button {
+	border-radius: var(--radius-control);
+}
+
+/* ── Settings nav: active uses ink/canvas (high contrast) → signal accent */
+.settings-nav {
+	border-radius: var(--radius-row);
+	background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+
+.settings-nav button {
+	border-radius: var(--radius-control);
+}
+
+/* Overrides the older high-contrast active (ink/canvas) with signal accent */
+.settings-nav button.active {
+	background: color-mix(in srgb, var(--signal) 12%, var(--surface));
+	color: var(--ink);
+	box-shadow: inset 2px 0 0 var(--signal),
+	            0 0 0 1px color-mix(in srgb, var(--signal) 22%, transparent);
+}
+
+/* ── Buttons: standardize radius everywhere ──────────────────────────── */
+.button {
+	border-radius: var(--radius-control);
+}
+
+/* ── Empty / loading states: display font headings ───────────────────── */
+.empty-state h2,
+.loading-screen h1 {
+	font-family: var(--display);
+	font-size: clamp(22px, 2.5vw, 28px);
+	letter-spacing: -0.028em;
+	font-weight: 650;
+}
+
+/* Error mark icon */
+.error-mark {
+	border-radius: var(--radius-control);
+}
+
+/* ── Routing / orchestration grid ────────────────────────────────────── */
+.routing-mode-grid button {
+	border-radius: var(--radius-control);
+}
+
+.routing-grid {
+	border-radius: var(--radius-control);
+}
+
+.orchestration-status {
+	border-radius: var(--radius-control);
+}
+
+/* ── Switch control: standardize radius ──────────────────────────────── */
+.switch {
+	border-radius: 999px;
+}
+
+/* ── Segmented control: standardize ─────────────────────────────────── */
+.segmented {
+	border-radius: var(--radius-control);
+}
+
+/* ── Runtime suggestions: rounder, not flat ──────────────────────────── */
+.runtime-suggestions {
+	border-radius: var(--radius-row);
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-block: 1px solid var(--line);
+}
+
+.runtime-suggestions button {
+	border-radius: 0;
+}
+
+/* ── Background note: consistent radius ──────────────────────────────── */
+.background-note {
+	border-radius: var(--radius-row);
+	background: color-mix(in srgb, var(--panel) 80%, transparent);
+	border-color: var(--line);
+}
+
+/* ── Native Graphite message bubbles: consistent with our new scale ──── */
+.assistant-avatar {
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--signal) 80%, #000 20%);
+	color: #fff;
+	font-weight: 700;
+}
+
+.user-message p {
+	border-radius: 18px 18px 4px 18px;
+	background: color-mix(in srgb, var(--surface-strong) 88%, var(--signal) 12%);
+	border: 1px solid var(--line);
+	box-shadow: var(--shadow-xs);
+}
+
+/* ── Page frame + topbar alignment ───────────────────────────────────── */
+.page-content {
+	height: calc(100vh - 54px);
+}
+
+/* ── Eyebrow label: mono-style, signal-adjacent color ───────────────── */
+.eyebrow {
+	color: var(--signal-deep);
+	font-family: var(--mono);
+	font-size: 9.5px;
+	font-weight: 620;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+/* ── Connection list / OAuth cards ───────────────────────────────────── */
+.connection-list article {
+	border-radius: var(--radius-row);
+}
+
+/* ── Danger button: more intentional ─────────────────────────────────── */
+.danger-button {
+	border-color: var(--danger);
+	background: var(--danger);
+	color: #fff;
+	border-radius: var(--radius-control);
+}
+
+/* ── Setup-onboarding scoped tokens: align with global palette ──────── */
+/* The setup screen uses hardcoded hex via CSS custom properties that
+   override the global tokens. Update to match the upgraded system. */
+.setup-onboarding {
+	--canvas:        #161618;
+	--sidebar:       #0f0f11;
+	--sidebar-hover: #1e1e21;
+	--surface:       #232327;
+	--surface-strong: #2e2e32;
+	--panel:         #1a1a1d;
+	--ink:           #f4f4f6;
+	--muted:         #a8a8b0;
+	--faint:         #6a6a72;
+	--line:          #2e2e34;
+	--line-strong:   #424248;
+	--solid:         #f4f4f6;
+	--solid-hover:   #ffffff;
+	--solid-text:    #161618;
+	--signal:        #7dcc8c;
+	--signal-deep:   #a3e0af;
+	--status-soft:   #1a2e20;
+	--status-ink:    #a3e0af;
+	--healthy:       #7dcc8c;
+	--warning:       #d4ae52;
+	--warning-soft:  #342e18;
+	--warning-ink:   #f0d58a;
+	--danger:        #e05e68;
+	--danger-soft:   #2e181c;
+	--danger-ink:    #f2b0b6;
+	--brand:         #b2d880;
+}
+
+/* ── Subscription note, monogram, honest-status: radius tokens ───────── */
+.subscription-note {
+	border-radius: var(--radius-control);
+}
+
+.provider-monogram {
+	border-radius: var(--radius-sm);
+}
+
+.honest-status {
+	border-radius: var(--radius-sm);
+}
+
+/* ── Paid provider browser ───────────────────────────────────────────── */
+.paid-provider-browser {
+	border-radius: var(--radius-surface);
+}
+
+.paid-provider-directory > input {
+	border-radius: var(--radius-control);
+}
+
+.paid-provider-directory [role="group"] > button {
+	border-radius: var(--radius-control);
+}
+
+/* ── Connection method cards ─────────────────────────────────────────── */
+.connection-method {
+	border-radius: var(--radius-control);
+}
+
+/* ── Local bootstrap progress bar ────────────────────────────────────── */
+.local-bootstrap-progress {
+	border-radius: var(--radius-control);
+}
+
+.local-bootstrap-progress progress {
+	border-radius: 999px;
+}
+
+/* ── Local runtime ready box ─────────────────────────────────────────── */
+.local-runtime-ready {
+	border-radius: var(--radius-control);
+}
+
+/* ── Model library article recommended ───────────────────────────────── */
+.model-library article.recommended {
+	border-radius: var(--radius-control);
+}
+
+/* ── Product anchor mark ─────────────────────────────────────────────── */
+.product-anchor-mark {
+	border-radius: var(--radius-control);
+}
+
+/* ── Tools disclosure ────────────────────────────────────────────────── */
+.tools-disclosure {
+	border-radius: var(--radius-surface);
+}
+
+/* ── Default browser badge: rounder ─────────────────────────────────── */
+.default-browser-icon-badge {
+	border-radius: var(--radius-row);
+}
+
+.default-browser-sub-icon {
+	border-radius: var(--radius-sm);
+}
+
+/* ── Agent config banner ─────────────────────────────────────────────── */
+.agent-config-banner {
+	border-radius: var(--radius-row);
+}
+
+.agent-config-badge {
+	border-radius: var(--radius-sm);
+}
+
+.agent-config-chip {
+	border-radius: var(--radius-control);
+}
+
+/* ── Finish checks and setup finish ──────────────────────────────────── */
+.finish-checks > div > span:first-child {
+	border-radius: var(--radius-sm);
+}
+
+/* ── Reduced safeguards note ─────────────────────────────────────────── */
+.reduced-safeguards-note {
+	border-radius: 0 var(--radius-control) var(--radius-control) 0;
+}
+
+/* ── Workflow memory action / skill notice ───────────────────────────── */
+.workflow-memory-action {
+	border-radius: var(--radius-control);
+}
+
+/* ── Runtime composer error ──────────────────────────────────────────── */
+.runtime-composer .chat-error,
+.runtime-new-composer .chat-error {
+	border-radius: var(--radius-control);
+}
+
+/* ── Welcome screen kicker dot ───────────────────────────────────────── */
+.welcome-kicker::before {
+	border-radius: 50%;
+}
+
+/* ── Welcome mark icon ───────────────────────────────────────────────── */
+.welcome-mark {
+	border-radius: var(--radius-control);
+}
+
+/* ── Empty session note in runtime ──────────────────────────────────── */
+.empty-session-note {
+	border-radius: var(--radius-control);
+}
+
+/* ── Setup rail finish checks ────────────────────────────────────────── */
+.setup-rail li button > span:first-child {
+	border-radius: 50%;
+}
+
+/* ── Event error toast ───────────────────────────────────────────────── */
+.event-error {
+	border-radius: var(--radius-control);
+}
+
+/* ── Event import form inputs ────────────────────────────────────────── */
+.event-import-form input,
+.event-answer textarea,
+.eligibility-list select {
+	border-radius: var(--radius-control);
+}
+
+/* ── Approval card: fully rounded ────────────────────────────────────── */
+.approval-card {
+	border-radius: var(--radius-surface);
+	overflow: hidden;
+}
+
+/* ── Honest status indicator: not square ─────────────────────────────── */
+.external-secret-state {
+	border-radius: var(--radius-sm);
+}
+
+/* ── Account slot inputs ─────────────────────────────────────────────── */
+.account-slot input,
+.custom-model-download input {
+	border-radius: var(--radius-control);
+}
+
+/* ── Source glyph in model picker ────────────────────────────────────── */
+.model-source-picker .source-glyph {
+	border-radius: var(--radius-control);
+}
+
+/* ── Runtime task control inputs ─────────────────────────────────────── */
+.runtime-task-controls select,
+.runtime-task-controls input {
+	border-radius: var(--radius-control);
+}
+
+.runtime-task-controls > span {
+	border-radius: var(--radius-control);
+}
+
+.runtime-lifecycle-controls input {
+	border-radius: var(--radius-control);
+}
+
+.runtime-lifecycle-controls .quiet-link {
+	border-radius: var(--radius-control);
+}
+
+.runtime-usage {
+	border-radius: var(--radius-control);
+}
+
+/* ── Project picker select ───────────────────────────────────────────── */
+.runtime-project-picker select {
+	border-radius: var(--radius-control);
+}
+
+/* ── Runtime setup details ───────────────────────────────────────────── */
+.runtime-setup summary {
+	border-radius: var(--radius-control);
+}
+
+/* ── Approval message pre (JSON dump) ────────────────────────────────── */
+.approval-message pre {
+	border-radius: var(--radius-control);
+}
+
+/* ── Configuration message pre ───────────────────────────────────────── */
+.configuration-message pre {
+	border-radius: var(--radius-control);
+}
+
+/* ── Chat error: left-bordered card style ────────────────────────────── */
+.chat-error {
+	border-radius: var(--radius-control);
+	border-left-width: 3px;
+}
+
+/* ── Segment buttons ─────────────────────────────────────────────────── */
+.segmented button {
+	border-radius: calc(var(--radius-control) - 2px);
+}
+
+.segmented button.selected {
+	border-radius: calc(var(--radius-control) - 2px);
+}
+
+/* ── Routing trace and orchestration route ───────────────────────────── */
+.routing-trace-summary {
+	border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* ── Memory filter buttons ───────────────────────────────────────────── */
+.memory-filters button {
+	border-radius: var(--radius-control);
+}
+
+/* ── Token leaderboard ───────────────────────────────────────────────── */
+.leaderboard-row {
+	border-radius: var(--radius-control);
+}
+
+/* ── Skin picker buttons ─────────────────────────────────────────────── */
+.skin-picker button {
+	border-radius: var(--radius-control);
+}
+
+/* ── Presence / availability selector ───────────────────────────────── */
+.presence-option {
+	border-radius: var(--radius-control);
+}
+
+/* ── Plugin / extension card ─────────────────────────────────────────── */
+.plugin-card {
+	border-radius: var(--radius-row);
+}
+
+/* ── Observation / activity log row ──────────────────────────────────── */
+.observation-row {
+	border-radius: var(--radius-control);
+}
+
+/* ── HonchoMemory settings ───────────────────────────────────────────── */
+.memory-record {
+	border-radius: var(--radius-control);
+}
+
+/* ── Keyboard shortcuts modal ────────────────────────────────────────── */
+.shortcuts-modal {
+	border-radius: var(--radius-stage);
+}
+
+/* ── Command center ──────────────────────────────────────────────────── */
+.command-center {
+	border-radius: var(--radius-surface);
+}
+
+.command-center-input {
+	border-radius: var(--radius-control) var(--radius-control) 0 0;
+}
+
+.command-result {
+	border-radius: var(--radius-control);
+}
+
+/* ── Final: ensure no layout shift from border-radius animations ─────── */
+@media (prefers-reduced-motion: reduce) {
+	.pet-mini-composer textarea,
+	.switch span,
+	.model-source-picker button,
+	.work-card,
+	.oauth-connection,
+	.attachment-chips button,
+	.prompt-suggestions button,
+	.runtime-suggestions button {
+		transition: none !important;
+	}
+}
+
