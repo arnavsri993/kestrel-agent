@@ -4,10 +4,12 @@ import {
 	mkdir,
 	readFile,
 	rename,
+	stat,
 	unlink,
 	writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { ProtectedDatabaseError } from "@kestrel/database";
 import { decryptText, encryptText } from "@kestrel/encryption";
 
 export interface ElectronSafeStorage {
@@ -233,6 +235,7 @@ function loadDefaultProtection(): Promise<SecretProtection> {
 
 export class CredentialBroker {
 	private readonly keyPath: string;
+	private readonly databasePath: string;
 	private readonly credentialRoot: string;
 	private readonly protection: Promise<SecretProtection>;
 	private databaseKey: Promise<Buffer> | undefined;
@@ -247,6 +250,7 @@ export class CredentialBroker {
 
 	constructor(userDataPath: string, protection?: SecretProtection) {
 		this.keyPath = join(userDataPath, "secure", "database-key.bin");
+		this.databasePath = join(userDataPath, "database", "kestrel.sqlite");
 		this.credentialRoot = join(userDataPath, "secure", "credentials");
 		this.protection = protection
 			? Promise.resolve(protection)
@@ -517,6 +521,17 @@ export class CredentialBroker {
 				return key;
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				try {
+					if ((await stat(this.databasePath)).isFile())
+						throw new ProtectedDatabaseError(
+							"Kestrel found its encrypted database, but the protected database key is missing. The existing profile will not be overwritten.",
+						);
+				} catch (databaseError) {
+					if (databaseError instanceof ProtectedDatabaseError)
+						throw databaseError;
+					if ((databaseError as NodeJS.ErrnoException).code !== "ENOENT")
+						throw databaseError;
+				}
 				const key = randomBytes(32);
 				await this.writeProtectedFile(
 					this.keyPath,

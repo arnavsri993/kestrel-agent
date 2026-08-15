@@ -81,7 +81,10 @@ import {
   developmentHeartbeatIsStale,
 } from "./single-instance";
 import { canShowMainWindow } from "./startup-window";
-import { startupRecoveryCopy } from "./startup-recovery";
+import {
+  archiveProtectedProfile,
+  startupRecoveryCopy,
+} from "./startup-recovery";
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
@@ -2361,16 +2364,53 @@ async function initializeCoreForStartup(): Promise<boolean> {
         type: "error",
         title: `${PRODUCT_IDENTITY.productName} could not start`,
         message: copy.message,
-        detail: copy.detail,
-        buttons: ["Try again", "Quit"],
-        defaultId: 0,
-        cancelId: 1,
+        detail:
+          copy.kind === "protected-database"
+            ? `${copy.detail}\n\nBackup folder: ${join(app.getPath("userData"), "recovery")}`
+            : copy.detail,
+        buttons:
+          copy.kind === "protected-database"
+            ? ["Start fresh (keep backup)", "Try again", "Quit"]
+            : ["Try again", "Quit"],
+        defaultId: copy.kind === "protected-database" ? 1 : 0,
+        cancelId: copy.kind === "protected-database" ? 2 : 1,
         noLink: true,
       };
       const result = mainWindow
         ? await dialog.showMessageBox(mainWindow, options)
         : await dialog.showMessageBox(options);
-      if (result.response !== 0) return false;
+      if (copy.kind === "protected-database" && result.response === 0) {
+        try {
+          await archiveProtectedProfile(app.getPath("userData"));
+          // The failed attempt cached the old key. A new broker is required so
+          // the first-run path creates a fresh protected key after the archive.
+          appCredentialBroker = null;
+          continue;
+        } catch (archiveCause) {
+          const detail =
+            archiveCause instanceof Error
+              ? archiveCause.message
+              : "The protected profile could not be archived.";
+          const archiveOptions: Electron.MessageBoxOptions = {
+            type: "error",
+            title: `${PRODUCT_IDENTITY.productName} could not create a backup`,
+            message: "Kestrel left the existing profile unchanged.",
+            detail: `${detail}\n\nFree disk space or close another Kestrel process, then try again.`,
+            buttons: ["Try again", "Quit"],
+            defaultId: 0,
+            cancelId: 1,
+            noLink: true,
+          };
+          const archiveResult = mainWindow
+            ? await dialog.showMessageBox(mainWindow, archiveOptions)
+            : await dialog.showMessageBox(archiveOptions);
+          if (archiveResult.response !== 0) return false;
+          continue;
+        }
+      }
+      const retryResponse = copy.kind === "protected-database" ? 1 : 0;
+      if (result.response === retryResponse) continue;
+      return false;
     }
   }
 }

@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { KestrelDatabase } from "@kestrel/database";
+import {
+	ProtectedDatabaseError,
+	type KestrelDatabase,
+} from "@kestrel/database";
 import {
 	type AgentConfigurationAuditEvent,
 	AgentConfigurationAuditEventSchema,
@@ -1439,6 +1442,10 @@ export class AgentConfigurationManager {
 			"agent.configuration.head",
 		);
 		if (versions.length === 0) {
+			if (currentId)
+				throw new ProtectedDatabaseError(
+					"Kestrel found an encrypted agent configuration history, but none of its records could be decrypted with the current profile key.",
+				);
 			const createdAt = this.now().toISOString();
 			const document = canonicalDocument(DEFAULT_AGENT_CONFIGURATION);
 			const version = AgentConfigurationVersionSchema.parse({

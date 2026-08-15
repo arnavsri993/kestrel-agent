@@ -195,6 +195,37 @@ CREATE INDEX IF NOT EXISTS idx_agent_configuration_records_kind_status
   ON agent_configuration_records(kind, status);
 `;
 
+export const PROTECTED_DATABASE_ERROR_CODE = "kestrel-protected-database";
+
+/**
+ * Signals that Kestrel found an existing encrypted profile but cannot safely
+ * decrypt it with the currently available database key.
+ *
+ * This is intentionally distinct from a first-run database. Callers may offer
+ * a non-destructive recovery choice, but must never silently replace the
+ * protected profile.
+ */
+export class ProtectedDatabaseError extends Error {
+	readonly code = PROTECTED_DATABASE_ERROR_CODE;
+
+	constructor(message: string, cause?: unknown) {
+		super(message);
+		this.name = "ProtectedDatabaseError";
+		if (cause !== undefined) this.cause = cause;
+	}
+}
+
+export function isProtectedDatabaseError(
+	error: unknown,
+): error is ProtectedDatabaseError {
+	return (
+		error instanceof ProtectedDatabaseError ||
+		(typeof error === "object" &&
+			error !== null &&
+			(error as { code?: unknown }).code === PROTECTED_DATABASE_ERROR_CODE)
+	);
+}
+
 export interface IdempotencyClaim<T = unknown> {
 	key: string;
 	ownerToken: string;
