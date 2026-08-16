@@ -3,6 +3,21 @@ import { ModelProviderError } from "./types";
 
 const MAX_PROVIDER_ERROR_BYTES = 64_000;
 
+export function parseRetryAfterMs(
+	value: string | null,
+	nowMs = Date.now(),
+): number | undefined {
+	if (!value) return undefined;
+	const normalized = value.trim();
+	if (!normalized) return undefined;
+	const seconds = Number(normalized);
+	if (Number.isFinite(seconds) && seconds >= 0)
+		return Math.trunc(seconds * 1_000);
+	const dateMs = Date.parse(normalized);
+	if (!Number.isFinite(dateMs)) return undefined;
+	return Math.max(0, dateMs - nowMs);
+}
+
 export interface ServerSentEvent {
 	event?: string;
 	data: string;
@@ -19,6 +34,8 @@ export async function readServerSentEvents(
 			providerId,
 			true,
 			response.status,
+			false,
+			parseRetryAfterMs(response.headers.get("retry-after")),
 		);
 	const reader = response.body.getReader();
 	const decoder = new TextDecoder();
@@ -56,6 +73,8 @@ export async function readNdjson(
 			providerId,
 			true,
 			response.status,
+			false,
+			parseRetryAfterMs(response.headers.get("retry-after")),
 		);
 	const reader = response.body.getReader();
 	const decoder = new TextDecoder();
@@ -116,6 +135,8 @@ export async function providerFetch(
 			providerId,
 			retryable,
 			response.status,
+			false,
+			parseRetryAfterMs(response.headers.get("retry-after")),
 		);
 	}
 	return response;

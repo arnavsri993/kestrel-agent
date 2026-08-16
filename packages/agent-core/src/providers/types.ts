@@ -118,17 +118,25 @@ export interface ModelProvider {
   close?(): Promise<void>;
 }
 
+export type ProviderAvailabilityReason =
+  | "capacity"
+  | "rate_limit"
+  | "transient"
+  | "unknown";
+
 import { KestrelError } from "@kestrel/error-handling";
 
 export class ModelProviderError extends KestrelError {
   readonly isRefusal: boolean;
+  readonly retryAfterMs?: number;
 
   constructor(
     message: string,
     readonly providerId: string,
     retryable: boolean,
     readonly status?: number,
-    isRefusal = false
+    isRefusal = false,
+    retryAfterMs?: number,
   ) {
     super({
       code: isRefusal ? "model_refusal_error" : "model_provider_error",
@@ -138,6 +146,9 @@ export class ModelProviderError extends KestrelError {
     });
     this.name = "ModelProviderError";
     this.isRefusal = isRefusal || isRefusalErrorMessage(message);
+    if (retryAfterMs !== undefined && Number.isFinite(retryAfterMs)) {
+      this.retryAfterMs = Math.max(0, Math.trunc(retryAfterMs));
+    }
   }
 }
 
