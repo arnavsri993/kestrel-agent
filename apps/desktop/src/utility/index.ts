@@ -26,7 +26,11 @@ import {
 	type ScreenshotFrame,
 	VisualValidator,
 } from "@kestrel/agent-core";
-import { KestrelDatabase } from "@kestrel/database";
+import {
+	isProtectedDatabaseError,
+	KestrelDatabase,
+	PROTECTED_DATABASE_ERROR_CODE,
+} from "@kestrel/database";
 import { CoreRequestSchema } from "@kestrel/shared-types";
 
 interface ParentPort {
@@ -420,9 +424,14 @@ port.on("message", async ({ data }) => {
 			automationTimer.unref();
 			port.postMessage({ type: "ready" });
 		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Core bootstrap failed";
 			port.postMessage({
 				type: "start-error",
-				error: error instanceof Error ? error.message : "Core bootstrap failed",
+				error: message,
+				...(isProtectedDatabaseError(error)
+					? { errorCode: PROTECTED_DATABASE_ERROR_CODE }
+					: {}),
 			});
 		}
 		return;

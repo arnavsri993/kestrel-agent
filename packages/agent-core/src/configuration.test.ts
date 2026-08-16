@@ -1,7 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { KestrelDatabase } from "@kestrel/database";
+import {
+	KestrelDatabase,
+	ProtectedDatabaseError,
+} from "@kestrel/database";
 import { createEncryptionKey, encryptText } from "@kestrel/encryption";
 import type { RuntimeToolExecution } from "@kestrel/shared-types";
 import { afterEach, describe, expect, it } from "vitest";
@@ -140,6 +143,62 @@ describe("chat configuration manager", () => {
 			action: "recovery_fallback",
 			versionId: knownGood.id,
 		});
+		database.close();
+	});
+
+	it("identifies a protected history that has no decryptable records", () => {
+		const key = createEncryptionKey();
+		const database = new KestrelDatabase(":memory:", key);
+		const manager = new AgentConfigurationManager(database);
+		const current = manager.currentVersion();
+		const wrongKey = encryptText(
+			JSON.stringify(current),
+			createEncryptionKey(),
+		);
+		database.db
+			.prepare(
+				`UPDATE agent_configuration_records
+         SET payload_ciphertext = ?, payload_iv = ?, payload_auth_tag = ?
+         WHERE id = ? AND kind = 'version'`,
+			)
+			.run(
+				wrongKey.ciphertext,
+				wrongKey.iv,
+				wrongKey.authTag,
+				current.id,
+			);
+
+		expect(() => new AgentConfigurationManager(database)).toThrowError(
+			ProtectedDatabaseError,
+		);
+		database.close();
+	});
+
+	it("does not initialize a new profile when the protected head pointer is missing", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const wrongKey = encryptText(
+			JSON.stringify({ id: "not-a-valid-configuration-version" }),
+			createEncryptionKey(),
+		);
+		database.db
+			.prepare(
+				`INSERT INTO agent_configuration_records (
+					id, kind, status, payload_ciphertext, payload_iv, payload_auth_tag,
+					created_at, updated_at
+				) VALUES (?, 'version', 'known_good', ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				"unreadable-version",
+				wrongKey.ciphertext,
+				wrongKey.iv,
+				wrongKey.authTag,
+				"2026-08-15T12:00:00.000Z",
+				"2026-08-15T12:00:00.000Z",
+			);
+
+		expect(() => new AgentConfigurationManager(database)).toThrowError(
+			ProtectedDatabaseError,
+		);
 		database.close();
 	});
 

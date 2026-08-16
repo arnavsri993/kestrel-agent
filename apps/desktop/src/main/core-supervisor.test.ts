@@ -1,4 +1,8 @@
 import { EventEmitter, once } from "node:events";
+import {
+	ProtectedDatabaseError,
+	PROTECTED_DATABASE_ERROR_CODE,
+} from "@kestrel/database";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({
@@ -230,6 +234,23 @@ describe("CoreSupervisor recovery", () => {
 		await expect(supervisor.request({ type: "snapshot" })).rejects.toThrow(
 			"Agent Core is unavailable.",
 		);
+	});
+
+	it("preserves protected-profile bootstrap failures across the utility boundary", async () => {
+		const child = new FakeCoreProcess();
+		const supervisor = new CoreSupervisor(undefined, undefined, {
+			processFactory: () => child,
+			startupTimeoutMs: 500,
+		});
+
+		const started = supervisor.start(config);
+		child.emit("message", {
+			type: "start-error",
+			error: "The encrypted profile could not be decrypted.",
+			errorCode: PROTECTED_DATABASE_ERROR_CODE,
+		});
+
+		await expect(started).rejects.toBeInstanceOf(ProtectedDatabaseError);
 	});
 
 	it("cancels a scheduled recovery when the supervisor is stopped", async () => {

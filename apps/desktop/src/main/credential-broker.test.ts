@@ -1,4 +1,5 @@
 import {
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -8,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProtectedDatabaseError } from "@kestrel/database";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	CredentialBroker,
@@ -191,6 +193,23 @@ describe("desktop credential broker", () => {
 		expect(readFileSync(keyPath, "utf8")).toBe(
 			`current:${key.toString("base64")}`,
 		);
+	});
+
+	it("does not invent a key when an existing database has lost its key file", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-missing-key-"));
+		roots.push(root);
+		mkdirSync(join(root, "database"), { recursive: true });
+		writeFileSync(join(root, "database", "kestrel.sqlite"), "encrypted profile");
+		const broker = new CredentialBroker(root, {
+			isEncryptionAvailable: () => true,
+			decryptString: async () => "unused",
+			encryptString: async () => Buffer.from("unused"),
+		});
+
+		await expect(broker.getDatabaseKey()).rejects.toBeInstanceOf(
+			ProtectedDatabaseError,
+		);
+		expect(existsSync(join(root, "secure", "database-key.bin"))).toBe(false);
 	});
 
 	it("migrates individually protected legacy credentials to the one-root-key format", async () => {

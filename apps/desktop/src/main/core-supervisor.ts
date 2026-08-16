@@ -8,6 +8,10 @@ import {
 	CoreResponseSchema,
 	RuntimeEventSchema,
 } from "@kestrel/shared-types";
+import {
+	ProtectedDatabaseError,
+	PROTECTED_DATABASE_ERROR_CODE,
+} from "@kestrel/database";
 import { utilityProcess } from "electron";
 import type { AutomationBrowserBackendWireRequest } from "./electron-browser-service";
 import type { UserBrowserBackendWireRequest } from "./user-browser-service";
@@ -363,11 +367,14 @@ export class CoreSupervisor extends EventEmitter {
 			return;
 		}
 		if (wire.type === "start-error") {
-			const error = new Error(
+			const message =
 				typeof wire.error === "string"
 					? wire.error
-					: "Agent Core reported an invalid startup error.",
-			);
+					: "Agent Core reported an invalid startup error.";
+			const error =
+				wire.errorCode === PROTECTED_DATABASE_ERROR_CODE
+					? new ProtectedDatabaseError(message)
+					: new Error(message);
 			this.settleStartup(child, error);
 			this.child = undefined;
 			this.ready = false;
