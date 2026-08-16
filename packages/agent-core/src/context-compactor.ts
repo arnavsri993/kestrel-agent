@@ -1,5 +1,6 @@
 import type { RuntimeCheckpoint, RuntimeMessage } from "@kestrel/shared-types";
 import { contentText, type ModelMessage, textContent } from "./providers";
+import { redactSensitiveContent } from "./tool-result-guardrails";
 
 export interface CompactedContext {
 	messages: ModelMessage[];
@@ -19,7 +20,11 @@ interface MessageGroup {
 function toModelMessage(message: RuntimeMessage): ModelMessage {
 	return {
 		role: message.role,
-		content: textContent(message.content),
+		content: textContent(
+			message.role === "tool"
+				? redactSensitiveContent(message.content)
+				: message.content,
+		),
 		...(message.modelToolCalls ? { toolCalls: message.modelToolCalls } : {}),
 		...(message.providerToolCallId
 			? { toolCallId: message.providerToolCallId }

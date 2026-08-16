@@ -2848,6 +2848,10 @@ export {
 	DevelopmentEmailConnector,
 } from "./connectors";
 export { type CompactedContext, ContextCompactor } from "./context-compactor";
+export {
+	modelVisibleToolResult,
+	redactSensitiveContent,
+} from "./tool-result-guardrails";
 export { PreResponseContextResolver } from "./context-resolver";
 export { DEFAULT_DREAMING_CONFIGURATION, DreamingManager } from "./dreaming";
 export {
