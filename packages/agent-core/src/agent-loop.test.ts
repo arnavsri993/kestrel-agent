@@ -76,6 +76,104 @@ describe("provider-neutral agent loop", () => {
 		database.close();
 	});
 
+	it("redacts sensitive tool output before it enters model context or history", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Tool result redaction" });
+		const openAiKey = `sk-proj-${"a".repeat(32)}`;
+		const bearerToken = "b".repeat(32);
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "test.secret-output",
+				title: "Secret output fixture",
+				description: "Return a fixture with secret-like output.",
+				category: "web",
+				riskLevel: "read_only",
+				readOnly: true,
+				requiresWorkspace: false,
+				source: "mcp",
+				tags: ["test", "untrusted"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({
+				apiKey: openAiKey,
+				pageText: `Bearer ${bearerToken}`,
+			}),
+		});
+		runtime.allowTool(session.id, "test.secret-output");
+		let calls = 0;
+		let secondRequestToolContent = "";
+		const provider: ModelProvider = {
+			id: "tool-redaction",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				if (calls === 2) {
+					secondRequestToolContent = request.messages
+						.filter((message) => message.role === "tool")
+						.map((message) => contentText(message.content))
+						.join("\n");
+				}
+				return calls === 1
+					? {
+							providerId: "tool-redaction",
+							model: request.model,
+							text: "",
+							toolCalls: [
+								{
+									id: "call-secret-output",
+									name: "test.secret-output",
+									arguments: {},
+								},
+							],
+							usage: { inputTokens: 2, outputTokens: 1 },
+							finishReason: "tool_calls",
+						}
+					: {
+							providerId: "tool-redaction",
+							model: request.model,
+							text: "The result was handled without exposing credentials.",
+							toolCalls: [],
+							usage: { inputTokens: 4, outputTokens: 5 },
+							finishReason: "stop",
+						};
+			},
+		};
+
+		await new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		).run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Read the external result."),
+		});
+
+		expect(secondRequestToolContent).not.toContain(openAiKey);
+		expect(secondRequestToolContent).not.toContain(bearerToken);
+		expect(secondRequestToolContent).toContain("[API_KEY_1]");
+		expect(secondRequestToolContent).toContain("[BEARER_TOKEN_1]");
+		const storedToolMessage = runtime
+			.listMessages(session.id)
+			.find((message) => message.role === "tool");
+		expect(storedToolMessage?.content).not.toContain(openAiKey);
+		expect(storedToolMessage?.content).not.toContain(bearerToken);
+		expect(database.listToolExecutions(session.id)[0]?.output).toEqual({
+			apiKey: openAiKey,
+			pageText: `Bearer ${bearerToken}`,
+		});
+		database.close();
+	});
+
 	it("normalizes a non-finite maximum turn setting", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
