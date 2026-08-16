@@ -78,7 +78,11 @@ export async function providerFetch(
 ): Promise<Response> {
 	let response: Response;
 	try {
-		response = await fetch(url, init);
+		// Provider requests carry protected credentials. A redirect could move
+		// those credentials to a different host, so fail closed instead of
+		// following it. Custom provider endpoints still work; their first hop is
+		// the explicit endpoint the user configured.
+		response = await fetch(url, { ...init, redirect: "error" });
 	} catch (error) {
 		if (init.signal?.aborted) throw error;
 		throw new ModelProviderError(

@@ -2,6 +2,23 @@ import { describe, expect, it } from "vitest";
 import { providerFetch } from "./http";
 
 describe("provider HTTP helpers", () => {
+	it("fails closed on redirects so provider credentials stay on the configured host", async () => {
+		let requestInit: RequestInit | undefined;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async (_input, init) => {
+			requestInit = init;
+			return new Response(null, { status: 204 });
+		};
+		try {
+			await providerFetch("fixture", "https://provider.example.test", {
+				redirect: "follow",
+			});
+			expect(requestInit?.redirect).toBe("error");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	it("bounds oversized non-success response bodies before creating provider errors", async () => {
 		let pulls = 0;
 		let cancellations = 0;
