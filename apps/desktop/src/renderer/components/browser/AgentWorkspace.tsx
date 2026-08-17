@@ -4,7 +4,7 @@ import {
 	type AgentSessionFilter,
 	agentSessionRecency,
 	agentSessionStatusLabel,
-	agentSessionsForWorkspace,
+	agentSessionTreeForWorkspace,
 	agentStateLabel,
 	agentWorkspaceName,
 } from "../../agent-workspace";
@@ -40,7 +40,7 @@ export function AgentWorkspace({
 	const [query, setQuery] = useState("");
 	const [filter, setFilter] = useState<AgentSessionFilter>("all");
 	const visibleSessions = useMemo(
-		() => agentSessionsForWorkspace(sessions, query, filter),
+		() => agentSessionTreeForWorkspace(sessions, query, filter),
 		[filter, query, sessions],
 	);
 	const openCount = sessions.filter((session) =>
@@ -56,6 +56,7 @@ export function AgentWorkspace({
 					</span>
 					<div>
 						<h1 id="agent-workspace-title">Agent Workspace</h1>
+						<p>Delegated tasks stay connected to the work that created them.</p>
 					</div>
 				</div>
 			</header>
@@ -127,15 +128,26 @@ export function AgentWorkspace({
 
 				{visibleSessions.length ? (
 					<ul className="agent-task-list">
-						{visibleSessions.map((session) => {
+						{visibleSessions.map(({ session, depth, parentTitle }) => {
 							const active = session.id === activeSessionId;
+							const workspaceName = agentWorkspaceName(session.workspaceRoot);
+							const lineage = parentTitle
+								? `Derived from ${sessionTitleForDisplay(parentTitle)} · ${workspaceName}`
+								: workspaceName;
 							return (
 								<li key={session.id}>
 									<button
 										type="button"
 										className={active ? "active" : ""}
+										style={
+											depth > 0
+												? {
+														paddingInlineStart: `calc(18px + ${depth * 24}px)`,
+													}
+												: undefined
+										}
 										aria-current={active ? "page" : undefined}
-										aria-label={`${sessionTitleForDisplay(session.title)}, ${agentSessionStatusLabel(session.status)}, ${agentWorkspaceName(session.workspaceRoot)}`}
+										aria-label={`${sessionTitleForDisplay(session.title)}, ${agentSessionStatusLabel(session.status)}, ${lineage}`}
 										onClick={() => onOpenSession(session.id)}
 									>
 										<span
@@ -144,7 +156,7 @@ export function AgentWorkspace({
 										/>
 										<span className="agent-task-copy">
 											<strong>{sessionTitleForDisplay(session.title)}</strong>
-											<small>{agentWorkspaceName(session.workspaceRoot)}</small>
+											<small>{lineage}</small>
 										</span>
 										<span className="agent-task-meta">
 											<strong>{agentSessionStatusLabel(session.status)}</strong>

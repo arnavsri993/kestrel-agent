@@ -6,6 +6,12 @@ import type {
 
 export type AgentSessionFilter = "all" | "open" | "done";
 
+export interface AgentSessionTreeItem {
+	session: RuntimeSession;
+	depth: number;
+	parentTitle?: string;
+}
+
 const OPEN_SESSION_STATUSES = new Set<RuntimeSessionStatus>([
 	"active",
 	"waiting",
@@ -81,4 +87,54 @@ export function agentSessionsForWorkspace(
 				.includes(needle);
 		})
 		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+/**
+ * Keep delegated work beside the task that created it without trusting the
+ * persisted graph to be complete or acyclic. Missing parents become roots and
+ * corrupt cycles are rendered once rather than hiding a task.
+ */
+export function agentSessionTreeForWorkspace(
+	sessions: RuntimeSession[],
+	query: string,
+	filter: AgentSessionFilter,
+): AgentSessionTreeItem[] {
+	const visible = agentSessionsForWorkspace(sessions, query, filter);
+	const visibleIds = new Set(visible.map((session) => session.id));
+	const byId = new Map(sessions.map((session) => [session.id, session]));
+	const children = new Map<string, RuntimeSession[]>();
+	for (const session of visible) {
+		if (!session.parentSessionId || !visibleIds.has(session.parentSessionId))
+			continue;
+		const siblings = children.get(session.parentSessionId) ?? [];
+		siblings.push(session);
+		children.set(session.parentSessionId, siblings);
+	}
+	for (const siblings of children.values())
+		siblings.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+	const tree: AgentSessionTreeItem[] = [];
+	const visited = new Set<string>();
+	const visit = (session: RuntimeSession, depth: number, path: Set<string>) => {
+		if (visited.has(session.id) || path.has(session.id)) return;
+		visited.add(session.id);
+		const parent = session.parentSessionId
+			? byId.get(session.parentSessionId)
+			: undefined;
+		tree.push({
+			session,
+			depth,
+			...(parent ? { parentTitle: parent.title } : {}),
+		});
+		const nextPath = new Set(path).add(session.id);
+		for (const child of children.get(session.id) ?? [])
+			visit(child, Math.min(depth + 1, 3), nextPath);
+	};
+
+	for (const session of visible) {
+		if (!session.parentSessionId || !visibleIds.has(session.parentSessionId))
+			visit(session, 0, new Set());
+	}
+	for (const session of visible) visit(session, 0, new Set());
+	return tree;
 }
