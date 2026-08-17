@@ -3783,4 +3783,376 @@ body:has(.ai-browser-app),
 	background: color-mix(in srgb, #ea4335 12%, transparent);
 }
 
+/* Persistent agent ledger: keep ownership and outcomes visible without
+ * turning the browser-side rail into a dashboard. */
+.agent-session-context {
+	min-width: 0;
+	display: grid;
+	gap: 7px;
+	margin-top: 12px;
+	padding: 11px 10px 10px;
+	border: 1px solid color-mix(in srgb, var(--line-strong) 82%, transparent);
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--surface) 58%, transparent);
+}
 
+.agent-session-context.state-working,
+.agent-session-context.state-observing,
+.agent-session-context.state-updating {
+	border-color: color-mix(in srgb, var(--signal) 34%, var(--line));
+}
+
+.agent-session-context.state-waiting_approval,
+.agent-session-context.state-paused {
+	border-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+}
+
+.agent-session-context.state-error,
+.agent-session-context.state-offline {
+	border-color: color-mix(in srgb, var(--danger) 38%, var(--line));
+}
+
+.agent-session-context-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.agent-session-eyebrow,
+.runtime-section-label {
+	color: var(--faint);
+	font-size: 9px;
+	font-weight: 650;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.agent-state-chip {
+	min-width: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--muted);
+	font-size: 9px;
+	font-weight: 620;
+	white-space: nowrap;
+}
+
+.agent-state-chip .agent-dot {
+	width: 6px;
+	height: 6px;
+}
+
+.agent-session-title {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--ink);
+	font-size: 13px;
+	font-weight: 640;
+	line-height: 1.25;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-session-context-line {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 1.35;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-next-action {
+	min-width: 0;
+	display: grid;
+	grid-template-columns: 13px minmax(0, 1fr);
+	align-items: center;
+	gap: 6px;
+	margin-top: 2px;
+	padding-top: 7px;
+	border-top: 1px solid var(--line);
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 1.35;
+}
+
+.agent-next-action svg {
+	width: 13px;
+	height: 13px;
+	color: var(--signal);
+}
+
+.agent-session-context.state-waiting_approval .agent-next-action svg,
+.agent-session-context.state-paused .agent-next-action svg {
+	color: var(--warning);
+}
+
+.agent-session-context.state-error .agent-next-action svg,
+.agent-session-context.state-offline .agent-next-action svg {
+	color: var(--danger-ink);
+}
+
+.agent-conversation-host .runtime-current-action {
+	min-width: 0;
+	margin: 0 0 14px;
+	padding: 10px;
+	border: 1px solid color-mix(in srgb, var(--signal) 28%, var(--line));
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--signal) 7%, var(--panel));
+}
+
+.runtime-current-action-header {
+	display: grid;
+	grid-template-columns: 22px minmax(0, 1fr);
+	gap: 8px;
+	align-items: start;
+}
+
+.runtime-current-action-copy {
+	min-width: 0;
+	display: grid;
+	gap: 2px;
+}
+
+.runtime-current-action-copy strong {
+	overflow-wrap: anywhere;
+	color: var(--ink);
+	font-size: 11px;
+	font-weight: 640;
+	line-height: 1.35;
+}
+
+.runtime-current-action-copy small {
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 1.35;
+}
+
+.agent-conversation-host .runtime-current-action .assistant-avatar {
+	width: 22px;
+	height: 22px;
+}
+
+.agent-conversation-host .runtime-stream-preview {
+	max-height: 120px;
+	margin: 9px 0 0 30px;
+	padding-top: 9px;
+	border-top: 1px solid color-mix(in srgb, var(--signal) 18%, var(--line));
+	overflow: auto;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.agent-conversation-host .runtime-activity {
+	margin: 0 0 14px;
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+}
+
+.agent-conversation-host .runtime-activity > summary {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-height: 31px;
+	padding: 0 3px;
+	color: var(--muted);
+	cursor: pointer;
+	font-size: 10px;
+	font-weight: 620;
+	list-style: none;
+}
+
+.agent-conversation-host .runtime-activity > summary::-webkit-details-marker {
+	display: none;
+}
+
+.agent-conversation-host .runtime-activity > summary::after {
+	content: "+";
+	color: var(--faint);
+	font-size: 13px;
+	font-weight: 400;
+}
+
+.agent-conversation-host .runtime-activity[open] > summary::after {
+	content: "−";
+}
+
+.agent-conversation-host .runtime-activity > summary small {
+	margin-left: auto;
+	color: var(--faint);
+	font-size: 9px;
+	font-weight: 500;
+}
+
+.agent-conversation-host .runtime-activity-list {
+	padding: 2px 0 7px;
+}
+
+.agent-conversation-host .runtime-activity-list .work-summary {
+	margin: 0;
+	padding: 6px 3px;
+	border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+	font-size: 9px;
+	line-height: 1.4;
+}
+
+.agent-conversation-host .runtime-activity-list .work-summary span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.agent-conversation-host .runtime-approval-owner {
+	display: block;
+	margin-top: 5px;
+	color: var(--warning);
+	font-size: 10px;
+	line-height: 1.4;
+}
+
+.agent-conversation-host .runtime-outcome {
+	min-width: 0;
+	display: grid;
+	grid-template-columns: 24px minmax(0, 1fr);
+	align-items: start;
+	gap: 9px;
+	margin: 12px 0 14px;
+	padding: 10px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--surface) 74%, var(--panel));
+}
+
+.agent-conversation-host .runtime-outcome-completed {
+	border-color: color-mix(in srgb, var(--healthy) 32%, var(--line));
+}
+
+.agent-conversation-host .runtime-outcome-failed {
+	border-color: color-mix(in srgb, var(--danger) 42%, var(--line));
+	background: color-mix(in srgb, var(--danger-soft) 42%, var(--panel));
+}
+
+.agent-conversation-host .runtime-outcome-cancelled {
+	border-color: color-mix(in srgb, var(--warning) 34%, var(--line));
+}
+
+.runtime-outcome-icon {
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 7px;
+	background: var(--status-soft);
+	color: var(--status-ink);
+}
+
+.runtime-outcome-failed .runtime-outcome-icon {
+	background: var(--danger-soft);
+	color: var(--danger-ink);
+}
+
+.runtime-outcome-cancelled .runtime-outcome-icon {
+	background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+	color: var(--warning);
+}
+
+.runtime-outcome-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.runtime-outcome-copy {
+	min-width: 0;
+}
+
+.runtime-outcome-copy strong {
+	font-size: 11px;
+	font-weight: 650;
+}
+
+.runtime-outcome-copy p {
+	margin: 3px 0 0;
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+.agent-conversation-host .runtime-outcome > .button {
+	grid-column: 2;
+	justify-self: start;
+	min-width: 0;
+	margin-top: 1px;
+}
+
+.agent-conversation-host .task-settings-panel {
+	box-sizing: border-box;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.agent-conversation-host .task-settings {
+	position: static;
+}
+
+.agent-conversation-host .task-settings-panel {
+	left: auto;
+	right: 0;
+	bottom: 42px;
+	width: min(340px, 100%);
+}
+
+.agent-conversation-host .runtime-task-controls {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.agent-conversation-host .runtime-task-controls > p {
+	grid-column: auto;
+}
+
+.agent-conversation-host .workflow-memory-action {
+	align-items: stretch;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.agent-conversation-host .workflow-memory-action .button {
+	width: 100%;
+}
+
+@media (max-width: 980px) {
+	.agent-session-context {
+		padding: 10px 9px 9px;
+	}
+
+	.agent-session-title {
+		font-size: 12px;
+	}
+}
+
+@media (max-height: 720px) {
+	.agent-session-context {
+		gap: 5px;
+		margin-top: 8px;
+		padding-block: 8px;
+	}
+
+	.agent-session-context-line,
+	.agent-next-action {
+		font-size: 9px;
+	}
+}
+
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+	.agent-session-context,
+	.agent-conversation-host .runtime-current-action,
+	.agent-conversation-host .runtime-outcome {
+		background: var(--panel);
+	}
+}

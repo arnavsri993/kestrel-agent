@@ -4,6 +4,28 @@ import { Brand } from "./Brand";
 import { Icon } from "../Icon";
 import { sessionTitleForDisplay } from "../../chat-title";
 
+const agentStateMeta: Record<
+	AgentState,
+	{ label: string; nextAction: string }
+> = {
+	idle: { label: "Ready", nextAction: "Ready for your next task" },
+	observing: { label: "Reading", nextAction: "Kestrel is gathering context" },
+	working: { label: "Working", nextAction: "Kestrel is working on the task" },
+	waiting_approval: {
+		label: "Needs approval",
+		nextAction: "Your decision is needed",
+	},
+	paused: { label: "Paused", nextAction: "Waiting for the next safe step" },
+	offline: { label: "Offline", nextAction: "Check the connection before continuing" },
+	error: { label: "Needs recovery", nextAction: "Retry or adjust the task" },
+	updating: { label: "Updating", nextAction: "Kestrel is applying an update" },
+};
+
+function shortWorkspaceName(workspaceRoot?: string) {
+	if (!workspaceRoot) return "Conversation only";
+	return workspaceRoot.split("/").filter(Boolean).at(-1) ?? workspaceRoot;
+}
+
 export function AgentSidebar({
   children,
   sessions,
@@ -50,10 +72,18 @@ export function AgentSidebar({
     };
   }, [historyOpen]);
 
-  const sortedSessions = [...sessions].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  );
-  return (
+	const sortedSessions = [...sessions].sort((left, right) =>
+		right.updatedAt.localeCompare(left.updatedAt),
+	);
+	const activeSession = sessions.find((session) => session.id === activeSessionId);
+	const stateMeta = agentStateMeta[agentState];
+	const currentTaskTitle = activeSession
+		? sessionTitleForDisplay(activeSession.title)
+		: "New task";
+	const currentTaskContext = activeSession
+		? `${shortWorkspaceName(activeSession.workspaceRoot)} · ${activeTab?.title ?? "No page open"}`
+		: `Conversation only · ${activeTab?.title ?? "No page open"}`;
+	return (
     <aside
       className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}`}
       aria-label={`${agentName} agent`}
@@ -112,9 +142,31 @@ export function AgentSidebar({
         </div>
         <div className="agent-browser-context" title={activeTab?.url || "No page open"}>
           <Icon name="context" />
-          <span><strong>{activeTab?.url ? activeTab.title : "No page open"}</strong></span>
+          <span>
+            <small>Browser context</small>
+            <strong>{activeTab?.url ? activeTab.title : "No page open"}</strong>
+          </span>
         </div>
-        <section className="agent-sidebar-history" aria-label="Recent">
+        <section className={`agent-session-context state-${agentState}`} aria-label="Current task and agent state">
+          <div className="agent-session-context-header">
+            <span className="agent-session-eyebrow">Current task</span>
+            <span className={`agent-state-chip ${agentState}`}>
+              <span className={`agent-dot ${agentState}`} />
+              {stateMeta.label}
+            </span>
+          </div>
+          <strong className="agent-session-title" title={currentTaskTitle}>
+            {currentTaskTitle}
+          </strong>
+          <span className="agent-session-context-line" title={currentTaskContext}>
+            {currentTaskContext}
+          </span>
+          <div className="agent-next-action">
+            <Icon name={agentState === "waiting_approval" ? "warning" : "arrow"} />
+            <span>{stateMeta.nextAction}</span>
+          </div>
+	        </section>
+	        <section className="agent-sidebar-history" aria-label="Recent">
           <div className="agent-sidebar-section-heading">
             <span>Recent</span>
             <button
@@ -174,7 +226,7 @@ export function AgentSidebar({
         </nav>
         <div className="agent-quiet-status" role="status">
           <span className={`agent-dot ${agentState}`} />
-          <span>{agentState === "waiting_approval" ? "Needs approval" : agentState === "working" ? "Working" : "Ready"}</span>
+          <span>{stateMeta.label}</span>
         </div>
       </div>
     </aside>

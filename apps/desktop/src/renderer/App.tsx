@@ -3742,6 +3742,37 @@ function RuntimeConversation({
 	);
 	const activeSessionBusy = runScope === "active";
 	const backgroundSessionBusy = runScope === "background";
+	const visibleToolActivity = configurationUi.showToolActivity
+		? toolActivity.filter(
+				(event) =>
+					!String(event.payload.toolName ?? "").startsWith("agent.config."),
+			  )
+		: [];
+	const latestToolEvent = toolActivity.at(-1);
+	const currentAction = latestToolEvent
+		? String(
+				latestToolEvent.payload.toolName ??
+					latestToolEvent.executionId ??
+					"Tool activity",
+		  )
+		: streamText
+			? "Drafting a response"
+			: "Starting the task";
+	const currentActionDetail = latestToolEvent
+		? latestToolEvent.type === "tool.progress"
+			? "Progress update received"
+			: latestToolEvent.type === "tool.completed"
+				? "Tool result received"
+				: "Tool started"
+		: "Kestrel is working in this chat.";
+	const latestOutcome =
+		!busy &&
+		!pending &&
+		(latestRun?.status === "completed" ||
+			latestRun?.status === "cancelled" ||
+			latestRun?.status === "failed")
+			? latestRun.status
+			: null;
 	const emptySession = Boolean(
 		activeSessionId &&
 			visibleMessages.length === 0 &&
@@ -3880,41 +3911,52 @@ function RuntimeConversation({
 						</div>
 					))}
 					{activeSessionBusy && (
-						<div className="assistant-message">
-							<span className="assistant-avatar">K</span>
-							<div>
-								<p className={streamText ? "" : "thinking"}>
-									{streamText || "Working…"}
-								</p>
+						<div
+							className="runtime-current-action"
+							role="status"
+							aria-live="polite"
+						>
+							<div className="runtime-current-action-header">
+								<span className="assistant-avatar">K</span>
+								<div className="runtime-current-action-copy">
+									<span className="runtime-section-label">Current action</span>
+									<strong>{currentAction}</strong>
+									<small>{currentActionDetail}</small>
+								</div>
 							</div>
+							{streamText && (
+								<p className="runtime-stream-preview">{streamText}</p>
+							)}
 						</div>
 					)}
-					{configurationUi.showToolActivity &&
-						toolActivity
-							.filter(
-								(event) =>
-									!String(event.payload.toolName ?? "").startsWith(
-										"agent.config.",
-									),
-							)
-							.map((event) => (
-								<div className="work-summary" key={event.id}>
-									<Icon
-										name={event.type === "tool.completed" ? "check" : "arrow"}
-									/>
-									<span>
-										{event.type.replace("tool.", "Tool ")} ·{" "}
-										{String(
-											event.payload.toolName ??
-												event.executionId ??
+					{visibleToolActivity.length > 0 && (
+						<details className="runtime-activity">
+							<summary>
+								<span>Recent activity</span>
+								<small>{visibleToolActivity.length} updates</small>
+							</summary>
+							<div className="runtime-activity-list">
+								{visibleToolActivity.map((event) => (
+									<div className="work-summary" key={event.id}>
+										<Icon
+											name={event.type === "tool.completed" ? "check" : "arrow"}
+										/>
+										<span>
+											{event.type.replace("tool.", "Tool ")} ·{" "}
+											{String(
+												event.payload.toolName ??
+													event.executionId ??
 												"execution",
-										)}
-										{event.type === "tool.progress"
-											? ` · ${JSON.stringify(event.payload)}`
-											: ""}
-									</span>
-								</div>
-							))}
+											)}
+											{event.type === "tool.progress"
+												? ` · ${JSON.stringify(event.payload)}`
+												: ""}
+										</span>
+									</div>
+								))}
+							</div>
+						</details>
+					)}
 					{pending && !busy && (
 						<div className="assistant-message approval-message">
 							<span className="assistant-avatar">!</span>
@@ -3925,6 +3967,9 @@ function RuntimeConversation({
 										: "Approval required"}{" "}
 									· {pending.execution.riskLevel.replaceAll("_", " ")}
 								</strong>
+								<small className="runtime-approval-owner">
+									Your decision is required before Kestrel can continue.
+								</small>
 								<p>{pending.execution.toolName}</p>
 								{typeof pending.execution.output?.preview === "string" && (
 									<pre className="approval-preview">
@@ -3971,6 +4016,54 @@ function RuntimeConversation({
 									</button>
 								</div>
 							</div>
+						</div>
+					)}
+					{latestOutcome && (
+						<div
+							className={`runtime-outcome runtime-outcome-${latestOutcome}`}
+							role="status"
+						>
+							<div className="runtime-outcome-icon">
+								<Icon
+									name={
+										latestOutcome === "completed"
+											? "check"
+											: latestOutcome === "failed"
+												? "warning"
+												: "pause"
+										}
+								/>
+							</div>
+							<div className="runtime-outcome-copy">
+								<strong>
+									{latestOutcome === "completed"
+										? "Task complete"
+										: latestOutcome === "failed"
+											? "Task needs recovery"
+											: "Task cancelled"}
+								</strong>
+								<p>
+									{latestOutcome === "completed"
+										? "Kestrel finished this run. Continue with another message when you are ready."
+										: latestOutcome === "failed"
+											? error ||
+												"The last run did not complete. Review the task context, then retry when ready."
+											: "The run was cancelled before it completed. You can continue this chat or start a new task."}
+								</p>
+							</div>
+							{latestOutcome === "failed" && (
+								<button
+									type="button"
+									className="button secondary"
+									disabled={
+										!executionReady ||
+										visibleMessages.every((message) => message.role !== "user")
+									}
+									onClick={() => void retryLastTurn()}
+								>
+									Retry last turn
+								</button>
+							)}
 						</div>
 					)}
 					{latestRun?.status === "completed" &&
@@ -4246,7 +4339,7 @@ function RuntimeConversation({
 						)}
 					</div>
 				</form>
-				{error && (
+				{error && !latestOutcome && (
 					<p className="chat-error" role="alert">
 						{error}
 					</p>
