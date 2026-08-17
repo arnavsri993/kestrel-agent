@@ -7965,12 +7965,12 @@ function Settings({
 							<div className="agent-config-banner-header">
 								<span className="agent-config-badge">
 									<Icon name="agent" />
-									<span>Agent Configurable</span>
+									<span>Ask in chat</span>
 								</span>
-								<strong>Everything in Kestrel is configurable through conversation</strong>
+								<strong>Ask Kestrel to change supported settings</strong>
 							</div>
 							<p>
-								You can customize browser privacy, default search, theme skins, desktop pets, chat density, workflows, and permissions simply by asking Kestrel in the sidebar.
+								Request a setting change in the sidebar. Kestrel shows the proposed change and waits for approval before applying it.
 							</p>
 							<div className="agent-config-chips" aria-label="Sample configuration requests">
 								<span className="chips-label">Try asking:</span>
@@ -7978,7 +7978,7 @@ function Settings({
 									"Set search engine to Google",
 									"Switch theme skin to Meadow",
 									"Make chat density compact",
-									"Enable tracker and ad blocking",
+									"Use vertical tabs",
 									"Turn off desktop pet",
 								].map((prompt) => (
 									<button

@@ -16,7 +16,7 @@ import { SurfaceBackButton } from "./SurfaceBackButton";
 const filters: Array<{ id: AgentSessionFilter; label: string }> = [
 	{ id: "all", label: "All" },
 	{ id: "open", label: "Open" },
-	{ id: "done", label: "Done" },
+	{ id: "done", label: "Completed" },
 ];
 
 export function AgentWorkspace({
@@ -80,11 +80,12 @@ export function AgentWorkspace({
 				<button type="button" onClick={onOpenApprovals}>
 					<Icon name="approvals" />
 					<span>
-						<strong>
+						<strong>Approvals</strong>
+						<small>
 							{pendingApprovals
-								? `${pendingApprovals} approval${pendingApprovals === 1 ? "" : "s"}`
-								: "No approvals"}
-						</strong>
+								? `${pendingApprovals} pending`
+								: "None pending"}
+						</small>
 					</span>
 					<Icon name="chevron" />
 				</button>
@@ -92,6 +93,7 @@ export function AgentWorkspace({
 					<Icon name="work" />
 					<span>
 						<strong>Work</strong>
+						<small>Goals and runs</small>
 					</span>
 					<Icon name="chevron" />
 				</button>

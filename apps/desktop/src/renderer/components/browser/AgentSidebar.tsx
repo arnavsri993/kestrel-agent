@@ -81,8 +81,8 @@ export function AgentSidebar({
 		? sessionTitleForDisplay(activeSession.title)
 		: "New task";
 	const currentTaskContext = activeSession
-		? `${shortWorkspaceName(activeSession.workspaceRoot)} · ${activeTab?.title ?? "No page open"}`
-		: `Conversation only · ${activeTab?.title ?? "No page open"}`;
+		? shortWorkspaceName(activeSession.workspaceRoot)
+		: "Conversation only";
 	return (
     <aside
       className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}`}
@@ -115,7 +115,7 @@ export function AgentSidebar({
           </button>
           {historyOpen && (
             <div className="agent-history-popover" aria-label="Task history">
-              <header><strong>Tasks</strong></header>
+              <header><strong>Task history</strong></header>
               {sortedSessions.length === 0 ? (
                 <p>No tasks yet.</p>
               ) : (
@@ -169,15 +169,6 @@ export function AgentSidebar({
 	        <section className="agent-sidebar-history" aria-label="Recent">
           <div className="agent-sidebar-section-heading">
             <span>Recent</span>
-            <button
-              type="button"
-              aria-label="Open task history"
-              aria-expanded={historyOpen}
-              onClick={() => setHistoryOpen((open) => !open)}
-            >
-              <Icon name="history" />
-              <span>All</span>
-            </button>
           </div>
           {sortedSessions.length > 0 ? (
             <div className="agent-sidebar-history-list">
@@ -195,7 +186,7 @@ export function AgentSidebar({
               ))}
             </div>
           ) : (
-            <p>No recent chats</p>
+            <p>No recent tasks</p>
           )}
         </section>
       </div>

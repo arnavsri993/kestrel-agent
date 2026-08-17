@@ -10,6 +10,16 @@ function compactBytes(value: number): string {
 	return `${value} B`;
 }
 
+function downloadStatusLabel(status: string): string {
+	return {
+		completed: "Completed",
+		cancelled: "Cancelled",
+		failed: "Failed",
+		interrupted: "Interrupted",
+		progressing: "Downloading",
+	}[status] ?? status;
+}
+
 export function BrowserHistory({
 	browser,
 	onOpenBrowser,
@@ -45,7 +55,7 @@ export function BrowserHistory({
 					<span className="library-icon">
 						<Icon name="history" />
 					</span>
-					<h1 id="history-title">History</h1>
+					<h1 id="history-title">Pages you visited</h1>
 				</div>
 				<label>
 					<Icon name="search" />
@@ -62,7 +72,7 @@ export function BrowserHistory({
 						className="quiet-link"
 						onClick={() => void browser.clearHistory()}
 					>
-						Clear
+						Clear browsing history
 					</button>
 				)}
 			</header>
@@ -114,7 +124,7 @@ export function BrowserDownloads({
 					<span className="library-icon">
 						<Icon name="downloads" />
 					</span>
-					<h1 id="downloads-title">Downloads</h1>
+					<h1 id="downloads-title">Files from the web</h1>
 				</div>
 			</header>
 			{downloads.length === 0 ? (
@@ -151,8 +161,8 @@ export function BrowserDownloads({
 									<strong>{download.filename}</strong>
 									<small>
 										{download.status === "progressing"
-											? `${progress}% · ${compactBytes(download.receivedBytes)}`
-											: `${download.status} · ${compactBytes(download.receivedBytes)}`}
+											? `Downloading · ${progress}% · ${compactBytes(download.receivedBytes)}`
+											: `${downloadStatusLabel(download.status)} · ${compactBytes(download.receivedBytes)}`}
 									</small>
 									{download.status === "progressing" && (
 										<progress

@@ -719,7 +719,7 @@ export function BrowserSettings({
             onClick={() => void browser.clearHistory()}
             disabled={!browser.state?.history.length}
           >
-            Clear history
+            Clear browsing history
           </button>
         </div>
       </section>
@@ -764,6 +764,7 @@ export function NewTabPersonalization({
               />
               <span>
                 <strong>{option.label}</strong>
+                <small>{option.detail}</small>
               </span>
             </button>
           ))}
