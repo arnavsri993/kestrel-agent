@@ -97,6 +97,7 @@ import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
 import { applySkin } from "./components/SkinSettings";
+import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import {
 	memoryInGb,
@@ -7715,6 +7716,7 @@ function Settings({
 	browser,
 	browserContextEnabled,
 	onToggleBrowserContext,
+	onBack,
 }: {
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
@@ -7726,6 +7728,7 @@ function Settings({
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
+	onBack(): void;
 }) {
 	const [login, setLogin] = useState<{
 		enabled: boolean;
@@ -7921,7 +7924,7 @@ function Settings({
 		["advanced", "Advanced System", "Diagnostics and organization"],
 	] as const;
 	return (
-		<PageFrame title="Preferences">
+		<PageFrame title="Preferences" onBack={onBack}>
 			<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
 					<div className="settings-nav-category-header">
@@ -8383,15 +8386,18 @@ function PageFrame({
 	eyebrow,
 	title,
 	text,
+	onBack,
 	children,
 }: {
 	eyebrow?: string;
 	title: string;
 	text?: string;
+	onBack?(): void;
 	children: ReactNode;
 }) {
 	return (
 		<div className="page-frame">
+			{onBack && <SurfaceBackButton onBack={onBack} />}
 			<header className="page-header">
 				{eyebrow && <span className="eyebrow">{eyebrow}</span>}
 				<h1>{title}</h1>
@@ -9028,17 +9034,25 @@ export function App() {
 							onOpenSession={openRuntimeSession}
 							onOpenApprovals={() => navigate("approvals")}
 							onOpenWork={() => navigate("work")}
+							onBack={openBrowser}
 						/>
 					)}
 					{page === "history" && (
-						<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
+						<BrowserHistory
+							browser={browser}
+							onOpenBrowser={openBrowser}
+							onBack={openBrowser}
+						/>
 					)}
-					{page === "downloads" && <BrowserDownloads browser={browser} />}
+					{page === "downloads" && (
+						<BrowserDownloads browser={browser} onBack={openBrowser} />
+					)}
 					{page === "commands" && (
 						<CommandCenter
 							destinations={commandDestinations}
 							onSelect={navigate}
 							onClose={closeCommandCenter}
+							onBack={openBrowser}
 						/>
 					)}
 					{page === "settings" && (
@@ -9056,6 +9070,7 @@ export function App() {
 								browser={browser}
 								browserContextEnabled={browserContextEnabled}
 								onToggleBrowserContext={toggleBrowserContext}
+								onBack={openBrowser}
 							/>
 						</div>
 					)}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../Icon";
+import { SurfaceBackButton } from "./SurfaceBackButton";
 
 export interface CommandDestination {
 	id: string;
@@ -13,10 +14,12 @@ export function CommandCenter({
 	destinations,
 	onSelect,
 	onClose,
+	onBack,
 }: {
 	destinations: CommandDestination[];
 	onSelect(destination: string): void;
 	onClose(): void;
+	onBack(): void;
 }) {
 	const [query, setQuery] = useState("");
 	const visible = useMemo(() => {
@@ -42,6 +45,7 @@ export function CommandCenter({
 	return (
 		<main className="command-center" aria-labelledby="command-center-title">
 			<header>
+				<SurfaceBackButton onBack={onBack} />
 				<span className="command-mark">
 					<Icon name="command" />
 				</span>

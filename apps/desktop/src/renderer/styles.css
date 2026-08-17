@@ -8861,6 +8861,10 @@ select {
 	padding: 44px 0 72px;
 }
 
+.unified-ui .page-frame > .surface-back-button {
+	margin-bottom: 18px;
+}
+
 .unified-ui .event-applications-page {
 	max-width: none;
 }
@@ -9280,5 +9284,4 @@ select {
 	transform: translateY(-1px);
 	box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
 }
-
 

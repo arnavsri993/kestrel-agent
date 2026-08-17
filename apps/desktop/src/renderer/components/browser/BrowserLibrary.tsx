@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { Icon } from "../Icon";
+import { SurfaceBackButton } from "./SurfaceBackButton";
 
 function compactBytes(value: number): string {
 	if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
@@ -12,9 +13,11 @@ function compactBytes(value: number): string {
 export function BrowserHistory({
 	browser,
 	onOpenBrowser,
+	onBack,
 }: {
 	browser: UserBrowserController;
 	onOpenBrowser(): void;
+	onBack(): void;
 }) {
 	const [query, setQuery] = useState("");
 	const history = browser.state?.history ?? [];
@@ -38,6 +41,7 @@ export function BrowserHistory({
 		<main className="browser-library" aria-labelledby="history-title">
 			<header>
 				<div>
+					<SurfaceBackButton onBack={onBack} />
 					<span className="library-icon">
 						<Icon name="history" />
 					</span>
@@ -96,14 +100,17 @@ export function BrowserHistory({
 
 export function BrowserDownloads({
 	browser,
+	onBack,
 }: {
 	browser: UserBrowserController;
+	onBack(): void;
 }) {
 	const downloads = [...(browser.state?.downloads ?? [])].reverse();
 	return (
 		<main className="browser-library" aria-labelledby="downloads-title">
 			<header>
 				<div>
+					<SurfaceBackButton onBack={onBack} />
 					<span className="library-icon">
 						<Icon name="downloads" />
 					</span>
