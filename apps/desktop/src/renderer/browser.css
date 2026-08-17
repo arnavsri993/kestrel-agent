@@ -3790,10 +3790,11 @@ body:has(.ai-browser-app),
 	display: grid;
 	gap: 7px;
 	margin-top: 12px;
-	padding: 11px 10px 10px;
+	padding: 14px 13px 12px;
 	border: 1px solid color-mix(in srgb, var(--line-strong) 82%, transparent);
-	border-radius: 11px;
-	background: color-mix(in srgb, var(--surface) 58%, transparent);
+	border-radius: 14px;
+	background: color-mix(in srgb, var(--surface) 78%, var(--sidebar));
+	box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035);
 }
 
 .agent-session-context.state-working,
@@ -3833,8 +3834,12 @@ body:has(.ai-browser-app),
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
+	padding: 4px 7px;
+	border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--signal) 9%, transparent);
 	color: var(--muted);
-	font-size: 9px;
+	font-size: 10px;
 	font-weight: 620;
 	white-space: nowrap;
 }
@@ -3848,7 +3853,7 @@ body:has(.ai-browser-app),
 	min-width: 0;
 	overflow: hidden;
 	color: var(--ink);
-	font-size: 13px;
+	font-size: 16px;
 	font-weight: 640;
 	line-height: 1.25;
 	text-overflow: ellipsis;
@@ -3859,7 +3864,7 @@ body:has(.ai-browser-app),
 	min-width: 0;
 	overflow: hidden;
 	color: var(--muted);
-	font-size: 10px;
+	font-size: 11px;
 	line-height: 1.35;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -3871,11 +3876,13 @@ body:has(.ai-browser-app),
 	grid-template-columns: 13px minmax(0, 1fr);
 	align-items: center;
 	gap: 6px;
-	margin-top: 2px;
-	padding-top: 7px;
-	border-top: 1px solid var(--line);
+	margin-top: 5px;
+	padding: 9px 10px;
+	border: 1px solid color-mix(in srgb, var(--signal) 18%, var(--line));
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--signal) 7%, transparent);
 	color: var(--muted);
-	font-size: 10px;
+	font-size: 11px;
 	line-height: 1.35;
 }
 
@@ -3902,6 +3909,49 @@ body:has(.ai-browser-app),
 	border: 1px solid color-mix(in srgb, var(--signal) 28%, var(--line));
 	border-radius: 10px;
 	background: color-mix(in srgb, var(--signal) 7%, var(--panel));
+}
+
+.agent-conversation-host .conversation-view {
+	align-items: stretch;
+}
+
+.agent-conversation-host .new-task-center,
+.agent-conversation-host .runtime-new-composer,
+.agent-conversation-host .thread-composer {
+	justify-self: stretch;
+}
+
+.agent-conversation-host .new-task-center h1 {
+	font-size: 22px;
+	letter-spacing: -0.035em;
+}
+
+.agent-conversation-host .runtime-suggestions {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 8px;
+	margin-top: 16px;
+	border-top: 0;
+}
+
+.agent-conversation-host .runtime-suggestions button {
+	justify-content: space-between;
+	min-width: 0;
+	min-height: 58px;
+	padding: 11px 10px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--surface) 72%, transparent);
+	text-align: left;
+}
+
+.agent-conversation-host .runtime-suggestions button:hover {
+	border-color: var(--line-strong);
+	background: color-mix(in srgb, var(--signal) 8%, var(--surface));
+}
+
+.agent-conversation-host .runtime-suggestions strong {
+	line-height: 1.25;
 }
 
 .runtime-current-action-header {
@@ -4128,11 +4178,11 @@ body:has(.ai-browser-app),
 
 @media (max-width: 980px) {
 	.agent-session-context {
-		padding: 10px 9px 9px;
+		padding: 12px 11px 11px;
 	}
 
 	.agent-session-title {
-		font-size: 12px;
+		font-size: 15px;
 	}
 }
 
