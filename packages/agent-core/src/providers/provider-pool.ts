@@ -1,8 +1,10 @@
-import type {
-	ModelCallOptions,
-	ModelProvider,
-	ModelRequest,
-	ModelResult,
+import {
+	ModelProviderError,
+	type ModelCallOptions,
+	type ModelProvider,
+	type ModelRequest,
+	type ModelResult,
+	type ProviderAvailabilityReason,
 } from "./types";
 
 const DEFAULT_HEALTH_BACKOFF_MS = 30_000;
@@ -30,6 +32,7 @@ export interface ProviderHealth {
 	consecutiveFailures: number;
 	averageLatencyMs: number;
 	unhealthyUntil?: string;
+	unhealthyReason?: ProviderAvailabilityReason;
 }
 
 export interface ProviderVerification {
@@ -51,18 +54,81 @@ export class ProviderPoolError extends Error {
 	}
 }
 
+const CAPACITY_ERROR_PATTERN =
+	/(?:capacity|overloaded|exhausted your capacity|model_capacity)/i;
+const RATE_LIMIT_ERROR_PATTERN =
+	/(?:rate.?limit|too many requests|quota|retry.?after|retry in)/i;
+const RETRY_DELAY_PATTERN =
+	/(?:retry(?:\s+after|\s+in)?|try again in)\s*(\d+(?:\.\d+)?)\s*(ms|s|m|h)\b/i;
+
 function boundedHealthBackoff(value: number | undefined): number {
 	if (value === undefined || !Number.isFinite(value))
 		return DEFAULT_HEALTH_BACKOFF_MS;
 	return Math.max(0, Math.min(MAX_HEALTH_BACKOFF_MS, Math.trunc(value)));
 }
 
+function boundedRetryDelay(value: number | undefined): number | undefined {
+	if (value === undefined || !Number.isFinite(value)) return undefined;
+	return Math.max(0, Math.min(MAX_HEALTH_BACKOFF_MS, Math.trunc(value)));
+}
+
+function retryDelayFromMessage(message: string): number | undefined {
+	const match = message.match(RETRY_DELAY_PATTERN);
+	if (!match) return undefined;
+	const value = Number(match[1]);
+	if (!Number.isFinite(value) || value < 0) return undefined;
+	const multiplier = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 }[
+		match[2]!.toLowerCase() as "ms" | "s" | "m" | "h"
+	];
+	return boundedRetryDelay(value * multiplier);
+}
+
+function availabilityReason(error: unknown): ProviderAvailabilityReason {
+	const message = error instanceof Error ? error.message : String(error);
+	const status = error instanceof ModelProviderError ? error.status : undefined;
+	if (CAPACITY_ERROR_PATTERN.test(message)) return "capacity";
+	if (status === 429 || RATE_LIMIT_ERROR_PATTERN.test(message))
+		return "rate_limit";
+	if (
+		(error instanceof ModelProviderError && error.retryable) ||
+		(status !== undefined && status >= 500 && status < 600)
+	)
+		return "transient";
+	return "unknown";
+}
+
+function availabilityDelay(
+	error: unknown,
+	baseBackoffMs: number | undefined,
+	consecutiveFailures: number,
+): number {
+	const providerHint = boundedRetryDelay(
+		error instanceof ModelProviderError
+			? error.retryAfterMs
+			: retryDelayFromMessage(error instanceof Error ? error.message : String(error)),
+	);
+	if (providerHint !== undefined) return providerHint;
+	const base = boundedHealthBackoff(baseBackoffMs);
+	const multiplier =
+		availabilityReason(error) === "unknown"
+			? 1
+			: 2 ** Math.min(Math.max(consecutiveFailures - 1, 0), 5);
+	return Math.min(MAX_HEALTH_BACKOFF_MS, Math.trunc(base * multiplier));
+}
+
 export class ProviderPool {
 	private readonly providers = new Map<string, ModelProvider>();
 	private readonly unhealthyUntil = new Map<string, number>();
+	private readonly unhealthyReason = new Map<
+		string,
+		ProviderAvailabilityReason
+	>();
 	private readonly measurements = new Map<
 		string,
-		Omit<ProviderHealth, "providerId" | "poolId" | "unhealthyUntil">
+		Omit<
+			ProviderHealth,
+			"providerId" | "poolId" | "unhealthyUntil" | "unhealthyReason"
+		>
 	>();
 
 	constructor(
@@ -96,12 +162,18 @@ export class ProviderPool {
 				averageLatencyMs: 0,
 			};
 			const unhealthyUntil = this.unhealthyUntil.get(provider.id);
+			const unhealthyReason = this.unhealthyReason.get(provider.id);
+			const isUnhealthy =
+				unhealthyUntil !== undefined && unhealthyUntil > this.now().getTime();
 			return {
 				providerId: provider.id,
 				...(provider.poolId ? { poolId: provider.poolId } : {}),
 				...measurement,
-				...(unhealthyUntil && unhealthyUntil > this.now().getTime()
-					? { unhealthyUntil: new Date(unhealthyUntil).toISOString() }
+				...(isUnhealthy && unhealthyUntil !== undefined
+					? {
+							unhealthyUntil: new Date(unhealthyUntil).toISOString(),
+							...(unhealthyReason ? { unhealthyReason } : {}),
+						}
 					: {}),
 			};
 		});
@@ -356,6 +428,7 @@ export class ProviderPool {
 				});
 				this.measured(provider, startedAt, true);
 				this.unhealthyUntil.delete(providerId);
+				this.unhealthyReason.delete(providerId);
 				return { result, attempts };
 			} catch (error) {
 				if (options.signal?.aborted) throw error;
@@ -369,10 +442,18 @@ export class ProviderPool {
 						error instanceof Error ? error.message : "Provider call failed.",
 				});
 				this.measured(provider, startedAt, false);
+				const consecutiveFailures =
+					this.measurements.get(providerId)?.consecutiveFailures ?? 1;
 				this.unhealthyUntil.set(
 					providerId,
-					this.now().getTime() + boundedHealthBackoff(options.healthBackoffMs),
+					this.now().getTime() +
+						availabilityDelay(
+							error,
+							options.healthBackoffMs,
+							consecutiveFailures,
+						),
 				);
+				this.unhealthyReason.set(providerId, availabilityReason(error));
 				const next = candidates[index + 1];
 				if (!next) break;
 			}

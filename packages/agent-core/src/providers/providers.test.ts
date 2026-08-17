@@ -201,6 +201,44 @@ describe("model provider adapters", () => {
 		expect(authorization).toBe("Bearer probe-secret");
 	});
 
+	it("uses HTTP Retry-After to remember provider capacity availability", async () => {
+		const baseUrl = await serve((_request, response) => {
+			response.writeHead(429, {
+				"content-type": "application/json",
+				"retry-after": "12",
+			});
+			response.end(JSON.stringify({ error: { message: "capacity exhausted" } }));
+		});
+		let nowMs = Date.parse("2026-07-29T12:00:00.000Z");
+		const pool = new ProviderPool(
+			[
+				new OpenAIResponsesProvider({
+					apiKey: "probe-secret",
+					baseUrl,
+				}),
+			],
+			() => new Date(nowMs),
+		);
+
+		await expect(
+			pool.complete({
+				model: "test",
+				messages: [{ role: "user", content: textContent("hello") }],
+			}),
+		).rejects.toBeInstanceOf(Error);
+		expect(pool.health()[0]).toMatchObject({
+			unhealthyUntil: "2026-07-29T12:00:12.000Z",
+			unhealthyReason: "capacity",
+		});
+		nowMs += 11_000;
+		await expect(
+			pool.complete({
+				model: "test",
+				messages: [{ role: "user", content: textContent("hello") }],
+			}),
+		).rejects.toMatchObject({ attempts: [] });
+	});
+
 	it("stops provider verification when cancellation wins", async () => {
 		const capabilities = {
 			streaming: false,
@@ -833,6 +871,7 @@ describe("model provider adapters", () => {
 			providerId: "only",
 			failures: 1,
 			unhealthyUntil: "2026-07-29T12:00:30.000Z",
+			unhealthyReason: "transient",
 		});
 		await expect(pool.complete(request)).rejects.toMatchObject({
 			attempts: [],
@@ -841,6 +880,40 @@ describe("model provider adapters", () => {
 		nowMs += 30_001;
 		await expect(pool.complete(request)).rejects.toMatchObject({
 			attempts: [{ providerId: "only", status: "failed" }],
+		});
+		expect(calls).toBe(2);
+	});
+
+	it("uses exponential availability backoff after repeated transient failures", async () => {
+		let nowMs = Date.parse("2026-07-29T12:00:00.000Z");
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "only",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async () => {
+				calls += 1;
+				throw new ModelProviderError("temporary", "only", true, 503);
+			},
+		};
+		const pool = new ProviderPool([provider], () => new Date(nowMs));
+		const request = {
+			model: "test",
+			messages: [{ role: "user" as const, content: textContent("retry") }],
+		};
+
+		await expect(pool.complete(request, { healthBackoffMs: 1_000 })).rejects.toThrow();
+		nowMs += 1_001;
+		await expect(pool.complete(request, { healthBackoffMs: 1_000 })).rejects.toThrow();
+		expect(pool.health()[0]).toMatchObject({
+			failures: 2,
+			unhealthyUntil: "2026-07-29T12:00:03.001Z",
 		});
 		expect(calls).toBe(2);
 	});
