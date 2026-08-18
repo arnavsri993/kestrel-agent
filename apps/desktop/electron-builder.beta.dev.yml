@@ -1,4 +1,0 @@
-extends: electron-builder.beta.yml
-mac:
-  identity: "-"
-  entitlementsInherit: build/entitlements.mac.dev.inherit.plist

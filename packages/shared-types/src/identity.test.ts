@@ -25,17 +25,6 @@ describe("product identity", () => {
 				userDataDirectoryName: "Kestrel",
 			},
 		},
-		{
-			channel: "beta",
-			environment: { KESTREL_RELEASE_CHANNEL: "beta" },
-			expected: {
-				appId: "com.kestrel.desktop.beta",
-				keychainService: "Kestrel Safe Storage",
-				runtimeApplicationName: "Kestrel",
-				updateChannel: "beta",
-				userDataDirectoryName: "Kestrel",
-			},
-		},
 	])(
 		"uses the $channel bundle/update identity without orphaning data",
 		({ environment, expected }) => {
@@ -46,9 +35,9 @@ describe("product identity", () => {
 		},
 	);
 
-	it("fails closed to the stable identity for an unexpected channel", () => {
+	it("fails closed to the stable identity for a removed channel", () => {
 		expect(
-			productIdentityForEnvironment({ KESTREL_RELEASE_CHANNEL: "preview" }),
+			productIdentityForEnvironment({ KESTREL_RELEASE_CHANNEL: "beta" }),
 		).toMatchObject({
 			appId: "com.kestrel.desktop",
 			keychainService: "Kestrel Safe Storage",

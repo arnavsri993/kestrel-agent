@@ -1,4 +1,4 @@
-export type ReleaseChannel = "development" | "beta" | "stable";
+export type ReleaseChannel = "development" | "stable";
 
 export interface ProductIdentity {
 	productName: string;
@@ -19,13 +19,13 @@ export function productIdentityForEnvironment(
 ): ProductIdentity {
 	const requestedChannel = runtimeEnv.KESTREL_RELEASE_CHANNEL;
 	const channel: ReleaseChannel =
-		requestedChannel === "development" || requestedChannel === "beta"
-			? requestedChannel
+		requestedChannel === "development"
+			? "development"
 			: "stable";
 	const suffix =
 		channel === "stable"
 			? ""
-			: `.${channel === "development" ? "dev" : channel}`;
+			: ".dev";
 	const productName = runtimeEnv.KESTREL_PRODUCT_NAME ?? "Kestrel";
 	const runtimeApplicationName = "Kestrel";
 

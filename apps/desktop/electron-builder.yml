@@ -54,7 +54,7 @@ dmg:
       type: link
       path: /Applications
 publish:
-  - provider: generic
-    url: ${env.KESTREL_UPDATE_URL}
-    channel: latest
+  provider: generic
+  url: ${env.KESTREL_UPDATE_URL}
+  channel: latest
 afterPack: build/after-pack.cjs
