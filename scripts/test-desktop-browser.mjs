@@ -225,15 +225,15 @@ try {
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 
-	await page.getByRole("button", { name: "Personalize", exact: true }).click();
-	await page.getByRole("heading", { name: "Tabs & Personalization" }).waitFor();
-	await page.getByRole("button", { name: /Meadow Terraced green landscape/ }).click();
-	assert.equal((await browserState()).settings.newTabBackground, "meadow");
+	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
+	await page.getByRole("button", { name: "Open browser preferences", exact: true }).click();
+	await page.getByRole("heading", { name: "Tabs & General" }).waitFor();
+	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await page.getByRole("button", { name: "Browser", exact: true }).first().click();
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await page.reload();
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
-	assert.equal((await browserState()).settings.newTabBackground, "meadow");
+	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
 	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).waitFor();
@@ -599,7 +599,7 @@ try {
 	await browserSettings.click();
 	assert.equal(await browserSettings.getAttribute("aria-current"), "page");
 	await page
-		.getByRole("heading", { name: "Tabs & Personalization", exact: true })
+		.getByRole("heading", { name: "Tabs & General", exact: true })
 		.waitFor();
 	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
 	await page.getByLabel("Tab layout").selectOption("vertical");

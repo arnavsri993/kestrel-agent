@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import "./styles.css";
 import "./life-context.css";
 import "./browser.css";
+import "./components/ui/ui.css";
 import { App } from "./App";
 import { PetOverlay } from "./components/PetOverlay";
 

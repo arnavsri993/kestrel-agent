@@ -61,6 +61,7 @@ import {
 	type ReactNode,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -97,6 +98,7 @@ import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
 import { applySkin } from "./components/SkinSettings";
+import { EmptyState } from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import {
@@ -860,6 +862,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		return window.kestrel.onLocalRuntimeProgress(setLocalProgress);
 	}, []);
 
+	useLayoutEffect(() => {
+		const stage = setupStageRef.current;
+		stage?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+		stage
+			?.closest<HTMLElement>(".setup-onboarding")
+			?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+	}, [modelView, step]);
+
 	function go(next: number) {
 		const bounded = Math.min(finalSetupStep, Math.max(0, next));
 		activeSetupStepRef.current = bounded;
@@ -1133,7 +1143,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			transition={{ duration: reduced ? 0 : 0.16 }}
 		>
 			<header className="onboarding-bar">
+				<ProductAnchor
+					className="setup-product-anchor"
+					detail={`Step ${step + 1} of ${setupSteps.length}`}
+				/>
 				<nav className="setup-rail" aria-label="Setup progress">
+					<span className="setup-stage-name" aria-live="polite">
+						{setupSteps[step]!.label}
+					</span>
 					<ol>
 						{setupSteps.map((item, index) => (
 							<li
@@ -1159,31 +1176,37 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				</nav>
 			</header>
 			<div className="setup-body">
-				<ProductAnchor
-					className="setup-product-anchor"
-					detail={`Step ${step + 1} of ${setupSteps.length}`}
-				/>
 				<AnimatePresence mode="wait" initial={false}>
 					<motion.section
 						ref={setupStageRef}
 						key={step}
 						className={`setup-stage setup-stage-${step}`}
-						initial={reduced ? false : { opacity: 0, x: 10 }}
-						animate={{ opacity: 1, x: 0 }}
-						exit={{ opacity: reduced ? 1 : 0, x: reduced ? 0 : -8 }}
-						transition={{ duration: reduced ? 0 : 0.16 }}
+						initial={reduced ? false : { opacity: 0, y: 8 }}
+						animate={{ opacity: 1, y: 0 }}
+						exit={{ opacity: reduced ? 1 : 0, y: reduced ? 0 : -6 }}
+						transition={{ duration: reduced ? 0 : 0.22 }}
 						onAnimationComplete={() => {
 							if (
 								activeSetupStepRef.current !== step ||
 								!focusSetupHeadingRef.current
 							)
 								return;
-							setupStageRef.current?.querySelector<HTMLElement>("h1")?.focus();
+							const stage = setupStageRef.current;
+							stage?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+							stage
+								?.closest<HTMLElement>(".setup-onboarding")
+								?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+							stage
+								?.querySelector<HTMLElement>("h1")
+								?.focus({ preventScroll: true });
 							focusSetupHeadingRef.current = false;
 						}}
 					>
 						{step === 0 && (
 							<div className="setup-welcome">
+								<div className="setup-welcome-mark" aria-hidden="true">
+									<BrandMark />
+								</div>
 								<h1 tabIndex={-1}>
 									Your AI answers.
 									<br />
@@ -1335,7 +1358,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										className="model-source-picker"
 										aria-label="Model access choices"
 									>
-										<button onClick={() => chooseModelAccess("accounts")}>
+										<button
+											type="button"
+											onClick={() => chooseModelAccess("accounts")}
+										>
 											<span className="source-glyph" aria-hidden="true">
 												<Icon name="models" />
 											</span>
@@ -1350,12 +1376,17 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<Icon name="arrow" />
 											</span>
 										</button>
-										<button onClick={() => chooseModelAccess("local")}>
+										<button
+											type="button"
+											className="model-source-option model-source-option-recommended"
+											onClick={() => chooseModelAccess("local")}
+										>
 											<span className="source-glyph" aria-hidden="true">
 												<Icon name="local" />
 											</span>
 											<strong>Run on this Mac</strong>
 											<small>Private and offline-capable.</small>
+											<span className="route-badge">Recommended</span>
 											<span className="source-action">
 												<b>
 													{localModels.length
@@ -1364,8 +1395,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</b>
 												<Icon name="arrow" />
 											</span>
-										</button>
-										<button onClick={() => chooseModelAccess("open")}>
+											</button>
+										<button
+											type="button"
+											onClick={() => chooseModelAccess("open")}
+										>
 											<span className="source-glyph" aria-hidden="true">
 												<Icon name="free" />
 											</span>
@@ -1519,9 +1553,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																					void toggleSubscription(
 																						cli.id,
 																						!cli.enabled,
-																					)
-																				}
-																			>
+							)
+						}
+				>
 																				{subscriptionBusy === cli.id
 																					? "Updating…"
 																					: cli.enabled
@@ -2075,6 +2109,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
 						{step === finalSetupStep && (
 							<div className="setup-finish">
+								<div className="setup-finish-mark" aria-hidden="true">
+									<BrandMark />
+								</div>
 								<h1 tabIndex={-1}>{finishHeading}</h1>
 								<p>{finishDescription}</p>
 								<div className="finish-checks">
@@ -7206,36 +7243,43 @@ const routingModeOptions: ReadonlyArray<{
 	id: RoutingPolicy["mode"];
 	label: string;
 	description: string;
+	icon: string;
 }> = [
 	{
 		id: "balanced",
 		label: "Balanced",
 		description: "Strong results without unnecessary premium-model use.",
+		icon: "models",
 	},
 	{
 		id: "fastest",
 		label: "Fastest",
 		description: "Prefer responsive endpoints when quality remains adequate.",
+		icon: "reload",
 	},
 	{
 		id: "cheapest",
 		label: "Cheapest",
 		description: "Use the lowest-cost model expected to pass validation.",
+		icon: "free",
 	},
 	{
 		id: "best_quality",
 		label: "Best quality",
 		description: "Favor capability and reliability over cost and latency.",
+		icon: "ready",
 	},
 	{
 		id: "local_first",
 		label: "Local first",
 		description: "Start on this Mac, then use cloud models only when needed.",
+		icon: "local",
 	},
 	{
 		id: "privacy_first",
 		label: "Privacy first",
 		description: "Keep model work on configured local endpoints.",
+		icon: "safety",
 	},
 ];
 
@@ -7338,6 +7382,9 @@ function RoutingPolicySettings() {
 								})
 							}
 						>
+							<span className="routing-mode-icon" aria-hidden="true">
+								<Icon name={option.icon} />
+							</span>
 							<strong>{option.label}</strong>
 							<span>{option.description}</span>
 						</button>
@@ -7976,7 +8023,6 @@ function Settings({
 								<span className="chips-label">Try asking:</span>
 								{[
 									"Set search engine to Google",
-									"Switch theme skin to Meadow",
 									"Make chat density compact",
 									"Use vertical tabs",
 									"Turn off desktop pet",
@@ -8410,11 +8456,7 @@ function PageFrame({
 
 function Empty({ title, text }: { title: string; text: string }) {
 	return (
-		<section className="empty-state">
-			<BrandMark />
-			<h2>{title}</h2>
-			<p>{text}</p>
-		</section>
+		<EmptyState title={title} detail={text} />
 	);
 }
 
@@ -9053,6 +9095,11 @@ export function App() {
 							onSelect={navigate}
 							onClose={closeCommandCenter}
 							onBack={openBrowser}
+							onNewTask={() => {
+								startNewAgent();
+								openAgent();
+							}}
+							pendingApprovals={pendingApprovalCount}
 						/>
 					)}
 					{page === "settings" && (
@@ -9130,10 +9177,12 @@ export function App() {
 					agentName={activeAgentName}
 					collapsed={!agentSidebarOpen}
 					agentState={effectiveAgentState}
+					pendingApprovals={pendingApprovalCount}
 					activeDestination={page}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onOpenSession={openRuntimeSession}
+					onReviewApprovals={() => navigate("approvals")}
 					onNavigate={openPrimaryDestination}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so

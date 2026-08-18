@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { Icon } from "../Icon";
+import { EmptyState } from "../ui";
 import { SurfaceBackButton } from "./SurfaceBackButton";
 
 function compactBytes(value: number): string {
@@ -77,10 +78,22 @@ export function BrowserHistory({
 				)}
 			</header>
 			{filtered.length === 0 ? (
-				<section className="library-empty">
-					<Icon name="history" />
-					<h2>{query ? "No matching pages" : "No history"}</h2>
-				</section>
+				<EmptyState
+					className="library-empty"
+					title={query ? "No matching pages" : "No history yet"}
+					detail={
+						query
+							? "Try a different search term."
+							: "Pages you open in Kestrel stay available here on this Mac."
+					}
+					action={
+						!query ? (
+							<button type="button" className="button secondary" onClick={onOpenBrowser}>
+								Open browser
+						</button>
+						) : undefined
+					}
+				/>
 			) : (
 				<ol className="history-list">
 					{filtered.map((entry) => (
@@ -128,10 +141,11 @@ export function BrowserDownloads({
 				</div>
 			</header>
 			{downloads.length === 0 ? (
-				<section className="library-empty">
-					<Icon name="downloads" />
-					<h2>No downloads</h2>
-				</section>
+				<EmptyState
+					className="library-empty"
+					title="No downloads yet"
+					detail="Files you save from browser tabs will appear here."
+				/>
 			) : (
 				<ul className="download-list">
 					{downloads.map((download) => {
