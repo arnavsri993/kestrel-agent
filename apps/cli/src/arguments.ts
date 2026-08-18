@@ -80,6 +80,7 @@ export type CliCommand =
 			tlsKey?: string;
 			tlsCert?: string;
 			allowedOrigins: string[];
+			allowedHosts: string[];
 			trustedProxyConfig?: string;
 			proxyTerminatedTls: boolean;
 			tailscaleMode: "off" | "serve" | "funnel";
@@ -511,6 +512,7 @@ function parseRemoteCommand(args: string[]): CliCommand {
 			"tls-key",
 			"tls-cert",
 			"allowed-origins",
+			"allowed-hosts",
 			"trusted-proxy-config",
 			"proxy-terminated-tls",
 			"tailscale",
@@ -550,6 +552,38 @@ function parseRemoteCommand(args: string[]): CliCommand {
 				throw new Error(
 					"--allowed-origins must contain exact HTTP(S) origins.",
 				);
+		}
+		const allowedHosts = (values.get("allowed-hosts") ?? "")
+			.split(",")
+			.map((value) => value.trim())
+			.filter(Boolean);
+		for (const value of allowedHosts) {
+			if (
+				value.includes("/") ||
+				value.includes("?") ||
+				value.includes("#") ||
+				value.includes("@")
+			)
+				throw new Error(
+					"--allowed-hosts must contain hostnames only, without schemes or paths.",
+				);
+			try {
+				const colonCount = [...value].filter((character) => character === ":").length;
+				const authority =
+					colonCount > 1 && !value.startsWith("[")
+						? `[${value}]`
+						: value;
+				const parsed = new URL(`http://${authority}`);
+				if (
+					parsed.hostname.replace(/^\[|\]$/g, "") !==
+					value.replace(/^\[|\]$/g, "").replace(/\.$/, "")
+				)
+					throw new Error("hostname mismatch");
+			} catch {
+				throw new Error(
+					"--allowed-hosts must contain hostnames only, without schemes or paths.",
+				);
+			}
 		}
 		const trustedProxyConfig = values.get("trusted-proxy-config");
 		const proxyTerminatedTls = values.get("proxy-terminated-tls") ?? "no";
@@ -607,6 +641,7 @@ function parseRemoteCommand(args: string[]): CliCommand {
 			host,
 			port,
 			allowedOrigins,
+			allowedHosts,
 			proxyTerminatedTls: proxyTerminatedTls === "yes",
 			tailscaleMode: tailscaleMode as "off" | "serve" | "funnel",
 			tailscaleResetOnExit: tailscaleResetOnExit === "yes",

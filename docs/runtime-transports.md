@@ -50,5 +50,8 @@ kestrel remote serve --host 127.0.0.1 --port 0
 ```
 
 Plain HTTP is restricted to loopback. Non-loopback binds require both
-`--tls-key` and `--tls-cert`. Use `--allowed-origins` for browser clients.
+`--tls-key` and `--tls-cert`. Use `--allowed-hosts` for the exact hostname(s)
+served by a reverse proxy or custom DNS name, and `--allowed-origins` for browser
+clients. Hostnames are rejected by default on wildcard binds; IP literals remain
+available for owner-managed network access.
 Revoke a paired device locally with `kestrel remote revoke --device <id>`.

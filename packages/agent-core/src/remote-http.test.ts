@@ -5,6 +5,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
@@ -65,6 +66,17 @@ function fixture() {
 	);
 	const remote = new RemoteControl(database, runtime, orchestrator);
 	return { database, runtime, session, remote };
+}
+
+function requestStatus(url: string, host: string): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const request = httpRequest(url, { headers: { host } }, (response) => {
+			response.resume();
+			resolve(response.statusCode ?? 0);
+		});
+		request.once("error", reject);
+		request.end();
+	});
 }
 
 describe("authenticated remote HTTP transport", () => {
@@ -658,6 +670,25 @@ describe("authenticated remote HTTP transport", () => {
 		await expect(
 			new RemoteHttpServer({ remote, runtime, host: "0.0.0.0" }).start(),
 		).rejects.toThrow("requires TLS");
+		database.close();
+	});
+
+	it("rejects DNS-rebinding Host headers and accepts explicit host opt-ins", async () => {
+		const { database, runtime, remote } = fixture();
+		const server = new RemoteHttpServer({
+			remote,
+			runtime,
+			host: "127.0.0.1",
+			allowedHosts: ["control.example"],
+		});
+		servers.push(server);
+		const { origin } = await server.start();
+		expect(await requestStatus(`${origin}/health`, "attacker.example")).toBe(
+			400,
+		);
+		expect(
+			await requestStatus(`${origin}/health`, "control.example:443"),
+		).toBe(200);
 		database.close();
 	});
 
