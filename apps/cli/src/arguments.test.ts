@@ -313,12 +313,15 @@ describe("Kestrel CLI arguments", () => {
 				"/private/proxy.json",
 				"--proxy-terminated-tls",
 				"yes",
+				"--allowed-hosts",
+				"control.example",
 			]),
 		).toEqual({
 			name: "remote-serve",
 			host: "0.0.0.0",
 			port: 0,
 			allowedOrigins: [],
+			allowedHosts: ["control.example"],
 			trustedProxyConfig: "/private/proxy.json",
 			proxyTerminatedTls: true,
 			tailscaleMode: "off",
@@ -326,6 +329,17 @@ describe("Kestrel CLI arguments", () => {
 			tailscalePublicApproved: false,
 			bonjourMode: "off",
 			bonjourName: "Kestrel",
+		});
+		expect(
+			parseCliArguments([
+				"remote",
+				"serve",
+				"--allowed-hosts",
+				"Control.Example.,[FE80::1]",
+			]),
+		).toMatchObject({
+			name: "remote-serve",
+			allowedHosts: ["Control.Example.", "[FE80::1]"],
 		});
 		expect(
 			parseCliArguments([
@@ -415,6 +429,9 @@ describe("Kestrel CLI arguments", () => {
 		expect(() =>
 			parseCliArguments(["remote", "serve", "--allowed-origins", "not a URL"]),
 		).toThrow("--allowed-origins must contain exact HTTP(S) origins.");
+		expect(() =>
+			parseCliArguments(["remote", "serve", "--allowed-hosts", "https://evil.example"]),
+		).toThrow("--allowed-hosts must contain hostnames only");
 		expect(() =>
 			parseCliArguments([
 				"remote",

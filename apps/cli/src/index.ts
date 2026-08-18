@@ -76,6 +76,7 @@ const help = `Kestrel CLI
                        [--bonjour-name <name>]
                        [--bonjour-tailnet-dns <name> --bonjour-ssh-port <port>
                         --bonjour-cli-path <path>]
+                       [--allowed-hosts <host,host>]
                        [--allowed-origins <origin,origin>]
 
 State is local. Set KESTREL_DATA_DIR to choose its directory. TUI/ACP can read
@@ -525,6 +526,7 @@ export async function runCli(args: string[]): Promise<void> {
 				host: command.host,
 				port: command.port,
 				allowedOrigins: command.allowedOrigins,
+				allowedHosts: command.allowedHosts,
 				presence: core.presence,
 				nativeNodes: core.nativeNodes,
 				onNodeTalk: async ({ nodeId, text }) => {
@@ -577,7 +579,9 @@ export async function runCli(args: string[]): Promise<void> {
 			});
 			const address = await server.start();
 			try {
-				const exposure = await tailscale.apply(address.origin);
+				const exposure = await tailscale.apply(address.origin, (advertisedHost) =>
+					server.allowHost(advertisedHost),
+				);
 				const discovery = await bonjour.start(address.origin);
 				process.stdout.write(
 					`${JSON.stringify({ ...address, tailscale: exposure, discovery, pid: process.pid })}\n`,

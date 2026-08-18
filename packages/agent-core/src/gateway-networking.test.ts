@@ -117,9 +117,11 @@ describe("trusted proxy gateway authentication", () => {
 describe("managed Tailscale exposure", () => {
 	it("publishes loopback through tailnet-only Serve and resets only what it applied", async () => {
 		const calls: string[][] = [];
+		const lifecycle: string[] = [];
 		const runner: GatewayCommandRunner = {
 			run: async (_executable, args) => {
 				calls.push(args);
+				lifecycle.push(`run:${args[0]}`);
 				return args[0] === "status"
 					? {
 							exitCode: 0,
@@ -141,12 +143,21 @@ describe("managed Tailscale exposure", () => {
 			},
 			runner,
 		);
-		expect(await manager.apply("http://127.0.0.1:18789")).toEqual({
+		expect(
+			await manager.apply("http://127.0.0.1:18789", (advertisedHost) =>
+				lifecycle.push(`allow:${advertisedHost}`),
+			),
+		).toEqual({
 			mode: "serve",
 			active: true,
 			url: "https://workstrand.example.ts.net/",
 			detail: "Tailnet-only HTTPS exposure is active.",
 		});
+		expect(lifecycle).toEqual([
+			"run:status",
+			"allow:workstrand.example.ts.net",
+			"run:serve",
+		]);
 		await manager.close();
 		expect(calls).toEqual([
 			["status", "--json"],
