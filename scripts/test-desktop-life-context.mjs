@@ -36,7 +36,10 @@ try {
 		if (message.type() === "error") runtimeErrors.push(message.text());
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
-	await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:onboarded", "yes");
+		localStorage.setItem("kestrel:default-browser-prompted", "yes");
+	});
 	await page.reload();
 
 	const fixture = await page.evaluate(async () => {

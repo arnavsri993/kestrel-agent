@@ -111,6 +111,11 @@ function safePageUrl(value: string): URL | undefined {
 	}
 }
 
+function pageDomain(value: string): string | undefined {
+	const url = safePageUrl(value);
+	return url?.hostname.toLowerCase().replace(/^www\./, "") || undefined;
+}
+
 function hostnameTitle(value: string): string {
 	try {
 		return new URL(value).hostname.replace(/^www\./, "") || "New Tab";
@@ -552,6 +557,64 @@ export class UserBrowserService {
 			capturedAt: this.now().toISOString(),
 			trust: "untrusted_browser",
 		});
+	}
+
+	isActiveTab(tabId: string): boolean {
+		return this.state.activeTabId === tabId;
+	}
+
+	async insertLoginCode(
+		tabId: string,
+		code: string,
+		expectedDomain: string,
+		expectedOrigin: string,
+	): Promise<void> {
+		if (!/^[A-Z0-9][A-Z0-9-]{3,15}$/.test(code))
+			throw new Error("The login code is invalid.");
+		if (!this.isActiveTab(tabId))
+			throw new Error("The verification page is no longer active.");
+		const domain = pageDomain(`https://${expectedDomain}`);
+		const originUrl = safePageUrl(expectedOrigin);
+		if (!domain || !originUrl || originUrl.origin !== expectedOrigin)
+			throw new Error("The verification page domain is invalid.");
+		const tab = this.requireTab(tabId);
+		const record = this.requireView(tab.id);
+		const webContents = record.view.webContents;
+		if (
+			pageDomain(webContents.getURL()) !== domain ||
+			safePageUrl(webContents.getURL())?.origin !== expectedOrigin
+		)
+			throw new Error("The page changed before the code was used.");
+		const focusedCodeField = await webContents.executeJavaScript(`(() => {
+      const visible = (node) => {
+        const rect = node.getBoundingClientRect();
+        const style = getComputedStyle(node);
+        return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
+      };
+      const explicitSelector = [
+        'input[autocomplete="one-time-code"]',
+        'input[name*="code" i]',
+        'input[id*="code" i]',
+        'input[placeholder*="code" i]',
+        'input[name*="otp" i]',
+        'input[id*="otp" i]',
+      ].join(",");
+      const explicitTarget = Array.from(document.querySelectorAll(explicitSelector)).find(visible);
+      const target = explicitTarget ?? Array.from(document.querySelectorAll('input[type="tel"]')).find(visible);
+      if (!target) return false;
+      target.focus();
+      if (typeof target.select === "function") target.select();
+      return true;
+    })()`);
+		if (!focusedCodeField)
+			throw new Error("The page changed; Kestrel could not find its code field.");
+		if (
+			pageDomain(webContents.getURL()) !== domain ||
+			safePageUrl(webContents.getURL())?.origin !== expectedOrigin
+		)
+			throw new Error("The page changed before the code was used.");
+		webContents.focus();
+		webContents.insertText(code);
 	}
 
 	async snapshot(

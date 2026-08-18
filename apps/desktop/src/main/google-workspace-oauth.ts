@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { GMAIL_READONLY_SCOPE } from "@kestrel/shared-types";
 import type { CredentialBroker } from "./credential-broker";
 
 const GOOGLE_AUTHORIZATION_ENDPOINT =
@@ -16,6 +17,7 @@ const REQUESTED_SCOPES = [
 	"openid",
 	"email",
 	"https://www.googleapis.com/auth/gmail.send",
+	GMAIL_READONLY_SCOPE,
 	"https://www.googleapis.com/auth/calendar.events",
 ] as const;
 

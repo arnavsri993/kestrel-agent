@@ -1,6 +1,6 @@
 # Google Workspace OAuth
 
-Kestrel supports a user-owned Google OAuth client for Gmail send and Google Calendar events. This is usable before Kestrel has its own publicly verified Google client registration.
+Kestrel supports a user-owned Google OAuth client for Gmail send, read-only recent-message lookup, and Google Calendar events. This is usable before Kestrel has its own publicly verified Google client registration.
 
 ## User setup
 
@@ -16,7 +16,13 @@ The requested grants are deliberately narrow:
 - `openid`
 - `email`
 - `https://www.googleapis.com/auth/gmail.send`
+- `https://www.googleapis.com/auth/gmail.readonly`
 - `https://www.googleapis.com/auth/calendar.events`
+
+The read-only Gmail grant is used only when the user asks Kestrel to find a
+recent verification code for an active browser login. Kestrel returns the
+short code and message metadata to the trusted desktop surface; it does not
+send message bodies to the agent or store them in task history.
 
 ## Security and lifecycle
 
