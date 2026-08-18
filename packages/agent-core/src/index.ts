@@ -1209,6 +1209,18 @@ export class AgentCore {
 			switch (request.type) {
 				case "snapshot":
 					return { ok: true, snapshot: this.snapshot() };
+				case "communication-code-search":
+					return {
+						ok: true,
+						communicationMatches: this.deps.googleWorkspace
+							? await this.deps.googleWorkspace.searchLoginCodes({
+										after: request.after,
+										domain: request.domain,
+										maxResults: request.maxResults,
+									signal: AbortSignal.timeout(30_000),
+								})
+							: [],
+					};
 				case "approve":
 					return { ok: true, snapshot: this.approve(request.approvalId) };
 				case "reject":

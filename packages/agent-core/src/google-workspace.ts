@@ -1,10 +1,17 @@
 import { createHash } from "node:crypto";
 import { NativeChannelAdapter } from "./channels";
 import type { AgentRuntime } from "./runtime";
+import {
+	GMAIL_READONLY_SCOPE,
+	type CommunicationCodeMatch,
+	extractLoginCodes,
+} from "@kestrel/shared-types";
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const CALENDAR_EVENTS_ENDPOINT =
 	"https://www.googleapis.com/calendar/v3/calendars/primary/events";
+const GMAIL_MESSAGES_ENDPOINT =
+	"https://gmail.googleapis.com/gmail/v1/users/me/messages";
 const REQUIRED_SCOPES = [
 	"https://www.googleapis.com/auth/gmail.send",
 	"https://www.googleapis.com/auth/calendar.events",
@@ -93,6 +100,82 @@ export class GoogleWorkspaceClient {
 			fetcher,
 			now,
 		});
+	}
+
+	get canReadMessages(): boolean {
+		return this.record.scopes.includes(GMAIL_READONLY_SCOPE);
+	}
+
+	async searchLoginCodes(input: {
+		after: string;
+		domain: string;
+		maxResults: number;
+		signal: AbortSignal;
+	}): Promise<CommunicationCodeMatch[]> {
+		if (!this.canReadMessages) return [];
+		const after = new Date(input.after);
+		if (!Number.isFinite(after.getTime()))
+			throw new Error("Google login-code search time is invalid.");
+		const maxResults = Number.isFinite(input.maxResults)
+			? Math.max(1, Math.min(10, Math.trunc(input.maxResults)))
+			: 5;
+		const query = [
+			`after:${Math.floor(after.getTime() / 1_000)}`,
+			`{verification security "one-time" passcode login "sign-in" code}`,
+			gmailDomainQuery(input.domain),
+		]
+			.filter(Boolean)
+			.join(" ");
+		const listUrl = new URL(GMAIL_MESSAGES_ENDPOINT);
+		listUrl.search = new URLSearchParams({
+			q: query,
+			maxResults: String(Math.min(20, maxResults * 2)),
+			includeSpamTrash: "false",
+		}).toString();
+		const listed = await this.authorizedJson(listUrl, {
+			signal: input.signal,
+		});
+		const messageIds = Array.isArray(listed.messages)
+			? listed.messages.flatMap((value) => {
+					if (!value || typeof value !== "object") return [];
+					const id = (value as Record<string, unknown>).id;
+					return typeof id === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(id)
+						? [id]
+						: [];
+				})
+			: [];
+		const matches: CommunicationCodeMatch[] = [];
+		for (const id of messageIds.slice(0, 20)) {
+			if (input.signal.aborted) throw input.signal.reason;
+			const messageUrl = new URL(`${GMAIL_MESSAGES_ENDPOINT}/${id}`);
+			messageUrl.search = new URLSearchParams({ format: "full" }).toString();
+			const message = await this.authorizedJson(messageUrl, {
+				signal: input.signal,
+				responseLimit: 1_000_000,
+			});
+			const receivedAt = gmailReceivedAt(message, this.now());
+			if (!receivedAt || receivedAt.getTime() < after.getTime()) continue;
+			const headers = gmailHeaders(message);
+			const subject = headers.subject;
+			const sender = headers.from;
+			const body = gmailText(message);
+			const codes = extractLoginCodes(
+				`${subject ?? ""}\n${sender ?? ""}\n${String(message.snippet ?? "")}\n${body}`,
+			);
+			for (const code of codes) {
+				matches.push({
+					sourceId: "gmail",
+					sourceLabel: "Gmail",
+					account: this.email,
+					...(sender ? { sender } : {}),
+					...(subject ? { subject } : {}),
+					code,
+					receivedAt: receivedAt.toISOString(),
+				});
+				if (matches.length >= maxResults) return matches;
+			}
+		}
+		return matches;
 	}
 
 	async listEvents(input: {
@@ -320,6 +403,7 @@ export class GoogleWorkspaceClient {
 			body?: Record<string, unknown>;
 			signal: AbortSignal;
 			allowNotFound?: boolean;
+			responseLimit?: number;
 		},
 	): Promise<Record<string, unknown>> {
 		const response = await this.fetcher(url, {
@@ -337,13 +421,83 @@ export class GoogleWorkspaceClient {
 			await response.arrayBuffer();
 			return {};
 		}
-		const body = await responseJson(response);
+		const body = await responseJson(response, input.responseLimit ?? 256_000);
 		if (!response.ok)
 			throw new Error(
 				`Google Workspace request failed (${response.status}: ${String(body.error ?? response.statusText).slice(0, 500)}).`,
 			);
 		return body;
 	}
+}
+
+function gmailHeaders(
+	message: Record<string, unknown>,
+): { from?: string; subject?: string } {
+	const payload =
+		message.payload && typeof message.payload === "object"
+			? (message.payload as Record<string, unknown>)
+			: {};
+	const headers = Array.isArray(payload.headers) ? payload.headers : [];
+	const values: { from?: string; subject?: string } = {};
+	for (const raw of headers) {
+		if (!raw || typeof raw !== "object") continue;
+		const header = raw as Record<string, unknown>;
+		const name = typeof header.name === "string" ? header.name.toLowerCase() : "";
+		const value = typeof header.value === "string" ? header.value.trim() : "";
+		if (!value) continue;
+		if (name === "from") values.from = value.slice(0, 500);
+		if (name === "subject") values.subject = value.slice(0, 500);
+	}
+	return values;
+}
+
+function gmailReceivedAt(
+	message: Record<string, unknown>,
+	now: Date,
+): Date | undefined {
+	const value = Number(message.internalDate);
+	if (!Number.isFinite(value) || value <= 0) return undefined;
+	const receivedAt = new Date(Math.min(value, now.getTime()));
+	return Number.isFinite(receivedAt.getTime()) ? receivedAt : undefined;
+}
+
+function gmailText(message: Record<string, unknown>): string {
+	const parts: string[] = [];
+	const visit = (value: unknown): void => {
+		if (!value || typeof value !== "object") return;
+		const record = value as Record<string, unknown>;
+		const body =
+			record.body && typeof record.body === "object"
+				? (record.body as Record<string, unknown>)
+				: {};
+		if (typeof body.data === "string" && body.data.length <= 400_000) {
+			try {
+				const decoded = Buffer.from(body.data, "base64url")
+					.toString("utf8")
+					.replace(/<[^>]+>/g, " ")
+					.slice(0, 400_000);
+				parts.push(decoded);
+			} catch {
+				// Ignore malformed MIME parts; the bounded Gmail snippet still gets scanned.
+			}
+		}
+		if (Array.isArray(record.parts))
+			for (const part of record.parts.slice(0, 50)) visit(part);
+	};
+	visit(message.payload);
+	return parts.join("\n").slice(0, 500_000);
+}
+
+function gmailDomainQuery(domain: string): string {
+	const normalized = domain.trim().toLowerCase();
+	if (
+		normalized.length > 253 ||
+		!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(
+			normalized,
+		)
+	)
+		return "";
+	return `{from:${normalized} "${normalized}"}`;
 }
 
 export function environmentGoogleWorkspaceClient(
