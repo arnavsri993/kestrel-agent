@@ -178,6 +178,9 @@ page.on("pageerror", (error) => runtimeErrors.push(error.message));
 try {
 	await page.waitForLoadState("domcontentloaded");
 	await page.setViewportSize({ width: 1320, height: 860 });
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:default-browser-prompted", "yes");
+	});
 
 	await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
 	await capture(page, "setup-01-welcome.png");
@@ -378,8 +381,8 @@ try {
 		["Browser", "settings-browser.png"],
 		["General", "settings-general.png"],
 		["Models", "settings-models.png"],
-		["Memory", "settings-memory.png"],
-		["Extensions", "settings-extensions.png"],
+		["Intelligence & Memory", "settings-memory.png"],
+		["Agent Plugins", "settings-extensions.png"],
 		["Privacy", "settings-privacy.png"],
 		["Advanced", "settings-advanced.png"],
 	] as const;

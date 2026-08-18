@@ -44,7 +44,7 @@ describe("Google Workspace desktop OAuth", () => {
 						expires_in: 3600,
 						token_type: "Bearer",
 						scope:
-							"openid email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events",
+							"openid email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.events",
 					}),
 					{ status: 200 },
 				);

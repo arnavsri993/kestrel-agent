@@ -2,33 +2,33 @@ import { useMemo, useState, type FormEvent } from "react";
 import type { UserBrowserHistoryEntry } from "@kestrel/shared-types";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
-import meadowLandscape from "../../assets/new-tab-meadow.svg";
-import {
-  frequentBrowserSites,
-  siteAccent,
-  siteInitial,
-  type NewTabBackground,
-} from "./new-tab";
+import { frequentBrowserSites, siteAccent, siteInitial } from "./new-tab";
 
 const recommendations = [
   {
     icon: "research",
     art: "research",
+    eyebrow: "Explore",
     title: "Make sense of a new topic",
+    description: "Find useful starting points and a next step.",
     prompt:
       "Help me explore a new topic, find the useful starting points, and suggest the next step.",
   },
   {
     icon: "work",
     art: "plan",
+    eyebrow: "Plan",
     title: "Turn an idea into a plan",
+    description: "Turn a rough idea into the smallest useful plan.",
     prompt:
       "Help me turn an idea into a clear plan with the smallest useful next step.",
   },
   {
     icon: "agent",
     art: "continue",
+    eyebrow: "Continue",
     title: "Pick up where you left off",
+    description: "Bring important context into the next step.",
     prompt:
       "Help me pick up where I left off and decide what is most useful to do next.",
   },
@@ -36,7 +36,6 @@ const recommendations = [
 
 export function NewTabPage({
   history,
-  background,
   agentName,
   onNavigate,
   onNewTab,
@@ -44,7 +43,6 @@ export function NewTabPage({
   onOpenSettings,
 }: {
   history: UserBrowserHistoryEntry[];
-  background: NewTabBackground;
   agentName: string;
   onNavigate(input: string): void;
   onNewTab(): void;
@@ -63,31 +61,25 @@ export function NewTabPage({
   }
 
   return (
-    <section
-      className={`new-tab-page new-tab-page-${background}`}
-      aria-labelledby="new-tab-title"
-    >
-      <div
-        className="new-tab-backdrop"
-        aria-hidden="true"
-        style={
-          background === "meadow"
-            ? { backgroundImage: `url("${meadowLandscape}")` }
-            : undefined
-        }
-      />
+    <section className="new-tab-page" aria-labelledby="new-tab-title">
+      <div className="new-tab-backdrop" aria-hidden="true" />
       <header className="new-tab-home-header">
         <div className="new-tab-home-identity">
           <BrandMark />
+          <span>
+            <strong>Kestrel home</strong>
+            <small>Browser + agent</small>
+          </span>
         </div>
         <button
           type="button"
-          className="new-tab-personalize"
+          className="new-tab-settings"
           onClick={onOpenSettings}
-          aria-label="Personalize"
-          title="Personalize"
+          aria-label="Open browser preferences"
+          title="Open browser preferences"
         >
           <Icon name="settings" />
+          <span>Settings</span>
         </button>
       </header>
 
@@ -97,9 +89,12 @@ export function NewTabPage({
             <BrandMark />
           </div>
           <h1 id="new-tab-title">Good to see you.</h1>
+          <p className="new-tab-support">
+            Ask {agentName} to think, plan, or get something done.
+          </p>
           <form className="new-tab-chat" onSubmit={submitChat}>
             <span className="new-tab-chat-mark" aria-hidden="true">
-              <Icon name="agent" />
+              <Icon name="sparkle" />
             </span>
             <label className="sr-only" htmlFor="new-tab-chat-input">
               Ask {agentName}
@@ -126,7 +121,10 @@ export function NewTabPage({
 
         <section className="new-tab-frequent" aria-labelledby="frequent-title">
           <div className="new-tab-section-heading">
-            <h2 id="frequent-title">Frequent</h2>
+            <div>
+              <h2 id="frequent-title">Frequent tabs</h2>
+              <small>From local history</small>
+            </div>
             <button
               type="button"
               className="new-tab-section-action"
@@ -135,6 +133,7 @@ export function NewTabPage({
               title="New tab"
             >
               <Icon name="plus" />
+              <span>New tab</span>
             </button>
           </div>
           {frequent.length > 0 ? (
@@ -155,6 +154,7 @@ export function NewTabPage({
                   </span>
                   <span className="new-tab-site-copy">
                     <strong>{site.title}</strong>
+                    <small>{site.hostname}</small>
                   </span>
                 </button>
               ))}
@@ -170,6 +170,7 @@ export function NewTabPage({
               </span>
               <span>
                 <strong>Open a site to start</strong>
+                <small>Your local shortcuts will appear here.</small>
               </span>
               <Icon name="arrow" />
             </button>
@@ -182,6 +183,7 @@ export function NewTabPage({
         >
           <div className="new-tab-section-heading">
             <h2 id="recommendations-title">Suggestions</h2>
+            <small>Open a guided chat</small>
           </div>
           <div className="new-tab-recommendation-grid">
             {recommendations.map((recommendation) => (
@@ -196,12 +198,17 @@ export function NewTabPage({
                   </span>
                 </div>
                 <div className="new-tab-recommendation-body">
+                  <span className="new-tab-recommendation-heading">
+                    {recommendation.eyebrow}
+                  </span>
                   <h3>{recommendation.title}</h3>
+                  <p>{recommendation.description}</p>
                   <button
                     type="button"
-                    aria-label={`Ask ${recommendation.title}`}
+                    aria-label={`Open in chat: ${recommendation.title}`}
                     onClick={() => onNewAgent(recommendation.prompt)}
                   >
+                    <span>Open in chat</span>
                     <Icon name="arrow" />
                   </button>
                 </div>

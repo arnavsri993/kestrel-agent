@@ -23,8 +23,13 @@ function storePath(): string {
 	return join(directory, "browser-state.json");
 }
 
+it("defaults new browser settings to Google", () => {
+	expect(freshBrowserState().settings.searchEngine).toBe("google");
+	expect(UserBrowserSettingsSchema.parse({}).searchEngine).toBe("google");
+});
+
 describe("browser address normalization", () => {
-	it("navigates hosts and searches ordinary language with DuckDuckGo as default", () => {
+	it("navigates hosts and searches ordinary language with Google as default", () => {
 		expect(normalizeBrowserAddress("example.com/docs")).toEqual({
 			kind: "url",
 			url: "https://example.com/docs",
@@ -35,7 +40,7 @@ describe("browser address normalization", () => {
 		});
 		expect(normalizeBrowserAddress("quiet browser design")).toEqual({
 			kind: "search",
-			url: "https://duckduckgo.com/?q=quiet%20browser%20design",
+			url: "https://www.google.com/search?q=quiet%20browser%20design",
 		});
 	});
 

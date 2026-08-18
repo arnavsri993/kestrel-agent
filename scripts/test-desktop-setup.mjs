@@ -55,15 +55,15 @@ try {
 			colorScheme: getComputedStyle(element).colorScheme,
 			color: getComputedStyle(element).color,
 		}));
-	assert.equal(setupTheme.canvas, "#1c1c1e");
-	assert.equal(setupTheme.signal, "#78b986");
+	assert.equal(setupTheme.canvas, "#0e0e10");
+	assert.equal(setupTheme.signal, "#f4f4f6");
 	assert.equal(setupTheme.colorScheme, "dark");
-	assert.equal(setupTheme.color, "rgb(245, 245, 247)");
+	assert.equal(setupTheme.color, "rgb(244, 244, 246)");
 	await page.waitForFunction(
 		() =>
 			getComputedStyle(document.documentElement)
 				.getPropertyValue("--canvas")
-				.trim() === "#f5f2ea",
+			.trim() === "#0e0e10",
 	);
 	assert.equal(await page.locator(".setup-product-anchor").count(), 1);
 	assert.deepEqual(
@@ -474,7 +474,10 @@ try {
 		true,
 	);
 	await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
-	await page.getByRole("button", { name: /General/ }).click();
+	await page
+		.getByRole("navigation", { name: "Settings sections" })
+		.getByRole("button", { name: /General & Autonomy/ })
+		.click();
 	const communicationStyle = page.getByRole("group", {
 		name: "Communication style",
 	});
@@ -501,7 +504,10 @@ try {
 	await page.keyboard.press("Meta+N");
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
-	await page.getByRole("button", { name: /General/ }).click();
+	await page
+		.getByRole("navigation", { name: "Settings sections" })
+		.getByRole("button", { name: /General & Autonomy/ })
+		.click();
 	await page.getByRole("button", { name: "Open setup guide" }).click();
 	await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
 	assert.equal(

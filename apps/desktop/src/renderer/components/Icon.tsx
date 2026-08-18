@@ -90,6 +90,24 @@ const paths: Record<string, string[]> = {
 	],
 	free: ["M12 4a8 8 0 108 8", "M12 8v8M8 12h8", "M18.5 3.5v4M16.5 5.5h4"],
 	ready: ["M12 21a9 9 0 100-18 9 9 0 000 18z", "M8 12l2.5 2.5L16 9"],
+	sparkle: [
+		"M12 2l1.9 6.1L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.9z",
+		"M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z",
+	],
+	compass: [
+		"M12 21a9 9 0 100-18 9 9 0 000 18z",
+		"M15.5 8.5l-2.2 4.8-4.8 2.2 2.2-4.8z",
+	],
+	info: ["M12 21a9 9 0 100-18 9 9 0 000 18z", "M12 11v5", "M12 8h.01"],
+	"check-circle": [
+		"M12 21a9 9 0 100-18 9 9 0 000 18z",
+		"M8 12l2.5 2.5L16 9",
+	],
+	"alert-circle": [
+		"M12 21a9 9 0 100-18 9 9 0 000 18z",
+		"M12 8v5",
+		"M12 16.5h.01",
+	],
 };
 
 export function Icon({
@@ -102,7 +120,7 @@ export function Icon({
 			aria-hidden="true"
 			fill="none"
 			stroke="currentColor"
-			strokeWidth="1.7"
+			strokeWidth="1.75"
 			strokeLinecap="round"
 			strokeLinejoin="round"
 			{...props}

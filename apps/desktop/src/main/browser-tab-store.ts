@@ -15,7 +15,7 @@ import {
 } from "@kestrel/shared-types";
 
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
-	searchEngine: "duckduckgo",
+	searchEngine: "google",
 	tabLayout: "horizontal",
 	newTabBackground: "graphite",
 	restoreSession: true,
@@ -96,7 +96,7 @@ export function sanitizeBrowserUrl(value: string): string {
 
 export function normalizeBrowserAddress(
 	value: string,
-	searchEngine: UserBrowserSettings["searchEngine"] = "duckduckgo",
+	searchEngine: UserBrowserSettings["searchEngine"] = "google",
 	customSearchUrl?: string,
 ): NormalizedBrowserAddress {
 	const input = value.trim();

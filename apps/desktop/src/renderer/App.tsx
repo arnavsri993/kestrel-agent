@@ -5,6 +5,7 @@ import type {
 	ArtifactRecordContract,
 	BrokeredCredentialSummary,
 	ChannelSummary,
+	CommunicationSourceStatus,
 	CoreResponse,
 	EnterpriseAnalytics,
 	GoalRecordContract,
@@ -61,6 +62,7 @@ import {
 	type ReactNode,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -80,6 +82,7 @@ import {
 } from "./components/browser/BrowserLibrary";
 import { BrowserSettings } from "./components/browser/BrowserSettings";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
+import { CommunicationCodeAssistant } from "./components/browser/CommunicationCodeAssistant";
 import { DefaultBrowserPrompt } from "./components/browser/DefaultBrowserPrompt";
 import { KeyboardShortcutsModal } from "./components/browser/KeyboardShortcutsModal";
 import {
@@ -97,6 +100,8 @@ import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
 import { applySkin } from "./components/SkinSettings";
+import { EmptyState } from "./components/ui";
+import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import {
 	memoryInGb,
@@ -859,6 +864,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		return window.kestrel.onLocalRuntimeProgress(setLocalProgress);
 	}, []);
 
+	useLayoutEffect(() => {
+		const stage = setupStageRef.current;
+		stage?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+		stage
+			?.closest<HTMLElement>(".setup-onboarding")
+			?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+	}, [modelView, step]);
+
 	function go(next: number) {
 		const bounded = Math.min(finalSetupStep, Math.max(0, next));
 		activeSetupStepRef.current = bounded;
@@ -1132,7 +1145,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			transition={{ duration: reduced ? 0 : 0.16 }}
 		>
 			<header className="onboarding-bar">
+				<ProductAnchor
+					className="setup-product-anchor"
+					detail={`Step ${step + 1} of ${setupSteps.length}`}
+				/>
 				<nav className="setup-rail" aria-label="Setup progress">
+					<span className="setup-stage-name" aria-live="polite">
+						{setupSteps[step]!.label}
+					</span>
 					<ol>
 						{setupSteps.map((item, index) => (
 							<li
@@ -1158,31 +1178,37 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				</nav>
 			</header>
 			<div className="setup-body">
-				<ProductAnchor
-					className="setup-product-anchor"
-					detail={`Step ${step + 1} of ${setupSteps.length}`}
-				/>
 				<AnimatePresence mode="wait" initial={false}>
 					<motion.section
 						ref={setupStageRef}
 						key={step}
 						className={`setup-stage setup-stage-${step}`}
-						initial={reduced ? false : { opacity: 0, x: 10 }}
-						animate={{ opacity: 1, x: 0 }}
-						exit={{ opacity: reduced ? 1 : 0, x: reduced ? 0 : -8 }}
-						transition={{ duration: reduced ? 0 : 0.16 }}
+						initial={reduced ? false : { opacity: 0, y: 8 }}
+						animate={{ opacity: 1, y: 0 }}
+						exit={{ opacity: reduced ? 1 : 0, y: reduced ? 0 : -6 }}
+						transition={{ duration: reduced ? 0 : 0.22 }}
 						onAnimationComplete={() => {
 							if (
 								activeSetupStepRef.current !== step ||
 								!focusSetupHeadingRef.current
 							)
 								return;
-							setupStageRef.current?.querySelector<HTMLElement>("h1")?.focus();
+							const stage = setupStageRef.current;
+							stage?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+							stage
+								?.closest<HTMLElement>(".setup-onboarding")
+								?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+							stage
+								?.querySelector<HTMLElement>("h1")
+								?.focus({ preventScroll: true });
 							focusSetupHeadingRef.current = false;
 						}}
 					>
 						{step === 0 && (
 							<div className="setup-welcome">
+								<div className="setup-welcome-mark" aria-hidden="true">
+									<BrandMark />
+								</div>
 								<h1 tabIndex={-1}>
 									Your AI answers.
 									<br />
@@ -1334,7 +1360,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										className="model-source-picker"
 										aria-label="Model access choices"
 									>
-										<button onClick={() => chooseModelAccess("accounts")}>
+										<button
+											type="button"
+											onClick={() => chooseModelAccess("accounts")}
+										>
 											<span className="source-glyph" aria-hidden="true">
 												<Icon name="models" />
 											</span>
@@ -1349,12 +1378,17 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<Icon name="arrow" />
 											</span>
 										</button>
-										<button onClick={() => chooseModelAccess("local")}>
+										<button
+											type="button"
+											className="model-source-option model-source-option-recommended"
+											onClick={() => chooseModelAccess("local")}
+										>
 											<span className="source-glyph" aria-hidden="true">
 												<Icon name="local" />
 											</span>
 											<strong>Run on this Mac</strong>
 											<small>Private and offline-capable.</small>
+											<span className="route-badge">Recommended</span>
 											<span className="source-action">
 												<b>
 													{localModels.length
@@ -1363,8 +1397,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</b>
 												<Icon name="arrow" />
 											</span>
-										</button>
-										<button onClick={() => chooseModelAccess("open")}>
+											</button>
+										<button
+											type="button"
+											onClick={() => chooseModelAccess("open")}
+										>
 											<span className="source-glyph" aria-hidden="true">
 												<Icon name="free" />
 											</span>
@@ -1518,9 +1555,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																					void toggleSubscription(
 																						cli.id,
 																						!cli.enabled,
-																					)
-																				}
-																			>
+							)
+						}
+				>
 																				{subscriptionBusy === cli.id
 																					? "Updating…"
 																					: cli.enabled
@@ -2074,6 +2111,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 
 						{step === finalSetupStep && (
 							<div className="setup-finish">
+								<div className="setup-finish-mark" aria-hidden="true">
+									<BrandMark />
+								</div>
 								<h1 tabIndex={-1}>{finishHeading}</h1>
 								<p>{finishDescription}</p>
 								<div className="finish-checks">
@@ -3742,6 +3782,37 @@ function RuntimeConversation({
 	);
 	const activeSessionBusy = runScope === "active";
 	const backgroundSessionBusy = runScope === "background";
+	const visibleToolActivity = configurationUi.showToolActivity
+		? toolActivity.filter(
+				(event) =>
+					!String(event.payload.toolName ?? "").startsWith("agent.config."),
+			  )
+		: [];
+	const latestToolEvent = toolActivity.at(-1);
+	const currentAction = latestToolEvent
+		? String(
+				latestToolEvent.payload.toolName ??
+					latestToolEvent.executionId ??
+					"Tool activity",
+		  )
+		: streamText
+			? "Drafting a response"
+			: "Starting the task";
+	const currentActionDetail = latestToolEvent
+		? latestToolEvent.type === "tool.progress"
+			? "Progress update received"
+			: latestToolEvent.type === "tool.completed"
+				? "Tool result received"
+				: "Tool started"
+		: "Kestrel is working in this chat.";
+	const latestOutcome =
+		!busy &&
+		!pending &&
+		(latestRun?.status === "completed" ||
+			latestRun?.status === "cancelled" ||
+			latestRun?.status === "failed")
+			? latestRun.status
+			: null;
 	const emptySession = Boolean(
 		activeSessionId &&
 			visibleMessages.length === 0 &&
@@ -3880,41 +3951,52 @@ function RuntimeConversation({
 						</div>
 					))}
 					{activeSessionBusy && (
-						<div className="assistant-message">
-							<span className="assistant-avatar">K</span>
-							<div>
-								<p className={streamText ? "" : "thinking"}>
-									{streamText || "Working…"}
-								</p>
+						<div
+							className="runtime-current-action"
+							role="status"
+							aria-live="polite"
+						>
+							<div className="runtime-current-action-header">
+								<span className="assistant-avatar">K</span>
+								<div className="runtime-current-action-copy">
+									<span className="runtime-section-label">Current action</span>
+									<strong>{currentAction}</strong>
+									<small>{currentActionDetail}</small>
+								</div>
 							</div>
+							{streamText && (
+								<p className="runtime-stream-preview">{streamText}</p>
+							)}
 						</div>
 					)}
-					{configurationUi.showToolActivity &&
-						toolActivity
-							.filter(
-								(event) =>
-									!String(event.payload.toolName ?? "").startsWith(
-										"agent.config.",
-									),
-							)
-							.map((event) => (
-								<div className="work-summary" key={event.id}>
-									<Icon
-										name={event.type === "tool.completed" ? "check" : "arrow"}
-									/>
-									<span>
-										{event.type.replace("tool.", "Tool ")} ·{" "}
-										{String(
-											event.payload.toolName ??
-												event.executionId ??
+					{visibleToolActivity.length > 0 && (
+						<details className="runtime-activity">
+							<summary>
+								<span>Recent activity</span>
+								<small>{visibleToolActivity.length} updates</small>
+							</summary>
+							<div className="runtime-activity-list">
+								{visibleToolActivity.map((event) => (
+									<div className="work-summary" key={event.id}>
+										<Icon
+											name={event.type === "tool.completed" ? "check" : "arrow"}
+										/>
+										<span>
+											{event.type.replace("tool.", "Tool ")} ·{" "}
+											{String(
+												event.payload.toolName ??
+													event.executionId ??
 												"execution",
-										)}
-										{event.type === "tool.progress"
-											? ` · ${JSON.stringify(event.payload)}`
-											: ""}
-									</span>
-								</div>
-							))}
+											)}
+											{event.type === "tool.progress"
+												? ` · ${JSON.stringify(event.payload)}`
+												: ""}
+										</span>
+									</div>
+								))}
+							</div>
+						</details>
+					)}
 					{pending && !busy && (
 						<div className="assistant-message approval-message">
 							<span className="assistant-avatar">!</span>
@@ -3925,6 +4007,9 @@ function RuntimeConversation({
 										: "Approval required"}{" "}
 									· {pending.execution.riskLevel.replaceAll("_", " ")}
 								</strong>
+								<small className="runtime-approval-owner">
+									Your decision is required before Kestrel can continue.
+								</small>
 								<p>{pending.execution.toolName}</p>
 								{typeof pending.execution.output?.preview === "string" && (
 									<pre className="approval-preview">
@@ -3971,6 +4056,54 @@ function RuntimeConversation({
 									</button>
 								</div>
 							</div>
+						</div>
+					)}
+					{latestOutcome && (
+						<div
+							className={`runtime-outcome runtime-outcome-${latestOutcome}`}
+							role="status"
+						>
+							<div className="runtime-outcome-icon">
+								<Icon
+									name={
+										latestOutcome === "completed"
+											? "check"
+											: latestOutcome === "failed"
+												? "warning"
+												: "pause"
+										}
+								/>
+							</div>
+							<div className="runtime-outcome-copy">
+								<strong>
+									{latestOutcome === "completed"
+										? "Task complete"
+										: latestOutcome === "failed"
+											? "Task needs recovery"
+											: "Task cancelled"}
+								</strong>
+								<p>
+									{latestOutcome === "completed"
+										? "Kestrel finished this run. Continue with another message when you are ready."
+										: latestOutcome === "failed"
+											? error ||
+												"The last run did not complete. Review the task context, then retry when ready."
+											: "The run was cancelled before it completed. You can continue this chat or start a new task."}
+								</p>
+							</div>
+							{latestOutcome === "failed" && (
+								<button
+									type="button"
+									className="button secondary"
+									disabled={
+										!executionReady ||
+										visibleMessages.every((message) => message.role !== "user")
+									}
+									onClick={() => void retryLastTurn()}
+								>
+									Retry last turn
+								</button>
+							)}
 						</div>
 					)}
 					{latestRun?.status === "completed" &&
@@ -4246,7 +4379,7 @@ function RuntimeConversation({
 						)}
 					</div>
 				</form>
-				{error && (
+				{error && !latestOutcome && (
 					<p className="chat-error" role="alert">
 						{error}
 					</p>
@@ -5775,6 +5908,9 @@ function Work({
 function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
 	const [channels, setChannels] = useState<ChannelSummary[]>([]);
+	const [communicationSources, setCommunicationSources] = useState<
+		CommunicationSourceStatus[]
+	>([]);
 	const [busy, setBusy] = useState(false);
 	const [grantError, setGrantError] = useState("");
 	const [googleStatus, setGoogleStatus] = useState<GoogleWorkspaceOAuthStatus>({
@@ -5807,15 +5943,32 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 					setGoogleStatus(response.googleWorkspaceOAuth);
 			});
 		void window.kestrel
+			.request({ type: "communication-sources" })
+			.then((response) => {
+				if (response.ok && "communicationSources" in response)
+					setCommunicationSources(response.communicationSources);
+			});
+		void window.kestrel
 			.request({ type: "subscription-cli-status" })
 			.then((response) => {
 				if (response.ok && "subscriptionClis" in response)
 					setSubscriptionClis(response.subscriptionClis);
 			});
 	}, []);
+	async function refreshCommunicationSources() {
+		const response = await window.kestrel.request({
+			type: "communication-sources",
+		});
+		if (response.ok && "communicationSources" in response)
+			setCommunicationSources(response.communicationSources);
+	}
 	const codexSubscription = subscriptionClis.find(
 		(subscription) => subscription.id === "codex",
 	);
+	const messagesSource = communicationSources.find(
+		(source) => source.id === "mac-messages",
+	);
+	const gmailSource = communicationSources.find((source) => source.id === "gmail");
 	async function connectChatGpt() {
 		if (chatGptBusy) {
 			await window.kestrel.request({ type: "oauth-chatgpt-cancel" });
@@ -5879,6 +6032,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 				);
 			if ("googleWorkspaceOAuth" in response)
 				setGoogleStatus(response.googleWorkspaceOAuth);
+			await refreshCommunicationSources();
 			setGoogleClientId("");
 		} catch (error) {
 			setGoogleError(
@@ -5904,6 +6058,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 				);
 			if ("googleWorkspaceOAuth" in response)
 				setGoogleStatus(response.googleWorkspaceOAuth);
+			await refreshCommunicationSources();
 		} catch (error) {
 			setGoogleError(
 				error instanceof Error ? error.message : "Google disconnect failed.",
@@ -6019,8 +6174,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 						<strong>Google Workspace</strong>
 						<p>
 							{googleStatus.connected
-								? `${googleStatus.email} · Gmail send and Calendar events`
-								: "Bring your own Google Desktop OAuth client. Kestrel requests only Gmail send and Calendar event access."}
+								? `${googleStatus.email} · Gmail, Calendar, and login-code lookup`
+								: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar access."}
 						</p>
 						{!googleStatus.connected && (
 							<>
@@ -6048,12 +6203,22 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								</small>
 							</>
 						)}
+						{googleStatus.connected && gmailSource?.state === "needs_reconnect" && (
+							<small role="status">
+								This connection predates code lookup. Disconnect, then connect again
+								to grant the new read-only Gmail permission.
+							</small>
+						)}
 						{googleError && <small role="alert">{googleError}</small>}
 					</div>
 					<span
-						className={`connection-status ${googleStatus.connected ? "connected" : "not_connected"}`}
+						className={`connection-status ${gmailSource?.state === "connected" ? "connected" : "not_connected"}`}
 					>
-						{googleStatus.connected ? "connected" : "not connected"}
+						{gmailSource?.state === "needs_reconnect"
+							? "reconnect for code lookup"
+							: googleStatus.connected
+								? "connected"
+								: "not connected"}
 					</span>
 					<div className="connection-actions">
 						{googleStatus.connected ? (
@@ -6081,6 +6246,52 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								onClick={() => void connectGoogle()}
 							>
 								Connect with Google
+							</button>
+						)}
+					</div>
+				</article>
+				<article className="oauth-connection communication-source-connection">
+					<div className="connection-monogram">MS</div>
+					<div>
+						<strong>Messages on this Mac</strong>
+						<p>
+							{messagesSource?.detail ??
+								"Checking whether Kestrel can read the local Messages database."}
+						</p>
+						<small>
+							Read-only and on demand. Kestrel extracts a short code, never the
+							message body, and never sends a message.
+						</small>
+					</div>
+					<span
+						className={`connection-status ${messagesSource?.state === "connected" ? "connected" : "not_connected"}`}
+					>
+						{messagesSource?.state === "connected"
+							? "connected"
+							: messagesSource?.state === "needs_permission"
+								? "permission needed"
+								: messagesSource?.state === "unavailable"
+									? "unavailable"
+									: "not connected"}
+					</span>
+					<div className="connection-actions">
+						{messagesSource?.state === "needs_permission" ? (
+							<button
+								className="button secondary"
+								onClick={() =>
+									void window.kestrel.request({
+										type: "communication-messages-open-settings",
+									})
+								}
+							>
+								Open System Settings
+							</button>
+						) : (
+							<button
+								className="button secondary"
+								onClick={() => void refreshCommunicationSources()}
+							>
+								Check access
 							</button>
 						)}
 					</div>
@@ -7112,36 +7323,43 @@ const routingModeOptions: ReadonlyArray<{
 	id: RoutingPolicy["mode"];
 	label: string;
 	description: string;
+	icon: string;
 }> = [
 	{
 		id: "balanced",
 		label: "Balanced",
 		description: "Strong results without unnecessary premium-model use.",
+		icon: "models",
 	},
 	{
 		id: "fastest",
 		label: "Fastest",
 		description: "Prefer responsive endpoints when quality remains adequate.",
+		icon: "reload",
 	},
 	{
 		id: "cheapest",
 		label: "Cheapest",
 		description: "Use the lowest-cost model expected to pass validation.",
+		icon: "free",
 	},
 	{
 		id: "best_quality",
 		label: "Best quality",
 		description: "Favor capability and reliability over cost and latency.",
+		icon: "ready",
 	},
 	{
 		id: "local_first",
 		label: "Local first",
 		description: "Start on this Mac, then use cloud models only when needed.",
+		icon: "local",
 	},
 	{
 		id: "privacy_first",
 		label: "Privacy first",
 		description: "Keep model work on configured local endpoints.",
+		icon: "safety",
 	},
 ];
 
@@ -7244,6 +7462,9 @@ function RoutingPolicySettings() {
 								})
 							}
 						>
+							<span className="routing-mode-icon" aria-hidden="true">
+								<Icon name={option.icon} />
+							</span>
 							<strong>{option.label}</strong>
 							<span>{option.description}</span>
 						</button>
@@ -7622,6 +7843,7 @@ function Settings({
 	browser,
 	browserContextEnabled,
 	onToggleBrowserContext,
+	onBack,
 }: {
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
@@ -7633,6 +7855,7 @@ function Settings({
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
+	onBack(): void;
 }) {
 	const [login, setLogin] = useState<{
 		enabled: boolean;
@@ -7828,7 +8051,7 @@ function Settings({
 		["advanced", "Advanced System", "Diagnostics and organization"],
 	] as const;
 	return (
-		<PageFrame title="Preferences">
+		<PageFrame title="Preferences" onBack={onBack}>
 			<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
 					<div className="settings-nav-category-header">
@@ -7869,20 +8092,19 @@ function Settings({
 							<div className="agent-config-banner-header">
 								<span className="agent-config-badge">
 									<Icon name="agent" />
-									<span>Agent Configurable</span>
+									<span>Ask in chat</span>
 								</span>
-								<strong>Everything in Kestrel is configurable through conversation</strong>
+								<strong>Ask Kestrel to change supported settings</strong>
 							</div>
 							<p>
-								You can customize browser privacy, default search, theme skins, desktop pets, chat density, workflows, and permissions simply by asking Kestrel in the sidebar.
+								Request a setting change in the sidebar. Kestrel shows the proposed change and waits for approval before applying it.
 							</p>
 							<div className="agent-config-chips" aria-label="Sample configuration requests">
 								<span className="chips-label">Try asking:</span>
 								{[
 									"Set search engine to Google",
-									"Switch theme skin to Meadow",
 									"Make chat density compact",
-									"Enable tracker and ad blocking",
+									"Use vertical tabs",
 									"Turn off desktop pet",
 								].map((prompt) => (
 									<button
@@ -8290,15 +8512,18 @@ function PageFrame({
 	eyebrow,
 	title,
 	text,
+	onBack,
 	children,
 }: {
 	eyebrow?: string;
 	title: string;
 	text?: string;
+	onBack?(): void;
 	children: ReactNode;
 }) {
 	return (
 		<div className="page-frame">
+			{onBack && <SurfaceBackButton onBack={onBack} />}
 			<header className="page-header">
 				{eyebrow && <span className="eyebrow">{eyebrow}</span>}
 				<h1>{title}</h1>
@@ -8311,11 +8536,7 @@ function PageFrame({
 
 function Empty({ title, text }: { title: string; text: string }) {
 	return (
-		<section className="empty-state">
-			<BrandMark />
-			<h2>{title}</h2>
-			<p>{text}</p>
-		</section>
+		<EmptyState title={title} detail={text} />
 	);
 }
 
@@ -8935,17 +9156,30 @@ export function App() {
 							onOpenSession={openRuntimeSession}
 							onOpenApprovals={() => navigate("approvals")}
 							onOpenWork={() => navigate("work")}
+							onBack={openBrowser}
 						/>
 					)}
 					{page === "history" && (
-						<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
+						<BrowserHistory
+							browser={browser}
+							onOpenBrowser={openBrowser}
+							onBack={openBrowser}
+						/>
 					)}
-					{page === "downloads" && <BrowserDownloads browser={browser} />}
+					{page === "downloads" && (
+						<BrowserDownloads browser={browser} onBack={openBrowser} />
+					)}
 					{page === "commands" && (
 						<CommandCenter
 							destinations={commandDestinations}
 							onSelect={navigate}
 							onClose={closeCommandCenter}
+							onBack={openBrowser}
+							onNewTask={() => {
+								startNewAgent();
+								openAgent();
+							}}
+							pendingApprovals={pendingApprovalCount}
 						/>
 					)}
 					{page === "settings" && (
@@ -8963,6 +9197,7 @@ export function App() {
 								browser={browser}
 								browserContextEnabled={browserContextEnabled}
 								onToggleBrowserContext={toggleBrowserContext}
+								onBack={openBrowser}
 							/>
 						</div>
 					)}
@@ -9016,16 +9251,25 @@ export function App() {
 					)}
 				</section>
 				<AgentSidebar
+					communicationAssistant={
+						<CommunicationCodeAssistant
+							browser={browser}
+							enabled={page === "browser"}
+							onOpenConnections={() => openSettings("connections")}
+						/>
+					}
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					{...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
 					agentName={activeAgentName}
 					collapsed={!agentSidebarOpen}
 					agentState={effectiveAgentState}
+					pendingApprovals={pendingApprovalCount}
 					activeDestination={page}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onOpenSession={openRuntimeSession}
+					onReviewApprovals={() => navigate("approvals")}
 					onNavigate={openPrimaryDestination}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so

@@ -77,11 +77,14 @@ try {
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
-	await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:onboarded", "yes");
+		localStorage.setItem("kestrel:default-browser-prompted", "yes");
+	});
 	await page.reload();
 
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
-	await page.getByRole("button", { name: /^Extensions/ }).click();
+	await page.getByRole("button", { name: /^Agent Plugins/ }).click();
 	const readinessPlugin = page
 		.locator("article.setting-row")
 		.filter({ hasText: "Readiness Test" });

@@ -9,7 +9,7 @@ import {
 	type Server as HttpsServer,
 	type ServerOptions as HttpsServerOptions,
 } from "node:https";
-import type { AddressInfo } from "node:net";
+import { isIP, type AddressInfo } from "node:net";
 import {
 	type RuntimeEvent,
 	RuntimeEventSchema,
@@ -32,6 +32,7 @@ export interface RemoteHttpServerOptions {
 	port?: number;
 	tls?: HttpsServerOptions;
 	allowedOrigins?: string[];
+	allowedHosts?: string[];
 	maximumRequestsPerMinute?: number;
 	maximumSseClients?: number;
 	channelGateway?: ChannelGateway;
@@ -76,6 +77,72 @@ const remoteToolNamePattern = /^[a-z][a-z0-9_.-]{0,99}$/;
 
 function isLoopback(host: string): boolean {
 	return host === "127.0.0.1" || host === "::1" || host === "localhost";
+}
+
+function normalizedHostName(value: string): string {
+	const candidate = value.trim();
+	if (!candidate || candidate.length > 255)
+		throw new Error("Remote allowed hosts must contain hostnames only.");
+	const colonCount = [...candidate].filter((character) => character === ":").length;
+	const authority =
+		colonCount > 1 && !candidate.startsWith("[")
+			? `[${candidate}]`
+			: candidate;
+	let parsed: URL;
+	try {
+		parsed = new URL(`http://${authority}`);
+	} catch {
+		throw new Error("Remote allowed hosts must contain hostnames only.");
+	}
+	if (
+		parsed.username ||
+		parsed.password ||
+		parsed.pathname !== "/" ||
+		parsed.search ||
+		parsed.hash
+	)
+		throw new Error("Remote allowed hosts must contain hostnames only.");
+	return parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+}
+
+function normalizedBindHostName(value: string): string {
+	const candidate = value.trim();
+	const unbracketed =
+		candidate.startsWith("[") && candidate.endsWith("]")
+			? candidate.slice(1, -1)
+			: candidate;
+	const scopeIndex = unbracketed.indexOf("%");
+	if (scopeIndex >= 0) {
+		const address = unbracketed.slice(0, scopeIndex);
+		const scope = unbracketed.slice(scopeIndex + 1);
+		if (
+			isIP(address) !== 6 ||
+			!/^[A-Za-z0-9_.-]{1,64}$/.test(scope)
+		)
+			throw new Error("Remote bind host must be a valid hostname or IP address.");
+		return address.toLowerCase();
+	}
+	return normalizedHostName(candidate);
+}
+
+function hostNameFromHeader(value: string | undefined): string | undefined {
+	if (!value) return undefined;
+	try {
+		return normalizedHostName(value);
+	} catch {
+		return undefined;
+	}
+}
+
+function hostNameFromOrigin(value: string): string | undefined {
+	try {
+		const parsed = new URL(value);
+		return parsed.username || parsed.password
+			? undefined
+			: normalizedHostName(parsed.host);
+	} catch {
+		return undefined;
+	}
 }
 
 function bearer(request: IncomingMessage): string | undefined {
@@ -302,6 +369,8 @@ export class RemoteHttpServer {
 	private readonly rates = new Map<string, RateRecord>();
 	private readonly sse = new Set<ServerResponse>();
 	private readonly mcpSessions = new Map<string, McpRuntimeServer>();
+	private readonly allowedHostnames: Set<string>;
+	private readonly allowAnyIpHost: boolean;
 
 	constructor(private readonly options: RemoteHttpServerOptions) {
 		for (const [name, value] of [
@@ -314,6 +383,27 @@ export class RemoteHttpServer {
 			)
 				throw new Error(`${name} must be a finite positive integer.`);
 		}
+		const configuredHost = normalizedBindHostName(options.host ?? "127.0.0.1");
+		const derived = new Set<string>();
+		for (const host of options.allowedHosts ?? [])
+			derived.add(normalizedHostName(host));
+		for (const origin of options.allowedOrigins ?? []) {
+			const host = hostNameFromOrigin(origin);
+			if (host) derived.add(host);
+		}
+		if (isLoopback(options.host ?? "127.0.0.1")) {
+			derived.add("127.0.0.1");
+			derived.add("localhost");
+			derived.add("::1");
+		} else if (configuredHost !== "0.0.0.0" && configuredHost !== "::") {
+			derived.add(configuredHost);
+		}
+		this.allowedHostnames = derived;
+		this.allowAnyIpHost = configuredHost === "0.0.0.0" || configuredHost === "::";
+	}
+
+	allowHost(host: string): void {
+		this.allowedHostnames.add(normalizedHostName(host));
 	}
 
 	async start(): Promise<{ origin: string }> {
@@ -348,6 +438,7 @@ export class RemoteHttpServer {
 			});
 		});
 		const address = this.server.address() as AddressInfo;
+		this.allowedHostnames.add(normalizedBindHostName(address.address));
 		const displayHost =
 			address.family === "IPv6" ? `[${address.address}]` : address.address;
 		return {
@@ -394,12 +485,28 @@ export class RemoteHttpServer {
 		return true;
 	}
 
+	private checkHost(
+		request: IncomingMessage,
+		response: ServerResponse,
+	): boolean {
+		const hostname = hostNameFromHeader(request.headers.host);
+		if (
+			hostname &&
+			(this.allowedHostnames.has(hostname) ||
+				(this.allowAnyIpHost && isIP(hostname) !== 0))
+		)
+			return true;
+		json(response, 400, { error: "Host is not allowed." });
+		return false;
+	}
+
 	private async handle(
 		request: IncomingMessage,
 		response: ServerResponse,
 	): Promise<void> {
 		try {
 			this.checkRate(request);
+			if (!this.checkHost(request, response)) return;
 			if (!this.checkOrigin(request, response)) return;
 			if (request.method === "OPTIONS") {
 				response.writeHead(204, {

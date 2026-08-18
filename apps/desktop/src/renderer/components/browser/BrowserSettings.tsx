@@ -5,8 +5,6 @@ import type {
 } from "@kestrel/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../Icon";
-import { NEW_TAB_BACKGROUND_OPTIONS } from "./new-tab";
-import meadowLandscape from "../../assets/new-tab-meadow.svg";
 
 const SEARCH_ENGINE_OPTIONS = [
   { value: "google", label: "Google (Default)" },
@@ -597,11 +595,11 @@ export function BrowserSettings({
         </div>
       </section>
 
-      {/* 🌐 SECTION 4: TABS & GENERAL */}
+      {/* SECTION 4: TABS & GENERAL */}
       <section className="settings-stack browser-settings-panel" aria-label="General browser preferences">
         <header className="settings-panel-header">
           <h3>
-            <Icon name="browser" /> Tabs & Personalization
+            <Icon name="browser" /> Tabs & General
           </h3>
         </header>
 
@@ -661,7 +659,6 @@ export function BrowserSettings({
           />
         </label>
 
-        <NewTabPersonalization browser={browser} />
       </section>
 
       {/* 🛡️ SECTION 5: PRIVACY & HISTORY */}
@@ -719,56 +716,10 @@ export function BrowserSettings({
             onClick={() => void browser.clearHistory()}
             disabled={!browser.state?.history.length}
           >
-            Clear history
+            Clear browsing history
           </button>
         </div>
       </section>
     </div>
-  );
-}
-
-export function NewTabPersonalization({
-  browser,
-}: {
-  browser: UserBrowserController;
-}) {
-  const settings = browser.state?.settings;
-  return (
-    <article className="setting-row new-tab-personalization-setting">
-      <div>
-        <strong>New Tab Personalization</strong>
-        <fieldset className="new-tab-background-picker" disabled={!settings}>
-          <legend className="sr-only">New tab background</legend>
-          {NEW_TAB_BACKGROUND_OPTIONS.map((option) => (
-            <button
-              type="button"
-              key={option.value}
-              className={`new-tab-background-option new-tab-background-option-${option.value} ${settings?.newTabBackground === option.value ? "selected" : ""}`}
-              aria-pressed={settings?.newTabBackground === option.value}
-              onClick={() => {
-                if (!settings) return;
-                void browser.updateSettings({
-                  ...settings,
-                  newTabBackground: option.value,
-                });
-              }}
-            >
-              <span
-                className="new-tab-background-preview"
-                aria-hidden="true"
-                style={
-                  option.value === "meadow"
-                    ? { backgroundImage: `url("${meadowLandscape}")` }
-                    : undefined
-                }
-              />
-              <span>
-                <strong>{option.label}</strong>
-              </span>
-            </button>
-          ))}
-        </fieldset>
-      </div>
-    </article>
   );
 }

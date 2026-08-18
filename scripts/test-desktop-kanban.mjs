@@ -26,7 +26,10 @@ try {
 	const page = await application.firstWindow();
 	page.setDefaultTimeout(10_000);
 	await page.setViewportSize({ width: 1280, height: 900 });
-	await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:onboarded", "yes");
+		localStorage.setItem("kestrel:default-browser-prompted", "yes");
+	});
 	await page.reload();
 	const openWork = async () => {
 		await openKestrelDestination(page, "Work");

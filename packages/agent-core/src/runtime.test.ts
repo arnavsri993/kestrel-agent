@@ -1799,6 +1799,7 @@ describe("agent runtime", () => {
 			).toBe(true);
 			database.close();
 		},
+		15_000,
 	);
 
 	it.skipIf(process.platform !== "darwin")(

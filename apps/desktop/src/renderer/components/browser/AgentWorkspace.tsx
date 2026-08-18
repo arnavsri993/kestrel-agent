@@ -4,18 +4,19 @@ import {
 	type AgentSessionFilter,
 	agentSessionRecency,
 	agentSessionStatusLabel,
-	agentSessionsForWorkspace,
+	agentSessionTreeForWorkspace,
 	agentStateLabel,
 	agentWorkspaceName,
 } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
+import { SurfaceBackButton } from "./SurfaceBackButton";
 
 const filters: Array<{ id: AgentSessionFilter; label: string }> = [
 	{ id: "all", label: "All" },
 	{ id: "open", label: "Open" },
-	{ id: "done", label: "Done" },
+	{ id: "done", label: "Completed" },
 ];
 
 export function AgentWorkspace({
@@ -27,6 +28,7 @@ export function AgentWorkspace({
 	onOpenSession,
 	onOpenApprovals,
 	onOpenWork,
+	onBack,
 }: {
 	sessions: RuntimeSession[];
 	activeSessionId: string | null;
@@ -36,11 +38,12 @@ export function AgentWorkspace({
 	onOpenSession(sessionId: string): void;
 	onOpenApprovals(): void;
 	onOpenWork(): void;
+	onBack(): void;
 }) {
 	const [query, setQuery] = useState("");
 	const [filter, setFilter] = useState<AgentSessionFilter>("all");
 	const visibleSessions = useMemo(
-		() => agentSessionsForWorkspace(sessions, query, filter),
+		() => agentSessionTreeForWorkspace(sessions, query, filter),
 		[filter, query, sessions],
 	);
 	const openCount = sessions.filter((session) =>
@@ -50,12 +53,14 @@ export function AgentWorkspace({
 	return (
 		<main className="agent-workspace" aria-labelledby="agent-workspace-title">
 			<header className="agent-workspace-header">
+				<SurfaceBackButton onBack={onBack} />
 				<div className="agent-workspace-heading">
 					<span className="agent-workspace-mark" aria-hidden="true">
 						<BrandMark />
 					</span>
 					<div>
 						<h1 id="agent-workspace-title">Agent Workspace</h1>
+						<p>Delegated tasks stay connected to the work that created them.</p>
 					</div>
 				</div>
 			</header>
@@ -76,11 +81,12 @@ export function AgentWorkspace({
 				<button type="button" onClick={onOpenApprovals}>
 					<Icon name="approvals" />
 					<span>
-						<strong>
+						<strong>Approvals</strong>
+						<small>
 							{pendingApprovals
-								? `${pendingApprovals} approval${pendingApprovals === 1 ? "" : "s"}`
-								: "No approvals"}
-						</strong>
+								? `${pendingApprovals} pending`
+								: "None pending"}
+						</small>
 					</span>
 					<Icon name="chevron" />
 				</button>
@@ -88,6 +94,7 @@ export function AgentWorkspace({
 					<Icon name="work" />
 					<span>
 						<strong>Work</strong>
+						<small>Goals and runs</small>
 					</span>
 					<Icon name="chevron" />
 				</button>
@@ -127,15 +134,26 @@ export function AgentWorkspace({
 
 				{visibleSessions.length ? (
 					<ul className="agent-task-list">
-						{visibleSessions.map((session) => {
+						{visibleSessions.map(({ session, depth, parentTitle }) => {
 							const active = session.id === activeSessionId;
+							const workspaceName = agentWorkspaceName(session.workspaceRoot);
+							const lineage = parentTitle
+								? `Derived from ${sessionTitleForDisplay(parentTitle)} · ${workspaceName}`
+								: workspaceName;
 							return (
 								<li key={session.id}>
 									<button
 										type="button"
 										className={active ? "active" : ""}
+										style={
+											depth > 0
+												? {
+														paddingInlineStart: `calc(18px + ${depth * 24}px)`,
+													}
+												: undefined
+										}
 										aria-current={active ? "page" : undefined}
-										aria-label={`${sessionTitleForDisplay(session.title)}, ${agentSessionStatusLabel(session.status)}, ${agentWorkspaceName(session.workspaceRoot)}`}
+										aria-label={`${sessionTitleForDisplay(session.title)}, ${agentSessionStatusLabel(session.status)}, ${lineage}`}
 										onClick={() => onOpenSession(session.id)}
 									>
 										<span
@@ -144,7 +162,7 @@ export function AgentWorkspace({
 										/>
 										<span className="agent-task-copy">
 											<strong>{sessionTitleForDisplay(session.title)}</strong>
-											<small>{agentWorkspaceName(session.workspaceRoot)}</small>
+											<small>{lineage}</small>
 										</span>
 										<span className="agent-task-meta">
 											<strong>{agentSessionStatusLabel(session.status)}</strong>

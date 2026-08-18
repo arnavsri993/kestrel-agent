@@ -56,6 +56,7 @@ export interface AgentLoopInput {
 	signal?: AbortSignal;
 	onTextDelta?: (delta: string) => void;
 	takeSteering?: () => string[];
+	onEvent?: (event: { type: string; detail: string }) => void;
 }
 
 export interface AgentLoopResult {
@@ -511,7 +512,7 @@ export class AgentLoop {
 			signal?: AbortSignal;
 			onTextDelta?: (delta: string) => void;
 			takeSteering?: () => string[];
-			onEvent?: (event: { type: "provider_progress"; detail: string }) => void;
+			onEvent?: (event: { type: string; detail: string }) => void;
 		},
 	): Promise<AgentLoopResult> {
 		let run = initialRun;
@@ -632,7 +633,7 @@ export class AgentLoop {
 							providerIds: run.providerIds.includes("auto")
 								? ["auto"]
 								: [
-										nextEndpointId,
+										nextEndpointId!,
 										...run.providerIds.filter((p) => p !== nextEndpointId),
 									],
 							fallbackModelIds: remainingFallbacks,

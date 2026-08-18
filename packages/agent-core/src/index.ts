@@ -792,7 +792,7 @@ export class AgentCore {
 			validationPassed: completed,
 			refused: refusal.refused,
 			...(refusal.reason ? { refusalReason: refusal.reason } : {}),
-			...(result.run.refusalRecoveryCount !== undefined
+			...((result.run.refusalRecoveryCount ?? 0) > 0
 				? { recoverySucceeded: completed }
 				: {}),
 			latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
@@ -1209,6 +1209,18 @@ export class AgentCore {
 			switch (request.type) {
 				case "snapshot":
 					return { ok: true, snapshot: this.snapshot() };
+				case "communication-code-search":
+					return {
+						ok: true,
+						communicationMatches: this.deps.googleWorkspace
+							? await this.deps.googleWorkspace.searchLoginCodes({
+										after: request.after,
+										domain: request.domain,
+										maxResults: request.maxResults,
+									signal: AbortSignal.timeout(30_000),
+								})
+							: [],
+					};
 				case "approve":
 					return { ok: true, snapshot: this.approve(request.approvalId) };
 				case "reject":
@@ -1402,9 +1414,9 @@ export class AgentCore {
 										maximumContextCharacters: route.maximumContextCharacters,
 										maximumOutputTokens: route.maximumOutputTokens,
 										temperature: route.temperature,
-									...(route.route.fallbackModelIds
-										? { fallbackModelIds: route.route.fallbackModelIds }
-										: {}),
+										...(route.route.fallbackModelIds
+											? { fallbackModelIds: route.route.fallbackModelIds }
+											: {}),
 									}
 								: {}),
 							allowedTools: this.configuration.filterToolNames(
@@ -2440,9 +2452,9 @@ export class AgentCore {
 										maximumContextCharacters: route.maximumContextCharacters,
 										maximumOutputTokens: route.maximumOutputTokens,
 										temperature: route.temperature,
-									...(route.route.fallbackModelIds
-										? { fallbackModelIds: route.route.fallbackModelIds }
-										: {}),
+										...(route.route.fallbackModelIds
+											? { fallbackModelIds: route.route.fallbackModelIds }
+											: {}),
 									}
 								: {}),
 							...(personality.toolNames
