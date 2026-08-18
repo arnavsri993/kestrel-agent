@@ -11,7 +11,14 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, extname, join, resolve } from "node:path";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+} from "node:path";
 import { tmpdir } from "node:os";
 
 if (process.platform !== "darwin") {
@@ -25,6 +32,7 @@ const home = process.env.HOME ?? tmpdir();
 const installRoot = resolve(process.env.KESTREL_MACOS_INSTALL_ROOT ?? "/Applications");
 const destination = join(installRoot, "Kestrel.app");
 const trashRoot = resolve(process.env.KESTREL_MACOS_TRASH_ROOT ?? join(home, ".Trash"));
+const mdfind = process.env.KESTREL_MDFIND_PATH ?? "/usr/bin/mdfind";
 const searchRoots = uniquePaths(
   (process.env.KESTREL_MACOS_SEARCH_ROOTS
     ? process.env.KESTREL_MACOS_SEARCH_ROOTS.split(":")
@@ -56,6 +64,14 @@ function copyBundle(sourcePath, destinationPath) {
 
 function samePath(left, right) {
   return resolve(left) === resolve(right);
+}
+
+function isInside(path, root) {
+  const relativePath = relative(resolve(root), resolve(path));
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !isAbsolute(relativePath))
+  );
 }
 
 function statIsDirectory(path) {
@@ -142,6 +158,42 @@ function appCandidates(root) {
     .filter(isKestrelBundle);
 }
 
+function spotlightCandidates() {
+  // Finder indexes packaged bundles left in old worktrees even when they are
+  // not in a common install directory. Query the exact bundle name so a new
+  // install can move those stale artifacts to the same reversible Trash path.
+  if (
+    process.env.KESTREL_SKIP_SPOTLIGHT === "1" ||
+    !existsSync(mdfind)
+  ) {
+    return [];
+  }
+  let output;
+  try {
+    output = execFileSync(mdfind, ["kMDItemFSName == 'Kestrel.app'c"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return [];
+  }
+  return output
+    .split(/\r?\n/)
+    .map((path) => path.trim())
+    .filter(Boolean)
+    .filter((path) => !isInside(path, trashRoot))
+    .filter(isKestrelBundle);
+}
+
+function allAppCandidates() {
+  return [
+    ...searchRoots.flatMap((root) => appCandidates(root)),
+    ...spotlightCandidates(),
+  ].filter((candidate, index, candidates) =>
+    candidates.findIndex((other) => samePath(candidate, other)) === index,
+  );
+}
+
 function uniqueTrashPath(originalPath, reason) {
   const originalName = basename(originalPath, extname(originalPath));
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -171,11 +223,11 @@ function moveToTrash(appPath, reason) {
 
 function moveDuplicatesToTrash(excludedPaths) {
   const moved = [];
-  for (const root of searchRoots) {
-    for (const candidate of appCandidates(root)) {
-      if (excludedPaths.some((excludedPath) => samePath(candidate, excludedPath))) continue;
-      moved.push({ from: candidate, to: moveToTrash(candidate, "duplicate") });
+  for (const candidate of allAppCandidates()) {
+    if (excludedPaths.some((excludedPath) => samePath(candidate, excludedPath))) {
+      continue;
     }
+    moved.push({ from: candidate, to: moveToTrash(candidate, "duplicate") });
   }
   return moved;
 }

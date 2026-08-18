@@ -134,8 +134,8 @@ corepack pnpm test:packaged-desktop:arm64
 ```
 
 `install:mac:dev` keeps the canonical app at `/Applications/Kestrel.app`, moves other
-Kestrel bundles found in `/Applications`, `~/Applications`, or `~/Desktop` to
-Trash, and leaves `release/mac-arm64/Kestrel.app` as a build artifact only.
+Kestrel bundles found in common install locations or by Finder/Spotlight to Trash,
+and leaves `release/mac-arm64/Kestrel.app` as a non-indexed build artifact only.
 
 ## Repository map
 
