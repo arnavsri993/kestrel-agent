@@ -41,6 +41,7 @@ const electron = vi.hoisted(() => {
     setZoomLevel = vi.fn((level: number) => { this.zoomLevel = level; });
     stop = vi.fn();
     focus = vi.fn();
+    insertText = vi.fn();
     executeJavaScript = vi.fn();
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = handler; });
     windowOpenHandler: ((details: { url: string; disposition: "foreground-tab" | "background-tab" | "new-window" }) => { action: string }) | undefined;
@@ -478,6 +479,35 @@ describe("UserBrowserService", () => {
     expect(JSON.stringify({ tabs, context, snapshot })).not.toMatch(
       /do-not-share|hidden-link|hidden-ax-name|hidden-ax-link/,
     );
+  });
+
+  it("inserts a selected code only into the active page's matching domain", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/verify");
+    const contents = electron.state.views[0]!.webContents;
+    contents.executeJavaScript.mockResolvedValueOnce(true);
+
+    await service.insertLoginCode(
+      tab.id,
+      "481902",
+      "example.com",
+      "https://example.com",
+    );
+
+    expect(contents.executeJavaScript).toHaveBeenCalledTimes(1);
+    expect(contents.focus).toHaveBeenCalledTimes(1);
+    expect(contents.insertText).toHaveBeenCalledWith("481902");
+
+    contents.url = "https://other.example/verify";
+    await expect(
+      service.insertLoginCode(
+        tab.id,
+        "481902",
+        "example.com",
+        "https://example.com",
+      ),
+    ).rejects.toThrow("page changed");
   });
 
   it("searches bounded history and lists visible downloads as untrusted data", async () => {

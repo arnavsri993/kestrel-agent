@@ -26,7 +26,7 @@ body:has(.ai-browser-app),
 	position: relative;
 	z-index: 3;
 	display: grid;
-	grid-template-rows: auto minmax(0, 1fr) auto;
+	grid-template-rows: auto auto minmax(0, 1fr) auto;
 	min-width: 0;
 	height: 100vh;
 	overflow: hidden;
@@ -35,6 +35,164 @@ body:has(.ai-browser-app),
 	border-left: 1px solid var(--line);
 	border-right: none;
 	backdrop-filter: saturate(115%) blur(24px);
+}
+
+.communication-code-assistant {
+	min-width: 0;
+	max-height: min(310px, 34vh);
+	margin: 0 12px 10px;
+	padding: 10px;
+	overflow: auto;
+	border: 1px solid color-mix(in srgb, var(--signal) 28%, var(--line));
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--surface) 82%, var(--sidebar));
+	box-shadow: 0 12px 30px rgb(0 0 0 / 0.14);
+}
+
+.communication-code-assistant > header,
+.communication-code-assistant > header > div,
+.communication-code-actions,
+.communication-code-results li {
+	display: flex;
+	align-items: center;
+}
+
+.communication-code-assistant > header {
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.communication-code-assistant > header > div {
+	min-width: 0;
+	gap: 7px;
+}
+
+.communication-code-icon {
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	flex: 0 0 24px;
+	border-radius: 7px;
+	background: color-mix(in srgb, var(--signal) 13%, transparent);
+	color: var(--status-ink);
+}
+
+.communication-code-icon svg {
+	width: 13px;
+	height: 13px;
+}
+
+.communication-code-assistant header span:not(.communication-code-live) {
+	min-width: 0;
+	display: grid;
+}
+
+.communication-code-assistant header strong {
+	overflow: hidden;
+	font-size: 11px;
+	font-weight: 650;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.communication-code-assistant header small,
+.communication-code-assistant p,
+.communication-code-source,
+.communication-code-error,
+.communication-code-results small {
+	color: var(--faint);
+	font-size: 10px;
+	line-height: 1.35;
+}
+
+.communication-code-live {
+	flex: 0 0 auto;
+	color: var(--status-ink);
+	font-size: 9px;
+	font-weight: 650;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.communication-code-assistant > p {
+	margin: 8px 0;
+}
+
+.communication-code-actions {
+	gap: 6px;
+}
+
+.communication-code-assistant .button {
+	min-height: 28px;
+	padding: 0 9px;
+	font-size: 10px;
+}
+
+.communication-code-results {
+	display: grid;
+	gap: 6px;
+	margin: 9px 0;
+	padding: 0;
+	list-style: none;
+}
+
+.communication-code-results li {
+	justify-content: space-between;
+	gap: 8px;
+	padding: 7px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--panel) 52%, transparent);
+}
+
+.communication-code-results li > div {
+	min-width: 0;
+	display: grid;
+	gap: 2px;
+}
+
+.communication-code-results code {
+	color: var(--ink);
+	font: 700 15px / 1 var(--mono);
+	letter-spacing: 0.08em;
+}
+
+.communication-code-results small {
+	overflow: hidden;
+	max-width: 180px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.communication-code-source,
+.communication-code-error {
+	display: block;
+	margin-top: 5px;
+}
+
+.communication-code-source.connected {
+	color: var(--status-ink);
+}
+
+.communication-code-source.needs_permission,
+.communication-code-source.needs_reconnect,
+.communication-code-error {
+	color: var(--signal-deep);
+}
+
+.communication-code-rescan {
+	margin-top: 8px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--muted);
+	font-size: 10px;
+	cursor: pointer;
+}
+
+.communication-code-rescan:hover {
+	color: var(--ink);
 }
 
 .agent-sidebar-header {
@@ -2254,7 +2412,7 @@ body:has(.ai-browser-app),
   position: relative;
   z-index: 3;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-width: 0;
   height: 100vh;
   overflow: hidden;

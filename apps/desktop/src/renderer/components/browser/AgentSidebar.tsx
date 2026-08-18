@@ -28,6 +28,7 @@ function shortWorkspaceName(workspaceRoot?: string) {
 
 export function AgentSidebar({
   children,
+  communicationAssistant,
   sessions,
   activeSessionId,
   activeTab,
@@ -41,6 +42,7 @@ export function AgentSidebar({
   onNavigate,
 }: {
   children: ReactNode;
+  communicationAssistant?: ReactNode;
   sessions: RuntimeSession[];
   activeSessionId: string | null;
   activeTab?: UserBrowserTab;
@@ -190,6 +192,7 @@ export function AgentSidebar({
           )}
         </section>
       </div>
+      {communicationAssistant}
       <div className="agent-conversation-host">{children}</div>
       <div className="agent-sidebar-footer">
         <nav aria-label="Kestrel destinations">
