@@ -126,28 +126,33 @@ export function BrowserToolbar({
         type="button"
         className={`browser-context-toggle ${contextEnabled ? "active" : ""}`}
         aria-pressed={contextEnabled}
+        aria-label={
+          contextEnabled
+            ? "Stop sharing page context with agent"
+            : "Share page context with agent"
+        }
         title={
           contextEnabled
-            ? "The active page is available to this agent"
-            : "The active page is excluded from this agent"
+            ? "The agent can use this page as task context. Click to stop sharing."
+            : "The agent cannot use this page as task context. Click to share."
         }
         onClick={onToggleContext}
       >
         <Icon name="context" />
-        <span>{contextEnabled ? "Page on" : "Page off"}</span>
+        <span>{contextEnabled ? "Shared with agent" : "Share with agent"}</span>
       </button>
       <div className="browser-toolbar-actions">
         <button
           id="browser-agent-toggle"
           type="button"
           className={`browser-agent-toggle ${agentOpen ? "active" : ""}`}
-          aria-label={agentOpen ? `Minimize ${agentName}` : `Open ${agentName}`}
+          aria-label={agentOpen ? `Hide ${agentName}` : `Chat with ${agentName}`}
           aria-expanded={agentOpen}
-          title={agentOpen ? `Minimize ${agentName}` : agentName}
+          title={agentOpen ? `Hide ${agentName}` : `Chat with ${agentName}`}
           onClick={onToggleAgent}
         >
           <Icon name="chat" />
-          <span>{agentName}</span>
+          <span>{agentOpen ? `Hide ${agentName}` : `Chat with ${agentName}`}</span>
         </button>
         <button
           type="button"

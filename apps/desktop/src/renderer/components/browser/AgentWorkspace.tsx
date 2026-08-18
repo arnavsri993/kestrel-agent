@@ -11,11 +11,12 @@ import {
 import { sessionTitleForDisplay } from "../../chat-title";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
+import { SurfaceBackButton } from "./SurfaceBackButton";
 
 const filters: Array<{ id: AgentSessionFilter; label: string }> = [
 	{ id: "all", label: "All" },
 	{ id: "open", label: "Open" },
-	{ id: "done", label: "Done" },
+	{ id: "done", label: "Completed" },
 ];
 
 export function AgentWorkspace({
@@ -27,6 +28,7 @@ export function AgentWorkspace({
 	onOpenSession,
 	onOpenApprovals,
 	onOpenWork,
+	onBack,
 }: {
 	sessions: RuntimeSession[];
 	activeSessionId: string | null;
@@ -36,6 +38,7 @@ export function AgentWorkspace({
 	onOpenSession(sessionId: string): void;
 	onOpenApprovals(): void;
 	onOpenWork(): void;
+	onBack(): void;
 }) {
 	const [query, setQuery] = useState("");
 	const [filter, setFilter] = useState<AgentSessionFilter>("all");
@@ -50,6 +53,7 @@ export function AgentWorkspace({
 	return (
 		<main className="agent-workspace" aria-labelledby="agent-workspace-title">
 			<header className="agent-workspace-header">
+				<SurfaceBackButton onBack={onBack} />
 				<div className="agent-workspace-heading">
 					<span className="agent-workspace-mark" aria-hidden="true">
 						<BrandMark />
@@ -76,11 +80,12 @@ export function AgentWorkspace({
 				<button type="button" onClick={onOpenApprovals}>
 					<Icon name="approvals" />
 					<span>
-						<strong>
+						<strong>Approvals</strong>
+						<small>
 							{pendingApprovals
-								? `${pendingApprovals} approval${pendingApprovals === 1 ? "" : "s"}`
-								: "No approvals"}
-						</strong>
+								? `${pendingApprovals} pending`
+								: "None pending"}
+						</small>
 					</span>
 					<Icon name="chevron" />
 				</button>
@@ -88,6 +93,7 @@ export function AgentWorkspace({
 					<Icon name="work" />
 					<span>
 						<strong>Work</strong>
+						<small>Goals and runs</small>
 					</span>
 					<Icon name="chevron" />
 				</button>

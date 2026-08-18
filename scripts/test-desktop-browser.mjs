@@ -226,7 +226,7 @@ try {
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 
 	await page.getByRole("button", { name: "Personalize", exact: true }).click();
-	await page.getByRole("heading", { name: "Tabs, search, and history" }).waitFor();
+	await page.getByRole("heading", { name: "Tabs & Personalization" }).waitFor();
 	await page.getByRole("button", { name: /Meadow Terraced green landscape/ }).click();
 	assert.equal((await browserState()).settings.newTabBackground, "meadow");
 	await page.getByRole("button", { name: "Browser", exact: true }).first().click();
@@ -235,15 +235,15 @@ try {
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "meadow");
 
-	await page.getByRole("button", { name: "Minimize Pragmatic", exact: true }).first().click();
-	await page.getByRole("button", { name: "Open Pragmatic", exact: true }).waitFor();
+	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
+	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).waitFor();
 	await page.reload();
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
-	await page.getByRole("button", { name: "Open Pragmatic", exact: true }).click();
-	await page.getByRole("button", { name: "Minimize Pragmatic", exact: true }).first().waitFor();
+	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).click();
+	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().waitFor();
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 
-	await page.getByRole("button", { name: "Open in chat", exact: true }).first().click();
+	await page.getByRole("button", { name: /Open in chat/ }).first().click();
 	await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");
 		return (
@@ -367,7 +367,7 @@ try {
 	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Agent", exact: true }).last().click();
 	await page
-		.getByRole("heading", { name: "Your agent", exact: true })
+		.getByRole("heading", { name: "Agent Workspace", exact: true })
 		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
@@ -599,9 +599,9 @@ try {
 	await browserSettings.click();
 	assert.equal(await browserSettings.getAttribute("aria-current"), "page");
 	await page
-		.getByRole("heading", { name: "Tabs, search, and history", exact: true })
+		.getByRole("heading", { name: "Tabs & Personalization", exact: true })
 		.waitFor();
-	await page.getByLabel("Search engine").selectOption("ecosia");
+	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
 	await page.getByLabel("Tab layout").selectOption("vertical");
 	state = await waitForBrowserState(
 		(candidate) =>
