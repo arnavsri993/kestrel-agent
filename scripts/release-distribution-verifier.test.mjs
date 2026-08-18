@@ -113,6 +113,25 @@ describe("public release artifact coherence", () => {
 		});
 	});
 
+	it("accepts the beta channel metadata filename", () => {
+		const manifest = fixtureManifest();
+		const metadata = "beta-mac.yml";
+		expect(
+			verifyReleaseMetadata({
+				version,
+				manifest,
+				checksums: parseSha256Sums(fixtureChecksums(manifest)),
+				updater: parseLatestMac(fixtureUpdater(manifest), metadata),
+				downloadFilename: `Kestrel-Apple-Silicon-${version}.dmg`,
+				metadataName: metadata,
+			}),
+		).toMatchObject({
+			downloadArtifact: {
+				filename: `Kestrel-Apple-Silicon-${version}.dmg`,
+			},
+		});
+	});
+
 	it("rejects a stale manifest version", () => {
 		expect(() =>
 			validateReleaseManifest(fixtureManifest({ version: "1.2.2" }), version),

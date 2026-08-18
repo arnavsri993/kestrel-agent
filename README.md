@@ -49,7 +49,7 @@ The packaged development build is Apple Silicon and ad-hoc signed. It is useful 
 - Static Next.js product site with accessible responsive states and provenance-tracked generated/fallback atmosphere.
 - Verified ad-hoc-signed Apple Silicon (`arm64`) `.app` packaging (not Developer ID signed and not notarized), plus release automation that can produce signed/notarized DMG and ZIP artifacts once organization-owned credentials are supplied.
 
-Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, and a public download URL. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
+Not yet complete for the stable production channel: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, and the verified public website/update endpoints. The beta channel has a separate GitHub prerelease workflow and update feed; users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
 
 ## Browser and agent workspace
 
@@ -74,6 +74,9 @@ The chat configuration transaction, extension registry, protected control plane,
 Public privacy/support surfaces, store metadata, distribution inputs, signing,
 hardware certification, and the fail-closed market gate are documented in
 [docs/market-release.md](docs/market-release.md).
+Beta installer creation, GitHub prerelease publishing, automatic beta updates,
+and the single-instance boundary are documented in
+[docs/beta-release.md](docs/beta-release.md).
 The signed-policy contract, MDM PKG rollout, clean-device verification, and
 the exact organization-owned deployment inputs are documented in
 [docs/enterprise-deployment.md](docs/enterprise-deployment.md).

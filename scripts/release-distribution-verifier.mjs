@@ -133,7 +133,8 @@ export function parseSha256Sums(source) {
 	return checksums;
 }
 
-export function parseLatestMac(source) {
+export function parseLatestMac(source, metadataName = "latest-mac.yml") {
+	const metadataLabel = metadataName || "latest-mac.yml";
 	let version;
 	let path;
 	let sha512;
@@ -152,21 +153,21 @@ export function parseLatestMac(source) {
 	};
 	const claimTopLevelField = (field) => {
 		if (topLevelFields.has(field))
-			throw new Error(`latest-mac.yml repeats top-level ${field}.`);
+			throw new Error(`${metadataLabel} repeats top-level ${field}.`);
 		topLevelFields.add(field);
 	};
 	const claimFileField = (field) => {
 		if (!currentFile)
-			throw new Error(`latest-mac.yml has ${field} outside a file record.`);
+			throw new Error(`${metadataLabel} has ${field} outside a file record.`);
 		if (currentFile.fields.has(field))
-			throw new Error(`latest-mac.yml repeats file ${field}.`);
+			throw new Error(`${metadataLabel} repeats file ${field}.`);
 		currentFile.fields.add(field);
 	};
 
 	for (const rawLine of source.replaceAll("\r", "").split("\n")) {
 		if (!rawLine.trim() || rawLine.trimStart().startsWith("#")) continue;
 		if (rawLine.includes("\t"))
-			throw new Error("latest-mac.yml must not use tab indentation.");
+			throw new Error(`${metadataLabel} must not use tab indentation.`);
 		const indentation = rawLine.length - rawLine.trimStart().length;
 		const line = rawLine.trim();
 		if (indentation === 0) {
@@ -198,14 +199,14 @@ export function parseLatestMac(source) {
 				);
 			} else {
 				throw new Error(
-					`latest-mac.yml contains unsupported top-level content: ${line}.`,
+					`${metadataLabel} contains unsupported top-level content: ${line}.`,
 				);
 			}
 			continue;
 		}
 		if (!inFiles)
 			throw new Error(
-				`latest-mac.yml contains unexpected nested content: ${line}.`,
+				`${metadataLabel} contains unexpected nested content: ${line}.`,
 			);
 		if (indentation === 2 && line.startsWith("- url:")) {
 			finishFile();
@@ -227,7 +228,7 @@ export function parseLatestMac(source) {
 			);
 		} else {
 			throw new Error(
-				`latest-mac.yml contains unsupported file content or indentation: ${line}.`,
+				`${metadataLabel} contains unsupported file content or indentation: ${line}.`,
 			);
 		}
 	}
@@ -235,15 +236,15 @@ export function parseLatestMac(source) {
 
 	if (!version || !path || !sha512 || !releaseDate)
 		throw new Error(
-			"latest-mac.yml must contain top-level version, path, sha512, and releaseDate fields.",
+			`${metadataLabel} must contain top-level version, path, sha512, and releaseDate fields.`,
 		);
 	if (!Number.isFinite(Date.parse(releaseDate)) || !releaseDate.includes("T"))
-		throw new Error("latest-mac.yml contains an invalid release date.");
+		throw new Error(`${metadataLabel} contains an invalid release date.`);
 	if (!files.length)
-		throw new Error("latest-mac.yml does not contain updater files.");
+		throw new Error(`${metadataLabel} does not contain updater files.`);
 	for (const file of files) {
 		if (!file.url || !file.sha512 || !file.bytes)
-			throw new Error("latest-mac.yml contains an incomplete updater file.");
+			throw new Error(`${metadataLabel} contains an incomplete updater file.`);
 	}
 	return { version, path, sha512, releaseDate, files };
 }
@@ -254,7 +255,9 @@ export function verifyReleaseMetadata({
 	checksums,
 	updater,
 	downloadFilename,
+	metadataName = "latest-mac.yml",
 }) {
+	const metadataLabel = metadataName || "latest-mac.yml";
 	const artifacts = validateReleaseManifest(manifest, version);
 	if (
 		checksums.size !== artifacts.size ||
@@ -285,7 +288,7 @@ export function verifyReleaseMetadata({
 	for (const file of updater.files) {
 		if (basename(file.url) !== file.url || updaterFiles.has(file.url))
 			throw new Error(
-				`latest-mac.yml contains an invalid or duplicate file URL: ${file.url}.`,
+				`${metadataLabel} contains an invalid or duplicate file URL: ${file.url}.`,
 			);
 		updaterFiles.set(file.url, file);
 	}
@@ -295,7 +298,7 @@ export function verifyReleaseMetadata({
 		!updaterFiles.has(expectedZip)
 	)
 		throw new Error(
-			`latest-mac.yml must contain exactly ${expectedDmg} and ${expectedZip}.`,
+			`${metadataLabel} must contain exactly ${expectedDmg} and ${expectedZip}.`,
 		);
 
 	for (const filename of [expectedDmg, expectedZip]) {
@@ -503,6 +506,7 @@ export async function verifyLocalReleaseBundle({
 	releaseDirectory,
 	version,
 	expectedCommit,
+	metadataName = "latest-mac.yml",
 }) {
 	if (!commitPattern.test(expectedCommit))
 		throw new Error("Expected release commit must be a full Git commit SHA.");
@@ -513,8 +517,8 @@ export async function verifyLocalReleaseBundle({
 		),
 		readLocalMetadata(join(releaseDirectory, "SHA256SUMS"), "SHA256SUMS"),
 		readLocalMetadata(
-			join(releaseDirectory, "latest-mac.yml"),
-			"latest-mac.yml",
+			join(releaseDirectory, metadataName),
+			metadataName,
 		),
 	]);
 	let manifest;
@@ -531,8 +535,9 @@ export async function verifyLocalReleaseBundle({
 		version,
 		manifest,
 		checksums: parseSha256Sums(checksumsSource),
-		updater: parseLatestMac(updaterSource),
+		updater: parseLatestMac(updaterSource, metadataName),
 		downloadFilename: `Kestrel-Apple-Silicon-${version}.dmg`,
+		metadataName,
 	});
 	await Promise.all(
 		[...result.artifacts.values()].map((artifact) =>
@@ -557,6 +562,7 @@ export async function verifyPublicReleaseArtifacts({
 	manifestUrl,
 	checksumsUrl,
 	updateBaseUrl,
+	metadataName = "latest-mac.yml",
 	fetchImpl = fetch,
 }) {
 	if (!commitPattern.test(expectedCommit))
@@ -564,7 +570,7 @@ export async function verifyPublicReleaseArtifacts({
 			"Expected public release commit must be a full Git commit SHA.",
 		);
 	const updateFeedUrl = new URL(
-		"latest-mac.yml",
+		metadataName,
 		`${updateBaseUrl.toString().replace(/\/$/, "")}/`,
 	);
 	const [manifestResponse, checksumsResponse, updaterResponse] =
@@ -574,13 +580,13 @@ export async function verifyPublicReleaseArtifacts({
 			fetchRequired(
 				fetchImpl,
 				updateFeedUrl,
-				"KESTREL_UPDATE_URL/latest-mac.yml",
+				`KESTREL_UPDATE_URL/${metadataName}`,
 			),
 		]);
 	const [manifestSource, checksumsSource, updaterSource] = await Promise.all([
 		readMetadata(manifestResponse, "PUBLIC_RELEASE_MANIFEST_URL"),
 		readMetadata(checksumsResponse, "PUBLIC_RELEASE_CHECKSUMS_URL"),
-		readMetadata(updaterResponse, "KESTREL_UPDATE_URL/latest-mac.yml"),
+		readMetadata(updaterResponse, `KESTREL_UPDATE_URL/${metadataName}`),
 	]);
 	let manifest;
 	try {
@@ -596,8 +602,9 @@ export async function verifyPublicReleaseArtifacts({
 		version,
 		manifest,
 		checksums: parseSha256Sums(checksumsSource),
-		updater: parseLatestMac(updaterSource),
+		updater: parseLatestMac(updaterSource, metadataName),
 		downloadFilename: decodeURIComponent(basename(downloadUrl.pathname)),
+		metadataName,
 	});
 	const updaterArtifactUrl = new URL(
 		result.updaterArtifact.filename,
