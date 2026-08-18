@@ -31,7 +31,7 @@ async function launch() {
 }
 
 async function assertFresh(page) {
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 	const response = await page.evaluate(() =>
 		window.kestrel.request({ type: "snapshot" }),
 	);
@@ -50,8 +50,8 @@ async function assertFresh(page) {
 		await page.getByText("Needs Your Approval", { exact: true }).count(),
 		0,
 	);
-	await page.getByRole("button", { name: "Review a project" }).waitFor();
-	await page.getByRole("button", { name: "Plan a task" }).waitFor();
+	assert.equal(await page.getByRole("button", { name: "Review a project" }).count(), 0);
+	assert.equal(await page.getByRole("button", { name: "Plan a task" }).count(), 0);
 }
 
 try {

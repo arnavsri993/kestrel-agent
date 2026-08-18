@@ -40,10 +40,10 @@ try {
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
 
-	const selectedSkin = await page.evaluate(async () =>
+	const legacySkinSelection = await page.evaluate(async () =>
 		window.kestrel.request({ type: "skin-select", skinId: "daylight" }),
 	);
-	assert.equal(selectedSkin.ok, true);
+	assert.equal(legacySkinSelection.ok, true);
 	await page.reload();
 
 	await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
@@ -51,21 +51,21 @@ try {
 		.locator(".setup-onboarding")
 		.evaluate((element) => ({
 			canvas: getComputedStyle(element).getPropertyValue("--canvas").trim(),
-			signal: getComputedStyle(element).getPropertyValue("--signal").trim(),
+			solid: getComputedStyle(element).getPropertyValue("--solid").trim(),
 			colorScheme: getComputedStyle(element).colorScheme,
 			color: getComputedStyle(element).color,
 		}));
-	assert.equal(setupTheme.canvas, "#0e0e10");
-	assert.equal(setupTheme.signal, "#f4f4f6");
+	assert.equal(setupTheme.canvas, "#0a0a0a");
+	assert.equal(setupTheme.solid, "#f5f5f7");
 	assert.equal(setupTheme.colorScheme, "dark");
-	assert.equal(setupTheme.color, "rgb(244, 244, 246)");
+	assert.equal(setupTheme.color, "rgb(245, 245, 247)");
 	await page.waitForFunction(
 		() =>
 			getComputedStyle(document.documentElement)
 				.getPropertyValue("--canvas")
-			.trim() === "#0e0e10",
+			.trim() === "#0a0a0a",
 	);
-	assert.equal(await page.locator(".setup-product-anchor").count(), 1);
+	assert.equal(await page.locator(".setup-product-anchor").count(), 0);
 	assert.deepEqual(
 		await page.locator(".setup-rail li strong").allTextContents(),
 		["Welcome", "Before you begin", "Choose a model", "Model setup", "Ready"],
@@ -249,7 +249,7 @@ try {
 			document.documentElement.clientWidth,
 	);
 	assert.equal(overflow, false);
-	assert.equal(await page.locator(".setup-product-anchor").count(), 1);
+	assert.equal(await page.locator(".setup-product-anchor").count(), 0);
 	const railLayout = await page.locator(".setup-rail ol").evaluate((rail) => {
 		const items = [...rail.querySelectorAll("li")].map((item) =>
 			item.getBoundingClientRect(),
@@ -270,9 +270,7 @@ try {
 	);
 	await page.getByRole("button", { name: "Continue" }).click();
 	await page
-		.getByRole("heading", {
-			name: /Kestrel is ready|Your model route is configured\.|Your workspace is ready\./,
-		})
+		.getByRole("heading", { name: "You're set.", exact: true })
 		.waitFor();
 	await page.getByRole("button", { name: "Finish with setup help" }).click();
 	await page
@@ -389,8 +387,9 @@ try {
 		"Meta+N",
 	);
 	await page.getByRole("button", { name: "Add project" }).waitFor();
-	await page.getByRole("button", { name: /Review a project/ }).waitFor();
-	await page.getByRole("button", { name: /Plan a task/ }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
+	assert.equal(await page.getByRole("button", { name: /Review a project/ }).count(), 0);
+	assert.equal(await page.getByRole("button", { name: /Plan a task/ }).count(), 0);
 	const preservedDraft = "Keep this draft while I check Settings.";
 	await page.getByLabel("Message Kestrel").fill(preservedDraft);
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -402,8 +401,16 @@ try {
 	await page.getByLabel("Message Kestrel").fill("");
 	await page.setViewportSize({ width: 640, height: 760 });
 	await newAgentButton.getByText("New task", { exact: true }).waitFor();
-	await page.getByRole("button", { name: "More", exact: true }).waitFor();
-	await page.getByRole("button", { name: "Settings", exact: true }).waitFor();
+	const compactNav = page
+		.locator(".agent-sidebar-footer")
+		.getByRole("navigation", { name: "Kestrel destinations" });
+	assert.deepEqual(await compactNav.getByRole("button").allTextContents(), [
+		"Browser",
+		"Agent",
+		"Approvals",
+		"Settings",
+	]);
+	assert.equal(await page.getByRole("button", { name: "More", exact: true }).count(), 0);
 	assert.equal(
 		await page.evaluate(
 			() =>
@@ -412,8 +419,7 @@ try {
 		),
 		false,
 	);
-	const moreButton = page.getByRole("button", { name: "More", exact: true });
-	await moreButton.click();
+	await page.keyboard.press("Meta+K");
 	await page.getByLabel("Search Kestrel").waitFor();
 	const compactCommands = await page
 		.locator(".command-center")
@@ -492,7 +498,7 @@ try {
 	);
 	const selectedButtonShadows = await page
 		.locator(
-			'.sidebar-bottom > button.active, .nav-section button.active, .new-task-button.active, .settings-nav button.active, .skin-picker button.selected, [role="option"][aria-selected="true"], .event-application-rail button.active',
+			'.sidebar-bottom > button.active, .nav-section button.active, .new-task-button.active, .settings-nav button.active, [role="option"][aria-selected="true"], .event-application-rail button.active',
 		)
 		.evaluateAll((buttons) =>
 			buttons.map((button) => getComputedStyle(button).boxShadow),
@@ -502,7 +508,7 @@ try {
 		false,
 	);
 	await page.keyboard.press("Meta+N");
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
 	await page
 		.getByRole("navigation", { name: "Settings sections" })

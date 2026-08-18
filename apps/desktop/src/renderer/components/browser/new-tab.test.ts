@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { frequentBrowserSites, siteAccent, siteInitial } from "./new-tab";
+import { frequentBrowserSites, siteInitial } from "./new-tab";
 
 const tabId = "tab-00000000-0000-4000-8000-000000000000";
 
@@ -38,8 +38,7 @@ describe("new tab shortcuts", () => {
     });
   });
 
-  it("derives stable accessible glyph metadata", () => {
-    expect(siteInitial({ hostname: "www.example.com", title: "Example" })).toBe("E");
-    expect(siteAccent("example.com")).toBe(siteAccent("example.com"));
-  });
+	it("derives stable neutral glyph text", () => {
+		expect(siteInitial({ hostname: "www.example.com", title: "Example" })).toBe("E");
+	});
 });

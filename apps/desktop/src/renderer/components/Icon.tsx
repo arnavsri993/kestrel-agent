@@ -110,10 +110,68 @@ const paths: Record<string, string[]> = {
 	],
 };
 
+const filledStatusPaths: Record<string, { shell: string; mark: string[] }> = {
+	"check-circle-filled": {
+		shell: "M12 2a10 10 0 110 20 10 10 0 010-20z",
+		mark: ["M7.8 12.2l2.7 2.7 5.8-6"],
+	},
+	"alert-triangle-filled": {
+		shell: "M10.3 3.3a2 2 0 013.4 0l8 14A2 2 0 0120 20H4a2 2 0 01-1.7-3l8-13.7z",
+		mark: ["M12 8.3v5.2", "M12 16.8h.01"],
+	},
+	"x-circle-filled": {
+		shell: "M12 2a10 10 0 110 20 10 10 0 010-20z",
+		mark: ["M8.5 8.5l7 7", "M15.5 8.5l-7 7"],
+	},
+	"info-filled": {
+		shell: "M12 2a10 10 0 110 20 10 10 0 010-20z",
+		mark: ["M12 10.8v5", "M12 7.4h.01"],
+	},
+};
+
 export function Icon({
 	name,
 	...props
 }: SVGProps<SVGSVGElement> & { name: string }) {
+	const filled = filledStatusPaths[name];
+	if (filled) {
+		return (
+			<svg
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+				fill="none"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				{...props}
+			>
+				<path d={filled.shell} fill="currentColor" stroke="none" />
+				{filled.mark.map((path) => (
+					<path
+						d={path}
+						key={path}
+						stroke="var(--status-fill)"
+						strokeWidth="1.9"
+					/>
+				))}
+			</svg>
+		);
+	}
+	if (name === "loader") {
+		return (
+			<svg
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+				{...props}
+			>
+				<circle cx="12" cy="12" r="8" opacity="0.28" />
+				<path d="M12 4a8 8 0 014.9 1.7" />
+			</svg>
+		);
+	}
 	return (
 		<svg
 			viewBox="0 0 24 24"

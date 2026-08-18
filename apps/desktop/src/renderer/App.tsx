@@ -21,8 +21,6 @@ import type {
 	ModelProviderSummary,
 	ModelRoutingDecision,
 	OrganizationMemberContract,
-	PetActivityState,
-	PetStatus,
 	PluginMutation,
 	PluginSummary,
 	ProviderVerification,
@@ -38,7 +36,6 @@ import type {
 	SessionUsageSummary,
 	SetupSystemProfile,
 	SkillLearningProposal,
-	SkinStatus,
 	SubscriptionCliStatus,
 	SystemReadiness,
 	TeamRecordContract,
@@ -99,7 +96,6 @@ import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
-import { applySkin } from "./components/SkinSettings";
 import { EmptyState } from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
@@ -1120,21 +1116,13 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			void checkModelRoutes();
 	}, [step, modelReady, verifiedModelReady]);
 
-	const finishHeading = verifiedModelReady
-		? "Kestrel is ready."
-		: modelReady
-			? "Your model route is configured."
-			: "Your workspace is ready.";
+	const finishHeading = "You're set.";
 	const finishDescription = verifiedModelReady
 		? "A real model route responded. Add access only when a task needs it."
 		: modelReady
 			? "The route is saved but not live-verified yet."
 			: "Explore now. Connect a model when you need live work.";
-	const finishPrimaryLabel = verifiedModelReady
-		? "Start using Kestrel"
-		: modelReady
-			? "Open Kestrel"
-			: "Open local preview";
+	const finishPrimaryLabel = "Open Kestrel";
 
 	return (
 		<motion.main
@@ -1142,13 +1130,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			initial={false}
 			animate={{ opacity: 1 }}
 			exit={{ opacity: reduced ? 1 : 0 }}
-			transition={{ duration: reduced ? 0 : 0.16 }}
+			transition={{ duration: reduced ? 0 : 0.14 }}
 		>
 			<header className="onboarding-bar">
-				<ProductAnchor
-					className="setup-product-anchor"
-					detail={`Step ${step + 1} of ${setupSteps.length}`}
-				/>
 				<nav className="setup-rail" aria-label="Setup progress">
 					<span className="setup-stage-name" aria-live="polite">
 						{setupSteps[step]!.label}
@@ -1183,10 +1167,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						ref={setupStageRef}
 						key={step}
 						className={`setup-stage setup-stage-${step}`}
-						initial={reduced ? false : { opacity: 0, y: 8 }}
+						initial={reduced ? false : { opacity: 0, y: 6 }}
 						animate={{ opacity: 1, y: 0 }}
 						exit={{ opacity: reduced ? 1 : 0, y: reduced ? 0 : -6 }}
-						transition={{ duration: reduced ? 0 : 0.22 }}
+						transition={{ duration: reduced ? 0 : 0.14 }}
 						onAnimationComplete={() => {
 							if (
 								activeSetupStepRef.current !== step ||
@@ -2117,10 +2101,18 @@ function Onboarding({ onDone }: { onDone(): void }) {
 								<h1 tabIndex={-1}>{finishHeading}</h1>
 								<p>{finishDescription}</p>
 								<div className="finish-checks">
-									<div className={verifiedModelReady ? "done" : "attention"}>
-										<span>
-											{verifiedModelReady ? "✓" : providerCheckBusy ? "…" : "!"}
-										</span>
+								<div className={verifiedModelReady ? "done" : "attention"}>
+									<span>
+										<Icon
+											name={
+												verifiedModelReady
+													? "check-circle-filled"
+													: providerCheckBusy
+														? "loader"
+														: "info-filled"
+											}
+										/>
+									</span>
 										<span>
 											<strong>
 												{verifiedModelReady
@@ -2151,15 +2143,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</button>
 											)}
 									</div>
-									<div className="done">
-										<span>✓</span>
+								<div className="done">
+									<span><Icon name="check-circle-filled" /></span>
 										<span>
 											<strong>Approval boundary</strong>
 											<small>Sensitive actions pause for review</small>
 										</span>
 									</div>
-									<div className="done">
-										<span>✓</span>
+								<div className="done">
+									<span><Icon name="check-circle-filled" /></span>
 										<span>
 											<strong>Private storage</strong>
 											<small>
@@ -2167,8 +2159,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</small>
 										</span>
 									</div>
-									<div>
-										<span>→</span>
+								<div>
+									<span><Icon name="info-filled" /></span>
 										<span>
 											<strong>Project access</strong>
 											<small>
@@ -2272,7 +2264,7 @@ function ProductAnchor({
 			{...(reduced ? {} : { layoutId: "kestrel-product-anchor" })}
 			transition={{
 				layout: {
-					duration: 0.22,
+					duration: 0.14,
 					ease: [0.22, 1, 0.36, 1],
 				},
 			}}
@@ -2811,7 +2803,6 @@ function RuntimeConversation({
 	browserContext,
 	newAgentRequestId,
 	newAgentPrompt,
-	onNewAgent,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -2824,7 +2815,6 @@ function RuntimeConversation({
 	browserContext?(): Promise<UserBrowserPageContext | undefined>;
 	newAgentRequestId: number;
 	newAgentPrompt: string;
-	onNewAgent(): void;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -3345,12 +3335,6 @@ function RuntimeConversation({
 		}
 	}
 
-	async function reviewProject() {
-		setInput("Review this project and suggest the next useful step.");
-		if (!taskWorkspace) await addProject();
-		window.setTimeout(() => promptRef.current?.focus(), 0);
-	}
-
 	async function submit() {
 		const prompt = input.trim();
 		if (!prompt) return;
@@ -3848,52 +3832,7 @@ function RuntimeConversation({
 			>
 				{assistiveStatus}
 			</p>
-			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
-				<div className="new-task-center">
-					<h1>{activeSessionId ? "Continue this chat." : "How can I help?"}</h1>
-					{activeSessionId && <p>Describe the next useful step.</p>}
-					<ProductAnchor
-						className="workspace-product-anchor"
-						detail={
-							activeSessionId ? "This chat is ready" : "Ready on this Mac"
-						}
-					/>
-					{!activeSessionId && (
-						<div
-							className="prompt-suggestions runtime-suggestions"
-							aria-label="Suggested starts"
-						>
-							<button type="button" onClick={() => void reviewProject()}>
-								<span>
-									<strong>Review a project</strong>
-								</span>
-								<Icon name="arrow" />
-							</button>
-							<button
-								type="button"
-								onClick={() => {
-									setInput("Help me plan the next thing I need to get done.");
-									window.setTimeout(() => promptRef.current?.focus(), 0);
-								}}
-							>
-								<span>
-									<strong>Plan a task</strong>
-								</span>
-								<Icon name="arrow" />
-							</button>
-						</div>
-					)}
-					{activeSessionId && (
-						<div className="empty-session-note">
-							<span className="agent-dot idle" />
-							<span>This chat is conversation-only.</span>
-							<button type="button" className="quiet-link" onClick={onNewAgent}>
-								Start a new chat
-							</button>
-						</div>
-					)}
-				</div>
-			) : (
+			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? null : (
 				<div className="message-list">
 					{hasEarlierMessages && (
 						<button
@@ -7836,10 +7775,6 @@ function Settings({
 	snapshot,
 	update,
 	initialSection,
-	skinStatus,
-	onSkinStatus,
-	petStatus,
-	onPetStatus,
 	browser,
 	browserContextEnabled,
 	onToggleBrowserContext,
@@ -7848,10 +7783,6 @@ function Settings({
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
 	initialSection?: SettingsSection;
-	skinStatus: SkinStatus | null;
-	onSkinStatus(next: SkinStatus): void;
-	petStatus: PetStatus | null;
-	onPetStatus(next: PetStatus): void;
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
@@ -8105,7 +8036,6 @@ function Settings({
 									"Set search engine to Google",
 									"Make chat density compact",
 									"Use vertical tabs",
-									"Turn off desktop pet",
 								].map((prompt) => (
 									<button
 										key={prompt}
@@ -8251,12 +8181,6 @@ function Settings({
 											</button>
 										),
 									)}
-								</div>
-							</article>
-							<article className="setting-row">
-								<div>
-									<strong>Activity pet</strong>
-									<p>Hatch an original pet with AI</p>
 								</div>
 							</article>
 						</section>
@@ -8543,10 +8467,6 @@ function Empty({ title, text }: { title: string; text: string }) {
 export function App() {
 	const browser = useUserBrowser();
 	const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
-	const [skinStatus, setSkinStatus] = useState<SkinStatus | null>(null);
-	const [petStatus, setPetStatus] = useState<PetStatus | null>(null);
-	const [petActivity, setPetActivity] = useState<PetActivityState>("idle");
-	const petActivityTimer = useRef<number | null>(null);
 	const [page, setPage] = useState<Page>("browser");
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
@@ -8639,7 +8559,7 @@ export function App() {
 	const closeCommandCenter = useCallback(() => {
 		setPage("browser");
 		window.requestAnimationFrame(() =>
-			document.getElementById("kestrel-more")?.focus(),
+			document.getElementById("kestrel-browser-nav")?.focus(),
 		);
 	}, []);
 	const openPrimaryDestination = useCallback(
@@ -8647,10 +8567,8 @@ export function App() {
 			destination:
 				| "browser"
 				| "agent"
-				| "history"
-				| "downloads"
-				| "settings"
-				| "commands",
+				| "approvals"
+				| "settings",
 		) => {
 			if (destination === "settings") setSettingsSectionRequest(null);
 			setPage(destination);
@@ -8683,11 +8601,6 @@ export function App() {
 		const timer = window.setTimeout(() => setDeepLinkNotice(""), 8_000);
 		return () => window.clearTimeout(timer);
 	}, [deepLinkNotice]);
-	function updateSkinStatus(next: SkinStatus) {
-		setSkinStatus(next);
-		const selected = next.skins.find((skin) => skin.id === next.selectedId);
-		if (selected) applySkin(selected);
-	}
 	useEffect(() => {
 		let active = true;
 		const unsubscribe = window.kestrel.onSnapshot((next) => {
@@ -8725,11 +8638,7 @@ export function App() {
 					setRuntimeSessions((current) =>
 						runtimeSessionsAfterEvent(current, event),
 					);
-				if (petActivityTimer.current)
-					window.clearTimeout(petActivityTimer.current);
-				if (event.type === "tool.started" || event.type === "tool.progress")
-					setPetActivity("run");
-				else if (event.type === "tool.completed") {
+				if (event.type === "tool.completed") {
 					const status = String(event.payload.status ?? "");
 					const toolName = String(event.payload.toolName ?? "");
 					if (toolName.startsWith("agent.config.") && status === "verified")
@@ -8740,105 +8649,13 @@ export function App() {
 									setSnapshot(response.snapshot);
 							})
 							.catch(() => undefined);
-					setPetActivity(
-						["failed", "blocked", "cancelled"].includes(status)
-							? "failed"
-							: /goal|task/.test(toolName)
-								? "jump"
-								: "review",
-					);
-				} else if (event.type === "message.appended")
-					setPetActivity(
-						event.payload.role === "assistant" ? "wave" : "review",
-					);
-				petActivityTimer.current = window.setTimeout(() => {
-					petActivityTimer.current = null;
-					setPetActivity(
-						snapshot?.agentState === "waiting_approval"
-							? "waiting"
-							: snapshot?.agentState === "working"
-								? "run"
-								: "idle",
-					);
-				}, 2_200);
+				}
 			}),
-		[snapshot?.agentState],
-	);
-	useEffect(() => {
-		if (snapshot?.agentState === "waiting_approval") setPetActivity("waiting");
-		else if (snapshot?.agentState === "working") setPetActivity("run");
-		else if (!petActivityTimer.current) setPetActivity("idle");
-	}, [snapshot?.agentState]);
-	useEffect(
-		() => () => {
-			if (petActivityTimer.current)
-				window.clearTimeout(petActivityTimer.current);
-		},
 		[],
 	);
 	useEffect(() => {
-		void window.kestrel.request({ type: "skin-get" }).then((raw) => {
-			const response = raw as CoreResponse;
-			if (response.ok && response.skinStatus)
-				updateSkinStatus(response.skinStatus);
-		});
-		void window.kestrel.request({ type: "pet-get" }).then((raw) => {
-			const response = raw as CoreResponse;
-			if (response.ok && response.petStatus) setPetStatus(response.petStatus);
-		});
-	}, []);
-	useEffect(() => {
 		if (!snapshot?.configuration) return;
 		const config = snapshot.configuration as Record<string, unknown>;
-		const appearance = config.appearance as
-			| {
-					skin?: string;
-					petEnabled?: boolean;
-					petSlug?: string;
-					petScale?: number;
-					petRenderMode?: "unicode" | "canvas";
-			  }
-			| undefined;
-		if (
-			appearance?.skin &&
-			skinStatus &&
-			skinStatus.selectedId !== appearance.skin
-		) {
-			const matchingSkin = skinStatus.skins.find(
-				(s) => s.id === appearance.skin,
-			);
-			if (matchingSkin) {
-				updateSkinStatus({ ...skinStatus, selectedId: appearance.skin });
-			}
-		}
-		if (appearance && typeof appearance.petEnabled === "boolean" && petStatus) {
-			if (
-				petStatus.configuration.enabled !== appearance.petEnabled ||
-				(appearance.petSlug &&
-					petStatus.configuration.selectedSlug !== appearance.petSlug)
-			) {
-				const nextConfig = {
-					...petStatus.configuration,
-					enabled: appearance.petEnabled,
-					...(appearance.petSlug ? { selectedSlug: appearance.petSlug } : {}),
-					...(typeof appearance.petScale === "number"
-						? { scale: appearance.petScale }
-						: {}),
-					...(appearance.petRenderMode && appearance.petRenderMode !== "canvas"
-						? {
-								renderMode: appearance.petRenderMode as
-									| "auto"
-									| "kitty"
-									| "iterm"
-									| "sixel"
-									| "unicode"
-									| "off",
-							}
-						: {}),
-				};
-				setPetStatus({ ...petStatus, configuration: nextConfig });
-			}
-		}
 		const browserConfig = config.browser as
 			| (Partial<UserBrowserSettings> & { contextEnabled?: boolean })
 			| undefined;
@@ -8877,14 +8694,7 @@ export function App() {
 				}
 			}
 		}
-	}, [
-		snapshot?.configuration,
-		skinStatus,
-		petStatus,
-		browser,
-		browserContextEnabled,
-	]);
-	useEffect(() => window.kestrel.onPetStatus(setPetStatus), []);
+	}, [snapshot?.configuration, browser, browserContextEnabled]);
 	useEffect(() => {
 		const storageKey = "kestrel:presence-instance";
 		const instanceId =
@@ -9061,12 +8871,6 @@ export function App() {
 				<Loading key="loading" />
 			</ProductShellTransition>
 		);
-	async function popOutPet() {
-		const response = (await window.kestrel.request({
-			type: "pet-overlay-open",
-		})) as CoreResponse;
-		if (response.ok && response.petStatus) setPetStatus(response.petStatus);
-	}
 	const activeBrowserTab = browser.state?.tabs.find(
 		(tab) => tab.id === browser.state?.activeTabId,
 	);
@@ -9119,7 +8923,7 @@ export function App() {
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0 }}
-				transition={{ duration: reduced ? 0 : 0.16 }}
+				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
 				<section className="browser-main-plane">
 					{deepLinkNotice && (
@@ -9190,11 +8994,7 @@ export function App() {
 								{...(settingsSectionRequest
 									? { initialSection: settingsSectionRequest }
 									: {})}
-								skinStatus={skinStatus}
-								onSkinStatus={updateSkinStatus}
-								petStatus={petStatus}
-								onPetStatus={setPetStatus}
-								browser={browser}
+									browser={browser}
 								browserContextEnabled={browserContextEnabled}
 								onToggleBrowserContext={toggleBrowserContext}
 								onBack={openBrowser}
@@ -9285,7 +9085,6 @@ export function App() {
 						configurationUi={snapshot.configuration.ui}
 						newAgentRequestId={newAgentRequestId}
 						newAgentPrompt={newAgentPrompt}
-						onNewAgent={startNewAgent}
 						{...(browserContextEnabled
 							? { browserContext: () => browser.pageContext() }
 							: {})}
