@@ -579,7 +579,9 @@ export async function runCli(args: string[]): Promise<void> {
 			});
 			const address = await server.start();
 			try {
-				const exposure = await tailscale.apply(address.origin);
+				const exposure = await tailscale.apply(address.origin, (advertisedHost) =>
+					server.allowHost(advertisedHost),
+				);
 				const discovery = await bonjour.start(address.origin);
 				process.stdout.write(
 					`${JSON.stringify({ ...address, tailscale: exposure, discovery, pid: process.pid })}\n`,

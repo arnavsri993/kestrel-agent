@@ -298,7 +298,10 @@ export class TailscaleExposureManager {
 			);
 	}
 
-	async apply(origin: string): Promise<TailscaleExposureStatus> {
+	async apply(
+		origin: string,
+		beforeEnable?: (advertisedHost: string) => void,
+	): Promise<TailscaleExposureStatus> {
 		if (this.configuration.mode === "off")
 			return {
 				mode: "off",
@@ -360,15 +363,16 @@ export class TailscaleExposureManager {
 				: []),
 			target.toString().replace(/\/$/, ""),
 		];
+		const advertisedHost = this.configuration.serviceName
+			? `${this.configuration.serviceName.slice(4)}.${dnsName.split(".").slice(1).join(".")}`
+			: dnsName;
+		beforeEnable?.(advertisedHost);
 		const result = await this.runner.run(executable, args, 30_000);
 		if (result.exitCode !== 0)
 			throw new Error(
 				`Tailscale ${action} failed: ${result.stderr.slice(0, 500)}`,
 			);
 		this.appliedMode = action;
-		const advertisedHost = this.configuration.serviceName
-			? `${this.configuration.serviceName.slice(4)}.${dnsName.split(".").slice(1).join(".")}`
-			: dnsName;
 		return {
 			mode: action,
 			active: true,

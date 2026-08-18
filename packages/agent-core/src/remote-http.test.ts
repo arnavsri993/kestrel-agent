@@ -679,7 +679,7 @@ describe("authenticated remote HTTP transport", () => {
 			remote,
 			runtime,
 			host: "127.0.0.1",
-			allowedHosts: ["control.example"],
+			allowedHosts: ["Control.Example."],
 		});
 		servers.push(server);
 		const { origin } = await server.start();
@@ -687,8 +687,20 @@ describe("authenticated remote HTTP transport", () => {
 			400,
 		);
 		expect(
-			await requestStatus(`${origin}/health`, "control.example:443"),
+			await requestStatus(`${origin}/health`, "control.example.:443"),
 		).toBe(200);
+		server.allowHost("tailscale.example");
+		expect(await requestStatus(`${origin}/health`, "tailscale.example")).toBe(
+			200,
+		);
+		expect(
+			() =>
+				new RemoteHttpServer({
+					remote,
+					runtime,
+					host: "fe80::1%en0",
+				}),
+		).not.toThrow();
 		database.close();
 	});
 

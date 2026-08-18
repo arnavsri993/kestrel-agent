@@ -575,8 +575,14 @@ function parseRemoteCommand(args: string[]): CliCommand {
 						: value;
 				const parsed = new URL(`http://${authority}`);
 				if (
-					parsed.hostname.replace(/^\[|\]$/g, "") !==
-					value.replace(/^\[|\]$/g, "").replace(/\.$/, "")
+					parsed.hostname
+						.replace(/^\[|\]$/g, "")
+						.toLowerCase()
+						.replace(/\.$/, "") !==
+					value
+						.replace(/^\[|\]$/g, "")
+						.toLowerCase()
+						.replace(/\.$/, "")
 				)
 					throw new Error("hostname mismatch");
 			} catch {

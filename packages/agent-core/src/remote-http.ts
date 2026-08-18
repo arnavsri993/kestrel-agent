@@ -105,6 +105,26 @@ function normalizedHostName(value: string): string {
 	return parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
 }
 
+function normalizedBindHostName(value: string): string {
+	const candidate = value.trim();
+	const unbracketed =
+		candidate.startsWith("[") && candidate.endsWith("]")
+			? candidate.slice(1, -1)
+			: candidate;
+	const scopeIndex = unbracketed.indexOf("%");
+	if (scopeIndex >= 0) {
+		const address = unbracketed.slice(0, scopeIndex);
+		const scope = unbracketed.slice(scopeIndex + 1);
+		if (
+			isIP(address) !== 6 ||
+			!/^[A-Za-z0-9_.-]{1,64}$/.test(scope)
+		)
+			throw new Error("Remote bind host must be a valid hostname or IP address.");
+		return address.toLowerCase();
+	}
+	return normalizedHostName(candidate);
+}
+
 function hostNameFromHeader(value: string | undefined): string | undefined {
 	if (!value) return undefined;
 	try {
@@ -349,7 +369,7 @@ export class RemoteHttpServer {
 	private readonly rates = new Map<string, RateRecord>();
 	private readonly sse = new Set<ServerResponse>();
 	private readonly mcpSessions = new Map<string, McpRuntimeServer>();
-	private readonly allowedHostnames: ReadonlySet<string>;
+	private readonly allowedHostnames: Set<string>;
 	private readonly allowAnyIpHost: boolean;
 
 	constructor(private readonly options: RemoteHttpServerOptions) {
@@ -363,7 +383,7 @@ export class RemoteHttpServer {
 			)
 				throw new Error(`${name} must be a finite positive integer.`);
 		}
-		const configuredHost = normalizedHostName(options.host ?? "127.0.0.1");
+		const configuredHost = normalizedBindHostName(options.host ?? "127.0.0.1");
 		const derived = new Set<string>();
 		for (const host of options.allowedHosts ?? [])
 			derived.add(normalizedHostName(host));
@@ -380,6 +400,10 @@ export class RemoteHttpServer {
 		}
 		this.allowedHostnames = derived;
 		this.allowAnyIpHost = configuredHost === "0.0.0.0" || configuredHost === "::";
+	}
+
+	allowHost(host: string): void {
+		this.allowedHostnames.add(normalizedHostName(host));
 	}
 
 	async start(): Promise<{ origin: string }> {
@@ -414,6 +438,7 @@ export class RemoteHttpServer {
 			});
 		});
 		const address = this.server.address() as AddressInfo;
+		this.allowedHostnames.add(normalizedBindHostName(address.address));
 		const displayHost =
 			address.family === "IPv6" ? `[${address.address}]` : address.address;
 		return {

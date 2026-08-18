@@ -334,6 +334,17 @@ describe("Kestrel CLI arguments", () => {
 			parseCliArguments([
 				"remote",
 				"serve",
+				"--allowed-hosts",
+				"Control.Example.,[FE80::1]",
+			]),
+		).toMatchObject({
+			name: "remote-serve",
+			allowedHosts: ["Control.Example.", "[FE80::1]"],
+		});
+		expect(
+			parseCliArguments([
+				"remote",
+				"serve",
 				"--tailscale",
 				"funnel",
 				"--tailscale-public-ack",
