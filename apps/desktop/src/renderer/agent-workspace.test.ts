@@ -4,6 +4,7 @@ import {
 	agentSessionRecency,
 	agentSessionStatusLabel,
 	agentSessionsForWorkspace,
+	agentSessionTreeForWorkspace,
 	agentStateLabel,
 	agentWorkspaceName,
 } from "./agent-workspace";
@@ -62,5 +63,65 @@ describe("agent workspace presentation", () => {
 			"Just now",
 		);
 		expect(agentSessionRecency("2026-08-11T13:00:00.000Z", now)).toBe("1h ago");
+	});
+
+	it("renders delegated tasks beneath their recorded parent", () => {
+		const delegated: RuntimeSession = {
+			...sessions[1]!,
+			id: "session-child",
+			title: "Verify checkout fix",
+			parentSessionId: "session-new",
+			updatedAt: "2026-08-11T14:00:00.000Z",
+		};
+		expect(
+			agentSessionTreeForWorkspace(
+				[...sessions, delegated],
+				"",
+				"all",
+			).map((item) => [
+				item.session.id,
+				item.depth,
+				item.parentTitle,
+			]),
+		).toEqual([
+			["session-new", 0, undefined],
+			["session-child", 1, "Repair checkout"],
+			["session-old", 0, undefined],
+		]);
+	});
+
+	it("renders broken or cyclic lineage once instead of dropping tasks", () => {
+		const cyclic: RuntimeSession[] = [
+			{
+				...sessions[0]!,
+				id: "cycle-a",
+				title: "Cycle A",
+				parentSessionId: "cycle-b",
+				updatedAt: "2026-08-11T14:00:00.000Z",
+			},
+			{
+				...sessions[1]!,
+				id: "cycle-b",
+				title: "Cycle B",
+				parentSessionId: "cycle-a",
+				updatedAt: "2026-08-11T13:00:00.000Z",
+			},
+			{
+				...sessions[0]!,
+				id: "orphan",
+				title: "Orphan task",
+				parentSessionId: "missing-parent",
+				updatedAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
+		const result = agentSessionTreeForWorkspace(cyclic, "", "all");
+		expect(result.map((item) => item.session.id)).toEqual([
+			"orphan",
+			"cycle-a",
+			"cycle-b",
+		]);
+		expect(new Set(result.map((item) => item.session.id)).size).toBe(
+			cyclic.length,
+		);
 	});
 });
