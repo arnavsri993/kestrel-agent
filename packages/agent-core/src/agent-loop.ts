@@ -612,10 +612,11 @@ export class AgentLoop {
 					const remainingFallbacks = [...(run.fallbackModelIds ?? [])];
 					const nextFallbackId = remainingFallbacks.shift();
 					if (nextFallbackId) {
-						const [nextEndpointId, ...nextModelParts] = nextFallbackId.includes(":")
+						const nextParts = nextFallbackId.includes(":")
 							? nextFallbackId.split(":")
 							: [nextFallbackId, nextFallbackId];
-						const nextModel = nextModelParts.join(":") || nextFallbackId;
+						const nextEndpointId = nextParts[0] ?? nextFallbackId;
+						const nextModel = nextParts.slice(1).join(":") || nextFallbackId;
 						const prevModel = run.model;
 						const recoveryCount = (run.refusalRecoveryCount ?? 0) + 1;
 

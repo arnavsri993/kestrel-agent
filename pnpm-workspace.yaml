@@ -13,6 +13,7 @@ supportedArchitectures:
 
 allowBuilds:
   better-sqlite3: true
+  electron: true
   electron-winstaller: true
   esbuild: true
   sharp: true
@@ -40,7 +41,7 @@ minimumReleaseAgeExclude:
   - '@next/swc-win32-arm64-msvc@16.2.11'
   - '@next/swc-win32-x64-msvc@16.2.11'
   - better-sqlite3@13.0.1
-  - electron@43.2.0
+  - electron@43.4.0
   - next@16.2.11
   - react-dom@19.2.8
   - react@19.2.8

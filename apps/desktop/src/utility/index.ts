@@ -32,16 +32,32 @@ import {
 	PROTECTED_DATABASE_ERROR_CODE,
 } from "@kestrel/database";
 import { CoreRequestSchema } from "@kestrel/shared-types";
+import {
+	decodeNodeIpcMessage,
+	encodeNodeIpcMessage,
+} from "../main/core-ipc-codec";
 
 interface ParentPort {
 	on(event: "message", listener: (event: { data: unknown }) => void): void;
 	postMessage(message: unknown): void;
 }
-const port = (process as typeof process & { parentPort?: ParentPort })
+const electronParentPort = (process as typeof process & { parentPort?: ParentPort })
 	.parentPort;
+const nodeParentPort: ParentPort | undefined = process.send
+	? {
+			on: (_event, listener) =>
+				process.on("message", (data) =>
+					listener({ data: decodeNodeIpcMessage(data) }),
+				),
+			postMessage: (message) => {
+				process.send?.(encodeNodeIpcMessage(message));
+			},
+		}
+	: undefined;
+const port = electronParentPort ?? nodeParentPort;
 if (!port)
 	throw new Error(
-		"Kestrel Agent Core must run as an Electron utility process.",
+		"Kestrel Agent Core must run as an Electron utility or Node child process.",
 	);
 
 let core: AgentCore | undefined;
@@ -426,6 +442,7 @@ port.on("message", async ({ data }) => {
 		} catch (error) {
 			const message =
 				error instanceof Error ? error.message : "Core bootstrap failed";
+			console.error("Kestrel Agent Core bootstrap failed:", error);
 			port.postMessage({
 				type: "start-error",
 				error: message,
