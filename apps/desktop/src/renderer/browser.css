@@ -601,7 +601,7 @@ body:has(.ai-browser-app),
 	border-radius: 8px 8px 0 0;
 	color: var(--muted);
 	cursor: pointer;
-	transition: background 0.12s ease, color 0.12s ease;
+	transition: background 0.12s ease, color 0.12s ease, width 0.15s cubic-bezier(0.2, 0, 0, 1), max-width 0.15s cubic-bezier(0.2, 0, 0, 1), flex-basis 0.15s cubic-bezier(0.2, 0, 0, 1);
 }
 
 .browser-tab::after {

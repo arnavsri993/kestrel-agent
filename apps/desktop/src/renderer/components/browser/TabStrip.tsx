@@ -1,6 +1,17 @@
 import type { UserBrowserTab } from "@kestrel/shared-types";
-import type { KeyboardEvent, MouseEvent } from "react";
+import {
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	type KeyboardEvent,
+	type MouseEvent,
+} from "react";
 import { Icon } from "../Icon";
+import {
+	computeLockedTabStyle,
+	shouldRetainTabWidthOnClose,
+} from "./tab-strip-layout";
 
 export function TabStrip({
 	tabs,
@@ -19,6 +30,41 @@ export function TabStrip({
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
 }) {
+	const [lockedWidth, setLockedWidth] = useState<number | null>(null);
+	const tabsContainerRef = useRef<HTMLDivElement | null>(null);
+
+	const handleRowMouseLeave = useCallback(() => {
+		setLockedWidth(null);
+	}, []);
+
+	useEffect(() => {
+		if (tabs.length <= 1 || orientation === "vertical") {
+			setLockedWidth(null);
+		}
+	}, [tabs.length, orientation]);
+
+	const lockTabWidthBeforeClose = useCallback(() => {
+		if (!shouldRetainTabWidthOnClose(orientation, tabs.length)) {
+			setLockedWidth(null);
+			return;
+		}
+		if (tabsContainerRef.current) {
+			const firstTab =
+				tabsContainerRef.current.querySelector<HTMLElement>(".browser-tab");
+			if (firstTab) {
+				const rect = firstTab.getBoundingClientRect();
+				if (rect.width > 0) {
+					setLockedWidth(rect.width);
+				}
+			}
+		}
+	}, [orientation, tabs.length]);
+
+	function handleTabClose(tabId: string) {
+		lockTabWidthBeforeClose();
+		onClose(tabId);
+	}
+
 	function moveFocus(event: KeyboardEvent<HTMLDivElement>) {
 		const previousKey = orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
 		const nextKey = orientation === "vertical" ? "ArrowDown" : "ArrowRight";
@@ -40,11 +86,11 @@ export function TabStrip({
 	}
 
 	function handleTabAuxClick(event: MouseEvent, tabId: string) {
-		// Middle-click (button 1) closes tab, exact Microsoft Edge behavior
+		// Middle-click (button 1) closes tab, exact Microsoft Edge / Chrome behavior
 		if (event.button === 1) {
 			event.preventDefault();
 			event.stopPropagation();
-			onClose(tabId);
+			handleTabClose(tabId);
 		}
 	}
 
@@ -52,8 +98,14 @@ export function TabStrip({
 		// Middle-click on empty tab strip opens new tab
 		if (event.button === 1) {
 			event.preventDefault();
+			setLockedWidth(null);
 			onCreate();
 		}
+	}
+
+	function handleCreate() {
+		setLockedWidth(null);
+		onCreate();
 	}
 
 	function getFaviconContent(tab: UserBrowserTab) {
@@ -78,9 +130,12 @@ export function TabStrip({
 		}
 	}
 
+	const tabStyle = computeLockedTabStyle(lockedWidth, orientation);
+
 	return (
 		<div
 			className={`browser-tab-row browser-tab-row-${orientation} drag-region-browser`}
+			onMouseLeave={handleRowMouseLeave}
 		>
 			{onToggleOrientation && (
 				<div className="browser-tab-leading-actions no-drag">
@@ -106,6 +161,7 @@ export function TabStrip({
 				</div>
 			)}
 			<div
+				ref={tabsContainerRef}
 				className="browser-tabs no-drag"
 				role="tablist"
 				aria-label="Browser tabs"
@@ -119,6 +175,7 @@ export function TabStrip({
 						<div
 							className={`browser-tab ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""}`}
 							key={tab.id}
+							style={tabStyle}
 							onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
 						>
 							<button
@@ -135,7 +192,11 @@ export function TabStrip({
 								</span>
 								<span className="browser-tab-title">
 									{tab.title}
-									{isSleeping && <span className="tab-sleep-badge" title="Sleeping tab">💤</span>}
+									{isSleeping && (
+										<span className="tab-sleep-badge" title="Sleeping tab">
+											💤
+										</span>
+									)}
 								</span>
 							</button>
 							<button
@@ -146,7 +207,7 @@ export function TabStrip({
 								tabIndex={active ? 0 : -1}
 								onClick={(event) => {
 									event.stopPropagation();
-									onClose(tab.id);
+									handleTabClose(tab.id);
 								}}
 							>
 								<Icon name="close" />
@@ -161,14 +222,14 @@ export function TabStrip({
 				aria-label="New Tab"
 				aria-keyshortcuts="Meta+T"
 				title="New tab (Cmd+T)"
-				onClick={onCreate}
+				onClick={handleCreate}
 			>
 				<Icon name="plus" />
 				<span>New Tab</span>
 			</button>
 			<div
 				className="browser-tab-drag-fill"
-				onDoubleClick={onCreate}
+				onDoubleClick={handleCreate}
 				onAuxClick={handleDragFillAuxClick}
 			/>
 		</div>
