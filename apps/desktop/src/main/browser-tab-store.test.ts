@@ -23,6 +23,11 @@ function storePath(): string {
 	return join(directory, "browser-state.json");
 }
 
+it("defaults new browser settings to Google", () => {
+	expect(freshBrowserState().settings.searchEngine).toBe("google");
+	expect(UserBrowserSettingsSchema.parse({}).searchEngine).toBe("google");
+});
+
 describe("browser address normalization", () => {
 	it("navigates hosts and searches ordinary language with Google as default", () => {
 		expect(normalizeBrowserAddress("example.com/docs")).toEqual({

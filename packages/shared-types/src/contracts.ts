@@ -2449,7 +2449,7 @@ export const UserBrowserSettingsSchema = z.object({
 			"yandex",
 			"custom",
 		])
-		.default("duckduckgo"),
+		.default("google"),
 	customSearchUrl: z.string().max(8_192).optional(),
 	customSearchName: z.string().max(100).optional(),
 	tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),

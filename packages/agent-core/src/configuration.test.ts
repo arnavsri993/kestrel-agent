@@ -1156,7 +1156,7 @@ describe("chat configuration runtime approval boundary", () => {
 		const manager = new AgentConfigurationManager(database);
 		const initial = manager.currentVersion();
 
-		expect(initial.document.browser.searchEngine).toBe("duckduckgo");
+		expect(initial.document.browser.searchEngine).toBe("google");
 		expect(initial.document.appearance.skin).toBe("default");
 		expect(initial.document.system.launchAtLogin).toBe(false);
 
