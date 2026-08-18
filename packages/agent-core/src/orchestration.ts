@@ -4,6 +4,7 @@ import type { KestrelDatabase } from "@kestrel/database";
 import {
 	GoalRecordSchema,
 	type ModelCapability,
+	type ModelTier,
 	type RuntimeToolExecution,
 	ScheduledJobSummarySchema,
 	type TaskOpportunity,
@@ -25,6 +26,7 @@ export interface DelegatedWorkerRoute {
 	providerId: string;
 	model: string;
 	selectedModelId?: string;
+	tier?: ModelTier;
 	role?: "orchestrator" | "worker" | "reviewer" | "fallback";
 	reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
 	fastMode?: boolean;
@@ -33,6 +35,7 @@ export interface DelegatedWorkerRoute {
 	estimatedCost?: number;
 	fallbackModelIds?: string[];
 	traceId?: string;
+	refusalRecovery?: boolean;
 	verifiedAt: string;
 	verificationLatencyMs: number;
 	rationale: string;
@@ -712,7 +715,7 @@ export class TaskOrchestrator {
 						providerId: decision.providerId,
 						model: decision.model,
 						selectedModelId: decision.selectedModelId,
-						tier: decision.tier,
+						...(decision.tier ? { tier: decision.tier } : {}),
 						role: decision.role,
 						reasoningEffort: decision.reasoningLevel,
 						fastMode: decision.fastMode,

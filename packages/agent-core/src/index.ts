@@ -792,8 +792,9 @@ export class AgentCore {
 			validationPassed: completed,
 			refused: refusal.refused,
 			...(refusal.reason ? { refusalReason: refusal.reason } : {}),
-			recoverySucceeded:
-				(result.run.refusalRecoveryCount ?? 0) > 0 ? completed : undefined,
+			...((result.run.refusalRecoveryCount ?? 0) > 0
+				? { recoverySucceeded: completed }
+				: {}),
 			latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
 			actualCostUsd,
 			escalated: modelId !== automatic.decision.selectedModelId,
@@ -1401,7 +1402,9 @@ export class AgentCore {
 										maximumContextCharacters: route.maximumContextCharacters,
 										maximumOutputTokens: route.maximumOutputTokens,
 										temperature: route.temperature,
-										fallbackModelIds: route.route.fallbackModelIds,
+										...(route.route.fallbackModelIds
+											? { fallbackModelIds: route.route.fallbackModelIds }
+											: {}),
 									}
 								: {}),
 							allowedTools: this.configuration.filterToolNames(
@@ -2437,7 +2440,9 @@ export class AgentCore {
 										maximumContextCharacters: route.maximumContextCharacters,
 										maximumOutputTokens: route.maximumOutputTokens,
 										temperature: route.temperature,
-										fallbackModelIds: route.route.fallbackModelIds,
+										...(route.route.fallbackModelIds
+											? { fallbackModelIds: route.route.fallbackModelIds }
+											: {}),
 									}
 								: {}),
 							...(personality.toolNames
