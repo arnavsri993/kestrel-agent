@@ -92,6 +92,7 @@ import {
   archiveProtectedProfile,
   startupRecoveryCopy,
 } from "./startup-recovery";
+import { canRegisterAsDefaultBrowser } from "./default-browser";
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
@@ -814,6 +815,7 @@ function deliverPendingDeepLinks(): void {
 }
 
 export function isDefaultBrowser(): boolean {
+  if (!canRegisterAsDefaultBrowser(app.isPackaged)) return false;
   if (process.platform !== "darwin" && process.platform !== "win32") {
     return app.isDefaultProtocolClient("http");
   }
@@ -824,6 +826,7 @@ export function isDefaultBrowser(): boolean {
 }
 
 export function setAsDefaultBrowser(): boolean {
+  if (!canRegisterAsDefaultBrowser(app.isPackaged)) return false;
   const httpOk = app.setAsDefaultProtocolClient("http");
   const httpsOk = app.setAsDefaultProtocolClient("https");
   return httpOk || httpsOk;
@@ -1739,17 +1742,20 @@ function registerIpc(): void {
       };
     }
     if (request.type === "get-default-browser-status") {
+      const canSetAsDefault = canRegisterAsDefaultBrowser(app.isPackaged);
       return {
         ok: true,
         isDefault: isDefaultBrowser(),
-        canSetAsDefault: true,
+        canSetAsDefault,
       };
     }
     if (request.type === "set-default-browser") {
+      const canSetAsDefault = canRegisterAsDefaultBrowser(app.isPackaged);
       const success = setAsDefaultBrowser();
       return {
         ok: true,
         isDefault: isDefaultBrowser(),
+        canSetAsDefault,
         success,
       };
     }
@@ -2666,7 +2672,8 @@ void app
   .whenReady()
   .then(async () => {
     if (!singleInstance) return;
-    app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
+    if (canRegisterAsDefaultBrowser(app.isPackaged))
+      app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
     startAutomaticUpdates(autoUpdater, {
       packaged: app.isPackaged,
       channel: PRODUCT_IDENTITY.updateChannel,

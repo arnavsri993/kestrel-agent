@@ -47,6 +47,7 @@ export function BrowserSettings({
 }) {
   const settings = browser.state?.settings;
   const [isDefaultBrowser, setIsDefaultBrowser] = useState<boolean | null>(null);
+  const [canSetAsDefault, setCanSetAsDefault] = useState<boolean | null>(null);
   const [defaultBrowserBusy, setDefaultBrowserBusy] = useState(false);
 
   // Custom search engine state
@@ -86,6 +87,8 @@ export function BrowserSettings({
       .then((response) => {
         if (!cancelled && response.ok && "isDefault" in response) {
           setIsDefaultBrowser(Boolean(response.isDefault));
+          if ("canSetAsDefault" in response)
+            setCanSetAsDefault(response.canSetAsDefault);
         }
       })
       .catch(() => undefined);
@@ -114,6 +117,8 @@ export function BrowserSettings({
       });
       if (response.ok && "isDefault" in response) {
         setIsDefaultBrowser(Boolean(response.isDefault));
+        if ("canSetAsDefault" in response)
+          setCanSetAsDefault(response.canSetAsDefault);
       }
     } finally {
       setDefaultBrowserBusy(false);
@@ -611,6 +616,8 @@ export function BrowserSettings({
             <span className="badge success">
               <Icon name="check" /> Default browser
             </span>
+          ) : canSetAsDefault === false ? (
+            <span className="browser-setting-note">Available in installed Kestrel</span>
           ) : (
             <button
               type="button"

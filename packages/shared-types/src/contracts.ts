@@ -2986,6 +2986,12 @@ export type RendererResponse =
 	| CoreResponse
 	| { ok: true; browserState: UserBrowserState }
 	| { ok: true; browserContext: UserBrowserPageContext }
+	| {
+			ok: true;
+			isDefault: boolean;
+			canSetAsDefault: boolean;
+			success?: boolean;
+	  }
 	| { ok: true; launchAtLogin: boolean; launchStatus: string }
 	| {
 			ok: true;

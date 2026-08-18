@@ -50,9 +50,20 @@ export function DefaultBrowserPrompt({
 			const response = await window.kestrel.request({
 				type: "set-default-browser",
 			});
-			if (response.ok) {
+			if (
+				response.ok &&
+				"success" in response &&
+				response.success &&
+				(!("canSetAsDefault" in response) || response.canSetAsDefault)
+			) {
 				onSetDefault?.();
 				onClose();
+			} else if (
+				response.ok &&
+				"canSetAsDefault" in response &&
+				!response.canSetAsDefault
+			) {
+				setError("Install Kestrel before choosing it as the default browser.");
 			} else {
 				setError("Could not set Kestrel as default browser.");
 			}

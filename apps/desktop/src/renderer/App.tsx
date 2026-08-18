@@ -8592,6 +8592,8 @@ export function App() {
 					active &&
 					response.ok &&
 					"isDefault" in response &&
+					"canSetAsDefault" in response &&
+					response.canSetAsDefault &&
 					!response.isDefault
 				) {
 					setShowDefaultBrowserPrompt(true);
