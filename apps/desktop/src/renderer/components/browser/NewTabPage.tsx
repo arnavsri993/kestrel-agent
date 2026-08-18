@@ -2,13 +2,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import type { UserBrowserHistoryEntry } from "@kestrel/shared-types";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
-import meadowLandscape from "../../assets/new-tab-meadow.svg";
-import {
-  frequentBrowserSites,
-  siteAccent,
-  siteInitial,
-  type NewTabBackground,
-} from "./new-tab";
+import { frequentBrowserSites, siteAccent, siteInitial } from "./new-tab";
 
 const recommendations = [
   {
@@ -42,7 +36,6 @@ const recommendations = [
 
 export function NewTabPage({
   history,
-  background,
   agentName,
   onNavigate,
   onNewTab,
@@ -50,7 +43,6 @@ export function NewTabPage({
   onOpenSettings,
 }: {
   history: UserBrowserHistoryEntry[];
-  background: NewTabBackground;
   agentName: string;
   onNavigate(input: string): void;
   onNewTab(): void;
@@ -69,19 +61,8 @@ export function NewTabPage({
   }
 
   return (
-    <section
-      className={`new-tab-page new-tab-page-${background}`}
-      aria-labelledby="new-tab-title"
-    >
-      <div
-        className="new-tab-backdrop"
-        aria-hidden="true"
-        style={
-          background === "meadow"
-            ? { backgroundImage: `url("${meadowLandscape}")` }
-            : undefined
-        }
-      />
+    <section className="new-tab-page" aria-labelledby="new-tab-title">
+      <div className="new-tab-backdrop" aria-hidden="true" />
       <header className="new-tab-home-header">
         <div className="new-tab-home-identity">
           <BrandMark />
@@ -92,13 +73,13 @@ export function NewTabPage({
         </div>
         <button
           type="button"
-          className="new-tab-personalize"
+          className="new-tab-settings"
           onClick={onOpenSettings}
-          aria-label="Personalize"
-          title="Personalize"
+          aria-label="Open browser preferences"
+          title="Open browser preferences"
         >
           <Icon name="settings" />
-          <span>Personalize</span>
+          <span>Settings</span>
         </button>
       </header>
 
@@ -113,7 +94,7 @@ export function NewTabPage({
           </p>
           <form className="new-tab-chat" onSubmit={submitChat}>
             <span className="new-tab-chat-mark" aria-hidden="true">
-              <Icon name="agent" />
+              <Icon name="sparkle" />
             </span>
             <label className="sr-only" htmlFor="new-tab-chat-input">
               Ask {agentName}

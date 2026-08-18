@@ -182,7 +182,10 @@ async function launch() {
 
 try {
 	let page = await launch();
-	await page.evaluate(() => localStorage.setItem("kestrel:onboarded", "yes"));
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:onboarded", "yes");
+		localStorage.setItem("kestrel:default-browser-prompted", "yes");
+	});
 	await page.reload();
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 	await page.evaluate(async () => {

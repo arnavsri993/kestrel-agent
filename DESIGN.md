@@ -1,5 +1,72 @@
 # Kestrel design system
 
+## Monochrome amendment — August 17, 2026
+
+This user-directed amendment supersedes accent-color recommendations below
+where they conflict. Kestrel's renderer is intentionally limited to black,
+white, and grayscale. The elevation ramp, typography, spacing, motion,
+approval hierarchy, setup continuity, agent rail, command center, settings
+structure, empty states, and accessibility rules from the overhaul remain in
+force; their semantic tokens are neutral values rather than sage, blue, amber,
+or red.
+
+- **One visual language:** canvas, rails, panels, surfaces, overlays, ink,
+  borders, focus, primary actions, ambient fields, recommendation art, and
+  site shortcuts all render in grayscale. A renderer-level grayscale guard
+  keeps legacy hard-coded accents from leaking through.
+- **Semantics without hue:** warning, danger, info, running, and verified
+  states pair a neutral value with an icon, explicit label, and structural
+  treatment such as weight, border, or placement. No state relies on color
+  alone.
+- **No visible color choices:** the skin IDs, custom skin persistence, config
+  routes, and `UserBrowserSettings` values remain backward-compatible for
+  existing users, tests, and CLI/API callers. The desktop renderer always
+  applies the monochrome semantic ramp and does not expose skin or new-tab
+  backdrop pickers. New tabs use the single graphite treatment.
+- **Ambient restraint:** Home and setup may retain the overhaul's CSS-only
+  ambient field and fine texture, but only as black, white, and gray value
+  shifts. Chrome, rails, conversations, settings, and specialist surfaces
+  remain matte.
+
+## Graphite, lit from within — August 2026
+
+This section amends the Final Native Graphite system below wherever the two
+directions conflict. The product remains a quiet Mac instrument; the change is
+execution, not a move toward a generic AI dashboard.
+
+- **Elevation:** the dark default now uses a five-plane ramp: canvas `#0e0e10`,
+  sidebar `#131316`, panel `#17171a`, surface `#1e1e22`, raised surface
+  `#26262b`, and overlay `#2e2e34`. Separation comes from value and short,
+  visible shadows before borders.
+- **Type:** primary ink is `#f4f4f6`, readable secondary ink is `#c9c9d1`,
+  metadata uses `#9c9ca6`, and hints use `#6e6e78`. Display is 44/48, greeting
+  36/42, title 26/32, section 17/22, body 14/21, control 13.5/18, support
+  12.5/17, and evidence 11/15 mono. No interface copy is intentionally below
+  11px.
+- **Signal:** sage `#8fd694` is a spotlight for primary actions, focus,
+  active navigation, verification, and live work. `--glow-signal` is reserved
+  for those interactive/focused moments; it is not a decorative surface effect.
+  Warning, danger, and info states always pair color with an icon and label.
+- **Composition:** setup and Home use an understated CSS ambient field with a
+  fine texture; chrome, rails, conversations, settings, and specialist surfaces
+  remain matte. Home's composer is its focal element. Empty surfaces receive a
+  composed Kestrel mark and one useful next action instead of a void.
+- **Interaction:** shared renderer primitives provide 40px controls, 44px
+  decision/setup actions, 56px rows, 18px cards, visible focus, pressed/hover
+  feedback, and state-aware status badges. Route and card feedback stays
+  interruptible and under 240ms; reduced motion removes travel, scale, pulse,
+  and ambient drift while retaining a short opacity/state change.
+- **Continuity:** the setup progress rail is a five-segment path with the
+  current stage named above it. Welcome, Ready, approval, readiness, and the
+  persistent agent rail make the Kestrel mark and the current decision
+  visible without changing onboarding, approval, IPC, persistence, or skin
+  contracts. User skins derive the new semantic roles from their existing
+  palette, while the built-in Kestrel skin adopts this ramp.
+- **Why this is not generic:** the visual hierarchy follows Kestrel's real
+  loop—ask, scope, act, approve, verify—so sage marks a live decision or
+  trustworthy state rather than decorating every card, and browser context plus
+  agent work remain one product surface.
+
 ## Unified life context — July 2026
 
 ### Product and architecture

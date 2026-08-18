@@ -34,12 +34,14 @@ export function AgentSidebar({
   activeTab,
   agentName,
   collapsed,
-  agentState,
-  activeDestination,
-  onNewAgent,
-  onToggleAgent,
-  onOpenSession,
-  onNavigate,
+	agentState,
+	pendingApprovals = 0,
+	activeDestination,
+	onNewAgent,
+	onToggleAgent,
+	onOpenSession,
+	onNavigate,
+	onReviewApprovals,
 }: {
   children: ReactNode;
   communicationAssistant?: ReactNode;
@@ -48,12 +50,14 @@ export function AgentSidebar({
   activeTab?: UserBrowserTab;
   agentName: string;
   collapsed: boolean;
-  agentState: AgentState;
-  activeDestination: string;
+	agentState: AgentState;
+	pendingApprovals?: number;
+	activeDestination: string;
   onNewAgent(prompt?: string): void;
   onToggleAgent(): void;
   onOpenSession(sessionId: string): void;
-  onNavigate(destination: "browser" | "agent" | "history" | "downloads" | "settings" | "commands"): void;
+	onNavigate(destination: "browser" | "agent" | "history" | "downloads" | "settings" | "commands"): void;
+	onReviewApprovals?(): void;
 }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const historyRef = useRef<HTMLDivElement | null>(null);
@@ -163,10 +167,13 @@ export function AgentSidebar({
           <span className="agent-session-context-line" title={currentTaskContext}>
             {currentTaskContext}
           </span>
-          <div className="agent-next-action">
-            <Icon name={agentState === "waiting_approval" ? "warning" : "arrow"} />
-            <span>{stateMeta.nextAction}</span>
-          </div>
+		  <div className="agent-next-action">
+		    <Icon name={agentState === "waiting_approval" ? "warning" : "arrow"} />
+		    <span>{stateMeta.nextAction}</span>
+		    {agentState === "waiting_approval" && onReviewApprovals && (
+		      <button type="button" onClick={onReviewApprovals}>Review</button>
+		    )}
+		  </div>
 	        </section>
 	        <section className="agent-sidebar-history" aria-label="Recent">
           <div className="agent-sidebar-section-heading">
@@ -195,6 +202,15 @@ export function AgentSidebar({
       {communicationAssistant}
       <div className="agent-conversation-host">{children}</div>
       <div className="agent-sidebar-footer">
+		{pendingApprovals > 0 && (
+		  <div className="agent-approval-banner" role="status">
+		    <Icon name="warning" />
+		    <span>{pendingApprovals} approval{pendingApprovals === 1 ? "" : "s"} waiting</span>
+		    {onReviewApprovals && (
+		      <button type="button" onClick={onReviewApprovals}>Review</button>
+		    )}
+		  </div>
+		)}
         <nav aria-label="Kestrel destinations">
           {([
             ["browser", "Browser", "browser"],

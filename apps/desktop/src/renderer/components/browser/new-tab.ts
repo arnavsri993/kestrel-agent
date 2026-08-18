@@ -1,17 +1,4 @@
-import type { UserBrowserHistoryEntry, UserBrowserSettings } from "@kestrel/shared-types";
-
-export type NewTabBackground = UserBrowserSettings["newTabBackground"];
-
-export const NEW_TAB_BACKGROUND_OPTIONS: ReadonlyArray<{
-  value: NewTabBackground;
-  label: string;
-  detail: string;
-}> = [
-  { value: "graphite", label: "Graphite", detail: "Quiet and focused" },
-  { value: "meadow", label: "Meadow", detail: "Terraced green landscape" },
-  { value: "dawn", label: "Dawn", detail: "Warm morning light" },
-  { value: "paper", label: "Paper", detail: "Bright and minimal" },
-];
+import type { UserBrowserHistoryEntry } from "@kestrel/shared-types";
 
 export interface FrequentBrowserSite {
   origin: string;
@@ -78,8 +65,6 @@ export function siteInitial(site: Pick<FrequentBrowserSite, "hostname" | "title"
 }
 
 export function siteAccent(hostname: string): string {
-  const palette = ["sage", "blue", "amber", "rose", "violet", "teal"] as const;
-  let hash = 0;
-  for (const character of hostname) hash = (hash * 31 + character.charCodeAt(0)) | 0;
-  return palette[Math.abs(hash) % palette.length]!;
+  void hostname;
+  return "neutral";
 }
