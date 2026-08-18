@@ -5,6 +5,7 @@ import type {
 	ArtifactRecordContract,
 	BrokeredCredentialSummary,
 	ChannelSummary,
+	CommunicationSourceStatus,
 	CoreResponse,
 	EnterpriseAnalytics,
 	GoalRecordContract,
@@ -81,6 +82,7 @@ import {
 } from "./components/browser/BrowserLibrary";
 import { BrowserSettings } from "./components/browser/BrowserSettings";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
+import { CommunicationCodeAssistant } from "./components/browser/CommunicationCodeAssistant";
 import { DefaultBrowserPrompt } from "./components/browser/DefaultBrowserPrompt";
 import { KeyboardShortcutsModal } from "./components/browser/KeyboardShortcutsModal";
 import {
@@ -5906,6 +5908,9 @@ function Work({
 function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
 	const [channels, setChannels] = useState<ChannelSummary[]>([]);
+	const [communicationSources, setCommunicationSources] = useState<
+		CommunicationSourceStatus[]
+	>([]);
 	const [busy, setBusy] = useState(false);
 	const [grantError, setGrantError] = useState("");
 	const [googleStatus, setGoogleStatus] = useState<GoogleWorkspaceOAuthStatus>({
@@ -5938,15 +5943,32 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 					setGoogleStatus(response.googleWorkspaceOAuth);
 			});
 		void window.kestrel
+			.request({ type: "communication-sources" })
+			.then((response) => {
+				if (response.ok && "communicationSources" in response)
+					setCommunicationSources(response.communicationSources);
+			});
+		void window.kestrel
 			.request({ type: "subscription-cli-status" })
 			.then((response) => {
 				if (response.ok && "subscriptionClis" in response)
 					setSubscriptionClis(response.subscriptionClis);
 			});
 	}, []);
+	async function refreshCommunicationSources() {
+		const response = await window.kestrel.request({
+			type: "communication-sources",
+		});
+		if (response.ok && "communicationSources" in response)
+			setCommunicationSources(response.communicationSources);
+	}
 	const codexSubscription = subscriptionClis.find(
 		(subscription) => subscription.id === "codex",
 	);
+	const messagesSource = communicationSources.find(
+		(source) => source.id === "mac-messages",
+	);
+	const gmailSource = communicationSources.find((source) => source.id === "gmail");
 	async function connectChatGpt() {
 		if (chatGptBusy) {
 			await window.kestrel.request({ type: "oauth-chatgpt-cancel" });
@@ -6010,6 +6032,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 				);
 			if ("googleWorkspaceOAuth" in response)
 				setGoogleStatus(response.googleWorkspaceOAuth);
+			await refreshCommunicationSources();
 			setGoogleClientId("");
 		} catch (error) {
 			setGoogleError(
@@ -6035,6 +6058,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 				);
 			if ("googleWorkspaceOAuth" in response)
 				setGoogleStatus(response.googleWorkspaceOAuth);
+			await refreshCommunicationSources();
 		} catch (error) {
 			setGoogleError(
 				error instanceof Error ? error.message : "Google disconnect failed.",
@@ -6150,8 +6174,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 						<strong>Google Workspace</strong>
 						<p>
 							{googleStatus.connected
-								? `${googleStatus.email} · Gmail send and Calendar events`
-								: "Bring your own Google Desktop OAuth client. Kestrel requests only Gmail send and Calendar event access."}
+								? `${googleStatus.email} · Gmail, Calendar, and login-code lookup`
+								: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar access."}
 						</p>
 						{!googleStatus.connected && (
 							<>
@@ -6179,12 +6203,22 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								</small>
 							</>
 						)}
+						{googleStatus.connected && gmailSource?.state === "needs_reconnect" && (
+							<small role="status">
+								This connection predates code lookup. Disconnect, then connect again
+								to grant the new read-only Gmail permission.
+							</small>
+						)}
 						{googleError && <small role="alert">{googleError}</small>}
 					</div>
 					<span
-						className={`connection-status ${googleStatus.connected ? "connected" : "not_connected"}`}
+						className={`connection-status ${gmailSource?.state === "connected" ? "connected" : "not_connected"}`}
 					>
-						{googleStatus.connected ? "connected" : "not connected"}
+						{gmailSource?.state === "needs_reconnect"
+							? "reconnect for code lookup"
+							: googleStatus.connected
+								? "connected"
+								: "not connected"}
 					</span>
 					<div className="connection-actions">
 						{googleStatus.connected ? (
@@ -6212,6 +6246,52 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								onClick={() => void connectGoogle()}
 							>
 								Connect with Google
+							</button>
+						)}
+					</div>
+				</article>
+				<article className="oauth-connection communication-source-connection">
+					<div className="connection-monogram">MS</div>
+					<div>
+						<strong>Messages on this Mac</strong>
+						<p>
+							{messagesSource?.detail ??
+								"Checking whether Kestrel can read the local Messages database."}
+						</p>
+						<small>
+							Read-only and on demand. Kestrel extracts a short code, never the
+							message body, and never sends a message.
+						</small>
+					</div>
+					<span
+						className={`connection-status ${messagesSource?.state === "connected" ? "connected" : "not_connected"}`}
+					>
+						{messagesSource?.state === "connected"
+							? "connected"
+							: messagesSource?.state === "needs_permission"
+								? "permission needed"
+								: messagesSource?.state === "unavailable"
+									? "unavailable"
+									: "not connected"}
+					</span>
+					<div className="connection-actions">
+						{messagesSource?.state === "needs_permission" ? (
+							<button
+								className="button secondary"
+								onClick={() =>
+									void window.kestrel.request({
+										type: "communication-messages-open-settings",
+									})
+								}
+							>
+								Open System Settings
+							</button>
+						) : (
+							<button
+								className="button secondary"
+								onClick={() => void refreshCommunicationSources()}
+							>
+								Check access
 							</button>
 						)}
 					</div>
@@ -9171,6 +9251,13 @@ export function App() {
 					)}
 				</section>
 				<AgentSidebar
+					communicationAssistant={
+						<CommunicationCodeAssistant
+							browser={browser}
+							enabled={page === "browser"}
+							onOpenConnections={() => openSettings("connections")}
+						/>
+					}
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					{...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}

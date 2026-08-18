@@ -30,11 +30,17 @@ import {
 import updater from "electron-updater";
 import {
   CoreRequestSchema,
+  CommunicationCodeScanSchema,
+  GMAIL_READONLY_SCOPE,
+  isLoginCodeChallenge,
   PRODUCT_IDENTITY,
   RendererRequestSchema,
   SelectedAttachmentSchema,
   type AgentState,
   type BackgroundJobsEvent,
+  type CommunicationCodeCandidate,
+  type CommunicationCodeScan,
+  type CommunicationSourceStatus,
   type InstalledExtension,
   type WorkspaceGrant,
 } from "@kestrel/shared-types";
@@ -72,6 +78,7 @@ import {
   parseWebUrl,
   urlsFromArgv,
 } from "./deep-links";
+import { MacMessagesSource } from "./mac-messages-source";
 import {
   PetOverlayRequestAccess,
   petOverlayActivityForRuntimeEvent,
@@ -144,6 +151,17 @@ let appCredentialBroker: CredentialBroker | null = null;
 let googleOAuthController: AbortController | null = null;
 let chatGptOAuthController: AbortController | null = null;
 let activeChatGptOAuthManager: ChatGptOAuthManager | null = null;
+const macMessagesSource = new MacMessagesSource();
+const pendingCommunicationScans = new Map<
+  string,
+  {
+    tabId: string;
+    domain: string;
+    origin: string;
+    candidates: CommunicationCodeCandidate[];
+    expiresAt: number;
+  }
+>();
 
 function trustedRendererUrl(value: string): boolean {
   return isTrustedRendererUrl(
@@ -151,6 +169,63 @@ function trustedRendererUrl(value: string): boolean {
     RENDERER_ENTRY_PATH,
     DEVELOPMENT_RENDERER_URL,
   );
+}
+
+async function communicationSourceStatuses(): Promise<CommunicationSourceStatus[]> {
+  const google = await googleWorkspaceOAuthManager().status();
+  const gmail: CommunicationSourceStatus = google.connected
+    ? google.scopes.includes(GMAIL_READONLY_SCOPE)
+      ? {
+          id: "gmail",
+          label: "Connected Gmail",
+          kind: "email",
+          state: "connected",
+          detail: "Recent verification messages can be searched on request.",
+          ...(google.email ? { account: google.email } : {}),
+        }
+      : {
+          id: "gmail",
+          label: "Connected Gmail",
+          kind: "email",
+          state: "needs_reconnect",
+          detail: "Reconnect Google Workspace to allow read-only code lookup.",
+          ...(google.email ? { account: google.email } : {}),
+        }
+    : {
+        id: "gmail",
+        label: "Connected Gmail",
+        kind: "email",
+        state: "not_connected",
+        detail: "Connect Google Workspace to search a mailbox on request.",
+      };
+  return [macMessagesSource.status(), gmail];
+}
+
+function activePageDomain(url: string): string {
+  const parsed = new URL(url);
+  if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password)
+    throw new Error("The selected page does not have a safe web origin.");
+  const domain = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  if (!domain || domain.length > 253) throw new Error("The page domain is invalid.");
+  return domain;
+}
+
+function activePageOrigin(url: string): string {
+  const parsed = new URL(url);
+  if (!/^https?:$/.test(parsed.protocol) || parsed.username || parsed.password)
+    throw new Error("The selected page does not have a safe web origin.");
+  return parsed.origin;
+}
+
+function trimCommunicationScans(): void {
+  const now = Date.now();
+  for (const [scanId, scan] of pendingCommunicationScans)
+    if (scan.expiresAt <= now) pendingCommunicationScans.delete(scanId);
+  while (pendingCommunicationScans.size > 50) {
+    const oldest = pendingCommunicationScans.keys().next().value;
+    if (typeof oldest !== "string") break;
+    pendingCommunicationScans.delete(oldest);
+  }
 }
 
 interface OllamaTag {
@@ -1302,6 +1377,135 @@ function registerIpc(): void {
       if (!overlayAccess)
         throw new Error("Kestrel rejected a stale pet overlay request.");
       overlayAccess.assertAllowed(request);
+    }
+    if (request.type === "communication-sources") {
+      return {
+        ok: true,
+        communicationSources: await communicationSourceStatuses(),
+      };
+    }
+    if (request.type === "communication-code-search") {
+      throw new Error(
+        "Code lookup is available only from an active verification page.",
+      );
+    }
+    if (request.type === "communication-code-notify") {
+      if (!userBrowserService || !userBrowserService.isActiveTab(request.tabId))
+        return { ok: true };
+      const context = await userBrowserService.pageContext(request.tabId);
+      if (!isLoginCodeChallenge(context)) return { ok: true };
+      if (Notification.isSupported()) {
+        const notification = new Notification({
+          title: `${PRODUCT_IDENTITY.productName} · Verification code needed`,
+          body: "A code field is open. Click to find a recent code in connected messages.",
+        });
+        notification.on("click", () => {
+          showMainWindow();
+          mainWindow?.focus();
+        });
+        notification.show();
+      }
+      return { ok: true };
+    }
+    if (request.type === "communication-code-scan") {
+      if (!userBrowserService || !userBrowserService.isActiveTab(request.tabId))
+        throw new Error("The verification page is no longer active.");
+      const context = await userBrowserService.pageContext(request.tabId);
+      if (!isLoginCodeChallenge(context))
+        throw new Error("This page is not asking for a verification code.");
+      const domain = activePageDomain(context.url);
+      const origin = activePageOrigin(context.url);
+      const after = new Date(Date.now() - 30 * 60_000);
+      const localResult = await macMessagesSource.searchLoginCodes();
+      const coreResult = await supervisor
+        .request({
+          type: "communication-code-search",
+          domain,
+          after: after.toISOString(),
+          maxResults: 5,
+        })
+        .catch(() => undefined);
+      const matches = [
+        ...localResult.matches,
+        ...(coreResult?.ok ? (coreResult.communicationMatches ?? []) : []),
+      ]
+        .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt))
+        .filter(
+          (match, index, all) =>
+            all.findIndex(
+              (candidate) =>
+                candidate.sourceId === match.sourceId &&
+                candidate.code === match.code &&
+                candidate.receivedAt === match.receivedAt,
+            ) === index,
+        )
+        .slice(0, 10);
+      const candidates: CommunicationCodeCandidate[] = matches.map((match) => ({
+        id: `candidate-${randomUUID()}`,
+        ...match,
+      }));
+      const sources = await communicationSourceStatuses();
+      const mergedSources = sources.map((source) => {
+        if (source.id === "mac-messages") return localResult.status;
+        if (source.id === "gmail" && source.state === "connected" && !coreResult?.ok)
+          return {
+            ...source,
+            state: "unavailable" as const,
+            detail: "Gmail could not be searched. Check the connection and try again.",
+          };
+        return source;
+      });
+      const scanId = `scan-${randomUUID()}`;
+      const scan: CommunicationCodeScan = CommunicationCodeScanSchema.parse({
+        scanId,
+        domain,
+        siteLabel: context.title.slice(0, 200),
+        scannedAt: new Date().toISOString(),
+        candidates,
+        sources: mergedSources,
+      });
+      trimCommunicationScans();
+      pendingCommunicationScans.set(scanId, {
+        tabId: request.tabId,
+        domain,
+        origin,
+        candidates,
+        expiresAt: Date.now() + 2 * 60_000,
+      });
+      return { ok: true, communicationScan: scan };
+    }
+    if (request.type === "communication-code-use") {
+      trimCommunicationScans();
+      const scan = pendingCommunicationScans.get(request.scanId);
+      if (!scan) throw new Error("That code lookup has expired.");
+      if (!userBrowserService || !userBrowserService.isActiveTab(scan.tabId))
+        throw new Error("The verification page is no longer active.");
+      const context = await userBrowserService.pageContext(scan.tabId);
+      if (
+        activePageDomain(context.url) !== scan.domain ||
+        activePageOrigin(context.url) !== scan.origin
+      )
+        throw new Error("The page changed before the code was used.");
+      const candidate = scan.candidates.find(
+        (item) => item.id === request.candidateId,
+      );
+      if (!candidate) throw new Error("That code is no longer available.");
+      await userBrowserService.insertLoginCode(
+        scan.tabId,
+        candidate.code,
+        scan.domain,
+        scan.origin,
+      );
+      pendingCommunicationScans.delete(request.scanId);
+      return { ok: true, communicationCodeInserted: true };
+    }
+    if (request.type === "communication-messages-open-settings") {
+      if (process.platform !== "darwin")
+        throw new Error("Messages access settings are available on macOS only.");
+      await shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+      );
+      return { ok: true };
     }
     if (request.type === "browser-get-state") {
       if (!userBrowserService)

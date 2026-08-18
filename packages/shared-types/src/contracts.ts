@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+	CommunicationCodeScanSchema,
+	CommunicationCodeMatchSchema,
+	CommunicationSourceStatusSchema,
+} from "./communication";
 
 export const SensitivitySchema = z.enum([
 	"public",
@@ -1630,6 +1635,12 @@ export type ChannelInteractionConfiguration = z.infer<
 
 export const CoreRequestSchema = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("snapshot") }),
+	z.object({
+		type: z.literal("communication-code-search"),
+		domain: z.string().min(1).max(253),
+		after: z.string().datetime(),
+		maxResults: z.number().int().min(1).max(10).default(5),
+	}),
 	z.object({ type: z.literal("approve"), approvalId: z.string() }),
 	z.object({ type: z.literal("reject"), approvalId: z.string() }),
 	z.object({
@@ -2274,6 +2285,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 			})
 			.optional(),
 		channels: z.array(ChannelSummarySchema).optional(),
+		communicationMatches: z.array(CommunicationCodeMatchSchema).max(10).optional(),
 		channelInteractionConfiguration:
 			ChannelInteractionConfigurationSchema.optional(),
 		skinStatus: SkinStatusSchema.optional(),
@@ -2585,6 +2597,21 @@ export type KestrelDeepLink = z.infer<typeof KestrelDeepLinkSchema>;
 
 export const RendererRequestSchema = z.union([
 	CoreRequestSchema,
+	z.object({ type: z.literal("communication-sources") }),
+	z.object({
+		type: z.literal("communication-code-notify"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("communication-code-scan"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("communication-code-use"),
+		scanId: z.string().regex(/^scan-[a-f0-9-]{36}$/),
+		candidateId: z.string().regex(/^candidate-[a-f0-9-]{36}$/),
+	}),
+	z.object({ type: z.literal("communication-messages-open-settings") }),
 	z.object({ type: z.literal("browser-get-state") }),
 	z.object({
 		type: z.literal("browser-create-tab"),
@@ -2988,6 +3015,9 @@ export type RendererResponse =
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }
+	| { ok: true; communicationSources: z.infer<typeof CommunicationSourceStatusSchema>[] }
+	| { ok: true; communicationScan: z.infer<typeof CommunicationCodeScanSchema> }
+	| { ok: true; communicationCodeInserted: true }
 	| {
 			ok: true;
 			externalSecretSources: ExternalSecretProviderStatus[];

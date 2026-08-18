@@ -474,7 +474,10 @@ try {
 		true,
 	);
 	await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
-	await page.locator(".settings-nav").getByRole("button", { name: /General/ }).click();
+	await page
+		.getByRole("navigation", { name: "Settings sections" })
+		.getByRole("button", { name: /General & Autonomy/ })
+		.click();
 	const communicationStyle = page.getByRole("group", {
 		name: "Communication style",
 	});
@@ -501,7 +504,10 @@ try {
 	await page.keyboard.press("Meta+N");
 	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
-	await page.locator(".settings-nav").getByRole("button", { name: /General/ }).click();
+	await page
+		.getByRole("navigation", { name: "Settings sections" })
+		.getByRole("button", { name: /General & Autonomy/ })
+		.click();
 	await page.getByRole("button", { name: "Open setup guide" }).click();
 	await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
 	assert.equal(

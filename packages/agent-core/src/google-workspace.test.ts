@@ -17,6 +17,7 @@ const authorization = JSON.stringify({
 		"openid",
 		"email",
 		"https://www.googleapis.com/auth/gmail.send",
+		"https://www.googleapis.com/auth/gmail.readonly",
 		"https://www.googleapis.com/auth/calendar.events",
 	],
 	connectedAt: "2026-07-23T07:00:00.000Z",
@@ -49,10 +50,29 @@ describe("Google Workspace runtime connector", () => {
 					}),
 					{ status: 200 },
 				);
-			if (url.includes("gmail.googleapis.com"))
+			if (url.includes("gmail.googleapis.com")) {
+				if (url.includes("format=full"))
+					return new Response(
+						JSON.stringify({
+							internalDate: "1784790000000",
+							snippet: "Your verification code is 481902.",
+							payload: {
+								headers: [
+									{ name: "Subject", value: "Sign in" },
+									{ name: "From", value: "security@example.test" },
+								],
+							},
+						}),
+						{ status: 200 },
+					);
+				if (url.includes("/messages?") || url.endsWith("/messages"))
+					return new Response(JSON.stringify({ messages: [{ id: "message-1" }] }), {
+						status: 200,
+					});
 				return new Response(JSON.stringify({ id: "gmail-message-1" }), {
 					status: 200,
 				});
+			}
 			if (url.includes("/calendar/v3/calendars/primary/events/")) {
 				if (!event)
 					return new Response(JSON.stringify({ error: { code: 404 } }), {
@@ -104,6 +124,31 @@ describe("Google Workspace runtime connector", () => {
 			signal: new AbortController().signal,
 		});
 		expect(gmail.externalId).toBe("gmail-message-1");
+		const codes = await client!.searchLoginCodes({
+			after: "2026-07-23T07:00:00.000Z",
+			domain: "example.test",
+			maxResults: 5,
+			signal: new AbortController().signal,
+		});
+		expect(codes).toMatchObject([
+			{
+				sourceId: "gmail",
+				code: "481902",
+				subject: "Sign in",
+			},
+		]);
+		const gmailListRequest = requests.find((request) => {
+			const url = new URL(request.url);
+			return (
+				url.hostname === "gmail.googleapis.com" &&
+				url.pathname.endsWith("/messages") &&
+				url.searchParams.has("q")
+			);
+		});
+		expect(gmailListRequest).toBeDefined();
+		const gmailQuery = new URL(gmailListRequest!.url).searchParams.get("q");
+		expect(gmailQuery).toContain("from:example.test");
+		expect(gmailQuery).toContain('"example.test"');
 
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);

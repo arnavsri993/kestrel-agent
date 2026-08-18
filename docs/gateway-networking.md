@@ -1,6 +1,10 @@
 # Gateway networking
 
-Kestrel's remote server can be placed behind a trusted identity proxy, exposed through Tailscale, and advertised on a local macOS network. These features are opt-in and do not weaken the existing pairing, scope, TLS, origin, rate-limit, or revocation boundaries.
+Kestrel's remote server can be placed behind a trusted identity proxy, exposed through Tailscale, and advertised on a local macOS network. These features are opt-in and do not weaken the existing pairing, scope, TLS, host, origin, rate-limit, or revocation boundaries.
+
+The server rejects requests whose `Host` header is not a configured local/bound host,
+an IP literal on a wildcard bind, or an explicit `--allowed-hosts` entry. This is a
+DNS-rebinding defense; `--allowed-origins` also contributes its exact hostname.
 
 ## Trusted identity proxy
 
@@ -23,7 +27,8 @@ kestrel remote serve \
   --host 0.0.0.0 \
   --port 18789 \
   --trusted-proxy-config ./trusted-proxy.json \
-  --proxy-terminated-tls yes
+  --proxy-terminated-tls yes \
+  --allowed-hosts control.example
 ```
 
 Authentication succeeds only when the socket peer matches an exact configured IP or CIDR, all required headers exist, the normalized identity is allowed, and the requested scopes fit the configured cap. A request from a non-loopback local host interface is rejected as a spoofing guard. Loopback proxy trust is denied unless `allowLoopback` is deliberately enabled. `--proxy-terminated-tls yes` is a separate acknowledgement that the trusted proxy terminates HTTPS; without that flag, the existing non-loopback TLS requirement remains in force. There is no fallback from a failed proxy identity to an unscoped request.

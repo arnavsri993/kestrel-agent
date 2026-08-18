@@ -28,6 +28,7 @@ function shortWorkspaceName(workspaceRoot?: string) {
 
 export function AgentSidebar({
   children,
+  communicationAssistant,
   sessions,
   activeSessionId,
   activeTab,
@@ -43,6 +44,7 @@ export function AgentSidebar({
 	onReviewApprovals,
 }: {
   children: ReactNode;
+  communicationAssistant?: ReactNode;
   sessions: RuntimeSession[];
   activeSessionId: string | null;
   activeTab?: UserBrowserTab;
@@ -197,6 +199,7 @@ export function AgentSidebar({
           )}
         </section>
       </div>
+      {communicationAssistant}
       <div className="agent-conversation-host">{children}</div>
       <div className="agent-sidebar-footer">
 		{pendingApprovals > 0 && (
