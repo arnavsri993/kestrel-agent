@@ -1,4 +1,9 @@
 import { EventEmitter } from "node:events";
+import {
+	fork,
+	type ChildProcess,
+	type Serializable,
+} from "node:child_process";
 import { join } from "node:path";
 import {
 	AgentStreamEventSchema,
@@ -15,6 +20,10 @@ import {
 import { utilityProcess } from "electron";
 import type { AutomationBrowserBackendWireRequest } from "./electron-browser-service";
 import type { UserBrowserBackendWireRequest } from "./user-browser-service";
+import {
+	decodeNodeIpcMessage,
+	encodeNodeIpcMessage,
+} from "./core-ipc-codec";
 
 type BrowserBackendWireRequest =
 	| AutomationBrowserBackendWireRequest
@@ -42,6 +51,82 @@ interface CoreProcess {
 	once(event: "exit", listener: (code: number | null) => void): unknown;
 	postMessage(message: unknown): void;
 	kill(): boolean;
+}
+
+function coreEnvironment(): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(process.env).filter(
+			([key, value]) =>
+				value !== undefined &&
+				![
+					"OPENAI_API_KEY",
+					"OPENAI_API_KEY_SECONDARY",
+					"ANTHROPIC_API_KEY",
+					"ANTHROPIC_API_KEY_SECONDARY",
+					"GEMINI_API_KEY",
+					"NOUS_API_KEY",
+					"GROQ_API_KEY",
+					"MISTRAL_API_KEY",
+					"OPENROUTER_API_KEY",
+					"CLOUDFLARE_API_KEY",
+					"XAI_API_KEY",
+					"DEEPSEEK_API_KEY",
+					"TOGETHER_API_KEY",
+					"FIREWORKS_API_KEY",
+					"NVIDIA_API_KEY",
+					"HUGGINGFACE_API_KEY",
+					"PERPLEXITY_API_KEY",
+					"GITHUB_MODELS_TOKEN",
+					"COHERE_API_KEY",
+					"BRAVE_SEARCH_API_KEY",
+					"GITHUB_TOKEN",
+					"HONCHO_API_KEY",
+					"FAL_KEY",
+					"KESTREL_REMOTE_TARGETS",
+					"KESTREL_GOOGLE_WORKSPACE_OAUTH",
+				].includes(key),
+		),
+	) as Record<string, string>;
+}
+
+function nodeCoreProcess(): CoreProcess {
+	const nodeExecutable = process.env.KESTREL_NODE_EXEC_PATH;
+	if (!nodeExecutable)
+		throw new Error(
+			"The development Node executable was not provided for Agent Core.",
+		);
+	const child: ChildProcess = fork(join(__dirname, "utility.js"), [], {
+		execPath: nodeExecutable,
+		execArgv: [],
+		env: coreEnvironment(),
+		serialization: "json",
+		stdio: ["ignore", "inherit", "inherit", "ipc"],
+	});
+	return {
+		on(event: "message" | "exit", listener: (...args: any[]) => void) {
+			if (event === "message") {
+				child.on("message", (message) =>
+					listener(decodeNodeIpcMessage(message)),
+				);
+				return;
+			}
+			child.on("exit", listener as (code: number | null) => void);
+		},
+		once(event: "message" | "exit", listener: (...args: any[]) => void) {
+			if (event === "message") {
+				child.once("message", (message) =>
+					listener(decodeNodeIpcMessage(message)),
+				);
+				return;
+			}
+			child.once("exit", listener as (code: number | null) => void);
+		},
+		postMessage: (message) => {
+			if (!child.send(encodeNodeIpcMessage(message) as Serializable))
+				throw new Error("Agent Core child process is not connected.");
+		},
+		kill: () => child.kill(),
+	};
 }
 
 export interface CoreSupervisorOptions {
@@ -124,42 +209,13 @@ export class CoreSupervisor extends EventEmitter {
 		this.processFactory =
 			options.processFactory ??
 			(() =>
-				utilityProcess.fork(join(__dirname, "utility.js"), [], {
-					serviceName: "Kestrel Agent Core",
-					env: Object.fromEntries(
-						Object.entries(process.env).filter(
-							([key, value]) =>
-								value !== undefined &&
-								![
-									"OPENAI_API_KEY",
-									"OPENAI_API_KEY_SECONDARY",
-									"ANTHROPIC_API_KEY",
-									"ANTHROPIC_API_KEY_SECONDARY",
-									"GEMINI_API_KEY",
-									"NOUS_API_KEY",
-									"GROQ_API_KEY",
-									"MISTRAL_API_KEY",
-									"OPENROUTER_API_KEY",
-									"CLOUDFLARE_API_KEY",
-									"XAI_API_KEY",
-									"DEEPSEEK_API_KEY",
-									"TOGETHER_API_KEY",
-									"FIREWORKS_API_KEY",
-									"NVIDIA_API_KEY",
-									"HUGGINGFACE_API_KEY",
-									"PERPLEXITY_API_KEY",
-									"GITHUB_MODELS_TOKEN",
-									"COHERE_API_KEY",
-									"BRAVE_SEARCH_API_KEY",
-									"GITHUB_TOKEN",
-									"HONCHO_API_KEY",
-									"FAL_KEY",
-									"KESTREL_REMOTE_TARGETS",
-									"KESTREL_GOOGLE_WORKSPACE_OAUTH",
-								].includes(key),
-						),
-					) as Record<string, string>,
-				}));
+				process.env.NODE_ENV_ELECTRON_VITE === "development" ||
+				process.env.KESTREL_USE_NODE_CORE === "1"
+					? nodeCoreProcess()
+					: utilityProcess.fork(join(__dirname, "utility.js"), [], {
+							serviceName: "Kestrel Agent Core",
+							env: coreEnvironment(),
+						}));
 		const restartDelays = options.restartDelaysMs ?? DEFAULT_RESTART_DELAYS_MS;
 		this.restartDelaysMs = restartDelays.map((delay, index) =>
 			boundedTimer(

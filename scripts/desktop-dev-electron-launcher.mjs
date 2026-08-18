@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
@@ -20,13 +21,50 @@ const desktopDirectory = resolve(scriptDirectory, "../apps/desktop");
 const electronPackageDirectory = dirname(
   require.resolve("electron", { paths: [desktopDirectory] }),
 );
-const electronExecutable =
-  process.env.KESTREL_REAL_ELECTRON_EXEC_PATH ??
-  join(
-    electronPackageDirectory,
-    "dist",
-    readFileSync(join(electronPackageDirectory, "path.txt"), "utf8").trim(),
+function resolveElectronExecutable() {
+  if (process.env.KESTREL_REAL_ELECTRON_EXEC_PATH)
+    return process.env.KESTREL_REAL_ELECTRON_EXEC_PATH;
+  const distDirectory = join(electronPackageDirectory, "dist");
+  const pathFile = join(electronPackageDirectory, "path.txt");
+  const relativeExecutablePath = existsSync(pathFile)
+    ? readFileSync(pathFile, "utf8").trim()
+    : process.platform === "darwin"
+      ? "Electron.app/Contents/MacOS/Electron"
+      : process.platform === "win32"
+        ? "electron.exe"
+        : "electron";
+  const executable = join(distDirectory, relativeExecutablePath);
+  if (!existsSync(executable))
+    throw new Error(
+      `Electron's downloaded binary is missing at ${executable}. Run pnpm install or pnpm rebuild electron before starting Kestrel.`,
+    );
+  return executable;
+}
+const electronExecutable = resolveElectronExecutable();
+
+function resolveNodeExecutable() {
+  if (process.env.KESTREL_NODE_EXEC_PATH)
+    return process.env.KESTREL_NODE_EXEC_PATH;
+  if (!process.versions.bun) return process.execPath;
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    const candidate = join(directory, "node");
+    if (!existsSync(candidate) || candidate === process.execPath) continue;
+    try {
+      const runtime = execFileSync(
+        candidate,
+        ["-p", "process.versions.bun ? 'bun' : process.release.name"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+      ).trim();
+      if (runtime === "node") return candidate;
+    } catch {
+      // Keep searching PATH for a real Node binary when pnpm was launched by Bun.
+    }
+  }
+  throw new Error(
+    "Kestrel development requires a real Node.js executable for Agent Core. Set KESTREL_NODE_EXEC_PATH to its path.",
   );
+}
+const nodeExecutable = resolveNodeExecutable();
 const lockKey = createHash("sha256")
   .update(`${desktopDirectory}:${electronExecutable}`)
   .digest("hex")
@@ -150,12 +188,35 @@ if (shuttingDown) {
   process.exit(0);
 }
 
-child = spawn(electronExecutable, process.argv.slice(2), {
+const macArmDevelopmentRuntime =
+  process.platform === "darwin" && process.arch === "arm64";
+const disableGpu =
+  process.env.KESTREL_DISABLE_GPU === "1" ||
+  (macArmDevelopmentRuntime && process.env.KESTREL_ENABLE_GPU !== "1");
+const disableJit =
+  process.env.KESTREL_DISABLE_JIT === "1" ||
+  (macArmDevelopmentRuntime && process.env.KESTREL_ENABLE_JIT !== "1");
+const extraElectronArgs = [
+  ...(disableGpu
+    ? [
+        "--disable-gpu",
+        "--disable-gpu-compositing",
+        "--disable-gpu-sandbox",
+        "--use-angle=swiftshader",
+      ]
+    : []),
+  ...(disableJit ? ["--js-flags=--jitless"] : []),
+];
+const childEnvironment = {
+  ...process.env,
+  ...(disableGpu ? { KESTREL_DISABLE_GPU: "1" } : {}),
+  ...(disableJit ? { KESTREL_DISABLE_JIT: "1" } : {}),
+  KESTREL_DEV_ELECTRON_HEARTBEAT: lockOwnerPath,
+  KESTREL_NODE_EXEC_PATH: nodeExecutable,
+};
+child = spawn(electronExecutable, [...extraElectronArgs, ...process.argv.slice(2)], {
   stdio: "inherit",
-  env: {
-    ...process.env,
-    KESTREL_DEV_ELECTRON_HEARTBEAT: lockOwnerPath,
-  },
+  env: childEnvironment,
 });
 writeOwner();
 const launcherParentPid = process.ppid;

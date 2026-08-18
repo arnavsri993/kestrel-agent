@@ -669,6 +669,12 @@ supervisor.on("recovery-failed", (error: Error) => {
 // Keep the runtime name stable until a tested migration can move the existing
 // safeStorage Keychain account and encrypted user data without orphaning them.
 app.setName(PRODUCT_IDENTITY.runtimeApplicationName);
+if (process.env.KESTREL_DISABLE_GPU === "1") {
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-gpu-compositing");
+  app.commandLine.appendSwitch("in-process-gpu");
+  app.disableHardwareAcceleration();
+}
 app.setPath(
   "userData",
   process.env.KESTREL_TEST_USER_DATA ??
@@ -808,32 +814,35 @@ function createMainWindow(): BrowserWindow {
       preload: join(__dirname, "../preload/index.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      sandbox: !DEVELOPMENT_RENDERER_URL,
       webSecurity: true,
       devTools: !app.isPackaged,
     },
   });
   userBrowserService?.dispose();
-  userBrowserService = new UserBrowserService({
-    window,
-    statePath: join(app.getPath("userData"), "browser", "state.json"),
-    downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-      ? join(app.getPath("userData"), "browser-downloads")
-      : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
-    onEvent: (event) => {
-      if (!window.isDestroyed())
-        window.webContents.send("kestrel:browser-event", event);
-    },
-    onCommand: (command) => {
-      if (!window.isDestroyed()) {
-        // Native WebContentsView pages own focus while the user is browsing.
-        // Return focus to the trusted renderer before asking it to focus the
-        // address field, composer, or command center.
-        window.webContents.focus();
-        window.webContents.send("kestrel:browser-command", command);
-      }
-    },
-  });
+  userBrowserService =
+    process.env.KESTREL_DISABLE_USER_BROWSER === "1"
+      ? null
+      : new UserBrowserService({
+          window,
+          statePath: join(app.getPath("userData"), "browser", "state.json"),
+          downloadDirectory: process.env.KESTREL_TEST_USER_DATA
+            ? join(app.getPath("userData"), "browser-downloads")
+            : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+          onEvent: (event) => {
+            if (!window.isDestroyed())
+              window.webContents.send("kestrel:browser-event", event);
+          },
+          onCommand: (command) => {
+            if (!window.isDestroyed()) {
+              // Native WebContentsView pages own focus while the user is browsing.
+              // Return focus to the trusted renderer before asking it to focus the
+              // address field, composer, or command center.
+              window.webContents.focus();
+              window.webContents.send("kestrel:browser-command", command);
+            }
+          },
+        });
   deliverPendingWebUrls();
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url);
@@ -964,7 +973,7 @@ async function createPetOverlay(): Promise<BrowserWindow> {
       partition: "kestrel-pet-overlay",
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      sandbox: !DEVELOPMENT_RENDERER_URL,
       webSecurity: true,
       devTools: !app.isPackaged,
     },

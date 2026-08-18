@@ -24,7 +24,7 @@ function storePath(): string {
 }
 
 describe("browser address normalization", () => {
-	it("navigates hosts and searches ordinary language with Google as default", () => {
+	it("navigates hosts and searches ordinary language with DuckDuckGo as default", () => {
 		expect(normalizeBrowserAddress("example.com/docs")).toEqual({
 			kind: "url",
 			url: "https://example.com/docs",
@@ -35,7 +35,7 @@ describe("browser address normalization", () => {
 		});
 		expect(normalizeBrowserAddress("quiet browser design")).toEqual({
 			kind: "search",
-			url: "https://www.google.com/search?q=quiet%20browser%20design",
+			url: "https://duckduckgo.com/?q=quiet%20browser%20design",
 		});
 	});
 

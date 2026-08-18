@@ -25,6 +25,7 @@ export interface DelegatedWorkerRoute {
 	providerId: string;
 	model: string;
 	selectedModelId?: string;
+	tier?: ReturnType<AdaptiveModelRouter["route"]>["tier"];
 	role?: "orchestrator" | "worker" | "reviewer" | "fallback";
 	reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
 	fastMode?: boolean;
