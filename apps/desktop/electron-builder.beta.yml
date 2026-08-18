@@ -1,0 +1,17 @@
+extends: electron-builder.yml
+appId: com.kestrel.desktop.beta
+productName: Kestrel Beta
+mac:
+  artifactName: Kestrel-Apple-Silicon-${version}.${ext}
+  extendInfo:
+    LSEnvironment:
+      KESTREL_RELEASE_CHANNEL: beta
+      KESTREL_PRODUCT_NAME: Kestrel Beta
+dmg:
+  title: Kestrel Beta
+publish:
+  provider: github
+  owner: arnavsri993
+  repo: kestrel-agent
+  channel: beta
+  releaseType: prerelease

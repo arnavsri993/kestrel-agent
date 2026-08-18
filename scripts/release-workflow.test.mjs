@@ -12,6 +12,20 @@ const workflow = readFileSync(
 	),
 	"utf8",
 );
+const betaWorkflow = readFileSync(
+	resolve(
+		import.meta.dirname,
+		"..",
+		".github",
+		"workflows",
+		"release-macos-beta.yml",
+	),
+	"utf8",
+);
+const betaBuilder = readFileSync(
+	resolve(import.meta.dirname, "..", "apps", "desktop", "electron-builder.beta.yml"),
+	"utf8",
+);
 const websiteWorkflow = readFileSync(
 	resolve(
 		import.meta.dirname,
@@ -77,6 +91,25 @@ describe("macOS release workflow security contract", () => {
 
 		expect(workflow.split("GH_TOKEN: ${{ github.token }}")).toHaveLength(3);
 		expect(between("\n  publish:")).toContain("GH_TOKEN: ${{ github.token }}");
+	});
+
+	it("publishes a signed GitHub beta DMG with prerelease-aware updates", () => {
+		expect(betaWorkflow).toContain('"v*-beta.*"');
+		expect(betaWorkflow).toContain("environment:\n      name: macos-release");
+		expect(betaWorkflow).toContain("Require a beta release identity");
+		expect(betaWorkflow).toContain("test \"$GITHUB_REF_NAME\" = \"v$version\"");
+		expect(betaWorkflow).toContain("beta-mac.yml");
+		expect(betaWorkflow).toContain("--prerelease");
+		expect(betaWorkflow).toContain("--draft=false");
+		expect(betaWorkflow).toContain("Kestrel Beta.app");
+		expect(betaWorkflow).toContain("Contents/MacOS/Kestrel Beta");
+		expect(betaWorkflow).toContain("KESTREL_RELEASE_CHANNEL: beta");
+		expect(betaBuilder).toContain("appId: com.kestrel.desktop.beta");
+		expect(betaBuilder).toContain("productName: Kestrel Beta");
+		expect(betaBuilder).toContain("title: Kestrel Beta");
+		expect(betaBuilder).toContain("provider: github");
+		expect(betaBuilder).toContain("channel: beta");
+		expect(betaBuilder).toContain("releaseType: prerelease");
 	});
 
 	it("serializes each ref and never publishes a manual dispatch", () => {

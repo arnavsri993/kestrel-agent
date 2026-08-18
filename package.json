@@ -44,6 +44,7 @@
     "test:editors": "node scripts/verify-editor-integrations.mjs",
     "test:e2e": "playwright test",
     "package:mac:dev": "pnpm --filter @kestrel/desktop package:mac:dev",
+    "package:mac:beta:dev": "pnpm --filter @kestrel/desktop package:mac:beta:dev",
     "install:mac:dev": "pnpm package:mac:dev && node scripts/install-development-macos-app.mjs",
     "assets:hero": "tsx scripts/fal-generate-hero.ts",
     "assets:backgrounds": "tsx scripts/fal-generate-backgrounds.ts",
