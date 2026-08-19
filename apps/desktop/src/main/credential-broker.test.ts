@@ -13,7 +13,6 @@ import { ProtectedDatabaseError } from "@kestrel/database";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	CredentialBroker,
-	ElectronSecretProtection,
 	PlaintextSecretProtection,
 	SecureStorageError,
 } from "./credential-broker";
@@ -130,8 +129,7 @@ describe("desktop credential broker", () => {
 	it("stores the database key as a local plaintext file without OS encryption", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-plaintext-"));
 		roots.push(root);
-		const protection = new PlaintextSecretProtection();
-		const broker = new CredentialBroker(root, protection);
+		const broker = new CredentialBroker(root);
 		const key = await broker.getDatabaseKey();
 		expect(key).toHaveLength(32);
 		const stored = readFileSync(join(root, "secure", "database-key.bin"));
@@ -139,9 +137,7 @@ describe("desktop credential broker", () => {
 			stored.subarray(0, "kestrel-plaintext-v1\n".length).toString("utf8"),
 		).toBe("kestrel-plaintext-v1\n");
 		expect(stored.toString("utf8")).toContain(key.toString("base64"));
-		expect(
-			await new CredentialBroker(root, protection).getDatabaseKey(),
-		).toEqual(key);
+		expect(await new CredentialBroker(root).getDatabaseKey()).toEqual(key);
 	});
 
 	it("refuses leftover Keychain ciphertext instead of prompting macOS", async () => {
@@ -149,45 +145,6 @@ describe("desktop credential broker", () => {
 		await expect(
 			protection.decryptString(Buffer.from([0x00, 0x01, 0x02, 0xff])),
 		).rejects.toBeInstanceOf(SecureStorageError);
-	});
-
-	it("initializes Electron secure storage once and never retries the same rotating ciphertext", async () => {
-		let syncAvailabilityCalls = 0;
-		let availabilityCalls = 0;
-		let decryptCalls = 0;
-		let encryptCalls = 0;
-		const safeStorage = {
-			isEncryptionAvailable: () => {
-				syncAvailabilityCalls += 1;
-				return true;
-			},
-			isAsyncEncryptionAvailable: async () => {
-				availabilityCalls += 1;
-				return true;
-			},
-			encryptStringAsync: async (value: string) => {
-				encryptCalls += 1;
-				return Buffer.from(`current:${value}`);
-			},
-			decryptStringAsync: async () => {
-				decryptCalls += 1;
-				return { result: "decrypted", shouldReEncrypt: true };
-			},
-		};
-		const protection = new ElectronSecretProtection(safeStorage);
-
-		await expect(
-			protection.decryptString(Buffer.from("legacy")),
-		).resolves.toEqual({
-			result: "decrypted",
-			shouldReEncrypt: true,
-		});
-		await protection.encryptString("decrypted");
-
-		expect(syncAvailabilityCalls).toBe(0);
-		expect(availabilityCalls).toBe(1);
-		expect(decryptCalls).toBe(1);
-		expect(encryptCalls).toBe(1);
 	});
 
 	it("persists a rotated database-key ciphertext without repeating decryption", async () => {
@@ -299,7 +256,7 @@ describe("desktop credential broker", () => {
 		expect(decryptCalls).toBe(3);
 	});
 
-	it("refuses to load or store secrets without OS encryption", async () => {
+	it("refuses to load or store secrets when protection is unavailable", async () => {
 		const root = mkdtempSync(
 			join(tmpdir(), "kestrel-credentials-unavailable-"),
 		);
@@ -311,9 +268,9 @@ describe("desktop credential broker", () => {
 		});
 		await expect(
 			broker.setCredential("anthropic", "test-secret-value"),
-		).rejects.toThrow("secure storage is unavailable");
+		).rejects.toThrow("Protected storage is unavailable");
 		await expect(broker.getDatabaseKey()).rejects.toThrow(
-			"secure storage is unavailable",
+			"Protected storage is unavailable",
 		);
 		await expect(broker.getDatabaseKey()).rejects.toBeInstanceOf(
 			SecureStorageError,

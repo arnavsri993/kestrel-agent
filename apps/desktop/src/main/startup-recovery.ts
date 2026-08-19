@@ -100,11 +100,11 @@ export function startupRecoveryCopy(cause: unknown): StartupRecoveryCopy {
 		return {
 			kind: "secure-storage",
 			message: "Kestrel needs access to its encrypted data.",
-			detail: `${detail}\n\nKestrel will not open your data without its encryption boundary. Unlock the login keychain and choose “Always Allow” for Kestrel Safe Storage, then try again.`,
+			detail: `${detail}\n\nKestrel will not open your data without its encryption boundary. Restore the local protected database key, then try again.`,
 		};
 	return {
 		kind: "core",
 		message: "Kestrel's local Agent Core could not start.",
-		detail: `${detail}\n\nThis is separate from Keychain access. Fix the reported Agent Core error or choose Try again.`,
+		detail: `${detail}\n\nThis is separate from the protected database key. Fix the reported Agent Core error or choose Try again.`,
 	};
 }

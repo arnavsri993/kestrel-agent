@@ -97,6 +97,11 @@ import {
   isPackagedKestrelRuntime,
 } from "./default-browser";
 
+// Chromium encrypts cookies with macOS Keychain under "Kestrel Safe Storage"
+// unless this switch is set before ready. Kestrel stores its own secrets as
+// local files and does not use Keychain.
+app.commandLine.appendSwitch("use-mock-keychain");
+
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
 const petOverlaysReturning = new WeakSet<BrowserWindow>();
@@ -749,8 +754,8 @@ supervisor.on("recovery-failed", (error: Error) => {
   notification.show();
 });
 
-// Keep the runtime name stable until a tested migration can move the existing
-// safeStorage Keychain account and encrypted user data without orphaning them.
+// Keep the runtime name stable so the existing user-data directory continues
+// to resolve without orphaning installed profiles.
 app.setName(PRODUCT_IDENTITY.runtimeApplicationName);
 if (process.env.KESTREL_DISABLE_GPU === "1") {
   app.commandLine.appendSwitch("disable-gpu");
@@ -790,8 +795,8 @@ function showMainWindow(): void {
   if (!singleInstance) return;
   if (!coreStartupComplete) {
     // During secure-storage recovery there is no main window yet. A second
-    // click on the Dock icon must bring the native Keychain/recovery dialog
-    // back to the front instead of making the app look like it exited.
+    // click on the Dock icon must bring the recovery dialog back to the front
+    // instead of making the app look like it exited.
     app.focus({ steal: true });
     return;
   }
@@ -2575,16 +2580,13 @@ async function initializeCoreForStartup(): Promise<boolean> {
       const copy = startupRecoveryCopy(cause);
       if (!mainWindow && app.isReady()) {
         // Give the native recovery dialog an owning window. Without one,
-        // macOS can leave the dialog behind the app that was active when the
-        // Keychain prompt was dismissed, making Kestrel look like it exited.
+        // macOS can leave the dialog behind the previously active app.
         mainWindow = createMainWindow();
         startupRecoveryWindowCreated = true;
       }
       mainWindow?.show();
       mainWindow?.focus();
-      // safeStorage failures can leave the native dialog behind the app the
-      // user was using when the Keychain prompt was dismissed. Keep recovery
-      // visible and make a subsequent Dock click return here.
+      // Keep recovery visible and make a subsequent Dock click return here.
       app.focus({ steal: true });
       const options: Electron.MessageBoxOptions = {
         type: "error",
