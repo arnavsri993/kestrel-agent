@@ -16,7 +16,12 @@ import { describe, expect, it } from "vitest";
 
 const script = resolve(import.meta.dirname, "install-development-macos-app.mjs");
 
-function createBundle(root, name, identifier = "com.kestrel.desktop.dev") {
+function createBundle(
+  root,
+  name,
+  identifier = "com.kestrel.desktop.dev",
+  productName = "Kestrel",
+) {
   const bundle = join(root, name);
   mkdirSync(join(bundle, "Contents"), { recursive: true });
   writeFileSync(
@@ -25,8 +30,8 @@ function createBundle(root, name, identifier = "com.kestrel.desktop.dev") {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>${identifier}</string>
-<key>CFBundleName</key><string>Kestrel</string>
-<key>CFBundleDisplayName</key><string>Kestrel</string>
+<key>CFBundleName</key><string>${productName}</string>
+<key>CFBundleDisplayName</key><string>${productName}</string>
 </dict></plist>
 `,
   );
@@ -68,6 +73,12 @@ testSuite("development macOS app installer", () => {
     const previous = createBundle(installRoot, "Kestrel.app");
     writeFileSync(join(previous, "Contents", "payload.txt"), "previous");
     const duplicate = createBundle(desktopRoot, "Kestrel 2.app");
+    const legacyVariant = createBundle(
+      desktopRoot,
+      "Kestrel Legacy.app",
+      "com.kestrel.desktop.legacy",
+      "Kestrel Legacy",
+    );
 
     const output = runInstaller(source, installRoot, [installRoot, desktopRoot], trashRoot);
     const canonical = join(installRoot, "Kestrel.app");
@@ -77,8 +88,9 @@ testSuite("development macOS app installer", () => {
     expect(existsSync(join(canonical, "Contents", "payload.txt"))).toBe(true);
     expect(readPayload(canonical)).toBe("Kestrel.app");
     expect(existsSync(duplicate)).toBe(false);
+    expect(existsSync(legacyVariant)).toBe(false);
     expect(existsSync(source)).toBe(true);
-    expect(readdirSync(trashRoot)).toHaveLength(2);
+    expect(readdirSync(trashRoot)).toHaveLength(3);
   });
 
   it("is safe to run repeatedly", () => {

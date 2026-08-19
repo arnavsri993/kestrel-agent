@@ -121,11 +121,6 @@ check the `latest` feed, download signed updates, and notify the user that the
 update will install after quit and reopen; development builds never check the
 production feed.
 
-Beta builds use the separate GitHub prerelease provider and `beta` channel.
-See [beta distribution](beta-release.md) for the matching version/tag and
-release workflow; beta artifacts are never promoted to the stable `latest`
-feed.
-
 ## Release decision
 
 A candidate is ready for internet distribution only when:

@@ -21,7 +21,6 @@ const result = await verifyLocalReleaseBundle({
 	releaseDirectory,
 	version,
 	expectedCommit: process.env.GITHUB_SHA ?? "",
-	metadataName: process.env.KESTREL_UPDATE_METADATA ?? "latest-mac.yml",
 });
 console.log(
 	`Verified ${result.artifacts.length} Kestrel ${result.version} artifacts from ${result.commit}.`,

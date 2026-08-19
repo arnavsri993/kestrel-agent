@@ -2,13 +2,11 @@ import { useMemo, useState, type FormEvent } from "react";
 import type { UserBrowserHistoryEntry } from "@kestrel/shared-types";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
-import { frequentBrowserSites, siteAccent, siteInitial } from "./new-tab";
+import { frequentBrowserSites, siteInitial } from "./new-tab";
 
 const recommendations = [
   {
     icon: "research",
-    art: "research",
-    eyebrow: "Explore",
     title: "Make sense of a new topic",
     description: "Find useful starting points and a next step.",
     prompt:
@@ -16,8 +14,6 @@ const recommendations = [
   },
   {
     icon: "work",
-    art: "plan",
-    eyebrow: "Plan",
     title: "Turn an idea into a plan",
     description: "Turn a rough idea into the smallest useful plan.",
     prompt:
@@ -25,8 +21,6 @@ const recommendations = [
   },
   {
     icon: "agent",
-    art: "continue",
-    eyebrow: "Continue",
     title: "Pick up where you left off",
     description: "Bring important context into the next step.",
     prompt:
@@ -38,16 +32,12 @@ export function NewTabPage({
   history,
   agentName,
   onNavigate,
-  onNewTab,
   onNewAgent,
-  onOpenSettings,
 }: {
   history: UserBrowserHistoryEntry[];
   agentName: string;
   onNavigate(input: string): void;
-  onNewTab(): void;
   onNewAgent(prompt?: string): void;
-  onOpenSettings(): void;
 }) {
   const [input, setInput] = useState("");
   const frequent = useMemo(() => frequentBrowserSites(history), [history]);
@@ -62,36 +52,12 @@ export function NewTabPage({
 
   return (
     <section className="new-tab-page" aria-labelledby="new-tab-title">
-      <div className="new-tab-backdrop" aria-hidden="true" />
-      <header className="new-tab-home-header">
-        <div className="new-tab-home-identity">
-          <BrandMark />
-          <span>
-            <strong>Kestrel home</strong>
-            <small>Browser + agent</small>
-          </span>
-        </div>
-        <button
-          type="button"
-          className="new-tab-settings"
-          onClick={onOpenSettings}
-          aria-label="Open browser preferences"
-          title="Open browser preferences"
-        >
-          <Icon name="settings" />
-          <span>Settings</span>
-        </button>
-      </header>
-
       <div className="new-tab-content">
         <div className="new-tab-center">
           <div className="new-tab-welcome-mark" aria-hidden="true">
             <BrandMark />
           </div>
           <h1 id="new-tab-title">Good to see you.</h1>
-          <p className="new-tab-support">
-            Ask {agentName} to think, plan, or get something done.
-          </p>
           <form className="new-tab-chat" onSubmit={submitChat}>
             <span className="new-tab-chat-mark" aria-hidden="true">
               <Icon name="sparkle" />
@@ -119,24 +85,14 @@ export function NewTabPage({
           </form>
         </div>
 
-        <section className="new-tab-frequent" aria-labelledby="frequent-title">
-          <div className="new-tab-section-heading">
-            <div>
-              <h2 id="frequent-title">Frequent tabs</h2>
-              <small>From local history</small>
+        {frequent.length > 0 && (
+          <section className="new-tab-frequent" aria-labelledby="frequent-title">
+            <div className="new-tab-section-heading">
+              <div>
+                <h2 id="frequent-title">Frequent tabs</h2>
+                <small>From local history</small>
+              </div>
             </div>
-            <button
-              type="button"
-              className="new-tab-section-action"
-              onClick={onNewTab}
-              aria-label="New tab"
-              title="New tab"
-            >
-              <Icon name="plus" />
-              <span>New tab</span>
-            </button>
-          </div>
-          {frequent.length > 0 ? (
             <div className="new-tab-frequent-list">
               {frequent.map((site) => (
                 <button
@@ -146,10 +102,7 @@ export function NewTabPage({
                   onClick={() => onNavigate(site.url)}
                   title={`${site.title} · ${site.hostname}`}
                 >
-                  <span
-                    className={`new-tab-site-glyph site-accent-${siteAccent(site.hostname)}`}
-                    aria-hidden="true"
-                  >
+                  <span className="new-tab-site-glyph" aria-hidden="true">
                     {siteInitial(site)}
                   </span>
                   <span className="new-tab-site-copy">
@@ -159,23 +112,8 @@ export function NewTabPage({
                 </button>
               ))}
             </div>
-          ) : (
-            <button
-              type="button"
-              className="new-tab-frequent-empty"
-              onClick={onNewTab}
-            >
-              <span className="new-tab-site-glyph" aria-hidden="true">
-                <Icon name="plus" />
-              </span>
-              <span>
-                <strong>Open a site to start</strong>
-                <small>Your local shortcuts will appear here.</small>
-              </span>
-              <Icon name="arrow" />
-            </button>
-          )}
-        </section>
+          </section>
+        )}
 
         <section
           className="new-tab-recommendations"
@@ -187,32 +125,24 @@ export function NewTabPage({
           </div>
           <div className="new-tab-recommendation-grid">
             {recommendations.map((recommendation) => (
-              <article
-                className={`new-tab-recommendation new-tab-recommendation-${recommendation.art}`}
+              <button
+                type="button"
+                className="new-tab-recommendation"
                 key={recommendation.title}
+                aria-label={`Ask Kestrel: ${recommendation.title}`}
+                onClick={() => onNewAgent(recommendation.prompt)}
               >
-                <div className="new-tab-recommendation-art" aria-hidden="true">
-                  <span className="new-tab-recommendation-art-glow" />
-                  <span className="new-tab-recommendation-art-icon">
-                    <Icon name={recommendation.icon} />
-                  </span>
-                </div>
-                <div className="new-tab-recommendation-body">
-                  <span className="new-tab-recommendation-heading">
-                    {recommendation.eyebrow}
-                  </span>
-                  <h3>{recommendation.title}</h3>
-                  <p>{recommendation.description}</p>
-                  <button
-                    type="button"
-                    aria-label={`Open in chat: ${recommendation.title}`}
-                    onClick={() => onNewAgent(recommendation.prompt)}
-                  >
-                    <span>Open in chat</span>
-                    <Icon name="arrow" />
-                  </button>
-                </div>
-              </article>
+                <span className="new-tab-recommendation-icon" aria-hidden="true">
+                  <Icon name={recommendation.icon} />
+                </span>
+                <span className="new-tab-recommendation-copy">
+                  <strong>{recommendation.title}</strong>
+                  <small>{recommendation.description}</small>
+                </span>
+                <span className="new-tab-recommendation-action" aria-hidden="true">
+                  Ask <Icon name="arrow" />
+                </span>
+              </button>
             ))}
           </div>
         </section>

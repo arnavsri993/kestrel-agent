@@ -12,7 +12,6 @@
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "preview": "KESTREL_RELEASE_CHANNEL=development electron-vite preview",
     "package:mac:dev": "KESTREL_RELEASE_CHANNEL=development pnpm build && CSC_FOR_PULL_REQUEST=true KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac dir --arm64 --config electron-builder.dev.yml && node ../../scripts/verify-development-macos-app.mjs ../../release/mac-arm64/Kestrel.app",
-    "package:mac:beta:dev": "KESTREL_RELEASE_CHANNEL=beta pnpm build && CSC_FOR_PULL_REQUEST=true electron-builder --mac dir --arm64 --config electron-builder.beta.dev.yml",
     "package:mac:mdm": "pnpm build && KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac pkg --arm64 --config electron-builder.yml"
   },
   "dependencies": {

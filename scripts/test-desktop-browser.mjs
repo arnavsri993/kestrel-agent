@@ -223,10 +223,14 @@ try {
 	});
 	await page.reload();
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
-	await page.getByRole("button", { name: "Open browser preferences", exact: true }).click();
+	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await page
+		.getByRole("navigation", { name: "Settings sections" })
+		.getByRole("button", { name: /^Browser/ })
+		.click();
 	await page.getByRole("heading", { name: "Tabs & General" }).waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await page.getByRole("button", { name: "Browser", exact: true }).first().click();
@@ -241,9 +245,11 @@ try {
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).click();
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().waitFor();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 
-	await page.getByRole("button", { name: /Open in chat/ }).first().click();
+	await page
+		.getByRole("button", { name: "Ask Kestrel: Make sense of a new topic" })
+		.click();
 	await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");
 		return (
@@ -265,7 +271,7 @@ try {
 	const initialTabs = (await browserState()).tabs.length;
 	const tabList = page.getByRole("tablist", { name: "Browser tabs" });
 	assert.equal(await tabList.getAttribute("aria-orientation"), "horizontal");
-	await page.getByRole("button", { name: "New tab", exact: true }).click();
+	await page.getByRole("button", { name: "New Tab", exact: true }).click();
 	let state = await browserState();
 	assert.equal(state.tabs.length, initialTabs + 1);
 	const addedBlankTab = state.activeTabId;
@@ -590,10 +596,7 @@ try {
 		"kestrel-browser.txt",
 	);
 
-	await page
-		.getByRole("button", { name: "History", exact: true })
-		.last()
-		.click();
+	await page.keyboard.press("Meta+H");
 	await page
 		.getByRole("heading", { name: "Pages you visited", exact: true })
 		.waitFor();
@@ -607,10 +610,7 @@ try {
 		.first()
 		.waitFor();
 
-	await page
-		.getByRole("button", { name: "Downloads", exact: true })
-		.last()
-		.click();
+	await page.keyboard.press("Meta+J");
 	await page
 		.getByRole("heading", { name: "Files from the web", exact: true })
 		.waitFor();
