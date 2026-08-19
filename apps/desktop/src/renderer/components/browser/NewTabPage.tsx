@@ -1,32 +1,13 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo } from "react";
 import type { UserBrowserHistoryEntry } from "@kestrel/shared-types";
-import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
-import { frequentBrowserSites, siteInitial } from "./new-tab";
-
-const recommendations = [
-  {
-    icon: "research",
-    title: "Make sense of a new topic",
-    description: "Find useful starting points and a next step.",
-    prompt:
-      "Help me explore a new topic, find the useful starting points, and suggest the next step.",
-  },
-  {
-    icon: "work",
-    title: "Turn an idea into a plan",
-    description: "Turn a rough idea into the smallest useful plan.",
-    prompt:
-      "Help me turn an idea into a clear plan with the smallest useful next step.",
-  },
-  {
-    icon: "agent",
-    title: "Pick up where you left off",
-    description: "Bring important context into the next step.",
-    prompt:
-      "Help me pick up where I left off and decide what is most useful to do next.",
-  },
-] as const;
+import {
+  browserSiteLabel,
+  frequentBrowserSites,
+  siteInitial,
+  suggestedAgentActions,
+} from "./new-tab";
+import "./new-tab.css";
 
 export function NewTabPage({
   history,
@@ -39,111 +20,122 @@ export function NewTabPage({
   onNavigate(input: string): void;
   onNewAgent(prompt?: string): void;
 }) {
-  const [input, setInput] = useState("");
-  const frequent = useMemo(() => frequentBrowserSites(history), [history]);
-
-  function submitChat(event: FormEvent) {
-    event.preventDefault();
-    const prompt = input.trim();
-    if (!prompt) return;
-    setInput("");
-    onNewAgent(prompt);
-  }
+  const suggestedActions = useMemo(
+    () => suggestedAgentActions(history),
+    [history],
+  );
+  const recommendedLinks = useMemo(
+    () => frequentBrowserSites(history, 5),
+    [history],
+  );
+  const hasPersonalization = recommendedLinks.length > 0;
 
   return (
-    <section className="new-tab-page" aria-labelledby="new-tab-title">
-      <div className="new-tab-content">
-        <div className="new-tab-center">
-          <div className="new-tab-welcome-mark" aria-hidden="true">
-            <BrandMark />
-          </div>
+    <section
+      className="new-tab-page kestrel-home"
+      aria-labelledby="new-tab-title"
+    >
+      <div className="kestrel-home-shell">
+        <header className="kestrel-home-intro">
+          <span className="kestrel-home-eyebrow">Ready when you are</span>
           <h1 id="new-tab-title">Good to see you.</h1>
-          <form className="new-tab-chat" onSubmit={submitChat}>
-            <span className="new-tab-chat-mark" aria-hidden="true">
-              <Icon name="sparkle" />
-            </span>
-            <label className="sr-only" htmlFor="new-tab-chat-input">
-              Ask {agentName}
-            </label>
-            <input
-              id="new-tab-chat-input"
-              autoFocus
-              value={input}
-              placeholder={`Ask ${agentName}...`}
-              autoCapitalize="sentences"
-              autoCorrect="on"
-              spellCheck
-              onChange={(event) => setInput(event.target.value)}
-            />
-            <button
-              type="submit"
-              aria-label={`Send to ${agentName}`}
-              disabled={!input.trim()}
-            >
-              <Icon name="arrow" />
-            </button>
-          </form>
-        </div>
+          <p>
+            Pick a starting point. Kestrel will place it in {agentName}&apos;s
+            composer so you can review it before sending.
+          </p>
+        </header>
 
-        {frequent.length > 0 && (
-          <section className="new-tab-frequent" aria-labelledby="frequent-title">
-            <div className="new-tab-section-heading">
+        <div className="kestrel-home-layout">
+          <section
+            className="kestrel-home-suggestions"
+            aria-labelledby="suggested-actions-title"
+          >
+            <div className="kestrel-home-section-heading">
               <div>
-                <h2 id="frequent-title">Frequent tabs</h2>
+                <span className="kestrel-home-section-kicker">
+                  {hasPersonalization ? "For you" : "Start here"}
+                </span>
+                <h2 id="suggested-actions-title">Suggested actions</h2>
               </div>
+              <small>
+                {hasPersonalization ? "Shaped by local history" : "Five useful prompts"}
+              </small>
             </div>
-            <div className="new-tab-frequent-list">
-              {frequent.map((site) => (
-                <button
-                  key={site.origin}
-                  type="button"
-                  className="new-tab-site"
-                  onClick={() => onNavigate(site.url)}
-                  title={`${site.title} · ${site.hostname}`}
-                >
-                  <span className="new-tab-site-glyph" aria-hidden="true">
-                    {siteInitial(site)}
-                  </span>
-                  <span className="new-tab-site-copy">
-                    <strong>{site.title}</strong>
-                    <small>{site.hostname}</small>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
 
-        <section
-          className="new-tab-recommendations"
-          aria-labelledby="recommendations-title"
-        >
-          <div className="new-tab-section-heading">
-            <h2 id="recommendations-title">Suggestions</h2>
-          </div>
-          <div className="new-tab-recommendation-grid">
-            {recommendations.map((recommendation) => (
-              <button
-                type="button"
-                className="new-tab-recommendation"
-                key={recommendation.title}
-                aria-label={`Ask Kestrel: ${recommendation.title}`}
-                onClick={() => onNewAgent(recommendation.prompt)}
-              >
-                <span className="new-tab-recommendation-icon" aria-hidden="true">
-                  <Icon name={recommendation.icon} />
+            <ol className="kestrel-home-action-list">
+              {suggestedActions.map((action, index) => (
+                <li key={action.id}>
+                  <button
+                    type="button"
+                    className="kestrel-home-action"
+                    onClick={() => onNewAgent(action.prompt)}
+                    aria-label={`Add to ${agentName} composer: ${action.title}`}
+                  >
+                    <span className="kestrel-home-action-index" aria-hidden="true">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <span className="kestrel-home-action-copy">
+                      <strong>{action.title}</strong>
+                      <small>{action.description}</small>
+                    </span>
+                    <span className="kestrel-home-action-affordance" aria-hidden="true">
+                      <span>Use prompt</span>
+                      <Icon name="arrow" />
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </section>
+
+          <section
+            className="kestrel-home-links"
+            aria-labelledby="recommended-links-title"
+          >
+            <div className="kestrel-home-section-heading">
+              <div>
+                <span className="kestrel-home-section-kicker">Private to this profile</span>
+                <h2 id="recommended-links-title">Recommended links</h2>
+              </div>
+              {hasPersonalization && <small>Local history only</small>}
+            </div>
+
+            {hasPersonalization ? (
+              <ul className="kestrel-home-link-list">
+                {recommendedLinks.map((site) => (
+                  <li key={site.origin}>
+                    <button
+                      type="button"
+                      className="kestrel-home-link"
+                      onClick={() => onNavigate(site.url)}
+                      title={`${browserSiteLabel(site)} · ${site.hostname}`}
+                    >
+                      <span className="kestrel-home-link-glyph" aria-hidden="true">
+                        {siteInitial(site)}
+                      </span>
+                      <span className="kestrel-home-link-copy">
+                        <strong>{browserSiteLabel(site)}</strong>
+                        <small>{site.hostname}</small>
+                      </span>
+                      <Icon name="arrow" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="kestrel-home-links-empty">
+                <span aria-hidden="true">
+                  <Icon name="history" />
                 </span>
-                <span className="new-tab-recommendation-copy">
-                  <strong>{recommendation.title}</strong>
-                  <small>{recommendation.description}</small>
-                </span>
-                <span className="new-tab-recommendation-action" aria-hidden="true">
-                  Ask <Icon name="arrow" />
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
+                <strong>Your links will learn from browsing.</strong>
+                <p>
+                  Open a few pages and Kestrel will surface useful places from
+                  this profile&apos;s local history. Nothing is sent elsewhere.
+                </p>
+              </div>
+            )}
+          </section>
+        </div>
       </div>
     </section>
   );

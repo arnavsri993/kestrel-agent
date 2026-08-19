@@ -1,0 +1,358 @@
+.new-tab-page.kestrel-home {
+  display: block;
+  min-height: 100%;
+  height: 100%;
+  padding: clamp(40px, 7vh, 72px) clamp(28px, 5vw, 72px) 48px;
+  overflow: auto;
+  color: var(--ink);
+  background: var(--canvas);
+}
+
+.kestrel-home-shell {
+  width: min(100%, 1040px);
+  margin: 0 auto;
+}
+
+.kestrel-home-intro {
+  max-width: 650px;
+  margin-bottom: clamp(36px, 6vh, 60px);
+}
+
+.kestrel-home-eyebrow,
+.kestrel-home-section-kicker {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.kestrel-home-intro h1 {
+  margin: 10px 0 8px;
+  color: var(--ink);
+  font: 700 clamp(34px, 4.2vw, 46px) / 1.08 var(--display);
+  letter-spacing: -0.04em;
+}
+
+.kestrel-home-intro p {
+  max-width: 590px;
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.kestrel-home-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(250px, 0.8fr);
+  gap: clamp(36px, 5vw, 64px);
+  align-items: start;
+}
+
+.kestrel-home-suggestions,
+.kestrel-home-links {
+  min-width: 0;
+}
+
+.kestrel-home-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 43px;
+  margin-bottom: 12px;
+}
+
+.kestrel-home-section-heading h2 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.kestrel-home-section-heading > small {
+  flex: 0 0 auto;
+  padding-bottom: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.kestrel-home-action-list,
+.kestrel-home-link-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kestrel-home-action-list {
+  border-top: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.kestrel-home-action-list li + li,
+.kestrel-home-link-list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.kestrel-home-action,
+.kestrel-home-link {
+  width: 100%;
+  border: 0;
+  color: var(--ink);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background-color var(--motion-feedback) var(--ease-kestrel),
+    transform var(--motion-feedback) var(--ease-kestrel);
+}
+
+.kestrel-home-action {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  min-height: 72px;
+  padding: 10px 12px 10px 4px;
+}
+
+.kestrel-home-action:hover,
+.kestrel-home-link:hover {
+  background: var(--selected-soft);
+}
+
+.kestrel-home-action:hover {
+  transform: translateX(2px);
+}
+
+.kestrel-home-action:active,
+.kestrel-home-link:active {
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+.kestrel-home-action:focus-visible,
+.kestrel-home-link:focus-visible {
+  position: relative;
+  z-index: 1;
+  border-radius: var(--radius-xs);
+}
+
+.kestrel-home-action-index {
+  color: var(--faint);
+  font: 600 11px / 1 var(--mono);
+  letter-spacing: 0.04em;
+}
+
+.kestrel-home-action-copy,
+.kestrel-home-link-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.kestrel-home-action-copy {
+  gap: 4px;
+}
+
+.kestrel-home-action-copy strong,
+.kestrel-home-link-copy strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kestrel-home-action-copy small,
+.kestrel-home-link-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kestrel-home-action-affordance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.72;
+}
+
+.kestrel-home-action-affordance svg,
+.kestrel-home-link > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.kestrel-home-action:is(:hover, :focus-visible) .kestrel-home-action-affordance,
+.kestrel-home-link:is(:hover, :focus-visible) > svg {
+  color: var(--ink);
+  opacity: 1;
+}
+
+.kestrel-home-link-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  background: var(--panel);
+}
+
+.kestrel-home-link {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 16px;
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  padding: 8px 12px;
+}
+
+.kestrel-home-link-glyph,
+.kestrel-home-links-empty > span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--ink-secondary);
+  background: var(--surface);
+  font: 650 12px / 1 var(--mono);
+}
+
+.kestrel-home-link-copy {
+  gap: 2px;
+}
+
+.kestrel-home-link > svg {
+  color: var(--faint);
+  opacity: 0.72;
+}
+
+.kestrel-home-links-empty {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-row);
+  background: var(--panel);
+}
+
+.kestrel-home-links-empty > span {
+  margin-bottom: 16px;
+}
+
+.kestrel-home-links-empty svg {
+  width: 15px;
+  height: 15px;
+}
+
+.kestrel-home-links-empty strong {
+  display: block;
+  color: var(--ink-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.kestrel-home-links-empty p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1180px) {
+  .new-tab-page.kestrel-home {
+    padding-inline: clamp(24px, 4vw, 40px);
+  }
+
+  .kestrel-home-shell {
+    max-width: 680px;
+  }
+
+  .kestrel-home-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 38px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .new-tab-page.kestrel-home {
+    padding-top: 32px;
+    padding-bottom: 40px;
+  }
+
+  .kestrel-home-intro {
+    margin-bottom: 32px;
+  }
+
+  .kestrel-home-intro h1 {
+    font-size: 36px;
+  }
+
+  .kestrel-home-section-heading {
+    align-items: start;
+  }
+
+  .kestrel-home-section-heading > small,
+  .kestrel-home-action-affordance span {
+    display: none;
+  }
+
+  .kestrel-home-action {
+    grid-template-columns: 28px minmax(0, 1fr) 16px;
+    gap: 10px;
+    min-height: 68px;
+  }
+}
+
+@media (max-width: 680px) {
+  .new-tab-page.kestrel-home {
+    padding: 28px 20px 40px;
+  }
+
+  .kestrel-home-intro h1 {
+    font-size: 32px;
+  }
+}
+
+@media (max-height: 720px) and (min-width: 901px) {
+  .new-tab-page.kestrel-home {
+    padding-top: 32px;
+  }
+
+  .kestrel-home-intro {
+    margin-bottom: 30px;
+  }
+
+  .kestrel-home-action {
+    min-height: 64px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kestrel-home-action,
+  .kestrel-home-link {
+    transition: none;
+  }
+
+  .kestrel-home-action:hover {
+    transform: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .kestrel-home-action-list,
+  .kestrel-home-link-list,
+  .kestrel-home-links-empty {
+    border-color: var(--ink-secondary);
+  }
+}

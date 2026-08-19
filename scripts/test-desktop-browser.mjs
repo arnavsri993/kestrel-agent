@@ -264,17 +264,36 @@ try {
 	assert.equal(await agentSidebar.evaluate((sidebar) => sidebar.inert), false);
 	await page.locator("#runtime-prompt").waitFor();
 
-	await page
-		.getByRole("button", { name: "Ask Kestrel: Make sense of a new topic" })
-		.click();
+	const suggestedActions = page.getByRole("button", {
+		name: /^Add to Pragmatic composer:/,
+	});
+	assert.equal(await suggestedActions.count(), 5);
+	const sessionsBeforeSuggestion = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		return response.ok && "sessions" in response
+			? (response.sessions ?? []).length
+			: -1;
+	});
+	await suggestedActions.first().click();
 	await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");
 		return (
 			prompt instanceof HTMLTextAreaElement &&
 			prompt.value ===
-				"Help me explore a new topic, find the useful starting points, and suggest the next step."
+				"Review the current project and context. Identify the highest-impact issues, explain why they matter, and recommend the smallest useful next step. Do not change anything until the review is clear."
 		);
 	});
+	const sessionsAfterSuggestion = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		return response.ok && "sessions" in response
+			? (response.sessions ?? []).length
+			: -1;
+	});
+	assert.equal(sessionsAfterSuggestion, sessionsBeforeSuggestion);
 	await page.getByRole("button", { name: "New task", exact: true }).click();
 
 	const initialSessions = await page.evaluate(async () => {
