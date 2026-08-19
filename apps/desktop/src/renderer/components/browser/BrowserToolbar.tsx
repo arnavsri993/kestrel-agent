@@ -7,8 +7,6 @@ export function BrowserToolbar({
   agentName,
   agentOpen,
   addressRef,
-  contextEnabled,
-  onToggleContext,
   onToggleAgent,
   onNavigate,
   onBack,
@@ -23,8 +21,6 @@ export function BrowserToolbar({
   agentName: string;
   agentOpen: boolean;
   addressRef: RefObject<HTMLInputElement | null>;
-  contextEnabled: boolean;
-  onToggleContext(): void;
   onToggleAgent(): void;
   onNavigate(input: string): void;
   onBack(): void;
@@ -122,25 +118,6 @@ export function BrowserToolbar({
           </span>
         )}
       </form>
-      <button
-        type="button"
-        className={`browser-context-toggle ${contextEnabled ? "active" : ""}`}
-        aria-pressed={contextEnabled}
-        aria-label={
-          contextEnabled
-            ? "Stop sharing page context with agent"
-            : "Share page context with agent"
-        }
-        title={
-          contextEnabled
-            ? "The agent can use this page as task context. Click to stop sharing."
-            : "The agent cannot use this page as task context. Click to share."
-        }
-        onClick={onToggleContext}
-      >
-        <Icon name="context" />
-        <span>{contextEnabled ? "Shared with agent" : "Share with agent"}</span>
-      </button>
       <div className="browser-toolbar-actions">
         <button
           id="browser-agent-toggle"

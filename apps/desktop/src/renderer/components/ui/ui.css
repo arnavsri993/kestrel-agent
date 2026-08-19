@@ -917,9 +917,6 @@
 .browser-address { height: 36px; border-color: var(--line); border-radius: var(--radius-control); background: var(--surface); }
 .browser-address:focus-within { border-color: var(--solid); box-shadow: none; }
 .browser-address input { font-size: 12px; }
-.browser-context-toggle { min-height: 32px; border-radius: 9px; color: var(--ink-secondary); }
-.browser-context-toggle.active { border-color: color-mix(in srgb, var(--solid) 30%, var(--line)); background: var(--selected-soft); color: var(--ink); }
-
 /* Home is a flat, quiet browser canvas. */
 .new-tab-page {
 	background: var(--canvas);
@@ -1770,7 +1767,6 @@ body { font-family: var(--sans); }
 	background: var(--surface);
 }
 .browser-address:focus-within { border-color: var(--ink); box-shadow: none; }
-.browser-context-toggle,
 .browser-toolbar-actions .browser-agent-toggle {
 	min-height: 32px;
 	border: 1px solid var(--line);
@@ -1778,7 +1774,6 @@ body { font-family: var(--sans); }
 	background: var(--surface);
 	color: var(--ink-secondary);
 }
-.browser-context-toggle.active,
 .browser-toolbar-actions .browser-agent-toggle.active {
 	border-color: var(--line-strong);
 	background: var(--selected-soft);

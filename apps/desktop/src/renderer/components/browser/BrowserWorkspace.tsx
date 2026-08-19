@@ -16,8 +16,6 @@ export function BrowserWorkspace({
   browser,
   agentName,
   agentOpen,
-  contextEnabled,
-  onToggleContext,
   onToggleAgent,
   onNewAgent,
   onOpenSettings,
@@ -30,8 +28,6 @@ export function BrowserWorkspace({
   browser: UserBrowserController;
   agentName: string;
   agentOpen: boolean;
-  contextEnabled: boolean;
-  onToggleContext(): void;
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
   onOpenSettings(): void;
@@ -339,8 +335,6 @@ export function BrowserWorkspace({
         agentName={agentName}
         agentOpen={agentOpen}
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
-        contextEnabled={contextEnabled}
-        onToggleContext={onToggleContext}
         onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}
         onBack={() => void back(activeTab.id)}

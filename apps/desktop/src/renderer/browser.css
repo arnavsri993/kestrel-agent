@@ -942,7 +942,7 @@ body:has(.ai-browser-app),
 	position: relative;
 	z-index: 2;
 	display: grid;
-	grid-template-columns: auto minmax(180px, 1fr) auto auto;
+	grid-template-columns: auto minmax(180px, 1fr) auto;
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
@@ -1016,36 +1016,6 @@ body:has(.ai-browser-app),
 }
 .browser-address-host {
 	display: none;
-}
-
-.browser-context-toggle {
-	display: flex;
-	align-items: center;
-	gap: 5px;
-	height: 31px;
-	padding: 0 8px;
-	border: 1px solid transparent;
-	border-radius: 7px;
-	background: transparent;
-	color: var(--faint);
-	cursor: pointer;
-}
-.browser-context-toggle:hover {
-	background: var(--surface);
-	color: var(--ink);
-}
-.browser-context-toggle.active {
-	border-color: color-mix(in srgb, var(--solid) 28%, transparent);
-	background: color-mix(in srgb, var(--solid) 10%, transparent);
-	color: var(--status-ink);
-}
-.browser-context-toggle svg {
-	width: 14px;
-	height: 14px;
-}
-.browser-context-toggle span {
-	font-size: 11px;
-	white-space: nowrap;
 }
 
 .browser-viewport {
@@ -2226,14 +2196,6 @@ body:has(.ai-browser-app),
 	.ai-browser-app.agent-sidebar-collapsed {
 		grid-template-columns: minmax(0, 1fr) 0px;
 	}
-	.browser-context-toggle span {
-		display: none;
-	}
-	.browser-context-toggle {
-		width: 31px;
-		justify-content: center;
-		padding: 0;
-	}
 	.new-tab-recents > div {
 		grid-template-columns: repeat(4, minmax(0, 1fr));
 	}
@@ -2395,7 +2357,6 @@ body:has(.ai-browser-app),
 @media (forced-colors: active) {
 	.browser-tab.active,
 	.agent-sidebar-footer nav button.active,
-	.browser-context-toggle.active,
 	.agent-task-filters button[aria-pressed="true"],
 	.agent-task-list li > button.active {
 		outline: 2px solid Highlight;
@@ -3285,8 +3246,6 @@ body:has(.ai-browser-app),
 /* Edge home: responsive and accessibility refinements */
 @media (max-width: 1120px) {
   .ai-browser-app { grid-template-columns: 330px minmax(0, 1fr); }
-  .browser-context-toggle span { display: none; }
-  .browser-context-toggle { width: 31px; justify-content: center; padding: 0; }
   .new-tab-frequent-list { flex-wrap: wrap; gap: 14px 22px; }
   .browser-workspace-vertical { grid-template-columns: 180px minmax(0, 1fr); }
   .browser-workspace-vertical .browser-loading-line { left: 180px; }
@@ -3379,7 +3338,6 @@ body:has(.ai-browser-app),
 @media (forced-colors: active) {
   .browser-tab.active,
   .agent-sidebar-footer nav button.active,
-  .browser-context-toggle.active,
   .agent-task-filters button[aria-pressed="true"],
   .agent-task-list li > button.active { outline: 2px solid Highlight; }
   .browser-loading-line { background: Highlight; }
