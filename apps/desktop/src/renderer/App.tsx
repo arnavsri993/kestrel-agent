@@ -123,12 +123,6 @@ import {
 	type KestrelAppPageId,
 } from "../utility/browser-app-pages";
 import {
-	isKestrelAppPageId,
-	kestrelAppPageUrl,
-	parseKestrelAppPage,
-	type KestrelAppPageId,
-} from "../utility/browser-app-pages";
-import {
 	memoryInGb,
 	recommendedLocalModelTiers,
 	supportedLocalModels,
