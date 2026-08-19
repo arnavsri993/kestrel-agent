@@ -709,6 +709,9 @@ function showMainWindow(): void {
   }
   if (!mainWindow && app.isReady()) mainWindow = createMainWindow();
   if (!mainWindow) return;
+  if (userBrowserService && userBrowserService.getState().tabs.length === 0) {
+    void userBrowserService.createTab();
+  }
   mainWindow.show();
   mainWindow.focus();
 }

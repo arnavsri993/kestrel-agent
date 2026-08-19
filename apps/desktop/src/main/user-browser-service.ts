@@ -353,21 +353,13 @@ export class UserBrowserService {
 		this.closeView(tabId);
 		this.state.tabs.splice(index, 1);
 		if (this.state.tabs.length === 0) {
-			const timestamp = this.now().toISOString();
-			const id = `tab-${randomUUID()}`;
-			this.state.tabs.push({
-				id,
-				title: "New Tab",
-				url: "",
-				loading: false,
-				canGoBack: false,
-				canGoForward: false,
-				discarded: false,
-				crashed: false,
-				createdAt: timestamp,
-				lastActiveAt: timestamp,
-			});
-			this.state.activeTabId = id;
+			this.state.activeTabId = null;
+			this.commit();
+			await this.syncActiveView();
+			if (!this.window.isDestroyed()) {
+				this.window.close();
+			}
+			return this.getState();
 		} else if (this.state.activeTabId === tabId) {
 			this.state.activeTabId =
 				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;

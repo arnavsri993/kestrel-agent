@@ -134,6 +134,7 @@ function createService(options: { partitionName?: string; now?: () => Date } = {
   const window = {
     getContentSize: vi.fn(() => [300, 200]),
     isDestroyed: vi.fn(() => false),
+    close: vi.fn(),
     contentView: {
       children,
       addChildView: vi.fn((view: unknown) => children.push(view)),
@@ -162,8 +163,8 @@ async function navigateNewTab(service: UserBrowserService, url: string) {
 }
 
 describe("UserBrowserService", () => {
-  it("creates, selects, and closes tabs with a deterministic fallback and a replacement tab", async () => {
-    const { service } = createService();
+  it("creates, selects, and closes tabs with a deterministic fallback and closes the window when the last tab is closed", async () => {
+    const { service, window } = createService();
     const first = service.getState().activeTabId!;
     const second = (await service.createTab()).activeTabId!;
     const third = (await service.createTab()).activeTabId!;
@@ -176,9 +177,9 @@ describe("UserBrowserService", () => {
     await service.closeTab(third);
     await service.closeTab(first);
     const state = service.getState();
-    expect(state.tabs).toHaveLength(1);
-    expect(state.activeTabId).toBe(state.tabs[0]?.id);
-    expect(state.tabs[0]).toMatchObject({ title: "New Tab", url: "" });
+    expect(state.tabs).toHaveLength(0);
+    expect(state.activeTabId).toBeNull();
+    expect(window.close).toHaveBeenCalledTimes(1);
   });
 
   it("uses the production persistent partition by default and preserves an explicit custom partition", () => {
