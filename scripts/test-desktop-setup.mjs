@@ -386,7 +386,9 @@ try {
 		await newAgentButton.getAttribute("aria-keyshortcuts"),
 		"Meta+N",
 	);
-	await page.getByRole("button", { name: "Add project" }).waitFor();
+	await page
+		.getByRole("button", { name: "Add files or choose folder" })
+		.waitFor();
 	await page.locator("#runtime-prompt").waitFor();
 	assert.equal(await page.getByRole("button", { name: /Review a project/ }).count(), 0);
 	assert.equal(await page.getByRole("button", { name: /Plan a task/ }).count(), 0);

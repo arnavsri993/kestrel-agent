@@ -3290,6 +3290,20 @@ function RuntimeConversation({
 		}
 	}
 
+	function addComposerContext() {
+		if (taskWorkspace && selectedGrant?.available !== false) {
+			void addContext();
+			return;
+		}
+		if (!activeSessionId) {
+			void addProject();
+			return;
+		}
+		setError(
+			"This conversation has no project folder. Start a new task to add files.",
+		);
+	}
+
 	async function addProject() {
 		if (activeSessionId || busy) return;
 		setError("");
@@ -3742,9 +3756,15 @@ function RuntimeConversation({
 			}
 		>
 			{voiceState === "recording" ? (
-				"Stop"
+				<>
+					<Icon name="pause" />
+					<span className="sr-only">Stop recording</span>
+				</>
 			) : voiceState === "transcribing" ? (
-				"Transcribing…"
+				<>
+					<Icon name="loader" />
+					<span className="sr-only">Transcribing</span>
+				</>
 			) : (
 				<Icon name="voice" />
 			)}
@@ -4083,15 +4103,18 @@ function RuntimeConversation({
 					<div className="attachment-chips">
 						{attachments.map((attachment) => (
 							<button
+								type="button"
 								key={attachment.path}
-								title="Remove attachment"
+								aria-label={`Remove ${attachment.name}`}
+								title={`Remove ${attachment.name}`}
 								onClick={() =>
 									setAttachments((current) =>
 										current.filter((item) => item.path !== attachment.path),
 									)
 								}
 							>
-								{attachment.name} ×
+								<span>{attachment.name}</span>
+								<Icon name="close" />
 							</button>
 						))}
 					</div>
@@ -4118,30 +4141,39 @@ function RuntimeConversation({
 					/>
 					<div className="composer-footer">
 						<div className="button-row composer-context-actions">
-							{taskWorkspace && selectedGrant?.available !== false ? (
-								<button
-									type="button"
-									className="composer-icon"
-									aria-label="Add context files"
-									disabled={busy || voiceState !== "idle"}
-									onClick={() => void addContext()}
-								>
-									<Icon name="plus" />
-								</button>
-							) : !activeSessionId ? (
-								<button
-									type="button"
-									className="composer-project-button"
-									disabled={busy || voiceState !== "idle"}
-									onClick={() => void addProject()}
-								>
-									<Icon name="plus" />
-									<span>Add project</span>
-								</button>
-							) : null}
+							<button
+								type="button"
+								className="composer-icon composer-add-files"
+								aria-label={
+									taskWorkspace
+										? "Add context files"
+										: "Add files or choose folder"
+								}
+								title={
+									taskWorkspace
+										? "Add files to this task"
+										: "Choose a project before adding files"
+								}
+								disabled={busy || voiceState !== "idle"}
+								onClick={addComposerContext}
+							>
+								<Icon name="plus" />
+							</button>
 							<details className="task-settings">
-								<summary aria-label="Task settings" title="Task settings">
-									<Icon name="settings" />
+								<summary
+									aria-label="Task settings"
+									title={`Model: ${
+										executionMode === "automatic"
+											? "Smart"
+											: model.trim() || "Choose a model"
+									}`}
+								>
+									<span className="runtime-model-label">
+										{executionMode === "automatic"
+											? "Smart"
+											: model.trim() || "Choose model"}
+									</span>
+									<Icon name="chevron" />
 								</summary>
 								<div className="task-settings-panel">
 									<header>
@@ -4282,7 +4314,7 @@ function RuntimeConversation({
 													: "Conversation only"}
 						</span>
 						{activeSessionBusy ? (
-							<div className="button-row">
+							<div className="button-row composer-send-actions">
 								{voiceButton}
 								<button
 									className="send-button"
@@ -4300,7 +4332,7 @@ function RuntimeConversation({
 								</button>
 							</div>
 						) : (
-							<div className="button-row">
+							<div className="button-row composer-send-actions">
 								{voiceButton}
 								<button
 									className="send-button"
