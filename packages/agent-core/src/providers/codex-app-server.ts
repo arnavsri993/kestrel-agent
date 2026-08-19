@@ -20,6 +20,10 @@ import {
 	type ModelResult,
 	type ModelUsage,
 } from "./types";
+import {
+	type BrowserMcpCallSession,
+	resolveUniqueMappedSession,
+} from "../browser-mcp-session";
 
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -240,6 +244,13 @@ export class CodexAppServerProvider {
 	attachBrowserMcp(attachment: CodexBrowserMcpAttachment): void {
 		assertLoopbackHttpUrl(attachment.url);
 		this.browserMcp = { url: attachment.url, token: attachment.token };
+	}
+
+	activeBrowserMcpSession(): BrowserMcpCallSession {
+		const threadToSession = new Map<string, string>();
+		for (const [sessionKey, binding] of this.threads)
+			threadToSession.set(binding.threadId, sessionKey);
+		return resolveUniqueMappedSession(this.collectors.keys(), threadToSession);
 	}
 
 	async probe(signal?: AbortSignal): Promise<void> {

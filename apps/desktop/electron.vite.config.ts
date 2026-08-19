@@ -10,6 +10,17 @@ const workspacePackages = [
 	"@kestrel/shared-types",
 ];
 
+// electron-vite injects this after the last `import` match. Bundled remote-web
+// HTML/JS strings can match that regex and leave a mid-chunk import that esbuild
+// rejects. Putting the identical Node 20.11+ shim in the banner skips injection.
+const electronViteCjsShim = `
+// -- CommonJS Shims --
+import __cjs_mod__ from 'node:module';
+const __filename = import.meta.filename;
+const __dirname = import.meta.dirname;
+const require = __cjs_mod__.createRequire(import.meta.url);
+`;
+
 export default defineConfig({
 	main: {
 		plugins: [
@@ -20,6 +31,9 @@ export default defineConfig({
 				input: {
 					index: resolve(__dirname, "src/main/index.ts"),
 					utility: resolve(__dirname, "src/utility/index.ts"),
+				},
+				output: {
+					banner: electronViteCjsShim,
 				},
 			},
 		},

@@ -171,6 +171,11 @@ describe("browser observation diffs", () => {
 		const controller = new BrowserController(backend);
 		const signal = new AbortController().signal;
 		const autonomous = await controller.create("owner", ["https://example.test"]);
+		await controller.snapshot("owner", autonomous.browserSessionId, signal);
+		await controller.visibleSnapshot(
+			"tab-00000000-0000-4000-8000-000000000000",
+			signal,
+		);
 
 		const autonomousResult = await controller.act(
 			"owner",

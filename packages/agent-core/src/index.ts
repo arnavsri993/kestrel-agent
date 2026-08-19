@@ -121,6 +121,7 @@ import {
 	NetworkPolicyWebClient,
 	type WebAccessOptions,
 } from "./web-tools";
+import type { BrowserMcpCallSession } from "./browser-mcp-session";
 
 function persistedCompactionCount(value: unknown): number {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
@@ -2773,6 +2774,24 @@ export class AgentCore {
 		}
 	}
 
+	resolveCodexBrowserMcpSession(): BrowserMcpCallSession {
+		const sessionIds = new Set<string>();
+		for (const provider of this.providerPool.list()) {
+			if (!(provider instanceof CodexAppServerProvider)) continue;
+			const resolved = provider.activeBrowserMcpSession();
+			if (!resolved.ok) {
+				if (resolved.reason === "ambiguous")
+					return { ok: false, reason: "ambiguous" };
+				continue;
+			}
+			sessionIds.add(resolved.sessionId);
+		}
+		if (sessionIds.size === 1)
+			return { ok: true, sessionId: [...sessionIds][0]! };
+		if (sessionIds.size > 1) return { ok: false, reason: "ambiguous" };
+		return { ok: false, reason: "none" };
+	}
+
 	async close(): Promise<void> {
 		for (const active of this.activeStreams.values())
 			active.controller.abort(new Error("Agent Core is shutting down."));
@@ -2818,6 +2837,7 @@ export {
 	type BrowserActionResult,
 	type BrowserAutomationBackend,
 	BrowserController,
+	normalizeIsolatedBrowserOrigins,
 	type BrowserDiagnostic,
 	type BrowserDownload,
 	type BrowserSnapshot,
@@ -2837,6 +2857,7 @@ export {
 	type AnnotatedBrowserTree,
 	type BrowserInteractiveRef,
 } from "./browser-element-refs";
+export { summarizeBrowserActivity } from "./browser-activity";
 export {
 	diffBrowserSnapshots,
 	type BrowserObservationChange,
@@ -2918,6 +2939,10 @@ export {
 	StdioMcpTransport,
 	StreamableHttpMcpTransport,
 } from "./extensions/mcp";
+export {
+	type BrowserMcpCallSession,
+	resolveUniqueMappedSession,
+} from "./browser-mcp-session";
 export {
 	LocalBrowserMcpServer,
 	type LocalBrowserMcpServerOptions,

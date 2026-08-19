@@ -519,6 +519,7 @@ try {
 		{ approvalStatus: "approved" },
 	);
 	assert.equal(screenshot?.status, "verified");
+	assert.equal(screenshot?.output?.trust, "untrusted_browser");
 	assert.match(String(screenshot?.output?.pngBase64 ?? ""), /^iVBOR/);
 
 	const address = page.locator("#browser-address-input");

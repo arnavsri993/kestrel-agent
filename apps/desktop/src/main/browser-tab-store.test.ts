@@ -7,7 +7,9 @@ import {
 	BrowserTabStore,
 	freshBrowserState,
 	normalizeBrowserAddress,
+	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
+	sanitizeUntrustedBrowserValue,
 } from "./browser-tab-store";
 
 const temporaryDirectories: string[] = [];
@@ -26,6 +28,20 @@ function storePath(): string {
 it("defaults new browser settings to Google", () => {
 	expect(freshBrowserState().settings.searchEngine).toBe("google");
 	expect(UserBrowserSettingsSchema.parse({}).searchEngine).toBe("google");
+});
+
+it("redacts embedded URLs from untrusted browser text", () => {
+	expect(
+		redactUntrustedBrowserText(
+			"Open https://example.com/path?token=secret",
+			500,
+		),
+	).toBe("Open https://example.com/path");
+	expect(
+		sanitizeUntrustedBrowserValue({
+			name: { value: "javascript:alert(1)" },
+		}),
+	).toEqual({ name: { value: "[redacted URL]" } });
 });
 
 describe("browser address normalization", () => {

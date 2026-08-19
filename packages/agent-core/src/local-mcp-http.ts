@@ -5,13 +5,18 @@ import {
 	type Server,
 	type ServerResponse,
 } from "node:http";
+import { type BrowserMcpCallSession } from "./browser-mcp-session";
 import { type JsonRpcMessage, McpRuntimeServer } from "./extensions/mcp";
 import type { AgentRuntime } from "./runtime";
+
+export type { BrowserMcpCallSession } from "./browser-mcp-session";
+export { resolveUniqueMappedSession } from "./browser-mcp-session";
 
 export interface LocalBrowserMcpServerOptions {
 	runtime: AgentRuntime;
 	sessionId: string;
 	toolFilter?: (name: string) => boolean;
+	resolveCallSession?: () => BrowserMcpCallSession;
 }
 
 interface McpHttpSession {
@@ -155,6 +160,9 @@ export class LocalBrowserMcpServer {
 	private readonly runtime: AgentRuntime;
 	private readonly sessionId: string;
 	private readonly toolFilter: (name: string) => boolean;
+	private readonly resolveCallSession:
+		| (() => BrowserMcpCallSession)
+		| undefined;
 	private readonly sessions = new Map<string, McpHttpSession>();
 	private server: Server | undefined;
 	private token: string | undefined;
@@ -164,6 +172,7 @@ export class LocalBrowserMcpServer {
 		this.sessionId = options.sessionId;
 		this.toolFilter =
 			options.toolFilter ?? ((name) => name.startsWith("browser."));
+		this.resolveCallSession = options.resolveCallSession;
 	}
 
 	async start(): Promise<{ url: string; token: string; port: number }> {
@@ -237,11 +246,12 @@ export class LocalBrowserMcpServer {
 	private resolveOriginalToolName(
 		session: McpHttpSession,
 		listedName: string,
+		kestrelSessionId: string,
 	): string {
 		const mapped = session.listedNames.get(listedName);
 		if (mapped) return mapped;
 		const available = this.runtime
-			.modelTools(this.sessionId)
+			.modelTools(kestrelSessionId)
 			.filter(
 				(tool) => !this.toolFilter || this.toolFilter(tool.descriptor.name),
 			);
@@ -352,6 +362,32 @@ export class LocalBrowserMcpServer {
 				sessionId = created.id;
 				session = created.session;
 			}
+			let callSession: BrowserMcpCallSession = {
+				ok: true,
+				sessionId: this.sessionId,
+			};
+			if (this.resolveCallSession && body.method === "tools/call") {
+				callSession = this.resolveCallSession();
+				if (!callSession.ok) {
+					writeJson(
+						response,
+						200,
+						{
+							jsonrpc: "2.0",
+							id: body.id,
+							error: {
+								code: -32000,
+								message:
+									callSession.reason === "ambiguous"
+										? "Browser MCP tools/call is ambiguous across concurrent Codex turns."
+										: "Browser MCP tools/call requires an active Codex turn.",
+							},
+						},
+						sessionId,
+					);
+					return;
+				}
+			}
 			if (
 				body.method === "tools/call" &&
 				body.params &&
@@ -360,10 +396,18 @@ export class LocalBrowserMcpServer {
 			) {
 				const params = body.params as Record<string, unknown>;
 				if (typeof params.name === "string")
-					params.name = this.resolveOriginalToolName(session, params.name);
+					params.name = this.resolveOriginalToolName(
+						session,
+						params.name,
+						callSession.ok ? callSession.sessionId : this.sessionId,
+					);
 			}
 			const result = await session.server.handle(body as JsonRpcMessage, {
 				allowMutatingTools: false,
+				sessionId:
+					body.method === "tools/call" && callSession.ok
+						? callSession.sessionId
+						: this.sessionId,
 			});
 			if (!result) {
 				writeEmpty(response, 202, sessionId);

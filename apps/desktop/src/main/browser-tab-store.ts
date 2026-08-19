@@ -57,6 +57,38 @@ export interface NormalizedBrowserAddress {
 	url: string;
 }
 
+export const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
+export const MAX_AX_SNAPSHOT_NODES = 5_000;
+export const MAX_INTERACTIVE_REFS = 200;
+
+const ACCESSIBILITY_URL_VALUE =
+	/\b(?:https?|file|ftp|data|javascript|blob):[^\s<>"'{}[\]]+/gi;
+
+export function sanitizeUntrustedBrowserValue(value: unknown): unknown {
+	if (typeof value === "string")
+		return value.replace(ACCESSIBILITY_URL_VALUE, (candidate) => {
+			return sanitizeBrowserUrl(candidate) || "[redacted URL]";
+		});
+	if (Array.isArray(value)) return value.map(sanitizeUntrustedBrowserValue);
+	if (!value || typeof value !== "object") return value;
+	return Object.fromEntries(
+		Object.entries(value).map(([key, item]) => [
+			key,
+			sanitizeUntrustedBrowserValue(item),
+		]),
+	);
+}
+
+export function redactUntrustedBrowserText(
+	value: unknown,
+	maximum: number,
+): string {
+	return String(sanitizeUntrustedBrowserValue(String(value ?? ""))).slice(
+		0,
+		maximum,
+	);
+}
+
 /**
  * Keep navigationally useful URLs while excluding credential-like values from
  * durable history, session restore, downloads, and model-visible metadata.
