@@ -9,7 +9,7 @@ export function shouldRetainTabWidthOnClose(
 
 export function clampTabWidth(
 	width: number,
-	minWidth = 112,
+	minWidth = 44,
 	maxWidth = 280,
 ): number {
 	if (!Number.isFinite(width)) return maxWidth;
