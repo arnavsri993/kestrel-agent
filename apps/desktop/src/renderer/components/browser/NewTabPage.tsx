@@ -90,7 +90,6 @@ export function NewTabPage({
             <div className="new-tab-section-heading">
               <div>
                 <h2 id="frequent-title">Frequent tabs</h2>
-                <small>From local history</small>
               </div>
             </div>
             <div className="new-tab-frequent-list">
@@ -121,7 +120,6 @@ export function NewTabPage({
         >
           <div className="new-tab-section-heading">
             <h2 id="recommendations-title">Suggestions</h2>
-            <small>Open a guided chat</small>
           </div>
           <div className="new-tab-recommendation-grid">
             {recommendations.map((recommendation) => (
