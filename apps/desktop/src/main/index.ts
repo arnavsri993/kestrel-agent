@@ -1311,9 +1311,6 @@ async function initializeCore(
       throw new Error("Agent Core returned no workspace state during startup.");
     agentState = response.snapshot.agentState;
     debugAgentLog("initializeCore succeeded", {});
-    void localRuntimeManager()
-      .startManagedIfInstalled()
-      .catch(() => undefined);
   } catch (error) {
     // #region agent log
     debugAgentLog("initializeCore failed", {
@@ -1326,6 +1323,10 @@ async function initializeCore(
     await supervisor.stop().catch(() => undefined);
     throw error;
   }
+  // Local runtime warmup is optional and must never tear down a started core.
+  void Promise.resolve()
+    .then(() => localRuntimeManager().ensureChatReady())
+    .catch(() => undefined);
 }
 
 function pluginTrustStore(): PluginTrustStore {
@@ -1463,7 +1464,7 @@ function registerIpc(): void {
     }
     if (request.type === "runtime-run-agent") {
       await localRuntimeManager()
-        .startManagedIfInstalled()
+        .ensureChatReady()
         .catch(() => undefined);
     }
     const overlayAccess =
