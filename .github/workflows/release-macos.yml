@@ -90,6 +90,9 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
+          MACOSX_DEPLOYMENT_TARGET: "13.0"
+          npm_config_arch: arm64
+          npm_config_target_arch: arm64
         run: corepack pnpm --filter @kestrel/desktop exec electron-builder --mac dmg zip pkg --arm64 --publish never --config electron-builder.yml
       - name: Verify signature and Gatekeeper
         shell: bash

@@ -29,6 +29,9 @@ const [
 	developmentVerifier,
 	desktopSmoke,
 	desktopSetup,
+	workspace,
+	afterPack,
+	architectureAudit,
 ] = await Promise.all([
 	read("apps/desktop/electron-builder.yml"),
 	read("apps/desktop/electron-builder.dev.yml"),
@@ -45,6 +48,9 @@ const [
 	read("scripts/verify-development-macos-app.mjs"),
 	read("scripts/smoke-desktop.mjs"),
 	read("scripts/test-desktop-setup.mjs"),
+	read("pnpm-workspace.yaml"),
+	read("apps/desktop/build/after-pack.cjs"),
+	read("scripts/macos-architecture-audit.cjs"),
 ]);
 
 for (const [name, source] of [
@@ -65,6 +71,9 @@ for (const marker of [
 	"provider: generic",
 	"${env.KESTREL_UPDATE_URL}",
 	"channel: latest",
+	'minimumSystemVersion: "13.0.0"',
+	"npmRebuild: true",
+	"node_modules/@img/sharp-darwin-arm64/**/*",
 ]) {
 	if (!builder.includes(marker))
 		fail(`desktop packaging is missing ${marker}.`);
@@ -91,6 +100,7 @@ for (const marker of [
 	"latest-mac.yml",
 	"SHA256SUMS",
 	"release-manifest.json",
+	"MACOSX_DEPLOYMENT_TARGET",
 ]) {
 	if (!workflow.includes(marker))
 		fail(`macOS release workflow is missing ${marker}.`);
@@ -127,7 +137,9 @@ for (const marker of [
 }
 if (
 	!desktopPackage.includes('"package:mac:dev"') ||
-	!desktopPackage.includes("--arm64")
+	!desktopPackage.includes("--arm64") ||
+	!desktopPackage.includes("MACOSX_DEPLOYMENT_TARGET=13.0") ||
+	!desktopPackage.includes("npm_config_arch=arm64")
 )
 	fail("desktop development packaging must target arm64.");
 for (const marker of [
@@ -197,6 +209,8 @@ for (const marker of [
 	'"TeamIdentifier=not set"',
 	'"/usr/bin/lipo"',
 	'"com.apple.security.cs.disable-library-validation"',
+	"LSMinimumSystemVersion",
+	"auditPackagedMacApp",
 ]) {
 	if (!developmentVerifier.includes(marker))
 		fail(`development app verifier is missing ${marker}.`);
@@ -216,6 +230,19 @@ if (
 	)
 )
 	fail("universal desktop scripts remain configured.");
+if (
+	/^supportedArchitectures:/m.test(workspace) ||
+	/cpu:\n\s+- x64/.test(workspace)
+)
+	fail("workspace install still fetches extra CPU families for packaging.");
+if (
+	!afterPack.includes("auditPackagedMacApp") ||
+	!architectureAudit.includes('ALLOWED_ARCHITECTURE = "arm64"') ||
+	!architectureAudit.includes("MAXIMUM_MINOS = [13, 0, 0]")
+)
+	fail(
+		"packaged macOS architecture audit must require arm64 binaries that run on macOS 13.",
+	);
 if (!rootPackage.includes("pnpm test:desktop-setup"))
 	fail(
 		"the market verification command does not exercise guided local-AI setup.",

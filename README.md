@@ -6,7 +6,7 @@ Kestrel is a local-first desktop agent for macOS. Describe an outcome in one con
 
 ## Start here
 
-Requirements: macOS 13+, Node 22.12+, Corepack, and pnpm 11.
+Requirements: an Apple Silicon Mac (M1 or later) running macOS 13+, Node 22.12+, Corepack, and pnpm 11.
 
 ```bash
 corepack enable
