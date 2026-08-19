@@ -753,10 +753,10 @@ body:has(.ai-browser-app),
 	position: relative;
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) 26px;
-	flex: 1 1 200px;
-	/* Keep titles readable until the strip actually runs out of room. */
-	min-width: 112px;
-	max-width: 280px;
+	flex: 1 1 260px;
+	/* Keep tabs generous; only compress once the strip is genuinely full. */
+	min-width: 144px;
+	max-width: 520px;
 	height: 34px;
 	border-radius: 8px 8px 0 0;
 	color: var(--muted);
@@ -2280,7 +2280,7 @@ body:has(.ai-browser-app),
 		width: 28px;
 	}
 	.browser-tab {
-		flex-basis: 150px;
+		flex-basis: 260px;
 	}
 	.new-tab-page {
 		padding-inline: 22px;
@@ -3310,7 +3310,7 @@ body:has(.ai-browser-app),
   .browser-toolbar { gap: 4px; padding-inline: 7px; }
   .browser-navigation button,
   .browser-toolbar-actions button { width: 28px; }
-  .browser-tab { flex-basis: 150px; }
+  .browser-tab { flex-basis: 260px; }
   .new-tab-home-header,
   .new-tab-content { width: min(100%, calc(100% - 44px)); }
   .new-tab-center { width: min(620px, 100%); }
