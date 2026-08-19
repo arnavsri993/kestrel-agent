@@ -64,7 +64,7 @@ import { ProviderAuthMonitor } from "./provider-auth-monitor";
 import { ExternalSecretManager } from "./external-secret-manager";
 import type { ResolvedExternalCredentials } from "./credential-broker";
 import { fileDigest } from "./file-digest";
-import { startAutomaticUpdates } from "./update-channel";
+import { shouldCheckForUpdates, updaterFeedChannel } from "./update-channel";
 import {
   isTrustedRendererFrame,
   isTrustedRendererUrl,
@@ -2683,25 +2683,6 @@ void app
     if (!singleInstance) return;
     if (canRegisterAsDefaultBrowser(app.isPackaged))
       app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
-    startAutomaticUpdates(autoUpdater, {
-      packaged: app.isPackaged,
-      channel: PRODUCT_IDENTITY.updateChannel,
-      updatesDisabled: process.env.KESTREL_DISABLE_UPDATES === "1",
-      subscribeToUpdate: (listener) =>
-        autoUpdater.on("update-downloaded", listener),
-      onUpdateDownloaded: (info) => {
-        if (!Notification.isSupported()) return;
-        const notification = new Notification({
-          title: `${PRODUCT_IDENTITY.productName} ${info.version} is ready`,
-          body: "The signed update will install after you quit and reopen Kestrel.",
-        });
-        notification.on("click", () => {
-          mainWindow?.show();
-          mainWindow?.focus();
-        });
-        notification.show();
-      },
-    });
     registerIpc();
     if (!(await initializeCoreForStartup())) {
       quitting = true;
@@ -2735,6 +2716,33 @@ void app
       await createPetOverlay();
     if (launchedAtLogin)
       startupWindow.once("ready-to-show", () => startupWindow.hide());
+    if (
+      shouldCheckForUpdates(
+        app.isPackaged,
+        PRODUCT_IDENTITY.updateChannel,
+        process.env.KESTREL_DISABLE_UPDATES === "1",
+      )
+    ) {
+      autoUpdater.autoDownload = true;
+      autoUpdater.autoInstallOnAppQuit = true;
+      autoUpdater.channel = updaterFeedChannel(PRODUCT_IDENTITY.updateChannel)!;
+      autoUpdater.on("update-downloaded", (info) => {
+        if (!Notification.isSupported()) return;
+        const notification = new Notification({
+          title: `${PRODUCT_IDENTITY.productName} ${info.version} is ready`,
+          body: "The signed update will install after you quit and reopen Kestrel.",
+        });
+        notification.on("click", () => {
+          mainWindow?.show();
+          mainWindow?.focus();
+        });
+        notification.show();
+      });
+      setTimeout(
+        () => void autoUpdater.checkForUpdates().catch(() => undefined),
+        15000,
+      ).unref();
+    }
   })
   .catch((cause) => {
     const copy = startupRecoveryCopy(cause);

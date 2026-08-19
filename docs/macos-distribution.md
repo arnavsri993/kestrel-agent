@@ -9,7 +9,9 @@ identity remain distinct when Finder launches it. Its `Kestrel` application
 data directory and macOS `Kestrel Safe Storage` Keychain identity remain
 compatibility-shared with earlier development builds; changing either without a
 tested migration would make existing encrypted history and credentials appear
-lost. The repository does not yet ship a beta-specific packaging workflow.
+lost. Development and stable packages share the single Kestrel product name;
+only the development bundle identifier differs to avoid collisions while
+building locally.
 
 Closing the main window hides it while the opted-in background agent continues. The menu bar exposes exact states, pending approvals, pause/resume, open, and quit. Quit checkpoints work and terminates the utility process.
 
