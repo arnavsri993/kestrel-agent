@@ -14,31 +14,40 @@ export interface RendererLink {
 	target: string;
 }
 
+export interface UserBrowserLinkRoute {
+	url: string;
+	active: boolean;
+}
+
 /**
- * Returns a URL only for ordinary renderer-link activations that may move into
- * the persistent user browser. Everything else stays with its existing owner.
+ * Returns a managed-tab route for ordinary renderer links, including links
+ * that would otherwise create a separate browsing context. Explicit system
+ * handoffs, downloads, and non-web protocols stay with their existing owner.
  */
-export function userBrowserUrlForRendererLink(
+export function userBrowserRouteForRendererLink(
 	event: RendererLinkActivation,
 	link: RendererLink,
-): string | undefined {
+): UserBrowserLinkRoute | undefined {
 	if (
 		event.defaultPrevented ||
-		event.button !== 0 ||
-		event.metaKey ||
-		event.ctrlKey ||
-		event.shiftKey ||
+		(event.button !== 0 && event.button !== 1) ||
 		event.altKey ||
 		link.hasDownload ||
-		link.openExternally ||
-		(link.target !== "" && link.target.toLowerCase() !== "_self")
+		link.openExternally
 	)
 		return undefined;
 
 	try {
 		const url = new URL(link.href);
 		return url.protocol === "http:" || url.protocol === "https:"
-			? url.toString()
+			? {
+					url: url.toString(),
+					// Match browser conventions: middle-click and Cmd/Ctrl-click create
+					// background tabs, while Shift keeps the new tab in the foreground.
+					active:
+						event.shiftKey ||
+						(event.button === 0 && !event.metaKey && !event.ctrlKey),
+				}
 			: undefined;
 	} catch {
 		return undefined;

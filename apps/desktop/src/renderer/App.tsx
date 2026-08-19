@@ -104,7 +104,7 @@ import { PresenceSettings } from "./components/PresenceSettings";
 import { EmptyState } from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
-import { userBrowserUrlForRendererLink } from "./renderer-link-routing";
+import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
 import {
 	isKestrelAppPageId,
 	kestrelAppPageUrl,
@@ -8562,7 +8562,7 @@ export function App() {
 			if (!(event.target instanceof Element)) return;
 			const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
 			if (!anchor) return;
-			const url = userBrowserUrlForRendererLink(event, {
+			const route = userBrowserRouteForRendererLink(event, {
 				href: anchor.href,
 				hasDownload: anchor.hasAttribute("download"),
 				target: anchor.target,
@@ -8570,14 +8570,17 @@ export function App() {
 				// external owner with this explicit opt-out.
 				openExternally: anchor.hasAttribute("data-kestrel-external"),
 			});
-			if (!url) return;
+			if (!route) return;
 
 			event.preventDefault();
-			void browser.createTab(url).catch(() => undefined);
+			void browser.createTab(route.url, route.active).catch(() => undefined);
 		};
 		document.addEventListener("click", openRendererLinkInUserBrowser);
-		return () =>
+		document.addEventListener("auxclick", openRendererLinkInUserBrowser);
+		return () => {
 			document.removeEventListener("click", openRendererLinkInUserBrowser);
+			document.removeEventListener("auxclick", openRendererLinkInUserBrowser);
+		};
 	}, [browser.createTab, onboarded]);
 
 	useEffect(() => {
