@@ -394,6 +394,7 @@ try {
 		const link = document.createElement("a");
 		link.id = "renderer-managed-tab-fixture";
 		link.href = href;
+		link.target = "_blank";
 		link.textContent = "Open renderer link";
 		document.querySelector(".new-tab-page")?.append(link);
 	}, `${origin}/renderer-link`);
@@ -402,7 +403,7 @@ try {
 		(value) =>
 			value.tabs.length === initialTabs + 1 &&
 			value.tabs.some((tab) => tab.url === `${origin}/renderer-link`),
-		"Trusted renderer link did not open in a managed tab",
+		"Trusted renderer target=_blank link did not open in a managed tab",
 	);
 	const rendererManagedTab = state.tabs.find(
 		(tab) => tab.url === `${origin}/renderer-link`,

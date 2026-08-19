@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { userBrowserUrlForRendererLink } from "./renderer-link-routing";
+import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
 
 const ordinaryClick = {
 	defaultPrevented: false,
@@ -17,65 +17,85 @@ const webLink = {
 	target: "",
 };
 
-describe("userBrowserUrlForRendererLink", () => {
-	it("routes an ordinary http(s) link into the persistent user browser", () => {
-		expect(userBrowserUrlForRendererLink(ordinaryClick, webLink)).toBe(
-			"https://example.com/path?q=1",
-		);
+describe("userBrowserRouteForRendererLink", () => {
+	it("routes ordinary http(s) links into an active persistent tab", () => {
+		expect(userBrowserRouteForRendererLink(ordinaryClick, webLink)).toEqual({
+			url: "https://example.com/path?q=1",
+			active: true,
+		});
 		expect(
-			userBrowserUrlForRendererLink(ordinaryClick, {
+			userBrowserRouteForRendererLink(ordinaryClick, {
 				...webLink,
 				href: "http://localhost:3000/",
 			}),
-		).toBe("http://localhost:3000/");
+		).toEqual({ url: "http://localhost:3000/", active: true });
 	});
 
-	it("keeps handled, modified, and non-primary activations with their caller", () => {
-		for (const event of [
-			{ ...ordinaryClick, defaultPrevented: true },
-			{ ...ordinaryClick, button: 1 },
-			{ ...ordinaryClick, metaKey: true },
-			{ ...ordinaryClick, ctrlKey: true },
-			{ ...ordinaryClick, shiftKey: true },
-			{ ...ordinaryClick, altKey: true },
-		]) {
-			expect(userBrowserUrlForRendererLink(event, webLink)).toBeUndefined();
-		}
-	});
-
-	it("preserves explicit browsing-context targets", () => {
-		for (const target of ["_blank", "_parent", "_top", "provider-help"]) {
+	it("turns every web browsing-context target into a managed tab", () => {
+		for (const target of ["_self", "_blank", "_parent", "_top", "provider-help"]) {
 			expect(
-				userBrowserUrlForRendererLink(ordinaryClick, {
+				userBrowserRouteForRendererLink(ordinaryClick, {
 					...webLink,
 					target,
 				}),
+			).toEqual({ url: webLink.href, active: true });
+		}
+	});
+
+	it("preserves foreground and background tab conventions", () => {
+		for (const event of [
+			{ ...ordinaryClick, button: 1 },
+			{ ...ordinaryClick, metaKey: true },
+			{ ...ordinaryClick, ctrlKey: true },
+		]) {
+			expect(userBrowserRouteForRendererLink(event, webLink)).toEqual({
+				url: webLink.href,
+				active: false,
+			});
+		}
+		for (const event of [
+			{ ...ordinaryClick, shiftKey: true },
+			{ ...ordinaryClick, metaKey: true, shiftKey: true },
+		]) {
+			expect(userBrowserRouteForRendererLink(event, webLink)).toEqual({
+				url: webLink.href,
+				active: true,
+			});
+		}
+	});
+
+	it("keeps handled, alternate, and unsupported activations with their caller", () => {
+		for (const event of [
+			{ ...ordinaryClick, defaultPrevented: true },
+			{ ...ordinaryClick, button: 2 },
+			{ ...ordinaryClick, altKey: true },
+		]) {
+			expect(
+				userBrowserRouteForRendererLink(event, webLink),
 			).toBeUndefined();
 		}
-		expect(
-			userBrowserUrlForRendererLink(ordinaryClick, {
-				...webLink,
-				target: "_self",
-			}),
-		).toBe("https://example.com/path?q=1");
 	});
 
 	it("preserves download, explicit-external, and non-web link boundaries", () => {
 		expect(
-			userBrowserUrlForRendererLink(ordinaryClick, {
+			userBrowserRouteForRendererLink(ordinaryClick, {
 				...webLink,
 				hasDownload: true,
 			}),
 		).toBeUndefined();
 		expect(
-			userBrowserUrlForRendererLink(ordinaryClick, {
+			userBrowserRouteForRendererLink(ordinaryClick, {
 				...webLink,
 				openExternally: true,
 			}),
 		).toBeUndefined();
-		for (const href of ["mailto:hello@example.com", "kestrel://settings", "file:///tmp/a"]) {
+		for (const href of [
+			"mailto:hello@example.com",
+			"kestrel://settings",
+			"file:///tmp/a",
+		]) {
 			expect(
-				userBrowserUrlForRendererLink(ordinaryClick, { ...webLink, href }),
+				userBrowserRouteForRendererLink(ordinaryClick, { ...webLink, href }),
 			).toBeUndefined();
 		}
 	});
