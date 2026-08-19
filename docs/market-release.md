@@ -1,8 +1,10 @@
 # Apple Silicon internet release
 
-Kestrel ships as a direct download for Apple Silicon Macs. It is not an App
-Store application, does not ship an iPhone or Android companion, and does not
-support Intel Macs.
+Kestrel ships as a direct download for Apple Silicon Macs (M1 and later)
+running macOS 13+. It is not an App Store application, does not ship an iPhone
+or Android companion, and does not support Intel Macs. Native modules are
+rebuilt with a macOS 13 deployment target so a CI build on a newer OS still
+runs on Ventura M-series machines.
 
 ## Repository gate
 

@@ -1,6 +1,6 @@
 # macOS runtime and distribution
 
-The initial target is macOS 13+ through a direct, signed, notarized DMG. Development packages are ad-hoc signed, not Developer ID signed or notarized, and are not release artifacts.
+The initial target is any Apple Silicon Mac (M1 and later) running macOS 13+ through a direct, signed, notarized DMG. Native modules are rebuilt with `MACOSX_DEPLOYMENT_TARGET=13.0` so a build produced on a newer OS still launches on Ventura M-series machines. Development packages are ad-hoc signed, not Developer ID signed or notarized, and are not release artifacts.
 
 Identity values live in `packages/shared-types/src/identity.ts`. The packaged
 development app persists `KESTREL_RELEASE_CHANNEL=development` in its
