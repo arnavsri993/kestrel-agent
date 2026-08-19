@@ -104,6 +104,7 @@ import { PresenceSettings } from "./components/PresenceSettings";
 import { EmptyState } from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
+import { userBrowserUrlForRendererLink } from "./renderer-link-routing";
 import {
 	memoryInGb,
 	recommendedLocalModelTiers,
@@ -3295,6 +3296,20 @@ function RuntimeConversation({
 		}
 	}
 
+	function addComposerContext() {
+		if (taskWorkspace && selectedGrant?.available !== false) {
+			void addContext();
+			return;
+		}
+		if (!activeSessionId) {
+			void addProject();
+			return;
+		}
+		setError(
+			"This conversation has no project folder. Start a new task to add files.",
+		);
+	}
+
 	async function addProject() {
 		if (activeSessionId || busy) return;
 		setError("");
@@ -3747,14 +3762,39 @@ function RuntimeConversation({
 			}
 		>
 			{voiceState === "recording" ? (
-				"Stop"
+				<>
+					<Icon name="pause" />
+					<span className="sr-only">Stop recording</span>
+				</>
 			) : voiceState === "transcribing" ? (
-				"Transcribing…"
+				<>
+					<Icon name="loader" />
+					<span className="sr-only">Transcribing</span>
+				</>
 			) : (
 				<Icon name="voice" />
 			)}
 		</button>
 	);
+	const canAddContextFiles =
+		Boolean(taskWorkspace) && selectedGrant?.available !== false;
+	const projectFilesUnavailable =
+		Boolean(taskWorkspace) && selectedGrant?.available === false;
+	const needsNewTaskForFiles = !canAddContextFiles && Boolean(activeSessionId);
+	const composerFilesLabel = canAddContextFiles
+		? "Add context files"
+		: projectFilesUnavailable
+			? "Project files unavailable"
+		: needsNewTaskForFiles
+			? "Files unavailable in this conversation"
+			: "Add files or choose folder";
+	const composerFilesTitle = canAddContextFiles
+		? "Add files to this task"
+		: projectFilesUnavailable
+			? "Reconnect or remove this project in Settings"
+		: needsNewTaskForFiles
+			? "Start a new task to add files"
+			: "Choose a project before adding files";
 	const runScope = runtimeRunScope({
 		busy,
 		streamSessionId: streamSessionIdRef.current,
@@ -4088,15 +4128,18 @@ function RuntimeConversation({
 					<div className="attachment-chips">
 						{attachments.map((attachment) => (
 							<button
+								type="button"
 								key={attachment.path}
-								title="Remove attachment"
+								aria-label={`Remove ${attachment.name}`}
+								title={`Remove ${attachment.name}`}
 								onClick={() =>
 									setAttachments((current) =>
 										current.filter((item) => item.path !== attachment.path),
 									)
 								}
 							>
-								{attachment.name} ×
+								<span>{attachment.name}</span>
+								<Icon name="close" />
 							</button>
 						))}
 					</div>
@@ -4123,30 +4166,33 @@ function RuntimeConversation({
 					/>
 					<div className="composer-footer">
 						<div className="button-row composer-context-actions">
-							{taskWorkspace && selectedGrant?.available !== false ? (
-								<button
-									type="button"
-									className="composer-icon"
-									aria-label="Add context files"
-									disabled={busy || voiceState !== "idle"}
-									onClick={() => void addContext()}
-								>
-									<Icon name="plus" />
-								</button>
-							) : !activeSessionId ? (
-								<button
-									type="button"
-									className="composer-project-button"
-									disabled={busy || voiceState !== "idle"}
-									onClick={() => void addProject()}
-								>
-									<Icon name="plus" />
-									<span>Add project</span>
-								</button>
-							) : null}
+							<button
+								type="button"
+								className="composer-icon composer-add-files"
+								aria-label={composerFilesLabel}
+								title={composerFilesTitle}
+								disabled={
+									busy || voiceState !== "idle" || needsNewTaskForFiles
+								}
+								onClick={addComposerContext}
+							>
+								<Icon name="plus" />
+							</button>
 							<details className="task-settings">
-								<summary aria-label="Task settings" title="Task settings">
-									<Icon name="settings" />
+								<summary
+									aria-label="Task settings"
+									title={`Model: ${
+										executionMode === "automatic"
+											? "Smart"
+											: model.trim() || "Choose a model"
+									}`}
+								>
+									<span className="runtime-model-label">
+										{executionMode === "automatic"
+											? "Smart"
+											: model.trim() || "Choose model"}
+									</span>
+									<Icon name="chevron" />
 								</summary>
 								<div className="task-settings-panel">
 									<header>
@@ -4287,7 +4333,7 @@ function RuntimeConversation({
 													: "Conversation only"}
 						</span>
 						{activeSessionBusy ? (
-							<div className="button-row">
+							<div className="button-row composer-send-actions">
 								{voiceButton}
 								<button
 									className="send-button"
@@ -4305,7 +4351,7 @@ function RuntimeConversation({
 								</button>
 							</div>
 						) : (
-							<div className="button-row">
+							<div className="button-row composer-send-actions">
 								{voiceButton}
 								<button
 									className="send-button"
@@ -8502,6 +8548,33 @@ export function App() {
 	const [showDefaultBrowserPrompt, setShowDefaultBrowserPrompt] = useState(false);
 	const [showShortcuts, setShowShortcuts] = useState(false);
 	const reduced = useReducedMotion();
+
+	useEffect(() => {
+		// Setup links keep their provider-owned/system-browser handoff. A managed
+		// tab would otherwise open behind onboarding with no visible way to reach it.
+		if (!onboarded) return;
+		const openRendererLinkInUserBrowser = (event: MouseEvent) => {
+			if (!(event.target instanceof Element)) return;
+			const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+			if (!anchor) return;
+			const url = userBrowserUrlForRendererLink(event, {
+				href: anchor.href,
+				hasDownload: anchor.hasAttribute("download"),
+				target: anchor.target,
+				// Provider-owned OAuth and native/system flows can retain their
+				// external owner with this explicit opt-out.
+				openExternally: anchor.hasAttribute("data-kestrel-external"),
+			});
+			if (!url) return;
+
+			event.preventDefault();
+			setPage("browser");
+			void browser.createTab(url).catch(() => undefined);
+		};
+		document.addEventListener("click", openRendererLinkInUserBrowser);
+		return () =>
+			document.removeEventListener("click", openRendererLinkInUserBrowser);
+	}, [browser.createTab, onboarded]);
 
 	useEffect(() => {
 		if (!onboarded) return;

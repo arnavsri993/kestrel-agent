@@ -240,11 +240,28 @@ try {
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
+	const agentSidebar = page.locator(".agent-sidebar");
+	assert.equal(await agentSidebar.getAttribute("aria-hidden"), "true");
+	assert.equal(
+		await agentSidebar.evaluate((sidebar) => sidebar.inert),
+		true,
+	);
+	assert.equal(
+		await agentSidebar
+			.locator("button")
+			.first()
+			.evaluate((button) => {
+				button.focus();
+				return document.activeElement === button;
+			}),
+		false,
+	);
 	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).waitFor();
 	await page.reload();
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).click();
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().waitFor();
+	assert.equal(await agentSidebar.evaluate((sidebar) => sidebar.inert), false);
 	await page.locator("#runtime-prompt").waitFor();
 
 	await page
@@ -312,6 +329,47 @@ try {
 		true,
 	);
 	assert.equal((await browserState()).tabs.length, initialTabs);
+	const rendererSourceTabId = (await browserState()).activeTabId;
+	assert(rendererSourceTabId);
+	await page.evaluate((href) => {
+		const link = document.createElement("a");
+		link.id = "renderer-managed-tab-fixture";
+		link.href = href;
+		link.textContent = "Open renderer link";
+		document.querySelector(".new-tab-page")?.append(link);
+	}, `${origin}/renderer-link`);
+	await page.locator("#renderer-managed-tab-fixture").click();
+	state = await waitForBrowserState(
+		(value) =>
+			value.tabs.length === initialTabs + 1 &&
+			value.tabs.some((tab) => tab.url === `${origin}/renderer-link`),
+		"Trusted renderer link did not open in a managed tab",
+	);
+	const rendererManagedTab = state.tabs.find(
+		(tab) => tab.url === `${origin}/renderer-link`,
+	);
+	assert(rendererManagedTab);
+	assert.equal((await nativeViewState()).browserWindowCount, 1);
+	await page.evaluate(
+		async ({ managedTabId, sourceTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: managedTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: sourceTabId,
+			});
+		},
+		{
+			managedTabId: rendererManagedTab.id,
+			sourceTabId: rendererSourceTabId,
+		},
+	);
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Renderer-managed tab remained attached after returning to New Tab",
+	);
 	const sessionsAfterIndependentActions = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
 			type: "runtime-list-sessions",
