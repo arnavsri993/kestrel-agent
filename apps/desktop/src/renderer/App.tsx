@@ -99,6 +99,7 @@ import { PresenceSettings } from "./components/PresenceSettings";
 import { EmptyState } from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
+import { userBrowserUrlForRendererLink } from "./renderer-link-routing";
 import {
 	memoryInGb,
 	recommendedLocalModelTiers,
@@ -8529,6 +8530,29 @@ export function App() {
 	const [showDefaultBrowserPrompt, setShowDefaultBrowserPrompt] = useState(false);
 	const [showShortcuts, setShowShortcuts] = useState(false);
 	const reduced = useReducedMotion();
+
+	useEffect(() => {
+		const openRendererLinkInUserBrowser = (event: MouseEvent) => {
+			if (!(event.target instanceof Element)) return;
+			const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+			if (!anchor) return;
+			const url = userBrowserUrlForRendererLink(event, {
+				href: anchor.href,
+				hasDownload: anchor.hasAttribute("download"),
+				// Provider-owned OAuth and native/system flows can retain their
+				// external owner with this explicit opt-out.
+				openExternally: anchor.hasAttribute("data-kestrel-external"),
+			});
+			if (!url) return;
+
+			event.preventDefault();
+			setPage("browser");
+			void browser.createTab(url);
+		};
+		document.addEventListener("click", openRendererLinkInUserBrowser);
+		return () =>
+			document.removeEventListener("click", openRendererLinkInUserBrowser);
+	}, [browser.createTab]);
 
 	useEffect(() => {
 		if (!onboarded) return;
