@@ -13,6 +13,7 @@ import {
 	isolatedBrowserShouldCancelRequest,
 	MAX_BROWSER_DOWNLOAD_RECORDS,
 	retainRecentBrowserDownloads,
+	uniqueIsolatedDownloadFilename,
 } from "./electron-browser-service";
 
 function download(id: string, status: "completed" | "progressing") {
@@ -75,6 +76,23 @@ describe("Electron browser download history", () => {
 		expect(downloads).toContain(active);
 		expect(downloads).toContain(newest);
 		expect(downloads.some((candidate) => candidate.id === "old-0")).toBe(false);
+	});
+
+	it("assigns unique filenames when a download name is already occupied", () => {
+		expect(
+			uniqueIsolatedDownloadFilename(
+				"report.pdf",
+				["report.pdf"],
+				"download-1",
+			),
+		).toBe("report-2.pdf");
+		expect(
+			uniqueIsolatedDownloadFilename(
+				"report.pdf",
+				["report.pdf", "report-2.pdf"],
+				"download-1",
+			),
+		).toBe("report-3.pdf");
 	});
 });
 

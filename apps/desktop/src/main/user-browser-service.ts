@@ -40,48 +40,28 @@ import {
 } from "./browser-backend-node-target";
 import { BrowserExtensionManager } from "./browser-extension-manager";
 import {
+	isUserBrowserBackendWireRequest,
+	type UserBrowserBackendWireRequest,
+} from "./browser-backend-wire";
+import {
 	BrowserTabStore,
+	MAX_AX_SNAPSHOT_BYTES,
+	MAX_AX_SNAPSHOT_NODES,
+	MAX_INTERACTIVE_REFS,
 	normalizeBrowserAddress,
+	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
+	sanitizeUntrustedBrowserValue,
 } from "./browser-tab-store";
 
 const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
 const MAX_DOWNLOAD_ENTRIES = 500;
-const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
 const POPUP_GESTURE_WINDOW_MS = 1_500;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
 
-export type UserBrowserBackendWireRequest =
-	| { operation: "visible-tabs" }
-	| { operation: "visible-context"; tabId?: string }
-	| { operation: "visible-snapshot"; tabId?: string }
-	| { operation: "visible-screenshot"; tabId?: string }
-	| { operation: "visible-history"; query?: string; limit?: number }
-	| { operation: "visible-downloads" }
-	| { operation: "visible-act"; tabId: string; action: BrowserAction }
-	| { operation: "visible-navigate"; tabId: string; input: string }
-	| { operation: "visible-create"; input?: string }
-	| { operation: "visible-close"; tabId: string }
-	| { operation: "visible-select"; tabId: string };
-
-export function isUserBrowserBackendWireRequest(request: {
-	operation?: unknown;
-}): request is UserBrowserBackendWireRequest {
-	return new Set<UserBrowserBackendWireRequest["operation"]>([
-		"visible-tabs",
-		"visible-context",
-		"visible-snapshot",
-		"visible-screenshot",
-		"visible-history",
-		"visible-downloads",
-		"visible-act",
-		"visible-navigate",
-		"visible-create",
-		"visible-close",
-		"visible-select",
-	]).has(request.operation as UserBrowserBackendWireRequest["operation"]);
-}
+export { isUserBrowserBackendWireRequest };
+export type { UserBrowserBackendWireRequest };
 
 export interface UserBrowserServiceOptions {
 	window: BrowserWindow;
@@ -125,24 +105,6 @@ function hostnameTitle(value: string): string {
 	} catch {
 		return "New Tab";
 	}
-}
-
-const ACCESSIBILITY_URL_VALUE =
-	/\b(?:https?|file|ftp|data|javascript|blob):[^\s<>"'{}[\]]+/gi;
-
-function sanitizeAccessibilityTree(value: unknown): unknown {
-	if (typeof value === "string")
-		return value.replace(ACCESSIBILITY_URL_VALUE, (candidate) => {
-			return sanitizeBrowserUrl(candidate) || "[redacted URL]";
-		});
-	if (Array.isArray(value)) return value.map(sanitizeAccessibilityTree);
-	if (!value || typeof value !== "object") return value;
-	return Object.fromEntries(
-		Object.entries(value).map(([key, item]) => [
-			key,
-			sanitizeAccessibilityTree(item),
-		]),
-	);
 }
 
 function cloneState(state: UserBrowserState): UserBrowserState {
@@ -544,8 +506,30 @@ export class UserBrowserService {
 					const candidate = link as { text?: unknown; url?: unknown };
 					const url = sanitizeBrowserUrl(String(candidate.url ?? ""));
 					return url
-						? [{ text: String(candidate.text ?? "").slice(0, 500), url }]
+						? [
+								{
+									text: redactUntrustedBrowserText(candidate.text, 500),
+									url,
+								},
+							]
 						: [];
+				})
+			: [];
+		const forms = Array.isArray(raw.forms)
+			? raw.forms.flatMap((form) => {
+					if (!form || typeof form !== "object") return [];
+					const candidate = form as {
+						label?: unknown;
+						type?: unknown;
+						name?: unknown;
+					};
+					return [
+						{
+							label: redactUntrustedBrowserText(candidate.label, 500),
+							type: redactUntrustedBrowserText(candidate.type, 100),
+							name: redactUntrustedBrowserText(candidate.name, 500),
+						},
+					];
 				})
 			: [];
 		const url =
@@ -556,9 +540,21 @@ export class UserBrowserService {
 		return UserBrowserPageContextSchema.parse({
 			tabId: tab.id,
 			url,
-			title: (record.view.webContents.getTitle() || tab.title).slice(0, 500),
-			...raw,
+			title: redactUntrustedBrowserText(
+				record.view.webContents.getTitle() || tab.title,
+				500,
+			),
+			description: redactUntrustedBrowserText(raw.description, 2000),
+			selectedText: redactUntrustedBrowserText(raw.selectedText, 20_000),
+			visibleText: redactUntrustedBrowserText(raw.visibleText, 40_000),
+			headings: Array.isArray(raw.headings)
+				? raw.headings
+						.map((heading) => redactUntrustedBrowserText(heading, 500))
+						.filter(Boolean)
+				: [],
 			links,
+			forms,
+			viewport: raw.viewport,
 			capturedAt: this.now().toISOString(),
 			trust: "untrusted_browser",
 		});
@@ -648,29 +644,36 @@ export class UserBrowserService {
 		const result = (await webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
+		const nodes = result.nodes ?? [];
 		const annotated = annotateAccessibilityTree({
-			nodes: (result.nodes ?? []).slice(0, 5_000),
+			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
 		});
-		this.elementRefs.set(tab.id, rememberElementRefs(annotated.interactive));
-		const accessibilityTree = sanitizeAccessibilityTree(
+		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
+		const accessibilityTree = sanitizeUntrustedBrowserValue(
 			annotated.accessibilityTree,
 		);
 		if (
 			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
 			MAX_AX_SNAPSHOT_BYTES
-		)
+		) {
+			this.elementRefs.set(tab.id, new Map());
 			throw new Error("Visible browser accessibility snapshot exceeds 1.5 MB.");
+		}
+		this.elementRefs.set(tab.id, rememberElementRefs(interactive));
 		return {
 			url,
-			title: webContents.getTitle().slice(0, 500),
+			title: redactUntrustedBrowserText(webContents.getTitle(), 500),
 			accessibilityTree,
-			interactive: publicInteractiveRefs(annotated.interactive).map((item) => ({
+			interactive: publicInteractiveRefs(interactive).map((item) => ({
 				ref: item.ref,
 				role: item.role,
 				...(item.name
-					? { name: String(sanitizeAccessibilityTree(item.name)) }
+					? { name: redactUntrustedBrowserText(item.name, 500) }
 					: {}),
 			})),
+			truncated:
+				nodes.length > MAX_AX_SNAPSHOT_NODES ||
+				annotated.interactive.length > MAX_INTERACTIVE_REFS,
 		};
 	}
 
@@ -684,11 +687,23 @@ export class UserBrowserService {
 		const needle = query.trim().toLocaleLowerCase();
 		const entries = [...this.state.history]
 			.reverse()
-			.filter(
-				(entry) =>
-					!needle ||
-					`${entry.title}\n${entry.url}`.toLocaleLowerCase().includes(needle),
-			)
+			.flatMap((entry) => {
+				const url = sanitizeBrowserUrl(entry.url);
+				if (!url) return [];
+				const sanitized = {
+					...entry,
+					url,
+					title: redactUntrustedBrowserText(entry.title, 500),
+				};
+				if (
+					needle &&
+					!`${sanitized.title}\n${sanitized.url}`
+						.toLocaleLowerCase()
+						.includes(needle)
+				)
+					return [];
+				return [sanitized];
+			})
 			.slice(0, Math.min(100, Math.max(1, Math.trunc(limit))));
 		return { entries: structuredClone(entries), trust: "untrusted_browser" };
 	}
@@ -844,7 +859,10 @@ export class UserBrowserService {
 					trust: "untrusted_browser",
 				};
 			case "visible-screenshot":
-				return this.screenshot(request.tabId, signal);
+				return {
+					...(await this.screenshot(request.tabId, signal)),
+					trust: "untrusted_browser",
+				};
 			case "visible-history":
 				return this.searchHistory(request.query, request.limit);
 			case "visible-downloads":
@@ -853,7 +871,8 @@ export class UserBrowserService {
 				await this.act(request.tabId, request.action, signal);
 				return { performed: true };
 			case "visible-navigate":
-				return this.navigate(request.tabId, request.input);
+				await this.navigate(request.tabId, request.input);
+				return { navigated: true };
 			case "visible-create": {
 				const state = await this.createTab(request.input, true);
 				return { tabId: state.activeTabId };

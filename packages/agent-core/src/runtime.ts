@@ -49,6 +49,7 @@ import {
 	SandboxedCommandRunner,
 } from "./command-runner";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
+import { summarizeBrowserActivity } from "./browser-activity";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
 
@@ -1541,7 +1542,7 @@ export class AgentRuntime extends EventEmitter {
 				: {}),
 		});
 		if (!policy.allowed) {
-			this.database.saveToolExecution(execution);
+			this.journalToolExecution(execution);
 			this.emitRuntimeEvent(
 				"tool.started",
 				session.id,
@@ -1570,7 +1571,7 @@ export class AgentRuntime extends EventEmitter {
 				error: preHook.reason ?? "A pre-tool hook blocked execution.",
 				completedAt: this.now(),
 			});
-			this.database.saveToolExecution(execution);
+			this.journalToolExecution(execution);
 			this.emitRuntimeEvent(
 				"tool.started",
 				session.id,
@@ -1597,7 +1598,7 @@ export class AgentRuntime extends EventEmitter {
 						: "Execution cancelled by the user.",
 				completedAt: this.now(),
 			});
-			this.database.saveToolExecution(execution);
+			this.journalToolExecution(execution);
 			this.emitRuntimeEvent(
 				"tool.started",
 				session.id,
@@ -1693,7 +1694,7 @@ export class AgentRuntime extends EventEmitter {
 				...(verification ? { verification } : {}),
 				completedAt: verifiedAt,
 			});
-			this.database.saveToolExecution(execution);
+			this.journalToolExecution(execution);
 			await this.runHooks(
 				"post_tool",
 				session,
@@ -1733,7 +1734,7 @@ export class AgentRuntime extends EventEmitter {
 						: "Tool execution failed.",
 				completedAt: this.now(),
 			});
-			this.database.saveToolExecution(execution);
+			this.journalToolExecution(execution);
 			if (idempotencyKey && effectStarted) {
 				execution = this.completeIdempotentExecution(idempotencyKey, execution);
 				claimOwned = false;
@@ -1784,11 +1785,28 @@ export class AgentRuntime extends EventEmitter {
 						this.idempotencyOwnerToken,
 						uncertain,
 					);
-					this.database.saveToolExecution(
+					this.journalToolExecution(
 						RuntimeToolExecutionSchema.parse(completion.result),
 					);
 				}
 			}
+		}
+	}
+
+	private journalToolExecution(execution: RuntimeToolExecution): void {
+		this.database.saveToolExecution(execution);
+		if (execution.status === "running") return;
+		const event = summarizeBrowserActivity(execution);
+		if (!event) return;
+		try {
+			this.database.appendBrowserActivity(event);
+		} catch (error) {
+			const code =
+				error && typeof error === "object"
+					? String((error as { code?: unknown }).code ?? "")
+					: "";
+			if (code.includes("CONSTRAINT")) return;
+			throw error;
 		}
 	}
 
@@ -1802,7 +1820,7 @@ export class AgentRuntime extends EventEmitter {
 			execution,
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
-		this.database.saveToolExecution(result);
+		this.journalToolExecution(result);
 		return result;
 	}
 
@@ -1886,7 +1904,7 @@ export class AgentRuntime extends EventEmitter {
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
 		if (completion.completed) {
-			this.database.saveToolExecution(result);
+			this.journalToolExecution(result);
 			this.emitRuntimeEvent(
 				"tool.completed",
 				result.sessionId,

@@ -192,7 +192,7 @@ export function BrowserWorkspace({
       }
 
       if (
-        ((key === "tab" ||
+        (((key === "tab" && !event.shiftKey) ||
           key === "pagedown" ||
           (key === "]" && event.shiftKey)) &&
           state?.tabs.length) ||

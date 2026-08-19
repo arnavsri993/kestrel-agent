@@ -17,7 +17,7 @@ import {
 	McpClient,
 	StreamableHttpMcpTransport,
 } from "./extensions/mcp";
-import { LocalBrowserMcpServer } from "./local-mcp-http";
+import { LocalBrowserMcpServer, resolveUniqueMappedSession } from "./local-mcp-http";
 import { AgentRuntime } from "./runtime";
 
 const directories: string[] = [];
@@ -125,6 +125,30 @@ function postWithHost(
 }
 
 describe("LocalBrowserMcpServer", () => {
+	it("maps an active Codex thread onto exactly one Kestrel session", () => {
+		expect(
+			resolveUniqueMappedSession(
+				["thread-b"],
+				new Map([
+					["thread-a", "session-a"],
+					["thread-b", "session-b"],
+				]),
+			),
+		).toEqual({ ok: true, sessionId: "session-b" });
+		expect(resolveUniqueMappedSession([], new Map([["thread-a", "session-a"]]))).toEqual(
+			{ ok: false, reason: "none" },
+		);
+		expect(
+			resolveUniqueMappedSession(
+				["thread-a", "thread-b"],
+				new Map([
+					["thread-a", "session-a"],
+					["thread-b", "session-b"],
+				]),
+			),
+		).toEqual({ ok: false, reason: "ambiguous" });
+	});
+
 	it("starts on loopback and exposes an /mcp URL", async () => {
 		const started = await startFixture();
 		expect(started.url).toBe(`http://127.0.0.1:${started.port}/mcp`);
@@ -274,5 +298,146 @@ describe("LocalBrowserMcpServer", () => {
 			"not a url",
 		);
 		expect(status).toBe(403);
+	});
+
+	it("rejects a null Origin header and a file Origin", async () => {
+		const started = await startFixture();
+		expect(
+			await postWithHost(started.url, "127.0.0.1", started.token, "null"),
+		).toBe(403);
+		expect(
+			await postWithHost(
+				started.url,
+				"127.0.0.1",
+				started.token,
+				"file://",
+			),
+		).toBe(403);
+	});
+
+	it("attributes tools/call to the resolved Codex conversation, not the fallback session", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-local-mcp-bind-"));
+		directories.push(root);
+		writeFileSync(join(root, "README.md"), "# bind\n");
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		databases.push(database);
+		const runtime = new AgentRuntime(database, [root]);
+		const fallback = runtime.createSession({
+			title: "Fallback",
+			workspaceRoot: root,
+		});
+		const active = runtime.createSession({
+			title: "Active Codex",
+			workspaceRoot: root,
+		});
+		const backend = new FakeBrowser();
+		const toolNames = installBrowserTools(
+			runtime,
+			new BrowserController(backend),
+			fallback.id,
+		);
+		runtime.allowTools(active.id, toolNames);
+		const server = new LocalBrowserMcpServer({
+			runtime,
+			sessionId: fallback.id,
+			resolveCallSession: () => ({ ok: true, sessionId: active.id }),
+		});
+		const started = await server.start();
+		servers.push(server);
+		const transport = new StreamableHttpMcpTransport(started.url, {
+			authorization: `Bearer ${started.token}`,
+		});
+		const client = new McpClient(transport);
+		await client.initialize();
+		await client.callTool("browser_tabs", {});
+		expect(database.listToolExecutions(active.id)).toHaveLength(1);
+		expect(database.listToolExecutions(fallback.id)).toHaveLength(0);
+		await client.close();
+	});
+
+	it("rejects tools/call when no Codex turn is active or two turns overlap", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-local-mcp-none-"));
+		directories.push(root);
+		writeFileSync(join(root, "README.md"), "# none\n");
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		databases.push(database);
+		const runtime = new AgentRuntime(database, [root]);
+		const session = runtime.createSession({
+			title: "Local MCP",
+			workspaceRoot: root,
+		});
+		installBrowserTools(
+			runtime,
+			new BrowserController(new FakeBrowser()),
+			session.id,
+		);
+		let resolution: { ok: false; reason: "none" | "ambiguous" } = {
+			ok: false,
+			reason: "none",
+		};
+		const server = new LocalBrowserMcpServer({
+			runtime,
+			sessionId: session.id,
+			resolveCallSession: () => resolution,
+		});
+		const startedServer = await server.start();
+		servers.push(server);
+		const transport = new StreamableHttpMcpTransport(startedServer.url, {
+			authorization: `Bearer ${startedServer.token}`,
+		});
+		const client = new McpClient(transport);
+		await client.initialize();
+		await expect(client.listTools()).resolves.toEqual(
+			expect.arrayContaining([expect.objectContaining({ name: "browser_tabs" })]),
+		);
+		await expect(client.callTool("browser_tabs", {})).rejects.toThrow(
+			/active Codex turn/,
+		);
+		resolution = { ok: false, reason: "ambiguous" };
+		await expect(client.callTool("browser_tabs", {})).rejects.toThrow(
+			/ambiguous/,
+		);
+		await client.close();
+	});
+
+	it("fails tools/call against a cancelled resolved session instead of falling back", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-local-mcp-cancel-"));
+		directories.push(root);
+		writeFileSync(join(root, "README.md"), "# cancel\n");
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		databases.push(database);
+		const runtime = new AgentRuntime(database, [root]);
+		const fallback = runtime.createSession({
+			title: "Fallback",
+			workspaceRoot: root,
+		});
+		const active = runtime.createSession({
+			title: "Cancelled",
+			workspaceRoot: root,
+		});
+		const names = installBrowserTools(
+			runtime,
+			new BrowserController(new FakeBrowser()),
+			fallback.id,
+		);
+		runtime.allowTools(active.id, names);
+		runtime.cancelSession(active.id);
+		const server = new LocalBrowserMcpServer({
+			runtime,
+			sessionId: fallback.id,
+			resolveCallSession: () => ({ ok: true, sessionId: active.id }),
+		});
+		const started = await server.start();
+		servers.push(server);
+		const transport = new StreamableHttpMcpTransport(started.url, {
+			authorization: `Bearer ${started.token}`,
+		});
+		const client = new McpClient(transport);
+		await client.initialize();
+		await expect(client.callTool("browser_tabs", {})).rejects.toThrow(
+			/cancelled/,
+		);
+		expect(database.listToolExecutions(fallback.id)).toHaveLength(0);
+		await client.close();
 	});
 });

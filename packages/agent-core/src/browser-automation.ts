@@ -34,10 +34,12 @@ export interface BrowserSnapshot {
 	title: string;
 	accessibilityTree: unknown;
 	interactive?: BrowserInteractiveRef[];
+	truncated?: boolean;
 }
 export type BrowserActionResult = {
 	performed: true;
 	observation: BrowserObservationDiff;
+	trust: "untrusted_browser";
 };
 export interface ScreenshotFrame {
 	width: number;
@@ -143,7 +145,7 @@ export interface BrowserAutomationBackend {
 	visibleScreenshot?(
 		tabId: string | undefined,
 		signal: AbortSignal,
-	): Promise<ScreenshotFrame>;
+	): Promise<ScreenshotFrame & { trust: "untrusted_browser" }>;
 	visibleHistory?(
 		query: string | undefined,
 		limit: number | undefined,
@@ -181,11 +183,58 @@ interface BrowserSessionRecord {
 	ownerSessionId: string;
 	allowedOrigins: string[];
 	createdAt: string;
+	lastSnapshot?: BrowserSnapshot;
 }
 const MAX_BROWSER_SESSIONS_PER_OWNER = 8;
+const MAX_ISOLATED_BROWSER_ORIGINS = 20;
+const EMPTY_BROWSER_SNAPSHOT: BrowserSnapshot = {
+	url: "",
+	title: "",
+	accessibilityTree: { nodes: [] },
+};
+
+export function normalizeIsolatedBrowserOrigins(
+	allowedOrigins: string[],
+): string[] {
+	if (allowedOrigins.length === 0)
+		throw new Error("Browser sessions require at least one allowed origin.");
+	const origins = [
+		...new Set(
+			allowedOrigins.map((value) => {
+				let url: URL;
+				try {
+					url = new URL(value);
+				} catch {
+					throw new Error(
+						"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
+					);
+				}
+				const loopbackHttp =
+					url.protocol === "http:" &&
+					["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+				if (
+					(url.protocol !== "https:" && !loopbackHttp) ||
+					url.origin === "null" ||
+					url.username ||
+					url.password
+				)
+					throw new Error(
+						"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
+					);
+				return url.origin;
+			}),
+		),
+	];
+	if (origins.length > MAX_ISOLATED_BROWSER_ORIGINS)
+		throw new Error(
+			`Browser sessions allow at most ${MAX_ISOLATED_BROWSER_ORIGINS} origins.`,
+		);
+	return origins;
+}
 
 export class BrowserController {
 	private readonly sessions = new Map<string, BrowserSessionRecord>();
+	private readonly lastVisibleSnapshots = new Map<string, BrowserSnapshot>();
 	constructor(
 		private readonly backend: BrowserAutomationBackend,
 		private readonly now: () => Date = () => new Date(),
@@ -195,35 +244,7 @@ export class BrowserController {
 		ownerSessionId: string,
 		allowedOrigins: string[],
 	): Promise<{ browserSessionId: string }> {
-		if (allowedOrigins.length === 0)
-			throw new Error("Browser sessions require at least one allowed origin.");
-		const origins = [
-			...new Set(
-				allowedOrigins.map((value) => {
-					let url: URL;
-					try {
-						url = new URL(value);
-					} catch {
-						throw new Error(
-							"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
-						);
-					}
-					const loopbackHttp =
-						url.protocol === "http:" &&
-						["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
-					if (
-						(url.protocol !== "https:" && !loopbackHttp) ||
-						url.origin === "null" ||
-						url.username ||
-						url.password
-					)
-						throw new Error(
-							"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
-						);
-					return url.origin;
-				}),
-			),
-		];
+		const origins = normalizeIsolatedBrowserOrigins(allowedOrigins);
 		if (
 			[...this.sessions.values()].filter(
 				(session) => session.ownerSessionId === ownerSessionId,
@@ -309,12 +330,13 @@ export class BrowserController {
 				Math.abs(action.y) > 100_000)
 		)
 			throw new Error("Browser scroll exceeds limits.");
-		const before = await this.snapshot(ownerSessionId, id, signal);
+		const before = session.lastSnapshot ?? EMPTY_BROWSER_SNAPSHOT;
 		await this.backend.act(session.backendSessionId, action, signal);
 		const after = await this.snapshot(ownerSessionId, id, signal);
 		return {
 			performed: true,
 			observation: diffBrowserSnapshots(before, after),
+			trust: "untrusted_browser",
 		};
 	}
 
@@ -337,7 +359,9 @@ export class BrowserController {
 		}
 		if (!serializedTree || serializedTree.length > 2_000_000)
 			throw new Error("Browser accessibility snapshot exceeds 2 MB.");
-		return { ...snapshot, trust: "untrusted_browser" };
+		const stamped = { ...snapshot, trust: "untrusted_browser" as const };
+		session.lastSnapshot = stamped;
+		return stamped;
 	}
 
 	async screenshot(
@@ -536,7 +560,7 @@ export class BrowserController {
 		const tabs = await this.backend.visibleTabs(signal);
 		if (tabs.length > 32)
 			throw new Error("The visible browser returned too many tabs.");
-		return { tabs };
+		return { tabs, trust: "untrusted_browser" as const };
 	}
 
 	async visibleContext(tabId: string | undefined, signal: AbortSignal) {
@@ -556,6 +580,7 @@ export class BrowserController {
 		const serialized = JSON.stringify(snapshot.accessibilityTree);
 		if (serialized.length > 2_000_000)
 			throw new Error("Visible browser accessibility snapshot exceeds 2 MB.");
+		this.lastVisibleSnapshots.set(tabId ?? "active", snapshot);
 		return snapshot;
 	}
 
@@ -573,7 +598,7 @@ export class BrowserController {
 			frame.png.byteLength > 10_000_000
 		)
 			throw new Error("Visible browser screenshot is invalid or too large.");
-		return frame;
+		return { ...frame, trust: "untrusted_browser" as const };
 	}
 
 	async visibleHistory(
@@ -626,12 +651,14 @@ export class BrowserController {
 			throw new Error(
 				"Visible browser typing is limited to 20,000 characters.",
 			);
-		const before = await this.visibleSnapshot(tabId, signal);
+		const before =
+			this.lastVisibleSnapshots.get(tabId) ?? EMPTY_BROWSER_SNAPSHOT;
 		await this.backend.visibleAct(tabId, action, signal);
 		const after = await this.visibleSnapshot(tabId, signal);
 		return {
 			performed: true,
 			observation: diffBrowserSnapshots(before, after),
+			trust: "untrusted_browser",
 		};
 	}
 
@@ -658,6 +685,7 @@ export class BrowserController {
 			throw new Error("The visible user browser is unavailable.");
 		this.validateVisibleTabId(tabId);
 		await this.backend.visibleClose(tabId, signal);
+		this.lastVisibleSnapshots.delete(tabId);
 		return { closed: true };
 	}
 

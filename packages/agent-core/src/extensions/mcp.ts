@@ -648,6 +648,7 @@ export class McpClient {
 
 export interface McpRuntimeAccess {
 	allowMutatingTools: boolean;
+	sessionId?: string;
 }
 
 export class McpRuntimeServer {
@@ -697,13 +698,14 @@ export class McpRuntimeServer {
 					},
 				};
 			if (!this.initialized) throw new Error("MCP server is not initialized.");
+			const sessionId = access.sessionId ?? this.sessionId;
 			if (message.method === "tools/list")
 				return {
 					jsonrpc: "2.0",
 					id: message.id,
 					result: {
 						tools: this.runtime
-							.modelTools(this.sessionId)
+							.modelTools(sessionId)
 							.filter(
 								(tool) => access.allowMutatingTools || tool.descriptor.readOnly,
 							)
@@ -725,13 +727,13 @@ export class McpRuntimeServer {
 				if (this.toolFilter && !this.toolFilter(name))
 					throw new Error("Tool is not exposed by this MCP server.");
 				const tool = this.runtime
-					.modelTools(this.sessionId)
+					.modelTools(sessionId)
 					.find((candidate) => candidate.descriptor.name === name);
 				if (!access.allowMutatingTools && !tool?.descriptor.readOnly)
 					throw new Error("Mutating MCP tools require task authorization.");
 				const args = message.params?.arguments;
 				const execution = await this.runtime.callTool(
-					this.sessionId,
+					sessionId,
 					name,
 					args && typeof args === "object"
 						? (args as Record<string, unknown>)
