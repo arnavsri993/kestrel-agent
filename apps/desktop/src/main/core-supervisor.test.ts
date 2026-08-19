@@ -369,11 +369,12 @@ describe("CoreSupervisor browser backend IPC", () => {
 			requestId: "req-snapshot",
 			request: { operation: "snapshot", sessionId: "electron-browser-1" },
 		});
-		await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
-		expect(handler.mock.calls[0]?.[0]).toEqual({
-			operation: "snapshot",
-			sessionId: "electron-browser-1",
-		});
+		await vi.waitFor(() =>
+			expect(handler).toHaveBeenCalledWith(
+				{ operation: "snapshot", sessionId: "electron-browser-1" },
+				expect.any(AbortSignal),
+			),
+		);
 
 		child.emit("message", {
 			type: "browser-backend-request",

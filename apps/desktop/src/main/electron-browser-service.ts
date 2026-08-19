@@ -138,7 +138,18 @@ export class ElectronBrowserService {
 		if (request.operation === "screenshot")
 			return this.screenshot(request.sessionId, signal);
 		if (request.operation === "viewport")
-			return this.setViewport(request.sessionId, request.viewport, signal);
+			return this.setViewport(
+				request.sessionId,
+				{
+					name: request.viewport.name,
+					width: request.viewport.width,
+					height: request.viewport.height,
+					...(request.viewport.deviceScaleFactor !== undefined
+						? { deviceScaleFactor: request.viewport.deviceScaleFactor }
+						: {}),
+				},
+				signal,
+			);
 		if (request.operation === "diagnostics")
 			return this.diagnostics(request.sessionId, signal);
 		if (request.operation === "auth-handoff")

@@ -200,14 +200,14 @@ const browserBackend: BrowserAutomationBackend = {
 			signal,
 		),
 	visibleScreenshot: async (tabId, signal) => {
-		const result = await browserRequest<ScreenshotFrame>(
-			{ operation: "visible-screenshot", ...(tabId ? { tabId } : {}) },
-			signal,
-		);
+		const result = await browserRequest<
+			ScreenshotFrame & { trust: "untrusted_browser" }
+		>({ operation: "visible-screenshot", ...(tabId ? { tabId } : {}) }, signal);
 		return {
 			...result,
 			rgba: new Uint8Array(result.rgba),
 			...(result.png ? { png: new Uint8Array(result.png) } : {}),
+			trust: "untrusted_browser",
 		};
 	},
 	visibleHistory: (query, limit, signal) =>
@@ -357,17 +357,18 @@ port.on("message", async ({ data }) => {
 				...(managedPolicy ? { managedPolicy } : {}),
 				...(googleWorkspace ? { googleWorkspace } : {}),
 			});
+			const agentCore = core;
 			for (const key of Object.keys(message.config.secureEnvironment))
 				delete message.config.secureEnvironment[key];
-			const mainSession = core.runtime.ensureMainSession();
+			const mainSession = agentCore.runtime.ensureMainSession();
 			if (googleWorkspace)
 				installGoogleWorkspaceTools(
-					core.runtime,
+					agentCore.runtime,
 					googleWorkspace,
 					mainSession.id,
 				);
 			const browserToolNames = installBrowserTools(
-				core.runtime,
+				agentCore.runtime,
 				new BrowserController(browserBackend),
 				mainSession.id,
 				new VisualValidator(database, artifactRoot),
@@ -375,18 +376,18 @@ port.on("message", async ({ data }) => {
 			// Sessions created after registration inherit these tools automatically.
 			// Preserve conversation timestamps while making the new browser layer
 			// available to conversations that already existed before this release.
-			for (const session of core.runtime.listSessions())
+			for (const session of agentCore.runtime.listSessions())
 				if (session.id !== mainSession.id)
-					core.runtime.allowTools(session.id, browserToolNames, {
+					agentCore.runtime.allowTools(session.id, browserToolNames, {
 						preserveUpdatedAt: true,
 					});
 			browserMcp = new LocalBrowserMcpServer({
-				runtime: core.runtime,
+				runtime: agentCore.runtime,
 				sessionId: mainSession.id,
-				resolveCallSession: () => core.resolveCodexBrowserMcpSession(),
+				resolveCallSession: () => agentCore.resolveCodexBrowserMcpSession(),
 			});
 			const browserMcpEndpoint = await browserMcp.start();
-			core.attachCodexBrowserMcp({
+			agentCore.attachCodexBrowserMcp({
 				url: browserMcpEndpoint.url,
 				token: browserMcpEndpoint.token,
 			});

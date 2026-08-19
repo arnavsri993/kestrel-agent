@@ -299,6 +299,7 @@ export class BrowserController {
 		url.username = "";
 		url.password = "";
 		url.hash = "";
+		delete session.lastSnapshot;
 		await this.backend.navigate(
 			session.backendSessionId,
 			url.toString(),
@@ -668,6 +669,7 @@ export class BrowserController {
 		this.validateVisibleTabId(tabId);
 		if (!input.trim() || input.length > 8_192)
 			throw new Error("Visible browser navigation input is invalid.");
+		this.lastVisibleSnapshots.delete(tabId);
 		await this.backend.visibleNavigate(tabId, input, signal);
 		return { navigated: true };
 	}

@@ -121,7 +121,7 @@ import {
 	NetworkPolicyWebClient,
 	type WebAccessOptions,
 } from "./web-tools";
-import type { BrowserMcpCallSession } from "./local-mcp-http";
+import type { BrowserMcpCallSession } from "./browser-mcp-session";
 
 function persistedCompactionCount(value: unknown): number {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
@@ -2940,10 +2940,12 @@ export {
 	StreamableHttpMcpTransport,
 } from "./extensions/mcp";
 export {
-	LocalBrowserMcpServer,
 	type BrowserMcpCallSession,
-	type LocalBrowserMcpServerOptions,
 	resolveUniqueMappedSession,
+} from "./browser-mcp-session";
+export {
+	LocalBrowserMcpServer,
+	type LocalBrowserMcpServerOptions,
 } from "./local-mcp-http";
 export {
 	type InstalledPlugin,

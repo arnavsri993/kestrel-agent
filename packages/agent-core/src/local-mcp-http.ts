@@ -5,32 +5,18 @@ import {
 	type Server,
 	type ServerResponse,
 } from "node:http";
+import { type BrowserMcpCallSession } from "./browser-mcp-session";
 import { type JsonRpcMessage, McpRuntimeServer } from "./extensions/mcp";
 import type { AgentRuntime } from "./runtime";
+
+export type { BrowserMcpCallSession } from "./browser-mcp-session";
+export { resolveUniqueMappedSession } from "./browser-mcp-session";
 
 export interface LocalBrowserMcpServerOptions {
 	runtime: AgentRuntime;
 	sessionId: string;
 	toolFilter?: (name: string) => boolean;
 	resolveCallSession?: () => BrowserMcpCallSession;
-}
-
-export type BrowserMcpCallSession =
-	| { ok: true; sessionId: string }
-	| { ok: false; reason: "none" | "ambiguous" };
-
-export function resolveUniqueMappedSession(
-	activeThreadIds: Iterable<string>,
-	threadToSession: ReadonlyMap<string, string>,
-): BrowserMcpCallSession {
-	const sessionIds = new Set<string>();
-	for (const threadId of activeThreadIds) {
-		const sessionId = threadToSession.get(threadId);
-		if (sessionId) sessionIds.add(sessionId);
-	}
-	if (sessionIds.size === 0) return { ok: false, reason: "none" };
-	if (sessionIds.size > 1) return { ok: false, reason: "ambiguous" };
-	return { ok: true, sessionId: [...sessionIds][0]! };
 }
 
 interface McpHttpSession {

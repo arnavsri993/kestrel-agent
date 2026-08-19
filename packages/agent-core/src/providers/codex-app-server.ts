@@ -23,7 +23,7 @@ import {
 import {
 	type BrowserMcpCallSession,
 	resolveUniqueMappedSession,
-} from "../local-mcp-http";
+} from "../browser-mcp-session";
 
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;

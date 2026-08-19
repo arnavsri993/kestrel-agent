@@ -494,6 +494,41 @@ describe("isolated browser automation and visual validation", () => {
 		expect(backend.actions).toEqual([{ type: "click", target: "#buy" }]);
 	});
 
+	it("does not diff an act against a snapshot from before navigation", async () => {
+		const backend = new FakeBrowser();
+		let title = "Before";
+		backend.snapshot = async () => {
+			backend.snapshotCalls += 1;
+			return {
+				url: "https://example.test/",
+				title,
+				accessibilityTree: { nodes: [{ name: { value: title } }] },
+			};
+		};
+		const controller = new BrowserController(backend);
+		const session = await controller.create("owner", ["https://example.test"]);
+		await controller.snapshot(
+			"owner",
+			session.browserSessionId,
+			new AbortController().signal,
+		);
+		title = "After";
+		await controller.navigate(
+			"owner",
+			session.browserSessionId,
+			"https://example.test/next",
+			new AbortController().signal,
+		);
+		const result = await controller.act(
+			"owner",
+			session.browserSessionId,
+			{ type: "click", target: "#buy" },
+			new AbortController().signal,
+		);
+		expect(result.observation.before.title).toBe("");
+		expect(result.observation.after.title).toBe("After");
+	});
+
 	it("records deterministic pixel comparisons with encrypted metadata", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const validator = new VisualValidator(
