@@ -2156,6 +2156,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		streamId: z.string().min(1).max(100).optional(),
 		attachments: z.array(SelectedAttachmentSchema).max(8).optional(),
 		browserContext: z.lazy(() => UserBrowserPageContextSchema).optional(),
+		reasoningEffort: ReasoningEffortSchema.optional(),
 	}),
 	z.object({
 		type: z.literal("runtime-resume-agent"),
