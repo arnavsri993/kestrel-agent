@@ -19,6 +19,10 @@ export function TabStrip({
 	onSelect,
 	onClose,
 	onCreate,
+	onPin,
+	onMute,
+	onDuplicate,
+	onCloseOthers,
 	orientation,
 	onToggleOrientation,
 }: {
@@ -27,10 +31,17 @@ export function TabStrip({
 	onSelect(tabId: string): void;
 	onClose(tabId: string): void;
 	onCreate(): void;
+	onPin?(tabId: string, pinned: boolean): void;
+	onMute?(tabId: string, muted: boolean): void;
+	onDuplicate?(tabId: string): void;
+	onCloseOthers?(tabId: string): void;
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
 }) {
 	const [lockedWidth, setLockedWidth] = useState<number | null>(null);
+	const [menu, setMenu] = useState<{ tabId: string; x: number; y: number } | null>(
+		null,
+	);
 	const tabsContainerRef = useRef<HTMLDivElement | null>(null);
 
 	const handleRowMouseLeave = useCallback(() => {
@@ -108,6 +119,13 @@ export function TabStrip({
 		onCreate();
 	}
 
+	function openMenu(event: MouseEvent, tabId: string) {
+		event.preventDefault();
+		setMenu({ tabId, x: event.clientX, y: event.clientY });
+	}
+
+	const menuTab = tabs.find((tab) => tab.id === menu?.tabId);
+
 	function getFaviconContent(tab: UserBrowserTab) {
 		if (tab.faviconDataUrl) {
 			return <img src={tab.faviconDataUrl} alt="" />;
@@ -173,10 +191,11 @@ export function TabStrip({
 					const isSleeping = tab.discarded && Boolean(tab.url);
 					return (
 						<div
-							className={`browser-tab ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""}`}
+							className={`browser-tab ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""}`}
 							key={tab.id}
 							style={tabStyle}
 							onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
+							onContextMenu={(event) => openMenu(event, tab.id)}
 						>
 							<button
 								type="button"
@@ -191,6 +210,11 @@ export function TabStrip({
 									{getFaviconContent(tab)}
 								</span>
 								<span className="browser-tab-title">
+									{tab.pinned && (
+										<span className="tab-pin-badge" title="Pinned">
+											<Icon name="pin" />
+										</span>
+									)}
 									{tab.title}
 									{isSleeping && (
 										<span className="tab-sleep-badge" title="Sleeping tab">
@@ -232,6 +256,67 @@ export function TabStrip({
 				onDoubleClick={handleCreate}
 				onAuxClick={handleDragFillAuxClick}
 			/>
+			{menu && menuTab && (
+				<div
+					className="browser-tab-menu"
+					style={{ left: menu.x, top: menu.y }}
+					role="menu"
+				>
+					<button
+						type="button"
+						role="menuitem"
+						onClick={() => {
+							onPin?.(menuTab.id, !menuTab.pinned);
+							setMenu(null);
+						}}
+					>
+						{menuTab.pinned ? "Unpin tab" : "Pin tab"}
+					</button>
+					<button
+						type="button"
+						role="menuitem"
+						onClick={() => {
+							onMute?.(menuTab.id, !menuTab.muted);
+							setMenu(null);
+						}}
+					>
+						{menuTab.muted ? "Unmute tab" : "Mute tab"}
+					</button>
+					<button
+						type="button"
+						role="menuitem"
+						onClick={() => {
+							onDuplicate?.(menuTab.id);
+							setMenu(null);
+						}}
+					>
+						Duplicate tab
+					</button>
+					<button
+						type="button"
+						role="menuitem"
+						onClick={() => {
+							onCloseOthers?.(menuTab.id);
+							setMenu(null);
+						}}
+					>
+						Close other tabs
+					</button>
+					<button
+						type="button"
+						role="menuitem"
+						onClick={() => {
+							handleTabClose(menuTab.id);
+							setMenu(null);
+						}}
+					>
+						Close tab
+					</button>
+					<button type="button" role="menuitem" onClick={() => setMenu(null)}>
+						Cancel
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }

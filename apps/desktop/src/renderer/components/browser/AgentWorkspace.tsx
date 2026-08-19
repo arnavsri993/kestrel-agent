@@ -65,38 +65,44 @@ export function AgentWorkspace({
 						<p>Delegated tasks stay connected to the work that created them.</p>
 					</div>
 				</div>
+				<button type="button" className="button primary" onClick={onNewTask}>
+					<Icon name="agent" />
+					New task
+				</button>
 			</header>
 
 			<section className="agent-workspace-status" aria-label="Agent status">
 				<div>
 					<span className={`agent-dot ${agentState}`} aria-hidden="true" />
 					<span>
+						<small>Agent</small>
 						<strong>{agentStateLabel(agentState)}</strong>
 					</span>
 				</div>
 				<div>
 					<Icon name="work" />
 					<span>
+						<small>Tasks</small>
 						<strong>{openCount} open</strong>
 					</span>
 				</div>
 				<button type="button" onClick={onOpenApprovals}>
 					<Icon name="approvals" />
 					<span>
-						<strong>Approvals</strong>
-						<small>
+						<small>Approvals</small>
+						<strong>
 							{pendingApprovals
 								? `${pendingApprovals} pending`
 								: "None pending"}
-						</small>
+						</strong>
 					</span>
 					<Icon name="chevron" />
 				</button>
 				<button type="button" onClick={onOpenWork}>
 					<Icon name="work" />
 					<span>
-						<strong>Work</strong>
-						<small>Goals and runs</small>
+						<small>Work</small>
+						<strong>Goals and runs</strong>
 					</span>
 					<Icon name="chevron" />
 				</button>

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync, appendFileSync } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -55,6 +55,7 @@ import {
   isUserBrowserBackendWireRequest,
 } from "./user-browser-service";
 import { LocalRuntimeManager } from "./local-runtime-manager";
+import { listWorkspaceFiles } from "./workspace-file-search";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
 import {
   ChatGptOAuthManager,
@@ -745,6 +746,7 @@ supervisor.on("recovered", () => {
   notification.show();
 });
 supervisor.on("recovery-failed", (error: Error) => {
+  debugAgentLog("supervisor recovery-failed", { error: error.message });
   if (!Notification.isSupported()) return;
   const notification = new Notification({
     title: `${PRODUCT_IDENTITY.productName} · Agent Core needs attention`,
@@ -891,6 +893,30 @@ function queueDeepLink(value: unknown): boolean {
   return true;
 }
 
+function debugAgentLog(
+  message: string,
+  data: Record<string, unknown> = {},
+): void {
+  // #region agent log
+  try {
+    appendFileSync(
+      "/Users/arnavsrivastava/Documents/Agent/.cursor/debug-91c7b0.log",
+      `${JSON.stringify({
+        sessionId: "91c7b0",
+        runId: "post-fix",
+        hypothesisId: "H",
+        location: "main/index.ts",
+        message,
+        data,
+        timestamp: Date.now(),
+      })}\n`,
+    );
+  } catch {
+    /* ignore debug log failures */
+  }
+  // #endregion
+}
+
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1320,
@@ -899,7 +925,7 @@ function createMainWindow(): BrowserWindow {
     minHeight: 680,
     show: false,
     titleBarStyle: "hiddenInset",
-    backgroundColor: "#eceee7",
+    backgroundColor: "#0a0a0a",
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       nodeIntegration: false,
@@ -977,7 +1003,19 @@ function createMainWindow(): BrowserWindow {
   if (DEVELOPMENT_RENDERER_URL)
     void window.loadURL(DEVELOPMENT_RENDERER_URL);
   else void window.loadFile(RENDERER_ENTRY_PATH);
-  window.once("ready-to-show", () => window.show());
+  window.webContents.on("console-message", (_event, level, message) => {
+    if (level >= 2)
+      debugAgentLog("renderer console", {
+        level,
+        message: String(message).slice(0, 400),
+      });
+  });
+  window.once("ready-to-show", () => {
+    debugAgentLog("main window ready-to-show", {
+      packaged: app.isPackaged,
+    });
+    window.show();
+  });
   return window;
 }
 
@@ -1219,13 +1257,27 @@ async function initializeCore(
   try {
     const localRuntime = localRuntimeManager();
     await localRuntime.startManagedIfInstalled();
-    const localModels = await listLocalModels(700);
+    const localModels = await listLocalModels(5_000);
     if (localModels.length > 0) {
       secureEnvironment.KESTREL_ENABLE_OLLAMA = "1";
       secureEnvironment.KESTREL_OLLAMA_MODEL ??=
         (await localRuntime.preferredModel(localModels)) ?? localModels[0]!.name;
     }
-  } catch {
+    // #region agent log
+    debugAgentLog("ollama discovery", {
+      hypothesisId: "K",
+      modelCount: localModels.length,
+      ollamaEnabled: localModels.length > 0,
+      preferredModel: secureEnvironment.KESTREL_OLLAMA_MODEL ?? "",
+    });
+    // #endregion
+  } catch (error) {
+    // #region agent log
+    debugAgentLog("ollama discovery failed", {
+      hypothesisId: "K",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // #endregion
     // A local model server is optional and must not delay or block startup.
   }
   const workspaceGrantStore = new WorkspaceGrantStore(
@@ -1258,7 +1310,16 @@ async function initializeCore(
     if (!response.snapshot)
       throw new Error("Agent Core returned no workspace state during startup.");
     agentState = response.snapshot.agentState;
+    debugAgentLog("initializeCore succeeded", {});
+    void localRuntimeManager()
+      .ensureChatReady()
+      .catch(() => undefined);
   } catch (error) {
+    // #region agent log
+    debugAgentLog("initializeCore failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // #endregion
     // A bootstrap can fail after the utility process has been created. Tear it
     // down before the recovery dialog retries, or the next attempt sees a
     // stale supervisor and reports only “Agent Core is unavailable.”
@@ -1393,6 +1454,18 @@ function registerIpc(): void {
     )
       throw new Error("Kestrel rejected a request from an untrusted renderer.");
     const request = RendererRequestSchema.parse(raw);
+    if (
+      request.type === "runtime-run-agent" ||
+      request.type === "runtime-create-session" ||
+      request.type === "runtime-list-providers"
+    ) {
+      debugAgentLog("renderer ipc", { type: request.type });
+    }
+    if (request.type === "runtime-run-agent") {
+      await localRuntimeManager()
+        .ensureChatReady()
+        .catch(() => undefined);
+    }
     const overlayAccess =
       senderWindow === petOverlayWindow
         ? petOverlayAccess.get(senderWindow)
@@ -1671,11 +1744,147 @@ function registerIpc(): void {
         browserState: userBrowserService.clearHistory(),
       };
     }
+    if (request.type === "browser-clear-data") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.clearBrowsingData({
+          history: request.history,
+          cookies: request.cookies,
+          cache: request.cache,
+        }),
+      };
+    }
     if (request.type === "browser-reveal-download") {
       if (!userBrowserService)
         throw new Error("The visible user browser is unavailable.");
       userBrowserService.revealDownload(request.downloadId);
       return { ok: true };
+    }
+    if (request.type === "browser-open-download") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      await userBrowserService.openDownload(request.downloadId);
+      return { ok: true };
+    }
+    if (request.type === "browser-cancel-download") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.cancelDownload(request.downloadId),
+      };
+    }
+    if (request.type === "browser-toggle-bookmark") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.toggleBookmark(
+          request.url,
+          request.title,
+        ),
+      };
+    }
+    if (request.type === "browser-remove-bookmark") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.removeBookmark(request.bookmarkId),
+      };
+    }
+    if (request.type === "browser-pin-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.pinTab(request.tabId, request.pinned),
+      };
+    }
+    if (request.type === "browser-mute-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.muteTab(request.tabId, request.muted),
+      };
+    }
+    if (request.type === "browser-duplicate-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.duplicateTab(request.tabId),
+      };
+    }
+    if (request.type === "browser-close-other-tabs") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: await userBrowserService.closeOtherTabs(request.tabId),
+      };
+    }
+    if (request.type === "browser-move-tab") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.moveTab(request.tabId, request.toIndex),
+      };
+    }
+    if (request.type === "browser-find-in-page") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.findInPage(
+          request.tabId,
+          request.query,
+          {
+            ...(request.findNext ? { findNext: true } : {}),
+            ...(request.forward === false ? { forward: false } : {}),
+          },
+        ),
+      };
+    }
+    if (request.type === "browser-stop-find-in-page") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.stopFindInPage(request.tabId),
+      };
+    }
+    if (request.type === "browser-print") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.printTab(request.tabId),
+      };
+    }
+    if (request.type === "browser-open-devtools") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.openDevTools(request.tabId),
+      };
+    }
+    if (request.type === "browser-set-site-permission") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: userBrowserService.setSitePermission(
+          request.origin,
+          request.permission,
+          request.decision,
+        ),
+      };
     }
     if (request.type === "browser-list-extensions") {
       if (!userBrowserService)
@@ -2167,6 +2376,28 @@ function registerIpc(): void {
       });
       return { ok: true, selectedAttachments };
     }
+    if (request.type === "list-workspace-files") {
+      const workspaceRoot = realpathSync(request.workspaceRoot);
+      const granted = (await grantStore.list()).some((grant) => {
+        try {
+          return realpathSync(grant.path) === workspaceRoot;
+        } catch {
+          return false;
+        }
+      });
+      if (!granted)
+        throw new Error(
+          "Choose a currently granted task workspace before listing files.",
+        );
+      return {
+        ok: true,
+        workspaceFiles: await listWorkspaceFiles({
+          workspaceRoot,
+          ...(request.query ? { query: request.query } : {}),
+          mediaTypeForPath,
+        }),
+      };
+    }
     if (request.type === "credential-list")
       return {
         ok: true,
@@ -2577,6 +2808,30 @@ async function initializeCoreForStartup(): Promise<boolean> {
       await initializeCore();
       return true;
     } catch (cause) {
+      debugAgentLog("initializeCoreForStartup failed", {
+        error: cause instanceof Error ? cause.message : String(cause),
+      });
+      // #region agent log
+      fetch("http://127.0.0.1:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "b84a5b",
+        },
+        body: JSON.stringify({
+          sessionId: "b84a5b",
+          runId: "pre-fix",
+          hypothesisId: "A",
+          location: "main/index.ts:initializeCoreForStartup",
+          message: "startup recovery dialog",
+          data: {
+            error:
+              cause instanceof Error ? cause.message.slice(0, 240) : String(cause),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       const copy = startupRecoveryCopy(cause);
       if (!mainWindow && app.isReady()) {
         // Give the native recovery dialog an owning window. Without one,
@@ -2689,6 +2944,28 @@ app.on("window-all-closed", () => {
 void app
   .whenReady()
   .then(async () => {
+    // #region agent log
+    fetch("http://127.0.0.1:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "b84a5b",
+      },
+      body: JSON.stringify({
+        sessionId: "b84a5b",
+        runId: "pre-fix",
+        hypothesisId: "D",
+        location: "main/index.ts:whenReady",
+        message: "app ready",
+        data: {
+          singleInstance,
+          packaged: app.isPackaged,
+          coreStartupComplete,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (!singleInstance) return;
     if (canRegisterAsDefaultBrowser(isPackagedKestrelApp))
       app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);

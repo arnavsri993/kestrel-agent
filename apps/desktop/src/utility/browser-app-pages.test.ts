@@ -19,6 +19,11 @@ describe("kestrel app page URLs", () => {
 		});
 		expect(kestrelAppPageUrl("commands")).toBe("kestrel://commands");
 		expect(isKestrelAppPageUrl("kestrel://downloads")).toBe(true);
+		expect(parseKestrelAppPage("kestrel://bookmarks")).toEqual({
+			id: "bookmarks",
+			url: "kestrel://bookmarks",
+			title: "Bookmarks",
+		});
 	});
 
 	it("rejects unknown, privileged, or credential-bearing kestrel URLs", () => {

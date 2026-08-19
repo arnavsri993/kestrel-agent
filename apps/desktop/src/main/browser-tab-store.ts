@@ -194,29 +194,37 @@ export function normalizeBrowserAddress(
 	return { kind: "url", url: parsed.toString() };
 }
 
+export function createEmptyBrowserTab(
+	now: () => Date = () => new Date(),
+): UserBrowserState["tabs"][number] {
+	const timestamp = now().toISOString();
+	return {
+		id: `tab-${randomUUID()}`,
+		title: "New Tab",
+		url: "",
+		loading: false,
+		canGoBack: false,
+		canGoForward: false,
+		discarded: false,
+		crashed: false,
+		pinned: false,
+		muted: false,
+		createdAt: timestamp,
+		lastActiveAt: timestamp,
+	};
+}
+
 export function freshBrowserState(
 	now: () => Date = () => new Date(),
 ): UserBrowserState {
-	const timestamp = now().toISOString();
-	const id = `tab-${randomUUID()}`;
+	const tab = createEmptyBrowserTab(now);
 	return {
-		tabs: [
-			{
-				id,
-				title: "New Tab",
-				url: "",
-				loading: false,
-				canGoBack: false,
-				canGoForward: false,
-				discarded: false,
-				crashed: false,
-				createdAt: timestamp,
-				lastActiveAt: timestamp,
-			},
-		],
-		activeTabId: id,
+		tabs: [tab],
+		activeTabId: tab.id,
 		history: [],
 		downloads: [],
+		bookmarks: [],
+		sitePermissions: [],
 		settings: { ...DEFAULT_BROWSER_SETTINGS },
 	};
 }
@@ -253,6 +261,8 @@ export class BrowserTabStore {
 				return {
 					...freshBrowserState(now),
 					history: state.history,
+					bookmarks: state.bookmarks,
+					sitePermissions: state.sitePermissions,
 					downloads: state.downloads.map((download) => ({
 						...download,
 						status:

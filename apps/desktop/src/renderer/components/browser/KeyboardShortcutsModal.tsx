@@ -41,7 +41,12 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
 			{ keys: [cmd, shift, "R"], description: "Hard reload (ignore cache)" },
 			{ keys: [cmd, "["], description: "Go back in history" },
 			{ keys: [cmd, "]"], description: "Go forward in history" },
-			{ keys: ["Esc"], description: "Stop loading / Close dialog" },
+			{ keys: [cmd, "F"], description: "Find in page" },
+			{ keys: [cmd, "D"], description: "Bookmark this page" },
+			{ keys: [cmd, shift, "D"], description: "Open bookmarks" },
+			{ keys: [cmd, "P"], description: "Print this page" },
+			{ keys: [cmd, shift, "I"], description: "Inspect page (DevTools)" },
+			{ keys: ["Esc"], description: "Stop loading / Close find" },
 		],
 	},
 	{
@@ -55,9 +60,10 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
 	{
 		title: "Agent & Workspace",
 		shortcuts: [
-			{ keys: [cmd, "N"], description: "New agent task" },
+			{ keys: ["@"], description: "Mention a tab, bookmark, or file" },
 			{ keys: [cmd, "K"], description: "Capabilities & Command palette" },
 			{ keys: [cmd, "H"], description: "Open browsing history" },
+			{ keys: [cmd, shift, "D"], description: "Open bookmarks" },
 			{ keys: [cmd, "J"], description: "Open downloads" },
 			{ keys: [cmd, ","], description: "Open settings" },
 			{ keys: [cmd, "B"], description: "Toggle agent sidebar" },

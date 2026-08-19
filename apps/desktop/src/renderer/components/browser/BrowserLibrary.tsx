@@ -55,7 +55,7 @@ export function BrowserHistory({
 					<span className="library-icon">
 						<Icon name="history" />
 					</span>
-					<h1 id="history-title">Pages you visited</h1>
+					<h1 id="history-title">History</h1>
 				</div>
 				<label>
 					<Icon name="search" />
@@ -80,11 +80,7 @@ export function BrowserHistory({
 				<EmptyState
 					className="library-empty"
 					title={query ? "No matching pages" : "No history yet"}
-					detail={
-						query
-							? "Try a different search term."
-							: "Pages you open in Kestrel stay available here on this Mac."
-					}
+					detail={query ? "Try a different search." : "Open a page to start a history."}
 					action={
 						!query ? (
 							<button type="button" className="button secondary" onClick={onOpenBrowser}>
@@ -136,14 +132,14 @@ export function BrowserDownloads({
 					<span className="library-icon">
 						<Icon name="downloads" />
 					</span>
-					<h1 id="downloads-title">Files from the web</h1>
+					<h1 id="downloads-title">Downloads</h1>
 				</div>
 			</header>
 			{downloads.length === 0 ? (
 				<EmptyState
 					className="library-empty"
 					title="No downloads yet"
-					detail="Files you save from browser tabs will appear here."
+					detail="Saved files will appear here."
 				/>
 			) : (
 				<ul className="download-list">
@@ -192,15 +188,125 @@ export function BrowserDownloads({
 									<button
 										type="button"
 										className="quiet-link"
+										onClick={() => void browser.openDownload(download.id)}
+									>
+										Open
+									</button>
+								)}
+								{download.canReveal && (
+									<button
+										type="button"
+										className="quiet-link"
 										onClick={() => void browser.revealDownload(download.id)}
 									>
 										Show in Finder
+									</button>
+								)}
+								{download.status === "progressing" && (
+									<button
+										type="button"
+										className="quiet-link"
+										onClick={() => void browser.cancelDownload(download.id)}
+									>
+										Cancel
 									</button>
 								)}
 							</li>
 						);
 					})}
 				</ul>
+			)}
+		</main>
+	);
+}
+
+export function BrowserBookmarks({
+	browser,
+	onOpenBrowser,
+	onBack,
+}: {
+	browser: UserBrowserController;
+	onOpenBrowser(): void;
+	onBack?(): void;
+}) {
+	const [query, setQuery] = useState("");
+	const bookmarks = browser.state?.bookmarks ?? [];
+	const filtered = useMemo(() => {
+		const normalized = query.trim().toLowerCase();
+		return bookmarks.filter(
+			(entry) =>
+				!normalized ||
+				`${entry.title} ${entry.url}`.toLowerCase().includes(normalized),
+		);
+	}, [bookmarks, query]);
+
+	return (
+		<main className="browser-library" aria-labelledby="bookmarks-title">
+			<header>
+				<div>
+					{onBack ? <SurfaceBackButton onBack={onBack} /> : null}
+					<span className="library-icon">
+						<Icon name="star" />
+					</span>
+					<h1 id="bookmarks-title">Bookmarks</h1>
+				</div>
+				<label>
+					<Icon name="search" />
+					<span className="sr-only">Search bookmarks</span>
+					<input
+						value={query}
+						placeholder="Search bookmarks"
+						onChange={(event) => setQuery(event.target.value)}
+					/>
+				</label>
+			</header>
+			{filtered.length === 0 ? (
+				<EmptyState
+					className="library-empty"
+					title={query ? "No matching bookmarks" : "No bookmarks yet"}
+					detail={
+						query
+							? "Try a different search term."
+							: "Press ⌘D on a page to save it here."
+					}
+					action={
+						!query ? (
+							<button
+								type="button"
+								className="button secondary"
+								onClick={onOpenBrowser}
+							>
+								Open browser
+							</button>
+						) : undefined
+					}
+				/>
+			) : (
+				<ol className="history-list">
+					{filtered.map((entry) => (
+						<li key={entry.id}>
+							<button
+								type="button"
+								onClick={() => void browser.createTab(entry.url)}
+							>
+								<span className="history-favicon">
+									<Icon name="star" />
+								</span>
+								<span>
+									<strong>{entry.title}</strong>
+									<small>{entry.url}</small>
+								</span>
+							</button>
+							<button
+								type="button"
+								className="quiet-link"
+								onClick={() => void browser.removeBookmark(entry.id)}
+							>
+								Remove
+							</button>
+						</li>
+					))}
+				</ol>
 			)}
 		</main>
 	);

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import type {
+  UserBrowserBookmark,
   UserBrowserHistoryEntry,
   UserBrowserSettings,
 } from "@kestrel/shared-types";
@@ -14,14 +15,32 @@ import {
 } from "./new-tab";
 import "./new-tab.css";
 
+function homeInputLooksLikeBrowse(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  if (/^(https?:\/\/|localhost(:\d+)?(\/|$))/i.test(trimmed)) return true;
+  try {
+    const parsed = new URL(
+      /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`,
+    );
+    return (
+      ["http:", "https:"].includes(parsed.protocol) && parsed.hostname.includes(".")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function NewTabPage({
   history,
+  bookmarks = [],
   background,
   agentName,
   onNavigate,
   onNewAgent,
 }: {
   history: UserBrowserHistoryEntry[];
+  bookmarks?: UserBrowserBookmark[];
   background: UserBrowserSettings["newTabBackground"];
   agentName: string;
   onNavigate(input: string): void;
@@ -44,6 +63,10 @@ export function NewTabPage({
     const prompt = input.trim();
     if (!prompt) return;
     setInput("");
+    if (homeInputLooksLikeBrowse(prompt)) {
+      onNavigate(prompt);
+      return;
+    }
     onNewAgent(prompt);
   }
 
@@ -72,13 +95,13 @@ export function NewTabPage({
 
           <form className="kestrel-home-composer" onSubmit={submitChat}>
             <label className="sr-only" htmlFor="new-tab-chat-input">
-              Message {agentName}
+              Message {agentName} or enter a website
             </label>
             <input
               ref={inputRef}
               id="new-tab-chat-input"
               value={input}
-              placeholder={`Message ${agentName} or @ mention a tab`}
+              placeholder={`Message ${agentName}, enter a website, or @ mention a tab`}
               autoCapitalize="sentences"
               autoCorrect="on"
               spellCheck
@@ -173,6 +196,35 @@ export function NewTabPage({
             </div>
           )}
         </section>
+
+        {bookmarks.length > 0 && (
+          <section className="kestrel-home-shortcuts" aria-labelledby="bookmark-links-title">
+            <div className="kestrel-home-section-heading">
+              <div>
+                <span className="kestrel-home-section-kicker">Saved in this profile</span>
+                <h2 id="bookmark-links-title">Bookmarks</h2>
+              </div>
+            </div>
+            <div className="kestrel-home-shortcut-list">
+              {bookmarks.slice(0, 8).map((bookmark) => (
+                <button
+                  key={bookmark.id}
+                  type="button"
+                  className="kestrel-home-shortcut"
+                  onClick={() => onNavigate(bookmark.url)}
+                  title={bookmark.url}
+                >
+                  <span className="kestrel-home-shortcut-glyph" aria-hidden="true">
+                    <Icon name="star" />
+                  </span>
+                  <span className="kestrel-home-shortcut-copy">
+                    <strong>{bookmark.title}</strong>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section className="kestrel-home-actions" aria-labelledby="suggested-actions-title">
           <div className="kestrel-home-section-heading">

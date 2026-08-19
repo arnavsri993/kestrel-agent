@@ -2412,6 +2412,8 @@ export const UserBrowserTabSchema = z.object({
 	discarded: z.boolean(),
 	crashed: z.boolean(),
 	error: z.string().min(1).max(500).optional(),
+	pinned: z.boolean().default(false),
+	muted: z.boolean().default(false),
 	createdAt: z.string().datetime(),
 	lastActiveAt: z.string().datetime(),
 });
@@ -2444,6 +2446,32 @@ export const UserBrowserDownloadSchema = z.object({
 	canReveal: z.boolean(),
 });
 export type UserBrowserDownload = z.infer<typeof UserBrowserDownloadSchema>;
+
+export const UserBrowserBookmarkSchema = z.object({
+	id: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
+	url: z.string().url().max(8_192),
+	title: z.string().min(1).max(500),
+	createdAt: z.string().datetime(),
+});
+export type UserBrowserBookmark = z.infer<typeof UserBrowserBookmarkSchema>;
+
+export const UserBrowserSitePermissionSchema = z.object({
+	origin: z.string().min(1).max(8_192),
+	permission: z.string().min(1).max(80),
+	decision: z.enum(["allow", "deny"]),
+	updatedAt: z.string().datetime(),
+});
+export type UserBrowserSitePermission = z.infer<
+	typeof UserBrowserSitePermissionSchema
+>;
+
+export const UserBrowserFindMatchSchema = z.object({
+	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	activeMatchOrdinal: z.number().int().nonnegative(),
+	matches: z.number().int().nonnegative(),
+	finalUpdate: z.boolean(),
+});
+export type UserBrowserFindMatch = z.infer<typeof UserBrowserFindMatchSchema>;
 
 export const UserBrowserSettingsSchema = z.object({
 	searchEngine: z
@@ -2519,6 +2547,11 @@ export const UserBrowserStateSchema = z.object({
 		.nullable(),
 	history: z.array(UserBrowserHistoryEntrySchema).max(5_000),
 	downloads: z.array(UserBrowserDownloadSchema).max(500),
+	bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
+	sitePermissions: z
+		.array(UserBrowserSitePermissionSchema)
+		.max(500)
+		.default([]),
 	settings: UserBrowserSettingsSchema,
 });
 export type UserBrowserState = z.infer<typeof UserBrowserStateSchema>;
@@ -2615,10 +2648,16 @@ export const BrowserActivityEventSchema = z.strictObject({
 });
 export type BrowserActivityEvent = z.infer<typeof BrowserActivityEventSchema>;
 
-export const UserBrowserEventSchema = z.object({
-	type: z.literal("state"),
-	state: UserBrowserStateSchema,
-});
+export const UserBrowserEventSchema = z.discriminatedUnion("type", [
+	z.object({
+		type: z.literal("state"),
+		state: UserBrowserStateSchema,
+	}),
+	z.object({
+		type: z.literal("find-in-page"),
+		match: UserBrowserFindMatchSchema,
+	}),
+]);
 export type UserBrowserEvent = z.infer<typeof UserBrowserEventSchema>;
 export const UserBrowserCommandSchema = z.enum([
 	"focus-address",
@@ -2626,10 +2665,13 @@ export const UserBrowserCommandSchema = z.enum([
 	"open-commands",
 	"open-history",
 	"open-downloads",
+	"open-bookmarks",
 	"open-settings",
 	"show-shortcuts",
 	"toggle-sidebar",
 	"reopen-closed-tab",
+	"find-in-page",
+	"print-page",
 ]);
 export type UserBrowserCommand = z.infer<typeof UserBrowserCommandSchema>;
 
@@ -2717,8 +2759,84 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("browser-clear-history") }),
 	z.object({
+		type: z.literal("browser-clear-data"),
+		history: z.boolean().default(false),
+		cookies: z.boolean().default(false),
+		cache: z.boolean().default(false),
+	}),
+	z.object({
 		type: z.literal("browser-reveal-download"),
 		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-open-download"),
+		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-cancel-download"),
+		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-toggle-bookmark"),
+		url: z.string().max(8_192).optional(),
+		title: z.string().max(500).optional(),
+	}),
+	z.object({
+		type: z.literal("browser-remove-bookmark"),
+		bookmarkId: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-pin-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+		pinned: z.boolean(),
+	}),
+	z.object({
+		type: z.literal("browser-mute-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+		muted: z.boolean(),
+	}),
+	z.object({
+		type: z.literal("browser-duplicate-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-close-other-tabs"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-move-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+		toIndex: z.number().int().min(0).max(31),
+	}),
+	z.object({
+		type: z.literal("browser-find-in-page"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+		query: z.string().max(2_000),
+		findNext: z.boolean().optional(),
+		forward: z.boolean().optional(),
+	}),
+	z.object({
+		type: z.literal("browser-stop-find-in-page"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-print"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-open-devtools"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-set-site-permission"),
+		origin: z.string().min(1).max(8_192),
+		permission: z.string().min(1).max(80),
+		decision: z.enum(["allow", "deny"]),
+	}),
+	z.object({
+		type: z.literal("list-workspace-files"),
+		workspaceRoot: z.string().min(1),
+		query: z.string().max(200).optional(),
 	}),
 	z.object({ type: z.literal("browser-list-extensions") }),
 	z.object({
@@ -3056,6 +3174,7 @@ export type RendererResponse =
 			snapshot?: WorkspaceSnapshot;
 	  }
 	| { ok: true; selectedAttachments: SelectedAttachment[]; cancelled?: boolean }
+	| { ok: true; workspaceFiles: SelectedAttachment[] }
 	| { ok: true; microphoneAccess: boolean }
 	| { ok: true; credentials: BrokeredCredentialSummary[] }
 	| {

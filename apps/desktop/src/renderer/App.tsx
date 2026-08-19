@@ -36,6 +36,8 @@ import type {
 	SelectedAttachment,
 	SessionUsageSummary,
 	SetupSystemProfile,
+	UserBrowserBookmark,
+	UserBrowserTab,
 	SkillLearningProposal,
 	SubscriptionCliStatus,
 	SystemReadiness,
@@ -82,9 +84,15 @@ import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
 import {
+	BrowserBookmarks,
 	BrowserDownloads,
 	BrowserHistory,
 } from "./components/browser/BrowserLibrary";
+import { ComposerMentionPicker } from "./components/browser/ComposerMentionPicker";
+import {
+	mentionQuery,
+	replaceMention,
+} from "./components/browser/composer-mentions";
 import { BrowserSettings } from "./components/browser/BrowserSettings";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
 import { CommunicationCodeAssistant } from "./components/browser/CommunicationCodeAssistant";
@@ -115,6 +123,12 @@ import {
 	type KestrelAppPageId,
 } from "../utility/browser-app-pages";
 import {
+	isKestrelAppPageId,
+	kestrelAppPageUrl,
+	parseKestrelAppPage,
+	type KestrelAppPageId,
+} from "../utility/browser-app-pages";
+import {
 	memoryInGb,
 	recommendedLocalModelTiers,
 	supportedLocalModels,
@@ -136,6 +150,7 @@ const pages = [
 	["browser", "Browser"],
 	["agent", "Agent"],
 	["history", "History"],
+	["bookmarks", "Bookmarks"],
 	["downloads", "Downloads"],
 	["commands", "Capabilities"],
 	["readiness", "Readiness"],
@@ -179,6 +194,13 @@ const commandDestinations: CommandDestination[] = [
 		label: "History",
 		detail: "Find pages you visited",
 		icon: "history",
+		group: "Browse",
+	},
+	{
+		id: "bookmarks",
+		label: "Bookmarks",
+		detail: "Pages you saved in this profile",
+		icon: "star",
 		group: "Browse",
 	},
 	{
@@ -2817,6 +2839,8 @@ function RuntimeConversation({
 	onRuntimeAgentState,
 	configurationUi,
 	browserContext,
+	mentionTabs = [],
+	mentionBookmarks = [],
 	newAgentRequestId,
 	newAgentPrompt,
 }: {
@@ -2829,6 +2853,8 @@ function RuntimeConversation({
 	onRuntimeAgentState(state: AgentState | null): void;
 	configurationUi: WorkspaceSnapshot["configuration"]["ui"];
 	browserContext?(): Promise<UserBrowserPageContext | undefined>;
+	mentionTabs?: UserBrowserTab[];
+	mentionBookmarks?: UserBrowserBookmark[];
 	newAgentRequestId: number;
 	newAgentPrompt: string;
 }) {
@@ -2864,6 +2890,7 @@ function RuntimeConversation({
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
 	const [workspace, setWorkspace] = useState("");
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
+	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
 	const [input, setInput] = useState(() => {
 		if (localStorage.getItem("kestrel:setup-coach") !== "yes") return "";
 		localStorage.removeItem("kestrel:setup-coach");
@@ -2914,6 +2941,32 @@ function RuntimeConversation({
 		draftWorkspaceRoot: workspace,
 	});
 	const selectedGrant = grants.find((grant) => grant.path === taskWorkspace);
+	const activeMention = mentionQuery(input);
+	useEffect(() => {
+		if (activeMention === null || !taskWorkspace) {
+			setMentionFiles([]);
+			return;
+		}
+		let cancelled = false;
+		void window.kestrel
+			.request({
+				type: "list-workspace-files",
+				workspaceRoot: taskWorkspace,
+				query: activeMention,
+			})
+			.then((response) => {
+				if (
+					!cancelled &&
+					response.ok &&
+					"workspaceFiles" in response
+				)
+					setMentionFiles(response.workspaceFiles);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [activeMention, taskWorkspace]);
 	const manualRoutingReady = Boolean(providerId && model.trim());
 	const executionReady = executionMode === "automatic" || manualRoutingReady;
 	activeSessionIdRef.current = activeSessionId;
@@ -3400,8 +3453,8 @@ function RuntimeConversation({
 		}
 	}
 
-	async function submit() {
-		const prompt = input.trim();
+	async function submit(promptOverride?: string) {
+		const prompt = (promptOverride ?? input).trim();
 		// #region agent log
 		fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
 			method: "POST",
@@ -3543,7 +3596,8 @@ function RuntimeConversation({
 					data: {
 						ok: response.ok,
 						error: response.ok ? undefined : response.error,
-						runStatus: response.run?.status,
+						runStatus:
+							"run" in response ? response.run?.status : undefined,
 					},
 					timestamp: Date.now(),
 				}),
@@ -4204,14 +4258,36 @@ function RuntimeConversation({
 						value={input}
 						onChange={(event) => setInput(event.target.value)}
 						onKeyDown={(event) => {
+							if (activeMention !== null && ["ArrowDown", "ArrowUp", "Tab"].includes(event.key))
+								return;
 							if (event.key !== "Enter" || event.shiftKey) return;
+							if (activeMention !== null) return;
 							event.preventDefault();
 							void submit();
 						}}
 						placeholder={
-							activeSessionId ? "Message Kestrel" : "Describe the outcome"
+							activeSessionId
+								? "Message Kestrel. Type @ for tabs, bookmarks, or files."
+								: "Describe the outcome. Type @ for tabs, bookmarks, or files."
 						}
 					/>
+					{activeMention !== null && (
+						<ComposerMentionPicker
+							query={activeMention}
+							tabs={mentionTabs}
+							bookmarks={mentionBookmarks}
+							files={mentionFiles}
+							onSelect={(mention) => {
+								setInput((current) =>
+									replaceMention(current, mention.insert),
+								);
+								if (mention.attachment)
+									setAttachments((current) =>
+										[...current, mention.attachment!].slice(0, 8),
+									);
+							}}
+						/>
+					)}
 					<div className="composer-footer">
 						<div className="button-row composer-context-actions">
 							<button
@@ -8673,9 +8749,55 @@ export function App() {
 		localStorage.setItem("kestrel:agent-sidebar", "open");
 	}, []);
 	const startNewAgent = useCallback((prompt = "") => {
+		const trimmed = prompt.trim();
+		if (!trimmed && Date.now() - lastPromptedNewAgentAtRef.current < 500) {
+			// #region agent log
+			fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"X-Debug-Session-Id": "91c7b0",
+				},
+				body: JSON.stringify({
+					sessionId: "91c7b0",
+					runId: "post-fix",
+					hypothesisId: "L",
+					location: "App.tsx:startNewAgent",
+					message: "Ignored steal-click empty startNewAgent",
+					data: {
+						msSincePrompted: Date.now() - lastPromptedNewAgentAtRef.current,
+					},
+					timestamp: Date.now(),
+				}),
+			}).catch(() => {});
+			// #endregion
+			return;
+		}
+		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
+		// #region agent log
+		fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Debug-Session-Id": "91c7b0",
+			},
+			body: JSON.stringify({
+				sessionId: "91c7b0",
+				runId: "post-fix",
+				hypothesisId: "B",
+				location: "App.tsx:startNewAgent",
+				message: "startNewAgent invoked",
+				data: {
+					promptLength: prompt.length,
+					hadPrompt: Boolean(trimmed),
+				},
+				timestamp: Date.now(),
+			}),
+		}).catch(() => {});
+		// #endregion
 	}, [revealAgentSidebar]);
 	const focusRuntimeApproval = useCallback(() => {
 		revealAgentSidebar();
@@ -8769,6 +8891,9 @@ export function App() {
 	const openBrowserDownloads = useCallback(() => {
 		void openAppPage("downloads");
 	}, [openAppPage]);
+	const openBrowserBookmarks = useCallback(() => {
+		void openAppPage("bookmarks");
+	}, [openAppPage]);
 	const openCommandCenter = useCallback(() => {
 		void openAppPage("commands");
 	}, [openAppPage]);
@@ -8833,14 +8958,13 @@ export function App() {
 					"This Kestrel link is not supported. Open New task or Settings from the sidebar.",
 				);
 			}),
-		[openAppPage, startNewAgent],
+		[openAppPage, openRuntimeSession, startNewAgent],
 	);
 	useEffect(() => {
 		if (!deepLinkNotice) return;
 		const timer = window.setTimeout(() => setDeepLinkNotice(""), 8_000);
 		return () => window.clearTimeout(timer);
 	}, [deepLinkNotice]);
-
 	useEffect(() => {
 		let active = true;
 		const unsubscribe = window.kestrel.onSnapshot((next) => {
@@ -9137,6 +9261,9 @@ export function App() {
 			{appPageId === "history" && (
 				<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
 			)}
+			{appPageId === "bookmarks" && (
+				<BrowserBookmarks browser={browser} onOpenBrowser={openBrowser} />
+			)}
 			{appPageId === "downloads" && <BrowserDownloads browser={browser} />}
 			{appPageId === "commands" && (
 				<CommandCenter
@@ -9214,6 +9341,7 @@ export function App() {
 						onOpenSettings={() => openSettings("browser")}
 						onOpenHistory={openBrowserHistory}
 						onOpenDownloads={openBrowserDownloads}
+						onOpenBookmarks={openBrowserBookmarks}
 						onOpenMenu={openCommandCenter}
 						onShowShortcuts={() => setShowShortcuts(true)}
 						{...(appPage ? { appPage } : {})}
@@ -9256,6 +9384,8 @@ export function App() {
 						configurationUi={snapshot.configuration.ui}
 						newAgentRequestId={newAgentRequestId}
 						newAgentPrompt={newAgentPrompt}
+						mentionTabs={browser.state?.tabs ?? []}
+						mentionBookmarks={browser.state?.bookmarks ?? []}
 						{...(browserContextEnabled
 							? { browserContext: () => browser.pageContext() }
 							: {})}
