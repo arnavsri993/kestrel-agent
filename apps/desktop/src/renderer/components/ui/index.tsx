@@ -136,7 +136,7 @@ export function EmptyState({
   className = "",
 }: {
   title: string;
-  detail: string;
+  detail?: string;
   action?: ReactNode;
   className?: string;
 }) {
@@ -146,7 +146,7 @@ export function EmptyState({
         <BrandMark />
       </span>
       <h2>{title}</h2>
-      <p>{detail}</p>
+      {detail ? <p>{detail}</p> : null}
       {action && <div className="ui-empty-state-action">{action}</div>}
     </section>
   );

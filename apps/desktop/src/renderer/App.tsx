@@ -1236,46 +1236,18 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									<br />
 									Kestrel gets it done.
 								</h1>
-								<p>
-									Give it an outcome. Kestrel plans the work, asks when it
-									matters, and shows what changed.
-								</p>
-								<div className="welcome-stack" aria-label="How Kestrel works">
-									<div>
-										<span>
-											<Icon name="research" />
-										</span>
-										<strong>Plan the work</strong>
-									</div>
-									<div>
-										<span>
-											<Icon name="approvals" />
-										</span>
-										<strong>Pause when it matters</strong>
-									</div>
-									<div>
-										<span>
-											<Icon name="ready" />
-										</span>
-										<strong>Verify the result</strong>
-									</div>
-								</div>
 							</div>
 						)}
 
 						{step === 1 && (
 							<div className="setup-warning">
 								<h1 tabIndex={-1}>Know what leaves this Mac.</h1>
-								<p>Models and connections determine where task data goes.</p>
 								<div className="warning-panel">
 									<details>
 										<summary>
 											<span>01</span>
 											<span>
 												<strong>Cloud models receive what you send</strong>
-												<small>
-													Use local models for work that must stay here.
-												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
@@ -1289,7 +1261,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>02</span>
 											<span>
 												<strong>Connected services may charge you</strong>
-												<small>Provider billing and limits still apply.</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
@@ -1304,9 +1275,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>03</span>
 											<span>
 												<strong>Approval is a pause, not a guarantee</strong>
-												<small>
-													Verify high-stakes output before relying on it.
-												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
@@ -1321,7 +1289,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>04</span>
 											<span>
 												<strong>Connections widen access</strong>
-												<small>Grant only what the task needs.</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
@@ -1346,10 +1313,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									/>
 									<span>
 										<strong>I understand these boundaries</strong>
-										<small>
-											Providers, permissions, budgets, and approval rules can
-											change later.
-										</small>
 									</span>
 								</label>
 							</div>
@@ -1367,15 +1330,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													? "Set up a local model."
 													: "Connect a free account."}
 									</h1>
-									<p>
-										{step === 2
-											? "You can change this later."
-											: modelView === "accounts"
-												? "Sign in or add a protected API key."
-												: modelView === "local"
-													? "Balanced is recommended for this Mac."
-													: "Terms and free limits vary by provider."}
-									</p>
 								</header>
 								{step === 2 && (
 									<div
@@ -1390,7 +1344,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<Icon name="models" />
 											</span>
 											<strong>Use an account</strong>
-											<small>Sign in or add an API key.</small>
 											<span className="source-action">
 												<b>
 													{configuredCredentials.length
@@ -1409,7 +1362,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<Icon name="local" />
 											</span>
 											<strong>Run on this Mac</strong>
-											<small>Private and offline-capable.</small>
 											<span className="route-badge">Recommended</span>
 											<span className="source-action">
 												<b>
@@ -1428,7 +1380,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<Icon name="free" />
 											</span>
 											<strong>Try free providers</strong>
-											<small>Current terms and limits apply.</small>
 											<span className="source-action">
 												<b>Four supported options</b>
 												<Icon name="arrow" />
@@ -1521,14 +1472,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 														<strong id="selected-provider-name">
 															{selectedPaidProvider.name}
 														</strong>
-														<small>{selectedPaidProvider.description}</small>
 													</span>
 												</header>
-												<p className="account-intro">
-													Choose a connection method. API usage and
-													subscriptions are separate products billed by the
-													provider.
-												</p>
 												<div className="connection-method-list">
 													{selectedPaidProvider.methods.map((method) => {
 														if (method.kind === "cli") {
@@ -1729,11 +1674,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															? `${memoryInGb(systemProfile)} GB ${systemProfile.architecture === "arm64" ? "Apple Silicon Mac" : `${systemProfile.architecture} Mac`}`
 															: "Checking this Mac…"}
 													</strong>
-													<small>
-														{systemProfile
-															? "Your device"
-															: "Checking device capacity"}
-													</small>
 												</span>
 											</div>
 										</div>
@@ -1768,7 +1708,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																		<span>Recommended</span>
 																	)}
 																</div>
-																<p>{model.description}</p>
 																<details className="model-tier-details">
 																	<summary>Details</summary>
 																	<dl>
@@ -1929,9 +1868,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											>
 												<span>
 													<strong>Manual setup</strong>
-													<small>
-														Use your own Ollama install or choose any model.
-													</small>
 												</span>
 												<span aria-hidden="true">
 													{manualSetupOpen ? "−" : "+"}
@@ -1971,7 +1907,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													>
 														<label htmlFor="custom-ollama-model">
 															<span>Any other Ollama model</span>
-															<small>Use the exact library name and tag.</small>
 														</label>
 														<input
 															id="custom-ollama-model"
@@ -2018,11 +1953,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									>
 										<div className="more-provider-lead">
 											<strong>Add the accounts you want to use.</strong>
-											<p>
-												Create a key on the provider’s official site, then save
-												it here. Kestrel protects the key and can use any
-												account you connect.
-											</p>
 										</div>
 										<div className="provider-groups">
 											{freeCredentialGroups.map((group) => {
@@ -2293,7 +2223,7 @@ function ProductAnchor({
 	detail,
 }: {
 	className?: string;
-	detail: string;
+	detail?: string;
 }) {
 	const reduced = useReducedMotion();
 	return (
@@ -2312,7 +2242,7 @@ function ProductAnchor({
 			</span>
 			<span>
 				<strong>Kestrel</strong>
-				<small>{detail}</small>
+				{detail ? <small>{detail}</small> : null}
 			</span>
 		</motion.div>
 	);
@@ -2394,10 +2324,7 @@ function Artifacts() {
 		);
 	}, []);
 	return (
-		<PageFrame
-			title="Verified results"
-			text="Files stay local with their provenance."
-		>
+		<PageFrame title="Verified results">
 			<div className="artifact-toolbar">
 				<span>
 					{artifacts.length} verified file{artifacts.length === 1 ? "" : "s"}
@@ -2419,10 +2346,7 @@ function Artifacts() {
 			</div>
 			{error && <p role="alert">{error}</p>}
 			{artifacts.length === 0 ? (
-				<Empty
-					title="Nothing saved yet"
-					text="Verified files and interactive results will appear here."
-				/>
+				<Empty title="Nothing saved yet" />
 			) : (
 				<section className="artifact-grid">
 					{artifacts
@@ -2665,11 +2589,6 @@ function Home({
 								? "1 approval waiting"
 								: "Background work is quiet"}
 						</strong>
-						<small>
-							{approval?.status === "pending"
-								? "Kestrel prepared a plan and paused before acting"
-								: "No action needs you right now"}
-						</small>
 					</span>
 					<Icon name="chevron" />
 				</button>
@@ -4524,10 +4443,7 @@ function Approvals({
 	const approval = snapshot.approvals[0];
 	if (!approval)
 		return (
-			<Empty
-				title="No approvals waiting"
-				text="Prepared actions that cross a permission boundary will appear here."
-			/>
+			<Empty title="No approvals waiting" />
 		);
 	async function request(input: Parameters<typeof window.kestrel.request>[0]) {
 		const response = (await window.kestrel.request(input)) as CoreResponse;
@@ -4535,10 +4451,7 @@ function Approvals({
 		if (response.snapshot) update(response.snapshot);
 	}
 	return (
-		<PageFrame
-			title="Review this action"
-			text="Nothing happens until you decide."
-		>
+		<PageFrame title="Review this action">
 			<ApprovalCard
 				approval={approval}
 				onApprove={() => request({ type: "approve", approvalId: approval.id })}
@@ -4678,10 +4591,7 @@ function Memory({
 	}
 
 	return (
-		<PageFrame
-			title="Memory"
-			text="Review, correct, or forget what Kestrel keeps."
-		>
+		<PageFrame title="Memory">
 			<form
 				className="memory-create"
 				onSubmit={(event) => {
@@ -4892,10 +4802,7 @@ function Memory({
 
 function Activity({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 	return (
-		<PageFrame
-			title="What happened"
-			text="Each step keeps its source and status."
-		>
+		<PageFrame title="What happened">
 			<ol className="activity-list">
 				{snapshot.activity.map((item, index) => (
 					<li key={item.id}>
@@ -5046,7 +4953,6 @@ function Readiness() {
 	return (
 		<PageFrame
 			title={readiness?.readyForLiveWork ? "Ready for work" : "Needs attention"}
-			text="Core, model route, project scope, permissions, and recovery."
 		>
 			<section
 				className={`readiness-hero ${readiness?.readyForLiveWork ? "ready" : "attention"}`}
@@ -5129,10 +5035,6 @@ function Readiness() {
 								<small className="verified-label">Verified</small>
 							)}
 						</header>
-						<p>
-							This contacts only the configured provider or local model service.
-							It does not send a project prompt.
-						</p>
 						{providerChecks.length > 0 && (
 							<ul>
 								{providerChecks.map((check) => (
@@ -5269,10 +5171,7 @@ function Research() {
 		}
 	}
 	return (
-		<PageFrame
-			title="Search with sources"
-			text="HTTPS sources remain cited and untrusted."
-		>
+		<PageFrame title="Search with sources">
 			<form
 				className="research-search"
 				onSubmit={(event) => {
@@ -5503,10 +5402,7 @@ function Work({
 				: 100;
 
 	return (
-		<PageFrame
-			title="Plan and track"
-			text="Goals, delegates, and schedules stay inspectable."
-		>
+		<PageFrame title="Plan and track">
 			{routedTask && (
 				<section
 					className={`orchestration-status status-${routedTask.status}`}
@@ -5618,10 +5514,6 @@ function Work({
 					}}
 				>
 					<h2>Delegate a task</h2>
-					<p className="work-card-note">
-						Kestrel chooses a verified worker by capability, quality,
-						reliability, latency, cost, privacy, and your routing preference.
-					</p>
 					<label>
 						Parent task
 						<select
@@ -5811,10 +5703,6 @@ function Work({
 							placeholder="tomorrow at 9 am · every 30 minutes · */15 * * * *"
 						/>
 					</label>
-					<small>
-						Natural-language times are interpreted in UTC. Five-field cron is
-						supported.
-					</small>
 					<button
 						className="button primary"
 						disabled={
@@ -5835,10 +5723,6 @@ function Work({
 						Scheduled runs stay local and encrypted. Sensitive actions stop in
 						the review queue for approval, and recurring work advances only
 						after a completed run.
-					</p>
-					<p>
-						Use the packaged daemon for headless execution or leave Kestrel
-						Desktop running for local background polling.
 					</p>
 				</article>
 			</section>
@@ -6240,10 +6124,6 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 		>
 			<header className="settings-panel-header">
 				<h2 id="settings-connections-title">Accounts and access</h2>
-				<p>
-					Sign-ins stay with their providers. Project folders and external
-					access remain explicit and revocable.
-				</p>
 			</header>
 			<div className="connection-list">
 				<article className="oauth-connection">
@@ -6557,10 +6437,6 @@ function LearnedSkillsSettings() {
 		<article className="setting-row learned-skills-setting">
 			<div>
 				<strong>Experience-to-skill learning</strong>
-				<p>
-					Agent proposals are credential-scanned and parsed in isolation.
-					Nothing is installed until you review it.
-				</p>
 				<small>
 					{installed.length} installed · {waiting.length} waiting ·{" "}
 					{feedbackCount} outcome records
@@ -6677,10 +6553,6 @@ function CredentialSettings() {
 			<article className="setting-row credential-setting">
 				<div>
 					<strong>Protected provider credentials</strong>
-					<p>
-						Secrets are encrypted with macOS secure storage, sent only to the
-						isolated core process, and never displayed again.
-					</p>
 					<div className="credential-list">
 						{credentials.map((credential) => (
 							<div className="credential-entry" key={credential.id}>
@@ -6816,12 +6688,6 @@ function SubscriptionCliSettings() {
 		<article className="setting-row subscription-setting">
 			<div>
 				<strong>Existing vendor subscriptions</strong>
-				<p>
-					Use the authenticated Codex, Claude Code, or OpenCode app already on
-					this Mac. Codex runs as one persistent, read-only app-server with
-					durable threads and streamed turns; Claude and OpenCode provide
-					isolated CLI invocations. Kestrel never copies vendor OAuth tokens.
-				</p>
 				<ul className="subscription-setting-list">
 					{items.map((item) => (
 						<li key={item.id}>
@@ -6914,10 +6780,6 @@ function ProviderVerificationSettings() {
 		<article className="setting-row">
 			<div>
 				<strong>Live provider verification</strong>
-				<p>
-					Probe configured provider accounts from the isolated core without
-					exposing credentials or sending a model prompt.
-				</p>
 				{providers.length === 0 ? (
 					<small>No model providers are configured.</small>
 				) : (
@@ -7020,11 +6882,6 @@ function MigrationSettings() {
 		<article className="setting-row">
 			<div>
 				<strong>Reference-product migration</strong>
-				<p>
-					Dry-run an import from OpenClaw, Hermes, Codex, or Claude Code.
-					Kestrel preserves source files and writes a separate non-secret
-					normalized settings manifest.
-				</p>
 				<div className="button-row">
 					<select
 						value={product}
@@ -7350,11 +7207,6 @@ function CustomAgentsSettings({
 		<article className="setting-row custom-agent-setting">
 			<div>
 				<strong>Custom agents</strong>
-				<p>
-					Create encrypted profiles with a fixed model/provider route,
-					least-privilege tool list, and optional isolation from shared user
-					memory.
-				</p>
 				<div className="custom-agent-grid">
 					<label>
 						Agent ID
@@ -7559,10 +7411,6 @@ function RoutingPolicySettings() {
 		<article className="setting-row routing-policy-setting">
 			<div>
 				<strong>How Kestrel chooses models</strong>
-				<p>
-					Choose an outcome. Kestrel still selects the model, provider,
-					reasoning, speed, context, fallbacks, and review for each task.
-				</p>
 				<div
 					className="routing-mode-grid"
 					role="radiogroup"
@@ -7764,11 +7612,6 @@ function UsagePolicySettings() {
 		<article className="setting-row usage-policy-setting">
 			<div>
 				<strong>Usage and cost guardrails</strong>
-				<p>
-					Budget reservations and concurrency are enforced before every provider
-					call. Rates are accounting estimates per million tokens and can be
-					overridden through the policy API by model.
-				</p>
 				<div className="usage-policy-grid">
 					<label>
 						Daily budget, USD
@@ -7925,10 +7768,6 @@ function ApprovalRulesSettings() {
 		<article className="setting-row">
 			<div>
 				<strong>Persistent tool approval rules</strong>
-				<p>
-					Rules created at a task approval boundary are encrypted,
-					session-scoped by default, and revocable here.
-				</p>
 				{rules.length === 0 ? (
 					<small>No persistent tool rules.</small>
 				) : (
@@ -8166,16 +8005,16 @@ function Settings({
 	});
 	const route = snapshot.modelRouting.currentDecision;
 	const browserSections = [
-		["browser", "Browser Preferences", "Search, extensions, performance & tabs"],
+		["browser", "Browser Preferences"],
 	] as const;
 	const agentSections = [
-		["general", "General & Autonomy", "Appearance, behavior, and initiatives"],
-		["connections", "Connections", "Accounts, workspaces, and folders"],
-		["models", "Models & Routing", "Model routing, rates, and providers"],
-		["intelligence", "Intelligence & Memory", "Recall, presence, and learning"],
-		["extensions", "Agent Plugins", "Supply chain and trusted publisher keys"],
-		["privacy", "Privacy & Safety", "Approvals, boundaries, and recovery"],
-		["advanced", "Advanced System", "Diagnostics and organization"],
+		["general", "General & Autonomy"],
+		["connections", "Connections"],
+		["models", "Models & Routing"],
+		["intelligence", "Intelligence & Memory"],
+		["extensions", "Agent Plugins"],
+		["privacy", "Privacy & Safety"],
+		["advanced", "Advanced System"],
 	] as const;
 	return (
 		<PageFrame title="Preferences" {...(onBack ? { onBack } : {})}>
@@ -8185,7 +8024,7 @@ function Settings({
 						<Icon name="browser" />
 						<span>Browser Settings</span>
 					</div>
-					{browserSections.map(([id, label, description]) => (
+					{browserSections.map(([id, label]) => (
 						<button
 							key={id}
 							className={section === id ? "active browser-section-btn" : "browser-section-btn"}
@@ -8193,7 +8032,6 @@ function Settings({
 							onClick={() => setSection(id)}
 						>
 							<span>{label}</span>
-							<small>{description}</small>
 						</button>
 					))}
 
@@ -8201,7 +8039,7 @@ function Settings({
 						<Icon name="agent" />
 						<span>Agent Settings</span>
 					</div>
-					{agentSections.map(([id, label, description]) => (
+					{agentSections.map(([id, label]) => (
 						<button
 							key={id}
 							className={section === id ? "active" : ""}
@@ -8209,7 +8047,6 @@ function Settings({
 							onClick={() => setSection(id)}
 						>
 							<span>{label}</span>
-							<small>{description}</small>
 						</button>
 					))}
 				</nav>
@@ -8223,9 +8060,6 @@ function Settings({
 								</span>
 								<strong>Ask Kestrel to change supported settings</strong>
 							</div>
-							<p>
-								Request a setting change in the sidebar. Kestrel shows the proposed change and waits for approval before applying it.
-							</p>
 							<div className="agent-config-chips" aria-label="Personalized configuration requests">
 								<span className="chips-label">Try asking:</span>
 								{configurationPrompts.map((prompt) => (
@@ -8273,11 +8107,6 @@ function Settings({
 							<article className="setting-row">
 								<div>
 									<strong>Setup guide</strong>
-									<p>
-										Reopen the simple account, local-model, privacy, and
-										readiness walkthrough. Existing protected credentials stay
-										in place.
-									</p>
 								</div>
 								<button className="button secondary" onClick={reopenSetup}>
 									Open setup guide
@@ -8286,7 +8115,6 @@ function Settings({
 							<article className="setting-row">
 								<div>
 									<strong>Background work</strong>
-									<p>Pause proactive work without closing Kestrel.</p>
 								</div>
 								<button
 									className="button secondary"
@@ -8300,10 +8128,6 @@ function Settings({
 							<article className="setting-row routing-setting">
 								<div>
 									<strong>Communication style</strong>
-									<p>
-										Choose how Kestrel explains work; safety and capability
-										rules do not change.
-									</p>
 								</div>
 								<div
 									className="segmented"
@@ -8332,10 +8156,6 @@ function Settings({
 							<article className="setting-row">
 								<div>
 									<strong>Run at login</strong>
-									<p>
-										Off by default. macOS may require confirmation in System
-										Settings.
-									</p>
 									{login && <small>System status: {login.status}</small>}
 								</div>
 								<button
@@ -8351,10 +8171,6 @@ function Settings({
 							<article className="setting-row autonomy">
 								<div>
 									<strong>Initiative level</strong>
-									<p>
-										Assistant prepares safe work and pauses at meaningful
-										external actions.
-									</p>
 								</div>
 								<div
 									className="segmented"
@@ -8388,10 +8204,6 @@ function Settings({
 								<article className="setting-row routing-setting">
 									<div>
 										<strong>Execution routing</strong>
-										<p>
-											Kestrel selects all three per task from complexity,
-											quality, latency, risk, tool use, and budget.
-										</p>
 										<small>
 											{route.execution === "local"
 												? "No provider request was needed for the current task."
@@ -8650,10 +8462,8 @@ function PageFrame({
 	);
 }
 
-function Empty({ title, text }: { title: string; text: string }) {
-	return (
-		<EmptyState title={title} detail={text} />
-	);
+function Empty({ title, text }: { title: string; text?: string }) {
+	return text ? <EmptyState title={title} detail={text} /> : <EmptyState title={title} />;
 }
 
 export function App() {

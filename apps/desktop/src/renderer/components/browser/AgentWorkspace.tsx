@@ -62,7 +62,6 @@ export function AgentWorkspace({
 						<h1 id="agent-workspace-title" tabIndex={-1}>
 							Agent Workspace
 						</h1>
-						<p>Delegated tasks stay connected to the work that created them.</p>
 					</div>
 				</div>
 				<button type="button" className="button primary" onClick={onNewTask}>

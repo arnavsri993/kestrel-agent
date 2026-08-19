@@ -569,7 +569,6 @@ function PeopleView() {
 				<header>
 					<div>
 						<h2>People</h2>
-						<p>Relationship context with fact-level provenance.</p>
 					</div>
 					<strong>{people.length}</strong>
 				</header>
@@ -604,9 +603,6 @@ function PeopleView() {
 				{people.length === 0 && !busy && (
 					<div className="people-empty">
 						<p>No people are stored yet.</p>
-						<small>
-							Add someone only when their relationship context will be useful.
-						</small>
 					</div>
 				)}
 			</section>
@@ -1144,9 +1140,6 @@ function MemoryView({
 				<header>
 					<div>
 						<h2>Explain context selection</h2>
-						<p>
-							Preview the smallest non-sensitive context a task would receive.
-						</p>
 					</div>
 				</header>
 				<form onSubmit={(event) => void previewContext(event)}>
@@ -1179,7 +1172,6 @@ function MemoryView({
 				<section className="life-proposals">
 					<header>
 						<h2>Waiting for your review</h2>
-						<p>Proposals never become confirmed profile facts silently.</p>
 					</header>
 					{facts
 						.filter((fact) => fact.status === "proposed")
@@ -1240,7 +1232,6 @@ export function LifeContext({
 		<div className="life-page">
 			<header className="page-header life-header">
 				<h1>Your context</h1>
-				<p>Time, people, and memory stay connected and explainable.</p>
 			</header>
 			<nav className="life-switcher" aria-label="Life views">
 				{(

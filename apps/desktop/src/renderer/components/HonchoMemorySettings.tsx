@@ -171,11 +171,6 @@ export function HonchoMemorySettings() {
 		<article className="setting-row honcho-memory-setting">
 			<div>
 				<strong>Honcho remote memory</strong>
-				<p>
-					Optional reasoning-backed memory alongside Kestrel’s encrypted local
-					memory. Local facts, corrections, review, and deletion controls stay
-					available even when Honcho is enabled.
-				</p>
 				<small className="honcho-disclosure">
 					{status.remoteDataDisclosure}
 				</small>

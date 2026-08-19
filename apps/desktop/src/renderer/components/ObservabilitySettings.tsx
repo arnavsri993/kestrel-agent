@@ -113,9 +113,8 @@ export function ObservabilitySettings() {
 			<div>
 				<strong>External observability</strong>
 				<p>
-					Export bounded operational counts to your own monitoring stack. Prompt
-					and response text, tool payloads, session IDs, paths, hostnames, and
-					credentials are never eligible for export.
+					Prompt and response text, tool payloads, session IDs, paths, hostnames,
+					and credentials are never eligible for export.
 				</p>
 				<label className="checkbox-label">
 					<input

@@ -173,12 +173,7 @@ export function EventApplications({
 		<section className="page-frame event-applications-page">
 			<header className="event-applications-hero">
 				<div>
-					<h1>Apply with your agent. Send with your consent.</h1>
-					<p>
-						Import an official event or hackathon page, let the local agent
-						prepare a review workspace, then approve each answer before any
-						external submission.
-					</p>
+					<h1>Opportunities</h1>
 				</div>
 				<div className="event-safety-note">
 					<strong>Submission stays locked</strong>
