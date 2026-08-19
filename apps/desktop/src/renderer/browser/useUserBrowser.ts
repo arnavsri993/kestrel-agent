@@ -17,7 +17,7 @@ export interface UserBrowserController {
 	state: UserBrowserState | null;
 	error: string;
 	findMatch: UserBrowserFindMatch | null;
-	createTab(input?: string): Promise<void>;
+	createTab(input?: string, active?: boolean): Promise<void>;
 	reopenClosedTab(): Promise<void>;
 	closeTab(tabId: string): Promise<void>;
 	selectTab(tabId: string): Promise<void>;
@@ -129,11 +129,11 @@ export function useUserBrowser(): UserBrowserController {
 	}, []);
 
 	const createTab = useCallback(
-		(input?: string) =>
+		(input?: string, active = true) =>
 			requestState({
 				type: "browser-create-tab",
 				...(input ? { input } : {}),
-				active: true,
+				active,
 			}),
 		[requestState],
 	);

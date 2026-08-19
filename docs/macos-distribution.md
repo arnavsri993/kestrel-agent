@@ -1,6 +1,6 @@
 # macOS runtime and distribution
 
-The initial target is macOS 13+ through a direct, signed, notarized DMG. Development packages are ad-hoc signed, not Developer ID signed or notarized, and are not release artifacts.
+The initial target is any Apple Silicon Mac (M1 and later) running macOS 13+ through a direct, signed, notarized DMG. Native modules are rebuilt with `MACOSX_DEPLOYMENT_TARGET=13.0` so a build produced on a newer OS still launches on Ventura M-series machines. Development packages are ad-hoc signed, not Developer ID signed or notarized, and are not release artifacts.
 
 Identity values live in `packages/shared-types/src/identity.ts`. The packaged
 development app persists `KESTREL_RELEASE_CHANNEL=development` in its
@@ -9,7 +9,9 @@ identity remain distinct when Finder launches it. Its `Kestrel` application
 data directory and macOS `Kestrel Safe Storage` Keychain identity remain
 compatibility-shared with earlier development builds; changing either without a
 tested migration would make existing encrypted history and credentials appear
-lost. The repository does not yet ship a beta-specific packaging workflow.
+lost. Development and stable packages share the single Kestrel product name;
+only the development bundle identifier differs to avoid collisions while
+building locally.
 
 Closing the main window hides it while the opted-in background agent continues. The menu bar exposes exact states, pending approvals, pause/resume, open, and quit. Quit checkpoints work and terminates the utility process.
 

@@ -131,7 +131,7 @@ async function assertDistinctVisibleCopy(
 }
 
 async function openTool(page: Page, label: string) {
-	await page.getByRole("button", { name: "More", exact: true }).click();
+	await page.keyboard.press("Meta+K");
 	await page
 		.getByRole("heading", { name: "Capabilities", exact: true })
 		.waitFor();
@@ -140,11 +140,10 @@ async function openTool(page: Page, label: string) {
 		.filter({ has: page.getByText(label, { exact: true }) })
 		.first()
 		.click();
-	await page.locator(".legacy-product-surface").waitFor();
+	await page.locator(".browser-app-page").waitFor();
 	await assertDistinctVisibleCopy(page, `${label} surface`, [
-		".secondary-surface-bar > strong",
-		".legacy-product-surface .page-header h1",
-		".legacy-product-surface .page-header .eyebrow",
+		".browser-tab.active [role='tab'] .browser-tab-title",
+		".browser-app-page h1",
 	]);
 }
 
@@ -204,7 +203,6 @@ try {
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "Choose-model setup", [
 		".setup-rail li.current strong",
-		".setup-product-anchor small",
 		".setup-stage h1",
 	]);
 	await capture(page, "setup-03-choose-model.png");
@@ -240,25 +238,18 @@ try {
 
 	await page.getByRole("button", { name: "Continue" }).click();
 	await page
-		.getByRole("heading", {
-			name: /Kestrel is ready|Your model route is configured\.|Your workspace is ready\./,
-		})
+		.getByRole("heading", { name: "You're set.", exact: true })
 		.waitFor();
 	await capture(page, "setup-05-ready.png");
 
+	await page.getByRole("button", { name: /Open Kestrel/ }).click();
+	await page.locator("#runtime-prompt").waitFor();
 	await page
-		.getByRole("button", {
-			name: /Start using Kestrel|Open Kestrel|Open local preview/,
-		})
-		.click();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
-	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
+		.waitFor();
 	await capture(page, "workspace-new-agent-and-tab.png", 360);
 
-	await page
-		.locator(".agent-sidebar-footer")
-		.getByRole("button", { name: "History", exact: true })
-		.click();
+	await page.keyboard.press("Meta+H");
 	await page
 		.getByRole("heading", { name: "Pages you visited", exact: true })
 		.waitFor();
@@ -268,10 +259,7 @@ try {
 	]);
 	await capture(page, "surface-history.png");
 
-	await page
-		.locator(".agent-sidebar-footer")
-		.getByRole("button", { name: "Downloads", exact: true })
-		.click();
+	await page.keyboard.press("Meta+J");
 	await page
 		.getByRole("heading", { name: "Files from the web", exact: true })
 		.waitFor();
@@ -285,16 +273,17 @@ try {
 		.locator(".agent-sidebar-footer")
 		.getByRole("button", { name: "Browser", exact: true })
 		.click();
-	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+	await page
+		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
+		.waitFor();
 
 	await page.getByLabel("Task settings").click();
 	await page.getByText("Task settings", { exact: true }).waitFor();
 	await capture(page, "workspace-task-settings.png", 120);
 	await page.getByLabel("Task settings").click();
 
-	await page.getByRole("button", { name: "Task history", exact: true }).click();
 	const firstSession = page
-		.locator(".agent-history-popover > div > button")
+		.locator(".agent-sidebar-history-list > button")
 		.first();
 	if (await firstSession.count()) {
 		await firstSession.click();
@@ -306,7 +295,7 @@ try {
 		.first()
 		.click();
 
-	await page.getByRole("button", { name: "More", exact: true }).click();
+	await page.keyboard.press("Meta+K");
 	await page.getByLabel("Search Kestrel").waitFor();
 	await capture(page, "workspace-command-center.png", 160);
 
@@ -404,13 +393,15 @@ try {
 		.first()
 		.click();
 	await page.getByRole("button", { name: "Browser", exact: true }).click();
-	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+	await page
+		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
+		.waitFor();
 	await page.setViewportSize({ width: 640, height: 760 });
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 	await capture(page, "compact-new-agent.png");
 	await assertNoPageOverflow(page, "Compact workspace");
 
-	await page.getByRole("button", { name: "More", exact: true }).click();
+	await page.keyboard.press("Meta+K");
 	await page.getByLabel("Search Kestrel").waitFor();
 	await capture(page, "compact-command-center.png", 160);
 	const commandBounds = await page
@@ -436,10 +427,12 @@ try {
 	await capture(page, "compact-settings.png");
 	await assertNoPageOverflow(page, "Compact Settings");
 
-	const moreTrigger = page.getByRole("button", { name: "More", exact: true });
+	const focusTrigger = page
+		.locator(".agent-sidebar-footer")
+		.getByRole("button", { name: "Browser", exact: true });
 	// Verify focus the way a keyboard user reaches this control. Programmatic
 	// focus intentionally does not always match :focus-visible in Chromium.
-	await moreTrigger.focus();
+	await focusTrigger.focus();
 	await page.keyboard.press("Shift+Tab");
 	await page.keyboard.press("Tab");
 	const focusStyle = await page.evaluate(() => {
@@ -455,7 +448,7 @@ try {
 		};
 	});
 	if (
-		focusStyle.label !== "More" ||
+		focusStyle.label !== "Browser" ||
 		focusStyle.outline === "none" ||
 		focusStyle.width === "0px"
 	)
@@ -468,7 +461,7 @@ try {
 		.getByRole("button", { name: "New task", exact: true })
 		.first()
 		.waitFor();
-	await moreTrigger.click();
+	await page.keyboard.press("Meta+K");
 	await page
 		.locator(".command-groups button")
 		.filter({ hasText: "Approvals" })
@@ -512,12 +505,11 @@ try {
 			{ name: "prefers-reduced-transparency", value: "reduce" },
 		],
 	});
-	await page.getByRole("button", { name: "Task history", exact: true }).click();
 	const transparency = await page
-		.locator(".agent-history-popover")
+		.locator(".agent-sidebar")
 		.evaluate((element) => getComputedStyle(element).backdropFilter);
 	if (transparency !== "none")
-		throw new Error("Reduced transparency did not remove history blur.");
+		throw new Error("Reduced transparency did not keep the agent rail matte.");
 	await capture(page, "compact-reduced-transparency.png", 20);
 
 	if (runtimeErrors.length > 0)

@@ -43,6 +43,11 @@ const electron = vi.hoisted(() => {
     focus = vi.fn();
     insertText = vi.fn();
     executeJavaScript = vi.fn();
+    capturePage = vi.fn(async () => ({
+      getSize: () => ({ width: 1, height: 1 }),
+      toBitmap: () => Buffer.from([0, 0, 0, 255]),
+      toPNG: () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    }));
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = handler; });
     windowOpenHandler: ((details: { url: string; disposition: "foreground-tab" | "background-tab" | "new-window" }) => { action: string }) | undefined;
     isDestroyed = () => this.destroyed;
@@ -246,28 +251,20 @@ describe("UserBrowserService", () => {
     expect(view.visible).toBe(false);
   });
 
-  it("opens one user-initiated safe popup as a managed tab and denies script popup spam", async () => {
+  it("opens user-initiated safe links as a managed tab and denies unsafe urls", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "example.com");
     const source = electron.state.views[0]!.webContents;
 
+    // Unsafe URLs (like file://, javascript:, etc.) are denied
     expect(source.windowOpenHandler?.({
-      url: "https://script.example/path",
-      disposition: "new-window",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(1);
-
-    source.emit("before-mouse-event", {}, { type: "mouseDown" });
-    source.emit("before-mouse-event", {}, { type: "mouseUp" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(source.windowOpenHandler?.({
-      url: "https://late-script.example/path",
+      url: "file:///etc/passwd",
       disposition: "foreground-tab",
     })).toEqual({ action: "deny" });
     expect(service.getState().tabs).toHaveLength(1);
 
-    source.emit("before-mouse-event", {}, { type: "mouseDown" });
+    // Safe page links open as a managed tab
     expect(source.windowOpenHandler?.({
       url: "https://open.example/path",
       disposition: "foreground-tab",
@@ -275,19 +272,9 @@ describe("UserBrowserService", () => {
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState()).toMatchObject({ activeTabId: expect.any(String) });
     expect(service.getState().tabs.at(-1)).toMatchObject({ url: "https://open.example/path" });
-
-    expect(source.windowOpenHandler?.({
-      url: "https://spam.example/path",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(source.windowOpenHandler?.({
-      url: "file:///etc/passwd",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(2);
   });
 
-  it("awaits CDP clicks and scopes one popup to the approved action", async () => {
+  it("awaits CDP clicks and opens a managed tab for new window links", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
     await service.navigate(tab.id, "https://example.com");
@@ -340,11 +327,6 @@ describe("UserBrowserService", () => {
     expect(service.getState().tabs.at(-1)).toMatchObject({
       url: "https://opened.example/path",
     });
-    expect(contents.windowOpenHandler?.({
-      url: "https://spam.example/path",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(2);
   });
 
   it("settles an approved click after the source document is destroyed", async () => {
@@ -442,7 +424,7 @@ describe("UserBrowserService", () => {
     contents.executeJavaScript.mockResolvedValue({
       description: "Fixture",
       selectedText: "",
-      visibleText: "Visible reference text",
+      visibleText: "Visible reference text javascript:alert(1)",
       headings: ["Fixture"],
       links: [
         {
@@ -504,9 +486,57 @@ describe("UserBrowserService", () => {
         }],
       }],
     });
+    expect(context.visibleText).toBe("Visible reference text [redacted URL]");
     expect(JSON.stringify({ tabs, context, snapshot })).not.toMatch(
-      /do-not-share|hidden-link|hidden-ax-name|hidden-ax-link/,
+      /do-not-share|hidden-link|hidden-ax-name|hidden-ax-link|javascript:/,
     );
+  });
+
+  it("returns an empty snapshot for a blank tab without a safe URL", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    const snapshot = await service.snapshot(tab.id);
+    expect(snapshot).toEqual({
+      url: "about:blank",
+      title: "New Tab",
+      accessibilityTree: { nodes: [] },
+      interactive: [],
+    });
+    expect(electron.state.views[0]?.webContents.debugger.attach).not.toHaveBeenCalled();
+  });
+
+  it("mints snapshot refs for interactive accessibility nodes", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+    contents.title = "Example";
+    contents.debugger.sendCommand.mockResolvedValue({
+      nodes: [
+        {
+          nodeId: "1",
+          role: { value: "button" },
+          name: { value: "Save" },
+          backendDOMNodeId: 9,
+        },
+        {
+          nodeId: "2",
+          role: { value: "link" },
+          name: { value: "Home" },
+          backendDOMNodeId: 10,
+        },
+      ],
+    });
+
+    const snapshot = await service.snapshot(tab.id);
+    expect(snapshot.interactive).toEqual([
+      { ref: "e1", role: "button", name: "Save" },
+      { ref: "e2", role: "link", name: "Home" },
+    ]);
+    expect(snapshot.accessibilityTree).toMatchObject({
+      nodes: [{ ref: "e1" }, { ref: "e2" }],
+    });
   });
 
   it("inserts a selected code only into the active page's matching domain", async () => {
@@ -562,6 +592,49 @@ describe("UserBrowserService", () => {
         new AbortController().signal,
       ),
     ).resolves.toEqual({ downloads: [], trust: "untrusted_browser" });
+
+    const poisoned = {
+      id: "visit-00000000-0000-4000-8000-000000000000",
+      tabId: tab.id,
+      url: "https://example.com/notes?token=hidden-history",
+      title: "Poison",
+      visitedAt: "2026-08-19T12:00:00.000Z",
+    };
+    (
+      service as unknown as {
+        state: { history: Array<typeof poisoned> };
+      }
+    ).state.history.push(poisoned);
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-history", query: "hidden-history" },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ entries: [] });
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-history", query: "example.com/notes" },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      entries: [{ url: "https://example.com/notes", title: "Poison" }],
+    });
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-screenshot" },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      width: 1,
+      height: 1,
+      trust: "untrusted_browser",
+    });
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-navigate", tabId: tab.id, input: "https://robotics.example/next" },
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ navigated: true });
   });
 
   it("rejects oversized accessibility snapshots before returning them", async () => {
@@ -607,6 +680,9 @@ describe("UserBrowserService", () => {
       type: "keyDown",
       key: "Tab",
     });
+    await vi.waitFor(() =>
+      expect(service.getState().activeTabId).toBe(first.id),
+    );
     firstContents.emit("before-input-event", inputEvent, {
       meta: true,
       control: false,
@@ -642,8 +718,15 @@ describe("UserBrowserService", () => {
       type: "keyDown",
       key: "/",
     });
+    firstContents.emit("before-input-event", inputEvent, {
+      meta: false,
+      control: true,
+      shift: true,
+      type: "keyDown",
+      key: "Tab",
+    });
     await vi.waitFor(() =>
-      expect(service.getState().activeTabId).toBe(first.id),
+      expect(service.getState().activeTabId).toBe(second.id),
     );
 
     expect(commands).toEqual([
@@ -655,7 +738,7 @@ describe("UserBrowserService", () => {
       "open-settings",
       "show-shortcuts",
     ]);
-    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(8);
+    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(9);
   });
 
   it("supports reopening closed tabs and direct tab index switching", async () => {
@@ -730,5 +813,28 @@ describe("UserBrowserService", () => {
     expect(contents.openDevTools).toHaveBeenCalled();
     service.printTab(first.id);
     expect(contents.print).toHaveBeenCalled();
+  });
+
+  it("allows 'Continue with Google' and OAuth links to open as a managed tab", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://app.example.com/login");
+    const source = electron.state.views[0]!.webContents;
+
+    const googleAuthUrl =
+      "https://accounts.google.com/o/oauth2/v2/auth?client_id=test-client.apps.googleusercontent.com&redirect_uri=https://app.example.com/auth/callback&response_type=code&scope=openid%20email";
+
+    expect(
+      source.windowOpenHandler?.({
+        url: googleAuthUrl,
+        disposition: "foreground-tab",
+      }),
+    ).toEqual({ action: "deny" });
+
+    await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
+    const createdTab = service.getState().tabs.at(-1);
+    expect(createdTab).toMatchObject({
+      url: googleAuthUrl,
+    });
   });
 });

@@ -23,3 +23,5 @@ website-media/originals/
 website-media/work/
 website-media/.locks/
 apps/desktop/build/*.png
+graphify-out/
+**/graphify-out/

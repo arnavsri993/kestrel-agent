@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
-import type {
-	BrowserAction,
-	BrowserSnapshot,
-	ScreenshotFrame,
+import {
+	annotateAccessibilityTree,
+	type BrowserAction,
+	type BrowserSnapshot,
+	normalizeBrowserElementRef,
+	type ScreenshotFrame,
 } from "@kestrel/agent-core";
 import {
 	type UserBrowserCommand,
@@ -32,12 +34,26 @@ import {
 	type WebContents,
 	WebContentsView,
 } from "electron";
+import {
+	publicInteractiveRefs,
+	rememberElementRefs,
+	targetPointFromBackendNode,
+} from "./browser-backend-node-target";
 import { BrowserExtensionManager } from "./browser-extension-manager";
+import {
+	isUserBrowserBackendWireRequest,
+	type UserBrowserBackendWireRequest,
+} from "./browser-backend-wire";
 import {
 	BrowserTabStore,
 	createEmptyBrowserTab,
+	MAX_AX_SNAPSHOT_BYTES,
+	MAX_AX_SNAPSHOT_NODES,
+	MAX_INTERACTIVE_REFS,
 	normalizeBrowserAddress,
+	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
+	sanitizeUntrustedBrowserValue,
 } from "./browser-tab-store";
 import {
 	isKestrelAppPageUrl,
@@ -47,7 +63,6 @@ import {
 const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
 const MAX_DOWNLOAD_ENTRIES = 500;
-const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
 const POPUP_GESTURE_WINDOW_MS = 1_500;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
 const MAX_BOOKMARKS = 2_000;
@@ -63,36 +78,8 @@ const ALWAYS_DENY_PERMISSIONS = new Set([
 	"windowManagement",
 ]);
 
-export type UserBrowserBackendWireRequest =
-	| { operation: "visible-tabs" }
-	| { operation: "visible-context"; tabId?: string }
-	| { operation: "visible-snapshot"; tabId?: string }
-	| { operation: "visible-screenshot"; tabId?: string }
-	| { operation: "visible-history"; query?: string; limit?: number }
-	| { operation: "visible-downloads" }
-	| { operation: "visible-act"; tabId: string; action: BrowserAction }
-	| { operation: "visible-navigate"; tabId: string; input: string }
-	| { operation: "visible-create"; input?: string }
-	| { operation: "visible-close"; tabId: string }
-	| { operation: "visible-select"; tabId: string };
-
-export function isUserBrowserBackendWireRequest(request: {
-	operation?: unknown;
-}): request is UserBrowserBackendWireRequest {
-	return new Set<UserBrowserBackendWireRequest["operation"]>([
-		"visible-tabs",
-		"visible-context",
-		"visible-snapshot",
-		"visible-screenshot",
-		"visible-history",
-		"visible-downloads",
-		"visible-act",
-		"visible-navigate",
-		"visible-create",
-		"visible-close",
-		"visible-select",
-	]).has(request.operation as UserBrowserBackendWireRequest["operation"]);
-}
+export { isUserBrowserBackendWireRequest };
+export type { UserBrowserBackendWireRequest };
 
 export interface UserBrowserServiceOptions {
 	window: BrowserWindow;
@@ -108,10 +95,6 @@ export interface UserBrowserServiceOptions {
 interface ViewRecord {
 	view: WebContentsView;
 	navigatingTo?: string;
-	popupGestureAt?: number;
-	popupAllowance: number;
-	popupActionInFlight?: boolean;
-	popupResetTimer?: ReturnType<typeof setTimeout>;
 }
 
 function safePageUrl(value: string): URL | undefined {
@@ -143,24 +126,6 @@ function hostnameTitle(value: string): string {
 	}
 }
 
-const ACCESSIBILITY_URL_VALUE =
-	/\b(?:https?|file|ftp|data|javascript|blob):[^\s<>"'{}[\]]+/gi;
-
-function sanitizeAccessibilityTree(value: unknown): unknown {
-	if (typeof value === "string")
-		return value.replace(ACCESSIBILITY_URL_VALUE, (candidate) => {
-			return sanitizeBrowserUrl(candidate) || "[redacted URL]";
-		});
-	if (Array.isArray(value)) return value.map(sanitizeAccessibilityTree);
-	if (!value || typeof value !== "object") return value;
-	return Object.fromEntries(
-		Object.entries(value).map(([key, item]) => [
-			key,
-			sanitizeAccessibilityTree(item),
-		]),
-	);
-}
-
 function cloneState(state: UserBrowserState): UserBrowserState {
 	return UserBrowserStateSchema.parse(structuredClone(state));
 }
@@ -171,6 +136,7 @@ export class UserBrowserService {
 	private readonly partition: Session;
 	private readonly extensionManager: BrowserExtensionManager;
 	private readonly views = new Map<string, ViewRecord>();
+	private readonly elementRefs = new Map<string, Map<string, number>>();
 	private readonly downloadPaths = new Map<string, string>();
 	private readonly activeDownloads = new Map<string, Electron.DownloadItem>();
 	private readonly webContentsToTab = new Map<number, string>();
@@ -436,6 +402,7 @@ export class UserBrowserService {
 			this.state.settings.customSearchUrl,
 		);
 		const record = this.ensureView(tab);
+		this.elementRefs.delete(tabId);
 		tab.error = undefined;
 		tab.crashed = false;
 		tab.discarded = false;
@@ -767,8 +734,30 @@ export class UserBrowserService {
 					const candidate = link as { text?: unknown; url?: unknown };
 					const url = sanitizeBrowserUrl(String(candidate.url ?? ""));
 					return url
-						? [{ text: String(candidate.text ?? "").slice(0, 500), url }]
+						? [
+								{
+									text: redactUntrustedBrowserText(candidate.text, 500),
+									url,
+								},
+							]
 						: [];
+				})
+			: [];
+		const forms = Array.isArray(raw.forms)
+			? raw.forms.flatMap((form) => {
+					if (!form || typeof form !== "object") return [];
+					const candidate = form as {
+						label?: unknown;
+						type?: unknown;
+						name?: unknown;
+					};
+					return [
+						{
+							label: redactUntrustedBrowserText(candidate.label, 500),
+							type: redactUntrustedBrowserText(candidate.type, 100),
+							name: redactUntrustedBrowserText(candidate.name, 500),
+						},
+					];
 				})
 			: [];
 		const url =
@@ -779,9 +768,21 @@ export class UserBrowserService {
 		return UserBrowserPageContextSchema.parse({
 			tabId: tab.id,
 			url,
-			title: (record.view.webContents.getTitle() || tab.title).slice(0, 500),
-			...raw,
+			title: redactUntrustedBrowserText(
+				record.view.webContents.getTitle() || tab.title,
+				500,
+			),
+			description: redactUntrustedBrowserText(raw.description, 2000),
+			selectedText: redactUntrustedBrowserText(raw.selectedText, 20_000),
+			visibleText: redactUntrustedBrowserText(raw.visibleText, 40_000),
+			headings: Array.isArray(raw.headings)
+				? raw.headings
+						.map((heading) => redactUntrustedBrowserText(heading, 500))
+						.filter(Boolean)
+				: [],
 			links,
+			forms,
+			viewport: raw.viewport,
 			capturedAt: this.now().toISOString(),
 			trust: "untrusted_browser",
 		});
@@ -852,25 +853,55 @@ export class UserBrowserService {
 		const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
 		const webContents = this.ensureView(tab).view.webContents;
 		if (signal?.aborted) throw signal.reason;
+		const url =
+			sanitizeBrowserUrl(webContents.getURL()) ||
+			sanitizeBrowserUrl(tab.url);
+		if (!url) {
+			this.elementRefs.set(tab.id, new Map());
+			return {
+				url: "about:blank",
+				title: (webContents.getTitle() || tab.title || "New Tab").slice(
+					0,
+					500,
+				),
+				accessibilityTree: { nodes: [] },
+				interactive: [],
+			};
+		}
 		if (!webContents.debugger.isAttached()) webContents.debugger.attach("1.3");
 		const result = (await webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
-		const accessibilityTree = sanitizeAccessibilityTree({
-			nodes: (result.nodes ?? []).slice(0, 5_000),
+		const nodes = result.nodes ?? [];
+		const annotated = annotateAccessibilityTree({
+			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
 		});
+		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
+		const accessibilityTree = sanitizeUntrustedBrowserValue(
+			annotated.accessibilityTree,
+		);
 		if (
 			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
 			MAX_AX_SNAPSHOT_BYTES
-		)
+		) {
+			this.elementRefs.set(tab.id, new Map());
 			throw new Error("Visible browser accessibility snapshot exceeds 1.5 MB.");
-		const url = sanitizeBrowserUrl(webContents.getURL());
-		if (!url)
-			throw new Error("The selected tab does not have a safe readable URL.");
+		}
+		this.elementRefs.set(tab.id, rememberElementRefs(interactive));
 		return {
 			url,
-			title: webContents.getTitle().slice(0, 500),
+			title: redactUntrustedBrowserText(webContents.getTitle(), 500),
 			accessibilityTree,
+			interactive: publicInteractiveRefs(interactive).map((item) => ({
+				ref: item.ref,
+				role: item.role,
+				...(item.name
+					? { name: redactUntrustedBrowserText(item.name, 500) }
+					: {}),
+			})),
+			truncated:
+				nodes.length > MAX_AX_SNAPSHOT_NODES ||
+				annotated.interactive.length > MAX_INTERACTIVE_REFS,
 		};
 	}
 
@@ -884,11 +915,23 @@ export class UserBrowserService {
 		const needle = query.trim().toLocaleLowerCase();
 		const entries = [...this.state.history]
 			.reverse()
-			.filter(
-				(entry) =>
-					!needle ||
-					`${entry.title}\n${entry.url}`.toLocaleLowerCase().includes(needle),
-			)
+			.flatMap((entry) => {
+				const url = sanitizeBrowserUrl(entry.url);
+				if (!url) return [];
+				const sanitized = {
+					...entry,
+					url,
+					title: redactUntrustedBrowserText(entry.title, 500),
+				};
+				if (
+					needle &&
+					!`${sanitized.title}\n${sanitized.url}`
+						.toLocaleLowerCase()
+						.includes(needle)
+				)
+					return [];
+				return [sanitized];
+			})
 			.slice(0, Math.min(100, Math.max(1, Math.trunc(limit))));
 		return { entries: structuredClone(entries), trust: "untrusted_browser" };
 	}
@@ -932,7 +975,12 @@ export class UserBrowserService {
 		const webContents = record.view.webContents;
 		if (signal.aborted) throw signal.reason;
 		if (action.type === "click") {
-			const point = await this.targetPoint(webContents, action.target, false);
+			const point = await this.targetPoint(
+				webContents,
+				action.target,
+				false,
+				tabId,
+			);
 			if (signal.aborted) throw signal.reason;
 			if (!webContents.debugger.isAttached())
 				webContents.debugger.attach("1.3");
@@ -950,51 +998,40 @@ export class UserBrowserService {
 				clickCount: 0,
 			});
 			if (signal.aborted) throw signal.reason;
-			record.popupActionInFlight = true;
-			this.grantPopupAllowance(record);
+			let pressed = false;
 			try {
-				let pressed = false;
-				try {
-					await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-						...pointer,
-						type: "mousePressed",
-						button: "left",
-						buttons: 1,
-						clickCount: 1,
-					});
-					pressed = true;
-					if (signal.aborted) throw signal.reason;
-					await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-						...pointer,
-						type: "mouseReleased",
-						button: "left",
-						buttons: 0,
-						clickCount: 1,
-					});
-					pressed = false;
-				} finally {
-					if (pressed)
-						await webContents.debugger
-							.sendCommand("Input.dispatchMouseEvent", {
-								...pointer,
-								type: "mouseReleased",
-								button: "left",
-								buttons: 0,
-								clickCount: 1,
-							})
-							.catch(() => undefined);
-				}
-				// CDP can acknowledge input before the renderer-side window-open event
-				// reaches the main process. Keep this approved allowance one-shot for
-				// one main-process turn without depending on a document that may have
-				// navigated or been destroyed by the click.
-				await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
+				await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+					...pointer,
+					type: "mousePressed",
+					button: "left",
+					buttons: 1,
+					clickCount: 1,
+				});
+				pressed = true;
+				if (signal.aborted) throw signal.reason;
+				await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+					...pointer,
+					type: "mouseReleased",
+					button: "left",
+					buttons: 0,
+					clickCount: 1,
+				});
+				pressed = false;
 			} finally {
-				delete record.popupActionInFlight;
-				this.clearPopupAllowance(record);
+				if (pressed)
+					await webContents.debugger
+						.sendCommand("Input.dispatchMouseEvent", {
+							...pointer,
+							type: "mouseReleased",
+							button: "left",
+							buttons: 0,
+							clickCount: 1,
+						})
+						.catch(() => undefined);
 			}
+			await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
 		} else if (action.type === "type") {
-			await this.targetPoint(webContents, action.target, true);
+			await this.targetPoint(webContents, action.target, true, tabId);
 			if (signal.aborted) throw signal.reason;
 			webContents.insertText(action.text);
 		} else if (action.type === "key") {
@@ -1050,7 +1087,10 @@ export class UserBrowserService {
 					trust: "untrusted_browser",
 				};
 			case "visible-screenshot":
-				return this.screenshot(request.tabId, signal);
+				return {
+					...(await this.screenshot(request.tabId, signal)),
+					trust: "untrusted_browser",
+				};
 			case "visible-history":
 				return this.searchHistory(request.query, request.limit);
 			case "visible-downloads":
@@ -1059,7 +1099,8 @@ export class UserBrowserService {
 				await this.act(request.tabId, request.action, signal);
 				return { performed: true };
 			case "visible-navigate":
-				return this.navigate(request.tabId, request.input);
+				await this.navigate(request.tabId, request.input);
+				return { navigated: true };
 			case "visible-create": {
 				const state = await this.createTab(request.input, true);
 				return { tabId: state.activeTabId };
@@ -1216,6 +1257,7 @@ export class UserBrowserService {
 		if (this.sleepingTabsInterval) clearInterval(this.sleepingTabsInterval);
 		this.partition.off("will-download", this.onWillDownload);
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
+		this.elementRefs.clear();
 	}
 
 	private ensureView(tab: UserBrowserTab): ViewRecord {
@@ -1237,7 +1279,7 @@ export class UserBrowserService {
 			},
 		});
 		view.setBackgroundColor("#ffffff");
-		const record: ViewRecord = { view, popupAllowance: 0 };
+		const record: ViewRecord = { view };
 		this.views.set(tab.id, record);
 		this.webContentsToTab.set(view.webContents.id, tab.id);
 		this.configureView(tab, record);
@@ -1266,12 +1308,7 @@ export class UserBrowserService {
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const { webContents } = record.view;
 		webContents.setWindowOpenHandler(({ url, disposition }) => {
-			const gestureFresh =
-				record.popupGestureAt !== undefined &&
-				Date.now() - record.popupGestureAt <= POPUP_GESTURE_WINDOW_MS;
-			const allowed = gestureFresh && record.popupAllowance > 0;
-			this.clearPopupAllowance(record);
-			if (safePageUrl(url) && allowed && this.state.tabs.length < 32) {
+			if (safePageUrl(url) && this.state.tabs.length < 32) {
 				void this.createTab(url, disposition !== "background-tab").catch(
 					() => undefined,
 				);
@@ -1285,7 +1322,6 @@ export class UserBrowserService {
 			if (!safePageUrl(url)) event.preventDefault();
 		});
 		webContents.on("did-start-loading", () => {
-			this.clearPopupAllowance(record);
 			tab.loading = true;
 			tab.error = undefined;
 			this.updateNavigationState(tab, webContents);
@@ -1419,16 +1455,6 @@ export class UserBrowserService {
 			Menu.buildFromTemplate(template).popup({ window: this.window });
 		});
 		webContents.on("before-input-event", (event, input) => {
-			if (
-				input.type === "keyDown" &&
-				!input.isAutoRepeat &&
-				["Enter", " "].includes(input.key)
-			) {
-				this.grantPopupAllowance(record);
-			}
-			if (input.type === "keyUp" && ["Enter", " "].includes(input.key))
-				this.schedulePopupAllowanceReset(record);
-
 			if (input.type !== "keyDown") return;
 
 			// Escape: Stop loading if currently loading
@@ -1594,34 +1620,6 @@ export class UserBrowserService {
 				this.forward(tab.id);
 			}
 		});
-		webContents.on("before-mouse-event", (_event, mouse) => {
-			if (mouse.type === "mouseDown") this.grantPopupAllowance(record);
-			else if (mouse.type === "mouseUp" && !record.popupActionInFlight)
-				this.schedulePopupAllowanceReset(record);
-		});
-	}
-
-	private grantPopupAllowance(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		delete record.popupResetTimer;
-		record.popupGestureAt = Date.now();
-		record.popupAllowance = 1;
-	}
-
-	private schedulePopupAllowanceReset(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		const gestureAt = record.popupGestureAt;
-		record.popupResetTimer = setTimeout(() => {
-			delete record.popupResetTimer;
-			if (record.popupGestureAt === gestureAt) this.clearPopupAllowance(record);
-		}, 0);
-	}
-
-	private clearPopupAllowance(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		delete record.popupResetTimer;
-		delete record.popupGestureAt;
-		record.popupAllowance = 0;
 	}
 
 	private didNavigate(
@@ -1721,8 +1719,8 @@ export class UserBrowserService {
 	private closeView(tabId: string, closeWebContents = true): void {
 		const record = this.views.get(tabId);
 		if (!record) return;
-		this.clearPopupAllowance(record);
 		this.views.delete(tabId);
+		this.elementRefs.delete(tabId);
 		this.webContentsToTab.delete(record.view.webContents.id);
 		if (
 			!this.window.isDestroyed() &&
@@ -1867,9 +1865,17 @@ export class UserBrowserService {
 		webContents: WebContents,
 		selector: string,
 		focus: boolean,
+		tabId: string,
 	): Promise<{ x: number; y: number }> {
 		if (!selector || selector.length > 2_000)
 			throw new Error("Browser selector is invalid.");
+		const ref = normalizeBrowserElementRef(selector);
+		if (ref) {
+			const backendNodeId = this.elementRefs.get(tabId)?.get(ref);
+			if (backendNodeId === undefined)
+				throw new Error("Browser target ref is stale. Take a new snapshot.");
+			return targetPointFromBackendNode(webContents, backendNodeId, focus);
+		}
 		return webContents.executeJavaScript(`(() => {
       const node = document.querySelector(${JSON.stringify(selector)});
       if (!(node instanceof Element)) throw new Error("Browser target was not found.");
@@ -1878,8 +1884,14 @@ export class UserBrowserService {
       const style = getComputedStyle(node);
       if (box.width <= 0 || box.height <= 0 || style.display === "none" || style.visibility === "hidden" || Number(style.opacity) <= 0) throw new Error("Browser target is not visible.");
       if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") throw new Error("Browser target is disabled.");
+      const x = Math.round(Math.max(0, Math.min(innerWidth - 1, box.left + box.width / 2)));
+      const y = Math.round(Math.max(0, Math.min(innerHeight - 1, box.top + box.height / 2)));
+      const hit = document.elementFromPoint(x, y);
+      if (!(hit instanceof Element) || (hit !== node && !node.contains(hit))) {
+        throw new Error("Browser target is obscured or cannot receive pointer input.");
+      }
       ${focus ? "if (node instanceof HTMLElement) node.focus();" : ""}
-      return { x: Math.round(Math.max(0, Math.min(innerWidth - 1, box.left + box.width / 2))), y: Math.round(Math.max(0, Math.min(innerHeight - 1, box.top + box.height / 2))) };
+      return { x, y };
     })()`);
 	}
 }

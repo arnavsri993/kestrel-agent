@@ -1,15 +1,18 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import type {
-	BrowserAction,
-	BrowserDiagnostic,
-	BrowserDownload,
-	BrowserSnapshot,
-	BrowserViewport,
-	DesktopAction,
-	ScreenshotFrame,
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import {
+	annotateAccessibilityTree,
+	type BrowserAction,
+	type BrowserDiagnostic,
+	type BrowserDownload,
+	type BrowserSnapshot,
+	type BrowserViewport,
+	type DesktopAction,
+	normalizeBrowserElementRef,
+	normalizeIsolatedBrowserOrigins,
+	type ScreenshotFrame,
 } from "@kestrel/agent-core";
 import {
 	app,
@@ -19,26 +22,43 @@ import {
 	type Session,
 	systemPreferences,
 } from "electron";
+import {
+	type AutomationBrowserBackendWireRequest,
+} from "./browser-backend-wire";
+import {
+	MAX_AX_SNAPSHOT_BYTES,
+	MAX_AX_SNAPSHOT_NODES,
+	MAX_INTERACTIVE_REFS,
+	redactUntrustedBrowserText,
+	sanitizeBrowserUrl,
+	sanitizeUntrustedBrowserValue,
+} from "./browser-tab-store";
+import {
+	publicInteractiveRefs,
+	rememberElementRefs,
+	targetPointFromBackendNode,
+} from "./browser-backend-node-target";
 
-export type AutomationBrowserBackendWireRequest =
-	| { operation: "create"; allowedOrigins: string[] }
-	| { operation: "navigate"; sessionId: string; url: string }
-	| { operation: "act"; sessionId: string; action: BrowserAction }
-	| { operation: "snapshot"; sessionId: string }
-	| { operation: "screenshot"; sessionId: string }
-	| { operation: "viewport"; sessionId: string; viewport: BrowserViewport }
-	| { operation: "diagnostics"; sessionId: string }
-	| { operation: "auth-handoff"; sessionId: string; visible: boolean }
-	| {
-			operation: "upload";
-			sessionId: string;
-			selector: string;
-			paths: string[];
-	  }
-	| { operation: "downloads"; sessionId: string }
-	| { operation: "desktop-screenshot" }
-	| { operation: "desktop-act"; action: DesktopAction }
-	| { operation: "close"; sessionId: string };
+export function uniqueIsolatedDownloadFilename(
+	requested: string,
+	occupied: Iterable<string>,
+	fallbackId: string,
+): string {
+	const taken = new Set(occupied);
+	const sanitized =
+		requested.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120) ||
+		`${fallbackId}.bin`;
+	if (!taken.has(sanitized)) return sanitized;
+	const extension = extname(sanitized);
+	const stem = basename(sanitized, extension).slice(0, 80) || fallbackId;
+	for (let n = 2; n < 10_000; n += 1) {
+		const candidate = `${stem}-${n}${extension}`;
+		if (!taken.has(candidate)) return candidate;
+	}
+	return `${fallbackId}.bin`;
+}
+
+export type { AutomationBrowserBackendWireRequest };
 
 interface BrowserRecord {
 	window: BrowserWindow;
@@ -74,23 +94,34 @@ export function retainRecentBrowserDownloads(
 	}
 }
 
-function origin(value: string): string | undefined {
+export function isolatedBrowserShouldCancelRequest(
+	value: string,
+	allowedOrigins: ReadonlySet<string>,
+): boolean {
 	try {
 		const url = new URL(value);
+		if (url.protocol === "about:" && url.pathname === "blank") return false;
 		if (
 			url.protocol === "data:" ||
-			url.protocol === "blob:" ||
+			url.protocol === "javascript:" ||
+			url.protocol === "file:" ||
 			url.protocol === "about:"
 		)
-			return undefined;
-		return url.origin;
+			return true;
+		if (url.protocol === "blob:") {
+			const origin = url.origin === "null" ? undefined : url.origin;
+			return origin === undefined || !allowedOrigins.has(origin);
+		}
+		const origin = url.origin;
+		return !origin || origin === "null" || !allowedOrigins.has(origin);
 	} catch {
-		return "invalid";
+		return true;
 	}
 }
 
 export class ElectronBrowserService {
 	private readonly sessions = new Map<string, BrowserRecord>();
+	private readonly elementRefs = new Map<string, Map<string, number>>();
 
 	async handle(
 		request: AutomationBrowserBackendWireRequest,
@@ -107,7 +138,18 @@ export class ElectronBrowserService {
 		if (request.operation === "screenshot")
 			return this.screenshot(request.sessionId, signal);
 		if (request.operation === "viewport")
-			return this.setViewport(request.sessionId, request.viewport, signal);
+			return this.setViewport(
+				request.sessionId,
+				{
+					name: request.viewport.name,
+					width: request.viewport.width,
+					height: request.viewport.height,
+					...(request.viewport.deviceScaleFactor !== undefined
+						? { deviceScaleFactor: request.viewport.deviceScaleFactor }
+						: {}),
+				},
+				signal,
+			);
 		if (request.operation === "diagnostics")
 			return this.diagnostics(request.sessionId, signal);
 		if (request.operation === "auth-handoff")
@@ -140,7 +182,8 @@ export class ElectronBrowserService {
 		const partition = electronSession.fromPartition(partitionName, {
 			cache: false,
 		});
-		const allowed = new Set(allowedOrigins);
+		const origins = normalizeIsolatedBrowserOrigins(allowedOrigins);
+		const allowed = new Set(origins);
 		const diagnostics: BrowserDiagnostic[] = [];
 		const downloads: BrowserDownload[] = [];
 		const downloadDirectory = join(
@@ -159,9 +202,8 @@ export class ElectronBrowserService {
 		);
 		partition.setPermissionCheckHandler(() => false);
 		partition.webRequest.onBeforeRequest((details, callback) => {
-			const requestedOrigin = origin(details.url);
 			callback({
-				cancel: requestedOrigin !== undefined && !allowed.has(requestedOrigin),
+				cancel: isolatedBrowserShouldCancelRequest(details.url, allowed),
 			});
 		});
 		partition.webRequest.onErrorOccurred((details) =>
@@ -175,12 +217,22 @@ export class ElectronBrowserService {
 		);
 		partition.on("will-download", (_event, item) => {
 			const id = `download-${randomUUID()}`;
-			const filename =
-				item
-					.getFilename()
-					.replace(/[^A-Za-z0-9._-]/g, "-")
-					.slice(0, 120) || `${id}.bin`;
-			const destination = join(downloadDirectory, filename);
+			const occupied = new Set(downloads.map((download) => download.filename));
+			let filename = uniqueIsolatedDownloadFilename(
+				item.getFilename(),
+				occupied,
+				id,
+			);
+			let destination = join(downloadDirectory, filename);
+			while (existsSync(destination)) {
+				occupied.add(filename);
+				filename = uniqueIsolatedDownloadFilename(
+					item.getFilename(),
+					occupied,
+					id,
+				);
+				destination = join(downloadDirectory, filename);
+			}
 			const record: BrowserDownload = {
 				id,
 				filename,
@@ -225,10 +277,19 @@ export class ElectronBrowserService {
 			},
 		});
 		window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-		window.webContents.on("will-navigate", (event, url) => {
-			const requestedOrigin = origin(url);
-			if (requestedOrigin !== undefined && !allowed.has(requestedOrigin))
-				event.preventDefault();
+		const preventDisallowedNavigation = (
+			event: { preventDefault: () => void },
+			url: string,
+		) => {
+			if (isolatedBrowserShouldCancelRequest(url, allowed)) event.preventDefault();
+		};
+		window.webContents.on("will-navigate", preventDisallowedNavigation);
+		window.webContents.on("will-redirect", preventDisallowedNavigation);
+		window.webContents.on("did-navigate", () => {
+			this.elementRefs.delete(id);
+		});
+		window.webContents.on("did-navigate-in-page", () => {
+			this.elementRefs.delete(id);
 		});
 		window.webContents.on(
 			"console-message",
@@ -279,6 +340,7 @@ export class ElectronBrowserService {
 			throw new Error(
 				"Electron browser navigation is outside the origin allowlist.",
 			);
+		this.elementRefs.delete(id);
 		const abort = () => window.webContents.stop();
 		signal.addEventListener("abort", abort, { once: true });
 		try {
@@ -290,12 +352,24 @@ export class ElectronBrowserService {
 	}
 
 	private async targetPoint(
+		sessionId: string,
 		window: BrowserWindow,
 		selector: string,
 		focus = false,
 	): Promise<{ x: number; y: number }> {
 		if (!selector || selector.length > 2_000)
 			throw new Error("Browser selector is invalid.");
+		const ref = normalizeBrowserElementRef(selector);
+		if (ref) {
+			const backendNodeId = this.elementRefs.get(sessionId)?.get(ref);
+			if (backendNodeId === undefined)
+				throw new Error("Browser target ref is stale. Take a new snapshot.");
+			return targetPointFromBackendNode(
+				window.webContents,
+				backendNodeId,
+				focus,
+			);
+		}
 		const result = (await window.webContents.executeJavaScript(
 			`(async () => {
       const node = document.querySelector(${JSON.stringify(selector)});
@@ -354,7 +428,7 @@ export class ElectronBrowserService {
 		const { window } = this.require(id);
 		if (signal.aborted) throw signal.reason;
 		if (action.type === "click") {
-			const point = await this.targetPoint(window, action.target);
+			const point = await this.targetPoint(id, window, action.target);
 			if (signal.aborted) throw signal.reason;
 			// BrowserWindow sessions stay hidden, so Electron's window-level input
 			// dispatch can be dropped by a headless runner. CDP input dispatch keeps
@@ -424,7 +498,7 @@ export class ElectronBrowserService {
 				true,
 			);
 		} else if (action.type === "type") {
-			await this.targetPoint(window, action.target, true);
+			await this.targetPoint(id, window, action.target, true);
 			if (signal.aborted) throw signal.reason;
 			window.webContents.insertText(action.text);
 		} else if (action.type === "key") {
@@ -471,10 +545,32 @@ export class ElectronBrowserService {
 		const result = (await window.webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
+		const nodes = result.nodes ?? [];
+		const annotated = annotateAccessibilityTree({
+			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
+		});
+		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
+		const accessibilityTree = sanitizeUntrustedBrowserValue(
+			annotated.accessibilityTree,
+		);
+		if (
+			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
+			MAX_AX_SNAPSHOT_BYTES
+		) {
+			this.elementRefs.set(id, new Map());
+			throw new Error("Isolated browser accessibility snapshot exceeds 1.5 MB.");
+		}
+		this.elementRefs.set(id, rememberElementRefs(interactive));
 		return {
-			url: window.webContents.getURL(),
-			title: window.webContents.getTitle(),
-			accessibilityTree: { nodes: (result.nodes ?? []).slice(0, 5_000) },
+			url:
+				sanitizeBrowserUrl(window.webContents.getURL()) ||
+				"https://invalid.local/",
+			title: redactUntrustedBrowserText(window.webContents.getTitle(), 500),
+			accessibilityTree,
+			interactive: publicInteractiveRefs(interactive),
+			truncated:
+				nodes.length > MAX_AX_SNAPSHOT_NODES ||
+				annotated.interactive.length > MAX_INTERACTIVE_REFS,
 		};
 	}
 
@@ -647,6 +743,7 @@ export class ElectronBrowserService {
 		const record = this.sessions.get(id);
 		if (!record) return;
 		this.sessions.delete(id);
+		this.elementRefs.delete(id);
 		if (record.window.webContents.debugger.isAttached())
 			record.window.webContents.debugger.detach();
 		if (!record.window.isDestroyed()) record.window.destroy();

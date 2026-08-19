@@ -65,7 +65,7 @@ import { ProviderAuthMonitor } from "./provider-auth-monitor";
 import { ExternalSecretManager } from "./external-secret-manager";
 import type { ResolvedExternalCredentials } from "./credential-broker";
 import { fileDigest } from "./file-digest";
-import { startAutomaticUpdates } from "./update-channel";
+import { shouldCheckForUpdates, updaterFeedChannel } from "./update-channel";
 import {
   isTrustedRendererFrame,
   isTrustedRendererUrl,
@@ -93,7 +93,15 @@ import {
   archiveProtectedProfile,
   startupRecoveryCopy,
 } from "./startup-recovery";
-import { canRegisterAsDefaultBrowser } from "./default-browser";
+import {
+  canRegisterAsDefaultBrowser,
+  isPackagedKestrelRuntime,
+} from "./default-browser";
+
+// Chromium encrypts cookies with macOS Keychain under "Kestrel Safe Storage"
+// unless this switch is set before ready. Kestrel stores its own secrets as
+// local files and does not use Keychain.
+app.commandLine.appendSwitch("use-mock-keychain");
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
@@ -146,6 +154,10 @@ const RENDERER_ENTRY_PATH = join(__dirname, "../renderer/index.html");
 const RAW_DEVELOPMENT_RENDERER_URL = process.env.ELECTRON_RENDERER_URL;
 const DEVELOPMENT_RENDERER_URL = trustedDevelopmentRendererUrl(
   RAW_DEVELOPMENT_RENDERER_URL,
+);
+const isPackagedKestrelApp = isPackagedKestrelRuntime(
+  app.isPackaged,
+  process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
 let managedLocalRuntime: LocalRuntimeManager | null = null;
@@ -540,7 +552,7 @@ async function distributionReadiness(): Promise<{
   status: "pass" | "warning";
   detail: string;
 }> {
-  if (!app.isPackaged)
+  if (!isPackagedKestrelApp)
     return {
       status: "warning",
       detail:
@@ -744,9 +756,15 @@ supervisor.on("recovery-failed", (error: Error) => {
   notification.show();
 });
 
-// Keep the runtime name stable until a tested migration can move the existing
-// safeStorage Keychain account and encrypted user data without orphaning them.
+// Keep the runtime name stable so the existing user-data directory continues
+// to resolve without orphaning installed profiles.
 app.setName(PRODUCT_IDENTITY.runtimeApplicationName);
+if (process.env.KESTREL_DISABLE_GPU === "1") {
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-gpu-compositing");
+  app.commandLine.appendSwitch("in-process-gpu");
+  app.disableHardwareAcceleration();
+}
 app.setPath(
   "userData",
   process.env.KESTREL_TEST_USER_DATA ??
@@ -779,8 +797,8 @@ function showMainWindow(): void {
   if (!singleInstance) return;
   if (!coreStartupComplete) {
     // During secure-storage recovery there is no main window yet. A second
-    // click on the Dock icon must bring the native Keychain/recovery dialog
-    // back to the front instead of making the app look like it exited.
+    // click on the Dock icon must bring the recovery dialog back to the front
+    // instead of making the app look like it exited.
     app.focus({ steal: true });
     return;
   }
@@ -817,7 +835,7 @@ function deliverPendingDeepLinks(): void {
 }
 
 export function isDefaultBrowser(): boolean {
-  if (!canRegisterAsDefaultBrowser(app.isPackaged)) return false;
+  if (!canRegisterAsDefaultBrowser(isPackagedKestrelApp)) return false;
   if (process.platform !== "darwin" && process.platform !== "win32") {
     return app.isDefaultProtocolClient("http");
   }
@@ -828,7 +846,7 @@ export function isDefaultBrowser(): boolean {
 }
 
 export function setAsDefaultBrowser(): boolean {
-  if (!canRegisterAsDefaultBrowser(app.isPackaged)) return false;
+  if (!canRegisterAsDefaultBrowser(isPackagedKestrelApp)) return false;
   const httpOk = app.setAsDefaultProtocolClient("http");
   const httpsOk = app.setAsDefaultProtocolClient("https");
   return httpOk || httpsOk;
@@ -912,35 +930,38 @@ function createMainWindow(): BrowserWindow {
       preload: join(__dirname, "../preload/index.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      sandbox: !DEVELOPMENT_RENDERER_URL,
       webSecurity: true,
-      devTools: !app.isPackaged,
+      devTools: !isPackagedKestrelApp,
     },
   });
   userBrowserService?.dispose();
-  userBrowserService = new UserBrowserService({
-    window,
-    statePath: join(app.getPath("userData"), "browser", "state.json"),
-    downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-      ? join(app.getPath("userData"), "browser-downloads")
-      : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
-    onEvent: (event) => {
-      if (!window.isDestroyed())
-        window.webContents.send("kestrel:browser-event", event);
-    },
-    onCommand: (command) => {
-      if (!window.isDestroyed()) {
-        // Native WebContentsView pages own focus while the user is browsing.
-        // Return focus to the trusted renderer before asking it to focus the
-        // address field, composer, or command center.
-        window.webContents.focus();
-        window.webContents.send("kestrel:browser-command", command);
-      }
-    },
-  });
+  userBrowserService =
+    process.env.KESTREL_DISABLE_USER_BROWSER === "1"
+      ? null
+      : new UserBrowserService({
+          window,
+          statePath: join(app.getPath("userData"), "browser", "state.json"),
+          downloadDirectory: process.env.KESTREL_TEST_USER_DATA
+            ? join(app.getPath("userData"), "browser-downloads")
+            : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+          onEvent: (event) => {
+            if (!window.isDestroyed())
+              window.webContents.send("kestrel:browser-event", event);
+          },
+          onCommand: (command) => {
+            if (!window.isDestroyed()) {
+              // Native WebContentsView pages own focus while the user is browsing.
+              // Return focus to the trusted renderer before asking it to focus the
+              // address field, composer, or command center.
+              window.webContents.focus();
+              window.webContents.send("kestrel:browser-command", command);
+            }
+          },
+        });
   deliverPendingWebUrls();
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//.test(url)) void shell.openExternal(url);
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.session.setPermissionRequestHandler(
@@ -1080,9 +1101,9 @@ async function createPetOverlay(): Promise<BrowserWindow> {
       partition: "kestrel-pet-overlay",
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      sandbox: !DEVELOPMENT_RENDERER_URL,
       webSecurity: true,
-      devTools: !app.isPackaged,
+      devTools: !isPackagedKestrelApp,
     },
   });
   petOverlayWindow = window;
@@ -1951,7 +1972,7 @@ function registerIpc(): void {
       };
     }
     if (request.type === "get-default-browser-status") {
-      const canSetAsDefault = canRegisterAsDefaultBrowser(app.isPackaged);
+      const canSetAsDefault = canRegisterAsDefaultBrowser(isPackagedKestrelApp);
       return {
         ok: true,
         isDefault: isDefaultBrowser(),
@@ -1959,7 +1980,7 @@ function registerIpc(): void {
       };
     }
     if (request.type === "set-default-browser") {
-      const canSetAsDefault = canRegisterAsDefaultBrowser(app.isPackaged);
+      const canSetAsDefault = canRegisterAsDefaultBrowser(isPackagedKestrelApp);
       const success = setAsDefaultBrowser();
       return {
         ok: true,
@@ -2814,16 +2835,13 @@ async function initializeCoreForStartup(): Promise<boolean> {
       const copy = startupRecoveryCopy(cause);
       if (!mainWindow && app.isReady()) {
         // Give the native recovery dialog an owning window. Without one,
-        // macOS can leave the dialog behind the app that was active when the
-        // Keychain prompt was dismissed, making Kestrel look like it exited.
+        // macOS can leave the dialog behind the previously active app.
         mainWindow = createMainWindow();
         startupRecoveryWindowCreated = true;
       }
       mainWindow?.show();
       mainWindow?.focus();
-      // safeStorage failures can leave the native dialog behind the app the
-      // user was using when the Keychain prompt was dismissed. Keep recovery
-      // visible and make a subsequent Dock click return here.
+      // Keep recovery visible and make a subsequent Dock click return here.
       app.focus({ steal: true });
       const options: Electron.MessageBoxOptions = {
         type: "error",
@@ -2949,27 +2967,8 @@ void app
     }).catch(() => {});
     // #endregion
     if (!singleInstance) return;
-    if (canRegisterAsDefaultBrowser(app.isPackaged))
+    if (canRegisterAsDefaultBrowser(isPackagedKestrelApp))
       app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
-    startAutomaticUpdates(autoUpdater, {
-      packaged: app.isPackaged,
-      channel: PRODUCT_IDENTITY.updateChannel,
-      updatesDisabled: process.env.KESTREL_DISABLE_UPDATES === "1",
-      subscribeToUpdate: (listener) =>
-        autoUpdater.on("update-downloaded", listener),
-      onUpdateDownloaded: (info) => {
-        if (!Notification.isSupported()) return;
-        const notification = new Notification({
-          title: `${PRODUCT_IDENTITY.productName} ${info.version} is ready`,
-          body: "The signed update will install after you quit and reopen Kestrel.",
-        });
-        notification.on("click", () => {
-          mainWindow?.show();
-          mainWindow?.focus();
-        });
-        notification.show();
-      },
-    });
     registerIpc();
     if (!(await initializeCoreForStartup())) {
       quitting = true;
@@ -3003,6 +3002,33 @@ void app
       await createPetOverlay();
     if (launchedAtLogin)
       startupWindow.once("ready-to-show", () => startupWindow.hide());
+    if (
+      shouldCheckForUpdates(
+        isPackagedKestrelApp,
+        PRODUCT_IDENTITY.updateChannel,
+        process.env.KESTREL_DISABLE_UPDATES === "1",
+      )
+    ) {
+      autoUpdater.autoDownload = true;
+      autoUpdater.autoInstallOnAppQuit = true;
+      autoUpdater.channel = updaterFeedChannel(PRODUCT_IDENTITY.updateChannel)!;
+      autoUpdater.on("update-downloaded", (info) => {
+        if (!Notification.isSupported()) return;
+        const notification = new Notification({
+          title: `${PRODUCT_IDENTITY.productName} ${info.version} is ready`,
+          body: "The signed update will install after you quit and reopen Kestrel.",
+        });
+        notification.on("click", () => {
+          mainWindow?.show();
+          mainWindow?.focus();
+        });
+        notification.show();
+      });
+      setTimeout(
+        () => void autoUpdater.checkForUpdates().catch(() => undefined),
+        15000,
+      ).unref();
+    }
   })
   .catch((cause) => {
     const copy = startupRecoveryCopy(cause);

@@ -737,7 +737,7 @@ body:has(.ai-browser-app),
 
 .browser-tabs {
 	display: flex;
-	/* Use the open strip first; tabs only compress when they reach the right edge. */
+	/* Let the tab group use the open space instead of collapsing to title width. */
 	flex: 1 1 0;
 	align-items: flex-end;
 	min-width: 0;
@@ -909,6 +909,14 @@ body:has(.ai-browser-app),
 .browser-tab-close svg {
 	width: 11px;
 	height: 11px;
+}
+
+/* The form owns the focus treatment; do not paint a second ring around the input. */
+.browser-address input:focus-visible,
+.new-tab-chat input:focus-visible {
+	outline: 0;
+	outline-offset: 0;
+	box-shadow: none;
 }
 
 .browser-new-tab {

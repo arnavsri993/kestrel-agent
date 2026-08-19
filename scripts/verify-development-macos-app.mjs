@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
+import { auditPackagedMacApp } from "./macos-architecture-audit.cjs";
 
 const appArgument = process.argv[2];
 if (process.platform !== "darwin")
@@ -85,6 +86,12 @@ if (releaseChannel !== "development")
 		`Development launch channel is ${releaseChannel}; expected development.`,
 	);
 
+const minimumSystemVersion = readPlistValue(appInfo, "LSMinimumSystemVersion");
+if (minimumSystemVersion !== "13.0.0")
+	throw new Error(
+		`Development app minimum macOS is ${minimumSystemVersion}; expected 13.0.0 for M-series Ventura and later.`,
+	);
+
 const executablePath = join(appPath, "Contents", "MacOS", "Kestrel");
 const architecture = spawnSync("/usr/bin/lipo", ["-archs", executablePath], {
 	encoding: "utf8",
@@ -96,6 +103,7 @@ if (architecture.status !== 0 || architecture.stdout.trim() !== "arm64") {
 		`Development app architecture must be arm64${detail ? `; received ${detail}` : "."}`,
 	);
 }
+auditPackagedMacApp(appPath);
 
 runCodesign(["--verify", "--deep", "--strict", "--verbose=2", appPath], {
 	stdio: "inherit",

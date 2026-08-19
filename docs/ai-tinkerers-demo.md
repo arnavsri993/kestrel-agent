@@ -32,10 +32,9 @@ Do not copy the bundle to the Desktop or rename it. The installer keeps
 stale copies found in common install locations or by Finder/Spotlight to Trash;
 the `release/` bundle stays a non-indexed build artifact.
 
-On the first launch of a rebuilt development app, macOS may ask for access to
-`Kestrel Safe Storage`. Unlock the login keychain and choose **Always Allow**
-before the event. Kestrel deliberately does not provide a plaintext fallback.
-Never launch the real demo with Chromium's `--use-mock-keychain` test flag.
+Kestrel stores the database key as a local file and does not use macOS
+Keychain. The desktop app also disables Chromium's Keychain cookie store so
+the `Kestrel Safe Storage` prompt should not appear.
 
 In Kestrel, open **Tools → Readiness** and confirm the protected store,
 database, local runtime, model route, and packaged app are ready. Open one new

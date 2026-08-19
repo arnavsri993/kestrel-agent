@@ -222,36 +222,118 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
-	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page
+		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
+		.waitFor();
+	await page.locator("#runtime-prompt").waitFor();
+	await page.locator("#new-tab-chat-input").waitFor();
+	assert.equal(await page.locator(".kestrel-home-model-selector summary").count(), 1);
+	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
+	const homeSend = page.getByRole("button", {
+		name: "Open message in Pragmatic composer",
+	});
+	assert.equal(await homeSend.isDisabled(), true);
+	const homePrompt = "Start with the smallest useful fix.";
+	const homeSessionsBefore = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		return response.ok && "sessions" in response
+			? (response.sessions ?? []).length
+			: -1;
+	});
+	await page.locator("#new-tab-chat-input").fill(homePrompt);
+	await homeSend.click();
+	await page.waitForFunction((expected) => {
+		const prompt = document.querySelector("#runtime-prompt");
+		return prompt instanceof HTMLTextAreaElement && prompt.value === expected;
+	}, homePrompt);
+	const homeSessionsAfter = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		return response.ok && "sessions" in response
+			? (response.sessions ?? []).length
+			: -1;
+	});
+	assert.equal(homeSessionsAfter, homeSessionsBefore);
+	await page.getByRole("button", { name: "New task", exact: true }).click();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
-	await page.getByRole("button", { name: "Open browser preferences", exact: true }).click();
+	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await page
+		.getByRole("navigation", { name: "Settings sections" })
+		.getByRole("button", { name: /^Browser/ })
+		.click();
 	await page.getByRole("heading", { name: "Tabs & General" }).waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await page.getByRole("button", { name: "Browser", exact: true }).first().click();
-	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+	await page
+		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
+		.waitFor();
 	await page.reload();
-	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+	await page
+		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
+		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
+	const agentSidebar = page.locator(".agent-sidebar");
+	assert.equal(await agentSidebar.getAttribute("aria-hidden"), "true");
+	assert.equal(
+		await agentSidebar.evaluate((sidebar) => sidebar.inert),
+		true,
+	);
+	assert.equal(
+		await agentSidebar
+			.locator("button")
+			.first()
+			.evaluate((button) => {
+				button.focus();
+				return document.activeElement === button;
+			}),
+		false,
+	);
 	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).waitFor();
 	await page.reload();
-	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
+	await page
+		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
+		.waitFor();
 	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).click();
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().waitFor();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	assert.equal(await agentSidebar.evaluate((sidebar) => sidebar.inert), false);
+	await page.locator("#runtime-prompt").waitFor();
 
-	await page.getByRole("button", { name: /Open in chat/ }).first().click();
+	const suggestedActions = page.getByRole("button", {
+		name: /^Add to Pragmatic composer:/,
+	});
+	assert.equal(await suggestedActions.count(), 5);
+	const sessionsBeforeSuggestion = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		return response.ok && "sessions" in response
+			? (response.sessions ?? []).length
+			: -1;
+	});
+	await suggestedActions.first().click();
 	await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");
 		return (
 			prompt instanceof HTMLTextAreaElement &&
 			prompt.value ===
-				"Help me explore a new topic, find the useful starting points, and suggest the next step."
+				"Review the current project and context. Identify the highest-impact issues, explain why they matter, and recommend the smallest useful next step. Do not change anything until the review is clear."
 		);
 	});
+	const sessionsAfterSuggestion = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		return response.ok && "sessions" in response
+			? (response.sessions ?? []).length
+			: -1;
+	});
+	assert.equal(sessionsAfterSuggestion, sessionsBeforeSuggestion);
 	await page.getByRole("button", { name: "New task", exact: true }).click();
 
 	const initialSessions = await page.evaluate(async () => {
@@ -265,7 +347,7 @@ try {
 	const initialTabs = (await browserState()).tabs.length;
 	const tabList = page.getByRole("tablist", { name: "Browser tabs" });
 	assert.equal(await tabList.getAttribute("aria-orientation"), "horizontal");
-	await page.getByRole("button", { name: "New tab", exact: true }).click();
+	await page.getByRole("button", { name: "New Tab", exact: true }).click();
 	let state = await browserState();
 	assert.equal(state.tabs.length, initialTabs + 1);
 	const addedBlankTab = state.activeTabId;
@@ -306,6 +388,48 @@ try {
 		true,
 	);
 	assert.equal((await browserState()).tabs.length, initialTabs);
+	const rendererSourceTabId = (await browserState()).activeTabId;
+	assert(rendererSourceTabId);
+	await page.evaluate((href) => {
+		const link = document.createElement("a");
+		link.id = "renderer-managed-tab-fixture";
+		link.href = href;
+		link.target = "_blank";
+		link.textContent = "Open renderer link";
+		document.querySelector(".new-tab-page")?.append(link);
+	}, `${origin}/renderer-link`);
+	await page.locator("#renderer-managed-tab-fixture").click();
+	state = await waitForBrowserState(
+		(value) =>
+			value.tabs.length === initialTabs + 1 &&
+			value.tabs.some((tab) => tab.url === `${origin}/renderer-link`),
+		"Trusted renderer target=_blank link did not open in a managed tab",
+	);
+	const rendererManagedTab = state.tabs.find(
+		(tab) => tab.url === `${origin}/renderer-link`,
+	);
+	assert(rendererManagedTab);
+	assert.equal((await nativeViewState()).browserWindowCount, 1);
+	await page.evaluate(
+		async ({ managedTabId, sourceTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: managedTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: sourceTabId,
+			});
+		},
+		{
+			managedTabId: rendererManagedTab.id,
+			sourceTabId: rendererSourceTabId,
+		},
+	);
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Renderer-managed tab remained attached after returning to New Tab",
+	);
 	const sessionsAfterIndependentActions = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
 			type: "runtime-list-sessions",
@@ -455,6 +579,7 @@ try {
 		{ approvalStatus: "approved" },
 	);
 	assert.equal(screenshot?.status, "verified");
+	assert.equal(screenshot?.output?.trust, "untrusted_browser");
 	assert.match(String(screenshot?.output?.pngBase64 ?? ""), /^iVBOR/);
 
 	const address = page.locator("#browser-address-input");
@@ -481,7 +606,33 @@ try {
 	);
 
 	await activeViewScript("document.querySelector('#popup').click() ");
-	assert.equal((await browserState()).tabs.length, 1);
+	state = await waitForBrowserState(
+		(value) =>
+			value.tabs.length === 2 &&
+			value.tabs.some((tab) => tab.url.endsWith("/popup")),
+		"Popup tab did not open from in-page click",
+	);
+	let popupTab = state.tabs.find((tab) => tab.url.endsWith("/popup"));
+	assert(popupTab);
+	assert.equal((await nativeViewState()).browserWindowCount, 1);
+	await page.evaluate(
+		async ({ popupTabId, originalTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: popupTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: originalTabId,
+			});
+		},
+		{ popupTabId: popupTab.id, originalTabId: tabId },
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Original tab was not restored after popup close",
+	);
+
 	const openedPopup = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",
@@ -496,9 +647,9 @@ try {
 		(value) =>
 			value.tabs.length === 2 &&
 			value.tabs.some((tab) => tab.url.endsWith("/popup")),
-		"Popup tab did not open",
+		"Popup tab did not open from tool act",
 	);
-	const popupTab = state.tabs.find((tab) => tab.url.endsWith("/popup"));
+	popupTab = state.tabs.find((tab) => tab.url.endsWith("/popup"));
 	assert(popupTab);
 	assert.equal((await nativeViewState()).browserWindowCount, 1);
 	await page.evaluate(
@@ -564,10 +715,7 @@ try {
 		"kestrel-browser.txt",
 	);
 
-	await page
-		.getByRole("button", { name: "History", exact: true })
-		.last()
-		.click();
+	await page.keyboard.press("Meta+H");
 	await page
 		.getByRole("heading", { name: "Pages you visited", exact: true })
 		.waitFor();
@@ -581,10 +729,7 @@ try {
 		.first()
 		.waitFor();
 
-	await page
-		.getByRole("button", { name: "Downloads", exact: true })
-		.last()
-		.click();
+	await page.keyboard.press("Meta+J");
 	await page
 		.getByRole("heading", { name: "Files from the web", exact: true })
 		.waitFor();

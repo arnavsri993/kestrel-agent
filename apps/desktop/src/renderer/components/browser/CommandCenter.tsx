@@ -21,7 +21,7 @@ export function CommandCenter({
   destinations: CommandDestination[];
   onSelect(destination: string): void;
   onClose(): void;
-  onBack(): void;
+  onBack?(): void;
   onNewTask?(): void;
   pendingApprovals?: number;
 }) {
@@ -49,7 +49,7 @@ export function CommandCenter({
   return (
     <main className="command-center" aria-labelledby="command-center-title">
       <header>
-        <SurfaceBackButton onBack={onBack} />
+        {onBack && <SurfaceBackButton onBack={onBack} />}
         <span className="command-mark">
           <Icon name="command" />
         </span>

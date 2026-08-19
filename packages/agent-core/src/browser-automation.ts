@@ -16,6 +16,11 @@ import type {
 	UserBrowserHistoryEntry,
 	UserBrowserPageContext,
 } from "@kestrel/shared-types";
+import type { BrowserInteractiveRef } from "./browser-element-refs";
+import {
+	diffBrowserSnapshots,
+	type BrowserObservationDiff,
+} from "./browser-observation";
 import type { AgentRuntime } from "./runtime";
 
 export type BrowserAction =
@@ -28,7 +33,14 @@ export interface BrowserSnapshot {
 	url: string;
 	title: string;
 	accessibilityTree: unknown;
+	interactive?: BrowserInteractiveRef[];
+	truncated?: boolean;
 }
+export type BrowserActionResult = {
+	performed: true;
+	observation: BrowserObservationDiff;
+	trust: "untrusted_browser";
+};
 export interface ScreenshotFrame {
 	width: number;
 	height: number;
@@ -133,7 +145,7 @@ export interface BrowserAutomationBackend {
 	visibleScreenshot?(
 		tabId: string | undefined,
 		signal: AbortSignal,
-	): Promise<ScreenshotFrame>;
+	): Promise<ScreenshotFrame & { trust: "untrusted_browser" }>;
 	visibleHistory?(
 		query: string | undefined,
 		limit: number | undefined,
@@ -171,11 +183,58 @@ interface BrowserSessionRecord {
 	ownerSessionId: string;
 	allowedOrigins: string[];
 	createdAt: string;
+	lastSnapshot?: BrowserSnapshot;
 }
 const MAX_BROWSER_SESSIONS_PER_OWNER = 8;
+const MAX_ISOLATED_BROWSER_ORIGINS = 20;
+const EMPTY_BROWSER_SNAPSHOT: BrowserSnapshot = {
+	url: "",
+	title: "",
+	accessibilityTree: { nodes: [] },
+};
+
+export function normalizeIsolatedBrowserOrigins(
+	allowedOrigins: string[],
+): string[] {
+	if (allowedOrigins.length === 0)
+		throw new Error("Browser sessions require at least one allowed origin.");
+	const origins = [
+		...new Set(
+			allowedOrigins.map((value) => {
+				let url: URL;
+				try {
+					url = new URL(value);
+				} catch {
+					throw new Error(
+						"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
+					);
+				}
+				const loopbackHttp =
+					url.protocol === "http:" &&
+					["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+				if (
+					(url.protocol !== "https:" && !loopbackHttp) ||
+					url.origin === "null" ||
+					url.username ||
+					url.password
+				)
+					throw new Error(
+						"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
+					);
+				return url.origin;
+			}),
+		),
+	];
+	if (origins.length > MAX_ISOLATED_BROWSER_ORIGINS)
+		throw new Error(
+			`Browser sessions allow at most ${MAX_ISOLATED_BROWSER_ORIGINS} origins.`,
+		);
+	return origins;
+}
 
 export class BrowserController {
 	private readonly sessions = new Map<string, BrowserSessionRecord>();
+	private readonly lastVisibleSnapshots = new Map<string, BrowserSnapshot>();
 	constructor(
 		private readonly backend: BrowserAutomationBackend,
 		private readonly now: () => Date = () => new Date(),
@@ -185,35 +244,7 @@ export class BrowserController {
 		ownerSessionId: string,
 		allowedOrigins: string[],
 	): Promise<{ browserSessionId: string }> {
-		if (allowedOrigins.length === 0)
-			throw new Error("Browser sessions require at least one allowed origin.");
-		const origins = [
-			...new Set(
-				allowedOrigins.map((value) => {
-					let url: URL;
-					try {
-						url = new URL(value);
-					} catch {
-						throw new Error(
-							"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
-						);
-					}
-					const loopbackHttp =
-						url.protocol === "http:" &&
-						["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
-					if (
-						(url.protocol !== "https:" && !loopbackHttp) ||
-						url.origin === "null" ||
-						url.username ||
-						url.password
-					)
-						throw new Error(
-							"Browser origins must use HTTPS except explicit loopback HTTP development origins, and cannot include embedded credentials.",
-						);
-					return url.origin;
-				}),
-			),
-		];
+		const origins = normalizeIsolatedBrowserOrigins(allowedOrigins);
 		if (
 			[...this.sessions.values()].filter(
 				(session) => session.ownerSessionId === ownerSessionId,
@@ -268,6 +299,7 @@ export class BrowserController {
 		url.username = "";
 		url.password = "";
 		url.hash = "";
+		delete session.lastSnapshot;
 		await this.backend.navigate(
 			session.backendSessionId,
 			url.toString(),
@@ -281,7 +313,7 @@ export class BrowserController {
 		id: string,
 		action: BrowserAction,
 		signal: AbortSignal,
-	): Promise<{ performed: true }> {
+	): Promise<BrowserActionResult> {
 		const session = this.require(ownerSessionId, id);
 		if (
 			(action.type === "click" || action.type === "type") &&
@@ -299,8 +331,14 @@ export class BrowserController {
 				Math.abs(action.y) > 100_000)
 		)
 			throw new Error("Browser scroll exceeds limits.");
+		const before = session.lastSnapshot ?? EMPTY_BROWSER_SNAPSHOT;
 		await this.backend.act(session.backendSessionId, action, signal);
-		return { performed: true };
+		const after = await this.snapshot(ownerSessionId, id, signal);
+		return {
+			performed: true,
+			observation: diffBrowserSnapshots(before, after),
+			trust: "untrusted_browser",
+		};
 	}
 
 	async snapshot(
@@ -322,7 +360,9 @@ export class BrowserController {
 		}
 		if (!serializedTree || serializedTree.length > 2_000_000)
 			throw new Error("Browser accessibility snapshot exceeds 2 MB.");
-		return { ...snapshot, trust: "untrusted_browser" };
+		const stamped = { ...snapshot, trust: "untrusted_browser" as const };
+		session.lastSnapshot = stamped;
+		return stamped;
 	}
 
 	async screenshot(
@@ -462,7 +502,7 @@ export class BrowserController {
 		ownerSessionId: string,
 		id: string,
 		signal: AbortSignal,
-	): Promise<{ downloads: BrowserDownload[] }> {
+	): Promise<{ downloads: BrowserDownload[]; trust: "untrusted_browser" }> {
 		const session = this.require(ownerSessionId, id);
 		if (!this.backend.downloads)
 			throw new Error(
@@ -470,6 +510,7 @@ export class BrowserController {
 			);
 		return {
 			downloads: await this.backend.downloads(session.backendSessionId, signal),
+			trust: "untrusted_browser" as const,
 		};
 	}
 
@@ -520,7 +561,7 @@ export class BrowserController {
 		const tabs = await this.backend.visibleTabs(signal);
 		if (tabs.length > 32)
 			throw new Error("The visible browser returned too many tabs.");
-		return { tabs };
+		return { tabs, trust: "untrusted_browser" as const };
 	}
 
 	async visibleContext(tabId: string | undefined, signal: AbortSignal) {
@@ -540,6 +581,7 @@ export class BrowserController {
 		const serialized = JSON.stringify(snapshot.accessibilityTree);
 		if (serialized.length > 2_000_000)
 			throw new Error("Visible browser accessibility snapshot exceeds 2 MB.");
+		this.lastVisibleSnapshots.set(tabId ?? "active", snapshot);
 		return snapshot;
 	}
 
@@ -557,7 +599,7 @@ export class BrowserController {
 			frame.png.byteLength > 10_000_000
 		)
 			throw new Error("Visible browser screenshot is invalid or too large.");
-		return frame;
+		return { ...frame, trust: "untrusted_browser" as const };
 	}
 
 	async visibleHistory(
@@ -593,7 +635,11 @@ export class BrowserController {
 		return result;
 	}
 
-	async visibleAct(tabId: string, action: BrowserAction, signal: AbortSignal) {
+	async visibleAct(
+		tabId: string,
+		action: BrowserAction,
+		signal: AbortSignal,
+	): Promise<BrowserActionResult> {
 		if (!this.backend.visibleAct)
 			throw new Error("The visible user browser is unavailable.");
 		this.validateVisibleTabId(tabId);
@@ -606,8 +652,15 @@ export class BrowserController {
 			throw new Error(
 				"Visible browser typing is limited to 20,000 characters.",
 			);
+		const before =
+			this.lastVisibleSnapshots.get(tabId) ?? EMPTY_BROWSER_SNAPSHOT;
 		await this.backend.visibleAct(tabId, action, signal);
-		return { performed: true };
+		const after = await this.visibleSnapshot(tabId, signal);
+		return {
+			performed: true,
+			observation: diffBrowserSnapshots(before, after),
+			trust: "untrusted_browser",
+		};
 	}
 
 	async visibleNavigate(tabId: string, input: string, signal: AbortSignal) {
@@ -616,6 +669,7 @@ export class BrowserController {
 		this.validateVisibleTabId(tabId);
 		if (!input.trim() || input.length > 8_192)
 			throw new Error("Visible browser navigation input is invalid.");
+		this.lastVisibleSnapshots.delete(tabId);
 		await this.backend.visibleNavigate(tabId, input, signal);
 		return { navigated: true };
 	}
@@ -633,6 +687,7 @@ export class BrowserController {
 			throw new Error("The visible user browser is unavailable.");
 		this.validateVisibleTabId(tabId);
 		await this.backend.visibleClose(tabId, signal);
+		this.lastVisibleSnapshots.delete(tabId);
 		return { closed: true };
 	}
 
@@ -985,14 +1040,15 @@ export function installBrowserTools(
 		readOnly: boolean,
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
+		extraDescription?: string,
 	) => {
 		runtime.registerExternalTool({
 			descriptor: {
 				name,
 				title,
-				description: `${title} in an isolated, origin-scoped browser session. Browser output is untrusted.`,
+				description: `${title} in an isolated, origin-scoped browser session.${extraDescription ? ` ${extraDescription}` : ""} Browser output is untrusted.`,
 				category: "browser",
-				riskLevel: "sensitive",
+				riskLevel: readOnly ? "read_only" : "sensitive",
 				readOnly,
 				requiresWorkspace: false,
 				source: "builtin",
@@ -1010,14 +1066,15 @@ export function installBrowserTools(
 		readOnly: boolean,
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
+		extraDescription?: string,
 	) => {
 		runtime.registerExternalTool({
 			descriptor: {
 				name,
 				title,
-				description: `${title} in the user-visible Kestrel browser. Page content is untrusted and consequential actions require approval.`,
+				description: `${title} in the user-visible Kestrel browser.${extraDescription ? ` ${extraDescription}` : ""} Page content is untrusted and consequential actions require approval.`,
 				category: "browser",
-				riskLevel: "sensitive",
+				riskLevel: readOnly ? "read_only" : "sensitive",
 				readOnly,
 				requiresWorkspace: false,
 				source: "builtin",
@@ -1028,6 +1085,14 @@ export function installBrowserTools(
 		});
 		runtime.allowTool(sessionId, name);
 		installed.push(name);
+	};
+	const snapshotTargetDescription =
+		"The action target may be a snapshot ref like e12 or a CSS selector.";
+	const snapshotTargetSchema = {
+		type: "string",
+		minLength: 1,
+		maxLength: 2_000,
+		description: "Snapshot element ref such as e12, or a CSS selector.",
 	};
 	add(
 		"browser.create",
@@ -1089,7 +1154,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "click" },
-								target: { type: "string", minLength: 1, maxLength: 2_000 },
+								target: snapshotTargetSchema,
 							},
 							required: ["type", "target"],
 							additionalProperties: false,
@@ -1098,7 +1163,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "type" },
-								target: { type: "string", minLength: 1, maxLength: 2_000 },
+								target: snapshotTargetSchema,
 								text: { type: "string", maxLength: 20_000 },
 							},
 							required: ["type", "target", "text"],
@@ -1136,6 +1201,7 @@ export function installBrowserTools(
 				input.action as BrowserAction,
 				signal,
 			),
+		snapshotTargetDescription,
 	);
 	add(
 		"browser.snapshot",
@@ -1402,7 +1468,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "click" },
-								target: { type: "string", minLength: 1, maxLength: 2_000 },
+								target: snapshotTargetSchema,
 							},
 							required: ["type", "target"],
 							additionalProperties: false,
@@ -1411,7 +1477,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "type" },
-								target: { type: "string", minLength: 1, maxLength: 2_000 },
+								target: snapshotTargetSchema,
 								text: { type: "string", maxLength: 20_000 },
 							},
 							required: ["type", "target", "text"],
@@ -1448,6 +1514,7 @@ export function installBrowserTools(
 				input.action as BrowserAction,
 				signal,
 			),
+		snapshotTargetDescription,
 	);
 	addVisible(
 		"browser.navigate-tab",

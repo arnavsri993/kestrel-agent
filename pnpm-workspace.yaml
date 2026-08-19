@@ -2,17 +2,13 @@ packages:
   - apps/*
   - packages/*
 
-# Universal macOS packaging needs both Sharp/libvips optional binary families
-# available in the shared pnpm install before electron-builder splits arches.
-supportedArchitectures:
-  os:
-    - darwin
-  cpu:
-    - arm64
-    - x64
+# Optional native packages follow the host that runs install. The desktop app
+# ships only Apple Silicon arm64, so M1 and later Macs share one binary family.
+# Website CI keeps its own current Linux architecture via pnpm's default.
 
 allowBuilds:
   better-sqlite3: true
+  electron: true
   electron-winstaller: true
   esbuild: true
   sharp: true
@@ -40,7 +36,7 @@ minimumReleaseAgeExclude:
   - '@next/swc-win32-arm64-msvc@16.2.11'
   - '@next/swc-win32-x64-msvc@16.2.11'
   - better-sqlite3@13.0.1
-  - electron@43.2.0
+  - electron@43.4.0
   - next@16.2.11
   - react-dom@19.2.8
   - react@19.2.8

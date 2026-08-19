@@ -45,7 +45,7 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 	await page.locator('summary[aria-label="Task settings"]').click();
 	await page.getByLabel("Project").waitFor();
 	const execution = page.getByLabel("Execution");

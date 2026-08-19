@@ -33,6 +33,12 @@ const installRoot = resolve(process.env.KESTREL_MACOS_INSTALL_ROOT ?? "/Applicat
 const destination = join(installRoot, "Kestrel.app");
 const trashRoot = resolve(process.env.KESTREL_MACOS_TRASH_ROOT ?? join(home, ".Trash"));
 const mdfind = process.env.KESTREL_MDFIND_PATH ?? "/usr/bin/mdfind";
+const kestrelBundleIdentifier = "com.kestrel.desktop";
+const kestrelApplicationName = "Kestrel";
+const supportedBundleIdentifiers = new Set([
+	"com.kestrel.desktop",
+	"com.kestrel.desktop.dev",
+]);
 const searchRoots = uniquePaths(
   (process.env.KESTREL_MACOS_SEARCH_ROOTS
     ? process.env.KESTREL_MACOS_SEARCH_ROOTS.split(":")
@@ -99,14 +105,23 @@ function isKestrelBundle(bundlePath) {
   const identifier = plistValue(bundlePath, "CFBundleIdentifier");
   const name = plistValue(bundlePath, "CFBundleName");
   const displayName = plistValue(bundlePath, "CFBundleDisplayName");
-  return (
-    (identifier === "com.kestrel.desktop" || identifier === "com.kestrel.desktop.dev") &&
-    (name === "Kestrel" || displayName === "Kestrel")
+  const isKestrelIdentifier =
+    identifier === kestrelBundleIdentifier ||
+    identifier.startsWith(`${kestrelBundleIdentifier}.`);
+  const isKestrelName = [name, displayName].some(
+    (value) =>
+      value === kestrelApplicationName ||
+      value.startsWith(`${kestrelApplicationName} `),
   );
+  return isKestrelIdentifier && isKestrelName;
 }
 
 function validateSource(bundlePath) {
-  if (!isKestrelBundle(bundlePath)) {
+  const identifier = plistValue(bundlePath, "CFBundleIdentifier");
+  if (
+    !isKestrelBundle(bundlePath) ||
+    !supportedBundleIdentifiers.has(identifier)
+  ) {
     throw new Error(`Not a verified Kestrel app bundle: ${bundlePath}`);
   }
 }
@@ -160,8 +175,8 @@ function appCandidates(root) {
 
 function spotlightCandidates() {
   // Finder indexes packaged bundles left in old worktrees even when they are
-  // not in a common install directory. Query the exact bundle name so a new
-  // install can move those stale artifacts to the same reversible Trash path.
+  // not in a common install directory. Query the Kestrel bundle ID prefix so
+  // a new install can move stale variants to the same reversible Trash path.
   if (
     process.env.KESTREL_SKIP_SPOTLIGHT === "1" ||
     !existsSync(mdfind)
@@ -170,10 +185,14 @@ function spotlightCandidates() {
   }
   let output;
   try {
-    output = execFileSync(mdfind, ["kMDItemFSName == 'Kestrel.app'c"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    output = execFileSync(
+      mdfind,
+      ["kMDItemCFBundleIdentifier == 'com.kestrel.desktop*'c"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
   } catch {
     return [];
   }

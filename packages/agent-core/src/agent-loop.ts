@@ -28,6 +28,34 @@ import { UsageGovernor } from "./usage-governor";
 
 const CREDENTIAL_BOUNDARY_INSTRUCTIONS =
 	"Never ask the user to paste API keys, OAuth tokens, passwords, session cookies, private keys, or other secrets into chat. Direct credential entry to the product's protected native credential field or the provider's own OAuth or device-login surface. You may explain what a credential enables and verify only non-secret connection status.";
+
+function isUntrustedTrustLabel(value: unknown): boolean {
+	return typeof value === "string" && value.startsWith("untrusted_");
+}
+
+function outputCarriesUntrustedContent(output: unknown): boolean {
+	if (!output || typeof output !== "object" || Array.isArray(output))
+		return false;
+	const record = output as Record<string, unknown>;
+	if (isUntrustedTrustLabel(record.trust)) return true;
+	if (
+		record.observation &&
+		typeof record.observation === "object" &&
+		!Array.isArray(record.observation) &&
+		isUntrustedTrustLabel(
+			(record.observation as Record<string, unknown>).trust,
+		)
+	)
+		return true;
+	if (Array.isArray(record.tabs))
+		return record.tabs.some(
+			(tab) =>
+				tab &&
+				typeof tab === "object" &&
+				isUntrustedTrustLabel((tab as Record<string, unknown>).trust),
+		);
+	return false;
+}
 export const LOCAL_FIRST_TOOL_INSTRUCTIONS =
 	"Prefer self-contained local capability before any external tool or hosted service. Inspect existing conversation, workspace files, local memory, and local runtime tools first. For interactive web research, prefer Kestrel's isolated on-device browser over a hosted search API when direct navigation can satisfy the request. Use web.search, hosted transcription, remote execution, or another external service only when local capability cannot complete the request and the user has explicitly enabled that fallback. Make the external boundary visible; never imply that network-derived content or hosted processing happened locally.";
 const TOOL_RESULT_SAFETY_INSTRUCTIONS =
@@ -612,10 +640,11 @@ export class AgentLoop {
 					const remainingFallbacks = [...(run.fallbackModelIds ?? [])];
 					const nextFallbackId = remainingFallbacks.shift();
 					if (nextFallbackId) {
-						const [nextEndpointId, ...nextModelParts] = nextFallbackId.includes(":")
+						const nextParts = nextFallbackId.includes(":")
 							? nextFallbackId.split(":")
 							: [nextFallbackId, nextFallbackId];
-						const nextModel = nextModelParts.join(":") || nextFallbackId;
+						const nextEndpointId = nextParts[0] ?? nextFallbackId;
+						const nextModel = nextParts.slice(1).join(":") || nextFallbackId;
 						const prevModel = run.model;
 						const recoveryCount = (run.refusalRecoveryCount ?? 0) + 1;
 
@@ -776,11 +805,9 @@ export class AgentLoop {
 					if (
 						execution.status === "verified" &&
 						(descriptor.category === "web" ||
-							descriptor.category === "browser" ||
 							descriptor.source === "mcp" ||
-							(execution.output as Record<string, unknown> | undefined)
-								?.trust === "untrusted_external")
-						) {
+							outputCarriesUntrustedContent(execution.output))
+					) {
 						untrustedExternalContent =
 								`${untrustedExternalContent}\n${content}`.slice(
 									-100_000,

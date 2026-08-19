@@ -125,6 +125,7 @@ describe("sidebar footer destination", () => {
 		expect(sidebarActiveDestination("browser")).toBe("browser");
 		expect(sidebarActiveDestination("agent")).toBe("agent");
 		expect(sidebarActiveDestination("approvals")).toBe("approvals");
+		expect(sidebarActiveDestination("settings")).toBe("settings");
 		expect(sidebarActiveDestination("kestrel://settings")).toBe("settings");
 		expect(sidebarActiveDestination("kestrel://history")).toBe("browser");
 	});

@@ -21,6 +21,7 @@ import {
 	installBrowserTools,
 	installCodeIntelligenceTools,
 	installGoogleWorkspaceTools,
+	LocalBrowserMcpServer,
 	type LanguageServerClient,
 	loadSignedManagedPolicy,
 	type ScreenshotFrame,
@@ -32,19 +33,36 @@ import {
 	PROTECTED_DATABASE_ERROR_CODE,
 } from "@kestrel/database";
 import { CoreRequestSchema } from "@kestrel/shared-types";
+import {
+	decodeNodeIpcMessage,
+	encodeNodeIpcMessage,
+} from "../main/core-ipc-codec";
 
 interface ParentPort {
 	on(event: "message", listener: (event: { data: unknown }) => void): void;
 	postMessage(message: unknown): void;
 }
-const port = (process as typeof process & { parentPort?: ParentPort })
+const electronParentPort = (process as typeof process & { parentPort?: ParentPort })
 	.parentPort;
+const nodeParentPort: ParentPort | undefined = process.send
+	? {
+			on: (_event, listener) =>
+				process.on("message", (data) =>
+					listener({ data: decodeNodeIpcMessage(data) }),
+				),
+			postMessage: (message) => {
+				process.send?.(encodeNodeIpcMessage(message));
+			},
+		}
+	: undefined;
+const port = electronParentPort ?? nodeParentPort;
 if (!port)
 	throw new Error(
-		"Kestrel Agent Core must run as an Electron utility process.",
+		"Kestrel Agent Core must run as an Electron utility or Node child process.",
 	);
 
 let core: AgentCore | undefined;
+let browserMcp: LocalBrowserMcpServer | undefined;
 let languageServer: LanguageServerClient | undefined;
 let automationTimer: NodeJS.Timeout | undefined;
 let automationRunning = false;
@@ -182,14 +200,14 @@ const browserBackend: BrowserAutomationBackend = {
 			signal,
 		),
 	visibleScreenshot: async (tabId, signal) => {
-		const result = await browserRequest<ScreenshotFrame>(
-			{ operation: "visible-screenshot", ...(tabId ? { tabId } : {}) },
-			signal,
-		);
+		const result = await browserRequest<
+			ScreenshotFrame & { trust: "untrusted_browser" }
+		>({ operation: "visible-screenshot", ...(tabId ? { tabId } : {}) }, signal);
 		return {
 			...result,
 			rgba: new Uint8Array(result.rgba),
 			...(result.png ? { png: new Uint8Array(result.png) } : {}),
+			trust: "untrusted_browser",
 		};
 	},
 	visibleHistory: (query, limit, signal) =>
@@ -339,17 +357,18 @@ port.on("message", async ({ data }) => {
 				...(managedPolicy ? { managedPolicy } : {}),
 				...(googleWorkspace ? { googleWorkspace } : {}),
 			});
+			const agentCore = core;
 			for (const key of Object.keys(message.config.secureEnvironment))
 				delete message.config.secureEnvironment[key];
-			const mainSession = core.runtime.ensureMainSession();
+			const mainSession = agentCore.runtime.ensureMainSession();
 			if (googleWorkspace)
 				installGoogleWorkspaceTools(
-					core.runtime,
+					agentCore.runtime,
 					googleWorkspace,
 					mainSession.id,
 				);
 			const browserToolNames = installBrowserTools(
-				core.runtime,
+				agentCore.runtime,
 				new BrowserController(browserBackend),
 				mainSession.id,
 				new VisualValidator(database, artifactRoot),
@@ -357,11 +376,21 @@ port.on("message", async ({ data }) => {
 			// Sessions created after registration inherit these tools automatically.
 			// Preserve conversation timestamps while making the new browser layer
 			// available to conversations that already existed before this release.
-			for (const session of core.runtime.listSessions())
+			for (const session of agentCore.runtime.listSessions())
 				if (session.id !== mainSession.id)
-					core.runtime.allowTools(session.id, browserToolNames, {
+					agentCore.runtime.allowTools(session.id, browserToolNames, {
 						preserveUpdatedAt: true,
 					});
+			browserMcp = new LocalBrowserMcpServer({
+				runtime: agentCore.runtime,
+				sessionId: mainSession.id,
+				resolveCallSession: () => agentCore.resolveCodexBrowserMcpSession(),
+			});
+			const browserMcpEndpoint = await browserMcp.start();
+			agentCore.attachCodexBrowserMcp({
+				url: browserMcpEndpoint.url,
+				token: browserMcpEndpoint.token,
+			});
 			const configuredLanguageServer = await environmentLanguageServerClient();
 			if (configuredLanguageServer) {
 				languageServer = configuredLanguageServer.client;
@@ -424,8 +453,11 @@ port.on("message", async ({ data }) => {
 			automationTimer.unref();
 			port.postMessage({ type: "ready" });
 		} catch (error) {
+			await browserMcp?.stop();
+			browserMcp = undefined;
 			const message =
 				error instanceof Error ? error.message : "Core bootstrap failed";
+			console.error("Kestrel Agent Core bootstrap failed:", error);
 			port.postMessage({
 				type: "start-error",
 				error: message,
@@ -456,6 +488,8 @@ port.on("message", async ({ data }) => {
 			pending.reject(new Error("Agent Core is shutting down."));
 		}
 		browserPending.clear();
+		await browserMcp?.stop();
+		browserMcp = undefined;
 		await languageServer?.close();
 		await core?.close();
 		process.exit(0);

@@ -8,9 +8,7 @@ import {
   type RefObject,
 } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
-import {
-  parseKestrelAppPage,
-} from "../../../utility/browser-app-pages";
+import { parseKestrelAppPage } from "../../../utility/browser-app-pages";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BrowserToolbar } from "./BrowserToolbar";
@@ -233,7 +231,7 @@ export function BrowserWorkspace({
       }
 
       if (
-        ((key === "tab" ||
+        (((key === "tab" && !event.shiftKey) ||
           key === "pagedown" ||
           (key === "]" && event.shiftKey)) &&
           state?.tabs.length) ||
@@ -498,10 +496,10 @@ export function BrowserWorkspace({
           <NewTabPage
             history={state.history}
             bookmarks={state.bookmarks}
+            background={state.settings.newTabBackground}
             agentName={agentName}
             onNavigate={(input) => void navigate(activeTab.id, input)}
             onNewAgent={onNewAgent}
-            onOpenSettings={onOpenSettings}
           />
         )}
         {activeTab.error && (

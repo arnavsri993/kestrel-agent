@@ -52,30 +52,50 @@ instead of entering renderer or prompt state.
 
 ## Approval and workspace boundary
 
-Codex app-server is deliberately configured with:
+Codex app-server remains unable to run a shell or edit files. It is
+deliberately configured with:
 
 - `sandbox: "read-only"`;
 - `approvalPolicy: "never"`;
 - network disabled in the per-turn sandbox policy;
-- base instructions forbidding commands, file edits, browsing, MCP, and
-  approval requests.
+- `capabilities.tools = false` on the Kestrel provider, so Codex MCP traffic
+  never appears as Kestrel `toolCalls`.
 
-Any server-initiated command or file-change approval request is explicitly
-declined. Unknown server requests receive a method-not-supported error. This
-means Codex supplies persistent model reasoning while Kestrel remains the sole
-owner of tool execution, workspace mutation, idempotency, and visible approval.
-It cannot use a vendor-side permission prompt to bypass Kestrel policy.
+Without a browser MCP attachment, base instructions stay closed: no commands,
+file edits, browsing, MCP, or vendor-side approval requests.
+
+When desktop bootstrap attaches a Kestrel-owned loopback browser MCP before the
+first probe, Codex may use MCP server `kestrel_browser` to inspect
+the visible Kestrel browser. Mutating tab/page actions stay on Kestrel's native
+approval path and are not exposed through that MCP server. That attachment writes an overlay `CODEX_HOME`
+under the owner-private scratch directory and points Codex at the loopback MCP
+URL through `config.toml`. The bearer token is passed only as
+`KESTREL_CODEX_MCP_TOKEN`. Kestrel may symlink the user's existing
+`auth.json` into the overlay; it does not write `~/.codex/config.toml` or copy
+vendor auth bytes. If the overlay is not attached, `CODEX_HOME` is left
+unchanged so the child keeps using the ordinary user or test home.
+
+Mutating browser actions still belong to Kestrel. The loopback MCP enforces
+that through `runtime.callTool`. Codex auto-approval in the overlay config only
+avoids a second vendor prompt; it does not bypass Kestrel policy. Command
+execution, file-change, and permission-grant requests are declined or granted
+as an empty set, and MCP elicitation is declined. Unknown server requests
+receive a method-not-supported error. Codex cannot use a vendor-side permission
+prompt to edit files, run a shell, or skip Kestrel approval.
 
 The child receives only a small allowlist of process variables needed for the
-vendor-owned login and runtime. OpenAI API keys and unrelated environment
-secrets are stripped.
+vendor-owned login, runtime, and optional overlay MCP token. OpenAI API keys
+and unrelated environment secrets are stripped.
 
 ## Verification
 
 `packages/agent-core/src/providers/codex-app-server.test.ts` runs a real JSONL
 child fixture and proves one initialization and OS process across two turns,
 one durable thread, first-turn transcript handoff, subsequent delta-only input,
-streaming, token usage, explicit command denial, and secret stripping.
+streaming, token usage, explicit command denial, and secret stripping. A second
+fixture path attaches the loopback browser MCP and proves overlay `CODEX_HOME`,
+`kestrel_browser` instructions, and the same read-only sandbox and command
+denial.
 
 `apps/desktop/src/main/chatgpt-oauth.test.ts` proves the stable ChatGPT login
 request, official authorization-URL boundary, completion notification,

@@ -12,15 +12,6 @@ import { dirname, join } from "node:path";
 import { ProtectedDatabaseError } from "@kestrel/database";
 import { decryptText, encryptText } from "@kestrel/encryption";
 
-export interface ElectronSafeStorage {
-	isAsyncEncryptionAvailable(): Promise<boolean>;
-	encryptStringAsync(value: string): Promise<Buffer>;
-	decryptStringAsync(value: Buffer): Promise<{
-		result: string;
-		shouldReEncrypt: boolean;
-	}>;
-}
-
 export type BrokeredCredentialId =
 	| "openai"
 	| "openai-secondary"
@@ -120,8 +111,9 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
 ] as const;
 
 export const SECURE_STORAGE_UNAVAILABLE_MESSAGE =
-	"macOS secure storage is unavailable; Agent Core will not start with an unprotected key.";
+	"Protected storage is unavailable; Agent Core will not start with an unprotected key.";
 const SECRET_ENVELOPE_PREFIX = Buffer.from("kestrel-secret-v1\n", "utf8");
+const PLAINTEXT_PROTECTION_PREFIX = Buffer.from("kestrel-plaintext-v1\n", "utf8");
 const SECRET_KEY_SALT = Buffer.from("kestrel-credential-broker-v1", "utf8");
 const fileMutationQueues = new Map<string, Promise<void>>();
 
@@ -142,7 +134,7 @@ export function isSecureStorageError(error: unknown): error is SecureStorageErro
 function asSecureStorageError(error: unknown): SecureStorageError {
 	if (isSecureStorageError(error)) return error;
 	return new SecureStorageError(
-		"Kestrel could not unlock its protected data. Unlock the login keychain and choose “Always Allow” for Kestrel Safe Storage, then try again.",
+		"Kestrel could not unlock its protected data. Restore the local database key file, then try again.",
 		error,
 	);
 }
@@ -164,72 +156,39 @@ interface SecretProtection {
 	decryptString(value: Buffer): Promise<string | ProtectedDecryption>;
 }
 
-export class ElectronSecretProtection implements SecretProtection {
-	private availability: Promise<void> | undefined;
-	private queue: Promise<void> = Promise.resolve();
-
-	constructor(private readonly safeStorage: ElectronSafeStorage) {}
-
-	prepare(): Promise<void> {
-		return this.ensureAvailable();
+export class PlaintextSecretProtection implements SecretProtection {
+	isEncryptionAvailable(): boolean {
+		return true;
 	}
 
-	encryptString(value: string): Promise<Buffer> {
-		return this.withEncryption(() =>
-			this.safeStorage.encryptStringAsync(value),
-		);
+	async encryptString(value: string): Promise<Buffer> {
+		return Buffer.concat([
+			PLAINTEXT_PROTECTION_PREFIX,
+			Buffer.from(value, "utf8"),
+		]);
 	}
 
-	decryptString(value: Buffer): Promise<ProtectedDecryption> {
-		// shouldReEncrypt is a persistence instruction, not a retry signal. Calling
-		// decrypt again with the same legacy ciphertext can return the same flag
-		// forever and repeatedly fall back to the macOS Keychain implementation.
-		return this.withEncryption(() =>
-			this.safeStorage.decryptStringAsync(value),
-		);
-	}
-
-	private async withEncryption<T>(operation: () => Promise<T>): Promise<T> {
-		const previous = this.queue;
-		let release!: () => void;
-		this.queue = new Promise<void>((resolve) => {
-			release = resolve;
-		});
-		await previous;
-		try {
-			await this.prepare();
-			return await operation();
-		} catch (error) {
-			throw asSecureStorageError(error);
-		} finally {
-			release();
+	async decryptString(value: Buffer): Promise<ProtectedDecryption> {
+		if (
+			value
+				.subarray(0, PLAINTEXT_PROTECTION_PREFIX.length)
+				.equals(PLAINTEXT_PROTECTION_PREFIX)
+		) {
+			return {
+				result: value.subarray(PLAINTEXT_PROTECTION_PREFIX.length).toString("utf8"),
+				shouldReEncrypt: false,
+			};
 		}
-	}
-
-	private async ensureAvailable(): Promise<void> {
-		this.availability ??= this.safeStorage
-			.isAsyncEncryptionAvailable()
-			.then((available) => {
-				if (!available)
-					throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
-			});
-		try {
-			await this.availability;
-		} catch (error) {
-			// A denied or locked login keychain can become available after the user
-			// unlocks it. Do not permanently poison the process with one failure.
-			this.availability = undefined;
-			throw error;
-		}
+		throw new SecureStorageError(
+			"Kestrel found a Keychain-protected secret, but this build stores the database key as a local file instead of using macOS Keychain.",
+		);
 	}
 }
 
 let defaultProtection: Promise<SecretProtection> | undefined;
 
 function loadDefaultProtection(): Promise<SecretProtection> {
-	defaultProtection ??= import("electron").then(
-		({ safeStorage }) => new ElectronSecretProtection(safeStorage),
-	);
+	defaultProtection ??= Promise.resolve(new PlaintextSecretProtection());
 	return defaultProtection;
 }
 
@@ -520,11 +479,15 @@ export class CredentialBroker {
 					);
 				return key;
 			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				const missingKeyFile =
+					(error as NodeJS.ErrnoException).code === "ENOENT";
+				if (!missingKeyFile && !isSecureStorageError(error)) throw error;
 				try {
 					if ((await stat(this.databasePath)).isFile())
 						throw new ProtectedDatabaseError(
-							"Kestrel found its encrypted database, but the protected database key is missing. The existing profile will not be overwritten.",
+							missingKeyFile
+								? "Kestrel found its encrypted database, but the protected database key is missing. The existing profile will not be overwritten."
+								: "Kestrel found its encrypted database, but this build no longer uses macOS Keychain to unlock the old key. The existing profile will not be overwritten.",
 						);
 				} catch (databaseError) {
 					if (databaseError instanceof ProtectedDatabaseError)
@@ -576,9 +539,8 @@ export class CredentialBroker {
 			)
 				return this.decryptSecret(encrypted, purpose, databaseKey);
 
-			// Files written by older Kestrel versions were protected individually by
-			// safeStorage. Read each one once, then migrate it to the root-key format
-			// so future setup and restart flows never revisit Keychain for it.
+			// Older builds protected files individually with Electron safeStorage.
+			// This build never opens macOS Keychain, so leftover ciphertext is refused.
 			const legacy = this.normalizedDecryption(
 				await this.decryptWithProtection(
 					await this.availableProtection(),
@@ -691,7 +653,7 @@ export class CredentialBroker {
 	}
 
 	private async availableProtection(
-		unavailableMessage = "macOS secure storage is unavailable; credentials will not be stored or loaded unprotected.",
+		unavailableMessage = "Protected storage is unavailable; credentials will not be stored or loaded unprotected.",
 	): Promise<SecretProtection> {
 		const protection = await this.protection;
 		if (protection.prepare) {

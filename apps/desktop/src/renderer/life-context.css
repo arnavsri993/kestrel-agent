@@ -8,7 +8,7 @@
 }
 
 .life-page :is(button, a, input, select, textarea, summary):focus-visible {
-	outline: 2px solid var(--signal);
+	outline: 2px solid var(--solid);
 	outline-offset: 2px;
 }
 
@@ -42,7 +42,7 @@
 
 .life-switcher button.active {
 	color: var(--ink);
-	border-bottom-color: var(--signal);
+	border-bottom-color: var(--solid);
 }
 
 .life-switcher button svg {
@@ -124,16 +124,16 @@
 }
 
 .calendar-provider-strip [data-state="connected"] i {
-	background: var(--healthy);
+	background: var(--status-ink);
 }
 
 .calendar-provider-strip [data-state="error"] i {
-	background: var(--danger);
+	background: var(--status-ink);
 }
 
 .calendar-provider-strip strong,
 .calendar-provider-strip small {
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .calendar-provider-strip strong {
@@ -151,7 +151,7 @@
 	flex-wrap: wrap;
 	gap: 8px 18px;
 	color: var(--faint);
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .calendar-legend span {
@@ -160,12 +160,12 @@
 }
 
 .calendar-legend [data-origin="explicit"] {
-	border-left-color: var(--signal);
+	border-left-color: var(--solid);
 }
 
 .calendar-legend [data-origin="inferred"] {
 	border-left-style: dashed;
-	border-left-color: var(--warning);
+	border-left-color: var(--status-ink);
 }
 
 .calendar-legend [data-origin="suggested"] {
@@ -211,13 +211,13 @@
 }
 
 .calendar-day > header[data-today] {
-	color: var(--signal-deep);
-	background: color-mix(in srgb, var(--signal) 7%, transparent);
+	color: var(--ink);
+	background: color-mix(in srgb, var(--solid) 7%, transparent);
 }
 
 .calendar-day > header span {
 	overflow: hidden;
-	font-size: 10px;
+	font-size: 11px;
 	text-transform: uppercase;
 	text-overflow: ellipsis;
 }
@@ -257,12 +257,12 @@
 }
 
 .calendar-event[data-origin="explicit"] {
-	border-left-color: var(--signal);
+	border-left-color: var(--solid);
 }
 
 .calendar-event[data-origin="inferred"] {
 	border-left-style: dashed;
-	border-left-color: var(--warning);
+	border-left-color: var(--status-ink);
 }
 
 .calendar-event[data-origin="suggested"] {
@@ -274,7 +274,7 @@
 	overflow: hidden;
 	color: var(--faint);
 	font-family: var(--mono);
-	font-size: 9px;
+	font-size: 11px;
 	line-height: 1.35;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -290,7 +290,7 @@
 .calendar-open {
 	padding: 9px 3px;
 	color: color-mix(in srgb, var(--faint) 66%, transparent);
-	font-size: 9px;
+	font-size: 11px;
 }
 
 .calendar-detail {
@@ -321,16 +321,16 @@
 	border-left: 2px solid var(--line-strong);
 	color: var(--faint);
 	font-family: var(--mono);
-	font-size: 9px;
+	font-size: 11px;
 }
 
 .origin-line[data-origin="explicit"] {
-	border-left-color: var(--signal);
+	border-left-color: var(--solid);
 }
 
 .origin-line[data-origin="inferred"] {
 	border-left-style: dashed;
-	border-left-color: var(--warning);
+	border-left-color: var(--status-ink);
 }
 
 .origin-line[data-origin="suggested"] {
@@ -357,7 +357,7 @@
 	margin-top: 8px;
 	color: var(--faint);
 	font-family: var(--mono);
-	font-size: 9px;
+	font-size: 11px;
 	line-height: 1.5;
 	overflow-wrap: anywhere;
 }
@@ -368,9 +368,9 @@
 }
 
 .button.danger {
-	border-color: color-mix(in srgb, var(--danger) 50%, var(--line));
-	background: var(--danger-soft);
-	color: var(--danger-ink);
+	border-color: color-mix(in srgb, var(--status-ink) 50%, var(--line));
+	background: var(--status-fill);
+	color: var(--status-ink);
 }
 
 .life-empty {
@@ -423,7 +423,7 @@
 	display: grid;
 	gap: 6px;
 	color: var(--faint);
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .life-create input,
@@ -452,7 +452,7 @@
 	display: block;
 	margin-top: 9px;
 	color: var(--faint);
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .people-layout {
@@ -491,7 +491,7 @@
 .people-directory p {
 	margin-top: 3px;
 	color: var(--faint);
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .people-directory > header > strong {
@@ -522,7 +522,7 @@
 }
 
 .people-directory > button.active {
-	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--solid) 28%, transparent);
 }
 
 .people-directory > button > span,
@@ -535,7 +535,7 @@
 	background: var(--surface-strong);
 	color: var(--muted);
 	font-family: var(--mono);
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .people-directory > button strong,
@@ -553,7 +553,7 @@
 .people-directory > button small {
 	margin-top: 3px;
 	color: var(--faint);
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .people-empty {
@@ -655,7 +655,7 @@
 .person-facts p,
 .person-facts small {
 	margin: 0;
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .person-facts p {
@@ -686,19 +686,19 @@
 }
 
 .danger-link {
-	color: var(--danger-ink);
+	color: var(--status-ink);
 }
 
 .destructive-confirmation {
 	margin-top: 18px;
 	padding: 14px;
-	border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
+	border: 1px solid color-mix(in srgb, var(--status-ink) 45%, var(--line));
 	border-radius: var(--radius-row);
-	background: var(--danger-soft);
+	background: var(--status-fill);
 }
 
 .destructive-confirmation p {
-	color: var(--danger-ink);
+	color: var(--status-ink);
 	font-size: 11px;
 }
 
@@ -749,7 +749,7 @@
 .memory-commandbar > strong {
 	color: var(--faint);
 	font-family: var(--mono);
-	font-size: 10px;
+	font-size: 11px;
 	text-align: right;
 }
 
@@ -790,7 +790,7 @@
 }
 
 .memory-ledger-list > button.active {
-	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal) 28%, transparent);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--solid) 28%, transparent);
 }
 
 .memory-ledger-list > button > span {
@@ -804,11 +804,11 @@
 .memory-ledger-list > button > span[data-state="explicit"],
 .memory-ledger-list > button > span[data-state="user_confirmed"],
 .memory-ledger-list > button > span[data-state="provider_confirmed"] {
-	background: var(--signal);
+	background: var(--solid);
 }
 
 .memory-ledger-list > button > span[data-state="suggested"] {
-	background: var(--warning);
+	background: var(--status-ink);
 }
 
 .memory-ledger-list strong,
@@ -828,7 +828,7 @@
 	margin-top: 4px;
 	color: var(--faint);
 	font-family: var(--mono);
-	font-size: 9px;
+	font-size: 11px;
 	white-space: nowrap;
 }
 
@@ -860,7 +860,7 @@
 .memory-inspector > header > span {
 	color: var(--faint);
 	font-family: var(--mono);
-	font-size: 9px;
+	font-size: 11px;
 }
 
 .memory-inspector-actions {
@@ -875,7 +875,7 @@
 	margin-top: 4px;
 	color: var(--faint);
 	font-family: var(--mono);
-	font-size: 9px;
+	font-size: 11px;
 }
 
 .memory-inspector details {
@@ -916,7 +916,7 @@
 .life-proposals header p {
 	margin-top: 3px;
 	color: var(--faint);
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .context-explainer form {
@@ -938,11 +938,11 @@
 	gap: 10px;
 	padding: 8px 0;
 	border-top: 1px solid var(--line);
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .context-explainer li strong {
-	color: var(--signal-deep);
+	color: var(--ink);
 }
 
 .context-explainer li span {
@@ -967,7 +967,7 @@
 .life-proposals article p,
 .life-proposals article small {
 	margin: 3px 0 0;
-	font-size: 10px;
+	font-size: 11px;
 }
 
 .life-proposals article p {
@@ -987,7 +987,7 @@
 .memory-control-note {
 	margin: 0;
 	color: var(--faint);
-	font-size: 10px;
+	font-size: 11px;
 	line-height: 1.55;
 }
 

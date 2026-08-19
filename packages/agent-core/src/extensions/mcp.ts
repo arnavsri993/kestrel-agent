@@ -648,15 +648,28 @@ export class McpClient {
 
 export interface McpRuntimeAccess {
 	allowMutatingTools: boolean;
+	sessionId?: string;
 }
 
 export class McpRuntimeServer {
 	private initialized = false;
+	private readonly toolFilter: ((name: string) => boolean) | undefined;
+	private readonly serverName: string;
+	private readonly serverTitle: string;
 
 	constructor(
 		private readonly runtime: AgentRuntime,
 		private readonly sessionId: string,
-	) {}
+		options?: {
+			toolFilter?: (name: string) => boolean;
+			serverName?: string;
+			serverTitle?: string;
+		},
+	) {
+		this.toolFilter = options?.toolFilter;
+		this.serverName = options?.serverName ?? "kestrel-runtime";
+		this.serverTitle = options?.serverTitle ?? "Kestrel Runtime";
+	}
 
 	async handle(
 		message: JsonRpcMessage,
@@ -677,23 +690,28 @@ export class McpRuntimeServer {
 						protocolVersion: MCP_PROTOCOL_VERSION,
 						capabilities: { tools: { listChanged: false } },
 						serverInfo: {
-							name: "kestrel-runtime",
-							title: "Kestrel Runtime",
+							name: this.serverName,
+							title: this.serverTitle,
 							version: "0.1.0",
 							description: "Policy-scoped Kestrel tools",
 						},
 					},
 				};
 			if (!this.initialized) throw new Error("MCP server is not initialized.");
+			const sessionId = access.sessionId ?? this.sessionId;
 			if (message.method === "tools/list")
 				return {
 					jsonrpc: "2.0",
 					id: message.id,
 					result: {
 						tools: this.runtime
-							.modelTools(this.sessionId)
+							.modelTools(sessionId)
 							.filter(
 								(tool) => access.allowMutatingTools || tool.descriptor.readOnly,
+							)
+							.filter(
+								(tool) =>
+									!this.toolFilter || this.toolFilter(tool.descriptor.name),
 							)
 							.map((tool) => ({
 								name: tool.descriptor.name,
@@ -706,14 +724,16 @@ export class McpRuntimeServer {
 				};
 			if (message.method === "tools/call") {
 				const name = String(message.params?.name ?? "");
+				if (this.toolFilter && !this.toolFilter(name))
+					throw new Error("Tool is not exposed by this MCP server.");
 				const tool = this.runtime
-					.modelTools(this.sessionId)
+					.modelTools(sessionId)
 					.find((candidate) => candidate.descriptor.name === name);
 				if (!access.allowMutatingTools && !tool?.descriptor.readOnly)
 					throw new Error("Mutating MCP tools require task authorization.");
 				const args = message.params?.arguments;
 				const execution = await this.runtime.callTool(
-					this.sessionId,
+					sessionId,
 					name,
 					args && typeof args === "object"
 						? (args as Record<string, unknown>)

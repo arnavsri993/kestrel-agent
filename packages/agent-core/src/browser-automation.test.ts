@@ -20,6 +20,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 	uploaded: string[] = [];
 	desktopActions: Array<{ type: string }> = [];
 	visibleActions: BrowserAction[] = [];
+	snapshotCalls = 0;
 	readonly visibleTabId = "tab-00000000-0000-4000-8000-000000000000";
 	async createSession(input: {
 		allowedOrigins: string[];
@@ -37,6 +38,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 		title: string;
 		accessibilityTree: unknown;
 	}> {
+		this.snapshotCalls += 1;
 		return {
 			url: "https://example.test/",
 			title: "Example",
@@ -144,6 +146,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 			height: 1,
 			rgba: Uint8Array.from([0, 0, 0, 255]),
 			png: Uint8Array.from([137, 80, 78, 71]),
+			trust: "untrusted_browser" as const,
 		};
 	}
 	async visibleHistory() {
@@ -217,6 +220,12 @@ describe("isolated browser automation and visual validation", () => {
 			await expect(controller.create("owner", [rejected])).rejects.toThrow(
 				"must use HTTPS",
 			);
+		await expect(
+			controller.create(
+				"owner",
+				Array.from({ length: 21 }, (_, index) => `https://site-${index}.example`),
+			),
+		).rejects.toThrow("at most 20 origins");
 	});
 
 	it("scopes sessions and origins and approval-gates computer actions", async () => {
@@ -231,6 +240,11 @@ describe("isolated browser automation and visual validation", () => {
 			workspaceRoot: root,
 		});
 		installBrowserTools(runtime, controller, session.id);
+		expect(
+			runtime
+				.discoverTools(session.id)
+				.find((tool) => tool.name === "browser.act")?.description,
+		).toContain("snapshot ref like e12");
 		const created = await runtime.callTool(
 			session.id,
 			"browser.create",
@@ -274,12 +288,9 @@ describe("isolated browser automation and visual validation", () => {
 				)
 			).status,
 		).toBe("verified");
-		const snapshot = await runtime.callTool(
-			session.id,
-			"browser.snapshot",
-			{ browserSessionId },
-			{ approvalStatus: "approved" },
-		);
+		const snapshot = await runtime.callTool(session.id, "browser.snapshot", {
+			browserSessionId,
+		});
 		expect(snapshot).toMatchObject({
 			output: { title: "Example", trust: "untrusted_browser" },
 		});
@@ -306,7 +317,10 @@ describe("isolated browser automation and visual validation", () => {
 				{ approvalStatus: "approved" },
 			),
 		).toMatchObject({
-			output: { downloads: [{ filename: "report.pdf", status: "completed" }] },
+			output: {
+				downloads: [{ filename: "report.pdf", status: "completed" }],
+				trust: "untrusted_browser",
+			},
 		});
 		expect(
 			(
@@ -328,13 +342,13 @@ describe("isolated browser automation and visual validation", () => {
 		const runtime = new AgentRuntime(database);
 		const session = runtime.createSession({ title: "Visible browser" });
 		installBrowserTools(runtime, new BrowserController(backend), session.id);
+		expect(
+			runtime
+				.discoverTools(session.id)
+				.find((tool) => tool.name === "browser.visible-act")?.description,
+		).toContain("snapshot ref like e12");
 
-		const listed = await runtime.callTool(
-			session.id,
-			"browser.tabs",
-			{},
-			{ approvalStatus: "approved" },
-		);
+		const listed = await runtime.callTool(session.id, "browser.tabs", {});
 		expect(listed).toMatchObject({
 			status: "verified",
 			output: {
@@ -373,6 +387,21 @@ describe("isolated browser automation and visual validation", () => {
 			output: {
 				trust: "untrusted_browser",
 				downloads: [{ filename: "notes.pdf" }],
+			},
+		});
+
+		await expect(
+			runtime.callTool(
+				session.id,
+				"browser.visible-screenshot",
+				{ tabId: backend.visibleTabId },
+				{ approvalStatus: "approved" },
+			),
+		).resolves.toMatchObject({
+			status: "verified",
+			output: {
+				trust: "untrusted_browser",
+				pngBase64: expect.any(String),
 			},
 		});
 
@@ -443,6 +472,61 @@ describe("isolated browser automation and visual validation", () => {
 				new AbortController().signal,
 			),
 		).rejects.toThrow("exceeds 2 MB");
+	});
+
+	it("does not remint snapshots before click or type", async () => {
+		const backend = new FakeBrowser();
+		const controller = new BrowserController(backend);
+		const session = await controller.create("owner", ["https://example.test"]);
+		await controller.snapshot(
+			"owner",
+			session.browserSessionId,
+			new AbortController().signal,
+		);
+		const afterExplicit = backend.snapshotCalls;
+		await controller.act(
+			"owner",
+			session.browserSessionId,
+			{ type: "click", target: "#buy" },
+			new AbortController().signal,
+		);
+		expect(backend.snapshotCalls).toBe(afterExplicit + 1);
+		expect(backend.actions).toEqual([{ type: "click", target: "#buy" }]);
+	});
+
+	it("does not diff an act against a snapshot from before navigation", async () => {
+		const backend = new FakeBrowser();
+		let title = "Before";
+		backend.snapshot = async () => {
+			backend.snapshotCalls += 1;
+			return {
+				url: "https://example.test/",
+				title,
+				accessibilityTree: { nodes: [{ name: { value: title } }] },
+			};
+		};
+		const controller = new BrowserController(backend);
+		const session = await controller.create("owner", ["https://example.test"]);
+		await controller.snapshot(
+			"owner",
+			session.browserSessionId,
+			new AbortController().signal,
+		);
+		title = "After";
+		await controller.navigate(
+			"owner",
+			session.browserSessionId,
+			"https://example.test/next",
+			new AbortController().signal,
+		);
+		const result = await controller.act(
+			"owner",
+			session.browserSessionId,
+			{ type: "click", target: "#buy" },
+			new AbortController().signal,
+		);
+		expect(result.observation.before.title).toBe("");
+		expect(result.observation.after.title).toBe("After");
 	});
 
 	it("records deterministic pixel comparisons with encrypted metadata", () => {

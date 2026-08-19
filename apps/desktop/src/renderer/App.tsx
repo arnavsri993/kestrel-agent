@@ -21,8 +21,6 @@ import type {
 	ModelProviderSummary,
 	ModelRoutingDecision,
 	OrganizationMemberContract,
-	PetActivityState,
-	PetStatus,
 	PluginMutation,
 	PluginSummary,
 	ProviderVerification,
@@ -41,7 +39,6 @@ import type {
 	UserBrowserBookmark,
 	UserBrowserTab,
 	SkillLearningProposal,
-	SkinStatus,
 	SubscriptionCliStatus,
 	SystemReadiness,
 	TeamRecordContract,
@@ -78,7 +75,11 @@ import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { BrandMark } from "./components/BrandMark";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
-import { sidebarActiveDestination } from "./components/browser/agent-sidebar";
+import {
+	sidebarActiveDestination,
+	sidebarApprovalsNavTarget,
+	sidebarReviewTarget,
+} from "./components/browser/agent-sidebar";
 import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -114,6 +115,13 @@ import { PresenceSettings } from "./components/PresenceSettings";
 import { EmptyState } from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
+import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
+import {
+	isKestrelAppPageId,
+	kestrelAppPageUrl,
+	parseKestrelAppPage,
+	type KestrelAppPageId,
+} from "../utility/browser-app-pages";
 import {
 	isKestrelAppPageId,
 	kestrelAppPageUrl,
@@ -136,6 +144,7 @@ import {
 	loadInitialDesktopState,
 	startupFailureMessage,
 } from "./startup-state";
+import { personalizedConfigurationPrompts } from "./configuration-prompts";
 
 const pages = [
 	["browser", "Browser"],
@@ -1145,21 +1154,13 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			void checkModelRoutes();
 	}, [step, modelReady, verifiedModelReady]);
 
-	const finishHeading = verifiedModelReady
-		? "Kestrel is ready."
-		: modelReady
-			? "Your model route is configured."
-			: "Your workspace is ready.";
+	const finishHeading = "You're set.";
 	const finishDescription = verifiedModelReady
 		? "A real model route responded. Add access only when a task needs it."
 		: modelReady
 			? "The route is saved but not live-verified yet."
 			: "Explore now. Connect a model when you need live work.";
-	const finishPrimaryLabel = verifiedModelReady
-		? "Start using Kestrel"
-		: modelReady
-			? "Open Kestrel"
-			: "Open local preview";
+	const finishPrimaryLabel = "Open Kestrel";
 
 	return (
 		<motion.main
@@ -1167,13 +1168,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			initial={false}
 			animate={{ opacity: 1 }}
 			exit={{ opacity: reduced ? 1 : 0 }}
-			transition={{ duration: reduced ? 0 : 0.16 }}
+			transition={{ duration: reduced ? 0 : 0.14 }}
 		>
 			<header className="onboarding-bar">
-				<ProductAnchor
-					className="setup-product-anchor"
-					detail={`Step ${step + 1} of ${setupSteps.length}`}
-				/>
 				<nav className="setup-rail" aria-label="Setup progress">
 					<span className="setup-stage-name" aria-live="polite">
 						{setupSteps[step]!.label}
@@ -1208,10 +1205,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						ref={setupStageRef}
 						key={step}
 						className={`setup-stage setup-stage-${step}`}
-						initial={reduced ? false : { opacity: 0, y: 8 }}
+						initial={reduced ? false : { opacity: 0, y: 6 }}
 						animate={{ opacity: 1, y: 0 }}
 						exit={{ opacity: reduced ? 1 : 0, y: reduced ? 0 : -6 }}
-						transition={{ duration: reduced ? 0 : 0.22 }}
+						transition={{ duration: reduced ? 0 : 0.14 }}
 						onAnimationComplete={() => {
 							if (
 								activeSetupStepRef.current !== step ||
@@ -2142,10 +2139,18 @@ function Onboarding({ onDone }: { onDone(): void }) {
 								<h1 tabIndex={-1}>{finishHeading}</h1>
 								<p>{finishDescription}</p>
 								<div className="finish-checks">
-									<div className={verifiedModelReady ? "done" : "attention"}>
-										<span>
-											{verifiedModelReady ? "✓" : providerCheckBusy ? "…" : "!"}
-										</span>
+								<div className={verifiedModelReady ? "done" : "attention"}>
+									<span>
+										<Icon
+											name={
+												verifiedModelReady
+													? "check-circle-filled"
+													: providerCheckBusy
+														? "loader"
+														: "info-filled"
+											}
+										/>
+									</span>
 										<span>
 											<strong>
 												{verifiedModelReady
@@ -2176,15 +2181,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												</button>
 											)}
 									</div>
-									<div className="done">
-										<span>✓</span>
+								<div className="done">
+									<span><Icon name="check-circle-filled" /></span>
 										<span>
 											<strong>Approval boundary</strong>
 											<small>Sensitive actions pause for review</small>
 										</span>
 									</div>
-									<div className="done">
-										<span>✓</span>
+								<div className="done">
+									<span><Icon name="check-circle-filled" /></span>
 										<span>
 											<strong>Private storage</strong>
 											<small>
@@ -2192,8 +2197,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</small>
 										</span>
 									</div>
-									<div>
-										<span>→</span>
+								<div>
+									<span><Icon name="info-filled" /></span>
 										<span>
 											<strong>Project access</strong>
 											<small>
@@ -2297,7 +2302,7 @@ function ProductAnchor({
 			{...(reduced ? {} : { layoutId: "kestrel-product-anchor" })}
 			transition={{
 				layout: {
-					duration: 0.22,
+					duration: 0.14,
 					ease: [0.22, 1, 0.36, 1],
 				},
 			}}
@@ -2838,7 +2843,6 @@ function RuntimeConversation({
 	mentionBookmarks = [],
 	newAgentRequestId,
 	newAgentPrompt,
-	onNewAgent,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -2853,7 +2857,6 @@ function RuntimeConversation({
 	mentionBookmarks?: UserBrowserBookmark[];
 	newAgentRequestId: number;
 	newAgentPrompt: string;
-	onNewAgent(): void;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -3391,6 +3394,20 @@ function RuntimeConversation({
 		}
 	}
 
+	function addComposerContext() {
+		if (taskWorkspace && selectedGrant?.available !== false) {
+			void addContext();
+			return;
+		}
+		if (!activeSessionId) {
+			void addProject();
+			return;
+		}
+		setError(
+			"This conversation has no project folder. Start a new task to add files.",
+		);
+	}
+
 	async function addProject() {
 		if (activeSessionId || busy) return;
 		setError("");
@@ -3434,12 +3451,6 @@ function RuntimeConversation({
 				cause instanceof Error ? cause.message : "Could not add the project.",
 			);
 		}
-	}
-
-	async function reviewProject() {
-		setInput("Review this project and suggest the next useful step.");
-		if (!taskWorkspace) await addProject();
-		window.setTimeout(() => promptRef.current?.focus(), 0);
 	}
 
 	async function submit(promptOverride?: string) {
@@ -3848,14 +3859,39 @@ function RuntimeConversation({
 			}
 		>
 			{voiceState === "recording" ? (
-				"Stop"
+				<>
+					<Icon name="pause" />
+					<span className="sr-only">Stop recording</span>
+				</>
 			) : voiceState === "transcribing" ? (
-				"Transcribing…"
+				<>
+					<Icon name="loader" />
+					<span className="sr-only">Transcribing</span>
+				</>
 			) : (
 				<Icon name="voice" />
 			)}
 		</button>
 	);
+	const canAddContextFiles =
+		Boolean(taskWorkspace) && selectedGrant?.available !== false;
+	const projectFilesUnavailable =
+		Boolean(taskWorkspace) && selectedGrant?.available === false;
+	const needsNewTaskForFiles = !canAddContextFiles && Boolean(activeSessionId);
+	const composerFilesLabel = canAddContextFiles
+		? "Add context files"
+		: projectFilesUnavailable
+			? "Project files unavailable"
+		: needsNewTaskForFiles
+			? "Files unavailable in this conversation"
+			: "Add files or choose folder";
+	const composerFilesTitle = canAddContextFiles
+		? "Add files to this task"
+		: projectFilesUnavailable
+			? "Reconnect or remove this project in Settings"
+		: needsNewTaskForFiles
+			? "Start a new task to add files"
+			: "Choose a project before adding files";
 	const runScope = runtimeRunScope({
 		busy,
 		streamSessionId: streamSessionIdRef.current,
@@ -3938,52 +3974,7 @@ function RuntimeConversation({
 			>
 				{assistiveStatus}
 			</p>
-			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
-				<div className="new-task-center">
-					<h1>{activeSessionId ? "Continue this chat." : "How can I help?"}</h1>
-					{activeSessionId && <p>Describe the next useful step.</p>}
-					<ProductAnchor
-						className="workspace-product-anchor"
-						detail={
-							activeSessionId ? "This chat is ready" : "Ready on this Mac"
-						}
-					/>
-					{!activeSessionId && (
-						<div
-							className="prompt-suggestions runtime-suggestions"
-							aria-label="Suggested starts"
-						>
-							<button type="button" onClick={() => void reviewProject()}>
-								<span>
-									<strong>Review a project</strong>
-								</span>
-								<Icon name="arrow" />
-							</button>
-							<button
-								type="button"
-								onClick={() => {
-									setInput("Help me plan the next thing I need to get done.");
-									window.setTimeout(() => promptRef.current?.focus(), 0);
-								}}
-							>
-								<span>
-									<strong>Plan a task</strong>
-								</span>
-								<Icon name="arrow" />
-							</button>
-						</div>
-					)}
-					{activeSessionId && (
-						<div className="empty-session-note">
-							<span className="agent-dot idle" />
-							<span>This chat is conversation-only.</span>
-							<button type="button" className="quiet-link" onClick={onNewAgent}>
-								Start a new chat
-							</button>
-						</div>
-					)}
-				</div>
-			) : (
+			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? null : (
 				<div className="message-list">
 					{hasEarlierMessages && (
 						<button
@@ -4234,15 +4225,18 @@ function RuntimeConversation({
 					<div className="attachment-chips">
 						{attachments.map((attachment) => (
 							<button
+								type="button"
 								key={attachment.path}
-								title="Remove attachment"
+								aria-label={`Remove ${attachment.name}`}
+								title={`Remove ${attachment.name}`}
 								onClick={() =>
 									setAttachments((current) =>
 										current.filter((item) => item.path !== attachment.path),
 									)
 								}
 							>
-								{attachment.name} ×
+								<span>{attachment.name}</span>
+								<Icon name="close" />
 							</button>
 						))}
 					</div>
@@ -4296,27 +4290,18 @@ function RuntimeConversation({
 					)}
 					<div className="composer-footer">
 						<div className="button-row composer-context-actions">
-							{taskWorkspace && selectedGrant?.available !== false ? (
-								<button
-									type="button"
-									className="composer-icon"
-									aria-label="Add context files"
-									disabled={busy || voiceState !== "idle"}
-									onClick={() => void addContext()}
-								>
-									<Icon name="plus" />
-								</button>
-							) : !activeSessionId ? (
-								<button
-									type="button"
-									className="composer-project-button"
-									disabled={busy || voiceState !== "idle"}
-									onClick={() => void addProject()}
-								>
-									<Icon name="plus" />
-									<span>Add project</span>
-								</button>
-							) : null}
+							<button
+								type="button"
+								className="composer-icon composer-add-files"
+								aria-label={composerFilesLabel}
+								title={composerFilesTitle}
+								disabled={
+									busy || voiceState !== "idle" || needsNewTaskForFiles
+								}
+								onClick={addComposerContext}
+							>
+								<Icon name="plus" />
+							</button>
 							<ModelSelector
 								providers={providers}
 								localModels={localModels}
@@ -4324,8 +4309,20 @@ function RuntimeConversation({
 								onChange={applyModelChoice}
 							/>
 							<details className="task-settings">
-								<summary aria-label="Task settings" title="Task settings">
-									<Icon name="settings" />
+								<summary
+									aria-label="Task settings"
+									title={`Model: ${
+										executionMode === "automatic"
+											? "Smart"
+											: model.trim() || "Choose a model"
+									}`}
+								>
+									<span className="runtime-model-label">
+										{executionMode === "automatic"
+											? "Smart"
+											: model.trim() || "Choose model"}
+									</span>
+									<Icon name="chevron" />
 								</summary>
 								<div className="task-settings-panel">
 									<header>
@@ -4466,7 +4463,7 @@ function RuntimeConversation({
 													: "Conversation only"}
 						</span>
 						{activeSessionBusy ? (
-							<div className="button-row">
+							<div className="button-row composer-send-actions">
 								{voiceButton}
 								<button
 									className="send-button"
@@ -4484,7 +4481,7 @@ function RuntimeConversation({
 								</button>
 							</div>
 						) : (
-							<div className="button-row">
+							<div className="button-row composer-send-actions">
 								{voiceButton}
 								<button
 									className="send-button"
@@ -7959,10 +7956,6 @@ function Settings({
 	snapshot,
 	update,
 	initialSection,
-	skinStatus,
-	onSkinStatus,
-	petStatus,
-	onPetStatus,
 	browser,
 	browserContextEnabled,
 	onToggleBrowserContext,
@@ -7971,10 +7964,6 @@ function Settings({
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
 	initialSection?: SettingsSection;
-	skinStatus: SkinStatus | null;
-	onSkinStatus(next: SkinStatus): void;
-	petStatus: PetStatus | null;
-	onPetStatus(next: PetStatus): void;
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
@@ -8160,6 +8149,16 @@ function Settings({
 		localStorage.setItem("kestrel:setup-step", setupSteps[0]!.id);
 		location.reload();
 	}
+	const configurationPrompts = personalizedConfigurationPrompts({
+		density: snapshot.configuration.ui.density,
+		showToolActivity: snapshot.configuration.ui.showToolActivity,
+		showConfigurationDiffs: snapshot.configuration.ui.showConfigurationDiffs,
+		searchEngine: browser.state?.settings.searchEngine,
+		tabLayout: browser.state?.settings.tabLayout,
+		contextEnabled: browserContextEnabled,
+		launchAtLogin: login?.enabled,
+		paused: snapshot.agentState === "paused",
+	});
 	const route = snapshot.modelRouting.currentDecision;
 	const browserSections = [
 		["browser", "Browser Preferences", "Search, extensions, performance & tabs"],
@@ -8222,14 +8221,9 @@ function Settings({
 							<p>
 								Request a setting change in the sidebar. Kestrel shows the proposed change and waits for approval before applying it.
 							</p>
-							<div className="agent-config-chips" aria-label="Sample configuration requests">
+							<div className="agent-config-chips" aria-label="Personalized configuration requests">
 								<span className="chips-label">Try asking:</span>
-								{[
-									"Set search engine to Google",
-									"Make chat density compact",
-									"Use vertical tabs",
-									"Turn off desktop pet",
-								].map((prompt) => (
+								{configurationPrompts.map((prompt) => (
 									<button
 										key={prompt}
 										type="button"
@@ -8374,12 +8368,6 @@ function Settings({
 											</button>
 										),
 									)}
-								</div>
-							</article>
-							<article className="setting-row">
-								<div>
-									<strong>Activity pet</strong>
-									<p>Hatch an original pet with AI</p>
 								</div>
 							</article>
 						</section>
@@ -8666,10 +8654,6 @@ function Empty({ title, text }: { title: string; text: string }) {
 export function App() {
 	const browser = useUserBrowser();
 	const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
-	const [skinStatus, setSkinStatus] = useState<SkinStatus | null>(null);
-	const [petStatus, setPetStatus] = useState<PetStatus | null>(null);
-	const [petActivity, setPetActivity] = useState<PetActivityState>("idle");
-	const petActivityTimer = useRef<number | null>(null);
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
 	);
@@ -8702,6 +8686,35 @@ export function App() {
 	const reduced = useReducedMotion();
 
 	useEffect(() => {
+		// Setup links keep their provider-owned/system-browser handoff. A managed
+		// tab would otherwise open behind onboarding with no visible way to reach it.
+		if (!onboarded) return;
+		const openRendererLinkInUserBrowser = (event: MouseEvent) => {
+			if (!(event.target instanceof Element)) return;
+			const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
+			if (!anchor) return;
+			const route = userBrowserRouteForRendererLink(event, {
+				href: anchor.href,
+				hasDownload: anchor.hasAttribute("download"),
+				target: anchor.target,
+				// Provider-owned OAuth and native/system flows can retain their
+				// external owner with this explicit opt-out.
+				openExternally: anchor.hasAttribute("data-kestrel-external"),
+			});
+			if (!route) return;
+
+			event.preventDefault();
+			void browser.createTab(route.url, route.active).catch(() => undefined);
+		};
+		document.addEventListener("click", openRendererLinkInUserBrowser);
+		document.addEventListener("auxclick", openRendererLinkInUserBrowser);
+		return () => {
+			document.removeEventListener("click", openRendererLinkInUserBrowser);
+			document.removeEventListener("auxclick", openRendererLinkInUserBrowser);
+		};
+	}, [browser.createTab, onboarded]);
+
+	useEffect(() => {
 		if (!onboarded) return;
 		const prompted =
 			localStorage.getItem("kestrel:default-browser-prompted") === "yes";
@@ -8731,6 +8744,10 @@ export function App() {
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
 		setActiveRuntimeSessionId(sessionId);
 	}, []);
+	const revealAgentSidebar = useCallback(() => {
+		setAgentSidebarOpen(true);
+		localStorage.setItem("kestrel:agent-sidebar", "open");
+	}, []);
 	const startNewAgent = useCallback((prompt = "") => {
 		const trimmed = prompt.trim();
 		if (!trimmed && Date.now() - lastPromptedNewAgentAtRef.current < 500) {
@@ -8759,8 +8776,7 @@ export function App() {
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
 		setNewAgentRequestId((current) => current + 1);
-		setAgentSidebarOpen(true);
-		localStorage.setItem("kestrel:agent-sidebar", "open");
+		revealAgentSidebar();
 		// #region agent log
 		fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
 			method: "POST",
@@ -8782,22 +8798,33 @@ export function App() {
 			}),
 		}).catch(() => {});
 		// #endregion
-	}, []);
-	const toggleAgentSidebar = useCallback(() => {
-		setAgentSidebarOpen((current) => {
-			const next = !current;
-			localStorage.setItem(
-				"kestrel:agent-sidebar",
-				next ? "open" : "collapsed",
+	}, [revealAgentSidebar]);
+	const focusRuntimeApproval = useCallback(() => {
+		revealAgentSidebar();
+		window.requestAnimationFrame(() => {
+			const card = document.querySelector(
+				".agent-conversation-host .approval-message",
 			);
-			window.requestAnimationFrame(() => {
-				document
-					.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
-					?.focus();
-			});
-			return next;
+			card?.scrollIntoView({ block: "nearest" });
+			card
+				?.querySelector<HTMLButtonElement>(".button.primary")
+				?.focus();
 		});
-	}, []);
+	}, [revealAgentSidebar]);
+	const openSidebarSession = useCallback(
+		(sessionId: string) => {
+			revealAgentSidebar();
+			openRuntimeSession(sessionId);
+			window.requestAnimationFrame(() => {
+				document.getElementById("runtime-prompt")?.focus();
+			});
+		},
+		[openRuntimeSession, revealAgentSidebar],
+	);
+	const snapshotPendingCount =
+		snapshot?.approvals.filter((approval) => approval.status === "pending")
+			.length ?? 0;
+	const runtimeWaiting = runtimeAgentState === "waiting_approval";
 	const openAppPage = useCallback(
 		async (id: KestrelAppPageId, section?: SettingsSection) => {
 			if (id === "settings") setSettingsSectionRequest(section ?? null);
@@ -8825,6 +8852,33 @@ export function App() {
 		}
 		await browser.createTab();
 	}, [browser]);
+	const reviewApprovals = useCallback(() => {
+		if (
+			sidebarReviewTarget({
+				runtimeWaiting,
+				snapshotPendingCount,
+			}) === "thread"
+		) {
+			focusRuntimeApproval();
+			return;
+		}
+		void openAppPage("approvals");
+	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
+	const toggleAgentSidebar = useCallback(() => {
+		setAgentSidebarOpen((current) => {
+			const next = !current;
+			localStorage.setItem(
+				"kestrel:agent-sidebar",
+				next ? "open" : "collapsed",
+			);
+			window.requestAnimationFrame(() => {
+				document
+					.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
+					?.focus();
+			});
+			return next;
+		});
+	}, []);
 	const openBrowser = useCallback(() => {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
@@ -8860,14 +8914,30 @@ export function App() {
 		void openBrowserWorkspace();
 	}, [browser, openBrowserWorkspace]);
 	const openPrimaryDestination = useCallback(
-		(destination: "browser" | KestrelAppPageId) => {
+		(destination: "browser" | "agent" | "approvals" | "settings") => {
 			if (destination === "browser") {
 				void openBrowserWorkspace();
 				return;
 			}
+			if (
+				destination === "approvals" &&
+				sidebarApprovalsNavTarget({
+					runtimeWaiting,
+					snapshotPendingCount,
+				}) === "thread"
+			) {
+				focusRuntimeApproval();
+				return;
+			}
 			void openAppPage(destination);
 		},
-		[openAppPage, openBrowserWorkspace],
+		[
+			focusRuntimeApproval,
+			openAppPage,
+			openBrowserWorkspace,
+			runtimeWaiting,
+			snapshotPendingCount,
+		],
 	);
 	useEffect(
 		() =>
@@ -8875,7 +8945,7 @@ export function App() {
 				const action = desktopDeepLinkAction(deepLink);
 				if (action === "new-chat") {
 					setDeepLinkNotice("");
-					openRuntimeSession(null);
+					startNewAgent();
 					return;
 				}
 				if (action === "settings") {
@@ -8888,16 +8958,13 @@ export function App() {
 					"This Kestrel link is not supported. Open New task or Settings from the sidebar.",
 				);
 			}),
-		[openAppPage, openRuntimeSession],
+		[openAppPage, openRuntimeSession, startNewAgent],
 	);
 	useEffect(() => {
 		if (!deepLinkNotice) return;
 		const timer = window.setTimeout(() => setDeepLinkNotice(""), 8_000);
 		return () => window.clearTimeout(timer);
 	}, [deepLinkNotice]);
-	function updateSkinStatus(next: SkinStatus) {
-		setSkinStatus(next);
-	}
 	useEffect(() => {
 		let active = true;
 		const unsubscribe = window.kestrel.onSnapshot((next) => {
@@ -8935,11 +9002,7 @@ export function App() {
 					setRuntimeSessions((current) =>
 						runtimeSessionsAfterEvent(current, event),
 					);
-				if (petActivityTimer.current)
-					window.clearTimeout(petActivityTimer.current);
-				if (event.type === "tool.started" || event.type === "tool.progress")
-					setPetActivity("run");
-				else if (event.type === "tool.completed") {
+				if (event.type === "tool.completed") {
 					const status = String(event.payload.status ?? "");
 					const toolName = String(event.payload.toolName ?? "");
 					if (toolName.startsWith("agent.config.") && status === "verified")
@@ -8950,105 +9013,13 @@ export function App() {
 									setSnapshot(response.snapshot);
 							})
 							.catch(() => undefined);
-					setPetActivity(
-						["failed", "blocked", "cancelled"].includes(status)
-							? "failed"
-							: /goal|task/.test(toolName)
-								? "jump"
-								: "review",
-					);
-				} else if (event.type === "message.appended")
-					setPetActivity(
-						event.payload.role === "assistant" ? "wave" : "review",
-					);
-				petActivityTimer.current = window.setTimeout(() => {
-					petActivityTimer.current = null;
-					setPetActivity(
-						snapshot?.agentState === "waiting_approval"
-							? "waiting"
-							: snapshot?.agentState === "working"
-								? "run"
-								: "idle",
-					);
-				}, 2_200);
+				}
 			}),
-		[snapshot?.agentState],
-	);
-	useEffect(() => {
-		if (snapshot?.agentState === "waiting_approval") setPetActivity("waiting");
-		else if (snapshot?.agentState === "working") setPetActivity("run");
-		else if (!petActivityTimer.current) setPetActivity("idle");
-	}, [snapshot?.agentState]);
-	useEffect(
-		() => () => {
-			if (petActivityTimer.current)
-				window.clearTimeout(petActivityTimer.current);
-		},
 		[],
 	);
 	useEffect(() => {
-		void window.kestrel.request({ type: "skin-get" }).then((raw) => {
-			const response = raw as CoreResponse;
-			if (response.ok && response.skinStatus)
-				updateSkinStatus(response.skinStatus);
-		});
-		void window.kestrel.request({ type: "pet-get" }).then((raw) => {
-			const response = raw as CoreResponse;
-			if (response.ok && response.petStatus) setPetStatus(response.petStatus);
-		});
-	}, []);
-	useEffect(() => {
 		if (!snapshot?.configuration) return;
 		const config = snapshot.configuration as Record<string, unknown>;
-		const appearance = config.appearance as
-			| {
-					skin?: string;
-					petEnabled?: boolean;
-					petSlug?: string;
-					petScale?: number;
-					petRenderMode?: "unicode" | "canvas";
-			  }
-			| undefined;
-		if (
-			appearance?.skin &&
-			skinStatus &&
-			skinStatus.selectedId !== appearance.skin
-		) {
-			const matchingSkin = skinStatus.skins.find(
-				(s) => s.id === appearance.skin,
-			);
-			if (matchingSkin) {
-				updateSkinStatus({ ...skinStatus, selectedId: appearance.skin });
-			}
-		}
-		if (appearance && typeof appearance.petEnabled === "boolean" && petStatus) {
-			if (
-				petStatus.configuration.enabled !== appearance.petEnabled ||
-				(appearance.petSlug &&
-					petStatus.configuration.selectedSlug !== appearance.petSlug)
-			) {
-				const nextConfig = {
-					...petStatus.configuration,
-					enabled: appearance.petEnabled,
-					...(appearance.petSlug ? { selectedSlug: appearance.petSlug } : {}),
-					...(typeof appearance.petScale === "number"
-						? { scale: appearance.petScale }
-						: {}),
-					...(appearance.petRenderMode && appearance.petRenderMode !== "canvas"
-						? {
-								renderMode: appearance.petRenderMode as
-									| "auto"
-									| "kitty"
-									| "iterm"
-									| "sixel"
-									| "unicode"
-									| "off",
-							}
-						: {}),
-				};
-				setPetStatus({ ...petStatus, configuration: nextConfig });
-			}
-		}
 		const browserConfig = config.browser as
 			| (Partial<UserBrowserSettings> & { contextEnabled?: boolean })
 			| undefined;
@@ -9087,14 +9058,7 @@ export function App() {
 				}
 			}
 		}
-	}, [
-		snapshot?.configuration,
-		skinStatus,
-		petStatus,
-		browser,
-		browserContextEnabled,
-	]);
-	useEffect(() => window.kestrel.onPetStatus(setPetStatus), []);
+	}, [snapshot?.configuration, browser, browserContextEnabled]);
 	useEffect(() => {
 		const storageKey = "kestrel:presence-instance";
 		const instanceId =
@@ -9144,6 +9108,13 @@ export function App() {
 			if (routeFocusFrameRef.current !== null)
 				window.cancelAnimationFrame(routeFocusFrameRef.current);
 		},
+		[],
+	);
+	useEffect(
+		() =>
+			window.kestrel.onBrowserCommand((command) => {
+				if (command === "show-shortcuts") setShowShortcuts((prev) => !prev);
+			}),
 		[],
 	);
 	useEffect(() => {
@@ -9219,12 +9190,6 @@ export function App() {
 				<Loading key="loading" />
 			</ProductShellTransition>
 		);
-	async function popOutPet() {
-		const response = (await window.kestrel.request({
-			type: "pet-overlay-open",
-		})) as CoreResponse;
-		if (response.ok && response.petStatus) setPetStatus(response.petStatus);
-	}
 	const activeBrowserTab = browser.state?.tabs.find(
 		(tab) => tab.id === browser.state?.activeTabId,
 	);
@@ -9319,10 +9284,6 @@ export function App() {
 					{...(settingsSectionRequest
 						? { initialSection: settingsSectionRequest }
 						: {})}
-					skinStatus={skinStatus}
-					onSkinStatus={updateSkinStatus}
-					petStatus={petStatus}
-					onPetStatus={setPetStatus}
 					browser={browser}
 					browserContextEnabled={browserContextEnabled}
 					onToggleBrowserContext={toggleBrowserContext}
@@ -9361,7 +9322,7 @@ export function App() {
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0 }}
-				transition={{ duration: reduced ? 0 : 0.16 }}
+				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
 				<section className="browser-main-plane">
 					{deepLinkNotice && (
@@ -9406,8 +9367,8 @@ export function App() {
 					)}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
-					onOpenSession={openRuntimeSession}
-					onReviewApprovals={() => navigate("approvals")}
+					onOpenSession={openSidebarSession}
+					onReviewApprovals={reviewApprovals}
 					onNavigate={openPrimaryDestination}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
@@ -9423,7 +9384,6 @@ export function App() {
 						configurationUi={snapshot.configuration.ui}
 						newAgentRequestId={newAgentRequestId}
 						newAgentPrompt={newAgentPrompt}
-						onNewAgent={startNewAgent}
 						mentionTabs={browser.state?.tabs ?? []}
 						mentionBookmarks={browser.state?.bookmarks ?? []}
 						{...(browserContextEnabled

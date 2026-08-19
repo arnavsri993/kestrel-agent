@@ -1,8 +1,10 @@
 # Apple Silicon internet release
 
-Kestrel ships as a direct download for Apple Silicon Macs. It is not an App
-Store application, does not ship an iPhone or Android companion, and does not
-support Intel Macs.
+Kestrel ships as a direct download for Apple Silicon Macs (M1 and later)
+running macOS 13+. It is not an App Store application, does not ship an iPhone
+or Android companion, and does not support Intel Macs. Native modules are
+rebuilt with a macOS 13 deployment target so a CI build on a newer OS still
+runs on Ventura M-series machines.
 
 ## Repository gate
 
@@ -120,11 +122,6 @@ for the DMG, manifest, and checksums are all present. Stable packaged builds
 check the `latest` feed, download signed updates, and notify the user that the
 update will install after quit and reopen; development builds never check the
 production feed.
-
-Beta builds use the separate GitHub prerelease provider and `beta` channel.
-See [beta distribution](beta-release.md) for the matching version/tag and
-release workflow; beta artifacts are never promoted to the stable `latest`
-feed.
 
 ## Release decision
 

@@ -2594,6 +2594,60 @@ export type UserBrowserPageContext = z.infer<
 	typeof UserBrowserPageContextSchema
 >;
 
+export const BrowserActivityEventSchema = z.strictObject({
+	id: z.string().regex(/^browser-activity-[a-f0-9-]{36}$/),
+	ownerSessionId: z.string().min(1).max(200),
+	surface: z.enum(["autonomous", "visible"]),
+	toolName: z.enum(["browser.act", "browser.visible-act"]),
+	toolExecutionId: z.string().min(1).max(200).optional(),
+	target: z.discriminatedUnion("kind", [
+		z.strictObject({
+			kind: z.literal("session"),
+			browserSessionId: z.string().min(1).max(200),
+		}),
+		z.strictObject({
+			kind: z.literal("tab"),
+			tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+		}),
+	]),
+	intent: z.strictObject({
+		type: z.enum(["click", "type", "key", "scroll"]),
+		target: z.string().min(1).max(2_000).optional(),
+		key: z.string().min(1).max(40).optional(),
+		dx: z.number().finite().optional(),
+		dy: z.number().finite().optional(),
+		textChars: z.number().int().nonnegative().max(20_000).optional(),
+	}),
+	approval: z.strictObject({
+		required: z.boolean(),
+		result: z.enum(["not_required", "approved", "denied", "pending"]),
+		approvalId: z.string().min(1).max(200).optional(),
+	}),
+	observation: z
+		.strictObject({
+			before: z.strictObject({
+				url: z.string().max(2_048),
+				title: z.string().max(500),
+			}),
+			after: z.strictObject({
+				url: z.string().max(2_048),
+				title: z.string().max(500),
+			}),
+			added: z.number().int().nonnegative(),
+			removed: z.number().int().nonnegative(),
+			changed: z.number().int().nonnegative(),
+			truncated: z.boolean(),
+			trust: z.literal("untrusted_browser"),
+		})
+		.optional(),
+	outcome: z.enum(["performed", "blocked", "failed", "cancelled"]),
+	error: z.string().max(500).optional(),
+	createdAt: z.string().datetime(),
+	completedAt: z.string().datetime(),
+	trust: z.literal("untrusted_browser"),
+});
+export type BrowserActivityEvent = z.infer<typeof BrowserActivityEventSchema>;
+
 export const UserBrowserEventSchema = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("state"),

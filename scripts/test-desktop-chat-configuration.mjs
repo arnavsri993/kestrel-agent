@@ -187,7 +187,7 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 	await page.evaluate(async () => {
 		const snapshot = await window.kestrel.request({ type: "snapshot" });
 		if (!snapshot.ok || !snapshot.snapshot)
@@ -203,10 +203,10 @@ try {
 		}
 	});
 	await page.reload();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 	assert.equal(
 		(
-			await page.locator(".agent-quiet-status span:last-child").textContent()
+			await page.locator(".agent-task-line .ui-status > span").textContent()
 		)?.trim(),
 		"Ready",
 	);
@@ -313,7 +313,7 @@ try {
 	await page.waitForFunction(
 		() =>
 			document
-				.querySelector(".agent-quiet-status span:last-child")
+				.querySelector(".agent-task-line .ui-status > span")
 				?.textContent?.trim()
 				.toLowerCase() === "ready",
 	);
@@ -328,10 +328,9 @@ try {
 	await application.close();
 	application = undefined;
 	page = await launch();
-	await page.getByRole("button", { name: "Task history" }).click();
 	await page
-		.locator(".agent-history-popover")
-		.getByRole("button", { name: session.title })
+		.locator(".agent-sidebar-history-list > button")
+		.filter({ hasText: session.title })
 		.click();
 	await page
 		.locator(".configuration-applied")
@@ -343,7 +342,7 @@ try {
 	);
 	assert.equal(
 		(
-			await page.locator(".agent-quiet-status span:last-child").textContent()
+			await page.locator(".agent-task-line .ui-status > span").textContent()
 		)?.trim(),
 		"Ready",
 	);

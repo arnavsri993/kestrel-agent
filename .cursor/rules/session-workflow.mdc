@@ -1,0 +1,24 @@
+---
+description: Session start, PR, and desktop restart workflow
+alwaysApply: true
+---
+
+# Session workflow
+
+Follow this in every conversation in this repo.
+
+## Start of session
+
+1. Fetch and update from GitHub before editing (`git fetch` and fast-forward or rebase onto the tracked remote branch / `origin` default).
+2. Do not start from a stale checkout. If local work would be overwritten, stop and preserve it.
+
+## After every change
+
+1. Restart the Kestrel desktop app so the running process matches the current source. Do not leave an old Electron process serving previous main-process code. Prefer stopping the existing `corepack pnpm dev:desktop` watcher and starting a fresh one. Only one desktop watcher should run.
+2. Open a pull request for that change. Keep the PR scoped to the work from this change; do not dump unrelated local files, screenshots, or artifacts. Commit only when the user has asked for a PR or commit (this rule is that ask). Push the branch and create the PR with `gh`.
+
+## Do not
+
+- Skip the GitHub update because a previous session already pulled.
+- Assume Vite HMR is enough after main-process, preload, credential, or Electron startup changes.
+- Mix unrelated dirty-tree files into the PR.

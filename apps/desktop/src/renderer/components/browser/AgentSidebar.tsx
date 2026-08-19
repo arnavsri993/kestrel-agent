@@ -71,6 +71,7 @@ export function AgentSidebar({
 			className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}`}
 			aria-label={`${agentName} agent`}
 			aria-hidden={collapsed}
+			inert={collapsed}
 		>
 			<div className="agent-sidebar-header">
 				<div className="agent-sidebar-drag" />
