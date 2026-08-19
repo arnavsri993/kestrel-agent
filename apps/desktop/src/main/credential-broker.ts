@@ -122,6 +122,7 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
 export const SECURE_STORAGE_UNAVAILABLE_MESSAGE =
 	"macOS secure storage is unavailable; Agent Core will not start with an unprotected key.";
 const SECRET_ENVELOPE_PREFIX = Buffer.from("kestrel-secret-v1\n", "utf8");
+const PLAINTEXT_PROTECTION_PREFIX = Buffer.from("kestrel-plaintext-v1\n", "utf8");
 const SECRET_KEY_SALT = Buffer.from("kestrel-credential-broker-v1", "utf8");
 const fileMutationQueues = new Map<string, Promise<void>>();
 
@@ -162,6 +163,35 @@ interface SecretProtection {
 	prepare?(): Promise<void>;
 	encryptString(value: string): Promise<Buffer>;
 	decryptString(value: Buffer): Promise<string | ProtectedDecryption>;
+}
+
+export class PlaintextSecretProtection implements SecretProtection {
+	isEncryptionAvailable(): boolean {
+		return true;
+	}
+
+	async encryptString(value: string): Promise<Buffer> {
+		return Buffer.concat([
+			PLAINTEXT_PROTECTION_PREFIX,
+			Buffer.from(value, "utf8"),
+		]);
+	}
+
+	async decryptString(value: Buffer): Promise<ProtectedDecryption> {
+		if (
+			value
+				.subarray(0, PLAINTEXT_PROTECTION_PREFIX.length)
+				.equals(PLAINTEXT_PROTECTION_PREFIX)
+		) {
+			return {
+				result: value.subarray(PLAINTEXT_PROTECTION_PREFIX.length).toString("utf8"),
+				shouldReEncrypt: false,
+			};
+		}
+		throw new SecureStorageError(
+			"Kestrel found a Keychain-protected secret, but this build stores the database key as a local file instead of using macOS Keychain.",
+		);
+	}
 }
 
 export class ElectronSecretProtection implements SecretProtection {
@@ -227,9 +257,7 @@ export class ElectronSecretProtection implements SecretProtection {
 let defaultProtection: Promise<SecretProtection> | undefined;
 
 function loadDefaultProtection(): Promise<SecretProtection> {
-	defaultProtection ??= import("electron").then(
-		({ safeStorage }) => new ElectronSecretProtection(safeStorage),
-	);
+	defaultProtection ??= Promise.resolve(new PlaintextSecretProtection());
 	return defaultProtection;
 }
 
@@ -520,11 +548,15 @@ export class CredentialBroker {
 					);
 				return key;
 			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+				const missingKeyFile =
+					(error as NodeJS.ErrnoException).code === "ENOENT";
+				if (!missingKeyFile && !isSecureStorageError(error)) throw error;
 				try {
 					if ((await stat(this.databasePath)).isFile())
 						throw new ProtectedDatabaseError(
-							"Kestrel found its encrypted database, but the protected database key is missing. The existing profile will not be overwritten.",
+							missingKeyFile
+								? "Kestrel found its encrypted database, but the protected database key is missing. The existing profile will not be overwritten."
+								: "Kestrel found its encrypted database, but this build no longer uses macOS Keychain to unlock the old key. The existing profile will not be overwritten.",
 						);
 				} catch (databaseError) {
 					if (databaseError instanceof ProtectedDatabaseError)
