@@ -81,13 +81,7 @@ export function DashboardExtensions({
 	return (
 		<div className="page-frame dashboard-extensions">
 			<header className="page-header">
-				<h1>Useful surfaces, without hidden code.</h1>
-				<p>
-					Enabled plugins can contribute bounded operational panels. Kestrel
-					renders their text, approved metrics, and links to built-in pages;
-					plugin JavaScript, CSS, HTML, network calls, and backend routes never
-					enter the desktop renderer.
-				</p>
+				<h1>Extensions</h1>
 			</header>
 
 			{error && (
@@ -100,10 +94,6 @@ export function DashboardExtensions({
 				<section className="empty-state">
 					<BrandMark />
 					<h2>No dashboard panels enabled.</h2>
-					<p>
-						Install a signed plugin with a declarative dashboard contribution,
-						then enable it in Settings.
-					</p>
 					<button
 						className="button secondary"
 						onClick={() => onNavigate("settings")}

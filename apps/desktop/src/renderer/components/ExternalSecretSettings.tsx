@@ -713,11 +713,6 @@ export function ExternalSecretSettings() {
 		<article className="setting-row external-secret-setting">
 			<div className="external-secret-content">
 				<strong>External secret sources</strong>
-				<p>
-					Optional for advanced setups. Kestrel resolves only supported provider
-					credentials, keeps values out of the interface, and gives saved
-					protected fields precedence unless you explicitly override them.
-				</p>
 				<div className="external-secret-list">
 					<OnePasswordSection
 						configuration={configuration.onepassword}

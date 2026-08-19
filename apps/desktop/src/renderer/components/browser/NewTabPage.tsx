@@ -125,10 +125,6 @@ export function NewTabPage({
                 </summary>
                 <div className="kestrel-home-model-popover">
                   <strong>Smart routing</strong>
-                  <p>
-                    Kestrel chooses the model, reasoning, and service tier for
-                    this task.
-                  </p>
                   <button type="button" onClick={() => onNewAgent()}>
                     Open task settings
                   </button>
@@ -150,15 +146,7 @@ export function NewTabPage({
 
         <section className="kestrel-home-shortcuts" aria-labelledby="frequent-title">
           <div className="kestrel-home-section-heading">
-            <div>
-              <span className="kestrel-home-section-kicker">From your local history</span>
-              <h2 id="frequent-title">Frequent tabs</h2>
-            </div>
-            <small>
-              {frequent.length > 0
-                ? "Private to this profile"
-                : "Open pages to build shortcuts"}
-            </small>
+            <h2 id="frequent-title">Frequent tabs</h2>
           </div>
 
           {frequent.length > 0 ? (
@@ -191,7 +179,6 @@ export function NewTabPage({
               </span>
               <span>
                 <strong>Your shortcuts will appear here.</strong>
-                <small>Only this profile&apos;s local browser history is used.</small>
               </span>
             </div>
           )}
@@ -228,11 +215,7 @@ export function NewTabPage({
 
         <section className="kestrel-home-actions" aria-labelledby="suggested-actions-title">
           <div className="kestrel-home-section-heading">
-            <div>
-              <span className="kestrel-home-section-kicker">A useful place to begin</span>
-              <h2 id="suggested-actions-title">Suggested actions</h2>
-            </div>
-            <small>Five ways to start</small>
+            <h2 id="suggested-actions-title">Suggested actions</h2>
           </div>
 
           <ol className="kestrel-home-action-list">
@@ -249,7 +232,6 @@ export function NewTabPage({
                   </span>
                   <span className="kestrel-home-action-copy">
                     <strong>{action.title}</strong>
-                    <small>{action.description}</small>
                   </span>
                   <span className="kestrel-home-action-affordance" aria-hidden="true">
                     <span>Use prompt</span>

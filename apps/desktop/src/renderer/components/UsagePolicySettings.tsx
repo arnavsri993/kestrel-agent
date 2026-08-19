@@ -60,11 +60,6 @@ export function UsagePolicySettings() {
 		<article className="setting-row usage-policy-setting">
 			<div>
 				<strong>Usage and cost guardrails</strong>
-				<p>
-					Budget reservations and concurrency are enforced before every provider
-					call. Rates are accounting estimates per million tokens and can be
-					overridden through the policy API by model.
-				</p>
 				<div className="usage-policy-grid">
 					<label>
 						Daily budget, USD

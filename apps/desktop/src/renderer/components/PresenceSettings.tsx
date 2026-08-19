@@ -92,11 +92,6 @@ export function PresenceSettings() {
 			<article className="setting-row presence-setting">
 				<div>
 					<strong>Connected instances</strong>
-					<p>
-						An ephemeral five-minute roster shows active UI, remote web, and
-						node clients. Kestrel never stores client IP addresses, hostnames,
-						or probe traffic in presence.
-					</p>
 					{entries.length === 0 ? (
 						<small>No active instances.</small>
 					) : (
@@ -134,12 +129,6 @@ export function PresenceSettings() {
 			<article className="setting-row channel-interaction-setting">
 				<div>
 					<strong>Channel progress, typing, and reactions</strong>
-					<p>
-						Editable providers reuse one public progress message with generic
-						phase text only—never tool arguments, paths, content, output,
-						errors, or credentials. Reactions are approval-gated and
-						provider-capability checked.
-					</p>
 					{channels.length > 0 ? (
 						<small>
 							{channels.filter((channel) => channel.editableProgress).length}{" "}

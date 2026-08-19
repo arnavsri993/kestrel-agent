@@ -274,15 +274,11 @@ export function BrowserSettings({
           <h3>
             <Icon name="search" /> Search Engine
           </h3>
-          <p className="settings-panel-subtitle">
-            Configure the default search provider for the omnibox, new tab page, and web lookups.
-          </p>
         </header>
 
         <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Default search engine</strong>
-            <p>Searches entered into the address bar or new tab page will use this provider.</p>
           </div>
           <select
             aria-label="Search engine"
@@ -324,7 +320,6 @@ export function BrowserSettings({
                   onChange={(e) => setCustomUrl(e.target.value)}
                   className="input-text"
                 />
-                <small className="help-text">Use <code>%s</code> as placeholder for search terms (e.g. <code>https://kagi.com/search?q=%s</code>).</small>
               </label>
             </div>
             <button
@@ -345,15 +340,11 @@ export function BrowserSettings({
           <h3>
             <Icon name="sparkles" /> Performance & Memory Saver
           </h3>
-          <p className="settings-panel-subtitle">
-            Manage background tab memory suspension and responsiveness optimizations.
-          </p>
         </header>
 
         <label className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Sleeping tabs</strong>
-            <p>Puts inactive background tabs to sleep to free up system memory and reduce CPU usage.</p>
           </div>
           <input
             type="checkbox"
@@ -372,7 +363,6 @@ export function BrowserSettings({
             <div className="setting-row browser-setting-row">
               <div className="browser-setting-copy">
                 <strong>Put inactive tabs to sleep after</strong>
-                <p>Tabs playing audio or in the exclusion list will remain active.</p>
               </div>
               <select
                 aria-label="Sleeping tab timeout"
@@ -397,7 +387,6 @@ export function BrowserSettings({
             <label className="setting-row browser-setting-row">
               <div className="browser-setting-copy">
                 <strong>Memory Saver mode</strong>
-                <p>Prioritizes immediate resource release when background tab memory consumption is elevated.</p>
               </div>
               <input
                 type="checkbox"
@@ -414,7 +403,6 @@ export function BrowserSettings({
             <div className="setting-row browser-setting-row">
               <div className="browser-setting-copy">
                 <strong>Manual tab hibernation</strong>
-                <p>Immediately suspend all inactive background tabs right now.</p>
               </div>
               <button
                 type="button"
@@ -429,7 +417,6 @@ export function BrowserSettings({
             <div className="excluded-domains-setting">
               <div className="browser-setting-copy">
                 <strong>Never put tabs to sleep on these sites</strong>
-                <p>Enter domain names that should stay permanently active in the background.</p>
               </div>
               <div className="excluded-domain-input-group">
                 <input
@@ -483,9 +470,6 @@ export function BrowserSettings({
           <h3>
             <Icon name="extensions" /> Web Extensions & Add-ons
           </h3>
-          <p className="settings-panel-subtitle">
-            Install and manage extensions directly from the Google Chrome Web Store, unpacked folders, or CRX/ZIP files.
-          </p>
         </header>
 
         {extensionMessage && (
@@ -554,7 +538,6 @@ export function BrowserSettings({
           {extensions.length === 0 ? (
             <div className="empty-extensions-state">
               <p>No browser extensions installed yet.</p>
-              <small>You can install ad blockers, password managers, developer tools, and productivity extensions from the Google Chrome Web Store.</small>
             </div>
           ) : (
             <div className="extensions-grid">
@@ -669,7 +652,6 @@ export function BrowserSettings({
         <label className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Restore tabs on startup</strong>
-            <p>Re-opens previous open tabs when launching Kestrel.</p>
           </div>
           <input
             type="checkbox"
@@ -696,7 +678,6 @@ export function BrowserSettings({
         <label className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Use current page context with agent</strong>
-            <p>Allows Kestrel agent to inspect active tab headings and visible content when requested.</p>
           </div>
           <input
             type="checkbox"
@@ -732,7 +713,6 @@ export function BrowserSettings({
         <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Clear browsing history</strong>
-            <p>Clears stored history entries and back/forward caches across tabs.</p>
           </div>
           <button
             type="button"

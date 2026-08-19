@@ -34,9 +34,6 @@ export function RunAtLoginSettings() {
 		<article className="setting-row">
 			<div>
 				<strong>Run at login</strong>
-				<p>
-					Off by default. macOS may require confirmation in System Settings.
-				</p>
 				{login && <small>System status: {login.status}</small>}
 			</div>
 			<button

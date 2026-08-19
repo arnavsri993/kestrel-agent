@@ -130,12 +130,7 @@ export function GoalKanban({
 		<section className="kanban" aria-labelledby="kanban-heading">
 			<header className="kanban-header">
 				<div>
-					<span className="eyebrow">Execution ledger</span>
 					<h2 id="kanban-heading">Goal board</h2>
-					<p>
-						Drag with a pointer or use each card’s move controls. Every change
-						is written to the durable goal record.
-					</p>
 				</div>
 				<dl className="kanban-tally" aria-label="Board totals">
 					<div>
@@ -156,11 +151,6 @@ export function GoalKanban({
 			<div className="worker-lanes" aria-labelledby="worker-lanes-heading">
 				<div className="worker-lanes-title">
 					<span id="worker-lanes-heading">Worker lanes</span>
-					<small>
-						{workers.length
-							? "Child sessions available for card assignment"
-							: "Delegate a task to create a child-session lane"}
-					</small>
 				</div>
 				{workers.length > 0 ? (
 					<ul>
@@ -187,20 +177,13 @@ export function GoalKanban({
 						})}
 					</ul>
 				) : (
-					<p>
-						No worker lanes are configured. Cards remain with the local
-						operator.
-					</p>
+					<p>No worker lanes yet.</p>
 				)}
 			</div>
 
 			{activeGoals.length === 0 ? (
 				<div className="kanban-empty-board">
 					<strong>No active goals</strong>
-					<p>
-						Create a goal below or convert the current opportunity. Its task
-						lines will appear here.
-					</p>
 				</div>
 			) : (
 				<div className="kanban-columns">
@@ -249,7 +232,6 @@ export function GoalKanban({
 								<header>
 									<div>
 										<h3 id={`kanban-${column.status}`}>{column.label}</h3>
-										<small>{column.note}</small>
 									</div>
 									<span aria-label={`${cards.length} tasks`}>
 										{String(cards.length).padStart(2, "0")}
