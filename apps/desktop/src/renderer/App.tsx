@@ -24,6 +24,7 @@ import type {
 	PluginMutation,
 	PluginSummary,
 	ProviderVerification,
+	ReasoningEffort,
 	RendererRequest,
 	RoutingPolicy,
 	RoutingTrace,
@@ -77,6 +78,8 @@ import {
 	sidebarApprovalsNavTarget,
 	sidebarReviewTarget,
 } from "./components/browser/agent-sidebar";
+import { ModelSelector } from "./components/browser/ModelSelector";
+import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
 import {
 	BrowserDownloads,
@@ -2833,9 +2836,24 @@ function RuntimeConversation({
 	const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
 	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
 	const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
-	const [providerId, setProviderId] = useState("");
+	const [providerId, setProviderId] = useState(
+		() => localStorage.getItem("kestrel:provider-id") ?? "",
+	);
 	const [model, setModel] = useState(
 		() => localStorage.getItem("kestrel:model") ?? "",
+	);
+	const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(
+		() => {
+			const stored = localStorage.getItem("kestrel:reasoning-effort");
+			return stored === "low" ||
+				stored === "medium" ||
+				stored === "high" ||
+				stored === "xhigh" ||
+				stored === "max" ||
+				stored === "none"
+				? stored
+				: "none";
+		},
 	);
 	const [executionMode, setExecutionMode] = useState<ExecutionMode>(() =>
 		localStorage.getItem("kestrel:execution-mode") === "manual"
@@ -2898,6 +2916,25 @@ function RuntimeConversation({
 	const manualRoutingReady = Boolean(providerId && model.trim());
 	const executionReady = executionMode === "automatic" || manualRoutingReady;
 	activeSessionIdRef.current = activeSessionId;
+	const modelChoice: ModelSelectorChoice = {
+		executionMode,
+		providerId,
+		model,
+		reasoningEffort,
+	};
+
+	function applyModelChoice(next: ModelSelectorChoice) {
+		setExecutionMode(next.executionMode);
+		setProviderId(next.providerId);
+		setModel(next.model);
+		setReasoningEffort(next.reasoningEffort);
+		localStorage.setItem("kestrel:execution-mode", next.executionMode);
+		if (next.providerId)
+			localStorage.setItem("kestrel:provider-id", next.providerId);
+		if (next.model.trim())
+			localStorage.setItem("kestrel:model", next.model.trim());
+		localStorage.setItem("kestrel:reasoning-effort", next.reasoningEffort);
+	}
 
 	useEffect(() => {
 		const prompt = promptRef.current;
@@ -2923,6 +2960,7 @@ function RuntimeConversation({
 		setCheckpointSummary("");
 		setError("");
 		window.setTimeout(() => promptRef.current?.focus(), 0);
+		if (newAgentPrompt.trim()) void submit(newAgentPrompt);
 	}, [busy, newAgentPrompt, newAgentRequestId, onActiveSession]);
 
 	async function refreshSessions() {
@@ -3363,6 +3401,34 @@ function RuntimeConversation({
 
 	async function submit() {
 		const prompt = input.trim();
+		// #region agent log
+		fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Debug-Session-Id": "91c7b0",
+			},
+			body: JSON.stringify({
+				sessionId: "91c7b0",
+				runId: "post-fix",
+				hypothesisId: "D",
+				location: "App.tsx:submit",
+				message: "Runtime submit entered",
+				data: {
+					promptLength: prompt.length,
+					fromOverride: Boolean(promptOverride),
+					busy,
+					executionReady,
+					executionMode,
+					providerId,
+					hasModel: Boolean(model.trim()),
+					activeSessionId,
+				},
+				timestamp: Date.now(),
+			}),
+		}).catch(() => {});
+		// #endregion
+>>>>>>> a0e56ba (Add a Cursor-style cascading model selector to the composer.)
 		if (!prompt) return;
 		if (busy) {
 			const streamId = streamIdRef.current;
@@ -3440,8 +3506,11 @@ function RuntimeConversation({
 				streamSessionIdRef.current = sessionId;
 			}
 			localStorage.setItem("kestrel:execution-mode", executionMode);
-			if (executionMode === "manual")
+			if (executionMode === "manual") {
 				localStorage.setItem("kestrel:model", model.trim());
+				if (providerId) localStorage.setItem("kestrel:provider-id", providerId);
+				localStorage.setItem("kestrel:reasoning-effort", reasoningEffort);
+			}
 			const activeBrowserContext = await browserContext?.();
 			const response = (await window.kestrel.request({
 				type: "runtime-run-agent",
@@ -3451,10 +3520,35 @@ function RuntimeConversation({
 				providerIds: executionMode === "automatic" ? ["auto"] : [providerId],
 				streamId,
 				attachments,
+				...(executionMode === "manual" && reasoningEffort !== "none"
+					? { reasoningEffort }
+					: {}),
 				...(activeBrowserContext
 					? { browserContext: activeBrowserContext }
 					: {}),
 			})) as CoreResponse;
+			// #region agent log
+			fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"X-Debug-Session-Id": "91c7b0",
+				},
+				body: JSON.stringify({
+					sessionId: "91c7b0",
+					runId: "post-fix",
+					hypothesisId: "D",
+					location: "App.tsx:runtime-run-agent",
+					message: "runtime-run-agent response",
+					data: {
+						ok: response.ok,
+						error: response.ok ? undefined : response.error,
+						runStatus: response.run?.status,
+					},
+					timestamp: Date.now(),
+				}),
+			}).catch(() => {});
+			// #endregion
 			if (!response.ok) throw new Error(response.error);
 			if (activeSessionIdRef.current === sessionId) {
 				setPending(
@@ -3688,67 +3782,10 @@ function RuntimeConversation({
 	);
 	const taskControls = (
 		<div className="runtime-task-controls">
-			<label>
-				Execution
-				<select
-					value={executionMode}
-					onChange={(event) =>
-						setExecutionMode(event.target.value as ExecutionMode)
-					}
-				>
-					<option value="automatic">Automatic — Kestrel chooses</option>
-					<option value="manual">Manual provider and model</option>
-				</select>
-			</label>
-			{executionMode === "manual" && (
-				<label>
-					Provider
-					<select
-						value={providerId}
-						onChange={(event) => setProviderId(event.target.value)}
-					>
-						<option value="">Choose a provider</option>
-						{providers.map((provider) => (
-							<option value={provider.id} key={provider.id}>
-								{provider.id}
-								{provider.capabilities.local ? " · local" : ""}
-							</option>
-						))}
-					</select>
-				</label>
-			)}
-			{executionMode === "manual" && (
-				<label>
-					Model
-					{providerId === "ollama" ? (
-						<select
-							value={model}
-							onChange={(event) => setModel(event.target.value)}
-							disabled={localModels.length === 0}
-						>
-							{localModels.length === 0 ? (
-								<option value="">No installed Ollama models found</option>
-							) : (
-								localModels.map((localModel) => (
-									<option value={localModel.name} key={localModel.name}>
-										{localModel.name} · {compactBytes(localModel.size)}
-									</option>
-								))
-							)}
-						</select>
-					) : (
-						<input
-							value={model}
-							onChange={(event) => setModel(event.target.value)}
-							placeholder="Provider model ID"
-						/>
-					)}
-				</label>
-			)}
 			{executionMode === "automatic" && (
 				<p>
-					Kestrel routes model, reasoning, and service tier from the task, risk,
-					provider health, and your budget.
+					Auto routes model, thinking level, and service tier from the task,
+					risk, provider health, and your budget.
 				</p>
 			)}
 		</div>
@@ -4166,6 +4203,11 @@ function RuntimeConversation({
 						rows={2}
 						value={input}
 						onChange={(event) => setInput(event.target.value)}
+						onKeyDown={(event) => {
+							if (event.key !== "Enter" || event.shiftKey) return;
+							event.preventDefault();
+							void submit();
+						}}
 						placeholder={
 							activeSessionId ? "Message Kestrel" : "Describe the outcome"
 						}
@@ -4184,6 +4226,12 @@ function RuntimeConversation({
 							>
 								<Icon name="plus" />
 							</button>
+							<ModelSelector
+								providers={providers}
+								localModels={localModels}
+								choice={modelChoice}
+								onChange={applyModelChoice}
+							/>
 							<details className="task-settings">
 								<summary
 									aria-label="Task settings"
@@ -8543,6 +8591,7 @@ export function App() {
 	>(null);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
+	const lastPromptedNewAgentAtRef = useRef(0);
 	const [error, setError] = useState<string | null>(null);
 	const [deepLinkNotice, setDeepLinkNotice] = useState("");
 	const [onboarded, setOnboarded] = useState(
@@ -8785,6 +8834,7 @@ export function App() {
 		const timer = window.setTimeout(() => setDeepLinkNotice(""), 8_000);
 		return () => window.clearTimeout(timer);
 	}, [deepLinkNotice]);
+
 	useEffect(() => {
 		let active = true;
 		const unsubscribe = window.kestrel.onSnapshot((next) => {

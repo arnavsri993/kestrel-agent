@@ -2459,7 +2459,9 @@ export class AgentCore {
 											? { fallbackModelIds: route.route.fallbackModelIds }
 											: {}),
 									}
-								: {}),
+								: request.reasoningEffort
+									? { reasoningEffort: request.reasoningEffort }
+									: {}),
 							...(personality.toolNames
 								? {
 										allowedTools: this.configuration.filterToolNames(
