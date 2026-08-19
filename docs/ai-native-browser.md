@@ -34,6 +34,7 @@ The Agent workspace gives those runtime sessions equal top-level standing with B
 
 - Read-only inspection is distinct from action. Navigation, typing, clicking, tab creation/selection/closing, and authentication handoff are sensitive mutating browser tools.
 - Existing Kestrel consequential-action policy is still the approval authority; page content cannot grant permission. This increment does not yet expose a browser-specific approval receipt or a per-site permission manager.
+- Approved or blocked `browser.act` / `browser.visible-act` calls are recorded in an encrypted `browser_activity_events` table (intent, tab or session, approval result, observation counts). Cookies, typed text, AX trees, and screenshots stay out of that ledger, and it is not `browser/state.json`.
 - User profile state remains local to the Mac. Autonomous-session state is isolated from the user profile. No cloud browser, Fal request, or local ML stack is required by this feature.
 - Session restore is configurable. Live web views are bounded and least-recent inactive views can be discarded; state is compactly persisted and temporary favicon data is excluded.
 

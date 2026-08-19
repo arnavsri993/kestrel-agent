@@ -18,16 +18,15 @@ import {
 	PROTECTED_DATABASE_ERROR_CODE,
 } from "@kestrel/database";
 import { utilityProcess } from "electron";
-import type { AutomationBrowserBackendWireRequest } from "./electron-browser-service";
-import type { UserBrowserBackendWireRequest } from "./user-browser-service";
+import {
+	BrowserBackendCancelMessageSchema,
+	BrowserBackendRequestMessageSchema,
+	type BrowserBackendWireRequest,
+} from "./browser-backend-wire";
 import {
 	decodeNodeIpcMessage,
 	encodeNodeIpcMessage,
 } from "./core-ipc-codec";
-
-type BrowserBackendWireRequest =
-	| AutomationBrowserBackendWireRequest
-	| UserBrowserBackendWireRequest;
 
 import {
 	coreRequestTimeoutMs,
@@ -471,26 +470,24 @@ export class CoreSupervisor extends EventEmitter {
 			);
 			return;
 		}
-		if (
-			wire.type === "browser-backend-cancel" &&
-			typeof wire.requestId === "string"
-		) {
+		if (wire.type === "browser-backend-cancel") {
+			const parsed = BrowserBackendCancelMessageSchema.safeParse(wire);
+			if (!parsed.success) {
+				this.invalidCoreMessage("browser backend cancel");
+				return;
+			}
 			this.browserRequests
-				.get(wire.requestId)
+				.get(parsed.data.requestId)
 				?.abort(new Error("Browser operation cancelled."));
 			return;
 		}
 		if (wire.type === "browser-backend-request") {
-			if (
-				typeof wire.requestId !== "string" ||
-				!wire.request ||
-				typeof wire.request !== "object" ||
-				Array.isArray(wire.request)
-			) {
+			const parsed = BrowserBackendRequestMessageSchema.safeParse(wire);
+			if (!parsed.success) {
 				this.invalidCoreMessage("browser backend request");
 				return;
 			}
-			const requestId = wire.requestId;
+			const requestId = parsed.data.requestId;
 			if (!this.browserHandler) {
 				this.safePost(child, {
 					type: "browser-backend-response",
@@ -502,10 +499,7 @@ export class CoreSupervisor extends EventEmitter {
 			}
 			const controller = new AbortController();
 			this.browserRequests.set(requestId, controller);
-			void this.browserHandler(
-				wire.request as BrowserBackendWireRequest,
-				controller.signal,
-			)
+			void this.browserHandler(parsed.data.request, controller.signal)
 				.then((result) =>
 					this.safePost(child, {
 						type: "browser-backend-response",

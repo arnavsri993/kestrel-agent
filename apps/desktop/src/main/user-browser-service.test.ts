@@ -43,6 +43,11 @@ const electron = vi.hoisted(() => {
     focus = vi.fn();
     insertText = vi.fn();
     executeJavaScript = vi.fn();
+    capturePage = vi.fn(async () => ({
+      getSize: () => ({ width: 1, height: 1 }),
+      toBitmap: () => Buffer.from([0, 0, 0, 255]),
+      toPNG: () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    }));
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = handler; });
     windowOpenHandler: ((details: { url: string; disposition: "foreground-tab" | "background-tab" | "new-window" }) => { action: string }) | undefined;
     isDestroyed = () => this.destroyed;
@@ -391,7 +396,7 @@ describe("UserBrowserService", () => {
     contents.executeJavaScript.mockResolvedValue({
       description: "Fixture",
       selectedText: "",
-      visibleText: "Visible reference text",
+      visibleText: "Visible reference text javascript:alert(1)",
       headings: ["Fixture"],
       links: [
         {
@@ -453,8 +458,9 @@ describe("UserBrowserService", () => {
         }],
       }],
     });
+    expect(context.visibleText).toBe("Visible reference text [redacted URL]");
     expect(JSON.stringify({ tabs, context, snapshot })).not.toMatch(
-      /do-not-share|hidden-link|hidden-ax-name|hidden-ax-link/,
+      /do-not-share|hidden-link|hidden-ax-name|hidden-ax-link|javascript:/,
     );
   });
 
@@ -558,6 +564,49 @@ describe("UserBrowserService", () => {
         new AbortController().signal,
       ),
     ).resolves.toEqual({ downloads: [], trust: "untrusted_browser" });
+
+    const poisoned = {
+      id: "visit-00000000-0000-4000-8000-000000000000",
+      tabId: tab.id,
+      url: "https://example.com/notes?token=hidden-history",
+      title: "Poison",
+      visitedAt: "2026-08-19T12:00:00.000Z",
+    };
+    (
+      service as unknown as {
+        state: { history: Array<typeof poisoned> };
+      }
+    ).state.history.push(poisoned);
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-history", query: "hidden-history" },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ entries: [] });
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-history", query: "example.com/notes" },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      entries: [{ url: "https://example.com/notes", title: "Poison" }],
+    });
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-screenshot" },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      width: 1,
+      height: 1,
+      trust: "untrusted_browser",
+    });
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-navigate", tabId: tab.id, input: "https://robotics.example/next" },
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ navigated: true });
   });
 
   it("rejects oversized accessibility snapshots before returning them", async () => {
@@ -603,6 +652,9 @@ describe("UserBrowserService", () => {
       type: "keyDown",
       key: "Tab",
     });
+    await vi.waitFor(() =>
+      expect(service.getState().activeTabId).toBe(first.id),
+    );
     firstContents.emit("before-input-event", inputEvent, {
       meta: true,
       control: false,
@@ -638,8 +690,15 @@ describe("UserBrowserService", () => {
       type: "keyDown",
       key: "/",
     });
+    firstContents.emit("before-input-event", inputEvent, {
+      meta: false,
+      control: true,
+      shift: true,
+      type: "keyDown",
+      key: "Tab",
+    });
     await vi.waitFor(() =>
-      expect(service.getState().activeTabId).toBe(first.id),
+      expect(service.getState().activeTabId).toBe(second.id),
     );
 
     expect(commands).toEqual([
@@ -651,7 +710,7 @@ describe("UserBrowserService", () => {
       "open-settings",
       "show-shortcuts",
     ]);
-    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(8);
+    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(9);
   });
 
   it("supports reopening closed tabs and direct tab index switching", async () => {

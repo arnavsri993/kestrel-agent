@@ -488,3 +488,101 @@ describe("runtime history retirement", () => {
 		}
 	});
 });
+
+describe("browser activity ledger", () => {
+	function event(
+		overrides: Partial<{
+			id: string;
+			ownerSessionId: string;
+			title: string;
+			url: string;
+		}> = {},
+	) {
+		return {
+			id:
+				overrides.id ??
+				"browser-activity-00000000-0000-4000-8000-000000000001",
+			ownerSessionId: overrides.ownerSessionId ?? "session-a",
+			surface: "autonomous" as const,
+			toolName: "browser.act" as const,
+			toolExecutionId: "tool-1",
+			target: {
+				kind: "session" as const,
+				browserSessionId: "browser-1",
+			},
+			intent: { type: "click" as const, target: "#save" },
+			approval: { required: true, result: "approved" as const },
+			observation: {
+				before: {
+					url: overrides.url ?? "https://example.test/",
+					title: overrides.title ?? "Example",
+				},
+				after: { url: "https://example.test/done", title: "Done" },
+				added: 0,
+				removed: 0,
+				changed: 1,
+				truncated: (overrides.title?.length ?? 0) > 500,
+				trust: "untrusted_browser" as const,
+			},
+			outcome: "performed" as const,
+			createdAt: "2026-08-19T18:00:00.000Z",
+			completedAt: "2026-08-19T18:00:01.000Z",
+			trust: "untrusted_browser" as const,
+		};
+	}
+
+	it("is append-only for a given activity id", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const first = event();
+		database.appendBrowserActivity(first);
+		expect(() => database.appendBrowserActivity(first)).toThrow();
+		expect(
+			database.listBrowserActivity({ ownerSessionId: "session-a" }),
+		).toHaveLength(1);
+		database.close();
+	});
+
+	it("stores ciphertext that does not contain page titles", () => {
+		const { first, second } = sharedDatabases();
+		try {
+			first.appendBrowserActivity(
+				event({
+					title: "Secret research title",
+					url: "https://secret.example/path",
+				}),
+			);
+			const row = first.db
+				.prepare("SELECT payload_ciphertext FROM browser_activity_events")
+				.get() as { payload_ciphertext: string };
+			expect(row.payload_ciphertext).not.toContain("Secret research title");
+			expect(row.payload_ciphertext).not.toContain("secret.example");
+			expect(
+				second.listBrowserActivity({ ownerSessionId: "session-a" })[0],
+			).toMatchObject({
+				observation: { before: { title: "Secret research title" } },
+			});
+		} finally {
+			first.close();
+			second.close();
+		}
+	});
+
+	it("lists only the requested owner session", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		database.appendBrowserActivity(event({ ownerSessionId: "session-a" }));
+		database.appendBrowserActivity(
+			event({
+				id: "browser-activity-00000000-0000-4000-8000-000000000002",
+				ownerSessionId: "session-b",
+			}),
+		);
+		expect(
+			database.listBrowserActivity({ ownerSessionId: "session-a" }),
+		).toHaveLength(1);
+		expect(
+			database.listBrowserActivity({ ownerSessionId: "session-b" })[0]
+				?.ownerSessionId,
+		).toBe("session-b");
+		database.close();
+	});
+});

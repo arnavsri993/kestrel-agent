@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { basename, extname, join } from "node:path";
 import {
 	annotateAccessibilityTree,
 	type BrowserAction,
@@ -11,6 +11,7 @@ import {
 	type BrowserViewport,
 	type DesktopAction,
 	normalizeBrowserElementRef,
+	normalizeIsolatedBrowserOrigins,
 	type ScreenshotFrame,
 } from "@kestrel/agent-core";
 import {
@@ -21,32 +22,43 @@ import {
 	type Session,
 	systemPreferences,
 } from "electron";
-import { sanitizeBrowserUrl } from "./browser-tab-store";
+import {
+	type AutomationBrowserBackendWireRequest,
+} from "./browser-backend-wire";
+import {
+	MAX_AX_SNAPSHOT_BYTES,
+	MAX_AX_SNAPSHOT_NODES,
+	MAX_INTERACTIVE_REFS,
+	redactUntrustedBrowserText,
+	sanitizeBrowserUrl,
+	sanitizeUntrustedBrowserValue,
+} from "./browser-tab-store";
 import {
 	publicInteractiveRefs,
 	rememberElementRefs,
 	targetPointFromBackendNode,
 } from "./browser-backend-node-target";
 
-export type AutomationBrowserBackendWireRequest =
-	| { operation: "create"; allowedOrigins: string[] }
-	| { operation: "navigate"; sessionId: string; url: string }
-	| { operation: "act"; sessionId: string; action: BrowserAction }
-	| { operation: "snapshot"; sessionId: string }
-	| { operation: "screenshot"; sessionId: string }
-	| { operation: "viewport"; sessionId: string; viewport: BrowserViewport }
-	| { operation: "diagnostics"; sessionId: string }
-	| { operation: "auth-handoff"; sessionId: string; visible: boolean }
-	| {
-			operation: "upload";
-			sessionId: string;
-			selector: string;
-			paths: string[];
-	  }
-	| { operation: "downloads"; sessionId: string }
-	| { operation: "desktop-screenshot" }
-	| { operation: "desktop-act"; action: DesktopAction }
-	| { operation: "close"; sessionId: string };
+export function uniqueIsolatedDownloadFilename(
+	requested: string,
+	occupied: Iterable<string>,
+	fallbackId: string,
+): string {
+	const taken = new Set(occupied);
+	const sanitized =
+		requested.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 120) ||
+		`${fallbackId}.bin`;
+	if (!taken.has(sanitized)) return sanitized;
+	const extension = extname(sanitized);
+	const stem = basename(sanitized, extension).slice(0, 80) || fallbackId;
+	for (let n = 2; n < 10_000; n += 1) {
+		const candidate = `${stem}-${n}${extension}`;
+		if (!taken.has(candidate)) return candidate;
+	}
+	return `${fallbackId}.bin`;
+}
+
+export type { AutomationBrowserBackendWireRequest };
 
 interface BrowserRecord {
 	window: BrowserWindow;
@@ -159,7 +171,8 @@ export class ElectronBrowserService {
 		const partition = electronSession.fromPartition(partitionName, {
 			cache: false,
 		});
-		const allowed = new Set(allowedOrigins);
+		const origins = normalizeIsolatedBrowserOrigins(allowedOrigins);
+		const allowed = new Set(origins);
 		const diagnostics: BrowserDiagnostic[] = [];
 		const downloads: BrowserDownload[] = [];
 		const downloadDirectory = join(
@@ -193,12 +206,22 @@ export class ElectronBrowserService {
 		);
 		partition.on("will-download", (_event, item) => {
 			const id = `download-${randomUUID()}`;
-			const filename =
-				item
-					.getFilename()
-					.replace(/[^A-Za-z0-9._-]/g, "-")
-					.slice(0, 120) || `${id}.bin`;
-			const destination = join(downloadDirectory, filename);
+			const occupied = new Set(downloads.map((download) => download.filename));
+			let filename = uniqueIsolatedDownloadFilename(
+				item.getFilename(),
+				occupied,
+				id,
+			);
+			let destination = join(downloadDirectory, filename);
+			while (existsSync(destination)) {
+				occupied.add(filename);
+				filename = uniqueIsolatedDownloadFilename(
+					item.getFilename(),
+					occupied,
+					id,
+				);
+				destination = join(downloadDirectory, filename);
+			}
 			const record: BrowserDownload = {
 				id,
 				filename,
@@ -511,17 +534,32 @@ export class ElectronBrowserService {
 		const result = (await window.webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
+		const nodes = result.nodes ?? [];
 		const annotated = annotateAccessibilityTree({
-			nodes: (result.nodes ?? []).slice(0, 5_000),
+			nodes: nodes.slice(0, MAX_AX_SNAPSHOT_NODES),
 		});
-		this.elementRefs.set(id, rememberElementRefs(annotated.interactive));
+		const interactive = annotated.interactive.slice(0, MAX_INTERACTIVE_REFS);
+		const accessibilityTree = sanitizeUntrustedBrowserValue(
+			annotated.accessibilityTree,
+		);
+		if (
+			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
+			MAX_AX_SNAPSHOT_BYTES
+		) {
+			this.elementRefs.set(id, new Map());
+			throw new Error("Isolated browser accessibility snapshot exceeds 1.5 MB.");
+		}
+		this.elementRefs.set(id, rememberElementRefs(interactive));
 		return {
 			url:
 				sanitizeBrowserUrl(window.webContents.getURL()) ||
 				"https://invalid.local/",
-			title: window.webContents.getTitle(),
-			accessibilityTree: annotated.accessibilityTree,
-			interactive: publicInteractiveRefs(annotated.interactive),
+			title: redactUntrustedBrowserText(window.webContents.getTitle(), 500),
+			accessibilityTree,
+			interactive: publicInteractiveRefs(interactive),
+			truncated:
+				nodes.length > MAX_AX_SNAPSHOT_NODES ||
+				annotated.interactive.length > MAX_INTERACTIVE_REFS,
 		};
 	}
 

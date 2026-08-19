@@ -19,6 +19,8 @@ import {
 	AgentRunSchema,
 	type Approval,
 	ApprovalSchema,
+	type BrowserActivityEvent,
+	BrowserActivityEventSchema,
 	type MemoryRecord,
 	MemoryRecordSchema,
 	type MemoryVersion,
@@ -195,6 +197,23 @@ CREATE INDEX IF NOT EXISTS idx_agent_configuration_records_kind_status
   ON agent_configuration_records(kind, status);
 `;
 
+const migration010 = `
+CREATE TABLE IF NOT EXISTS browser_activity_events (
+  id TEXT PRIMARY KEY,
+  owner_session_id TEXT NOT NULL,
+  surface TEXT NOT NULL CHECK(surface IN ('autonomous', 'visible')),
+  outcome TEXT NOT NULL CHECK(outcome IN ('performed', 'blocked', 'failed', 'cancelled')),
+  created_at TEXT NOT NULL,
+  payload_ciphertext TEXT NOT NULL,
+  payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_browser_activity_owner_created
+  ON browser_activity_events(owner_session_id, created_at);
+`;
+
+const MAX_BROWSER_ACTIVITY_PER_OWNER = 500;
+
 export const PROTECTED_DATABASE_ERROR_CODE = "kestrel-protected-database";
 
 /**
@@ -328,6 +347,14 @@ interface EncryptedPayloadRow {
 	payload_auth_tag: string;
 }
 
+interface BrowserActivityRow extends EncryptedPayloadRow {
+	id: string;
+	owner_session_id: string;
+	surface: "autonomous" | "visible";
+	outcome: "performed" | "blocked" | "failed" | "cancelled";
+	created_at: string;
+}
+
 interface MemoryMetadataRow extends EncryptedPayloadRow {
 	memory_id: string;
 }
@@ -404,6 +431,12 @@ export class KestrelDatabase {
 					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
 				)
 				.run(9, new Date().toISOString());
+			this.db.exec(migration010);
+			this.db
+				.prepare(
+					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+				)
+				.run(10, new Date().toISOString());
 		})();
 	}
 
@@ -1208,7 +1241,8 @@ export class KestrelDatabase {
 		| "toolExecutions"
 		| "modelCalls"
 		| "runs"
-		| "activity",
+		| "activity"
+		| "browserActivity",
 		number
 	> {
 		if (!Number.isFinite(Date.parse(cutoff)))
@@ -1230,6 +1264,9 @@ export class KestrelDatabase {
 			);
 			const runs = remove("DELETE FROM agent_runs WHERE updated_at < ?");
 			const activity = remove("DELETE FROM audit_events WHERE created_at < ?");
+			const browserActivity = remove(
+				"DELETE FROM browser_activity_events WHERE created_at < ?",
+			);
 			return {
 				messages,
 				memories,
@@ -1238,6 +1275,7 @@ export class KestrelDatabase {
 				modelCalls,
 				runs,
 				activity,
+				browserActivity,
 			};
 		})();
 	}
@@ -1484,6 +1522,75 @@ export class KestrelDatabase {
 		return this.listAgentConfigurationRecordRows("audit").map((row) =>
 			AgentConfigurationAuditEventSchema.parse(
 				this.decryptAgentConfigurationRecord(row),
+			),
+		);
+	}
+
+	appendBrowserActivity(event: BrowserActivityEvent): void {
+		const parsed = BrowserActivityEventSchema.parse(event);
+		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
+		this.db
+			.prepare(
+				`INSERT INTO browser_activity_events (
+          id, owner_session_id, surface, outcome, created_at,
+          payload_ciphertext, payload_iv, payload_auth_tag
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				parsed.id,
+				parsed.ownerSessionId,
+				parsed.surface,
+				parsed.outcome,
+				parsed.createdAt,
+				encrypted.ciphertext,
+				encrypted.iv,
+				encrypted.authTag,
+			);
+		this.db
+			.prepare(
+				`DELETE FROM browser_activity_events
+         WHERE owner_session_id = ?
+           AND id NOT IN (
+             SELECT id FROM browser_activity_events
+             WHERE owner_session_id = ?
+             ORDER BY created_at DESC, rowid DESC
+             LIMIT ?
+           )`,
+			)
+			.run(
+				parsed.ownerSessionId,
+				parsed.ownerSessionId,
+				MAX_BROWSER_ACTIVITY_PER_OWNER,
+			);
+	}
+
+	listBrowserActivity(input: {
+		ownerSessionId: string;
+		limit?: number;
+	}): BrowserActivityEvent[] {
+		const limit = Math.min(500, Math.max(1, Math.trunc(input.limit ?? 100)));
+		const rows = this.db
+			.prepare(
+				`SELECT id, owner_session_id, surface, outcome, created_at,
+            payload_ciphertext, payload_iv, payload_auth_tag
+         FROM browser_activity_events
+         WHERE owner_session_id = ?
+         ORDER BY created_at ASC, rowid ASC
+         LIMIT ?`,
+			)
+			.all(input.ownerSessionId, limit) as BrowserActivityRow[];
+		return rows.map((row) =>
+			BrowserActivityEventSchema.parse(
+				JSON.parse(
+					decryptText(
+						{
+							ciphertext: row.payload_ciphertext,
+							iv: row.payload_iv,
+							authTag: row.payload_auth_tag,
+						},
+						this.encryptionKey,
+					),
+				),
 			),
 		);
 	}

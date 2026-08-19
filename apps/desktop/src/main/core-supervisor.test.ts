@@ -349,3 +349,48 @@ describe("CoreSupervisor recovery", () => {
 		expect(processes).toHaveLength(1);
 	});
 });
+
+describe("CoreSupervisor browser backend IPC", () => {
+	it("forwards a valid snapshot request and rejects hostile desktop-act payloads", async () => {
+		const child = new FakeCoreProcess();
+		const handler = vi.fn(async () => ({ ok: true }));
+		const errors: Error[] = [];
+		const supervisor = new CoreSupervisor(handler, undefined, {
+			processFactory: () => child,
+			startupTimeoutMs: 500,
+		});
+		supervisor.on("automation-error", (error) => errors.push(error));
+		const started = supervisor.start(config);
+		child.ready();
+		await started;
+
+		child.emit("message", {
+			type: "browser-backend-request",
+			requestId: "req-snapshot",
+			request: { operation: "snapshot", sessionId: "electron-browser-1" },
+		});
+		await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+		expect(handler.mock.calls[0]?.[0]).toEqual({
+			operation: "snapshot",
+			sessionId: "electron-browser-1",
+		});
+
+		child.emit("message", {
+			type: "browser-backend-request",
+			requestId: "req-bad",
+			request: { operation: "desktop-act", action: { type: "click", x: "1", y: 2 } },
+		});
+		child.emit("message", {
+			type: "browser-backend-request",
+			requestId: "req-act",
+			request: { operation: "visible-act" },
+		});
+		child.emit("message", {
+			type: "browser-backend-request",
+			request: { operation: "visible-tabs" },
+		});
+		await vi.waitFor(() => expect(errors.length).toBeGreaterThanOrEqual(3));
+		expect(handler).toHaveBeenCalledTimes(1);
+		await supervisor.stop();
+	});
+});

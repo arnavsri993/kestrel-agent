@@ -383,6 +383,7 @@ port.on("message", async ({ data }) => {
 			browserMcp = new LocalBrowserMcpServer({
 				runtime: core.runtime,
 				sessionId: mainSession.id,
+				resolveCallSession: () => core.resolveCodexBrowserMcpSession(),
 			});
 			const browserMcpEndpoint = await browserMcp.start();
 			core.attachCodexBrowserMcp({
