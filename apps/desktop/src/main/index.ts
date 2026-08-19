@@ -92,7 +92,10 @@ import {
   archiveProtectedProfile,
   startupRecoveryCopy,
 } from "./startup-recovery";
-import { canRegisterAsDefaultBrowser } from "./default-browser";
+import {
+  canRegisterAsDefaultBrowser,
+  isPackagedKestrelRuntime,
+} from "./default-browser";
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
@@ -145,6 +148,10 @@ const RENDERER_ENTRY_PATH = join(__dirname, "../renderer/index.html");
 const RAW_DEVELOPMENT_RENDERER_URL = process.env.ELECTRON_RENDERER_URL;
 const DEVELOPMENT_RENDERER_URL = trustedDevelopmentRendererUrl(
   RAW_DEVELOPMENT_RENDERER_URL,
+);
+const isPackagedKestrelApp = isPackagedKestrelRuntime(
+  app.isPackaged,
+  process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
 let managedLocalRuntime: LocalRuntimeManager | null = null;
@@ -539,7 +546,7 @@ async function distributionReadiness(): Promise<{
   status: "pass" | "warning";
   detail: string;
 }> {
-  if (!app.isPackaged)
+  if (!isPackagedKestrelApp)
     return {
       status: "warning",
       detail:
@@ -821,7 +828,7 @@ function deliverPendingDeepLinks(): void {
 }
 
 export function isDefaultBrowser(): boolean {
-  if (!canRegisterAsDefaultBrowser(app.isPackaged)) return false;
+  if (!canRegisterAsDefaultBrowser(isPackagedKestrelApp)) return false;
   if (process.platform !== "darwin" && process.platform !== "win32") {
     return app.isDefaultProtocolClient("http");
   }
@@ -832,7 +839,7 @@ export function isDefaultBrowser(): boolean {
 }
 
 export function setAsDefaultBrowser(): boolean {
-  if (!canRegisterAsDefaultBrowser(app.isPackaged)) return false;
+  if (!canRegisterAsDefaultBrowser(isPackagedKestrelApp)) return false;
   const httpOk = app.setAsDefaultProtocolClient("http");
   const httpsOk = app.setAsDefaultProtocolClient("https");
   return httpOk || httpsOk;
@@ -894,7 +901,7 @@ function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       sandbox: !DEVELOPMENT_RENDERER_URL,
       webSecurity: true,
-      devTools: !app.isPackaged,
+      devTools: !isPackagedKestrelApp,
     },
   });
   userBrowserService?.dispose();
@@ -1053,7 +1060,7 @@ async function createPetOverlay(): Promise<BrowserWindow> {
       contextIsolation: true,
       sandbox: !DEVELOPMENT_RENDERER_URL,
       webSecurity: true,
-      devTools: !app.isPackaged,
+      devTools: !isPackagedKestrelApp,
     },
   });
   petOverlayWindow = window;
@@ -1751,7 +1758,7 @@ function registerIpc(): void {
       };
     }
     if (request.type === "get-default-browser-status") {
-      const canSetAsDefault = canRegisterAsDefaultBrowser(app.isPackaged);
+      const canSetAsDefault = canRegisterAsDefaultBrowser(isPackagedKestrelApp);
       return {
         ok: true,
         isDefault: isDefaultBrowser(),
@@ -1759,7 +1766,7 @@ function registerIpc(): void {
       };
     }
     if (request.type === "set-default-browser") {
-      const canSetAsDefault = canRegisterAsDefaultBrowser(app.isPackaged);
+      const canSetAsDefault = canRegisterAsDefaultBrowser(isPackagedKestrelApp);
       const success = setAsDefaultBrowser();
       return {
         ok: true,
@@ -2681,7 +2688,7 @@ void app
   .whenReady()
   .then(async () => {
     if (!singleInstance) return;
-    if (canRegisterAsDefaultBrowser(app.isPackaged))
+    if (canRegisterAsDefaultBrowser(isPackagedKestrelApp))
       app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);
     registerIpc();
     if (!(await initializeCoreForStartup())) {
@@ -2718,7 +2725,7 @@ void app
       startupWindow.once("ready-to-show", () => startupWindow.hide());
     if (
       shouldCheckForUpdates(
-        app.isPackaged,
+        isPackagedKestrelApp,
         PRODUCT_IDENTITY.updateChannel,
         process.env.KESTREL_DISABLE_UPDATES === "1",
       )

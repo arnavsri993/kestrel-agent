@@ -4,9 +4,12 @@ import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -14,6 +17,7 @@ import {
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { developmentLockDirectory } from "./desktop-dev-electron-lock.mjs";
 
 const require = createRequire(import.meta.url);
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -40,7 +44,7 @@ function resolveElectronExecutable() {
     );
   return executable;
 }
-const electronExecutable = resolveElectronExecutable();
+const rawElectronExecutable = resolveElectronExecutable();
 
 function resolveNodeExecutable() {
   if (process.env.KESTREL_NODE_EXEC_PATH)
@@ -65,13 +69,7 @@ function resolveNodeExecutable() {
   );
 }
 const nodeExecutable = resolveNodeExecutable();
-const lockKey = createHash("sha256")
-  .update(`${desktopDirectory}:${electronExecutable}`)
-  .digest("hex")
-  .slice(0, 16);
-const lockDirectory =
-  process.env.KESTREL_DEV_ELECTRON_LOCK_PATH ??
-  join(tmpdir(), `kestrel-electron-dev-${lockKey}.lock`);
+const lockDirectory = developmentLockDirectory();
 const lockOwnerPath = join(lockDirectory, "owner.json");
 
 let child;
@@ -178,6 +176,83 @@ function stop(signal) {
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 }
 
+function brandedMacElectronExecutable(rawExecutable) {
+  if (process.platform !== "darwin") return rawExecutable;
+
+  const electronApp = resolve(dirname(rawExecutable), "..", "..");
+  const iconPath = join(desktopDirectory, "build", "icon.icns");
+  const electronVersion = (() => {
+    try {
+      const packageJson = JSON.parse(
+        readFileSync(join(electronPackageDirectory, "package.json"), "utf8"),
+      );
+      return typeof packageJson.version === "string"
+        ? packageJson.version
+        : "unknown";
+    } catch {
+      return "unknown";
+    }
+  })();
+  const iconDigest = existsSync(iconPath)
+    ? createHash("sha256").update(readFileSync(iconPath)).digest("hex").slice(0, 12)
+    : "default";
+  const runtimeKey = createHash("sha256")
+    .update(`${electronVersion}:${process.arch}:${iconDigest}`)
+    .digest("hex")
+    .slice(0, 16);
+  const runtimeRoot = join(tmpdir(), `kestrel-electron-runtime-${runtimeKey}`);
+  const brandedApp = join(runtimeRoot, "Kestrel.app");
+  const brandedExecutable = join(brandedApp, "Contents", "MacOS", "Kestrel");
+  if (existsSync(brandedExecutable)) return brandedExecutable;
+
+  mkdirSync(runtimeRoot, { recursive: true });
+  const stageRoot = mkdtempSync(join(tmpdir(), "kestrel-electron-stage-"));
+  const stagedApp = join(stageRoot, "Kestrel.app");
+  try {
+    execFileSync(
+      "/usr/bin/ditto",
+      ["--rsrc", "--extattr", "--acl", electronApp, stagedApp],
+      { stdio: "ignore" },
+    );
+    const infoPlist = join(stagedApp, "Contents", "Info.plist");
+    const stagedExecutable = join(stagedApp, "Contents", "MacOS", "Electron");
+    const renamedExecutable = join(stagedApp, "Contents", "MacOS", "Kestrel");
+    renameSync(stagedExecutable, renamedExecutable);
+    execFileSync(
+      "/usr/bin/plutil",
+      ["-replace", "CFBundleName", "-string", "Kestrel", infoPlist],
+      { stdio: "ignore" },
+    );
+    execFileSync(
+      "/usr/bin/plutil",
+      ["-replace", "CFBundleDisplayName", "-string", "Kestrel", infoPlist],
+      { stdio: "ignore" },
+    );
+    execFileSync(
+      "/usr/bin/plutil",
+      ["-replace", "CFBundleExecutable", "-string", "Kestrel", infoPlist],
+      { stdio: "ignore" },
+    );
+    if (existsSync(iconPath)) {
+      const stagedIcon = join(stagedApp, "Contents", "Resources", "kestrel.icns");
+      copyFileSync(iconPath, stagedIcon);
+      execFileSync(
+        "/usr/bin/plutil",
+        ["-replace", "CFBundleIconFile", "-string", "kestrel.icns", infoPlist],
+        { stdio: "ignore" },
+      );
+    }
+    try {
+      renameSync(stagedApp, brandedApp);
+    } catch (error) {
+      if (!existsSync(brandedExecutable)) throw error;
+    }
+  } finally {
+    rmSync(stageRoot, { recursive: true, force: true });
+  }
+  return brandedExecutable;
+}
+
 process.on("SIGTERM", () => stop("SIGTERM"));
 process.on("SIGINT", () => stop("SIGINT"));
 process.on("SIGHUP", () => stop("SIGHUP"));
@@ -188,6 +263,7 @@ if (shuttingDown) {
   process.exit(0);
 }
 
+const electronExecutable = brandedMacElectronExecutable(rawElectronExecutable);
 const macArmDevelopmentRuntime =
   process.platform === "darwin" && process.arch === "arm64";
 const disableGpu =
