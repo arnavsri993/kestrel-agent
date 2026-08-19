@@ -1247,6 +1247,76 @@ describe("core agent request path", () => {
 	});
 });
 
+describe("runtime approval and audit listing", () => {
+	it("returns restart-safe pending tool approvals and recent executions without a session filter", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const core = new AgentCore({
+			database,
+			now: () => "2026-08-19T15:00:00.000Z",
+		});
+		const session = core.runtime.ensureMainSession();
+		const startedAt = "2026-08-19T15:00:00.000Z";
+		database.saveAgentRun({
+			id: "run-waiting",
+			sessionId: session.id,
+			model: "local",
+			providerIds: ["ollama"],
+			status: "waiting_approval",
+			turn: 1,
+			pendingToolExecutionId: "tool-blocked",
+			createdAt: startedAt,
+			updatedAt: startedAt,
+		});
+		database.saveToolExecution({
+			id: "tool-blocked",
+			sessionId: session.id,
+			toolName: "workspace.apply_patch",
+			status: "blocked",
+			riskLevel: "sensitive",
+			input: { path: "README.md" },
+			output: { approvalRequired: true, preview: "Patch README.md" },
+			error: "Approval level 3 is required before this action can execute.",
+			idempotencyKey: "run-waiting:call-1",
+			startedAt,
+			completedAt: startedAt,
+		});
+		database.saveToolExecution({
+			id: "tool-verified",
+			sessionId: session.id,
+			toolName: "workspace.read_file",
+			status: "verified",
+			riskLevel: "read_only",
+			input: { path: "README.md" },
+			output: { bytes: 12 },
+			verification: {
+				method: "workspace-read-digest",
+				evidenceSha256: "ab".repeat(32),
+				verifiedAt: startedAt,
+			},
+			startedAt,
+			completedAt: startedAt,
+		});
+
+		await expect(
+			core.handle({ type: "runtime-list-pending-tool-approvals" }),
+		).resolves.toMatchObject({
+			ok: true,
+			runs: [{ id: "run-waiting", status: "waiting_approval" }],
+			executions: [{ id: "tool-blocked", toolName: "workspace.apply_patch" }],
+		});
+		await expect(
+			core.handle({ type: "runtime-list-executions", limit: 10 }),
+		).resolves.toMatchObject({
+			ok: true,
+			executions: [
+				{ id: "tool-blocked" },
+				{ id: "tool-verified", verification: { method: "workspace-read-digest" } },
+			],
+		});
+		await core.close();
+	});
+});
+
 describe("opportunity governance", () => {
 	it("stops work at the configured autonomous depth", () => {
 		const engine = new OpportunityEngine();

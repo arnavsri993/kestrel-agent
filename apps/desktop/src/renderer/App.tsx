@@ -72,8 +72,9 @@ import {
 	useUserBrowser,
 } from "./browser/useUserBrowser";
 import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
-import { ApprovalCard } from "./components/ApprovalCard";
 import { BrandMark } from "./components/BrandMark";
+import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
+import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
 import {
 	sidebarActiveDestination,
@@ -123,12 +124,6 @@ import {
 	type KestrelAppPageId,
 } from "../utility/browser-app-pages";
 import {
-	isKestrelAppPageId,
-	kestrelAppPageUrl,
-	parseKestrelAppPage,
-	type KestrelAppPageId,
-} from "../utility/browser-app-pages";
-import {
 	memoryInGb,
 	recommendedLocalModelTiers,
 	supportedLocalModels,
@@ -145,6 +140,7 @@ import {
 	startupFailureMessage,
 } from "./startup-state";
 import { personalizedConfigurationPrompts } from "./configuration-prompts";
+import { policyGateCopy, runRouteLabel } from "./runtime-evidence";
 
 const pages = [
 	["browser", "Browser"],
@@ -3849,7 +3845,9 @@ function RuntimeConversation({
 			: latestToolEvent.type === "tool.completed"
 				? "Tool result received"
 				: "Tool started"
-		: "Kestrel is working in this chat.";
+		: latestRun
+			? `Isolated core · ${runRouteLabel(latestRun)}`
+			: "Kestrel is working in this chat.";
 	const latestOutcome =
 		!busy &&
 		!pending &&
@@ -4013,9 +4011,18 @@ function RuntimeConversation({
 									· {pending.execution.riskLevel.replaceAll("_", " ")}
 								</strong>
 								<small className="runtime-approval-owner">
-									Your decision is required before Kestrel can continue.
+									Policy level {policyGateCopy(pending.execution).level} paused
+									this run. The pause is restart-safe in encrypted local state
+									until you allow or reject it.
 								</small>
 								<p>{pending.execution.toolName}</p>
+								<small>
+									Route {runRouteLabel(pending.run)}
+									{pending.execution.idempotencyKey
+										? ` · ${pending.execution.idempotencyKey}`
+										: ""}
+								</small>
+								<p>{policyGateCopy(pending.execution).reason}</p>
 								{typeof pending.execution.output?.preview === "string" && (
 									<pre className="approval-preview">
 										{pending.execution.output.preview}
@@ -4433,37 +4440,6 @@ function RuntimeConversation({
 	);
 }
 
-function Approvals({
-	snapshot,
-	update,
-}: {
-	snapshot: WorkspaceSnapshot;
-	update(next: WorkspaceSnapshot): void;
-}) {
-	const approval = snapshot.approvals[0];
-	if (!approval)
-		return (
-			<Empty title="No approvals waiting" />
-		);
-	async function request(input: Parameters<typeof window.kestrel.request>[0]) {
-		const response = (await window.kestrel.request(input)) as CoreResponse;
-		if (!response.ok) throw new Error(response.error);
-		if (response.snapshot) update(response.snapshot);
-	}
-	return (
-		<PageFrame title="Review this action">
-			<ApprovalCard
-				approval={approval}
-				onApprove={() => request({ type: "approve", approvalId: approval.id })}
-				onReject={() => request({ type: "reject", approvalId: approval.id })}
-				onEdit={(emailBody) =>
-					request({ type: "edit-approval", approvalId: approval.id, emailBody })
-				}
-			/>
-		</PageFrame>
-	);
-}
-
 function Memory({
 	snapshot,
 	update,
@@ -4796,37 +4772,6 @@ function Memory({
 					{memoryError}
 				</p>
 			)}
-		</PageFrame>
-	);
-}
-
-function Activity({ snapshot }: { snapshot: WorkspaceSnapshot }) {
-	return (
-		<PageFrame title="What happened">
-			<ol className="activity-list">
-				{snapshot.activity.map((item, index) => (
-					<li key={item.id}>
-						<span className={`activity-node node-${item.status}`}>
-							{String(index + 1).padStart(2, "0")}
-						</span>
-						<div>
-							<div className="activity-title">
-								<strong>{item.title}</strong>
-								<time>
-									{new Date(item.timestamp).toLocaleTimeString([], {
-										hour: "numeric",
-										minute: "2-digit",
-									})}
-								</time>
-							</div>
-							<p>{item.detail}</p>
-							<small>
-								{item.status} · {item.sourceIds.join(" · ")}
-							</small>
-						</div>
-					</li>
-				))}
-			</ol>
 		</PageFrame>
 	);
 }
@@ -9091,7 +9036,11 @@ export function App() {
 			)}
 			{appPageId === "readiness" && <Readiness />}
 			{appPageId === "approvals" && (
-				<Approvals snapshot={snapshot} update={setSnapshot} />
+				<RuntimeApprovalQueue
+					snapshot={snapshot}
+					update={setSnapshot}
+					onOpenSession={openSidebarSession}
+				/>
 			)}
 			{appPageId === "memory" && (
 				<LifeContext snapshot={snapshot} update={setSnapshot} />
@@ -9104,7 +9053,9 @@ export function App() {
 			{appPageId === "events" && (
 				<EventApplications onOpenSession={openRuntimeSession} />
 			)}
-			{appPageId === "activity" && <Activity snapshot={snapshot} />}
+			{appPageId === "activity" && (
+				<RuntimeActivityTrail snapshot={snapshot} />
+			)}
 			{appPageId === "extensions" && (
 				<DashboardExtensions
 					snapshot={snapshot}

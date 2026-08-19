@@ -359,6 +359,45 @@ describe("tool execution history queries", () => {
 		).toEqual(["tool-recent"]);
 		database.close();
 	});
+
+	it("lists waiting agent runs across sessions", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const sessionId = "session-waiting";
+		database.saveRuntimeSession({
+			id: sessionId,
+			title: "Waiting run",
+			allowedTools: ["fixture.tool"],
+			status: "active",
+			checkpoints: [],
+			createdAt: "2026-08-19T12:00:00.000Z",
+			updatedAt: "2026-08-19T12:00:00.000Z",
+		});
+		database.saveAgentRun({
+			id: "run-complete",
+			sessionId,
+			model: "fixture",
+			providerIds: ["fixture"],
+			status: "completed",
+			turn: 1,
+			createdAt: "2026-08-19T12:00:00.000Z",
+			updatedAt: "2026-08-19T12:01:00.000Z",
+		});
+		database.saveAgentRun({
+			id: "run-waiting",
+			sessionId,
+			model: "fixture",
+			providerIds: ["fixture"],
+			status: "waiting_approval",
+			turn: 1,
+			pendingToolExecutionId: "tool-blocked",
+			createdAt: "2026-08-19T12:02:00.000Z",
+			updatedAt: "2026-08-19T12:03:00.000Z",
+		});
+		expect(database.listWaitingAgentRuns().map((run) => run.id)).toEqual([
+			"run-waiting",
+		]);
+		database.close();
+	});
 });
 
 describe("runtime history retirement", () => {
