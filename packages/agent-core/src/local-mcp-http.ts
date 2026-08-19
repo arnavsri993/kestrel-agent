@@ -240,18 +240,27 @@ export class LocalBrowserMcpServer {
 	): string {
 		const mapped = session.listedNames.get(listedName);
 		if (mapped) return mapped;
-		const available = this.runtime.modelTools(this.sessionId);
+		const available = this.runtime
+			.modelTools(this.sessionId)
+			.filter(
+				(tool) => !this.toolFilter || this.toolFilter(tool.descriptor.name),
+			);
+		let resolved = listedName;
 		if (available.some((tool) => tool.descriptor.name === listedName))
-			return listedName;
-		let candidate = listedName;
-		while (candidate.startsWith("browser")) {
-			const index = candidate.indexOf("_", "browser".length);
-			if (index < 0) break;
-			candidate = `${candidate.slice(0, index)}.${candidate.slice(index + 1)}`;
-			if (available.some((tool) => tool.descriptor.name === candidate))
-				return candidate;
+			resolved = listedName;
+		else {
+			let candidate = listedName;
+			while (candidate.startsWith("browser")) {
+				const index = candidate.indexOf("_", "browser".length);
+				if (index < 0) break;
+				candidate = `${candidate.slice(0, index)}.${candidate.slice(index + 1)}`;
+				if (available.some((tool) => tool.descriptor.name === candidate)) {
+					resolved = candidate;
+					break;
+				}
+			}
 		}
-		return listedName;
+		return resolved;
 	}
 
 	private rewriteListedTools(
@@ -354,7 +363,7 @@ export class LocalBrowserMcpServer {
 					params.name = this.resolveOriginalToolName(session, params.name);
 			}
 			const result = await session.server.handle(body as JsonRpcMessage, {
-				allowMutatingTools: true,
+				allowMutatingTools: false,
 			});
 			if (!result) {
 				writeEmpty(response, 202, sessionId);

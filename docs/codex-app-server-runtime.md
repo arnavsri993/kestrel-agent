@@ -65,8 +65,9 @@ Without a browser MCP attachment, base instructions stay closed: no commands,
 file edits, browsing, MCP, or vendor-side approval requests.
 
 When desktop bootstrap attaches a Kestrel-owned loopback browser MCP before the
-first probe, Codex may use MCP server `kestrel_browser` to inspect and operate
-the visible Kestrel browser. That attachment writes an overlay `CODEX_HOME`
+first probe, Codex may use MCP server `kestrel_browser` to inspect
+the visible Kestrel browser. Mutating tab/page actions stay on Kestrel's native
+approval path and are not exposed through that MCP server. That attachment writes an overlay `CODEX_HOME`
 under the owner-private scratch directory and points Codex at the loopback MCP
 URL through `config.toml`. The bearer token is passed only as
 `KESTREL_CODEX_MCP_TOKEN`. Kestrel may symlink the user's existing
