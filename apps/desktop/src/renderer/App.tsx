@@ -3429,7 +3429,6 @@ function RuntimeConversation({
 			}),
 		}).catch(() => {});
 		// #endregion
->>>>>>> a0e56ba (Add a Cursor-style cascading model selector to the composer.)
 		if (!prompt) return;
 		if (busy) {
 			const streamId = streamIdRef.current;

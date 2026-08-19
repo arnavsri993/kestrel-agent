@@ -24,23 +24,23 @@ afterEach(() => {
 });
 
 describe("desktop startup recovery copy", () => {
-	it("explains the Keychain action only for secure-storage failures", () => {
+	it("explains the local key action only for secure-storage failures", () => {
 		const copy = startupRecoveryCopy(
-			new SecureStorageError("Keychain access was denied."),
+			new SecureStorageError("The local database key could not be read."),
 		);
 
 		expect(copy.message).toBe("Kestrel needs access to its encrypted data.");
-		expect(copy.detail).toContain("Always Allow");
-		expect(copy.detail).not.toContain("separate from Keychain");
+		expect(copy.detail).toContain("Restore the local protected database key");
+		expect(copy.detail).not.toContain("separate from the protected database key");
 	});
 
-	it("does not mislabel Agent Core failures as Keychain failures", () => {
+	it("does not mislabel Agent Core failures as protected-key failures", () => {
 		const copy = startupRecoveryCopy(
 			new Error("The active agent configuration is unavailable."),
 		);
 
 		expect(copy.message).toBe("Kestrel's local Agent Core could not start.");
-		expect(copy.detail).toContain("separate from Keychain");
+		expect(copy.detail).toContain("separate from the protected database key");
 		expect(copy.detail).toContain("active agent configuration");
 	});
 
