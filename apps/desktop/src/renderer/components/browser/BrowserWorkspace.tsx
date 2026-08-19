@@ -368,9 +368,7 @@ export function BrowserWorkspace({
             history={state.history}
             agentName={agentName}
             onNavigate={(input) => void navigate(activeTab.id, input)}
-            onNewTab={() => void createTab()}
             onNewAgent={onNewAgent}
-            onOpenSettings={onOpenSettings}
           />
         )}
         {activeTab.error && (

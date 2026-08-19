@@ -5,13 +5,17 @@ import "./life-context.css";
 import "./browser.css";
 import "./components/ui/ui.css";
 import { App } from "./App";
-import { PetOverlay } from "./components/PetOverlay";
 
 const isPetOverlay =
 	new URLSearchParams(location.search).get("petOverlay") === "1";
+const root = document.getElementById("root")!;
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-	<React.StrictMode>
-		{isPetOverlay ? <PetOverlay /> : <App />}
-	</React.StrictMode>,
+if (isPetOverlay) {
+	document.documentElement.style.background = "transparent";
+	document.body.style.background = "transparent";
+	root.style.background = "transparent";
+}
+
+ReactDOM.createRoot(root).render(
+	<React.StrictMode>{isPetOverlay ? null : <App />}</React.StrictMode>,
 );

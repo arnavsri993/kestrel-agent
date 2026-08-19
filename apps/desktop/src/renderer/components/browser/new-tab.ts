@@ -63,8 +63,3 @@ export function siteInitial(site: Pick<FrequentBrowserSite, "hostname" | "title"
     "?"
   ).toUpperCase();
 }
-
-export function siteAccent(hostname: string): string {
-  void hostname;
-  return "neutral";
-}

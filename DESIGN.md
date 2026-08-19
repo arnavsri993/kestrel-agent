@@ -1,71 +1,82 @@
 # Kestrel design system
 
-## Monochrome amendment — August 17, 2026
+## Monochrome — August 2026
 
-This user-directed amendment supersedes accent-color recommendations below
-where they conflict. Kestrel's renderer is intentionally limited to black,
-white, and grayscale. The elevation ramp, typography, spacing, motion,
-approval hierarchy, setup continuity, agent rail, command center, settings
-structure, empty states, and accessibility rules from the overhaul remain in
-force; their semantic tokens are neutral values rather than sage, blue, amber,
-or red.
+This is the authoritative desktop visual system. It supersedes every older
+palette, ambient-field, navigation, skin, backdrop, pet, and motion direction
+below where they conflict. Kestrel is a black-and-white Mac instrument: simple,
+modern, fast, and honest about approval and data boundaries.
 
-- **One visual language:** canvas, rails, panels, surfaces, overlays, ink,
-  borders, focus, primary actions, ambient fields, recommendation art, and
-  site shortcuts all render in grayscale. A renderer-level grayscale guard
-  keeps legacy hard-coded accents from leaking through.
-- **Semantics without hue:** warning, danger, info, running, and verified
-  states pair a neutral value with an icon, explicit label, and structural
-  treatment such as weight, border, or placement. No state relies on color
-  alone.
-- **No visible color choices:** the skin IDs, custom skin persistence, config
-  routes, and `UserBrowserSettings` values remain backward-compatible for
-  existing users, tests, and CLI/API callers. The desktop renderer always
-  applies the monochrome semantic ramp and does not expose skin or new-tab
-  backdrop pickers. New tabs use the single graphite treatment.
-- **Ambient restraint:** Home and setup may retain the overhaul's CSS-only
-  ambient field and fine texture, but only as black, white, and gray value
-  shifts. Chrome, rails, conversations, settings, and specialist surfaces
-  remain matte.
+### Tokens and type
 
-## Graphite, lit from within — August 2026
+- Elevation is value-only: canvas `#0a0a0a`, sidebar `#101011`, panel
+  `#151517`, surface `#1d1d20`, raised surface `#27272b`, and overlay
+  `#303036`.
+- Ink is `#f5f5f7`, readable secondary ink is `#cfcfd6`, metadata is
+  `#9a9aa2`, and disabled or hint text is `#6a6a72`. White `#f5f5f7` is the
+  sole accent and `#0a0a0a` is the ink on solid actions.
+- Lines are `rgba(255,255,255,0.06)` and
+  `rgba(255,255,255,0.14)`. Selected fill is
+  `rgba(255,255,255,0.08)`. Status fill is the raised surface and status ink
+  is primary ink.
+- Display is `40/46 700`; title is `24/30 700`; section is `16/21 650`; body
+  is `14/21 450`; control is `13.5/18 550`; support is `12.5/17 450`; metadata
+  is `11.5/15 500` uppercase when it is an eyebrow or status label; evidence
+  is `11/15` SF Mono. No interface copy is below 11px.
+- Spacing uses the 4px base. Radii are `6/10/12/14/16/24px` plus a true pill.
+  Controls are 40px, compact controls and icon buttons never fall below 32px,
+  and setup or approval decisions are 44px.
 
-This section amends the Final Native Graphite system below wherever the two
-directions conflict. The product remains a quiet Mac instrument; the change is
-execution, not a move toward a generic AI dashboard.
+### Surface, status, and component rules
 
-- **Elevation:** the dark default now uses a five-plane ramp: canvas `#0e0e10`,
-  sidebar `#131316`, panel `#17171a`, surface `#1e1e22`, raised surface
-  `#26262b`, and overlay `#2e2e34`. Separation comes from value and short,
-  visible shadows before borders.
-- **Type:** primary ink is `#f4f4f6`, readable secondary ink is `#c9c9d1`,
-  metadata uses `#9c9ca6`, and hints use `#6e6e78`. Display is 44/48, greeting
-  36/42, title 26/32, section 17/22, body 14/21, control 13.5/18, support
-  12.5/17, and evidence 11/15 mono. No interface copy is intentionally below
-  11px.
-- **Signal:** sage `#8fd694` is a spotlight for primary actions, focus,
-  active navigation, verification, and live work. `--glow-signal` is reserved
-  for those interactive/focused moments; it is not a decorative surface effect.
-  Warning, danger, and info states always pair color with an icon and label.
-- **Composition:** setup and Home use an understated CSS ambient field with a
-  fine texture; chrome, rails, conversations, settings, and specialist surfaces
-  remain matte. Home's composer is its focal element. Empty surfaces receive a
-  composed Kestrel mark and one useful next action instead of a void.
-- **Interaction:** shared renderer primitives provide 40px controls, 44px
-  decision/setup actions, 56px rows, 18px cards, visible focus, pressed/hover
-  feedback, and state-aware status badges. Route and card feedback stays
-  interruptible and under 240ms; reduced motion removes travel, scale, pulse,
-  and ambient drift while retaining a short opacity/state change.
-- **Continuity:** the setup progress rail is a five-segment path with the
-  current stage named above it. Welcome, Ready, approval, readiness, and the
-  persistent agent rail make the Kestrel mark and the current decision
-  visible without changing onboarding, approval, IPC, persistence, or skin
-  contracts. User skins derive the new semantic roles from their existing
-  palette, while the built-in Kestrel skin adopts this ramp.
-- **Why this is not generic:** the visual hierarchy follows Kestrel's real
-  loop—ask, scope, act, approve, verify—so sage marks a live decision or
-  trustworthy state rather than decorating every card, and browser context plus
-  agent work remain one product surface.
+- Five matte planes and real shadows create depth. Content never uses a
+  gradient, glow, ambient field, texture, glass effect, or blur. Borders are
+  quiet and are not a substitute for elevation.
+- White is reserved for the primary action, focus ring, active navigation, and
+  the strongest verified state. Every status pairs a filled shape with a plain
+  label: check for verified, triangle for approval, loader for running,
+  octagon or x for error, and circle or info for neutral state. Hue never
+  communicates state because the renderer contains no hue.
+- Buttons, cards, rows, inputs, status badges, and empty states share one
+  grammar. Static cards have no visible border; interactive cards lift by 1px.
+  Rows are at least 52px with inset separators. Inputs focus with a white
+  border. Empty states use one 56px monochrome mark, one section line, one
+  support line, and at most one action.
+- Direct feedback is 90ms and state or route feedback is 140ms. Route entry is
+  a 6px rise plus fade. No ambient animation is allowed. A running indicator
+  may pulse opacity only, and reduced motion removes travel, scale, spin, and
+  pulse while keeping a short opacity or state change.
+
+### Shell and setup rules
+
+- The persistent agent rail is 360px. It contains one-line identity, New task,
+  one merged browser-context/current-task card, at most three Recent rows,
+  the pinned composer, and four destinations: Browser, Agent, Approvals, and
+  Settings. Empty Recent is omitted. Pending approval appears only in the task
+  card and as a white dot on Approvals; there is no duplicate banner or footer
+  status line. History, Downloads, and specialist tools remain reachable from
+  Capabilities and keyboard commands.
+- Browser Home is flat canvas. Its focal point is the 56px composer below a
+  40px greeting. Frequent tabs appear only when local history exists.
+  Suggestions are exactly three text rows; there are no thumbnails, duplicate
+  Home identity, personalization gear, or Frequent-tabs add control.
+- Setup keeps the five product stages and the complete safety acknowledgment.
+  Progress is five centered 32x4 segments with a metadata label. Welcome and
+  Ready are centered, model choice uses three continuous rows, and verification
+  remains explicit and live. Flat canvas, concise copy, and one solid primary
+  action replace decorative fields and card nesting.
+
+### Compatibility and safety
+
+- The renderer exposes no skin picker, new-tab backdrop picker, accent choice,
+  desktop-pet settings, pet overlay, or gradient thumbnail. Legacy IPC,
+  persistence fields, and schema values remain dormant for compatibility; they
+  do not affect the monochrome renderer and are not presented as choices.
+- Approval gates, boundary acknowledgment, consequential-action explanations,
+  focus visibility, semantic labels, and recovery paths are never deleted for
+  visual simplicity. The renderer must not claim a provider, model route,
+  migration, or packaged build is verified without the corresponding live
+  evidence.
 
 ## Unified life context — July 2026
 
@@ -138,12 +149,11 @@ execution, not a move toward a generic AI dashboard.
   person-scoped deletion, lifecycle archival, renderer typecheck/build,
   keyboard/focus, compact reflow, packaged macOS capture, and no console errors.
 
-## Final Native Graphite system — July 2026
+## Final Native Graphite system — July 2026 (historical)
 
-This section is the authoritative desktop visual and interaction specification.
-Older sections below preserve feature-specific safety boundaries and design
-history. Where an older palette, type scale, material, navigation treatment, or
-product name conflicts with this section, this section wins.
+This section preserves the design history and feature-specific safety
+boundaries. The Monochrome — August 2026 section above is authoritative wherever
+palette, navigation, material, motion, or visible customization conflicts.
 
 ### Product position
 
@@ -221,16 +231,16 @@ product name conflicts with this section, this section wins.
   detail stays in native disclosures; primary choices and current state remain
   visible.
 
-### Edge-inspired home screen (implemented)
+### Browser Home and persistent rail
 
-The empty user tab is a browser home rather than a dashboard: it keeps the browser's tab strip and address bar in the foreground, gives the durable agent a calm left rail, and makes the next useful action obvious without inventing data.
-
-- **Composition:** the persistent agent rail carries the selected agent name, New task, current-page context, recent chats, the mounted composer, and destination navigation. The browser plane carries the tab strip, address bar, top-right `Chat with {agent}` control, a greeting-led local chat composer, circular Frequent tabs, and exactly three dark recommendation cards with visual thumbnails.
-- **Real data:** Frequent tabs are derived from origin-grouped local browser history only. Recommendations open the real mounted agent conversation with a prefilled prompt; they are not fabricated activity or remote personalization.
-- **Agent handoff:** the left rail can be minimized and restored from either the rail header or the toolbar button. The state is persisted locally, and focus returns to the new control so the collapse is keyboard-complete.
-- **Personalization:** Browser settings exposes four local backdrops—Graphite, Meadow, Dawn, and Paper—under Personalization. The selected `newTabBackground` is part of `UserBrowserSettings`, survives reload, and adds no remote request or runtime image dependency. Meadow uses the checked-in `apps/desktop/src/renderer/assets/new-tab-meadow.svg` landscape illustration; the other choices remain CSS-native fields. This is a scoped home-canvas exception to the browser chrome rule: the chrome stays matte and restrained while the home surface can carry a quiet terrain/paper field.
-- **Responsive and access:** the frequent row reduces from six to three, two, and one columns; recommendation cards stack on narrow windows; the home remains scrollable in short windows; controls expose names, pressed state, visible focus, reduced-transparency behavior, and reduced-motion-safe CSS.
-- **Why this is not generic:** the Edge reference supplies the familiar browser-home rhythm, but Kestrel's rail, history shortcuts, recommendations, agent identity, and personalization are bound to its actual local browser and durable runtime state rather than copied product modules or generic AI metrics.
+The current Home is a flat browser canvas rather than a dashboard. Browser
+chrome remains primary, the greeting and hero composer form one focal region,
+local Frequent tabs disappear when empty, and exactly three monochrome text
+rows open real agent prompts. The persistent 360px rail merges browser context
+and current task, caps Recent at three rows, pins the composer, and exposes four
+primary destinations. Personalization choices, decorative thumbnails, duplicate
+identity, empty-history cards, and redundant approval state are not part of the
+renderer.
 
 ### Setup and workspace continuity
 
