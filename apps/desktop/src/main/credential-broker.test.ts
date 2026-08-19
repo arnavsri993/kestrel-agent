@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	CredentialBroker,
 	ElectronSecretProtection,
+	PlaintextSecretProtection,
 	SecureStorageError,
 } from "./credential-broker";
 
@@ -126,6 +127,30 @@ describe("desktop credential broker", () => {
 		});
 	});
 
+	it("stores the database key as a local plaintext file without OS encryption", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-plaintext-"));
+		roots.push(root);
+		const protection = new PlaintextSecretProtection();
+		const broker = new CredentialBroker(root, protection);
+		const key = await broker.getDatabaseKey();
+		expect(key).toHaveLength(32);
+		const stored = readFileSync(join(root, "secure", "database-key.bin"));
+		expect(
+			stored.subarray(0, "kestrel-plaintext-v1\n".length).toString("utf8"),
+		).toBe("kestrel-plaintext-v1\n");
+		expect(stored.toString("utf8")).toContain(key.toString("base64"));
+		expect(
+			await new CredentialBroker(root, protection).getDatabaseKey(),
+		).toEqual(key);
+	});
+
+	it("refuses leftover Keychain ciphertext instead of prompting macOS", async () => {
+		const protection = new PlaintextSecretProtection();
+		await expect(
+			protection.decryptString(Buffer.from([0x00, 0x01, 0x02, 0xff])),
+		).rejects.toBeInstanceOf(SecureStorageError);
+	});
+
 	it("initializes Electron secure storage once and never retries the same rotating ciphertext", async () => {
 		let syncAvailabilityCalls = 0;
 		let availabilityCalls = 0;
@@ -192,6 +217,23 @@ describe("desktop credential broker", () => {
 		expect(encryptCalls).toBe(1);
 		expect(readFileSync(keyPath, "utf8")).toBe(
 			`current:${key.toString("base64")}`,
+		);
+	});
+
+	it("does not invent a key when an existing database has a leftover Keychain-protected key", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-legacy-key-"));
+		roots.push(root);
+		mkdirSync(join(root, "database"), { recursive: true });
+		mkdirSync(join(root, "secure"), { recursive: true });
+		writeFileSync(join(root, "database", "kestrel.sqlite"), "encrypted profile");
+		writeFileSync(join(root, "secure", "database-key.bin"), Buffer.from([0, 1, 2]));
+		const broker = new CredentialBroker(root, new PlaintextSecretProtection());
+
+		await expect(broker.getDatabaseKey()).rejects.toBeInstanceOf(
+			ProtectedDatabaseError,
+		);
+		expect(readFileSync(join(root, "secure", "database-key.bin")).equals(Buffer.from([0, 1, 2]))).toBe(
+			true,
 		);
 	});
 
