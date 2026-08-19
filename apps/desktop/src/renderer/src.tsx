@@ -4,6 +4,7 @@ import "./styles.css";
 import "./life-context.css";
 import "./browser.css";
 import "./components/ui/ui.css";
+import "./agent-panel-layout.css";
 import { App } from "./App";
 
 const isPetOverlay =
