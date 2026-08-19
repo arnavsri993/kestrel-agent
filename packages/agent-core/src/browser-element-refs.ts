@@ -95,19 +95,20 @@ export function annotateAccessibilityTree(
 			truncated = true;
 			return node;
 		}
-		const ref = `e${interactive.length + 1}`;
-		const name = axText(node.name);
 		const backendDOMNodeId =
 			typeof node.backendDOMNodeId === "number" &&
 			Number.isInteger(node.backendDOMNodeId) &&
 			node.backendDOMNodeId > 0
 				? node.backendDOMNodeId
 				: undefined;
+		if (backendDOMNodeId === undefined) return node;
+		const ref = `e${interactive.length + 1}`;
+		const name = axText(node.name);
 		interactive.push({
 			ref,
 			role,
 			...(name ? { name } : {}),
-			...(backendDOMNodeId !== undefined ? { backendDOMNodeId } : {}),
+			backendDOMNodeId,
 		});
 		return { ...node, ref };
 	};

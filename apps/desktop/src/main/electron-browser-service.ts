@@ -21,6 +21,7 @@ import {
 	type Session,
 	systemPreferences,
 } from "electron";
+import { sanitizeBrowserUrl } from "./browser-tab-store";
 import {
 	publicInteractiveRefs,
 	rememberElementRefs,
@@ -81,18 +82,28 @@ export function retainRecentBrowserDownloads(
 	}
 }
 
-function origin(value: string): string | undefined {
+export function isolatedBrowserShouldCancelRequest(
+	value: string,
+	allowedOrigins: ReadonlySet<string>,
+): boolean {
 	try {
 		const url = new URL(value);
+		if (url.protocol === "about:" && url.pathname === "blank") return false;
 		if (
 			url.protocol === "data:" ||
-			url.protocol === "blob:" ||
+			url.protocol === "javascript:" ||
+			url.protocol === "file:" ||
 			url.protocol === "about:"
 		)
-			return undefined;
-		return url.origin;
+			return true;
+		if (url.protocol === "blob:") {
+			const origin = url.origin === "null" ? undefined : url.origin;
+			return origin === undefined || !allowedOrigins.has(origin);
+		}
+		const origin = url.origin;
+		return !origin || origin === "null" || !allowedOrigins.has(origin);
 	} catch {
-		return "invalid";
+		return true;
 	}
 }
 
@@ -167,9 +178,8 @@ export class ElectronBrowserService {
 		);
 		partition.setPermissionCheckHandler(() => false);
 		partition.webRequest.onBeforeRequest((details, callback) => {
-			const requestedOrigin = origin(details.url);
 			callback({
-				cancel: requestedOrigin !== undefined && !allowed.has(requestedOrigin),
+				cancel: isolatedBrowserShouldCancelRequest(details.url, allowed),
 			});
 		});
 		partition.webRequest.onErrorOccurred((details) =>
@@ -233,10 +243,19 @@ export class ElectronBrowserService {
 			},
 		});
 		window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-		window.webContents.on("will-navigate", (event, url) => {
-			const requestedOrigin = origin(url);
-			if (requestedOrigin !== undefined && !allowed.has(requestedOrigin))
-				event.preventDefault();
+		const preventDisallowedNavigation = (
+			event: { preventDefault: () => void },
+			url: string,
+		) => {
+			if (isolatedBrowserShouldCancelRequest(url, allowed)) event.preventDefault();
+		};
+		window.webContents.on("will-navigate", preventDisallowedNavigation);
+		window.webContents.on("will-redirect", preventDisallowedNavigation);
+		window.webContents.on("did-navigate", () => {
+			this.elementRefs.delete(id);
+		});
+		window.webContents.on("did-navigate-in-page", () => {
+			this.elementRefs.delete(id);
 		});
 		window.webContents.on(
 			"console-message",
@@ -497,7 +516,9 @@ export class ElectronBrowserService {
 		});
 		this.elementRefs.set(id, rememberElementRefs(annotated.interactive));
 		return {
-			url: window.webContents.getURL(),
+			url:
+				sanitizeBrowserUrl(window.webContents.getURL()) ||
+				"https://invalid.local/",
 			title: window.webContents.getTitle(),
 			accessibilityTree: annotated.accessibilityTree,
 			interactive: publicInteractiveRefs(annotated.interactive),

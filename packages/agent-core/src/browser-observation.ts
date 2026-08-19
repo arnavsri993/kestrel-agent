@@ -197,7 +197,14 @@ function observationUrl(value: string): string {
 		}
 		return url.toString().slice(0, MAX_OBSERVATION_URL);
 	} catch {
-		return candidate.replace(/#.*$/, "");
+		return candidate
+			.replace(/#.*$/, "")
+			.replace(/\/\/[^/?#]*@/, "//")
+			.replace(/[^\s/?#]+:[^\s/?#]*@/g, "")
+			.replace(
+				/[?&](?:access_?token|api_?key|auth(?:entication|orization)?(?:_?token|_?code)?|code|credential|jwt|password|refresh_?token|secret|session(?:_?id|_?token)?|sig(?:nature)?|ticket|token)=[^&]*/gi,
+				"",
+			);
 	}
 }
 

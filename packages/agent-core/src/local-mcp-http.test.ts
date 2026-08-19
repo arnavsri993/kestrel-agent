@@ -161,6 +161,9 @@ describe("LocalBrowserMcpServer", () => {
 		expect(names.every((name) => name.startsWith("browser_"))).toBe(true);
 		expect(names.some((name) => name.includes("."))).toBe(false);
 		expect(names).toContain("browser_tabs");
+		expect(names).not.toContain("browser_visible-act");
+		expect(names).not.toContain("browser_act");
+		expect(names).not.toContain("browser_navigate");
 		expect(names).not.toContain("workspace.write");
 		expect(names).not.toContain("workspace_write");
 		expect(names).not.toContain("computer.act");
@@ -195,6 +198,42 @@ describe("LocalBrowserMcpServer", () => {
 		});
 		if (!result.isError)
 			expect(started.backend.visibleTabsCalls).toBeGreaterThan(0);
+		await client.close();
+	});
+
+	it("rejects workspace and execution tools on tools/call", async () => {
+		const started = await startFixture();
+		const transport = new StreamableHttpMcpTransport(started.url, {
+			authorization: `Bearer ${started.token}`,
+		});
+		const client = new McpClient(transport);
+		await client.initialize();
+		for (const name of [
+			"workspace.write",
+			"workspace_write",
+			"execution.run",
+			"computer.act",
+		]) {
+			await expect(client.callTool(name, {})).rejects.toThrow(
+				/not exposed by this MCP server/i,
+			);
+		}
+		await client.close();
+	});
+
+	it("does not execute mutating browser tools over the loopback MCP", async () => {
+		const started = await startFixture();
+		const transport = new StreamableHttpMcpTransport(started.url, {
+			authorization: `Bearer ${started.token}`,
+		});
+		const client = new McpClient(transport);
+		await client.initialize();
+		await expect(
+			client.callTool("browser_visible-act", {
+				tabId: "tab-00000000-0000-4000-8000-000000000000",
+				action: { type: "click", target: "#save" },
+			}),
+		).rejects.toThrow(/mutating MCP tools require task authorization/i);
 		await client.close();
 	});
 
