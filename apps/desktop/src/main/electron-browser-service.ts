@@ -19,6 +19,7 @@ import {
 	type Session,
 	systemPreferences,
 } from "electron";
+import { sanitizeBrowserUserAgent } from "./user-browser-service";
 
 export type AutomationBrowserBackendWireRequest =
 	| { operation: "create"; allowedOrigins: string[] }
@@ -210,6 +211,10 @@ export class ElectronBrowserService {
 						.digest("hex");
 			});
 		});
+		const cleanUserAgent = sanitizeBrowserUserAgent(
+			partition.getUserAgent?.(),
+		);
+		partition.setUserAgent?.(cleanUserAgent);
 		const window = new BrowserWindow({
 			width: 1280,
 			height: 800,
@@ -224,6 +229,7 @@ export class ElectronBrowserService {
 				devTools: false,
 			},
 		});
+		window.webContents.setUserAgent?.(cleanUserAgent);
 		window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 		window.webContents.on("will-navigate", (event, url) => {
 			const requestedOrigin = origin(url);

@@ -9,25 +9,27 @@ function tokens(value: string): string[] {
 	);
 }
 
+const SUFFIXES = [
+	"ization",
+	"ational",
+	"fulness",
+	"ously",
+	"ments",
+	"ingly",
+	"ation",
+	"ities",
+	"ment",
+	"ness",
+	"ing",
+	"ers",
+	"ies",
+	"ed",
+	"es",
+	"s",
+] as const;
+
 function stem(token: string): string {
-	for (const suffix of [
-		"ization",
-		"ational",
-		"fulness",
-		"ously",
-		"ments",
-		"ingly",
-		"ation",
-		"ities",
-		"ment",
-		"ness",
-		"ing",
-		"ers",
-		"ies",
-		"ed",
-		"es",
-		"s",
-	]) {
+	for (const suffix of SUFFIXES) {
 		if (token.length > suffix.length + 3 && token.endsWith(suffix))
 			return `${token.slice(0, -suffix.length)}${suffix === "ies" ? "y" : ""}`;
 	}
@@ -88,8 +90,10 @@ export class BM25 {
   private readonly b = 0.75;
   private readonly documents: BM25Document[] = [];
   private readonly documentTokens = new Map<string, string[]>();
+  private readonly documentTermCounts = new Map<string, Map<string, number>>();
   private readonly documentLengths = new Map<string, number>();
   private readonly termDocumentFrequencies = new Map<string, number>();
+  private totalDocumentLength = 0;
   private averageDocumentLength = 0;
 
   constructor(documents: BM25Document[] = []) {
@@ -101,22 +105,27 @@ export class BM25 {
     this.documents.push(doc);
     this.documentTokens.set(doc.id, docTokens);
     this.documentLengths.set(doc.id, docTokens.length);
+    this.totalDocumentLength += docTokens.length;
+    this.averageDocumentLength = this.totalDocumentLength / this.documents.length;
 
-    const uniqueTokens = new Set(docTokens);
-    for (const token of uniqueTokens) {
+    const termCounts = new Map<string, number>();
+    for (const token of docTokens) {
+      termCounts.set(token, (termCounts.get(token) ?? 0) + 1);
+    }
+    this.documentTermCounts.set(doc.id, termCounts);
+
+    for (const token of termCounts.keys()) {
       this.termDocumentFrequencies.set(token, (this.termDocumentFrequencies.get(token) ?? 0) + 1);
     }
-    
-    const totalLength = Array.from(this.documentLengths.values()).reduce((sum, len) => sum + len, 0);
-    this.averageDocumentLength = totalLength / this.documents.length;
   }
 
   score(query: string): Array<{ id: string; score: number }> {
     const queryTokens = tokens(query).map(stem);
     const N = this.documents.length;
+    if (N === 0 || this.averageDocumentLength === 0) return [];
     
     return this.documents.map((doc) => {
-      const docTokens = this.documentTokens.get(doc.id) ?? [];
+      const termCounts = this.documentTermCounts.get(doc.id);
       const docLength = this.documentLengths.get(doc.id) ?? 0;
       
       let score = 0;
@@ -124,8 +133,7 @@ export class BM25 {
         const n_q = this.termDocumentFrequencies.get(token) ?? 0;
         const idf = Math.log(1 + (N - n_q + 0.5) / (n_q + 0.5));
         
-        let f_q_D = 0;
-        for (const t of docTokens) if (t === token) f_q_D += 1;
+        const f_q_D = termCounts?.get(token) ?? 0;
         
         const numerator = f_q_D * (this.k1 + 1);
         const denominator = f_q_D + this.k1 * (1 - this.b + this.b * (docLength / this.averageDocumentLength));

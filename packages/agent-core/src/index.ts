@@ -111,6 +111,7 @@ import {
 } from "./remote";
 import { AgentRuntime } from "./runtime";
 import { SkinManager } from "./skins";
+import { TokenLeaderboardService } from "./token-leaderboard";
 import { UsageGovernor } from "./usage-governor";
 import type { UserModelStore } from "./user-model";
 import {
@@ -173,6 +174,7 @@ export class AgentCore {
 	readonly runtime: AgentRuntime;
 	readonly providerPool: ProviderPool;
 	readonly usageGovernor: UsageGovernor;
+	readonly tokenLeaderboard: TokenLeaderboardService;
 	readonly agentLoop: AgentLoop;
 	readonly skillRegistry?: SkillRegistry;
 	readonly skillLearning?: SkillLearningManager;
@@ -411,6 +413,7 @@ export class AgentCore {
 			this.deps.database,
 			() => new Date(this.deps.now?.() ?? Date.now()),
 		);
+		this.tokenLeaderboard = new TokenLeaderboardService(this.deps.database);
 		this.modelRegistry = new ModelRegistry(
 			this.deps.database,
 			this.providerPool.list(),
@@ -785,20 +788,20 @@ export class AgentCore {
 		const modelId = winning?.id ?? automatic.decision.selectedModelId;
 		const completed = result.run.status === "completed";
 		const refusal = detectModelRefusal(result.modelResult ?? { text: "" });
-		this.modelRegistry.recordOutcome({
+		const outcome: Parameters<typeof this.modelRegistry.recordOutcome>[0] = {
 			modelId,
 			capabilities: automatic.requirements.capabilities,
 			succeeded: completed,
 			validationPassed: completed,
 			refused: refusal.refused,
-			...(refusal.reason ? { refusalReason: refusal.reason } : {}),
-			recoverySucceeded:
-				(result.run.refusalRecoveryCount ?? 0) > 0 ? completed : undefined,
 			latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
 			actualCostUsd,
 			escalated: modelId !== automatic.decision.selectedModelId,
 			observedAt: this.now(),
-		});
+		};
+		if (refusal.reason) outcome.refusalReason = refusal.reason;
+		if ((result.run.refusalRecoveryCount ?? 0) > 0) outcome.recoverySucceeded = completed;
+		this.modelRegistry.recordOutcome(outcome);
 		if (automatic.decision.traceId) {
 			this.modelRouter.completeTrace(automatic.decision.traceId, {
 				status: completed
@@ -1401,7 +1404,9 @@ export class AgentCore {
 										maximumContextCharacters: route.maximumContextCharacters,
 										maximumOutputTokens: route.maximumOutputTokens,
 										temperature: route.temperature,
-										fallbackModelIds: route.route.fallbackModelIds,
+										...(route.route.fallbackModelIds && route.route.fallbackModelIds.length > 0
+											? { fallbackModelIds: [...route.route.fallbackModelIds] }
+											: {}),
 									}
 								: {}),
 							allowedTools: this.configuration.filterToolNames(
@@ -1564,6 +1569,46 @@ export class AgentCore {
 						ok: true,
 						usagePolicy: this.usageGovernor.setPolicy(request.policy),
 					};
+				case "token-leaderboard-get":
+					return {
+						ok: true,
+						tokenLeaderboard: this.tokenLeaderboard.getLeaderboard(
+							request.category ?? "volume",
+							request.timeframe ?? "week",
+						),
+					};
+				case "token-stats-get":
+					return {
+						ok: true,
+						tokenStats: this.tokenLeaderboard.getUserTokenStats(),
+					};
+				case "token-leaderboard-submit": {
+					if (request.handle || request.anonymous !== undefined) {
+						this.tokenLeaderboard.updateSettings({
+							...(request.handle ? { handle: request.handle } : {}),
+							...(request.anonymous !== undefined
+								? { anonymous: request.anonymous }
+								: {}),
+						});
+					}
+					return {
+						ok: true,
+						tokenStats: this.tokenLeaderboard.getUserTokenStats(),
+					};
+				}
+				case "token-leaderboard-opt-in": {
+					this.tokenLeaderboard.updateSettings({
+						optedIn: request.enabled,
+						...(request.anonymous !== undefined
+							? { anonymous: request.anonymous }
+							: {}),
+						...(request.handle ? { handle: request.handle } : {}),
+					});
+					return {
+						ok: true,
+						tokenStats: this.tokenLeaderboard.getUserTokenStats(),
+					};
+				}
 				case "runtime-search-messages":
 					return {
 						ok: true,
@@ -2417,7 +2462,9 @@ export class AgentCore {
 										maximumContextCharacters: route.maximumContextCharacters,
 										maximumOutputTokens: route.maximumOutputTokens,
 										temperature: route.temperature,
-										fallbackModelIds: route.route.fallbackModelIds,
+										...(route.route.fallbackModelIds && route.route.fallbackModelIds.length > 0
+											? { fallbackModelIds: [...route.route.fallbackModelIds] }
+											: {}),
 									}
 								: {}),
 							...(personality.toolNames
@@ -3016,6 +3063,7 @@ export {
 	TenantFleet,
 	type TenantFleetRunner,
 } from "./tenant-fleet";
+export * from "./token-leaderboard";
 export * from "./usage-governor";
 export {
 	type UserModelFact,

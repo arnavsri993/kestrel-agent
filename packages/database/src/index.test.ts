@@ -429,4 +429,33 @@ describe("runtime history retirement", () => {
 			database.close();
 		}
 	});
+
+	it("tracks daily token streaks, usage summaries, and caches leaderboard data", () => {
+		const database = new KestrelDatabase(
+			":memory:",
+			Buffer.alloc(32, "test-db-key"),
+		);
+		try {
+			database.recordDailyTokenStreak(15000, 3, "2026-08-10");
+			database.recordDailyTokenStreak(22000, 5, "2026-08-11");
+			database.recordDailyTokenStreak(18000, 4, "2026-08-12");
+
+			const stats = database.getDailyTokenStreakStats();
+			expect(stats.longestStreak).toBe(3);
+			expect(stats.activeDays).toBe(3);
+			expect(stats.streakHistory).toHaveLength(3);
+
+			database.cacheLeaderboardData("volume", "week", {
+				entries: [{ rank: 1, handle: "alice", totalTokens: 100000 }],
+			});
+
+			const cached = database.getCachedLeaderboardData<{
+				entries: Array<{ rank: number; handle: string }>;
+			}>("volume", "week");
+			expect(cached?.payload.entries[0]?.handle).toBe("alice");
+		} finally {
+			database.close();
+		}
+	});
 });
+

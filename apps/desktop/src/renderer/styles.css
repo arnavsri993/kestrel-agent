@@ -1,50 +1,46 @@
 :root {
 	color-scheme: dark;
-	font-family:
-		-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
-		sans-serif;
+	font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
 	font-synthesis: none;
 
-	/* ── Palette ─────────────────────────────────────── */
-	--canvas:         #161618;
-	--sidebar:        #0f0f11;
-	--sidebar-hover:  #252528;
-	--surface:        #242428;
-	--surface-strong: #323237;
-	--panel:          #1c1c20;
-	--ink:            #f2f2f5;
-	--muted:          #b8b8c0;
-	--faint:          #8a8a94;
-	--line:           #2e2e34;
-	--line-strong:    #4a4a52;
+	/* ── Palette (Native macOS Dark) ─────────────────── */
+	--canvas:         #1C1C1E;
+	--sidebar:        #1C1C1E;
+	--sidebar-hover:  #2C2C2E;
+	--surface:        #2C2C2E;
+	--surface-strong: #3A3A3C;
+	--panel:          #2C2C2E;
+	--ink:            rgba(255, 255, 255, 0.9);
+	--muted:          rgba(255, 255, 255, 0.55);
+	--faint:          rgba(255, 255, 255, 0.3);
+	--line:           rgba(255, 255, 255, 0.1);
+	--line-strong:    rgba(255, 255, 255, 0.2);
 	--solid:          #eeeef2;
 	--solid-hover:    #ffffff;
 	--solid-text:     #111114;
 
-	/* ── Signal / Brand ──────────────────────────────── */
-	--signal:         #7ec98c;
-	--signal-deep:    #9ed9a8;
-	--brand:          #9ecf72;
-	--status-soft:    #1c3324;
-	--status-ink:     #b8e6c0;
-	--healthy:        #72b880;
+	/* ── Signal / Brand (iOS Native Green) ────────────── */
+	--signal:         #34C759;
+	--signal-deep:    #30D158;
+	--brand:          #34C759;
+	--status-soft:    rgba(52, 199, 89, 0.15);
+	--status-ink:     #34C759;
+	--healthy:        #34C759;
 
 	/* ── Semantic ────────────────────────────────────── */
-	--warning:        #d4ae54;
-	--warning-soft:   #332c18;
-	--warning-ink:    #f2d898;
-	--danger:         #e06870;
-	--danger-soft:    #30181c;
-	--danger-ink:     #f4bcc0;
+	--warning:        #FF9F0A;
+	--warning-soft:   rgba(255, 159, 10, 0.15);
+	--warning-ink:    #FF9F0A;
+	--danger:         #FF453A;
+	--danger-soft:    rgba(255, 69, 58, 0.15);
+	--danger-ink:     #FF453A;
 
-	/* ── Typography ──────────────────────────────────── */
+	/* ── Typography (Strict Hierarchy) ───────────────── */
 	--display: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
-	--sans:
-		-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
-		sans-serif;
-	--mono: "SFMono-Regular", ui-monospace, Menlo, monospace;
+	--sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+	--mono: "SF Mono", ui-monospace, Menlo, monospace;
 
-	/* ── Spacing ─────────────────────────────────────── */
+	/* ── Spacing (Strict 4/8/16/24 rhythm) ───────────── */
 	--space-1: 4px;
 	--space-2: 8px;
 	--space-3: 12px;
@@ -56,31 +52,28 @@
 	--space-14: 56px;
 	--space-18: 72px;
 
-	/* ── Radius — generous rounded corners ───────────── */
-	--radius-xs:      6px;
-	--radius-sm:      10px;
-	--radius-control: 10px;
-	--radius-row:     14px;
-	--radius-surface: 18px;
-	--radius-stage:   24px;
-	--radius-xl:      20px;
+	/* ── Radius — Native app rounding ────────────── */
+	--radius-xs:      4px;
+	--radius-sm:      6px;
+	--radius-control: 8px;
+	--radius-row:     12px;
+	--radius-surface: 16px;
+	--radius-stage:   20px;
+	--radius-xl:      24px;
 	--radius-pill:    999px;
 
-	/* ── Motion ──────────────────────────────────────── */
-	--motion-feedback: 90ms;
-	--motion-state:    150ms;
-	--motion-focal:    210ms;
-	--ease-kestrel:    cubic-bezier(0.22, 1, 0.36, 1);
+	/* ── Motion (Feedback & State) ───────────────────── */
+	--motion-feedback: 100ms;
+	--motion-state:    200ms;
+	--motion-focal:    300ms;
+	--ease-kestrel:    cubic-bezier(0.2, 0.8, 0.2, 1);
 
-	/* ── Shadows ─────────────────────────────────────── */
-	--shadow-xs:      0 1px 2px rgba(0,0,0,0.3);
-	--shadow-sm:      0 2px 8px rgba(0,0,0,0.36), 0 1px 0 rgba(255,255,255,0.03);
-	--shadow-md:      0 4px 18px rgba(0,0,0,0.42), 0 1px 0 rgba(255,255,255,0.04);
-	--shadow-lg:      0 8px 32px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.05);
-	--shadow-composer:
-		0 1px 0 rgba(255,255,255,0.045),
-		0 12px 28px rgba(0,0,0,0.32),
-		0 2px 6px rgba(0,0,0,0.2);
+	/* ── Shadows (Native depth) ──────────────────────── */
+	--shadow-xs:      0 1px 2px rgba(0,0,0,0.15);
+	--shadow-sm:      0 2px 10px rgba(0,0,0,0.2), 0 1px 0 rgba(255,255,255,0.05) inset;
+	--shadow-md:      0 4px 14px rgba(0,0,0,0.25), 0 1px 0 rgba(255,255,255,0.05) inset;
+	--shadow-lg:      0 12px 32px rgba(0,0,0,0.3), 0 1px 0 rgba(255,255,255,0.05) inset;
+	--shadow-composer: 0 12px 28px rgba(0,0,0,0.32), 0 1px 0 rgba(255,255,255,0.05) inset;
 }
 
 * {

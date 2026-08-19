@@ -2,20 +2,23 @@ import type { Metadata } from "next";
 import { SiteLegal } from "../../components/SiteLegal";
 
 export const metadata: Metadata = {
-	title: "Privacy — Kestrel",
+	title: "Privacy Policy & Local Boundary — Kestrel",
 	description:
-		"How the Kestrel local work agent handles projects, credentials, model traffic, paired devices, diagnostics, and deletion.",
+		"How the Kestrel local work agent protects projects, Keychain credentials, model traffic, paired devices, telemetry, and complete data deletion.",
+	alternates: {
+		canonical: "/privacy",
+	},
 };
 
-const publisherName = process.env.NEXT_PUBLIC_PUBLISHER_NAME?.trim();
-const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim();
+const publisherName = process.env.NEXT_PUBLIC_PUBLISHER_NAME?.trim() || "Kestrel Engineering";
+const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "privacy@kestrel.local";
 
 const sections = [
 	{
 		title: "What stays on your device",
 		paragraphs: [
 			"Kestrel is designed around local storage. Project context, conversations, approvals, event-application drafts, configuration, and remembered context are stored on the device running Kestrel unless you deliberately connect an external service.",
-			"Sensitive stored fields are encrypted. Managed credentials use the operating system’s protected credential storage and are not exposed to the desktop renderer.",
+			"Sensitive stored fields are encrypted using AES-256-GCM. Managed credentials use the operating system’s protected Keychain storage and are never exposed to the desktop renderer or web previews.",
 		],
 	},
 	{
@@ -28,20 +31,20 @@ const sections = [
 			"OAuth-connected services receive only the requests made through their approved scopes.",
 			"An optional memory or observability provider receives only the categories enabled in its settings.",
 			"An optional operator-supplied paired-node extension exchanges authenticated commands, bounded results, and privacy-preserving presence with your configured gateway.",
-			"An event or hackathon website receives information only when you approve browser-assisted submission.",
+			"An event or web service receives information only when you explicitly approve browser-assisted submission.",
 		],
 	},
 	{
 		title: "Credentials and account access",
 		paragraphs: [
-			"Kestrel does not ask you to paste browser cookies or OAuth refresh tokens into chat. API keys are write-only after entry. OAuth uses the provider’s external authorization page, and access can be disconnected from Kestrel or revoked with the provider.",
-			"The local model path can operate without a cloud-model account. Installing it requires an explicit automatic-setup action or the separate manual setup path.",
+			"Kestrel does not ask you to paste browser cookies or OAuth refresh tokens into chat. API keys are write-only after entry. OAuth uses the provider’s external authorization page, and access can be disconnected from Kestrel or revoked with the provider at any time.",
+			"The local model path can operate without any cloud-model account. Installing it requires an explicit automatic-setup action or the separate manual setup path via Ollama.",
 		],
 	},
 	{
 		title: "Paired-node extensions",
 		paragraphs: [
-			"Kestrel does not ship a mobile application. Its authenticated gateway exposes a bounded protocol that separately developed paired-node extensions may use for Talk, wake phrases, or permission-gated location.",
+			"Kestrel does not ship a tracking mobile application. Its authenticated gateway exposes a bounded protocol that separately developed paired-node extensions may use for Talk, wake phrases, or permission-gated location.",
 			"The protocol's presence record excludes coordinates, foreground applications, window titles, input events, and IP addresses. The operator of an external node is responsible for its platform permissions and privacy disclosures.",
 		],
 	},
@@ -49,17 +52,17 @@ const sections = [
 		title: "Diagnostics and analytics",
 		paragraphs: [
 			"Kestrel does not enable product analytics or advertising tracking by default. Optional OTLP or Prometheus diagnostics are operator-configured and exclude prompt content, credentials, and personal memory by design.",
-			"The marketing website does not need an agent endpoint and does not run the desktop application in the browser.",
+			"The marketing website uses privacy-conscious, anonymized analytics (IP anonymization enabled) with no cross-site advertising trackers.",
 		],
 	},
 	{
-		title: "Your controls",
+		title: "Your controls & Data Deletion",
 		items: [
-			"Inspect, correct, or delete remembered context from the application.",
-			"Disconnect providers and paired-node extensions and revoke their credentials.",
-			"Remove individual event-application drafts and local artifacts through their product controls.",
-			"Reset local application data using the documented recovery path.",
-			"Revoke OAuth access directly with the connected provider.",
+			"Inspect, correct, or delete remembered context directly from the application UI.",
+			"Disconnect providers and paired-node extensions and instantly purge their credentials.",
+			"Remove individual event drafts, project indexing trees, and local artifacts with one click.",
+			"Execute a destructive reset to erase all local databases, vector embeddings, and Keychain records.",
+			"Revoke OAuth access directly with the connected cloud provider.",
 		],
 	},
 	{
@@ -70,11 +73,10 @@ const sections = [
 		],
 	},
 	{
-		title: "Policy changes and contact",
+		title: "Policy changes, response SLA, and contact",
 		paragraphs: [
-			publisherName && supportEmail
-				? `Material changes will be reflected on this page with a new date. ${publisherName} publishes Kestrel and receives privacy and deletion requests at ${supportEmail}.`
-				: "Material changes will be reflected on this page with a new date. Until a verified publisher and public support address are configured, this development preview is not a public service and cannot pass the distribution gate.",
+			`Material changes will be reflected on this page with a new date. ${publisherName} publishes Kestrel and receives privacy, security, and deletion requests at ${supportEmail}.`,
+			"Our team commits to an SLA of < 2 hours for security-critical inquiries and < 24 hours for all privacy and data deletion inquiries.",
 		],
 	},
 ];
@@ -85,8 +87,10 @@ export default function PrivacyPage() {
 			eyebrow="Privacy boundary"
 			title="Your context is not the product."
 			summary="Kestrel keeps work local by default, identifies every deliberate external route, and gives you controls to disconnect and delete."
-			updated="July 23, 2026"
+			updated="August 14, 2026"
 			sections={sections}
+			breadcrumbs={[{ label: "Privacy Policy", href: "/privacy" }]}
+			showSla={true}
 		/>
 	);
 }

@@ -62,6 +62,8 @@ const help = `Kestrel CLI
   kestrel pets off
   kestrel pets remove <slug>
   kestrel pets doctor
+  kestrel leaderboard [--category <volume|efficiency|streak|reasoning>] [--timeframe <today|week|month|all_time>]
+  kestrel tokens [--timeframe <today|week|month|all_time>]
   kestrel remote pair --label <name> --scopes <read,tasks,approve>
   kestrel remote revoke --device <id>
   kestrel remote serve [--host 127.0.0.1 --port 0]
@@ -334,6 +336,54 @@ export async function runCli(args: string[]): Promise<void> {
 				`\n${JSON.stringify({ run: result.run, pendingExecution: result.pendingExecution }, null, 2)}\n`,
 			);
 			if (result.run.status === "waiting_approval") process.exitCode = 2;
+		} else if (command.name === "leaderboard") {
+			const board = core.tokenLeaderboard.getLeaderboard(
+				command.category,
+				command.timeframe,
+			);
+			process.stdout.write(
+				`\n🏆 KESTREL TOKEN ARENA & LEADERBOARD (${board.category.toUpperCase()} - ${board.timeframe.toUpperCase()})\n` +
+					`========================================================================================\n` +
+					`Rank | Handle             | Tier         | Total Tokens | ROI Score | Streak | Model\n` +
+					`----------------------------------------------------------------------------------------\n`,
+			);
+			for (const entry of board.entries) {
+				const rankStr = String(entry.rank).padEnd(4);
+				const handleStr = entry.handle.slice(0, 18).padEnd(18);
+				const tierStr = entry.tier.padEnd(12);
+				const tokenStr = `${(entry.totalTokens / 1000).toFixed(0)}k`.padStart(12);
+				const effStr = `${entry.efficiencyScore.toFixed(1)}%`.padStart(9);
+				const streakStr = `${entry.streakDays}d`.padStart(6);
+				const modelStr = entry.primaryModel.slice(0, 18);
+				const marker = entry.isCurrentUser ? " 👉 " : "    ";
+				process.stdout.write(
+					`${marker}#${rankStr} | @${handleStr} | ${tierStr} | ${tokenStr} | ${effStr} | ${streakStr} | ${modelStr}\n`,
+				);
+			}
+			process.stdout.write(
+				`========================================================================================\n\n`,
+			);
+		} else if (command.name === "tokens") {
+			const stats = core.tokenLeaderboard.getUserTokenStats();
+			process.stdout.write(
+				`\n⚡ KESTREL LOCAL TOKEN STATS & METRICS\n` +
+					`=========================================================\n` +
+					`Handle:              @${stats.handle}\n` +
+					`Current Tier:        ${stats.tier}\n` +
+					`Global Arena Rank:   #${stats.globalRank ?? 4}\n` +
+					`Active Streak:       🔥 ${stats.currentStreakDays} days (Longest: ${stats.longestStreakDays} days)\n` +
+					`Total Volume:        ${stats.totalTokens.toLocaleString()} tokens\n` +
+					`  Input Tokens:      ${stats.inputTokens.toLocaleString()}\n` +
+					`  Output Tokens:     ${stats.outputTokens.toLocaleString()}\n` +
+					`  Cached Tokens:     ${stats.cachedTokens.toLocaleString()}\n` +
+					`  Reasoning Tokens:  ${stats.reasoningTokens.toLocaleString()}\n` +
+					`Tokens Today:        ${stats.tokensToday.toLocaleString()}\n` +
+					`Tokens This Week:    ${stats.tokensThisWeek.toLocaleString()}\n` +
+					`Prompt ROI Score:    ${stats.efficiencyScore.toFixed(1)}%\n` +
+					`Tasks Completed:     ${stats.tasksCompleted}\n` +
+					`Est. Total Cost:     $${stats.estimatedTotalCostUsd.toFixed(4)}\n` +
+					`=========================================================\n\n`,
+			);
 		} else if (command.name === "jobs")
 			process.stdout.write(
 				`${JSON.stringify(

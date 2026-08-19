@@ -510,6 +510,7 @@ export class AgentLoop {
 			temperature?: number;
 			signal?: AbortSignal;
 			onTextDelta?: (delta: string) => void;
+			onEvent?: (event: { type: string; detail: string }) => void;
 			takeSteering?: () => string[];
 		},
 	): Promise<AgentLoopResult> {
@@ -624,14 +625,15 @@ export class AgentLoop {
 
 						modelMessages = reframePromptForNeutrality(modelMessages);
 
+						const safeEndpointId = nextEndpointId || nextModel;
 						run = {
 							...run,
 							model: nextModel,
 							providerIds: run.providerIds.includes("auto")
 								? ["auto"]
 								: [
-										nextEndpointId,
-										...run.providerIds.filter((p) => p !== nextEndpointId),
+										safeEndpointId,
+										...run.providerIds.filter((p) => p !== safeEndpointId),
 									],
 							fallbackModelIds: remainingFallbacks,
 							refusalRecoveryCount: recoveryCount,

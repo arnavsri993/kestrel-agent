@@ -97,6 +97,7 @@ import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
 import { applySkin } from "./components/SkinSettings";
+import { TokenLeaderboard } from "./components/TokenLeaderboard";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import {
 	memoryInGb,
@@ -128,6 +129,7 @@ const pages = [
 	["artifacts", "Artifacts"],
 	["work", "Work"],
 	["events", "Opportunities"],
+	["leaderboard", "Arena"],
 	["activity", "Activity"],
 	["extensions", "Extensions"],
 	["settings", "Settings"],
@@ -190,6 +192,13 @@ const commandDestinations: CommandDestination[] = [
 		label: "Opportunities",
 		detail: "Review event applications",
 		icon: "events",
+		group: "Agent",
+	},
+	{
+		id: "leaderboard",
+		label: "Arena",
+		detail: "Token efficiency and model metrics",
+		icon: "activity",
 		group: "Agent",
 	},
 	{
@@ -8672,6 +8681,12 @@ export function App() {
 				if (showShortcuts) {
 					event.preventDefault();
 					setShowShortcuts(false);
+					return;
+				}
+				if (page !== "browser") {
+					event.preventDefault();
+					setPage("browser");
+					return;
 				}
 				return;
 			}
@@ -8846,6 +8861,38 @@ export function App() {
 							browser={browser}
 							agentName={activeAgentName}
 							agentOpen={agentSidebarOpen}
+							agentSidebar={
+								<AgentSidebar
+									sessions={runtimeSessions}
+									activeSessionId={activeRuntimeSessionId}
+									{...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
+									agentName={activeAgentName}
+									collapsed={!agentSidebarOpen}
+									agentState={effectiveAgentState}
+									activeDestination={page}
+									onNewAgent={startNewAgent}
+									onToggleAgent={toggleAgentSidebar}
+									onOpenSession={openRuntimeSession}
+									onNavigate={openPrimaryDestination}
+								>
+									<RuntimeConversation
+										visible
+										activeSessionId={activeRuntimeSessionId}
+										sessions={runtimeSessions}
+										onActiveSession={setActiveRuntimeSessionId}
+										onSessions={setRuntimeSessions}
+										onSnapshot={setSnapshot}
+										onRuntimeAgentState={setRuntimeAgentState}
+										configurationUi={snapshot.configuration.ui}
+										newAgentRequestId={newAgentRequestId}
+										newAgentPrompt={newAgentPrompt}
+										onNewAgent={startNewAgent}
+										{...(browserContextEnabled
+											? { browserContext: () => browser.pageContext() }
+											: {})}
+									/>
+								</AgentSidebar>
+							}
 							contextEnabled={browserContextEnabled}
 							onToggleContext={toggleBrowserContext}
 							onToggleAgent={toggleAgentSidebar}
@@ -8870,12 +8917,15 @@ export function App() {
 							onOpenSession={openRuntimeSession}
 							onOpenApprovals={() => navigate("approvals")}
 							onOpenWork={() => navigate("work")}
+							onOpenBrowser={openBrowser}
 						/>
 					)}
 					{page === "history" && (
 						<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
 					)}
-					{page === "downloads" && <BrowserDownloads browser={browser} />}
+					{page === "downloads" && (
+						<BrowserDownloads browser={browser} onOpenBrowser={openBrowser} />
+					)}
 					{page === "commands" && (
 						<CommandCenter
 							destinations={commandDestinations}
@@ -8885,6 +8935,13 @@ export function App() {
 					)}
 					{page === "settings" && (
 						<div className="browser-secondary-surface">
+							<div className="secondary-surface-bar">
+								<button type="button" onClick={openBrowser}>
+									<Icon name="back" />
+									Browser
+								</button>
+								<strong>Preferences</strong>
+							</div>
 							<Settings
 								snapshot={snapshot}
 								update={setSnapshot}
@@ -8936,6 +8993,7 @@ export function App() {
 								<EventApplications onOpenSession={openRuntimeSession} />
 							)}
 							{page === "activity" && <Activity snapshot={snapshot} />}
+							{page === "leaderboard" && <TokenLeaderboard />}
 							{page === "extensions" && (
 								<DashboardExtensions
 									snapshot={snapshot}
@@ -8950,38 +9008,38 @@ export function App() {
 						</motion.div>
 					)}
 				</section>
-				<AgentSidebar
-					sessions={runtimeSessions}
-					activeSessionId={activeRuntimeSessionId}
-					{...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
-					agentName={activeAgentName}
-					collapsed={!agentSidebarOpen}
-					agentState={effectiveAgentState}
-					activeDestination={page}
-					onNewAgent={startNewAgent}
-					onToggleAgent={toggleAgentSidebar}
-					onOpenSession={openRuntimeSession}
-					onNavigate={openPrimaryDestination}
-				>
-					{/* Conversation state stays mounted across browser and settings routes so
-            streams, steering, cancellation, and approval boundaries remain intact. */}
-					<RuntimeConversation
-						visible
-						activeSessionId={activeRuntimeSessionId}
+				{page !== "browser" && (
+					<AgentSidebar
 						sessions={runtimeSessions}
-						onActiveSession={setActiveRuntimeSessionId}
-						onSessions={setRuntimeSessions}
-						onSnapshot={setSnapshot}
-						onRuntimeAgentState={setRuntimeAgentState}
-						configurationUi={snapshot.configuration.ui}
-						newAgentRequestId={newAgentRequestId}
-						newAgentPrompt={newAgentPrompt}
+						activeSessionId={activeRuntimeSessionId}
+						{...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
+						agentName={activeAgentName}
+						collapsed={!agentSidebarOpen}
+						agentState={effectiveAgentState}
+						activeDestination={page}
 						onNewAgent={startNewAgent}
-						{...(browserContextEnabled
-							? { browserContext: () => browser.pageContext() }
-							: {})}
-					/>
-				</AgentSidebar>
+						onToggleAgent={toggleAgentSidebar}
+						onOpenSession={openRuntimeSession}
+						onNavigate={openPrimaryDestination}
+					>
+						<RuntimeConversation
+							visible
+							activeSessionId={activeRuntimeSessionId}
+							sessions={runtimeSessions}
+							onActiveSession={setActiveRuntimeSessionId}
+							onSessions={setRuntimeSessions}
+							onSnapshot={setSnapshot}
+							onRuntimeAgentState={setRuntimeAgentState}
+							configurationUi={snapshot.configuration.ui}
+							newAgentRequestId={newAgentRequestId}
+							newAgentPrompt={newAgentPrompt}
+							onNewAgent={startNewAgent}
+							{...(browserContextEnabled
+								? { browserContext: () => browser.pageContext() }
+								: {})}
+						/>
+					</AgentSidebar>
+				)}
 				<DefaultBrowserPrompt
 					isOpen={showDefaultBrowserPrompt}
 					onClose={() => {

@@ -431,5 +431,25 @@ describe("Kestrel CLI arguments", () => {
 		expect(() => parseCliArguments(["pets", "scale", "0.05"])).toThrow(
 			"0.1 through 3",
 		);
+		expect(
+			parseCliArguments([
+				"leaderboard",
+				"--category",
+				"efficiency",
+				"--timeframe",
+				"week",
+			]),
+		).toEqual({
+			name: "leaderboard",
+			category: "efficiency",
+			timeframe: "week",
+		});
+		expect(
+			parseCliArguments(["tokens", "--timeframe", "today"]),
+		).toEqual({
+			name: "tokens",
+			timeframe: "today",
+		});
 	});
 });
+

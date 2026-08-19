@@ -42,11 +42,23 @@ export function CommandCenter({
 	return (
 		<main className="command-center" aria-labelledby="command-center-title">
 			<header>
-				<span className="command-mark">
-					<Icon name="command" />
-				</span>
-				<div>
-					<h1 id="command-center-title">Capabilities</h1>
+				<button
+					type="button"
+					className="browser-library-back"
+					onClick={onClose}
+					aria-label="Back to browser"
+					title="Back to browser (Esc)"
+				>
+					<Icon name="back" />
+					<span>Browser</span>
+				</button>
+				<div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+					<span className="command-mark">
+						<Icon name="command" />
+					</span>
+					<div>
+						<h1 id="command-center-title">Capabilities</h1>
+					</div>
 				</div>
 			</header>
 			<label className="command-search">

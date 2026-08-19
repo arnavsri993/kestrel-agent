@@ -205,9 +205,11 @@ export class StdioMcpTransport implements McpTransport {
 				this.reportError(new Error("MCP stdio message exceeded 1 MB."));
 				return;
 			}
-			const lines = this.buffer.split(/\r?\n/);
-			this.buffer = lines.pop() ?? "";
-			for (const line of lines) {
+			let newlineIndex: number;
+			while ((newlineIndex = this.buffer.indexOf("\n")) !== -1) {
+				let line = this.buffer.slice(0, newlineIndex);
+				this.buffer = this.buffer.slice(newlineIndex + 1);
+				if (line.endsWith("\r")) line = line.slice(0, -1);
 				if (!line.trim()) continue;
 				try {
 					this.events.emit("message", JSON.parse(line) as JsonRpcMessage);

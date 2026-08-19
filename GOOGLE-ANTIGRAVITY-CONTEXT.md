@@ -460,8 +460,6 @@ metadata, safe URLs, history, download metadata, and settings. It does not
 persist live view objects as the source of truth.
 
 Current caps and behavior:
-
-- Up to 32 open tabs.
 - Up to 8 live WebContentsView instances; inactive views may be discarded and
   recreated.
 - Up to 5,000 history entries.

@@ -5,6 +5,7 @@ import type {
 } from "@kestrel/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../Icon";
+import { AutofillManager } from "./AutofillManager";
 import { NEW_TAB_BACKGROUND_OPTIONS } from "./new-tab";
 import meadowLandscape from "../../assets/new-tab-meadow.svg";
 
@@ -265,6 +266,19 @@ export function BrowserSettings({
 
   return (
     <div className="browser-settings-wrapper">
+      {/* 🔑 SECTION: PASSWORDS & AUTOFILL */}
+      <section className="settings-stack browser-settings-panel" aria-label="Passwords and autofill">
+        <header className="settings-panel-header">
+          <h3>
+            <Icon name="key" /> Passwords & Autofill
+          </h3>
+          <p className="settings-panel-subtitle">
+            Manage your saved passwords, contact addresses, payment cards, and automatic form filling preferences.
+          </p>
+        </header>
+        <AutofillManager browser={browser} />
+      </section>
+
       {/* 🔍 SECTION 1: SEARCH ENGINE */}
       <section className="settings-stack browser-settings-panel" aria-label="Search engine preferences">
         <header className="settings-panel-header">

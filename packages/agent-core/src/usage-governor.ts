@@ -19,6 +19,7 @@ export const DEFAULT_USAGE_POLICY: UsagePolicy = UsagePolicySchema.parse({
 export class UsageGovernor {
 	private readonly key = "runtime.usage-policy";
 	private activeCalls = 0;
+	private cachedPolicy?: UsagePolicy;
 
 	constructor(
 		private readonly database: KestrelDatabase,
@@ -26,14 +27,17 @@ export class UsageGovernor {
 	) {}
 
 	getPolicy(): UsagePolicy {
+		if (this.cachedPolicy !== undefined) return this.cachedPolicy;
 		const stored = this.database.getPrivateState<unknown>(this.key);
 		const parsed = UsagePolicySchema.safeParse(stored);
-		return parsed.success ? parsed.data : DEFAULT_USAGE_POLICY;
+		this.cachedPolicy = parsed.success ? parsed.data : DEFAULT_USAGE_POLICY;
+		return this.cachedPolicy;
 	}
 
 	setPolicy(policy: UsagePolicy): UsagePolicy {
 		const parsed = UsagePolicySchema.parse(policy);
 		this.database.setPrivateState(this.key, parsed);
+		this.cachedPolicy = parsed;
 		return parsed;
 	}
 

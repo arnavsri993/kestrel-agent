@@ -37,11 +37,23 @@ export function BrowserHistory({
 	return (
 		<main className="browser-library" aria-labelledby="history-title">
 			<header>
-				<div>
-					<span className="library-icon">
-						<Icon name="history" />
-					</span>
-					<h1 id="history-title">History</h1>
+				<div className="browser-library-title-group">
+					<button
+						type="button"
+						className="browser-library-back"
+						onClick={onOpenBrowser}
+						aria-label="Back to browser"
+						title="Back to browser (Esc)"
+					>
+						<Icon name="back" />
+						<span>Browser</span>
+					</button>
+					<div className="browser-library-heading">
+						<span className="library-icon">
+							<Icon name="history" />
+						</span>
+						<h1 id="history-title">History</h1>
+					</div>
 				</div>
 				<label>
 					<Icon name="search" />
@@ -96,18 +108,34 @@ export function BrowserHistory({
 
 export function BrowserDownloads({
 	browser,
+	onOpenBrowser,
 }: {
 	browser: UserBrowserController;
+	onOpenBrowser?(): void;
 }) {
 	const downloads = [...(browser.state?.downloads ?? [])].reverse();
 	return (
 		<main className="browser-library" aria-labelledby="downloads-title">
 			<header>
-				<div>
-					<span className="library-icon">
-						<Icon name="downloads" />
-					</span>
-					<h1 id="downloads-title">Downloads</h1>
+				<div className="browser-library-title-group">
+					{onOpenBrowser && (
+						<button
+							type="button"
+							className="browser-library-back"
+							onClick={onOpenBrowser}
+							aria-label="Back to browser"
+							title="Back to browser (Esc)"
+						>
+							<Icon name="back" />
+							<span>Browser</span>
+						</button>
+					)}
+					<div className="browser-library-heading">
+						<span className="library-icon">
+							<Icon name="downloads" />
+						</span>
+						<h1 id="downloads-title">Downloads</h1>
+					</div>
 				</div>
 			</header>
 			{downloads.length === 0 ? (

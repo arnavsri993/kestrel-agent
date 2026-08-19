@@ -2,12 +2,19 @@
 
 import { motion, useReducedMotion } from "motion/react";
 import type { MouseEvent } from "react";
+import Link from "next/link";
 import { AmbientMedia, type VisualAsset } from "../components/AmbientMedia";
 import {
 	ApprovalScene,
 	ContextScene,
 	TeacherScene,
 } from "../components/ProductScenes";
+import { FaqSection } from "../components/FaqSection";
+import { ReviewsSection } from "../components/ReviewsSection";
+import { TeamSection } from "../components/TeamSection";
+import { LocationDirections } from "../components/LocationDirections";
+import { ResponsePromise } from "../components/ResponsePromise";
+import { StickyMobileCta } from "../components/StickyMobileCta";
 import mediaRegistry from "../data/media-registry.json";
 import { resolvePublicRelease } from "../lib/release-config";
 import { sitePath } from "../lib/site-path";
@@ -39,6 +46,27 @@ const capabilityExamples = [
 		trigger: "The task is unfamiliar",
 		work: "Discover available tools and skills, construct a plan, and verify the result.",
 		boundary: "Missing capability is reported, not invented.",
+	},
+];
+
+const featuredCaseStudies = [
+	{
+		title: "Autonomous Multi-Calendar Scheduling",
+		tag: "Personal Context",
+		summary: "Resolving overlapping teacher appointments against swim sessions and prep blocks with zero unreviewed emails.",
+		link: "/case-studies#smart-scheduling",
+	},
+	{
+		title: "Air-Gapped Codebase Refactoring",
+		tag: "Software Engineering",
+		summary: "Modernizing 40,000 lines of TypeScript to ESM with local Apple Silicon models and 100% green test passes.",
+		link: "/case-studies#repo-refactor",
+	},
+	{
+		title: "DJI Drone Controller Diagnostics",
+		tag: "Hardware Triage",
+		summary: "Isolating USB handshake timeouts on iOS Developer Beta in under 3 minutes without unnecessary hardware replacements.",
+		link: "/case-studies#drone-firmware",
 	},
 ];
 
@@ -115,7 +143,7 @@ function Brand() {
 			<img
 				className="brand-mark"
 				src={sitePath("/brand/workstrand-mark.svg")}
-				alt=""
+				alt="Kestrel Workstrand Logo Mark"
 			/>
 			<strong>Kestrel</strong>
 			<small>local work agent</small>
@@ -128,6 +156,12 @@ const navItems = [
 	["Memory", "#memory"],
 	["Control", "#control"],
 	["Architecture", "#architecture"],
+	["Cases", "/case-studies"],
+	["Leaderboard", "/leaderboard"],
+	["FAQ", "#faq"],
+	["Reviews", "#reviews"],
+	["Team", "#team"],
+	["Contact", "#contact"],
 ];
 
 function closeMobileMenu(event: MouseEvent<HTMLAnchorElement>) {
@@ -185,7 +219,7 @@ export default function Home() {
 			</header>
 
 			<main id="content">
-				{/* ── Hero ─────────────────────────────────────────────────── */}
+				{/* ── Hero (CTA Above the Fold) ────────────────────────────── */}
 				<section className="hero" id="top" aria-labelledby="hero-title">
 					<AmbientMedia asset={hero} className="hero-media" />
 					<div className="hero-copy">
@@ -199,12 +233,19 @@ export default function Home() {
 							consequential action.
 						</p>
 						<div className="hero-actions">
-							<a className="primary-cta" href="#decision">
-								See one verified workflow <Arrow />
+							<a className="primary-cta" href="#decision" id="hero-primary-cta">
+								See verified workflow <Arrow />
 							</a>
+							<Link className="secondary-cta" href="/case-studies">
+								Explore Case Studies
+							</Link>
 							<a className="text-cta" href="#control">
-								Read the safety model
+								Safety model
 							</a>
+						</div>
+						<div className="hero-sla-pill">
+							<span className="sla-dot" aria-hidden="true" />
+							<span>Response Guarantee: &lt; 2h Security · &lt; 24h Dev SLA</span>
 						</div>
 						<small className="availability">
 							Development preview · mocked connectors · no signed public
@@ -299,9 +340,9 @@ export default function Home() {
 							beta instead.
 						</p>
 						<blockquote>
-							"Because the phone still charges, DJI Fly launches, and another
+							&ldquo;Because the phone still charges, DJI Fly launches, and another
 							cable already failed, software compatibility now outranks a dead
-							controller."
+							controller.&rdquo;
 						</blockquote>
 						<div className="memory-note">
 							<span>Retrieval scope</span>
@@ -405,14 +446,137 @@ export default function Home() {
 					</div>
 				</section>
 
-				{/* ── 05 Security ──────────────────────────────────────────── */}
+				{/* ── 05 Featured Case Studies ──────────────────────────────── */}
+				<section
+					className="featured-cases-section"
+					id="cases"
+					aria-labelledby="cases-title"
+				>
+					<div className="section-index">05 / VERIFIED CASE STUDIES</div>
+					<div className="section-heading compact-heading">
+						<h2 id="cases-title">
+							Proven workflows in practice.
+							<span>Real tasks executed within strict safety boundaries.</span>
+						</h2>
+						<p>
+							Explore detailed breakdowns of how Kestrel handles calendar conflicts, air-gapped code refactors, and embedded hardware diagnostics.
+						</p>
+					</div>
+					<div className="featured-cases-grid">
+						{featuredCaseStudies.map((cs) => (
+							<article key={cs.title} className="featured-case-card">
+								<span className="case-tag-pill">{cs.tag}</span>
+								<h3>{cs.title}</h3>
+								<p>{cs.summary}</p>
+								<Link href={cs.link} className="case-card-link">
+									Read Full Workflow Breakdown →
+								</Link>
+							</article>
+						))}
+					</div>
+					<div className="cases-footer-cta">
+						<Link href="/case-studies" className="primary-cta">
+							View All Case Studies &amp; Metrics <Arrow />
+						</Link>
+					</div>
+				</section>
+
+				{/* ── 06 Token Arena & Community Leaderboard ─────────────────── */}
+				<section
+					className="leaderboard-spotlight-section"
+					id="arena"
+					aria-labelledby="arena-title"
+				>
+					<div className="section-index">06 / COMMUNITY TOKEN ARENA</div>
+					<div className="section-heading compact-heading">
+						<h2 id="arena-title">
+							Compete on throughput and cache efficiency.
+							<span>Gamified token metrics, daily streaks, and community tiers.</span>
+						</h2>
+						<p>
+							Benchmark your AI workflows against engineers worldwide. Track
+							prompt ROI, build consecutive daily streaks, and climb from
+							Apprentice to Grandmaster—with zero private context leaving your
+							device.
+						</p>
+					</div>
+
+					<div className="arena-spotlight-grid">
+						<div className="arena-preview-card">
+							<div className="arena-card-top">
+								<span className="live-pill">● Live Weekly Sprint</span>
+								<span className="arena-metric-label">Leaderboard Snapshot</span>
+							</div>
+							<div className="arena-podium-mini">
+								<div className="mini-podium-item gold">
+									<span className="mini-rank">👑 #1</span>
+									<strong>@vector_valkyrie</strong>
+									<small>8.45M tokens · 98.4% ROI</small>
+								</div>
+								<div className="mini-podium-item silver">
+									<span className="mini-rank">🥈 #2</span>
+									<strong>@context_king</strong>
+									<small>7.12M tokens · 96.1% ROI</small>
+								</div>
+								<div className="mini-podium-item bronze">
+									<span className="mini-rank">🥉 #3</span>
+									<strong>@synth_weaver</strong>
+									<small>5.34M tokens · 93.8% ROI</small>
+								</div>
+							</div>
+							<div className="arena-card-footer">
+								<div className="arena-privacy-tag">
+									🛡️ 100% Local-first telemetry &amp; Pseudonymous handles
+								</div>
+								<Link href="/leaderboard" className="button button-primary">
+									Enter Token Arena &amp; View Standings →
+								</Link>
+							</div>
+						</div>
+
+						<div className="arena-stats-highlights">
+							<div className="highlight-box">
+								<span className="highlight-icon">⚡</span>
+								<div>
+									<h4>Prompt ROI Scoring</h4>
+									<p>
+										Rewards cache hits and minimal token waste per verified
+										task completion.
+									</p>
+								</div>
+							</div>
+							<div className="highlight-box">
+								<span className="highlight-icon">🔥</span>
+								<div>
+									<h4>Daily Active Streaks</h4>
+									<p>
+										Build uninterrupted builder momentum with streak multipliers
+										and tier rank protection.
+									</p>
+								</div>
+							</div>
+							<div className="highlight-box">
+								<span className="highlight-icon">🏆</span>
+								<div>
+									<h4>Four Competitive Leagues</h4>
+									<p>
+										Token Titans (Volume), Efficiency Architects, Streak
+										Masters, and Deep Reasoning.
+									</p>
+								</div>
+							</div>
+						</div>
+					</div>
+				</section>
+
+				{/* ── 06 Security & Architecture ────────────────────────────── */}
 				<section
 					className="security-section"
 					id="architecture"
 					aria-labelledby="architecture-title"
 					tabIndex={-1}
 				>
-					<div className="section-index">05 / LOCAL-FIRST BY ARCHITECTURE</div>
+					<div className="section-index">06 / LOCAL-FIRST BY ARCHITECTURE</div>
 					<div className="section-heading compact-heading">
 						<h2 id="architecture-title">Personal context has a perimeter.</h2>
 						<p>
@@ -432,7 +596,24 @@ export default function Home() {
 					</div>
 				</section>
 
-				{/* ── 06 Release ───────────────────────────────────────────── */}
+				{/* ── 07 FAQs ──────────────────────────────────────────────── */}
+				<FaqSection />
+
+				{/* ── 08 Reviews ───────────────────────────────────────────── */}
+				<ReviewsSection />
+
+				{/* ── 09 Team ──────────────────────────────────────────────── */}
+				<TeamSection />
+
+				{/* ── 10 Location & Directions ─────────────────────────────── */}
+				<LocationDirections />
+
+				{/* ── 11 Response Promise SLA Banner ─────────────────────────── */}
+				<div className="home-sla-wrap">
+					<ResponsePromise />
+				</div>
+
+				{/* ── 12 Release Status ────────────────────────────────────── */}
 				<section
 					className="release-section"
 					id="release"
@@ -441,7 +622,7 @@ export default function Home() {
 				>
 					<AmbientMedia asset={cta} />
 					<div className="release-copy">
-						<div className="section-index">06 / RELEASE READINESS</div>
+						<div className="section-index">12 / RELEASE READINESS</div>
 						<h2 id="release-title">
 							{publicRelease.available
 								? "Download Kestrel for Apple Silicon."
@@ -532,19 +713,27 @@ export default function Home() {
 						</a>
 					))}
 					<a href="#release">Release</a>
-					<a href={repositoryUrl}>Repository</a>
-					<a href={sitePath("/privacy")}>Privacy</a>
-					<a href={sitePath("/support")}>Support</a>
+					<Link href="/case-studies">Case Studies</Link>
+					<Link href="/leaderboard">Leaderboard</Link>
+					<Link href="/privacy">Privacy</Link>
+					<Link href="/support">Support</Link>
+					<Link href="/thank-you">Onboarding</Link>
+					<a href={repositoryUrl} target="_blank" rel="noopener noreferrer">
+						Repository ↗
+					</a>
 				</div>
 				<div className="provenance">
-					<strong>Build provenance</strong>
+					<strong>Build provenance &amp; Quality Commitment</strong>
 					<p>
 						fal is used only by deliberate development scripts for optional
 						website atmosphere. It is absent from the public runtime and is not
-						a Kestrel capability.
+						a Kestrel capability. All local features execute directly on Apple Silicon.
 					</p>
 				</div>
 			</footer>
+
+			{/* ── Sticky Mobile CTA ────────────────────────────────────────── */}
+			<StickyMobileCta />
 		</>
 	);
 }

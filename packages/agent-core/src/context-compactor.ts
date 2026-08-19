@@ -29,10 +29,11 @@ function toModelMessage(message: RuntimeMessage): ModelMessage {
 }
 
 function messageCharacters(message: ModelMessage): number {
-	return (
-		contentText(message.content).length +
-		JSON.stringify(message.toolCalls ?? []).length
-	);
+	const toolCallsLength =
+		message.toolCalls && message.toolCalls.length > 0
+			? JSON.stringify(message.toolCalls).length
+			: 2;
+	return contentText(message.content).length + toolCallsLength;
 }
 
 function groupCharacters(group: MessageGroup): number {
@@ -114,7 +115,10 @@ function fitMessage(
 ): ModelMessage | undefined {
 	const characters = messageCharacters(message);
 	if (characters <= maximumCharacters) return message;
-	const metadataCharacters = JSON.stringify(message.toolCalls ?? []).length;
+	const metadataCharacters =
+		message.toolCalls && message.toolCalls.length > 0
+			? JSON.stringify(message.toolCalls).length
+			: 2;
 	const contentCharacters = maximumCharacters - metadataCharacters;
 	if (contentCharacters <= 0) return undefined;
 	return {

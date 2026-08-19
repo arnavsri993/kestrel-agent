@@ -252,6 +252,12 @@ try {
 	await page.getByRole("heading", { name: "Good to see you." }).waitFor();
 	await capture(page, "workspace-new-agent-and-tab.png", 360);
 
+	const defaultPromptClose = page.locator(".default-browser-close-button");
+	if ((await defaultPromptClose.count()) && (await defaultPromptClose.isVisible())) {
+		await defaultPromptClose.click();
+		await settle(page, 150);
+	}
+
 	await page
 		.locator(".agent-sidebar-footer")
 		.getByRole("button", { name: "History", exact: true })

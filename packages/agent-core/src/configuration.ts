@@ -66,7 +66,7 @@ export const DEFAULT_AGENT_CONFIGURATION: AgentConfigurationDocument =
 			announceVerification: true,
 		},
 		browser: {
-			searchEngine: "duckduckgo",
+			searchEngine: "google",
 			blockThirdPartyCookies: true,
 			blockTrackers: true,
 			adBlocking: true,

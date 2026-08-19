@@ -46,7 +46,17 @@ export class ConsoleLogger implements Logger {
       entry.error = error;
     }
 
-    const output = JSON.stringify(entry);
+    const output = JSON.stringify(entry, (_key, value) => {
+      if (value instanceof Error) {
+        return {
+          name: value.name,
+          message: value.message,
+          stack: value.stack,
+          cause: value.cause,
+        };
+      }
+      return value;
+    });
 
     switch (level) {
       case "debug":

@@ -18,6 +18,10 @@ import {
 	UserBrowserStateSchema,
 	type UserBrowserTab,
 	type InstalledExtension,
+	type SavedPassword,
+	type SavedAddress,
+	type SavedPaymentCard,
+	type AutofillPrompt,
 } from "@kestrel/shared-types";
 import {
 	type BrowserWindow,
@@ -31,6 +35,11 @@ import {
 	type WebContents,
 	WebContentsView,
 } from "electron";
+import {
+	generateAutofillApplyScript,
+	generateFormDetectionScript,
+} from "./browser-autofill-injector";
+import { BrowserAutofillStore } from "./browser-autofill-store";
 import { BrowserExtensionManager } from "./browser-extension-manager";
 import {
 	BrowserTabStore,
@@ -42,8 +51,44 @@ const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
 const MAX_DOWNLOAD_ENTRIES = 500;
 const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
-const POPUP_GESTURE_WINDOW_MS = 1_500;
+export const POPUP_GESTURE_WINDOW_MS = 3_000;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
+
+export function sanitizeBrowserUserAgent(sourceUserAgent?: string): string {
+	const raw = (sourceUserAgent || "").trim();
+	if (!raw) {
+		return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+	}
+	const cleaned = raw
+		.replace(/Electron\/[0-9.]+\s*/gi, "")
+		.replace(/kestrel\/[0-9.]+\s*/gi, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	return (
+		cleaned ||
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+	);
+}
+
+export function isOAuthUrl(value: string | URL): boolean {
+	try {
+		const parsed = typeof value === "string" ? new URL(value) : value;
+		const host = parsed.hostname.toLowerCase();
+		return (
+			host === "accounts.google.com" ||
+			host.endsWith(".accounts.google.com") ||
+			host === "accounts.youtube.com" ||
+			host === "appleid.apple.com" ||
+			(host === "github.com" && parsed.pathname.startsWith("/login/oauth")) ||
+			host === "login.microsoftonline.com" ||
+			host.endsWith(".auth0.com") ||
+			(host.endsWith(".supabase.co") && parsed.pathname.includes("/auth/")) ||
+			host === "auth0.openai.com"
+		);
+	} catch {
+		return false;
+	}
+}
 
 export type UserBrowserBackendWireRequest =
 	| { operation: "visible-tabs" }
@@ -89,10 +134,6 @@ export interface UserBrowserServiceOptions {
 interface ViewRecord {
 	view: WebContentsView;
 	navigatingTo?: string;
-	popupGestureAt?: number;
-	popupAllowance: number;
-	popupActionInFlight?: boolean;
-	popupResetTimer?: ReturnType<typeof setTimeout>;
 }
 
 function safePageUrl(value: string): URL | undefined {
@@ -146,6 +187,7 @@ export class UserBrowserService {
 	private readonly store: BrowserTabStore;
 	private readonly partition: Session;
 	private readonly extensionManager: BrowserExtensionManager;
+	private readonly autofillStore: BrowserAutofillStore;
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly downloadPaths = new Map<string, string>();
 	private readonly webContentsToTab = new Map<number, string>();
@@ -174,6 +216,10 @@ export class UserBrowserService {
 		this.extensionManager = new BrowserExtensionManager(
 			dirname(options.statePath),
 		);
+		this.autofillStore = new BrowserAutofillStore(
+			dirname(options.statePath),
+			this.now,
+		);
 		this.partitionName = options.partitionName ?? USER_BROWSER_PARTITION;
 		if (!/^persist:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(this.partitionName))
 			throw new Error(
@@ -181,6 +227,17 @@ export class UserBrowserService {
 			);
 		this.partition = electronSession.fromPartition(this.partitionName, {
 			cache: true,
+		});
+		const cleanUserAgent = sanitizeBrowserUserAgent(
+			this.partition.getUserAgent?.(),
+		);
+		this.partition.setUserAgent?.(cleanUserAgent);
+		this.partition.webRequest?.onBeforeSendHeaders?.((details, callback) => {
+			const headers = { ...details.requestHeaders };
+			const current =
+				headers["User-Agent"] || headers["user-agent"] || cleanUserAgent;
+			headers["User-Agent"] = sanitizeBrowserUserAgent(current);
+			callback({ requestHeaders: headers });
 		});
 		void this.extensionManager.loadAll(this.partition);
 		this.startSleepingTabsMonitor();
@@ -253,8 +310,6 @@ export class UserBrowserService {
 
 	async createTab(input?: string, active = true): Promise<UserBrowserState> {
 		this.assertAvailable();
-		if (this.state.tabs.length >= 32)
-			throw new Error("Kestrel supports up to 32 open tabs.");
 		const timestamp = this.now().toISOString();
 		const tab: UserBrowserTab = {
 			id: `tab-${randomUUID()}`,
@@ -659,49 +714,38 @@ export class UserBrowserService {
 				clickCount: 0,
 			});
 			if (signal.aborted) throw signal.reason;
-			record.popupActionInFlight = true;
-			this.grantPopupAllowance(record);
+			let pressed = false;
 			try {
-				let pressed = false;
-				try {
-					await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-						...pointer,
-						type: "mousePressed",
-						button: "left",
-						buttons: 1,
-						clickCount: 1,
-					});
-					pressed = true;
-					if (signal.aborted) throw signal.reason;
-					await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-						...pointer,
-						type: "mouseReleased",
-						button: "left",
-						buttons: 0,
-						clickCount: 1,
-					});
-					pressed = false;
-				} finally {
-					if (pressed)
-						await webContents.debugger
-							.sendCommand("Input.dispatchMouseEvent", {
-								...pointer,
-								type: "mouseReleased",
-								button: "left",
-								buttons: 0,
-								clickCount: 1,
-							})
-							.catch(() => undefined);
-				}
-				// CDP can acknowledge input before the renderer-side window-open event
-				// reaches the main process. Keep this approved allowance one-shot for
-				// one main-process turn without depending on a document that may have
-				// navigated or been destroyed by the click.
-				await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
+				await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+					...pointer,
+					type: "mousePressed",
+					button: "left",
+					buttons: 1,
+					clickCount: 1,
+				});
+				pressed = true;
+				if (signal.aborted) throw signal.reason;
+				await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+					...pointer,
+					type: "mouseReleased",
+					button: "left",
+					buttons: 0,
+					clickCount: 1,
+				});
+				pressed = false;
 			} finally {
-				delete record.popupActionInFlight;
-				this.clearPopupAllowance(record);
+				if (pressed)
+					await webContents.debugger
+						.sendCommand("Input.dispatchMouseEvent", {
+							...pointer,
+							type: "mouseReleased",
+							button: "left",
+							buttons: 0,
+							clickCount: 1,
+						})
+						.catch(() => undefined);
 			}
+			await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
 		} else if (action.type === "type") {
 			await this.targetPoint(webContents, action.target, true);
 			if (signal.aborted) throw signal.reason;
@@ -932,7 +976,11 @@ export class UserBrowserService {
 			},
 		});
 		view.setBackgroundColor("#ffffff");
-		const record: ViewRecord = { view, popupAllowance: 0 };
+		const cleanUserAgent = sanitizeBrowserUserAgent(
+			this.partition.getUserAgent?.(),
+		);
+		view.webContents.setUserAgent?.(cleanUserAgent);
+		const record: ViewRecord = { view };
 		this.views.set(tab.id, record);
 		this.webContentsToTab.set(view.webContents.id, tab.id);
 		this.configureView(tab, record);
@@ -955,12 +1003,7 @@ export class UserBrowserService {
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const { webContents } = record.view;
 		webContents.setWindowOpenHandler(({ url, disposition }) => {
-			const gestureFresh =
-				record.popupGestureAt !== undefined &&
-				Date.now() - record.popupGestureAt <= POPUP_GESTURE_WINDOW_MS;
-			const allowed = gestureFresh && record.popupAllowance > 0;
-			this.clearPopupAllowance(record);
-			if (safePageUrl(url) && allowed && this.state.tabs.length < 32) {
+			if (safePageUrl(url)) {
 				void this.createTab(url, disposition !== "background-tab").catch(
 					() => undefined,
 				);
@@ -974,7 +1017,6 @@ export class UserBrowserService {
 			if (!safePageUrl(url)) event.preventDefault();
 		});
 		webContents.on("did-start-loading", () => {
-			this.clearPopupAllowance(record);
 			tab.loading = true;
 			tab.error = undefined;
 			this.updateNavigationState(tab, webContents);
@@ -1061,16 +1103,6 @@ export class UserBrowserService {
 			Menu.buildFromTemplate(template).popup({ window: this.window });
 		});
 		webContents.on("before-input-event", (event, input) => {
-			if (
-				input.type === "keyDown" &&
-				!input.isAutoRepeat &&
-				["Enter", " "].includes(input.key)
-			) {
-				this.grantPopupAllowance(record);
-			}
-			if (input.type === "keyUp" && ["Enter", " "].includes(input.key))
-				this.schedulePopupAllowanceReset(record);
-
 			if (input.type !== "keyDown") return;
 
 			// Escape: Stop loading if currently loading
@@ -1217,34 +1249,6 @@ export class UserBrowserService {
 				this.forward(tab.id);
 			}
 		});
-		webContents.on("before-mouse-event", (_event, mouse) => {
-			if (mouse.type === "mouseDown") this.grantPopupAllowance(record);
-			else if (mouse.type === "mouseUp" && !record.popupActionInFlight)
-				this.schedulePopupAllowanceReset(record);
-		});
-	}
-
-	private grantPopupAllowance(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		delete record.popupResetTimer;
-		record.popupGestureAt = Date.now();
-		record.popupAllowance = 1;
-	}
-
-	private schedulePopupAllowanceReset(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		const gestureAt = record.popupGestureAt;
-		record.popupResetTimer = setTimeout(() => {
-			delete record.popupResetTimer;
-			if (record.popupGestureAt === gestureAt) this.clearPopupAllowance(record);
-		}, 0);
-	}
-
-	private clearPopupAllowance(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		delete record.popupResetTimer;
-		delete record.popupGestureAt;
-		record.popupAllowance = 0;
 	}
 
 	private didNavigate(
@@ -1343,7 +1347,6 @@ export class UserBrowserService {
 	private closeView(tabId: string, closeWebContents = true): void {
 		const record = this.views.get(tabId);
 		if (!record) return;
-		this.clearPopupAllowance(record);
 		this.views.delete(tabId);
 		this.webContentsToTab.delete(record.view.webContents.id);
 		if (
@@ -1455,5 +1458,166 @@ export class UserBrowserService {
       ${focus ? "if (node instanceof HTMLElement) node.focus();" : ""}
       return { x: Math.round(Math.max(0, Math.min(innerWidth - 1, box.left + box.width / 2))), y: Math.round(Math.max(0, Math.min(innerHeight - 1, box.top + box.height / 2))) };
     })()`);
+	}
+
+	// --------------------------------------------------------------------------
+	// Autofill & Credential Methods
+	// --------------------------------------------------------------------------
+
+	listPasswords(query?: string): SavedPassword[] {
+		return this.autofillStore.listPasswords(query);
+	}
+
+	savePassword(data: {
+		id?: string;
+		url: string;
+		domain?: string;
+		username: string;
+		password: string;
+		name?: string;
+	}): SavedPassword {
+		return this.autofillStore.savePassword(data);
+	}
+
+	deletePassword(id: string): boolean {
+		return this.autofillStore.deletePassword(id);
+	}
+
+	listAddresses(query?: string): SavedAddress[] {
+		return this.autofillStore.listAddresses(query);
+	}
+
+	saveAddress(data: {
+		id?: string;
+		label?: string;
+		fullName: string;
+		organization?: string;
+		streetAddress: string;
+		streetAddressLine2?: string;
+		city: string;
+		state?: string;
+		postalCode?: string;
+		country?: string;
+		phone?: string;
+		email?: string;
+	}): SavedAddress {
+		return this.autofillStore.saveAddress(data);
+	}
+
+	deleteAddress(id: string): boolean {
+		return this.autofillStore.deleteAddress(id);
+	}
+
+	listPaymentCards(query?: string): SavedPaymentCard[] {
+		return this.autofillStore.listPaymentCards(query, false);
+	}
+
+	savePaymentCard(data: {
+		id?: string;
+		cardholderName: string;
+		cardNumber: string;
+		cardBrand?: string;
+		expirationMonth: string;
+		expirationYear: string;
+		nickname?: string;
+		billingAddressId?: string;
+	}): SavedPaymentCard {
+		return this.autofillStore.savePaymentCard(data);
+	}
+
+	deletePaymentCard(id: string): boolean {
+		return this.autofillStore.deletePaymentCard(id);
+	}
+
+	async queryAutofill(
+		tabId?: string,
+		urlOverride?: string,
+	): Promise<{
+		passwords: SavedPassword[];
+		addresses: SavedAddress[];
+		paymentMethods: SavedPaymentCard[];
+		detectedForms: string[];
+	}> {
+		const targetTab = tabId
+			? this.state.tabs.find((tab) => tab.id === tabId)
+			: this.state.tabs.find((tab) => tab.id === this.state.activeTabId);
+		const targetUrl = urlOverride || targetTab?.url || "";
+		const matches = this.autofillStore.queryAutofill(targetUrl);
+		let detectedForms: string[] = [];
+
+		if (targetTab && targetTab.url && !targetTab.error) {
+			try {
+				const record = this.ensureView(targetTab);
+				const forms = (await record.view.webContents.executeJavaScript(
+					generateFormDetectionScript(),
+				)) as string[];
+				if (Array.isArray(forms)) {
+					detectedForms = forms;
+				}
+			} catch {
+				// Ignore form detection error
+			}
+		}
+
+		return {
+			...matches,
+			detectedForms,
+		};
+	}
+
+	async applyAutofill(
+		tabId: string | undefined,
+		fillType: "password" | "address" | "payment",
+		itemId: string,
+	): Promise<{ success: boolean; filledCount: number }> {
+		const targetTab = this.requireTab(tabId ?? this.requireActiveTab().id);
+		if (!targetTab.url || targetTab.error) {
+			throw new Error("The selected tab is not available for autofill.");
+		}
+		const record = this.ensureView(targetTab);
+
+		let fillData: Record<string, string> = {};
+		if (fillType === "password") {
+			const pwd = this.autofillStore.getPassword(itemId);
+			if (!pwd) throw new Error("Password entry not found.");
+			fillData = {
+				username: pwd.username,
+				password: pwd.password,
+			};
+			this.autofillStore.markPasswordUsed(itemId);
+		} else if (fillType === "address") {
+			const addr = this.autofillStore.getAddress(itemId);
+			if (!addr) throw new Error("Address entry not found.");
+			fillData = {
+				fullName: addr.fullName,
+				streetAddress: addr.streetAddress,
+				...(addr.streetAddressLine2 ? { streetAddressLine2: addr.streetAddressLine2 } : {}),
+				city: addr.city,
+				...(addr.state ? { state: addr.state } : {}),
+				...(addr.postalCode ? { postalCode: addr.postalCode } : {}),
+				...(addr.country ? { country: addr.country } : {}),
+				...(addr.phone ? { phone: addr.phone } : {}),
+				...(addr.email ? { email: addr.email } : {}),
+				...(addr.organization ? { organization: addr.organization } : {}),
+			};
+		} else if (fillType === "payment") {
+			const card = this.autofillStore.getPaymentCard(itemId, true);
+			if (!card) throw new Error("Payment card not found.");
+			fillData = {
+				cardholderName: card.cardholderName,
+				cardNumber: card.cardNumber,
+				expirationMonth: card.expirationMonth,
+				expirationYear: card.expirationYear,
+			};
+		}
+
+		const result = (await record.view.webContents.executeJavaScript(
+			generateAutofillApplyScript(fillType, fillData),
+		)) as { success: boolean; filledCount?: number; error?: string };
+
+		return {
+			success: Boolean(result?.success),
+			filledCount: Number(result?.filledCount ?? 0),
+		};
 	}
 }

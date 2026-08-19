@@ -48,6 +48,8 @@ The packaged development build is Apple Silicon and ad-hoc signed. It is useful 
 - Auditable automatic execution routing chooses the model family, reasoning effort, and Fast mode per task. The general agent request path invokes only configured adapters and records live provider verification separately from model execution.
 - Static Next.js product site with accessible responsive states and provenance-tracked generated/fallback atmosphere.
 - Verified ad-hoc-signed Apple Silicon (`arm64`) `.app` packaging (not Developer ID signed and not notarized), plus release automation that can produce signed/notarized DMG and ZIP artifacts once organization-owned credentials are supplied.
+- Built-in local-first Token Usage Tracking and Community Leaderboard & Arena (`/leaderboard`, Desktop Arena, `kestrel leaderboard`, `kestrel tokens`) with 4 competition leagues (Volume, Prompt Efficiency ROI, Streaks, Deep Reasoning), top-3 podiums, unlockable achievements, and strict on-device privacy protection. See [Token Arena Documentation](docs/token-leaderboard.md).
+
 
 Not yet complete: public Google OAuth app verification and bundled client registration, Developer ID signing, notarization, a real update host, and a public download URL. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send and Calendar event access.
 

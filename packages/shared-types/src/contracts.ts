@@ -1088,6 +1088,117 @@ export const UsagePolicySchema = z.object({
 });
 export type UsagePolicy = z.infer<typeof UsagePolicySchema>;
 
+export const TokenTierSchema = z.enum([
+	"Grandmaster",
+	"Titan",
+	"Architect",
+	"Specialist",
+	"Apprentice",
+]);
+export type TokenTier = z.infer<typeof TokenTierSchema>;
+
+export const TokenLeaderboardCategorySchema = z.enum([
+	"volume",
+	"efficiency",
+	"streak",
+	"reasoning",
+]);
+export type TokenLeaderboardCategory = z.infer<
+	typeof TokenLeaderboardCategorySchema
+>;
+
+export const TokenLeaderboardTimeframeSchema = z.enum([
+	"today",
+	"week",
+	"month",
+	"all_time",
+]);
+export type TokenLeaderboardTimeframe = z.infer<
+	typeof TokenLeaderboardTimeframeSchema
+>;
+
+export const TokenAchievementSchema = z.object({
+	id: z.string(),
+	title: z.string(),
+	description: z.string(),
+	icon: z.string(),
+	unlockedAt: z.string().datetime().optional(),
+	progress: z.number().min(0).max(1),
+});
+export type TokenAchievement = z.infer<typeof TokenAchievementSchema>;
+
+export const TokenLeaderboardEntrySchema = z.object({
+	rank: z.number().int().positive(),
+	handle: z.string().min(1).max(100),
+	displayName: z.string().min(1).max(200),
+	tier: TokenTierSchema,
+	avatarSeed: z.string().min(1).max(100),
+	isCurrentUser: z.boolean().optional(),
+	isAnonymous: z.boolean().default(false),
+	totalTokens: z.number().int().nonnegative(),
+	inputTokens: z.number().int().nonnegative(),
+	outputTokens: z.number().int().nonnegative(),
+	cachedTokens: z.number().int().nonnegative(),
+	reasoningTokens: z.number().int().nonnegative(),
+	efficiencyScore: z.number().nonnegative(),
+	streakDays: z.number().int().nonnegative(),
+	tasksCompleted: z.number().int().nonnegative(),
+	tokensSavedByCache: z.number().int().nonnegative(),
+	estimatedCostUsd: z.number().nonnegative(),
+	primaryModel: z.string().min(1).max(100),
+	lastActiveAt: z.string().datetime(),
+});
+export type TokenLeaderboardEntry = z.infer<
+	typeof TokenLeaderboardEntrySchema
+>;
+
+export const UserTokenModelBreakdownSchema = z.object({
+	model: z.string(),
+	tokens: z.number().int().nonnegative(),
+	percentage: z.number().nonnegative(),
+});
+export type UserTokenModelBreakdown = z.infer<
+	typeof UserTokenModelBreakdownSchema
+>;
+
+export const UserTokenStatsSchema = z.object({
+	handle: z.string().min(1).max(100),
+	tier: TokenTierSchema,
+	optedInToLeaderboard: z.boolean(),
+	anonymousInLeaderboard: z.boolean(),
+	totalTokens: z.number().int().nonnegative(),
+	inputTokens: z.number().int().nonnegative(),
+	outputTokens: z.number().int().nonnegative(),
+	cachedTokens: z.number().int().nonnegative(),
+	reasoningTokens: z.number().int().nonnegative(),
+	tokensToday: z.number().int().nonnegative(),
+	tokensThisWeek: z.number().int().nonnegative(),
+	currentStreakDays: z.number().int().nonnegative(),
+	longestStreakDays: z.number().int().nonnegative(),
+	tasksCompleted: z.number().int().nonnegative(),
+	efficiencyScore: z.number().nonnegative(),
+	globalRank: z.number().int().positive().optional(),
+	estimatedTotalCostUsd: z.number().nonnegative(),
+	tokensSavedByCache: z.number().int().nonnegative(),
+	topModelsUsed: z.array(UserTokenModelBreakdownSchema),
+	achievements: z.array(TokenAchievementSchema),
+	lastActiveAt: z.string().datetime(),
+});
+export type UserTokenStats = z.infer<typeof UserTokenStatsSchema>;
+
+export const TokenLeaderboardResponseDataSchema = z.object({
+	category: TokenLeaderboardCategorySchema,
+	timeframe: TokenLeaderboardTimeframeSchema,
+	entries: z.array(TokenLeaderboardEntrySchema),
+	currentUserEntry: TokenLeaderboardEntrySchema.optional(),
+	totalParticipants: z.number().int().nonnegative(),
+	updatedAt: z.string().datetime(),
+});
+export type TokenLeaderboardResponseData = z.infer<
+	typeof TokenLeaderboardResponseDataSchema
+>;
+
+
 export const WebCitationSchema = z.object({
 	title: z.string(),
 	url: z.string().url(),
@@ -1744,6 +1855,25 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		policy: UsagePolicySchema,
 	}),
 	z.object({
+		type: z.literal("token-leaderboard-get"),
+		category: TokenLeaderboardCategorySchema.default("volume").optional(),
+		timeframe: TokenLeaderboardTimeframeSchema.default("week").optional(),
+	}),
+	z.object({
+		type: z.literal("token-stats-get"),
+	}),
+	z.object({
+		type: z.literal("token-leaderboard-submit"),
+		handle: z.string().min(1).max(100).optional(),
+		anonymous: z.boolean().optional(),
+	}),
+	z.object({
+		type: z.literal("token-leaderboard-opt-in"),
+		enabled: z.boolean(),
+		anonymous: z.boolean().optional(),
+		handle: z.string().min(1).max(100).optional(),
+	}),
+	z.object({
 		type: z.literal("runtime-search-messages"),
 		query: z.string().min(1).max(500),
 		limit: z.number().int().positive().max(100).optional(),
@@ -2293,6 +2423,8 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		petHatchCapability: PetHatchCapabilitySchema.optional(),
 		petHatchDrafts: z.array(PetHatchDraftSchema).max(12).optional(),
 		petHatchResult: PetHatchResultSchema.optional(),
+		tokenLeaderboard: TokenLeaderboardResponseDataSchema.optional(),
+		tokenStats: UserTokenStatsSchema.optional(),
 	}),
 	z.object({ ok: z.literal(false), error: z.string() }),
 ]);
@@ -2478,8 +2610,76 @@ export const UserBrowserSettingsSchema = z.object({
 		.default(30),
 	sleepingTabExcludedDomains: z.array(z.string().max(200)).default([]),
 	memorySaverMode: z.boolean().default(true),
+	offerToSavePasswords: z.boolean().default(true),
+	autofillPasswords: z.boolean().default(true),
+	autofillAddresses: z.boolean().default(true),
+	autofillPayments: z.boolean().default(true),
 });
 export type UserBrowserSettings = z.infer<typeof UserBrowserSettingsSchema>;
+
+export const SavedPasswordSchema = z.object({
+	id: z.string().min(1).max(100),
+	url: z.string().max(8_192),
+	domain: z.string().min(1).max(500),
+	username: z.string().min(1).max(500),
+	password: z.string().max(5_000),
+	name: z.string().max(200).optional(),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+	lastUsedAt: z.string().datetime().optional(),
+});
+export type SavedPassword = z.infer<typeof SavedPasswordSchema>;
+
+export const SavedAddressSchema = z.object({
+	id: z.string().min(1).max(100),
+	label: z.string().max(100).optional(),
+	fullName: z.string().min(1).max(200),
+	organization: z.string().max(200).optional(),
+	streetAddress: z.string().min(1).max(500),
+	streetAddressLine2: z.string().max(500).optional(),
+	city: z.string().min(1).max(200),
+	state: z.string().max(200).optional(),
+	postalCode: z.string().max(50).optional(),
+	country: z.string().max(100).optional(),
+	phone: z.string().max(50).optional(),
+	email: z.string().email().optional(),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+});
+export type SavedAddress = z.infer<typeof SavedAddressSchema>;
+
+export const SavedPaymentCardSchema = z.object({
+	id: z.string().min(1).max(100),
+	cardholderName: z.string().min(1).max(200),
+	cardNumber: z.string().min(12).max(25),
+	cardBrand: z.string().max(50).optional(),
+	expirationMonth: z.string().regex(/^(0[1-9]|1[0-2])$/),
+	expirationYear: z.string().regex(/^\d{2,4}$/),
+	nickname: z.string().max(100).optional(),
+	billingAddressId: z.string().max(100).optional(),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+});
+export type SavedPaymentCard = z.infer<typeof SavedPaymentCardSchema>;
+
+export const AutofillPromptTypeSchema = z.enum(["password", "address", "payment"]);
+export type AutofillPromptType = z.infer<typeof AutofillPromptTypeSchema>;
+
+export const AutofillPromptSchema = z.object({
+	type: AutofillPromptTypeSchema,
+	domain: z.string(),
+	tabId: z.string(),
+	data: z.record(z.string(), z.unknown()),
+});
+export type AutofillPrompt = z.infer<typeof AutofillPromptSchema>;
+
+export const AutofillMatchResultsSchema = z.object({
+	passwords: z.array(SavedPasswordSchema),
+	addresses: z.array(SavedAddressSchema),
+	paymentMethods: z.array(SavedPaymentCardSchema),
+	detectedForms: z.array(z.string()).optional(),
+});
+export type AutofillMatchResults = z.infer<typeof AutofillMatchResultsSchema>;
 
 export const InstalledExtensionSchema = z.object({
 	id: z.string().min(1).max(100),
@@ -2496,7 +2696,7 @@ export const InstalledExtensionSchema = z.object({
 export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
 export const UserBrowserStateSchema = z.object({
-	tabs: z.array(UserBrowserTabSchema).max(32),
+	tabs: z.array(UserBrowserTabSchema),
 	activeTabId: z
 		.string()
 		.regex(/^tab-[a-f0-9-]{36}$/)
@@ -2655,6 +2855,70 @@ export const RendererRequestSchema = z.union([
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({ type: z.literal("browser-sleep-inactive-tabs") }),
+	z.object({
+		type: z.literal("browser-list-passwords"),
+		query: z.string().max(200).optional(),
+	}),
+	z.object({
+		type: z.literal("browser-save-password"),
+		password: SavedPasswordSchema.omit({
+			id: true,
+			createdAt: true,
+			updatedAt: true,
+		}).extend({ id: z.string().max(100).optional() }),
+	}),
+	z.object({
+		type: z.literal("browser-delete-password"),
+		id: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("browser-list-addresses"),
+		query: z.string().max(200).optional(),
+	}),
+	z.object({
+		type: z.literal("browser-save-address"),
+		address: SavedAddressSchema.omit({
+			id: true,
+			createdAt: true,
+			updatedAt: true,
+		}).extend({ id: z.string().max(100).optional() }),
+	}),
+	z.object({
+		type: z.literal("browser-delete-address"),
+		id: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("browser-list-payment-methods"),
+		query: z.string().max(200).optional(),
+	}),
+	z.object({
+		type: z.literal("browser-save-payment-method"),
+		paymentMethod: SavedPaymentCardSchema.omit({
+			id: true,
+			createdAt: true,
+			updatedAt: true,
+		}).extend({ id: z.string().max(100).optional() }),
+	}),
+	z.object({
+		type: z.literal("browser-delete-payment-method"),
+		id: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("browser-query-autofill"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/).optional(),
+		url: z.string().max(8_192).optional(),
+	}),
+	z.object({
+		type: z.literal("browser-apply-autofill"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/).optional(),
+		fillType: z.enum(["password", "address", "payment"]),
+		itemId: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("browser-autofill-prompt-response"),
+		accept: z.boolean(),
+		prompt: AutofillPromptSchema,
+	}),
 	z.object({ type: z.literal("get-system-state") }),
 	z.object({ type: z.literal("get-default-browser-status") }),
 	z.object({ type: z.literal("set-default-browser") }),
@@ -2998,6 +3262,10 @@ export type RendererResponse =
 	| { ok: true; pluginMutation: PluginMutation; plugins: PluginSummary[] }
 	| { ok: true; migrationPlan: MigrationPlanContract; cancelled?: boolean }
 	| { ok: true; migrationResult: MigrationResultContract }
+	| { ok: true; passwords: SavedPassword[] }
+	| { ok: true; addresses: SavedAddress[] }
+	| { ok: true; paymentMethods: SavedPaymentCard[] }
+	| { ok: true; autofillMatches: AutofillMatchResults }
 	| { ok: true };
 
 export interface RendererBridge {

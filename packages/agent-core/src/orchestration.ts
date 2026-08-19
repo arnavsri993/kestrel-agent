@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import {
+	type DelegatedWorkerRoute,
 	GoalRecordSchema,
 	type ModelCapability,
 	type RuntimeToolExecution,
@@ -20,23 +21,6 @@ import {
 } from "./model-orchestration";
 import { type ProviderPool, textContent } from "./providers";
 import type { AgentRuntime } from "./runtime";
-
-export interface DelegatedWorkerRoute {
-	providerId: string;
-	model: string;
-	selectedModelId?: string;
-	role?: "orchestrator" | "worker" | "reviewer" | "fallback";
-	reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
-	fastMode?: boolean;
-	local: boolean;
-	confidence?: number;
-	estimatedCost?: number;
-	fallbackModelIds?: string[];
-	traceId?: string;
-	verifiedAt: string;
-	verificationLatencyMs: number;
-	rationale: string;
-}
 
 export interface DelegatedTaskInput {
 	parentSessionId: string;
@@ -712,16 +696,15 @@ export class TaskOrchestrator {
 						providerId: decision.providerId,
 						model: decision.model,
 						selectedModelId: decision.selectedModelId,
-						tier: decision.tier,
+						...(decision.tier ? { tier: decision.tier } : {}),
 						role: decision.role,
 						reasoningEffort: decision.reasoningLevel,
 						fastMode: decision.fastMode,
 						local: profile.local,
 						confidence: decision.confidence,
-						...(decision.estimatedCost === undefined
-							? {}
-							: { estimatedCost: decision.estimatedCost }),
-						fallbackModelIds: decision.fallbackModelIds,
+						...(decision.fallbackModelIds
+							? { fallbackModelIds: decision.fallbackModelIds }
+							: {}),
 						...(decision.traceId ? { traceId: decision.traceId } : {}),
 						...(decision.refusalRecovery ? { refusalRecovery: true } : {}),
 						verifiedAt: this.now().toISOString(),

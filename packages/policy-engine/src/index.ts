@@ -20,16 +20,16 @@ export function assessExternalContent(content: string): ContentAssessment {
 	return { trusted: false, suspicious: reasons.length > 0, reasons };
 }
 
+const RISK_LEVEL_MAP: Record<RiskLevel, ApprovalLevel> = {
+	read_only: 0,
+	low: 1,
+	external: 2,
+	sensitive: 3,
+	high_consequence: 4,
+};
+
 export function approvalLevelForRisk(risk: RiskLevel): ApprovalLevel {
-	return (
-		{
-			read_only: 0,
-			low: 1,
-			external: 2,
-			sensitive: 3,
-			high_consequence: 4,
-		} as const
-	)[risk];
+	return RISK_LEVEL_MAP[risk];
 }
 
 export function mayExecute(params: {

@@ -58,6 +58,15 @@ export type CliCommand =
 	| { name: "pet-off" }
 	| { name: "pet-remove"; slug: string }
 	| { name: "pet-doctor" }
+	| {
+			name: "leaderboard";
+			category?: "volume" | "efficiency" | "streak" | "reasoning";
+			timeframe?: "today" | "week" | "month" | "all_time";
+	  }
+	| {
+			name: "tokens";
+			timeframe?: "today" | "week" | "month" | "all_time";
+	  }
 	| { name: "pet-hatch-drafts"; concept: string; style: string; count: number }
 	| {
 			name: "pet-hatch-complete";
@@ -705,6 +714,48 @@ export function parseCliArguments(input: string[]): CliCommand {
 	if (args[0] === "tui" || args[0] === "acp") {
 		const values = options(args.slice(1), ["model", "providers", "workspace"]);
 		return { name: args[0], ...modelOptions(values) };
+	}
+	if (args[0] === "leaderboard") {
+		const values = options(args.slice(1), ["category", "timeframe"]);
+		const category = values.get("category");
+		const timeframe = values.get("timeframe");
+		return {
+			name: "leaderboard",
+			...(category
+				? {
+						category: category as
+							| "volume"
+							| "efficiency"
+							| "streak"
+							| "reasoning",
+				  }
+				: {}),
+			...(timeframe
+				? {
+						timeframe: timeframe as
+							| "today"
+							| "week"
+							| "month"
+							| "all_time",
+				  }
+				: {}),
+		};
+	}
+	if (args[0] === "tokens") {
+		const values = options(args.slice(1), ["timeframe"]);
+		const timeframe = values.get("timeframe");
+		return {
+			name: "tokens",
+			...(timeframe
+				? {
+						timeframe: timeframe as
+							| "today"
+							| "week"
+							| "month"
+							| "all_time",
+				  }
+				: {}),
+		};
 	}
 	if (args[0] === "opencode") {
 		const isSetup = args.includes("--setup");

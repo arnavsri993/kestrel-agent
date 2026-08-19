@@ -1,5 +1,9 @@
 import type {
+	AutofillMatchResults,
 	RendererResponse,
+	SavedAddress,
+	SavedPassword,
+	SavedPaymentCard,
 	UserBrowserPageContext,
 	UserBrowserSettings,
 	UserBrowserState,
@@ -37,6 +41,53 @@ export interface UserBrowserController {
 	revealDownload(downloadId: string): Promise<void>;
 	sleepTab(tabId: string): Promise<void>;
 	sleepInactiveTabs(): Promise<void>;
+	listPasswords(query?: string): Promise<SavedPassword[]>;
+	savePassword(password: {
+		id?: string;
+		url: string;
+		domain: string;
+		username: string;
+		password: string;
+		name?: string;
+	}): Promise<void>;
+	deletePassword(id: string): Promise<void>;
+	listAddresses(query?: string): Promise<SavedAddress[]>;
+	saveAddress(address: {
+		id?: string;
+		label?: string;
+		fullName: string;
+		organization?: string;
+		streetAddress: string;
+		streetAddressLine2?: string;
+		city: string;
+		state?: string;
+		postalCode?: string;
+		country?: string;
+		phone?: string;
+		email?: string;
+	}): Promise<void>;
+	deleteAddress(id: string): Promise<void>;
+	listPaymentMethods(query?: string): Promise<SavedPaymentCard[]>;
+	savePaymentMethod(paymentMethod: {
+		id?: string;
+		cardholderName: string;
+		cardNumber: string;
+		cardBrand?: string;
+		expirationMonth: string;
+		expirationYear: string;
+		nickname?: string;
+		billingAddressId?: string;
+	}): Promise<void>;
+	deletePaymentMethod(id: string): Promise<void>;
+	queryAutofill(
+		tabId?: string,
+		url?: string,
+	): Promise<AutofillMatchResults | undefined>;
+	applyAutofill(
+		tabId: string | undefined,
+		fillType: "password" | "address" | "payment",
+		itemId: string,
+	): Promise<void>;
 }
 
 export function useUserBrowser(): UserBrowserController {
@@ -224,6 +275,138 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 
+	const listPasswords = useCallback(async (query?: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-list-passwords",
+			...(query ? { query } : {}),
+		});
+		return response.ok && "passwords" in response
+			? (response.passwords as SavedPassword[])
+			: [];
+	}, []);
+
+	const savePassword = useCallback(async (password: {
+		id?: string;
+		url: string;
+		domain: string;
+		username: string;
+		password: string;
+		name?: string;
+	}) => {
+		const response = await window.kestrel.request({
+			type: "browser-save-password",
+			password,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+
+	const deletePassword = useCallback(async (id: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-delete-password",
+			id,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+
+	const listAddresses = useCallback(async (query?: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-list-addresses",
+			...(query ? { query } : {}),
+		});
+		return response.ok && "addresses" in response
+			? (response.addresses as SavedAddress[])
+			: [];
+	}, []);
+
+	const saveAddress = useCallback(async (address: {
+		id?: string;
+		label?: string;
+		fullName: string;
+		organization?: string;
+		streetAddress: string;
+		streetAddressLine2?: string;
+		city: string;
+		state?: string;
+		postalCode?: string;
+		country?: string;
+		phone?: string;
+		email?: string;
+	}) => {
+		const response = await window.kestrel.request({
+			type: "browser-save-address",
+			address,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+
+	const deleteAddress = useCallback(async (id: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-delete-address",
+			id,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+
+	const listPaymentMethods = useCallback(async (query?: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-list-payment-methods",
+			...(query ? { query } : {}),
+		});
+		return response.ok && "paymentMethods" in response
+			? (response.paymentMethods as SavedPaymentCard[])
+			: [];
+	}, []);
+
+	const savePaymentMethod = useCallback(async (paymentMethod: {
+		id?: string;
+		cardholderName: string;
+		cardNumber: string;
+		cardBrand?: string;
+		expirationMonth: string;
+		expirationYear: string;
+		nickname?: string;
+		billingAddressId?: string;
+	}) => {
+		const response = await window.kestrel.request({
+			type: "browser-save-payment-method",
+			paymentMethod,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+
+	const deletePaymentMethod = useCallback(async (id: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-delete-payment-method",
+			id,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+
+	const queryAutofill = useCallback(async (tabId?: string, url?: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-query-autofill",
+			...(tabId ? { tabId } : {}),
+			...(url ? { url } : {}),
+		});
+		return response.ok && "autofillMatches" in response
+			? (response.autofillMatches as AutofillMatchResults)
+			: undefined;
+	}, []);
+
+	const applyAutofill = useCallback(async (
+		tabId: string | undefined,
+		fillType: "password" | "address" | "payment",
+		itemId: string,
+	) => {
+		const response = await window.kestrel.request({
+			type: "browser-apply-autofill",
+			...(tabId ? { tabId } : {}),
+			fillType,
+			itemId,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+
 	return useMemo(
 		() => ({
 			state,
@@ -247,6 +430,17 @@ export function useUserBrowser(): UserBrowserController {
 			revealDownload,
 			sleepTab,
 			sleepInactiveTabs,
+			listPasswords,
+			savePassword,
+			deletePassword,
+			listAddresses,
+			saveAddress,
+			deleteAddress,
+			listPaymentMethods,
+			savePaymentMethod,
+			deletePaymentMethod,
+			queryAutofill,
+			applyAutofill,
 		}),
 		[
 			state,
@@ -270,6 +464,17 @@ export function useUserBrowser(): UserBrowserController {
 			revealDownload,
 			sleepTab,
 			sleepInactiveTabs,
+			listPasswords,
+			savePassword,
+			deletePassword,
+			listAddresses,
+			saveAddress,
+			deleteAddress,
+			listPaymentMethods,
+			savePaymentMethod,
+			deletePaymentMethod,
+			queryAutofill,
+			applyAutofill,
 		],
 	);
 }

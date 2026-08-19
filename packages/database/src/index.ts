@@ -195,6 +195,31 @@ CREATE INDEX IF NOT EXISTS idx_agent_configuration_records_kind_status
   ON agent_configuration_records(kind, status);
 `;
 
+const migration010 = `
+CREATE TABLE IF NOT EXISTS token_leaderboard_cache (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL,
+  timeframe TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_token_leaderboard_cat_time ON token_leaderboard_cache(category, timeframe);
+
+CREATE TABLE IF NOT EXISTS user_token_streaks (
+  date_key TEXT PRIMARY KEY,
+  tokens INTEGER NOT NULL,
+  tasks_completed INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`;
+
+const migration011 = `
+CREATE INDEX IF NOT EXISTS idx_tool_executions_session_started ON tool_executions(session_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_memories_status_importance ON memories(status, importance, updated_at);
+CREATE INDEX IF NOT EXISTS idx_approvals_updated_at ON approvals(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at ASC);
+`;
+
 export interface IdempotencyClaim<T = unknown> {
 	key: string;
 	ownerToken: string;
@@ -293,6 +318,7 @@ interface MemoryMetadataRow extends EncryptedPayloadRow {
 
 export class KestrelDatabase {
 	readonly db: Database.Database;
+	private readonly statementCache = new Map<string, Database.Statement>();
 
 	constructor(
 		filename: string,
@@ -302,8 +328,23 @@ export class KestrelDatabase {
 			mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
 		this.db = new Database(filename);
 		this.db.pragma("journal_mode = WAL");
+		this.db.pragma("synchronous = NORMAL");
 		this.db.pragma("foreign_keys = ON");
 		this.db.pragma("secure_delete = ON");
+		this.db.pragma("cache_size = -32000");
+		this.db.pragma("temp_store = MEMORY");
+		this.db.pragma("mmap_size = 268435456");
+
+		const rawPrepare = this.db.prepare.bind(this.db);
+		this.db.prepare = ((sql: string) => {
+			let statement = this.statementCache.get(sql);
+			if (!statement) {
+				statement = rawPrepare(sql);
+				this.statementCache.set(sql, statement);
+			}
+			return statement;
+		}) as unknown as typeof this.db.prepare;
+
 		this.migrate();
 	}
 
@@ -363,6 +404,18 @@ export class KestrelDatabase {
 					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
 				)
 				.run(9, new Date().toISOString());
+			this.db.exec(migration010);
+			this.db
+				.prepare(
+					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+				)
+				.run(10, new Date().toISOString());
+			this.db.exec(migration011);
+			this.db
+				.prepare(
+					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+				)
+				.run(11, new Date().toISOString());
 		})();
 	}
 
@@ -477,42 +530,62 @@ export class KestrelDatabase {
 	}
 
 	listMemories(): MemoryRecord[] {
-		return (
-			this.db
-				.prepare(
-					"SELECT * FROM memories WHERE status != 'deleted' ORDER BY importance DESC, updated_at DESC",
-				)
-				.all() as MemoryRow[]
-		).map((row) =>
-			this.withMemoryMetadata(
-				MemoryRecordSchema.parse({
-					id: row.id,
-					type: row.type,
-					content: decryptText(
-						{
-							ciphertext: row.content_ciphertext,
-							iv: row.content_iv,
-							authTag: row.content_auth_tag,
-						},
-						this.encryptionKey,
-					),
-					structuredData: JSON.parse(row.structured_data),
-					sourceIds: JSON.parse(row.source_ids),
-					sourceType: row.source_type,
-					createdAt: row.created_at,
-					updatedAt: row.updated_at,
-					...(row.valid_from ? { validFrom: row.valid_from } : {}),
-					...(row.valid_until ? { validUntil: row.valid_until } : {}),
-					confidence: row.confidence,
-					importance: row.importance,
-					sensitivity: row.sensitivity,
-					status: row.status,
-					entityIds: JSON.parse(row.entity_ids),
-					userConfirmed: row.user_confirmed === 1,
-					inferred: row.inferred === 1,
-				}),
-			),
-		);
+		interface MemoryWithMetaRow extends MemoryRow {
+			meta_ciphertext?: string | null;
+			meta_iv?: string | null;
+			meta_auth_tag?: string | null;
+		}
+		const rows = this.db
+			.prepare(
+				`SELECT m.*, mm.payload_ciphertext AS meta_ciphertext, mm.payload_iv AS meta_iv, mm.payload_auth_tag AS meta_auth_tag
+				FROM memories m
+				LEFT JOIN memory_metadata mm ON mm.memory_id = m.id
+				WHERE m.status != 'deleted'
+				ORDER BY m.importance DESC, m.updated_at DESC`,
+			)
+			.all() as MemoryWithMetaRow[];
+
+		return rows.map((row) => {
+			let meta: Record<string, unknown> = {};
+			if (row.meta_ciphertext && row.meta_iv && row.meta_auth_tag) {
+				try {
+					meta = this.decryptPayload({
+						payload_ciphertext: row.meta_ciphertext,
+						payload_iv: row.meta_iv,
+						payload_auth_tag: row.meta_auth_tag,
+					}) as Record<string, unknown>;
+				} catch {
+					meta = {};
+				}
+			}
+			return MemoryRecordSchema.parse({
+				id: row.id,
+				type: row.type,
+				content: decryptText(
+					{
+						ciphertext: row.content_ciphertext,
+						iv: row.content_iv,
+						authTag: row.content_auth_tag,
+					},
+					this.encryptionKey,
+				),
+				structuredData: JSON.parse(row.structured_data),
+				sourceIds: JSON.parse(row.source_ids),
+				sourceType: row.source_type,
+				createdAt: row.created_at,
+				updatedAt: row.updated_at,
+				...(row.valid_from ? { validFrom: row.valid_from } : {}),
+				...(row.valid_until ? { validUntil: row.valid_until } : {}),
+				confidence: row.confidence,
+				importance: row.importance,
+				sensitivity: row.sensitivity,
+				status: row.status,
+				entityIds: JSON.parse(row.entity_ids),
+				userConfirmed: row.user_confirmed === 1,
+				inferred: row.inferred === 1,
+				...meta,
+			});
+		});
 	}
 
 	saveApproval(approval: Approval): void {
@@ -2061,7 +2134,235 @@ export class KestrelDatabase {
 			throw new Error("Idempotency claim owner PID is invalid.");
 	}
 
+	recordDailyTokenStreak(
+		tokens: number,
+		tasksCompleted: number,
+		dateKey?: string,
+	): void {
+		const day = dateKey ?? new Date().toISOString().slice(0, 10);
+		const now = new Date().toISOString();
+		this.db
+			.prepare(`
+      INSERT INTO user_token_streaks (date_key, tokens, tasks_completed, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(date_key) DO UPDATE SET
+        tokens = tokens + excluded.tokens,
+        tasks_completed = tasks_completed + excluded.tasks_completed,
+        updated_at = excluded.updated_at
+    `)
+			.run(day, tokens, tasksCompleted, now);
+	}
+
+	getDailyTokenStreakStats(): {
+		currentStreak: number;
+		longestStreak: number;
+		activeDays: number;
+		streakHistory: Array<{ date: string; tokens: number; tasks: number }>;
+	} {
+		const rows = this.db
+			.prepare(
+				"SELECT date_key, tokens, tasks_completed FROM user_token_streaks ORDER BY date_key ASC",
+			)
+			.all() as Array<{
+			date_key: string;
+			tokens: number;
+			tasks_completed: number;
+		}>;
+
+		if (rows.length === 0) {
+			return {
+				currentStreak: 0,
+				longestStreak: 0,
+				activeDays: 0,
+				streakHistory: [],
+			};
+		}
+
+		const streakHistory = rows.map((r) => ({
+			date: r.date_key,
+			tokens: r.tokens,
+			tasks: r.tasks_completed,
+		}));
+
+		const sortedDates = rows.map((r) => r.date_key);
+		let longestStreak = 0;
+		let currentRunningStreak = 0;
+		let prevDate: Date | null = null;
+
+		for (const dateStr of sortedDates) {
+			const currDate = new Date(`${dateStr}T00:00:00Z`);
+			if (!prevDate) {
+				currentRunningStreak = 1;
+			} else {
+				const diffDays = Math.round(
+					(currDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24),
+				);
+				if (diffDays === 1) {
+					currentRunningStreak += 1;
+				} else if (diffDays > 1) {
+					currentRunningStreak = 1;
+				}
+			}
+			prevDate = currDate;
+			if (currentRunningStreak > longestStreak) {
+				longestStreak = currentRunningStreak;
+			}
+		}
+
+		// Calculate current streak relative to today/yesterday
+		const todayStr = new Date().toISOString().slice(0, 10);
+		const yesterdayStr = new Date(Date.now() - 86400000)
+			.toISOString()
+			.slice(0, 10);
+
+		const lastDate = sortedDates[sortedDates.length - 1];
+		let currentStreak = 0;
+		if (lastDate === todayStr || lastDate === yesterdayStr) {
+			currentStreak = currentRunningStreak;
+		}
+
+		return {
+			currentStreak,
+			longestStreak,
+			activeDays: sortedDates.length,
+			streakHistory,
+		};
+	}
+
+	getUserTokenUsageSummary(sinceIso?: string): {
+		totalTokens: number;
+		inputTokens: number;
+		outputTokens: number;
+		cachedTokens: number;
+		reasoningTokens: number;
+		estimatedCostUsd: number;
+		totalRuns: number;
+		completedRuns: number;
+		topModels: Array<{ model: string; tokens: number; percentage: number }>;
+	} {
+		const filterClause = sinceIso ? "WHERE started_at >= ?" : "";
+		const params = sinceIso ? [sinceIso] : [];
+
+		const totals = this.db
+			.prepare(`
+      SELECT
+        COUNT(*) as totalCalls,
+        SUM(CAST(json_extract(payload, '$.inputTokens') as INTEGER)) as inputTokens,
+        SUM(CAST(json_extract(payload, '$.outputTokens') as INTEGER)) as outputTokens,
+        SUM(CAST(json_extract(payload, '$.cachedInputTokens') as INTEGER)) as cachedTokens,
+        SUM(CAST(json_extract(payload, '$.reasoningTokens') as INTEGER)) as reasoningTokens,
+        SUM(CAST(json_extract(payload, '$.estimatedCostUsd') as REAL)) as estimatedCostUsd
+      FROM model_call_audits
+      ${filterClause}
+    `)
+			.get(...params) as {
+			totalCalls: number;
+			inputTokens: number | null;
+			outputTokens: number | null;
+			cachedTokens: number | null;
+			reasoningTokens: number | null;
+			estimatedCostUsd: number | null;
+		};
+
+		const inTok = totals?.inputTokens ?? 0;
+		const outTok = totals?.outputTokens ?? 0;
+		const cachedTok = totals?.cachedTokens ?? 0;
+		const reasoningTok = totals?.reasoningTokens ?? 0;
+		const totalTok = inTok + outTok;
+
+		const modelBreakdown = this.db
+			.prepare(`
+      SELECT
+        COALESCE(json_extract(payload, '$.model'), 'unknown') as model,
+        SUM(CAST(json_extract(payload, '$.inputTokens') as INTEGER) + CAST(json_extract(payload, '$.outputTokens') as INTEGER)) as tokens
+      FROM model_call_audits
+      ${filterClause}
+      GROUP BY json_extract(payload, '$.model')
+      ORDER BY tokens DESC
+      LIMIT 6
+    `)
+			.all(...params) as Array<{ model: string; tokens: number | null }>;
+
+		const topModels = modelBreakdown.map((mb) => {
+			const tok = mb.tokens ?? 0;
+			const pct = totalTok > 0 ? Math.round((tok / totalTok) * 1000) / 10 : 0;
+			return {
+				model: mb.model,
+				tokens: tok,
+				percentage: pct,
+			};
+		});
+
+		const runStats = this.db
+			.prepare(`
+      SELECT
+        COUNT(*) as totalRuns,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completedRuns
+      FROM agent_runs
+      ${sinceIso ? "WHERE created_at >= ?" : ""}
+    `)
+			.get(...params) as {
+			totalRuns: number;
+			completedRuns: number | null;
+		};
+
+		return {
+			totalTokens: totalTok,
+			inputTokens: inTok,
+			outputTokens: outTok,
+			cachedTokens: cachedTok,
+			reasoningTokens: reasoningTok,
+			estimatedCostUsd:
+				Math.round((totals?.estimatedCostUsd ?? 0) * 100_000) / 100_000,
+			totalRuns: runStats?.totalRuns ?? 0,
+			completedRuns: runStats?.completedRuns ?? 0,
+			topModels,
+		};
+	}
+
+	cacheLeaderboardData(
+		category: string,
+		timeframe: string,
+		payload: unknown,
+	): void {
+		const id = `${category}:${timeframe}`;
+		const json = JSON.stringify(payload);
+		const now = new Date().toISOString();
+		this.db
+			.prepare(`
+      INSERT INTO token_leaderboard_cache (id, category, timeframe, payload_json, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `)
+			.run(id, category, timeframe, json, now);
+	}
+
+	getCachedLeaderboardData<T>(
+		category: string,
+		timeframe: string,
+	): { payload: T; updatedAt: string } | null {
+		const id = `${category}:${timeframe}`;
+		const row = this.db
+			.prepare(
+				"SELECT payload_json, updated_at FROM token_leaderboard_cache WHERE id = ?",
+			)
+			.get(id) as { payload_json: string; updated_at: string } | undefined;
+		if (!row) return null;
+		try {
+			return {
+				payload: JSON.parse(row.payload_json) as T,
+				updatedAt: row.updated_at,
+			};
+		} catch {
+			return null;
+		}
+	}
+
 	close(): void {
+		this.statementCache.clear();
 		this.db.close();
 	}
 }
+

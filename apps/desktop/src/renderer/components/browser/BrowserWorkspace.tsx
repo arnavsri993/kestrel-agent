@@ -3,11 +3,15 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
+  type ReactNode,
   type RefObject,
 } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
+import { AutofillQuickPopup } from "./AutofillQuickPopup";
+import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { NewTabPage } from "./NewTabPage";
 import { TabStrip } from "./TabStrip";
@@ -16,6 +20,7 @@ export function BrowserWorkspace({
   browser,
   agentName,
   agentOpen,
+  agentSidebar,
   contextEnabled,
   onToggleContext,
   onToggleAgent,
@@ -30,6 +35,7 @@ export function BrowserWorkspace({
   browser: UserBrowserController;
   agentName: string;
   agentOpen: boolean;
+  agentSidebar?: ReactNode;
   contextEnabled: boolean;
   onToggleContext(): void;
   onToggleAgent(): void;
@@ -44,6 +50,10 @@ export function BrowserWorkspace({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
   const lastBoundsRef = useRef("");
+  const [autofillOpen, setAutofillOpen] = useState(false);
+  const [bookmarksBarVisible, setBookmarksBarVisible] = useState(
+    () => localStorage.getItem("kestrel:bookmarks-bar") !== "hidden",
+  );
   const state = browser.state;
   const {
     back,
@@ -267,6 +277,13 @@ export function BrowserWorkspace({
       } else if (key === "/" || key === "?") {
         event.preventDefault();
         onShowShortcuts?.();
+      } else if (key === "b" && event.shiftKey) {
+        event.preventDefault();
+        setBookmarksBarVisible((v) => {
+          const next = !v;
+          localStorage.setItem("kestrel:bookmarks-bar", next ? "visible" : "hidden");
+          return next;
+        });
       } else if (key === "b" || (key === "s" && event.shiftKey)) {
         event.preventDefault();
         onToggleSidebar?.();
@@ -314,7 +331,7 @@ export function BrowserWorkspace({
 
   return (
     <main
-      className={`browser-workspace browser-workspace-${state.settings.tabLayout}`}
+      className={`browser-workspace browser-workspace-${state.settings.tabLayout} ${bookmarksBarVisible ? "has-bookmarks-bar" : "no-bookmarks-bar"}`}
       aria-label="Browser"
     >
       <TabStrip
@@ -350,55 +367,73 @@ export function BrowserWorkspace({
         onOpenHistory={onOpenHistory}
         onOpenDownloads={onOpenDownloads}
         onOpenMenu={onOpenMenu}
+        onToggleAutofill={() => setAutofillOpen(!autofillOpen)}
+        autofillOpen={autofillOpen}
+      />
+      {bookmarksBarVisible && (
+        <BookmarksBar
+          activeTab={activeTab}
+          onNavigate={(url) => void navigate(activeTab.id, url)}
+          onCreateTab={(url) => void createTab(url)}
+        />
+      )}
+      <AutofillQuickPopup
+        browser={browser}
+        isOpen={autofillOpen}
+        onClose={() => setAutofillOpen(false)}
+        onOpenSettings={onOpenSettings}
       />
       {browser.error && (
         <p className="browser-inline-error" role="status">
           {browser.error}
         </p>
       )}
-      <div
-        id="browser-viewport"
-        ref={viewportRef}
-        className="browser-viewport"
-        role="tabpanel"
-        aria-label={activeTab.title}
-      >
-        {!activeTab.url && (
-          <NewTabPage
-            history={state.history}
-            background={state.settings.newTabBackground}
-            agentName={agentName}
-            onNavigate={(input) => void navigate(activeTab.id, input)}
-            onNewTab={() => void createTab()}
-            onNewAgent={onNewAgent}
-            onOpenSettings={onOpenSettings}
-          />
-        )}
-        {activeTab.error && (
-          <section className="browser-error-state">
-            <span>
-              <Icon name="warning" />
-            </span>
-            <h1>This page could not be opened.</h1>
-            <p>{activeTab.error}</p>
-            <div>
-              <button
-                type="button"
-                className="button primary"
-                onClick={() => void reload(activeTab.id)}
-              >
-                Try again
-              </button>
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => void createTab()}
-              >
-                New Tab
-              </button>
-            </div>
-          </section>
-        )}
+      <div className={`browser-stage ${agentOpen ? "" : "agent-sidebar-collapsed"}`}>
+        <div
+          id="browser-viewport"
+          ref={viewportRef}
+          className="browser-viewport"
+          role="tabpanel"
+          aria-label={activeTab.title}
+        >
+          {!activeTab.url && (
+            <NewTabPage
+              history={state.history}
+              background={state.settings.newTabBackground}
+              agentName={agentName}
+              onNavigate={(input) => void navigate(activeTab.id, input)}
+              onNewTab={() => void createTab()}
+              onNewAgent={onNewAgent}
+              onOpenSettings={onOpenSettings}
+            />
+          )}
+          {activeTab.error && (
+            <section className="browser-error-state">
+              <span>
+                <Icon name="warning" />
+              </span>
+              <h1>This page could not be opened.</h1>
+              <p>{activeTab.error}</p>
+              <div>
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={() => void reload(activeTab.id)}
+                >
+                  Try again
+                </button>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => void createTab()}
+                >
+                  New Tab
+                </button>
+              </div>
+            </section>
+          )}
+        </div>
+        {agentSidebar}
       </div>
       {activeTab.loading && (
         <span className="browser-loading-line" aria-label="Page loading" />

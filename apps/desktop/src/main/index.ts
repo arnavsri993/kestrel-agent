@@ -832,7 +832,7 @@ function createMainWindow(): BrowserWindow {
   });
   deliverPendingWebUrls();
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//.test(url)) void shell.openExternal(url);
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.session.setPermissionRequestHandler(
@@ -1508,6 +1508,143 @@ function registerIpc(): void {
         ok: true,
         browserState: userBrowserService.sleepInactiveTabs(),
       };
+    }
+    if (request.type === "browser-list-passwords") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        passwords: userBrowserService.listPasswords(request.query),
+      };
+    }
+    if (request.type === "browser-save-password") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const saved = userBrowserService.savePassword(request.password as any);
+      return {
+        ok: true,
+        passwords: userBrowserService.listPasswords(),
+      };
+    }
+    if (request.type === "browser-delete-password") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      userBrowserService.deletePassword(request.id);
+      return {
+        ok: true,
+        passwords: userBrowserService.listPasswords(),
+      };
+    }
+    if (request.type === "browser-list-addresses") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        addresses: userBrowserService.listAddresses(request.query),
+      };
+    }
+    if (request.type === "browser-save-address") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      userBrowserService.saveAddress(request.address as any);
+      return {
+        ok: true,
+        addresses: userBrowserService.listAddresses(),
+      };
+    }
+    if (request.type === "browser-delete-address") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      userBrowserService.deleteAddress(request.id);
+      return {
+        ok: true,
+        addresses: userBrowserService.listAddresses(),
+      };
+    }
+    if (request.type === "browser-list-payment-methods") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        paymentMethods: userBrowserService.listPaymentCards(request.query),
+      };
+    }
+    if (request.type === "browser-save-payment-method") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      userBrowserService.savePaymentCard(request.paymentMethod as any);
+      return {
+        ok: true,
+        paymentMethods: userBrowserService.listPaymentCards(),
+      };
+    }
+    if (request.type === "browser-delete-payment-method") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      userBrowserService.deletePaymentCard(request.id);
+      return {
+        ok: true,
+        paymentMethods: userBrowserService.listPaymentCards(),
+      };
+    }
+    if (request.type === "browser-query-autofill") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const matches = await userBrowserService.queryAutofill(
+        request.tabId,
+        request.url,
+      );
+      return {
+        ok: true,
+        autofillMatches: matches,
+      };
+    }
+    if (request.type === "browser-apply-autofill") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const outcome = await userBrowserService.applyAutofill(
+        request.tabId,
+        request.fillType,
+        request.itemId,
+      );
+      return {
+        ok: true,
+      };
+    }
+    if (request.type === "browser-autofill-prompt-response") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      if (request.accept) {
+        if (request.prompt.type === "password" && request.prompt.data) {
+          userBrowserService.savePassword({
+            url: `https://${request.prompt.domain}`,
+            domain: request.prompt.domain,
+            username: String(request.prompt.data.username ?? ""),
+            password: String(request.prompt.data.password ?? ""),
+          });
+        } else if (request.prompt.type === "address" && request.prompt.data) {
+          const addrData = request.prompt.data;
+          const toSave: Parameters<typeof userBrowserService.saveAddress>[0] = {
+            fullName: String(addrData.fullName ?? ""),
+            streetAddress: String(addrData.streetAddress ?? ""),
+            city: String(addrData.city ?? ""),
+          };
+          if (addrData.state) toSave.state = String(addrData.state);
+          if (addrData.postalCode) toSave.postalCode = String(addrData.postalCode);
+          if (addrData.country) toSave.country = String(addrData.country);
+          if (addrData.phone) toSave.phone = String(addrData.phone);
+          if (addrData.email) toSave.email = String(addrData.email);
+          userBrowserService.saveAddress(toSave);
+        } else if (request.prompt.type === "payment" && request.prompt.data) {
+          userBrowserService.savePaymentCard({
+            cardholderName: String(request.prompt.data.cardholderName ?? ""),
+            cardNumber: String(request.prompt.data.cardNumber ?? ""),
+            expirationMonth: String(request.prompt.data.expirationMonth ?? "12"),
+            expirationYear: String(request.prompt.data.expirationYear ?? "2030"),
+          });
+        }
+      }
+      return { ok: true };
     }
     if (request.type === "get-system-state") {
       const state = app.getLoginItemSettings();

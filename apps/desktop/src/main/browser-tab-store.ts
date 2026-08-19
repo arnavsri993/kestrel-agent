@@ -15,7 +15,7 @@ import {
 } from "@kestrel/shared-types";
 
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
-	searchEngine: "duckduckgo",
+	searchEngine: "google",
 	tabLayout: "horizontal",
 	newTabBackground: "graphite",
 	restoreSession: true,
@@ -24,6 +24,10 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	sleepingTabTimeoutMinutes: 30,
 	sleepingTabExcludedDomains: [],
 	memorySaverMode: true,
+	offerToSavePasswords: true,
+	autofillPasswords: true,
+	autofillAddresses: true,
+	autofillPayments: true,
 };
 const SEARCH_ENGINES: Record<
 	Exclude<UserBrowserSettings["searchEngine"], "custom">,
@@ -96,7 +100,7 @@ export function sanitizeBrowserUrl(value: string): string {
 
 export function normalizeBrowserAddress(
 	value: string,
-	searchEngine: UserBrowserSettings["searchEngine"] = "duckduckgo",
+	searchEngine: UserBrowserSettings["searchEngine"] = "google",
 	customSearchUrl?: string,
 ): NormalizedBrowserAddress {
 	const input = value.trim();
@@ -251,14 +255,15 @@ export class BrowserTabStore {
 				return sourceUrl ? [{ ...download, sourceUrl }] : [];
 			}),
 		});
-		mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+		const dir = dirname(this.path);
+		if (!existsSync(dir)) {
+			mkdirSync(dir, { recursive: true, mode: 0o700 });
+		}
 		const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
 		writeFileSync(temporary, `${JSON.stringify(safe, null, 2)}\n`, {
 			encoding: "utf8",
 			mode: 0o600,
 		});
-		chmodSync(temporary, 0o600);
 		renameSync(temporary, this.path);
-		chmodSync(this.path, 0o600);
 	}
 }

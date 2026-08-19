@@ -4,7 +4,7 @@ import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import meadowLandscape from "../../assets/new-tab-meadow.svg";
 import {
-  frequentBrowserSites,
+  getNewTabShortcuts,
   siteAccent,
   siteInitial,
   type NewTabBackground,
@@ -52,7 +52,7 @@ export function NewTabPage({
   onOpenSettings(): void;
 }) {
   const [input, setInput] = useState("");
-  const frequent = useMemo(() => frequentBrowserSites(history), [history]);
+  const shortcuts = useMemo(() => getNewTabShortcuts(history, 8), [history]);
 
   function submitChat(event: FormEvent) {
     event.preventDefault();
@@ -124,56 +124,30 @@ export function NewTabPage({
           </form>
         </div>
 
-        <section className="new-tab-frequent" aria-labelledby="frequent-title">
-          <div className="new-tab-section-heading">
-            <h2 id="frequent-title">Frequent</h2>
-            <button
-              type="button"
-              className="new-tab-section-action"
-              onClick={onNewTab}
-              aria-label="New tab"
-              title="New tab"
-            >
-              <Icon name="plus" />
-            </button>
-          </div>
-          {frequent.length > 0 ? (
-            <div className="new-tab-frequent-list">
-              {frequent.map((site) => (
-                <button
-                  key={site.origin}
-                  type="button"
-                  className="new-tab-site"
-                  onClick={() => onNavigate(site.url)}
-                  title={`${site.title} · ${site.hostname}`}
+        <section className="new-tab-shortcuts" aria-label="Shortcuts">
+          <div className="new-tab-shortcuts-row">
+            {shortcuts.map((site) => (
+              <button
+                key={site.id}
+                type="button"
+                className="new-tab-shortcut-item"
+                onClick={() => onNavigate(site.url)}
+                title={`${site.title} · ${site.hostname}`}
+              >
+                <span
+                  className={`new-tab-shortcut-icon site-accent-${siteAccent(site.hostname)}`}
+                  aria-hidden="true"
                 >
-                  <span
-                    className={`new-tab-site-glyph site-accent-${siteAccent(site.hostname)}`}
-                    aria-hidden="true"
-                  >
-                    {siteInitial(site)}
-                  </span>
-                  <span className="new-tab-site-copy">
-                    <strong>{site.title}</strong>
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="new-tab-frequent-empty"
-              onClick={onNewTab}
-            >
-              <span className="new-tab-site-glyph" aria-hidden="true">
-                <Icon name="plus" />
-              </span>
-              <span>
-                <strong>Open a site to start</strong>
-              </span>
-              <Icon name="arrow" />
-            </button>
-          )}
+                  {site.favicon ? (
+                    <img src={site.favicon} alt="" />
+                  ) : (
+                    <span>{siteInitial(site)}</span>
+                  )}
+                </span>
+                <span className="new-tab-shortcut-label">{site.title}</span>
+              </button>
+            ))}
+          </div>
         </section>
 
         <section

@@ -55,6 +55,10 @@ const electron = vi.hoisted(() => {
       clear: vi.fn(),
     };
     debugger = { isAttached: vi.fn(() => false), attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn() };
+    isCurrentlyAudible = vi.fn(() => false);
+    userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) kestrel/0.1.0 Chrome/130.0.6723.137 Electron/33.2.1 Safari/537.36";
+    getUserAgent = vi.fn(() => this.userAgent);
+    setUserAgent = vi.fn((ua: string) => { this.userAgent = ua; });
   }
   class MockView {
     webContents = new MockWebContents();
@@ -71,6 +75,15 @@ const electron = vi.hoisted(() => {
     setPermissionCheckHandler = vi.fn((handler) => { this.permissionCheckHandler = handler; });
     setPermissionRequestHandler = vi.fn((handler) => { this.permissionRequestHandler = handler; });
     fetch = vi.fn();
+    loadExtension = vi.fn();
+    removeExtension = vi.fn();
+    getAllExtensions = vi.fn(() => []);
+    userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) kestrel/0.1.0 Chrome/130.0.6723.137 Electron/33.2.1 Safari/537.36";
+    getUserAgent = vi.fn(() => this.userAgent);
+    setUserAgent = vi.fn((ua: string) => { this.userAgent = ua; });
+    webRequest = {
+      onBeforeSendHeaders: vi.fn(),
+    };
   }
   const state: {
     views: MockView[];
@@ -99,7 +112,12 @@ vi.mock("electron", () => ({
   shell: { showItemInFolder: vi.fn() },
 }));
 
-import { UserBrowserService } from "./user-browser-service";
+import {
+  UserBrowserService,
+  sanitizeBrowserUserAgent,
+  isOAuthUrl,
+  POPUP_GESTURE_WINDOW_MS,
+} from "./user-browser-service";
 
 const directories: string[] = [];
 
@@ -217,28 +235,20 @@ describe("UserBrowserService", () => {
     expect(view.visible).toBe(false);
   });
 
-  it("opens one user-initiated safe popup as a managed tab and denies script popup spam", async () => {
+  it("opens user-initiated safe links as a managed tab and denies unsafe urls", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "example.com");
     const source = electron.state.views[0]!.webContents;
 
+    // Unsafe URLs (like file://, javascript:, etc.) are denied
     expect(source.windowOpenHandler?.({
-      url: "https://script.example/path",
-      disposition: "new-window",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(1);
-
-    source.emit("before-mouse-event", {}, { type: "mouseDown" });
-    source.emit("before-mouse-event", {}, { type: "mouseUp" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(source.windowOpenHandler?.({
-      url: "https://late-script.example/path",
+      url: "file:///etc/passwd",
       disposition: "foreground-tab",
     })).toEqual({ action: "deny" });
     expect(service.getState().tabs).toHaveLength(1);
 
-    source.emit("before-mouse-event", {}, { type: "mouseDown" });
+    // Safe page links open as a managed tab
     expect(source.windowOpenHandler?.({
       url: "https://open.example/path",
       disposition: "foreground-tab",
@@ -246,19 +256,9 @@ describe("UserBrowserService", () => {
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState()).toMatchObject({ activeTabId: expect.any(String) });
     expect(service.getState().tabs.at(-1)).toMatchObject({ url: "https://open.example/path" });
-
-    expect(source.windowOpenHandler?.({
-      url: "https://spam.example/path",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(source.windowOpenHandler?.({
-      url: "file:///etc/passwd",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(2);
   });
 
-  it("awaits CDP clicks and scopes one popup to the approved action", async () => {
+  it("awaits CDP clicks and opens a managed tab for new window links", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
     await service.navigate(tab.id, "https://example.com");
@@ -311,11 +311,6 @@ describe("UserBrowserService", () => {
     expect(service.getState().tabs.at(-1)).toMatchObject({
       url: "https://opened.example/path",
     });
-    expect(contents.windowOpenHandler?.({
-      url: "https://spam.example/path",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(2);
   });
 
   it("settles an approved click after the source document is destroyed", async () => {
@@ -649,4 +644,166 @@ describe("UserBrowserService", () => {
     service.zoomReset(first.id);
     expect(contents.zoomLevel).toBe(0);
   });
+
+  it("supports sleeping tabs manually and hibernating inactive tabs", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://first.example");
+
+    const secondState = await service.createTab("https://second.example", true);
+    const second = secondState.tabs.find((t) => t.id !== first.id)!;
+
+    // First tab is in background, can be put to sleep
+    service.sleepTab(first.id);
+    const afterSleep = service.getState();
+    const firstTabAfter = afterSleep.tabs.find((t) => t.id === first.id)!;
+    expect(firstTabAfter.discarded).toBe(true);
+    expect(firstTabAfter.url).toBe("https://first.example/");
+
+    // Sleeping all inactive tabs
+    const thirdState = await service.createTab("https://third.example", true);
+    service.sleepInactiveTabs();
+    const afterSleepAll = service.getState();
+    const secondTabAfter = afterSleepAll.tabs.find((t) => t.id === second.id)!;
+    expect(secondTabAfter.discarded).toBe(true);
+  });
+
+  it("navigates using custom search engine when configured", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+
+    service.updateSettings({
+      ...service.getState().settings,
+      searchEngine: "custom",
+      customSearchUrl: "https://kagi.com/search?q=%s",
+    });
+
+    await service.navigate(tab.id, "test custom search");
+    expect(electron.state.views[0]!.webContents.loadURL).toHaveBeenCalledWith(
+      "https://kagi.com/search?q=test%20custom%20search",
+    );
+  });
+
+  it("saves, lists, and manages passwords, addresses, and payment methods", async () => {
+    const { service } = createService();
+
+    // Passwords
+    const pwd = service.savePassword({
+      url: "https://example.com/login",
+      username: "alice@example.com",
+      password: "SuperSecretPassword!",
+      name: "Example Site",
+    });
+    expect(pwd.id).toBeTruthy();
+    expect(service.listPasswords()).toHaveLength(1);
+    expect(service.listPasswords()[0]!.username).toBe("alice@example.com");
+
+    // Addresses
+    const addr = service.saveAddress({
+      label: "Home",
+      fullName: "Alice Smith",
+      streetAddress: "100 Pine St",
+      city: "San Francisco",
+      state: "CA",
+      postalCode: "94111",
+      country: "US",
+    });
+    expect(addr.id).toBeTruthy();
+    expect(service.listAddresses()).toHaveLength(1);
+    expect(service.listAddresses()[0]!.city).toBe("San Francisco");
+
+    // Payment Cards
+    const card = service.savePaymentCard({
+      cardholderName: "Alice Smith",
+      cardNumber: "4111222233334444",
+      expirationMonth: "10",
+      expirationYear: "2027",
+      nickname: "Main Visa",
+    });
+    expect(card.id).toBeTruthy();
+    expect(card.cardBrand).toBe("visa");
+    expect(service.listPaymentCards()).toHaveLength(1);
+    expect(service.listPaymentCards()[0]!.cardNumber).toBe("•••• •••• •••• 4444");
+
+    // Unified query
+    const queryRes = await service.queryAutofill(undefined, "https://example.com/account");
+    expect(queryRes.passwords).toHaveLength(1);
+    expect(queryRes.addresses).toHaveLength(1);
+    expect(queryRes.paymentMethods).toHaveLength(1);
+
+    // Delete
+    expect(service.deletePassword(pwd.id)).toBe(true);
+    expect(service.deleteAddress(addr.id)).toBe(true);
+    expect(service.deletePaymentCard(card.id)).toBe(true);
+    expect(service.listPasswords()).toHaveLength(0);
+    expect(service.listAddresses()).toHaveLength(0);
+    expect(service.listPaymentCards()).toHaveLength(0);
+  });
+
+  it("sanitizes User-Agent strings to prevent Google 403 disallowed_useragent blocks", () => {
+    const electronUa =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) kestrel/0.1.0 Chrome/130.0.6723.137 Electron/33.2.1 Safari/537.36";
+    const cleaned = sanitizeBrowserUserAgent(electronUa);
+    expect(cleaned).not.toContain("Electron");
+    expect(cleaned).not.toContain("kestrel");
+    expect(cleaned).toContain("Chrome/130.0.6723.137");
+    expect(cleaned).toContain("Safari/537.36");
+
+    const fallback = sanitizeBrowserUserAgent("");
+    expect(fallback).toContain("Chrome");
+    expect(fallback).not.toContain("Electron");
+  });
+
+  it("identifies Google OAuth and identity provider URLs", () => {
+    expect(isOAuthUrl("https://accounts.google.com/o/oauth2/v2/auth?client_id=123")).toBe(true);
+    expect(isOAuthUrl("https://accounts.google.com/signin/oauth/oauthchooseaccount")).toBe(true);
+    expect(isOAuthUrl("https://accounts.youtube.com/accounts/SetSID")).toBe(true);
+    expect(isOAuthUrl("https://appleid.apple.com/auth/authorize")).toBe(true);
+    expect(isOAuthUrl("https://github.com/login/oauth/authorize")).toBe(true);
+    expect(isOAuthUrl("https://login.microsoftonline.com/common/oauth2/v2.0/authorize")).toBe(true);
+    expect(isOAuthUrl("https://example.auth0.com/authorize")).toBe(true);
+    expect(isOAuthUrl("https://myproject.supabase.co/auth/v1/authorize")).toBe(true);
+
+    expect(isOAuthUrl("https://example.com/page")).toBe(false);
+    expect(isOAuthUrl("https://google.com/search?q=test")).toBe(false);
+  });
+
+  it("allows 'Continue with Google' and OAuth links to open as a managed tab", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://app.example.com/login");
+    const source = electron.state.views[0]!.webContents;
+
+    // Google OAuth popup URL is opened
+    const googleAuthUrl =
+      "https://accounts.google.com/o/oauth2/v2/auth?client_id=test-client.apps.googleusercontent.com&redirect_uri=https://app.example.com/auth/callback&response_type=code&scope=openid%20email";
+
+    expect(
+      source.windowOpenHandler?.({
+        url: googleAuthUrl,
+        disposition: "foreground-tab",
+      }),
+    ).toEqual({ action: "deny" });
+
+    await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
+    const createdTab = service.getState().tabs.at(-1);
+    expect(createdTab).toMatchObject({
+      url: googleAuthUrl,
+    });
+
+    // Check that the created view's webContents has sanitized user-agent without Electron
+    const createdView = electron.state.views.at(-1)!;
+    expect(createdView.webContents.setUserAgent).toHaveBeenCalledWith(
+      expect.not.stringContaining("Electron"),
+    );
+  });
+
+  it("allows opening more than 32 tabs without limit", async () => {
+    const { service } = createService();
+    for (let i = 0; i < 35; i++) {
+      await service.createTab(`https://example${i}.com`, false);
+    }
+    expect(service.getState().tabs.length).toBe(36); // 1 initial + 35 created
+  });
 });
+

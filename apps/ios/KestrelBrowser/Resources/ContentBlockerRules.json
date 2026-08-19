@@ -1,0 +1,52 @@
+[
+  {
+    "trigger": {
+      "url-filter": ".*",
+      "resource-type": ["script", "xmlhttprequest"],
+      "if-domain": [
+        "*google-analytics.com",
+        "*googletagmanager.com",
+        "*doubleclick.net",
+        "*adnxs.com",
+        "*facebook.net",
+        "*analytics.yahoo.com",
+        "*criteo.com",
+        "*outbrain.com",
+        "*taboola.com",
+        "*hotjar.com",
+        "*clarity.ms",
+        "*scorecardresearch.com"
+      ]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*coin-hive.*|.*coinhive.*|.*cryptoloot.*",
+      "resource-type": ["script"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*",
+      "resource-type": ["popup"]
+    },
+    "action": {
+      "type": "block"
+    }
+  },
+  {
+    "trigger": {
+      "url-filter": ".*",
+      "if-domain": ["*ads.*", "*adserver.*", "*telemetry.*"]
+    },
+    "action": {
+      "type": "block"
+    }
+  }
+]

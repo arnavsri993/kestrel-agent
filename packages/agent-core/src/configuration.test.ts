@@ -1097,19 +1097,19 @@ describe("chat configuration runtime approval boundary", () => {
 		const manager = new AgentConfigurationManager(database);
 		const initial = manager.currentVersion();
 
-		expect(initial.document.browser.searchEngine).toBe("duckduckgo");
+		expect(initial.document.browser.searchEngine).toBe("google");
 		expect(initial.document.appearance.skin).toBe("default");
 		expect(initial.document.system.launchAtLogin).toBe(false);
 
 		const proposal = manager.plan({
 			requestSummary:
-				"Set search engine to Google, skin to Meadow, and enable launch at login.",
+				"Set search engine to Brave, skin to Meadow, and enable launch at login.",
 			sourceSessionId: "session-test",
 			patch: [
 				{
 					op: "replace",
 					path: "/browser/searchEngine",
-					value: "google",
+					value: "brave",
 				},
 				{
 					op: "replace",
@@ -1145,14 +1145,14 @@ describe("chat configuration runtime approval boundary", () => {
 			preview: proposal.diff,
 		});
 
-		expect(applied.version.document.browser.searchEngine).toBe("google");
+		expect(applied.version.document.browser.searchEngine).toBe("brave");
 		expect(applied.version.document.browser.newTabBackground).toBe("meadow");
 		expect(applied.version.document.appearance.skin).toBe("meadow");
 		expect(applied.version.document.appearance.petEnabled).toBe(true);
 		expect(applied.version.document.system.launchAtLogin).toBe(true);
 
 		const current = manager.currentVersion();
-		expect(current.document.browser.searchEngine).toBe("google");
+		expect(current.document.browser.searchEngine).toBe("brave");
 		expect(current.document.appearance.skin).toBe("meadow");
 	});
 });

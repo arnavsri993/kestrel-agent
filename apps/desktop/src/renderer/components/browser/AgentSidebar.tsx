@@ -60,7 +60,6 @@ export function AgentSidebar({
       aria-hidden={collapsed}
     >
       <div className="agent-sidebar-header">
-        <div className="agent-sidebar-drag" />
         <div className="agent-sidebar-identity">
           <Brand />
           <span className="agent-sidebar-agent-name">{agentName}</span>

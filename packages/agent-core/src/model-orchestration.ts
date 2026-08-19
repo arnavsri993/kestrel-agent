@@ -298,25 +298,31 @@ export function inferModelTier(
 	return "standard";
 }
 
+const CAPABILITIES_SET = new Set<string>(CAPABILITIES);
+
+const RISK_RANKS: Record<RiskLevel, number> = {
+	read_only: 0,
+	low: 1,
+	external: 2,
+	sensitive: 3,
+	high_consequence: 4,
+};
+
 function bounded(value: number): number {
 	if (!Number.isFinite(value)) return 0;
 	return Math.max(0, Math.min(1, value));
 }
 
 function emptyScores(value = 0): Record<ModelCapability, number> {
-	return Object.fromEntries(
-		CAPABILITIES.map((capability) => [capability, value]),
-	) as Record<ModelCapability, number>;
+	const scores = {} as Record<ModelCapability, number>;
+	for (const capability of CAPABILITIES) {
+		scores[capability] = value;
+	}
+	return scores;
 }
 
 function riskRank(risk: RiskLevel): number {
-	return [
-		"read_only",
-		"low",
-		"external",
-		"sensitive",
-		"high_consequence",
-	].indexOf(risk);
+	return RISK_RANKS[risk] ?? -1;
 }
 
 function estimatedLatencyMs(profile: ModelProfile): number {
@@ -359,7 +365,7 @@ function baselineCapabilities(
 	for (const [capability, score] of Object.entries(
 		provider.profileHints?.capabilities ?? {},
 	)) {
-		if (CAPABILITIES.includes(capability as ModelCapability))
+		if (CAPABILITIES_SET.has(capability))
 			scores[capability as ModelCapability] = bounded(score);
 	}
 	return scores;

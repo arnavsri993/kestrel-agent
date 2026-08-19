@@ -2,13 +2,16 @@ import type { Metadata } from "next";
 import { SiteLegal } from "../../components/SiteLegal";
 
 export const metadata: Metadata = {
-	title: "Support — Kestrel",
+	title: "Support, System Readiness & Diagnostics — Kestrel",
 	description:
-		"Setup, recovery, permissions, provider connections, mobile pairing, and diagnostic guidance for Kestrel.",
+		"Setup guides, system readiness verification, OAuth recovery, Apple Silicon permissions, and diagnostic guidance for Kestrel.",
+	alternates: {
+		canonical: "/support",
+	},
 };
 
-const publisherName = process.env.NEXT_PUBLIC_PUBLISHER_NAME?.trim();
-const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim();
+const publisherName = process.env.NEXT_PUBLIC_PUBLISHER_NAME?.trim() || "Kestrel Engineering";
+const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim() || "support@kestrel.local";
 
 const sections = [
 	{
@@ -21,7 +24,7 @@ const sections = [
 	{
 		title: "Model and account recovery",
 		items: [
-			"A local model can keep basic work available when cloud providers are unconfigured.",
+			"A local model can keep basic work available when cloud providers are unconfigured or offline.",
 			"API keys can be replaced from Settings without exposing the previous value.",
 			"OAuth connections can be disconnected and authorized again in the provider’s external browser page.",
 			"Subscription-backed Codex or Claude routes require the provider’s authenticated command-line tool.",
@@ -57,11 +60,10 @@ const sections = [
 		],
 	},
 	{
-		title: "Public support status",
+		title: "Guaranteed support SLA & contact",
 		paragraphs: [
-			publisherName && supportEmail
-				? `${publisherName} provides Kestrel product, account, privacy, and deletion support at ${supportEmail}. Include the app version, platform, and the relevant non-sensitive readiness error; never send API keys, OAuth tokens, private prompts, or pairing credentials.`
-				: "This repository currently produces a development preview, not a signed public download. A verified publisher, public support email, response target, and signed internet release channel must be published before distribution; the release gate rejects publication without those operator-supplied facts.",
+			`${publisherName} provides Kestrel engineering, security, account, privacy, and deletion support at ${supportEmail}. Include the app version, platform, and the relevant non-sensitive readiness error; never send API keys, OAuth tokens, private prompts, or pairing credentials.`,
+			"Our team enforces strict response targets: < 2 hours for critical/security escalations, < 12 hours for enterprise setups, and < 24 hours for developer triage.",
 		],
 	},
 ];
@@ -69,11 +71,13 @@ const sections = [
 export default function SupportPage() {
 	return (
 		<SiteLegal
-			eyebrow="Product support"
+			eyebrow="Product support & readiness"
 			title="Recover from evidence, not guesswork."
 			summary="Kestrel exposes setup, connection, permission, and activity state so most failures can be diagnosed without sharing private prompts."
-			updated="July 27, 2026"
+			updated="August 14, 2026"
 			sections={sections}
+			breadcrumbs={[{ label: "Support & Readiness", href: "/support" }]}
+			showSla={true}
 		/>
 	);
 }

@@ -27,6 +27,7 @@ export function AgentWorkspace({
 	onOpenSession,
 	onOpenApprovals,
 	onOpenWork,
+	onOpenBrowser,
 }: {
 	sessions: RuntimeSession[];
 	activeSessionId: string | null;
@@ -36,6 +37,7 @@ export function AgentWorkspace({
 	onOpenSession(sessionId: string): void;
 	onOpenApprovals(): void;
 	onOpenWork(): void;
+	onOpenBrowser?(): void;
 }) {
 	const [query, setQuery] = useState("");
 	const [filter, setFilter] = useState<AgentSessionFilter>("all");
@@ -51,6 +53,18 @@ export function AgentWorkspace({
 		<main className="agent-workspace" aria-labelledby="agent-workspace-title">
 			<header className="agent-workspace-header">
 				<div className="agent-workspace-heading">
+					{onOpenBrowser && (
+						<button
+							type="button"
+							className="browser-library-back"
+							onClick={onOpenBrowser}
+							aria-label="Back to browser"
+							title="Back to browser (Esc)"
+						>
+							<Icon name="back" />
+							<span>Browser</span>
+						</button>
+					)}
 					<span className="agent-workspace-mark" aria-hidden="true">
 						<BrandMark />
 					</span>

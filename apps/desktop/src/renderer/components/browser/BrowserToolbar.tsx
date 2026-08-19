@@ -18,6 +18,8 @@ export function BrowserToolbar({
   onOpenHistory,
   onOpenDownloads,
   onOpenMenu,
+  onToggleAutofill,
+  autofillOpen,
 }: {
   tab: UserBrowserTab;
   agentName: string;
@@ -34,6 +36,8 @@ export function BrowserToolbar({
   onOpenHistory(): void;
   onOpenDownloads(): void;
   onOpenMenu(): void;
+  onToggleAutofill?(): void;
+  autofillOpen?: boolean;
 }) {
   const [address, setAddress] = useState(tab.url);
   useEffect(() => setAddress(tab.url), [tab.id, tab.url]);
@@ -167,6 +171,17 @@ export function BrowserToolbar({
         >
           <Icon name="downloads" />
         </button>
+        {onToggleAutofill && (
+          <button
+            type="button"
+            className={`browser-autofill-btn ${autofillOpen ? "active" : ""}`}
+            aria-label="Autofill Passwords & Info"
+            title="Autofill Passwords, Addresses & Payment Info"
+            onClick={onToggleAutofill}
+          >
+            <Icon name="key" />
+          </button>
+        )}
         <button
           type="button"
           aria-label="Capabilities and commands"

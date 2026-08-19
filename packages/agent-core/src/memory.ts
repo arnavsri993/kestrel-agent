@@ -118,13 +118,22 @@ export class MemoryManager {
 				const body = terms(
 					`${memory.content} ${JSON.stringify(memory.structuredData)} ${memory.entityIds.join(" ")}`,
 				);
-				const exact = queryTerms.filter((term) => body.includes(term)).length;
-				const related = queryTerms.filter((term) =>
-					body.some(
-						(candidate) =>
-							candidate.startsWith(term) || term.startsWith(candidate),
-					),
-				).length;
+				const bodySet = new Set(body);
+				let exact = 0;
+				let related = 0;
+				for (const term of queryTerms) {
+					if (bodySet.has(term)) {
+						exact += 1;
+					}
+					if (
+						body.some(
+							(candidate) =>
+								candidate.startsWith(term) || term.startsWith(candidate),
+						)
+					) {
+						related += 1;
+					}
+				}
 				return {
 					memory,
 					score: exact * 4 + related + memory.importance + memory.confidence,

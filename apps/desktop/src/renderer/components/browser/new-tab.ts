@@ -69,7 +69,104 @@ export function frequentBrowserSites(
     .slice(0, limit);
 }
 
-export function siteInitial(site: Pick<FrequentBrowserSite, "hostname" | "title">): string {
+export interface ShortcutItem {
+  id: string;
+  url: string;
+  title: string;
+  hostname: string;
+  favicon?: string;
+}
+
+export const DEFAULT_SHORTCUTS: ShortcutItem[] = [
+  {
+    id: "shortcut-google",
+    url: "https://www.google.com",
+    title: "Google",
+    hostname: "google.com",
+  },
+  {
+    id: "shortcut-github",
+    url: "https://github.com",
+    title: "GitHub",
+    hostname: "github.com",
+  },
+  {
+    id: "shortcut-youtube",
+    url: "https://www.youtube.com",
+    title: "YouTube",
+    hostname: "youtube.com",
+  },
+  {
+    id: "shortcut-reddit",
+    url: "https://www.reddit.com",
+    title: "Reddit",
+    hostname: "reddit.com",
+  },
+  {
+    id: "shortcut-wikipedia",
+    url: "https://www.wikipedia.org",
+    title: "Wikipedia",
+    hostname: "wikipedia.org",
+  },
+  {
+    id: "shortcut-claude",
+    url: "https://claude.ai",
+    title: "Claude",
+    hostname: "claude.ai",
+  },
+  {
+    id: "shortcut-hackernews",
+    url: "https://news.ycombinator.com",
+    title: "Hacker News",
+    hostname: "news.ycombinator.com",
+  },
+  {
+    id: "shortcut-x",
+    url: "https://x.com",
+    title: "X",
+    hostname: "x.com",
+  },
+];
+
+export function getNewTabShortcuts(
+  history: UserBrowserHistoryEntry[],
+  limit = 8,
+): ShortcutItem[] {
+  const frequent = frequentBrowserSites(history, limit);
+  const items: ShortcutItem[] = frequent.map((site) => ({
+    id: site.origin,
+    url: site.url,
+    title: site.title,
+    hostname: site.hostname,
+  }));
+
+  const existingOrigins = new Set(
+    items.map((i) => {
+      try {
+        return new URL(i.url).origin;
+      } catch {
+        return i.url;
+      }
+    }),
+  );
+
+  for (const def of DEFAULT_SHORTCUTS) {
+    if (items.length >= limit) break;
+    try {
+      const defOrigin = new URL(def.url).origin;
+      if (!existingOrigins.has(defOrigin)) {
+        items.push(def);
+        existingOrigins.add(defOrigin);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return items.slice(0, limit);
+}
+
+export function siteInitial(site: Pick<FrequentBrowserSite, "hostname" | "title"> | Pick<ShortcutItem, "hostname" | "title">): string {
   return (
     site.hostname.replace(/^www\./, "")[0] ||
     site.title[0] ||
