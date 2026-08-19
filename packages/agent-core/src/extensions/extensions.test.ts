@@ -381,6 +381,43 @@ describe("MCP extensions", () => {
 		fixture.database.close();
 	});
 
+	it("rejects tools/call when a runtime server toolFilter hides a tool", async () => {
+		const fixture = runtimeFixture("mcp-tool-filter");
+		const server = new McpRuntimeServer(fixture.runtime, fixture.session.id, {
+			toolFilter: (name) => name !== "workspace.write",
+		});
+		await server.handle({ jsonrpc: "2.0", id: 1, method: "initialize" });
+		await server.handle({
+			jsonrpc: "2.0",
+			method: "notifications/initialized",
+		});
+		const listed = (await server.handle({
+			jsonrpc: "2.0",
+			id: 2,
+			method: "tools/list",
+		})) as { result: { tools: Array<{ name: string }> } };
+		expect(
+			listed.result.tools.some((tool) => tool.name === "workspace.read"),
+		).toBe(true);
+		expect(
+			listed.result.tools.some((tool) => tool.name === "workspace.write"),
+		).toBe(false);
+		const called = await server.handle({
+			jsonrpc: "2.0",
+			id: 3,
+			method: "tools/call",
+			params: {
+				name: "workspace.write",
+				arguments: { path: "blocked.txt", content: "must not be written" },
+			},
+		});
+		expect(called).toMatchObject({
+			error: { message: "Tool is not exposed by this MCP server." },
+		});
+		expect(existsSync(join(fixture.root, "blocked.txt"))).toBe(false);
+		fixture.database.close();
+	});
+
 	it("rejects failed async sends immediately without leaking an unhandled rejection", async () => {
 		const unhandled: unknown[] = [];
 		const onUnhandled = (reason: unknown) => unhandled.push(reason);

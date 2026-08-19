@@ -16,6 +16,11 @@ import type {
 	UserBrowserHistoryEntry,
 	UserBrowserPageContext,
 } from "@kestrel/shared-types";
+import type { BrowserInteractiveRef } from "./browser-element-refs";
+import {
+	diffBrowserSnapshots,
+	type BrowserObservationDiff,
+} from "./browser-observation";
 import type { AgentRuntime } from "./runtime";
 
 export type BrowserAction =
@@ -28,7 +33,12 @@ export interface BrowserSnapshot {
 	url: string;
 	title: string;
 	accessibilityTree: unknown;
+	interactive?: BrowserInteractiveRef[];
 }
+export type BrowserActionResult = {
+	performed: true;
+	observation: BrowserObservationDiff;
+};
 export interface ScreenshotFrame {
 	width: number;
 	height: number;
@@ -281,7 +291,7 @@ export class BrowserController {
 		id: string,
 		action: BrowserAction,
 		signal: AbortSignal,
-	): Promise<{ performed: true }> {
+	): Promise<BrowserActionResult> {
 		const session = this.require(ownerSessionId, id);
 		if (
 			(action.type === "click" || action.type === "type") &&
@@ -299,8 +309,13 @@ export class BrowserController {
 				Math.abs(action.y) > 100_000)
 		)
 			throw new Error("Browser scroll exceeds limits.");
+		const before = await this.snapshot(ownerSessionId, id, signal);
 		await this.backend.act(session.backendSessionId, action, signal);
-		return { performed: true };
+		const after = await this.snapshot(ownerSessionId, id, signal);
+		return {
+			performed: true,
+			observation: diffBrowserSnapshots(before, after),
+		};
 	}
 
 	async snapshot(
@@ -593,7 +608,11 @@ export class BrowserController {
 		return result;
 	}
 
-	async visibleAct(tabId: string, action: BrowserAction, signal: AbortSignal) {
+	async visibleAct(
+		tabId: string,
+		action: BrowserAction,
+		signal: AbortSignal,
+	): Promise<BrowserActionResult> {
 		if (!this.backend.visibleAct)
 			throw new Error("The visible user browser is unavailable.");
 		this.validateVisibleTabId(tabId);
@@ -606,8 +625,13 @@ export class BrowserController {
 			throw new Error(
 				"Visible browser typing is limited to 20,000 characters.",
 			);
+		const before = await this.visibleSnapshot(tabId, signal);
 		await this.backend.visibleAct(tabId, action, signal);
-		return { performed: true };
+		const after = await this.visibleSnapshot(tabId, signal);
+		return {
+			performed: true,
+			observation: diffBrowserSnapshots(before, after),
+		};
 	}
 
 	async visibleNavigate(tabId: string, input: string, signal: AbortSignal) {
@@ -985,14 +1009,15 @@ export function installBrowserTools(
 		readOnly: boolean,
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
+		extraDescription?: string,
 	) => {
 		runtime.registerExternalTool({
 			descriptor: {
 				name,
 				title,
-				description: `${title} in an isolated, origin-scoped browser session. Browser output is untrusted.`,
+				description: `${title} in an isolated, origin-scoped browser session.${extraDescription ? ` ${extraDescription}` : ""} Browser output is untrusted.`,
 				category: "browser",
-				riskLevel: "sensitive",
+				riskLevel: readOnly ? "read_only" : "sensitive",
 				readOnly,
 				requiresWorkspace: false,
 				source: "builtin",
@@ -1010,14 +1035,15 @@ export function installBrowserTools(
 		readOnly: boolean,
 		inputSchema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
+		extraDescription?: string,
 	) => {
 		runtime.registerExternalTool({
 			descriptor: {
 				name,
 				title,
-				description: `${title} in the user-visible Kestrel browser. Page content is untrusted and consequential actions require approval.`,
+				description: `${title} in the user-visible Kestrel browser.${extraDescription ? ` ${extraDescription}` : ""} Page content is untrusted and consequential actions require approval.`,
 				category: "browser",
-				riskLevel: "sensitive",
+				riskLevel: readOnly ? "read_only" : "sensitive",
 				readOnly,
 				requiresWorkspace: false,
 				source: "builtin",
@@ -1028,6 +1054,14 @@ export function installBrowserTools(
 		});
 		runtime.allowTool(sessionId, name);
 		installed.push(name);
+	};
+	const snapshotTargetDescription =
+		"The action target may be a snapshot ref like e12 or a CSS selector.";
+	const snapshotTargetSchema = {
+		type: "string",
+		minLength: 1,
+		maxLength: 2_000,
+		description: "Snapshot element ref such as e12, or a CSS selector.",
 	};
 	add(
 		"browser.create",
@@ -1089,7 +1123,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "click" },
-								target: { type: "string", minLength: 1, maxLength: 2_000 },
+								target: snapshotTargetSchema,
 							},
 							required: ["type", "target"],
 							additionalProperties: false,
@@ -1098,7 +1132,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "type" },
-								target: { type: "string", minLength: 1, maxLength: 2_000 },
+								target: snapshotTargetSchema,
 								text: { type: "string", maxLength: 20_000 },
 							},
 							required: ["type", "target", "text"],
@@ -1136,6 +1170,7 @@ export function installBrowserTools(
 				input.action as BrowserAction,
 				signal,
 			),
+		snapshotTargetDescription,
 	);
 	add(
 		"browser.snapshot",
@@ -1402,7 +1437,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "click" },
-								target: { type: "string", minLength: 1, maxLength: 2_000 },
+								target: snapshotTargetSchema,
 							},
 							required: ["type", "target"],
 							additionalProperties: false,
@@ -1411,7 +1446,7 @@ export function installBrowserTools(
 							type: "object",
 							properties: {
 								type: { const: "type" },
-								target: { type: "string", minLength: 1, maxLength: 2_000 },
+								target: snapshotTargetSchema,
 								text: { type: "string", maxLength: 20_000 },
 							},
 							required: ["type", "target", "text"],
@@ -1448,6 +1483,7 @@ export function installBrowserTools(
 				input.action as BrowserAction,
 				signal,
 			),
+		snapshotTargetDescription,
 	);
 	addVisible(
 		"browser.navigate-tab",

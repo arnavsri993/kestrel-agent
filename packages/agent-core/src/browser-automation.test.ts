@@ -231,6 +231,11 @@ describe("isolated browser automation and visual validation", () => {
 			workspaceRoot: root,
 		});
 		installBrowserTools(runtime, controller, session.id);
+		expect(
+			runtime
+				.discoverTools(session.id)
+				.find((tool) => tool.name === "browser.act")?.description,
+		).toContain("snapshot ref like e12");
 		const created = await runtime.callTool(
 			session.id,
 			"browser.create",
@@ -274,12 +279,9 @@ describe("isolated browser automation and visual validation", () => {
 				)
 			).status,
 		).toBe("verified");
-		const snapshot = await runtime.callTool(
-			session.id,
-			"browser.snapshot",
-			{ browserSessionId },
-			{ approvalStatus: "approved" },
-		);
+		const snapshot = await runtime.callTool(session.id, "browser.snapshot", {
+			browserSessionId,
+		});
 		expect(snapshot).toMatchObject({
 			output: { title: "Example", trust: "untrusted_browser" },
 		});
@@ -328,13 +330,13 @@ describe("isolated browser automation and visual validation", () => {
 		const runtime = new AgentRuntime(database);
 		const session = runtime.createSession({ title: "Visible browser" });
 		installBrowserTools(runtime, new BrowserController(backend), session.id);
+		expect(
+			runtime
+				.discoverTools(session.id)
+				.find((tool) => tool.name === "browser.visible-act")?.description,
+		).toContain("snapshot ref like e12");
 
-		const listed = await runtime.callTool(
-			session.id,
-			"browser.tabs",
-			{},
-			{ approvalStatus: "approved" },
-		);
+		const listed = await runtime.callTool(session.id, "browser.tabs", {});
 		expect(listed).toMatchObject({
 			status: "verified",
 			output: {

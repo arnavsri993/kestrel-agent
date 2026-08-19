@@ -23,7 +23,17 @@ const readline = require("node:readline");
 const capture = process.argv[1] + ".capture.jsonl";
 let turn = 0;
 function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
-function record(value) { fs.appendFileSync(capture, JSON.stringify({ pid: process.pid, value }) + "\\n"); }
+function record(value) {
+  const row = { pid: process.pid, value };
+  if (value.method === "initialize") {
+    row.env = {
+      CODEX_HOME: process.env.CODEX_HOME ?? null,
+      KESTREL_CODEX_MCP_TOKEN: process.env.KESTREL_CODEX_MCP_TOKEN ?? null,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? null,
+    };
+  }
+  fs.appendFileSync(capture, JSON.stringify(row) + "\\n");
+}
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", line => {
   const message = JSON.parse(line);
@@ -37,6 +47,8 @@ input.on("line", line => {
     turn += 1;
     const turnId = "turn-" + turn;
     send({ id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });
+    send({ id: 800 + turn, method: "item/permissions/requestApproval", params: { threadId: "thread-1", turnId, itemId: "perm-" + turn, permissions: { network: { enabled: true } } } });
+    send({ id: 700 + turn, method: "mcpServer/elicitation/request", params: { threadId: "thread-1", turnId, serverName: "kestrel_browser", mode: "form", message: "confirm" } });
     send({ id: 900 + turn, method: "item/commandExecution/requestApproval", params: { threadId: "thread-1", turnId, itemId: "cmd-" + turn, command: "touch forbidden" } });
     return;
   }
@@ -101,6 +113,26 @@ afterEach(async () => {
 		roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
 	);
 });
+
+type CaptureRecord = {
+	pid: number;
+	env?: {
+		CODEX_HOME: string | null;
+		KESTREL_CODEX_MCP_TOKEN: string | null;
+		OPENAI_API_KEY: string | null;
+	};
+	value: Record<string, unknown> & {
+		params?: Record<string, unknown>;
+		result?: Record<string, unknown>;
+	};
+};
+
+async function readCapture(path: string): Promise<CaptureRecord[]> {
+	return (await readFile(path, "utf8"))
+		.trim()
+		.split("\n")
+		.map((line) => JSON.parse(line) as CaptureRecord);
+}
 
 describe("persistent Codex app-server provider", () => {
 	it("restarts after initialization failure instead of reusing an uninitialized process", async () => {
@@ -183,19 +215,20 @@ describe("persistent Codex app-server provider", () => {
 		});
 		expect(deltas.join("")).toBe("Persistent answer 1");
 
-		const records = (await readFile(fake.capture, "utf8"))
-			.trim()
-			.split("\n")
-			.map(
-				(line) =>
-					JSON.parse(line) as {
-						pid: number;
-						value: Record<string, unknown> & {
-							params?: Record<string, unknown>;
-							result?: Record<string, unknown>;
-						};
-					},
-			);
+		const records = await readCapture(fake.capture);
+		expect(
+			records.find((record) => record.value.method === "initialize")?.env,
+		).toMatchObject({
+			CODEX_HOME: null,
+			KESTREL_CODEX_MCP_TOKEN: null,
+			OPENAI_API_KEY: null,
+		});
+		expect(
+			(
+				records.find((record) => record.value.method === "thread/start")?.value
+					.params as { baseInstructions?: string }
+			).baseInstructions,
+		).toContain("invoke MCP");
 		expect(new Set(records.map((record) => record.pid))).toHaveLength(1);
 		expect(
 			records.filter((record) => record.value.method === "initialize"),
@@ -224,6 +257,89 @@ describe("persistent Codex app-server provider", () => {
 				JSON.stringify(record.value).includes("must-not-leak"),
 			),
 		).toBe(false);
+	});
+
+	it("attaches a loopback browser MCP through overlay CODEX_HOME", async () => {
+		const fake = await fakeAppServer();
+		const provider = new CodexAppServerProvider({
+			executable: fake.executable,
+			environment: {
+				PATH: process.env.PATH,
+				HOME: process.env.HOME,
+				OPENAI_API_KEY: "must-not-leak",
+			},
+			requestTimeoutMs: 10_000,
+			turnTimeoutMs: 2_000,
+		});
+		expect(() =>
+			provider.attachBrowserMcp({
+				url: "https://example.com/mcp",
+				token: "tok",
+			}),
+		).toThrow("loopback HTTP URL");
+		provider.attachBrowserMcp({
+			url: "http://127.0.0.1:9/mcp",
+			token: "tok",
+		});
+		await provider.probe();
+		await provider.complete({
+			model: "gpt-test",
+			metadata: { session_id: "session-browser", workspace_root: process.cwd() },
+			messages: [{ role: "user", content: textContent("Use the browser") }],
+		});
+
+		const records = await readCapture(fake.capture);
+		const initialize = records.find(
+			(record) => record.value.method === "initialize",
+		);
+		expect(initialize?.env?.CODEX_HOME).toMatch(/kestrel-codex-app-server/);
+		expect(initialize?.env?.KESTREL_CODEX_MCP_TOKEN).toBe("tok");
+		expect(initialize?.env?.OPENAI_API_KEY).toBeNull();
+		const overlayConfig = await readFile(
+			join(initialize!.env!.CODEX_HOME!, "config.toml"),
+			"utf8",
+		);
+		expect(overlayConfig).toContain("[mcp_servers.kestrel_browser]");
+		expect(overlayConfig).toContain('url = "http://127.0.0.1:9/mcp"');
+		expect(overlayConfig).toContain(
+			'bearer_token_env_var = "KESTREL_CODEX_MCP_TOKEN"',
+		);
+		const instructions = (
+			records.find((record) => record.value.method === "thread/start")?.value
+				.params as { baseInstructions?: string }
+		).baseInstructions;
+		expect(instructions).toContain("kestrel_browser");
+		expect(instructions).not.toContain("invoke MCP");
+		const turn = records.find((record) => record.value.method === "turn/start")
+			?.value.params as {
+			sandboxPolicy?: { type?: string; networkAccess?: boolean };
+		};
+		expect(turn.sandboxPolicy).toEqual({
+			type: "readOnly",
+			networkAccess: false,
+		});
+		expect(
+			records.filter(
+				(record) =>
+					record.value.result && record.value.result.decision === "decline",
+			),
+		).toHaveLength(1);
+		expect(
+			records.some(
+				(record) =>
+					record.value.result &&
+					JSON.stringify(record.value.result.permissions) === "{}",
+			),
+		).toBe(true);
+		expect(
+			records.some(
+				(record) =>
+					record.value.result &&
+					record.value.result.action === "decline" &&
+					record.value.result.content === null,
+			),
+		).toBe(true);
+		await provider.close();
 	});
 
 	it.each([Number.NaN, Number.POSITIVE_INFINITY])(
