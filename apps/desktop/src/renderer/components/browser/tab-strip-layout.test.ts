@@ -15,9 +15,10 @@ describe("tab strip layout and cursor anchoring", () => {
 
 	it("clamps tab width to valid min/max bounds", () => {
 		expect(clampTabWidth(180)).toBe(180);
-		expect(clampTabWidth(20)).toBe(44);
-		expect(clampTabWidth(400)).toBe(280);
-		expect(clampTabWidth(NaN)).toBe(280);
+		expect(clampTabWidth(20)).toBe(144);
+		expect(clampTabWidth(400)).toBe(400);
+		expect(clampTabWidth(600)).toBe(520);
+		expect(clampTabWidth(NaN)).toBe(520);
 	});
 
 	it("computes fixed style when locked for horizontal tabs and returns undefined otherwise", () => {
