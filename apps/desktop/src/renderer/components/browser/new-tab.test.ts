@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { frequentBrowserSites, siteInitial } from "./new-tab";
+import {
+  browserSiteLabel,
+  frequentBrowserSites,
+  siteInitial,
+  suggestedAgentActions,
+} from "./new-tab";
 
 const tabId = "tab-00000000-0000-4000-8000-000000000000";
 
@@ -38,7 +43,58 @@ describe("new tab shortcuts", () => {
     });
   });
 
-	it("derives stable neutral glyph text", () => {
-		expect(siteInitial({ hostname: "www.example.com", title: "Example" })).toBe("E");
-	});
+  it("derives stable, bounded labels and glyph text", () => {
+    expect(siteInitial({ hostname: "www.example.com", title: "Example" })).toBe("E");
+    expect(browserSiteLabel({ hostname: "example.com", title: "  A   useful page  " })).toBe(
+      "A useful page",
+    );
+    expect(
+      browserSiteLabel(
+        { hostname: "example.com", title: "A very long page title" },
+        12,
+      ),
+    ).toBe("A very long…");
+  });
+
+  it("always returns five honest starter actions when history is empty", () => {
+    const actions = suggestedAgentActions([]);
+
+    expect(actions).toHaveLength(5);
+    expect(actions.every((action) => !action.personalized)).toBe(true);
+    expect(new Set(actions.map((action) => action.id))).toHaveLength(5);
+  });
+
+  it("personalizes actions from local links without carrying query secrets", () => {
+    const actions = suggestedAgentActions([
+      {
+        id: "visit-00000000-0000-4000-8000-000000000011",
+        tabId,
+        url: "https://user:password@example.com/project?token=private#draft",
+        title: "Project notes",
+        visitedAt: "2026-08-18T12:00:00.000Z",
+      },
+      {
+        id: "visit-00000000-0000-4000-8000-000000000012",
+        tabId,
+        url: "https://docs.example.org/guide?session=private",
+        title: "Implementation guide",
+        visitedAt: "2026-08-18T13:00:00.000Z",
+      },
+    ]);
+
+    expect(actions).toHaveLength(5);
+    expect(actions.filter((action) => action.personalized)).toHaveLength(2);
+    const projectAction = actions.find((action) =>
+      action.prompt.includes("Project notes"),
+    );
+    const guideAction = actions.find((action) =>
+      action.prompt.includes("Implementation guide"),
+    );
+    expect(projectAction?.prompt).toContain("https://example.com/project");
+    expect(projectAction?.prompt).not.toContain("user:password");
+    expect(projectAction?.prompt).not.toContain("token=private");
+    expect(projectAction?.prompt).not.toContain("#draft");
+    expect(guideAction?.prompt).toContain("https://docs.example.org/guide");
+    expect(guideAction?.prompt).not.toContain("session=private");
+  });
 });
