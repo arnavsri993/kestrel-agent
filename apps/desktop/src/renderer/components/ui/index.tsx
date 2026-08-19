@@ -103,13 +103,13 @@ export type StatusTone =
   | "neutral";
 
 const statusIcons: Record<StatusTone, string> = {
-  "needs-approval": "warning",
-  running: "agent",
-  verified: "check-circle",
-  error: "alert-circle",
-  warning: "warning",
-  info: "info",
-  neutral: "info",
+  "needs-approval": "alert-triangle-filled",
+  running: "loader",
+  verified: "check-circle-filled",
+  error: "x-circle-filled",
+  warning: "alert-triangle-filled",
+  info: "info-filled",
+  neutral: "info-filled",
 };
 
 export function Status({

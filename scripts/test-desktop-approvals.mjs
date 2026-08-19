@@ -29,7 +29,7 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
-	await page.getByRole("heading", { name: "How can I help?" }).waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 
 	await openKestrelDestination(page, "Approvals");
 	await page.getByRole("heading", { name: "Review this action" }).waitFor();
