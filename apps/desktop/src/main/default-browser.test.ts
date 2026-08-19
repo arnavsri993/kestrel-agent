@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { RendererRequestSchema } from "@kestrel/shared-types";
-import { canRegisterAsDefaultBrowser } from "./default-browser";
+import {
+	canRegisterAsDefaultBrowser,
+	isPackagedKestrelRuntime,
+} from "./default-browser";
+
+describe("isPackagedKestrelRuntime", () => {
+	it("keeps the branded development shell in development mode", () => {
+		expect(isPackagedKestrelRuntime(true, "development")).toBe(false);
+	});
+
+	it("recognizes an installed Kestrel app as packaged", () => {
+		expect(isPackagedKestrelRuntime(true, "production")).toBe(true);
+	});
+});
 
 describe("default browser registration", () => {
 	it("does not expose the Electron development shell as Kestrel", () => {
