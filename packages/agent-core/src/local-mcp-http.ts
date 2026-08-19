@@ -60,10 +60,10 @@ function originTargetsNonLoopbackHost(origin: string): boolean {
 	try {
 		const parsed = new URL(origin);
 		if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-			return false;
+			return true;
 		return !isLoopbackHostname(parsed.hostname.replace(/^\[|\]$/g, ""));
 	} catch {
-		return false;
+		return true;
 	}
 }
 

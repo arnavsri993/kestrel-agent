@@ -308,7 +308,10 @@ describe("isolated browser automation and visual validation", () => {
 				{ approvalStatus: "approved" },
 			),
 		).toMatchObject({
-			output: { downloads: [{ filename: "report.pdf", status: "completed" }] },
+			output: {
+				downloads: [{ filename: "report.pdf", status: "completed" }],
+				trust: "untrusted_browser",
+			},
 		});
 		expect(
 			(
