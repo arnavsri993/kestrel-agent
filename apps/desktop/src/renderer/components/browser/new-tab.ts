@@ -109,7 +109,7 @@ export function frequentBrowserSites(
 
 /**
  * Build exactly five editable prompt starters. Personalized rows are derived
- * only from the same local history used by Recommended links, then honest
+ * only from the same local history used by Frequent tabs, then honest
  * general starters fill any remaining slots.
  */
 export function suggestedAgentActions(
@@ -145,6 +145,15 @@ export function siteInitial(
     site.title[0] ||
     "?"
   ).toUpperCase();
+}
+
+export function siteAccent(hostname: string): string {
+  const palette = ["sage", "blue", "amber", "rose", "violet", "teal"] as const;
+  let hash = 0;
+  for (const character of hostname) {
+    hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  }
+  return palette[Math.abs(hash) % palette.length]!;
 }
 
 function actionForSite(
