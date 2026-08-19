@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
-import type {
-	BrowserAction,
-	BrowserSnapshot,
-	ScreenshotFrame,
+import {
+	annotateAccessibilityTree,
+	type BrowserAction,
+	type BrowserSnapshot,
+	normalizeBrowserElementRef,
+	type ScreenshotFrame,
 } from "@kestrel/agent-core";
 import {
 	type UserBrowserCommand,
@@ -31,6 +33,11 @@ import {
 	type WebContents,
 	WebContentsView,
 } from "electron";
+import {
+	publicInteractiveRefs,
+	rememberElementRefs,
+	targetPointFromBackendNode,
+} from "./browser-backend-node-target";
 import { BrowserExtensionManager } from "./browser-extension-manager";
 import {
 	BrowserTabStore,
@@ -148,6 +155,7 @@ export class UserBrowserService {
 	private readonly partition: Session;
 	private readonly extensionManager: BrowserExtensionManager;
 	private readonly views = new Map<string, ViewRecord>();
+	private readonly elementRefs = new Map<string, Map<string, number>>();
 	private readonly downloadPaths = new Map<string, string>();
 	private readonly webContentsToTab = new Map<number, string>();
 	private readonly now: () => Date;
@@ -391,6 +399,7 @@ export class UserBrowserService {
 			this.state.settings.customSearchUrl,
 		);
 		const record = this.ensureView(tab);
+		this.elementRefs.delete(tabId);
 		tab.error = undefined;
 		tab.crashed = false;
 		tab.discarded = false;
@@ -620,25 +629,48 @@ export class UserBrowserService {
 		const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
 		const webContents = this.ensureView(tab).view.webContents;
 		if (signal?.aborted) throw signal.reason;
+		const url =
+			sanitizeBrowserUrl(webContents.getURL()) ||
+			sanitizeBrowserUrl(tab.url);
+		if (!url) {
+			this.elementRefs.set(tab.id, new Map());
+			return {
+				url: "about:blank",
+				title: (webContents.getTitle() || tab.title || "New Tab").slice(
+					0,
+					500,
+				),
+				accessibilityTree: { nodes: [] },
+				interactive: [],
+			};
+		}
 		if (!webContents.debugger.isAttached()) webContents.debugger.attach("1.3");
 		const result = (await webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
-		const accessibilityTree = sanitizeAccessibilityTree({
+		const annotated = annotateAccessibilityTree({
 			nodes: (result.nodes ?? []).slice(0, 5_000),
 		});
+		this.elementRefs.set(tab.id, rememberElementRefs(annotated.interactive));
+		const accessibilityTree = sanitizeAccessibilityTree(
+			annotated.accessibilityTree,
+		);
 		if (
 			Buffer.byteLength(JSON.stringify(accessibilityTree), "utf8") >
 			MAX_AX_SNAPSHOT_BYTES
 		)
 			throw new Error("Visible browser accessibility snapshot exceeds 1.5 MB.");
-		const url = sanitizeBrowserUrl(webContents.getURL());
-		if (!url)
-			throw new Error("The selected tab does not have a safe readable URL.");
 		return {
 			url,
 			title: webContents.getTitle().slice(0, 500),
 			accessibilityTree,
+			interactive: publicInteractiveRefs(annotated.interactive).map((item) => ({
+				ref: item.ref,
+				role: item.role,
+				...(item.name
+					? { name: String(sanitizeAccessibilityTree(item.name)) }
+					: {}),
+			})),
 		};
 	}
 
@@ -700,7 +732,12 @@ export class UserBrowserService {
 		const webContents = record.view.webContents;
 		if (signal.aborted) throw signal.reason;
 		if (action.type === "click") {
-			const point = await this.targetPoint(webContents, action.target, false);
+			const point = await this.targetPoint(
+				webContents,
+				action.target,
+				false,
+				tabId,
+			);
 			if (signal.aborted) throw signal.reason;
 			if (!webContents.debugger.isAttached())
 				webContents.debugger.attach("1.3");
@@ -751,7 +788,7 @@ export class UserBrowserService {
 			}
 			await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
 		} else if (action.type === "type") {
-			await this.targetPoint(webContents, action.target, true);
+			await this.targetPoint(webContents, action.target, true, tabId);
 			if (signal.aborted) throw signal.reason;
 			webContents.insertText(action.text);
 		} else if (action.type === "key") {
@@ -961,6 +998,7 @@ export class UserBrowserService {
 		if (this.sleepingTabsInterval) clearInterval(this.sleepingTabsInterval);
 		this.partition.off("will-download", this.onWillDownload);
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
+		this.elementRefs.clear();
 	}
 
 	private ensureView(tab: UserBrowserTab): ViewRecord {
@@ -1348,6 +1386,7 @@ export class UserBrowserService {
 		const record = this.views.get(tabId);
 		if (!record) return;
 		this.views.delete(tabId);
+		this.elementRefs.delete(tabId);
 		this.webContentsToTab.delete(record.view.webContents.id);
 		if (
 			!this.window.isDestroyed() &&
@@ -1444,9 +1483,17 @@ export class UserBrowserService {
 		webContents: WebContents,
 		selector: string,
 		focus: boolean,
+		tabId: string,
 	): Promise<{ x: number; y: number }> {
 		if (!selector || selector.length > 2_000)
 			throw new Error("Browser selector is invalid.");
+		const ref = normalizeBrowserElementRef(selector);
+		if (ref) {
+			const backendNodeId = this.elementRefs.get(tabId)?.get(ref);
+			if (backendNodeId === undefined)
+				throw new Error("Browser target ref is stale. Take a new snapshot.");
+			return targetPointFromBackendNode(webContents, backendNodeId, focus);
+		}
 		return webContents.executeJavaScript(`(() => {
       const node = document.querySelector(${JSON.stringify(selector)});
       if (!(node instanceof Element)) throw new Error("Browser target was not found.");
@@ -1455,8 +1502,14 @@ export class UserBrowserService {
       const style = getComputedStyle(node);
       if (box.width <= 0 || box.height <= 0 || style.display === "none" || style.visibility === "hidden" || Number(style.opacity) <= 0) throw new Error("Browser target is not visible.");
       if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") throw new Error("Browser target is disabled.");
+      const x = Math.round(Math.max(0, Math.min(innerWidth - 1, box.left + box.width / 2)));
+      const y = Math.round(Math.max(0, Math.min(innerHeight - 1, box.top + box.height / 2)));
+      const hit = document.elementFromPoint(x, y);
+      if (!(hit instanceof Element) || (hit !== node && !node.contains(hit))) {
+        throw new Error("Browser target is obscured or cannot receive pointer input.");
+      }
       ${focus ? "if (node instanceof HTMLElement) node.focus();" : ""}
-      return { x: Math.round(Math.max(0, Math.min(innerWidth - 1, box.left + box.width / 2))), y: Math.round(Math.max(0, Math.min(innerHeight - 1, box.top + box.height / 2))) };
+      return { x, y };
     })()`);
 	}
 }

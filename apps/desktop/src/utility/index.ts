@@ -21,6 +21,7 @@ import {
 	installBrowserTools,
 	installCodeIntelligenceTools,
 	installGoogleWorkspaceTools,
+	LocalBrowserMcpServer,
 	type LanguageServerClient,
 	loadSignedManagedPolicy,
 	type ScreenshotFrame,
@@ -61,6 +62,7 @@ if (!port)
 	);
 
 let core: AgentCore | undefined;
+let browserMcp: LocalBrowserMcpServer | undefined;
 let languageServer: LanguageServerClient | undefined;
 let automationTimer: NodeJS.Timeout | undefined;
 let automationRunning = false;
@@ -378,6 +380,15 @@ port.on("message", async ({ data }) => {
 					core.runtime.allowTools(session.id, browserToolNames, {
 						preserveUpdatedAt: true,
 					});
+			browserMcp = new LocalBrowserMcpServer({
+				runtime: core.runtime,
+				sessionId: mainSession.id,
+			});
+			const browserMcpEndpoint = await browserMcp.start();
+			core.attachCodexBrowserMcp({
+				url: browserMcpEndpoint.url,
+				token: browserMcpEndpoint.token,
+			});
 			const configuredLanguageServer = await environmentLanguageServerClient();
 			if (configuredLanguageServer) {
 				languageServer = configuredLanguageServer.client;
@@ -440,6 +451,8 @@ port.on("message", async ({ data }) => {
 			automationTimer.unref();
 			port.postMessage({ type: "ready" });
 		} catch (error) {
+			await browserMcp?.stop();
+			browserMcp = undefined;
 			const message =
 				error instanceof Error ? error.message : "Core bootstrap failed";
 			console.error("Kestrel Agent Core bootstrap failed:", error);
@@ -473,6 +486,8 @@ port.on("message", async ({ data }) => {
 			pending.reject(new Error("Agent Core is shutting down."));
 		}
 		browserPending.clear();
+		await browserMcp?.stop();
+		browserMcp = undefined;
 		await languageServer?.close();
 		await core?.close();
 		process.exit(0);

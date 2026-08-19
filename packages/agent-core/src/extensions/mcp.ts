@@ -652,11 +652,23 @@ export interface McpRuntimeAccess {
 
 export class McpRuntimeServer {
 	private initialized = false;
+	private readonly toolFilter: ((name: string) => boolean) | undefined;
+	private readonly serverName: string;
+	private readonly serverTitle: string;
 
 	constructor(
 		private readonly runtime: AgentRuntime,
 		private readonly sessionId: string,
-	) {}
+		options?: {
+			toolFilter?: (name: string) => boolean;
+			serverName?: string;
+			serverTitle?: string;
+		},
+	) {
+		this.toolFilter = options?.toolFilter;
+		this.serverName = options?.serverName ?? "kestrel-runtime";
+		this.serverTitle = options?.serverTitle ?? "Kestrel Runtime";
+	}
 
 	async handle(
 		message: JsonRpcMessage,
@@ -677,8 +689,8 @@ export class McpRuntimeServer {
 						protocolVersion: MCP_PROTOCOL_VERSION,
 						capabilities: { tools: { listChanged: false } },
 						serverInfo: {
-							name: "kestrel-runtime",
-							title: "Kestrel Runtime",
+							name: this.serverName,
+							title: this.serverTitle,
 							version: "0.1.0",
 							description: "Policy-scoped Kestrel tools",
 						},
@@ -695,6 +707,10 @@ export class McpRuntimeServer {
 							.filter(
 								(tool) => access.allowMutatingTools || tool.descriptor.readOnly,
 							)
+							.filter(
+								(tool) =>
+									!this.toolFilter || this.toolFilter(tool.descriptor.name),
+							)
 							.map((tool) => ({
 								name: tool.descriptor.name,
 								title: tool.descriptor.title,
@@ -706,6 +722,8 @@ export class McpRuntimeServer {
 				};
 			if (message.method === "tools/call") {
 				const name = String(message.params?.name ?? "");
+				if (this.toolFilter && !this.toolFilter(name))
+					throw new Error("Tool is not exposed by this MCP server.");
 				const tool = this.runtime
 					.modelTools(this.sessionId)
 					.find((candidate) => candidate.descriptor.name === name);

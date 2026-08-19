@@ -97,6 +97,8 @@ import { PetHatchManager } from "./pet-hatch";
 import { PetManager } from "./pets";
 import { PresenceManager } from "./presence";
 import {
+	CodexAppServerProvider,
+	type CodexBrowserMcpAttachment,
 	createEnvironmentModelProviders,
 	type ModelContentPart,
 	type ModelProvider,
@@ -2764,6 +2766,13 @@ export class AgentCore {
 		}
 	}
 
+	attachCodexBrowserMcp(attachment: CodexBrowserMcpAttachment): void {
+		for (const provider of this.providerPool.list()) {
+			if (provider instanceof CodexAppServerProvider)
+				provider.attachBrowserMcp(attachment);
+		}
+	}
+
 	async close(): Promise<void> {
 		for (const active of this.activeStreams.values())
 			active.controller.abort(new Error("Agent Core is shutting down."));
@@ -2806,6 +2815,7 @@ export {
 export { readBoundedResponseBytes } from "./bounded-http";
 export {
 	type BrowserAction,
+	type BrowserActionResult,
 	type BrowserAutomationBackend,
 	BrowserController,
 	type BrowserDiagnostic,
@@ -2819,6 +2829,21 @@ export {
 	type VisualValidationResult,
 	VisualValidator,
 } from "./browser-automation";
+export {
+	annotateAccessibilityTree,
+	ELEMENT_REF_PATTERN,
+	isBrowserElementRef,
+	normalizeBrowserElementRef,
+	type AnnotatedBrowserTree,
+	type BrowserInteractiveRef,
+} from "./browser-element-refs";
+export {
+	diffBrowserSnapshots,
+	type BrowserObservationChange,
+	type BrowserObservationDiff,
+	type BrowserObservationNode,
+	type BrowserObservationSnapshot,
+} from "./browser-observation";
 export {
 	CAPABILITY_CATALOG,
 	type CapabilityCatalogEntry,
@@ -2893,6 +2918,10 @@ export {
 	StdioMcpTransport,
 	StreamableHttpMcpTransport,
 } from "./extensions/mcp";
+export {
+	LocalBrowserMcpServer,
+	type LocalBrowserMcpServerOptions,
+} from "./local-mcp-http";
 export {
 	type InstalledPlugin,
 	PLUGIN_SIGNATURE_PATH,

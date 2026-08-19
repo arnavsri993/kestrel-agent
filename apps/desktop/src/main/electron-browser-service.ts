@@ -2,14 +2,16 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type {
-	BrowserAction,
-	BrowserDiagnostic,
-	BrowserDownload,
-	BrowserSnapshot,
-	BrowserViewport,
-	DesktopAction,
-	ScreenshotFrame,
+import {
+	annotateAccessibilityTree,
+	type BrowserAction,
+	type BrowserDiagnostic,
+	type BrowserDownload,
+	type BrowserSnapshot,
+	type BrowserViewport,
+	type DesktopAction,
+	normalizeBrowserElementRef,
+	type ScreenshotFrame,
 } from "@kestrel/agent-core";
 import {
 	app,
@@ -19,6 +21,11 @@ import {
 	type Session,
 	systemPreferences,
 } from "electron";
+import {
+	publicInteractiveRefs,
+	rememberElementRefs,
+	targetPointFromBackendNode,
+} from "./browser-backend-node-target";
 
 export type AutomationBrowserBackendWireRequest =
 	| { operation: "create"; allowedOrigins: string[] }
@@ -91,6 +98,7 @@ function origin(value: string): string | undefined {
 
 export class ElectronBrowserService {
 	private readonly sessions = new Map<string, BrowserRecord>();
+	private readonly elementRefs = new Map<string, Map<string, number>>();
 
 	async handle(
 		request: AutomationBrowserBackendWireRequest,
@@ -279,6 +287,7 @@ export class ElectronBrowserService {
 			throw new Error(
 				"Electron browser navigation is outside the origin allowlist.",
 			);
+		this.elementRefs.delete(id);
 		const abort = () => window.webContents.stop();
 		signal.addEventListener("abort", abort, { once: true });
 		try {
@@ -290,12 +299,24 @@ export class ElectronBrowserService {
 	}
 
 	private async targetPoint(
+		sessionId: string,
 		window: BrowserWindow,
 		selector: string,
 		focus = false,
 	): Promise<{ x: number; y: number }> {
 		if (!selector || selector.length > 2_000)
 			throw new Error("Browser selector is invalid.");
+		const ref = normalizeBrowserElementRef(selector);
+		if (ref) {
+			const backendNodeId = this.elementRefs.get(sessionId)?.get(ref);
+			if (backendNodeId === undefined)
+				throw new Error("Browser target ref is stale. Take a new snapshot.");
+			return targetPointFromBackendNode(
+				window.webContents,
+				backendNodeId,
+				focus,
+			);
+		}
 		const result = (await window.webContents.executeJavaScript(
 			`(async () => {
       const node = document.querySelector(${JSON.stringify(selector)});
@@ -354,7 +375,7 @@ export class ElectronBrowserService {
 		const { window } = this.require(id);
 		if (signal.aborted) throw signal.reason;
 		if (action.type === "click") {
-			const point = await this.targetPoint(window, action.target);
+			const point = await this.targetPoint(id, window, action.target);
 			if (signal.aborted) throw signal.reason;
 			// BrowserWindow sessions stay hidden, so Electron's window-level input
 			// dispatch can be dropped by a headless runner. CDP input dispatch keeps
@@ -424,7 +445,7 @@ export class ElectronBrowserService {
 				true,
 			);
 		} else if (action.type === "type") {
-			await this.targetPoint(window, action.target, true);
+			await this.targetPoint(id, window, action.target, true);
 			if (signal.aborted) throw signal.reason;
 			window.webContents.insertText(action.text);
 		} else if (action.type === "key") {
@@ -471,10 +492,15 @@ export class ElectronBrowserService {
 		const result = (await window.webContents.debugger.sendCommand(
 			"Accessibility.getFullAXTree",
 		)) as { nodes?: unknown[] };
+		const annotated = annotateAccessibilityTree({
+			nodes: (result.nodes ?? []).slice(0, 5_000),
+		});
+		this.elementRefs.set(id, rememberElementRefs(annotated.interactive));
 		return {
 			url: window.webContents.getURL(),
 			title: window.webContents.getTitle(),
-			accessibilityTree: { nodes: (result.nodes ?? []).slice(0, 5_000) },
+			accessibilityTree: annotated.accessibilityTree,
+			interactive: publicInteractiveRefs(annotated.interactive),
 		};
 	}
 
@@ -647,6 +673,7 @@ export class ElectronBrowserService {
 		const record = this.sessions.get(id);
 		if (!record) return;
 		this.sessions.delete(id);
+		this.elementRefs.delete(id);
 		if (record.window.webContents.debugger.isAttached())
 			record.window.webContents.debugger.detach();
 		if (!record.window.isDestroyed()) record.window.destroy();

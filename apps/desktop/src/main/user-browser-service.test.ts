@@ -458,6 +458,53 @@ describe("UserBrowserService", () => {
     );
   });
 
+  it("returns an empty snapshot for a blank tab without a safe URL", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    const snapshot = await service.snapshot(tab.id);
+    expect(snapshot).toEqual({
+      url: "about:blank",
+      title: "New Tab",
+      accessibilityTree: { nodes: [] },
+      interactive: [],
+    });
+    expect(electron.state.views[0]?.webContents.debugger.attach).not.toHaveBeenCalled();
+  });
+
+  it("mints snapshot refs for interactive accessibility nodes", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+    contents.title = "Example";
+    contents.debugger.sendCommand.mockResolvedValue({
+      nodes: [
+        {
+          nodeId: "1",
+          role: { value: "button" },
+          name: { value: "Save" },
+          backendDOMNodeId: 9,
+        },
+        {
+          nodeId: "2",
+          role: { value: "link" },
+          name: { value: "Home" },
+          backendDOMNodeId: 10,
+        },
+      ],
+    });
+
+    const snapshot = await service.snapshot(tab.id);
+    expect(snapshot.interactive).toEqual([
+      { ref: "e1", role: "button", name: "Save" },
+      { ref: "e2", role: "link", name: "Home" },
+    ]);
+    expect(snapshot.accessibilityTree).toMatchObject({
+      nodes: [{ ref: "e1" }, { ref: "e2" }],
+    });
+  });
+
   it("inserts a selected code only into the active page's matching domain", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
