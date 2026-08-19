@@ -1542,14 +1542,23 @@ body { font-family: var(--sans); }
 /* Persistent agent rail: context, task, up to three recent rows, composer, nav. */
 .ai-browser-app { grid-template-columns: minmax(0, 1fr) 360px; }
 .agent-sidebar {
+	display: grid;
 	grid-template-rows: auto auto minmax(0, 1fr) auto;
 	background: var(--sidebar);
 	border-left: 1px solid var(--line);
 	transition: transform var(--motion-state) var(--ease-kestrel), opacity var(--motion-state) var(--ease-kestrel);
 }
 .agent-sidebar-header {
+	grid-row: 1;
 	padding: 0 16px 12px;
 	border-bottom: 1px solid var(--line);
+}
+.agent-sidebar-assist {
+	grid-row: 2;
+	min-height: 0;
+}
+.agent-sidebar-assist:empty {
+	display: none;
 }
 .agent-sidebar-drag { height: 24px; margin-inline: -16px; }
 .agent-sidebar-identity { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
@@ -1682,6 +1691,7 @@ body { font-family: var(--sans); }
 .agent-conversation-host {
 	position: relative;
 	z-index: 4;
+	grid-row: 3;
 	min-height: 0;
 	overflow: visible;
 }
@@ -1721,6 +1731,7 @@ body { font-family: var(--sans); }
 .agent-conversation-host .send-button { width: 28px; height: 28px; min-height: 28px; border-radius: 50%; }
 
 .agent-sidebar-footer {
+	grid-row: 4;
 	padding: 8px 16px 12px;
 	border-top: 1px solid var(--line);
 	background: var(--sidebar);

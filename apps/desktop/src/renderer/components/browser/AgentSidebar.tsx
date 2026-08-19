@@ -4,6 +4,10 @@ import { Brand } from "./Brand";
 import { Icon } from "../Icon";
 import { Status, type StatusTone } from "../ui";
 import { sessionTitleForDisplay } from "../../chat-title";
+import {
+	recentSidebarSessions,
+	sidebarReviewVisible,
+} from "./agent-sidebar";
 
 const agentStateMeta: Record<AgentState, { label: string; tone: StatusTone }> = {
 	idle: { label: "Ready", tone: "verified" },
@@ -49,14 +53,19 @@ export function AgentSidebar({
 	onNavigate(destination: "browser" | "agent" | "approvals" | "settings"): void;
 	onReviewApprovals?(): void;
 }) {
-	const sortedSessions = [...sessions].sort((left, right) =>
-		right.updatedAt.localeCompare(left.updatedAt),
-	);
+	const recentSessions = recentSidebarSessions(sessions);
 	const activeSession = sessions.find((session) => session.id === activeSessionId);
 	const stateMeta = agentStateMeta[agentState];
 	const currentTaskTitle = activeSession
 		? sessionTitleForDisplay(activeSession.title)
 		: "New task";
+	const showReview = Boolean(
+		onReviewApprovals &&
+			sidebarReviewVisible({
+				agentState,
+				pendingCount: pendingApprovals,
+			}),
+	);
 	return (
     <aside
       className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}`}
@@ -96,20 +105,20 @@ export function AgentSidebar({
 			</strong>
 			<Status tone={stateMeta.tone}>{stateMeta.label}</Status>
 		  </div>
-		  {agentState === "waiting_approval" && onReviewApprovals && (
-			<button type="button" className="agent-approval-action" onClick={onReviewApprovals}>
+		  {showReview && (
+			<button type="button" className="agent-approval-action" onClick={() => onReviewApprovals?.()}>
 			  <Icon name="alert-triangle-filled" />
 			  <span>Your decision is needed</span>
 			  <strong>Review</strong>
 			</button>
 		  )}
 	        </section>
-	        {sortedSessions.length > 0 && <section className="agent-sidebar-history" aria-label="Recent">
+	        {recentSessions.length > 0 && <section className="agent-sidebar-history" aria-label="Recent">
           <div className="agent-sidebar-section-heading">
             <span>Recent</span>
           </div>
           <div className="agent-sidebar-history-list">
-              {sortedSessions.slice(0, 3).map((session) => (
+              {recentSessions.map((session) => (
                 <button
                   type="button"
                   key={session.id}
@@ -127,7 +136,7 @@ export function AgentSidebar({
           </div>
         </section>}
       </div>
-      {communicationAssistant}
+      <div className="agent-sidebar-assist">{communicationAssistant}</div>
       <div className="agent-conversation-host">{children}</div>
       <div className="agent-sidebar-footer">
         <nav aria-label="Kestrel destinations">
