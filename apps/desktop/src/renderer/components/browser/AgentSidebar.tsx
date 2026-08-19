@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { AgentState, RuntimeSession, UserBrowserTab } from "@kestrel/shared-types";
-import { Brand } from "./Brand";
+import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { Status, type StatusTone } from "../ui";
 import { sessionTitleForDisplay } from "../../chat-title";
@@ -76,7 +76,7 @@ export function AgentSidebar({
 			<div className="agent-sidebar-header">
 				<div className="agent-sidebar-drag" />
 				<div className="agent-sidebar-identity">
-					<Brand />
+					<BrandMark className="agent-sidebar-mark" />
 					<span className="agent-sidebar-agent-name">{agentName}</span>
 					<button
 						type="button"

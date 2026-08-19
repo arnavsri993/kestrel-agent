@@ -71,14 +71,18 @@
 	gap: 8px;
 }
 
-.agent-sidebar-identity .browser-brand {
-	min-width: 0;
-	padding-inline: 0;
+.agent-sidebar-mark {
+	width: 22px;
+	height: 22px;
+	color: var(--ink);
 }
 
 .agent-sidebar-agent-name {
 	max-width: none;
 	overflow: hidden;
+	color: var(--ink);
+	font-size: 13.5px;
+	font-weight: 650;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -166,6 +170,14 @@
 .agent-sidebar-assist {
 	min-width: 0;
 	min-height: 0;
+}
+
+/* The rail already has identity, task, and Recent. Do not reprint a full
+ * empty-chat page ("Continue this chat" / conversation-only) above the composer. */
+.agent-conversation-host .new-task-center,
+.agent-conversation-host .empty-session-note,
+.agent-conversation-host .runtime-suggestions {
+	display: none;
 }
 
 .agent-sidebar-history-list button {
