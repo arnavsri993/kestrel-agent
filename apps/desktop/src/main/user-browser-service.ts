@@ -54,6 +54,7 @@ import {
 	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
 	sanitizeUntrustedBrowserValue,
+	upsertOriginFavicon,
 } from "./browser-tab-store";
 import {
 	isKestrelAppPageUrl,
@@ -502,6 +503,7 @@ export class UserBrowserService {
 
 	clearHistory(): UserBrowserState {
 		this.state.history = [];
+		this.state.originFavicons = [];
 		for (const record of this.views.values())
 			record.view.webContents.navigationHistory.clear();
 		this.commit();
@@ -542,7 +544,10 @@ export class UserBrowserService {
 		cache?: boolean;
 	}): Promise<UserBrowserState> {
 		this.assertAvailable();
-		if (options.history) this.state.history = [];
+		if (options.history) {
+			this.state.history = [];
+			this.state.originFavicons = [];
+		}
 		if (options.cache && typeof this.partition.clearCache === "function")
 			await this.partition.clearCache();
 		if (
@@ -1828,6 +1833,7 @@ export class UserBrowserService {
 		const days = this.state.settings.historyRetentionDays;
 		if (days === 0) {
 			this.state.history = [];
+			this.state.originFavicons = [];
 			return;
 		}
 		const cutoff = this.now().getTime() - days * 24 * 60 * 60 * 1_000;
@@ -1853,6 +1859,22 @@ export class UserBrowserService {
 		return candidate;
 	}
 
+	private rememberOriginFavicon(url: string, faviconDataUrl: string): boolean {
+		const parsed = safePageUrl(url);
+		if (!parsed) return false;
+		const existing = this.state.originFavicons.find(
+			(item) => item.origin === parsed.origin,
+		);
+		if (existing?.faviconDataUrl === faviconDataUrl) return false;
+		this.state.originFavicons = upsertOriginFavicon(
+			this.state.originFavicons,
+			parsed.origin,
+			faviconDataUrl,
+			this.now().toISOString(),
+		);
+		return true;
+	}
+
 	private async loadFavicon(tab: UserBrowserTab, value: string): Promise<void> {
 		try {
 			const response = await this.partition.fetch(value, {
@@ -1865,7 +1887,8 @@ export class UserBrowserService {
 			const image = nativeImage.createFromBuffer(bytes);
 			if (image.isEmpty()) return;
 			tab.faviconDataUrl = image.resize({ width: 32, height: 32 }).toDataURL();
-			this.emit();
+			if (this.rememberOriginFavicon(tab.url, tab.faviconDataUrl)) this.commit();
+			else this.emit();
 		} catch {
 			// Favicons are optional and must never affect navigation.
 		}

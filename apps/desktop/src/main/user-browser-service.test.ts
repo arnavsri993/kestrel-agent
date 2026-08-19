@@ -115,6 +115,7 @@ vi.mock("electron", () => ({
   shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => "") },
 }));
 
+import { nativeImage } from "electron";
 import { UserBrowserService } from "./user-browser-service";
 
 const directories: string[] = [];
@@ -836,5 +837,48 @@ describe("UserBrowserService", () => {
     expect(createdTab).toMatchObject({
       url: googleAuthUrl,
     });
+  });
+
+  it("stores the page favicon for frequent tabs and forgets it with history", async () => {
+    vi.mocked(nativeImage.createFromBuffer).mockReturnValue({
+      isEmpty: () => false,
+      resize: () => ({ toDataURL: () => "data:image/png;base64,AAAA" }),
+    } as never);
+    const { service } = createService();
+    const partition = electron.state.partitions[0]!.instance as {
+      fetch: ReturnType<typeof vi.fn>;
+    };
+    partition.fetch.mockResolvedValue({
+      ok: true,
+      headers: { get: () => "4" },
+      arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+    contents.title = "Example";
+    contents.emit("did-navigate", {}, contents.url, 200, "OK");
+    contents.emit("page-favicon-updated", {}, ["https://example.com/favicon.ico"]);
+
+    await vi.waitFor(() => {
+      expect(service.getState().tabs[0]?.faviconDataUrl).toBe(
+        "data:image/png;base64,AAAA",
+      );
+    });
+    expect(service.getState().originFavicons).toEqual([
+      {
+        origin: "https://example.com",
+        faviconDataUrl: "data:image/png;base64,AAAA",
+        updatedAt: expect.any(String),
+      },
+    ]);
+
+    service.clearHistory();
+    expect(service.getState().history).toEqual([]);
+    expect(service.getState().originFavicons).toEqual([]);
+    vi.mocked(nativeImage.createFromBuffer).mockReturnValue({
+      isEmpty: () => true,
+    } as never);
   });
 });
