@@ -3,9 +3,11 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  type ReactNode,
   type RefObject,
 } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
+import { parseKestrelAppPage } from "../../../utility/browser-app-pages";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BrowserToolbar } from "./BrowserToolbar";
@@ -26,6 +28,7 @@ export function BrowserWorkspace({
   onOpenMenu,
   onShowShortcuts,
   onToggleSidebar,
+  appPage,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -40,6 +43,7 @@ export function BrowserWorkspace({
   onOpenMenu(): void;
   onShowShortcuts?(): void;
   onToggleSidebar?(): void;
+  appPage?: ReactNode;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -61,7 +65,10 @@ export function BrowserWorkspace({
     zoomReset,
   } = browser;
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
-  const nativePageVisible = Boolean(activeTab?.url && !activeTab.error);
+  const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
+  const nativePageVisible = Boolean(
+    activeTab?.url && !activeTab.error && !activeAppPage,
+  );
 
   const syncBounds = useCallback(() => {
     const node = viewportRef.current;
@@ -261,6 +268,9 @@ export function BrowserWorkspace({
       } else if (key === "j") {
         event.preventDefault();
         onOpenDownloads();
+      } else if (key === "k" || (key === "p" && event.shiftKey)) {
+        event.preventDefault();
+        onOpenMenu();
       } else if (key === ",") {
         event.preventDefault();
         onOpenSettings?.();
@@ -363,6 +373,7 @@ export function BrowserWorkspace({
         role="tabpanel"
         aria-label={activeTab.title}
       >
+        {activeAppPage && appPage}
         {!activeTab.url && (
           <NewTabPage
             history={state.history}

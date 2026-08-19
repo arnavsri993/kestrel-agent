@@ -54,7 +54,8 @@ modern, fast, and honest about approval and data boundaries.
   the pinned composer, and four destinations: Browser, Agent, Approvals, and
   Settings. Empty Recent is omitted. Pending approval appears only in the task
   card and as a white dot on Approvals; there is no duplicate banner or footer
-  status line. History, Downloads, and specialist tools remain reachable from
+  status line. History, Downloads, Settings, and specialist tools open as
+  browser tabs rather than covering the workspace. They remain reachable from
   Capabilities and keyboard commands.
 - Browser Home is flat canvas. Its focal point is the 56px composer below a
   40px greeting. Frequent tabs appear only when local history exists.

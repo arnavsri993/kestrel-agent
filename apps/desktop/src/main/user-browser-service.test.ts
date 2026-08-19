@@ -169,6 +169,24 @@ describe("UserBrowserService", () => {
     expect(state.tabs[0]).toMatchObject({ title: "New Tab", url: "" });
   });
 
+  it("opens kestrel app pages as tabs without creating a web view", async () => {
+    const { service } = createService();
+    const before = electron.state.views.length;
+    const state = await service.createTab("kestrel://settings", true);
+    const tab = state.tabs.find((item) => item.id === state.activeTabId)!;
+    expect(tab).toMatchObject({
+      title: "Settings",
+      url: "kestrel://settings",
+      loading: false,
+    });
+    expect(electron.state.views.length).toBe(before);
+    await service.setContentBounds(
+      { x: 0, y: 80, width: 800, height: 600 },
+      true,
+    );
+    expect(electron.state.views.length).toBe(before);
+  });
+
   it("uses the production persistent partition by default and preserves an explicit custom partition", () => {
     const first = createService();
     expect(electron.state.partitions[0]).toMatchObject({

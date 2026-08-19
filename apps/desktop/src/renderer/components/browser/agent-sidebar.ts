@@ -1,4 +1,5 @@
 import type { AgentState, RuntimeSession } from "@kestrel/shared-types";
+import { parseKestrelAppPage } from "../../../utility/browser-app-pages";
 
 export const SIDEBAR_RECENT_LIMIT = 3;
 
@@ -39,8 +40,9 @@ export function sidebarApprovalsNavTarget(input: {
 }
 
 export function sidebarActiveDestination(page: string): SidebarDestination {
-	if (page === "agent" || page === "approvals" || page === "settings") {
-		return page;
+	const appPage = parseKestrelAppPage(page)?.id ?? page;
+	if (appPage === "agent" || appPage === "approvals" || appPage === "settings") {
+		return appPage;
 	}
 	return "browser";
 }
