@@ -754,13 +754,12 @@ body:has(.ai-browser-app),
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) 26px;
 	flex: 1 1 200px;
-	min-width: 44px;
+	/* Keep titles readable until the strip actually runs out of room. */
+	min-width: 112px;
 	max-width: 280px;
 	height: 34px;
 	border-radius: 8px 8px 0 0;
 	color: var(--muted);
-	container-name: browser-tab;
-	container-type: inline-size;
 	cursor: pointer;
 	transition: background 0.12s ease, color 0.12s ease, width 0.15s cubic-bezier(0.2, 0, 0, 1), max-width 0.15s cubic-bezier(0.2, 0, 0, 1), flex-basis 0.15s cubic-bezier(0.2, 0, 0, 1);
 }
@@ -910,42 +909,6 @@ body:has(.ai-browser-app),
 .browser-tab-close svg {
 	width: 11px;
 	height: 11px;
-}
-
-/*
- * Keep the normal strip spacious, then let the favicon become the stable
- * identity as more tabs compete for the same row. Container queries make this
- * responsive to the actual window width rather than a guessed tab count.
- */
-@container browser-tab (max-width: 96px) {
-	.browser-tab {
-		grid-template-columns: 1fr;
-	}
-	.browser-tab > button[role="tab"] {
-		justify-content: center;
-		gap: 0;
-		padding: 0;
-	}
-	.browser-tab-title {
-		display: none;
-	}
-	.browser-tab-close {
-		position: absolute;
-		top: 50%;
-		right: 2px;
-		margin: 0;
-		transform: translateY(-50%);
-	}
-	.browser-tab.active .browser-tab-close {
-		opacity: 0;
-		pointer-events: none;
-	}
-	.browser-tab:hover .browser-tab-close,
-	.browser-tab-close:focus-visible,
-	.browser-tab.active .browser-tab-close:focus-visible {
-		opacity: 1;
-		pointer-events: auto;
-	}
 }
 
 /* The form owns the focus treatment; do not paint a second ring around the input. */
