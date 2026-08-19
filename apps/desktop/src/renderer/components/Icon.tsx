@@ -70,6 +70,7 @@ const paths: Record<string, string[]> = {
 	artifacts: ["M4 5h6l2 2h8v12H4z", "M8 12l2-2 3 4 2-2 3 4H7z"],
 	extensions: ["M8 4h8v6h4v8h-6v2H6v-6H4V6h4z", "M8 10h6v4H8z"],
 	arrow: ["M5 12h14", "M14 7l5 5-5 5"],
+	expand: ["M8 3H3v5", "M3 3l6 6", "M16 21h5v-5", "M21 21l-6-6"],
 	check: ["M5 12l4 4L19 6"],
 	pause: ["M8 5v14M16 5v14"],
 	voice: ["M5 10v4M9 7v10M13 5v14M17 8v8M21 10v4"],

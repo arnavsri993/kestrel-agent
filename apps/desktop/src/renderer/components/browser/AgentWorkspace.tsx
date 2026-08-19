@@ -59,7 +59,9 @@ export function AgentWorkspace({
 						<BrandMark />
 					</span>
 					<div>
-						<h1 id="agent-workspace-title">Agent Workspace</h1>
+						<h1 id="agent-workspace-title" tabIndex={-1}>
+							Agent Workspace
+						</h1>
 						<p>Delegated tasks stay connected to the work that created them.</p>
 					</div>
 				</div>
