@@ -481,7 +481,33 @@ try {
 	);
 
 	await activeViewScript("document.querySelector('#popup').click() ");
-	assert.equal((await browserState()).tabs.length, 1);
+	state = await waitForBrowserState(
+		(value) =>
+			value.tabs.length === 2 &&
+			value.tabs.some((tab) => tab.url.endsWith("/popup")),
+		"Popup tab did not open from in-page click",
+	);
+	let popupTab = state.tabs.find((tab) => tab.url.endsWith("/popup"));
+	assert(popupTab);
+	assert.equal((await nativeViewState()).browserWindowCount, 1);
+	await page.evaluate(
+		async ({ popupTabId, originalTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: popupTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: originalTabId,
+			});
+		},
+		{ popupTabId: popupTab.id, originalTabId: tabId },
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Original tab was not restored after popup close",
+	);
+
 	const openedPopup = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",
@@ -496,9 +522,9 @@ try {
 		(value) =>
 			value.tabs.length === 2 &&
 			value.tabs.some((tab) => tab.url.endsWith("/popup")),
-		"Popup tab did not open",
+		"Popup tab did not open from tool act",
 	);
-	const popupTab = state.tabs.find((tab) => tab.url.endsWith("/popup"));
+	popupTab = state.tabs.find((tab) => tab.url.endsWith("/popup"));
 	assert(popupTab);
 	assert.equal((await nativeViewState()).browserWindowCount, 1);
 	await page.evaluate(

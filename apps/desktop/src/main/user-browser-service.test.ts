@@ -218,28 +218,20 @@ describe("UserBrowserService", () => {
     expect(view.visible).toBe(false);
   });
 
-  it("opens one user-initiated safe popup as a managed tab and denies script popup spam", async () => {
+  it("opens user-initiated safe links as a managed tab and denies unsafe urls", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "example.com");
     const source = electron.state.views[0]!.webContents;
 
+    // Unsafe URLs (like file://, javascript:, etc.) are denied
     expect(source.windowOpenHandler?.({
-      url: "https://script.example/path",
-      disposition: "new-window",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(1);
-
-    source.emit("before-mouse-event", {}, { type: "mouseDown" });
-    source.emit("before-mouse-event", {}, { type: "mouseUp" });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(source.windowOpenHandler?.({
-      url: "https://late-script.example/path",
+      url: "file:///etc/passwd",
       disposition: "foreground-tab",
     })).toEqual({ action: "deny" });
     expect(service.getState().tabs).toHaveLength(1);
 
-    source.emit("before-mouse-event", {}, { type: "mouseDown" });
+    // Safe page links open as a managed tab
     expect(source.windowOpenHandler?.({
       url: "https://open.example/path",
       disposition: "foreground-tab",
@@ -247,19 +239,9 @@ describe("UserBrowserService", () => {
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState()).toMatchObject({ activeTabId: expect.any(String) });
     expect(service.getState().tabs.at(-1)).toMatchObject({ url: "https://open.example/path" });
-
-    expect(source.windowOpenHandler?.({
-      url: "https://spam.example/path",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(source.windowOpenHandler?.({
-      url: "file:///etc/passwd",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(2);
   });
 
-  it("awaits CDP clicks and scopes one popup to the approved action", async () => {
+  it("awaits CDP clicks and opens a managed tab for new window links", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
     await service.navigate(tab.id, "https://example.com");
@@ -312,11 +294,6 @@ describe("UserBrowserService", () => {
     expect(service.getState().tabs.at(-1)).toMatchObject({
       url: "https://opened.example/path",
     });
-    expect(contents.windowOpenHandler?.({
-      url: "https://spam.example/path",
-      disposition: "foreground-tab",
-    })).toEqual({ action: "deny" });
-    expect(service.getState().tabs).toHaveLength(2);
   });
 
   it("settles an approved click after the source document is destroyed", async () => {
@@ -678,5 +655,28 @@ describe("UserBrowserService", () => {
 
     service.zoomReset(first.id);
     expect(contents.zoomLevel).toBe(0);
+  });
+
+  it("allows 'Continue with Google' and OAuth links to open as a managed tab", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://app.example.com/login");
+    const source = electron.state.views[0]!.webContents;
+
+    const googleAuthUrl =
+      "https://accounts.google.com/o/oauth2/v2/auth?client_id=test-client.apps.googleusercontent.com&redirect_uri=https://app.example.com/auth/callback&response_type=code&scope=openid%20email";
+
+    expect(
+      source.windowOpenHandler?.({
+        url: googleAuthUrl,
+        disposition: "foreground-tab",
+      }),
+    ).toEqual({ action: "deny" });
+
+    await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
+    const createdTab = service.getState().tabs.at(-1);
+    expect(createdTab).toMatchObject({
+      url: googleAuthUrl,
+    });
   });
 });
