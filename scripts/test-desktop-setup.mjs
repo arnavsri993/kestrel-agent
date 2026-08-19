@@ -387,7 +387,9 @@ try {
 		"Meta+N",
 	);
 	await page
-		.getByRole("button", { name: "Add files or choose folder" })
+		.getByRole("button", {
+			name: /Add (?:context files|files or choose folder)/,
+		})
 		.waitFor();
 	await page.locator("#runtime-prompt").waitFor();
 	assert.equal(await page.getByRole("button", { name: /Review a project/ }).count(), 0);
