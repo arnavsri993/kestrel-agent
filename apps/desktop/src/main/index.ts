@@ -1312,7 +1312,7 @@ async function initializeCore(
     agentState = response.snapshot.agentState;
     debugAgentLog("initializeCore succeeded", {});
     void localRuntimeManager()
-      .ensureChatReady()
+      .startManagedIfInstalled()
       .catch(() => undefined);
   } catch (error) {
     // #region agent log
@@ -1463,7 +1463,7 @@ function registerIpc(): void {
     }
     if (request.type === "runtime-run-agent") {
       await localRuntimeManager()
-        .ensureChatReady()
+        .startManagedIfInstalled()
         .catch(() => undefined);
     }
     const overlayAccess =
