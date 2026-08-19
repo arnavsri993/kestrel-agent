@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
 	AdaptiveModelRouter,
 	detectModelRefusal,
+	inferModelTier,
 	ModelRegistry,
 	reframePromptForNeutrality,
 	TaskRequirementAnalyzer,
@@ -183,7 +184,7 @@ describe("adaptive model orchestration", () => {
 		);
 		const decision = item.router.route(requirements, { role: "orchestrator" });
 		expect(decision.selectedModelId).toBe("strong:large");
-		expect(["high", "max"]).toContain(decision.reasoningLevel);
+		expect(["high", "xhigh", "max"]).toContain(decision.reasoningLevel);
 		expect(decision.settings.reviewRequired).toBe(true);
 		expect(decision.settings.parallelism).toBeGreaterThan(1);
 		item.database.close();
@@ -656,6 +657,91 @@ describe("adaptive model orchestration", () => {
 		expect(profile.reliability.refusalCount).toBe(1);
 		expect(profile.reliability.refusalRate).toBeGreaterThan(0);
 
+		item.database.close();
+	});
+
+	it("classifies current hosted models and ignores compact names as frontier", () => {
+		const empty = {
+			complex_reasoning: 0.5,
+			coding: 0.5,
+		} as Record<string, number>;
+		expect(
+			inferModelTier("gpt-5.6-terra", "openai", false, empty),
+		).toBe("frontier");
+		expect(
+			inferModelTier("claude-opus-4-6", "anthropic", false, empty),
+		).toBe("frontier");
+		expect(
+			inferModelTier("claude-sonnet-4-5", "anthropic", false, empty),
+		).toBe("advanced");
+		expect(
+			inferModelTier("claude-haiku-4-5", "anthropic", false, empty),
+		).toBe("standard");
+		expect(inferModelTier("grok-3-mini", "xai", false, empty)).toBe("standard");
+		expect(inferModelTier("llama3.3", "ollama", true, empty)).toBe(
+			"local_private",
+		);
+	});
+
+	it("does not treat everyday wording as research, tools, or code review", () => {
+		const analyzer = new TaskRequirementAnalyzer();
+		const weather = analyzer.analyze(
+			"weather",
+			"What's the latest weather in St. Louis?",
+		);
+		expect(weather.capabilities.research).toBeUndefined();
+		expect(weather.capabilities.tool_use).toBeUndefined();
+		expect(weather.complexity).toBeLessThan(0.3);
+		expect(weather.riskLevel).toBe("read_only");
+
+		const dining = analyzer.analyze(
+			"dining",
+			"Review this restaurant and tell me if I should go.",
+		);
+		expect(dining.capabilities.code_review).toBeUndefined();
+		expect(dining.capabilities.coding).toBeUndefined();
+
+		expect(
+			analyzer.routingPolicy("Think hard about this.", {
+				mode: "balanced",
+				allowExternal: true,
+				preferLocal: false,
+				maximumParallelism: 4,
+				maximumRetries: 2,
+				maximumDelegationDepth: 3,
+				maximumTaskDurationMs: 600_000,
+				requireReviewAboveRisk: "sensitive",
+			}).mode,
+		).toBe("best_quality");
+	});
+
+	it("keeps trivial work off frontier models when a cheaper adequate model exists", () => {
+		const item = fixture([
+			provider({
+				id: "strong",
+				model: "gpt-5.6-terra",
+				reasoningLevels: true,
+			}),
+			provider({
+				id: "cheap",
+				model: "small",
+				capabilities: {
+					technical_writing: 0.82,
+					instruction_following: 0.84,
+					reliability: 0.85,
+					speed: 0.95,
+					cost_efficiency: 0.98,
+				},
+				fastMode: true,
+			}),
+		]);
+		const decision = item.router.route(
+			item.analyzer.analyze("note", "Summarize this note."),
+			{ role: "worker" },
+		);
+		expect(decision.selectedModelId).toBe("cheap:small");
+		expect(decision.reasoningLevel).toBe("low");
+		expect(decision.reasons.join(" ")).toMatch(/thinking to low/i);
 		item.database.close();
 	});
 });

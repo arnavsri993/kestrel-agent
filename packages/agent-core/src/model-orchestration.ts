@@ -234,6 +234,93 @@ export function reframePromptForNeutrality(
 	return updated;
 }
 
+function normalizedModelId(model: string): string {
+	return model.toLowerCase();
+}
+
+function isCompactModelName(model: string): boolean {
+	return /\b(haiku|mini|nano|lite|tiny|small|flash-lite|gpt-oss|8b|7b|3b|1b)\b/.test(
+		model,
+	);
+}
+
+function isPermissiveModelName(model: string, providerId: string): boolean {
+	return (
+		providerId.includes("nous") ||
+		model.includes("uncensored") ||
+		model.includes("dolphin") ||
+		model.includes("hermes") ||
+		model.includes("openrouter/free") ||
+		model.includes("permissive")
+	);
+}
+
+function isFrontierModelName(model: string): boolean {
+	if (isCompactModelName(model)) return false;
+	return (
+		/\bgpt-5(?:\.\d+)?(?:-|$)/.test(model) ||
+		/\b(?:o1|o3|o4)(?:-|$)/.test(model) ||
+		model.includes("gpt-4.5") ||
+		model.includes("claude-opus") ||
+		model.includes("claude-3-opus") ||
+		model.includes("claude-3-7") ||
+		model.includes("gemini-2.5-pro") ||
+		(model.includes("gemini-3") && model.includes("pro")) ||
+		model.includes("gemini-1.5-pro") ||
+		/\bgrok-[34](?:-|$)/.test(model) ||
+		model.includes("deepseek-r1") ||
+		model.includes("gpt-5.6")
+	);
+}
+
+function isAdvancedModelName(model: string): boolean {
+	if (isCompactModelName(model) || isFrontierModelName(model)) return false;
+	return (
+		model.includes("claude-sonnet") ||
+		model.includes("claude-3-5-sonnet") ||
+		model.includes("gpt-4o") ||
+		model.includes("gpt-4.1") ||
+		model.includes("gemini-2.5-flash") ||
+		(model.includes("gemini-3") && model.includes("flash")) ||
+		model.includes("deepseek-v3") ||
+		model.includes("llama-3.3-70b") ||
+		model.includes("command-r-plus") ||
+		model.includes("mistral-large")
+	);
+}
+
+function applyModelNamePriors(
+	model: string,
+	scores: Record<ModelCapability, number>,
+): void {
+	const name = normalizedModelId(model);
+	if (isCompactModelName(name)) {
+		scores.speed = Math.max(scores.speed, 0.92);
+		scores.cost_efficiency = Math.max(scores.cost_efficiency, 0.93);
+		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.48);
+		scores.coding = Math.max(scores.coding, 0.58);
+		return;
+	}
+	if (isFrontierModelName(name)) {
+		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.96);
+		scores.coding = Math.max(scores.coding, 0.94);
+		scores.planning = Math.max(scores.planning, 0.93);
+		scores.code_review = Math.max(scores.code_review, 0.92);
+		scores.backend_architecture = Math.max(scores.backend_architecture, 0.92);
+		scores.instruction_following = Math.max(scores.instruction_following, 0.93);
+		scores.reliability = Math.max(scores.reliability, 0.9);
+		return;
+	}
+	if (isAdvancedModelName(name)) {
+		scores.complex_reasoning = Math.max(scores.complex_reasoning, 0.88);
+		scores.coding = Math.max(scores.coding, 0.88);
+		scores.planning = Math.max(scores.planning, 0.84);
+		scores.code_review = Math.max(scores.code_review, 0.84);
+		scores.instruction_following = Math.max(scores.instruction_following, 0.86);
+		scores.reliability = Math.max(scores.reliability, 0.84);
+	}
+}
+
 export function inferModelTier(
 	model: string,
 	providerId: string,
@@ -244,46 +331,25 @@ export function inferModelTier(
 	if (hints?.tier) return hints.tier;
 	if (local) return "local_private";
 
-	const normalizedModel = model.toLowerCase();
+	const normalizedModel = normalizedModelId(model);
 	const normalizedProvider = providerId.toLowerCase();
 
-	if (
-		normalizedProvider.includes("nous") ||
-		normalizedModel.includes("uncensored") ||
-		normalizedModel.includes("dolphin") ||
-		normalizedModel.includes("hermes") ||
-		normalizedModel.includes("openrouter/free") ||
-		normalizedModel.includes("permissive")
-	) {
+	if (isPermissiveModelName(normalizedModel, normalizedProvider)) {
 		return "permissive_fallback";
 	}
 
+	if (isFrontierModelName(normalizedModel)) return "frontier";
 	if (
-		normalizedModel.includes("gpt-4.5") ||
-		normalizedModel.includes("o3") ||
-		normalizedModel.includes("o1") ||
-		normalizedModel.includes("claude-3-7") ||
-		normalizedModel.includes("claude-3-opus") ||
-		normalizedModel.includes("gemini-2.5-pro") ||
-		normalizedModel.includes("gemini-1.5-pro") ||
-		normalizedModel.includes("grok-3") ||
-		normalizedModel.includes("deepseek-r1") ||
-		((capabilities.complex_reasoning ?? 0) >= 0.95 &&
-			(capabilities.coding ?? 0) >= 0.9)
+		(capabilities.complex_reasoning ?? 0) >= 0.95 &&
+		(capabilities.coding ?? 0) >= 0.9
 	) {
 		return "frontier";
 	}
 
+	if (isAdvancedModelName(normalizedModel)) return "advanced";
 	if (
-		normalizedModel.includes("claude-3-5-sonnet") ||
-		normalizedModel.includes("gpt-4o") ||
-		normalizedModel.includes("gemini-2.5-flash") ||
-		normalizedModel.includes("deepseek-v3") ||
-		normalizedModel.includes("llama-3.3-70b") ||
-		normalizedModel.includes("command-r-plus") ||
-		normalizedModel.includes("mistral-large") ||
-		((capabilities.complex_reasoning ?? 0) >= 0.8 &&
-			(capabilities.coding ?? 0) >= 0.8)
+		(capabilities.complex_reasoning ?? 0) >= 0.8 &&
+		(capabilities.coding ?? 0) >= 0.8
 	) {
 		return "advanced";
 	}
@@ -356,6 +422,7 @@ function baselineCapabilities(
 	scores.long_context = provider.profileHints?.limits?.contextWindow
 		? bounded(provider.profileHints.limits.contextWindow / 200_000)
 		: 0.55;
+	if (provider.defaultModel) applyModelNamePriors(provider.defaultModel, scores);
 	for (const [capability, score] of Object.entries(
 		provider.profileHints?.capabilities ?? {},
 	)) {
@@ -629,13 +696,13 @@ export class TaskRequirementAnalyzer {
 		let allowExternal = base.allowExternal;
 		let preferLocal = base.preferLocal;
 		if (
-			/\b(best models?|best quality|maximum quality|highest quality)\b/.test(
+			/\b(best models?|best quality|maximum quality|highest quality|think(?:ing)? hard|max(?:imum)? reasoning|deep think)\b/.test(
 				normalized,
 			)
 		)
 			mode = "best_quality";
 		else if (
-			/\b(as quickly as possible|fastest|finish quickly|prioritize speed)\b/.test(
+			/\b(as quickly as possible|fastest|finish quickly|prioritize speed|no reasoning|skip thinking|quick answer)\b/.test(
 				normalized,
 			)
 		)
@@ -692,26 +759,33 @@ export class TaskRequirementAnalyzer {
 		const mark = (capability: ModelCapability, score: number) => {
 			capabilities[capability] = Math.max(capabilities[capability] ?? 0, score);
 		};
+		const softwareContext =
+			/```/.test(prompt) ||
+			/\b(code|coding|software|typescript|javascript|python|rust|golang|refactor|bug|fix|implement(?:ation)?|function|handler|repository|repo|pull request|diff|api|backend|frontend|react|kernel|driver|component|authentication|css|html|program|compiler)\b/.test(
+				normalized,
+			);
 
 		const isSecurityOrAdminAudit =
 			/\b(security|vulnerability|pentest|penetration|exploit|cve|reverse engineer|disassemble|binary|decompil|firewall|wireshark|network packet|privilege escalation|sandbox escape|kernel exploit|root action|payload)\b/.test(
 				normalized,
 			);
 		const isLowLevelOrMath =
-			/\b(kernel|driver|firmware|assembly|c\+\+|rust|embedded|cuda|gpu|matrix|tensor|quantum|cryptograph|algebra|calculus|differential)\b/.test(
+			/\b(kernel|driver|firmware|assembly|embedded|cuda|matrix|tensor|quantum|cryptograph|algebra|calculus|differential)\b/.test(
 				normalized,
 			);
 
 		if (
-			/\b(code|coding|software|typescript|javascript|python|rust|golang|refactor|bug|fix|implement|function|class)\b/.test(
+			/\b(code|coding|software|typescript|javascript|python|rust|golang|refactor|bug|fix|implement(?:ation)?|function|handler)\b/.test(
 				normalized,
-			)
+			) ||
+			/```/.test(prompt)
 		)
 			mark("coding", 0.86);
 		if (
-			/\b(backend|database|schema|api|security|distributed|architecture)\b/.test(
+			/\b(backend|database|schema|api|distributed|architecture|migration)\b/.test(
 				normalized,
-			)
+			) ||
+			(isSecurityOrAdminAudit && softwareContext)
 		)
 			mark("backend_architecture", 0.82);
 		if (
@@ -721,18 +795,29 @@ export class TaskRequirementAnalyzer {
 		)
 			mark("frontend_implementation", 0.82);
 		if (
-			/\b(ui|ux|visual|layout|design|figma|style|animation)\b/.test(normalized)
+			/\b(ui|ux|visual design|layout|figma|animation)\b/.test(normalized) &&
+			!/\b(image|screenshot|photo|diagram)\b/.test(normalized)
 		)
 			mark("ui_visual_design", 0.8);
-		if (/\b(debug|root cause|failing test|regression)\b/.test(normalized))
+		if (/\b(debug|root cause|failing test|regression|\bbug\b)\b/.test(normalized))
 			mark("debugging", 0.9);
-		if (/\b(review|audit|verify|critique|inspect)\b/.test(normalized))
+		if (
+			/\b(code review|audit|critique)\b/.test(normalized) ||
+			(/\b(review|verify|inspect)\b/.test(normalized) && softwareContext)
+		)
 			mark("code_review", 0.82);
 		if (
-			/\b(research|search|sources|compare|latest|evidence)\b/.test(normalized)
+			/\b(research|search the web|look up|sources|compare evidence|cite)\b/.test(
+				normalized,
+			)
 		)
 			mark("research", 0.82);
-		if (/\b(write|copy|story|creative|narrative|brand)\b/.test(normalized))
+		if (
+			/\b(story|poem|creative writing|narrative|brand copy|marketing copy)\b/.test(
+				normalized,
+			) &&
+			!softwareContext
+		)
 			mark("creative_writing", 0.72);
 		if (
 			/\b(documentation|technical writing|readme|specification|explain)\b/.test(
@@ -747,26 +832,28 @@ export class TaskRequirementAnalyzer {
 		)
 			mark("mathematical_reasoning", 0.88);
 		if (
-			/\b(plan|coordinate|orchestrat|multiple|team|subtask|project)\b/.test(
+			/\b(plan|coordinate|orchestrat|multiple systems|subtask|rollout)\b/.test(
 				normalized,
 			)
 		)
 			mark("planning", 0.88);
 		if (
 			input.requiresTools ||
-			/\b(file|repository|browser|command|tool|git|deploy|publish)\b/.test(
+			/\b(repository|repo|git|deploy|publish|shell command|run the command|browser automation)\b/.test(
 				normalized,
-			)
+			) ||
+			/\b(edit|open|read|write)\b.{0,24}\bfiles?\b/.test(normalized)
 		)
 			mark("tool_use", 0.88);
 		if (
 			input.requiresVision ||
-			/\b(image|screenshot|photo|diagram|visual)\b/.test(normalized)
+			/\b(image|screenshot|photo|diagram)\b/.test(normalized)
 		)
 			mark("image_understanding", 0.86);
 		if (
 			input.requiresStructuredOutput ||
-			/\b(json|schema|structured output|csv|table)\b/.test(normalized)
+			/\b(json|structured output|csv)\b/.test(normalized) ||
+			(/\bschema\b/.test(normalized) && softwareContext)
 		)
 			mark("structured_output", 0.86);
 
@@ -780,28 +867,45 @@ export class TaskRequirementAnalyzer {
 			mark("complex_reasoning", 0.92);
 		}
 
-		const complexity = bounded(
+		let complexity = bounded(
 			words / 700 +
 				(capabilities.coding ? 0.16 : 0) +
 				(capabilities.backend_architecture ? 0.18 : 0) +
 				(capabilities.planning ? 0.16 : 0) +
 				(isSecurityOrAdminAudit ? 0.2 : 0) +
 				(isLowLevelOrMath ? 0.2 : 0) +
-				(Object.keys(capabilities).length >= 6 ? 0.18 : 0),
+				(Object.keys(capabilities).length >= 6 ? 0.18 : 0) +
+				(/```/.test(prompt) ? 0.08 : 0) +
+				(/\n\s*\d+[.)]\s+\S/.test(prompt) ? 0.08 : 0),
 		);
+		const shortQuestion =
+			words < 28 &&
+			/^(?:what|why|who|when|where|how|is|are|can|does|should)\b/i.test(
+				prompt.trim(),
+			) &&
+			!isSecurityOrAdminAudit &&
+			(capabilities.planning ?? 0) < 0.7 &&
+			(capabilities.coding ?? 0) < 0.8;
+		if (shortQuestion) complexity = Math.min(complexity, 0.28);
 		if (complexity >= 0.55)
 			mark("complex_reasoning", Math.max(0.7, complexity));
 		if (prompt.length > 40_000)
 			mark("long_context", bounded(prompt.length / 300_000 + 0.55));
 		const highConsequence =
-			/\b(production|deploy|publish|delete|payment|legal|medical|credential|security)\b/.test(
+			/\b(production|deploy|publish|delete|payment|legal|medical|credential)\b/.test(
 				normalized,
-			);
+			) ||
+			(isSecurityOrAdminAudit &&
+				/\b(exploit|vulnerability|hardening|pentest)\b/.test(normalized));
+		const mutatingWork =
+			/\b(write|edit|create|implement|fix|refactor|delete|deploy|publish)\b/.test(
+				normalized,
+			) || /\bchange\b/.test(normalized);
 		const riskLevel =
 			input.riskLevel ??
 			(highConsequence
 				? "high_consequence"
-				: /\b(write|edit|change|create|run)\b/.test(normalized)
+				: mutatingWork
 					? "sensitive"
 					: "read_only");
 		const qualitySensitivity = bounded(
@@ -823,6 +927,11 @@ export class TaskRequirementAnalyzer {
 		].filter(
 			(capability) => (capabilities[capability as ModelCapability] ?? 0) >= 0.7,
 		).length;
+		const latencySensitivity = bounded(
+			(words < 80 ? 0.78 : 0.42) -
+				complexity * 0.2 -
+				(riskLevel === "high_consequence" ? 0.2 : 0),
+		);
 		return {
 			taskId,
 			summary: prompt.replace(/\s+/g, " ").trim().slice(0, 240) || "Agent task",
@@ -830,7 +939,7 @@ export class TaskRequirementAnalyzer {
 			riskLevel,
 			complexity,
 			qualitySensitivity,
-			latencySensitivity: words < 80 ? 0.78 : 0.42,
+			latencySensitivity,
 			contextCharacters: Math.max(24_000, prompt.length * 3),
 			expectedInputTokens: Math.max(1_000, Math.ceil(prompt.length / 3.5)),
 			expectedOutputTokens:
@@ -987,6 +1096,7 @@ export class AdaptiveModelRouter {
 			selected.profile.local
 				? "Keeps this model step on the configured local endpoint."
 				: "Uses a configured external endpoint because it offers the best policy-adjusted fit.",
+			`Sets thinking to ${reasoningLevel} from complexity ${requirements.complexity.toFixed(2)}, risk ${requirements.riskLevel}, and ${selected.profile.features.reasoningLevels ? "this model's reasoning controls" : "no reasoning controls on this model"}.`,
 			policy.mode === "balanced"
 				? "Balanced quality, reliability, latency, and cost."
 				: `Applied the ${policy.mode.replaceAll("_", " ")} routing mode.`,
@@ -1195,6 +1305,17 @@ export class AdaptiveModelRouter {
 		} else if (profile.tier === "standard" && requirements.complexity < 0.35) {
 			tierBonus += 0.08;
 		}
+		if (profile.features.reasoningLevels && requirements.complexity >= 0.55) {
+			tierBonus += 0.1;
+		} else if (
+			!profile.features.reasoningLevels &&
+			requirements.complexity >= 0.7
+		) {
+			tierBonus -= 0.12;
+		}
+		if (profile.tier === "frontier" && requirements.complexity < 0.28) {
+			tierBonus -= 0.14;
+		}
 
 		const weightSets: Record<
 			RoutingPolicy["mode"],
@@ -1237,6 +1358,12 @@ export class AdaptiveModelRouter {
 		) {
 			level = "max";
 		} else if (
+			requirements.complexity >= 0.8 ||
+			((requirements.capabilities.complex_reasoning ?? 0) >= 0.94 &&
+				requirements.qualitySensitivity >= 0.86)
+		) {
+			level = "xhigh";
+		} else if (
 			requirements.complexity >= 0.7 ||
 			requirements.isSecurityOrAdminAudit ||
 			requirements.qualitySensitivity >= 0.86 ||
@@ -1259,7 +1386,7 @@ export class AdaptiveModelRouter {
 				none: "low",
 				low: "medium",
 				medium: "high",
-				high: "max",
+				high: "xhigh",
 				xhigh: "max",
 				max: "max",
 			};
