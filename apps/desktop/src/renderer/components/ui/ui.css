@@ -1687,7 +1687,9 @@ body { font-family: var(--sans); }
 }
 .agent-conversation-host .conversation-view {
 	display: grid;
+	grid-template-columns: minmax(0, 1fr);
 	grid-template-rows: minmax(0, 1fr) auto;
+	justify-content: stretch;
 }
 .agent-conversation-host .runtime-new-composer,
 .agent-conversation-host .thread-composer {
@@ -1959,4 +1961,226 @@ body { font-family: var(--sans); }
 	.new-tab-recommendation:hover,
 	.new-tab-site:hover .new-tab-site-glyph,
 	.model-source-picker button:hover { transform: none; }
+}
+
+/* Copilot-like agent composer: message first, context and model controls below. */
+.agent-conversation-host .runtime-new-composer,
+.agent-conversation-host .thread-composer {
+	padding: 14px 16px 16px;
+}
+
+.agent-conversation-host .composer {
+	min-height: 80px;
+	border: 1px solid var(--line-strong);
+	border-radius: 15px;
+	background: color-mix(in srgb, var(--surface-strong) 86%, var(--sidebar));
+	box-shadow: var(--shadow-md);
+}
+
+.agent-conversation-host .composer:focus-within {
+	border-color: color-mix(in srgb, var(--solid) 48%, var(--line-strong));
+	box-shadow:
+		0 0 0 2px color-mix(in srgb, var(--solid) 12%, transparent),
+		var(--shadow-md);
+}
+
+.agent-conversation-host .composer textarea {
+	min-height: 50px;
+	max-height: 160px;
+	padding: 13px 14px 4px;
+	font-size: 13px;
+	line-height: 19px;
+}
+
+.agent-conversation-host .composer-footer {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	min-height: 34px;
+	padding: 3px 8px 8px;
+}
+
+.agent-conversation-host .composer-context-actions,
+.agent-conversation-host .composer-send-actions {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	gap: 3px;
+}
+
+.agent-conversation-host .composer-send-actions {
+	justify-content: flex-end;
+}
+
+.agent-conversation-host .composer-icon,
+.agent-conversation-host .voice-button,
+.agent-conversation-host .send-button {
+	width: 30px;
+	min-width: 30px;
+	height: 30px;
+	min-height: 30px;
+}
+
+.agent-conversation-host .composer-icon,
+.agent-conversation-host .voice-button {
+	color: var(--muted);
+}
+
+.agent-conversation-host .composer-icon:hover:not(:disabled),
+.agent-conversation-host .voice-button:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--ink) 8%, transparent);
+	color: var(--ink);
+}
+
+.agent-conversation-host .composer-icon svg,
+.agent-conversation-host .voice-button svg,
+.agent-conversation-host .send-button svg {
+	width: 16px;
+	height: 16px;
+}
+
+.agent-conversation-host .voice-button.recording {
+	background: var(--status-fill);
+	color: var(--status-ink);
+}
+
+.agent-conversation-host .voice-button.transcribing svg {
+	animation: ui-composer-spin 0.9s linear infinite;
+}
+
+.agent-conversation-host .task-settings {
+	position: static;
+	min-width: 0;
+}
+
+.agent-conversation-host .task-settings > summary {
+	display: inline-flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	width: auto;
+	min-width: 76px;
+	max-width: 166px;
+	height: 30px;
+	min-height: 30px;
+	padding: 0 8px 0 10px;
+	border: 1px solid var(--line);
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--surface) 78%, transparent);
+	color: var(--ink-secondary);
+	font-size: 11.5px;
+	font-weight: 560;
+	line-height: 1;
+	list-style: none;
+	cursor: pointer;
+}
+
+.agent-conversation-host .task-settings > summary::-webkit-details-marker {
+	display: none;
+}
+
+.agent-conversation-host .task-settings > summary:hover,
+.agent-conversation-host .task-settings[open] > summary {
+	border-color: var(--line-strong);
+	background: var(--surface);
+	color: var(--ink);
+}
+
+.agent-conversation-host .task-settings > summary:focus-visible {
+	outline: 2px solid var(--solid);
+	outline-offset: 1px;
+}
+
+.agent-conversation-host .runtime-model-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-conversation-host .task-settings > summary > svg {
+	width: 12px;
+	height: 12px;
+	flex: 0 0 auto;
+	color: var(--muted);
+	transition: transform var(--motion-feedback) ease;
+}
+
+.agent-conversation-host .task-settings[open] > summary > svg {
+	transform: rotate(90deg);
+}
+
+.agent-conversation-host .task-settings .task-settings-panel {
+	left: auto;
+	right: 0;
+	bottom: 40px;
+	width: min(340px, calc(100vw - 48px));
+}
+
+.agent-conversation-host .attachment-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	margin: 0 0 8px;
+	padding: 0 2px;
+}
+
+.agent-conversation-host .attachment-chips button {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	max-width: 220px;
+	min-height: 26px;
+	padding: 0 7px 0 9px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--surface);
+	color: var(--ink-secondary);
+	font-size: 11px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.agent-conversation-host .attachment-chips button:hover {
+	border-color: var(--line-strong);
+	background: var(--surface-strong);
+	color: var(--ink);
+}
+
+.agent-conversation-host .attachment-chips button > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-conversation-host .attachment-chips button > svg {
+	width: 12px;
+	height: 12px;
+	flex: 0 0 auto;
+}
+
+@keyframes ui-composer-spin {
+	to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+	.agent-conversation-host .runtime-new-composer,
+	.agent-conversation-host .thread-composer {
+		padding-inline: 12px;
+	}
+
+	.agent-conversation-host .task-settings > summary {
+		max-width: 124px;
+	}
+
+	.agent-conversation-host .task-settings .task-settings-panel {
+		width: min(300px, calc(100vw - 32px));
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-conversation-host .voice-button.transcribing svg {
+		animation: none;
+	}
 }
