@@ -43,6 +43,7 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
 			{ keys: [cmd, "]"], description: "Go forward in history" },
 			{ keys: [cmd, "F"], description: "Find in page" },
 			{ keys: [cmd, "D"], description: "Bookmark this page" },
+			{ keys: [cmd, shift, "B"], description: "Show or hide the bookmarks bar" },
 			{ keys: [cmd, shift, "D"], description: "Open bookmarks" },
 			{ keys: [cmd, "P"], description: "Print this page" },
 			{ keys: [cmd, shift, "I"], description: "Inspect page (DevTools)" },

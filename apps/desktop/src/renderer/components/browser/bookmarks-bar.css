@@ -1,0 +1,131 @@
+.browser-workspace.browser-workspace-bookmarks {
+	grid-template-areas:
+		"tabs"
+		"toolbar"
+		"bookmarks"
+		"viewport";
+	grid-template-rows: 40px 48px 32px minmax(0, 1fr);
+}
+
+.browser-workspace-vertical.browser-workspace-bookmarks {
+	grid-template-areas:
+		"tabs toolbar"
+		"tabs bookmarks"
+		"tabs viewport";
+	grid-template-rows: 48px 32px minmax(0, 1fr);
+}
+
+.browser-workspace-bookmarks .browser-loading-line {
+	top: 121px;
+}
+
+.browser-workspace-bookmarks .browser-inline-error {
+	top: 128px;
+}
+
+.browser-workspace-vertical.browser-workspace-bookmarks .browser-loading-line {
+	top: 79px;
+}
+
+.browser-workspace-vertical.browser-workspace-bookmarks .browser-inline-error {
+	top: 86px;
+}
+
+.browser-bookmarks-bar {
+	grid-area: bookmarks;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	height: 32px;
+	padding: 0 8px 0 10px;
+	background: var(--canvas);
+	border-bottom: 1px solid var(--line);
+}
+
+.browser-bookmarks-bar-list {
+	display: flex;
+	flex: 1 1 auto;
+	align-items: center;
+	gap: 2px;
+	min-width: 0;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	list-style: none;
+	scrollbar-width: none;
+}
+
+.browser-bookmarks-bar-list::-webkit-scrollbar {
+	display: none;
+}
+
+.browser-bookmarks-bar-item {
+	flex: 0 0 auto;
+}
+
+.browser-bookmarks-bar-link,
+.browser-bookmarks-bar-empty,
+.browser-bookmarks-bar-manage {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 180px;
+	height: 24px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 520;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: pointer;
+}
+
+.browser-bookmarks-bar-link:hover,
+.browser-bookmarks-bar-manage:hover {
+	background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.browser-bookmarks-bar-glyph {
+	display: grid;
+	place-items: center;
+	flex: 0 0 auto;
+	width: 14px;
+	height: 14px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--ink) 10%, transparent);
+	color: var(--ink-secondary);
+	font-size: 8px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.browser-bookmarks-bar-empty {
+	max-width: none;
+	color: var(--muted);
+	cursor: default;
+}
+
+.browser-bookmarks-bar-manage {
+	flex: 0 0 auto;
+	max-width: none;
+	color: var(--ink-secondary);
+}
+
+.browser-bookmarks-bar-manage svg {
+	width: 12px;
+	height: 12px;
+}
+
+@media (max-width: 980px) {
+	.browser-bookmarks-bar-link {
+		max-width: 140px;
+	}
+}

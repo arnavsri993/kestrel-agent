@@ -28,6 +28,7 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	sleepingTabTimeoutMinutes: 30,
 	sleepingTabExcludedDomains: [],
 	memorySaverMode: true,
+	showBookmarksBar: true,
 };
 const SEARCH_ENGINES: Record<
 	Exclude<UserBrowserSettings["searchEngine"], "custom">,

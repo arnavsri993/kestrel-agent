@@ -11,6 +11,7 @@ import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { parseKestrelAppPage } from "../../../utility/browser-app-pages";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
+import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { NewTabPage } from "./NewTabPage";
 import { TabStrip } from "./TabStrip";
@@ -325,7 +326,17 @@ export function BrowserWorkspace({
       } else if (key === "/" || key === "?") {
         event.preventDefault();
         onShowShortcuts?.();
-      } else if (key === "b" || (key === "s" && event.shiftKey)) {
+      } else if (key === "b") {
+        event.preventDefault();
+        if (event.shiftKey && state) {
+          void browser.updateSettings({
+            ...state.settings,
+            showBookmarksBar: !state.settings.showBookmarksBar,
+          });
+        } else {
+          onToggleSidebar?.();
+        }
+      } else if (key === "s" && event.shiftKey) {
         event.preventDefault();
         onToggleSidebar?.();
       } else if (event.key === "[" && activeTab?.canGoBack) {
@@ -341,6 +352,7 @@ export function BrowserWorkspace({
   }, [
     activeTab,
     back,
+    browser,
     closeTab,
     createTab,
     forward,
@@ -378,7 +390,9 @@ export function BrowserWorkspace({
 
   return (
     <main
-      className={`browser-workspace browser-workspace-${state.settings.tabLayout}`}
+      className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
+        state.settings.showBookmarksBar ? " browser-workspace-bookmarks" : ""
+      }`}
       aria-label="Browser"
     >
       <TabStrip
@@ -422,6 +436,15 @@ export function BrowserWorkspace({
         onToggleBookmark={() => void toggleBookmark()}
         onOpenMenu={onOpenMenu}
       />
+      {state.settings.showBookmarksBar && (
+        <BookmarksBar
+          bookmarks={state.bookmarks}
+          onOpen={(url) => void navigate(activeTab.id, url)}
+          onOpenInNewTab={(url) => void createTab(url)}
+          onRemove={(bookmarkId) => void browser.removeBookmark(bookmarkId)}
+          onManage={onOpenBookmarks}
+        />
+      )}
       {findOpen && (
         <form
           className="browser-find-bar"

@@ -27,7 +27,9 @@ function storePath(): string {
 
 it("defaults new browser settings to Google", () => {
 	expect(freshBrowserState().settings.searchEngine).toBe("google");
+	expect(freshBrowserState().settings.showBookmarksBar).toBe(true);
 	expect(UserBrowserSettingsSchema.parse({}).searchEngine).toBe("google");
+	expect(UserBrowserSettingsSchema.parse({}).showBookmarksBar).toBe(true);
 });
 
 it("redacts embedded URLs from untrusted browser text", () => {
@@ -224,6 +226,7 @@ describe("browser tab persistence", () => {
 		expect(store.load().settings).toMatchObject({
 			tabLayout: "vertical",
 			searchEngine: "ecosia",
+			showBookmarksBar: true,
 		});
 
 		const legacy = JSON.parse(readFileSync(path, "utf8"));
