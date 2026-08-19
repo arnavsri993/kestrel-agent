@@ -1,3 +1,7 @@
+/* Browser Home — flat monochrome canvas. The 56px composer is the focal
+   point below the greeting; frequent tabs and exactly three suggestion rows
+   sit beneath on quiet matte planes. No hue, imagery, blur, or glow. */
+
 .new-tab-page.kestrel-home {
   position: relative;
   display: block;
@@ -6,202 +10,85 @@
   min-height: 0;
   padding: 0;
   overflow: auto;
-  isolation: isolate;
-  color: var(--kestrel-home-text);
+  color: var(--ink);
   background: var(--canvas);
-  scrollbar-color: color-mix(in srgb, var(--kestrel-home-text) 28%, transparent) transparent;
-}
-
-.new-tab-page-graphite,
-.new-tab-page-meadow {
-  --kestrel-home-text: #f5f8f3;
-  --kestrel-home-muted: #d0dbd2;
-  --kestrel-home-rule: rgb(245 248 243 / 24%);
-  --kestrel-home-panel: rgb(10 20 18 / 78%);
-  --kestrel-home-surface: rgb(235 243 236 / 12%);
-  --kestrel-home-accent: #d8efad;
-}
-
-.new-tab-page-dawn {
-  --kestrel-home-text: #352d2a;
-  --kestrel-home-muted: #6b5d57;
-  --kestrel-home-rule: rgb(53 45 42 / 20%);
-  --kestrel-home-panel: rgb(255 249 241 / 82%);
-  --kestrel-home-surface: rgb(255 255 255 / 48%);
-  --kestrel-home-accent: #6f4f46;
-}
-
-.new-tab-page-paper {
-  --kestrel-home-text: #28312e;
-  --kestrel-home-muted: #5f6a65;
-  --kestrel-home-rule: rgb(40 49 46 / 18%);
-  --kestrel-home-panel: rgb(255 255 255 / 84%);
-  --kestrel-home-surface: rgb(255 255 255 / 58%);
-  --kestrel-home-accent: #40584d;
-}
-
-.kestrel-home-backdrop {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  background-color: #17221f;
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
-}
-
-.new-tab-page-graphite .kestrel-home-backdrop {
-  filter: saturate(72%) brightness(62%);
-}
-
-.new-tab-page-meadow .kestrel-home-backdrop {
-  filter: saturate(88%) brightness(82%);
-}
-
-.new-tab-page-dawn .kestrel-home-backdrop {
-  background:
-    radial-gradient(ellipse at 78% 8%, rgb(255 238 203 / 82%), transparent 38%),
-    linear-gradient(145deg, #f0d5b5 0%, #d49c8e 53%, #875b62 100%);
-}
-
-.new-tab-page-paper .kestrel-home-backdrop {
-  background:
-    radial-gradient(ellipse at 18% 0%, #fff 0%, transparent 42%),
-    linear-gradient(148deg, #f2f0e8 0%, #dbe2de 54%, #b6c4c1 100%);
-}
-
-.kestrel-home-backdrop::before,
-.kestrel-home-backdrop::after {
-  position: absolute;
-  inset: 0;
-  content: "";
-  pointer-events: none;
-}
-
-.kestrel-home-backdrop::before {
-  background:
-    linear-gradient(180deg, rgb(5 12 12 / 10%) 0%, rgb(5 14 12 / 18%) 42%, rgb(4 13 11 / 72%) 100%),
-    linear-gradient(90deg, rgb(4 12 12 / 30%), transparent 44%, rgb(4 12 11 / 24%));
-}
-
-.kestrel-home-backdrop::after {
-  background: radial-gradient(ellipse at 50% 18%, transparent 0 26%, rgb(3 10 9 / 14%) 74%, rgb(3 9 9 / 34%) 100%);
-}
-
-.new-tab-page-dawn .kestrel-home-backdrop::before {
-  background: linear-gradient(180deg, rgb(255 250 238 / 8%), rgb(93 55 52 / 28%));
-}
-
-.new-tab-page-paper .kestrel-home-backdrop::before {
-  background: linear-gradient(180deg, rgb(255 255 255 / 12%), rgb(42 59 53 / 18%));
+  scrollbar-color: var(--surface-strong) transparent;
 }
 
 .kestrel-home-content {
-  position: relative;
-  z-index: 1;
   display: grid;
-  gap: clamp(34px, 5.2vh, 52px);
-  width: min(900px, calc(100% - 72px));
+  gap: clamp(40px, 6vh, 64px);
+  width: min(720px, calc(100% - 48px));
   min-height: 100%;
   margin: 0 auto;
-  padding: clamp(42px, 7vh, 76px) 0 64px;
+  padding: clamp(56px, 10vh, 96px) 0 64px;
+  animation: kestrel-home-enter var(--motion-state) var(--ease-kestrel);
+}
+
+@keyframes kestrel-home-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .kestrel-home-hero {
-  width: min(720px, 100%);
-  margin: 0 auto;
+  display: grid;
+  gap: 28px;
+  width: 100%;
   text-align: center;
-}
-
-.kestrel-home-eyebrow,
-.kestrel-home-section-kicker {
-  margin: 0;
-  color: var(--kestrel-home-muted);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  line-height: 1.35;
-  text-transform: uppercase;
 }
 
 .kestrel-home-hero h1 {
   max-width: 700px;
   margin: 0 auto;
-  color: var(--kestrel-home-text);
-  font: 650 clamp(32px, 4.6vw, 50px) / 1.04 var(--display);
-  letter-spacing: -0.05em;
-  text-shadow: 0 2px 24px rgb(0 0 0 / 14%);
+  color: var(--ink);
+  font: 700 clamp(30px, 4vw, 40px) / 1.15 var(--display);
+  letter-spacing: -0.02em;
 }
 
+/* Composer — the primary elevated work surface on the flat canvas. */
 .kestrel-home-composer {
-  width: min(720px, 100%);
-  margin: 24px auto 0;
-  padding: 12px 13px 10px;
-  border: 1px solid color-mix(in srgb, var(--kestrel-home-text) 24%, var(--kestrel-home-rule));
-  border-radius: 21px;
-  background: color-mix(in srgb, var(--kestrel-home-panel) 94%, transparent);
-  box-shadow: 0 22px 54px rgb(0 0 0 / 25%), inset 0 1px rgb(255 255 255 / 8%);
-  backdrop-filter: blur(20px) saturate(118%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 56px;
+  margin: 0;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-surface);
+  background: var(--overlay);
+  box-shadow: var(--shadow-md);
   text-align: left;
+  transition: border-color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .kestrel-home-composer:focus-within {
-  border-color: color-mix(in srgb, var(--kestrel-home-accent) 72%, var(--kestrel-home-rule));
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--kestrel-home-accent) 16%, transparent),
-    0 22px 54px rgb(0 0 0 / 25%);
+  border-color: var(--solid);
 }
 
 .kestrel-home-composer > input {
   display: block;
+  flex: 1 1 auto;
   width: 100%;
-  height: 46px;
+  height: 40px;
   min-width: 0;
-  padding: 0 5px;
+  padding: 0 4px;
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--kestrel-home-text);
-  font-size: 15px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .kestrel-home-composer > input::placeholder {
-  color: color-mix(in srgb, var(--kestrel-home-muted) 86%, transparent);
-}
-
-.kestrel-home-composer-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-}
-
-.kestrel-home-composer-icon,
-.kestrel-home-send {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border: 0;
-  cursor: pointer;
-}
-
-.kestrel-home-composer-icon {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--kestrel-home-rule);
-  border-radius: 50%;
-  background: transparent;
-  color: var(--kestrel-home-muted);
-}
-
-.kestrel-home-composer-icon:disabled {
-  cursor: not-allowed;
-  opacity: 0.68;
-}
-
-.kestrel-home-composer-icon svg {
-  width: 17px;
-  height: 17px;
+  color: var(--muted);
 }
 
 .kestrel-home-model-selector {
@@ -212,16 +99,19 @@
 .kestrel-home-model-selector summary {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  min-height: 30px;
-  padding: 0 9px;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: 9px;
-  color: var(--kestrel-home-text);
-  font-size: 12px;
+  border-radius: var(--radius-pill);
+  color: var(--ink-secondary);
+  font-size: 12.5px;
   font-weight: 600;
   list-style: none;
   cursor: pointer;
+  transition:
+    background-color var(--motion-feedback) var(--ease-kestrel),
+    color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .kestrel-home-model-selector summary::-webkit-details-marker {
@@ -230,94 +120,99 @@
 
 .kestrel-home-model-selector summary:hover,
 .kestrel-home-model-selector[open] summary {
-  border-color: var(--kestrel-home-rule);
-  background: color-mix(in srgb, var(--kestrel-home-surface) 74%, transparent);
+  background: var(--surface-strong);
+  color: var(--ink);
 }
 
 .kestrel-home-model-selector summary svg {
   width: 13px;
   height: 13px;
-  color: var(--kestrel-home-muted);
+  color: var(--muted);
 }
 
 .kestrel-home-model-popover {
   position: absolute;
   z-index: 3;
-  bottom: calc(100% + 9px);
+  top: calc(100% + 10px);
   left: 0;
-  width: 238px;
-  padding: 13px;
-  border: 1px solid var(--kestrel-home-rule);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--kestrel-home-panel) 96%, transparent);
-  box-shadow: 0 14px 36px rgb(0 0 0 / 24%);
-  color: var(--kestrel-home-text);
-  backdrop-filter: blur(20px);
+  width: 240px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--overlay);
+  box-shadow: var(--shadow-lg);
+  color: var(--ink);
 }
 
 .kestrel-home-model-popover strong {
   display: block;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 650;
 }
 
 .kestrel-home-model-popover p {
-  margin: 5px 0 11px;
-  color: var(--kestrel-home-muted);
-  font-size: 11px;
+  margin: 4px 0 12px;
+  color: var(--ink-secondary);
+  font-size: 11.5px;
   line-height: 1.45;
 }
 
 .kestrel-home-model-popover button {
-  min-height: 28px;
-  padding: 0 9px;
-  border: 1px solid var(--kestrel-home-rule);
-  border-radius: 8px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--kestrel-home-text);
-  font-size: 11px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
   cursor: pointer;
+  transition: background-color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .kestrel-home-model-popover button:hover {
-  background: color-mix(in srgb, var(--kestrel-home-surface) 80%, transparent);
-}
-
-.kestrel-home-composer-hint {
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  color: var(--kestrel-home-muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  background: var(--surface-strong);
 }
 
 .kestrel-home-send {
-  width: 34px;
-  height: 34px;
-  border-radius: 12px;
-  background: var(--kestrel-home-accent);
-  color: #14241b;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--solid);
+  color: var(--on-solid);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-feedback) var(--ease-kestrel),
+    transform var(--motion-feedback) var(--ease-kestrel),
+    opacity var(--motion-feedback) var(--ease-kestrel);
 }
 
 .kestrel-home-send:disabled {
   cursor: default;
-  opacity: 0.38;
+  opacity: 0.32;
 }
 
 .kestrel-home-send:not(:disabled):hover {
-  filter: brightness(0.92);
+  background: var(--solid-hover);
+}
+
+.kestrel-home-send:not(:disabled):active {
+  transform: scale(0.96);
 }
 
 .kestrel-home-send svg {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
 }
 
+/* Sections */
 .kestrel-home-shortcuts,
 .kestrel-home-actions {
-  width: min(860px, 100%);
+  width: 100%;
   margin: 0 auto;
 }
 
@@ -326,82 +221,60 @@
   align-items: end;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 13px;
-}
-
-.kestrel-home-section-heading > div {
-  min-width: 0;
+  margin-bottom: 14px;
 }
 
 .kestrel-home-section-heading h2 {
-  margin: 5px 0 0;
-  color: var(--kestrel-home-text);
-  font: 650 20px / 1.1 var(--display);
-  letter-spacing: -0.03em;
+  margin: 0;
+  color: var(--ink);
+  font: 650 16px / 21px var(--display);
+  letter-spacing: -0.01em;
 }
 
-.kestrel-home-section-heading > small {
-  flex: 0 0 auto;
-  padding-bottom: 1px;
-  color: var(--kestrel-home-muted);
-  font-size: 10px;
-  line-height: 1.35;
-}
-
+/* Frequent tabs — monochrome initial glyphs on matte planes. */
 .kestrel-home-shortcut-list {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: clamp(8px, 2vw, 22px);
+  gap: 8px;
 }
 
 .kestrel-home-shortcut {
   display: grid;
   justify-items: center;
   min-width: 0;
-  gap: 8px;
-  padding: 4px 3px 5px;
+  gap: 10px;
+  padding: 14px 6px 12px;
   border: 0;
-  border-radius: 13px;
+  border-radius: var(--radius-row);
   background: transparent;
-  color: var(--kestrel-home-text);
+  color: var(--ink);
   text-align: center;
   cursor: pointer;
+  transition:
+    background-color var(--motion-feedback) var(--ease-kestrel),
+    transform var(--motion-feedback) var(--ease-kestrel);
 }
 
-.kestrel-home-shortcut:hover,
-.kestrel-home-shortcut:focus-visible {
-  background: color-mix(in srgb, var(--kestrel-home-surface) 62%, transparent);
+.kestrel-home-shortcut:hover {
+  background: var(--surface);
+  transform: translateY(-1px);
 }
 
-.kestrel-home-shortcut:focus-visible,
-.kestrel-home-action:focus-visible,
-.kestrel-home-model-selector summary:focus-visible,
-.kestrel-home-model-popover button:focus-visible,
-.kestrel-home-composer-icon:focus-visible,
-.kestrel-home-send:focus-visible {
-  outline: 2px solid var(--kestrel-home-accent);
-  outline-offset: 2px;
+.kestrel-home-shortcut:active {
+  transform: translateY(0);
 }
 
 .kestrel-home-shortcut-glyph,
 .kestrel-home-shortcuts-empty-glyph {
   display: grid;
   place-items: center;
-  width: 55px;
-  height: 55px;
-  border: 1px solid var(--kestrel-home-rule);
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--line);
   border-radius: 50%;
-  background: var(--kestrel-home-surface);
-  color: var(--kestrel-home-text);
-  font: 700 16px / 1 var(--mono);
-  box-shadow: 0 10px 22px rgb(0 0 0 / 14%), inset 0 1px rgb(255 255 255 / 8%);
-  transition: transform var(--motion-state) var(--ease-kestrel), background var(--motion-state) var(--ease-kestrel);
-}
-
-.kestrel-home-shortcut:hover .kestrel-home-shortcut-glyph,
-.kestrel-home-shortcut:focus-visible .kestrel-home-shortcut-glyph {
-  transform: translateY(-2px);
-  background: color-mix(in srgb, var(--kestrel-home-surface) 88%, transparent);
+  background: var(--surface-strong);
+  color: var(--ink);
+  font: 700 15px / 1 var(--mono);
 }
 
 .kestrel-home-shortcut-copy {
@@ -420,36 +293,35 @@
 }
 
 .kestrel-home-shortcut-copy strong {
-  color: var(--kestrel-home-text);
-  font-size: 11px;
-  font-weight: 650;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .kestrel-home-shortcut-copy small {
-  color: var(--kestrel-home-muted);
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .kestrel-home-shortcuts-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  min-height: 66px;
-  padding: 9px 16px;
-  border: 1px solid var(--kestrel-home-rule);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--kestrel-home-panel) 60%, transparent);
-  color: var(--kestrel-home-text);
+  gap: 14px;
+  min-height: 76px;
+  padding: 12px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-surface);
+  background: var(--panel);
+  color: var(--ink);
   text-align: left;
-  backdrop-filter: blur(14px);
 }
 
 .kestrel-home-shortcuts-empty-glyph {
   flex: 0 0 auto;
-  width: 43px;
-  height: 43px;
-  color: var(--kestrel-home-muted);
+  width: 40px;
+  height: 40px;
+  color: var(--muted);
 }
 
 .kestrel-home-shortcuts-empty-glyph svg {
@@ -459,93 +331,89 @@
 
 .kestrel-home-shortcuts-empty > span:last-child {
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
 .kestrel-home-shortcuts-empty strong {
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
 .kestrel-home-shortcuts-empty small {
-  color: var(--kestrel-home-muted);
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 11.5px;
 }
 
+/* Suggested actions — exactly three clean text rows. */
 .kestrel-home-action-list {
   margin: 0;
   padding: 0;
-  border-top: 1px solid var(--kestrel-home-rule);
-  border-bottom: 1px solid var(--kestrel-home-rule);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   list-style: none;
 }
 
 .kestrel-home-action-list li + li {
-  border-top: 1px solid color-mix(in srgb, var(--kestrel-home-rule) 76%, transparent);
+  border-top: 1px solid var(--line);
 }
 
 .kestrel-home-action {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   width: 100%;
-  min-height: 72px;
-  padding: 10px 12px 10px 4px;
+  min-height: 52px;
+  padding: 6px 12px 6px 4px;
   border: 0;
   background: transparent;
-  color: var(--kestrel-home-text);
+  color: var(--ink);
   text-align: left;
   cursor: pointer;
-  transition: background var(--motion-feedback) var(--ease-kestrel), transform var(--motion-feedback) var(--ease-kestrel);
+  transition: background-color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .kestrel-home-action:hover {
-  background: color-mix(in srgb, var(--kestrel-home-surface) 78%, transparent);
-  transform: translateX(2px);
+  background: var(--surface);
+}
+
+.kestrel-home-action:active {
+  background: var(--surface-strong);
 }
 
 .kestrel-home-action-index {
-  color: var(--kestrel-home-muted);
+  color: var(--muted);
   font: 650 11px / 1 var(--mono);
   letter-spacing: 0.06em;
-  opacity: 0.76;
+  text-align: center;
 }
 
 .kestrel-home-action-copy {
   display: grid;
   min-width: 0;
-  gap: 4px;
-}
-
-.kestrel-home-action-copy strong,
-.kestrel-home-action-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .kestrel-home-action-copy strong {
-  color: var(--kestrel-home-text);
+  overflow: hidden;
+  color: var(--ink);
   font-size: 13.5px;
-  font-weight: 650;
-  line-height: 1.35;
-}
-
-.kestrel-home-action-copy small {
-  color: var(--kestrel-home-muted);
-  font-size: 11.5px;
+  font-weight: 550;
   line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kestrel-home-action-affordance {
   display: flex;
   align-items: center;
-  gap: 7px;
-  color: var(--kestrel-home-muted);
-  font-size: 10.5px;
-  font-weight: 650;
-  opacity: 0.82;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  opacity: 0;
+  transition:
+    opacity var(--motion-feedback) var(--ease-kestrel),
+    color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .kestrel-home-action-affordance svg {
@@ -555,74 +423,56 @@
 
 .kestrel-home-action:hover .kestrel-home-action-affordance,
 .kestrel-home-action:focus-visible .kestrel-home-action-affordance {
-  color: var(--kestrel-home-text);
+  color: var(--ink-secondary);
+  opacity: 1;
 }
 
-.site-accent-sage { background: color-mix(in srgb, #a9d1aa 25%, var(--kestrel-home-surface)); }
-.site-accent-blue { background: color-mix(in srgb, #9dbce5 25%, var(--kestrel-home-surface)); }
-.site-accent-amber { background: color-mix(in srgb, #e7c58d 25%, var(--kestrel-home-surface)); }
-.site-accent-rose { background: color-mix(in srgb, #e1a3a9 25%, var(--kestrel-home-surface)); }
-.site-accent-violet { background: color-mix(in srgb, #c1a9e8 25%, var(--kestrel-home-surface)); }
-.site-accent-teal { background: color-mix(in srgb, #91d2cf 25%, var(--kestrel-home-surface)); }
+/* Focus visibility — white is the focus accent. */
+.kestrel-home-shortcut:focus-visible,
+.kestrel-home-action:focus-visible,
+.kestrel-home-model-selector summary:focus-visible,
+.kestrel-home-model-popover button:focus-visible,
+.kestrel-home-send:focus-visible {
+  outline: 2px solid var(--solid);
+  outline-offset: 2px;
+}
+
+.kestrel-home-action:focus-visible {
+  outline-offset: -2px;
+}
 
 @media (max-width: 900px) {
   .kestrel-home-content {
-    width: min(100%, calc(100% - 48px));
+    width: calc(100% - 40px);
   }
 
   .kestrel-home-shortcut-list {
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    row-gap: 14px;
   }
 }
 
 @media (max-width: 680px) {
   .kestrel-home-content {
-    width: calc(100% - 36px);
-    gap: 34px;
-    padding-top: 38px;
+    width: calc(100% - 32px);
+    gap: 36px;
+    padding-top: 44px;
     padding-bottom: 48px;
   }
 
-  .kestrel-home-hero h1 {
-    font-size: clamp(30px, 8vw, 40px);
+  .kestrel-home-hero {
+    gap: 22px;
   }
 
-  .kestrel-home-composer {
-    margin-top: 20px;
-    border-radius: 18px;
-  }
-
-  .kestrel-home-composer-hint,
-  .kestrel-home-section-heading > small,
   .kestrel-home-action-affordance span {
     display: none;
   }
 
   .kestrel-home-shortcut-list {
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px 7px;
-  }
-
-  .kestrel-home-shortcut-glyph {
-    width: 49px;
-    height: 49px;
-  }
-
-  .kestrel-home-action {
-    grid-template-columns: 30px minmax(0, 1fr) 15px;
-    gap: 10px;
-    min-height: 68px;
-    padding-right: 4px;
   }
 }
 
 @media (max-width: 480px) {
-  .kestrel-home-content {
-    width: calc(100% - 28px);
-    padding-top: 30px;
-  }
-
   .kestrel-home-shortcut-list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -634,29 +484,28 @@
 
 @media (max-height: 720px) and (min-width: 681px) {
   .kestrel-home-content {
-    gap: 30px;
-    padding-top: 32px;
-  }
-
-  .kestrel-home-hero h1 {
-    font-size: clamp(30px, 4vw, 42px);
-  }
-
-  .kestrel-home-composer {
-    margin-top: 17px;
+    gap: 32px;
+    padding-top: 40px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .kestrel-home-content {
+    animation: none;
+  }
+
+  .kestrel-home-composer,
+  .kestrel-home-model-selector summary,
+  .kestrel-home-model-popover button,
+  .kestrel-home-send,
+  .kestrel-home-shortcut,
   .kestrel-home-action,
-  .kestrel-home-shortcut-glyph,
   .kestrel-home-action-affordance {
     transition: none;
   }
 
-  .kestrel-home-action:hover,
-  .kestrel-home-shortcut:hover .kestrel-home-shortcut-glyph,
-  .kestrel-home-shortcut:focus-visible .kestrel-home-shortcut-glyph {
+  .kestrel-home-shortcut:hover,
+  .kestrel-home-send:not(:disabled):active {
     transform: none;
   }
 }
@@ -664,7 +513,8 @@
 @media (prefers-contrast: more) {
   .kestrel-home-composer,
   .kestrel-home-shortcuts-empty,
-  .kestrel-home-action-list {
-    border-color: var(--kestrel-home-text);
+  .kestrel-home-action-list,
+  .kestrel-home-shortcut-glyph {
+    border-color: var(--line-strong);
   }
 }

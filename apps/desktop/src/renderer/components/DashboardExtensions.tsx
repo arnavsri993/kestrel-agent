@@ -7,7 +7,7 @@ import type {
 	WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { useEffect, useState } from "react";
-import { BrandMark } from "./BrandMark";
+import { Button, EmptyState } from "./ui";
 
 function metricValue(
 	source: DashboardMetricSource,
@@ -81,7 +81,7 @@ export function DashboardExtensions({
 	return (
 		<div className="page-frame dashboard-extensions">
 			<header className="page-header">
-				<h1>Extensions</h1>
+				<h1>Extension panels</h1>
 			</header>
 
 			{error && (
@@ -91,16 +91,15 @@ export function DashboardExtensions({
 			)}
 			{!plugins && !error && <p role="status">Loading extension panels…</p>}
 			{plugins && contributions.length === 0 && (
-				<section className="empty-state">
-					<BrandMark />
-					<h2>No dashboard panels enabled.</h2>
-					<button
-						className="button secondary"
-						onClick={() => onNavigate("settings")}
-					>
-						Open plugin settings
-					</button>
-				</section>
+				<EmptyState
+					title="No extension panels yet"
+					detail="Enable a signed plugin that contributes dashboard panels and it will appear here."
+					action={
+						<Button variant="secondary" onClick={() => onNavigate("settings")}>
+							Open plugin settings
+						</Button>
+					}
+				/>
 			)}
 
 			{contributions.map((plugin) => {
