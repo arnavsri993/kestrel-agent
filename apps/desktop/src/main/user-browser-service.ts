@@ -1609,7 +1609,17 @@ export class UserBrowserService {
 			} else if (key === "/" || key === "?") {
 				event.preventDefault();
 				this.onCommand?.("show-shortcuts");
-			} else if (key === "b" || (key === "s" && input.shift)) {
+			} else if (key === "b") {
+				event.preventDefault();
+				if (input.shift) {
+					this.updateSettings({
+						...this.state.settings,
+						showBookmarksBar: !this.state.settings.showBookmarksBar,
+					});
+				} else {
+					this.onCommand?.("toggle-sidebar");
+				}
+			} else if (key === "s" && input.shift) {
 				event.preventDefault();
 				this.onCommand?.("toggle-sidebar");
 			} else if (input.key === "[" || (input.meta && input.key === "ArrowLeft")) {

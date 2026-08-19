@@ -2522,6 +2522,7 @@ export const UserBrowserSettingsSchema = z.object({
 		.default(30),
 	sleepingTabExcludedDomains: z.array(z.string().max(200)).default([]),
 	memorySaverMode: z.boolean().default(true),
+	showBookmarksBar: z.boolean().default(true),
 });
 export type UserBrowserSettings = z.infer<typeof UserBrowserSettingsSchema>;
 

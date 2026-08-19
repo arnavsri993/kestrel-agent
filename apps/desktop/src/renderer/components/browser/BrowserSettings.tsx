@@ -630,6 +630,23 @@ export function BrowserSettings({
           )}
         </div>
 
+        <label className="setting-row browser-setting-row">
+          <div className="browser-setting-copy">
+            <strong>Show bookmarks bar</strong>
+            <p>Pins saved pages under the address bar. Toggle with ⌘⇧B.</p>
+          </div>
+          <input
+            type="checkbox"
+            checked={settings.showBookmarksBar}
+            onChange={(event) =>
+              void browser.updateSettings({
+                ...settings,
+                showBookmarksBar: event.target.checked,
+              })
+            }
+          />
+        </label>
+
         <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Tab layout</strong>
