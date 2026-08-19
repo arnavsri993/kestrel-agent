@@ -130,6 +130,7 @@ import {
 	loadInitialDesktopState,
 	startupFailureMessage,
 } from "./startup-state";
+import { personalizedConfigurationPrompts } from "./configuration-prompts";
 
 const pages = [
 	["browser", "Browser"],
@@ -8073,6 +8074,16 @@ function Settings({
 		localStorage.setItem("kestrel:setup-step", setupSteps[0]!.id);
 		location.reload();
 	}
+	const configurationPrompts = personalizedConfigurationPrompts({
+		density: snapshot.configuration.ui.density,
+		showToolActivity: snapshot.configuration.ui.showToolActivity,
+		showConfigurationDiffs: snapshot.configuration.ui.showConfigurationDiffs,
+		searchEngine: browser.state?.settings.searchEngine,
+		tabLayout: browser.state?.settings.tabLayout,
+		contextEnabled: browserContextEnabled,
+		launchAtLogin: login?.enabled,
+		paused: snapshot.agentState === "paused",
+	});
 	const route = snapshot.modelRouting.currentDecision;
 	const browserSections = [
 		["browser", "Browser Preferences", "Search, extensions, performance & tabs"],
@@ -8135,13 +8146,9 @@ function Settings({
 							<p>
 								Request a setting change in the sidebar. Kestrel shows the proposed change and waits for approval before applying it.
 							</p>
-							<div className="agent-config-chips" aria-label="Sample configuration requests">
+							<div className="agent-config-chips" aria-label="Personalized configuration requests">
 								<span className="chips-label">Try asking:</span>
-								{[
-									"Set search engine to Google",
-									"Make chat density compact",
-									"Use vertical tabs",
-								].map((prompt) => (
+								{configurationPrompts.map((prompt) => (
 									<button
 										key={prompt}
 										type="button"
