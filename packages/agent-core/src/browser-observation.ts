@@ -197,7 +197,14 @@ function observationUrl(value: string): string {
 		}
 		return url.toString().slice(0, MAX_OBSERVATION_URL);
 	} catch {
-		return candidate.replace(/#.*$/, "");
+		return candidate
+			.replace(/#.*$/, "")
+			.replace(/\/\/[^/?#]*@/, "//")
+			.replace(/[^\s/?#]+:[^\s/?#]*@/g, "")
+			.replace(
+				/[?&](?:access_?token|api_?key|auth(?:entication|orization)?(?:_?token|_?code)?|code|credential|jwt|password|refresh_?token|secret|session(?:_?id|_?token)?|sig(?:nature)?|ticket|token)=[^&]*/gi,
+				"",
+			);
 	}
 }
 
@@ -234,14 +241,21 @@ export function diffBrowserSnapshots(
 			after: publicNode(node),
 		}));
 
+	const beforeUrl = observationUrl(before.url);
+	const afterUrl = observationUrl(after.url);
+	const beforeTitle = observationTitle(before.title);
+	const afterTitle = observationTitle(after.title);
+	const collapsedBeforeTitle = before.title.replace(/\s+/g, " ").trim();
+	const collapsedAfterTitle = after.title.replace(/\s+/g, " ").trim();
+
 	return {
 		before: {
-			url: observationUrl(before.url),
-			title: observationTitle(before.title),
+			url: beforeUrl,
+			title: beforeTitle,
 		},
 		after: {
-			url: observationUrl(after.url),
-			title: observationTitle(after.title),
+			url: afterUrl,
+			title: afterTitle,
 		},
 		added: added.slice(0, MAX_OBSERVATION_CHANGES),
 		removed: removed.slice(0, MAX_OBSERVATION_CHANGES),
@@ -251,7 +265,11 @@ export function diffBrowserSnapshots(
 			afterTree.truncated ||
 			added.length > MAX_OBSERVATION_CHANGES ||
 			removed.length > MAX_OBSERVATION_CHANGES ||
-			changed.length > MAX_OBSERVATION_CHANGES,
+			changed.length > MAX_OBSERVATION_CHANGES ||
+			before.url.length > MAX_OBSERVATION_URL ||
+			after.url.length > MAX_OBSERVATION_URL ||
+			collapsedBeforeTitle.length > MAX_OBSERVATION_TEXT ||
+			collapsedAfterTitle.length > MAX_OBSERVATION_TEXT,
 		trust: "untrusted_browser",
 	};
 }

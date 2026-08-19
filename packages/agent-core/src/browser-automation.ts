@@ -477,7 +477,7 @@ export class BrowserController {
 		ownerSessionId: string,
 		id: string,
 		signal: AbortSignal,
-	): Promise<{ downloads: BrowserDownload[] }> {
+	): Promise<{ downloads: BrowserDownload[]; trust: "untrusted_browser" }> {
 		const session = this.require(ownerSessionId, id);
 		if (!this.backend.downloads)
 			throw new Error(
@@ -485,6 +485,7 @@ export class BrowserController {
 			);
 		return {
 			downloads: await this.backend.downloads(session.backendSessionId, signal),
+			trust: "untrusted_browser" as const,
 		};
 	}
 

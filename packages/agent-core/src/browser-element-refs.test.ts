@@ -93,13 +93,35 @@ describe("browser element refs", () => {
 		expect(isBrowserElementRef("#main")).toBe(false);
 	});
 
+	it("does not advertise refs that cannot be resolved", () => {
+		const result = annotateAccessibilityTree({
+			nodes: [
+				{ nodeId: "1", role: "button", name: "Ghost" },
+				{ nodeId: "2", role: "link", name: "Real", backendDOMNodeId: 9 },
+			],
+		});
+
+		expect(result.interactive).toEqual([
+			{ ref: "e1", role: "link", name: "Real", backendDOMNodeId: 9 },
+		]);
+		expect(result.accessibilityTree).toMatchObject({
+			nodes: [
+				{ nodeId: "1", role: "button", name: "Ghost" },
+				{ nodeId: "2", ref: "e1", role: "link" },
+			],
+		});
+		expect(
+			(result.accessibilityTree as { nodes: Array<{ ref?: string }> }).nodes[0],
+		).not.toHaveProperty("ref");
+	});
+
 	it("caps interactive refs and marks truncation", () => {
 		const result = annotateAccessibilityTree(
 			{
 				nodes: [
-					{ nodeId: "1", role: "button", name: "One" },
-					{ nodeId: "2", role: "link", name: "Two" },
-					{ nodeId: "3", role: "textbox", name: "Three" },
+					{ nodeId: "1", role: "button", name: "One", backendDOMNodeId: 1 },
+					{ nodeId: "2", role: "link", name: "Two", backendDOMNodeId: 2 },
+					{ nodeId: "3", role: "textbox", name: "Three", backendDOMNodeId: 3 },
 				],
 			},
 			2,

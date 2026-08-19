@@ -195,4 +195,26 @@ describe("browser observation diffs", () => {
 		expect(autonomousResult.observation.changed).toHaveLength(1);
 		expect(visibleResult.observation.changed).toHaveLength(1);
 	});
+
+	it("redacts userinfo and password query keys when the URL cannot be parsed", () => {
+		const diff = diffBrowserSnapshots(
+			snapshot("not a url user:pass@host?password=secret#frag", "Before", {
+				nodes: [],
+			}),
+			snapshot("https://example.test/", "After", { nodes: [] }),
+		);
+		expect(diff.before.url).not.toMatch(/user:pass/);
+		expect(diff.before.url).not.toMatch(/password=secret/);
+		expect(diff.before.url).not.toMatch(/#frag/);
+		expect(diff.trust).toBe("untrusted_browser");
+	});
+
+	it("marks truncated when a title exceeds the observation text bound", () => {
+		const diff = diffBrowserSnapshots(
+			snapshot("https://example.test/", "a".repeat(600), { nodes: [] }),
+			snapshot("https://example.test/", "After", { nodes: [] }),
+		);
+		expect(diff.truncated).toBe(true);
+		expect(diff.before.title).toHaveLength(500);
+	});
 });

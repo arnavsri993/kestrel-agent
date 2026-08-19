@@ -10,6 +10,7 @@ vi.mock("electron", () => ({
 
 import {
 	ElectronBrowserService,
+	isolatedBrowserShouldCancelRequest,
 	MAX_BROWSER_DOWNLOAD_RECORDS,
 	retainRecentBrowserDownloads,
 } from "./electron-browser-service";
@@ -23,6 +24,40 @@ function download(id: string, status: "completed" | "progressing") {
 		createdAt: new Date().toISOString(),
 	};
 }
+
+describe("isolated browser origin policy", () => {
+	const allowed = new Set(["https://example.test"]);
+
+	it("cancels opaque and unallowlisted navigations, including data and blob holes", () => {
+		expect(
+			isolatedBrowserShouldCancelRequest("https://example.test/app", allowed),
+		).toBe(false);
+		expect(isolatedBrowserShouldCancelRequest("about:blank", allowed)).toBe(
+			false,
+		);
+		expect(
+			isolatedBrowserShouldCancelRequest("data:text/html,pwn", allowed),
+		).toBe(true);
+		expect(
+			isolatedBrowserShouldCancelRequest("about:srcdoc", allowed),
+		).toBe(true);
+		expect(
+			isolatedBrowserShouldCancelRequest(
+				"blob:https://evil.test/11111111-1111-4111-8111-111111111111",
+				allowed,
+			),
+		).toBe(true);
+		expect(
+			isolatedBrowserShouldCancelRequest(
+				"blob:https://example.test/11111111-1111-4111-8111-111111111111",
+				allowed,
+			),
+		).toBe(false);
+		expect(
+			isolatedBrowserShouldCancelRequest("https://evil.test/", allowed),
+		).toBe(true);
+	});
+});
 
 describe("Electron browser download history", () => {
 	it("retains active downloads and the newest terminal records", () => {
