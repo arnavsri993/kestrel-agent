@@ -485,6 +485,7 @@ export class BrowserController {
 			);
 		return {
 			downloads: await this.backend.downloads(session.backendSessionId, signal),
+			trust: "untrusted_browser" as const,
 		};
 	}
 

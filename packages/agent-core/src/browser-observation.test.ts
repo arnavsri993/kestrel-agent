@@ -208,4 +208,13 @@ describe("browser observation diffs", () => {
 		expect(diff.before.url).not.toMatch(/#frag/);
 		expect(diff.trust).toBe("untrusted_browser");
 	});
+
+	it("marks truncated when a title exceeds the observation text bound", () => {
+		const diff = diffBrowserSnapshots(
+			snapshot("https://example.test/", "a".repeat(600), { nodes: [] }),
+			snapshot("https://example.test/", "After", { nodes: [] }),
+		);
+		expect(diff.truncated).toBe(true);
+		expect(diff.before.title).toHaveLength(500);
+	});
 });

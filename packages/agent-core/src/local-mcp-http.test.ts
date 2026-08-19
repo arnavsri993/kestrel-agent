@@ -95,6 +95,7 @@ function postWithHost(
 	url: string,
 	host: string,
 	token: string,
+	origin?: string,
 ): Promise<number> {
 	return new Promise((resolve, reject) => {
 		const parsed = new URL(url);
@@ -110,6 +111,7 @@ function postWithHost(
 					authorization: `Bearer ${token}`,
 					"content-type": "application/json",
 					"content-length": Buffer.byteLength(body),
+					...(origin ? { origin } : {}),
 				},
 			},
 			(response) => {
@@ -252,13 +254,25 @@ describe("LocalBrowserMcpServer", () => {
 		).rejects.toThrow();
 	});
 
-	it("rejects a non-loopback Host header", async () => {
+	it("rejects a non-loopback Origin header", async () => {
 		const started = await startFixture();
 		const status = await postWithHost(
 			started.url,
-			"example.com",
+			"127.0.0.1",
 			started.token,
+			"https://evil.example",
 		);
-		expect(status).toBe(400);
+		expect(status).toBe(403);
+	});
+
+	it("rejects an unparseable Origin header", async () => {
+		const started = await startFixture();
+		const status = await postWithHost(
+			started.url,
+			"127.0.0.1",
+			started.token,
+			"not a url",
+		);
+		expect(status).toBe(403);
 	});
 });
