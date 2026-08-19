@@ -1539,11 +1539,11 @@ body { font-family: var(--sans); }
 .onboarding-actions .button { min-height: 40px; }
 .onboarding-actions .button.primary { min-width: 152px; min-height: 44px; }
 
-/* Persistent agent rail: context, task, up to three recent rows, composer, nav. */
+/* Persistent agent rail: context, task, up to three recent rows, composer. */
 .ai-browser-app { grid-template-columns: minmax(0, 1fr) 360px; }
 .agent-sidebar {
 	display: grid;
-	grid-template-rows: auto auto minmax(0, 1fr) auto;
+	grid-template-rows: auto auto minmax(0, 1fr);
 	background: var(--sidebar);
 	border-left: 1px solid var(--line);
 	transition: transform var(--motion-state) var(--ease-kestrel), opacity var(--motion-state) var(--ease-kestrel);

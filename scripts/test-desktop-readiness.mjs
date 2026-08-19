@@ -83,7 +83,7 @@ try {
 	});
 	await page.reload();
 
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await openKestrelDestination(page, "Settings");
 	await page.getByRole("button", { name: /^Agent Plugins/ }).click();
 	const readinessPlugin = page
 		.locator("article.setting-row")
@@ -126,7 +126,7 @@ try {
 	);
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.setViewportSize({ width: 1320, height: 860 });
-	await page.getByRole("button", { name: "Settings" }).click();
+	await openKestrelDestination(page, "Settings");
 	const subscriptionSetting = page.locator(".subscription-setting");
 	await subscriptionSetting
 		.getByText("ChatGPT plan through Codex", { exact: true })

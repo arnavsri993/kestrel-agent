@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-observability-ui-"));
 const screenshotPath = resolve(
@@ -48,7 +49,7 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
-	await page.getByRole("button", { name: "Settings" }).click();
+	await openKestrelDestination(page, "Settings");
 	await page.getByRole("button", { name: /^Advanced/ }).click();
 	const observability = page.locator(".observability-setting");
 	await observability

@@ -75,11 +75,7 @@ import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { BrandMark } from "./components/BrandMark";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
-import {
-	sidebarActiveDestination,
-	sidebarApprovalsNavTarget,
-	sidebarReviewTarget,
-} from "./components/browser/agent-sidebar";
+import { sidebarReviewTarget } from "./components/browser/agent-sidebar";
 import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -116,12 +112,6 @@ import { EmptyState } from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
-import {
-	isKestrelAppPageId,
-	kestrelAppPageUrl,
-	parseKestrelAppPage,
-	type KestrelAppPageId,
-} from "../utility/browser-app-pages";
 import {
 	isKestrelAppPageId,
 	kestrelAppPageUrl,
@@ -8728,32 +8718,6 @@ export function App() {
 		}
 		void openBrowserWorkspace();
 	}, [browser, openBrowserWorkspace]);
-	const openPrimaryDestination = useCallback(
-		(destination: "browser" | "agent" | "approvals" | "settings") => {
-			if (destination === "browser") {
-				void openBrowserWorkspace();
-				return;
-			}
-			if (
-				destination === "approvals" &&
-				sidebarApprovalsNavTarget({
-					runtimeWaiting,
-					snapshotPendingCount,
-				}) === "thread"
-			) {
-				focusRuntimeApproval();
-				return;
-			}
-			void openAppPage(destination);
-		},
-		[
-			focusRuntimeApproval,
-			openAppPage,
-			openBrowserWorkspace,
-			runtimeWaiting,
-			snapshotPendingCount,
-		],
-	);
 	useEffect(
 		() =>
 			window.kestrel.onDeepLink((deepLink) => {
@@ -9177,14 +9141,10 @@ export function App() {
 					collapsed={!agentSidebarOpen}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
-					activeDestination={sidebarActiveDestination(
-						activeBrowserTab?.url ?? "browser",
-					)}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
 					onReviewApprovals={reviewApprovals}
-					onNavigate={openPrimaryDestination}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
             streams, steering, cancellation, and approval boundaries remain intact. */}
