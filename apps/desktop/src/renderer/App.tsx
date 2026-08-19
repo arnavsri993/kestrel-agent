@@ -72,6 +72,11 @@ import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 import { ApprovalCard } from "./components/ApprovalCard";
 import { BrandMark } from "./components/BrandMark";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
+import {
+	sidebarActiveDestination,
+	sidebarApprovalsNavTarget,
+	sidebarReviewTarget,
+} from "./components/browser/agent-sidebar";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
 import {
 	BrowserDownloads,
@@ -8528,12 +8533,53 @@ export function App() {
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
 		setActiveRuntimeSessionId(sessionId);
 	}, []);
-	const startNewAgent = useCallback((prompt = "") => {
-		setNewAgentPrompt(prompt);
-		setNewAgentRequestId((current) => current + 1);
+	const revealAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
 	}, []);
+	const startNewAgent = useCallback((prompt = "") => {
+		setNewAgentPrompt(prompt);
+		setNewAgentRequestId((current) => current + 1);
+		revealAgentSidebar();
+	}, [revealAgentSidebar]);
+	const focusRuntimeApproval = useCallback(() => {
+		revealAgentSidebar();
+		window.requestAnimationFrame(() => {
+			const card = document.querySelector(
+				".agent-conversation-host .approval-message",
+			);
+			card?.scrollIntoView({ block: "nearest" });
+			card
+				?.querySelector<HTMLButtonElement>(".button.primary")
+				?.focus();
+		});
+	}, [revealAgentSidebar]);
+	const openSidebarSession = useCallback(
+		(sessionId: string) => {
+			revealAgentSidebar();
+			openRuntimeSession(sessionId);
+			window.requestAnimationFrame(() => {
+				document.getElementById("runtime-prompt")?.focus();
+			});
+		},
+		[openRuntimeSession, revealAgentSidebar],
+	);
+	const snapshotPendingCount =
+		snapshot?.approvals.filter((approval) => approval.status === "pending")
+			.length ?? 0;
+	const runtimeWaiting = runtimeAgentState === "waiting_approval";
+	const reviewApprovals = useCallback(() => {
+		if (
+			sidebarReviewTarget({
+				runtimeWaiting,
+				snapshotPendingCount,
+			}) === "thread"
+		) {
+			focusRuntimeApproval();
+			return;
+		}
+		setPage("approvals");
+	}, [focusRuntimeApproval, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen((current) => {
 			const next = !current;
@@ -8573,9 +8619,19 @@ export function App() {
 				| "settings",
 		) => {
 			if (destination === "settings") setSettingsSectionRequest(null);
+			if (
+				destination === "approvals" &&
+				sidebarApprovalsNavTarget({
+					runtimeWaiting,
+					snapshotPendingCount,
+				}) === "thread"
+			) {
+				focusRuntimeApproval();
+				return;
+			}
 			setPage(destination);
 		},
-		[],
+		[focusRuntimeApproval, runtimeWaiting, snapshotPendingCount],
 	);
 	useEffect(
 		() =>
@@ -8583,7 +8639,7 @@ export function App() {
 				const action = desktopDeepLinkAction(deepLink);
 				if (action === "new-chat") {
 					setDeepLinkNotice("");
-					openRuntimeSession(null);
+					startNewAgent();
 					return;
 				}
 				if (action === "settings") {
@@ -8596,7 +8652,7 @@ export function App() {
 					"This Kestrel link is not supported. Open New task or Settings from the sidebar.",
 				);
 			}),
-		[openRuntimeSession],
+		[startNewAgent],
 	);
 	useEffect(() => {
 		if (!deepLinkNotice) return;
@@ -9067,11 +9123,11 @@ export function App() {
 					collapsed={!agentSidebarOpen}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
-					activeDestination={page}
+					activeDestination={sidebarActiveDestination(page)}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
-					onOpenSession={openRuntimeSession}
-					onReviewApprovals={() => navigate("approvals")}
+					onOpenSession={openSidebarSession}
+					onReviewApprovals={reviewApprovals}
 					onNavigate={openPrimaryDestination}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
