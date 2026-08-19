@@ -923,7 +923,7 @@ function createMainWindow(): BrowserWindow {
         });
   deliverPendingWebUrls();
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//.test(url)) void shell.openExternal(url);
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.session.setPermissionRequestHandler(

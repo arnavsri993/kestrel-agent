@@ -89,10 +89,6 @@ export interface UserBrowserServiceOptions {
 interface ViewRecord {
 	view: WebContentsView;
 	navigatingTo?: string;
-	popupGestureAt?: number;
-	popupAllowance: number;
-	popupActionInFlight?: boolean;
-	popupResetTimer?: ReturnType<typeof setTimeout>;
 }
 
 function safePageUrl(value: string): URL | undefined {
@@ -722,49 +718,38 @@ export class UserBrowserService {
 				clickCount: 0,
 			});
 			if (signal.aborted) throw signal.reason;
-			record.popupActionInFlight = true;
-			this.grantPopupAllowance(record);
+			let pressed = false;
 			try {
-				let pressed = false;
-				try {
-					await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-						...pointer,
-						type: "mousePressed",
-						button: "left",
-						buttons: 1,
-						clickCount: 1,
-					});
-					pressed = true;
-					if (signal.aborted) throw signal.reason;
-					await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-						...pointer,
-						type: "mouseReleased",
-						button: "left",
-						buttons: 0,
-						clickCount: 1,
-					});
-					pressed = false;
-				} finally {
-					if (pressed)
-						await webContents.debugger
-							.sendCommand("Input.dispatchMouseEvent", {
-								...pointer,
-								type: "mouseReleased",
-								button: "left",
-								buttons: 0,
-								clickCount: 1,
-							})
-							.catch(() => undefined);
-				}
-				// CDP can acknowledge input before the renderer-side window-open event
-				// reaches the main process. Keep this approved allowance one-shot for
-				// one main-process turn without depending on a document that may have
-				// navigated or been destroyed by the click.
-				await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
+				await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+					...pointer,
+					type: "mousePressed",
+					button: "left",
+					buttons: 1,
+					clickCount: 1,
+				});
+				pressed = true;
+				if (signal.aborted) throw signal.reason;
+				await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+					...pointer,
+					type: "mouseReleased",
+					button: "left",
+					buttons: 0,
+					clickCount: 1,
+				});
+				pressed = false;
 			} finally {
-				delete record.popupActionInFlight;
-				this.clearPopupAllowance(record);
+				if (pressed)
+					await webContents.debugger
+						.sendCommand("Input.dispatchMouseEvent", {
+							...pointer,
+							type: "mouseReleased",
+							button: "left",
+							buttons: 0,
+							clickCount: 1,
+						})
+						.catch(() => undefined);
 			}
+			await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
 		} else if (action.type === "type") {
 			await this.targetPoint(webContents, action.target, true);
 			if (signal.aborted) throw signal.reason;
@@ -995,7 +980,7 @@ export class UserBrowserService {
 			},
 		});
 		view.setBackgroundColor("#ffffff");
-		const record: ViewRecord = { view, popupAllowance: 0 };
+		const record: ViewRecord = { view };
 		this.views.set(tab.id, record);
 		this.webContentsToTab.set(view.webContents.id, tab.id);
 		this.configureView(tab, record);
@@ -1018,12 +1003,7 @@ export class UserBrowserService {
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const { webContents } = record.view;
 		webContents.setWindowOpenHandler(({ url, disposition }) => {
-			const gestureFresh =
-				record.popupGestureAt !== undefined &&
-				Date.now() - record.popupGestureAt <= POPUP_GESTURE_WINDOW_MS;
-			const allowed = gestureFresh && record.popupAllowance > 0;
-			this.clearPopupAllowance(record);
-			if (safePageUrl(url) && allowed && this.state.tabs.length < 32) {
+			if (safePageUrl(url) && this.state.tabs.length < 32) {
 				void this.createTab(url, disposition !== "background-tab").catch(
 					() => undefined,
 				);
@@ -1037,7 +1017,6 @@ export class UserBrowserService {
 			if (!safePageUrl(url)) event.preventDefault();
 		});
 		webContents.on("did-start-loading", () => {
-			this.clearPopupAllowance(record);
 			tab.loading = true;
 			tab.error = undefined;
 			this.updateNavigationState(tab, webContents);
@@ -1124,16 +1103,6 @@ export class UserBrowserService {
 			Menu.buildFromTemplate(template).popup({ window: this.window });
 		});
 		webContents.on("before-input-event", (event, input) => {
-			if (
-				input.type === "keyDown" &&
-				!input.isAutoRepeat &&
-				["Enter", " "].includes(input.key)
-			) {
-				this.grantPopupAllowance(record);
-			}
-			if (input.type === "keyUp" && ["Enter", " "].includes(input.key))
-				this.schedulePopupAllowanceReset(record);
-
 			if (input.type !== "keyDown") return;
 
 			// Escape: Stop loading if currently loading
@@ -1280,34 +1249,6 @@ export class UserBrowserService {
 				this.forward(tab.id);
 			}
 		});
-		webContents.on("before-mouse-event", (_event, mouse) => {
-			if (mouse.type === "mouseDown") this.grantPopupAllowance(record);
-			else if (mouse.type === "mouseUp" && !record.popupActionInFlight)
-				this.schedulePopupAllowanceReset(record);
-		});
-	}
-
-	private grantPopupAllowance(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		delete record.popupResetTimer;
-		record.popupGestureAt = Date.now();
-		record.popupAllowance = 1;
-	}
-
-	private schedulePopupAllowanceReset(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		const gestureAt = record.popupGestureAt;
-		record.popupResetTimer = setTimeout(() => {
-			delete record.popupResetTimer;
-			if (record.popupGestureAt === gestureAt) this.clearPopupAllowance(record);
-		}, 0);
-	}
-
-	private clearPopupAllowance(record: ViewRecord): void {
-		if (record.popupResetTimer) clearTimeout(record.popupResetTimer);
-		delete record.popupResetTimer;
-		delete record.popupGestureAt;
-		record.popupAllowance = 0;
 	}
 
 	private didNavigate(
@@ -1406,7 +1347,6 @@ export class UserBrowserService {
 	private closeView(tabId: string, closeWebContents = true): void {
 		const record = this.views.get(tabId);
 		if (!record) return;
-		this.clearPopupAllowance(record);
 		this.views.delete(tabId);
 		this.webContentsToTab.delete(record.view.webContents.id);
 		if (
