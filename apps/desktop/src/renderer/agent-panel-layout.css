@@ -1,0 +1,64 @@
+/* Keep the Copilot-style agent surface inside the page chrome. The browser
+ * controls remain full-width above it, while the actual page viewport reserves
+ * the rail width so native browser content never sits underneath the panel. */
+.ai-browser-app {
+	--agent-panel-width: 360px;
+	--agent-panel-top: 88px;
+	position: relative;
+	display: block;
+}
+
+.ai-browser-app.agent-sidebar-collapsed {
+	--agent-panel-width: 0px;
+}
+
+.browser-main-plane {
+	width: 100%;
+	padding-right: var(--agent-panel-width);
+}
+
+.browser-main-plane:has(.browser-workspace) {
+	padding-right: 0;
+}
+
+.browser-workspace .browser-viewport {
+	width: calc(100% - var(--agent-panel-width));
+	justify-self: start;
+}
+
+.ai-browser-app.agent-sidebar-collapsed .browser-workspace .browser-viewport {
+	width: 100%;
+}
+
+.agent-sidebar {
+	position: absolute;
+	top: var(--agent-panel-top);
+	right: 0;
+	bottom: 0;
+	width: var(--agent-panel-width);
+	height: auto;
+	border-top: 1px solid var(--line);
+	border-top-left-radius: var(--radius-surface);
+}
+
+.agent-sidebar.is-collapsed {
+	width: 0;
+}
+
+@media (max-width: 1120px) {
+	.ai-browser-app {
+		--agent-panel-width: 330px;
+	}
+}
+
+@media (max-width: 980px) {
+	.ai-browser-app {
+		--agent-panel-width: 305px;
+	}
+}
+
+@media (max-width: 760px) {
+	.ai-browser-app {
+		--agent-panel-width: 300px;
+	}
+}
