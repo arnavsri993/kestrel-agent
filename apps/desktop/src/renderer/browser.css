@@ -1104,6 +1104,13 @@ body:has(.ai-browser-app),
 	background: var(--canvas);
 }
 
+.browser-app-page {
+	position: absolute;
+	inset: 0;
+	overflow: auto;
+	background: var(--canvas);
+}
+
 .browser-workspace-vertical {
 	grid-template-areas:
 		"tabs toolbar"

@@ -106,6 +106,12 @@ import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import { userBrowserUrlForRendererLink } from "./renderer-link-routing";
 import {
+	isKestrelAppPageId,
+	kestrelAppPageUrl,
+	parseKestrelAppPage,
+	type KestrelAppPageId,
+} from "../utility/browser-app-pages";
+import {
 	memoryInGb,
 	recommendedLocalModelTiers,
 	supportedLocalModels,
@@ -7837,7 +7843,7 @@ function Settings({
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
-	onBack(): void;
+	onBack?(): void;
 }) {
 	const [login, setLogin] = useState<{
 		enabled: boolean;
@@ -8033,7 +8039,7 @@ function Settings({
 		["advanced", "Advanced System", "Diagnostics and organization"],
 	] as const;
 	return (
-		<PageFrame title="Preferences" onBack={onBack}>
+		<PageFrame title="Preferences" {...(onBack ? { onBack } : {})}>
 			<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
 					<div className="settings-nav-category-header">
@@ -8518,7 +8524,6 @@ function Empty({ title, text }: { title: string; text: string }) {
 export function App() {
 	const browser = useUserBrowser();
 	const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
-	const [page, setPage] = useState<Page>("browser");
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
 	);
@@ -8527,7 +8532,7 @@ export function App() {
 	const [browserContextEnabled, setBrowserContextEnabled] = useState(
 		() => localStorage.getItem("kestrel:browser-context") !== "off",
 	);
-	const pendingToolRouteFocusRef = useRef<Page | null>(null);
+	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
 	const [runtimeAgentState, setRuntimeAgentState] = useState<AgentState | null>(
@@ -8568,7 +8573,6 @@ export function App() {
 			if (!url) return;
 
 			event.preventDefault();
-			setPage("browser");
 			void browser.createTab(url).catch(() => undefined);
 		};
 		document.addEventListener("click", openRendererLinkInUserBrowser);
@@ -8641,6 +8645,33 @@ export function App() {
 		snapshot?.approvals.filter((approval) => approval.status === "pending")
 			.length ?? 0;
 	const runtimeWaiting = runtimeAgentState === "waiting_approval";
+	const openAppPage = useCallback(
+		async (id: KestrelAppPageId, section?: SettingsSection) => {
+			if (id === "settings") setSettingsSectionRequest(section ?? null);
+			pendingToolRouteFocusRef.current = id;
+			const tabs = browser.state?.tabs ?? [];
+			const existing = tabs.find(
+				(tab) => parseKestrelAppPage(tab.url)?.id === id,
+			);
+			if (existing) {
+				if (existing.id !== browser.state?.activeTabId)
+					await browser.selectTab(existing.id);
+				return;
+			}
+			await browser.createTab(kestrelAppPageUrl(id));
+		},
+		[browser],
+	);
+	const openBrowserWorkspace = useCallback(async () => {
+		const tabs = browser.state?.tabs ?? [];
+		const webTab = tabs.find((tab) => !parseKestrelAppPage(tab.url));
+		if (webTab) {
+			if (webTab.id !== browser.state?.activeTabId)
+				await browser.selectTab(webTab.id);
+			return;
+		}
+		await browser.createTab();
+	}, [browser]);
 	const reviewApprovals = useCallback(() => {
 		if (
 			sidebarReviewTarget({
@@ -8651,8 +8682,8 @@ export function App() {
 			focusRuntimeApproval();
 			return;
 		}
-		setPage("approvals");
-	}, [focusRuntimeApproval, runtimeWaiting, snapshotPendingCount]);
+		void openAppPage("approvals");
+	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen((current) => {
 			const next = !current;
@@ -8668,30 +8699,43 @@ export function App() {
 			return next;
 		});
 	}, []);
-	const openBrowser = useCallback(() => setPage("browser"), []);
-	const openAgent = useCallback(() => setPage("agent"), []);
-	const openBrowserHistory = useCallback(() => setPage("history"), []);
-	const openBrowserDownloads = useCallback(() => setPage("downloads"), []);
-	const openCommandCenter = useCallback(() => setPage("commands"), []);
-	const openSettings = useCallback((section?: SettingsSection) => {
-		setSettingsSectionRequest(section ?? null);
-		setPage("settings");
-	}, []);
+	const openBrowser = useCallback(() => {
+		void openBrowserWorkspace();
+	}, [openBrowserWorkspace]);
+	const openAgent = useCallback(() => {
+		void openAppPage("agent");
+	}, [openAppPage]);
+	const openBrowserHistory = useCallback(() => {
+		void openAppPage("history");
+	}, [openAppPage]);
+	const openBrowserDownloads = useCallback(() => {
+		void openAppPage("downloads");
+	}, [openAppPage]);
+	const openCommandCenter = useCallback(() => {
+		void openAppPage("commands");
+	}, [openAppPage]);
+	const openSettings = useCallback(
+		(section?: SettingsSection) => {
+			void openAppPage("settings", section);
+		},
+		[openAppPage],
+	);
 	const closeCommandCenter = useCallback(() => {
-		setPage("browser");
-		window.requestAnimationFrame(() =>
-			document.getElementById("kestrel-browser-nav")?.focus(),
+		const active = browser.state?.tabs.find(
+			(tab) => tab.id === browser.state?.activeTabId,
 		);
-	}, []);
+		if (active && parseKestrelAppPage(active.url)?.id === "commands") {
+			void browser.closeTab(active.id);
+			return;
+		}
+		void openBrowserWorkspace();
+	}, [browser, openBrowserWorkspace]);
 	const openPrimaryDestination = useCallback(
-		(
-			destination:
-				| "browser"
-				| "agent"
-				| "approvals"
-				| "settings",
-		) => {
-			if (destination === "settings") setSettingsSectionRequest(null);
+		(destination: "browser" | "agent" | "approvals" | "settings") => {
+			if (destination === "browser") {
+				void openBrowserWorkspace();
+				return;
+			}
 			if (
 				destination === "approvals" &&
 				sidebarApprovalsNavTarget({
@@ -8702,9 +8746,15 @@ export function App() {
 				focusRuntimeApproval();
 				return;
 			}
-			setPage(destination);
+			void openAppPage(destination);
 		},
-		[focusRuntimeApproval, runtimeWaiting, snapshotPendingCount],
+		[
+			focusRuntimeApproval,
+			openAppPage,
+			openBrowserWorkspace,
+			runtimeWaiting,
+			snapshotPendingCount,
+		],
 	);
 	useEffect(
 		() =>
@@ -8718,14 +8768,14 @@ export function App() {
 				if (action === "settings") {
 					setDeepLinkNotice("");
 					setSettingsSectionRequest(null);
-					setPage("settings");
+					void openAppPage("settings");
 					return;
 				}
 				setDeepLinkNotice(
 					"This Kestrel link is not supported. Open New task or Settings from the sidebar.",
 				);
 			}),
-		[startNewAgent],
+		[openAppPage, startNewAgent],
 	);
 	useEffect(() => {
 		if (!deepLinkNotice) return;
@@ -8845,33 +8895,31 @@ export function App() {
 		const timer = window.setInterval(beacon, 45_000);
 		return () => window.clearInterval(timer);
 	}, []);
-	const focusToolRoute = useCallback(
-		(node: HTMLDivElement | null) => {
-			if (!node || pendingToolRouteFocusRef.current !== page) return;
-			if (routeFocusFrameRef.current !== null)
-				window.cancelAnimationFrame(routeFocusFrameRef.current);
-			routeFocusFrameRef.current = window.requestAnimationFrame(() => {
-				routeFocusFrameRef.current = null;
-				if (pendingToolRouteFocusRef.current !== page || !node.isConnected)
-					return;
-				const heading = node.querySelector<HTMLElement>("h1, h2");
-				if (!heading) return;
-				pendingToolRouteFocusRef.current = null;
-				const previousTabIndex = heading.getAttribute("tabindex");
-				heading.tabIndex = -1;
-				heading.focus();
-				heading.addEventListener(
-					"blur",
-					() => {
-						if (previousTabIndex === null) heading.removeAttribute("tabindex");
-						else heading.setAttribute("tabindex", previousTabIndex);
-					},
-					{ once: true },
-				);
-			});
-		},
-		[page],
-	);
+	const focusToolRoute = useCallback((node: HTMLDivElement | null) => {
+		const expected = pendingToolRouteFocusRef.current;
+		if (!node || !expected) return;
+		if (routeFocusFrameRef.current !== null)
+			window.cancelAnimationFrame(routeFocusFrameRef.current);
+		routeFocusFrameRef.current = window.requestAnimationFrame(() => {
+			routeFocusFrameRef.current = null;
+			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected)
+				return;
+			const heading = node.querySelector<HTMLElement>("h1, h2");
+			if (!heading) return;
+			pendingToolRouteFocusRef.current = null;
+			const previousTabIndex = heading.getAttribute("tabindex");
+			heading.tabIndex = -1;
+			heading.focus();
+			heading.addEventListener(
+				"blur",
+				() => {
+					if (previousTabIndex === null) heading.removeAttribute("tabindex");
+					else heading.setAttribute("tabindex", previousTabIndex);
+				},
+				{ once: true },
+			);
+		});
+	}, []);
 	useEffect(
 		() => () => {
 			if (routeFocusFrameRef.current !== null)
@@ -8882,11 +8930,7 @@ export function App() {
 	useEffect(
 		() =>
 			window.kestrel.onBrowserCommand((command) => {
-				if (command === "open-settings") setPage("settings");
-				else if (command === "open-history") setPage("history");
-				else if (command === "open-downloads") setPage("downloads");
-				else if (command === "show-shortcuts") setShowShortcuts((prev) => !prev);
-				else if (command === "open-commands") setPage("commands");
+				if (command === "show-shortcuts") setShowShortcuts((prev) => !prev);
 			}),
 		[],
 	);
@@ -8915,53 +8959,14 @@ export function App() {
 			if (key === "n" && !event.shiftKey) {
 				event.preventDefault();
 				startNewAgent();
-			} else if (key === "k" || (key === "p" && event.shiftKey)) {
-				event.preventDefault();
-				setPage("commands");
-			} else if (key === "," && !event.shiftKey) {
-				event.preventDefault();
-				setPage("settings");
-			} else if ((key === "h" || key === "y") && !event.shiftKey) {
-				event.preventDefault();
-				setPage("history");
-			} else if (key === "j" && !event.shiftKey) {
-				event.preventDefault();
-				setPage("downloads");
 			} else if (key === "/" || key === "?") {
 				event.preventDefault();
 				setShowShortcuts((prev) => !prev);
-			} else if (key === "t" && page !== "browser") {
-				event.preventDefault();
-				setPage("browser");
-				if (event.shiftKey) {
-					void browser.reopenClosedTab();
-				} else {
-					void browser.createTab();
-				}
-			} else if (
-				/^[1-8]$/.test(event.key) &&
-				page !== "browser" &&
-				browser.state?.tabs.length
-			) {
-				event.preventDefault();
-				setPage("browser");
-				const targetIndex = parseInt(event.key, 10) - 1;
-				const target = browser.state.tabs[targetIndex];
-				if (target) void browser.selectTab(target.id);
-			} else if (
-				event.key === "9" &&
-				page !== "browser" &&
-				browser.state?.tabs.length
-			) {
-				event.preventDefault();
-				setPage("browser");
-				const target = browser.state.tabs[browser.state.tabs.length - 1];
-				if (target) void browser.selectTab(target.id);
 			}
 		};
 		document.addEventListener("keydown", workspaceShortcuts);
 		return () => document.removeEventListener("keydown", workspaceShortcuts);
-	}, [browser, onboarded, page, showShortcuts, startNewAgent]);
+	}, [onboarded, showShortcuts, startNewAgent]);
 	if (!onboarded)
 		return (
 			<ProductShellTransition>
@@ -9005,6 +9010,7 @@ export function App() {
 	const activeBrowserTab = browser.state?.tabs.find(
 		(tab) => tab.id === browser.state?.activeTabId,
 	);
+	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
 	const activeAgentName =
 		snapshot.personality.available.find(
 			(personality) => personality.id === snapshot.personality.selectedId,
@@ -9013,39 +9019,115 @@ export function App() {
 	const pendingApprovalCount =
 		snapshot.approvals.filter((approval) => approval.status === "pending")
 			.length + (runtimeAgentState === "waiting_approval" ? 1 : 0);
-	const legacyPage = ![
-		"browser",
-		"agent",
-		"history",
-		"downloads",
-		"commands",
-		"settings",
-	].includes(page);
 	function navigate(destination: string) {
 		if (destination === "shortcuts") {
 			setShowShortcuts(true);
 			return;
 		}
-		if (!pages.some(([id]) => id === destination)) return;
-		const next = destination as Page;
-		if (
-			![
-				"browser",
-				"agent",
-				"history",
-				"downloads",
-				"commands",
-				"settings",
-			].includes(next)
-		)
-			pendingToolRouteFocusRef.current = next;
-		setPage(next);
+		if (destination === "browser") {
+			void openBrowserWorkspace();
+			return;
+		}
+		if (destination === "connections") {
+			void openAppPage("settings", "connections");
+			return;
+		}
+		if (!isKestrelAppPageId(destination)) return;
+		void openAppPage(destination);
 	}
 	function toggleBrowserContext() {
 		const enabled = !browserContextEnabled;
 		setBrowserContextEnabled(enabled);
 		localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
 	}
+	const appPageId = currentAppPage?.id;
+	const appPage = appPageId ? (
+		<div
+			ref={focusToolRoute}
+			className={`browser-app-page${
+				appPageId === "settings" ||
+				appPageId === "readiness" ||
+				appPageId === "approvals" ||
+				appPageId === "memory" ||
+				appPageId === "research" ||
+				appPageId === "artifacts" ||
+				appPageId === "work" ||
+				appPageId === "events" ||
+				appPageId === "activity" ||
+				appPageId === "extensions"
+					? " browser-secondary-surface"
+					: ""
+			}`}
+			data-app-page={appPageId}
+		>
+			{appPageId === "agent" && (
+				<AgentWorkspace
+					sessions={runtimeSessions}
+					activeSessionId={activeRuntimeSessionId}
+					agentState={effectiveAgentState}
+					pendingApprovals={pendingApprovalCount}
+					onNewTask={() => {
+						startNewAgent();
+						openAgent();
+					}}
+					onOpenSession={openRuntimeSession}
+					onOpenApprovals={() => navigate("approvals")}
+					onOpenWork={() => navigate("work")}
+				/>
+			)}
+			{appPageId === "history" && (
+				<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
+			)}
+			{appPageId === "downloads" && <BrowserDownloads browser={browser} />}
+			{appPageId === "commands" && (
+				<CommandCenter
+					destinations={commandDestinations}
+					onSelect={navigate}
+					onClose={closeCommandCenter}
+					onNewTask={() => {
+						startNewAgent();
+						openAgent();
+					}}
+					pendingApprovals={pendingApprovalCount}
+				/>
+			)}
+			{appPageId === "settings" && (
+				<Settings
+					snapshot={snapshot}
+					update={setSnapshot}
+					{...(settingsSectionRequest
+						? { initialSection: settingsSectionRequest }
+						: {})}
+					browser={browser}
+					browserContextEnabled={browserContextEnabled}
+					onToggleBrowserContext={toggleBrowserContext}
+				/>
+			)}
+			{appPageId === "readiness" && <Readiness />}
+			{appPageId === "approvals" && (
+				<Approvals snapshot={snapshot} update={setSnapshot} />
+			)}
+			{appPageId === "memory" && (
+				<LifeContext snapshot={snapshot} update={setSnapshot} />
+			)}
+			{appPageId === "research" && <Research />}
+			{appPageId === "artifacts" && <Artifacts />}
+			{appPageId === "work" && (
+				<Work sessions={runtimeSessions} onSessions={setRuntimeSessions} />
+			)}
+			{appPageId === "events" && (
+				<EventApplications onOpenSession={openRuntimeSession} />
+			)}
+			{appPageId === "activity" && <Activity snapshot={snapshot} />}
+			{appPageId === "extensions" && (
+				<DashboardExtensions
+					snapshot={snapshot}
+					sessions={runtimeSessions}
+					onNavigate={navigate}
+				/>
+			)}
+		</div>
+	) : undefined;
 	return (
 		<ProductShellTransition>
 			<motion.div
@@ -9062,130 +9144,27 @@ export function App() {
 							{deepLinkNotice}
 						</small>
 					)}
-					{page === "browser" && (
-						<BrowserWorkspace
-							browser={browser}
-							agentName={activeAgentName}
-							agentOpen={agentSidebarOpen}
-							contextEnabled={browserContextEnabled}
-							onToggleContext={toggleBrowserContext}
-							onToggleAgent={toggleAgentSidebar}
-							onNewAgent={startNewAgent}
-							onOpenSettings={() => openSettings("browser")}
-							onOpenHistory={openBrowserHistory}
-							onOpenDownloads={openBrowserDownloads}
-							onOpenMenu={openCommandCenter}
-							onShowShortcuts={() => setShowShortcuts(true)}
-						/>
-					)}
-					{page === "agent" && (
-						<AgentWorkspace
-							sessions={runtimeSessions}
-							activeSessionId={activeRuntimeSessionId}
-							agentState={effectiveAgentState}
-							pendingApprovals={pendingApprovalCount}
-							onNewTask={() => {
-								startNewAgent();
-								openAgent();
-							}}
-							onOpenSession={openRuntimeSession}
-							onOpenApprovals={() => navigate("approvals")}
-							onOpenWork={() => navigate("work")}
-							onBack={openBrowser}
-						/>
-					)}
-					{page === "history" && (
-						<BrowserHistory
-							browser={browser}
-							onOpenBrowser={openBrowser}
-							onBack={openBrowser}
-						/>
-					)}
-					{page === "downloads" && (
-						<BrowserDownloads browser={browser} onBack={openBrowser} />
-					)}
-					{page === "commands" && (
-						<CommandCenter
-							destinations={commandDestinations}
-							onSelect={navigate}
-							onClose={closeCommandCenter}
-							onBack={openBrowser}
-							onNewTask={() => {
-								startNewAgent();
-								openAgent();
-							}}
-							pendingApprovals={pendingApprovalCount}
-						/>
-					)}
-					{page === "settings" && (
-						<div className="browser-secondary-surface">
-							<Settings
-								snapshot={snapshot}
-								update={setSnapshot}
-								{...(settingsSectionRequest
-									? { initialSection: settingsSectionRequest }
-									: {})}
-									browser={browser}
-								browserContextEnabled={browserContextEnabled}
-								onToggleBrowserContext={toggleBrowserContext}
-								onBack={openBrowser}
-							/>
-						</div>
-					)}
-					{legacyPage && (
-						<motion.div
-							key={page}
-							ref={focusToolRoute}
-							className="browser-secondary-surface legacy-product-surface"
-							initial={reduced ? false : { opacity: 0 }}
-							animate={{ opacity: 1 }}
-							transition={{ duration: reduced ? 0 : 0.12 }}
-						>
-							<div className="secondary-surface-bar">
-								<button type="button" onClick={() => setPage("browser")}>
-									<Icon name="back" />
-									Browser
-								</button>
-								<strong>{pages.find(([id]) => id === page)?.[1]}</strong>
-							</div>
-							{page === "readiness" && <Readiness />}
-							{page === "approvals" && (
-								<Approvals snapshot={snapshot} update={setSnapshot} />
-							)}
-							{page === "memory" && (
-								<LifeContext snapshot={snapshot} update={setSnapshot} />
-							)}
-							{page === "research" && <Research />}
-							{page === "artifacts" && <Artifacts />}
-							{page === "work" && (
-								<Work
-									sessions={runtimeSessions}
-									onSessions={setRuntimeSessions}
-								/>
-							)}
-							{page === "events" && (
-								<EventApplications onOpenSession={openRuntimeSession} />
-							)}
-							{page === "activity" && <Activity snapshot={snapshot} />}
-							{page === "extensions" && (
-								<DashboardExtensions
-									snapshot={snapshot}
-									sessions={runtimeSessions}
-									onNavigate={(destination) =>
-										setPage(
-											destination === "connections" ? "settings" : destination,
-										)
-									}
-								/>
-							)}
-						</motion.div>
-					)}
+					<BrowserWorkspace
+						browser={browser}
+						agentName={activeAgentName}
+						agentOpen={agentSidebarOpen}
+						contextEnabled={browserContextEnabled}
+						onToggleContext={toggleBrowserContext}
+						onToggleAgent={toggleAgentSidebar}
+						onNewAgent={startNewAgent}
+						onOpenSettings={() => openSettings("browser")}
+						onOpenHistory={openBrowserHistory}
+						onOpenDownloads={openBrowserDownloads}
+						onOpenMenu={openCommandCenter}
+						onShowShortcuts={() => setShowShortcuts(true)}
+						{...(appPage ? { appPage } : {})}
+					/>
 				</section>
 				<AgentSidebar
 					communicationAssistant={
 						<CommunicationCodeAssistant
 							browser={browser}
-							enabled={page === "browser"}
+							enabled={!currentAppPage}
 							onOpenConnections={() => openSettings("connections")}
 						/>
 					}
@@ -9196,7 +9175,9 @@ export function App() {
 					collapsed={!agentSidebarOpen}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
-					activeDestination={sidebarActiveDestination(page)}
+					activeDestination={sidebarActiveDestination(
+						activeBrowserTab?.url ?? "browser",
+					)}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onOpenSession={openSidebarSession}

@@ -44,6 +44,10 @@ import {
 	normalizeBrowserAddress,
 	sanitizeBrowserUrl,
 } from "./browser-tab-store";
+import {
+	isKestrelAppPageUrl,
+	parseKestrelAppPage,
+} from "../utility/browser-app-pages";
 
 const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
@@ -393,6 +397,21 @@ export class UserBrowserService {
 
 	async navigate(tabId: string, input: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
+		const appPage = parseKestrelAppPage(input);
+		if (appPage) {
+			this.closeView(tabId);
+			tab.error = undefined;
+			tab.crashed = false;
+			tab.discarded = false;
+			tab.loading = false;
+			tab.canGoBack = false;
+			tab.canGoForward = false;
+			tab.url = appPage.url;
+			tab.title = appPage.title;
+			this.commit();
+			await this.syncActiveView();
+			return this.getState();
+		}
 		const normalized = normalizeBrowserAddress(
 			input,
 			this.state.settings.searchEngine,
@@ -430,6 +449,8 @@ export class UserBrowserService {
 	}
 
 	back(tabId: string): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.requireView(tabId);
 		if (record.view.webContents.navigationHistory.canGoBack())
 			record.view.webContents.navigationHistory.goBack();
@@ -437,6 +458,8 @@ export class UserBrowserService {
 	}
 
 	forward(tabId: string): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.requireView(tabId);
 		if (record.view.webContents.navigationHistory.canGoForward())
 			record.view.webContents.navigationHistory.goForward();
@@ -445,7 +468,7 @@ export class UserBrowserService {
 
 	reload(tabId: string, ignoreCache = false): UserBrowserState {
 		const tab = this.requireTab(tabId);
-		if (!tab.url) return this.getState();
+		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.ensureView(tab);
 		tab.error = undefined;
 		if (
@@ -460,6 +483,8 @@ export class UserBrowserService {
 	}
 
 	stop(tabId: string): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		this.requireView(tabId).view.webContents.stop();
 		return this.getState();
 	}
@@ -511,7 +536,7 @@ export class UserBrowserService {
 
 	async pageContext(tabId?: string): Promise<UserBrowserPageContext> {
 		const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
-		if (!tab.url || tab.error)
+		if (!tab.url || tab.error || isKestrelAppPageUrl(tab.url))
 			throw new Error("The selected tab does not have a readable web page.");
 		const record = this.ensureView(tab);
 		const raw = (await record.view.webContents.executeJavaScript(`(() => {
@@ -876,7 +901,7 @@ export class UserBrowserService {
 	sleepTab(tabId: string): UserBrowserState {
 		if (tabId === this.state.activeTabId) return this.getState();
 		const tab = this.requireTab(tabId);
-		if (!tab.url) return this.getState();
+		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
 		this.closeView(tabId);
 		tab.discarded = true;
 		this.commit();
@@ -885,7 +910,13 @@ export class UserBrowserService {
 
 	sleepInactiveTabs(): UserBrowserState {
 		for (const tab of this.state.tabs) {
-			if (tab.id === this.state.activeTabId || !tab.url || tab.discarded) continue;
+			if (
+				tab.id === this.state.activeTabId ||
+				!tab.url ||
+				tab.discarded ||
+				isKestrelAppPageUrl(tab.url)
+			)
+				continue;
 			const record = this.views.get(tab.id);
 			if (
 				record &&
@@ -916,7 +947,13 @@ export class UserBrowserService {
 		let changed = false;
 
 		for (const tab of this.state.tabs) {
-			if (tab.id === this.state.activeTabId || !tab.url || tab.discarded) continue;
+			if (
+				tab.id === this.state.activeTabId ||
+				!tab.url ||
+				tab.discarded ||
+				isKestrelAppPageUrl(tab.url)
+			)
+				continue;
 			const lastActive = Date.parse(tab.lastActiveAt);
 			if (isNaN(lastActive) || nowTime - lastActive < timeoutMs) continue;
 
@@ -1002,6 +1039,8 @@ export class UserBrowserService {
 	}
 
 	private ensureView(tab: UserBrowserTab): ViewRecord {
+		if (isKestrelAppPageUrl(tab.url))
+			throw new Error("App pages do not use a web view.");
 		const existing = this.views.get(tab.id);
 		if (existing && !existing.view.webContents.isDestroyed()) return existing;
 		const view = new WebContentsView({
@@ -1358,6 +1397,7 @@ export class UserBrowserService {
 			(candidate) => candidate.id === this.state.activeTabId,
 		);
 		if (!this.contentVisible || !tab || !tab.url || tab.error) return;
+		if (isKestrelAppPageUrl(tab.url)) return;
 		const { view } = this.ensureView(tab);
 		this.window.contentView.addChildView(view);
 		view.setBounds(this.contentBounds);
@@ -1414,7 +1454,8 @@ export class UserBrowserService {
 
 	private requireView(tabId: string): ViewRecord {
 		const tab = this.requireTab(tabId);
-		if (!tab.url) throw new Error("This tab has not navigated yet.");
+		if (!tab.url || isKestrelAppPageUrl(tab.url))
+			throw new Error("This tab has not navigated yet.");
 		return this.ensureView(tab);
 	}
 

@@ -38,7 +38,7 @@ export function AgentWorkspace({
 	onOpenSession(sessionId: string): void;
 	onOpenApprovals(): void;
 	onOpenWork(): void;
-	onBack(): void;
+	onBack?(): void;
 }) {
 	const [query, setQuery] = useState("");
 	const [filter, setFilter] = useState<AgentSessionFilter>("all");
@@ -53,7 +53,7 @@ export function AgentWorkspace({
 	return (
 		<main className="agent-workspace" aria-labelledby="agent-workspace-title">
 			<header className="agent-workspace-header">
-				<SurfaceBackButton onBack={onBack} />
+				{onBack && <SurfaceBackButton onBack={onBack} />}
 				<div className="agent-workspace-heading">
 					<span className="agent-workspace-mark" aria-hidden="true">
 						<BrandMark />

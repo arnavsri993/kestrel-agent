@@ -140,11 +140,10 @@ async function openTool(page: Page, label: string) {
 		.filter({ has: page.getByText(label, { exact: true }) })
 		.first()
 		.click();
-	await page.locator(".legacy-product-surface").waitFor();
+	await page.locator(".browser-app-page").waitFor();
 	await assertDistinctVisibleCopy(page, `${label} surface`, [
-		".secondary-surface-bar > strong",
-		".legacy-product-surface .page-header h1",
-		".legacy-product-surface .page-header .eyebrow",
+		".browser-tab.active [role='tab'] .browser-tab-title",
+		".browser-app-page h1",
 	]);
 }
 

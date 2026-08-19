@@ -28,7 +28,7 @@ export function BrowserHistory({
 }: {
 	browser: UserBrowserController;
 	onOpenBrowser(): void;
-	onBack(): void;
+	onBack?(): void;
 }) {
 	const [query, setQuery] = useState("");
 	const history = browser.state?.history ?? [];
@@ -45,14 +45,13 @@ export function BrowserHistory({
 
 	async function open(url: string) {
 		await browser.createTab(url);
-		onOpenBrowser();
 	}
 
 	return (
 		<main className="browser-library" aria-labelledby="history-title">
 			<header>
 				<div>
-					<SurfaceBackButton onBack={onBack} />
+					{onBack ? <SurfaceBackButton onBack={onBack} /> : null}
 					<span className="library-icon">
 						<Icon name="history" />
 					</span>
@@ -126,14 +125,14 @@ export function BrowserDownloads({
 	onBack,
 }: {
 	browser: UserBrowserController;
-	onBack(): void;
+	onBack?(): void;
 }) {
 	const downloads = [...(browser.state?.downloads ?? [])].reverse();
 	return (
 		<main className="browser-library" aria-labelledby="downloads-title">
 			<header>
 				<div>
-					<SurfaceBackButton onBack={onBack} />
+					{onBack ? <SurfaceBackButton onBack={onBack} /> : null}
 					<span className="library-icon">
 						<Icon name="downloads" />
 					</span>
