@@ -38,7 +38,7 @@ export function AgentWorkspace({
 	onOpenSession(sessionId: string): void;
 	onOpenApprovals(): void;
 	onOpenWork(): void;
-	onBack(): void;
+	onBack?(): void;
 }) {
 	const [query, setQuery] = useState("");
 	const [filter, setFilter] = useState<AgentSessionFilter>("all");
@@ -53,48 +53,54 @@ export function AgentWorkspace({
 	return (
 		<main className="agent-workspace" aria-labelledby="agent-workspace-title">
 			<header className="agent-workspace-header">
-				<SurfaceBackButton onBack={onBack} />
+				{onBack && <SurfaceBackButton onBack={onBack} />}
 				<div className="agent-workspace-heading">
 					<span className="agent-workspace-mark" aria-hidden="true">
 						<BrandMark />
 					</span>
 					<div>
 						<h1 id="agent-workspace-title">Agent Workspace</h1>
-						<p>Delegated tasks stay connected to the work that created them.</p>
+						<p>Open tasks, approvals, and the work they belong to.</p>
 					</div>
 				</div>
+				<button type="button" className="button primary" onClick={onNewTask}>
+					<Icon name="agent" />
+					New task
+				</button>
 			</header>
 
 			<section className="agent-workspace-status" aria-label="Agent status">
 				<div>
 					<span className={`agent-dot ${agentState}`} aria-hidden="true" />
 					<span>
+						<small>Agent</small>
 						<strong>{agentStateLabel(agentState)}</strong>
 					</span>
 				</div>
 				<div>
 					<Icon name="work" />
 					<span>
+						<small>Tasks</small>
 						<strong>{openCount} open</strong>
 					</span>
 				</div>
 				<button type="button" onClick={onOpenApprovals}>
 					<Icon name="approvals" />
 					<span>
-						<strong>Approvals</strong>
-						<small>
+						<small>Approvals</small>
+						<strong>
 							{pendingApprovals
 								? `${pendingApprovals} pending`
 								: "None pending"}
-						</small>
+						</strong>
 					</span>
 					<Icon name="chevron" />
 				</button>
 				<button type="button" onClick={onOpenWork}>
 					<Icon name="work" />
 					<span>
-						<strong>Work</strong>
-						<small>Goals and runs</small>
+						<small>Work</small>
+						<strong>Goals and runs</strong>
 					</span>
 					<Icon name="chevron" />
 				</button>

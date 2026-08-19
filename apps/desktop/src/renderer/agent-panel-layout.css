@@ -21,9 +21,17 @@
 	padding-right: 0;
 }
 
+.browser-tab-row,
+.browser-toolbar {
+	position: relative;
+	z-index: 5;
+}
+
 .browser-workspace .browser-viewport {
 	width: calc(100% - var(--agent-panel-width));
 	justify-self: start;
+	z-index: 1;
+	overflow: hidden;
 }
 
 .ai-browser-app.agent-sidebar-collapsed .browser-workspace .browser-viewport {
@@ -35,14 +43,152 @@
 	top: var(--agent-panel-top);
 	right: 0;
 	bottom: 0;
+	z-index: 6;
 	width: var(--agent-panel-width);
 	height: auto;
+	max-height: calc(100vh - var(--agent-panel-top));
 	border-top: 1px solid var(--line);
 	border-top-left-radius: var(--radius-surface);
 }
 
 .agent-sidebar.is-collapsed {
 	width: 0;
+	opacity: 0;
+	pointer-events: none;
+	transform: none;
+}
+
+/* The overlay rail no longer owns the titlebar, so keep the drag strip tiny
+ * and size the remaining chrome for the current four destinations. */
+.agent-sidebar-drag {
+	height: 6px;
+}
+
+.agent-sidebar-identity {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+}
+
+.agent-sidebar-identity .browser-brand {
+	min-width: 0;
+	padding-inline: 0;
+}
+
+.agent-sidebar-agent-name {
+	max-width: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-sidebar-actions {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.agent-context-line,
+.agent-task-line,
+.agent-approval-action {
+	min-width: 0;
+	display: grid;
+	align-items: center;
+	gap: 8px;
+}
+
+.agent-context-line {
+	grid-template-columns: 14px minmax(0, 1fr);
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.agent-context-line svg {
+	width: 14px;
+	height: 14px;
+	color: var(--faint);
+}
+
+.agent-context-line span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-task-line {
+	grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.agent-task-line .agent-session-title {
+	font-size: 13px;
+	line-height: 1.3;
+}
+
+.agent-task-line .ui-status {
+	max-width: 11.5rem;
+	overflow: hidden;
+}
+
+.agent-approval-action {
+	grid-template-columns: 14px minmax(0, 1fr) auto;
+	width: 100%;
+	margin: 0;
+	padding: 8px 9px;
+	border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--line));
+	border-radius: 9px;
+	background: var(--warning-soft);
+	color: var(--warning-ink);
+	text-align: left;
+	cursor: pointer;
+}
+
+.agent-approval-action svg {
+	width: 14px;
+	height: 14px;
+}
+
+.agent-approval-action span {
+	overflow: hidden;
+	font-size: 11px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.agent-approval-action strong {
+	font-size: 11px;
+	font-weight: 700;
+}
+
+.agent-sidebar-assist:empty {
+	display: none;
+}
+
+.agent-sidebar-history-list button {
+	grid-template-columns: 15px minmax(0, 1fr) auto;
+}
+
+.agent-sidebar-history-list time {
+	color: var(--faint);
+	font-size: 10px;
+	white-space: nowrap;
+}
+
+.agent-sidebar-footer nav {
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.agent-sidebar-footer nav button {
+	position: relative;
+}
+
+.agent-approval-dot {
+	position: absolute;
+	top: 5px;
+	right: 10px;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--warning);
 }
 
 @media (max-width: 1120px) {
