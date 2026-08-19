@@ -2,9 +2,9 @@
 
 ## Status and scope
 
-**Implemented in this increment:** Kestrel has a dual-primary Browser and Agent desktop workspace with a persistent user browser, an always-mounted agent conversation, a searchable durable-task workspace, independent conversations, History, Downloads, a searchable capability launcher, browser settings, and command-routed access to existing specialist surfaces. The visible browser supports up to 32 tabs, HTTP(S) address/search navigation, back/forward/reload/stop, tab restoration, local history retention, downloads, and an optional current-page context handoff to the conversation.
+**Implemented in this increment:** Kestrel has a dual-primary Browser and Agent desktop workspace with a persistent user browser, an always-mounted agent conversation, a searchable durable-task workspace, independent conversations, History, Bookmarks, Downloads, a searchable capability launcher, browser settings, and command-routed access to existing specialist surfaces. The visible browser supports up to 32 tabs, HTTP(S) address/search navigation, back/forward/reload/stop, tab restoration, pin/mute/duplicate, find in page, print, inspect, local history retention, bookmarks, downloads (open/reveal/cancel), current-page context handoff, and `@` mentions of open tabs, bookmarks, and granted workspace files.
 
-**Not a claim of a general-purpose browser or unrestricted autonomy:** extensions, bookmarks, profile import/sync, site permission prompts, cross-device sync, private browsing, and a user-facing per-action browser approval UI are follow-up work. Existing Kestrel policy and approval gates remain the authority for consequential agent actions.
+**Not a claim of a general-purpose browser or unrestricted autonomy:** Chrome-complete extensions, profile import/sync, private browsing, and a user-facing per-action browser approval receipt remain follow-up work. Site permission prompts now remember allow/deny per origin for this profile. Existing Kestrel policy and approval gates remain the authority for consequential agent actions.
 
 ## Two browser boundaries
 

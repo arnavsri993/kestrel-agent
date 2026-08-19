@@ -726,6 +726,25 @@ export function BrowserSettings({
             Clear browsing history
           </button>
         </div>
+
+        <div className="setting-row browser-setting-row">
+          <div className="browser-setting-copy">
+            <strong>Clear cookies and site data</strong>
+            <p>
+              Removes cookies, cache, and remembered site permissions for this
+              browser profile. Open tabs stay put.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() =>
+              void browser.clearBrowsingData({ cookies: true, cache: true })
+            }
+          >
+            Clear site data
+          </button>
+        </div>
       </section>
     </div>
   );

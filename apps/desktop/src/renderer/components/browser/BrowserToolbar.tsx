@@ -17,6 +17,9 @@ export function BrowserToolbar({
   onStop,
   onOpenHistory,
   onOpenDownloads,
+  onOpenBookmarks,
+  onToggleBookmark,
+  bookmarked,
   onOpenMenu,
 }: {
   tab: UserBrowserTab;
@@ -24,6 +27,7 @@ export function BrowserToolbar({
   agentOpen: boolean;
   addressRef: RefObject<HTMLInputElement | null>;
   contextEnabled: boolean;
+  bookmarked: boolean;
   onToggleContext(): void;
   onToggleAgent(): void;
   onNavigate(input: string): void;
@@ -33,6 +37,8 @@ export function BrowserToolbar({
   onStop(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
+  onOpenBookmarks(): void;
+  onToggleBookmark(): void;
   onOpenMenu(): void;
 }) {
   const [address, setAddress] = useState(tab.url);
@@ -108,7 +114,7 @@ export function BrowserToolbar({
           id="browser-address-input"
           ref={addressRef}
           value={address}
-          placeholder="Search or enter address (⌘L)"
+          placeholder="Search or enter address"
           aria-keyshortcuts="Meta+L"
           autoCapitalize="off"
           autoCorrect="off"
@@ -116,6 +122,19 @@ export function BrowserToolbar({
           onFocus={(event) => event.currentTarget.select()}
           onChange={(event) => setAddress(event.target.value)}
         />
+        {tab.url && (
+          <button
+            type="button"
+            className={`browser-bookmark ${bookmarked ? "active" : ""}`}
+            aria-label={bookmarked ? "Remove bookmark" : "Bookmark this page"}
+            aria-pressed={bookmarked}
+            aria-keyshortcuts="Meta+D"
+            title={bookmarked ? "Remove bookmark (⌘D)" : "Bookmark this page (⌘D)"}
+            onClick={onToggleBookmark}
+          >
+            <Icon name="star" />
+          </button>
+        )}
         {tab.url && (
           <span className="browser-address-host" aria-hidden="true">
             {host}
@@ -162,6 +181,15 @@ export function BrowserToolbar({
           onClick={onOpenHistory}
         >
           <Icon name="history" />
+        </button>
+        <button
+          type="button"
+          aria-label="Bookmarks"
+          aria-keyshortcuts="Meta+Shift+D"
+          title="Bookmarks (⌘⇧D)"
+          onClick={onOpenBookmarks}
+        >
+          <Icon name="star" />
         </button>
         <button
           type="button"

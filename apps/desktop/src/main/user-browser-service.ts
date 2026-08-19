@@ -22,6 +22,7 @@ import {
 import {
 	type BrowserWindow,
 	clipboard,
+	dialog,
 	session as electronSession,
 	Menu,
 	nativeImage,
@@ -34,9 +35,14 @@ import {
 import { BrowserExtensionManager } from "./browser-extension-manager";
 import {
 	BrowserTabStore,
+	createEmptyBrowserTab,
 	normalizeBrowserAddress,
 	sanitizeBrowserUrl,
 } from "./browser-tab-store";
+import {
+	isKestrelAppPageUrl,
+	parseKestrelAppPage,
+} from "../utility/browser-app-pages";
 
 const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
@@ -44,6 +50,18 @@ const MAX_DOWNLOAD_ENTRIES = 500;
 const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
 const POPUP_GESTURE_WINDOW_MS = 1_500;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
+const MAX_BOOKMARKS = 2_000;
+const ALWAYS_ALLOW_PERMISSIONS = new Set([
+	"fullscreen",
+	"clipboard-sanitized-write",
+]);
+const ALWAYS_DENY_PERMISSIONS = new Set([
+	"usb",
+	"hid",
+	"serial",
+	"fileSystem",
+	"windowManagement",
+]);
 
 export type UserBrowserBackendWireRequest =
 	| { operation: "visible-tabs" }
@@ -84,6 +102,7 @@ export interface UserBrowserServiceOptions {
 	now?: () => Date;
 	onEvent(event: UserBrowserEvent): void;
 	onCommand?(command: UserBrowserCommand): void;
+	confirmSitePermission?(origin: string, permission: string): Promise<boolean>;
 }
 
 interface ViewRecord {
@@ -153,7 +172,11 @@ export class UserBrowserService {
 	private readonly extensionManager: BrowserExtensionManager;
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly downloadPaths = new Map<string, string>();
+	private readonly activeDownloads = new Map<string, Electron.DownloadItem>();
 	private readonly webContentsToTab = new Map<number, string>();
+	private readonly confirmSitePermission: NonNullable<
+		UserBrowserServiceOptions["confirmSitePermission"]
+	>;
 	private readonly now: () => Date;
 	private readonly downloadDirectory: string;
 	private readonly partitionName: string;
@@ -175,6 +198,21 @@ export class UserBrowserService {
 		this.downloadDirectory = options.downloadDirectory;
 		this.onEvent = options.onEvent;
 		this.onCommand = options.onCommand;
+		this.confirmSitePermission =
+			options.confirmSitePermission ??
+			(async (origin, permission) => {
+				const response = await dialog.showMessageBox(this.window, {
+					type: "question",
+					buttons: ["Allow", "Block"],
+					defaultId: 1,
+					cancelId: 1,
+					title: "Site permission",
+					message: `${origin} wants to use ${permission}.`,
+					detail:
+						"Allow only if you trust this site. The choice is remembered for this profile.",
+				});
+				return response.response === 0;
+			});
 		mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
 		this.extensionManager = new BrowserExtensionManager(
 			dirname(options.statePath),
@@ -189,9 +227,18 @@ export class UserBrowserService {
 		});
 		void this.extensionManager.loadAll(this.partition);
 		this.startSleepingTabsMonitor();
-		this.partition.setPermissionCheckHandler(() => false);
+		this.partition.setPermissionCheckHandler(
+			(_webContents, permission, requestingOrigin) =>
+				this.isPermissionAllowed(requestingOrigin, String(permission)),
+		);
 		this.partition.setPermissionRequestHandler(
-			(_webContents, _permission, callback) => callback(false),
+			(webContents, permission, callback, details) => {
+				void this.resolvePermissionRequest(
+					webContents,
+					String(permission),
+					details?.requestingUrl,
+				).then(callback);
+			},
 		);
 		this.onWillDownload = (_event, item, webContents) => {
 			const tabId = this.webContentsToTab.get(webContents.id);
@@ -205,6 +252,7 @@ export class UserBrowserService {
 			const startedAt = this.now().toISOString();
 			item.setSavePath(path);
 			this.downloadPaths.set(id, path);
+			this.activeDownloads.set(id, item);
 			this.state.downloads.push({
 				id,
 				tabId,
@@ -232,6 +280,7 @@ export class UserBrowserService {
 				this.emit();
 			});
 			item.once("done", (_doneEvent, status) => {
+				this.activeDownloads.delete(id);
 				const record = this.state.downloads.find(
 					(download) => download.id === id,
 				);
@@ -261,18 +310,7 @@ export class UserBrowserService {
 		if (this.state.tabs.length >= 32)
 			throw new Error("Kestrel supports up to 32 open tabs.");
 		const timestamp = this.now().toISOString();
-		const tab: UserBrowserTab = {
-			id: `tab-${randomUUID()}`,
-			title: "New Tab",
-			url: "",
-			loading: false,
-			canGoBack: false,
-			canGoForward: false,
-			discarded: false,
-			crashed: false,
-			createdAt: timestamp,
-			lastActiveAt: timestamp,
-		};
+		const tab = createEmptyBrowserTab(() => new Date(timestamp));
 		this.state.tabs.push(tab);
 		if (active || !this.state.activeTabId) this.state.activeTabId = tab.id;
 		this.commit();
@@ -303,21 +341,9 @@ export class UserBrowserService {
 		this.closeView(tabId);
 		this.state.tabs.splice(index, 1);
 		if (this.state.tabs.length === 0) {
-			const timestamp = this.now().toISOString();
-			const id = `tab-${randomUUID()}`;
-			this.state.tabs.push({
-				id,
-				title: "New Tab",
-				url: "",
-				loading: false,
-				canGoBack: false,
-				canGoForward: false,
-				discarded: false,
-				crashed: false,
-				createdAt: timestamp,
-				lastActiveAt: timestamp,
-			});
-			this.state.activeTabId = id;
+			const replacement = createEmptyBrowserTab(this.now);
+			this.state.tabs.push(replacement);
+			this.state.activeTabId = replacement.id;
 		} else if (this.state.activeTabId === tabId) {
 			this.state.activeTabId =
 				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
@@ -389,6 +415,21 @@ export class UserBrowserService {
 
 	async navigate(tabId: string, input: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
+		const appPage = parseKestrelAppPage(input);
+		if (appPage) {
+			this.closeView(tabId);
+			tab.error = undefined;
+			tab.crashed = false;
+			tab.discarded = false;
+			tab.loading = false;
+			tab.canGoBack = false;
+			tab.canGoForward = false;
+			tab.url = appPage.url;
+			tab.title = appPage.title;
+			this.commit();
+			await this.syncActiveView();
+			return this.getState();
+		}
 		const normalized = normalizeBrowserAddress(
 			input,
 			this.state.settings.searchEngine,
@@ -425,6 +466,8 @@ export class UserBrowserService {
 	}
 
 	back(tabId: string): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.requireView(tabId);
 		if (record.view.webContents.navigationHistory.canGoBack())
 			record.view.webContents.navigationHistory.goBack();
@@ -432,6 +475,8 @@ export class UserBrowserService {
 	}
 
 	forward(tabId: string): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.requireView(tabId);
 		if (record.view.webContents.navigationHistory.canGoForward())
 			record.view.webContents.navigationHistory.goForward();
@@ -440,7 +485,7 @@ export class UserBrowserService {
 
 	reload(tabId: string, ignoreCache = false): UserBrowserState {
 		const tab = this.requireTab(tabId);
-		if (!tab.url) return this.getState();
+		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.ensureView(tab);
 		tab.error = undefined;
 		if (
@@ -455,6 +500,8 @@ export class UserBrowserService {
 	}
 
 	stop(tabId: string): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		this.requireView(tabId).view.webContents.stop();
 		return this.getState();
 	}
@@ -504,9 +551,190 @@ export class UserBrowserService {
 		shell.showItemInFolder(path);
 	}
 
+	async openDownload(downloadId: string): Promise<void> {
+		const download = this.state.downloads.find(
+			(item) => item.id === downloadId,
+		);
+		const path = this.downloadPaths.get(downloadId);
+		if (!download || !path || !download.canReveal || !existsSync(path))
+			throw new Error("This download is no longer available to open.");
+		const error = await shell.openPath(path);
+		if (error) throw new Error(error);
+	}
+
+	cancelDownload(downloadId: string): UserBrowserState {
+		const item = this.activeDownloads.get(downloadId);
+		if (!item) throw new Error("This download is not in progress.");
+		item.cancel();
+		return this.getState();
+	}
+
+	async clearBrowsingData(options: {
+		history?: boolean;
+		cookies?: boolean;
+		cache?: boolean;
+	}): Promise<UserBrowserState> {
+		this.assertAvailable();
+		if (options.history) this.state.history = [];
+		if (options.cache && typeof this.partition.clearCache === "function")
+			await this.partition.clearCache();
+		if (
+			options.cookies &&
+			typeof this.partition.clearStorageData === "function"
+		) {
+			await this.partition.clearStorageData();
+			this.state.sitePermissions = [];
+		}
+		this.commit();
+		return this.getState();
+	}
+
+	toggleBookmark(url?: string, title?: string): UserBrowserState {
+		const tab = url
+			? undefined
+			: this.state.tabs.find((item) => item.id === this.state.activeTabId);
+		const targetUrl = sanitizeBrowserUrl(url ?? tab?.url ?? "");
+		if (!safePageUrl(targetUrl))
+			throw new Error("Only HTTP and HTTPS pages can be bookmarked.");
+		const existing = this.state.bookmarks.find((item) => item.url === targetUrl);
+		if (existing) {
+			this.state.bookmarks = this.state.bookmarks.filter(
+				(item) => item.id !== existing.id,
+			);
+			this.commit();
+			return this.getState();
+		}
+		if (this.state.bookmarks.length >= MAX_BOOKMARKS)
+			throw new Error("Kestrel supports up to 2,000 bookmarks.");
+		this.state.bookmarks.unshift({
+			id: `bookmark-${randomUUID()}`,
+			url: targetUrl,
+			title: (title ?? tab?.title ?? hostnameTitle(targetUrl))
+				.trim()
+				.slice(0, 500) || hostnameTitle(targetUrl),
+			createdAt: this.now().toISOString(),
+		});
+		this.commit();
+		return this.getState();
+	}
+
+	removeBookmark(bookmarkId: string): UserBrowserState {
+		this.state.bookmarks = this.state.bookmarks.filter(
+			(item) => item.id !== bookmarkId,
+		);
+		this.commit();
+		return this.getState();
+	}
+
+	pinTab(tabId: string, pinned: boolean): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		tab.pinned = pinned;
+		const pinnedTabs = this.state.tabs.filter((item) => item.pinned);
+		const rest = this.state.tabs.filter((item) => !item.pinned);
+		this.state.tabs = [...pinnedTabs, ...rest];
+		this.commit();
+		return this.getState();
+	}
+
+	muteTab(tabId: string, muted: boolean): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		tab.muted = muted;
+		const record = this.views.get(tabId);
+		if (
+			record &&
+			!record.view.webContents.isDestroyed() &&
+			typeof record.view.webContents.setAudioMuted === "function"
+		) {
+			record.view.webContents.setAudioMuted(muted);
+		}
+		this.commit();
+		return this.getState();
+	}
+
+	async duplicateTab(tabId: string): Promise<UserBrowserState> {
+		const tab = this.requireTab(tabId);
+		return this.createTab(tab.url || undefined, true);
+	}
+
+	async closeOtherTabs(tabId: string): Promise<UserBrowserState> {
+		this.requireTab(tabId);
+		const closing = this.state.tabs
+			.filter((tab) => tab.id !== tabId && !tab.pinned)
+			.map((tab) => tab.id);
+		for (const id of closing) await this.closeTab(id);
+		return this.getState();
+	}
+
+	moveTab(tabId: string, toIndex: number): UserBrowserState {
+		const fromIndex = this.state.tabs.findIndex((tab) => tab.id === tabId);
+		if (fromIndex < 0) throw new Error("Browser tab is unavailable.");
+		const [tab] = this.state.tabs.splice(fromIndex, 1);
+		if (!tab) throw new Error("Browser tab is unavailable.");
+		const bounded = Math.min(Math.max(0, toIndex), this.state.tabs.length);
+		this.state.tabs.splice(bounded, 0, tab);
+		this.commit();
+		return this.getState();
+	}
+
+	findInPage(
+		tabId: string,
+		query: string,
+		options: { findNext?: boolean; forward?: boolean } = {},
+	): UserBrowserState {
+		const record = this.requireView(tabId);
+		const text = query.trim();
+		if (!text) {
+			this.stopFindInPage(tabId);
+			return this.getState();
+		}
+		record.view.webContents.findInPage(text, {
+			forward: options.forward ?? true,
+			findNext: Boolean(options.findNext),
+		});
+		return this.getState();
+	}
+
+	stopFindInPage(tabId: string): UserBrowserState {
+		const record = this.views.get(tabId);
+		if (record && !record.view.webContents.isDestroyed())
+			record.view.webContents.stopFindInPage("clearSelection");
+		return this.getState();
+	}
+
+	printTab(tabId: string): UserBrowserState {
+		const record = this.requireView(tabId);
+		record.view.webContents.print({});
+		return this.getState();
+	}
+
+	openDevTools(tabId: string): UserBrowserState {
+		const record = this.requireView(tabId);
+		record.view.webContents.openDevTools({ mode: "detach" });
+		return this.getState();
+	}
+
+	setSitePermission(
+		origin: string,
+		permission: string,
+		decision: "allow" | "deny",
+	): UserBrowserState {
+		const next = this.state.sitePermissions.filter(
+			(item) => !(item.origin === origin && item.permission === permission),
+		);
+		next.push({
+			origin,
+			permission,
+			decision,
+			updatedAt: this.now().toISOString(),
+		});
+		this.state.sitePermissions = next.slice(-500);
+		this.commit();
+		return this.getState();
+	}
+
 	async pageContext(tabId?: string): Promise<UserBrowserPageContext> {
 		const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
-		if (!tab.url || tab.error)
+		if (!tab.url || tab.error || isKestrelAppPageUrl(tab.url))
 			throw new Error("The selected tab does not have a readable web page.");
 		const record = this.ensureView(tab);
 		const raw = (await record.view.webContents.executeJavaScript(`(() => {
@@ -854,7 +1082,7 @@ export class UserBrowserService {
 	sleepTab(tabId: string): UserBrowserState {
 		if (tabId === this.state.activeTabId) return this.getState();
 		const tab = this.requireTab(tabId);
-		if (!tab.url) return this.getState();
+		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
 		this.closeView(tabId);
 		tab.discarded = true;
 		this.commit();
@@ -863,7 +1091,13 @@ export class UserBrowserService {
 
 	sleepInactiveTabs(): UserBrowserState {
 		for (const tab of this.state.tabs) {
-			if (tab.id === this.state.activeTabId || !tab.url || tab.discarded) continue;
+			if (
+				tab.id === this.state.activeTabId ||
+				!tab.url ||
+				tab.discarded ||
+				isKestrelAppPageUrl(tab.url)
+			)
+				continue;
 			const record = this.views.get(tab.id);
 			if (
 				record &&
@@ -894,7 +1128,13 @@ export class UserBrowserService {
 		let changed = false;
 
 		for (const tab of this.state.tabs) {
-			if (tab.id === this.state.activeTabId || !tab.url || tab.discarded) continue;
+			if (
+				tab.id === this.state.activeTabId ||
+				!tab.url ||
+				tab.discarded ||
+				isKestrelAppPageUrl(tab.url)
+			)
+				continue;
 			const lastActive = Date.parse(tab.lastActiveAt);
 			if (isNaN(lastActive) || nowTime - lastActive < timeoutMs) continue;
 
@@ -979,6 +1219,8 @@ export class UserBrowserService {
 	}
 
 	private ensureView(tab: UserBrowserTab): ViewRecord {
+		if (isKestrelAppPageUrl(tab.url))
+			throw new Error("App pages do not use a web view.");
 		const existing = this.views.get(tab.id);
 		if (existing && !existing.view.webContents.isDestroyed()) return existing;
 		const view = new WebContentsView({
@@ -999,6 +1241,12 @@ export class UserBrowserService {
 		this.views.set(tab.id, record);
 		this.webContentsToTab.set(view.webContents.id, tab.id);
 		this.configureView(tab, record);
+		if (
+			tab.muted &&
+			typeof view.webContents.setAudioMuted === "function"
+		) {
+			view.webContents.setAudioMuted(true);
+		}
 		if (tab.url) {
 			tab.discarded = false;
 			tab.loading = true;
@@ -1084,6 +1332,17 @@ export class UserBrowserService {
 			tab.discarded = Boolean(tab.url);
 			this.commit();
 		});
+		webContents.on("found-in-page", (_event, result) => {
+			this.onEvent({
+				type: "find-in-page",
+				match: {
+					tabId: tab.id,
+					activeMatchOrdinal: result.activeMatchOrdinal,
+					matches: result.matches,
+					finalUpdate: result.finalUpdate,
+				},
+			});
+		});
 		webContents.on("context-menu", (_event, params) => {
 			const template: Electron.MenuItemConstructorOptions[] = [];
 			if (params.linkURL && safePageUrl(params.linkURL)) {
@@ -1099,6 +1358,19 @@ export class UserBrowserService {
 					{ type: "separator" },
 				);
 			}
+			if (params.hasImageContents && params.srcURL && safePageUrl(params.srcURL)) {
+				template.push(
+					{
+						label: "Open Image in New Tab",
+						click: () => void this.createTab(params.srcURL, true),
+					},
+					{
+						label: "Copy Image Address",
+						click: () => clipboard.writeText(params.srcURL),
+					},
+					{ type: "separator" },
+				);
+			}
 			if (params.isEditable)
 				template.push(
 					{ role: "cut" },
@@ -1106,7 +1378,16 @@ export class UserBrowserService {
 					{ role: "paste" },
 					{ role: "selectAll" },
 				);
-			else if (params.selectionText) template.push({ role: "copy" });
+			else if (params.selectionText) {
+				template.push({ role: "copy" });
+				const query = params.selectionText.trim().slice(0, 200);
+				if (query) {
+					template.push({
+						label: `Search for “${query.slice(0, 40)}”`,
+						click: () => void this.createTab(query, true),
+					});
+				}
+			}
 			template.push(
 				...(template.length ? [{ type: "separator" } as const] : []),
 				{
@@ -1120,6 +1401,20 @@ export class UserBrowserService {
 					click: () => this.forward(tab.id),
 				},
 				{ role: "reload" },
+				{ type: "separator" },
+				{
+					label: "Bookmark This Page",
+					enabled: Boolean(safePageUrl(tab.url)),
+					click: () => this.toggleBookmark(tab.url, tab.title),
+				},
+				{
+					label: "Print…",
+					click: () => this.printTab(tab.id),
+				},
+				{
+					label: "Inspect",
+					click: () => this.openDevTools(tab.id),
+				},
 			);
 			Menu.buildFromTemplate(template).popup({ window: this.window });
 		});
@@ -1257,6 +1552,25 @@ export class UserBrowserService {
 			} else if (key === "k" || (key === "p" && input.shift)) {
 				event.preventDefault();
 				this.onCommand?.("open-commands");
+			} else if (key === "p") {
+				event.preventDefault();
+				this.printTab(tab.id);
+			} else if (key === "f") {
+				event.preventDefault();
+				this.onCommand?.("find-in-page");
+			} else if (key === "d") {
+				event.preventDefault();
+				if (input.shift) this.onCommand?.("open-bookmarks");
+				else {
+					try {
+						this.toggleBookmark();
+					} catch {
+						this.onCommand?.("open-bookmarks");
+					}
+				}
+			} else if (key === "i" && input.shift) {
+				event.preventDefault();
+				this.openDevTools(tab.id);
 			} else if (key === "h" || key === "y") {
 				event.preventDefault();
 				this.onCommand?.("open-history");
@@ -1379,6 +1693,7 @@ export class UserBrowserService {
 			(candidate) => candidate.id === this.state.activeTabId,
 		);
 		if (!this.contentVisible || !tab || !tab.url || tab.error) return;
+		if (isKestrelAppPageUrl(tab.url)) return;
 		const { view } = this.ensureView(tab);
 		this.window.contentView.addChildView(view);
 		view.setBounds(this.contentBounds);
@@ -1435,8 +1750,56 @@ export class UserBrowserService {
 
 	private requireView(tabId: string): ViewRecord {
 		const tab = this.requireTab(tabId);
-		if (!tab.url) throw new Error("This tab has not navigated yet.");
+		if (!tab.url || isKestrelAppPageUrl(tab.url))
+			throw new Error("This tab has not navigated yet.");
 		return this.ensureView(tab);
+	}
+
+	private isPermissionAllowed(originValue: string, permission: string): boolean {
+		if (ALWAYS_ALLOW_PERMISSIONS.has(permission)) return true;
+		if (ALWAYS_DENY_PERMISSIONS.has(permission)) return false;
+		const origin = this.permissionOrigin(originValue);
+		if (!origin) return false;
+		return (
+			this.state.sitePermissions.find(
+				(item) => item.origin === origin && item.permission === permission,
+			)?.decision === "allow"
+		);
+	}
+
+	private async resolvePermissionRequest(
+		webContents: WebContents,
+		permission: string,
+		requestingUrl?: string,
+	): Promise<boolean> {
+		if (ALWAYS_ALLOW_PERMISSIONS.has(permission)) return true;
+		if (ALWAYS_DENY_PERMISSIONS.has(permission)) return false;
+		const origin = this.permissionOrigin(
+			requestingUrl ||
+				(typeof webContents?.isDestroyed === "function" &&
+				!webContents.isDestroyed()
+					? webContents.getURL()
+					: "") ||
+				"",
+		);
+		if (!origin) return false;
+		const stored = this.state.sitePermissions.find(
+			(item) => item.origin === origin && item.permission === permission,
+		);
+		if (stored) return stored.decision === "allow";
+		const allowed = await this.confirmSitePermission(origin, permission);
+		this.setSitePermission(origin, permission, allowed ? "allow" : "deny");
+		return allowed;
+	}
+
+	private permissionOrigin(value: string): string | undefined {
+		try {
+			const url = new URL(value);
+			if (!["http:", "https:"].includes(url.protocol)) return undefined;
+			return url.origin;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private assertAvailable(): void {

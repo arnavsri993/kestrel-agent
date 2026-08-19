@@ -64,6 +64,10 @@ const paths: Record<string, string[]> = {
 		"M19.4 15a1.7 1.7 0 00.3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21h-4v-.1a1.7 1.7 0 00-1-1.5 1.7 1.7 0 00-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3v-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 001.9.3 1.7 1.7 0 001-1.5V3h4v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 00-.3 1.9 1.7 1.7 0 001.5 1h.1v4h-.1a1.7 1.7 0 00-1.5 1z",
 	],
 	search: ["M11 18a7 7 0 100-14 7 7 0 000 14z", "M20 20l-4-4"],
+	star: [
+		"M12 3.6l2.3 4.7 5.2.8-3.8 3.6.9 5.1L12 15.8 7.4 17.8l.9-5.1-3.8-3.6 5.2-.8z",
+	],
+	pin: ["M12 3v10", "M8 7h8", "M12 13l-3 8", "M12 13l3 8"],
 	research: ["M11 18a7 7 0 100-14 7 7 0 000 14z", "M20 20l-4-4"],
 	work: ["M5 6h14v13H5z", "M9 6V4h6v2M8 11h8M8 15h5"],
 	events: ["M5 4h14v16H5z", "M8 2v4M16 2v4M5 8h14", "M9 13l2 2 4-5"],
@@ -110,10 +114,68 @@ const paths: Record<string, string[]> = {
 	],
 };
 
+const filledStatusPaths: Record<string, { shell: string; mark: string[] }> = {
+	"check-circle-filled": {
+		shell: "M12 2a10 10 0 110 20 10 10 0 010-20z",
+		mark: ["M7.8 12.2l2.7 2.7 5.8-6"],
+	},
+	"alert-triangle-filled": {
+		shell: "M10.3 3.3a2 2 0 013.4 0l8 14A2 2 0 0120 20H4a2 2 0 01-1.7-3l8-13.7z",
+		mark: ["M12 8.3v5.2", "M12 16.8h.01"],
+	},
+	"x-circle-filled": {
+		shell: "M12 2a10 10 0 110 20 10 10 0 010-20z",
+		mark: ["M8.5 8.5l7 7", "M15.5 8.5l-7 7"],
+	},
+	"info-filled": {
+		shell: "M12 2a10 10 0 110 20 10 10 0 010-20z",
+		mark: ["M12 10.8v5", "M12 7.4h.01"],
+	},
+};
+
 export function Icon({
 	name,
 	...props
 }: SVGProps<SVGSVGElement> & { name: string }) {
+	const filled = filledStatusPaths[name];
+	if (filled) {
+		return (
+			<svg
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+				fill="none"
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				{...props}
+			>
+				<path d={filled.shell} fill="currentColor" stroke="none" />
+				{filled.mark.map((path) => (
+					<path
+						d={path}
+						key={path}
+						stroke="var(--status-fill)"
+						strokeWidth="1.9"
+					/>
+				))}
+			</svg>
+		);
+	}
+	if (name === "loader") {
+		return (
+			<svg
+				viewBox="0 0 24 24"
+				aria-hidden="true"
+				fill="none"
+				stroke="currentColor"
+				strokeWidth="2"
+				strokeLinecap="round"
+				{...props}
+			>
+				<circle cx="12" cy="12" r="8" opacity="0.28" />
+				<path d="M12 4a8 8 0 014.9 1.7" />
+			</svg>
+		);
+	}
 	return (
 		<svg
 			viewBox="0 0 24 24"

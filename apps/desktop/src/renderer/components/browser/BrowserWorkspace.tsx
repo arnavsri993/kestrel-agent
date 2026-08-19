@@ -3,9 +3,14 @@ import {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
+  type ReactNode,
   type RefObject,
 } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
+import {
+  parseKestrelAppPage,
+} from "../../../utility/browser-app-pages";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BrowserToolbar } from "./BrowserToolbar";
@@ -23,9 +28,11 @@ export function BrowserWorkspace({
   onOpenSettings,
   onOpenHistory,
   onOpenDownloads,
+  onOpenBookmarks,
   onOpenMenu,
   onShowShortcuts,
   onToggleSidebar,
+  appPage,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -37,12 +44,17 @@ export function BrowserWorkspace({
   onOpenSettings(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
+  onOpenBookmarks(): void;
   onOpenMenu(): void;
   onShowShortcuts?(): void;
   onToggleSidebar?(): void;
+  appPage?: ReactNode;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
+  const findRef = useRef<HTMLInputElement | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
   const lastBoundsRef = useRef("");
   const state = browser.state;
   const {
@@ -59,9 +71,21 @@ export function BrowserWorkspace({
     zoomIn,
     zoomOut,
     zoomReset,
+    toggleBookmark,
+    pinTab,
+    muteTab,
+    duplicateTab,
+    closeOtherTabs,
+    findInPage,
+    stopFindInPage,
+    printTab,
+    openDevTools,
   } = browser;
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
-  const nativePageVisible = Boolean(activeTab?.url && !activeTab.error);
+  const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
+  const nativePageVisible = Boolean(
+    activeTab?.url && !activeTab.error && !activeAppPage,
+  );
 
   const syncBounds = useCallback(() => {
     const node = viewportRef.current;
@@ -112,19 +136,29 @@ export function BrowserWorkspace({
         else if (command === "open-commands") onOpenMenu();
         else if (command === "open-history") onOpenHistory();
         else if (command === "open-downloads") onOpenDownloads();
+        else if (command === "open-bookmarks") onOpenBookmarks();
         else if (command === "open-settings") onOpenSettings?.();
         else if (command === "show-shortcuts") onShowShortcuts?.();
         else if (command === "toggle-sidebar") onToggleSidebar?.();
         else if (command === "reopen-closed-tab") void reopenClosedTab();
+        else if (command === "find-in-page") {
+          setFindOpen(true);
+          window.requestAnimationFrame(() => findRef.current?.focus());
+        }
+        else if (command === "print-page" && activeTab?.url)
+          void printTab(activeTab.id);
       }),
     [
+      activeTab,
       onNewAgent,
       onOpenMenu,
       onOpenHistory,
       onOpenDownloads,
+      onOpenBookmarks,
       onOpenSettings,
       onShowShortcuts,
       onToggleSidebar,
+      printTab,
       reopenClosedTab,
     ],
   );
@@ -134,6 +168,13 @@ export function BrowserWorkspace({
       if (event.defaultPrevented) return;
 
       if (event.key === "Escape") {
+        if (findOpen && activeTab) {
+          event.preventDefault();
+          setFindOpen(false);
+          setFindQuery("");
+          void stopFindInPage(activeTab.id);
+          return;
+        }
         if (activeTab?.loading) {
           event.preventDefault();
           void stop(activeTab.id);
@@ -261,6 +302,25 @@ export function BrowserWorkspace({
       } else if (key === "j") {
         event.preventDefault();
         onOpenDownloads();
+      } else if (key === "f") {
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("#runtime-prompt, textarea, input")) return;
+        event.preventDefault();
+        setFindOpen(true);
+        window.requestAnimationFrame(() => findRef.current?.focus());
+      } else if (key === "d") {
+        event.preventDefault();
+        if (event.shiftKey) onOpenBookmarks();
+        else void toggleBookmark();
+      } else if (key === "p" && !event.shiftKey && activeTab?.url) {
+        event.preventDefault();
+        void printTab(activeTab.id);
+      } else if (key === "i" && event.shiftKey && activeTab?.url) {
+        event.preventDefault();
+        void openDevTools(activeTab.id);
+      } else if (key === "k" || (key === "p" && event.shiftKey)) {
+        event.preventDefault();
+        onOpenMenu();
       } else if (key === ",") {
         event.preventDefault();
         onOpenSettings?.();
@@ -287,17 +347,23 @@ export function BrowserWorkspace({
     createTab,
     forward,
     onNewAgent,
+    onOpenBookmarks,
     onOpenDownloads,
     onOpenHistory,
     onOpenMenu,
     onOpenSettings,
     onShowShortcuts,
     onToggleSidebar,
+    openDevTools,
+    printTab,
     reload,
     reopenClosedTab,
     selectTab,
     state,
     stop,
+    stopFindInPage,
+    findOpen,
+    toggleBookmark,
     zoomIn,
     zoomOut,
     zoomReset,
@@ -324,6 +390,10 @@ export function BrowserWorkspace({
         onSelect={(tabId) => void selectTab(tabId)}
         onClose={(tabId) => void closeTab(tabId)}
         onCreate={() => void createTab()}
+        onPin={(tabId, pinned) => void pinTab(tabId, pinned)}
+        onMute={(tabId, muted) => void muteTab(tabId, muted)}
+        onDuplicate={(tabId) => void duplicateTab(tabId)}
+        onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
         onToggleOrientation={() => {
           void browser.updateSettings({
             ...state.settings,
@@ -340,6 +410,7 @@ export function BrowserWorkspace({
         agentOpen={agentOpen}
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
         contextEnabled={contextEnabled}
+        bookmarked={state.bookmarks.some((item) => item.url === activeTab.url)}
         onToggleContext={onToggleContext}
         onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}
@@ -349,8 +420,67 @@ export function BrowserWorkspace({
         onStop={() => void stop(activeTab.id)}
         onOpenHistory={onOpenHistory}
         onOpenDownloads={onOpenDownloads}
+        onOpenBookmarks={onOpenBookmarks}
+        onToggleBookmark={() => void toggleBookmark()}
         onOpenMenu={onOpenMenu}
       />
+      {findOpen && (
+        <form
+          className="browser-find-bar"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (activeTab?.url)
+              void findInPage(activeTab.id, findQuery, { findNext: true });
+          }}
+        >
+          <label className="sr-only" htmlFor="browser-find-input">
+            Find in page
+          </label>
+          <input
+            id="browser-find-input"
+            ref={findRef}
+            value={findQuery}
+            placeholder="Find in page"
+            onChange={(event) => {
+              const value = event.target.value;
+              setFindQuery(value);
+              if (activeTab?.url) void findInPage(activeTab.id, value);
+            }}
+          />
+          <span>
+            {browser.findMatch && findQuery
+              ? `${browser.findMatch.activeMatchOrdinal} of ${browser.findMatch.matches}`
+              : "Find"}
+          </span>
+          <button
+            type="button"
+            aria-label="Previous match"
+            onClick={() =>
+              activeTab?.url &&
+              void findInPage(activeTab.id, findQuery, {
+                findNext: true,
+                forward: false,
+              })
+            }
+          >
+            <Icon name="back" />
+          </button>
+          <button type="submit" aria-label="Next match">
+            <Icon name="forward" />
+          </button>
+          <button
+            type="button"
+            aria-label="Close find"
+            onClick={() => {
+              setFindOpen(false);
+              setFindQuery("");
+              if (activeTab) void stopFindInPage(activeTab.id);
+            }}
+          >
+            <Icon name="close" />
+          </button>
+        </form>
+      )}
       {browser.error && (
         <p className="browser-inline-error" role="status">
           {browser.error}
@@ -363,12 +493,13 @@ export function BrowserWorkspace({
         role="tabpanel"
         aria-label={activeTab.title}
       >
+        {activeAppPage && appPage}
         {!activeTab.url && (
           <NewTabPage
             history={state.history}
+            bookmarks={state.bookmarks}
             agentName={agentName}
             onNavigate={(input) => void navigate(activeTab.id, input)}
-            onNewTab={() => void createTab()}
             onNewAgent={onNewAgent}
             onOpenSettings={onOpenSettings}
           />

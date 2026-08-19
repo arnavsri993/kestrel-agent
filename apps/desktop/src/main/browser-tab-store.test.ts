@@ -137,6 +137,18 @@ describe("browser address normalization", () => {
 			),
 		).toBe("https://example.com/#view=summary");
 		expect(sanitizeBrowserUrl("file:///etc/passwd")).toBe("");
+		expect(sanitizeBrowserUrl("kestrel://settings")).toBe("kestrel://settings");
+		expect(sanitizeBrowserUrl("kestrel://unknown")).toBe("");
+	});
+
+	it("allows typed kestrel app pages and still blocks other schemes", () => {
+		expect(normalizeBrowserAddress("kestrel://history")).toEqual({
+			kind: "url",
+			url: "kestrel://history",
+		});
+		expect(() => normalizeBrowserAddress("kestrel://unknown")).toThrow(
+			"HTTP and HTTPS",
+		);
 	});
 });
 
@@ -165,6 +177,23 @@ describe("browser tab persistence", () => {
 			canGoBack: false,
 			discarded: true,
 			error: undefined,
+		});
+	});
+
+	it("restores kestrel app pages without treating them as sleeping web views", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+		state.tabs[0] = {
+			...state.tabs[0]!,
+			title: "Settings",
+			url: "kestrel://settings",
+		};
+		store.save(state);
+		expect(store.load().tabs[0]).toMatchObject({
+			title: "Settings",
+			url: "kestrel://settings",
+			discarded: false,
 		});
 	});
 

@@ -1,5 +1,6 @@
 import type {
 	RendererResponse,
+	UserBrowserFindMatch,
 	UserBrowserPageContext,
 	UserBrowserSettings,
 	UserBrowserState,
@@ -15,6 +16,7 @@ function responseError(response: RendererResponse): string {
 export interface UserBrowserController {
 	state: UserBrowserState | null;
 	error: string;
+	findMatch: UserBrowserFindMatch | null;
 	createTab(input?: string): Promise<void>;
 	reopenClosedTab(): Promise<void>;
 	closeTab(tabId: string): Promise<void>;
@@ -34,7 +36,34 @@ export interface UserBrowserController {
 	pageContext(tabId?: string): Promise<UserBrowserPageContext | undefined>;
 	updateSettings(settings: UserBrowserSettings): Promise<void>;
 	clearHistory(): Promise<void>;
+	clearBrowsingData(options: {
+		history?: boolean;
+		cookies?: boolean;
+		cache?: boolean;
+	}): Promise<void>;
 	revealDownload(downloadId: string): Promise<void>;
+	openDownload(downloadId: string): Promise<void>;
+	cancelDownload(downloadId: string): Promise<void>;
+	toggleBookmark(url?: string, title?: string): Promise<void>;
+	removeBookmark(bookmarkId: string): Promise<void>;
+	pinTab(tabId: string, pinned: boolean): Promise<void>;
+	muteTab(tabId: string, muted: boolean): Promise<void>;
+	duplicateTab(tabId: string): Promise<void>;
+	closeOtherTabs(tabId: string): Promise<void>;
+	moveTab(tabId: string, toIndex: number): Promise<void>;
+	findInPage(
+		tabId: string,
+		query: string,
+		options?: { findNext?: boolean; forward?: boolean },
+	): Promise<void>;
+	stopFindInPage(tabId: string): Promise<void>;
+	printTab(tabId: string): Promise<void>;
+	openDevTools(tabId: string): Promise<void>;
+	setSitePermission(
+		origin: string,
+		permission: string,
+		decision: "allow" | "deny",
+	): Promise<void>;
 	sleepTab(tabId: string): Promise<void>;
 	sleepInactiveTabs(): Promise<void>;
 }
@@ -42,6 +71,7 @@ export interface UserBrowserController {
 export function useUserBrowser(): UserBrowserController {
 	const [state, setState] = useState<UserBrowserState | null>(null);
 	const [error, setError] = useState("");
+	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
 	stateRef.current = state;
 
@@ -68,9 +98,12 @@ export function useUserBrowser(): UserBrowserController {
 	useEffect(() => {
 		let active = true;
 		const unsubscribe = window.kestrel.onBrowserEvent((event) => {
-			if (active && event.type === "state") {
+			if (!active) return;
+			if (event.type === "state") {
 				setState(event.state);
 				setError("");
+			} else if (event.type === "find-in-page") {
+				setFindMatch(event.match);
 			}
 		});
 		void window.kestrel
@@ -208,6 +241,16 @@ export function useUserBrowser(): UserBrowserController {
 		() => requestState({ type: "browser-clear-history" }),
 		[requestState],
 	);
+	const clearBrowsingData = useCallback(
+		(options: { history?: boolean; cookies?: boolean; cache?: boolean }) =>
+			requestState({
+				type: "browser-clear-data",
+				history: Boolean(options.history),
+				cookies: Boolean(options.cookies),
+				cache: Boolean(options.cache),
+			}),
+		[requestState],
+	);
 	const revealDownload = useCallback(async (downloadId: string) => {
 		const response = await window.kestrel.request({
 			type: "browser-reveal-download",
@@ -215,6 +258,92 @@ export function useUserBrowser(): UserBrowserController {
 		});
 		if (!response.ok) throw new Error(responseError(response));
 	}, []);
+	const openDownload = useCallback(async (downloadId: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-open-download",
+			downloadId,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+	const cancelDownload = useCallback(
+		(downloadId: string) =>
+			requestState({ type: "browser-cancel-download", downloadId }),
+		[requestState],
+	);
+	const toggleBookmark = useCallback(
+		(url?: string, title?: string) =>
+			requestState({
+				type: "browser-toggle-bookmark",
+				...(url ? { url } : {}),
+				...(title ? { title } : {}),
+			}),
+		[requestState],
+	);
+	const removeBookmark = useCallback(
+		(bookmarkId: string) =>
+			requestState({ type: "browser-remove-bookmark", bookmarkId }),
+		[requestState],
+	);
+	const pinTab = useCallback(
+		(tabId: string, pinned: boolean) =>
+			requestState({ type: "browser-pin-tab", tabId, pinned }),
+		[requestState],
+	);
+	const muteTab = useCallback(
+		(tabId: string, muted: boolean) =>
+			requestState({ type: "browser-mute-tab", tabId, muted }),
+		[requestState],
+	);
+	const duplicateTab = useCallback(
+		(tabId: string) => requestState({ type: "browser-duplicate-tab", tabId }),
+		[requestState],
+	);
+	const closeOtherTabs = useCallback(
+		(tabId: string) => requestState({ type: "browser-close-other-tabs", tabId }),
+		[requestState],
+	);
+	const moveTab = useCallback(
+		(tabId: string, toIndex: number) =>
+			requestState({ type: "browser-move-tab", tabId, toIndex }),
+		[requestState],
+	);
+	const findInPage = useCallback(
+		(
+			tabId: string,
+			query: string,
+			options?: { findNext?: boolean; forward?: boolean },
+		) =>
+			requestState({
+				type: "browser-find-in-page",
+				tabId,
+				query,
+				...(options?.findNext ? { findNext: true } : {}),
+				...(options?.forward === false ? { forward: false } : {}),
+			}),
+		[requestState],
+	);
+	const stopFindInPage = useCallback(
+		(tabId: string) => requestState({ type: "browser-stop-find-in-page", tabId }),
+		[requestState],
+	);
+	const printTab = useCallback(
+		(tabId: string) => requestState({ type: "browser-print", tabId }),
+		[requestState],
+	);
+	const openDevTools = useCallback(
+		(tabId: string) => requestState({ type: "browser-open-devtools", tabId }),
+		[requestState],
+	);
+	const setSitePermission = useCallback(
+		(origin: string, permission: string, decision: "allow" | "deny") =>
+			requestState({
+				type: "browser-set-site-permission",
+				origin,
+				permission,
+				decision,
+			}),
+		[requestState],
+	);
 	const sleepTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-sleep-tab", tabId }),
 		[requestState],
@@ -228,6 +357,7 @@ export function useUserBrowser(): UserBrowserController {
 		() => ({
 			state,
 			error,
+			findMatch,
 			createTab,
 			reopenClosedTab,
 			closeTab,
@@ -244,13 +374,29 @@ export function useUserBrowser(): UserBrowserController {
 			pageContext,
 			updateSettings,
 			clearHistory,
+			clearBrowsingData,
 			revealDownload,
+			openDownload,
+			cancelDownload,
+			toggleBookmark,
+			removeBookmark,
+			pinTab,
+			muteTab,
+			duplicateTab,
+			closeOtherTabs,
+			moveTab,
+			findInPage,
+			stopFindInPage,
+			printTab,
+			openDevTools,
+			setSitePermission,
 			sleepTab,
 			sleepInactiveTabs,
 		}),
 		[
 			state,
 			error,
+			findMatch,
 			createTab,
 			reopenClosedTab,
 			closeTab,
@@ -267,7 +413,22 @@ export function useUserBrowser(): UserBrowserController {
 			pageContext,
 			updateSettings,
 			clearHistory,
+			clearBrowsingData,
 			revealDownload,
+			openDownload,
+			cancelDownload,
+			toggleBookmark,
+			removeBookmark,
+			pinTab,
+			muteTab,
+			duplicateTab,
+			closeOtherTabs,
+			moveTab,
+			findInPage,
+			stopFindInPage,
+			printTab,
+			openDevTools,
+			setSitePermission,
 			sleepTab,
 			sleepInactiveTabs,
 		],

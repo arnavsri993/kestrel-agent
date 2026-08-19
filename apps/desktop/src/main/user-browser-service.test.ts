@@ -48,6 +48,11 @@ const electron = vi.hoisted(() => {
     isDestroyed = () => this.destroyed;
     getURL = () => this.url;
     getTitle = () => this.title;
+    findInPage = vi.fn();
+    stopFindInPage = vi.fn();
+    print = vi.fn();
+    openDevTools = vi.fn();
+    setAudioMuted = vi.fn();
     navigationHistory = {
       canGoBack: vi.fn(() => false),
       canGoForward: vi.fn(() => false),
@@ -71,6 +76,8 @@ const electron = vi.hoisted(() => {
     permissionRequestHandler: unknown;
     setPermissionCheckHandler = vi.fn((handler) => { this.permissionCheckHandler = handler; });
     setPermissionRequestHandler = vi.fn((handler) => { this.permissionRequestHandler = handler; });
+    clearCache = vi.fn(async () => undefined);
+    clearStorageData = vi.fn(async () => undefined);
     fetch = vi.fn();
   }
   const state: {
@@ -96,8 +103,11 @@ vi.mock("electron", () => ({
   session: { fromPartition: electron.fromPartition },
   Menu: { buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })) },
   clipboard: { writeText: vi.fn() },
+  dialog: {
+    showMessageBox: vi.fn(async () => ({ response: 1 })),
+  },
   nativeImage: { createFromBuffer: vi.fn(() => ({ isEmpty: () => true })) },
-  shell: { showItemInFolder: vi.fn() },
+  shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => "") },
 }));
 
 import { UserBrowserService } from "./user-browser-service";
@@ -164,6 +174,24 @@ describe("UserBrowserService", () => {
     expect(state.tabs[0]).toMatchObject({ title: "New Tab", url: "" });
   });
 
+  it("opens kestrel app pages as tabs without creating a web view", async () => {
+    const { service } = createService();
+    const before = electron.state.views.length;
+    const state = await service.createTab("kestrel://settings", true);
+    const tab = state.tabs.find((item) => item.id === state.activeTabId)!;
+    expect(tab).toMatchObject({
+      title: "Settings",
+      url: "kestrel://settings",
+      loading: false,
+    });
+    expect(electron.state.views.length).toBe(before);
+    await service.setContentBounds(
+      { x: 0, y: 80, width: 800, height: 600 },
+      true,
+    );
+    expect(electron.state.views.length).toBe(before);
+  });
+
   it("uses the production persistent partition by default and preserves an explicit custom partition", () => {
     const first = createService();
     expect(electron.state.partitions[0]).toMatchObject({
@@ -190,7 +218,7 @@ describe("UserBrowserService", () => {
     ).toThrow("persistent profiles");
   });
 
-  it("denies permission checks and requests by default", () => {
+  it("denies permission checks and requests by default", async () => {
     const { service } = createService();
     const partition = electron.state.partitions[0]!.instance as unknown as {
       permissionCheckHandler: (webContents: unknown, permission: string, requestingOrigin: string) => boolean;
@@ -199,7 +227,7 @@ describe("UserBrowserService", () => {
     expect(partition.permissionCheckHandler({}, "notifications", "https://example.com")).toBe(false);
     const callback = vi.fn();
     partition.permissionRequestHandler({}, "media", callback);
-    expect(callback).toHaveBeenCalledWith(false);
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
     service.dispose();
   });
 
@@ -678,5 +706,29 @@ describe("UserBrowserService", () => {
 
     service.zoomReset(first.id);
     expect(contents.zoomLevel).toBe(0);
+  });
+
+  it("bookmarks, pins, and finds in the active page", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://docs.example/path");
+    const bookmarked = service.toggleBookmark();
+    expect(bookmarked.bookmarks).toHaveLength(1);
+    expect(bookmarked.bookmarks[0]?.url).toBe("https://docs.example/path");
+    expect(service.toggleBookmark().bookmarks).toHaveLength(0);
+
+    const pinned = service.pinTab(first.id, true);
+    expect(pinned.tabs[0]?.pinned).toBe(true);
+
+    const contents = electron.state.views[0]!.webContents;
+    service.findInPage(first.id, "kestrel");
+    expect(contents.findInPage).toHaveBeenCalledWith("kestrel", {
+      forward: true,
+      findNext: false,
+    });
+    service.openDevTools(first.id);
+    expect(contents.openDevTools).toHaveBeenCalled();
+    service.printTab(first.id);
+    expect(contents.print).toHaveBeenCalled();
   });
 });
