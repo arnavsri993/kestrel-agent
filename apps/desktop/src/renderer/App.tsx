@@ -3974,7 +3974,12 @@ function RuntimeConversation({
 			>
 				{assistiveStatus}
 			</p>
-			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? null : (
+			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
+				<div className="chat-welcome">
+					<h1>How can I help?</h1>
+					<p>Ask for a plan, a change, or the next useful step.</p>
+				</div>
+			) : (
 				<div className="message-list">
 					{hasEarlierMessages && (
 						<button
@@ -4447,7 +4452,7 @@ function RuntimeConversation({
 								</div>
 							</details>
 						</div>
-						<span>
+						<span className="composer-status">
 							{voiceState === "recording"
 								? "Microphone live · tap Stop to transcribe"
 								: activeSessionBusy
@@ -9243,21 +9248,6 @@ export function App() {
 			}`}
 			data-app-page={appPageId}
 		>
-			{appPageId === "agent" && (
-				<AgentWorkspace
-					sessions={runtimeSessions}
-					activeSessionId={activeRuntimeSessionId}
-					agentState={effectiveAgentState}
-					pendingApprovals={pendingApprovalCount}
-					onNewTask={() => {
-						startNewAgent();
-						openAgent();
-					}}
-					onOpenSession={openRuntimeSession}
-					onOpenApprovals={() => navigate("approvals")}
-					onOpenWork={() => navigate("work")}
-				/>
-			)}
 			{appPageId === "history" && (
 				<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
 			)}
@@ -9318,7 +9308,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${appPageId === "agent" ? " agent-full-page" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0 }}
@@ -9355,9 +9345,24 @@ export function App() {
 							onOpenConnections={() => openSettings("connections")}
 						/>
 					}
+					workspace={
+						<AgentWorkspace
+							sessions={runtimeSessions}
+							activeSessionId={activeRuntimeSessionId}
+							agentState={effectiveAgentState}
+							pendingApprovals={pendingApprovalCount}
+							onNewTask={() => {
+								startNewAgent();
+								openAgent();
+							}}
+							onOpenSession={openSidebarSession}
+							onOpenApprovals={() => navigate("approvals")}
+							onOpenWork={() => navigate("work")}
+							onBack={() => void openBrowserWorkspace()}
+						/>
+					}
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
-					{...(activeBrowserTab ? { activeTab: activeBrowserTab } : {})}
 					agentName={activeAgentName}
 					collapsed={!agentSidebarOpen}
 					agentState={effectiveAgentState}
@@ -9367,7 +9372,7 @@ export function App() {
 					)}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
-					onOpenSession={openSidebarSession}
+					onExpandChat={openAgent}
 					onReviewApprovals={reviewApprovals}
 					onNavigate={openPrimaryDestination}
 				>

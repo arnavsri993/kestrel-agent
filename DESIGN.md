@@ -49,14 +49,15 @@ modern, fast, and honest about approval and data boundaries.
 
 ### Shell and setup rules
 
-- The persistent agent rail is 360px. It contains one-line identity, New task,
-  one merged browser-context/current-task card, at most three Recent rows,
-  the pinned composer, and four destinations: Browser, Agent, Approvals, and
-  Settings. Empty Recent is omitted. Pending approval appears only in the task
-  card and as a white dot on Approvals; there is no duplicate banner or footer
-  status line. History, Downloads, Settings, and specialist tools open as
-  browser tabs rather than covering the workspace. They remain reachable from
-  Capabilities and keyboard commands.
+- The persistent agent rail is 360px. Its top bar is expand-to-full-chat, New
+  chat, centered title with the project name under it, and collapse. Empty
+  chats show a centered welcome above the pinned composer. The composer keeps
+  the model selector on the left and send plus microphone on the right. Four
+  destinations remain: Browser, Agent, Approvals, and Settings. Pending
+  approval appears as Review in the rail and as a white dot on Approvals.
+  History, Downloads, Settings, and specialist tools open as browser tabs
+  rather than covering the workspace. They remain reachable from Capabilities
+  and keyboard commands.
 - Browser Home is flat canvas. Its focal point is the 56px composer below a
   40px greeting. Frequent tabs appear only when local history exists.
   Suggestions are exactly three text rows; there are no thumbnails, duplicate

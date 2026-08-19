@@ -1,31 +1,16 @@
 import type { ReactNode } from "react";
-import type { AgentState, RuntimeSession, UserBrowserTab } from "@kestrel/shared-types";
-import { BrandMark } from "../BrandMark";
-import { Icon } from "../Icon";
-import { Status, type StatusTone } from "../ui";
+import type { AgentState, RuntimeSession } from "@kestrel/shared-types";
+import { agentWorkspaceName } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
-import {
-	recentSidebarSessions,
-	sidebarReviewVisible,
-} from "./agent-sidebar";
-
-const agentStateMeta: Record<AgentState, { label: string; tone: StatusTone }> = {
-	idle: { label: "Ready", tone: "verified" },
-	observing: { label: "Reading", tone: "running" },
-	working: { label: "Working", tone: "running" },
-	waiting_approval: { label: "Needs approval", tone: "needs-approval" },
-	paused: { label: "Paused", tone: "neutral" },
-	offline: { label: "Offline", tone: "neutral" },
-	error: { label: "Needs recovery", tone: "error" },
-	updating: { label: "Updating", tone: "running" },
-};
+import { Icon } from "../Icon";
+import { sidebarReviewVisible } from "./agent-sidebar";
 
 export function AgentSidebar({
 	children,
 	communicationAssistant,
+	workspace,
 	sessions,
 	activeSessionId,
-	activeTab,
 	agentName,
 	collapsed,
 	agentState,
@@ -33,15 +18,15 @@ export function AgentSidebar({
 	activeDestination,
 	onNewAgent,
 	onToggleAgent,
-	onOpenSession,
+	onExpandChat,
 	onNavigate,
 	onReviewApprovals,
 }: {
 	children: ReactNode;
 	communicationAssistant?: ReactNode;
+	workspace?: ReactNode;
 	sessions: RuntimeSession[];
 	activeSessionId: string | null;
-	activeTab?: UserBrowserTab;
 	agentName: string;
 	collapsed: boolean;
 	agentState: AgentState;
@@ -49,16 +34,15 @@ export function AgentSidebar({
 	activeDestination: string;
 	onNewAgent(prompt?: string): void;
 	onToggleAgent(): void;
-	onOpenSession(sessionId: string): void;
+	onExpandChat(): void;
 	onNavigate(destination: "browser" | "agent" | "approvals" | "settings"): void;
 	onReviewApprovals?(): void;
 }) {
-	const recentSessions = recentSidebarSessions(sessions);
 	const activeSession = sessions.find((session) => session.id === activeSessionId);
-	const stateMeta = agentStateMeta[agentState];
 	const currentTaskTitle = activeSession
 		? sessionTitleForDisplay(activeSession.title)
-		: "New task";
+		: "New chat";
+	const projectName = agentWorkspaceName(activeSession?.workspaceRoot);
 	const showReview = Boolean(
 		onReviewApprovals &&
 			sidebarReviewVisible({
@@ -69,15 +53,36 @@ export function AgentSidebar({
 	return (
 		<aside
 			className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}`}
-			aria-label={`${agentName} agent`}
+			aria-label={`${agentName} chat`}
 			aria-hidden={collapsed}
 			inert={collapsed}
 		>
 			<div className="agent-sidebar-header">
 				<div className="agent-sidebar-drag" />
-				<div className="agent-sidebar-identity">
-					<BrandMark className="agent-sidebar-mark" />
-					<span className="agent-sidebar-agent-name">{agentName}</span>
+				<div className="agent-chat-toolbar">
+					<button
+						type="button"
+						className="agent-sidebar-expand"
+						aria-label="Open chat in the full window"
+						title="Open chat in the full window"
+						onClick={onExpandChat}
+					>
+						<Icon name="expand" />
+					</button>
+					<button
+						type="button"
+						className="agent-sidebar-new"
+						aria-label="New chat"
+						aria-keyshortcuts="Meta+N"
+						title="New chat"
+						onClick={() => onNewAgent()}
+					>
+						<Icon name="plus" />
+					</button>
+					<div className="agent-chat-heading">
+						<strong title={currentTaskTitle}>{currentTaskTitle}</strong>
+						<small title={projectName}>{projectName}</small>
+					</div>
 					<button
 						type="button"
 						className="agent-sidebar-collapse"
@@ -88,82 +93,23 @@ export function AgentSidebar({
 						<Icon name="chevron" />
 					</button>
 				</div>
-				<div className="agent-sidebar-actions">
+				{showReview && (
 					<button
 						type="button"
-						className="agent-new-button"
-						aria-label="New task"
-						aria-keyshortcuts="Meta+N"
-						onClick={() => onNewAgent()}
+						className="agent-approval-action"
+						onClick={() => onReviewApprovals?.()}
 					>
-						<Icon name="agent" />
-						<span>New task</span>
-						<kbd>⌘ N</kbd>
+						<Icon name="alert-triangle-filled" />
+						<span>Your decision is needed</span>
+						<strong>Review</strong>
 					</button>
-				</div>
-				<section
-					className={`agent-session-context state-${agentState}`}
-					aria-label="Current task and agent state"
-				>
-					<div
-						className="agent-context-line"
-						title={activeTab?.url || "No page open"}
-					>
-						<Icon name="context" />
-						<span>{activeTab?.url ? activeTab.title : "No page open"}</span>
-					</div>
-					<div className="agent-task-line">
-						<strong className="agent-session-title" title={currentTaskTitle}>
-							{currentTaskTitle}
-						</strong>
-						<Status tone={stateMeta.tone}>{stateMeta.label}</Status>
-					</div>
-					{showReview && (
-						<button
-							type="button"
-							className="agent-approval-action"
-							onClick={() => onReviewApprovals?.()}
-						>
-							<Icon name="alert-triangle-filled" />
-							<span>Your decision is needed</span>
-							<strong>Review</strong>
-						</button>
-					)}
-				</section>
-				{recentSessions.length > 0 && (
-					<section className="agent-sidebar-history" aria-label="Recent">
-						<div className="agent-sidebar-section-heading">
-							<span>Recent</span>
-						</div>
-						<div className="agent-sidebar-history-list">
-							{recentSessions.map((session) => (
-								<button
-									type="button"
-									key={session.id}
-									className={session.id === activeSessionId ? "active" : ""}
-									aria-current={
-										session.id === activeSessionId ? "page" : undefined
-									}
-									onClick={() => onOpenSession(session.id)}
-								>
-									<Icon name="chat" />
-									<span>
-										<strong>{sessionTitleForDisplay(session.title)}</strong>
-									</span>
-									<time dateTime={session.updatedAt}>
-										{new Intl.DateTimeFormat(undefined, {
-											month: "short",
-											day: "numeric",
-										}).format(new Date(session.updatedAt))}
-									</time>
-								</button>
-							))}
-						</div>
-					</section>
 				)}
 			</div>
 			<div className="agent-sidebar-assist">{communicationAssistant}</div>
-			<div className="agent-conversation-host">{children}</div>
+			<div className="agent-sidebar-main">
+				<div className="agent-full-page-workspace">{workspace}</div>
+				<div className="agent-conversation-host">{children}</div>
+			</div>
 			<div className="agent-sidebar-footer">
 				<nav aria-label="Kestrel destinations">
 					{(
