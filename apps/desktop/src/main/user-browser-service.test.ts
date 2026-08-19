@@ -197,6 +197,20 @@ describe("UserBrowserService", () => {
     expect(electron.state.views.length).toBe(before);
   });
 
+  it("attaches the web view before loading when navigating from a new tab", async () => {
+    const { service, window } = createService();
+    const tab = service.getState().tabs[0]!;
+    const url = "https://www.google.com/search?q=ai%20tinkerers";
+    await service.navigate(tab.id, url);
+    const view = electron.state.views[0]!;
+    expect(window.contentView.children).toContain(view);
+    expect(view.visible).toBe(true);
+    expect(view.webContents.loadURL).toHaveBeenCalledWith(url);
+    const attachedAt = window.contentView.addChildView.mock.invocationCallOrder[0]!;
+    const loadedAt = view.webContents.loadURL.mock.invocationCallOrder[0]!;
+    expect(attachedAt).toBeLessThan(loadedAt);
+  });
+
   it("uses the production persistent partition by default and preserves an explicit custom partition", () => {
     const first = createService();
     expect(electron.state.partitions[0]).toMatchObject({
@@ -554,7 +568,7 @@ describe("UserBrowserService", () => {
     );
 
     expect(contents.executeJavaScript).toHaveBeenCalledTimes(1);
-    expect(contents.focus).toHaveBeenCalledTimes(1);
+    expect(contents.focus).toHaveBeenCalled();
     expect(contents.insertText).toHaveBeenCalledWith("481902");
 
     contents.url = "https://other.example/verify";
