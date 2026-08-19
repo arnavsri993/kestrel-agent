@@ -202,6 +202,61 @@ describe("core agent request path", () => {
 		await core.close();
 	});
 
+	it("passes a manual thinking level through to the selected provider", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let received: { model?: string; reasoningEffort?: string } | undefined;
+		const provider: ModelProvider = {
+			id: "openai",
+			defaultModel: "gpt-5.6-terra",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async (request) => {
+				received = request;
+				return {
+					providerId: "openai",
+					model: request.model,
+					text: "ok",
+					toolCalls: [],
+					usage: { inputTokens: 2, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const core = new AgentCore({
+			database,
+			modelProviders: [provider],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+		const session = core.runtime.ensureMainSession();
+		const response = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Plan the demo",
+			model: "gpt-5.6-luna",
+			providerIds: ["openai"],
+			reasoningEffort: "low",
+		});
+		expect(response).toMatchObject({
+			ok: true,
+			run: {
+				model: "gpt-5.6-luna",
+				providerIds: ["openai"],
+				reasoningEffort: "low",
+			},
+		});
+		expect(received).toMatchObject({
+			model: "gpt-5.6-luna",
+			reasoningEffort: "low",
+		});
+		await core.close();
+	});
+
 	it("routes automatic image work only to providers with image capability", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-core-auto-image-"));
 		writeFileSync(join(root, "diagram.png"), Buffer.from("image fixture"));
