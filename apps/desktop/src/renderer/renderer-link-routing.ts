@@ -11,6 +11,7 @@ export interface RendererLink {
 	href: string;
 	hasDownload: boolean;
 	openExternally: boolean;
+	target: string;
 }
 
 /**
@@ -29,7 +30,8 @@ export function userBrowserUrlForRendererLink(
 		event.shiftKey ||
 		event.altKey ||
 		link.hasDownload ||
-		link.openExternally
+		link.openExternally ||
+		(link.target !== "" && link.target.toLowerCase() !== "_self")
 	)
 		return undefined;
 

@@ -3771,6 +3771,25 @@ function RuntimeConversation({
 			)}
 		</button>
 	);
+	const canAddContextFiles =
+		Boolean(taskWorkspace) && selectedGrant?.available !== false;
+	const projectFilesUnavailable =
+		Boolean(taskWorkspace) && selectedGrant?.available === false;
+	const needsNewTaskForFiles = !canAddContextFiles && Boolean(activeSessionId);
+	const composerFilesLabel = canAddContextFiles
+		? "Add context files"
+		: projectFilesUnavailable
+			? "Project files unavailable"
+		: needsNewTaskForFiles
+			? "Files unavailable in this conversation"
+			: "Add files or choose folder";
+	const composerFilesTitle = canAddContextFiles
+		? "Add files to this task"
+		: projectFilesUnavailable
+			? "Reconnect or remove this project in Settings"
+		: needsNewTaskForFiles
+			? "Start a new task to add files"
+			: "Choose a project before adding files";
 	const runScope = runtimeRunScope({
 		busy,
 		streamSessionId: streamSessionIdRef.current,
@@ -4145,17 +4164,11 @@ function RuntimeConversation({
 							<button
 								type="button"
 								className="composer-icon composer-add-files"
-								aria-label={
-									taskWorkspace
-										? "Add context files"
-										: "Add files or choose folder"
+								aria-label={composerFilesLabel}
+								title={composerFilesTitle}
+								disabled={
+									busy || voiceState !== "idle" || needsNewTaskForFiles
 								}
-								title={
-									taskWorkspace
-										? "Add files to this task"
-										: "Choose a project before adding files"
-								}
-								disabled={busy || voiceState !== "idle"}
 								onClick={addComposerContext}
 							>
 								<Icon name="plus" />
@@ -8532,6 +8545,9 @@ export function App() {
 	const reduced = useReducedMotion();
 
 	useEffect(() => {
+		// Setup links keep their provider-owned/system-browser handoff. A managed
+		// tab would otherwise open behind onboarding with no visible way to reach it.
+		if (!onboarded) return;
 		const openRendererLinkInUserBrowser = (event: MouseEvent) => {
 			if (!(event.target instanceof Element)) return;
 			const anchor = event.target.closest<HTMLAnchorElement>("a[href]");
@@ -8539,6 +8555,7 @@ export function App() {
 			const url = userBrowserUrlForRendererLink(event, {
 				href: anchor.href,
 				hasDownload: anchor.hasAttribute("download"),
+				target: anchor.target,
 				// Provider-owned OAuth and native/system flows can retain their
 				// external owner with this explicit opt-out.
 				openExternally: anchor.hasAttribute("data-kestrel-external"),
@@ -8547,12 +8564,12 @@ export function App() {
 
 			event.preventDefault();
 			setPage("browser");
-			void browser.createTab(url);
+			void browser.createTab(url).catch(() => undefined);
 		};
 		document.addEventListener("click", openRendererLinkInUserBrowser);
 		return () =>
 			document.removeEventListener("click", openRendererLinkInUserBrowser);
-	}, [browser.createTab]);
+	}, [browser.createTab, onboarded]);
 
 	useEffect(() => {
 		if (!onboarded) return;

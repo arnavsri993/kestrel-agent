@@ -14,6 +14,7 @@ const webLink = {
 	href: "https://example.com/path?q=1",
 	hasDownload: false,
 	openExternally: false,
+	target: "",
 };
 
 describe("userBrowserUrlForRendererLink", () => {
@@ -40,6 +41,23 @@ describe("userBrowserUrlForRendererLink", () => {
 		]) {
 			expect(userBrowserUrlForRendererLink(event, webLink)).toBeUndefined();
 		}
+	});
+
+	it("preserves explicit browsing-context targets", () => {
+		for (const target of ["_blank", "_parent", "_top", "provider-help"]) {
+			expect(
+				userBrowserUrlForRendererLink(ordinaryClick, {
+					...webLink,
+					target,
+				}),
+			).toBeUndefined();
+		}
+		expect(
+			userBrowserUrlForRendererLink(ordinaryClick, {
+				...webLink,
+				target: "_self",
+			}),
+		).toBe("https://example.com/path?q=1");
 	});
 
 	it("preserves download, explicit-external, and non-web link boundaries", () => {
