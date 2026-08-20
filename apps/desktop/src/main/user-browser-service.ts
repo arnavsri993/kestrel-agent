@@ -127,6 +127,32 @@ function hostnameTitle(value: string): string {
 	}
 }
 
+function isFaviconDataUrl(value: string): boolean {
+	return value.startsWith("data:image/") && value.length <= 200_000;
+}
+
+function resolveFaviconReference(
+	pageUrl: string,
+	value: string,
+): string | undefined {
+	if (isFaviconDataUrl(value)) return value;
+	const direct = safePageUrl(value);
+	if (direct) return direct.toString();
+	if (!pageUrl) return undefined;
+	try {
+		const resolved = new URL(value, pageUrl);
+		if (
+			!["http:", "https:"].includes(resolved.protocol) ||
+			resolved.username ||
+			resolved.password
+		)
+			return undefined;
+		return resolved.toString();
+	} catch {
+		return undefined;
+	}
+}
+
 function cloneState(state: UserBrowserState): UserBrowserState {
 	return UserBrowserStateSchema.parse(structuredClone(state));
 }
@@ -266,6 +292,7 @@ export class UserBrowserService {
 			});
 		};
 		this.partition.on("will-download", this.onWillDownload);
+		void this.backfillOriginFaviconsFromHistory();
 	}
 
 	getState(): UserBrowserState {
@@ -1334,6 +1361,10 @@ export class UserBrowserService {
 		webContents.on("did-stop-loading", () => {
 			tab.loading = false;
 			this.updateNavigationState(tab, webContents);
+			if (!tab.faviconDataUrl && tab.url) {
+				const origin = safePageUrl(tab.url)?.origin;
+				if (origin) void this.loadFavicon(tab, `${origin}/favicon.ico`);
+			}
 		});
 		webContents.on("page-title-updated", (_event, title) => {
 			tab.title = title.trim().slice(0, 500) || hostnameTitle(tab.url);
@@ -1344,7 +1375,9 @@ export class UserBrowserService {
 			this.commit();
 		});
 		webContents.on("page-favicon-updated", (_event, favicons) => {
-			const favicon = favicons.find((value) => safePageUrl(value));
+			const favicon = favicons.find(
+				(value) => isFaviconDataUrl(value) || safePageUrl(value),
+			);
 			if (favicon) void this.loadFavicon(tab, favicon);
 		});
 		webContents.on(
@@ -1859,39 +1892,110 @@ export class UserBrowserService {
 		return candidate;
 	}
 
-	private rememberOriginFavicon(url: string, faviconDataUrl: string): boolean {
-		const parsed = safePageUrl(url);
-		if (!parsed) return false;
+	private rememberOriginFavicon(
+		origin: string,
+		faviconDataUrl: string,
+	): boolean {
 		const existing = this.state.originFavicons.find(
-			(item) => item.origin === parsed.origin,
+			(item) => item.origin === origin,
 		);
 		if (existing?.faviconDataUrl === faviconDataUrl) return false;
 		this.state.originFavicons = upsertOriginFavicon(
 			this.state.originFavicons,
-			parsed.origin,
+			origin,
 			faviconDataUrl,
 			this.now().toISOString(),
 		);
 		return true;
 	}
 
-	private async loadFavicon(tab: UserBrowserTab, value: string): Promise<void> {
+	private backfillOriginFaviconsFromHistory(limit = 7): void {
+		const known = new Set(
+			this.state.originFavicons.map((item) => item.origin),
+		);
+		const grouped = new Map<
+			string,
+			{ visits: number; lastVisitedAt: string }
+		>();
+		for (const entry of this.state.history) {
+			const parsed = safePageUrl(entry.url);
+			if (!parsed || known.has(parsed.origin)) continue;
+			const current = grouped.get(parsed.origin);
+			if (!current) {
+				grouped.set(parsed.origin, {
+					visits: 1,
+					lastVisitedAt: entry.visitedAt,
+				});
+				continue;
+			}
+			current.visits += 1;
+			if (entry.visitedAt > current.lastVisitedAt) {
+				current.lastVisitedAt = entry.visitedAt;
+			}
+		}
+		const origins = [...grouped.entries()]
+			.sort(
+				(left, right) =>
+					right[1].visits - left[1].visits ||
+					right[1].lastVisitedAt.localeCompare(left[1].lastVisitedAt),
+			)
+			.slice(0, Math.max(0, limit))
+			.map(([origin]) => origin);
+		for (const origin of origins) {
+			void this.loadFavicon({ url: `${origin}/` }, `${origin}/favicon.ico`);
+		}
+	}
+
+	private async loadFavicon(
+		target: Pick<UserBrowserTab, "url" | "faviconDataUrl">,
+		value: string,
+	): Promise<void> {
 		try {
-			const response = await this.partition.fetch(value, {
-				signal: AbortSignal.timeout(5_000),
-			});
-			const length = Number(response.headers.get("content-length") ?? 0);
-			if (!response.ok || length > 512_000) return;
-			const bytes = Buffer.from(await response.arrayBuffer());
-			if (bytes.byteLength > 512_000) return;
-			const image = nativeImage.createFromBuffer(bytes);
-			if (image.isEmpty()) return;
-			tab.faviconDataUrl = image.resize({ width: 32, height: 32 }).toDataURL();
-			if (this.rememberOriginFavicon(tab.url, tab.faviconDataUrl)) this.commit();
+			const faviconDataUrl = await this.resolveFaviconDataUrl(
+				target.url,
+				value,
+			);
+			if (!faviconDataUrl) return;
+			target.faviconDataUrl = faviconDataUrl;
+			const origin =
+				safePageUrl(target.url)?.origin ??
+				safePageUrl(resolveFaviconReference(target.url, value) ?? "")?.origin;
+			if (origin && this.rememberOriginFavicon(origin, faviconDataUrl))
+				this.commit();
 			else this.emit();
 		} catch {
 			// Favicons are optional and must never affect navigation.
 		}
+	}
+
+	private async resolveFaviconDataUrl(
+		pageUrl: string,
+		value: string,
+	): Promise<string | undefined> {
+		if (isFaviconDataUrl(value)) return this.normalizeInlineFavicon(value);
+		const resolved = resolveFaviconReference(pageUrl, value);
+		if (!resolved) return undefined;
+		return this.fetchFaviconDataUrl(resolved);
+	}
+
+	private normalizeInlineFavicon(value: string): string | undefined {
+		if (!isFaviconDataUrl(value)) return undefined;
+		const image = nativeImage.createFromDataURL(value);
+		if (image.isEmpty()) return undefined;
+		return image.resize({ width: 32, height: 32 }).toDataURL();
+	}
+
+	private async fetchFaviconDataUrl(value: string): Promise<string | undefined> {
+		const response = await this.partition.fetch(value, {
+			signal: AbortSignal.timeout(5_000),
+		});
+		const length = Number(response.headers.get("content-length") ?? 0);
+		if (!response.ok || length > 512_000) return undefined;
+		const bytes = Buffer.from(await response.arrayBuffer());
+		if (bytes.byteLength > 512_000) return undefined;
+		const image = nativeImage.createFromBuffer(bytes);
+		if (image.isEmpty()) return undefined;
+		return image.resize({ width: 32, height: 32 }).toDataURL();
 	}
 
 	private async targetPoint(

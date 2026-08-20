@@ -111,7 +111,13 @@ vi.mock("electron", () => ({
   dialog: {
     showMessageBox: vi.fn(async () => ({ response: 1 })),
   },
-  nativeImage: { createFromBuffer: vi.fn(() => ({ isEmpty: () => true })) },
+  nativeImage: {
+    createFromBuffer: vi.fn(() => ({ isEmpty: () => true })),
+    createFromDataURL: vi.fn(() => ({
+      isEmpty: () => false,
+      resize: () => ({ toDataURL: () => "data:image/png;base64,INLINE" }),
+    })),
+  },
   shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => "") },
 }));
 
@@ -880,5 +886,66 @@ describe("UserBrowserService", () => {
     vi.mocked(nativeImage.createFromBuffer).mockReturnValue({
       isEmpty: () => true,
     } as never);
+  });
+
+  it("accepts inline favicon data URLs and backfills frequent origins on startup", async () => {
+    vi.mocked(nativeImage.createFromDataURL).mockReturnValue({
+      isEmpty: () => false,
+      resize: () => ({ toDataURL: () => "data:image/png;base64,INLINE" }),
+    } as never);
+    vi.mocked(nativeImage.createFromBuffer).mockReturnValue({
+      isEmpty: () => false,
+      resize: () => ({ toDataURL: () => "data:image/png;base64,BACKFILL" }),
+    } as never);
+    const { service } = createService();
+    const partition = electron.state.partitions[0]!.instance as {
+      fetch: ReturnType<typeof vi.fn>;
+    };
+    partition.fetch.mockResolvedValue({
+      ok: true,
+      headers: { get: () => "4" },
+      arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/docs";
+    contents.title = "Example";
+    contents.emit("did-navigate", {}, contents.url, 200, "OK");
+    contents.emit("page-favicon-updated", {}, [
+      "data:image/png;base64,QUFB",
+    ]);
+
+    await vi.waitFor(() => {
+      expect(service.getState().tabs[0]?.faviconDataUrl).toBe(
+        "data:image/png;base64,INLINE",
+      );
+    });
+
+    service.state.history.push({
+      id: "visit-00000000-0000-4000-8000-000000000099",
+      tabId: tab.id,
+      url: "https://docs.example.org/guide",
+      title: "Docs",
+      visitedAt: "2026-08-19T12:00:00.000Z",
+    });
+    service.state.history.push({
+      id: "visit-00000000-0000-4000-8000-000000000098",
+      tabId: tab.id,
+      url: "https://example.com/",
+      title: "Example",
+      visitedAt: "2026-08-18T12:00:00.000Z",
+    });
+    service["backfillOriginFaviconsFromHistory"](2);
+
+    await vi.waitFor(() => {
+      expect(
+        service
+          .getState()
+          .originFavicons.some(
+            (item) => item.origin === "https://docs.example.org",
+          ),
+      ).toBe(true);
+    });
   });
 });
