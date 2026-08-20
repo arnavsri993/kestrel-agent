@@ -17,10 +17,10 @@ interface GoalKanbanProps {
 	onCompleteGoal(goalId: string): Promise<boolean>;
 }
 
-const columns: Array<{ status: TaskStatus; label: string; note: string }> = [
-	{ status: "pending", label: "Ready", note: "Defined and waiting" },
-	{ status: "in_progress", label: "In progress", note: "Actively underway" },
-	{ status: "completed", label: "Done", note: "Finished and retained" },
+const columns: Array<{ status: TaskStatus; label: string }> = [
+	{ status: "pending", label: "Ready" },
+	{ status: "in_progress", label: "In progress" },
+	{ status: "completed", label: "Done" },
 ];
 
 function statusLabel(status: TaskStatus): string {
@@ -177,17 +177,17 @@ export function GoalKanban({
 						})}
 					</ul>
 				) : (
-					<p>No worker lanes yet.</p>
+					<p>
+						No worker lanes are configured. Cards remain with the local
+						operator.
+					</p>
 				)}
 			</div>
 
 			{activeGoals.length === 0 ? (
 				<div className="kanban-empty-board">
 					<strong>No active goals</strong>
-					<p>
-						Create a goal below or convert the current opportunity to populate
-						the board.
-					</p>
+					<p>Create a goal and its task lines will appear here.</p>
 				</div>
 			) : (
 				<div className="kanban-columns">
@@ -236,7 +236,6 @@ export function GoalKanban({
 								<header>
 									<div>
 										<h3 id={`kanban-${column.status}`}>{column.label}</h3>
-										<small>{column.note}</small>
 									</div>
 									<span aria-label={`${cards.length} tasks`}>
 										{String(cards.length).padStart(2, "0")}

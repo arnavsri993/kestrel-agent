@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import {
+	type UserBrowserOriginFavicon,
 	type UserBrowserSettings,
 	type UserBrowserState,
 	UserBrowserStateSchema,
@@ -65,6 +66,20 @@ export interface NormalizedBrowserAddress {
 export const MAX_AX_SNAPSHOT_BYTES = 1_500_000;
 export const MAX_AX_SNAPSHOT_NODES = 5_000;
 export const MAX_INTERACTIVE_REFS = 200;
+export const MAX_ORIGIN_FAVICONS = 200;
+
+export function upsertOriginFavicon(
+	current: UserBrowserOriginFavicon[],
+	origin: string,
+	faviconDataUrl: string,
+	updatedAt: string,
+	limit = MAX_ORIGIN_FAVICONS,
+): UserBrowserOriginFavicon[] {
+	const without = current.filter((item) => item.origin !== origin);
+	return [...without, { origin, faviconDataUrl, updatedAt }].slice(
+		-Math.max(1, limit),
+	);
+}
 
 const ACCESSIBILITY_URL_VALUE =
 	/\b(?:https?|file|ftp|data|javascript|blob):[^\s<>"'{}[\]]+/gi;
@@ -223,6 +238,7 @@ export function freshBrowserState(
 		tabs: [tab],
 		activeTabId: tab.id,
 		history: [],
+		originFavicons: [],
 		downloads: [],
 		bookmarks: [],
 		sitePermissions: [],
@@ -262,6 +278,7 @@ export class BrowserTabStore {
 				return {
 					...freshBrowserState(now),
 					history: state.history,
+					originFavicons: state.originFavicons,
 					bookmarks: state.bookmarks,
 					sitePermissions: state.sitePermissions,
 					downloads: state.downloads.map((download) => ({
@@ -301,6 +318,19 @@ export class BrowserTabStore {
 			history: state.history.flatMap((entry) => {
 				const url = sanitizeBrowserUrl(entry.url);
 				return url ? [{ ...entry, url }] : [];
+			}),
+			originFavicons: state.originFavicons.flatMap((item) => {
+				try {
+					const origin = new URL(item.origin).origin;
+					if (
+						!item.faviconDataUrl.startsWith("data:image/") ||
+						origin !== item.origin
+					)
+						return [];
+					return [{ ...item, origin }];
+				} catch {
+					return [];
+				}
 			}),
 			downloads: state.downloads.flatMap((download) => {
 				const sourceUrl = sanitizeBrowserUrl(download.sourceUrl);

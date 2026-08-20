@@ -58,8 +58,7 @@
 	transform: none;
 }
 
-/* The overlay rail no longer owns the titlebar, so keep the drag strip tiny
- * and size the remaining chrome for the current four destinations. */
+/* The overlay rail no longer owns the titlebar, so keep the drag strip tiny. */
 .agent-sidebar-drag {
 	height: 6px;
 }
@@ -279,26 +278,39 @@
 	grid-template-columns: minmax(0, 1fr) auto auto auto;
 }
 
-.agent-sidebar-footer nav {
-	grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.agent-sidebar-footer nav button {
-	position: relative;
-}
-
-.agent-approval-dot {
-	position: absolute;
-	top: 5px;
-	right: 10px;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--warning);
-}
-
 .agent-sidebar-main {
 	display: contents;
+}
+
+.agent-conversation-host {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.agent-conversation-host .conversation-view {
+	flex: 1 1 auto;
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.agent-conversation-host .chat-welcome,
+.agent-conversation-host .message-list {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.agent-conversation-host .message-list {
+	overflow: auto;
+}
+
+.agent-conversation-host .runtime-new-composer,
+.agent-conversation-host .thread-composer {
+	flex: 0 0 auto;
 }
 
 .agent-full-page-workspace {
@@ -324,19 +336,19 @@
 	top: auto;
 	right: auto;
 	bottom: auto;
+	display: grid;
+	grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+	grid-template-rows: auto minmax(0, 1fr);
 	width: 100%;
 	height: 100vh;
 	max-height: none;
 	border: 0;
 	border-radius: 0;
+	background: var(--canvas);
 }
 
 .ai-browser-app.agent-full-page .agent-sidebar.is-collapsed {
 	width: 100%;
-}
-
-.ai-browser-app.agent-full-page .agent-sidebar {
-	grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .ai-browser-app.agent-full-page .agent-sidebar-assist {
@@ -344,7 +356,19 @@
 }
 
 .ai-browser-app.agent-full-page .agent-sidebar-header {
-	padding-bottom: 8px;
+	grid-column: 2;
+	grid-row: 1;
+	padding: 10px 18px 10px;
+	border-bottom: 1px solid var(--line);
+	background: var(--sidebar);
+}
+
+.ai-browser-app.agent-full-page .agent-chat-toolbar {
+	grid-template-columns: auto minmax(0, 1fr);
+}
+
+.ai-browser-app.agent-full-page .agent-sidebar-drag {
+	display: none;
 }
 
 .ai-browser-app.agent-full-page .agent-sidebar-identity {
@@ -368,34 +392,78 @@
 }
 
 .ai-browser-app.agent-full-page .agent-sidebar-main {
-	display: grid;
-	grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.4fr);
-	min-height: 0;
-	overflow: hidden;
+	display: contents;
 }
 
 .ai-browser-app.agent-full-page .agent-full-page-workspace {
 	display: block;
+	grid-column: 1;
+	grid-row: 1 / span 2;
 	min-height: 0;
 	overflow: auto;
 	border-right: 1px solid var(--line);
+	background: var(--sidebar);
 }
 
 .ai-browser-app.agent-full-page .agent-conversation-host {
+	grid-column: 2;
+	grid-row: 2;
 	min-height: 0;
 	min-width: 0;
+	background: var(--canvas);
 }
 
-.ai-browser-app.agent-full-page .agent-sidebar-footer {
-	padding-inline: 18px;
+.ai-browser-app.agent-full-page .agent-conversation-host .chat-welcome {
+	display: grid;
+	align-content: center;
+	justify-items: center;
+	padding: 32px 24px;
+	text-align: center;
+}
+
+.ai-browser-app.agent-full-page .agent-conversation-host .message-list {
+	overflow: auto;
+	padding: 24px 28px 12px;
+}
+
+.ai-browser-app.agent-full-page .agent-conversation-host .runtime-new-composer,
+.ai-browser-app.agent-full-page .agent-conversation-host .thread-composer {
+	width: min(760px, 100%);
+	margin-inline: auto;
+	padding: 12px 24px 28px;
+	background: transparent;
 }
 
 .ai-browser-app.agent-full-page .agent-workspace {
-	padding-inline: clamp(18px, 3vw, 42px);
+	padding: 52px 16px 20px;
+}
+
+.ai-browser-app.agent-full-page .agent-workspace-header,
+.ai-browser-app.agent-full-page .agent-workspace-status,
+.ai-browser-app.agent-full-page .agent-task-library {
+	width: 100%;
+}
+
+.ai-browser-app.agent-full-page .agent-workspace-header {
+	gap: 12px;
+	margin-bottom: 16px;
+	padding-left: 62px;
+	-webkit-app-region: drag;
+}
+
+.ai-browser-app.agent-full-page .agent-workspace-header .button,
+.ai-browser-app.agent-full-page .agent-workspace-header .surface-back-button {
+	-webkit-app-region: no-drag;
+}
+
+.ai-browser-app.agent-full-page .agent-workspace-heading h1 {
+	font-size: 18px;
+	line-height: 22px;
 }
 
 .ai-browser-app.agent-full-page .agent-workspace-status {
 	grid-template-columns: 1fr 1fr;
+	margin-bottom: 16px;
 }
 
 .ai-browser-app.agent-full-page .agent-workspace-status > :nth-child(2) {
@@ -416,19 +484,35 @@
 }
 
 @media (max-width: 820px) {
-	.ai-browser-app.agent-full-page .agent-sidebar-main {
-		grid-template-columns: minmax(250px, 0.78fr) minmax(0, 1.22fr);
+	.ai-browser-app.agent-full-page .agent-sidebar {
+		grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
 	}
 }
 
 @media (max-width: 620px) {
-	.ai-browser-app.agent-full-page .agent-sidebar-main {
+	.ai-browser-app.agent-full-page .agent-sidebar {
 		grid-template-columns: 1fr;
-		grid-template-rows: minmax(220px, 0.78fr) minmax(320px, 1.22fr);
+		grid-template-rows: minmax(200px, 0.42fr) auto minmax(0, 1fr);
 	}
 	.ai-browser-app.agent-full-page .agent-full-page-workspace {
+		grid-column: 1;
+		grid-row: 1;
 		border-right: 0;
 		border-bottom: 1px solid var(--line);
+	}
+	.ai-browser-app.agent-full-page .agent-sidebar-header {
+		grid-column: 1;
+		grid-row: 2;
+	}
+	.ai-browser-app.agent-full-page .agent-conversation-host {
+		grid-column: 1;
+		grid-row: 3;
+	}
+	.ai-browser-app.agent-full-page .agent-workspace {
+		padding: 52px 16px 16px;
+	}
+	.ai-browser-app.agent-full-page .agent-workspace-header {
+		padding-left: 62px;
 	}
 }
 
@@ -447,5 +531,113 @@
 @media (max-width: 760px) {
 	.ai-browser-app {
 		--agent-panel-width: 300px;
+	}
+}
+
+/* Monochrome refinement layer (loads last; wins equal-specificity ties). */
+
+/* The rail's one clear primary action is solid white. */
+.agent-new-button {
+	background: var(--solid);
+	color: var(--on-solid);
+	box-shadow: var(--shadow-sm);
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-state) var(--ease-kestrel);
+}
+
+.agent-new-button:hover {
+	background: var(--solid-hover);
+	box-shadow: var(--shadow-md);
+}
+
+.agent-new-button:active {
+	background: var(--solid);
+	box-shadow: none;
+}
+
+.agent-new-button kbd {
+	color: color-mix(in srgb, var(--on-solid) 52%, transparent);
+}
+
+/* Active navigation takes a crisp white edge; hover stays a quiet fill. */
+.agent-sidebar-history-list button {
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.agent-sidebar-history-list button:active {
+	background: var(--surface-strong);
+}
+
+.agent-sidebar-history-list button.active::before {
+	position: absolute;
+	top: 8px;
+	bottom: 8px;
+	left: 0;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--solid);
+	content: "";
+}
+
+.agent-sidebar-footer nav button {
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.agent-sidebar-footer nav button:active {
+	background: var(--surface-strong);
+}
+
+@media (min-width: 761px) {
+	.agent-sidebar-footer nav button.active::before {
+		position: absolute;
+		top: 0;
+		left: 50%;
+		width: 18px;
+		height: 2px;
+		border-radius: 1px;
+		background: var(--solid);
+		content: "";
+		transform: translateX(-50%);
+	}
+}
+
+/* The active tab carries the same white accent as other active navigation. */
+.browser-tab.active {
+	box-shadow: inset 0 2px 0 var(--solid);
+}
+
+.browser-tab-row-vertical .browser-tab.active {
+	box-shadow: inset 2px 0 0 var(--solid);
+}
+
+/* Sleeping tabs recede without hue. */
+.browser-tab.tab-sleeping {
+	transition: opacity var(--motion-state) var(--ease-kestrel);
+}
+
+/* Approval affordance keeps its shape-coded fill but responds like a button. */
+.agent-approval-action {
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.agent-approval-action:active {
+	background: var(--overlay);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-new-button,
+	.agent-sidebar-history-list button,
+	.agent-sidebar-footer nav button,
+	.browser-tab.tab-sleeping,
+	.agent-approval-action,
+	.agent-sidebar-expand {
+		transition: none;
 	}
 }

@@ -5,6 +5,7 @@ import type {
 } from "@kestrel/shared-types";
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../Icon";
+import { Status } from "../ui";
 
 const SEARCH_ENGINE_OPTIONS = [
   { value: "google", label: "Google (Default)" },
@@ -268,7 +269,7 @@ export function BrowserSettings({
 
   return (
     <div className="browser-settings-wrapper">
-      {/* 🔍 SECTION 1: SEARCH ENGINE */}
+      {/* Search engine */}
       <section className="settings-stack browser-settings-panel" aria-label="Search engine preferences">
         <header className="settings-panel-header">
           <h2>
@@ -308,7 +309,7 @@ export function BrowserSettings({
                   placeholder="e.g. My Intranet Search"
                   value={customName}
                   onChange={(e) => setCustomName(e.target.value)}
-                  className="input-text"
+                  className="ui-input"
                 />
               </label>
               <label className="custom-search-label">
@@ -318,7 +319,7 @@ export function BrowserSettings({
                   placeholder="https://example.com/search?q=%s"
                   value={customUrl}
                   onChange={(e) => setCustomUrl(e.target.value)}
-                  className="input-text"
+                  className="ui-input"
                 />
               </label>
             </div>
@@ -334,7 +335,7 @@ export function BrowserSettings({
         )}
       </section>
 
-      {/* ⚡ SECTION 2: PERFORMANCE & SLEEPING TABS */}
+      {/* Performance and sleeping tabs */}
       <section className="settings-stack browser-settings-panel" aria-label="Performance and sleeping tabs">
         <header className="settings-panel-header">
           <h2>
@@ -440,7 +441,7 @@ export function BrowserSettings({
                       void handleAddExcludedDomain();
                     }
                   }}
-                  className="input-text"
+                  className="ui-input"
                 />
                 <button
                   type="button"
@@ -474,7 +475,7 @@ export function BrowserSettings({
         )}
       </section>
 
-      {/* 🧩 SECTION 3: EXTENSIONS & CHROME WEB STORE */}
+      {/* Web extensions */}
       <section className="settings-stack browser-settings-panel" aria-label="Web extensions and store">
         <header className="settings-panel-header">
           <h2>
@@ -507,7 +508,7 @@ export function BrowserSettings({
                 void handleInstallExtensionFromUrl();
               }
             }}
-            className="input-text extension-url-input"
+            className="ui-input extension-url-input"
             disabled={extensionLoading}
           />
           <button
@@ -548,6 +549,7 @@ export function BrowserSettings({
           {extensions.length === 0 ? (
             <div className="empty-extensions-state">
               <p>No browser extensions installed yet.</p>
+              <small>Install from the Chrome Web Store or a local file above.</small>
             </div>
           ) : (
             <div className="extensions-grid">
@@ -593,7 +595,7 @@ export function BrowserSettings({
         </div>
       </section>
 
-      {/* SECTION 4: TABS & GENERAL */}
+      {/* Tabs and general */}
       <section className="settings-stack browser-settings-panel" aria-label="General browser preferences">
         <header className="settings-panel-header">
           <h2>
@@ -606,11 +608,9 @@ export function BrowserSettings({
             <strong>Default browser</strong>
           </div>
           {isDefaultBrowser ? (
-            <span className="badge success">
-              <Icon name="check" /> Default browser
-            </span>
+            <Status tone="verified">Default browser</Status>
           ) : canSetAsDefault === false ? (
-            <span className="browser-setting-note">Available in installed Kestrel</span>
+            <Status tone="neutral">Available in installed Kestrel</Status>
           ) : (
             <button
               type="button"
@@ -687,7 +687,7 @@ export function BrowserSettings({
 
       </section>
 
-      {/* 🛡️ SECTION 5: PRIVACY & HISTORY */}
+      {/* Privacy and history */}
       <section className="settings-stack browser-settings-panel" aria-label="Browser privacy and history">
         <header className="settings-panel-header">
           <h2>

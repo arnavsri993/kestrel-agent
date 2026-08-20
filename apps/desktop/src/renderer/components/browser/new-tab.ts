@@ -1,4 +1,8 @@
-import type { UserBrowserHistoryEntry } from "@kestrel/shared-types";
+import type {
+  UserBrowserHistoryEntry,
+  UserBrowserOriginFavicon,
+  UserBrowserTab,
+} from "@kestrel/shared-types";
 
 export interface FrequentBrowserSite {
   origin: string;
@@ -7,6 +11,7 @@ export interface FrequentBrowserSite {
   hostname: string;
   visits: number;
   lastVisitedAt: string;
+  faviconDataUrl?: string;
 }
 
 export interface SuggestedAgentAction {
@@ -67,6 +72,7 @@ const STARTER_ACTIONS: readonly SuggestedAgentAction[] = [
 export function frequentBrowserSites(
   history: UserBrowserHistoryEntry[],
   limit = 6,
+  faviconByOrigin: ReadonlyMap<string, string> = new Map(),
 ): FrequentBrowserSite[] {
   const grouped = new Map<string, FrequentBrowserSite>();
 
@@ -104,7 +110,40 @@ export function frequentBrowserSites(
       right.visits - left.visits ||
       right.lastVisitedAt.localeCompare(left.lastVisitedAt),
     )
-    .slice(0, Math.max(0, limit));
+    .slice(0, Math.max(0, limit))
+    .map((site) => {
+      const faviconDataUrl = faviconByOrigin.get(site.origin);
+      return faviconDataUrl ? { ...site, faviconDataUrl } : site;
+    });
+}
+
+export function originFaviconMap(
+  persisted: readonly Pick<UserBrowserOriginFavicon, "origin" | "faviconDataUrl">[],
+  tabs: readonly Pick<UserBrowserTab, "url" | "faviconDataUrl">[] = [],
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const item of persisted) {
+    if (item.faviconDataUrl.startsWith("data:image/")) {
+      map.set(item.origin, item.faviconDataUrl);
+    }
+  }
+  for (const tab of tabs) {
+    if (!tab.faviconDataUrl?.startsWith("data:image/")) continue;
+    const origin = httpOrigin(tab.url);
+    if (origin) map.set(origin, tab.faviconDataUrl);
+  }
+  return map;
+}
+
+function httpOrigin(value: string): string | undefined {
+  try {
+    const parsed = new URL(value);
+    return ["http:", "https:"].includes(parsed.protocol)
+      ? parsed.origin
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

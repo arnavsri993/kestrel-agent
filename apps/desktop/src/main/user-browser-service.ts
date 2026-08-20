@@ -34,6 +34,8 @@ import {
 	type WebContents,
 	WebContentsView,
 } from "electron";
+import decodeIco from "decode-ico";
+import sharp from "sharp";
 import {
 	publicInteractiveRefs,
 	rememberElementRefs,
@@ -54,6 +56,7 @@ import {
 	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
 	sanitizeUntrustedBrowserValue,
+	upsertOriginFavicon,
 } from "./browser-tab-store";
 import {
 	isKestrelAppPageUrl,
@@ -123,6 +126,32 @@ function hostnameTitle(value: string): string {
 		return new URL(value).hostname.replace(/^www\./, "") || "New Tab";
 	} catch {
 		return "New Tab";
+	}
+}
+
+function isFaviconDataUrl(value: string): boolean {
+	return value.startsWith("data:image/") && value.length <= 200_000;
+}
+
+function resolveFaviconReference(
+	pageUrl: string,
+	value: string,
+): string | undefined {
+	if (isFaviconDataUrl(value)) return value;
+	const direct = safePageUrl(value);
+	if (direct) return direct.toString();
+	if (!pageUrl) return undefined;
+	try {
+		const resolved = new URL(value, pageUrl);
+		if (
+			!["http:", "https:"].includes(resolved.protocol) ||
+			resolved.username ||
+			resolved.password
+		)
+			return undefined;
+		return resolved.toString();
+	} catch {
+		return undefined;
 	}
 }
 
@@ -265,6 +294,7 @@ export class UserBrowserService {
 			});
 		};
 		this.partition.on("will-download", this.onWillDownload);
+		void this.backfillOriginFaviconsFromHistory();
 	}
 
 	getState(): UserBrowserState {
@@ -414,7 +444,8 @@ export class UserBrowserService {
 		tab.title = hostnameTitle(normalized.url);
 		record.navigatingTo = normalized.url;
 		this.commit();
-		await this.syncActiveView();
+		if (tabId === this.state.activeTabId) this.revealActiveWebContent();
+		this.attachActiveWebView();
 		try {
 			await record.view.webContents.loadURL(normalized.url);
 		} catch (cause) {
@@ -453,8 +484,24 @@ export class UserBrowserService {
 	reload(tabId: string, ignoreCache = false): UserBrowserState {
 		const tab = this.requireTab(tabId);
 		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
-		const record = this.ensureView(tab);
 		tab.error = undefined;
+		tab.crashed = false;
+		const record = this.ensureView(tab);
+		if (tabId === this.state.activeTabId) this.revealActiveWebContent();
+		this.attachActiveWebView();
+		const loadedUrl = record.view.webContents.getURL?.() ?? "";
+		if (!loadedUrl) {
+			void record.view.webContents.loadURL(tab.url).catch((cause) => {
+				if (record.view.webContents.isDestroyed()) return;
+				tab.loading = false;
+				tab.error =
+					cause instanceof Error
+						? cause.message.slice(0, 500)
+						: "This page could not be opened.";
+				this.commit();
+			});
+			return this.getState();
+		}
 		if (
 			ignoreCache &&
 			typeof record.view.webContents.reloadIgnoringCache === "function"
@@ -502,6 +549,7 @@ export class UserBrowserService {
 
 	clearHistory(): UserBrowserState {
 		this.state.history = [];
+		this.state.originFavicons = [];
 		for (const record of this.views.values())
 			record.view.webContents.navigationHistory.clear();
 		this.commit();
@@ -542,7 +590,10 @@ export class UserBrowserService {
 		cache?: boolean;
 	}): Promise<UserBrowserState> {
 		this.assertAvailable();
-		if (options.history) this.state.history = [];
+		if (options.history) {
+			this.state.history = [];
+			this.state.originFavicons = [];
+		}
 		if (options.cache && typeof this.partition.clearCache === "function")
 			await this.partition.clearCache();
 		if (
@@ -1329,6 +1380,10 @@ export class UserBrowserService {
 		webContents.on("did-stop-loading", () => {
 			tab.loading = false;
 			this.updateNavigationState(tab, webContents);
+			if (!tab.faviconDataUrl && tab.url) {
+				const origin = safePageUrl(tab.url)?.origin;
+				if (origin) void this.loadFavicon(tab, `${origin}/favicon.ico`);
+			}
 		});
 		webContents.on("page-title-updated", (_event, title) => {
 			tab.title = title.trim().slice(0, 500) || hostnameTitle(tab.url);
@@ -1339,7 +1394,9 @@ export class UserBrowserService {
 			this.commit();
 		});
 		webContents.on("page-favicon-updated", (_event, favicons) => {
-			const favicon = favicons.find((value) => safePageUrl(value));
+			const favicon = favicons.find(
+				(value) => isFaviconDataUrl(value) || safePageUrl(value),
+			);
 			if (favicon) void this.loadFavicon(tab, favicon);
 		});
 		webContents.on(
@@ -1691,6 +1748,23 @@ export class UserBrowserService {
 	}
 
 	private async syncActiveView(): Promise<void> {
+		this.attachActiveWebView();
+	}
+
+	private revealActiveWebContent(): void {
+		if (this.contentBounds.width >= 160 && this.contentBounds.height >= 120) {
+			this.contentVisible = true;
+			return;
+		}
+		const size = this.window.getContentSize();
+		const width = Math.max(0, size[0] ?? 0);
+		const height = Math.max(0, size[1] ?? 0);
+		if (width < 160 || height < 120) return;
+		this.contentBounds = { x: 0, y: 0, width, height };
+		this.contentVisible = true;
+	}
+
+	private attachActiveWebView(): void {
 		if (this.disposed || this.window.isDestroyed()) return;
 		for (const { view } of this.views.values()) {
 			if (this.window.contentView.children.includes(view))
@@ -1828,6 +1902,7 @@ export class UserBrowserService {
 		const days = this.state.settings.historyRetentionDays;
 		if (days === 0) {
 			this.state.history = [];
+			this.state.originFavicons = [];
 			return;
 		}
 		const cutoff = this.now().getTime() - days * 24 * 60 * 60 * 1_000;
@@ -1853,22 +1928,178 @@ export class UserBrowserService {
 		return candidate;
 	}
 
-	private async loadFavicon(tab: UserBrowserTab, value: string): Promise<void> {
+	private rememberOriginFavicon(
+		origin: string,
+		faviconDataUrl: string,
+	): boolean {
+		const existing = this.state.originFavicons.find(
+			(item) => item.origin === origin,
+		);
+		if (existing?.faviconDataUrl === faviconDataUrl) return false;
+		this.state.originFavicons = upsertOriginFavicon(
+			this.state.originFavicons,
+			origin,
+			faviconDataUrl,
+			this.now().toISOString(),
+		);
+		return true;
+	}
+
+	private backfillOriginFaviconsFromHistory(limit = 7): void {
+		const known = new Set(
+			this.state.originFavicons.map((item) => item.origin),
+		);
+		const grouped = new Map<
+			string,
+			{ visits: number; lastVisitedAt: string }
+		>();
+		for (const entry of this.state.history) {
+			const parsed = safePageUrl(entry.url);
+			if (!parsed || known.has(parsed.origin)) continue;
+			const current = grouped.get(parsed.origin);
+			if (!current) {
+				grouped.set(parsed.origin, {
+					visits: 1,
+					lastVisitedAt: entry.visitedAt,
+				});
+				continue;
+			}
+			current.visits += 1;
+			if (entry.visitedAt > current.lastVisitedAt) {
+				current.lastVisitedAt = entry.visitedAt;
+			}
+		}
+		const origins = [...grouped.entries()]
+			.sort(
+				(left, right) =>
+					right[1].visits - left[1].visits ||
+					right[1].lastVisitedAt.localeCompare(left[1].lastVisitedAt),
+			)
+			.slice(0, Math.max(0, limit))
+			.map(([origin]) => origin);
+		for (const origin of origins) {
+			void this.loadOriginFavicon(origin);
+		}
+	}
+
+	private loadOriginFavicon(origin: string): void {
+		const candidates = [
+			`${origin}/favicon.ico`,
+			`${origin}/favicon.png`,
+			`${origin}/apple-touch-icon.png`,
+		];
+		void this.loadFirstOriginFavicon(origin, candidates);
+	}
+
+	private async loadFirstOriginFavicon(
+		origin: string,
+		candidates: string[],
+	): Promise<void> {
+		for (const candidate of candidates) {
+			const faviconDataUrl = await this.resolveFaviconDataUrl(
+				`${origin}/`,
+				candidate,
+			);
+			if (!faviconDataUrl) continue;
+			if (this.rememberOriginFavicon(origin, faviconDataUrl)) this.commit();
+			else this.emit();
+			return;
+		}
+	}
+
+	private async loadFavicon(
+		target: Pick<UserBrowserTab, "url" | "faviconDataUrl">,
+		value: string,
+	): Promise<void> {
 		try {
-			const response = await this.partition.fetch(value, {
-				signal: AbortSignal.timeout(5_000),
-			});
-			const length = Number(response.headers.get("content-length") ?? 0);
-			if (!response.ok || length > 512_000) return;
-			const bytes = Buffer.from(await response.arrayBuffer());
-			if (bytes.byteLength > 512_000) return;
-			const image = nativeImage.createFromBuffer(bytes);
-			if (image.isEmpty()) return;
-			tab.faviconDataUrl = image.resize({ width: 32, height: 32 }).toDataURL();
-			this.emit();
+			const faviconDataUrl = await this.resolveFaviconDataUrl(
+				target.url,
+				value,
+			);
+			if (!faviconDataUrl) return;
+			target.faviconDataUrl = faviconDataUrl;
+			const origin =
+				safePageUrl(target.url)?.origin ??
+				safePageUrl(resolveFaviconReference(target.url, value) ?? "")?.origin;
+			if (origin && this.rememberOriginFavicon(origin, faviconDataUrl))
+				this.commit();
+			else this.emit();
 		} catch {
 			// Favicons are optional and must never affect navigation.
 		}
+	}
+
+	private async resolveFaviconDataUrl(
+		pageUrl: string,
+		value: string,
+	): Promise<string | undefined> {
+		if (isFaviconDataUrl(value)) return this.normalizeInlineFavicon(value);
+		const resolved = resolveFaviconReference(pageUrl, value);
+		if (!resolved) return undefined;
+		return this.fetchFaviconDataUrl(resolved);
+	}
+
+	private normalizeInlineFavicon(value: string): string | undefined {
+		if (!isFaviconDataUrl(value)) return undefined;
+		const image = nativeImage.createFromDataURL(value);
+		if (image.isEmpty()) return undefined;
+		return image.resize({ width: 32, height: 32 }).toDataURL();
+	}
+
+	private async encodeFaviconBytes(bytes: Buffer): Promise<string | undefined> {
+		try {
+			const png = await sharp(bytes, { failOn: "none" })
+				.resize(32, 32, {
+					fit: "contain",
+					background: { r: 0, g: 0, b: 0, alpha: 0 },
+				})
+				.png()
+				.toBuffer();
+			if (png.byteLength === 0 || png.byteLength > 200_000) return undefined;
+			const image = nativeImage.createFromBuffer(png);
+			if (!image.isEmpty()) return image.toDataURL();
+		} catch {
+			// Fall back to ICO decoding and Electron's native decoder.
+		}
+		try {
+			const icons = decodeIco(bytes);
+			const largest = [...icons].sort((left, right) => right.width - left.width)[0];
+			if (largest) {
+				const png = await sharp(largest.data, {
+					raw: {
+						width: largest.width,
+						height: largest.height,
+						channels: 4,
+					},
+				})
+					.resize(32, 32, {
+						fit: "contain",
+						background: { r: 0, g: 0, b: 0, alpha: 0 },
+					})
+					.png()
+					.toBuffer();
+				if (png.byteLength > 0 && png.byteLength <= 200_000) {
+					const image = nativeImage.createFromBuffer(png);
+					if (!image.isEmpty()) return image.toDataURL();
+				}
+			}
+		} catch {
+			// Optional favicon formats must never affect navigation.
+		}
+		const image = nativeImage.createFromBuffer(bytes);
+		if (image.isEmpty()) return undefined;
+		return image.resize({ width: 32, height: 32 }).toDataURL();
+	}
+
+	private async fetchFaviconDataUrl(value: string): Promise<string | undefined> {
+		const response = await this.partition.fetch(value, {
+			signal: AbortSignal.timeout(5_000),
+		});
+		const length = Number(response.headers.get("content-length") ?? 0);
+		if (!response.ok || length > 512_000) return undefined;
+		const bytes = Buffer.from(await response.arrayBuffer());
+		if (bytes.byteLength > 512_000) return undefined;
+		return this.encodeFaviconBytes(bytes);
 	}
 
 	private async targetPoint(

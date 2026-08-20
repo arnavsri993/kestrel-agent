@@ -1543,13 +1543,32 @@ export class AgentCore {
 						ok: true,
 						runs: this.deps.database.listAgentRuns(request.sessionId),
 					};
-				case "runtime-list-executions":
+				case "runtime-list-executions": {
+					if (request.sessionId)
+						return {
+							ok: true,
+							executions: this.deps.database.listToolExecutions(
+								request.sessionId,
+							),
+						};
+					const executions = this.deps.database.listAllToolExecutions();
+					const limit = request.limit ?? 80;
 					return {
 						ok: true,
-						executions: this.deps.database.listToolExecutions(
-							request.sessionId,
-						),
+						executions: executions.slice(-limit),
 					};
+				}
+				case "runtime-list-pending-tool-approvals": {
+					const runs = this.deps.database.listWaitingAgentRuns();
+					const executions = runs.flatMap((run) => {
+						if (!run.pendingToolExecutionId) return [];
+						const execution = this.deps.database.getToolExecution(
+							run.pendingToolExecutionId,
+						);
+						return execution ? [execution] : [];
+					});
+					return { ok: true, runs, executions };
+				}
 				case "runtime-session-usage": {
 					this.runtime.getSession(request.sessionId);
 					const runs = this.deps.database.listAgentRuns(request.sessionId);

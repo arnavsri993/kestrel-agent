@@ -141,6 +141,15 @@ async function openTool(page: Page, label: string) {
 		.first()
 		.click();
 	await page.locator(".browser-app-page").waitFor();
+	// Tab activation is async; wait for the destination tab title to land
+	// before asserting, otherwise the previous page's copy gets compared.
+	await page
+		.locator(".browser-tab.active [role='tab'] .browser-tab-title")
+		.filter({ hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) })
+		.first()
+		.waitFor({ timeout: 5_000 })
+		.catch(() => {});
+	await settle(page);
 	await assertDistinctVisibleCopy(page, `${label} surface`, [
 		".browser-tab.active [role='tab'] .browser-tab-title",
 		".browser-app-page h1",
@@ -254,7 +263,6 @@ try {
 		.getByRole("heading", { name: "Pages you visited", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "History surface", [
-		".agent-sidebar-footer button[aria-current='page'] span",
 		".browser-library h1",
 	]);
 	await capture(page, "surface-history.png");
@@ -264,15 +272,11 @@ try {
 		.getByRole("heading", { name: "Files from the web", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "Downloads surface", [
-		".agent-sidebar-footer button[aria-current='page'] span",
 		".browser-library h1",
 	]);
 	await capture(page, "surface-downloads.png");
 
-	await page
-		.locator(".agent-sidebar-footer")
-		.getByRole("button", { name: "Browser", exact: true })
-		.click();
+	await page.getByRole("button", { name: "Back to Browser" }).click();
 	await page
 		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
 		.waitFor();
@@ -351,12 +355,11 @@ try {
 	await page.locator(".dashboard-extensions").waitFor();
 	await capture(page, "surface-extensions.png");
 
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await openTool(page, "Settings");
 	await page
 		.getByRole("heading", { name: "Preferences", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "Settings shell", [
-		".agent-sidebar-footer button[aria-current='page'] span",
 		".page-header h1",
 	]);
 	await assertDistinctVisibleCopy(page, "Connections settings", [
@@ -388,11 +391,7 @@ try {
 		await capture(page, filename, 120);
 	}
 
-	await page
-		.getByRole("button", { name: "New task", exact: true })
-		.first()
-		.click();
-	await page.getByRole("button", { name: "Browser", exact: true }).click();
+	await page.getByRole("button", { name: "Back to Browser" }).click();
 	await page
 		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
 		.waitFor();
@@ -427,9 +426,7 @@ try {
 	await capture(page, "compact-settings.png");
 	await assertNoPageOverflow(page, "Compact Settings");
 
-	const focusTrigger = page
-		.locator(".agent-sidebar-footer")
-		.getByRole("button", { name: "Browser", exact: true });
+	const focusTrigger = page.getByRole("button", { name: "New chat" });
 	// Verify focus the way a keyboard user reaches this control. Programmatic
 	// focus intentionally does not always match :focus-visible in Chromium.
 	await focusTrigger.focus();
@@ -448,7 +445,7 @@ try {
 		};
 	});
 	if (
-		focusStyle.label !== "Browser" ||
+		focusStyle.label !== "New chat" ||
 		focusStyle.outline === "none" ||
 		focusStyle.width === "0px"
 	)
@@ -457,10 +454,7 @@ try {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.reload();
 	await page.waitForLoadState("domcontentloaded");
-	await page
-		.getByRole("button", { name: "New task", exact: true })
-		.first()
-		.waitFor();
+	await page.getByRole("button", { name: "New chat" }).waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
 		.locator(".command-groups button")

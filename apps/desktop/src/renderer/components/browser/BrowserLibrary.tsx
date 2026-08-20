@@ -105,15 +105,19 @@ export function BrowserHistory({
 					className="library-empty"
 					icon="history"
 					title={query ? "No matching pages" : "No history yet"}
-					detail={query ? "Try a different search." : "Pages you visit will appear here."}
+					detail={
+						query
+							? "Try a different search."
+							: "Pages you open in Kestrel stay available here on this Mac."
+					}
 					action={
 						!query ? (
 							<button type="button" className="button secondary" onClick={onOpenBrowser}>
 								Open browser
 						</button>
-						) : undefined
-					}
-				/>
+					) : undefined
+				}
+			/>
 			) : (
 				<ol className="history-list">
 					{filtered.map((entry) => (
@@ -165,7 +169,7 @@ export function BrowserDownloads({
 					className="library-empty"
 					icon="downloads"
 					title="No downloads yet"
-					detail="Saved files will appear here."
+					detail="Files you save will appear here on this Mac."
 				/>
 			) : (
 				<ul className="download-list">

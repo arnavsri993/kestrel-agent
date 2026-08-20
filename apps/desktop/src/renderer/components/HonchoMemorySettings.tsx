@@ -228,7 +228,7 @@ export function HonchoMemorySettings() {
 			</div>
 			<div className="honcho-actions">
 				<span className={`status status-${status.state}`}>
-					{status.state.replace("_", " ")}
+					{status.state.replaceAll("_", " ")}
 				</span>
 				{status.configuration.enabled ? (
 					<>

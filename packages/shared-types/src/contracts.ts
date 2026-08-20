@@ -1745,7 +1745,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({
 		type: z.literal("runtime-list-executions"),
-		sessionId: z.string().min(1),
+		sessionId: z.string().min(1).optional(),
+		limit: z.number().int().positive().max(200).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-list-pending-tool-approvals"),
 	}),
 	z.object({
 		type: z.literal("runtime-session-usage"),
@@ -2395,17 +2399,21 @@ export type ExternalSecretProviderStatus = z.infer<
 	typeof ExternalSecretProviderStatusSchema
 >;
 
+export const UserBrowserFaviconDataUrlSchema = z
+	.string()
+	.max(200_000)
+	.refine((value) => value.startsWith("data:image/"), {
+		message: "Browser favicons must be image data URLs.",
+	});
+export type UserBrowserFaviconDataUrl = z.infer<
+	typeof UserBrowserFaviconDataUrlSchema
+>;
+
 export const UserBrowserTabSchema = z.object({
 	id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	title: z.string().min(1).max(500),
 	url: z.string().max(8_192),
-	faviconDataUrl: z
-		.string()
-		.max(200_000)
-		.refine((value) => value.startsWith("data:image/"), {
-			message: "Browser favicons must be image data URLs.",
-		})
-		.optional(),
+	faviconDataUrl: UserBrowserFaviconDataUrlSchema.optional(),
 	loading: z.boolean(),
 	canGoBack: z.boolean(),
 	canGoForward: z.boolean(),
@@ -2418,6 +2426,15 @@ export const UserBrowserTabSchema = z.object({
 	lastActiveAt: z.string().datetime(),
 });
 export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
+
+export const UserBrowserOriginFaviconSchema = z.object({
+	origin: z.string().url().max(8_192),
+	faviconDataUrl: UserBrowserFaviconDataUrlSchema,
+	updatedAt: z.string().datetime(),
+});
+export type UserBrowserOriginFavicon = z.infer<
+	typeof UserBrowserOriginFaviconSchema
+>;
 
 export const UserBrowserHistoryEntrySchema = z.object({
 	id: z.string().regex(/^visit-[a-f0-9-]{36}$/),
@@ -2547,6 +2564,10 @@ export const UserBrowserStateSchema = z.object({
 		.regex(/^tab-[a-f0-9-]{36}$/)
 		.nullable(),
 	history: z.array(UserBrowserHistoryEntrySchema).max(5_000),
+	originFavicons: z
+		.array(UserBrowserOriginFaviconSchema)
+		.max(200)
+		.default([]),
 	downloads: z.array(UserBrowserDownloadSchema).max(500),
 	bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
 	sitePermissions: z

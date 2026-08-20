@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   browserSiteLabel,
   frequentBrowserSites,
+  originFaviconMap,
   siteInitial,
   suggestedAgentActions,
 } from "./new-tab";
@@ -41,6 +42,55 @@ describe("new tab shortcuts", () => {
       url: "https://example.com/new",
       visits: 2,
     });
+  });
+
+  it("attaches local tab favicons to frequent sites and prefers live tabs", () => {
+    const history = [
+      {
+        id: "visit-00000000-0000-4000-8000-000000000021",
+        tabId,
+        url: "https://example.com/docs",
+        title: "Example",
+        visitedAt: "2026-08-18T12:00:00.000Z",
+      },
+      {
+        id: "visit-00000000-0000-4000-8000-000000000022",
+        tabId,
+        url: "https://kestrel.example/guide",
+        title: "Kestrel",
+        visitedAt: "2026-08-18T13:00:00.000Z",
+      },
+    ];
+    const persisted = originFaviconMap(
+      [
+        {
+          origin: "https://example.com",
+          faviconDataUrl: "data:image/png;base64,PERSISTED",
+        },
+        {
+          origin: "https://kestrel.example",
+          faviconDataUrl: "data:image/png;base64,OLD",
+        },
+      ],
+      [
+        {
+          url: "https://kestrel.example/open",
+          faviconDataUrl: "data:image/png;base64,LIVE",
+        },
+      ],
+    );
+    const sites = frequentBrowserSites(history, 7, persisted);
+
+    expect(sites).toEqual([
+      expect.objectContaining({
+        hostname: "kestrel.example",
+        faviconDataUrl: "data:image/png;base64,LIVE",
+      }),
+      expect.objectContaining({
+        hostname: "example.com",
+        faviconDataUrl: "data:image/png;base64,PERSISTED",
+      }),
+    ]);
   });
 
   it("derives stable, bounded labels and glyph text", () => {

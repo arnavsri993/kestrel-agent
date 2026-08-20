@@ -519,6 +519,8 @@ export function BrowserWorkspace({
           <NewTabPage
             history={state.history}
             bookmarks={state.bookmarks}
+            tabs={state.tabs}
+            originFavicons={state.originFavicons}
             background={state.settings.newTabBackground}
             agentName={agentName}
             onNavigate={(input) => void navigate(activeTab.id, input)}

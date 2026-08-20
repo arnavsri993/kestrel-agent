@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const electron = vi.hoisted(() => {
@@ -111,10 +112,17 @@ vi.mock("electron", () => ({
   dialog: {
     showMessageBox: vi.fn(async () => ({ response: 1 })),
   },
-  nativeImage: { createFromBuffer: vi.fn(() => ({ isEmpty: () => true })) },
+  nativeImage: {
+    createFromBuffer: vi.fn(() => ({ isEmpty: () => true })),
+    createFromDataURL: vi.fn(() => ({
+      isEmpty: () => false,
+      resize: () => ({ toDataURL: () => "data:image/png;base64,INLINE" }),
+    })),
+  },
   shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => "") },
 }));
 
+import { nativeImage } from "electron";
 import { UserBrowserService } from "./user-browser-service";
 
 const directories: string[] = [];
@@ -195,6 +203,20 @@ describe("UserBrowserService", () => {
       true,
     );
     expect(electron.state.views.length).toBe(before);
+  });
+
+  it("attaches the web view before loading when navigating from a new tab", async () => {
+    const { service, window } = createService();
+    const tab = service.getState().tabs[0]!;
+    const url = "https://www.google.com/search?q=ai%20tinkerers";
+    await service.navigate(tab.id, url);
+    const view = electron.state.views[0]!;
+    expect(window.contentView.children).toContain(view);
+    expect(view.visible).toBe(true);
+    expect(view.webContents.loadURL).toHaveBeenCalledWith(url);
+    const attachedAt = window.contentView.addChildView.mock.invocationCallOrder[0]!;
+    const loadedAt = view.webContents.loadURL.mock.invocationCallOrder[0]!;
+    expect(attachedAt).toBeLessThan(loadedAt);
   });
 
   it("uses the production persistent partition by default and preserves an explicit custom partition", () => {
@@ -554,7 +576,7 @@ describe("UserBrowserService", () => {
     );
 
     expect(contents.executeJavaScript).toHaveBeenCalledTimes(1);
-    expect(contents.focus).toHaveBeenCalledTimes(1);
+    expect(contents.focus).toHaveBeenCalled();
     expect(contents.insertText).toHaveBeenCalledWith("481902");
 
     contents.url = "https://other.example/verify";
@@ -836,5 +858,139 @@ describe("UserBrowserService", () => {
     expect(createdTab).toMatchObject({
       url: googleAuthUrl,
     });
+  });
+
+  it("stores the page favicon for frequent tabs and forgets it with history", async () => {
+    vi.mocked(nativeImage.createFromBuffer).mockReturnValue({
+      isEmpty: () => false,
+      resize: () => ({ toDataURL: () => "data:image/png;base64,AAAA" }),
+    } as never);
+    const { service } = createService();
+    const partition = electron.state.partitions[0]!.instance as {
+      fetch: ReturnType<typeof vi.fn>;
+    };
+    partition.fetch.mockResolvedValue({
+      ok: true,
+      headers: { get: () => "4" },
+      arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+    contents.title = "Example";
+    contents.emit("did-navigate", {}, contents.url, 200, "OK");
+    contents.emit("page-favicon-updated", {}, ["https://example.com/favicon.ico"]);
+
+    await vi.waitFor(() => {
+      expect(service.getState().tabs[0]?.faviconDataUrl).toBe(
+        "data:image/png;base64,AAAA",
+      );
+    });
+    expect(service.getState().originFavicons).toEqual([
+      {
+        origin: "https://example.com",
+        faviconDataUrl: "data:image/png;base64,AAAA",
+        updatedAt: expect.any(String),
+      },
+    ]);
+
+    service.clearHistory();
+    expect(service.getState().history).toEqual([]);
+    expect(service.getState().originFavicons).toEqual([]);
+    vi.mocked(nativeImage.createFromBuffer).mockReturnValue({
+      isEmpty: () => true,
+    } as never);
+  });
+
+  it("accepts inline favicon data URLs and backfills frequent origins on startup", async () => {
+    vi.mocked(nativeImage.createFromDataURL).mockReturnValue({
+      isEmpty: () => false,
+      resize: () => ({ toDataURL: () => "data:image/png;base64,INLINE" }),
+    } as never);
+    vi.mocked(nativeImage.createFromBuffer).mockReturnValue({
+      isEmpty: () => false,
+      resize: () => ({ toDataURL: () => "data:image/png;base64,BACKFILL" }),
+    } as never);
+    const { service } = createService();
+    const partition = electron.state.partitions[0]!.instance as {
+      fetch: ReturnType<typeof vi.fn>;
+    };
+    partition.fetch.mockResolvedValue({
+      ok: true,
+      headers: { get: () => "4" },
+      arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/docs";
+    contents.title = "Example";
+    contents.emit("did-navigate", {}, contents.url, 200, "OK");
+    contents.emit("page-favicon-updated", {}, [
+      "data:image/png;base64,QUFB",
+    ]);
+
+    await vi.waitFor(() => {
+      expect(service.getState().tabs[0]?.faviconDataUrl).toBe(
+        "data:image/png;base64,INLINE",
+      );
+    });
+
+    service["state"].history.push({
+      id: "visit-00000000-0000-4000-8000-000000000099",
+      tabId: tab.id,
+      url: "https://docs.example.org/guide",
+      title: "Docs",
+      visitedAt: "2026-08-19T12:00:00.000Z",
+    });
+    service["state"].history.push({
+      id: "visit-00000000-0000-4000-8000-000000000098",
+      tabId: tab.id,
+      url: "https://example.com/",
+      title: "Example",
+      visitedAt: "2026-08-18T12:00:00.000Z",
+    });
+    service["backfillOriginFaviconsFromHistory"](2);
+
+    await vi.waitFor(() => {
+      expect(
+        service
+          .getState()
+          .originFavicons.some(
+            (item) => item.origin === "https://docs.example.org",
+          ),
+      ).toBe(true);
+    });
+  });
+
+  it("decodes Windows .ico favicons for frequent-tab backfill", async () => {
+    const bytes = execSync(
+      "curl -sL 'https://www.google.com/favicon.ico'",
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    vi.mocked(nativeImage.createFromBuffer).mockImplementation((buffer) => ({
+      isEmpty: () => buffer.byteLength === 0,
+      toDataURL: () => "data:image/png;base64,GOOGLE",
+      resize: () => ({ toDataURL: () => "data:image/png;base64,GOOGLE" }),
+    }) as never);
+    const { service } = createService();
+    const partition = electron.state.partitions[0]!.instance as {
+      fetch: ReturnType<typeof vi.fn>;
+    };
+    partition.fetch.mockResolvedValue({
+      ok: true,
+      headers: { get: () => String(bytes.byteLength) },
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    });
+    await service["loadFirstOriginFavicon"]("https://www.google.com", [
+      "https://www.google.com/favicon.ico",
+    ]);
+    expect(service.getState().originFavicons).toEqual([
+      expect.objectContaining({
+        origin: "https://www.google.com",
+        faviconDataUrl: "data:image/png;base64,GOOGLE",
+      }),
+    ]);
   });
 });

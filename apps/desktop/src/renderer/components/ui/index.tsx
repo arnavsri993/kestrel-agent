@@ -14,6 +14,7 @@ export type ButtonVariant =
 export function Button({
   variant = "secondary",
   busy = false,
+  type = "button",
   children,
   className = "",
   ...props
@@ -24,6 +25,7 @@ export function Button({
   return (
     <button
       {...props}
+      type={type}
       className={`ui-button ui-button-${variant} ${className}`.trim()}
       aria-busy={busy || undefined}
       disabled={busy || props.disabled}

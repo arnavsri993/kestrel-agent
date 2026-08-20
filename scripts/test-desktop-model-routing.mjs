@@ -36,7 +36,7 @@ try {
 	});
 	await page.reload();
 
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await openKestrelDestination(page, "Settings");
 	await page.locator(".settings-nav").waitFor();
 	await page
 		.locator(".settings-nav button")

@@ -309,10 +309,10 @@ function CalendarView() {
 			</div>
 
 			<section className="calendar-legend" aria-label="Calendar event legend">
-				<span data-origin="provider">Solid · connected calendar</span>
-				<span data-origin="explicit">Solid · explicit</span>
-				<span data-origin="inferred">Dashed · inferred with confidence</span>
-				<span data-origin="suggested">Dotted · awaiting approval</span>
+				<span data-origin="provider">Solid edge · connected calendar</span>
+				<span data-origin="explicit">Bright edge · explicit</span>
+				<span data-origin="inferred">Dashed edge · inferred with confidence</span>
+				<span data-origin="suggested">Dotted edge · awaiting approval</span>
 			</section>
 
 			<div className="calendar-layout">
@@ -607,13 +607,12 @@ function PeopleView() {
 					</button>
 				))}
 				{people.length === 0 && !busy && (
-					<section className="life-empty">
-						<Icon name="chat" />
-						<div>
-							<h2>No people stored yet</h2>
-							<p>Add someone below to keep relationships and context together.</p>
-						</div>
-					</section>
+					<div className="people-empty">
+						<p>No people are stored yet.</p>
+						<small>
+							Add someone below and their context stays on this Mac.
+						</small>
+					</div>
 				)}
 			</section>
 
@@ -1008,7 +1007,7 @@ function MemoryView({
 							<header>
 								<div>
 									<span className="eyebrow">
-										{(selected.layer ?? "mid_term").replace("_", " ")} ·{" "}
+										{(selected.layer ?? "mid_term").replaceAll("_", " ")} ·{" "}
 										{memoryState(selected)}
 									</span>
 									<h2>{selected.subject ?? selected.type}</h2>

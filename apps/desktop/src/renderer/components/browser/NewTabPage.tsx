@@ -2,16 +2,19 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 import type {
   UserBrowserBookmark,
   UserBrowserHistoryEntry,
+  UserBrowserOriginFavicon,
   UserBrowserSettings,
+  UserBrowserTab,
 } from "@kestrel/shared-types";
-import meadowLandscape from "../../assets/new-tab-meadow.svg";
 import { Icon } from "../Icon";
 import {
   browserSiteLabel,
   frequentBrowserSites,
+  originFaviconMap,
   siteAccent,
   siteInitial,
   suggestedAgentActions,
+  type FrequentBrowserSite,
 } from "./new-tab";
 import "./new-tab.css";
 
@@ -31,9 +34,37 @@ function homeInputLooksLikeBrowse(value: string): boolean {
   }
 }
 
+function FrequentTabGlyph({ site }: { site: FrequentBrowserSite }) {
+  const [broken, setBroken] = useState(false);
+  const showFavicon = Boolean(site.faviconDataUrl) && !broken;
+
+  return (
+    <span
+      className={`kestrel-home-shortcut-glyph ${
+        showFavicon
+          ? "has-favicon"
+          : `site-accent-${siteAccent(site.hostname)}`
+      }`}
+      aria-hidden="true"
+    >
+      {showFavicon ? (
+        <img
+          src={site.faviconDataUrl}
+          alt=""
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        siteInitial(site)
+      )}
+    </span>
+  );
+}
+
 export function NewTabPage({
   history,
   bookmarks = [],
+  tabs = [],
+  originFavicons = [],
   background,
   agentName,
   onNavigate,
@@ -41,6 +72,8 @@ export function NewTabPage({
 }: {
   history: UserBrowserHistoryEntry[];
   bookmarks?: UserBrowserBookmark[];
+  tabs?: Pick<UserBrowserTab, "url" | "faviconDataUrl">[];
+  originFavicons?: Pick<UserBrowserOriginFavicon, "origin" | "faviconDataUrl">[];
   background: UserBrowserSettings["newTabBackground"];
   agentName: string;
   onNavigate(input: string): void;
@@ -48,17 +81,19 @@ export function NewTabPage({
 }) {
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const faviconByOrigin = useMemo(
+    () => originFaviconMap(originFavicons, tabs),
+    [originFavicons, tabs],
+  );
   const frequent = useMemo(
-    () => frequentBrowserSites(history, 7),
-    [history],
+    () => frequentBrowserSites(history, 7, faviconByOrigin),
+    [faviconByOrigin, history],
   );
   const suggestedActions = useMemo(
-    () => suggestedAgentActions(history),
+    () => suggestedAgentActions(history, 3),
     [history],
   );
-  const hasBackgroundImage = background === "graphite" || background === "meadow";
-  const modelRoutingLabel = "Smart";
-  const modelRoutingTitle = "Smart routing";
+
 
   function submitChat(event: FormEvent) {
     event.preventDefault();
@@ -81,21 +116,25 @@ export function NewTabPage({
       className={`new-tab-page kestrel-home new-tab-page-${background}`}
       aria-labelledby="new-tab-title"
     >
-      <div
-        className="kestrel-home-backdrop"
-        aria-hidden="true"
-        style={
-          hasBackgroundImage
-            ? { backgroundImage: `url("${meadowLandscape}")` }
-            : undefined
-        }
-      />
-
       <div className="kestrel-home-content">
         <header className="kestrel-home-hero">
           <h1 id="new-tab-title">Hi there, what should we dive into today?</h1>
 
           <form className="kestrel-home-composer" onSubmit={submitChat}>
+            <details className="kestrel-home-model-selector">
+              <summary aria-label="Model selector: Smart" title="Model selector">
+                <span>Smart</span>
+                <Icon name="chevron" />
+              </summary>
+              <div className="kestrel-home-model-popover">
+                <strong>Smart routing</strong>
+                <p>Model and thinking level live in task settings.</p>
+                <button type="button" onClick={() => onNewAgent()}>
+                  Open task settings
+                </button>
+              </div>
+            </details>
+
             <label className="sr-only" htmlFor="new-tab-chat-input">
               Message {agentName} or enter a website
             </label>
@@ -109,44 +148,15 @@ export function NewTabPage({
               spellCheck
               onChange={(event) => setInput(event.target.value)}
             />
-            <div className="kestrel-home-composer-footer">
-              <button
-                type="button"
-                className="kestrel-home-composer-icon is-disabled"
-                aria-label="Add context"
-                aria-disabled="true"
-                title="Add context in the agent workspace"
-                disabled
-              >
-                <Icon name="plus" />
-              </button>
-
-              <details className="kestrel-home-model-selector">
-                <summary
-                  aria-label={`Model selector: ${modelRoutingLabel}`}
-                  title={`Model selector · ${modelRoutingTitle}`}
-                >
-                  <span>{modelRoutingLabel}</span>
-                  <Icon name="chevron" />
-                </summary>
-                <div className="kestrel-home-model-popover">
-                  <strong>{modelRoutingTitle}</strong>
-                  <button type="button" onClick={() => onNewAgent()}>
-                    Open task settings
-                  </button>
-                </div>
-              </details>
-
-              <button
-                type="submit"
-                className="kestrel-home-send"
-                aria-label={`Open message in ${agentName} composer`}
-                title={`Open message in ${agentName} composer`}
-                disabled={!input.trim()}
-              >
-                <Icon name="arrow" />
-              </button>
-            </div>
+            <button
+              type="submit"
+              className="kestrel-home-send"
+              aria-label={`Open message in ${agentName} composer`}
+              title={`Open message in ${agentName} composer`}
+              disabled={!input.trim()}
+            >
+              <Icon name="arrow" />
+            </button>
           </form>
         </header>
 
@@ -165,12 +175,7 @@ export function NewTabPage({
                   onClick={() => onNavigate(site.url)}
                   title={`${browserSiteLabel(site)} · ${site.hostname}`}
                 >
-                  <span
-                    className={`kestrel-home-shortcut-glyph site-accent-${siteAccent(site.hostname)}`}
-                    aria-hidden="true"
-                  >
-                    {siteInitial(site)}
-                  </span>
+                  <FrequentTabGlyph site={site} />
                   <span className="kestrel-home-shortcut-copy">
                     <strong>{browserSiteLabel(site, 24)}</strong>
                     <small>{site.hostname}</small>
@@ -185,6 +190,7 @@ export function NewTabPage({
               </span>
               <span>
                 <strong>Your shortcuts will appear here.</strong>
+                <small>Pages you open on this Mac will land here for quick access.</small>
               </span>
             </div>
           )}
