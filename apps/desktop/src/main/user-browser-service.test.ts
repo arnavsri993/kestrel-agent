@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const electron = vi.hoisted(() => {
@@ -947,5 +948,35 @@ describe("UserBrowserService", () => {
           ),
       ).toBe(true);
     });
+  });
+
+  it("decodes Windows .ico favicons for frequent-tab backfill", async () => {
+    const bytes = execSync(
+      "curl -sL 'https://www.google.com/favicon.ico'",
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    vi.mocked(nativeImage.createFromBuffer).mockImplementation((buffer) => ({
+      isEmpty: () => buffer.byteLength === 0,
+      toDataURL: () => "data:image/png;base64,GOOGLE",
+      resize: () => ({ toDataURL: () => "data:image/png;base64,GOOGLE" }),
+    }) as never);
+    const { service } = createService();
+    const partition = electron.state.partitions[0]!.instance as {
+      fetch: ReturnType<typeof vi.fn>;
+    };
+    partition.fetch.mockResolvedValue({
+      ok: true,
+      headers: { get: () => String(bytes.byteLength) },
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    });
+    await service["loadFirstOriginFavicon"]("https://www.google.com", [
+      "https://www.google.com/favicon.ico",
+    ]);
+    expect(service.getState().originFavicons).toEqual([
+      expect.objectContaining({
+        origin: "https://www.google.com",
+        faviconDataUrl: "data:image/png;base64,GOOGLE",
+      }),
+    ]);
   });
 });

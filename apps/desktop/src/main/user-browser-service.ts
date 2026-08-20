@@ -34,6 +34,8 @@ import {
 	type WebContents,
 	WebContentsView,
 } from "electron";
+import decodeIco from "decode-ico";
+import sharp from "sharp";
 import {
 	publicInteractiveRefs,
 	rememberElementRefs,
@@ -1942,7 +1944,32 @@ export class UserBrowserService {
 			.slice(0, Math.max(0, limit))
 			.map(([origin]) => origin);
 		for (const origin of origins) {
-			void this.loadFavicon({ url: `${origin}/` }, `${origin}/favicon.ico`);
+			void this.loadOriginFavicon(origin);
+		}
+	}
+
+	private loadOriginFavicon(origin: string): void {
+		const candidates = [
+			`${origin}/favicon.ico`,
+			`${origin}/favicon.png`,
+			`${origin}/apple-touch-icon.png`,
+		];
+		void this.loadFirstOriginFavicon(origin, candidates);
+	}
+
+	private async loadFirstOriginFavicon(
+		origin: string,
+		candidates: string[],
+	): Promise<void> {
+		for (const candidate of candidates) {
+			const faviconDataUrl = await this.resolveFaviconDataUrl(
+				`${origin}/`,
+				candidate,
+			);
+			if (!faviconDataUrl) continue;
+			if (this.rememberOriginFavicon(origin, faviconDataUrl)) this.commit();
+			else this.emit();
+			return;
 		}
 	}
 
@@ -1985,6 +2012,51 @@ export class UserBrowserService {
 		return image.resize({ width: 32, height: 32 }).toDataURL();
 	}
 
+	private async encodeFaviconBytes(bytes: Buffer): Promise<string | undefined> {
+		try {
+			const png = await sharp(bytes, { failOn: "none" })
+				.resize(32, 32, {
+					fit: "contain",
+					background: { r: 0, g: 0, b: 0, alpha: 0 },
+				})
+				.png()
+				.toBuffer();
+			if (png.byteLength === 0 || png.byteLength > 200_000) return undefined;
+			const image = nativeImage.createFromBuffer(png);
+			if (!image.isEmpty()) return image.toDataURL();
+		} catch {
+			// Fall back to ICO decoding and Electron's native decoder.
+		}
+		try {
+			const icons = decodeIco(bytes);
+			const largest = [...icons].sort((left, right) => right.width - left.width)[0];
+			if (largest) {
+				const png = await sharp(largest.data, {
+					raw: {
+						width: largest.width,
+						height: largest.height,
+						channels: 4,
+					},
+				})
+					.resize(32, 32, {
+						fit: "contain",
+						background: { r: 0, g: 0, b: 0, alpha: 0 },
+					})
+					.png()
+					.toBuffer();
+				if (png.byteLength > 0 && png.byteLength <= 200_000) {
+					const image = nativeImage.createFromBuffer(png);
+					if (!image.isEmpty()) return image.toDataURL();
+				}
+			}
+		} catch {
+			// Optional favicon formats must never affect navigation.
+		}
+		const image = nativeImage.createFromBuffer(bytes);
+		if (image.isEmpty()) return undefined;
+		return image.resize({ width: 32, height: 32 }).toDataURL();
+	}
+
 	private async fetchFaviconDataUrl(value: string): Promise<string | undefined> {
 		const response = await this.partition.fetch(value, {
 			signal: AbortSignal.timeout(5_000),
@@ -1993,9 +2065,7 @@ export class UserBrowserService {
 		if (!response.ok || length > 512_000) return undefined;
 		const bytes = Buffer.from(await response.arrayBuffer());
 		if (bytes.byteLength > 512_000) return undefined;
-		const image = nativeImage.createFromBuffer(bytes);
-		if (image.isEmpty()) return undefined;
-		return image.resize({ width: 32, height: 32 }).toDataURL();
+		return this.encodeFaviconBytes(bytes);
 	}
 
 	private async targetPoint(

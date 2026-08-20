@@ -20,6 +20,7 @@
     "@kestrel/encryption": "workspace:*",
     "@kestrel/shared-types": "workspace:*",
     "better-sqlite3": "13.0.1",
+    "decode-ico": "^0.4.1",
     "electron-updater": "6.8.9",
     "motion": "12.42.2",
     "react": "19.2.8",
