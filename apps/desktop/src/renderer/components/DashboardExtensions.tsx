@@ -94,6 +94,10 @@ export function DashboardExtensions({
 				<section className="empty-state">
 					<BrandMark />
 					<h2>No dashboard panels enabled.</h2>
+					<p>
+						Install signed plugins with dashboard contributions in Settings,
+						then enable them to show panels here.
+					</p>
 					<button
 						className="button secondary"
 						onClick={() => onNavigate("settings")}

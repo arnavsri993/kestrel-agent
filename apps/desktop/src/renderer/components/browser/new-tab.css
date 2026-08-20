@@ -296,6 +296,7 @@
 .kestrel-home-send {
   width: 34px;
   height: 34px;
+  margin-left: auto;
   border-radius: 12px;
   background: var(--kestrel-home-accent);
   color: #14241b;

@@ -184,6 +184,10 @@ export function GoalKanban({
 			{activeGoals.length === 0 ? (
 				<div className="kanban-empty-board">
 					<strong>No active goals</strong>
+					<p>
+						Create a goal below or convert the current opportunity to populate
+						the board.
+					</p>
 				</div>
 			) : (
 				<div className="kanban-columns">
@@ -232,6 +236,7 @@ export function GoalKanban({
 								<header>
 									<div>
 										<h3 id={`kanban-${column.status}`}>{column.label}</h3>
+										<small>{column.note}</small>
 									</div>
 									<span aria-label={`${cards.length} tasks`}>
 										{String(cards.length).padStart(2, "0")}
@@ -266,7 +271,12 @@ export function GoalKanban({
 											>
 												<div className="kanban-card-meta">
 													<span>{goal.title}</span>
-													<span aria-hidden="true">⋮⋮</span>
+													<span
+														className="kanban-drag-handle"
+														aria-label="Drag to move task"
+													>
+														<span aria-hidden="true">⋮⋮</span>
+													</span>
 												</div>
 												<h4>{task.title}</h4>
 												{task.dueAt && (

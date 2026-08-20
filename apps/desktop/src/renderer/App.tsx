@@ -1230,6 +1230,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									<br />
 									Kestrel gets it done.
 								</h1>
+								<p>
+									Local-first on your Mac, with approvals before sensitive
+									actions.
+								</p>
 							</div>
 						)}
 
@@ -1242,6 +1246,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>01</span>
 											<span>
 												<strong>Cloud models receive what you send</strong>
+												<small>
+													Prompts and tool results may leave this Mac.
+												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
@@ -1255,6 +1262,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>02</span>
 											<span>
 												<strong>Connected services may charge you</strong>
+												<small>
+													API, media, and storage can bill their own accounts.
+												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
@@ -1269,6 +1279,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>03</span>
 											<span>
 												<strong>Approval is a pause, not a guarantee</strong>
+												<small>
+													Review still matters for consequential work.
+												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
@@ -1283,6 +1296,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>04</span>
 											<span>
 												<strong>Connections widen access</strong>
+												<small>
+													Approved tools use the folders and accounts you grant.
+												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
@@ -1309,6 +1325,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										<strong>I understand these boundaries</strong>
 									</span>
 								</label>
+								<small>
+									You can change providers and permissions later in Settings.
+								</small>
 							</div>
 						)}
 
@@ -1322,7 +1341,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												? "Connect an account."
 												: modelView === "local"
 													? "Set up a local model."
-													: "Connect a free account."}
+													: "Set up free provider accounts."}
 									</h1>
 								</header>
 								{step === 2 && (
@@ -1338,6 +1357,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<Icon name="models" />
 											</span>
 											<strong>Use an account</strong>
+											<small>Sign in or add an API key.</small>
 											<span className="source-action">
 												<b>
 													{configuredCredentials.length
@@ -1356,6 +1376,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<Icon name="local" />
 											</span>
 											<strong>Run on this Mac</strong>
+											<small>Private and offline-capable.</small>
 											<span className="route-badge">Recommended</span>
 											<span className="source-action">
 												<b>
@@ -1374,8 +1395,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 												<Icon name="free" />
 											</span>
 											<strong>Try free providers</strong>
+											<small>Current terms and limits apply.</small>
 											<span className="source-action">
-												<b>Four supported options</b>
+												<b>
+													{freeCredentialGroups.length} supported options
+												</b>
 												<Icon name="arrow" />
 											</span>
 										</button>
@@ -1466,6 +1490,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 														<strong id="selected-provider-name">
 															{selectedPaidProvider.name}
 														</strong>
+														{selectedPaidProvider.description && (
+															<small>{selectedPaidProvider.description}</small>
+														)}
 													</span>
 												</header>
 												<div className="connection-method-list">
@@ -1702,16 +1729,13 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																		<span>Recommended</span>
 																	)}
 																</div>
+																<small>{model.bestFor}</small>
 																<details className="model-tier-details">
 																	<summary>Details</summary>
 																	<dl>
 																		<div>
 																			<dt>Model</dt>
 																			<dd>{model.title}</dd>
-																		</div>
-																		<div>
-																			<dt>Best for</dt>
-																			<dd>{model.bestFor}</dd>
 																		</div>
 																		<div>
 																			<dt>Requirements</dt>
@@ -2151,6 +2175,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				</AnimatePresence>
 			</div>
 			<footer className="onboarding-actions">
+				{step === 2 && (
+					<small className="setup-continue-hint">
+						Choose an option above to continue.
+					</small>
+				)}
 				<div className="button-row">
 					{step > 0 && (
 						<button
@@ -2187,25 +2216,23 @@ function Onboarding({ onDone }: { onDone(): void }) {
 							Finish with setup help
 						</button>
 					)}
-					{step !== 2 && (
-						<button
-							className="button primary"
-							disabled={step === 1 && !warningAccepted}
-							onClick={() => {
-								if (step === finalSetupStep) {
-									localStorage.removeItem("kestrel:setup-step");
-									onDone();
-								} else go(step + 1);
-							}}
-						>
-							{step === finalSetupStep
-								? finishPrimaryLabel
-								: step === 0
-									? "Get started"
-									: "Continue"}
-							<Icon name="arrow" />
-						</button>
-					)}
+					<button
+						className="button primary"
+						disabled={(step === 1 && !warningAccepted) || step === 2}
+						onClick={() => {
+							if (step === finalSetupStep) {
+								localStorage.removeItem("kestrel:setup-step");
+								onDone();
+							} else go(step + 1);
+						}}
+					>
+						{step === finalSetupStep
+							? finishPrimaryLabel
+							: step === 0
+								? "Get started"
+								: "Continue"}
+						<Icon name="arrow" />
+					</button>
 				</div>
 			</footer>
 		</motion.main>
@@ -2340,7 +2367,10 @@ function Artifacts() {
 			</div>
 			{error && <p role="alert">{error}</p>}
 			{artifacts.length === 0 ? (
-				<Empty title="Nothing saved yet" />
+				<Empty
+					title="Nothing saved yet"
+					text="Verified files and interactive results will appear here."
+				/>
 			) : (
 				<section className="artifact-grid">
 					{artifacts
@@ -3889,8 +3919,12 @@ function RuntimeConversation({
 			</p>
 			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
 				<div className="chat-welcome">
-					<h1>How can I help?</h1>
-					<p>Ask for a plan, a change, or the next useful step.</p>
+					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>
+					<p>
+						{emptySession
+							? "Send a message to continue this chat."
+							: "Ask for a plan, a change, or the next useful step."}
+					</p>
 				</div>
 			) : (
 				<div className="message-list">
@@ -4023,7 +4057,10 @@ function RuntimeConversation({
 									</summary>
 									<pre>{JSON.stringify(pending.execution.input, null, 2)}</pre>
 								</details>
-								<div className="button-row">
+								<div
+									className="button-row"
+									style={{ display: "flex", flexDirection: "column" }}
+								>
 									<button
 										className="button primary"
 										onClick={() => void decide("approved")}
@@ -4185,8 +4222,8 @@ function RuntimeConversation({
 						}}
 						placeholder={
 							activeSessionId
-								? "Message Kestrel. Type @ for tabs, bookmarks, or files."
-								: "Describe the outcome. Type @ for tabs, bookmarks, or files."
+								? "Message Kestrel. @ for context."
+								: "Describe the outcome. @ for context."
 						}
 					/>
 					{activeMention !== null && (
@@ -4794,6 +4831,14 @@ function Memory({
 	);
 }
 
+function formatActivityStatus(status: string): string {
+	return status
+		.split(/[_\s-]+/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+		.join(" ");
+}
+
 function Activity({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 	return (
 		<PageFrame title="What happened">
@@ -4815,7 +4860,8 @@ function Activity({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 							</div>
 							<p>{item.detail}</p>
 							<small>
-								{item.status} · {item.sourceIds.join(" · ")}
+								{formatActivityStatus(item.status)} ·{" "}
+								{item.sourceIds.join(" · ")}
 							</small>
 						</div>
 					</li>
@@ -5193,6 +5239,12 @@ function Research() {
 					{error}
 				</p>
 			)}
+			{!query.trim() && results.length === 0 && !page && !busy && (
+				<Empty
+					title="Search with sources"
+					text="Enter a query to find web results Kestrel can cite in answers."
+				/>
+			)}
 			<div className="research-layout">
 				<section className="research-results">
 					{results.map((result) => (
@@ -5449,7 +5501,10 @@ function Work({
 					</details>
 				</section>
 			)}
-			<div className="work-board-tools">
+			<header className="kanban-header work-board-tools">
+				<div>
+					<small>From the active session</small>
+				</div>
 				<button
 					className="button secondary"
 					disabled={busy || !parentSessionId}
@@ -5462,7 +5517,7 @@ function Work({
 				>
 					Convert current opportunity
 				</button>
-			</div>
+			</header>
 			<GoalKanban
 				goals={goals}
 				sessions={sessions}
@@ -6117,7 +6172,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 			aria-labelledby="settings-connections-title"
 		>
 			<header className="settings-panel-header">
-				<h2 id="settings-connections-title">Accounts and access</h2>
+				<h2 id="settings-connections-title">Connections</h2>
+				<p>Accounts, credentials, and permissions for models and services.</p>
 			</header>
 			<div className="connection-list">
 				<article className="oauth-connection">
@@ -6471,7 +6527,11 @@ function LearnedSkillsSettings() {
 	);
 }
 
-function CredentialSettings() {
+function CredentialSettings({
+	hideCodexDuplicate = false,
+}: {
+	hideCodexDuplicate?: boolean;
+}) {
 	const [credentials, setCredentials] = useState<BrokeredCredentialSummary[]>(
 		[],
 	);
@@ -6553,7 +6613,13 @@ function CredentialSettings() {
 								<label>
 									<span>
 										{credential.label} ·{" "}
-										{credential.configured ? "configured" : "not configured"}
+										<span
+											className={`connection-status ${credential.configured ? "connected" : "not_connected"}`}
+										>
+											{credential.configured
+												? "configured"
+												: "not configured"}
+										</span>
 									</span>
 									<input
 										type="password"
@@ -6600,12 +6666,16 @@ function CredentialSettings() {
 				</span>
 			</article>
 			<ExternalSecretSettings />
-			<SubscriptionCliSettings />
+			<SubscriptionCliSettings hideCodexDuplicate={hideCodexDuplicate} />
 		</>
 	);
 }
 
-function SubscriptionCliSettings() {
+function SubscriptionCliSettings({
+	hideCodexDuplicate = false,
+}: {
+	hideCodexDuplicate?: boolean;
+}) {
 	const [items, setItems] = useState<SubscriptionCliStatus[]>([]);
 	const [busy, setBusy] = useState("");
 	const [error, setError] = useState("");
@@ -6683,7 +6753,11 @@ function SubscriptionCliSettings() {
 			<div>
 				<strong>Existing vendor subscriptions</strong>
 				<ul className="subscription-setting-list">
-					{items.map((item) => (
+					{items
+						.filter(
+							(item) => !(hideCodexDuplicate && item.id === "codex"),
+						)
+						.map((item) => (
 						<li key={item.id}>
 							<span>
 								<strong>{item.label}</strong>
@@ -8045,7 +8119,7 @@ function Settings({
 					))}
 				</nav>
 				<div className="settings-content">
-					{section !== "browser" && (
+					{section === "general" && (
 						<div className="agent-config-banner" role="region" aria-label="Agent configuration">
 							<div className="agent-config-banner-header">
 								<span className="agent-config-badge">
@@ -8092,7 +8166,7 @@ function Settings({
 								className="settings-stack"
 								aria-label="Provider credentials"
 							>
-								<CredentialSettings />
+								<CredentialSettings hideCodexDuplicate />
 							</section>
 						</>
 					)}
@@ -8165,6 +8239,10 @@ function Settings({
 							<article className="setting-row autonomy">
 								<div>
 									<strong>Initiative level</strong>
+									<small>
+										Observer, Operator, and High are coming soon. Assistant is
+										available now.
+									</small>
 								</div>
 								<div
 									className="segmented"
@@ -8265,7 +8343,7 @@ function Settings({
 									{pluginNotice && <small role="status">{pluginNotice}</small>}
 									{pluginError && <small role="alert">{pluginError}</small>}
 								</div>
-								<div>
+								<div className="button-row">
 									<button
 										className="button secondary"
 										disabled={pluginBusy}

@@ -114,7 +114,7 @@ export function BrowserToolbar({
           id="browser-address-input"
           ref={addressRef}
           value={address}
-          placeholder="Search or enter address"
+          placeholder="Search or enter an address"
           aria-keyshortcuts="Meta+L"
           autoCapitalize="off"
           autoCorrect="off"

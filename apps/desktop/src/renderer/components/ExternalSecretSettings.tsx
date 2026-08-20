@@ -87,7 +87,7 @@ function OnePasswordSection({
 				<span
 					className={`external-secret-state ${status?.state ?? "needs_setup"}`}
 				>
-					{status ? status.state.replace("_", " ") : "checking"}
+					{status ? status.state.replaceAll("_", " ") : "checking"}
 				</span>
 			</summary>
 			<div className="external-secret-form">
@@ -281,7 +281,7 @@ function BitwardenSection({
 				<span
 					className={`external-secret-state ${status?.state ?? "needs_setup"}`}
 				>
-					{status ? status.state.replace("_", " ") : "checking"}
+					{status ? status.state.replaceAll("_", " ") : "checking"}
 				</span>
 			</summary>
 			<div className="external-secret-form">
@@ -434,7 +434,7 @@ function CommandSection({
 				<span
 					className={`external-secret-state ${status?.state ?? "needs_setup"}`}
 				>
-					{status ? status.state.replace("_", " ") : "checking"}
+					{status ? status.state.replaceAll("_", " ") : "checking"}
 				</span>
 			</summary>
 			<div className="external-secret-form">

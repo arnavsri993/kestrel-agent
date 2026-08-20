@@ -160,7 +160,7 @@ body:has(.ai-browser-app),
 
 .communication-code-results small {
 	overflow: hidden;
-	max-width: 180px;
+	max-width: 260px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -191,8 +191,18 @@ body:has(.ai-browser-app),
 	cursor: pointer;
 }
 
-.communication-code-rescan:hover {
+.communication-code-rescan:hover:not(:disabled) {
 	color: var(--ink);
+}
+
+.communication-code-rescan:focus-visible {
+	outline: 2px solid var(--solid);
+	outline-offset: 2px;
+}
+
+.communication-code-rescan:disabled {
+	opacity: 0.48;
+	cursor: not-allowed;
 }
 
 .agent-sidebar-header {
@@ -810,6 +820,7 @@ body:has(.ai-browser-app),
 }
 .browser-tab-title {
 	flex: 1 1 auto;
+	min-width: 0;
 	overflow: hidden;
 	font-size: 12px;
 	font-weight: 500;
@@ -895,7 +906,7 @@ body:has(.ai-browser-app),
 	transition: opacity 0.1s ease, background 0.1s ease, color 0.1s ease;
 }
 .browser-tab.active .browser-tab-close {
-	opacity: 0.8;
+	opacity: 1;
 	pointer-events: auto;
 }
 .browser-tab:hover .browser-tab-close,
@@ -978,6 +989,12 @@ body:has(.ai-browser-app),
 	opacity: 0.28;
 	cursor: default;
 }
+
+.browser-navigation button:not(:disabled):hover,
+.browser-toolbar-actions button:not(:disabled):hover {
+	background: color-mix(in srgb, var(--ink) 12%, transparent);
+	color: var(--ink);
+}
 .browser-navigation svg,
 .browser-toolbar-actions svg {
 	width: 16px;
@@ -995,6 +1012,10 @@ body:has(.ai-browser-app),
 	border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
 	border-radius: 9px;
 	background: color-mix(in srgb, var(--surface) 58%, transparent);
+}
+
+.browser-address:has(.browser-bookmark) {
+	grid-template-columns: 24px minmax(0, 1fr) 32px;
 }
 .browser-address:focus-within {
 	border-color: color-mix(in srgb, var(--solid) 68%, var(--line));
@@ -1039,7 +1060,7 @@ body:has(.ai-browser-app),
 	border: 1px solid transparent;
 	border-radius: 7px;
 	background: transparent;
-	color: var(--faint);
+	color: var(--ink-secondary);
 	cursor: pointer;
 }
 .browser-context-toggle:hover {
@@ -3392,6 +3413,7 @@ body:has(.ai-browser-app),
   .new-tab-recommendation { backdrop-filter: none; }
   .agent-sidebar { background: var(--sidebar); }
   .agent-history-popover { background: var(--panel); }
+  .shortcuts-modal-overlay { background: var(--canvas); }
 }
 
 @media (forced-colors: active) {
@@ -3607,10 +3629,6 @@ body:has(.ai-browser-app),
 	border-top: 1px solid var(--line);
 	color: var(--faint);
 }
-.browser-section-btn.active {
-	border-left: 3px solid var(--ink) !important;
-}
-
 /* Browser Settings Sections */
 .browser-settings-wrapper {
 	display: flex;
@@ -5006,6 +5024,8 @@ body:has(.ai-browser-app),
 	margin: 0;
 	padding: 6px;
 	border-top: 1px solid var(--line);
+	max-height: 260px;
+	overflow-y: auto;
 }
 
 .composer-mention-list button {

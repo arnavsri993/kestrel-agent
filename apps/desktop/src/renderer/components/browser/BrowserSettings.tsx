@@ -271,9 +271,9 @@ export function BrowserSettings({
       {/* 🔍 SECTION 1: SEARCH ENGINE */}
       <section className="settings-stack browser-settings-panel" aria-label="Search engine preferences">
         <header className="settings-panel-header">
-          <h3>
+          <h2>
             <Icon name="search" /> Search Engine
-          </h3>
+          </h2>
         </header>
 
         <div className="setting-row browser-setting-row">
@@ -302,7 +302,7 @@ export function BrowserSettings({
           <div className="custom-search-config-box">
             <div className="custom-search-fields">
               <label className="custom-search-label">
-                <span>Engine Name</span>
+                <span>Engine name</span>
                 <input
                   type="text"
                   placeholder="e.g. My Intranet Search"
@@ -328,7 +328,7 @@ export function BrowserSettings({
               onClick={() => void handleSaveCustomSearch()}
               disabled={!customUrl.trim()}
             >
-              Save Custom Engine
+              Save custom engine
             </button>
           </div>
         )}
@@ -337,26 +337,31 @@ export function BrowserSettings({
       {/* ⚡ SECTION 2: PERFORMANCE & SLEEPING TABS */}
       <section className="settings-stack browser-settings-panel" aria-label="Performance and sleeping tabs">
         <header className="settings-panel-header">
-          <h3>
+          <h2>
             <Icon name="sparkles" /> Performance & Memory Saver
-          </h3>
+          </h2>
         </header>
 
-        <label className="setting-row browser-setting-row">
+        <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Sleeping tabs</strong>
           </div>
-          <input
-            type="checkbox"
-            checked={settings.sleepingTabsEnabled ?? true}
-            onChange={(event) =>
+          <button
+            type="button"
+            className={`switch ${(settings.sleepingTabsEnabled ?? true) ? "on" : ""}`}
+            role="switch"
+            aria-label="Sleeping tabs"
+            aria-checked={settings.sleepingTabsEnabled ?? true}
+            onClick={() =>
               void browser.updateSettings({
                 ...settings,
-                sleepingTabsEnabled: event.target.checked,
+                sleepingTabsEnabled: !(settings.sleepingTabsEnabled ?? true),
               })
             }
-          />
-        </label>
+          >
+            <span />
+          </button>
+        </div>
 
         {settings.sleepingTabsEnabled !== false && (
           <>
@@ -384,21 +389,26 @@ export function BrowserSettings({
               </select>
             </div>
 
-            <label className="setting-row browser-setting-row">
+            <div className="setting-row browser-setting-row">
               <div className="browser-setting-copy">
                 <strong>Memory Saver mode</strong>
               </div>
-              <input
-                type="checkbox"
-                checked={settings.memorySaverMode ?? true}
-                onChange={(event) =>
+              <button
+                type="button"
+                className={`switch ${(settings.memorySaverMode ?? true) ? "on" : ""}`}
+                role="switch"
+                aria-label="Memory Saver mode"
+                aria-checked={settings.memorySaverMode ?? true}
+                onClick={() =>
                   void browser.updateSettings({
                     ...settings,
-                    memorySaverMode: event.target.checked,
+                    memorySaverMode: !(settings.memorySaverMode ?? true),
                   })
                 }
-              />
-            </label>
+              >
+                <span />
+              </button>
+            </div>
 
             <div className="setting-row browser-setting-row">
               <div className="browser-setting-copy">
@@ -410,7 +420,7 @@ export function BrowserSettings({
                 onClick={() => void handleSleepInactiveNow()}
                 disabled={sleepingBusy}
               >
-                {sleepingBusy ? "Suspending..." : "Sleep inactive tabs now"}
+                {sleepingBusy ? "Suspending…" : "Sleep inactive tabs now"}
               </button>
             </div>
 
@@ -438,7 +448,7 @@ export function BrowserSettings({
                   onClick={() => void handleAddExcludedDomain()}
                   disabled={!newExcludedDomain.trim()}
                 >
-                  Add Site
+                  Add site
                 </button>
               </div>
 
@@ -467,9 +477,9 @@ export function BrowserSettings({
       {/* 🧩 SECTION 3: EXTENSIONS & CHROME WEB STORE */}
       <section className="settings-stack browser-settings-panel" aria-label="Web extensions and store">
         <header className="settings-panel-header">
-          <h3>
+          <h2>
             <Icon name="extensions" /> Web Extensions & Add-ons
-          </h3>
+          </h2>
         </header>
 
         {extensionMessage && (
@@ -506,7 +516,7 @@ export function BrowserSettings({
             onClick={() => void handleInstallExtensionFromUrl()}
             disabled={extensionLoading || !extensionUrlInput.trim()}
           >
-            {extensionLoading ? "Installing..." : "Install from Web Store"}
+            {extensionLoading ? "Installing…" : "Install from Web Store"}
           </button>
         </div>
 
@@ -586,9 +596,9 @@ export function BrowserSettings({
       {/* SECTION 4: TABS & GENERAL */}
       <section className="settings-stack browser-settings-panel" aria-label="General browser preferences">
         <header className="settings-panel-header">
-          <h3>
+          <h2>
             <Icon name="browser" /> Tabs & General
-          </h3>
+          </h2>
         </header>
 
         <div className="setting-row browser-setting-row">
@@ -608,27 +618,32 @@ export function BrowserSettings({
               onClick={() => void handleSetDefault()}
               disabled={defaultBrowserBusy}
             >
-              {defaultBrowserBusy ? "Setting..." : "Set as default"}
+              {defaultBrowserBusy ? "Setting…" : "Set as default"}
             </button>
           )}
         </div>
 
-        <label className="setting-row browser-setting-row">
+        <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Show bookmarks bar</strong>
             <p>Pins saved pages under the address bar. Toggle with ⌘⇧B.</p>
           </div>
-          <input
-            type="checkbox"
-            checked={settings.showBookmarksBar}
-            onChange={(event) =>
+          <button
+            type="button"
+            className={`switch ${settings.showBookmarksBar ? "on" : ""}`}
+            role="switch"
+            aria-label="Show bookmarks bar"
+            aria-checked={settings.showBookmarksBar}
+            onClick={() =>
               void browser.updateSettings({
                 ...settings,
-                showBookmarksBar: event.target.checked,
+                showBookmarksBar: !settings.showBookmarksBar,
               })
             }
-          />
-        </label>
+          >
+            <span />
+          </button>
+        </div>
 
         <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
@@ -649,42 +664,52 @@ export function BrowserSettings({
           </select>
         </div>
 
-        <label className="setting-row browser-setting-row">
+        <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Restore tabs on startup</strong>
           </div>
-          <input
-            type="checkbox"
-            checked={settings.restoreSession}
-            onChange={(event) =>
+          <button
+            type="button"
+            className={`switch ${settings.restoreSession ? "on" : ""}`}
+            role="switch"
+            aria-label="Restore tabs on startup"
+            aria-checked={settings.restoreSession}
+            onClick={() =>
               void browser.updateSettings({
                 ...settings,
-                restoreSession: event.target.checked,
+                restoreSession: !settings.restoreSession,
               })
             }
-          />
-        </label>
+          >
+            <span />
+          </button>
+        </div>
 
       </section>
 
       {/* 🛡️ SECTION 5: PRIVACY & HISTORY */}
       <section className="settings-stack browser-settings-panel" aria-label="Browser privacy and history">
         <header className="settings-panel-header">
-          <h3>
+          <h2>
             <Icon name="privacy" /> Privacy & History
-          </h3>
+          </h2>
         </header>
 
-        <label className="setting-row browser-setting-row">
+        <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Use current page context with agent</strong>
           </div>
-          <input
-            type="checkbox"
-            checked={contextEnabled}
-            onChange={onToggleContext}
-          />
-        </label>
+          <button
+            type="button"
+            className={`switch ${contextEnabled ? "on" : ""}`}
+            role="switch"
+            aria-label="Use current page context with agent"
+            aria-checked={contextEnabled}
+            onClick={onToggleContext}
+          >
+            <span />
+          </button>
+        </div>
 
         <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">

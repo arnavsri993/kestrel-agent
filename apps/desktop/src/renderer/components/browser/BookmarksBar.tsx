@@ -73,7 +73,7 @@ export function BookmarksBar({
 									<span className="browser-bookmarks-bar-glyph" aria-hidden="true">
 										{bookmarkBarGlyph(bookmark.title, bookmark.url)}
 									</span>
-									{label}
+									<span className="browser-bookmarks-bar-label">{label}</span>
 								</button>
 							</li>
 						);

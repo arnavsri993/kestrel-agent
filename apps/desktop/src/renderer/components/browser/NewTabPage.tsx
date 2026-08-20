@@ -57,6 +57,8 @@ export function NewTabPage({
     [history],
   );
   const hasBackgroundImage = background === "graphite" || background === "meadow";
+  const modelRoutingLabel = "Smart";
+  const modelRoutingTitle = "Smart routing";
 
   function submitChat(event: FormEvent) {
     event.preventDefault();
@@ -110,8 +112,9 @@ export function NewTabPage({
             <div className="kestrel-home-composer-footer">
               <button
                 type="button"
-                className="kestrel-home-composer-icon"
+                className="kestrel-home-composer-icon is-disabled"
                 aria-label="Add context"
+                aria-disabled="true"
                 title="Add context in the agent workspace"
                 disabled
               >
@@ -119,12 +122,15 @@ export function NewTabPage({
               </button>
 
               <details className="kestrel-home-model-selector">
-                <summary aria-label="Model selector: Smart" title="Model selector">
-                  <span>Smart</span>
+                <summary
+                  aria-label={`Model selector: ${modelRoutingLabel}`}
+                  title={`Model selector · ${modelRoutingTitle}`}
+                >
+                  <span>{modelRoutingLabel}</span>
                   <Icon name="chevron" />
                 </summary>
                 <div className="kestrel-home-model-popover">
-                  <strong>Smart routing</strong>
+                  <strong>{modelRoutingTitle}</strong>
                   <button type="button" onClick={() => onNewAgent()}>
                     Open task settings
                   </button>
@@ -232,6 +238,7 @@ export function NewTabPage({
                   </span>
                   <span className="kestrel-home-action-copy">
                     <strong>{action.title}</strong>
+                    {action.description ? <small>{action.description}</small> : null}
                   </span>
                   <span className="kestrel-home-action-affordance" aria-hidden="true">
                     <span>Use prompt</span>
