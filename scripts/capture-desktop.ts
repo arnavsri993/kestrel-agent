@@ -141,6 +141,15 @@ async function openTool(page: Page, label: string) {
 		.first()
 		.click();
 	await page.locator(".browser-app-page").waitFor();
+	// Tab activation is async; wait for the destination tab title to land
+	// before asserting, otherwise the previous page's copy gets compared.
+	await page
+		.locator(".browser-tab.active [role='tab'] .browser-tab-title")
+		.filter({ hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) })
+		.first()
+		.waitFor({ timeout: 5_000 })
+		.catch(() => {});
+	await settle(page);
 	await assertDistinctVisibleCopy(page, `${label} surface`, [
 		".browser-tab.active [role='tab'] .browser-tab-title",
 		".browser-app-page h1",

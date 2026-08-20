@@ -121,7 +121,7 @@ export function AgentWorkspace({
 						<input
 							type="search"
 							value={query}
-							placeholder="Search tasks..."
+							placeholder="Search tasks…"
 							onChange={(event) => setQuery(event.target.value)}
 						/>
 					</label>
@@ -190,9 +190,16 @@ export function AgentWorkspace({
 							{query
 								? "No matching tasks"
 								: sessions.length
-									? `No ${filter} tasks`
+									? `No ${filter === "done" ? "completed" : filter} tasks`
 									: "No tasks yet"}
 						</h3>
+						<p>
+							{query
+								? "Try a different search."
+								: sessions.length
+									? "Switch filters to see the rest."
+									: "Tasks you start will appear here with their project and state."}
+						</p>
 						{query ? (
 							<button
 								type="button"

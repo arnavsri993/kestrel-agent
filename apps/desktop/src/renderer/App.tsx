@@ -1232,6 +1232,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									<br />
 									Kestrel gets it done.
 								</h1>
+								<p>
+									Give it an outcome. Kestrel plans the work, asks when it
+									matters, and shows what changed.
+								</p>
 							</div>
 						)}
 
@@ -1326,6 +1330,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													? "Set up a local model."
 													: "Connect a free account."}
 									</h1>
+									<p>
+										{step === 2
+											? "Pick one to start — you can change it later."
+											: modelView === "accounts"
+												? "Sign in with the provider, or add a protected API key."
+												: modelView === "local"
+													? "Balanced is recommended for this Mac."
+													: "Terms and free limits vary by provider."}
+									</p>
 								</header>
 								{step === 2 && (
 									<div
@@ -2341,9 +2354,12 @@ function Artifacts() {
 				</button>
 			</div>
 			{error && <p role="alert">{error}</p>}
-			{artifacts.length === 0 ? (
-				<Empty title="Nothing saved yet" />
-			) : (
+		{artifacts.length === 0 ? (
+			<Empty
+				title="Nothing saved yet"
+				text="Verified files and interactive results will appear here."
+			/>
+		) : (
 				<section className="artifact-grid">
 					{artifacts
 						.slice()
@@ -4440,6 +4456,7 @@ function RuntimeConversation({
 	);
 }
 
+
 function Memory({
 	snapshot,
 	update,
@@ -4976,11 +4993,15 @@ function Readiness() {
 								<span>Live account check</span>
 								<h2>Verify account access</h2>
 							</div>
-							{liveVerified && (
-								<small className="verified-label">Verified</small>
-							)}
-						</header>
-						{providerChecks.length > 0 && (
+						{liveVerified && (
+							<small className="verified-label">Verified</small>
+						)}
+					</header>
+					<p>
+						This contacts only the configured provider or local model service.
+						It does not send a project prompt.
+					</p>
+					{providerChecks.length > 0 && (
 							<ul>
 								{providerChecks.map((check) => (
 									<li key={check.providerId}>
@@ -5458,9 +5479,13 @@ function Work({
 						);
 					}}
 				>
-					<h2>Delegate a task</h2>
-					<label>
-						Parent task
+				<h2>Delegate a task</h2>
+				<p className="work-card-note">
+					Kestrel picks a verified worker by capability, cost, privacy, and
+					your routing preference.
+				</p>
+				<label>
+					Parent task
 						<select
 							value={parentSessionId}
 							onChange={(event) => {
@@ -5640,27 +5665,31 @@ function Work({
 							onChange={(event) => setSchedulePrompt(event.target.value)}
 						/>
 					</label>
-					<label>
-						When
-						<input
-							value={scheduleExpression}
-							onChange={(event) => setScheduleExpression(event.target.value)}
-							placeholder="tomorrow at 9 am · every 30 minutes · */15 * * * *"
-						/>
-					</label>
-					<button
-						className="button primary"
-						disabled={
-							busy ||
-							!scheduleTitle.trim() ||
-							!schedulePrompt.trim() ||
-							!scheduleExpression.trim() ||
-							!providerId ||
-							!model.trim()
-						}
-					>
-						Schedule
-					</button>
+				<label>
+					When
+					<input
+						value={scheduleExpression}
+						onChange={(event) => setScheduleExpression(event.target.value)}
+						placeholder="tomorrow at 9 am · every 30 minutes · */15 * * * *"
+					/>
+				</label>
+				<small>
+					Natural-language times are interpreted in UTC. Five-field cron is
+					supported.
+				</small>
+				<button
+					className="button primary"
+					disabled={
+						busy ||
+						!scheduleTitle.trim() ||
+						!schedulePrompt.trim() ||
+						!scheduleExpression.trim() ||
+						!providerId ||
+						!model.trim()
+					}
+				>
+					Schedule
+				</button>
 				</form>
 				<article className="work-card">
 					<h2>Automation boundary</h2>
@@ -6067,9 +6096,13 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 			className="settings-panel"
 			aria-labelledby="settings-connections-title"
 		>
-			<header className="settings-panel-header">
-				<h2 id="settings-connections-title">Accounts and access</h2>
-			</header>
+		<header className="settings-panel-header">
+			<h2 id="settings-connections-title">Accounts and access</h2>
+			<p>
+				Sign-ins stay with their providers. Project folders and external
+				access remain explicit and revocable.
+			</p>
+		</header>
 			<div className="connection-list">
 				<article className="oauth-connection">
 					<div className="connection-monogram">CG</div>
@@ -6382,6 +6415,10 @@ function LearnedSkillsSettings() {
 		<article className="setting-row learned-skills-setting">
 			<div>
 				<strong>Experience-to-skill learning</strong>
+				<p>
+					Proposals are credential-scanned and parsed in isolation. Nothing
+					installs without your review.
+				</p>
 				<small>
 					{installed.length} installed · {waiting.length} waiting ·{" "}
 					{feedbackCount} outcome records
@@ -6495,10 +6532,14 @@ function CredentialSettings() {
 	}
 	return (
 		<>
-			<article className="setting-row credential-setting">
-				<div>
-					<strong>Protected provider credentials</strong>
-					<div className="credential-list">
+		<article className="setting-row credential-setting">
+			<div>
+				<strong>Protected provider credentials</strong>
+				<p>
+					Encrypted with macOS secure storage, sent only to the isolated core,
+					and never displayed again.
+				</p>
+				<div className="credential-list">
 						{credentials.map((credential) => (
 							<div className="credential-entry" key={credential.id}>
 								<label>
@@ -6633,6 +6674,10 @@ function SubscriptionCliSettings() {
 		<article className="setting-row subscription-setting">
 			<div>
 				<strong>Existing vendor subscriptions</strong>
+				<p>
+					Use the Codex, Claude Code, or OpenCode sign-in already on this
+					Mac. Kestrel never copies vendor OAuth tokens.
+				</p>
 				<ul className="subscription-setting-list">
 					{items.map((item) => (
 						<li key={item.id}>
@@ -6725,6 +6770,10 @@ function ProviderVerificationSettings() {
 		<article className="setting-row">
 			<div>
 				<strong>Live provider verification</strong>
+				<p>
+					Probe configured accounts from the isolated core — no credentials
+					exposed, no model prompt sent.
+				</p>
 				{providers.length === 0 ? (
 					<small>No model providers are configured.</small>
 				) : (
@@ -6827,6 +6876,10 @@ function MigrationSettings() {
 		<article className="setting-row">
 			<div>
 				<strong>Reference-product migration</strong>
+				<p>
+					Dry-run an import from OpenClaw, Hermes, Codex, or Claude Code.
+					Source files stay untouched.
+				</p>
 				<div className="button-row">
 					<select
 						value={product}
@@ -7152,6 +7205,10 @@ function CustomAgentsSettings({
 		<article className="setting-row custom-agent-setting">
 			<div>
 				<strong>Custom agents</strong>
+				<p>
+					Encrypted profiles with a fixed route, least-privilege tools, and
+					optional isolation from shared memory.
+				</p>
 				<div className="custom-agent-grid">
 					<label>
 						Agent ID
@@ -7356,6 +7413,10 @@ function RoutingPolicySettings() {
 		<article className="setting-row routing-policy-setting">
 			<div>
 				<strong>How Kestrel chooses models</strong>
+				<p>
+					Choose an outcome. Kestrel still selects the model, provider,
+					reasoning, and review for each task.
+				</p>
 				<div
 					className="routing-mode-grid"
 					role="radiogroup"
@@ -7557,6 +7618,10 @@ function UsagePolicySettings() {
 		<article className="setting-row usage-policy-setting">
 			<div>
 				<strong>Usage and cost guardrails</strong>
+				<p>
+					Budgets and concurrency are enforced before every provider call.
+					Rates are estimates per million tokens.
+				</p>
 				<div className="usage-policy-grid">
 					<label>
 						Daily budget, USD
@@ -7713,6 +7778,10 @@ function ApprovalRulesSettings() {
 		<article className="setting-row">
 			<div>
 				<strong>Persistent tool approval rules</strong>
+				<p>
+					Rules from approval boundaries are encrypted, session-scoped by
+					default, and revocable here.
+				</p>
 				{rules.length === 0 ? (
 					<small>No persistent tool rules.</small>
 				) : (
@@ -7942,10 +8011,16 @@ function Settings({
 		density: snapshot.configuration.ui.density,
 		showToolActivity: snapshot.configuration.ui.showToolActivity,
 		showConfigurationDiffs: snapshot.configuration.ui.showConfigurationDiffs,
-		searchEngine: browser.state?.settings.searchEngine,
-		tabLayout: browser.state?.settings.tabLayout,
+		...(browser.state?.settings.searchEngine
+			? { searchEngine: browser.state.settings.searchEngine }
+			: {}),
+		...(browser.state?.settings.tabLayout
+			? { tabLayout: browser.state.settings.tabLayout }
+			: {}),
 		contextEnabled: browserContextEnabled,
-		launchAtLogin: login?.enabled,
+		...(typeof login?.enabled === "boolean"
+			? { launchAtLogin: login.enabled }
+			: {}),
 		paused: snapshot.agentState === "paused",
 	});
 	const route = snapshot.modelRouting.currentDecision;
@@ -8047,33 +8122,50 @@ function Settings({
 							</section>
 						</>
 					)}
-					{section === "general" && (
+				{section === "general" && (
+					<section
+						className="settings-panel"
+						aria-labelledby="settings-general-title"
+					>
+						<header className="settings-panel-header">
+							<h2 id="settings-general-title">Autonomy and behavior</h2>
+							<p>
+								Startup, communication style, and how much initiative Kestrel
+								takes.
+							</p>
+						</header>
 						<section className="settings-stack" aria-label="General settings">
-							<article className="setting-row">
-								<div>
-									<strong>Setup guide</strong>
-								</div>
-								<button className="button secondary" onClick={reopenSetup}>
-									Open setup guide
-								</button>
-							</article>
-							<article className="setting-row">
-								<div>
-									<strong>Background work</strong>
-								</div>
-								<button
-									className="button secondary"
-									onClick={() => void togglePause()}
-								>
-									{snapshot.agentState === "paused"
-										? "Resume background work"
-										: "Pause background work"}
-								</button>
-							</article>
-							<article className="setting-row routing-setting">
-								<div>
-									<strong>Communication style</strong>
-								</div>
+						<article className="setting-row">
+							<div>
+								<strong>Setup guide</strong>
+								<p>Reopen the walkthrough. Protected credentials stay in place.</p>
+							</div>
+							<button className="button secondary" onClick={reopenSetup}>
+								Open setup guide
+							</button>
+						</article>
+						<article className="setting-row">
+							<div>
+								<strong>Background work</strong>
+								<p>Pause proactive work without closing Kestrel.</p>
+							</div>
+							<button
+								className="button secondary"
+								onClick={() => void togglePause()}
+							>
+								{snapshot.agentState === "paused"
+									? "Resume background work"
+									: "Pause background work"}
+							</button>
+						</article>
+						<article className="setting-row routing-setting">
+							<div>
+								<strong>Communication style</strong>
+								<p>
+									How Kestrel explains work. Safety and capability rules do not
+									change.
+								</p>
+							</div>
 								<div
 									className="segmented"
 									role="group"
@@ -8113,37 +8205,52 @@ function Settings({
 									<span />
 								</button>
 							</article>
-							<article className="setting-row autonomy">
-								<div>
-									<strong>Initiative level</strong>
-								</div>
-								<div
-									className="segmented"
-									role="group"
-									aria-label="Initiative level"
-								>
-									{["Observer", "Assistant", "Operator", "High"].map(
-										(label) => (
-											<button
-												key={label}
-												disabled={label !== "Assistant"}
-												aria-pressed={label === "Assistant"}
-												className={label === "Assistant" ? "selected" : ""}
-											>
-												{label}
-											</button>
-										),
-									)}
-								</div>
-							</article>
+						<article className="setting-row autonomy">
+							<div>
+								<strong>Initiative level</strong>
+								<p>
+									Assistant is the supported mode while other levels are in
+									review.
+								</p>
+							</div>
+							<div
+								className="segmented"
+								role="group"
+								aria-label="Initiative level"
+							>
+								{["Observer", "Assistant", "Operator", "High"].map(
+									(label) => (
+										<button
+											key={label}
+											disabled={label !== "Assistant"}
+											aria-pressed={label === "Assistant"}
+											className={label === "Assistant" ? "selected" : ""}
+										>
+											{label}
+										</button>
+									),
+								)}
+							</div>
+						</article>
 						</section>
-					)}
-					{section === "models" && (
-						<section
-							className="settings-stack"
-							aria-label="Model and routing settings"
-						>
-							<RoutingPolicySettings />
+					</section>
+				)}
+				{section === "models" && (
+					<section
+						className="settings-panel"
+						aria-labelledby="settings-models-title"
+					>
+						<header className="settings-panel-header">
+							<h2 id="settings-models-title">Routing and providers</h2>
+							<p>
+								Model routing, live provider checks, and cost guardrails.
+							</p>
+						</header>
+					<section
+						className="settings-stack"
+						aria-label="Model and routing settings"
+					>
+						<RoutingPolicySettings />
 							<details className="settings-routing-details">
 								<summary>Current routing details</summary>
 								<article className="setting-row routing-setting">
@@ -8177,13 +8284,25 @@ function Settings({
 									</div>
 								</article>
 							</details>
-							<ProviderVerificationSettings />
-							<UsagePolicySettings />
-						</section>
-					)}
-					{section === "extensions" && (
-						<section className="settings-stack" aria-label="Extension settings">
-							<article className="setting-row">
+						<ProviderVerificationSettings />
+						<UsagePolicySettings />
+					</section>
+					</section>
+				)}
+				{section === "extensions" && (
+					<section
+						className="settings-panel"
+						aria-labelledby="settings-extensions-title"
+					>
+						<header className="settings-panel-header">
+							<h2 id="settings-extensions-title">Plugins and publishers</h2>
+							<p>
+								Signed bundles from publishers you explicitly trust — nothing
+								else installs.
+							</p>
+						</header>
+					<section className="settings-stack" aria-label="Extension settings">
+						<article className="setting-row">
 								<div>
 									<strong>Plugin supply chain</strong>
 									<p>
@@ -8324,8 +8443,20 @@ function Settings({
 								</article>
 							))}
 						</section>
+					</section>
 					)}
 					{section === "intelligence" && (
+						<section
+							className="settings-panel"
+							aria-labelledby="settings-intelligence-title"
+						>
+							<header className="settings-panel-header">
+								<h2 id="settings-intelligence-title">Memory and learning</h2>
+								<p>
+									What Kestrel remembers, senses, and learns stays reviewable
+									here.
+								</p>
+							</header>
 						<section
 							className="settings-stack"
 							aria-label="Memory and behavior settings"
@@ -8334,8 +8465,20 @@ function Settings({
 							<PresenceSettings />
 							<LearnedSkillsSettings />
 						</section>
+						</section>
 					)}
 					{section === "privacy" && (
+						<section
+							className="settings-panel"
+							aria-labelledby="settings-privacy-title"
+						>
+							<header className="settings-panel-header">
+								<h2 id="settings-privacy-title">Approvals and recovery</h2>
+								<p>
+									Persistent approval rules, reference imports, and local data
+									reset.
+								</p>
+							</header>
 						<section
 							className="settings-stack"
 							aria-label="Privacy and safety settings"
@@ -8367,12 +8510,24 @@ function Settings({
 								</button>
 							</article>
 						</section>
+						</section>
 					)}
 					{section === "advanced" && (
+						<section
+							className="settings-panel"
+							aria-labelledby="settings-advanced-title"
+						>
+							<header className="settings-panel-header">
+								<h2 id="settings-advanced-title">Diagnostics and organization</h2>
+								<p>
+									Content-free diagnostics, managed policy, and custom agents.
+								</p>
+							</header>
 						<section className="settings-stack" aria-label="Advanced settings">
 							<ObservabilitySettings />
 							<EnterpriseSettings />
 							<CustomAgentsSettings snapshot={snapshot} update={update} />
+						</section>
 						</section>
 					)}
 				</div>
@@ -9000,7 +9155,7 @@ export function App() {
 				appPageId === "extensions"
 					? " browser-secondary-surface"
 					: ""
-			}`}
+			}${appPageId === "memory" ? " legacy-product-surface" : ""}`}
 			data-app-page={appPageId}
 		>
 			{appPageId === "history" && (

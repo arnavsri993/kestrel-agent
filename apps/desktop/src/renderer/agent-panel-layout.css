@@ -449,3 +449,111 @@
 		--agent-panel-width: 300px;
 	}
 }
+
+/* Monochrome refinement layer (loads last; wins equal-specificity ties). */
+
+/* The rail's one clear primary action is solid white. */
+.agent-new-button {
+	background: var(--solid);
+	color: var(--on-solid);
+	box-shadow: var(--shadow-sm);
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-state) var(--ease-kestrel);
+}
+
+.agent-new-button:hover {
+	background: var(--solid-hover);
+	box-shadow: var(--shadow-md);
+}
+
+.agent-new-button:active {
+	background: var(--solid);
+	box-shadow: none;
+}
+
+.agent-new-button kbd {
+	color: color-mix(in srgb, var(--on-solid) 52%, transparent);
+}
+
+/* Active navigation takes a crisp white edge; hover stays a quiet fill. */
+.agent-sidebar-history-list button {
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.agent-sidebar-history-list button:active {
+	background: var(--surface-strong);
+}
+
+.agent-sidebar-history-list button.active::before {
+	position: absolute;
+	top: 8px;
+	bottom: 8px;
+	left: 0;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--solid);
+	content: "";
+}
+
+.agent-sidebar-footer nav button {
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.agent-sidebar-footer nav button:active {
+	background: var(--surface-strong);
+}
+
+@media (min-width: 761px) {
+	.agent-sidebar-footer nav button.active::before {
+		position: absolute;
+		top: 0;
+		left: 50%;
+		width: 18px;
+		height: 2px;
+		border-radius: 1px;
+		background: var(--solid);
+		content: "";
+		transform: translateX(-50%);
+	}
+}
+
+/* The active tab carries the same white accent as other active navigation. */
+.browser-tab.active {
+	box-shadow: inset 0 2px 0 var(--solid);
+}
+
+.browser-tab-row-vertical .browser-tab.active {
+	box-shadow: inset 2px 0 0 var(--solid);
+}
+
+/* Sleeping tabs recede without hue. */
+.browser-tab.tab-sleeping {
+	transition: opacity var(--motion-state) var(--ease-kestrel);
+}
+
+/* Approval affordance keeps its shape-coded fill but responds like a button. */
+.agent-approval-action {
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.agent-approval-action:active {
+	background: var(--overlay);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-new-button,
+	.agent-sidebar-history-list button,
+	.agent-sidebar-footer nav button,
+	.browser-tab.tab-sleeping,
+	.agent-approval-action,
+	.agent-sidebar-expand {
+		transition: none;
+	}
+}

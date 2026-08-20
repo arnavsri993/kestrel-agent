@@ -93,7 +93,7 @@ export function PresenceSettings() {
 				<div>
 					<strong>Connected instances</strong>
 					{entries.length === 0 ? (
-						<small>No active instances.</small>
+						<small>No instances are reporting right now.</small>
 					) : (
 						<ul className="presence-list">
 							{entries.map((entry) => (

@@ -113,7 +113,9 @@ export function CommandCenter({
         </div>
       </section>
       {visible.length === 0 ? (
-        <p className="command-empty">No matching destination.</p>
+        <p className="command-empty">
+          Nothing matches &ldquo;{query.trim()}&rdquo;. Try a different search.
+        </p>
       ) : (
         <div className="command-groups">
           {(["Browse", "Agent", "Context", "Build", "System"] as const).map(
