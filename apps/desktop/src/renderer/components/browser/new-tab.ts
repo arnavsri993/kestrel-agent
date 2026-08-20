@@ -176,6 +176,11 @@ export function browserSiteLabel(
   return `${normalized.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
 }
 
+export function siteFaviconUrl(hostname: string, size = 64): string {
+  const host = hostname.replace(/^www\./, "");
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=${size}`;
+}
+
 export function siteInitial(
   site: Pick<FrequentBrowserSite, "hostname" | "title">,
 ): string {

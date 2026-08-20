@@ -2831,6 +2831,10 @@ export const RendererRequestSchema = z.union([
 		toIndex: z.number().int().min(0).max(31),
 	}),
 	z.object({
+		type: z.literal("browser-detach-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.literal("browser-find-in-page"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 		query: z.string().max(2_000),

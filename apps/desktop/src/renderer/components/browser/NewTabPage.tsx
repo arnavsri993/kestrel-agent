@@ -1,11 +1,15 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import type {
+  RuntimeSession,
   UserBrowserBookmark,
   UserBrowserHistoryEntry,
   UserBrowserOriginFavicon,
   UserBrowserSettings,
   UserBrowserTab,
+  WorkspaceGrant,
 } from "@kestrel/shared-types";
+import { agentWorkspaceName, agentSessionRecency } from "../../agent-workspace";
+import { sessionTitleForDisplay } from "../../chat-title";
 import { Icon } from "../Icon";
 import {
   browserSiteLabel,
@@ -60,6 +64,8 @@ function FrequentTabGlyph({ site }: { site: FrequentBrowserSite }) {
   );
 }
 
+type SidebarSection = "projects" | "history";
+
 export function NewTabPage({
   history,
   bookmarks = [],
@@ -67,19 +73,30 @@ export function NewTabPage({
   originFavicons = [],
   background,
   agentName,
+  sessions = [],
+  projects = [],
   onNavigate,
   onNewAgent,
+  onOpenSession,
 }: {
   history: UserBrowserHistoryEntry[];
-  bookmarks?: UserBrowserBookmark[];
-  tabs?: Pick<UserBrowserTab, "url" | "faviconDataUrl">[];
-  originFavicons?: Pick<UserBrowserOriginFavicon, "origin" | "faviconDataUrl">[];
+  bookmarks?: UserBrowserBookmark[] | undefined;
+  tabs?: Pick<UserBrowserTab, "url" | "faviconDataUrl">[] | undefined;
+  originFavicons?:
+    | Pick<UserBrowserOriginFavicon, "origin" | "faviconDataUrl">[]
+    | undefined;
   background: UserBrowserSettings["newTabBackground"];
   agentName: string;
+  sessions?: RuntimeSession[] | undefined;
+  projects?: WorkspaceGrant[] | undefined;
   onNavigate(input: string): void;
   onNewAgent(prompt?: string): void;
+  onOpenSession?: ((sessionId: string) => void) | undefined;
 }) {
   const [input, setInput] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarSection, setSidebarSection] =
+    useState<SidebarSection>("projects");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const faviconByOrigin = useMemo(
     () => originFaviconMap(originFavicons, tabs),
@@ -93,7 +110,13 @@ export function NewTabPage({
     () => suggestedAgentActions(history, 3),
     [history],
   );
-
+  const recentSessions = useMemo(
+    () =>
+      [...sessions]
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+        .slice(0, 12),
+    [sessions],
+  );
 
   function submitChat(event: FormEvent) {
     event.preventDefault();
@@ -113,9 +136,103 @@ export function NewTabPage({
 
   return (
     <section
-      className={`new-tab-page kestrel-home new-tab-page-${background}`}
+      className={`new-tab-page kestrel-home new-tab-page-${background}${
+        sidebarOpen ? " new-tab-sidebar-open" : " new-tab-sidebar-collapsed"
+      }`}
       aria-labelledby="new-tab-title"
     >
+      <aside
+        className="new-tab-sidebar"
+        aria-label="Projects and chat history"
+      >
+        <button
+          type="button"
+          className="new-tab-sidebar-toggle"
+          aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          onClick={() => setSidebarOpen((value) => !value)}
+        >
+          <Icon name={sidebarOpen ? "back" : "forward"} />
+        </button>
+
+        {sidebarOpen && (
+          <>
+            <div
+              className="new-tab-sidebar-tabs"
+              role="tablist"
+              aria-label="Sidebar sections"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sidebarSection === "projects"}
+                className={sidebarSection === "projects" ? "active" : ""}
+                onClick={() => setSidebarSection("projects")}
+              >
+                Projects
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sidebarSection === "history"}
+                className={sidebarSection === "history" ? "active" : ""}
+                onClick={() => setSidebarSection("history")}
+              >
+                Chat history
+              </button>
+            </div>
+
+            <div className="new-tab-sidebar-panel" role="tabpanel">
+              {sidebarSection === "projects" ? (
+                projects.length > 0 ? (
+                  <ul className="new-tab-sidebar-list">
+                    {projects.map((project) => (
+                      <li key={project.path}>
+                        <button
+                          type="button"
+                          title={project.path}
+                          onClick={() =>
+                            onNewAgent(
+                              `Review ${project.name} and recommend the highest-impact next step.`,
+                            )
+                          }
+                        >
+                          <Icon name="work" />
+                          <span>{project.name}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="new-tab-sidebar-empty">No projects connected yet.</p>
+                )
+              ) : recentSessions.length > 0 ? (
+                <ul className="new-tab-sidebar-list">
+                  {recentSessions.map((session) => (
+                    <li key={session.id}>
+                      <button
+                        type="button"
+                        title={agentWorkspaceName(session.workspaceRoot)}
+                        onClick={() => onOpenSession?.(session.id)}
+                      >
+                        <Icon name="agent" />
+                        <span>
+                          <strong>{sessionTitleForDisplay(session.title)}</strong>
+                          <small>{agentSessionRecency(session.updatedAt)}</small>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="new-tab-sidebar-empty">Chat history will appear here.</p>
+              )}
+            </div>
+          </>
+        )}
+      </aside>
+
+
       <div className="kestrel-home-content">
         <header className="kestrel-home-hero">
           <h1 id="new-tab-title">Hi there, what should we dive into today?</h1>
@@ -230,30 +347,20 @@ export function NewTabPage({
             <h2 id="suggested-actions-title">Suggested actions</h2>
           </div>
 
-          <ol className="kestrel-home-action-list">
-            {suggestedActions.map((action, index) => (
-              <li key={action.id}>
-                <button
-                  type="button"
-                  className="kestrel-home-action"
-                  onClick={() => chooseAction(action.prompt)}
-                  aria-label={`Add to ${agentName} composer: ${action.title}`}
-                >
-                  <span className="kestrel-home-action-index" aria-hidden="true">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
-                  <span className="kestrel-home-action-copy">
-                    <strong>{action.title}</strong>
-                    {action.description ? <small>{action.description}</small> : null}
-                  </span>
-                  <span className="kestrel-home-action-affordance" aria-hidden="true">
-                    <span>Use prompt</span>
-                    <Icon name="arrow" />
-                  </span>
-                </button>
-              </li>
+          <div className="kestrel-home-action-buttons">
+            {suggestedActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                className="kestrel-home-action-chip"
+                onClick={() => chooseAction(action.prompt)}
+                aria-label={`Add to ${agentName} composer: ${action.title}`}
+                title={action.title}
+              >
+                {action.title}
+              </button>
             ))}
-          </ol>
+          </div>
         </section>
       </div>
     </section>

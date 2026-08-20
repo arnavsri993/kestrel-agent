@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import type { RuntimeSession, WorkspaceGrant } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { parseKestrelAppPage } from "../../../utility/browser-app-pages";
 import { BrandMark } from "../BrandMark";
@@ -32,6 +33,9 @@ export function BrowserWorkspace({
   onShowShortcuts,
   onToggleSidebar,
   appPage,
+  sessions = [],
+  projects = [],
+  onOpenSession,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -48,6 +52,9 @@ export function BrowserWorkspace({
   onShowShortcuts?(): void;
   onToggleSidebar?(): void;
   appPage?: ReactNode;
+  sessions?: RuntimeSession[];
+  projects?: WorkspaceGrant[];
+  onOpenSession?(sessionId: string): void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -79,6 +86,8 @@ export function BrowserWorkspace({
     stopFindInPage,
     printTab,
     openDevTools,
+    moveTab,
+    detachTab,
   } = browser;
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
@@ -406,6 +415,8 @@ export function BrowserWorkspace({
         onMute={(tabId, muted) => void muteTab(tabId, muted)}
         onDuplicate={(tabId) => void duplicateTab(tabId)}
         onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
+        onMoveTab={(tabId, toIndex) => void moveTab(tabId, toIndex)}
+        onDetachTab={(tabId) => void detachTab(tabId)}
         onToggleOrientation={() => {
           void browser.updateSettings({
             ...state.settings,
@@ -523,8 +534,11 @@ export function BrowserWorkspace({
             originFavicons={state.originFavicons}
             background={state.settings.newTabBackground}
             agentName={agentName}
+            sessions={sessions}
+            projects={projects}
             onNavigate={(input) => void navigate(activeTab.id, input)}
             onNewAgent={onNewAgent}
+            onOpenSession={onOpenSession}
           />
         )}
         {activeTab.error && (
