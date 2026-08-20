@@ -378,9 +378,7 @@ try {
 			.waitFor();
 		await page.getByRole("button", { name: "Not Now" }).click();
 	}
-	const newAgentButton = page
-		.getByRole("button", { name: "New task", exact: true })
-		.first();
+	const newAgentButton = page.getByRole("button", { name: "New chat" });
 	await newAgentButton.click();
 	assert.equal(
 		await newAgentButton.getAttribute("aria-keyshortcuts"),
@@ -396,7 +394,15 @@ try {
 	assert.equal(await page.getByRole("button", { name: /Plan a task/ }).count(), 0);
 	const preservedDraft = "Keep this draft while I check Settings.";
 	await page.getByLabel("Message Kestrel").fill(preservedDraft);
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await page.keyboard.press("Meta+K");
+	await page
+		.getByRole("heading", { name: "Capabilities", exact: true })
+		.waitFor();
+	await page
+		.locator(".command-groups button")
+		.filter({ has: page.getByText("Settings", { exact: true }) })
+		.first()
+		.click();
 	await page.getByRole("heading", { name: "Preferences" }).waitFor();
 	assert.equal(
 		await page.getByLabel("Message Kestrel").inputValue(),
@@ -404,16 +410,12 @@ try {
 	);
 	await page.getByLabel("Message Kestrel").fill("");
 	await page.setViewportSize({ width: 640, height: 760 });
-	await newAgentButton.getByText("New task", { exact: true }).waitFor();
-	const compactNav = page
-		.locator(".agent-sidebar-footer")
-		.getByRole("navigation", { name: "Kestrel destinations" });
-	assert.deepEqual(await compactNav.getByRole("button").allTextContents(), [
-		"Browser",
-		"Agent",
-		"Approvals",
-		"Settings",
-	]);
+	await newAgentButton.waitFor();
+	assert.equal(await page.locator(".agent-sidebar-footer").count(), 0);
+	assert.equal(
+		await page.getByRole("navigation", { name: "Kestrel destinations" }).count(),
+		0,
+	);
 	assert.equal(await page.getByRole("button", { name: "More", exact: true }).count(), 0);
 	assert.equal(
 		await page.evaluate(
@@ -441,17 +443,19 @@ try {
 		.locator(".command-groups button")
 		.filter({ hasText: "Readiness" })
 		.click();
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await page.keyboard.press("Meta+K");
+	await page
+		.getByRole("heading", { name: "Capabilities", exact: true })
+		.waitFor();
+	await page
+		.locator(".command-groups button")
+		.filter({ has: page.getByText("Settings", { exact: true }) })
+		.first()
+		.click();
 	await page.locator(".command-center").waitFor({ state: "detached" });
 	assert.equal(await page.locator(".command-center").count(), 0);
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await page.getByRole("heading", { name: "Preferences" }).waitFor();
-	assert.equal(
-		await page
-			.getByRole("button", { name: "Settings", exact: true })
-			.getAttribute("aria-current"),
-		"page",
-	);
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
 	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
@@ -513,7 +517,15 @@ try {
 	);
 	await page.keyboard.press("Meta+N");
 	await page.locator("#runtime-prompt").waitFor();
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await page.keyboard.press("Meta+K");
+	await page
+		.getByRole("heading", { name: "Capabilities", exact: true })
+		.waitFor();
+	await page
+		.locator(".command-groups button")
+		.filter({ has: page.getByText("Settings", { exact: true }) })
+		.first()
+		.click();
 	await page
 		.getByRole("navigation", { name: "Settings sections" })
 		.getByRole("button", { name: /General & Autonomy/ })

@@ -752,4 +752,8 @@ export class LocalRuntimeManager {
 			await this.start(AbortSignal.timeout(20_000));
 		}
 	}
+
+	async ensureChatReady(): Promise<void> {
+		await this.startManagedIfInstalled();
+	}
 }

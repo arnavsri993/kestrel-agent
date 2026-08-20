@@ -1745,7 +1745,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({
 		type: z.literal("runtime-list-executions"),
-		sessionId: z.string().min(1),
+		sessionId: z.string().min(1).optional(),
+		limit: z.number().int().positive().max(200).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-list-pending-tool-approvals"),
 	}),
 	z.object({
 		type: z.literal("runtime-session-usage"),

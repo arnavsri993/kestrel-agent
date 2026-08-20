@@ -6,7 +6,6 @@ import type {
   UserBrowserSettings,
   UserBrowserTab,
 } from "@kestrel/shared-types";
-import meadowLandscape from "../../assets/new-tab-meadow.svg";
 import { Icon } from "../Icon";
 import {
   browserSiteLabel,
@@ -91,10 +90,9 @@ export function NewTabPage({
     [faviconByOrigin, history],
   );
   const suggestedActions = useMemo(
-    () => suggestedAgentActions(history),
+    () => suggestedAgentActions(history, 3),
     [history],
   );
-  const hasBackgroundImage = background === "graphite" || background === "meadow";
 
   function submitChat(event: FormEvent) {
     event.preventDefault();
@@ -117,21 +115,25 @@ export function NewTabPage({
       className={`new-tab-page kestrel-home new-tab-page-${background}`}
       aria-labelledby="new-tab-title"
     >
-      <div
-        className="kestrel-home-backdrop"
-        aria-hidden="true"
-        style={
-          hasBackgroundImage
-            ? { backgroundImage: `url("${meadowLandscape}")` }
-            : undefined
-        }
-      />
-
       <div className="kestrel-home-content">
         <header className="kestrel-home-hero">
           <h1 id="new-tab-title">Hi there, what should we dive into today?</h1>
 
           <form className="kestrel-home-composer" onSubmit={submitChat}>
+            <details className="kestrel-home-model-selector">
+              <summary aria-label="Model selector: Smart" title="Model selector">
+                <span>Smart</span>
+                <Icon name="chevron" />
+              </summary>
+              <div className="kestrel-home-model-popover">
+                <strong>Smart routing</strong>
+                <p>Model and thinking level live in task settings.</p>
+                <button type="button" onClick={() => onNewAgent()}>
+                  Open task settings
+                </button>
+              </div>
+            </details>
+
             <label className="sr-only" htmlFor="new-tab-chat-input">
               Message {agentName} or enter a website
             </label>
@@ -145,40 +147,16 @@ export function NewTabPage({
               spellCheck
               onChange={(event) => setInput(event.target.value)}
             />
-            <div className="kestrel-home-composer-footer">
-              <button
-                type="button"
-                className="kestrel-home-composer-icon"
-                aria-label="Add context"
-                title="Add context in the agent workspace"
-                disabled
-              >
-                <Icon name="plus" />
-              </button>
 
-              <details className="kestrel-home-model-selector">
-                <summary aria-label="Model selector: Smart" title="Model selector">
-                  <span>Smart</span>
-                  <Icon name="chevron" />
-                </summary>
-                <div className="kestrel-home-model-popover">
-                  <strong>Smart routing</strong>
-                  <button type="button" onClick={() => onNewAgent()}>
-                    Open task settings
-                  </button>
-                </div>
-              </details>
-
-              <button
-                type="submit"
-                className="kestrel-home-send"
-                aria-label={`Open message in ${agentName} composer`}
-                title={`Open message in ${agentName} composer`}
-                disabled={!input.trim()}
-              >
-                <Icon name="arrow" />
-              </button>
-            </div>
+            <button
+              type="submit"
+              className="kestrel-home-send"
+              aria-label={`Open message in ${agentName} composer`}
+              title={`Open message in ${agentName} composer`}
+              disabled={!input.trim()}
+            >
+              <Icon name="arrow" />
+            </button>
           </form>
         </header>
 
@@ -212,6 +190,7 @@ export function NewTabPage({
               </span>
               <span>
                 <strong>Your shortcuts will appear here.</strong>
+                <small>Pages you open on this Mac will land here for quick access.</small>
               </span>
             </div>
           )}

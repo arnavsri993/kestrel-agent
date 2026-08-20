@@ -444,7 +444,8 @@ export class UserBrowserService {
 		tab.title = hostnameTitle(normalized.url);
 		record.navigatingTo = normalized.url;
 		this.commit();
-		await this.syncActiveView();
+		if (tabId === this.state.activeTabId) this.revealActiveWebContent();
+		this.attachActiveWebView();
 		try {
 			await record.view.webContents.loadURL(normalized.url);
 		} catch (cause) {
@@ -483,8 +484,24 @@ export class UserBrowserService {
 	reload(tabId: string, ignoreCache = false): UserBrowserState {
 		const tab = this.requireTab(tabId);
 		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
-		const record = this.ensureView(tab);
 		tab.error = undefined;
+		tab.crashed = false;
+		const record = this.ensureView(tab);
+		if (tabId === this.state.activeTabId) this.revealActiveWebContent();
+		this.attachActiveWebView();
+		const loadedUrl = record.view.webContents.getURL?.() ?? "";
+		if (!loadedUrl) {
+			void record.view.webContents.loadURL(tab.url).catch((cause) => {
+				if (record.view.webContents.isDestroyed()) return;
+				tab.loading = false;
+				tab.error =
+					cause instanceof Error
+						? cause.message.slice(0, 500)
+						: "This page could not be opened.";
+				this.commit();
+			});
+			return this.getState();
+		}
 		if (
 			ignoreCache &&
 			typeof record.view.webContents.reloadIgnoringCache === "function"
@@ -1731,6 +1748,23 @@ export class UserBrowserService {
 	}
 
 	private async syncActiveView(): Promise<void> {
+		this.attachActiveWebView();
+	}
+
+	private revealActiveWebContent(): void {
+		if (this.contentBounds.width >= 160 && this.contentBounds.height >= 120) {
+			this.contentVisible = true;
+			return;
+		}
+		const size = this.window.getContentSize();
+		const width = Math.max(0, size[0] ?? 0);
+		const height = Math.max(0, size[1] ?? 0);
+		if (width < 160 || height < 120) return;
+		this.contentBounds = { x: 0, y: 0, width, height };
+		this.contentVisible = true;
+	}
+
+	private attachActiveWebView(): void {
 		if (this.disposed || this.window.isDestroyed()) return;
 		for (const { view } of this.views.values()) {
 			if (this.window.contentView.children.includes(view))

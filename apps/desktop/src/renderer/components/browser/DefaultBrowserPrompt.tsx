@@ -128,7 +128,7 @@ export function DefaultBrowserPrompt({
 							Set Kestrel as your default browser?
 						</h2>
 						<p id="default-browser-prompt-description">
-							Open web links from external apps directly in Kestrel.
+							Open links from other apps directly in Kestrel.
 						</p>
 						{error && <p className="default-browser-error">{error}</p>}
 					</div>
@@ -149,7 +149,7 @@ export function DefaultBrowserPrompt({
 							onClick={() => void handleSetAsDefault()}
 							disabled={settingDefault}
 						>
-							{settingDefault ? "Setting default..." : "Set as Default Browser"}
+							{settingDefault ? "Setting default…" : "Set as default browser"}
 							<Icon name="arrow" />
 						</button>
 					</div>

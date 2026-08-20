@@ -173,7 +173,7 @@ export function EventApplications({
 		<section className="page-frame event-applications-page">
 			<header className="event-applications-hero">
 				<div>
-					<h1>Opportunities</h1>
+					<h1>Apply with your agent</h1>
 				</div>
 				<div className="event-safety-note">
 					<strong>Submission stays locked</strong>
@@ -203,7 +203,7 @@ export function EventApplications({
 									>
 										<strong>{application.title}</strong>
 										<span>{application.organizer}</span>
-										<small>{application.status.replace("_", " ")}</small>
+										<small>{application.status.replaceAll("_", " ")}</small>
 									</button>
 								</li>
 							))}
@@ -270,7 +270,7 @@ export function EventApplications({
 							<header>
 								<div>
 									<span className={`event-status status-${selected.status}`}>
-										{selected.status.replace("_", " ")}
+										{selected.status.replaceAll("_", " ")}
 									</span>
 									<h2>{selected.title}</h2>
 									<p>
@@ -355,7 +355,7 @@ export function EventApplications({
 														void update(selected, { eligibility });
 													}}
 												>
-													<option value="unknown">Check</option>
+													<option value="unknown">Not checked</option>
 													<option value="yes">Eligible</option>
 													<option value="no">Not eligible</option>
 												</select>

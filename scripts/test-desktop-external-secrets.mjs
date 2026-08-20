@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-external-secret-ui-"));
 const helperPath = join(root, "credential-helper");
@@ -43,7 +44,7 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
-	await page.getByRole("button", { name: "Settings" }).click();
+	await openKestrelDestination(page, "Settings");
 	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
 
 	const external = page.locator(".external-secret-setting");

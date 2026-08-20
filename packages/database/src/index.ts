@@ -1079,6 +1079,16 @@ export class KestrelDatabase {
 		).map((row) => AgentRunSchema.parse(JSON.parse(row.payload)));
 	}
 
+	listWaitingAgentRuns(): AgentRun[] {
+		return (
+			this.db
+				.prepare(
+					"SELECT payload FROM agent_runs WHERE status = 'waiting_approval' ORDER BY updated_at DESC, id DESC",
+				)
+				.all() as Array<{ payload: string }>
+		).map((row) => AgentRunSchema.parse(JSON.parse(row.payload)));
+	}
+
 	saveModelCallAudit(audit: ModelCallAudit): void {
 		const parsed = ModelCallAuditSchema.parse(audit);
 		this.db

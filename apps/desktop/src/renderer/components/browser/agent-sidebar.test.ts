@@ -92,13 +92,13 @@ describe("sidebar approval routing", () => {
 		).toBe("approvals");
 	});
 
-	it("keeps the Approvals destination on the queue when snapshot items exist", () => {
+	it("keeps Approvals on the in-thread gate when a runtime tool is waiting", () => {
 		expect(
 			sidebarApprovalsNavTarget({
 				runtimeWaiting: true,
 				snapshotPendingCount: 1,
 			}),
-		).toBe("approvals");
+		).toBe("thread");
 	});
 
 	it("focuses the in-thread gate from Approvals when the queue is empty", () => {

@@ -102,7 +102,7 @@ export function KeyboardShortcutsModal({ onClose }: { onClose(): void }) {
 							<Icon name="command" />
 						</span>
 						<div>
-							<h2 id="shortcuts-modal-title">Keyboard Shortcuts</h2>
+							<h2 id="shortcuts-modal-title">Keyboard shortcuts</h2>
 						</div>
 					</div>
 					<button

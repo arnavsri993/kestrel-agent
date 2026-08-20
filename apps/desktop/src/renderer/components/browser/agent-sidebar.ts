@@ -34,8 +34,8 @@ export function sidebarApprovalsNavTarget(input: {
 	runtimeWaiting: boolean;
 	snapshotPendingCount: number;
 }): SidebarApprovalSurface {
-	if (input.snapshotPendingCount > 0) return "approvals";
 	if (input.runtimeWaiting) return "thread";
+	if (input.snapshotPendingCount > 0) return "approvals";
 	return "approvals";
 }
 
