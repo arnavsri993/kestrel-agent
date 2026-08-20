@@ -150,6 +150,7 @@ export class UserBrowserService {
 	private readonly onCommand?: UserBrowserServiceOptions["onCommand"];
 	private readonly onWillDownload: Parameters<Session["on"]>[1];
 	private readonly recentlyClosedTabs: Array<{ url: string; title: string }> = [];
+	private readonly popoutWindows = new Set<BrowserWindow>();
 	private sleepingTabsInterval?: ReturnType<typeof setInterval>;
 	private state: UserBrowserState;
 	private contentBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
@@ -640,6 +641,90 @@ export class UserBrowserService {
 		const bounded = Math.min(Math.max(0, toIndex), this.state.tabs.length);
 		this.state.tabs.splice(bounded, 0, tab);
 		this.commit();
+		return this.getState();
+	}
+
+	async detachTab(tabId: string): Promise<UserBrowserState> {
+		const tab = this.requireTab(tabId);
+		if (!tab.url || tab.error || isKestrelAppPageUrl(tab.url)) {
+			throw new Error("Only loaded web pages can open in a separate window.");
+		}
+		const record = this.views.get(tabId) ?? this.ensureView(tab);
+		const popout = new BrowserWindow({
+			width: 1024,
+			height: 720,
+			minWidth: 420,
+			minHeight: 280,
+			show: false,
+			titleBarStyle: "hiddenInset",
+			backgroundColor: "#ffffff",
+			title: tab.title,
+			webPreferences: {
+				nodeIntegration: false,
+				contextIsolation: true,
+				sandbox: true,
+			},
+		});
+		this.popoutWindows.add(popout);
+		if (
+			!this.window.isDestroyed() &&
+			this.window.contentView.children.includes(record.view)
+		) {
+			this.window.contentView.removeChildView(record.view);
+		}
+		record.view.setVisible(false);
+		popout.contentView.addChildView(record.view);
+		const syncPopoutBounds = () => {
+			if (popout.isDestroyed() || record.view.webContents.isDestroyed()) return;
+			const [width, height] = popout.getContentSize();
+			record.view.setBounds({
+				x: 0,
+				y: 0,
+				width: Math.max(0, width),
+				height: Math.max(0, height),
+			});
+			record.view.setVisible(true);
+		};
+		popout.on("resize", syncPopoutBounds);
+		popout.once("ready-to-show", () => {
+			syncPopoutBounds();
+			popout.show();
+		});
+		setTimeout(() => {
+			if (!popout.isDestroyed() && !popout.isVisible()) {
+				syncPopoutBounds();
+				popout.show();
+			}
+		}, 120);
+		popout.on("closed", () => {
+			popout.removeAllListeners("resize");
+			this.popoutWindows.delete(popout);
+			if (
+				!this.window.isDestroyed() &&
+				this.window.contentView.children.includes(record.view)
+			) {
+				this.window.contentView.removeChildView(record.view);
+			}
+			if (!record.view.webContents.isDestroyed()) {
+				record.view.webContents.close({ waitForBeforeUnload: false });
+			}
+		});
+
+		this.views.delete(tabId);
+		this.elementRefs.delete(tabId);
+		this.webContentsToTab.delete(record.view.webContents.id);
+		const index = this.state.tabs.findIndex((item) => item.id === tabId);
+		this.state.tabs.splice(index, 1);
+		if (this.state.tabs.length === 0) {
+			const replacement = createEmptyBrowserTab(this.now);
+			this.state.tabs.push(replacement);
+			this.state.activeTabId = replacement.id;
+		} else if (this.state.activeTabId === tabId) {
+			this.state.activeTabId =
+				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
+		}
+		this.commit();
+		await this.syncActiveView();
 		return this.getState();
 	}
 
@@ -1256,6 +1341,10 @@ export class UserBrowserService {
 		this.disposed = true;
 		if (this.sleepingTabsInterval) clearInterval(this.sleepingTabsInterval);
 		this.partition.off("will-download", this.onWillDownload);
+		for (const popout of [...this.popoutWindows]) {
+			if (!popout.isDestroyed()) popout.close();
+		}
+		this.popoutWindows.clear();
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
 		this.elementRefs.clear();
 	}

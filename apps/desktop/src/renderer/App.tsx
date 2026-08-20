@@ -8552,6 +8552,7 @@ export function App() {
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
+	const [workspaceGrants, setWorkspaceGrants] = useState<WorkspaceGrant[]>([]);
 	const [runtimeAgentState, setRuntimeAgentState] = useState<AgentState | null>(
 		null,
 	);
@@ -8624,6 +8625,25 @@ export function App() {
 			})
 			.catch(() => undefined);
 
+		return () => {
+			active = false;
+		};
+	}, [onboarded]);
+	useEffect(() => {
+		if (!onboarded) return;
+		let active = true;
+		void window.kestrel
+			.request({ type: "get-workspace-grants" })
+			.then((response) => {
+				if (
+					active &&
+					response.ok &&
+					"workspaceGrants" in response
+				) {
+					setWorkspaceGrants(response.workspaceGrants);
+				}
+			})
+			.catch(() => undefined);
 		return () => {
 			active = false;
 		};
@@ -9216,6 +9236,9 @@ export function App() {
 						onOpenBookmarks={openBrowserBookmarks}
 						onOpenMenu={openCommandCenter}
 						onShowShortcuts={() => setShowShortcuts(true)}
+						sessions={runtimeSessions}
+						projects={availableWorkspaceGrants(workspaceGrants)}
+						onOpenSession={openSidebarSession}
 						{...(appPage ? { appPage } : {})}
 					/>
 				</section>
