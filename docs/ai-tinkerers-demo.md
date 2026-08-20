@@ -55,10 +55,11 @@ is delayed, so Ollama's configured keep-alive does not expire.
 3. Show Kestrel's selected local model and plan. Keep the discussion on the
    mechanism: scoped workspace access, isolated core, and automatic routing.
 4. Approve only the proposed local edit. Let Kestrel apply it and run the
-   focused check.
+   focused check. Point at the in-thread gate: policy level, selected route,
+   idempotency key, and the restart-safe pause in encrypted local state.
 5. Open **Activity** and show the verified file/test evidence. The visible
-   result should be the changed artifact and passing check, not a claim that the
-   task worked.
+   result should be the changed artifact, the verification method, and the
+   evidence hash—not a claim that the task worked.
 6. End by asking Kestrel to prepare—but not publish—a concise pull-request
    summary. Explain that sending, publishing, deleting, purchasing, and
    permission changes require a separate approval.
