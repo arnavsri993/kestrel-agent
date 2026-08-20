@@ -2,14 +2,19 @@ import { useMemo, useRef, useState, type FormEvent } from "react";
 import type {
   UserBrowserBookmark,
   UserBrowserHistoryEntry,
+  UserBrowserOriginFavicon,
   UserBrowserSettings,
+  UserBrowserTab,
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
 import {
   browserSiteLabel,
   frequentBrowserSites,
+  originFaviconMap,
+  siteAccent,
   siteInitial,
   suggestedAgentActions,
+  type FrequentBrowserSite,
 } from "./new-tab";
 import "./new-tab.css";
 
@@ -29,9 +34,37 @@ function homeInputLooksLikeBrowse(value: string): boolean {
   }
 }
 
+function FrequentTabGlyph({ site }: { site: FrequentBrowserSite }) {
+  const [broken, setBroken] = useState(false);
+  const showFavicon = Boolean(site.faviconDataUrl) && !broken;
+
+  return (
+    <span
+      className={`kestrel-home-shortcut-glyph ${
+        showFavicon
+          ? "has-favicon"
+          : `site-accent-${siteAccent(site.hostname)}`
+      }`}
+      aria-hidden="true"
+    >
+      {showFavicon ? (
+        <img
+          src={site.faviconDataUrl}
+          alt=""
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        siteInitial(site)
+      )}
+    </span>
+  );
+}
+
 export function NewTabPage({
   history,
   bookmarks = [],
+  tabs = [],
+  originFavicons = [],
   background,
   agentName,
   onNavigate,
@@ -39,6 +72,8 @@ export function NewTabPage({
 }: {
   history: UserBrowserHistoryEntry[];
   bookmarks?: UserBrowserBookmark[];
+  tabs?: Pick<UserBrowserTab, "url" | "faviconDataUrl">[];
+  originFavicons?: Pick<UserBrowserOriginFavicon, "origin" | "faviconDataUrl">[];
   background: UserBrowserSettings["newTabBackground"];
   agentName: string;
   onNavigate(input: string): void;
@@ -46,9 +81,13 @@ export function NewTabPage({
 }) {
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const faviconByOrigin = useMemo(
+    () => originFaviconMap(originFavicons, tabs),
+    [originFavicons, tabs],
+  );
   const frequent = useMemo(
-    () => frequentBrowserSites(history, 7),
-    [history],
+    () => frequentBrowserSites(history, 7, faviconByOrigin),
+    [faviconByOrigin, history],
   );
   const suggestedActions = useMemo(
     () => suggestedAgentActions(history, 3),
@@ -136,9 +175,7 @@ export function NewTabPage({
                   onClick={() => onNavigate(site.url)}
                   title={`${browserSiteLabel(site)} · ${site.hostname}`}
                 >
-                  <span className="kestrel-home-shortcut-glyph" aria-hidden="true">
-                    {siteInitial(site)}
-                  </span>
+                  <FrequentTabGlyph site={site} />
                   <span className="kestrel-home-shortcut-copy">
                     <strong>{browserSiteLabel(site, 24)}</strong>
                     <small>{site.hostname}</small>

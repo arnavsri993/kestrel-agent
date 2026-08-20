@@ -277,6 +277,24 @@
   font: 700 15px / 1 var(--mono);
 }
 
+.kestrel-home-shortcut-glyph.has-favicon {
+  overflow: hidden;
+  background: rgb(255 255 255 / 92%);
+  border-color: rgb(255 255 255 / 28%);
+}
+
+.kestrel-home-shortcut-glyph.has-favicon img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+}
+
+.kestrel-home-shortcut:hover .kestrel-home-shortcut-glyph.has-favicon,
+.kestrel-home-shortcut:focus-visible .kestrel-home-shortcut-glyph.has-favicon {
+  background: rgb(255 255 255 / 98%);
+}
+
 .kestrel-home-shortcut-copy {
   display: grid;
   min-width: 0;

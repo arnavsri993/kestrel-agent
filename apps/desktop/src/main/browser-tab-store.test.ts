@@ -6,10 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	BrowserTabStore,
 	freshBrowserState,
+	MAX_ORIGIN_FAVICONS,
 	normalizeBrowserAddress,
 	redactUntrustedBrowserText,
 	sanitizeBrowserUrl,
 	sanitizeUntrustedBrowserValue,
+	upsertOriginFavicon,
 } from "./browser-tab-store";
 
 const temporaryDirectories: string[] = [];
@@ -187,7 +189,10 @@ describe("browser tab persistence", () => {
 
 		store.save(state);
 
-		expect(readFileSync(path, "utf8")).not.toContain("faviconDataUrl");
+		const saved = JSON.parse(readFileSync(path, "utf8")) as {
+			tabs: Array<{ faviconDataUrl?: string }>;
+		};
+		expect(saved.tabs[0]?.faviconDataUrl).toBeUndefined();
 		expect(store.load().tabs[0]).toMatchObject({
 			title: "Kestrel",
 			url: "https://example.com/",
@@ -196,6 +201,39 @@ describe("browser tab persistence", () => {
 			discarded: true,
 			error: undefined,
 		});
+	});
+
+	it("persists origin favicons for frequent tabs without keeping tab favicons", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+		state.tabs[0] = {
+			...state.tabs[0]!,
+			url: "https://example.com/",
+			faviconDataUrl: "data:image/png;base64,TAB",
+		};
+		state.originFavicons = [
+			{
+				origin: "https://example.com",
+				faviconDataUrl: "data:image/png;base64,ORIGIN",
+				updatedAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
+		store.save(state);
+
+		const saved = JSON.parse(readFileSync(path, "utf8")) as {
+			tabs: Array<{ faviconDataUrl?: string }>;
+			originFavicons: Array<{ origin: string; faviconDataUrl: string }>;
+		};
+		expect(saved.tabs[0]?.faviconDataUrl).toBeUndefined();
+		expect(saved.originFavicons).toEqual([
+			{
+				origin: "https://example.com",
+				faviconDataUrl: "data:image/png;base64,ORIGIN",
+				updatedAt: "2026-08-11T12:00:00.000Z",
+			},
+		]);
+		expect(store.load().originFavicons).toEqual(saved.originFavicons);
 	});
 
 	it("restores kestrel app pages without treating them as sleeping web views", () => {
@@ -286,6 +324,13 @@ describe("browser tab persistence", () => {
 			title: "Example",
 			visitedAt: "2026-08-11T12:00:00.000Z",
 		});
+		state.originFavicons = [
+			{
+				origin: "https://example.com",
+				faviconDataUrl: "data:image/png;base64,ORIGIN",
+				updatedAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
 		store.save(state);
 
 		const restored = store.load(() => new Date("2026-08-12T12:00:00.000Z"));
@@ -293,5 +338,45 @@ describe("browser tab persistence", () => {
 		expect(restored.tabs).toHaveLength(1);
 		expect(restored.tabs[0]?.url).toBe("");
 		expect(restored.history).toHaveLength(1);
+		expect(restored.originFavicons).toEqual(state.originFavicons);
+	});
+});
+
+describe("origin favicon cache", () => {
+	it("replaces the same origin and drops the oldest extras", () => {
+		const first = upsertOriginFavicon(
+			[],
+			"https://a.example",
+			"data:image/png;base64,A",
+			"2026-08-11T12:00:00.000Z",
+		);
+		const updated = upsertOriginFavicon(
+			first,
+			"https://a.example",
+			"data:image/png;base64,A2",
+			"2026-08-11T13:00:00.000Z",
+		);
+		expect(updated).toEqual([
+			{
+				origin: "https://a.example",
+				faviconDataUrl: "data:image/png;base64,A2",
+				updatedAt: "2026-08-11T13:00:00.000Z",
+			},
+		]);
+
+		let current: ReturnType<typeof upsertOriginFavicon> = [];
+		for (let index = 0; index < MAX_ORIGIN_FAVICONS + 3; index += 1) {
+			current = upsertOriginFavicon(
+				current,
+				`https://site-${index}.example`,
+				`data:image/png;base64,${index}`,
+				"2026-08-11T12:00:00.000Z",
+			);
+		}
+		expect(current).toHaveLength(MAX_ORIGIN_FAVICONS);
+		expect(current[0]?.origin).toBe("https://site-3.example");
+		expect(current.at(-1)?.origin).toBe(
+			`https://site-${MAX_ORIGIN_FAVICONS + 2}.example`,
+		);
 	});
 });
