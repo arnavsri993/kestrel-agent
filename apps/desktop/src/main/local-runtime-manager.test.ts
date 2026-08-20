@@ -192,6 +192,23 @@ describe("managed local runtime", () => {
 			{ name: "qwen:test", size: 42 },
 		]);
 		await relaunched.stop();
+
+		serviceReady = false;
+		const warmed = new LocalRuntimeManager(root, () => undefined, {
+			fetch: fetcher,
+			execFile: execute,
+			platform: "darwin",
+			architecture: "arm64",
+			manifest,
+			origin: isolatedOrigin,
+			spawn: (() => {
+				serviceReady = true;
+				return fakeChild();
+			}) as unknown as typeof import("node:child_process").spawn,
+		});
+		await warmed.ensureChatReady();
+		expect(serviceReady).toBe(true);
+		await warmed.stop();
 	});
 
 	it("rejects a managed runtime origin outside the loopback interface", async () => {
@@ -331,6 +348,27 @@ describe("managed local runtime", () => {
 		await expect(manager.bootstrap("qwen:test")).rejects.toThrow(
 			"manual setup",
 		);
+	});
+
+	it("leaves chat ready a no-op when no managed runtime is installed", async () => {
+		const root = await mkdtemp(join(tmpdir(), "workstrand-local-runtime-"));
+		roots.push(root);
+		let spawned = false;
+		const manager = new LocalRuntimeManager(root, () => undefined, {
+			fetch: (async () => {
+				throw new TypeError("connection refused");
+			}) as typeof fetch,
+			platform: "darwin",
+			architecture: "arm64",
+			manifest: testManifest(new TextEncoder().encode("archive")),
+			spawn: (() => {
+				spawned = true;
+				return fakeChild();
+			}) as unknown as typeof import("node:child_process").spawn,
+		});
+
+		await expect(manager.ensureChatReady()).resolves.toBeUndefined();
+		expect(spawned).toBe(false);
 	});
 
 	it("does not offer the managed runtime on Intel Macs", async () => {
