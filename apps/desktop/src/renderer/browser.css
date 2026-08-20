@@ -741,11 +741,10 @@ body:has(.ai-browser-app),
 
 .browser-tabs {
 	display: flex;
-	/* Let the tab group use the open space instead of collapsing to title width. */
-	flex: 1 1 0;
+	/* Shrink-wrap the tabs so the new-tab control stays beside the last tab. */
+	flex: 0 1 auto;
 	align-items: flex-end;
 	min-width: 0;
-	max-width: 100%;
 	overflow-x: auto;
 	scrollbar-width: none;
 }
@@ -787,6 +786,7 @@ body:has(.ai-browser-app),
 }
 .browser-tab.active::after,
 .browser-tab:hover::after,
+.browser-tab:last-child::after,
 .browser-tab:has(+ .browser-tab.active)::after,
 .browser-tab:has(+ .browser-tab:hover)::after {
 	opacity: 0;
@@ -947,7 +947,7 @@ body:has(.ai-browser-app),
 	display: none;
 }
 .browser-tab-drag-fill {
-	flex: 0 0 24px;
+	flex: 1 1 32px;
 	min-width: 24px;
 	height: 34px;
 }
