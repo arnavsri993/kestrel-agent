@@ -76,11 +76,7 @@ import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
-import {
-	sidebarActiveDestination,
-	sidebarApprovalsNavTarget,
-	sidebarReviewTarget,
-} from "./components/browser/agent-sidebar";
+import { sidebarReviewTarget } from "./components/browser/agent-sidebar";
 import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -8828,32 +8824,6 @@ export function App() {
 		}
 		void openBrowserWorkspace();
 	}, [browser, openBrowserWorkspace]);
-	const openPrimaryDestination = useCallback(
-		(destination: "browser" | "agent" | "approvals" | "settings") => {
-			if (destination === "browser") {
-				void openBrowserWorkspace();
-				return;
-			}
-			if (
-				destination === "approvals" &&
-				sidebarApprovalsNavTarget({
-					runtimeWaiting,
-					snapshotPendingCount,
-				}) === "thread"
-			) {
-				focusRuntimeApproval();
-				return;
-			}
-			void openAppPage(destination);
-		},
-		[
-			focusRuntimeApproval,
-			openAppPage,
-			openBrowserWorkspace,
-			runtimeWaiting,
-			snapshotPendingCount,
-		],
-	);
 	useEffect(
 		() =>
 			window.kestrel.onDeepLink((deepLink) => {
@@ -9283,14 +9253,10 @@ export function App() {
 					collapsed={!agentSidebarOpen}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
-					activeDestination={sidebarActiveDestination(
-						activeBrowserTab?.url ?? "browser",
-					)}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
 					onReviewApprovals={reviewApprovals}
-					onNavigate={openPrimaryDestination}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
             streams, steering, cancellation, and approval boundaries remain intact. */}

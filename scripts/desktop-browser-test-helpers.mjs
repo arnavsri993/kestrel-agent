@@ -1,11 +1,13 @@
 export async function openKestrelDestination(page, label) {
-	await page
-		.locator(".agent-sidebar-footer")
-		.getByRole("button", { name: "Browser", exact: true })
-		.click();
-	await page
-		.getByRole("button", { name: "Capabilities and commands", exact: true })
-		.click();
+	const capabilities = page.getByRole("button", {
+		name: "Capabilities and commands",
+		exact: true,
+	});
+	if (await capabilities.isVisible()) {
+		await capabilities.click();
+	} else {
+		await page.keyboard.press("Meta+K");
+	}
 	await page
 		.getByRole("heading", { name: "Capabilities", exact: true })
 		.waitFor();

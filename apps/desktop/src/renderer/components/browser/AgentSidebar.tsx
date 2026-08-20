@@ -15,11 +15,9 @@ export function AgentSidebar({
 	collapsed,
 	agentState,
 	pendingApprovals = 0,
-	activeDestination,
 	onNewAgent,
 	onToggleAgent,
 	onExpandChat,
-	onNavigate,
 	onReviewApprovals,
 }: {
 	children: ReactNode;
@@ -31,11 +29,9 @@ export function AgentSidebar({
 	collapsed: boolean;
 	agentState: AgentState;
 	pendingApprovals?: number;
-	activeDestination: string;
 	onNewAgent(prompt?: string): void;
 	onToggleAgent(): void;
 	onExpandChat(): void;
-	onNavigate(destination: "browser" | "agent" | "approvals" | "settings"): void;
 	onReviewApprovals?(): void;
 }) {
 	const activeSession = sessions.find((session) => session.id === activeSessionId);
@@ -109,36 +105,6 @@ export function AgentSidebar({
 			<div className="agent-sidebar-main">
 				<div className="agent-full-page-workspace">{workspace}</div>
 				<div className="agent-conversation-host">{children}</div>
-			</div>
-			<div className="agent-sidebar-footer">
-				<nav aria-label="Kestrel destinations">
-					{(
-						[
-							["browser", "Browser", "browser"],
-							["agent", "Agent", "agent"],
-							["approvals", "Approvals", "approvals"],
-							["settings", "Settings", "settings"],
-						] as const
-					).map(([destination, label, icon]) => (
-						<button
-							type="button"
-							key={destination}
-							id={destination === "browser" ? "kestrel-browser-nav" : undefined}
-							aria-label={label}
-							aria-current={
-								activeDestination === destination ? "page" : undefined
-							}
-							className={activeDestination === destination ? "active" : ""}
-							onClick={() => onNavigate(destination)}
-						>
-							<Icon name={icon} />
-							{destination === "approvals" && pendingApprovals > 0 && (
-								<span className="agent-approval-dot" aria-hidden="true" />
-							)}
-							<span>{label}</span>
-						</button>
-					))}
-				</nav>
 			</div>
 		</aside>
 	);

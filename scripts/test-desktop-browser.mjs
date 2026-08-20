@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
@@ -257,17 +258,17 @@ try {
 			: -1;
 	});
 	assert.equal(homeSessionsAfter, homeSessionsBefore);
-	await page.getByRole("button", { name: "New task", exact: true }).click();
+	await page.getByRole("button", { name: "New chat" }).click();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await openKestrelDestination(page, "Settings");
 	await page
 		.getByRole("navigation", { name: "Settings sections" })
 		.getByRole("button", { name: /^Browser/ })
 		.click();
 	await page.getByRole("heading", { name: "Tabs & General" }).waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
-	await page.getByRole("button", { name: "Browser", exact: true }).first().click();
+	await page.getByRole("button", { name: "Back to Browser" }).click();
 	await page
 		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
 		.waitFor();
@@ -489,7 +490,7 @@ try {
 	const tabId = state.activeTabId;
 	assert(tabId);
 	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
-	await page.getByRole("button", { name: "Agent", exact: true }).last().click();
+	await page.getByRole("button", { name: "Open chat in the full window" }).click();
 	await page
 		.getByRole("heading", { name: "Agent Workspace", exact: true })
 		.waitFor();
@@ -503,7 +504,7 @@ try {
 	await taskRow.waitFor();
 	await taskRow.click();
 	assert.equal(await taskRow.getAttribute("aria-current"), "page");
-	await page.getByRole("button", { name: "Browser", exact: true }).click();
+	await page.getByRole("button", { name: "Back to Browser" }).click();
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after leaving Agent",
@@ -734,7 +735,7 @@ try {
 		.getByRole("heading", { name: "Files from the web", exact: true })
 		.waitFor();
 	await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await openKestrelDestination(page, "Settings");
 	await page
 		.getByRole("heading", { name: "Preferences", exact: true })
 		.waitFor();
@@ -766,7 +767,7 @@ try {
 	);
 	await useCurrentPage.check();
 
-	await page.getByRole("button", { name: "Browser", exact: true }).click();
+	await page.getByRole("button", { name: "Back to Browser" }).click();
 	await page.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	assert.equal(
 		await page
