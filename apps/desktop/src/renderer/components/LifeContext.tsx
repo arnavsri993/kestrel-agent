@@ -114,15 +114,21 @@ function originLabel(event: UnifiedCalendarEvent): string {
 	return `Suggested · ${Math.round(event.confidence * 100)}%`;
 }
 
+function formatDisplayLabel(value: string): string {
+	return value
+		.replaceAll("_", " ")
+		.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 function memoryState(memory: MemoryRecord): string {
-	return (
+	return formatDisplayLabel(
 		memory.confirmationStatus ??
-		(memory.userConfirmed
-			? "confirmed"
-			: memory.inferred
-				? "inferred"
-				: "suggested")
-	).replaceAll("_", " ");
+			(memory.userConfirmed
+				? "confirmed"
+				: memory.inferred
+					? "inferred"
+					: "suggested"),
+	);
 }
 
 async function request(
@@ -973,7 +979,7 @@ function MemoryView({
 							<div>
 								<strong>{memory.subject ?? memory.content}</strong>
 								<small>
-									{(memory.layer ?? "mid_term").replaceAll("_", " ")} ·{" "}
+									{formatDisplayLabel(memory.layer ?? "mid_term")} ·{" "}
 									{memoryState(memory)} · {Math.round(memory.confidence * 100)}%
 								</small>
 							</div>
@@ -1234,7 +1240,7 @@ export function LifeContext({
 	return (
 		<div className="life-page">
 			<header className="page-header life-header">
-				<h1>Your context</h1>
+				<h1>Life</h1>
 			</header>
 			<nav className="life-switcher" aria-label="Life views">
 				{(

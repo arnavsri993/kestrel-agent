@@ -37,7 +37,7 @@ export function AgentSidebar({
 	const activeSession = sessions.find((session) => session.id === activeSessionId);
 	const currentTaskTitle = activeSession
 		? sessionTitleForDisplay(activeSession.title)
-		: "New chat";
+		: "New task";
 	const projectName = agentWorkspaceName(activeSession?.workspaceRoot);
 	const showReview = Boolean(
 		onReviewApprovals &&
@@ -68,9 +68,9 @@ export function AgentSidebar({
 					<button
 						type="button"
 						className="agent-sidebar-new"
-						aria-label="New chat"
+						aria-label="New task"
 						aria-keyshortcuts="Meta+N"
-						title="New chat"
+						title="New task"
 						onClick={() => onNewAgent()}
 					>
 						<Icon name="plus" />
@@ -86,7 +86,7 @@ export function AgentSidebar({
 						title={`Minimize ${agentName}`}
 						onClick={onToggleAgent}
 					>
-						<Icon name="chevron" />
+						<Icon name="chevron" className="agent-sidebar-collapse-icon" />
 					</button>
 				</div>
 				{showReview && (

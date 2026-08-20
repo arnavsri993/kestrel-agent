@@ -107,6 +107,15 @@
 	line-height: 1;
 }
 
+.browser-bookmarks-bar-link > span:not(.browser-bookmarks-bar-glyph),
+.browser-bookmarks-bar-label {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .browser-bookmarks-bar-empty {
 	max-width: none;
 	color: var(--muted);

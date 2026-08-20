@@ -1,8 +1,32 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ComponentProps, type ReactNode } from "react";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import { Icon } from "../Icon";
-import { EmptyState } from "../ui";
 import { SurfaceBackButton } from "./SurfaceBackButton";
+
+function LibraryEmptyState({
+	icon,
+	title,
+	detail,
+	action,
+	className = "",
+}: {
+	icon: ComponentProps<typeof Icon>["name"];
+	title: string;
+	detail?: string;
+	action?: ReactNode;
+	className?: string;
+}) {
+	return (
+		<section className={`ui-empty-state ${className}`.trim()}>
+			<span className="ui-empty-state-mark" aria-hidden="true">
+				<Icon name={icon} />
+			</span>
+			<h2>{title}</h2>
+			{detail ? <p>{detail}</p> : null}
+			{action && <div className="ui-empty-state-action">{action}</div>}
+		</section>
+	);
+}
 
 function compactBytes(value: number): string {
 	if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
@@ -77,8 +101,9 @@ export function BrowserHistory({
 				)}
 			</header>
 			{filtered.length === 0 ? (
-				<EmptyState
+				<LibraryEmptyState
 					className="library-empty"
+					icon="history"
 					title={query ? "No matching pages" : "No history yet"}
 					detail={
 						query
@@ -140,8 +165,9 @@ export function BrowserDownloads({
 				</div>
 			</header>
 			{downloads.length === 0 ? (
-				<EmptyState
+				<LibraryEmptyState
 					className="library-empty"
+					icon="downloads"
 					title="No downloads yet"
 					detail="Files you save will appear here on this Mac."
 				/>
@@ -265,8 +291,9 @@ export function BrowserBookmarks({
 				</label>
 			</header>
 			{filtered.length === 0 ? (
-				<EmptyState
+				<LibraryEmptyState
 					className="library-empty"
+					icon="star"
 					title={query ? "No matching bookmarks" : "No bookmarks yet"}
 					detail={
 						query
@@ -300,13 +327,16 @@ export function BrowserBookmarks({
 									<strong>{entry.title}</strong>
 									<small>{entry.url}</small>
 								</span>
-							</button>
-							<button
-								type="button"
-								className="quiet-link"
-								onClick={() => void browser.removeBookmark(entry.id)}
-							>
-								Remove
+								<span
+									className="quiet-link"
+									onClick={(event) => {
+										event.preventDefault();
+										event.stopPropagation();
+										void browser.removeBookmark(entry.id);
+									}}
+								>
+									Remove
+								</span>
 							</button>
 						</li>
 					))}

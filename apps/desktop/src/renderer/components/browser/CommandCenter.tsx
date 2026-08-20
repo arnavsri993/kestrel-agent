@@ -63,7 +63,7 @@ export function CommandCenter({
         <input
           autoFocus
           value={query}
-          placeholder="Search actions and settings"
+          placeholder="Search capabilities"
           onChange={(event) => setQuery(event.target.value)}
         />
         <kbd>⌘ K</kbd>
@@ -80,7 +80,7 @@ export function CommandCenter({
               <strong>New task</strong>
               <small>Start with an outcome</small>
             </span>
-            <Icon name="arrow" />
+            <Icon name="chevron" />
           </button>
           <button type="button" onClick={() => onSelect("approvals")}>
             <Icon name="approvals" />
@@ -92,7 +92,7 @@ export function CommandCenter({
                   : "Nothing waiting"}
               </small>
             </span>
-            <Icon name="arrow" />
+            <Icon name="chevron" />
           </button>
           <button type="button" onClick={() => onSelect("readiness")}>
             <Icon name="readiness" />
@@ -100,7 +100,7 @@ export function CommandCenter({
               <strong>Readiness</strong>
               <small>Check what can work</small>
             </span>
-            <Icon name="arrow" />
+            <Icon name="chevron" />
           </button>
           <button type="button" onClick={() => onSelect("research")}>
             <Icon name="research" />
@@ -108,7 +108,7 @@ export function CommandCenter({
               <strong>Research</strong>
               <small>Search with sources</small>
             </span>
-            <Icon name="arrow" />
+            <Icon name="chevron" />
           </button>
         </div>
       </section>

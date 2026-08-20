@@ -164,7 +164,12 @@ export function ApprovalCard({
 						exit={{ opacity: 0 }}
 					>
 						<label className="policy-check">
-							<input type="checkbox" disabled />
+							<input
+								type="checkbox"
+								disabled
+								aria-label="Policy suggestion preview only"
+								title="Preview only — policy editing arrives with real connector setup"
+							/>
 							<span>
 								{approval.policySuggestion}
 								<small>Policy editing arrives with real connector setup.</small>

@@ -184,9 +184,7 @@ try {
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
-	await page
-		.getByText("Balanced is recommended for this Mac.", { exact: true })
-		.waitFor();
+	await page.locator(".recommended-model-tiers article.preferred").waitFor();
 	const tierNames = page.locator(".model-tier-name strong");
 	await tierNames.first().waitFor();
 	const names = await tierNames.allTextContents();
@@ -235,7 +233,7 @@ try {
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
 	await page
-		.getByRole("heading", { name: "Connect a free account." })
+		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();
 	await page.getByText("More ways to run models", { exact: true }).waitFor();
 	await page
@@ -458,7 +456,7 @@ try {
 	await page.getByRole("heading", { name: "Preferences" }).waitFor();
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
-	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
+	await page.getByRole("heading", { name: "Connections" }).waitFor();
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ hasText: "ChatGPT" });

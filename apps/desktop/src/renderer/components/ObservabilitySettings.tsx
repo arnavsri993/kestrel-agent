@@ -9,7 +9,7 @@ const EMPTY: ObservabilityConfiguration = {
 	otlp: {
 		enabled: false,
 		endpoint: "",
-		serviceName: "workstrand-agent",
+		serviceName: "kestrel-agent",
 		headerName: "authorization",
 		metrics: true,
 		traces: true,
@@ -354,14 +354,14 @@ export function ObservabilitySettings() {
 				)}
 				<div className="button-row observability-actions">
 					<button
-						className="button secondary"
+						className="button primary"
 						disabled={Boolean(busy) || !canSave}
 						onClick={() => void save()}
 					>
 						{busy === "save" ? "Saving…" : "Save observability"}
 					</button>
 					<button
-						className="button primary"
+						className="button secondary"
 						disabled={Boolean(busy) || !canTest}
 						onClick={() => void testCollector()}
 					>

@@ -270,7 +270,12 @@ export function GoalKanban({
 											>
 												<div className="kanban-card-meta">
 													<span>{goal.title}</span>
-													<span aria-hidden="true">⋮⋮</span>
+													<span
+														className="kanban-drag-handle"
+														aria-label="Drag to move task"
+													>
+														<span aria-hidden="true">⋮⋮</span>
+													</span>
 												</div>
 												<h4>{task.title}</h4>
 												{task.dueAt && (

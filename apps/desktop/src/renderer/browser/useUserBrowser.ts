@@ -51,6 +51,7 @@ export interface UserBrowserController {
 	duplicateTab(tabId: string): Promise<void>;
 	closeOtherTabs(tabId: string): Promise<void>;
 	moveTab(tabId: string, toIndex: number): Promise<void>;
+	detachTab(tabId: string): Promise<void>;
 	findInPage(
 		tabId: string,
 		query: string,
@@ -307,6 +308,10 @@ export function useUserBrowser(): UserBrowserController {
 			requestState({ type: "browser-move-tab", tabId, toIndex }),
 		[requestState],
 	);
+	const detachTab = useCallback(
+		(tabId: string) => requestState({ type: "browser-detach-tab", tabId }),
+		[requestState],
+	);
 	const findInPage = useCallback(
 		(
 			tabId: string,
@@ -385,6 +390,7 @@ export function useUserBrowser(): UserBrowserController {
 			duplicateTab,
 			closeOtherTabs,
 			moveTab,
+			detachTab,
 			findInPage,
 			stopFindInPage,
 			printTab,
@@ -424,6 +430,7 @@ export function useUserBrowser(): UserBrowserController {
 			duplicateTab,
 			closeOtherTabs,
 			moveTab,
+			detachTab,
 			findInPage,
 			stopFindInPage,
 			printTab,
