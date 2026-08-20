@@ -1228,10 +1228,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									<br />
 									Kestrel gets it done.
 								</h1>
-								<p>
-									Give it an outcome. Kestrel plans the work, asks when it
-									matters, and shows what changed.
-								</p>
 							</div>
 						)}
 
