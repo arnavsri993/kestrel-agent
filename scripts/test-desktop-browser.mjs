@@ -383,6 +383,82 @@ try {
 	assert(addedBlankTab);
 	const horizontalTabs = page.getByRole("tab");
 	await horizontalTabs.nth(1).waitFor();
+	const crowdedTabIds = await page.evaluate(async (count) => {
+		const ids = [];
+		for (let index = 0; index < count; index += 1) {
+			const response = await window.kestrel.request({
+				type: "browser-create-tab",
+				active: false,
+			});
+			if (!response.ok || !("browserState" in response))
+				throw new Error("A crowded tab fixture could not be created.");
+			const created = response.browserState.tabs.at(-1);
+			if (!created) throw new Error("The crowded tab fixture had no id.");
+			ids.push(created.id);
+		}
+		return ids;
+	}, 18);
+	state = await waitForBrowserState(
+		(value) => value.tabs.length === initialTabs + 1 + crowdedTabIds.length,
+		"crowded tab fixture",
+	);
+	const tabRail = page.locator(".browser-tabs");
+	const newTabControl = page.getByRole("button", {
+		name: "New Tab",
+		exact: true,
+	});
+	const railMetrics = await tabRail.evaluate((node) => ({
+		clientWidth: node.clientWidth,
+		scrollWidth: node.scrollWidth,
+	}));
+	assert(railMetrics.scrollWidth > railMetrics.clientWidth);
+	const railBounds = await tabRail.boundingBox();
+	const newTabBounds = await newTabControl.boundingBox();
+	const windowWidth = await page.evaluate(() => window.innerWidth);
+	assert(railBounds);
+	assert(newTabBounds);
+	assert(newTabBounds.x >= railBounds.x + railBounds.width);
+	assert(newTabBounds.x + newTabBounds.width <= windowWidth);
+	const firstTabId = state.tabs[0]?.id;
+	assert(firstTabId);
+	await horizontalTabs.first().click();
+	await waitForBrowserState(
+		(value) => value.activeTabId === firstTabId,
+		"clicking an existing crowded tab",
+	);
+	const lastCrowdedTabId = crowdedTabIds.at(-1);
+	assert(lastCrowdedTabId);
+	await page.evaluate(
+		async (tabId) => window.kestrel.request({ type: "browser-select-tab", tabId }),
+		lastCrowdedTabId,
+	);
+	await waitForBrowserState(
+		(value) => value.activeTabId === lastCrowdedTabId,
+		"selecting the last crowded tab",
+	);
+	await page.waitForFunction(
+		(index) =>
+			document.querySelectorAll(".browser-tabs .browser-tab")[
+				index
+			]?.classList.contains("active") === true,
+		state.tabs.length - 1,
+	);
+	const activeTabVisibility = await tabRail.evaluate((node) => {
+		const active = node.querySelector(".browser-tab.active");
+		if (!active) return false;
+		const rail = node.getBoundingClientRect();
+		const tab = active.getBoundingClientRect();
+		return tab.left >= rail.left && tab.right <= rail.right;
+	});
+	assert(activeTabVisibility);
+	await page.evaluate(async (tabIds) => {
+		for (const tabId of tabIds)
+			await window.kestrel.request({ type: "browser-close-tab", tabId });
+	}, crowdedTabIds);
+	await waitForBrowserState(
+		(value) => value.tabs.length === initialTabs + 1,
+		"crowded tab cleanup",
+	);
 	await horizontalTabs.first().focus();
 	await horizontalTabs.first().press("ArrowRight");
 	assert.equal(

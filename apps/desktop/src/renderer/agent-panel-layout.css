@@ -606,18 +606,15 @@
 	}
 }
 
-/* The active tab carries the same white accent as other active navigation. */
-.browser-tab.active {
-	box-shadow: inset 0 2px 0 var(--solid);
-}
-
 .browser-tab-row-vertical .browser-tab.active {
 	box-shadow: inset 2px 0 0 var(--solid);
 }
 
-/* Sleeping tabs recede without hue. */
-.browser-tab.tab-sleeping {
-	transition: opacity var(--motion-state) var(--ease-kestrel);
+/* Sleeping tabs use the same neutral surface treatment in every shell. */
+.browser-tab.tab-sleeping:not(.active) {
+	transition:
+		background-color var(--motion-state) var(--ease-kestrel),
+		color var(--motion-state) var(--ease-kestrel);
 }
 
 /* Approval affordance keeps its shape-coded fill but responds like a button. */

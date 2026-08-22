@@ -96,6 +96,13 @@ export function TabStrip({
 		}
 	}, [tabs.length, orientation]);
 
+	useEffect(() => {
+		const activeTab = tabsContainerRef.current?.querySelector<HTMLElement>(
+			".browser-tab.active",
+		);
+		activeTab?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
+	}, [activeTabId, orientation, tabs.length]);
+
 	const lockTabWidthBeforeClose = useCallback(() => {
 		if (!shouldRetainTabWidthOnClose(orientation, tabs.length)) {
 			setLockedWidth(null);
@@ -334,6 +341,14 @@ export function TabStrip({
 							style={tabStyle}
 							onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
 							onContextMenu={(event) => openMenu(event, tab.id)}
+							onClick={(event) => {
+								if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
+								if (suppressClickRef.current) {
+									suppressClickRef.current = false;
+									return;
+								}
+								onSelect(tab.id);
+							}}
 							onPointerDown={(event) => handleTabPointerDown(event, tab.id)}
 							onPointerMove={handleTabPointerMove}
 							onPointerUp={(event) => handleTabPointerUp(event, tab.id)}
@@ -346,13 +361,6 @@ export function TabStrip({
 								aria-controls="browser-viewport"
 								tabIndex={active ? 0 : -1}
 								title={`${tab.title}${isSleeping ? " (Sleeping — click to wake)" : ""}${tab.url ? ` — ${tab.url}` : ""}`}
-								onClick={() => {
-									if (suppressClickRef.current) {
-										suppressClickRef.current = false;
-										return;
-									}
-									onSelect(tab.id);
-								}}
 							>
 								<span className="browser-favicon" aria-hidden="true">
 									{getFaviconContent(tab)}
@@ -400,18 +408,18 @@ export function TabStrip({
 						</div>
 					);
 				})}
-				<button
-					type="button"
-					className="browser-new-tab no-drag"
-					aria-label="New Tab"
-					aria-keyshortcuts="Meta+T"
-					title="New tab (Cmd+T)"
-					onClick={handleCreate}
-				>
-					<Icon name="plus" />
-					<span>New Tab</span>
-				</button>
 			</div>
+			<button
+				type="button"
+				className="browser-new-tab no-drag"
+				aria-label="New Tab"
+				aria-keyshortcuts="Meta+T"
+				title="New tab (Cmd+T)"
+				onClick={handleCreate}
+			>
+				<Icon name="plus" />
+				<span>New Tab</span>
+			</button>
 			<div
 				className="browser-tab-drag-fill"
 				onDoubleClick={handleCreate}
