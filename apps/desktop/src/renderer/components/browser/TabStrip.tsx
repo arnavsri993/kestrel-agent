@@ -1,4 +1,7 @@
-import type { UserBrowserTab } from "@kestrel/shared-types";
+import type {
+	UserBrowserOriginFavicon,
+	UserBrowserTab,
+} from "@kestrel/shared-types";
 import {
 	useCallback,
 	useEffect,
@@ -13,6 +16,7 @@ import {
 	computeLockedTabStyle,
 	shouldRetainTabWidthOnClose,
 } from "./tab-strip-layout";
+import { tabFaviconDataUrl } from "./tab-favicon";
 
 const DETACH_DRAG_THRESHOLD_PX = 36;
 const REORDER_DRAG_THRESHOLD_PX = 12;
@@ -37,6 +41,7 @@ function tabDropIndex(
 
 export function TabStrip({
 	tabs,
+	originFavicons,
 	activeTabId,
 	onSelect,
 	onClose,
@@ -51,6 +56,10 @@ export function TabStrip({
 	onToggleOrientation,
 }: {
 	tabs: UserBrowserTab[];
+	originFavicons?: readonly Pick<
+		UserBrowserOriginFavicon,
+		"origin" | "faviconDataUrl"
+	>[];
 	activeTabId: string | null;
 	onSelect(tabId: string): void;
 	onClose(tabId: string): void;
@@ -241,8 +250,9 @@ export function TabStrip({
 	const menuTab = tabs.find((tab) => tab.id === menu?.tabId);
 
 	function getFaviconContent(tab: UserBrowserTab) {
-		if (tab.faviconDataUrl) {
-			return <img src={tab.faviconDataUrl} alt="" />;
+		const faviconDataUrl = tabFaviconDataUrl(tab, originFavicons);
+		if (faviconDataUrl) {
+			return <img src={faviconDataUrl} alt="" />;
 		}
 		if (tab.loading) {
 			return <span className="browser-tab-spinner" />;
