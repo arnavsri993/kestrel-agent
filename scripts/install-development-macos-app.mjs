@@ -284,7 +284,9 @@ function install() {
   if (stageRoot) rmSync(stageRoot, { recursive: true, force: true });
 
   // A second pass catches duplicates that shared the canonical install root.
-  moved.push(...moveDuplicatesToTrash([destination]));
+  // Keep the source build artifact available for packaged smoke tests; it is
+  // already excluded from the first pass and must stay excluded here too.
+  moved.push(...moveDuplicatesToTrash([destination, source]));
   validateSource(destination);
   register(destination);
   return { destination, moved };

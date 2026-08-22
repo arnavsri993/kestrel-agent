@@ -20,6 +20,13 @@ renderer changes use Vite HMR, so the running app always reflects the latest
 source without starting another copy. The app also enforces a single-instance
 lock and focuses the existing window when a second launch is attempted.
 
+Kestrel has one user-facing macOS app. Use the development watcher for live
+changes, or use `corepack pnpm install:mac:dev` to replace the existing
+`/Applications/Kestrel.app` with the current packaged build. Do not open or
+copy a `release/**/Kestrel.app` artifact, create a `Kestrel-release.app`, or
+keep versioned Kestrel bundles beside the canonical app; the installer moves
+stale bundles to Trash instead of deleting user data.
+
 On first launch, Kestrel checks the local runtime, lets you connect a model only when needed, and opens a clean conversation. Choose **Add project** for folder-scoped work, or describe a question directly. Read-only work can proceed automatically; sending, publishing, deleting, purchasing, and permission changes pause with a plain-language review.
 
 The packaged development build is Apple Silicon and ad-hoc signed. It is useful for local testing, but it is not a public release: Developer ID signing, notarization, update hosting, and a public download are still external release requirements.
@@ -138,6 +145,7 @@ corepack pnpm test:packaged-desktop:arm64
 `install:mac:dev` keeps the canonical app at `/Applications/Kestrel.app`, moves other
 Kestrel bundles found in common install locations or by Finder/Spotlight to Trash,
 and leaves `release/mac-arm64/Kestrel.app` as a non-indexed build artifact only.
+It is an in-place refresh of the canonical app, not a second installed version.
 
 ## Repository map
 

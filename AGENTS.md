@@ -18,6 +18,28 @@ short, explicit, reversible, and honest about what the current build can do.
   entry exists. Run the supported status/probe and report configured,
   reachable, and fully verified as separate states.
 
+## One canonical desktop app
+
+Treat Kestrel as one user-facing macOS app that is updated in place. Do not
+create or install `Kestrel-*.app`, `Kestrel-release.app`, beta copies, or a
+separate app for each worktree. A release version is build metadata; it is not
+permission to leave another installed Kestrel behind.
+
+- For live source changes, run only `corepack pnpm dev:desktop`. Its watcher,
+  HMR, restart path, and single-instance lock must keep the current app in sync;
+  do not open a `release/**/Kestrel.app` artifact directly.
+- For a packaged local refresh, run `corepack pnpm install:mac:dev`. It builds
+  the current source, replaces the same `/Applications/Kestrel.app` path, and
+  moves stale Kestrel bundles to the macOS Trash for recovery. Reopen that
+  canonical app; do not copy the artifact to Desktop or rename it.
+- Preserve the existing Kestrel profile, encrypted database, credentials,
+  Keychain identity, and `Application Support` data. Consolidation may move
+  duplicate app bundles to Trash, but must never delete or merge user data
+  implicitly.
+- Verify the real installed/running app after a refresh. A source checkout,
+  packaged artifact, and LaunchServices result are separate pieces of evidence;
+  do not claim the active app is current from a build timestamp alone.
+
 ## Human setup handoff
 
 When helping someone set up Kestrel, ask one compact choice before presenting a

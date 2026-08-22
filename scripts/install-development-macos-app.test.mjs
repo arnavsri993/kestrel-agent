@@ -73,6 +73,15 @@ testSuite("development macOS app installer", () => {
     const previous = createBundle(installRoot, "Kestrel.app");
     writeFileSync(join(previous, "Contents", "payload.txt"), "previous");
     const duplicate = createBundle(desktopRoot, "Kestrel 2.app");
+    const releaseNamedDuplicate = createBundle(
+      desktopRoot,
+      "Kestrel-release.app",
+    );
+    const developmentLauncher = createBundle(
+      desktopRoot,
+      "Kestrel launcher.app",
+      "com.kestrel.desktop.dev.launcher",
+    );
     const legacyVariant = createBundle(
       desktopRoot,
       "Kestrel Legacy.app",
@@ -88,9 +97,11 @@ testSuite("development macOS app installer", () => {
     expect(existsSync(join(canonical, "Contents", "payload.txt"))).toBe(true);
     expect(readPayload(canonical)).toBe("Kestrel.app");
     expect(existsSync(duplicate)).toBe(false);
+    expect(existsSync(releaseNamedDuplicate)).toBe(false);
+    expect(existsSync(developmentLauncher)).toBe(false);
     expect(existsSync(legacyVariant)).toBe(false);
     expect(existsSync(source)).toBe(true);
-    expect(readdirSync(trashRoot)).toHaveLength(3);
+    expect(readdirSync(trashRoot)).toHaveLength(5);
   });
 
   it("is safe to run repeatedly", () => {
@@ -125,7 +136,7 @@ testSuite("development macOS app installer", () => {
     const fakeMdfind = join(root, "mdfind");
     writeFileSync(
       fakeMdfind,
-      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(`${stale}\n`)});\n`,
+      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(`${source}\n${stale}\n`)});\n`,
       { mode: 0o755 },
     );
     chmodSync(fakeMdfind, 0o755);
@@ -133,6 +144,7 @@ testSuite("development macOS app installer", () => {
     runInstaller(source, installRoot, [installRoot], trashRoot, fakeMdfind);
 
     expect(existsSync(stale)).toBe(false);
+    expect(existsSync(source)).toBe(true);
     expect(readdirSync(trashRoot)).toHaveLength(1);
   });
 
