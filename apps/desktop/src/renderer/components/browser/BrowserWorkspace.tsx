@@ -21,8 +21,6 @@ export function BrowserWorkspace({
   browser,
   agentName,
   agentOpen,
-  contextEnabled,
-  onToggleContext,
   onToggleAgent,
   onNewAgent,
   onOpenSettings,
@@ -40,8 +38,6 @@ export function BrowserWorkspace({
   browser: UserBrowserController;
   agentName: string;
   agentOpen: boolean;
-  contextEnabled: boolean;
-  onToggleContext(): void;
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
   onOpenSettings(): void;
@@ -418,6 +414,7 @@ export function BrowserWorkspace({
         onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => void moveTab(tabId, toIndex)}
         onDetachTab={(tabId) => void detachTab(tabId)}
+        onReopenClosedTab={() => void reopenClosedTab()}
         onToggleOrientation={() => {
           void browser.updateSettings({
             ...state.settings,
@@ -430,12 +427,23 @@ export function BrowserWorkspace({
       />
       <BrowserToolbar
         tab={activeTab}
-        agentName={agentName}
         agentOpen={agentOpen}
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
-        contextEnabled={contextEnabled}
+        showBookmarksBar={state.settings.showBookmarksBar}
+        sleepingTabsEnabled={state.settings.sleepingTabsEnabled}
+        onToggleBookmarksBar={() =>
+          void browser.updateSettings({
+            ...state.settings,
+            showBookmarksBar: !state.settings.showBookmarksBar,
+          })
+        }
+        onToggleSleepingTabs={() =>
+          void browser.updateSettings({
+            ...state.settings,
+            sleepingTabsEnabled: !state.settings.sleepingTabsEnabled,
+          })
+        }
         bookmarked={state.bookmarks.some((item) => item.url === activeTab.url)}
-        onToggleContext={onToggleContext}
         onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}
         onBack={() => void back(activeTab.id)}
@@ -445,7 +453,15 @@ export function BrowserWorkspace({
         onOpenHistory={onOpenHistory}
         onOpenDownloads={onOpenDownloads}
         onOpenBookmarks={onOpenBookmarks}
+        onOpenFind={() => {
+          setFindOpen(true);
+          window.requestAnimationFrame(() => findRef.current?.focus());
+        }}
+        onPrint={() => void printTab(activeTab.id)}
+        onOpenDevTools={() => void openDevTools(activeTab.id)}
+        onSaveScreenshot={() => browser.saveScreenshot(activeTab.id)}
         onToggleBookmark={() => void toggleBookmark()}
+        onOpenSettings={onOpenSettings}
         onOpenMenu={onOpenMenu}
       />
       {state.settings.showBookmarksBar && (

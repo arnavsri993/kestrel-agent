@@ -1,15 +1,46 @@
-import { useEffect, useState, type FormEvent, type RefObject } from "react";
-import type { UserBrowserTab } from "@kestrel/shared-types";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEvent,
+  type RefObject,
+} from "react";
+import type { InstalledExtension, UserBrowserTab } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
+import { evaluateCalculatorExpression } from "./calculator";
+
+type ToolbarMenu = "extensions" | "tools" | "screen" | null;
+
+type MenuTriggerEvent = FormEvent | MouseEvent<HTMLButtonElement>;
+
+const PINNED_EXTENSIONS_KEY = "kestrel:browser-pinned-extensions";
+
+function readPinnedExtensions(): string[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const value: unknown = JSON.parse(
+      localStorage.getItem(PINNED_EXTENSIONS_KEY) ?? "[]",
+    );
+    return Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 export function BrowserToolbar({
   tab,
-  agentName,
   agentOpen,
   addressRef,
-  contextEnabled,
-  onToggleContext,
+  bookmarked,
+  showBookmarksBar,
+  sleepingTabsEnabled,
   onToggleAgent,
+  onToggleBookmarksBar,
+  onToggleSleepingTabs,
   onNavigate,
   onBack,
   onForward,
@@ -18,18 +49,23 @@ export function BrowserToolbar({
   onOpenHistory,
   onOpenDownloads,
   onOpenBookmarks,
+  onOpenFind,
+  onPrint,
+  onOpenDevTools,
+  onSaveScreenshot,
   onToggleBookmark,
-  bookmarked,
+  onOpenSettings,
   onOpenMenu,
 }: {
   tab: UserBrowserTab;
-  agentName: string;
   agentOpen: boolean;
   addressRef: RefObject<HTMLInputElement | null>;
-  contextEnabled: boolean;
   bookmarked: boolean;
-  onToggleContext(): void;
+  showBookmarksBar: boolean;
+  sleepingTabsEnabled: boolean;
   onToggleAgent(): void;
+  onToggleBookmarksBar(): void;
+  onToggleSleepingTabs(): void;
   onNavigate(input: string): void;
   onBack(): void;
   onForward(): void;
@@ -38,15 +74,153 @@ export function BrowserToolbar({
   onOpenHistory(): void;
   onOpenDownloads(): void;
   onOpenBookmarks(): void;
+  onOpenFind(): void;
+  onPrint(): void;
+  onOpenDevTools(): void;
+  onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
+  onOpenSettings(): void;
   onOpenMenu(): void;
 }) {
   const [address, setAddress] = useState(tab.url);
+  const [openMenu, setOpenMenu] = useState<ToolbarMenu>(null);
+  const [extensions, setExtensions] = useState<InstalledExtension[]>([]);
+  const [pinnedExtensionIds, setPinnedExtensionIds] = useState(
+    readPinnedExtensions,
+  );
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
+  const [calculatorExpression, setCalculatorExpression] = useState("");
+  const [calculatorResult, setCalculatorResult] = useState<string | null>(null);
+  const [toolNotice, setToolNotice] = useState("");
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const calculatorInputRef = useRef<HTMLInputElement | null>(null);
+
   useEffect(() => setAddress(tab.url), [tab.id, tab.url]);
+
+  const loadExtensions = useCallback(async () => {
+    try {
+      const response = await window.kestrel.request({
+        type: "browser-list-extensions",
+      });
+      if (response.ok && "extensions" in response)
+        setExtensions(response.extensions);
+    } catch {
+      // Extension management is optional; the menu remains useful without it.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadExtensions();
+  }, [loadExtensions]);
+
+  useEffect(() => {
+    if (openMenu === "extensions") void loadExtensions();
+  }, [loadExtensions, openMenu]);
+
+  const closeMenu = useCallback(() => {
+    setOpenMenu(null);
+    window.requestAnimationFrame(() => {
+      lastTriggerRef.current?.focus();
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!openMenu) return;
+    const frame = window.requestAnimationFrame(() => {
+      if (calculatorOpen) {
+        calculatorInputRef.current?.focus();
+        return;
+      }
+      menuRef.current
+        ?.querySelector<HTMLElement>(
+          "button[role='menuitem'], button[role='menuitemcheckbox']",
+        )
+        ?.focus();
+    });
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (
+        target &&
+        !menuRef.current?.contains(target) &&
+        !lastTriggerRef.current?.contains(target)
+      )
+        closeMenu();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeMenu();
+        return;
+      }
+      if (!menuRef.current || !["ArrowDown", "ArrowUp"].includes(event.key))
+        return;
+      const items = Array.from(
+        menuRef.current.querySelectorAll<HTMLElement>(
+          "button[role='menuitem'], button[role='menuitemcheckbox'], input",
+        ),
+      );
+      if (items.length === 0) return;
+      const index = items.indexOf(document.activeElement as HTMLElement);
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      event.preventDefault();
+      items[(index + delta + items.length) % items.length]?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [calculatorOpen, closeMenu, openMenu]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (address.trim()) onNavigate(address);
+  }
+
+  function toggleMenu(menu: Exclude<ToolbarMenu, null>, event: MenuTriggerEvent) {
+    lastTriggerRef.current = event.currentTarget as HTMLButtonElement;
+    setToolNotice("");
+    setOpenMenu((current) => (current === menu ? null : menu));
+    if (menu !== "tools") {
+      setCalculatorOpen(false);
+      setCalculatorResult(null);
+    }
+  }
+
+  function updatePinnedExtensions(id: string) {
+    setPinnedExtensionIds((current) => {
+      const next = current.includes(id)
+        ? current.filter((item) => item !== id)
+        : [...current, id];
+      try {
+        localStorage.setItem(PINNED_EXTENSIONS_KEY, JSON.stringify(next));
+      } catch {
+        // A browser profile may be read-only; the current session still works.
+      }
+      return next;
+    });
+  }
+
+  function runAndClose(action: () => void) {
+    action();
+    closeMenu();
+  }
+
+  function calculate() {
+    setCalculatorResult(evaluateCalculatorExpression(calculatorExpression));
+  }
+
+  async function saveScreenshot() {
+    setToolNotice("Saving screenshot…");
+    try {
+      const path = await onSaveScreenshot();
+      setToolNotice(path ? "Screenshot saved" : "Screenshot canceled");
+    } catch {
+      setToolNotice("Screenshot could not be saved");
+    }
   }
 
   let host = "Search or enter an address";
@@ -60,6 +234,10 @@ export function BrowserToolbar({
       host = tab.url;
     }
   }
+
+  const pinnedExtensions = pinnedExtensionIds
+    .map((id) => extensions.find((extension) => extension.id === id))
+    .filter((extension): extension is InstalledExtension => Boolean(extension));
 
   return (
     <div className="browser-toolbar" aria-label="Browser toolbar">
@@ -141,37 +319,53 @@ export function BrowserToolbar({
           </span>
         )}
       </form>
-      <button
-        type="button"
-        className={`browser-context-toggle ${contextEnabled ? "active" : ""}`}
-        aria-pressed={contextEnabled}
-        aria-label={
-          contextEnabled
-            ? "Stop sharing page context with agent"
-            : "Share page context with agent"
-        }
-        title={
-          contextEnabled
-            ? "The agent can use this page as task context. Click to stop sharing."
-            : "The agent cannot use this page as task context. Click to share."
-        }
-        onClick={onToggleContext}
-      >
-        <Icon name="context" />
-        <span>{contextEnabled ? "Shared with agent" : "Share with agent"}</span>
-      </button>
       <div className="browser-toolbar-actions">
+        <div className="browser-extension-cluster">
+          <button
+            type="button"
+            className={`browser-toolbar-menu-trigger ${openMenu === "extensions" ? "active" : ""}`}
+            aria-label="Extensions"
+            aria-haspopup="menu"
+            aria-expanded={openMenu === "extensions"}
+            title="Extensions"
+            onClick={(event) => toggleMenu("extensions", event)}
+          >
+            <Icon name="extensions" />
+          </button>
+          {pinnedExtensions.map((extension) => (
+            <button
+              type="button"
+              className="browser-pinned-extension"
+              key={extension.id}
+              aria-label={`Open extensions menu for ${extension.name}`}
+              title={`${extension.name}${extension.enabled ? "" : " (disabled)"}`}
+              onClick={(event) => toggleMenu("extensions", event)}
+            >
+              <Icon name="extensions" />
+            </button>
+          ))}
+        </div>
         <button
-          id="browser-agent-toggle"
           type="button"
-          className={`browser-agent-toggle ${agentOpen ? "active" : ""}`}
-          aria-label={agentOpen ? `Hide ${agentName}` : `Chat with ${agentName}`}
-          aria-expanded={agentOpen}
-          title={agentOpen ? `Hide ${agentName}` : `Chat with ${agentName}`}
-          onClick={onToggleAgent}
+          className={`browser-toolbar-menu-trigger ${openMenu === "tools" ? "active" : ""}`}
+          aria-label="Tools"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "tools"}
+          title="Tools"
+          onClick={(event) => toggleMenu("tools", event)}
         >
-          <Icon name="chat" />
-          <span>{agentOpen ? `Hide ${agentName}` : `Chat with ${agentName}`}</span>
+          <Icon name="tools" />
+        </button>
+        <button
+          type="button"
+          className={`browser-toolbar-menu-trigger ${openMenu === "screen" ? "active" : ""}`}
+          aria-label="Page options"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "screen"}
+          title="Page options"
+          onClick={(event) => toggleMenu("screen", event)}
+        >
+          <Icon name="sliders" />
         </button>
         <button
           type="button"
@@ -209,6 +403,226 @@ export function BrowserToolbar({
         >
           <Icon name="more" />
         </button>
+        <button
+          id="browser-agent-toggle"
+          type="button"
+          className={`browser-agent-toggle ${agentOpen ? "active" : ""}`}
+          aria-label={agentOpen ? "Hide Pragmatic" : "Show Pragmatic"}
+          aria-expanded={agentOpen}
+          title={agentOpen ? "Hide Pragmatic" : "Show Pragmatic"}
+          onClick={onToggleAgent}
+        >
+          <span className="pragmatic-logo" aria-hidden="true">
+            <Icon name="pragmatic" />
+          </span>
+          <span>Pragmatic</span>
+        </button>
+
+        {openMenu && (
+          <div
+            ref={menuRef}
+            className={`browser-toolbar-popover browser-toolbar-popover-${openMenu}`}
+            role="menu"
+            aria-label={
+              openMenu === "extensions"
+                ? "Extensions"
+                : openMenu === "tools"
+                  ? "Tools"
+                  : "Page options"
+              }
+          >
+            {openMenu === "extensions" && (
+              <>
+                <header className="browser-toolbar-popover-header">
+                  <Icon name="extensions" />
+                  <span>
+                    <strong>Extensions</strong>
+                    <small>Pin quick actions beside the logo</small>
+                  </span>
+                </header>
+                {extensions.length === 0 ? (
+                  <p className="browser-toolbar-popover-empty">
+                    No browser extensions installed yet.
+                  </p>
+                ) : (
+                  <div className="browser-extension-list">
+                    {extensions.map((extension) => {
+                      const pinned = pinnedExtensionIds.includes(extension.id);
+                      return (
+                        <div className="browser-extension-row" key={extension.id}>
+                          <span className="browser-extension-icon" aria-hidden="true">
+                            <Icon name="extensions" />
+                          </span>
+                          <span className="browser-extension-copy">
+                            <strong>{extension.name}</strong>
+                            <small>
+                              {extension.enabled ? "Enabled" : "Disabled"}
+                            </small>
+                          </span>
+                            <button
+                              type="button"
+                              className={`browser-extension-pin ${pinned ? "active" : ""}`}
+                              role="menuitemcheckbox"
+                              aria-checked={pinned}
+                              aria-label={pinned ? `Unpin ${extension.name}` : `Pin ${extension.name}`}
+                              title={pinned ? "Unpin extension" : "Pin extension"}
+                              onClick={() => updatePinnedExtensions(extension.id)}
+                            >
+                              <Icon name="pin" />
+                            </button>
+                          </div>
+                        );
+                    })}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="browser-toolbar-menu-link"
+                  onClick={() => runAndClose(onOpenSettings)}
+                >
+                  <Icon name="settings" />
+                  <span>Manage extensions</span>
+                  <Icon name="chevron" />
+                </button>
+              </>
+            )}
+            {openMenu === "tools" && (
+              <>
+                <header className="browser-toolbar-popover-header">
+                  <Icon name="tools" />
+                  <span>
+                    <strong>Tools</strong>
+                    <small>Common actions for this page</small>
+                  </span>
+                </header>
+                <div className="browser-toolbar-tool-grid">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void saveScreenshot()}
+                  >
+                    <Icon name="screenshot" />
+                    <span>Screenshot</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className={calculatorOpen ? "active" : ""}
+                    onClick={() => {
+                      setCalculatorOpen((current) => !current);
+                      setCalculatorResult(null);
+                    }}
+                  >
+                    <Icon name="calculator" />
+                    <span>Calculator</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenHistory)}>
+                    <Icon name="history" />
+                    <span>History</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenBookmarks)}>
+                    <Icon name="star" />
+                    <span>Bookmarks</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenDownloads)}>
+                    <Icon name="downloads" />
+                    <span>Downloads</span>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenFind)}>
+                    <Icon name="search" />
+                    <span>Find in page</span>
+                    <kbd>⌘F</kbd>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runAndClose(onPrint)}>
+                    <Icon name="print" />
+                    <span>Print page</span>
+                    <kbd>⌘P</kbd>
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenDevTools)}>
+                    <Icon name="devtools" />
+                    <span>Developer tools</span>
+                  </button>
+                </div>
+                {calculatorOpen && (
+                  <div className="browser-calculator" role="group" aria-label="Calculator">
+                    <label htmlFor="browser-calculator-input">Calculate</label>
+                    <div>
+                      <input
+                        id="browser-calculator-input"
+                        ref={calculatorInputRef}
+                        value={calculatorExpression}
+                        placeholder="12 * (3 + 4)"
+                        inputMode="decimal"
+                        onChange={(event) => setCalculatorExpression(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            calculate();
+                          }
+                        }}
+                      />
+                      <button type="button" onClick={calculate} aria-label="Calculate">
+                        <Icon name="arrow" />
+                      </button>
+                    </div>
+                    <output aria-live="polite">
+                      {calculatorResult ?? "Enter an expression"}
+                    </output>
+                  </div>
+                )}
+                {toolNotice && (
+                  <p className="browser-toolbar-popover-notice" role="status">
+                    {toolNotice}
+                  </p>
+                )}
+              </>
+            )}
+            {openMenu === "screen" && (
+              <>
+                <header className="browser-toolbar-popover-header">
+                  <Icon name="sliders" />
+                  <span>
+                    <strong>Page options</strong>
+                    <small>Quick settings for this browser surface</small>
+                  </span>
+                </header>
+                <div className="browser-toolbar-settings-list">
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={showBookmarksBar}
+                    onClick={onToggleBookmarksBar}
+                  >
+                    <Icon name="star" />
+                    <span>Show bookmarks bar</span>
+                    <Icon name={showBookmarksBar ? "check" : "close"} />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={sleepingTabsEnabled}
+                    onClick={onToggleSleepingTabs}
+                  >
+                    <Icon name="sleep" />
+                    <span>Sleep inactive tabs</span>
+                    <Icon name={sleepingTabsEnabled ? "check" : "close"} />
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenSettings)}>
+                    <Icon name="settings" />
+                    <span>All browser settings</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenMenu)}>
+                    <Icon name="command" />
+                    <span>Capabilities and commands</span>
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
