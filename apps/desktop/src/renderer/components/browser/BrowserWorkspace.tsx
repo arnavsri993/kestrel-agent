@@ -450,6 +450,7 @@ export function BrowserWorkspace({
       {state.settings.showBookmarksBar && (
         <BookmarksBar
           bookmarks={state.bookmarks}
+          originFavicons={state.originFavicons}
           onOpen={(url) => void navigate(activeTab.id, url)}
           onOpenInNewTab={(url) => void createTab(url)}
           onRemove={(bookmarkId) => void browser.removeBookmark(bookmarkId)}
