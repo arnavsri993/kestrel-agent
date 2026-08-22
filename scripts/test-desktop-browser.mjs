@@ -410,13 +410,13 @@ try {
 	);
 	await page.waitForFunction(
 		(index) =>
-			document.querySelectorAll<HTMLElement>(".browser-tabs .browser-tab")[
+			document.querySelectorAll(".browser-tabs .browser-tab")[
 				index
 			]?.classList.contains("active") === true,
 		state.tabs.length - 1,
 	);
 	const activeTabVisibility = await tabRail.evaluate((node) => {
-		const active = node.querySelector<HTMLElement>(".browser-tab.active");
+		const active = node.querySelector(".browser-tab.active");
 		if (!active) return false;
 		const rail = node.getBoundingClientRect();
 		const tab = active.getBoundingClientRect();
