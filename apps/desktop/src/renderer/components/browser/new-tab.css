@@ -1,9 +1,10 @@
-/* Browser Home — flat monochrome canvas. The 56px composer is the focal
-   point below the greeting; frequent tabs and exactly three suggestion rows
-   sit beneath on quiet matte planes. No hue, imagery, blur, or glow. */
+/* Browser Home — a light, readable canvas with an optional local landscape
+   behind the work surface. The image is decorative; the controls keep their
+   own opaque-ish surfaces so text remains readable over every preset. */
 
 .new-tab-page.kestrel-home {
   position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   width: 100%;
@@ -14,6 +15,58 @@
   color: var(--ink);
   background: var(--canvas);
   scrollbar-color: var(--surface-strong) transparent;
+  --kestrel-home-rule: var(--line);
+  --kestrel-home-panel: var(--panel);
+  --kestrel-home-surface: var(--surface);
+  --kestrel-home-text: var(--ink);
+  --kestrel-home-muted: var(--muted);
+}
+
+.kestrel-home-backdrop {
+  position: absolute;
+  z-index: -2;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-color: var(--canvas);
+}
+
+.kestrel-home-backdrop::after {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgb(246 249 246 / 0.94) 0%, rgb(246 249 246 / 0.72) 46%, rgb(246 249 246 / 0.42) 100%),
+    linear-gradient(180deg, rgb(246 249 246 / 0.22), rgb(246 249 246 / 0.52));
+  content: "";
+}
+
+.new-tab-page-graphite .kestrel-home-backdrop {
+  background-image:
+    radial-gradient(circle at 82% 18%, rgb(255 255 255 / 0.8), transparent 34%),
+    linear-gradient(135deg, #dbece1 0%, #f5f3e9 48%, #dfeaf1 100%);
+}
+
+.new-tab-page-meadow .kestrel-home-backdrop {
+  background-image: url("../../assets/new-tab-meadow.svg");
+}
+
+.new-tab-page-dawn .kestrel-home-backdrop {
+  background-image: url("../../assets/desert_sunrise_bg.jpg");
+}
+
+.new-tab-page-mountains .kestrel-home-backdrop {
+  background-image: url("../../assets/mountain_valley_bg.jpg");
+}
+
+.new-tab-page-paper .kestrel-home-backdrop {
+  background-image:
+    linear-gradient(135deg, rgb(255 255 255 / 0.96), rgb(239 236 226 / 0.96)),
+    repeating-linear-gradient(0deg, transparent 0 5px, rgb(91 83 66 / 0.035) 6px 7px);
+}
+
+.new-tab-page-custom .kestrel-home-backdrop {
+  background-image: linear-gradient(135deg, #dfeae2, #f4f1e7);
 }
 
 .new-tab-sidebar {
@@ -153,6 +206,8 @@
 }
 
 .kestrel-home-content {
+  position: relative;
+  z-index: 1;
   display: grid;
   gap: clamp(40px, 6vh, 64px);
   width: min(720px, calc(100% - 48px));
@@ -424,7 +479,6 @@
   width: 28px;
   height: 28px;
   object-fit: contain;
-}
 }
 
 .kestrel-home-shortcut:hover .kestrel-home-shortcut-glyph.has-favicon,

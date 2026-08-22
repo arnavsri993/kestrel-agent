@@ -2512,8 +2512,15 @@ export const UserBrowserSettingsSchema = z.object({
 	customSearchName: z.string().max(100).optional(),
 	tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),
 	newTabBackground: z
-		.enum(["graphite", "meadow", "dawn", "paper"])
+		.enum(["graphite", "meadow", "dawn", "mountains", "paper", "custom"])
 		.default("graphite"),
+	newTabBackgroundCustomDataUrl: z
+		.string()
+		.max(7_000_000)
+		.regex(
+			/^data:image\/(?:avif|gif|jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
+		)
+		.optional(),
 	restoreSession: z.boolean().default(true),
 	historyRetentionDays: z
 		.union([

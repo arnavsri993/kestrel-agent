@@ -1,8 +1,64 @@
 import type {
-  UserBrowserHistoryEntry,
-  UserBrowserOriginFavicon,
-  UserBrowserTab,
+	UserBrowserHistoryEntry,
+	UserBrowserOriginFavicon,
+	UserBrowserSettings,
+	UserBrowserTab,
 } from "@kestrel/shared-types";
+
+export const CUSTOM_BACKGROUND_MAX_BYTES = 5 * 1024 * 1024;
+export const SUPPORTED_BACKGROUND_MIME_TYPES = [
+	"image/avif",
+	"image/gif",
+	"image/jpeg",
+	"image/png",
+	"image/webp",
+] as const;
+
+export const NEW_TAB_BACKGROUND_OPTIONS = [
+	{
+		value: "graphite",
+		label: "Kestrel default",
+		description: "A soft sage-and-paper landscape",
+	},
+	{
+		value: "meadow",
+		label: "Meadow",
+		description: "Layered hills in a calm green palette",
+	},
+	{
+		value: "dawn",
+		label: "Desert dawn",
+		description: "Warm light over a wide desert horizon",
+	},
+	{
+		value: "mountains",
+		label: "Mountain valley",
+		description: "Cool daylight and open mountain air",
+	},
+	{
+		value: "paper",
+		label: "Paper",
+		description: "A quiet, image-free workspace",
+	},
+] as const satisfies ReadonlyArray<{
+	value: Exclude<UserBrowserSettings["newTabBackground"], "custom">;
+	label: string;
+	description: string;
+}>;
+
+export function readBackgroundFile(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.addEventListener("load", () => {
+			if (typeof reader.result === "string") resolve(reader.result);
+			else reject(new Error("The selected image could not be read."));
+		});
+		reader.addEventListener("error", () =>
+			reject(new Error("The selected image could not be read.")),
+		);
+		reader.readAsDataURL(file);
+	});
+}
 
 export interface FrequentBrowserSite {
   origin: string;

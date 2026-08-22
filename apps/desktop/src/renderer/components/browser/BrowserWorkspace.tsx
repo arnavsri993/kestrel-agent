@@ -533,6 +533,7 @@ export function BrowserWorkspace({
             tabs={state.tabs}
             originFavicons={state.originFavicons}
             background={state.settings.newTabBackground}
+            backgroundCustomDataUrl={state.settings.newTabBackgroundCustomDataUrl}
             agentName={agentName}
             sessions={sessions}
             projects={projects}

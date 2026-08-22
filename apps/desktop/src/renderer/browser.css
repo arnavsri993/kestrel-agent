@@ -3101,13 +3101,198 @@ body:has(.ai-browser-app),
 .browser-settings-wrapper {
 	display: flex;
 	flex-direction: column;
-	gap: 22px;
+	gap: 24px;
+}
+.browser-settings-intro {
+	padding: 2px 2px 0;
+}
+.browser-settings-intro h2 {
+	margin: 7px 0 0;
+	color: var(--ink);
+	font-size: clamp(24px, 3vw, 32px);
+	letter-spacing: -0.035em;
+}
+.browser-settings-intro p {
+	max-width: 620px;
+	margin: 8px 0 0;
+	color: var(--ink-secondary);
+	font-size: 13px;
+	line-height: 1.55;
 }
 .browser-settings-panel {
 	border: 1px solid var(--line);
-	border-radius: 12px;
-	padding: 20px;
-	background: color-mix(in srgb, var(--panel) 90%, transparent);
+	border-radius: var(--radius-surface);
+	padding: 22px;
+	background: var(--panel);
+	box-shadow: var(--shadow-xs);
+}
+.browser-background-panel .settings-panel-header {
+	padding-bottom: 16px;
+}
+.background-option-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 12px;
+}
+.background-option,
+.background-upload-card {
+	position: relative;
+	min-width: 0;
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-control);
+	background: var(--surface);
+	color: var(--ink);
+}
+.background-option {
+	display: grid;
+	grid-template-rows: auto 1fr;
+	cursor: pointer;
+	transition:
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-feedback) var(--ease-kestrel),
+		transform var(--motion-feedback) var(--ease-kestrel);
+}
+.background-option:hover,
+.background-upload-card:hover {
+	border-color: var(--line-strong);
+	transform: translateY(-1px);
+}
+.background-option.selected,
+.background-upload-card.selected {
+	border-color: var(--solid);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--solid) 20%, transparent);
+}
+.background-option:has(input:focus-visible) {
+	box-shadow: var(--focus-ring);
+}
+.background-option input {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	left: 10px;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	white-space: nowrap;
+}
+.background-option-preview {
+	position: relative;
+	display: block;
+	aspect-ratio: 16 / 8;
+	min-height: 92px;
+	background-position: center;
+	background-size: cover;
+	background-repeat: no-repeat;
+}
+.background-option-preview::after {
+	position: absolute;
+	inset: 0;
+	background: linear-gradient(180deg, rgb(255 255 255 / 0.04), rgb(21 44 34 / 0.18));
+	content: "";
+}
+.background-option-preview-graphite {
+	background-image:
+		radial-gradient(circle at 82% 18%, rgb(255 255 255 / 0.8), transparent 34%),
+		linear-gradient(135deg, #dbece1 0%, #f5f3e9 48%, #dfeaf1 100%);
+}
+.background-option-preview-meadow {
+	background-image: url("./assets/new-tab-meadow.svg");
+}
+.background-option-preview-dawn {
+	background-image: url("./assets/desert_sunrise_bg.jpg");
+}
+.background-option-preview-mountains {
+	background-image: url("./assets/mountain_valley_bg.jpg");
+}
+.background-option-preview-paper {
+	background-image:
+		linear-gradient(135deg, rgb(255 255 255 / 0.96), rgb(239 236 226 / 0.96)),
+		repeating-linear-gradient(0deg, transparent 0 5px, rgb(91 83 66 / 0.035) 6px 7px);
+}
+.background-option-preview-custom {
+	background-image: linear-gradient(135deg, #dfeae2, #f4f1e7);
+}
+.background-option-check {
+	position: absolute;
+	z-index: 1;
+	top: 8px;
+	right: 8px;
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	border: 1px solid rgb(255 255 255 / 0.74);
+	border-radius: 50%;
+	background: var(--solid);
+	color: var(--on-solid);
+	box-shadow: var(--shadow-xs);
+}
+.background-option-check svg {
+	width: 14px;
+	height: 14px;
+}
+.background-option-copy,
+.background-upload-copy {
+	display: grid;
+	align-content: start;
+	gap: 4px;
+	padding: 11px 12px 13px;
+}
+.background-option-copy strong,
+.background-upload-copy strong {
+	font-size: 12px;
+	font-weight: 650;
+}
+.background-option-copy small,
+.background-upload-copy small {
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.4;
+}
+.background-upload-card {
+	display: grid;
+	grid-column: 1 / -1;
+	grid-template-columns: minmax(160px, 0.75fr) minmax(0, 1.25fr);
+	align-items: stretch;
+	transition:
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-feedback) var(--ease-kestrel),
+		transform var(--motion-feedback) var(--ease-kestrel);
+}
+.background-upload-card .background-option-preview {
+	height: 100%;
+}
+.background-upload-copy {
+	align-content: center;
+	gap: 6px;
+}
+.background-upload-actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 4px;
+}
+.background-upload-actions .button {
+	min-height: 34px;
+	font-size: 12px;
+}
+.browser-background-error {
+	margin: 14px 0 0;
+	color: var(--danger, #a33b35);
+	font-size: 12px;
+}
+.settings-panel-header h2 {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.settings-panel-header h2 svg {
+	flex: 0 0 auto;
+	width: 18px;
+	height: 18px;
+	color: var(--solid);
 }
 .settings-panel-header h3 {
 	margin: 0;
@@ -4526,4 +4711,16 @@ body:has(.ai-browser-app),
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+	.background-option-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+	.background-upload-card {
+		grid-template-columns: 1fr;
+	}
+	.background-upload-card .background-option-preview {
+		height: auto;
+	}
 }
