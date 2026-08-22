@@ -406,6 +406,7 @@ export function BrowserWorkspace({
     >
       <TabStrip
         tabs={state.tabs}
+        originFavicons={state.originFavicons}
         activeTabId={state.activeTabId}
         orientation={state.settings.tabLayout}
         onSelect={(tabId) => void selectTab(tabId)}
