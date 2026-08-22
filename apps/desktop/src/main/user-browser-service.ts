@@ -88,6 +88,7 @@ export interface UserBrowserServiceOptions {
 	window: BrowserWindow;
 	statePath: string;
 	downloadDirectory: string;
+	initialState?: UserBrowserState;
 	partitionName?: string;
 	now?: () => Date;
 	onEvent(event: UserBrowserEvent): void;
@@ -159,6 +160,103 @@ function cloneState(state: UserBrowserState): UserBrowserState {
 	return UserBrowserStateSchema.parse(structuredClone(state));
 }
 
+interface BrowserPartitionParticipant {
+	ownsWebContents(webContents: WebContents): boolean;
+	isPermissionAllowed(origin: string, permission: string): boolean;
+	resolvePermissionRequest(
+		webContents: WebContents,
+		permission: string,
+		requestingUrl?: string,
+	): Promise<boolean>;
+	handleWillDownload(
+		event: Electron.Event,
+		item: Electron.DownloadItem,
+		webContents: WebContents,
+	): void;
+}
+
+/**
+ * Electron exposes one permission/download handler per Session. Detached
+ * Kestrel windows still use the same browser profile, so route those events to
+ * the service that owns the requesting WebContents instead of letting the
+ * newest window replace the main window's handlers.
+ */
+class BrowserPartitionCoordinator {
+	private readonly participants = new Set<BrowserPartitionParticipant>();
+
+	constructor(private readonly partition: Session) {
+		partition.setPermissionCheckHandler(
+			(webContents, permission, requestingOrigin) => {
+				const participant = this.find(webContents);
+				return (
+					participant?.isPermissionAllowed(
+						requestingOrigin,
+						String(permission),
+					) ?? false
+				);
+			},
+		);
+		partition.setPermissionRequestHandler(
+			(webContents, permission, callback, details) => {
+				const participant = this.find(webContents);
+				if (!participant) {
+					callback(false);
+					return;
+				}
+				void participant
+					.resolvePermissionRequest(
+						webContents,
+						String(permission),
+						details?.requestingUrl,
+					)
+					.then(callback)
+					.catch(() => callback(false));
+			},
+		);
+		partition.on("will-download", (event, item, webContents) => {
+			const participant = this.find(webContents);
+			if (!participant) {
+				item.cancel();
+				return;
+			}
+			participant.handleWillDownload(event, item, webContents);
+		});
+	}
+
+	register(participant: BrowserPartitionParticipant): void {
+		this.participants.add(participant);
+	}
+
+	unregister(participant: BrowserPartitionParticipant): void {
+		this.participants.delete(participant);
+	}
+
+	private find(
+		webContents: WebContents | null,
+	): BrowserPartitionParticipant | undefined {
+		if (!webContents) return undefined;
+		return [...this.participants].find((participant) =>
+			participant.ownsWebContents(webContents),
+		);
+	}
+}
+
+const browserPartitionCoordinators = new WeakMap<
+	Session,
+	BrowserPartitionCoordinator
+>();
+
+function browserPartitionCoordinator(
+	partition: Session,
+): BrowserPartitionCoordinator {
+	let coordinator = browserPartitionCoordinators.get(partition);
+	if (!coordinator) {
+		coordinator = new BrowserPartitionCoordinator(partition);
+		browserPartitionCoordinators.set(partition, coordinator);
+	}
+	return coordinator;
+}
+
 export class UserBrowserService {
 	private readonly window: BrowserWindow;
 	private readonly store: BrowserTabStore;
@@ -175,11 +273,11 @@ export class UserBrowserService {
 	private readonly now: () => Date;
 	private readonly downloadDirectory: string;
 	private readonly partitionName: string;
+	private readonly partitionCoordinator: BrowserPartitionCoordinator;
+	private readonly partitionParticipant: BrowserPartitionParticipant;
 	private readonly onEvent: UserBrowserServiceOptions["onEvent"];
 	private readonly onCommand?: UserBrowserServiceOptions["onCommand"];
-	private readonly onWillDownload: Parameters<Session["on"]>[1];
 	private readonly recentlyClosedTabs: Array<{ url: string; title: string }> = [];
-	private readonly popoutWindows = new Set<BrowserWindow>();
 	private sleepingTabsInterval?: ReturnType<typeof setInterval>;
 	private state: UserBrowserState;
 	private contentBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
@@ -189,7 +287,10 @@ export class UserBrowserService {
 	constructor(options: UserBrowserServiceOptions) {
 		this.window = options.window;
 		this.store = new BrowserTabStore(options.statePath);
-		this.state = this.store.load(options.now);
+		this.state =
+			options.initialState && !existsSync(options.statePath)
+				? cloneState(options.initialState)
+				: this.store.load(options.now);
 		this.now = options.now ?? (() => new Date());
 		this.downloadDirectory = options.downloadDirectory;
 		this.onEvent = options.onEvent;
@@ -223,78 +324,22 @@ export class UserBrowserService {
 		});
 		void this.extensionManager.loadAll(this.partition);
 		this.startSleepingTabsMonitor();
-		this.partition.setPermissionCheckHandler(
-			(_webContents, permission, requestingOrigin) =>
-				this.isPermissionAllowed(requestingOrigin, String(permission)),
-		);
-		this.partition.setPermissionRequestHandler(
-			(webContents, permission, callback, details) => {
-				void this.resolvePermissionRequest(
+		this.partitionCoordinator = browserPartitionCoordinator(this.partition);
+		this.partitionParticipant = {
+			ownsWebContents: (webContents) =>
+				this.webContentsToTab.has(webContents.id),
+			isPermissionAllowed: (origin, permission) =>
+				this.isPermissionAllowed(origin, permission),
+			resolvePermissionRequest: (webContents, permission, requestingUrl) =>
+				this.resolvePermissionRequest(
 					webContents,
-					String(permission),
-					details?.requestingUrl,
-				).then(callback);
-			},
-		);
-		this.onWillDownload = (_event, item, webContents) => {
-			const tabId = this.webContentsToTab.get(webContents.id);
-			if (!tabId) {
-				item.cancel();
-				return;
-			}
-			const id = `download-${randomUUID()}`;
-			const filename = this.availableDownloadName(item.getFilename(), id);
-			const path = join(this.downloadDirectory, filename);
-			const startedAt = this.now().toISOString();
-			item.setSavePath(path);
-			this.downloadPaths.set(id, path);
-			this.activeDownloads.set(id, item);
-			this.state.downloads.push({
-				id,
-				tabId,
-				filename,
-				sourceUrl:
-					sanitizeBrowserUrl(item.getURL()) || "https://invalid.local/",
-				receivedBytes: 0,
-				totalBytes: Math.max(0, item.getTotalBytes()),
-				status: "progressing",
-				startedAt,
-				canReveal: false,
-			});
-			this.state.downloads.splice(
-				0,
-				Math.max(0, this.state.downloads.length - MAX_DOWNLOAD_ENTRIES),
-			);
-			this.commit();
-			item.on("updated", () => {
-				const record = this.state.downloads.find(
-					(download) => download.id === id,
-				);
-				if (!record) return;
-				record.receivedBytes = Math.max(0, item.getReceivedBytes());
-				record.totalBytes = Math.max(0, item.getTotalBytes());
-				this.emit();
-			});
-			item.once("done", (_doneEvent, status) => {
-				this.activeDownloads.delete(id);
-				const record = this.state.downloads.find(
-					(download) => download.id === id,
-				);
-				if (!record) return;
-				record.receivedBytes = Math.max(0, item.getReceivedBytes());
-				record.totalBytes = Math.max(0, item.getTotalBytes());
-				record.status =
-					status === "completed"
-						? "completed"
-						: status === "cancelled"
-							? "cancelled"
-							: "failed";
-				record.completedAt = this.now().toISOString();
-				record.canReveal = status === "completed" && existsSync(path);
-				this.commit();
-			});
+					permission,
+					requestingUrl,
+				),
+			handleWillDownload: (event, item, webContents) =>
+				this.handleWillDownload(event, item, webContents),
 		};
-		this.partition.on("will-download", this.onWillDownload);
+		this.partitionCoordinator.register(this.partitionParticipant);
 		void this.backfillOriginFaviconsFromHistory();
 	}
 
@@ -700,70 +745,7 @@ export class UserBrowserService {
 		if (!tab.url || tab.error || isKestrelAppPageUrl(tab.url)) {
 			throw new Error("Only loaded web pages can open in a separate window.");
 		}
-		const record = this.views.get(tabId) ?? this.ensureView(tab);
-		const popout = new BrowserWindow({
-			width: 1024,
-			height: 720,
-			minWidth: 420,
-			minHeight: 280,
-			show: false,
-			titleBarStyle: "hiddenInset",
-			backgroundColor: "#ffffff",
-			title: tab.title,
-			webPreferences: {
-				nodeIntegration: false,
-				contextIsolation: true,
-				sandbox: true,
-			},
-		});
-		this.popoutWindows.add(popout);
-		if (
-			!this.window.isDestroyed() &&
-			this.window.contentView.children.includes(record.view)
-		) {
-			this.window.contentView.removeChildView(record.view);
-		}
-		record.view.setVisible(false);
-		popout.contentView.addChildView(record.view);
-		const syncPopoutBounds = () => {
-			if (popout.isDestroyed() || record.view.webContents.isDestroyed()) return;
-			const [width = 0, height = 0] = popout.getContentSize();
-			record.view.setBounds({
-				x: 0,
-				y: 0,
-				width: Math.max(0, width),
-				height: Math.max(0, height),
-			});
-			record.view.setVisible(true);
-		};
-		popout.on("resize", syncPopoutBounds);
-		popout.once("ready-to-show", () => {
-			syncPopoutBounds();
-			popout.show();
-		});
-		setTimeout(() => {
-			if (!popout.isDestroyed() && !popout.isVisible()) {
-				syncPopoutBounds();
-				popout.show();
-			}
-		}, 120);
-		popout.on("closed", () => {
-			popout.removeAllListeners("resize");
-			this.popoutWindows.delete(popout);
-			if (
-				!this.window.isDestroyed() &&
-				this.window.contentView.children.includes(record.view)
-			) {
-				this.window.contentView.removeChildView(record.view);
-			}
-			if (!record.view.webContents.isDestroyed()) {
-				record.view.webContents.close({ waitForBeforeUnload: false });
-			}
-		});
-
-		this.views.delete(tabId);
-		this.elementRefs.delete(tabId);
-		this.webContentsToTab.delete(record.view.webContents.id);
+		this.closeView(tabId);
 		const index = this.state.tabs.findIndex((item) => item.id === tabId);
 		this.state.tabs.splice(index, 1);
 		if (this.state.tabs.length === 0) {
@@ -1391,13 +1373,71 @@ export class UserBrowserService {
 		if (this.disposed) return;
 		this.disposed = true;
 		if (this.sleepingTabsInterval) clearInterval(this.sleepingTabsInterval);
-		this.partition.off("will-download", this.onWillDownload);
-		for (const popout of [...this.popoutWindows]) {
-			if (!popout.isDestroyed()) popout.close();
-		}
-		this.popoutWindows.clear();
+		this.partitionCoordinator.unregister(this.partitionParticipant);
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
 		this.elementRefs.clear();
+	}
+
+	private handleWillDownload(
+		_event: Electron.Event,
+		item: Electron.DownloadItem,
+		webContents: WebContents,
+	): void {
+		const tabId = this.webContentsToTab.get(webContents.id);
+		if (!tabId) {
+			item.cancel();
+			return;
+		}
+		const id = `download-${randomUUID()}`;
+		const filename = this.availableDownloadName(item.getFilename(), id);
+		const path = join(this.downloadDirectory, filename);
+		const startedAt = this.now().toISOString();
+		item.setSavePath(path);
+		this.downloadPaths.set(id, path);
+		this.activeDownloads.set(id, item);
+		this.state.downloads.push({
+			id,
+			tabId,
+			filename,
+			sourceUrl: sanitizeBrowserUrl(item.getURL()) || "https://invalid.local/",
+			receivedBytes: 0,
+			totalBytes: Math.max(0, item.getTotalBytes()),
+			status: "progressing",
+			startedAt,
+			canReveal: false,
+		});
+		this.state.downloads.splice(
+			0,
+			Math.max(0, this.state.downloads.length - MAX_DOWNLOAD_ENTRIES),
+		);
+		this.commit();
+		item.on("updated", () => {
+			const record = this.state.downloads.find(
+				(download) => download.id === id,
+			);
+			if (!record) return;
+			record.receivedBytes = Math.max(0, item.getReceivedBytes());
+			record.totalBytes = Math.max(0, item.getTotalBytes());
+			this.emit();
+		});
+		item.once("done", (_doneEvent, status) => {
+			this.activeDownloads.delete(id);
+			const record = this.state.downloads.find(
+				(download) => download.id === id,
+			);
+			if (!record) return;
+			record.receivedBytes = Math.max(0, item.getReceivedBytes());
+			record.totalBytes = Math.max(0, item.getTotalBytes());
+			record.status =
+				status === "completed"
+					? "completed"
+					: status === "cancelled"
+						? "cancelled"
+						: "failed";
+			record.completedAt = this.now().toISOString();
+			record.canReveal = status === "completed" && existsSync(path);
+			this.commit();
+		});
 	}
 
 	private ensureView(tab: UserBrowserTab): ViewRecord {

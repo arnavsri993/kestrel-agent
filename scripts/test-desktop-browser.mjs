@@ -158,6 +158,34 @@ async function waitForNativeView(predicate, label) {
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
 }
 
+async function waitForNativeViewInAnyWindow(expectedUrl, label) {
+	const deadline = Date.now() + 30_000;
+	let latest;
+	while (Date.now() < deadline) {
+		latest = await application.evaluate(
+			({ BrowserWindow }) =>
+				BrowserWindow.getAllWindows()
+					.filter(
+						(candidate) =>
+							!candidate.webContents.getURL().includes("petOverlay=1"),
+					)
+					.map((candidate) => ({
+						url: candidate.webContents.getURL(),
+						views: candidate.contentView.children
+							.filter((child) => "webContents" in child)
+							.map((child) =>
+								"webContents" in child ? child.webContents.getURL() : "",
+							),
+					})),
+			expectedUrl,
+		);
+		if (latest.some((candidate) => candidate.views.includes(expectedUrl)))
+			return latest;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	throw new Error(`${label}: ${JSON.stringify(latest)}`);
+}
+
 async function activeViewScript(source) {
 	return application.evaluate(async ({ BrowserWindow }, script) => {
 		const window = BrowserWindow.getAllWindows().find(
@@ -634,6 +662,57 @@ try {
 		"Original tab was not restored after popup close",
 	);
 
+	const detachableTabId = await page.evaluate(async (input) => {
+		const response = await window.kestrel.request({
+			type: "browser-create-tab",
+			input,
+			active: false,
+		});
+		if (!response.ok || !("browserState" in response))
+			throw new Error("A detachable tab could not be created.");
+		return response.browserState.tabs.at(-1)?.id;
+	}, `${origin}/two`);
+	assert(detachableTabId);
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === detachableTabId && tab.url === `${origin}/two`),
+		"Detachable tab did not load",
+	);
+	const detachableTab = page.getByRole("tab", { name: "Page two", exact: true });
+	await detachableTab.waitFor();
+	const detachableBounds = await detachableTab.boundingBox();
+	assert(detachableBounds);
+	const detachedWindowPromise = application.waitForEvent("window");
+	await page.mouse.move(
+		detachableBounds.x + detachableBounds.width / 2,
+		detachableBounds.y + detachableBounds.height / 2,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		detachableBounds.x + detachableBounds.width / 2,
+		detachableBounds.y + detachableBounds.height + 80,
+		{ steps: 4 },
+	);
+	await page.mouse.up();
+	const detachedPage = await detachedWindowPromise;
+	detachedPage.setDefaultTimeout(30_000);
+	detachedPage.on("console", (message) => {
+		if (message.type() === "error") runtimeErrors.push(message.text());
+	});
+	detachedPage.on("pageerror", (error) => runtimeErrors.push(error.message));
+	await detachedPage.getByRole("tablist", { name: "Browser tabs" }).waitFor();
+	await detachedPage.locator("#browser-address-input").waitFor();
+	assert.equal(await detachedPage.getByRole("tab", { name: "Page two", exact: true }).count(), 1);
+	const detachedWindowState = await waitForNativeViewInAnyWindow(
+		`${origin}/two`,
+		"Detached page did not attach to its new Kestrel window",
+	);
+	assert.equal(detachedWindowState.length, 2);
+	await detachedPage.close();
+	await waitForBrowserState(
+		(value) => value.tabs.length === 1 && value.tabs[0]?.url === `${origin}/one`,
+		"Source browser did not retain its remaining tab after detachment",
+	);
+
 	const openedPopup = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",
@@ -850,7 +929,7 @@ try {
 
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, downloads, search settings, hidden-view routing, and restart restore.\n",
+		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, hidden-view routing, and restart restore.\n",
 	);
 } finally {
 	await application?.close();
