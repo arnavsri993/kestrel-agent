@@ -2854,6 +2854,10 @@ export const RendererRequestSchema = z.union([
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({
+		type: z.literal("browser-save-screenshot"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.literal("browser-set-site-permission"),
 		origin: z.string().min(1).max(8_192),
 		permission: z.string().min(1).max(80),
@@ -3184,6 +3188,9 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 export type RendererResponse =
 	| CoreResponse
 	| { ok: true; browserState: UserBrowserState }
+	| { ok: true; extensions: InstalledExtension[] }
+	| { ok: true; extension: InstalledExtension }
+	| { ok: true; screenshotPath?: string; cancelled?: boolean }
 	| { ok: true; browserContext: UserBrowserPageContext }
 	| {
 			ok: true;

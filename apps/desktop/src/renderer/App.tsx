@@ -9284,8 +9284,6 @@ export function App() {
 						browser={browser}
 						agentName={activeAgentName}
 						agentOpen={agentSidebarOpen}
-						contextEnabled={browserContextEnabled}
-						onToggleContext={toggleBrowserContext}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
 						onOpenSettings={() => openSettings("browser")}

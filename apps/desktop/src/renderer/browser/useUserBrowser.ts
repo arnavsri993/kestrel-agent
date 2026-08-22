@@ -60,6 +60,7 @@ export interface UserBrowserController {
 	stopFindInPage(tabId: string): Promise<void>;
 	printTab(tabId: string): Promise<void>;
 	openDevTools(tabId: string): Promise<void>;
+	saveScreenshot(tabId: string): Promise<string | undefined>;
 	setSitePermission(
 		origin: string,
 		permission: string,
@@ -339,6 +340,15 @@ export function useUserBrowser(): UserBrowserController {
 		(tabId: string) => requestState({ type: "browser-open-devtools", tabId }),
 		[requestState],
 	);
+	const saveScreenshot = useCallback(async (tabId: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-save-screenshot",
+			tabId,
+		});
+		if (!response.ok)
+			throw new Error(responseError(response));
+		return "screenshotPath" in response ? response.screenshotPath : undefined;
+	}, []);
 	const setSitePermission = useCallback(
 		(origin: string, permission: string, decision: "allow" | "deny") =>
 			requestState({
@@ -395,6 +405,7 @@ export function useUserBrowser(): UserBrowserController {
 			stopFindInPage,
 			printTab,
 			openDevTools,
+			saveScreenshot,
 			setSitePermission,
 			sleepTab,
 			sleepInactiveTabs,
@@ -435,6 +446,7 @@ export function useUserBrowser(): UserBrowserController {
 			stopFindInPage,
 			printTab,
 			openDevTools,
+			saveScreenshot,
 			setSitePermission,
 			sleepTab,
 			sleepInactiveTabs,

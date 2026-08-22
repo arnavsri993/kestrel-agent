@@ -7,9 +7,9 @@ import {
 	useEffect,
 	useRef,
 	useState,
-	type KeyboardEvent,
-	type MouseEvent,
-	type PointerEvent,
+	type KeyboardEvent as ReactKeyboardEvent,
+	type MouseEvent as ReactMouseEvent,
+	type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Icon } from "../Icon";
 import {
@@ -52,6 +52,7 @@ export function TabStrip({
 	onCloseOthers,
 	onMoveTab,
 	onDetachTab,
+	onReopenClosedTab,
 	orientation,
 	onToggleOrientation,
 }: {
@@ -70,6 +71,7 @@ export function TabStrip({
 	onCloseOthers?(tabId: string): void;
 	onMoveTab?(tabId: string, toIndex: number): void;
 	onDetachTab?(tabId: string): void;
+	onReopenClosedTab?(): void;
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
 }) {
@@ -78,6 +80,8 @@ export function TabStrip({
 	const [menu, setMenu] = useState<{ tabId: string; x: number; y: number } | null>(
 		null,
 	);
+	const [tabToolsOpen, setTabToolsOpen] = useState(false);
+	const [tabSearch, setTabSearch] = useState("");
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragIntent, setDragIntent] = useState<"none" | "reorder" | "detach">(
 		"none",
@@ -85,6 +89,9 @@ export function TabStrip({
 	const dragStartRef = useRef<{ x: number; y: number } | null>(null);
 	const suppressClickRef = useRef(false);
 	const tabsContainerRef = useRef<HTMLDivElement | null>(null);
+	const tabToolsRef = useRef<HTMLDivElement | null>(null);
+	const tabToolsTriggerRef = useRef<HTMLButtonElement | null>(null);
+	const tabSearchRef = useRef<HTMLInputElement | null>(null);
 
 	const handleRowMouseLeave = useCallback(() => {
 		setLockedWidth(null);
@@ -102,6 +109,60 @@ export function TabStrip({
 		);
 		activeTab?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
 	}, [activeTabId, orientation, tabs.length]);
+
+	const closeTabTools = useCallback(() => {
+		setTabToolsOpen(false);
+		setTabSearch("");
+		window.requestAnimationFrame(() => tabToolsTriggerRef.current?.focus());
+	}, []);
+
+	useEffect(() => {
+		if (!tabToolsOpen) return;
+		const frame = window.requestAnimationFrame(() => {
+			if (tabSearch) tabSearchRef.current?.focus();
+			else
+				tabToolsRef.current
+					?.querySelector<HTMLButtonElement>(
+						"button[role='menuitem'], button[role='menuitemcheckbox']",
+					)
+					?.focus();
+		});
+		const onPointerDown = (event: PointerEvent) => {
+			const target = event.target as Node | null;
+			if (
+				target &&
+				!tabToolsRef.current?.contains(target) &&
+				!tabToolsTriggerRef.current?.contains(target)
+			)
+				closeTabTools();
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				closeTabTools();
+				return;
+			}
+			if (!tabToolsRef.current || !["ArrowDown", "ArrowUp"].includes(event.key))
+				return;
+			const items = Array.from(
+				tabToolsRef.current.querySelectorAll<HTMLElement>(
+					"button[role='menuitem'], button[role='menuitemcheckbox'], input",
+				),
+			);
+			if (items.length === 0) return;
+			const index = items.indexOf(document.activeElement as HTMLElement);
+			const delta = event.key === "ArrowDown" ? 1 : -1;
+			event.preventDefault();
+			items[(index + delta + items.length) % items.length]?.focus();
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			window.cancelAnimationFrame(frame);
+			document.removeEventListener("pointerdown", onPointerDown);
+			document.removeEventListener("keydown", onKeyDown);
+		};
+	}, [closeTabTools, tabSearch, tabToolsOpen]);
 
 	const lockTabWidthBeforeClose = useCallback(() => {
 		if (!shouldRetainTabWidthOnClose(orientation, tabs.length)) {
@@ -125,7 +186,7 @@ export function TabStrip({
 		onClose(tabId);
 	}
 
-	function moveFocus(event: KeyboardEvent<HTMLDivElement>) {
+	function moveFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
 		const previousKey = orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
 		const nextKey = orientation === "vertical" ? "ArrowDown" : "ArrowRight";
 		if (![previousKey, nextKey, "Home", "End"].includes(event.key)) return;
@@ -145,7 +206,7 @@ export function TabStrip({
 		buttons[next]?.focus();
 	}
 
-	function handleTabAuxClick(event: MouseEvent, tabId: string) {
+	function handleTabAuxClick(event: ReactMouseEvent, tabId: string) {
 		if (event.button === 1) {
 			event.preventDefault();
 			event.stopPropagation();
@@ -153,7 +214,7 @@ export function TabStrip({
 		}
 	}
 
-	function handleDragFillAuxClick(event: MouseEvent) {
+	function handleDragFillAuxClick(event: ReactMouseEvent) {
 		if (event.button === 1) {
 			event.preventDefault();
 			setLockedWidth(null);
@@ -166,7 +227,7 @@ export function TabStrip({
 		onCreate();
 	}
 
-	function openMenu(event: MouseEvent, tabId: string) {
+	function openMenu(event: ReactMouseEvent, tabId: string) {
 		event.preventDefault();
 		setMenu({ tabId, x: event.clientX, y: event.clientY });
 	}
@@ -177,7 +238,7 @@ export function TabStrip({
 		setDragIntent("none");
 	}
 
-	function handleTabPointerDown(event: PointerEvent, tabId: string) {
+	function handleTabPointerDown(event: ReactPointerEvent, tabId: string) {
 		if (event.button !== 0) return;
 		if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
 		dragStartRef.current = { x: event.clientX, y: event.clientY };
@@ -186,7 +247,7 @@ export function TabStrip({
 		event.currentTarget.setPointerCapture(event.pointerId);
 	}
 
-	function handleTabPointerMove(event: PointerEvent) {
+	function handleTabPointerMove(event: ReactPointerEvent) {
 		if (!draggingTabId || !dragStartRef.current) return;
 		const dx = event.clientX - dragStartRef.current.x;
 		const dy = event.clientY - dragStartRef.current.y;
@@ -212,7 +273,7 @@ export function TabStrip({
 		}
 	}
 
-	function handleTabPointerUp(event: PointerEvent, tabId: string) {
+	function handleTabPointerUp(event: ReactPointerEvent, tabId: string) {
 		if (!draggingTabId || draggingTabId !== tabId || !dragStartRef.current) {
 			resetDrag();
 			return;
@@ -289,37 +350,119 @@ export function TabStrip({
 			onMouseLeave={handleRowMouseLeave}
 		>
 			<div className="browser-tab-leading-actions no-drag">
-				{orientation === "horizontal" && (
-					<button
-						type="button"
-						className="browser-tab-actions-btn"
-						aria-label={compact ? "Expand tabs" : "Compact tabs to favicons"}
-						title={compact ? "Expand tabs" : "Compact tabs to favicons"}
-						onClick={() => setCompact((value) => !value)}
+				<button
+					type="button"
+					ref={tabToolsTriggerRef}
+					className={`browser-tab-actions-btn ${tabToolsOpen ? "active" : ""}`}
+					aria-label="Tab tools"
+					aria-haspopup="menu"
+					aria-expanded={tabToolsOpen}
+					title="Tab tools"
+					onClick={(event) => {
+						tabToolsTriggerRef.current = event.currentTarget;
+						setTabToolsOpen((value) => {
+							if (value) setTabSearch("");
+							return !value;
+						});
+					}}
+				>
+					<Icon name="tabActions" />
+				</button>
+				{tabToolsOpen && (
+					<div
+						ref={tabToolsRef}
+						className="browser-tab-tools-menu no-drag"
+						role="menu"
+						aria-label="Tab tools"
 					>
-						<Icon name={compact ? "forward" : "back"} />
-					</button>
-				)}
-				{onToggleOrientation && (
-					<button
-						type="button"
-						className="browser-tab-actions-btn"
-						aria-label={
-							orientation === "horizontal"
-								? "Turn on vertical tabs"
-								: "Turn off vertical tabs"
-						}
-						title={
-							orientation === "horizontal"
-								? "Turn on vertical tabs"
-								: "Turn off vertical tabs"
-						}
-						onClick={onToggleOrientation}
-					>
-						<Icon
-							name={orientation === "horizontal" ? "tabActions" : "browser"}
-						/>
-					</button>
+						<header>
+							<Icon name="tabActions" />
+							<span>
+								<strong>Tab tools</strong>
+								<small>Keep the strip tidy</small>
+							</span>
+						</header>
+						<button
+							type="button"
+							role="menuitemcheckbox"
+							aria-checked={compact}
+							onClick={() => setCompact((value) => !value)}
+						>
+							<Icon name="tabActions" />
+							<span>Compact tabs to favicons</span>
+							<Icon name={compact ? "check" : "close"} />
+						</button>
+						{onToggleOrientation && (
+							<button
+								type="button"
+								role="menuitemcheckbox"
+								aria-checked={orientation === "vertical"}
+								onClick={() => {
+									onToggleOrientation();
+									closeTabTools();
+								}}
+							>
+								<Icon name="verticalTabs" />
+								<span>Use vertical tabs</span>
+								<Icon name={orientation === "vertical" ? "check" : "close"} />
+							</button>
+						)}
+						{onReopenClosedTab && (
+							<button
+								type="button"
+								role="menuitem"
+								onClick={() => {
+									onReopenClosedTab();
+									closeTabTools();
+								}}
+							>
+								<Icon name="history" />
+								<span>Reopen closed tab</span>
+							</button>
+						)}
+						<label className="browser-tab-tools-search">
+							<Icon name="search" />
+							<span className="sr-only">Search open tabs</span>
+							<input
+								ref={tabSearchRef}
+								value={tabSearch}
+								placeholder="Search open tabs"
+								onChange={(event) => setTabSearch(event.target.value)}
+							/>
+						</label>
+						{tabSearch && (
+							<div className="browser-tab-search-results">
+								{tabs
+									.filter((tab) =>
+										`${tab.title} ${tab.url}`
+											.toLowerCase()
+											.includes(tabSearch.toLowerCase()),
+									)
+										.map((tab) => (
+											<button
+												type="button"
+												role="menuitem"
+												key={tab.id}
+												onClick={() => {
+													onSelect(tab.id);
+													closeTabTools();
+												}}
+											>
+												<span className="browser-tab-search-favicon">
+													{getFaviconContent(tab)}
+												</span>
+												<span>{tab.title}</span>
+											</button>
+										))}
+								{tabs.every(
+									(tab) =>
+										!`${tab.title} ${tab.url}`
+											.toLowerCase()
+											.includes(tabSearch.toLowerCase()),
+									) && <small>No matching tabs</small>}
+							</div>
+						)}
+					</div>
 				)}
 			</div>
 			<div

@@ -323,12 +323,12 @@ try {
 			}),
 		false,
 	);
-	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).waitFor();
+	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).waitFor();
 	await page.reload();
 	await page
 		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
 		.waitFor();
-	await page.getByRole("button", { name: "Chat with Pragmatic", exact: true }).click();
+	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().waitFor();
 	assert.equal(await agentSidebar.evaluate((sidebar) => sidebar.inert), false);
 	await page.locator("#runtime-prompt").waitFor();
