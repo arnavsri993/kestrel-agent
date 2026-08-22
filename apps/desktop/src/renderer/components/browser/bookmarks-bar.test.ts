@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	bookmarkBarFaviconDataUrl,
 	bookmarkBarGlyph,
 	bookmarkBarLabel,
 	hostnameFromBookmarkUrl,
@@ -37,6 +38,28 @@ describe("bookmarks bar labels", () => {
 	it("uses a stable glyph from the visible label", () => {
 		expect(bookmarkBarGlyph("Kestrel docs", "https://example.com")).toBe("K");
 		expect(bookmarkBarGlyph("", "https://www.example.com")).toBe("E");
+	});
+
+	it("uses the cached favicon for a bookmarked page origin", () => {
+		expect(
+			bookmarkBarFaviconDataUrl("https://example.com/docs", [
+				{
+					origin: "https://example.com",
+					faviconDataUrl: "data:image/png;base64,EXAMPLE",
+				},
+			]),
+		).toBe("data:image/png;base64,EXAMPLE");
+	});
+
+	it("does not borrow a favicon from another origin", () => {
+		expect(
+			bookmarkBarFaviconDataUrl("https://other.example/docs", [
+				{
+					origin: "https://example.com",
+					faviconDataUrl: "data:image/png;base64,EXAMPLE",
+				},
+			]),
+		).toBeUndefined();
 	});
 
 	it("ignores invalid bookmark URLs", () => {
