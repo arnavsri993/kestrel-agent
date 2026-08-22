@@ -273,6 +273,23 @@ describe("UserBrowserService", () => {
     expect(view.visible).toBe(false);
   });
 
+  it("removes a detached page from the source browser service", async () => {
+    const { service, window } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://first.example");
+    const second = await navigateNewTab(service, "https://second.example");
+    const secondView = electron.state.views.at(-1)!;
+
+    const state = await service.detachTab(second.id);
+
+    expect(state.tabs.map((tab) => tab.id)).toEqual([first.id]);
+    expect(state.activeTabId).toBe(first.id);
+    expect(window.contentView.children).not.toContain(secondView);
+    expect(secondView.webContents.close).toHaveBeenCalledWith({
+      waitForBeforeUnload: false,
+    });
+  });
+
   it("opens user-initiated safe links as a managed tab and denies unsafe urls", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
