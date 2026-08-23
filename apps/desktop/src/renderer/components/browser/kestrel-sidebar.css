@@ -15,6 +15,13 @@
 	--kestrel-sidebar-width: 60px;
 }
 
+/* browser.css still carries the pre-navigation two-column shell. Repeat the
+ * global navigation grid at the stronger collapsed-state specificity so
+ * hiding Pragmatic cannot turn the navigation rail into the whole window. */
+.ai-browser-app.agent-sidebar-collapsed {
+	grid-template-columns: var(--kestrel-sidebar-width) minmax(0, 1fr);
+}
+
 .browser-main-plane {
 	grid-column: 2;
 	width: auto;

@@ -76,4 +76,5 @@ jobs:
       - run: corepack pnpm test:desktop-chat-configuration
       - run: corepack pnpm test:desktop-managed-policy
       - run: corepack pnpm package:mac:dev
+      - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
       - run: corepack pnpm test:packaged-desktop:arm64
