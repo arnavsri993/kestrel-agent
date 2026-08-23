@@ -9,6 +9,7 @@ import {
 } from "react";
 import type {
 	FilePreview,
+	RuntimeSession,
 	UserBrowserFile,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
@@ -38,6 +39,8 @@ export function BrowserWorkspace({
 	onToggleSidebar,
 	onAskFile,
 	appPage,
+	sessions = [],
+	onOpenSession,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -53,6 +56,8 @@ export function BrowserWorkspace({
   onToggleSidebar?(): void;
 	onAskFile(file: UserBrowserFile): void;
 	appPage?: ReactNode;
+	sessions?: RuntimeSession[];
+	onOpenSession?(sessionId: string): void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -72,6 +77,7 @@ export function BrowserWorkspace({
     reload,
     selectTab,
     setContentBounds,
+    updateSettings,
     stop,
     zoomIn,
     zoomOut,
@@ -565,14 +571,24 @@ export function BrowserWorkspace({
           <NewTabPage
             history={state.history}
             bookmarks={state.bookmarks}
+            downloads={state.downloads}
             tabs={state.tabs}
             originFavicons={state.originFavicons}
-			background={state.settings.newTabBackground}
-			backgroundCustomDataUrl={state.settings.newTabBackgroundCustomDataUrl}
-			agentName={agentName}
-			onNavigate={(input) => void navigate(activeTab.id, input)}
-			onNewAgent={onNewAgent}
-		/>
+            background={state.settings.newTabBackground}
+            backgroundCustomDataUrl={state.settings.newTabBackgroundCustomDataUrl}
+            agentName={agentName}
+            sessions={sessions}
+            widgetSettings={state.settings.newTabWidgets}
+            onUpdateWidgetSettings={(newTabWidgets) =>
+              void updateSettings({ ...state.settings, newTabWidgets })
+            }
+            onNavigate={(input) => void navigate(activeTab.id, input)}
+            onNewAgent={onNewAgent}
+            onOpenHistory={onOpenHistory}
+            onOpenDownloads={onOpenDownloads}
+            onOpenBookmarks={onOpenBookmarks}
+            onOpenSession={onOpenSession}
+          />
         )}
         {activeTab.error && (
           <section className="browser-error-state">

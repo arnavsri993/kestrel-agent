@@ -9506,6 +9506,8 @@ export function App() {
 						onOpenMenu={openCommandCenter}
 						onShowShortcuts={() => setShowShortcuts(true)}
 						onAskFile={askFileFromTab}
+						sessions={runtimeSessions}
+						onOpenSession={openSidebarSession}
 						{...(appPage ? { appPage } : {})}
 					/>
 				</section>
