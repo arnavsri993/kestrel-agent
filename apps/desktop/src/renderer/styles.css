@@ -1,44 +1,39 @@
 :root {
-	color-scheme: light;
+	color-scheme: dark;
 
-	/* A light, slightly sage neutral ramp keeps the product calm without
-	   collapsing every surface into the same white plane. */
-	--canvas: #f2f5f1;
-	--sidebar: #e8eee9;
-	--panel: #fbfcfa;
-	--surface: #f5f8f4;
-	--surface-strong: #e7eee8;
-	--overlay: #ffffff;
+	/* Default surfaces stay black/graphite, with enough separation to keep
+	   navigation, content, controls, and overlays legible. */
+	--canvas: #141518;
+	--sidebar: #1b1c20;
+	--panel: #23252a;
+	--surface: #2b2d33;
+	--surface-strong: #36383f;
+	--overlay: #42444b;
 
-	/* Ink ramp — deep green-gray ink stays readable on the lighter planes. */
-	--ink: #1d2a22;
-	--ink-secondary: #4b5e52;
-	--muted: #607268;
-	--faint: #87958b;
+	/* Aluminum ink stays readable across the graphite elevation ramp. */
+	--ink: #f3f4f6;
+	--ink-secondary: #c8cbd2;
+	--muted: #aeb2bb;
+	--faint: #858a94;
 
-	/* Lines — separation comes from quiet green-gray rules. */
-	--line: rgba(35, 66, 48, 0.12);
-	--line-strong: rgba(35, 66, 48, 0.22);
+	/* Lines use white at low opacity so they remain neutral, not colorful. */
+	--line: rgba(255, 255, 255, 0.1);
+	--line-strong: rgba(255, 255, 255, 0.18);
 
-	/* Sage is the action accent; white remains the readable action ink. */
-	--solid: #2f684a;
-	--solid-hover: #24563b;
-	--on-solid: #ffffff;
-	--selected-soft: rgba(61, 126, 87, 0.13);
+	/* Primary actions remain grayscale: a light control on a dark canvas. */
+	--solid: #f3f4f6;
+	--solid-hover: #ffffff;
+	--on-solid: #141518;
+	--selected-soft: rgba(255, 255, 255, 0.1);
 
 	/* Statuses retain shape and text labels in addition to color. */
-	--status-fill: #e3efe7;
-	--status-ink: #2f684a;
+	--status-fill: #383a41;
+	--status-ink: #f3f4f6;
 
-	/* Warning — restrained warm accent for approvals. */
-	--warning: #a6682d;
+	/* Warning — neutral gray keeps the default system monochrome. */
+	--warning: #d3d5da;
 	--warning-soft: color-mix(in srgb, var(--warning) 14%, var(--surface));
-	--warning-ink: #7b4d22;
-
-	/* Warning — restrained warm accent for approvals */
-	--warning: color-mix(in srgb, hsl(42 52% 52%) 82%, var(--surface-strong));
-	--warning-soft: color-mix(in srgb, var(--warning) 14%, var(--surface));
-	--warning-ink: color-mix(in srgb, var(--warning) 58%, var(--ink));
+	--warning-ink: #f0f1f4;
 
 	/* Type */
 	--display: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
@@ -72,12 +67,12 @@
 	--ease-kestrel: cubic-bezier(0.25, 1, 0.35, 1);
 
 	/* Elevation */
-	--shadow-xs: 0 1px 2px rgba(29, 54, 39, 0.1);
-	--shadow-sm: 0 2px 8px rgba(29, 54, 39, 0.11);
-	--shadow-md: 0 8px 24px rgba(29, 54, 39, 0.14), 0 1px 0 rgba(255, 255, 255, 0.72) inset;
-	--shadow-lg: 0 20px 56px rgba(29, 54, 39, 0.18), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+	--shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.28);
+	--shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.32);
+	--shadow-md: 0 8px 24px rgba(0, 0, 0, 0.38), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+	--shadow-lg: 0 20px 56px rgba(0, 0, 0, 0.46), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
 
-	/* Focus ring — high-contrast sage, 2px, offset. */
+	/* Focus ring — high-contrast grayscale, 2px, offset. */
 	--focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--solid);
 }
 
@@ -4083,7 +4078,7 @@ input[type="radio"] {
 
 /* Setup exists before Settings, so it always uses the product's shared visual baseline. */
 .setup-onboarding {
-	color-scheme: light;
+	color-scheme: dark;
 	color: var(--ink);
 }
 .onboarding-bar {
