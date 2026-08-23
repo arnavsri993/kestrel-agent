@@ -58,7 +58,13 @@ export const AgentConfigurationDocumentSchema = z.strictObject({
 		contentBlocking: z.enum(["standard", "strict", "custom"]),
 		javascriptEnabled: z.boolean(),
 		doNotTrack: z.boolean(),
-		newTabBackground: z.enum(["graphite", "meadow", "dawn", "paper"]),
+			newTabBackground: z.enum([
+				"graphite",
+				"meadow",
+				"dawn",
+				"mountains",
+				"paper",
+			]),
 		contextEnabled: z.boolean(),
 	}),
 	appearance: z.strictObject({

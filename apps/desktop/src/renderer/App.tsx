@@ -166,6 +166,7 @@ type SettingsSection =
 	| "extensions"
 	| "privacy"
 	| "advanced";
+type SettingsScope = "browser" | "agent";
 const commandDestinations: CommandDestination[] = [
 	{
 		id: "browser",
@@ -7886,6 +7887,14 @@ function Settings({
 	const [section, setSection] = useState<SettingsSection>(
 		initialSection ?? "connections",
 	);
+	const [scope, setScope] = useState<SettingsScope>(
+		initialSection === "browser" ? "browser" : "agent",
+	);
+	useEffect(() => {
+		if (!initialSection) return;
+		setSection(initialSection);
+		setScope(initialSection === "browser" ? "browser" : "agent");
+	}, [initialSection]);
 	useEffect(() => {
 		void window.kestrel
 			.request({ type: "get-system-state" })
@@ -8088,37 +8097,96 @@ function Settings({
 	] as const;
 	return (
 		<PageFrame title="Preferences" {...(onBack ? { onBack } : {})}>
+			<div
+				className="settings-scope-switcher"
+				role="tablist"
+				aria-label="Settings category"
+			>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={scope === "browser"}
+					className={scope === "browser" ? "active" : ""}
+					onClick={() => {
+						setScope("browser");
+						setSection("browser");
+					}}
+				>
+					<Icon name="browser" />
+					<span>
+						<strong>Browser</strong>
+						<small>Tabs, search, and new tab</small>
+					</span>
+				</button>
+				<button
+					type="button"
+					role="tab"
+					aria-selected={scope === "agent"}
+					className={scope === "agent" ? "active" : ""}
+					onClick={() => {
+						setScope("agent");
+						setSection("general");
+					}}
+				>
+					<Icon name="agent" />
+					<span>
+						<strong>Agent</strong>
+						<small>Models, memory, and behavior</small>
+					</span>
+				</button>
+			</div>
 			<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
-					<div className="settings-nav-category-header">
-						<Icon name="browser" />
-						<span>Browser Settings</span>
+					<div className="settings-nav-heading">
+						<span>Settings for</span>
+						<strong>{scope === "browser" ? "Browser" : "Agent"}</strong>
+						<small>
+							{scope === "browser"
+								? "Keep browsing controls in one place."
+								: "Configure how Kestrel works with you."}
+						</small>
 					</div>
-					{browserSections.map(([id, label]) => (
-						<button
-							key={id}
-							className={section === id ? "active browser-section-btn" : "browser-section-btn"}
-							aria-current={section === id ? "page" : undefined}
-							onClick={() => setSection(id)}
-						>
-							<span>{label}</span>
-						</button>
-					))}
-
-					<div className="settings-nav-category-header settings-nav-category-agent">
-						<Icon name="agent" />
-						<span>Agent Settings</span>
-					</div>
-					{agentSections.map(([id, label]) => (
-						<button
-							key={id}
-							className={section === id ? "active" : ""}
-							aria-current={section === id ? "page" : undefined}
-							onClick={() => setSection(id)}
-						>
-							<span>{label}</span>
-						</button>
-					))}
+					{scope === "browser" ? (
+						<>
+							<div className="settings-nav-category-header">
+								<Icon name="browser" />
+								<span>Browser settings</span>
+							</div>
+							{browserSections.map(([id, label]) => (
+								<button
+									key={id}
+									className={section === id ? "active browser-section-btn" : "browser-section-btn"}
+									aria-current={section === id ? "page" : undefined}
+									onClick={() => {
+										setScope("browser");
+										setSection(id);
+									}}
+								>
+									<span>{label}</span>
+								</button>
+							))}
+						</>
+					) : (
+						<>
+							<div className="settings-nav-category-header">
+								<Icon name="agent" />
+								<span>Agent settings</span>
+							</div>
+							{agentSections.map(([id, label]) => (
+								<button
+									key={id}
+									className={section === id ? "active" : ""}
+									aria-current={section === id ? "page" : undefined}
+									onClick={() => {
+										setScope("agent");
+										setSection(id);
+									}}
+								>
+									<span>{label}</span>
+								</button>
+							))}
+						</>
+					)}
 				</nav>
 				<div className="settings-content">
 					{section === "general" && (

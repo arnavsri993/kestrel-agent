@@ -34,6 +34,26 @@ it("defaults new browser settings to Google", () => {
 	expect(UserBrowserSettingsSchema.parse({}).showBookmarksBar).toBe(true);
 });
 
+it("accepts bundled backgrounds and bounded local image data", () => {
+	const custom = UserBrowserSettingsSchema.safeParse({
+		newTabBackground: "custom",
+		newTabBackgroundCustomDataUrl: "data:image/png;base64,AAAA",
+	});
+
+	expect(custom.success).toBe(true);
+	expect(
+		UserBrowserSettingsSchema.safeParse({
+			newTabBackground: "mountains",
+		}).success,
+	).toBe(true);
+	expect(
+		UserBrowserSettingsSchema.safeParse({
+			newTabBackground: "custom",
+			newTabBackgroundCustomDataUrl: "file:///tmp/private.png",
+		}).success,
+	).toBe(false);
+});
+
 it("redacts embedded URLs from untrusted browser text", () => {
 	expect(
 		redactUntrustedBrowserText(

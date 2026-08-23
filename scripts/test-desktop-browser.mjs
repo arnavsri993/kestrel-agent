@@ -294,7 +294,9 @@ try {
 		.getByRole("navigation", { name: "Settings sections" })
 		.getByRole("button", { name: /^Browser/ })
 		.click();
-	await page.getByRole("heading", { name: "Tabs & General" }).waitFor();
+	await page
+		.getByRole("heading", { name: "Make the browser feel like yours." })
+		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await page.getByRole("button", { name: "Back to Browser" }).click();
 	await page
@@ -900,18 +902,21 @@ try {
 	await browserSettings.click();
 	assert.equal(await browserSettings.getAttribute("aria-current"), "page");
 	await page
-		.getByRole("heading", { name: "Tabs & General", exact: true })
+		.getByRole("heading", { name: "Make the browser feel like yours.", exact: true })
 		.waitFor();
+	await page.getByRole("radio", { name: /Mountain valley/ }).check();
 	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
 	await page.getByLabel("Tab layout").selectOption("vertical");
 	state = await waitForBrowserState(
 		(candidate) =>
 			candidate.settings.searchEngine === "ecosia" &&
-			candidate.settings.tabLayout === "vertical",
+			candidate.settings.tabLayout === "vertical" &&
+			candidate.settings.newTabBackground === "mountains",
 		"browser settings update",
 	);
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.newTabBackground, "mountains");
 	const useCurrentPage = page.getByRole("checkbox", {
 		name: /Use current page/,
 	});
@@ -990,6 +995,7 @@ try {
 	assert(state.history.some((entry) => entry.title === "Page two"));
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.newTabBackground, "mountains");
 	assert.equal(
 		await page
 			.getByRole("tablist", { name: "Browser tabs" })

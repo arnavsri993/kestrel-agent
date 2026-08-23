@@ -1173,7 +1173,7 @@ describe("chat configuration runtime approval boundary", () => {
 				{
 					op: "replace",
 					path: "/browser/newTabBackground",
-					value: "meadow",
+					value: "mountains",
 				},
 				{
 					op: "replace",
@@ -1205,7 +1205,7 @@ describe("chat configuration runtime approval boundary", () => {
 		});
 
 		expect(applied.version.document.browser.searchEngine).toBe("google");
-		expect(applied.version.document.browser.newTabBackground).toBe("meadow");
+		expect(applied.version.document.browser.newTabBackground).toBe("mountains");
 		expect(applied.version.document.appearance.skin).toBe("meadow");
 		expect(applied.version.document.appearance.petEnabled).toBe(true);
 		expect(applied.version.document.system.launchAtLogin).toBe(true);

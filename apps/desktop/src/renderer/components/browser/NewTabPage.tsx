@@ -1,4 +1,10 @@
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from "react";
 import type {
   RuntimeSession,
   UserBrowserBookmark,
@@ -72,6 +78,7 @@ export function NewTabPage({
   tabs = [],
   originFavicons = [],
   background,
+  backgroundCustomDataUrl,
   agentName,
   sessions = [],
   projects = [],
@@ -86,6 +93,7 @@ export function NewTabPage({
     | Pick<UserBrowserOriginFavicon, "origin" | "faviconDataUrl">[]
     | undefined;
   background: UserBrowserSettings["newTabBackground"];
+  backgroundCustomDataUrl?: UserBrowserSettings["newTabBackgroundCustomDataUrl"];
   agentName: string;
   sessions?: RuntimeSession[] | undefined;
   projects?: WorkspaceGrant[] | undefined;
@@ -117,6 +125,10 @@ export function NewTabPage({
         .slice(0, 12),
     [sessions],
   );
+  const customBackgroundStyle: CSSProperties | undefined =
+    background === "custom" && backgroundCustomDataUrl
+      ? { backgroundImage: `url("${backgroundCustomDataUrl}")` }
+      : undefined;
 
   function submitChat(event: FormEvent) {
     event.preventDefault();
@@ -141,6 +153,11 @@ export function NewTabPage({
       }`}
       aria-labelledby="new-tab-title"
     >
+      <div
+        className="kestrel-home-backdrop"
+        aria-hidden="true"
+        style={customBackgroundStyle}
+      />
       <aside
         className="new-tab-sidebar"
         aria-label="Projects and chat history"
