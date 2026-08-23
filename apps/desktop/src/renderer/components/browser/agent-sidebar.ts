@@ -3,7 +3,12 @@ import { parseKestrelAppPage } from "../../../utility/browser-app-pages";
 
 export const SIDEBAR_RECENT_LIMIT = 3;
 
-export type SidebarDestination = "browser" | "agent" | "approvals" | "settings";
+export type SidebarDestination =
+	| "browser"
+	| "agent"
+	| "approvals"
+	| "capabilities"
+	| "settings";
 export type SidebarApprovalSurface = "thread" | "approvals";
 
 export function recentSidebarSessions(
@@ -41,8 +46,15 @@ export function sidebarApprovalsNavTarget(input: {
 
 export function sidebarActiveDestination(page: string): SidebarDestination {
 	const appPage = parseKestrelAppPage(page)?.id ?? page;
-	if (appPage === "agent" || appPage === "approvals" || appPage === "settings") {
+	if (
+		appPage === "agent" ||
+		appPage === "approvals" ||
+		appPage === "settings" ||
+		appPage === "commands"
+	) {
+		if (appPage === "commands") return "capabilities";
 		return appPage;
 	}
+	if (appPage === "work") return "agent";
 	return "browser";
 }

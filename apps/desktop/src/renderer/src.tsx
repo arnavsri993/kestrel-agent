@@ -8,6 +8,7 @@ import "./agent-panel-layout.css";
 import "./components/browser/model-selector.css";
 import "./components/window-controls.css";
 import "./motion.css";
+import "./components/browser/kestrel-sidebar.css";
 import { App } from "./App";
 import { WindowControls } from "./components/WindowControls";
 

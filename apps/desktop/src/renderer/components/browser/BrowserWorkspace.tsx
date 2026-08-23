@@ -8,10 +8,8 @@ import {
   type RefObject,
 } from "react";
 import type {
-  FilePreview,
-  RuntimeSession,
-  UserBrowserFile,
-  WorkspaceGrant,
+	FilePreview,
+	UserBrowserFile,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import {
@@ -37,12 +35,9 @@ export function BrowserWorkspace({
   onOpenBookmarks,
   onOpenMenu,
   onShowShortcuts,
-  onToggleSidebar,
-  onAskFile,
-  appPage,
-  sessions = [],
-  projects = [],
-  onOpenSession,
+	onToggleSidebar,
+	onAskFile,
+	appPage,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -56,11 +51,8 @@ export function BrowserWorkspace({
   onOpenMenu(): void;
   onShowShortcuts?(): void;
   onToggleSidebar?(): void;
-  onAskFile(file: UserBrowserFile): void;
-  appPage?: ReactNode;
-  sessions?: RuntimeSession[];
-  projects?: WorkspaceGrant[];
-  onOpenSession?(sessionId: string): void;
+	onAskFile(file: UserBrowserFile): void;
+	appPage?: ReactNode;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -575,15 +567,12 @@ export function BrowserWorkspace({
             bookmarks={state.bookmarks}
             tabs={state.tabs}
             originFavicons={state.originFavicons}
-            background={state.settings.newTabBackground}
-            backgroundCustomDataUrl={state.settings.newTabBackgroundCustomDataUrl}
-            agentName={agentName}
-            sessions={sessions}
-            projects={projects}
-            onNavigate={(input) => void navigate(activeTab.id, input)}
-            onNewAgent={onNewAgent}
-            onOpenSession={onOpenSession}
-          />
+			background={state.settings.newTabBackground}
+			backgroundCustomDataUrl={state.settings.newTabBackgroundCustomDataUrl}
+			agentName={agentName}
+			onNavigate={(input) => void navigate(activeTab.id, input)}
+			onNewAgent={onNewAgent}
+		/>
         )}
         {activeTab.error && (
           <section className="browser-error-state">

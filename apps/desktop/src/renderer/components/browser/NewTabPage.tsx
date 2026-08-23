@@ -6,16 +6,12 @@ import {
   type FormEvent,
 } from "react";
 import type {
-  RuntimeSession,
   UserBrowserBookmark,
   UserBrowserHistoryEntry,
   UserBrowserOriginFavicon,
   UserBrowserSettings,
   UserBrowserTab,
-  WorkspaceGrant,
 } from "@kestrel/shared-types";
-import { agentWorkspaceName, agentSessionRecency } from "../../agent-workspace";
-import { sessionTitleForDisplay } from "../../chat-title";
 import { Icon } from "../Icon";
 import {
   browserSiteLabel,
@@ -70,8 +66,6 @@ function FrequentTabGlyph({ site }: { site: FrequentBrowserSite }) {
   );
 }
 
-type SidebarSection = "projects" | "history";
-
 export function NewTabPage({
   history,
   bookmarks = [],
@@ -80,11 +74,8 @@ export function NewTabPage({
   background,
   backgroundCustomDataUrl,
   agentName,
-  sessions = [],
-  projects = [],
   onNavigate,
   onNewAgent,
-  onOpenSession,
 }: {
   history: UserBrowserHistoryEntry[];
   bookmarks?: UserBrowserBookmark[] | undefined;
@@ -95,16 +86,10 @@ export function NewTabPage({
   background: UserBrowserSettings["newTabBackground"];
   backgroundCustomDataUrl?: UserBrowserSettings["newTabBackgroundCustomDataUrl"];
   agentName: string;
-  sessions?: RuntimeSession[] | undefined;
-  projects?: WorkspaceGrant[] | undefined;
   onNavigate(input: string): void;
   onNewAgent(prompt?: string): void;
-  onOpenSession?: ((sessionId: string) => void) | undefined;
 }) {
   const [input, setInput] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarSection, setSidebarSection] =
-    useState<SidebarSection>("projects");
   const inputRef = useRef<HTMLInputElement | null>(null);
   const faviconByOrigin = useMemo(
     () => originFaviconMap(originFavicons, tabs),
@@ -117,13 +102,6 @@ export function NewTabPage({
   const suggestedActions = useMemo(
     () => suggestedAgentActions(history, 3),
     [history],
-  );
-  const recentSessions = useMemo(
-    () =>
-      [...sessions]
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-        .slice(0, 12),
-    [sessions],
   );
   const customBackgroundStyle: CSSProperties | undefined =
     background === "custom" && backgroundCustomDataUrl
@@ -148,9 +126,7 @@ export function NewTabPage({
 
   return (
     <section
-      className={`new-tab-page kestrel-home new-tab-page-${background}${
-        sidebarOpen ? " new-tab-sidebar-open" : " new-tab-sidebar-collapsed"
-      }`}
+      className={`new-tab-page kestrel-home new-tab-page-${background}`}
       aria-labelledby="new-tab-title"
     >
       <div
@@ -158,98 +134,6 @@ export function NewTabPage({
         aria-hidden="true"
         style={customBackgroundStyle}
       />
-      <aside
-        className="new-tab-sidebar"
-        aria-label="Projects and chat history"
-      >
-        <button
-          type="button"
-          className="new-tab-sidebar-toggle"
-          aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-          onClick={() => setSidebarOpen((value) => !value)}
-        >
-          <Icon name={sidebarOpen ? "back" : "forward"} />
-        </button>
-
-        {sidebarOpen && (
-          <>
-            <div
-              className="new-tab-sidebar-tabs"
-              role="tablist"
-              aria-label="Sidebar sections"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sidebarSection === "projects"}
-                className={sidebarSection === "projects" ? "active" : ""}
-                onClick={() => setSidebarSection("projects")}
-              >
-                Projects
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={sidebarSection === "history"}
-                className={sidebarSection === "history" ? "active" : ""}
-                onClick={() => setSidebarSection("history")}
-              >
-                Chat history
-              </button>
-            </div>
-
-            <div className="new-tab-sidebar-panel" role="tabpanel">
-              {sidebarSection === "projects" ? (
-                projects.length > 0 ? (
-                  <ul className="new-tab-sidebar-list">
-                    {projects.map((project) => (
-                      <li key={project.path}>
-                        <button
-                          type="button"
-                          title={project.path}
-                          onClick={() =>
-                            onNewAgent(
-                              `Review ${project.name} and recommend the highest-impact next step.`,
-                            )
-                          }
-                        >
-                          <Icon name="work" />
-                          <span>{project.name}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="new-tab-sidebar-empty">No projects connected yet.</p>
-                )
-              ) : recentSessions.length > 0 ? (
-                <ul className="new-tab-sidebar-list">
-                  {recentSessions.map((session) => (
-                    <li key={session.id}>
-                      <button
-                        type="button"
-                        title={agentWorkspaceName(session.workspaceRoot)}
-                        onClick={() => onOpenSession?.(session.id)}
-                      >
-                        <Icon name="agent" />
-                        <span>
-                          <strong>{sessionTitleForDisplay(session.title)}</strong>
-                          <small>{agentSessionRecency(session.updatedAt)}</small>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="new-tab-sidebar-empty">Chat history will appear here.</p>
-              )}
-            </div>
-          </>
-        )}
-      </aside>
-
-
       <div className="kestrel-home-content">
         <header className="kestrel-home-hero">
           <h1 id="new-tab-title">Hi there, what should we dive into today?</h1>

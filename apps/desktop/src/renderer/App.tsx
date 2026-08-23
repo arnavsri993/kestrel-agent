@@ -78,7 +78,11 @@ import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
-import { sidebarReviewTarget } from "./components/browser/agent-sidebar";
+import {
+	sidebarActiveDestination,
+	sidebarReviewTarget,
+} from "./components/browser/agent-sidebar";
+import { KestrelSidebar } from "./components/browser/KestrelSidebar";
 import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -2829,6 +2833,7 @@ function RuntimeConversation({
 	mentionBookmarks = [],
 	newAgentRequestId,
 	newAgentPrompt,
+	newAgentWorkspace,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -2846,6 +2851,7 @@ function RuntimeConversation({
 	mentionBookmarks?: UserBrowserBookmark[];
 	newAgentRequestId: number;
 	newAgentPrompt: string;
+	newAgentWorkspace: string | null;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -3000,12 +3006,19 @@ function RuntimeConversation({
 		activeSessionIdRef.current = null;
 		onActiveSession(null);
 		setInput(newAgentPrompt);
+		if (newAgentWorkspace) setWorkspace(newAgentWorkspace);
 		setAttachments([]);
 		setCheckpointSummary("");
 		setError("");
 		window.setTimeout(() => promptRef.current?.focus(), 0);
 		if (newAgentPrompt.trim()) void submit(newAgentPrompt);
-	}, [busy, newAgentPrompt, newAgentRequestId, onActiveSession]);
+	}, [
+		busy,
+		newAgentPrompt,
+		newAgentRequestId,
+		newAgentWorkspace,
+		onActiveSession,
+	]);
 
 	useEffect(() => {
 		if (
@@ -8785,6 +8798,9 @@ export function App() {
 		null,
 	);
 	const [externalIntakeRequestId, setExternalIntakeRequestId] = useState(0);
+	const [newAgentWorkspace, setNewAgentWorkspace] = useState<string | null>(
+		null,
+	);
 	const lastPromptedNewAgentAtRef = useRef(0);
 	const [error, setError] = useState<string | null>(null);
 	const [deepLinkNotice, setDeepLinkNotice] = useState("");
@@ -8899,7 +8915,7 @@ export function App() {
 		},
 		[acceptExternalIntake],
 	);
-	const startNewAgent = useCallback((prompt = "") => {
+	const startNewAgent = useCallback((prompt = "", workspaceRoot?: string) => {
 		const trimmed = prompt.trim();
 		if (!trimmed && Date.now() - lastPromptedNewAgentAtRef.current < 500) {
 			// #region agent log
@@ -8926,6 +8942,7 @@ export function App() {
 		}
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
+		setNewAgentWorkspace(workspaceRoot ?? null);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
 		// #region agent log
@@ -9330,6 +9347,9 @@ export function App() {
 	const pendingApprovalCount =
 		snapshot.approvals.filter((approval) => approval.status === "pending")
 			.length + (runtimeAgentState === "waiting_approval" ? 1 : 0);
+	const activeSidebarDestination = sidebarActiveDestination(
+		activeBrowserTab?.url ?? "",
+	);
 	function navigate(destination: string) {
 		if (destination === "shortcuts") {
 			setShowShortcuts(true);
@@ -9443,6 +9463,30 @@ export function App() {
 				exit={{ opacity: reduced ? 1 : 0 }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
+				<KestrelSidebar
+					activeDestination={
+						activeSidebarDestination === "browser" ||
+						activeSidebarDestination === "agent" ||
+						activeSidebarDestination === "approvals" ||
+						activeSidebarDestination === "settings"
+							? activeSidebarDestination
+							: "capabilities"
+					}
+					activeSessionId={activeRuntimeSessionId}
+					agentName={activeAgentName}
+					pendingApprovals={pendingApprovalCount}
+					sessions={runtimeSessions}
+					projects={availableWorkspaceGrants(workspaceGrants)}
+					onNewTask={() => startNewAgent()}
+					onOpenBrowser={openBrowser}
+					onOpenAgent={openAgent}
+					onReviewApprovals={reviewApprovals}
+					onOpenCapabilities={openCommandCenter}
+					onOpenSettings={() => openSettings("browser")}
+					onOpenProject={(project) => startNewAgent("", project.path)}
+					onOpenSession={openSidebarSession}
+					onOpenTaskHistory={() => void openAppPage("work")}
+				/>
 				<section className="browser-main-plane">
 					{deepLinkNotice && (
 						<small className="browser-notice" role="status">
@@ -9462,9 +9506,6 @@ export function App() {
 						onOpenMenu={openCommandCenter}
 						onShowShortcuts={() => setShowShortcuts(true)}
 						onAskFile={askFileFromTab}
-						sessions={runtimeSessions}
-						projects={availableWorkspaceGrants(workspaceGrants)}
-						onOpenSession={openSidebarSession}
 						{...(appPage ? { appPage } : {})}
 					/>
 				</section>
@@ -9519,6 +9560,7 @@ export function App() {
 						externalIntakeRequestId={externalIntakeRequestId}
 						newAgentRequestId={newAgentRequestId}
 						newAgentPrompt={newAgentPrompt}
+						newAgentWorkspace={newAgentWorkspace}
 						mentionTabs={browser.state?.tabs ?? []}
 						mentionBookmarks={browser.state?.bookmarks ?? []}
 						{...(browserContextEnabled
