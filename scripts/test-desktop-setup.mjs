@@ -55,7 +55,7 @@ try {
 			colorScheme: getComputedStyle(element).colorScheme,
 			color: getComputedStyle(element).color,
 		}));
-	assert.equal(setupTheme.canvas, "#141518");
+	assert.equal(setupTheme.canvas, "#0d0e11");
 	assert.equal(setupTheme.solid, "#f3f4f6");
 	assert.equal(setupTheme.colorScheme, "dark");
 	assert.equal(setupTheme.color, "rgb(243, 244, 246)");
@@ -63,7 +63,7 @@ try {
 		() =>
 			getComputedStyle(document.documentElement)
 				.getPropertyValue("--canvas")
-			.trim() === "#141518",
+			.trim() === "#0d0e11",
 	);
 	assert.equal(await page.locator(".setup-product-anchor").count(), 0);
 	assert.deepEqual(

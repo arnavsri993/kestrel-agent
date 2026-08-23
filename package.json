@@ -25,6 +25,7 @@
     "test:packaged-cli": "node scripts/smoke-packaged-cli.mjs",
     "test:desktop-smoke": "node scripts/smoke-desktop.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",
+    "test:desktop-layout": "node scripts/test-desktop-layout.mjs",
     "test:desktop-fresh-profile": "node scripts/test-desktop-fresh-profile.mjs",
     "test:desktop-kanban": "node scripts/test-desktop-kanban.mjs",
     "test:desktop-model-routing": "node scripts/test-desktop-model-routing.mjs",
@@ -50,7 +51,7 @@
     "assets:posters": "tsx scripts/fal-generate-posters.ts",
     "assets:process": "tsx scripts/process-marketing-assets.ts",
     "assets:verify": "tsx scripts/verify-marketing-assets.ts",
-    "verify": "pnpm typecheck && pnpm test && pnpm audit:references && pnpm audit:market && pnpm build && pnpm test:e2e && pnpm test:desktop-smoke && pnpm test:desktop-browser && pnpm test:desktop-setup && pnpm test:desktop-fresh-profile && pnpm test:desktop-kanban && pnpm test:desktop-model-routing && pnpm test:desktop-readiness && pnpm test:desktop-external-secrets && pnpm test:desktop-observability && pnpm test:desktop-life-context && pnpm test:desktop-approvals && pnpm test:desktop-chat-configuration && pnpm test:desktop-managed-policy && pnpm test:packaged-cli && pnpm test:editors && pnpm test:security",
+    "verify": "pnpm typecheck && pnpm test && pnpm audit:references && pnpm audit:market && pnpm build && pnpm test:e2e && pnpm test:desktop-smoke && pnpm test:desktop-layout && pnpm test:desktop-browser && pnpm test:desktop-setup && pnpm test:desktop-fresh-profile && pnpm test:desktop-kanban && pnpm test:desktop-model-routing && pnpm test:desktop-readiness && pnpm test:desktop-external-secrets && pnpm test:desktop-observability && pnpm test:desktop-life-context && pnpm test:desktop-approvals && pnpm test:desktop-chat-configuration && pnpm test:desktop-managed-policy && pnpm test:packaged-cli && pnpm test:editors && pnpm test:security",
     "verify:meetup": "pnpm verify && pnpm assets:verify && pnpm test:local-ai:real && pnpm package:mac:dev && pnpm test:packaged-desktop:arm64"
   },
   "devDependencies": {

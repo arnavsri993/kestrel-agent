@@ -1599,13 +1599,9 @@ function showDockCompletion(): void {
 	}, 620);
 }
 
-async function initializeDock(): Promise<void> {
+function initializeDock(): void {
 	if (process.platform !== "darwin" || !app.dock) return;
-	try {
-		dockDefaultIcon = await app.getFileIcon(process.execPath, { size: "large" });
-	} catch {
-		dockDefaultIcon = null;
-	}
+	dockDefaultIcon = nativeIconFromSvg(dockIconSvg("idle", 0));
 	updateDock();
 }
 
@@ -3671,7 +3667,7 @@ void app
 		}
 		providerAuthMonitor.start();
 		updateTray();
-		await initializeDock();
+		initializeDock();
 		const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
 		if (!mainWindow) mainWindow = createMainWindow();
 		for (const deepLink of initialExternalIntakeLinks)
