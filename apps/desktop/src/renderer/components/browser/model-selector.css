@@ -217,7 +217,7 @@
 	width: 16px;
 	height: 16px;
 	border-radius: 50%;
-	background: var(--surface-strong, #fff);
+	background: var(--surface-strong, #36383f);
 	transition: transform var(--motion-feedback) var(--ease-kestrel);
 }
 

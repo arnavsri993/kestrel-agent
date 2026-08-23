@@ -21,7 +21,7 @@ describe("new tab shortcuts", () => {
 		]);
 		expect(NEW_TAB_BACKGROUND_OPTIONS[0]).toMatchObject({
 			label: "Kestrel default",
-			description: expect.stringContaining("sage"),
+			description: expect.stringContaining("graphite"),
 		});
 	});
 

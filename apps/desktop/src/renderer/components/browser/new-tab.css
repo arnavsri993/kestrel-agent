@@ -1,4 +1,4 @@
-/* Browser Home — a light, readable canvas with an optional local landscape
+/* Browser Home — a dark, readable canvas with an optional local landscape
    behind the work surface. The image is decorative; the controls keep their
    own opaque-ish surfaces so text remains readable over every preset. */
 
@@ -31,15 +31,15 @@
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(90deg, rgb(246 249 246 / 0.94) 0%, rgb(246 249 246 / 0.72) 46%, rgb(246 249 246 / 0.42) 100%),
-    linear-gradient(180deg, rgb(246 249 246 / 0.22), rgb(246 249 246 / 0.52));
+    linear-gradient(90deg, rgb(20 21 24 / 0.96) 0%, rgb(20 21 24 / 0.76) 46%, rgb(20 21 24 / 0.46) 100%),
+    linear-gradient(180deg, rgb(20 21 24 / 0.22), rgb(20 21 24 / 0.62));
   content: "";
 }
 
 .new-tab-page-graphite .kestrel-home-backdrop {
   background-image:
-    radial-gradient(circle at 82% 18%, rgb(255 255 255 / 0.8), transparent 34%),
-    linear-gradient(135deg, #dbece1 0%, #f5f3e9 48%, #dfeaf1 100%);
+    radial-gradient(circle at 82% 18%, rgb(255 255 255 / 0.1), transparent 34%),
+    linear-gradient(135deg, #0d0e10 0%, #202126 48%, #34363d 100%);
 }
 
 .new-tab-page-meadow .kestrel-home-backdrop {
