@@ -56,6 +56,7 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm build:desktop
+      - run: corepack pnpm test:desktop-file-icon-guard
       - run: corepack pnpm test
       - run: corepack pnpm test:desktop-smoke
       - run: corepack pnpm test:desktop-setup
