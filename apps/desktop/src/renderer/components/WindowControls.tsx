@@ -8,25 +8,47 @@ const controls = [
 	{
 		type: "window-close" as const,
 		className: "window-control-close",
-		glyph: "close",
+		glyph: "close" as const,
 		label: "Close window",
 		title: "Close window",
 	},
 	{
 		type: "window-minimize" as const,
 		className: "window-control-minimize",
-		glyph: "minimize",
+		glyph: "minimize" as const,
 		label: "Minimize window",
 		title: "Minimize window",
 	},
 	{
 		type: "window-toggle-zoom" as const,
 		className: "window-control-zoom",
-		glyph: "zoom",
+		glyph: "zoom" as const,
 		label: "Zoom window",
 		title: "Zoom window",
 	},
 ] as const;
+
+type WindowControlGlyph = (typeof controls)[number]["glyph"];
+
+const glyphPaths: Record<WindowControlGlyph, string> = {
+	close: "M2.25 2.25 7.75 7.75M7.75 2.25 2.25 7.75",
+	minimize: "M2.1 5h5.8",
+	zoom:
+		"M3.05 6.95 6.95 3.05M4.5 3.05h2.45V5.5M5.5 6.95H3.05V4.5",
+};
+
+function WindowControlGlyph({ glyph }: { glyph: WindowControlGlyph }) {
+	return (
+		<svg
+			className={`window-control-glyph window-control-glyph-${glyph}`}
+			viewBox="0 0 10 10"
+			aria-hidden="true"
+			focusable="false"
+		>
+			<path d={glyphPaths[glyph]} />
+		</svg>
+	);
+}
 
 function isMacOS(): boolean {
 	if (typeof navigator === "undefined") return false;
@@ -46,7 +68,8 @@ export function WindowControls() {
 				button.style.setProperty("--window-control-icon-scale", "1");
 				button.style.setProperty("--window-control-lift", "0px");
 				button.style.setProperty("--window-control-scale", "1");
-				button.classList.remove("window-control-near");
+				button.style.setProperty("--window-control-tilt", "0deg");
+				button.classList.remove("window-control-active");
 			});
 	}, []);
 
@@ -56,15 +79,45 @@ export function WindowControls() {
 		function updateProximity(event: PointerEvent) {
 			const node = controlsRef.current;
 			if (!node) return;
-			node.querySelectorAll<HTMLElement>(".window-control").forEach((button) => {
+			const buttons = Array.from(
+				node.querySelectorAll<HTMLElement>(".window-control"),
+			);
+			const measurements = buttons.map((button) => {
 				const bounds = button.getBoundingClientRect();
-				const distance = Math.hypot(
-					event.clientX - (bounds.left + bounds.width / 2),
-					event.clientY - (bounds.top + bounds.height / 2),
-				);
-				const raw = Math.max(0, Math.min(1, 1 - distance / 56));
+				const dx = event.clientX - (bounds.left + bounds.width / 2);
+				const dy = event.clientY - (bounds.top + bounds.height / 2);
+				return {
+					button,
+					bounds,
+					dx,
+					distance: Math.hypot(dx, dy),
+				};
+			});
+			let nearestIndex = -1;
+			let nearestDistance = Number.POSITIVE_INFINITY;
+			measurements.forEach(({ distance }, index) => {
+				if (distance < nearestDistance) {
+					nearestDistance = distance;
+					nearestIndex = index;
+				}
+			});
+			const activeIndex = nearestDistance <= 28 ? nearestIndex : -1;
+
+			measurements.forEach(({ button, bounds, distance, dx }, index) => {
+				const raw = Math.max(0, Math.min(1, 1 - distance / 58));
 				const eased = raw * raw * (3 - 2 * raw);
-				button.classList.toggle("window-control-near", raw > 0.55);
+				const isInside =
+					event.clientX >= bounds.left &&
+					event.clientX <= bounds.right &&
+					event.clientY >= bounds.top &&
+					event.clientY <= bounds.bottom;
+				const tilt = isInside
+					? 0
+					: Math.max(-8, Math.min(8, (-dx / 28) * eased * 8));
+				button.classList.toggle(
+					"window-control-active",
+					index === activeIndex,
+				);
 				button.style.setProperty(
 					"--window-control-icon-opacity",
 					(eased * 0.86).toFixed(3),
@@ -80,6 +133,10 @@ export function WindowControls() {
 				button.style.setProperty(
 					"--window-control-lift",
 					`${(-eased * 1.8).toFixed(2)}px`,
+				);
+				button.style.setProperty(
+					"--window-control-tilt",
+					`${tilt.toFixed(2)}deg`,
 				);
 			});
 		}
@@ -119,10 +176,7 @@ export function WindowControls() {
 							/>
 						</svg>
 					</span>
-					<span
-						className={`window-control-glyph window-control-glyph-${control.glyph}`}
-						aria-hidden="true"
-					/>
+					<WindowControlGlyph glyph={control.glyph} />
 				</button>
 			))}
 		</div>
