@@ -117,11 +117,13 @@ import {
 	svgDataUrl,
 	visualStateForAgentState,
 } from "./macos-integration";
+import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
 
 // Chromium encrypts cookies with macOS Keychain under "Kestrel Safe Storage"
 // unless this switch is set before ready. Kestrel stores its own secrets as
 // local files and does not use Keychain.
 app.commandLine.appendSwitch("use-mock-keychain");
+installMacFileIconCrashGuard(app);
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
