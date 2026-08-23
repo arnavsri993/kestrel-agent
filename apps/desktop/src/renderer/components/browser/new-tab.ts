@@ -18,7 +18,7 @@ export const NEW_TAB_BACKGROUND_OPTIONS = [
 	{
 		value: "graphite",
 		label: "Kestrel default",
-		description: "A soft sage-and-paper landscape",
+		description: "Matte graphite planes with quiet gray depth",
 	},
 	{
 		value: "meadow",

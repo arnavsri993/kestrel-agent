@@ -55,15 +55,15 @@ try {
 			colorScheme: getComputedStyle(element).colorScheme,
 			color: getComputedStyle(element).color,
 		}));
-	assert.equal(setupTheme.canvas, "#f2f5f1");
-	assert.equal(setupTheme.solid, "#2f684a");
-	assert.equal(setupTheme.colorScheme, "light");
-	assert.equal(setupTheme.color, "rgb(29, 42, 34)");
+	assert.equal(setupTheme.canvas, "#0d0e11");
+	assert.equal(setupTheme.solid, "#f3f4f6");
+	assert.equal(setupTheme.colorScheme, "dark");
+	assert.equal(setupTheme.color, "rgb(243, 244, 246)");
 	await page.waitForFunction(
 		() =>
 			getComputedStyle(document.documentElement)
 				.getPropertyValue("--canvas")
-				.trim() === "#f2f5f1",
+			.trim() === "#0d0e11",
 	);
 	assert.equal(await page.locator(".setup-product-anchor").count(), 0);
 	assert.deepEqual(

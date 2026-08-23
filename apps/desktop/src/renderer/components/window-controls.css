@@ -69,30 +69,30 @@
 }
 
 .window-control-close {
-	--window-control-fill: #de6861;
-	--window-control-icon-color: #9f332f;
+	--window-control-fill: #ff5f57;
+	--window-control-icon-color: #80170e;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(222, 104, 97, 0.38));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(255, 95, 87, 0.42));
 }
 
 .window-control-minimize {
-	--window-control-fill: #dfb64f;
-	--window-control-icon-color: #a15d10;
+	--window-control-fill: #ffbd2e;
+	--window-control-icon-color: #994219;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(223, 182, 79, 0.4));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(255, 189, 46, 0.44));
 }
 
 .window-control-zoom {
-	--window-control-fill: #58b879;
-	--window-control-icon-color: #2e753e;
+	--window-control-fill: #28c840;
+	--window-control-icon-color: #41711e;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(88, 184, 121, 0.38));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(40, 200, 64, 0.42));
 }
 
 .window-control-active,
 .window-control:hover,
 .window-control:focus-visible {
-	--window-control-icon-opacity: 0.82 !important;
+	--window-control-icon-opacity: 1 !important;
 	--window-control-icon-scale: 1.1 !important;
 	--window-control-lift: -1.8px !important;
 	--window-control-scale: 1.07 !important;
@@ -125,8 +125,8 @@
 	top: calc(50% + 1px);
 	left: 50%;
 	display: block;
-	width: 10px;
-	height: 10px;
+	width: 11px;
+	height: 11px;
 	fill: none;
 	color: var(--window-control-icon-color);
 	opacity: var(--window-control-icon-opacity);
@@ -134,7 +134,7 @@
 	stroke: currentColor;
 	stroke-linecap: round;
 	stroke-linejoin: round;
-	stroke-width: 1.35px;
+	stroke-width: 1.5px;
 	transform: translate(-50%, -50%) scale(var(--window-control-icon-scale));
 	transition:
 		opacity 120ms ease,

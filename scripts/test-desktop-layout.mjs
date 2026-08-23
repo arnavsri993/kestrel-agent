@@ -61,10 +61,10 @@ async function readLayout(page) {
 
 function assertTheme(layout) {
 	assert.deepEqual(layout.theme, {
-		canvas: "#f2f5f1",
-		sidebar: "#e8eee9",
-		solid: "#2f684a",
-		colorScheme: "light",
+		canvas: "#0d0e11",
+		sidebar: "#131519",
+		solid: "#f3f4f6",
+		colorScheme: "dark",
 	});
 	assert.equal(layout.bridgeReady, true);
 }
@@ -173,7 +173,7 @@ try {
 
 	assert.deepEqual(pageErrors, []);
 	process.stdout.write(
-		"Desktop layout smoke passed: light theme, preload bridge, global navigation, browser plane, and open/collapsed Pragmatic geometry.\n",
+		"Desktop layout smoke passed: graphite theme, preload bridge, global navigation, browser plane, and open/collapsed Pragmatic geometry.\n",
 	);
 } finally {
 	await application?.close();

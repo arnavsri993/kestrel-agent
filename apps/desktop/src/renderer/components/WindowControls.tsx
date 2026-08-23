@@ -32,11 +32,14 @@ const controls = [
 type WindowControlGlyph = (typeof controls)[number]["glyph"];
 
 const glyphPaths: Record<WindowControlGlyph, string> = {
-	close: "M2.25 2.25 7.75 7.75M7.75 2.25 2.25 7.75",
-	minimize: "M2.1 5h5.8",
+	close: "M1.7 1.7 8.3 8.3M8.3 1.7 1.7 8.3",
+	minimize: "M1.55 5h6.9",
 	zoom:
-		"M3.05 6.95 6.95 3.05M4.5 3.05h2.45V5.5M5.5 6.95H3.05V4.5",
+		"M2.35 7.65 7.65 2.35M4.15 2.35h3.5v3.5M5.85 7.65h-3.5v-3.5",
 };
+
+const WINDOW_CONTROL_REVEAL_RADIUS = 72;
+const WINDOW_CONTROL_ACTIVE_RADIUS = 34;
 
 function WindowControlGlyph({ glyph }: { glyph: WindowControlGlyph }) {
 	return (
@@ -88,11 +91,22 @@ export function WindowControls() {
 		function updateProximity(event: PointerEvent) {
 			const node = controlsRef.current;
 			if (!node) return;
+			const nodeBounds = node.getBoundingClientRect();
 			const buttons = Array.from(
 				node.querySelectorAll<HTMLElement>(".window-control"),
 			);
 			const measurements = buttons.map((button) => {
-				const bounds = button.getBoundingClientRect();
+				// Use the untransformed layout box. Measuring the transformed button
+				// makes the pointer target move underneath the cursor as proximity
+				// scaling and lift are applied, which causes visible jitter.
+				const bounds = {
+					left: nodeBounds.left + button.offsetLeft,
+					top: nodeBounds.top + button.offsetTop,
+					width: button.offsetWidth,
+					height: button.offsetHeight,
+					right: nodeBounds.left + button.offsetLeft + button.offsetWidth,
+					bottom: nodeBounds.top + button.offsetTop + button.offsetHeight,
+				};
 				const dx = event.clientX - (bounds.left + bounds.width / 2);
 				const dy = event.clientY - (bounds.top + bounds.height / 2);
 				return {
@@ -110,10 +124,14 @@ export function WindowControls() {
 					nearestIndex = index;
 				}
 			});
-			const activeIndex = nearestDistance <= 28 ? nearestIndex : -1;
+			const activeIndex =
+				nearestDistance <= WINDOW_CONTROL_ACTIVE_RADIUS ? nearestIndex : -1;
 
 			measurements.forEach(({ button, bounds, distance, dx }, index) => {
-				const raw = Math.max(0, Math.min(1, 1 - distance / 58));
+				const raw = Math.max(
+					0,
+					Math.min(1, 1 - distance / WINDOW_CONTROL_REVEAL_RADIUS),
+				);
 				const eased = raw * raw * (3 - 2 * raw);
 				const isInside =
 					event.clientX >= bounds.left &&
@@ -150,11 +168,19 @@ export function WindowControls() {
 			});
 		}
 
+		function resetWhenPointerLeavesWindow(event: PointerEvent) {
+			if (event.relatedTarget === null) resetProximity();
+		}
+
 		window.addEventListener("pointermove", updateProximity, { passive: true });
+		window.addEventListener("pointerout", resetWhenPointerLeavesWindow);
+		window.addEventListener("pointercancel", resetProximity);
 		window.addEventListener("focus", handleFocus);
 		window.addEventListener("blur", handleBlur);
 		return () => {
 			window.removeEventListener("pointermove", updateProximity);
+			window.removeEventListener("pointerout", resetWhenPointerLeavesWindow);
+			window.removeEventListener("pointercancel", resetProximity);
 			window.removeEventListener("focus", handleFocus);
 			window.removeEventListener("blur", handleBlur);
 		};
