@@ -7,6 +7,7 @@ import "./components/ui/ui.css";
 import "./agent-panel-layout.css";
 import "./components/browser/model-selector.css";
 import "./components/window-controls.css";
+import "./motion.css";
 import { App } from "./App";
 import { WindowControls } from "./components/WindowControls";
 

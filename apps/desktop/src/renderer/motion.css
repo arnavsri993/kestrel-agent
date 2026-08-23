@@ -1,0 +1,301 @@
+/*
+ * Kestrel motion layer
+ *
+ * Three roles keep motion legible instead of merely busy:
+ * - continuity: tabs and the agent rail explain spatial changes;
+ * - state: surfaces and notices settle into the latest state;
+ * - feedback: controls respond without delaying the task.
+ *
+ * The React tab strip owns interruptible tab lifecycle motion. This file
+ * handles the surrounding CSS-only surfaces and keeps all decorative motion
+ * behind the user's reduced-motion preference.
+ */
+:root {
+	--motion-smooth: 220ms;
+	--motion-panel: 320ms;
+	--ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+	--ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	/* Continuity: open and close the agent rail while the browser viewport
+	   yields the same space, rather than popping between two geometries. */
+	.ai-browser-app:not(.agent-full-page) .agent-sidebar {
+		overflow: hidden;
+		transform-origin: right center;
+		transition:
+			width var(--motion-panel) var(--ease-smooth),
+			opacity 180ms var(--ease-soft),
+			transform var(--motion-panel) var(--ease-smooth),
+			border-color var(--motion-smooth) var(--ease-soft);
+		will-change: width, transform;
+	}
+
+	.ai-browser-app:not(.agent-full-page) .agent-sidebar.is-collapsed {
+		transform: translateX(14px) scaleX(0.98);
+	}
+
+	.ai-browser-app:not(.agent-full-page) .browser-workspace .browser-viewport {
+		transition: width var(--motion-panel) var(--ease-smooth);
+	}
+
+	/* Feedback: controls lift a fraction of a pixel; the click still wins. */
+	.browser-navigation button:not(:disabled),
+	.browser-toolbar-actions button:not(:disabled),
+	.agent-sidebar-new,
+	.agent-sidebar-expand,
+	.agent-sidebar-collapse,
+	.surface-back-button,
+	.quiet-link,
+	.button,
+	.ui-button {
+		transition:
+			background-color var(--motion-smooth) var(--ease-soft),
+			border-color var(--motion-smooth) var(--ease-soft),
+			color var(--motion-smooth) var(--ease-soft),
+			box-shadow var(--motion-smooth) var(--ease-soft),
+			transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.browser-navigation button:not(:disabled):hover,
+	.browser-toolbar-actions button:not(:disabled):hover,
+	.agent-sidebar-new:hover,
+	.agent-sidebar-expand:hover,
+	.agent-sidebar-collapse:hover,
+	.surface-back-button:hover,
+	.quiet-link:hover,
+	.button:hover:not(:disabled),
+	.ui-button:hover:not(:disabled) {
+		transform: translateY(-1px);
+	}
+
+	.browser-navigation button:not(:disabled):active,
+	.browser-toolbar-actions button:not(:disabled):active,
+	.agent-sidebar-new:active,
+	.agent-sidebar-expand:active,
+	.agent-sidebar-collapse:active,
+	.button:active:not(:disabled),
+	.ui-button:active:not(:disabled) {
+		transform: scale(0.97);
+	}
+
+	.browser-address {
+		transition:
+			background-color var(--motion-smooth) var(--ease-soft),
+			border-color var(--motion-smooth) var(--ease-soft),
+			box-shadow var(--motion-smooth) var(--ease-soft),
+			transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.browser-address:focus-within {
+		transform: translateY(-1px);
+	}
+
+	.browser-context-toggle svg,
+	.browser-toolbar-actions svg,
+	.browser-navigation svg,
+	.agent-sidebar-new svg,
+	.agent-sidebar-expand svg,
+	.agent-sidebar-collapse svg,
+	.surface-back-button svg {
+		transition: transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.agent-sidebar-new:hover svg {
+		transform: rotate(90deg);
+	}
+
+	.agent-sidebar-expand:hover svg {
+		transform: scale(1.08);
+	}
+
+	.agent-sidebar-collapse:hover svg {
+		transform: translateX(2px);
+	}
+
+	.browser-context-toggle:hover svg,
+	.browser-toolbar-actions button:not(:disabled):hover svg,
+	.browser-navigation button:not(:disabled):hover svg {
+		transform: scale(1.08);
+	}
+
+	/* Tab continuity: Motion owns the layout transform; child affordances can
+	   still give the pointer a quiet tactile response. */
+	.browser-tab {
+		transition:
+			background-color var(--motion-smooth) var(--ease-soft),
+			color var(--motion-smooth) var(--ease-soft),
+			box-shadow var(--motion-smooth) var(--ease-soft),
+			opacity 180ms var(--ease-soft);
+	}
+
+	.browser-tab:hover:not(.active) {
+		box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--ink) 18%, transparent);
+	}
+
+	.browser-tab .browser-favicon {
+		transition: transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.browser-tab:hover .browser-favicon,
+	.browser-tab:focus-within .browser-favicon {
+		transform: translateY(-1px) scale(1.04);
+	}
+
+	.browser-tab-close {
+		transition:
+			background-color var(--motion-smooth) var(--ease-soft),
+			color var(--motion-smooth) var(--ease-soft),
+			opacity var(--motion-smooth) var(--ease-soft),
+			transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.browser-tab-close:hover {
+		transform: scale(1.08) rotate(6deg);
+	}
+
+	.browser-new-tab svg,
+	.browser-tab-actions-btn svg {
+		transition: transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.browser-new-tab:hover svg {
+		transform: rotate(90deg) scale(1.06);
+	}
+
+	/* The new-tab sidebar is a genuine mode switch, so its width and icon
+	   settle together instead of making the home layout jump. */
+	.new-tab-sidebar {
+		overflow: hidden;
+		transition:
+			width var(--motion-panel) var(--ease-smooth),
+			background-color var(--motion-smooth) var(--ease-soft);
+	}
+
+	.new-tab-sidebar-toggle {
+		transition:
+			background-color var(--motion-smooth) var(--ease-soft),
+			border-color var(--motion-smooth) var(--ease-soft),
+			transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.new-tab-sidebar-toggle:hover {
+		transform: translateY(-1px);
+	}
+
+	.new-tab-sidebar-toggle svg {
+		transition: transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.new-tab-sidebar-toggle:hover svg {
+		transform: rotate(90deg);
+	}
+
+	.kestrel-home-composer {
+		transition:
+			border-color var(--motion-smooth) var(--ease-soft),
+			box-shadow var(--motion-smooth) var(--ease-smooth),
+			transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.kestrel-home-composer:focus-within {
+		transform: translateY(-1px);
+		box-shadow: var(--shadow-lg);
+	}
+
+	.kestrel-home-send:not(:disabled):hover {
+		transform: translateY(-1px);
+		box-shadow: var(--shadow-md);
+	}
+
+	.kestrel-home-shortcut-glyph,
+	.kestrel-home-action-chip {
+		transition:
+			background-color var(--motion-smooth) var(--ease-soft),
+			border-color var(--motion-smooth) var(--ease-soft),
+			box-shadow var(--motion-smooth) var(--ease-soft),
+			transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.kestrel-home-shortcut:hover .kestrel-home-shortcut-glyph,
+	.kestrel-home-shortcut:focus-visible .kestrel-home-shortcut-glyph {
+		transform: translateY(-2px) scale(1.04);
+		box-shadow: var(--shadow-sm);
+	}
+
+	.kestrel-home-action-chip:hover,
+	.kestrel-home-action-chip:focus-visible {
+		transform: translateY(-1px);
+		box-shadow: var(--shadow-sm);
+	}
+
+	/* State: newly mounted notices, menus, and secondary surfaces explain
+	   where they came from without hiding the content behind a reveal. */
+	.browser-tab-menu,
+	.browser-find-bar,
+	.agent-history-popover,
+	.composer-mention-list,
+	.model-selector-menu {
+		animation: kestrel-pop-in var(--motion-smooth) var(--ease-smooth) both;
+		transform-origin: top center;
+	}
+
+	.browser-notice,
+	.browser-inline-error {
+		animation: kestrel-toast-in var(--motion-smooth) var(--ease-smooth) both;
+	}
+
+	.browser-secondary-surface,
+	.browser-library,
+	.command-center,
+	.settings-panel,
+	.agent-workspace {
+		animation: kestrel-surface-in var(--motion-panel) var(--ease-smooth) both;
+	}
+
+	.agent-approval-action {
+		transition:
+			background-color var(--motion-smooth) var(--ease-soft),
+			border-color var(--motion-smooth) var(--ease-soft),
+			box-shadow var(--motion-smooth) var(--ease-soft),
+			transform var(--motion-smooth) var(--ease-smooth);
+	}
+
+	.agent-approval-action:hover {
+		transform: translateY(-1px);
+		box-shadow: var(--shadow-sm);
+	}
+}
+
+@keyframes kestrel-pop-in {
+	from {
+		opacity: 0;
+		transform: translateY(-5px) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes kestrel-toast-in {
+	from {
+		opacity: 0;
+		transform: translateX(-50%) translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(-50%) translateY(0);
+	}
+}
+
+@keyframes kestrel-surface-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}

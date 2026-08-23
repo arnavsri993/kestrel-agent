@@ -3,6 +3,13 @@ import type {
 	UserBrowserTab,
 } from "@kestrel/shared-types";
 import {
+	AnimatePresence,
+	LayoutGroup,
+	motion,
+	useReducedMotion,
+	type MotionStyle,
+} from "motion/react";
+import {
 	useCallback,
 	useEffect,
 	useRef,
@@ -75,6 +82,7 @@ export function TabStrip({
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
 }) {
+	const reducedMotion = useReducedMotion() ?? false;
 	const [lockedWidth, setLockedWidth] = useState<number | null>(null);
 	const [compact, setCompact] = useState(false);
 	const [menu, setMenu] = useState<{ tabId: string; x: number; y: number } | null>(
@@ -473,84 +481,109 @@ export function TabStrip({
 				aria-orientation={orientation}
 				onKeyDown={moveFocus}
 			>
-				{tabs.map((tab) => {
-					const active = tab.id === activeTabId;
-					const isSleeping = tab.discarded && Boolean(tab.url);
-					const isDragging = draggingTabId === tab.id;
-					return (
-						<div
-							className={`browser-tab no-drag ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""} ${isDragging ? "is-dragging" : ""}`}
-							key={tab.id}
-							style={tabStyle}
-							onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
-							onContextMenu={(event) => openMenu(event, tab.id)}
-							onClick={(event) => {
-								if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
-								if (suppressClickRef.current) {
-									suppressClickRef.current = false;
-									return;
-								}
-								onSelect(tab.id);
-							}}
-							onPointerDown={(event) => handleTabPointerDown(event, tab.id)}
-							onPointerMove={handleTabPointerMove}
-							onPointerUp={(event) => handleTabPointerUp(event, tab.id)}
-							onPointerCancel={resetDrag}
-						>
-							<button
-								type="button"
-								role="tab"
-								aria-selected={active}
-								aria-controls="browser-viewport"
-								tabIndex={active ? 0 : -1}
-								title={`${tab.title}${isSleeping ? " (Sleeping — click to wake)" : ""}${tab.url ? ` — ${tab.url}` : ""}`}
-							>
-								<span className="browser-favicon" aria-hidden="true">
-									{getFaviconContent(tab)}
-								</span>
-								<span className="browser-tab-title">
-									{tab.pinned && (
-										<span className="tab-pin-badge" title="Pinned">
-											<Icon name="pin" />
+				<LayoutGroup id="kestrel-browser-tabs">
+					<AnimatePresence initial={false} mode="popLayout">
+						{tabs.map((tab) => {
+							const active = tab.id === activeTabId;
+							const isSleeping = tab.discarded && Boolean(tab.url);
+							const isDragging = draggingTabId === tab.id;
+							return (
+								<motion.div
+									className={`browser-tab no-drag ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""} ${isDragging ? "is-dragging" : ""}`}
+									key={tab.id}
+									layout="position"
+									initial={reducedMotion ? false : { opacity: 0, y: 5, scale: 0.98 }}
+									animate={{ opacity: 1, y: 0, scale: 1 }}
+									exit={
+										reducedMotion
+											? { opacity: 1 }
+											: {
+													opacity: 0,
+													y: -4,
+													scale: 0.96,
+													transition: { duration: 0.14, ease: [0.4, 0, 1, 1] },
+												}
+									}
+									transition={
+										reducedMotion
+											? { duration: 0 }
+											: {
+													default: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
+													layout: { type: "spring", stiffness: 520, damping: 38, mass: 0.72 },
+												}
+									}
+									style={tabStyle as MotionStyle}
+									onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
+									onContextMenu={(event) => openMenu(event, tab.id)}
+									onClick={(event) => {
+										if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
+										if (suppressClickRef.current) {
+											suppressClickRef.current = false;
+											return;
+										}
+										onSelect(tab.id);
+									}}
+									onPointerDown={(event) => handleTabPointerDown(event, tab.id)}
+									onPointerMove={handleTabPointerMove}
+									onPointerUp={(event) => handleTabPointerUp(event, tab.id)}
+									onPointerCancel={resetDrag}
+								>
+									<button
+										type="button"
+										role="tab"
+										aria-selected={active}
+										aria-controls="browser-viewport"
+										tabIndex={active ? 0 : -1}
+										title={`${tab.title}${isSleeping ? " (Sleeping — click to wake)" : ""}${tab.url ? ` — ${tab.url}` : ""}`}
+									>
+										<span className="browser-favicon" aria-hidden="true">
+											{getFaviconContent(tab)}
 										</span>
-									)}
-									{tab.title}
-									{isSleeping && (
-										<span
-											className="tab-sleep-badge"
-											title="Sleeping tab"
-											aria-hidden="true"
-										>
-											<svg
-												viewBox="0 0 24 24"
-												fill="none"
-												stroke="currentColor"
-												strokeWidth="1.75"
-												strokeLinecap="round"
-												strokeLinejoin="round"
-											>
-												<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
-											</svg>
+										<span className="browser-tab-title">
+											{tab.pinned && (
+												<span className="tab-pin-badge" title="Pinned">
+													<Icon name="pin" />
+												</span>
+											)}
+											{tab.title}
+											{isSleeping && (
+												<span
+													className="tab-sleep-badge"
+													title="Sleeping tab"
+													aria-hidden="true"
+												>
+													<svg
+														viewBox="0 0 24 24"
+														fill="none"
+														stroke="currentColor"
+														strokeWidth="1.75"
+														strokeLinecap="round"
+														strokeLinejoin="round"
+													>
+														<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+													</svg>
+												</span>
+											)}
 										</span>
-									)}
-								</span>
-							</button>
-							<button
-								type="button"
-								className="browser-tab-close"
-								aria-label={`Close ${tab.title}`}
-								title="Close tab (Cmd+W)"
-								tabIndex={active ? 0 : -1}
-								onClick={(event) => {
-									event.stopPropagation();
-									handleTabClose(tab.id);
-								}}
-							>
-								<Icon name="close" />
-							</button>
-						</div>
-					);
-				})}
+									</button>
+									<button
+										type="button"
+										className="browser-tab-close"
+										aria-label={`Close ${tab.title}`}
+										title="Close tab (Cmd+W)"
+										tabIndex={active ? 0 : -1}
+										onClick={(event) => {
+											event.stopPropagation();
+											handleTabClose(tab.id);
+										}}
+									>
+										<Icon name="close" />
+									</button>
+								</motion.div>
+							);
+						})}
+					</AnimatePresence>
+				</LayoutGroup>
 			</div>
 			<button
 				type="button"
