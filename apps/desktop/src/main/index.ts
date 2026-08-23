@@ -2028,6 +2028,35 @@ function registerIpc(): void {
         browserState: requestBrowserService.openDevTools(request.tabId),
       };
     }
+    if (request.type === "browser-save-screenshot") {
+      if (!userBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const tab = userBrowserService
+        .getState()
+        .tabs.find((candidate) => candidate.id === request.tabId);
+      const title = (tab?.title ?? "Kestrel page")
+        .replace(/[^a-z0-9._-]+/gi, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 80) || "Kestrel-page";
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, "-")
+        .replace(/Z$/, "");
+      const result = await dialog.showSaveDialog(senderWindow, {
+        title: "Save page screenshot",
+        defaultPath: join(app.getPath("downloads"), `${title}-${timestamp}.png`),
+        filters: [{ name: "PNG image", extensions: ["png"] }],
+      });
+      if (result.canceled || !result.filePath)
+        return { ok: true, cancelled: true };
+      const filePath = result.filePath.toLowerCase().endsWith(".png")
+        ? result.filePath
+        : `${result.filePath}.png`;
+      const frame = await userBrowserService.screenshot(request.tabId);
+      if (!frame.png) throw new Error("The page screenshot was empty.");
+      await writeFile(filePath, frame.png);
+      return { ok: true, screenshotPath: filePath };
+    }
     if (request.type === "browser-set-site-permission") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");

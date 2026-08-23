@@ -17,6 +17,16 @@
 	padding-right: var(--agent-panel-width);
 }
 
+/* Toolbar menus must be able to open over the rail when Pragmatic is visible. */
+.browser-main-plane:has(.browser-toolbar-popover) {
+	z-index: 7;
+	pointer-events: none;
+}
+
+.browser-main-plane:has(.browser-toolbar-popover) .browser-toolbar {
+	pointer-events: auto;
+}
+
 .browser-main-plane:has(.browser-workspace) {
 	padding-right: 0;
 }
