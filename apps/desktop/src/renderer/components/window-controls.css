@@ -56,21 +56,21 @@
 }
 
 .window-control-close {
-	--window-control-fill: #f1786e;
+	--window-control-fill: #de6861;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(241, 120, 110, 0.34));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(222, 104, 97, 0.38));
 }
 
 .window-control-minimize {
-	--window-control-fill: #f4c862;
+	--window-control-fill: #dfb64f;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(244, 200, 98, 0.36));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(223, 182, 79, 0.4));
 }
 
 .window-control-zoom {
-	--window-control-fill: #6bc98a;
+	--window-control-fill: #58b879;
 	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
-	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(107, 201, 138, 0.34));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(88, 184, 121, 0.38));
 }
 
 .window-control-near {
