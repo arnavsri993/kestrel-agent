@@ -3,6 +3,7 @@ import {
 	browserSiteLabel,
 	frequentBrowserSites,
 	NEW_TAB_BACKGROUND_OPTIONS,
+	newTabGreeting,
 	originFaviconMap,
   siteInitial,
   suggestedAgentActions,
@@ -161,5 +162,51 @@ describe("new tab shortcuts", () => {
     expect(projectAction?.prompt).not.toContain("#draft");
     expect(guideAction?.prompt).toContain("https://docs.example.org/guide");
     expect(guideAction?.prompt).not.toContain("session=private");
+  });
+});
+
+describe("new tab contextual greetings", () => {
+  function localTime(hour: number): Date {
+    return new Date(2026, 7, 23, hour, 0, 0, 0);
+  }
+
+  it("uses time-of-day rules and only the user's first name", () => {
+    expect(
+      newTabGreeting({
+        name: "Arnav Srivastava",
+        now: localTime(2),
+        variant: 0,
+      }),
+    ).toBe("Up this late again, Arnav?");
+    expect(
+      newTabGreeting({
+        name: "Arnav Srivastava",
+        now: localTime(7),
+        variant: 0,
+      }),
+    ).toBe("Early start, Arnav?");
+    expect(
+      newTabGreeting({
+        name: "Arnav Srivastava",
+        now: localTime(19),
+        variant: 0,
+      }),
+    ).toBe("Good evening, Arnav.");
+  });
+
+  it("fails closed for unsafe names and changes the line without user data", () => {
+    expect(
+      newTabGreeting({
+        name: "Arnav <private@example.com>",
+        now: localTime(22),
+        variant: 0,
+      }),
+    ).toBe("Up this late again?");
+    expect(
+      newTabGreeting({
+        now: localTime(22),
+        variant: 1,
+      }),
+    ).toBe("Night owl mode?");
   });
 });

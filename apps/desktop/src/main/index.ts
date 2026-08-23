@@ -13,7 +13,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { arch, cpus, platform, totalmem } from "node:os";
+import { arch, cpus, platform, totalmem, userInfo } from "node:os";
 import {
   app,
   BrowserWindow,
@@ -217,6 +217,7 @@ const isPackagedKestrelApp = isPackagedKestrelRuntime(
   process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
+let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
 let googleOAuthController: AbortController | null = null;
@@ -233,6 +234,57 @@ const pendingCommunicationScans = new Map<
     expiresAt: number;
   }
 >();
+
+function safeGreetingName(value: string): string | undefined {
+	const normalized = value.normalize("NFKC").trim();
+	if (
+		!normalized ||
+		normalized.length > 80 ||
+		!/^[\p{L}\p{M}'\-\s]+$/u.test(normalized)
+	)
+		return undefined;
+	const token = normalized.split(/\s+/)[0];
+	if (
+		!token ||
+		token.length > 40 ||
+		!/^[\p{L}\p{M}][\p{L}\p{M}'-]*$/u.test(token)
+	)
+		return undefined;
+	return token;
+}
+
+function localGreetingName(): Promise<string | undefined> {
+	if (localGreetingNamePromise) return localGreetingNamePromise;
+	localGreetingNamePromise = (async () => {
+		let displayName = "";
+		if (platform() === "darwin") {
+			try {
+				const result = await execFileAsync("/usr/bin/id", ["-F"], {
+					maxBuffer: 4_096,
+					timeout: 750,
+				});
+				displayName = String(result.stdout).trim();
+			} catch {
+				// Fall back to the local account name below.
+			}
+		}
+		if (!displayName) {
+			try {
+				displayName = userInfo().username;
+			} catch {
+				return undefined;
+			}
+		}
+		const safeDisplayName = safeGreetingName(displayName);
+		if (safeDisplayName) return safeDisplayName;
+		try {
+			return safeGreetingName(userInfo().username);
+		} catch {
+			return undefined;
+		}
+	})();
+	return localGreetingNamePromise;
+}
 
 function trustedRendererUrl(value: string): boolean {
   return isTrustedRendererUrl(
@@ -2590,6 +2642,7 @@ function registerIpc(): void {
         launchStatus:
           state.status ?? (state.openAtLogin ? "enabled" : "not-registered"),
         isDefaultBrowser: isDefaultBrowser(),
+        userName: await localGreetingName(),
       };
     }
     if (request.type === "get-default-browser-status") {

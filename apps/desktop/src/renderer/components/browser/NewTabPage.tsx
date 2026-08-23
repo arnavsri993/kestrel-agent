@@ -17,6 +17,7 @@ import type {
 import { Icon } from "../Icon";
 import {
 	frequentBrowserSites,
+	newTabGreeting,
 	originFaviconMap,
 	suggestedAgentActions,
 } from "./new-tab";
@@ -48,6 +49,7 @@ export function NewTabPage({
 	background,
 	backgroundCustomDataUrl,
 	agentName,
+	greetingName,
 	sessions = [],
 	widgetSettings,
 	onUpdateWidgetSettings,
@@ -68,6 +70,7 @@ export function NewTabPage({
 	background: UserBrowserSettings["newTabBackground"];
 	backgroundCustomDataUrl?: UserBrowserSettings["newTabBackgroundCustomDataUrl"];
 	agentName: string;
+	greetingName?: string | undefined;
 	sessions?: RuntimeSession[] | undefined;
 	widgetSettings: UserBrowserSettings["newTabWidgets"];
 	onUpdateWidgetSettings(next: UserBrowserSettings["newTabWidgets"]): void;
@@ -80,6 +83,11 @@ export function NewTabPage({
 }) {
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [greetingVariant] = useState(() => Math.floor(Math.random() * 3));
+  const greeting = useMemo(
+    () => newTabGreeting({ name: greetingName, variant: greetingVariant }),
+    [greetingName, greetingVariant],
+  );
   const faviconByOrigin = useMemo(
     () => originFaviconMap(originFavicons, tabs),
     [originFavicons, tabs],
@@ -125,7 +133,7 @@ export function NewTabPage({
       />
       <div className="kestrel-home-content">
         <header className="kestrel-home-hero">
-          <h1 id="new-tab-title">Hi there, what should we dive into today?</h1>
+          <h1 id="new-tab-title">{greeting}</h1>
 
           <form className="kestrel-home-composer" onSubmit={submitChat}>
             <details className="kestrel-home-model-selector">

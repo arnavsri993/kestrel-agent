@@ -27,6 +27,7 @@ import { TabStrip } from "./TabStrip";
 export function BrowserWorkspace({
   browser,
   agentName,
+	greetingName,
   agentOpen,
   onToggleAgent,
   onNewAgent,
@@ -44,6 +45,7 @@ export function BrowserWorkspace({
 }: {
   browser: UserBrowserController;
   agentName: string;
+	greetingName?: string | undefined;
   agentOpen: boolean;
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
@@ -577,6 +579,7 @@ export function BrowserWorkspace({
             background={state.settings.newTabBackground}
             backgroundCustomDataUrl={state.settings.newTabBackgroundCustomDataUrl}
             agentName={agentName}
+			greetingName={greetingName}
             sessions={sessions}
             widgetSettings={state.settings.newTabWidgets}
             onUpdateWidgetSettings={(newTabWidgets) =>

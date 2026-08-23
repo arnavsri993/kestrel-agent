@@ -3340,7 +3340,13 @@ export type RendererResponse =
 			canSetAsDefault: boolean;
 			success?: boolean;
 	  }
-	| { ok: true; launchAtLogin: boolean; launchStatus: string }
+	| {
+			ok: true;
+			launchAtLogin: boolean;
+			launchStatus: string;
+			isDefaultBrowser?: boolean;
+			userName?: string;
+	  }
 	| {
 			ok: true;
 			workspaceGrants: WorkspaceGrant[];

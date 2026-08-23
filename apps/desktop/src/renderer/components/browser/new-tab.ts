@@ -78,6 +78,129 @@ export interface SuggestedAgentAction {
   personalized: boolean;
 }
 
+export interface NewTabGreetingOptions {
+  name?: string | undefined;
+  now?: Date;
+  variant?: number;
+}
+
+type NewTabGreetingRule = {
+  id: string;
+  startHour: number;
+  endHour: number;
+  messages: readonly {
+    text: string;
+    punctuation: "?" | ".";
+  }[];
+};
+
+/**
+ * New-tab copy is generated locally from the time of day and an optional
+ * first name. It intentionally has no access to history, tabs, messages,
+ * email, projects, or other user content.
+ */
+export const NEW_TAB_GREETING_RULES: readonly NewTabGreetingRule[] = [
+  {
+    id: "late-night",
+    startHour: 0,
+    endHour: 5,
+    messages: [
+      { text: "Up this late again", punctuation: "?" },
+      { text: "Still up", punctuation: "?" },
+      { text: "A late one", punctuation: "?" },
+    ],
+  },
+  {
+    id: "early-morning",
+    startHour: 5,
+    endHour: 10,
+    messages: [
+      { text: "Early start", punctuation: "?" },
+      { text: "Up early", punctuation: "?" },
+      { text: "Quiet start", punctuation: "?" },
+    ],
+  },
+  {
+    id: "daytime",
+    startHour: 10,
+    endHour: 17,
+    messages: [
+      { text: "What are we getting into", punctuation: "?" },
+      { text: "What's on your mind", punctuation: "?" },
+      { text: "Ready when you are", punctuation: "." },
+    ],
+  },
+  {
+    id: "evening",
+    startHour: 17,
+    endHour: 22,
+    messages: [
+      { text: "Good evening", punctuation: "." },
+      { text: "Winding down or diving in", punctuation: "?" },
+      { text: "What's the plan for tonight", punctuation: "?" },
+    ],
+  },
+  {
+    id: "night",
+    startHour: 22,
+    endHour: 24,
+    messages: [
+      { text: "Up this late again", punctuation: "?" },
+      { text: "Night owl mode", punctuation: "?" },
+      { text: "One more thing", punctuation: "?" },
+    ],
+  },
+] as const;
+
+function greetingName(value: string | undefined): string | undefined {
+  const normalized = value?.normalize("NFKC").trim();
+  if (
+    !normalized ||
+    normalized.length > 80 ||
+    !/^[\p{L}\p{M}'\-\s]+$/u.test(normalized)
+  ) {
+    return undefined;
+  }
+  const token = normalized.split(/\s+/)[0];
+  if (
+    !token ||
+    token.length > 40 ||
+    !/^[\p{L}\p{M}][\p{L}\p{M}'-]*$/u.test(token)
+  ) {
+    return undefined;
+  }
+  return token;
+}
+
+function greetingRuleForHour(hour: number): NewTabGreetingRule {
+  return (
+    NEW_TAB_GREETING_RULES.find(
+      (rule) => hour >= rule.startHour && hour < rule.endHour,
+    ) ?? NEW_TAB_GREETING_RULES[2]!
+  );
+}
+
+/**
+ * Generate a small, vague greeting at render time. `variant` is injectable so
+ * tests can prove each rule without depending on Math.random or the clock.
+ */
+export function newTabGreeting({
+  name,
+  now = new Date(),
+  variant = Math.floor(Math.random() * 3),
+}: NewTabGreetingOptions = {}): string {
+  const hour = Number.isFinite(now.getTime()) ? now.getHours() : 12;
+  const rule = greetingRuleForHour(hour);
+  const safeVariant = Number.isFinite(variant) ? Math.trunc(variant) : 0;
+  const message = rule.messages[
+    ((safeVariant % rule.messages.length) + rule.messages.length) %
+      rule.messages.length
+  ]!;
+  const firstName = greetingName(name);
+  const address = firstName ? `, ${firstName}` : "";
+  return `${message.text}${address}${message.punctuation}`;
+}
+
 const STARTER_ACTIONS: readonly SuggestedAgentAction[] = [
   {
     id: "starter-review-project",
