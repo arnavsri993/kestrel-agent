@@ -1,20 +1,20 @@
 :root {
 	color-scheme: dark;
 
-	/* Default surfaces stay black/graphite, with enough separation to keep
-	   navigation, content, controls, and overlays legible. */
-	--canvas: #141518;
-	--sidebar: #1b1c20;
-	--panel: #23252a;
-	--surface: #2b2d33;
-	--surface-strong: #36383f;
-	--overlay: #42444b;
+	/* Default surfaces stay near-black graphite, with enough separation to
+	   keep navigation, content, controls, and overlays legible. */
+	--canvas: #0d0e11;
+	--sidebar: #131519;
+	--panel: #1a1c21;
+	--surface: #22252b;
+	--surface-strong: #2c3038;
+	--overlay: #363a44;
 
 	/* Aluminum ink stays readable across the graphite elevation ramp. */
 	--ink: #f3f4f6;
 	--ink-secondary: #c8cbd2;
 	--muted: #aeb2bb;
-	--faint: #858a94;
+	--faint: #8b909a;
 
 	/* Lines use white at low opacity so they remain neutral, not colorful. */
 	--line: rgba(255, 255, 255, 0.1);
@@ -23,7 +23,7 @@
 	/* Primary actions remain grayscale: a light control on a dark canvas. */
 	--solid: #f3f4f6;
 	--solid-hover: #ffffff;
-	--on-solid: #141518;
+	--on-solid: #0d0e11;
 	--selected-soft: rgba(255, 255, 255, 0.1);
 
 	/* Statuses retain shape and text labels in addition to color. */
