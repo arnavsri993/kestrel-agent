@@ -17,6 +17,24 @@ exports.default = async function architectureAudit(context) {
 		`${context.packager.appInfo.productFilename}.app`,
 	);
 	installAskKestrelService(appPath);
+	const configuredIdentity = context.packager?.platformSpecificBuildOptions?.identity;
+	const identity =
+		typeof configuredIdentity === "string"
+			? configuredIdentity
+			: process.env.KESTREL_MACOS_WIDGETS_IDENTITY || process.env.CSC_NAME || "-";
+	execFileSync(
+		process.execPath,
+		[
+			join(__dirname, "../../../scripts/build-macos-widgets.mjs"),
+			"--app-path",
+			appPath,
+			"--arch",
+			process.env.npm_config_arch || process.arch,
+			"--identity",
+			identity,
+		],
+		{ stdio: "inherit" },
+	);
 	auditPackagedMacApp(appPath);
 
 	const lsregister =

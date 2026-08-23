@@ -46,6 +46,7 @@ import {
   type UserBrowserState,
   type UserBrowserTab,
   type WorkspaceGrant,
+  type WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
@@ -88,6 +89,11 @@ import {
 	parseExternalServicePayload,
 } from "./external-intake";
 import { MacMessagesSource } from "./mac-messages-source";
+import {
+  MacWidgetsStore,
+  macWidgetsGroupContainerPath,
+  widgetSnapshotFromWorkspace,
+} from "./mac-widgets";
 import {
   PetOverlayRequestAccess,
   petOverlayActivityForRuntimeEvent,
@@ -746,6 +752,7 @@ supervisor.on("runtime-event", (event) => {
     overlay.webContents.send("kestrel:pet-activity", activity);
 });
 supervisor.on("agent-stream", (event) => {
+  publishMacWidgetAgentState("working");
   const main = mainWindow;
   if (
     main &&
@@ -813,6 +820,7 @@ supervisor.on("recovered", () => {
 	.then((response) => {
 		if (!response.ok || !response.snapshot) return;
 		setAgentState(response.snapshot.agentState);
+		publishMacWidgetSnapshot(response.snapshot);
       mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
     })
     .catch(() => undefined);
@@ -1130,6 +1138,67 @@ function debugAgentLog(
     /* ignore debug log failures */
   }
   // #endregion
+}
+
+let macWidgetsStore: MacWidgetsStore | null = null;
+let latestWorkspaceSnapshot: WorkspaceSnapshot | null = null;
+
+function publishMacWidgetSnapshot(snapshot: WorkspaceSnapshot): void {
+  latestWorkspaceSnapshot = snapshot;
+  if (process.platform !== "darwin") return;
+  macWidgetsStore ??= new MacWidgetsStore(
+    macWidgetsGroupContainerPath(app.getPath("home")),
+  );
+  void macWidgetsStore
+    .write(widgetSnapshotFromWorkspace(snapshot))
+    .catch((error: unknown) => {
+      debugAgentLog("macOS widgets update failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
+function publishMacWidgetAgentState(state: AgentState): void {
+  if (!latestWorkspaceSnapshot || latestWorkspaceSnapshot.agentState === state)
+    return;
+  publishMacWidgetSnapshot({
+    ...latestWorkspaceSnapshot,
+    agentState: state,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function refreshMacWidgetSnapshot(): void {
+  void supervisor
+    .request({ type: "snapshot" })
+    .then((response) => {
+      if (!response.ok || !response.snapshot) return;
+      setAgentState(response.snapshot.agentState);
+      publishMacWidgetSnapshot(response.snapshot);
+      mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
+    })
+    .catch(() => undefined);
+}
+
+function finishMacWidgetRun(
+  response: Awaited<ReturnType<CoreSupervisor["request"]>>,
+): void {
+  if (!response.ok) {
+    publishMacWidgetAgentState("error");
+    return;
+  }
+  const status = response.run?.status;
+  if (!status) return;
+  publishMacWidgetAgentState(
+    status === "waiting_approval"
+      ? "waiting_approval"
+      : status === "failed"
+        ? "error"
+        : status === "running"
+          ? "working"
+          : "idle",
+  );
+  refreshMacWidgetSnapshot();
 }
 
 function createMainWindow(): BrowserWindow {
@@ -1617,6 +1686,7 @@ function updateTray(): void {
 					});
 					if (response.ok && response.snapshot) {
 						setAgentState(response.snapshot.agentState);
+						publishMacWidgetSnapshot(response.snapshot);
 						mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
 					}
 				},
@@ -1743,6 +1813,7 @@ async function initializeCore(
     if (!response.snapshot)
       throw new Error("Agent Core returned no workspace state during startup.");
 		setAgentState(response.snapshot.agentState);
+    publishMacWidgetSnapshot(response.snapshot);
     debugAgentLog("initializeCore succeeded", {});
   } catch (error) {
     // #region agent log
@@ -1807,6 +1878,7 @@ async function restartCoreAfterGrantChange(): Promise<WorkspaceGrant[]> {
   const response = await supervisor.request({ type: "snapshot" });
 	if (response.ok && response.snapshot) {
 		setAgentState(response.snapshot.agentState);
+    publishMacWidgetSnapshot(response.snapshot);
     mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
   }
   return new WorkspaceGrantStore(
@@ -3324,6 +3396,7 @@ function registerIpc(): void {
           error: `Type ${PRODUCT_IDENTITY.productName} to confirm reset.`,
         };
       await supervisor.stop();
+      await macWidgetsStore?.clear().catch(() => undefined);
       await rm(app.getPath("userData"), { recursive: true, force: true });
       app.relaunch();
       quitting = true;
@@ -3353,6 +3426,12 @@ function registerIpc(): void {
 				activeAgentTaskLabel = request.message.split(/\r?\n/, 1)[0]!.slice(0, 120);
 			setAgentState("working");
 		}
+		if (
+			request.type === "runtime-run-agent" ||
+			request.type === "runtime-resume-agent" ||
+			request.type === "runtime-retry-agent"
+		)
+			publishMacWidgetAgentState("working");
 		if (overlayAccess && request.type === "runtime-create-session") {
       const response = await supervisor.request(coreRequest);
       if (response.ok && response.session)
@@ -3363,7 +3442,9 @@ function registerIpc(): void {
 			const streamId = request.streamId!;
 			overlayAccess.beginStream(streamId);
 			try {
-				return await supervisor.request(coreRequest);
+				const response = await supervisor.request(coreRequest);
+				finishMacWidgetRun(response);
+				return response;
 			} finally {
 				overlayAccess.finishStream(streamId);
 				activeAgentStreams.delete(streamId);
@@ -3377,7 +3458,14 @@ function registerIpc(): void {
 		}
 		if (response.ok && response.snapshot) {
 			setAgentState(response.snapshot.agentState);
+			publishMacWidgetSnapshot(response.snapshot);
 		}
+		if (
+			request.type === "runtime-run-agent" ||
+			request.type === "runtime-resume-agent" ||
+			request.type === "runtime-retry-agent"
+		)
+			finishMacWidgetRun(response);
     return response;
   });
 }
