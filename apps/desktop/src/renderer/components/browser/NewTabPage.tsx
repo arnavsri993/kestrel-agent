@@ -6,22 +6,21 @@ import {
   type FormEvent,
 } from "react";
 import type {
-  UserBrowserBookmark,
-  UserBrowserHistoryEntry,
-  UserBrowserOriginFavicon,
-  UserBrowserSettings,
-  UserBrowserTab,
+	RuntimeSession,
+	UserBrowserBookmark,
+	UserBrowserDownload,
+	UserBrowserHistoryEntry,
+	UserBrowserOriginFavicon,
+	UserBrowserSettings,
+	UserBrowserTab,
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
 import {
-  browserSiteLabel,
-  frequentBrowserSites,
-  originFaviconMap,
-  siteAccent,
-  siteInitial,
-  suggestedAgentActions,
-  type FrequentBrowserSite,
+	frequentBrowserSites,
+	originFaviconMap,
+	suggestedAgentActions,
 } from "./new-tab";
+import { NewTabWidgets } from "./NewTabWidgets";
 import "./new-tab.css";
 
 function homeInputLooksLikeBrowse(value: string): boolean {
@@ -40,54 +39,44 @@ function homeInputLooksLikeBrowse(value: string): boolean {
   }
 }
 
-function FrequentTabGlyph({ site }: { site: FrequentBrowserSite }) {
-  const [broken, setBroken] = useState(false);
-  const showFavicon = Boolean(site.faviconDataUrl) && !broken;
-
-  return (
-    <span
-      className={`kestrel-home-shortcut-glyph ${
-        showFavicon
-          ? "has-favicon"
-          : `site-accent-${siteAccent(site.hostname)}`
-      }`}
-      aria-hidden="true"
-    >
-      {showFavicon ? (
-        <img
-          src={site.faviconDataUrl}
-          alt=""
-          onError={() => setBroken(true)}
-        />
-      ) : (
-        siteInitial(site)
-      )}
-    </span>
-  );
-}
-
 export function NewTabPage({
-  history,
-  bookmarks = [],
-  tabs = [],
-  originFavicons = [],
-  background,
-  backgroundCustomDataUrl,
-  agentName,
-  onNavigate,
-  onNewAgent,
+	history,
+	bookmarks = [],
+	downloads = [],
+	tabs = [],
+	originFavicons = [],
+	background,
+	backgroundCustomDataUrl,
+	agentName,
+	sessions = [],
+	widgetSettings,
+	onUpdateWidgetSettings,
+	onNavigate,
+	onNewAgent,
+	onOpenHistory,
+	onOpenDownloads,
+	onOpenBookmarks,
+	onOpenSession,
 }: {
-  history: UserBrowserHistoryEntry[];
-  bookmarks?: UserBrowserBookmark[] | undefined;
-  tabs?: Pick<UserBrowserTab, "url" | "faviconDataUrl">[] | undefined;
+	history: UserBrowserHistoryEntry[];
+	bookmarks?: UserBrowserBookmark[] | undefined;
+	downloads?: UserBrowserDownload[] | undefined;
+	tabs?: Pick<UserBrowserTab, "url" | "faviconDataUrl">[] | undefined;
   originFavicons?:
     | Pick<UserBrowserOriginFavicon, "origin" | "faviconDataUrl">[]
     | undefined;
-  background: UserBrowserSettings["newTabBackground"];
-  backgroundCustomDataUrl?: UserBrowserSettings["newTabBackgroundCustomDataUrl"];
-  agentName: string;
-  onNavigate(input: string): void;
-  onNewAgent(prompt?: string): void;
+	background: UserBrowserSettings["newTabBackground"];
+	backgroundCustomDataUrl?: UserBrowserSettings["newTabBackgroundCustomDataUrl"];
+	agentName: string;
+	sessions?: RuntimeSession[] | undefined;
+	widgetSettings: UserBrowserSettings["newTabWidgets"];
+	onUpdateWidgetSettings(next: UserBrowserSettings["newTabWidgets"]): void;
+	onNavigate(input: string): void;
+	onNewAgent(prompt?: string): void;
+	onOpenHistory(): void;
+	onOpenDownloads(): void;
+	onOpenBookmarks(): void;
+	onOpenSession?: ((sessionId: string) => void) | undefined;
 }) {
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -99,10 +88,10 @@ export function NewTabPage({
     () => frequentBrowserSites(history, 7, faviconByOrigin),
     [faviconByOrigin, history],
   );
-  const suggestedActions = useMemo(
-    () => suggestedAgentActions(history, 3),
-    [history],
-  );
+	const suggestedActions = useMemo(
+		() => suggestedAgentActions(history, 5),
+		[history],
+	);
   const customBackgroundStyle: CSSProperties | undefined =
     background === "custom" && backgroundCustomDataUrl
       ? { backgroundImage: `url("${backgroundCustomDataUrl}")` }
@@ -178,91 +167,22 @@ export function NewTabPage({
           </form>
         </header>
 
-        <section className="kestrel-home-shortcuts" aria-labelledby="frequent-title">
-          <div className="kestrel-home-section-heading">
-            <h2 id="frequent-title">Frequent tabs</h2>
-          </div>
-
-          {frequent.length > 0 ? (
-            <div className="kestrel-home-shortcut-list">
-              {frequent.map((site) => (
-                <button
-                  key={site.origin}
-                  type="button"
-                  className="kestrel-home-shortcut"
-                  onClick={() => onNavigate(site.url)}
-                  title={`${browserSiteLabel(site)} · ${site.hostname}`}
-                >
-                  <FrequentTabGlyph site={site} />
-                  <span className="kestrel-home-shortcut-copy">
-                    <strong>{browserSiteLabel(site, 24)}</strong>
-                    <small>{site.hostname}</small>
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="kestrel-home-shortcuts-empty">
-              <span className="kestrel-home-shortcuts-empty-glyph" aria-hidden="true">
-                <Icon name="history" />
-              </span>
-              <span>
-                <strong>Your shortcuts will appear here.</strong>
-                <small>Pages you open on this Mac will land here for quick access.</small>
-              </span>
-            </div>
-          )}
-        </section>
-
-        {bookmarks.length > 0 && (
-          <section className="kestrel-home-shortcuts" aria-labelledby="bookmark-links-title">
-            <div className="kestrel-home-section-heading">
-              <div>
-                <span className="kestrel-home-section-kicker">Saved in this profile</span>
-                <h2 id="bookmark-links-title">Bookmarks</h2>
-              </div>
-            </div>
-            <div className="kestrel-home-shortcut-list">
-              {bookmarks.slice(0, 8).map((bookmark) => (
-                <button
-                  key={bookmark.id}
-                  type="button"
-                  className="kestrel-home-shortcut"
-                  onClick={() => onNavigate(bookmark.url)}
-                  title={bookmark.url}
-                >
-                  <span className="kestrel-home-shortcut-glyph" aria-hidden="true">
-                    <Icon name="star" />
-                  </span>
-                  <span className="kestrel-home-shortcut-copy">
-                    <strong>{bookmark.title}</strong>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        )}
-
-        <section className="kestrel-home-actions" aria-labelledby="suggested-actions-title">
-          <div className="kestrel-home-section-heading">
-            <h2 id="suggested-actions-title">Suggested actions</h2>
-          </div>
-
-          <div className="kestrel-home-action-buttons">
-            {suggestedActions.map((action) => (
-              <button
-                key={action.id}
-                type="button"
-                className="kestrel-home-action-chip"
-                onClick={() => chooseAction(action.prompt)}
-                aria-label={`Add to ${agentName} composer: ${action.title}`}
-                title={action.title}
-              >
-                {action.title}
-              </button>
-            ))}
-          </div>
-        </section>
+		<NewTabWidgets
+			frequent={frequent}
+			bookmarks={bookmarks}
+			downloads={downloads}
+			sessions={sessions}
+			suggestedActions={suggestedActions}
+			agentName={agentName}
+			onNavigate={onNavigate}
+			onNewAgent={chooseAction}
+			onOpenSession={onOpenSession}
+			onOpenHistory={onOpenHistory}
+			onOpenDownloads={onOpenDownloads}
+			onOpenBookmarks={onOpenBookmarks}
+			settings={widgetSettings}
+			onSettingsChange={onUpdateWidgetSettings}
+		/>
       </div>
     </section>
   );

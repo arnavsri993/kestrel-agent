@@ -2520,6 +2520,80 @@ export type UserBrowserSitePermission = z.infer<
 	typeof UserBrowserSitePermissionSchema
 >;
 
+export const NEW_TAB_WIDGET_IDS = [
+	"frequent-tabs",
+	"bookmarks",
+	"downloads",
+	"recent-work",
+	"quick-actions",
+] as const;
+
+export const DEFAULT_NEW_TAB_WIDGET_IDS = [
+	"frequent-tabs",
+	"bookmarks",
+	"downloads",
+	"recent-work",
+	"quick-actions",
+] as const;
+
+export const NewTabWidgetIdSchema = z.enum(NEW_TAB_WIDGET_IDS);
+export type NewTabWidgetId = z.infer<typeof NewTabWidgetIdSchema>;
+export const NewTabWidgetLayoutClassSchema = z.enum([
+	"compact",
+	"standard",
+	"wide",
+	"ultrawide",
+]);
+export type NewTabWidgetLayoutClass = z.infer<
+	typeof NewTabWidgetLayoutClassSchema
+>;
+export const NewTabWidgetSizeSchema = z.enum(["small", "medium", "large"]);
+export type NewTabWidgetSize = z.infer<typeof NewTabWidgetSizeSchema>;
+export const NewTabWidgetLayoutItemSchema = z.object({
+	id: NewTabWidgetIdSchema,
+	size: NewTabWidgetSizeSchema,
+});
+export type NewTabWidgetLayoutItem = z.infer<
+	typeof NewTabWidgetLayoutItemSchema
+>;
+export const NewTabWidgetLayoutSchema = z.object({
+	items: z.array(NewTabWidgetLayoutItemSchema).max(12),
+	customized: z.boolean().default(false),
+});
+export type NewTabWidgetLayout = z.infer<typeof NewTabWidgetLayoutSchema>;
+
+const DEFAULT_NEW_TAB_WIDGET_SETTINGS = {
+	version: 1 as const,
+	enabled: [...DEFAULT_NEW_TAB_WIDGET_IDS],
+	layouts: {},
+};
+
+/**
+ * New Tab widget preferences live beside the browser settings so they use the
+ * same atomic, profile-owned persistence path as tabs, bookmarks, and history.
+ * A bad or future widget payload falls back to the safe default without
+ * discarding the rest of the browser profile.
+ */
+export const NewTabWidgetSettingsSchema = z
+	.object({
+		version: z.literal(1).default(1),
+		enabled: z
+			.array(NewTabWidgetIdSchema)
+			.max(NEW_TAB_WIDGET_IDS.length)
+			.default([...DEFAULT_NEW_TAB_WIDGET_IDS]),
+		layouts: z
+			.object({
+				compact: NewTabWidgetLayoutSchema.optional(),
+				standard: NewTabWidgetLayoutSchema.optional(),
+				wide: NewTabWidgetLayoutSchema.optional(),
+				ultrawide: NewTabWidgetLayoutSchema.optional(),
+			})
+			.default({}),
+	})
+	.default(DEFAULT_NEW_TAB_WIDGET_SETTINGS)
+	.catch(DEFAULT_NEW_TAB_WIDGET_SETTINGS);
+export type NewTabWidgetSettings = z.infer<typeof NewTabWidgetSettingsSchema>;
+
 export const UserBrowserFindMatchSchema = z.object({
 	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	activeMatchOrdinal: z.number().int().nonnegative(),
@@ -2559,6 +2633,7 @@ export const UserBrowserSettingsSchema = z.object({
 			/^data:image\/(?:avif|gif|jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
 		)
 		.optional(),
+	newTabWidgets: NewTabWidgetSettingsSchema,
 	restoreSession: z.boolean().default(true),
 	historyRetentionDays: z
 		.union([

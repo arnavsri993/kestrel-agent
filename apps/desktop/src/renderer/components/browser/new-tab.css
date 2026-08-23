@@ -68,8 +68,8 @@
   position: relative;
   z-index: 1;
   display: grid;
-  gap: clamp(40px, 6vh, 64px);
-  width: min(720px, calc(100% - 48px));
+  gap: clamp(36px, 5vh, 58px);
+  width: min(1380px, calc(100% - 56px));
   min-height: 100%;
   margin: 0 auto;
   padding: clamp(56px, 10vh, 96px) 0 64px;
@@ -90,7 +90,8 @@
 .kestrel-home-hero {
   display: grid;
   gap: 28px;
-  width: 100%;
+  width: min(720px, 100%);
+  margin-inline: auto;
   text-align: center;
 }
 
@@ -535,7 +536,7 @@
 
 @media (max-width: 900px) {
   .kestrel-home-content {
-    width: calc(100% - 40px);
+    width: calc(100% - 44px);
   }
 
   .kestrel-home-shortcut-list {
@@ -544,6 +545,15 @@
 }
 
 @media (max-width: 680px) {
+  .new-tab-sidebar-open .new-tab-sidebar {
+    width: 56px;
+  }
+
+  .new-tab-sidebar-open .new-tab-sidebar-tabs,
+  .new-tab-sidebar-open .new-tab-sidebar-panel {
+    display: none;
+  }
+
   .kestrel-home-content {
     width: calc(100% - 32px);
     gap: 36px;
@@ -565,6 +575,10 @@
 }
 
 @media (max-width: 480px) {
+  .kestrel-home-content {
+    width: calc(100% - 24px);
+  }
+
   .kestrel-home-shortcut-list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

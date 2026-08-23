@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import {
+	DEFAULT_NEW_TAB_WIDGET_IDS,
 	type UserBrowserOriginFavicon,
 	type UserBrowserSettings,
 	type UserBrowserState,
@@ -23,6 +24,11 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	searchEngine: "google",
 	tabLayout: "horizontal",
 	newTabBackground: "graphite",
+	newTabWidgets: {
+		version: 1,
+		enabled: [...DEFAULT_NEW_TAB_WIDGET_IDS],
+		layouts: {},
+	},
 	restoreSession: true,
 	historyRetentionDays: 90,
 	sleepingTabsEnabled: true,

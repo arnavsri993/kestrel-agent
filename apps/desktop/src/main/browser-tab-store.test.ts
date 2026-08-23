@@ -297,6 +297,42 @@ describe("browser tab persistence", () => {
 		});
 	});
 
+	it("persists per-layout widget choices and fails closed for a future payload", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+		state.settings.newTabWidgets = {
+			version: 1,
+			enabled: ["frequent-tabs", "quick-actions"],
+			layouts: {
+				standard: {
+					customized: true,
+					items: [
+						{ id: "quick-actions", size: "large" },
+						{ id: "frequent-tabs", size: "small" },
+					],
+				},
+			},
+		};
+		store.save(state);
+		expect(store.load().settings.newTabWidgets).toEqual(
+			state.settings.newTabWidgets,
+		);
+
+		const malformed = JSON.parse(readFileSync(path, "utf8"));
+		malformed.settings.newTabWidgets = {
+			version: 2,
+			enabled: ["not-a-widget"],
+			layouts: { standard: { items: [{ id: "not-a-widget", size: "giant" }] } },
+		};
+		writeFileSync(path, `${JSON.stringify(malformed, null, 2)}\n`, "utf8");
+		expect(store.load().settings.newTabWidgets).toMatchObject({
+			version: 1,
+			enabled: ["frequent-tabs", "bookmarks", "downloads", "recent-work", "quick-actions"],
+			layouts: {},
+		});
+	});
+
 	it("does not persist credential-like URL parameters", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);
