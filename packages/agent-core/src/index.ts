@@ -1138,14 +1138,22 @@ export class AgentCore {
 	): ModelContentPart[] {
 		if (attachments.length === 0) return [];
 		const session = this.runtime.getSession(sessionId);
-		if (!session.workspaceRoot)
-			throw new Error("Attachments require a task workspace.");
-		const root = realpathSync(session.workspaceRoot);
+		const workspaceAttachments = attachments.filter(
+			(attachment) => attachment.source !== "external",
+		);
+		if (workspaceAttachments.length > 0 && !session.workspaceRoot)
+			throw new Error("Workspace attachments require a task workspace.");
+		const root = session.workspaceRoot
+			? realpathSync(session.workspaceRoot)
+			: undefined;
 		const parts: ModelContentPart[] = [];
 		let totalBytes = 0;
 		for (const attachment of attachments) {
 			const path = realpathSync(attachment.path);
-			if (path !== root && !path.startsWith(`${root}${sep}`))
+			if (
+				attachment.source !== "external" &&
+				(!root || (path !== root && !path.startsWith(`${root}${sep}`)))
+			)
 				throw new Error("Attachment escapes the task workspace.");
 			const metadata = statSync(path);
 			if (!metadata.isFile() || metadata.size > 10 * 1024 * 1024)

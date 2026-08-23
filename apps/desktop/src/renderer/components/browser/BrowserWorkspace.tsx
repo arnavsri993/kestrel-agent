@@ -7,9 +7,17 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type { RuntimeSession, WorkspaceGrant } from "@kestrel/shared-types";
+import type {
+  FilePreview,
+  RuntimeSession,
+  UserBrowserFile,
+  WorkspaceGrant,
+} from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
-import { parseKestrelAppPage } from "../../../utility/browser-app-pages";
+import {
+  parseKestrelAppPage,
+  parseKestrelFilePage,
+} from "../../../utility/browser-app-pages";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
@@ -30,6 +38,7 @@ export function BrowserWorkspace({
   onOpenMenu,
   onShowShortcuts,
   onToggleSidebar,
+  onAskFile,
   appPage,
   sessions = [],
   projects = [],
@@ -47,6 +56,7 @@ export function BrowserWorkspace({
   onOpenMenu(): void;
   onShowShortcuts?(): void;
   onToggleSidebar?(): void;
+  onAskFile(file: UserBrowserFile): void;
   appPage?: ReactNode;
   sessions?: RuntimeSession[];
   projects?: WorkspaceGrant[];
@@ -57,6 +67,7 @@ export function BrowserWorkspace({
   const findRef = useRef<HTMLInputElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
+  const [fileDragActive, setFileDragActive] = useState(false);
   const lastBoundsRef = useRef("");
   const state = browser.state;
   const {
@@ -87,8 +98,14 @@ export function BrowserWorkspace({
   } = browser;
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
+  const activeFilePage = activeTab ? parseKestrelFilePage(activeTab.url) : undefined;
   const nativePageVisible = Boolean(
-    activeTab?.url && !activeTab.error && !activeAppPage,
+    activeTab?.url && !activeTab.error && !activeAppPage && !activeFilePage,
+  );
+
+  useEffect(
+    () => window.kestrel.onFileDrag(({ active }) => setFileDragActive(active)),
+    [],
   );
 
   const syncBounds = useCallback(() => {
@@ -544,6 +561,14 @@ export function BrowserWorkspace({
         aria-label={activeTab.title}
       >
         {activeAppPage && appPage}
+        {activeFilePage && activeTab.file && (
+          <FileTabView
+            tabId={activeFilePage.tabId}
+            file={activeTab.file}
+            browser={browser}
+            onAskFile={onAskFile}
+          />
+        )}
         {!activeTab.url && (
           <NewTabPage
             history={state.history}
@@ -586,9 +611,199 @@ export function BrowserWorkspace({
           </section>
         )}
       </div>
+      {fileDragActive && (
+        <div className="browser-file-drop-veil" aria-hidden="true">
+          <span className="browser-file-drop-mark">
+            <span className="browser-file-drop-triangle browser-file-drop-triangle-back" />
+            <span className="browser-file-drop-triangle browser-file-drop-triangle-mid" />
+            <span className="browser-file-drop-triangle browser-file-drop-triangle-front" />
+          </span>
+          <strong>Release to open in Kestrel</strong>
+          <small>Files become tabs and task context</small>
+        </div>
+      )}
       {activeTab.loading && (
         <span className="browser-loading-line" aria-label="Page loading" />
       )}
     </main>
+  );
+}
+
+function fileSizeLabel(bytes: number): string {
+  if (bytes < 1_000) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes;
+  let unit = -1;
+  while (value >= 1_000 && unit < units.length - 1) {
+    value /= 1_000;
+    unit += 1;
+  }
+  return `${value.toFixed(value >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function FileTabView({
+  tabId,
+  file,
+  browser,
+  onAskFile,
+}: {
+  tabId: string;
+  file: UserBrowserFile;
+  browser: UserBrowserController;
+  onAskFile(file: UserBrowserFile): void;
+}) {
+  const [preview, setPreview] = useState<FilePreview | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const { filePreview, openFileDefault } = browser;
+  const askable = file.status === "available" && file.size <= 10 * 1024 * 1024;
+
+  useEffect(() => {
+    let active = true;
+    setPreview(null);
+    setError("");
+    void filePreview(tabId)
+      .then((next) => {
+        if (active) setPreview(next ?? null);
+      })
+      .catch((cause) => {
+        if (active)
+          setError(cause instanceof Error ? cause.message : "Preview unavailable.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [file.path, file.modifiedAt, filePreview, tabId]);
+
+  async function openDefaultApp() {
+    setNotice("");
+    try {
+      await openFileDefault(tabId);
+      setNotice("Opened in the default app.");
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : "Could not open the default app.");
+    }
+  }
+
+  return (
+    <section className="file-tab-view" aria-label={`File ${file.name}`}>
+      <header className="file-tab-header">
+        <div className="file-tab-heading">
+          <span className="file-tab-mark" aria-hidden="true">
+            <Icon name="artifacts" />
+          </span>
+          <div>
+            <h1>{file.name}</h1>
+            <p>
+              {file.extension ? `${file.extension.toUpperCase()} · ` : ""}
+              {fileSizeLabel(file.size)} · {file.mediaType}
+            </p>
+          </div>
+        </div>
+        <div className="file-tab-actions">
+          <button
+            type="button"
+            className="button primary"
+            disabled={!askable}
+            title={
+              askable
+                ? "Attach this file to the Kestrel composer"
+                : "Files over 10 MB cannot be attached through this composer yet"
+            }
+            onClick={() => onAskFile(file)}
+          >
+            Ask Kestrel
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            disabled={file.status !== "available"}
+            onClick={() => void openDefaultApp()}
+          >
+            Open with Default App
+          </button>
+        </div>
+      </header>
+      {file.status === "missing" && (
+        <p className="file-tab-notice" role="status">
+          This file is no longer at its original location. The tab is retained so
+          you can recover the context when it becomes available again.
+        </p>
+      )}
+      {notice && (
+        <p className="file-tab-notice" role="status">
+          {notice}
+        </p>
+      )}
+      {error && (
+        <p className="file-tab-notice" role="alert">
+          {error}
+        </p>
+      )}
+      {!preview && !error && file.status === "available" && (
+        <p className="file-tab-loading" role="status">
+          Preparing a bounded preview…
+        </p>
+      )}
+      {preview && <FilePreviewBody preview={preview} fileName={file.name} />}
+      <dl className="file-tab-metadata">
+        <div>
+          <dt>Location</dt>
+          <dd>{file.path}</dd>
+        </div>
+        <div>
+          <dt>Modified</dt>
+          <dd>{file.modifiedAt ? new Date(file.modifiedAt).toLocaleString() : "Unknown"}</dd>
+        </div>
+      </dl>
+    </section>
+  );
+}
+
+function FilePreviewBody({
+  preview,
+  fileName,
+}: {
+  preview: FilePreview;
+  fileName: string;
+}) {
+  if (preview.kind === "text")
+    return (
+      <div className="file-tab-preview file-tab-text-preview">
+        <pre>{preview.text || "(empty file)"}</pre>
+      </div>
+    );
+  if (preview.kind === "image" && preview.dataUrl)
+    return (
+      <div className="file-tab-preview file-tab-image-preview">
+        <img src={preview.dataUrl} alt={fileName} />
+      </div>
+    );
+  if (preview.kind === "pdf" && preview.dataUrl)
+    return (
+      <div className="file-tab-preview file-tab-pdf-preview">
+        <iframe title={`Preview of ${fileName}`} src={preview.dataUrl} />
+      </div>
+    );
+  if (preview.kind === "audio" && preview.dataUrl)
+    return (
+      <div className="file-tab-preview file-tab-media-preview">
+        <audio controls preload="metadata" src={preview.dataUrl} />
+      </div>
+    );
+  if (preview.kind === "video" && preview.dataUrl)
+    return (
+      <div className="file-tab-preview file-tab-media-preview">
+        <video controls preload="metadata" src={preview.dataUrl} />
+      </div>
+    );
+  return (
+    <div className="file-tab-preview file-tab-metadata-preview">
+      <span className="file-tab-fallback-mark" aria-hidden="true">
+        <Icon name="artifacts" />
+      </span>
+      <strong>Kestrel can keep this file as an object.</strong>
+      <p>{preview.detail || "This format is available to compatible agent routes and the default app."}</p>
+    </div>
   );
 }

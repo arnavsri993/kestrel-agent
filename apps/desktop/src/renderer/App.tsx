@@ -7,6 +7,7 @@ import type {
 	ChannelSummary,
 	CommunicationSourceStatus,
 	CoreResponse,
+	ExternalIntake,
 	EnterpriseAnalytics,
 	GoalRecordContract,
 	GoogleWorkspaceOAuthStatus,
@@ -37,6 +38,7 @@ import type {
 	SessionUsageSummary,
 	SetupSystemProfile,
 	UserBrowserBookmark,
+	UserBrowserFile,
 	UserBrowserTab,
 	SkillLearningProposal,
 	SubscriptionCliStatus,
@@ -137,6 +139,40 @@ import {
 } from "./startup-state";
 import { personalizedConfigurationPrompts } from "./configuration-prompts";
 import { policyGateCopy, runRouteLabel } from "./runtime-evidence";
+
+const MAX_RENDERER_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+function attachmentForExternalFile(
+	file: UserBrowserFile,
+): SelectedAttachment | undefined {
+	if (file.status !== "available" || file.size > MAX_RENDERER_ATTACHMENT_BYTES)
+		return undefined;
+	return {
+		path: file.path,
+		name: file.name,
+		mediaType: file.mediaType,
+		size: file.size,
+		source: "external",
+	};
+}
+
+function mergeAttachments(
+	current: SelectedAttachment[],
+	next: SelectedAttachment[],
+): SelectedAttachment[] {
+	const seen = new Set<string>();
+	return [...current, ...next].filter((attachment) => {
+		if (seen.has(attachment.path)) return false;
+		seen.add(attachment.path);
+		return true;
+	}).slice(0, 8);
+}
+
+function appendExternalText(current: string, incoming?: string): string {
+	const text = incoming?.trim() ?? "";
+	if (!text) return current;
+	return current ? `${current}\n\n${text}` : text;
+}
 
 const pages = [
 	["browser", "Browser"],
@@ -2786,6 +2822,9 @@ function RuntimeConversation({
 	onRuntimeAgentState,
 	configurationUi,
 	browserContext,
+	activeFileAttachment,
+	externalIntake,
+	externalIntakeRequestId,
 	mentionTabs = [],
 	mentionBookmarks = [],
 	newAgentRequestId,
@@ -2800,6 +2839,9 @@ function RuntimeConversation({
 	onRuntimeAgentState(state: AgentState | null): void;
 	configurationUi: WorkspaceSnapshot["configuration"]["ui"];
 	browserContext?(): Promise<UserBrowserPageContext | undefined>;
+	activeFileAttachment?: SelectedAttachment;
+	externalIntake: ExternalIntake | null;
+	externalIntakeRequestId: number;
 	mentionTabs?: UserBrowserTab[];
 	mentionBookmarks?: UserBrowserBookmark[];
 	newAgentRequestId: number;
@@ -2866,6 +2908,7 @@ function RuntimeConversation({
 	const streamSessionIdRef = useRef<string | null>(null);
 	const activeSessionIdRef = useRef(activeSessionId);
 	const previousNewAgentRequestIdRef = useRef(newAgentRequestId);
+	const externalIntakeRequestIdRef = useRef(0);
 	const sessionLoadSequenceRef = useRef(0);
 	const recorderRef = useRef<MediaRecorder | null>(null);
 	const microphoneStreamRef = useRef<MediaStream | null>(null);
@@ -2963,6 +3006,22 @@ function RuntimeConversation({
 		window.setTimeout(() => promptRef.current?.focus(), 0);
 		if (newAgentPrompt.trim()) void submit(newAgentPrompt);
 	}, [busy, newAgentPrompt, newAgentRequestId, onActiveSession]);
+
+	useEffect(() => {
+		if (
+			!externalIntake ||
+			externalIntakeRequestIdRef.current === externalIntakeRequestId
+		)
+			return;
+		externalIntakeRequestIdRef.current = externalIntakeRequestId;
+		setInput((current) => appendExternalText(current, externalIntake.text));
+		if (externalIntake.attachments.length > 0)
+			setAttachments((current) =>
+				mergeAttachments(current, externalIntake.attachments),
+			);
+		setError("");
+		window.setTimeout(() => promptRef.current?.focus(), 0);
+	}, [externalIntake, externalIntakeRequestId]);
 
 	async function refreshSessions() {
 		const response = (await window.kestrel.request({
@@ -3519,7 +3578,7 @@ function RuntimeConversation({
 				model: executionMode === "automatic" ? "auto" : model.trim(),
 				providerIds: executionMode === "automatic" ? ["auto"] : [providerId],
 				streamId,
-				attachments,
+					attachments: promptAttachments,
 				...(executionMode === "manual" && reasoningEffort !== "none"
 					? { reasoningEffort }
 					: {}),
@@ -3839,6 +3898,10 @@ function RuntimeConversation({
 		: needsNewTaskForFiles
 			? "Start a new task to add files"
 			: "Choose a project before adding files";
+	const promptAttachments = mergeAttachments(
+		attachments,
+		activeFileAttachment ? [activeFileAttachment] : [],
+	);
 	const runScope = runtimeRunScope({
 		busy,
 		streamSessionId: streamSessionIdRef.current,
@@ -4191,7 +4254,7 @@ function RuntimeConversation({
 						: "runtime-new-composer"
 				}
 			>
-				{attachments.length > 0 && (
+				{(attachments.length > 0 || activeFileAttachment) && (
 					<div className="attachment-chips">
 						{attachments.map((attachment) => (
 							<button
@@ -4206,9 +4269,20 @@ function RuntimeConversation({
 								}
 							>
 								<span>{attachment.name}</span>
-								<Icon name="close" />
-							</button>
-						))}
+									<Icon name="close" />
+								</button>
+							))}
+						{activeFileAttachment &&
+							!attachments.some(
+								(item) => item.path === activeFileAttachment.path,
+							) && (
+							<span
+								className="attachment-context-chip"
+								title="The active file tab is included with the next prompt"
+							>
+								Current tab · {activeFileAttachment.name}
+							</span>
+						)}
 					</div>
 				)}
 				<form
@@ -8707,6 +8781,10 @@ export function App() {
 	>(null);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
+	const [externalIntake, setExternalIntake] = useState<ExternalIntake | null>(
+		null,
+	);
+	const [externalIntakeRequestId, setExternalIntakeRequestId] = useState(0);
 	const lastPromptedNewAgentAtRef = useRef(0);
 	const [error, setError] = useState<string | null>(null);
 	const [deepLinkNotice, setDeepLinkNotice] = useState("");
@@ -8801,6 +8879,26 @@ export function App() {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
 	}, []);
+	const acceptExternalIntake = useCallback(
+		(intake: ExternalIntake) => {
+			setExternalIntake(intake);
+			setExternalIntakeRequestId((current) => current + 1);
+			revealAgentSidebar();
+		},
+		[revealAgentSidebar],
+	);
+	useEffect(
+		() => window.kestrel.onExternalIntake(acceptExternalIntake),
+		[acceptExternalIntake],
+	);
+	const askFileFromTab = useCallback(
+		(file: UserBrowserFile) => {
+			const attachment = attachmentForExternalFile(file);
+			if (!attachment) return;
+			acceptExternalIntake({ kind: "ask", attachments: [attachment] });
+		},
+		[acceptExternalIntake],
+	);
 	const startNewAgent = useCallback((prompt = "") => {
 		const trimmed = prompt.trim();
 		if (!trimmed && Date.now() - lastPromptedNewAgentAtRef.current < 500) {
@@ -9221,6 +9319,9 @@ export function App() {
 		(tab) => tab.id === browser.state?.activeTabId,
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
+	const activeFileAttachment = activeBrowserTab?.file
+		? attachmentForExternalFile(activeBrowserTab.file)
+		: undefined;
 	const activeAgentName =
 		snapshot.personality.available.find(
 			(personality) => personality.id === snapshot.personality.selectedId,
@@ -9360,6 +9461,7 @@ export function App() {
 						onOpenBookmarks={openBrowserBookmarks}
 						onOpenMenu={openCommandCenter}
 						onShowShortcuts={() => setShowShortcuts(true)}
+						onAskFile={askFileFromTab}
 						sessions={runtimeSessions}
 						projects={availableWorkspaceGrants(workspaceGrants)}
 						onOpenSession={openSidebarSession}
@@ -9412,6 +9514,9 @@ export function App() {
 						onSnapshot={setSnapshot}
 						onRuntimeAgentState={setRuntimeAgentState}
 						configurationUi={snapshot.configuration.ui}
+						{...(activeFileAttachment ? { activeFileAttachment } : {})}
+						externalIntake={externalIntake}
+						externalIntakeRequestId={externalIntakeRequestId}
 						newAgentRequestId={newAgentRequestId}
 						newAgentPrompt={newAgentPrompt}
 						mentionTabs={browser.state?.tabs ?? []}

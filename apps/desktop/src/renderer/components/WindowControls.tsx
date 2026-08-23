@@ -2,6 +2,7 @@ import {
 	useCallback,
 	useEffect,
 	useRef,
+	useState,
 } from "react";
 
 const controls = [
@@ -57,6 +58,9 @@ function isMacOS(): boolean {
 
 export function WindowControls() {
 	const controlsRef = useRef<HTMLDivElement | null>(null);
+	const [windowActive, setWindowActive] = useState(() =>
+		typeof document === "undefined" ? true : document.hasFocus(),
+	);
 	const activate = useCallback((type: (typeof controls)[number]["type"]) => {
 		void window.kestrel.request({ type }).catch(() => undefined);
 	}, []);
@@ -75,6 +79,11 @@ export function WindowControls() {
 
 	useEffect(() => {
 		if (!isMacOS()) return;
+		const handleFocus = () => setWindowActive(true);
+		const handleBlur = () => {
+			setWindowActive(false);
+			resetProximity();
+		};
 
 		function updateProximity(event: PointerEvent) {
 			const node = controlsRef.current;
@@ -142,10 +151,12 @@ export function WindowControls() {
 		}
 
 		window.addEventListener("pointermove", updateProximity, { passive: true });
-		window.addEventListener("blur", resetProximity);
+		window.addEventListener("focus", handleFocus);
+		window.addEventListener("blur", handleBlur);
 		return () => {
 			window.removeEventListener("pointermove", updateProximity);
-			window.removeEventListener("blur", resetProximity);
+			window.removeEventListener("focus", handleFocus);
+			window.removeEventListener("blur", handleBlur);
 		};
 	}, [resetProximity]);
 
@@ -154,7 +165,7 @@ export function WindowControls() {
 	return (
 		<div
 			ref={controlsRef}
-			className="window-controls"
+			className={`window-controls ${windowActive ? "" : "window-controls-inactive"}`}
 			role="group"
 			aria-label="Window controls"
 		>

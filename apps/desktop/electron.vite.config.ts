@@ -44,8 +44,11 @@ export default defineConfig({
 		],
 		build: {
 			rollupOptions: {
-				input: resolve(__dirname, "src/preload/index.ts"),
-				output: { format: "cjs", entryFileNames: "index.cjs" },
+				input: {
+					index: resolve(__dirname, "src/preload/index.ts"),
+					userBrowser: resolve(__dirname, "src/preload/user-browser.ts"),
+				},
+				output: { format: "cjs", entryFileNames: "[name].cjs" },
 			},
 		},
 	},

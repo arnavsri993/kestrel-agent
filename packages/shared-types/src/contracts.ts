@@ -840,8 +840,45 @@ export const SelectedAttachmentSchema = z.object({
 		.int()
 		.nonnegative()
 		.max(10 * 1024 * 1024),
+	source: z.enum(["workspace", "external"]).optional(),
 });
 export type SelectedAttachment = z.infer<typeof SelectedAttachmentSchema>;
+
+/**
+ * A local file opened as a first-class Kestrel tab. The path is retained so
+ * the trusted main process can revalidate it before previewing or attaching;
+ * the renderer never reads it directly from the filesystem.
+ */
+export const UserBrowserFileSchema = z.object({
+	path: z.string().min(1).max(4_096),
+	name: z.string().min(1).max(255),
+	extension: z.string().max(32),
+	mediaType: z.string().min(1).max(200),
+	size: z.number().int().nonnegative().max(2 * 1024 * 1024 * 1024),
+	modifiedAt: z.string().datetime().optional(),
+	status: z.enum(["available", "missing"]),
+});
+export type UserBrowserFile = z.infer<typeof UserBrowserFileSchema>;
+
+export const FilePreviewSchema = z.object({
+	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	kind: z.enum(["text", "image", "pdf", "audio", "video", "metadata"]),
+	mediaType: z.string().min(1).max(200),
+	bytes: z.number().int().nonnegative(),
+	text: z.string().max(1_100_000).optional(),
+	// 32 MB inline media becomes roughly 44.7 MB after base64 encoding.
+	dataUrl: z.string().max(48_000_000).optional(),
+	truncated: z.boolean().optional(),
+	detail: z.string().max(2_000).optional(),
+});
+export type FilePreview = z.infer<typeof FilePreviewSchema>;
+
+export const ExternalIntakeSchema = z.object({
+	kind: z.enum(["ask", "open"]),
+	text: z.string().max(20_000).optional(),
+	attachments: z.array(SelectedAttachmentSchema).max(8),
+});
+export type ExternalIntake = z.infer<typeof ExternalIntakeSchema>;
 
 export const ArtifactRecordSchema = z.object({
 	id: z.string().min(1),
@@ -2413,6 +2450,7 @@ export const UserBrowserTabSchema = z.object({
 	id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	title: z.string().min(1).max(500),
 	url: z.string().max(8_192),
+	file: UserBrowserFileSchema.optional(),
 	faviconDataUrl: UserBrowserFaviconDataUrlSchema.optional(),
 	loading: z.boolean(),
 	canGoBack: z.boolean(),
@@ -2739,6 +2777,19 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("communication-messages-open-settings") }),
 	z.object({ type: z.literal("browser-get-state") }),
+	z.object({
+		type: z.literal("browser-open-file-tabs"),
+		paths: z.array(z.string().min(1).max(4_096)).min(1).max(8),
+		active: z.boolean().default(true),
+	}),
+	z.object({
+		type: z.literal("browser-file-preview"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-open-file-default"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
 	z.object({
 		type: z.enum(["window-minimize", "window-toggle-zoom", "window-close"]),
 	}),
@@ -3198,6 +3249,12 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 export type RendererResponse =
 	| CoreResponse
 	| { ok: true; browserState: UserBrowserState }
+	| {
+			ok: true;
+			browserState: UserBrowserState;
+			selectedAttachments: SelectedAttachment[];
+		}
+	| { ok: true; filePreview: FilePreview }
 	| { ok: true; extensions: InstalledExtension[] }
 	| { ok: true; extension: InstalledExtension }
 	| { ok: true; screenshotPath?: string; cancelled?: boolean }
@@ -3258,9 +3315,12 @@ export type RendererResponse =
 
 export interface RendererBridge {
 	request(request: RendererRequest): Promise<RendererResponse>;
+	getPathForFile(file: unknown): string;
 	onBrowserEvent(callback: (event: UserBrowserEvent) => void): () => void;
 	onBrowserCommand(callback: (command: UserBrowserCommand) => void): () => void;
 	onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
+	onExternalIntake(callback: (intake: ExternalIntake) => void): () => void;
+	onFileDrag(callback: (event: { active: boolean }) => void): () => void;
 	onSnapshot(callback: (snapshot: WorkspaceSnapshot) => void): () => void;
 	onPetStatus(callback: (status: PetStatus) => void): () => void;
 	onPetActivity(callback: (activity: PetActivityState) => void): () => void;

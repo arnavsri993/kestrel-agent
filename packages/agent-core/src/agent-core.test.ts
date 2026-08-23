@@ -702,7 +702,9 @@ describe("core agent request path", () => {
 
 	it("streams a configured provider and contains selected attachments to the task workspace", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-core-attachment-"));
+		const externalRoot = mkdtempSync(join(tmpdir(), "kestrel-core-external-"));
 		writeFileSync(join(root, "context.txt"), "bounded attachment context\n");
+		writeFileSync(join(externalRoot, "external.txt"), "validated external context\n");
 		writeFileSync(
 			join(root, "clip.mp4"),
 			Buffer.from("0000002066747970", "hex"),
@@ -777,6 +779,25 @@ describe("core agent request path", () => {
 			await core.handle({
 				type: "runtime-run-agent",
 				sessionId: session.id,
+				message: "Use the explicitly opened external file",
+				model: "fixture",
+				providerIds: ["attachment-provider"],
+				attachments: [
+					{
+						path: join(externalRoot, "external.txt"),
+						name: "external.txt",
+						mediaType: "text/plain",
+						size: 28,
+						source: "external",
+					},
+				],
+			}),
+		).toMatchObject({ ok: true, run: { status: "completed" } });
+		expect(received).toContain("validated external context");
+		expect(
+			await core.handle({
+				type: "runtime-run-agent",
+				sessionId: session.id,
 				message: "Inspect the clip",
 				model: "fixture",
 				providerIds: ["attachment-provider"],
@@ -815,6 +836,7 @@ describe("core agent request path", () => {
 		});
 		await core.close();
 		rmSync(root, { recursive: true, force: true });
+		rmSync(externalRoot, { recursive: true, force: true });
 	});
 
 	it("cancels an active desktop model stream by its stream ID", async () => {

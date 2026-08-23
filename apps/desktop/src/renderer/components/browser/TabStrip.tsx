@@ -326,6 +326,7 @@ export function TabStrip({
 	const menuTab = tabs.find((tab) => tab.id === menu?.tabId);
 
 	function getFaviconContent(tab: UserBrowserTab) {
+		if (tab.file) return <Icon name="artifacts" />;
 		const faviconDataUrl = tabFaviconDataUrl(tab, originFavicons);
 		if (faviconDataUrl) {
 			return <img src={faviconDataUrl} alt="" />;

@@ -20,6 +20,8 @@ import {
 	UserBrowserStateSchema,
 	type UserBrowserTab,
 	type InstalledExtension,
+	type FilePreview,
+	type SelectedAttachment,
 } from "@kestrel/shared-types";
 import {
 	BrowserWindow,
@@ -58,6 +60,13 @@ import {
 	sanitizeUntrustedBrowserValue,
 	upsertOriginFavicon,
 } from "./browser-tab-store";
+import {
+	fileAttachment,
+	fileStillExists,
+	fileTabUrl,
+	inspectFilePath,
+	previewFile,
+} from "./file-tabs";
 import {
 	isKestrelAppPageUrl,
 	parseKestrelAppPage,
@@ -341,10 +350,114 @@ export class UserBrowserService {
 		};
 		this.partitionCoordinator.register(this.partitionParticipant);
 		void this.backfillOriginFaviconsFromHistory();
+		void this.refreshFileStatuses();
+	}
+
+	private async refreshFileStatuses(): Promise<void> {
+		let changed = false;
+		for (const tab of this.state.tabs) {
+			if (!tab.file) continue;
+			const available = await fileStillExists(tab.file.path);
+			const next = available ? "available" : "missing";
+			if (tab.file.status !== next) {
+				tab.file.status = next;
+				changed = true;
+			}
+		}
+		if (changed) this.commit();
 	}
 
 	getState(): UserBrowserState {
 		return cloneState(this.state);
+	}
+
+	/**
+	 * Open a bounded, atomically inspected batch of local files. File tabs do
+	 * not create WebContentsViews; they remain trusted renderer objects whose
+	 * bytes are fetched through the main-process preview boundary.
+	 */
+	async openFileTabs(
+		paths: string[],
+		active = true,
+	): Promise<{
+		browserState: UserBrowserState;
+		selectedAttachments: SelectedAttachment[];
+	}> {
+		this.assertAvailable();
+		const uniquePaths = [...new Set(paths)];
+		if (uniquePaths.length === 0) throw new Error("Choose at least one file.");
+		if (uniquePaths.length > 8)
+			throw new Error("Kestrel accepts up to 8 files at a time.");
+		const inspected = await Promise.all(uniquePaths.map((path) => inspectFilePath(path)));
+		const existing = new Map(
+			this.state.tabs.flatMap((tab) =>
+				tab.file?.path ? [[tab.file.path, tab] as const] : [],
+			),
+		);
+		const newFiles = inspected.filter((file) => !existing.has(file.path));
+		if (this.state.tabs.length + newFiles.length > 32)
+			throw new Error("Kestrel supports up to 32 open tabs.");
+
+		const opened: UserBrowserTab[] = [];
+		for (const file of inspected) {
+			const alreadyOpen = existing.get(file.path);
+			if (alreadyOpen) {
+				alreadyOpen.file = file;
+				alreadyOpen.title = file.name;
+				alreadyOpen.url = fileTabUrl(alreadyOpen.id);
+				alreadyOpen.loading = false;
+				alreadyOpen.error = undefined;
+				opened.push(alreadyOpen);
+				continue;
+			}
+			const timestamp = this.now().toISOString();
+			const tab = createEmptyBrowserTab(() => new Date(timestamp));
+			tab.title = file.name;
+			tab.url = fileTabUrl(tab.id);
+			tab.file = file;
+			this.state.tabs.push(tab);
+			existing.set(file.path, tab);
+			opened.push(tab);
+		}
+		if (active) {
+			const target = opened.at(-1);
+			if (target) {
+				this.state.activeTabId = target.id;
+				target.lastActiveAt = this.now().toISOString();
+			}
+		}
+		this.commit();
+		await this.syncActiveView();
+		return {
+			browserState: this.getState(),
+			selectedAttachments: inspected.flatMap((file) => {
+				const attachment = fileAttachment(file);
+				return attachment ? [attachment] : [];
+			}),
+		};
+	}
+
+	async filePreview(tabId: string): Promise<FilePreview> {
+		const tab = this.requireTab(tabId);
+		if (!tab.file) throw new Error("This tab is not a local file.");
+		return previewFile(tab.id, tab.file);
+	}
+
+	async openFileDefault(tabId: string): Promise<void> {
+		const tab = this.requireTab(tabId);
+		if (!tab.file) throw new Error("This tab is not a local file.");
+		if (!(await fileStillExists(tab.file.path)))
+			throw new Error(`${tab.file.name} is no longer available.`);
+		const error = await shell.openPath(tab.file.path);
+		if (error) throw new Error(error);
+	}
+
+	knownFilePath(path: string): boolean {
+		return this.state.tabs.some((tab) => tab.file?.path === path);
+	}
+
+	ownsWebContents(webContents: WebContents): boolean {
+		return this.webContentsToTab.has(webContents.id);
 	}
 
 	async createTab(input?: string, active = true): Promise<UserBrowserState> {
@@ -460,6 +573,7 @@ export class UserBrowserService {
 		const appPage = parseKestrelAppPage(input);
 		if (appPage) {
 			this.closeView(tabId);
+			delete tab.file;
 			tab.error = undefined;
 			tab.crashed = false;
 			tab.discarded = false;
@@ -477,6 +591,8 @@ export class UserBrowserService {
 			this.state.settings.searchEngine,
 			this.state.settings.customSearchUrl,
 		);
+		this.closeView(tabId);
+		delete tab.file;
 		const record = this.ensureView(tab);
 		this.elementRefs.delete(tabId);
 		tab.error = undefined;
@@ -717,6 +833,7 @@ export class UserBrowserService {
 
 	async duplicateTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
+		if (tab.file) return (await this.openFileTabs([tab.file.path], true)).browserState;
 		return this.createTab(tab.url || undefined, true);
 	}
 
@@ -742,7 +859,7 @@ export class UserBrowserService {
 
 	async detachTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
-		if (!tab.url || tab.error || isKestrelAppPageUrl(tab.url)) {
+		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
 			throw new Error("Only loaded web pages can open in a separate window.");
 		}
 		this.closeView(tabId);
@@ -1441,12 +1558,13 @@ export class UserBrowserService {
 	}
 
 	private ensureView(tab: UserBrowserTab): ViewRecord {
-		if (isKestrelAppPageUrl(tab.url))
+		if (tab.file || isKestrelAppPageUrl(tab.url))
 			throw new Error("App pages do not use a web view.");
 		const existing = this.views.get(tab.id);
 		if (existing && !existing.view.webContents.isDestroyed()) return existing;
 		const view = new WebContentsView({
 			webPreferences: {
+				preload: join(__dirname, "../preload/userBrowser.cjs"),
 				partition: this.partitionName,
 				sandbox: true,
 				contextIsolation: true,

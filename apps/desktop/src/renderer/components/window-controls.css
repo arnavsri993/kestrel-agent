@@ -11,6 +11,16 @@
 	-webkit-app-region: no-drag;
 }
 
+.window-controls-inactive {
+	opacity: 0.62;
+	filter: saturate(0.58);
+}
+
+.window-controls-inactive .window-control:hover,
+.window-controls-inactive .window-control:focus-visible {
+	opacity: 0.92;
+}
+
 .window-control {
 	--window-control-icon-opacity: 0;
 	--window-control-icon-scale: 1;

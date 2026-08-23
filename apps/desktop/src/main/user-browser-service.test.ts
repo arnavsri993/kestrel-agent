@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
@@ -187,7 +187,7 @@ describe("UserBrowserService", () => {
     expect(state.tabs[0]).toMatchObject({ title: "New Tab", url: "" });
   });
 
-  it("opens kestrel app pages as tabs without creating a web view", async () => {
+	it("opens kestrel app pages as tabs without creating a web view", async () => {
     const { service } = createService();
     const before = electron.state.views.length;
     const state = await service.createTab("kestrel://settings", true);
@@ -196,14 +196,44 @@ describe("UserBrowserService", () => {
       title: "Settings",
       url: "kestrel://settings",
       loading: false,
-    });
+	});
+
     expect(electron.state.views.length).toBe(before);
     await service.setContentBounds(
       { x: 0, y: 80, width: 800, height: 600 },
       true,
     );
-    expect(electron.state.views.length).toBe(before);
-  });
+			expect(electron.state.views.length).toBe(before);
+	});
+
+	it("opens local files as first-class tabs and exposes bounded external attachments", async () => {
+		const { service } = createService();
+		const root = mkdtempSync(join(tmpdir(), "kestrel-file-tab-fixture-"));
+		directories.push(root);
+		const path = join(root, "report.txt");
+		writeFileSync(path, "A report from a local file tab.");
+
+		const before = electron.state.views.length;
+		const opened = await service.openFileTabs([path], true);
+		const tab = opened.browserState.tabs.find(
+			(item) => item.id === opened.browserState.activeTabId,
+		)!;
+		const preview = await service.filePreview(tab.id);
+
+		expect(electron.state.views.length).toBe(before);
+		expect(tab).toMatchObject({
+			title: "report.txt",
+			url: `kestrel://file/${tab.id}`,
+			file: { path: realpathSync(path), name: "report.txt", status: "available" },
+		});
+		expect(opened.selectedAttachments).toMatchObject([
+			{ path: realpathSync(path), name: "report.txt", source: "external" },
+		]);
+		expect(preview).toMatchObject({
+			kind: "text",
+			text: "A report from a local file tab.",
+		});
+	});
 
   it("attaches the web view before loading when navigating from a new tab", async () => {
     const { service, window } = createService();
