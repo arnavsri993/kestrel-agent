@@ -40,11 +40,14 @@ function createBundle(
 }
 
 function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
+  addAskKestrelService(source);
+  const serviceRoot = join(trashRoot, "..", "Services");
   const environment = {
     ...process.env,
     KESTREL_MACOS_INSTALL_ROOT: installRoot,
     KESTREL_MACOS_SEARCH_ROOTS: searchRoots.join(":"),
     KESTREL_MACOS_TRASH_ROOT: trashRoot,
+    KESTREL_MACOS_SERVICE_ROOT: serviceRoot,
     KESTREL_SKIP_LSREGISTER: "1",
   };
   if (mdfindPath) environment.KESTREL_MDFIND_PATH = mdfindPath;
@@ -53,6 +56,29 @@ function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
   return execFileSync(process.execPath, [script, source], {
     encoding: "utf8",
     env: environment,
+  });
+}
+
+function addAskKestrelService(bundle) {
+  const service = join(
+    bundle,
+    "Contents",
+    "Resources",
+    "Ask Kestrel.app",
+  );
+  mkdirSync(join(service, "Contents", "MacOS"), { recursive: true });
+  writeFileSync(
+    join(service, "Contents", "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.kestrel.services.ask</string>
+<key>CFBundleName</key><string>Ask Kestrel</string>
+</dict></plist>
+`,
+  );
+  writeFileSync(join(service, "Contents", "MacOS", "Ask Kestrel"), "service", {
+    mode: 0o755,
   });
 }
 

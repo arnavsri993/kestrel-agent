@@ -1,5 +1,7 @@
 import type {
+	FilePreview,
 	RendererResponse,
+	SelectedAttachment,
 	UserBrowserFindMatch,
 	UserBrowserPageContext,
 	UserBrowserSettings,
@@ -17,6 +19,9 @@ export interface UserBrowserController {
 	state: UserBrowserState | null;
 	error: string;
 	findMatch: UserBrowserFindMatch | null;
+	openFileTabs(paths: string[], active?: boolean): Promise<SelectedAttachment[]>;
+	filePreview(tabId: string): Promise<FilePreview | undefined>;
+	openFileDefault(tabId: string): Promise<void>;
 	createTab(input?: string, active?: boolean): Promise<void>;
 	reopenClosedTab(): Promise<void>;
 	closeTab(tabId: string): Promise<void>;
@@ -96,6 +101,39 @@ export function useUserBrowser(): UserBrowserController {
 		},
 		[],
 	);
+	const openFileTabs = useCallback(
+		async (paths: string[], active = true) => {
+			const response = await window.kestrel.request({
+				type: "browser-open-file-tabs",
+				paths,
+				active,
+			});
+			if (!response.ok || !("browserState" in response))
+				throw new Error(responseError(response));
+			setState(response.browserState);
+			setError("");
+			return "selectedAttachments" in response
+				? response.selectedAttachments
+				: [];
+		},
+		[],
+	);
+	const filePreview = useCallback(async (tabId: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-file-preview",
+			tabId,
+		});
+		if (!response.ok || !("filePreview" in response))
+			throw new Error(responseError(response));
+		return response.filePreview;
+	}, []);
+	const openFileDefault = useCallback(async (tabId: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-open-file-default",
+			tabId,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
 
 	useEffect(() => {
 		let active = true;
@@ -373,6 +411,9 @@ export function useUserBrowser(): UserBrowserController {
 			state,
 			error,
 			findMatch,
+			openFileTabs,
+			filePreview,
+			openFileDefault,
 			createTab,
 			reopenClosedTab,
 			closeTab,
@@ -414,6 +455,9 @@ export function useUserBrowser(): UserBrowserController {
 			state,
 			error,
 			findMatch,
+			openFileTabs,
+			filePreview,
+			openFileDefault,
 			createTab,
 			reopenClosedTab,
 			closeTab,

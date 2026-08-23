@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { basename, dirname, extname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { existsSync, realpathSync, statSync, appendFileSync } from "node:fs";
 import {
   copyFile,
@@ -30,12 +30,13 @@ import {
 import updater from "electron-updater";
 import {
   CoreRequestSchema,
-  CommunicationCodeScanSchema,
-  GMAIL_READONLY_SCOPE,
-  isLoginCodeChallenge,
-  PRODUCT_IDENTITY,
-  RendererRequestSchema,
-  SelectedAttachmentSchema,
+	CommunicationCodeScanSchema,
+	ExternalIntakeSchema,
+	GMAIL_READONLY_SCOPE,
+	isLoginCodeChallenge,
+	PRODUCT_IDENTITY,
+	RendererRequestSchema,
+	SelectedAttachmentSchema,
   type AgentState,
   type BackgroundJobsEvent,
   type CommunicationCodeCandidate,
@@ -67,6 +68,7 @@ import { ProviderAuthMonitor } from "./provider-auth-monitor";
 import { ExternalSecretManager } from "./external-secret-manager";
 import type { ResolvedExternalCredentials } from "./credential-broker";
 import { fileDigest } from "./file-digest";
+import { mediaTypeForPath } from "./file-tabs";
 import { shouldCheckForUpdates, updaterFeedChannel } from "./update-channel";
 import {
   isTrustedRendererFrame,
@@ -75,12 +77,16 @@ import {
   trustedDevelopmentRendererUrl,
 } from "./renderer-security";
 import {
-  DeepLinkQueue,
+	DeepLinkQueue,
   deepLinksFromArgv,
   parseKestrelDeepLink,
   parseWebUrl,
   urlsFromArgv,
 } from "./deep-links";
+import {
+	externalPayloadIdFromDeepLink,
+	parseExternalServicePayload,
+} from "./external-intake";
 import { MacMessagesSource } from "./mac-messages-source";
 import {
   PetOverlayRequestAccess,
@@ -96,9 +102,15 @@ import {
   startupRecoveryCopy,
 } from "./startup-recovery";
 import {
-  canRegisterAsDefaultBrowser,
-  isPackagedKestrelRuntime,
+	canRegisterAsDefaultBrowser,
+	isPackagedKestrelRuntime,
 } from "./default-browser";
+import {
+	dockIconSvg,
+	menuBarIconSvg,
+	svgDataUrl,
+	visualStateForAgentState,
+} from "./macos-integration";
 
 // Chromium encrypts cookies with macOS Keychain under "Kestrel Safe Storage"
 // unless this switch is set before ready. Kestrel stores its own secrets as
@@ -114,11 +126,28 @@ const petOverlayAccess = new WeakMap<
 >();
 const pendingDeepLinks = new DeepLinkQueue();
 let mainRendererDeepLinkReady = false;
+let externalIntakeRendererReady = false;
+const externalIntakeReadyWindows = new WeakSet<BrowserWindow>();
 let tray: Tray | null = null;
+let dockDefaultIcon: ReturnType<typeof nativeImage.createEmpty> | null = null;
+let dockAnimationTimer: ReturnType<typeof setInterval> | undefined;
+let dockCompletionTimer: ReturnType<typeof setTimeout> | undefined;
+let dockAnimationGeneration = 0;
 let quitting = false;
 let coreStartupComplete = false;
 let startupRecoveryWindowCreated = false;
 let agentState: AgentState = "idle";
+const activeAgentStreams = new Set<string>();
+const recentAgentTasks: string[] = [];
+let activeAgentTaskLabel = "";
+let deliveringExternalIntakes = false;
+const pendingExternalIntakes: Array<{
+	kind: "ask" | "open";
+	paths: string[];
+	text?: string;
+	targetService?: UserBrowserService;
+	targetWindow?: BrowserWindow;
+}> = [];
 const browserService = new ElectronBrowserService();
 let userBrowserService: UserBrowserService | null = null;
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
@@ -220,6 +249,20 @@ function browserServiceForTab(tabId?: string): UserBrowserService | null {
     }
   }
   return userBrowserService;
+}
+
+function browserOwnerForDragSender(sender: Electron.WebContents):
+	| { window: BrowserWindow; service: UserBrowserService; mainRenderer: boolean }
+	| undefined {
+	for (const [window, service] of browserWindowServices) {
+		if (window.webContents === sender)
+			return { window, service, mainRenderer: true };
+	}
+	for (const [window, service] of browserWindowServices) {
+		if (service.ownsWebContents(sender))
+			return { window, service, mainRenderer: false };
+	}
+	return undefined;
 }
 
 async function communicationSourceStatuses(): Promise<CommunicationSourceStatus[]> {
@@ -767,10 +810,9 @@ supervisor.on(
 supervisor.on("recovered", () => {
   void supervisor
     .request({ type: "snapshot" })
-    .then((response) => {
-      if (!response.ok || !response.snapshot) return;
-      agentState = response.snapshot.agentState;
-      updateTray();
+	.then((response) => {
+		if (!response.ok || !response.snapshot) return;
+		setAgentState(response.snapshot.agentState);
       mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
     })
     .catch(() => undefined);
@@ -827,8 +869,15 @@ if (process.env.NODE_ENV_ELECTRON_VITE === "development" && developmentHeartbeat
   app.on("will-quit", () => clearInterval(heartbeatMonitor));
 }
 
-for (const deepLink of deepLinksFromArgv(process.argv))
-  pendingDeepLinks.enqueue(deepLink);
+const initialDeepLinks = deepLinksFromArgv(process.argv);
+const initialExternalIntakeLinks = initialDeepLinks.filter((deepLink) =>
+	externalPayloadIdFromDeepLink(deepLink),
+);
+for (const deepLink of initialDeepLinks) {
+	if (!externalPayloadIdFromDeepLink(deepLink)) pendingDeepLinks.enqueue(deepLink);
+}
+for (const path of filePathsFromArgv(process.argv))
+	pendingExternalIntakes.push({ kind: "open", paths: [path] });
 
 function showMainWindow(): void {
   if (!singleInstance) return;
@@ -891,6 +940,128 @@ export function setAsDefaultBrowser(): boolean {
 
 const pendingWebUrls: string[] = [];
 
+function filePathsFromArgv(argv: readonly string[]): string[] {
+	return [
+		...new Set(
+			argv.slice(1).filter((value) => {
+				if (!value.startsWith("/") || value === process.execPath) return false;
+				try {
+					return statSync(value).isFile();
+				} catch {
+					return false;
+				}
+			}),
+		),
+	];
+}
+
+function servicePayloadPath(id: string): string | undefined {
+	if (!/^[a-f0-9-]{36}$/.test(id)) return undefined;
+	return join(
+		app.getPath("appData"),
+		PRODUCT_IDENTITY.runtimeApplicationName,
+		"external-intake",
+		`${id}.json`,
+	);
+}
+
+async function readServicePayload(
+	id: string,
+): Promise<{ kind: "ask" | "open"; paths: string[]; text?: string } | undefined> {
+	const path = servicePayloadPath(id);
+	if (!path) return undefined;
+	try {
+		const metadata = await lstat(path);
+		if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > 1_000_000)
+			return undefined;
+		const raw: unknown = JSON.parse(await readFile(path, "utf8"));
+		await rm(path, { force: true });
+		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+		const parsed = parseExternalServicePayload(raw);
+		if (!parsed) return undefined;
+		return {
+			kind: parsed.kind,
+			paths: parsed.paths,
+			...(parsed.text === undefined ? {} : { text: parsed.text }),
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+function queueExternalIntake(
+	paths: string[],
+	options: {
+		kind: "ask" | "open";
+		text?: string;
+		targetService?: UserBrowserService;
+		targetWindow?: BrowserWindow;
+	},
+): void {
+	const unique = [...new Set(paths)].slice(0, 8);
+	if (unique.length === 0 && !options.text?.trim()) return;
+	if (pendingExternalIntakes.length >= 16) pendingExternalIntakes.shift();
+	pendingExternalIntakes.push({
+		kind: options.kind,
+		paths: unique,
+		...(options.text ? { text: options.text } : {}),
+		...(options.targetService ? { targetService: options.targetService } : {}),
+		...(options.targetWindow ? { targetWindow: options.targetWindow } : {}),
+	});
+	showMainWindow();
+	deliverPendingExternalIntakes();
+}
+
+async function deliverPendingExternalIntakes(): Promise<void> {
+	if (deliveringExternalIntakes) return;
+	deliveringExternalIntakes = true;
+	try {
+		while (pendingExternalIntakes.length > 0) {
+			const next = pendingExternalIntakes[0]!;
+			const targetService = next.targetService ?? userBrowserService;
+			const targetWindow = next.targetWindow ?? mainWindow;
+			if (
+				!targetService ||
+				!targetWindow ||
+				targetWindow.isDestroyed() ||
+				(!externalIntakeReadyWindows.has(targetWindow) &&
+					!(targetWindow === mainWindow && externalIntakeRendererReady)) ||
+				!trustedRendererUrl(targetWindow.webContents.getURL())
+			)
+				return;
+			try {
+				const opened = next.paths.length
+					? await targetService.openFileTabs(next.paths, true)
+					: { selectedAttachments: [] };
+				if (next.kind === "open" && !next.text?.trim()) {
+					pendingExternalIntakes.shift();
+					continue;
+				}
+				const intake = ExternalIntakeSchema.parse({
+					kind: next.kind,
+					...(next.text ? { text: next.text } : {}),
+					attachments: opened.selectedAttachments,
+				});
+				targetWindow.webContents.send("kestrel:external-intake", intake);
+				pendingExternalIntakes.shift();
+			} catch (error) {
+				pendingExternalIntakes.shift();
+				if (Notification.isSupported())
+					new Notification({
+						title: `${PRODUCT_IDENTITY.productName} · File intake failed`,
+						body: error instanceof Error ? error.message : "The selected files could not be opened.",
+					}).show();
+			}
+		}
+	} finally {
+		deliveringExternalIntakes = false;
+	}
+}
+
+function handleIncomingFileDrop(paths: string[]): void {
+	queueExternalIntake(paths, { kind: "ask" });
+}
+
 function openIncomingWebUrl(url: string): void {
   if (userBrowserService && mainWindow && !mainWindow.isDestroyed()) {
     showMainWindow();
@@ -912,7 +1083,14 @@ function deliverPendingWebUrls(): void {
 }
 
 function handleIncomingUrl(value: string): void {
-  const deepLink = parseKestrelDeepLink(value);
+	const payloadId = externalPayloadIdFromDeepLink(value);
+	if (payloadId) {
+		void readServicePayload(payloadId).then((payload) => {
+			if (payload) queueExternalIntake(payload.paths, payload);
+		});
+		return;
+	}
+	const deepLink = parseKestrelDeepLink(value);
   if (deepLink) {
     queueDeepLink(deepLink);
     return;
@@ -972,6 +1150,7 @@ function createMainWindow(): BrowserWindow {
       devTools: !isPackagedKestrelApp,
     },
   });
+  if (process.platform === "darwin") window.setWindowButtonVisibility(false);
   if (userBrowserService) {
     userBrowserService.dispose();
     if (mainWindow) browserWindowServices.delete(mainWindow);
@@ -1039,11 +1218,12 @@ function createMainWindow(): BrowserWindow {
     const service = browserServiceForWindow(window);
     if (service) service.dispose();
     browserWindowServices.delete(window);
-    if (mainWindow === window) {
-      userBrowserService = null;
-      mainWindow = null;
-      mainRendererDeepLinkReady = false;
-    }
+		if (mainWindow === window) {
+			userBrowserService = null;
+			mainWindow = null;
+			mainRendererDeepLinkReady = false;
+			externalIntakeRendererReady = false;
+		}
   });
   if (DEVELOPMENT_RENDERER_URL)
     void window.loadURL(DEVELOPMENT_RENDERER_URL);
@@ -1281,59 +1461,177 @@ async function createPetOverlay(): Promise<BrowserWindow> {
   return window;
 }
 
-function trayIcon() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><path fill="black" d="M3 2h3v6l5-6h4l-6 7 6 7h-4l-5-6v6H3z"/></svg>`;
-  const icon = nativeImage.createFromDataURL(
-    `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`,
-  );
-  icon.setTemplateImage(true);
-  return icon;
+function nativeIconFromSvg(svg: string) {
+	return nativeImage.createFromDataURL(svgDataUrl(svg));
+}
+
+function trayIcon(state = visualStateForAgentState(agentState)) {
+	const icon = nativeIconFromSvg(menuBarIconSvg(state));
+	icon.setTemplateImage(true);
+	return icon;
+}
+
+function dockAnimationsAllowed(): boolean {
+	if (process.platform !== "darwin") return false;
+	try {
+		return systemPreferences.getAnimationSettings().shouldRenderRichAnimation !== false;
+	} catch {
+		return true;
+	}
+}
+
+function updateDock(): void {
+	if (process.platform !== "darwin" || !app.dock) return;
+	const dock = app.dock;
+	const next = visualStateForAgentState(agentState);
+	dockAnimationGeneration += 1;
+	const generation = dockAnimationGeneration;
+	if (dockAnimationTimer) {
+		clearInterval(dockAnimationTimer);
+		dockAnimationTimer = undefined;
+	}
+	if (dockCompletionTimer) {
+		clearTimeout(dockCompletionTimer);
+		dockCompletionTimer = undefined;
+	}
+	if (next === "idle") {
+			if (dockDefaultIcon) dock.setIcon(dockDefaultIcon);
+			return;
+		}
+	let frame = 0;
+	const setFrame = () => {
+		if (generation !== dockAnimationGeneration) return;
+		dock.setIcon(nativeIconFromSvg(dockIconSvg(next, frame)));
+		frame = (frame + 1) % 2;
+	};
+	setFrame();
+	if (next === "waiting" || !dockAnimationsAllowed()) return;
+	dockAnimationTimer = setInterval(setFrame, next === "acting" ? 720 : 1_050);
+}
+
+function showDockCompletion(): void {
+	if (process.platform !== "darwin" || !app.dock || !dockAnimationsAllowed()) {
+		updateDock();
+		return;
+	}
+	const dock = app.dock;
+	dockAnimationGeneration += 1;
+	const generation = dockAnimationGeneration;
+	if (dockAnimationTimer) {
+		clearInterval(dockAnimationTimer);
+		dockAnimationTimer = undefined;
+	}
+	if (dockCompletionTimer) clearTimeout(dockCompletionTimer);
+	dock.setIcon(nativeIconFromSvg(dockIconSvg("completed", 0)));
+	dockCompletionTimer = setTimeout(() => {
+		if (generation !== dockAnimationGeneration) return;
+		dockCompletionTimer = undefined;
+		if (dockDefaultIcon) dock.setIcon(dockDefaultIcon);
+	}, 620);
+}
+
+async function initializeDock(): Promise<void> {
+	if (process.platform !== "darwin" || !app.dock) return;
+	try {
+		dockDefaultIcon = await app.getFileIcon(process.execPath, { size: "large" });
+	} catch {
+		dockDefaultIcon = null;
+	}
+	updateDock();
+}
+
+function setAgentState(next: AgentState): void {
+	const previous = agentState;
+	if (agentState !== next && next === "idle" && activeAgentTaskLabel) {
+		recentAgentTasks.unshift(activeAgentTaskLabel);
+		recentAgentTasks.splice(5);
+		activeAgentTaskLabel = "";
+	}
+	agentState = next;
+	updateTray();
+	if (
+		next === "idle" &&
+		["observing", "working", "updating"].includes(previous)
+	)
+		showDockCompletion();
+	else updateDock();
 }
 
 function updateTray(): void {
-  if (!tray) tray = new Tray(trayIcon());
-  const paused = agentState === "paused";
-  const label = agentState.replace("_", " ");
-  tray.setToolTip(`${PRODUCT_IDENTITY.productName} · ${label}`);
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: `${PRODUCT_IDENTITY.productName} · ${label}`, enabled: false },
-      { type: "separator" },
-      {
-        label: `Open ${PRODUCT_IDENTITY.productName}`,
-        click: () => {
-          mainWindow?.show();
-          mainWindow?.focus();
-        },
-      },
-      {
-        label: paused ? "Resume agent" : "Pause agent",
-        click: async () => {
-          const response = await supervisor.request({
-            type: "set-paused",
-            paused: !paused,
-          });
-          if (response.ok && response.snapshot) {
-            agentState = response.snapshot.agentState;
-            updateTray();
-            mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
-          }
-        },
-      },
-      { type: "separator" },
-      {
-        label: `Quit ${PRODUCT_IDENTITY.productName}`,
-        click: () => {
-          quitting = true;
-          app.quit();
-        },
-      },
-    ]),
-  );
-  tray.on("click", () => {
-    mainWindow?.show();
-    mainWindow?.focus();
-  });
+	const visual = visualStateForAgentState(agentState);
+	if (!tray) {
+		tray = new Tray(trayIcon());
+		tray.on("click", () => {
+			showMainWindow();
+			mainWindow?.focus();
+		});
+	}
+	tray.setImage(trayIcon(visual));
+	tray.setToolTip(`${PRODUCT_IDENTITY.productName} · ${agentState.replace("_", " ")}`);
+	const isWorking = activeAgentStreams.size > 0 || ["working", "observing", "updating"].includes(agentState);
+	const isWaiting = agentState === "waiting_approval";
+	const statusLabel = isWorking
+		? `Working${activeAgentTaskLabel ? ` · ${activeAgentTaskLabel}` : ""}`
+		: isWaiting
+			? "Needs your approval"
+			: agentState === "paused"
+				? "Paused"
+				: "Idle";
+	const recentItems = recentAgentTasks.length > 0
+		? [
+				{ type: "separator" as const },
+				{
+					label: "Recent",
+					enabled: false,
+				},
+				...recentAgentTasks.map((task) => ({ label: `✓ ${task}`, enabled: false })),
+		  ]
+		: [];
+	tray.setContextMenu(
+		Menu.buildFromTemplate([
+			{ label: `${PRODUCT_IDENTITY.productName} · ${statusLabel}`, enabled: false },
+			...(activeAgentTaskLabel ? [{ label: activeAgentTaskLabel, enabled: false }] : []),
+			{ type: "separator" },
+			{
+				label: `Open ${PRODUCT_IDENTITY.productName}`,
+				click: () => {
+					showMainWindow();
+					mainWindow?.focus();
+				},
+			},
+			...(activeAgentStreams.size > 0
+				? [{
+						label: "Stop active task",
+						click: () => {
+							for (const streamId of activeAgentStreams)
+								void supervisor.request({ type: "runtime-cancel-stream", streamId });
+						},
+				  }]
+				: []),
+			{
+				label: agentState === "paused" ? "Resume agent" : "Pause agent",
+				click: async () => {
+					const response = await supervisor.request({
+						type: "set-paused",
+						paused: agentState !== "paused",
+					});
+					if (response.ok && response.snapshot) {
+						setAgentState(response.snapshot.agentState);
+						mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
+					}
+				},
+			},
+			...recentItems,
+			{ type: "separator" },
+			{
+				label: `Quit ${PRODUCT_IDENTITY.productName}`,
+				click: () => {
+					quitting = true;
+					app.quit();
+				},
+			},
+		]),
+	);
 }
 
 function broadcastPetStatus(
@@ -1444,7 +1742,7 @@ async function initializeCore(
       throw new Error(response.error || "Agent Core rejected its startup snapshot.");
     if (!response.snapshot)
       throw new Error("Agent Core returned no workspace state during startup.");
-    agentState = response.snapshot.agentState;
+		setAgentState(response.snapshot.agentState);
     debugAgentLog("initializeCore succeeded", {});
   } catch (error) {
     // #region agent log
@@ -1503,47 +1801,12 @@ async function selectPluginDirectory(
   return selection.canceled ? undefined : selection.filePaths[0];
 }
 
-function mediaTypeForPath(path: string): string {
-  const extension = extname(path).toLowerCase();
-  return (
-    (
-      {
-        ".txt": "text/plain",
-        ".md": "text/markdown",
-        ".json": "application/json",
-        ".csv": "text/csv",
-        ".ts": "text/typescript",
-        ".tsx": "text/typescript",
-        ".js": "application/javascript",
-        ".jsx": "application/javascript",
-        ".py": "text/x-python",
-        ".html": "text/html",
-        ".css": "text/css",
-        ".xml": "application/xml",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
-        ".m4a": "audio/mp4",
-        ".mp4": "video/mp4",
-        ".mov": "video/quicktime",
-        ".webm": "video/webm",
-        ".pdf": "application/pdf",
-      } as Record<string, string>
-    )[extension] ?? "application/octet-stream"
-  );
-}
-
 async function restartCoreAfterGrantChange(): Promise<WorkspaceGrant[]> {
   await supervisor.stop();
   await initializeCore();
   const response = await supervisor.request({ type: "snapshot" });
-  if (response.ok && response.snapshot) {
-    agentState = response.snapshot.agentState;
-    updateTray();
+	if (response.ok && response.snapshot) {
+		setAgentState(response.snapshot.agentState);
     mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
   }
   return new WorkspaceGrantStore(
@@ -1573,11 +1836,78 @@ function registerIpc(): void {
   ipcMain.on("kestrel:deep-link-ready", (event) =>
     setDeepLinkReadiness(event, true),
   );
-  ipcMain.on("kestrel:deep-link-not-ready", (event) =>
-    setDeepLinkReadiness(event, false),
-  );
+	ipcMain.on("kestrel:deep-link-not-ready", (event) =>
+		setDeepLinkReadiness(event, false),
+	);
+	const setExternalIntakeReadiness = (event: Electron.IpcMainEvent) => {
+		const senderWindow = BrowserWindow.fromWebContents(event.sender);
+		if (
+			!senderWindow ||
+			!browserWindowServices.has(senderWindow) ||
+			!isTrustedRendererFrame(
+				event.senderFrame,
+				event.sender.mainFrame,
+				trustedRendererUrl,
+			)
+		)
+			return;
+		externalIntakeReadyWindows.add(senderWindow);
+		if (senderWindow === mainWindow) externalIntakeRendererReady = true;
+		void deliverPendingExternalIntakes();
+	};
+	ipcMain.on("kestrel:external-intake-ready", setExternalIntakeReadiness);
+	ipcMain.on("kestrel:user-browser-file-drag", (event, raw) => {
+		const owner = browserOwnerForDragSender(event.sender);
+		if (!owner || owner.window.isDestroyed()) return;
+		if (
+			owner.mainRenderer &&
+			!isTrustedRendererFrame(
+				event.senderFrame,
+				event.sender.mainFrame,
+				trustedRendererUrl,
+			)
+		)
+			return;
+		const active =
+			raw && typeof raw === "object" && !Array.isArray(raw)
+			? (raw as { active?: unknown }).active
+			: undefined;
+		if (typeof active !== "boolean") return;
+		if (trustedRendererUrl(owner.window.webContents.getURL()))
+			owner.window.webContents.send("kestrel:file-drag", { active });
+	});
+	ipcMain.on("kestrel:user-browser-file-drop", (event, raw) => {
+		const owner = browserOwnerForDragSender(event.sender);
+		if (!owner || owner.window.isDestroyed()) return;
+		if (
+			owner.mainRenderer &&
+			!isTrustedRendererFrame(
+				event.senderFrame,
+				event.sender.mainFrame,
+				trustedRendererUrl,
+			)
+		)
+			return;
+		const paths =
+			raw && typeof raw === "object" && !Array.isArray(raw) &&
+			Array.isArray((raw as { paths?: unknown }).paths)
+				? (raw as { paths: unknown[] }).paths.filter(
+						(value): value is string =>
+							typeof value === "string" &&
+								value.startsWith("/") &&
+								value.length <= 4_096 &&
+								!/[\u0000-\u001f\u007f]/.test(value),
+					  )
+						.slice(0, 8)
+				: [];
+		queueExternalIntake(paths, {
+			kind: "ask",
+			targetService: owner.service,
+			targetWindow: owner.window,
+		});
+	});
 
-  ipcMain.handle("kestrel:request", async (event, raw) => {
+	ipcMain.handle("kestrel:request", async (event, raw) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     if (
       !senderWindow ||
@@ -1612,6 +1942,24 @@ function registerIpc(): void {
       if (!overlayAccess)
         throw new Error("Kestrel rejected a stale pet overlay request.");
       overlayAccess.assertAllowed(request);
+    }
+    if (
+      request.type === "window-minimize" ||
+      request.type === "window-toggle-zoom" ||
+      request.type === "window-close"
+    ) {
+      if (process.platform !== "darwin" || senderWindow !== mainWindow)
+        throw new Error("Custom window controls are available only on macOS.");
+      if (request.type === "window-minimize") {
+        senderWindow.minimize();
+      } else if (request.type === "window-toggle-zoom") {
+        if (senderWindow.isFullScreen()) senderWindow.setFullScreen(false);
+        else if (senderWindow.isMaximized()) senderWindow.unmaximize();
+        else senderWindow.maximize();
+      } else {
+        senderWindow.close();
+      }
+      return { ok: true };
     }
     if (request.type === "communication-sources") {
       return {
@@ -1742,12 +2090,34 @@ function registerIpc(): void {
       );
       return { ok: true };
     }
-    if (request.type === "browser-get-state") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
-      return { ok: true, browserState: requestBrowserService.getState() };
-    }
-    if (request.type === "browser-create-tab") {
+	if (request.type === "browser-get-state") {
+		if (!requestBrowserService)
+			throw new Error("The visible user browser is unavailable.");
+		return { ok: true, browserState: requestBrowserService.getState() };
+	}
+	if (request.type === "browser-open-file-tabs") {
+		if (!requestBrowserService)
+			throw new Error("The visible user browser is unavailable.");
+		return {
+			ok: true,
+			...(await requestBrowserService.openFileTabs(request.paths, request.active)),
+		};
+	}
+	if (request.type === "browser-file-preview") {
+		if (!requestBrowserService)
+			throw new Error("The visible user browser is unavailable.");
+		return {
+			ok: true,
+			filePreview: await requestBrowserService.filePreview(request.tabId),
+		};
+	}
+	if (request.type === "browser-open-file-default") {
+		if (!requestBrowserService)
+			throw new Error("The visible user browser is unavailable.");
+		await requestBrowserService.openFileDefault(request.tabId);
+		return { ok: true };
+	}
+	if (request.type === "browser-create-tab") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       return {
@@ -2960,27 +3330,54 @@ function registerIpc(): void {
       app.quit();
       return { ok: true };
     }
-    const coreRequest = CoreRequestSchema.parse(request);
-    if (overlayAccess && request.type === "runtime-create-session") {
+		if (request.type === "runtime-run-agent" && request.attachments?.some((attachment) => attachment.source === "external")) {
+			if (!requestBrowserService)
+				throw new Error("The selected file is no longer open in Kestrel.");
+			for (const attachment of request.attachments) {
+				if (attachment.source === "external" && !requestBrowserService.knownFilePath(attachment.path))
+					throw new Error(
+						"Kestrel only sends files that were explicitly opened or dropped into a file tab.",
+					);
+			}
+		}
+		const coreRequest = CoreRequestSchema.parse(request);
+		const trackedStreamId =
+			(request.type === "runtime-run-agent" ||
+				request.type === "runtime-resume-agent" ||
+				request.type === "runtime-retry-agent")
+				? request.streamId
+				: undefined;
+		if (trackedStreamId) {
+			activeAgentStreams.add(trackedStreamId);
+			if (request.type === "runtime-run-agent")
+				activeAgentTaskLabel = request.message.split(/\r?\n/, 1)[0]!.slice(0, 120);
+			setAgentState("working");
+		}
+		if (overlayAccess && request.type === "runtime-create-session") {
       const response = await supervisor.request(coreRequest);
       if (response.ok && response.session)
         overlayAccess.registerSession(response.session.id);
       return response;
     }
-    if (overlayAccess && request.type === "runtime-run-agent") {
-      const streamId = request.streamId!;
-      overlayAccess.beginStream(streamId);
-      try {
-        return await supervisor.request(coreRequest);
-      } finally {
-        overlayAccess.finishStream(streamId);
-      }
-    }
-    const response = await supervisor.request(coreRequest);
-    if (response.ok && response.snapshot) {
-      agentState = response.snapshot.agentState;
-      updateTray();
-    }
+		if (overlayAccess && request.type === "runtime-run-agent") {
+			const streamId = request.streamId!;
+			overlayAccess.beginStream(streamId);
+			try {
+				return await supervisor.request(coreRequest);
+			} finally {
+				overlayAccess.finishStream(streamId);
+				activeAgentStreams.delete(streamId);
+			}
+		}
+		let response;
+		try {
+			response = await supervisor.request(coreRequest);
+		} finally {
+			if (trackedStreamId) activeAgentStreams.delete(trackedStreamId);
+		}
+		if (response.ok && response.snapshot) {
+			setAgentState(response.snapshot.agentState);
+		}
     return response;
   });
 }
@@ -3093,12 +3490,21 @@ function replaceStartupRecoveryWindow(): void {
 }
 
 app.on("second-instance", (_event, argv) => {
-  const { deepLinks, webUrls } = urlsFromArgv(argv);
-  if (deepLinks.length === 0 && webUrls.length === 0) showMainWindow();
-  else {
-    for (const deepLink of deepLinks) queueDeepLink(deepLink);
-    for (const webUrl of webUrls) openIncomingWebUrl(webUrl);
-  }
+	const { deepLinks, webUrls } = urlsFromArgv(argv);
+	const filePaths = filePathsFromArgv(argv);
+	if (deepLinks.length === 0 && webUrls.length === 0 && filePaths.length === 0)
+		showMainWindow();
+	else {
+		for (const deepLink of deepLinks) handleIncomingUrl(deepLink);
+		for (const webUrl of webUrls) openIncomingWebUrl(webUrl);
+		if (filePaths.length > 0)
+			queueExternalIntake(filePaths, { kind: "open" });
+	}
+});
+
+app.on("open-file", (event, path) => {
+	event.preventDefault();
+	queueExternalIntake([path], { kind: "open" });
 });
 
 app.on("open-url", (event, url) => {
@@ -3109,8 +3515,12 @@ app.on("before-quit", () => {
   quitting = true;
 });
 app.on("will-quit", () => {
-  providerAuthMonitor.stop();
-  for (const service of new Set(browserWindowServices.values())) service.dispose();
+	providerAuthMonitor.stop();
+		if (dockAnimationTimer) clearInterval(dockAnimationTimer);
+		if (dockCompletionTimer) clearTimeout(dockCompletionTimer);
+		tray?.destroy();
+	tray = null;
+	for (const service of new Set(browserWindowServices.values())) service.dispose();
   browserWindowServices.clear();
   userBrowserService = null;
   void Promise.all([
@@ -3170,12 +3580,16 @@ void app
       // Electron window on a blank page. Recreate it only after core startup
       // succeeds so the normal renderer gets one clean load.
       replaceStartupRecoveryWindow();
-    }
-    providerAuthMonitor.start();
-    updateTray();
-    const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
-    if (!mainWindow) mainWindow = createMainWindow();
-    deliverPendingWebUrls();
+		}
+		providerAuthMonitor.start();
+		updateTray();
+		await initializeDock();
+		const launchedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
+		if (!mainWindow) mainWindow = createMainWindow();
+		for (const deepLink of initialExternalIntakeLinks)
+			handleIncomingUrl(deepLink);
+		deliverPendingWebUrls();
+		void deliverPendingExternalIntakes();
     const startupWindow = mainWindow;
     const pet = await supervisor.request({ type: "pet-get" });
     if (

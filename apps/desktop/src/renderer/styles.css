@@ -1275,6 +1275,20 @@ input[type="radio"] {
 	white-space: nowrap;
 	cursor: pointer;
 }
+.attachment-context-chip {
+	display: inline-flex;
+	align-items: center;
+	max-width: 260px;
+	overflow: hidden;
+	padding: 5px 8px;
+	border: 1px solid color-mix(in srgb, var(--solid) 28%, var(--line));
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--solid) 8%, var(--surface));
+	color: var(--status-ink);
+	font-size: 11px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 .assistant-message p,
 .user-message p {
 	white-space: pre-wrap;

@@ -32,6 +32,10 @@ const home = process.env.HOME ?? tmpdir();
 const installRoot = resolve(process.env.KESTREL_MACOS_INSTALL_ROOT ?? "/Applications");
 const destination = join(installRoot, "Kestrel.app");
 const trashRoot = resolve(process.env.KESTREL_MACOS_TRASH_ROOT ?? join(home, ".Trash"));
+const serviceRoot = resolve(
+  process.env.KESTREL_MACOS_SERVICE_ROOT ?? join(home, "Library", "Services"),
+);
+const serviceDestination = join(serviceRoot, "Ask Kestrel.app");
 const mdfind = process.env.KESTREL_MDFIND_PATH ?? "/usr/bin/mdfind";
 const kestrelBundleIdentifier = "com.kestrel.desktop";
 const kestrelApplicationName = "Kestrel";
@@ -116,6 +120,15 @@ function isKestrelBundle(bundlePath) {
   return isKestrelIdentifier && isKestrelName;
 }
 
+function isAskKestrelService(bundlePath) {
+  return (
+    bundlePath.endsWith(".app") &&
+    statIsDirectory(bundlePath) &&
+    plistValue(bundlePath, "CFBundleIdentifier") === "com.kestrel.services.ask" &&
+    plistValue(bundlePath, "CFBundleName") === "Ask Kestrel"
+  );
+}
+
 function validateSource(bundlePath) {
   const identifier = plistValue(bundlePath, "CFBundleIdentifier");
   if (
@@ -142,6 +155,45 @@ function register(path) {
   } catch {
     // LaunchServices registration is best effort.
   }
+}
+
+function refreshServices() {
+  const pbs = "/System/Library/CoreServices/pbs";
+  if (!existsSync(pbs)) return;
+  try {
+    execFileSync(pbs, ["-update"], { stdio: "ignore" });
+  } catch {
+    // The next login or Services menu open will refresh the provider list.
+  }
+}
+
+function installAskKestrelService(appPath) {
+  const sourceService = join(
+    appPath,
+    "Contents",
+    "Resources",
+    "Ask Kestrel.app",
+  );
+  if (!isAskKestrelService(sourceService)) {
+    throw new Error(`Packaged Kestrel app is missing the native Ask Kestrel Service: ${sourceService}`);
+  }
+  mkdirSync(serviceRoot, { recursive: true });
+  if (existsSync(serviceDestination) && !isAskKestrelService(serviceDestination)) {
+    throw new Error(`Refusing to replace a non-Kestrel Service at ${serviceDestination}`);
+  }
+  const stageRoot = mkdtempSync(join(serviceRoot, ".Ask-Kestrel-service-"));
+  const stagedService = join(stageRoot, "Ask Kestrel.app");
+  try {
+    copyBundle(sourceService, stagedService);
+    if (existsSync(serviceDestination))
+      rmSync(serviceDestination, { recursive: true, force: true });
+    renameSync(stagedService, serviceDestination);
+  } finally {
+    rmSync(stageRoot, { recursive: true, force: true });
+  }
+  register(serviceDestination);
+  refreshServices();
+  return serviceDestination;
 }
 
 function preventSpotlightIndexing() {
@@ -289,9 +341,11 @@ function install() {
   moved.push(...moveDuplicatesToTrash([destination, source]));
   validateSource(destination);
   register(destination);
-  return { destination, moved };
+  const service = installAskKestrelService(destination);
+  return { destination, moved, service };
 }
 
 const result = install();
 console.log(`Installed Kestrel at ${result.destination}`);
+console.log(`Registered macOS Service at ${result.service}`);
 for (const item of result.moved) console.log(`Moved duplicate to Trash: ${item.from} -> ${item.to}`);

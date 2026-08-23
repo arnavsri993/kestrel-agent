@@ -3,6 +3,7 @@ import {
 	isKestrelAppPageUrl,
 	kestrelAppPageUrl,
 	parseKestrelAppPage,
+	parseKestrelFilePage,
 } from "./browser-app-pages";
 
 describe("kestrel app page URLs", () => {
@@ -32,5 +33,21 @@ describe("kestrel app page URLs", () => {
 		expect(parseKestrelAppPage("kestrel://user:secret@settings")).toBeUndefined();
 		expect(parseKestrelAppPage("https://settings")).toBeUndefined();
 		expect(isKestrelAppPageUrl("javascript:alert(1)")).toBe(false);
+	});
+
+	it("parses opaque file tabs without accepting path or query data", () => {
+		expect(
+			parseKestrelFilePage(
+				"kestrel://file/tab-00000000-0000-0000-0000-000000000000",
+			),
+		).toEqual({
+			tabId: "tab-00000000-0000-0000-0000-000000000000",
+			url: "kestrel://file/tab-00000000-0000-0000-0000-000000000000",
+		});
+		expect(
+			parseKestrelFilePage(
+				"kestrel://file/tab-00000000-0000-0000-0000-000000000000?path=/etc/passwd",
+			),
+		).toBeUndefined();
 	});
 });

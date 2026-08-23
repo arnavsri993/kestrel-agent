@@ -262,7 +262,7 @@ export class BrowserTabStore {
 								!tab.url ||
 								/^https?:\/\//.test(tab.url) ||
 								isKestrelAppPageUrl(tab.url),
-						)
+							)
 						.map((tab) => ({
 							...tab,
 							faviconDataUrl: undefined,
