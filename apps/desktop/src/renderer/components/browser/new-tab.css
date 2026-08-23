@@ -31,15 +31,15 @@
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(90deg, rgb(20 21 24 / 0.96) 0%, rgb(20 21 24 / 0.76) 46%, rgb(20 21 24 / 0.46) 100%),
-    linear-gradient(180deg, rgb(20 21 24 / 0.22), rgb(20 21 24 / 0.62));
+    linear-gradient(90deg, rgb(13 14 17 / 0.96) 0%, rgb(13 14 17 / 0.76) 46%, rgb(13 14 17 / 0.46) 100%),
+    linear-gradient(180deg, rgb(13 14 17 / 0.22), rgb(13 14 17 / 0.62));
   content: "";
 }
 
 .new-tab-page-graphite .kestrel-home-backdrop {
   background-image:
     radial-gradient(circle at 82% 18%, rgb(255 255 255 / 0.1), transparent 34%),
-    linear-gradient(135deg, #0d0e10 0%, #202126 48%, #34363d 100%);
+    linear-gradient(135deg, #08090b 0%, #181b20 48%, #292e37 100%);
 }
 
 .new-tab-page-meadow .kestrel-home-backdrop {
