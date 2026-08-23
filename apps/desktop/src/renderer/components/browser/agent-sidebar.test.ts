@@ -133,7 +133,12 @@ describe("sidebar footer destination", () => {
 	it("maps secondary surfaces to Browser", () => {
 		expect(sidebarActiveDestination("history")).toBe("browser");
 		expect(sidebarActiveDestination("downloads")).toBe("browser");
-		expect(sidebarActiveDestination("commands")).toBe("browser");
+		expect(sidebarActiveDestination("commands")).toBe("capabilities");
 		expect(sidebarActiveDestination("memory")).toBe("browser");
+	});
+
+	it("keeps the global sidebar destination in sync", () => {
+		expect(sidebarActiveDestination("kestrel://commands")).toBe("capabilities");
+		expect(sidebarActiveDestination("kestrel://work")).toBe("agent");
 	});
 });

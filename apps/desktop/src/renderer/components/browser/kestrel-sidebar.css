@@ -1,0 +1,488 @@
+/* The global rail mirrors the information architecture of the OpenAI
+ * references while keeping Kestrel's quiet, local-first surface language. */
+.ai-browser-app {
+	--kestrel-sidebar-width: 248px;
+	display: grid;
+	grid-template-columns: var(--kestrel-sidebar-width) minmax(0, 1fr);
+	width: 100vw;
+	height: 100vh;
+	min-width: 0;
+	overflow: hidden;
+	background: var(--canvas);
+}
+
+.ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
+	--kestrel-sidebar-width: 60px;
+}
+
+.browser-main-plane {
+	grid-column: 2;
+	width: auto;
+	min-width: 0;
+}
+
+.ai-browser-app .browser-tab-row-horizontal {
+	padding-left: 8px;
+}
+
+.ai-browser-app .browser-tab-row-vertical {
+	padding-top: 8px;
+}
+
+.kestrel-sidebar {
+	position: relative;
+	z-index: 8;
+	grid-column: 1;
+	grid-row: 1;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	height: 100vh;
+	overflow: hidden;
+	padding: 0 10px 12px;
+	border-right: 1px solid var(--line);
+	background: var(--sidebar);
+	color: var(--ink);
+}
+
+.kestrel-sidebar-drag {
+	height: 36px;
+	flex: 0 0 auto;
+	margin-inline: -10px;
+	-webkit-app-region: drag;
+}
+
+.kestrel-sidebar-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	min-width: 0;
+	min-height: 38px;
+	margin-bottom: 12px;
+}
+
+.kestrel-sidebar-brand,
+.kestrel-sidebar-icon-button {
+	-webkit-app-region: no-drag;
+}
+
+.kestrel-sidebar-brand {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	padding: 5px 6px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink);
+	font: 650 16px / 20px var(--display);
+	letter-spacing: -0.02em;
+	text-align: left;
+	cursor: pointer;
+}
+
+.kestrel-sidebar-brand:hover,
+.kestrel-sidebar-icon-button:hover,
+.kestrel-sidebar-section-action:hover {
+	background: var(--surface-strong);
+}
+
+.kestrel-sidebar-brand-mark {
+	width: 22px;
+	height: 22px;
+	flex: 0 0 auto;
+}
+
+.kestrel-sidebar-header-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.kestrel-sidebar-icon-button {
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+}
+
+.kestrel-sidebar-icon-button svg {
+	width: 16px;
+	height: 16px;
+}
+
+.kestrel-sidebar-collapse svg {
+	transform: rotate(180deg);
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-collapse svg {
+	transform: none;
+}
+
+.kestrel-sidebar-primary {
+	display: grid;
+	gap: 2px;
+}
+
+.kestrel-sidebar-nav-item,
+.kestrel-sidebar-new-task {
+	position: relative;
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-height: 36px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-secondary);
+	font-size: 13px;
+	font-weight: 560;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.kestrel-sidebar-nav-item:hover,
+.kestrel-sidebar-nav-item.active {
+	background: var(--surface-strong);
+	color: var(--ink);
+}
+
+.kestrel-sidebar-nav-item.active {
+	font-weight: 650;
+}
+
+.kestrel-sidebar-nav-item svg,
+.kestrel-sidebar-new-task svg {
+	width: 17px;
+	height: 17px;
+	color: var(--muted);
+}
+
+.kestrel-sidebar-nav-item.active svg,
+.kestrel-sidebar-new-task svg {
+	color: var(--solid);
+}
+
+.kestrel-sidebar-nav-item span,
+.kestrel-sidebar-new-task span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.kestrel-sidebar-nav-item small {
+	display: inline-grid;
+	place-items: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 5px;
+	border-radius: var(--radius-pill);
+	background: var(--warning-soft);
+	color: var(--warning-ink);
+	font-size: 10px;
+	font-weight: 700;
+}
+
+.kestrel-sidebar-new-task {
+	margin-bottom: 6px;
+	background: var(--solid);
+	box-shadow: var(--shadow-xs);
+	color: var(--on-solid);
+	font-weight: 650;
+}
+
+.kestrel-sidebar-new-task:hover {
+	background: var(--solid-hover);
+	color: var(--on-solid);
+}
+
+.kestrel-sidebar-new-task svg {
+	color: currentColor;
+}
+
+.kestrel-sidebar-new-task kbd {
+	color: color-mix(in srgb, var(--on-solid) 62%, transparent);
+	font: 11px var(--sans);
+}
+
+.kestrel-sidebar-scroll {
+	min-height: 0;
+	flex: 1 1 auto;
+	margin-top: 20px;
+	overflow-y: auto;
+	scrollbar-width: thin;
+}
+
+.kestrel-sidebar-section {
+	margin-top: 18px;
+}
+
+.kestrel-sidebar-section:first-child {
+	margin-top: 0;
+}
+
+.kestrel-sidebar-section h2 {
+	margin: 0;
+	padding: 0 10px 7px;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.kestrel-sidebar-section ul {
+	display: grid;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.kestrel-sidebar-section p {
+	margin: 0;
+	padding: 0 10px;
+	color: var(--faint);
+	font-size: 12px;
+}
+
+.kestrel-sidebar-section-heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.kestrel-sidebar-section-heading h2 {
+	min-width: 0;
+}
+
+.kestrel-sidebar-section-action {
+	display: grid;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	margin-right: 4px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+}
+
+.kestrel-sidebar-section-action svg {
+	width: 13px;
+	height: 13px;
+}
+
+.kestrel-sidebar-list-item {
+	display: grid;
+	grid-template-columns: 17px minmax(0, 1fr);
+	align-items: center;
+	gap: 9px;
+	width: 100%;
+	min-height: 32px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-secondary);
+	font-size: 12px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.kestrel-sidebar-list-item:hover,
+.kestrel-sidebar-list-item.active {
+	background: var(--surface-strong);
+	color: var(--ink);
+}
+
+.kestrel-sidebar-list-item svg {
+	width: 15px;
+	height: 15px;
+	color: var(--faint);
+}
+
+.kestrel-sidebar-list-item span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.kestrel-sidebar-footer {
+	flex: 0 0 auto;
+	margin-top: 10px;
+	padding-top: 9px;
+	border-top: 1px solid var(--line);
+}
+
+.kestrel-sidebar-local-status {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 26px;
+	padding: 0 10px;
+	color: var(--faint);
+	font-size: 11px;
+}
+
+.kestrel-sidebar-local-status > span:first-child {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--solid);
+}
+
+.kestrel-sidebar-footer .kestrel-sidebar-nav-item {
+	margin-top: 2px;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-header {
+	align-items: center;
+	justify-content: center;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-brand {
+	padding: 5px;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-brand span,
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-nav-item span,
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-new-task span,
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-new-task kbd,
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-section,
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-local-status span:last-child {
+	display: none;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-header-actions {
+	position: static;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-header {
+	flex-direction: column;
+	gap: 4px;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-primary {
+	margin-top: 4px;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-nav-item,
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-new-task {
+	grid-template-columns: 1fr;
+	place-items: center;
+	padding: 0;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-nav-item small {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	min-width: 15px;
+	height: 15px;
+	padding: 0 3px;
+	font-size: 9px;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-footer .kestrel-sidebar-nav-item {
+	margin-top: 4px;
+}
+
+@media (max-width: 1120px) {
+	.ai-browser-app,
+	.ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
+		--kestrel-sidebar-width: 56px;
+	}
+	.kestrel-sidebar {
+		padding-inline: 8px;
+	}
+	.kestrel-sidebar-drag {
+		margin-inline: -8px;
+	}
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-brand span,
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-nav-item span,
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task span,
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task kbd,
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-section,
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-local-status span:last-child {
+		display: none;
+	}
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header {
+		align-items: center;
+		justify-content: center;
+	}
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-brand {
+		padding: 5px;
+	}
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header-actions {
+		position: absolute;
+		top: 36px;
+		right: 8px;
+	}
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-primary {
+		margin-top: 4px;
+	}
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-nav-item,
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task {
+		grid-template-columns: 1fr;
+		place-items: center;
+		padding: 0;
+	}
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-nav-item small {
+		position: absolute;
+		top: 2px;
+		right: 2px;
+		min-width: 15px;
+		height: 15px;
+		padding: 0 3px;
+		font-size: 9px;
+	}
+}
+
+@media (max-width: 620px) {
+	.kestrel-sidebar {
+		padding-bottom: 8px;
+	}
+	.kestrel-sidebar-drag {
+		height: 32px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.kestrel-sidebar-nav-item,
+	.kestrel-sidebar-new-task {
+		transition: none;
+	}
+}
+
+/* The full Agent page keeps the global navigation at the left and gives the
+ * durable conversation/workspace the remaining surface. */
+.ai-browser-app.agent-full-page {
+	grid-template-columns: var(--kestrel-sidebar-width) minmax(0, 1fr);
+}
+
+.ai-browser-app.agent-full-page .browser-main-plane {
+	display: none;
+}
+
+.ai-browser-app.agent-full-page .agent-sidebar {
+	grid-column: 2;
+	grid-row: 1;
+}
