@@ -972,6 +972,7 @@ function createMainWindow(): BrowserWindow {
       devTools: !isPackagedKestrelApp,
     },
   });
+  if (process.platform === "darwin") window.setWindowButtonVisibility(false);
   if (userBrowserService) {
     userBrowserService.dispose();
     if (mainWindow) browserWindowServices.delete(mainWindow);
@@ -1612,6 +1613,24 @@ function registerIpc(): void {
       if (!overlayAccess)
         throw new Error("Kestrel rejected a stale pet overlay request.");
       overlayAccess.assertAllowed(request);
+    }
+    if (
+      request.type === "window-minimize" ||
+      request.type === "window-toggle-zoom" ||
+      request.type === "window-close"
+    ) {
+      if (process.platform !== "darwin" || senderWindow !== mainWindow)
+        throw new Error("Custom window controls are available only on macOS.");
+      if (request.type === "window-minimize") {
+        senderWindow.minimize();
+      } else if (request.type === "window-toggle-zoom") {
+        if (senderWindow.isFullScreen()) senderWindow.setFullScreen(false);
+        else if (senderWindow.isMaximized()) senderWindow.unmaximize();
+        else senderWindow.maximize();
+      } else {
+        senderWindow.close();
+      }
+      return { ok: true };
     }
     if (request.type === "communication-sources") {
       return {

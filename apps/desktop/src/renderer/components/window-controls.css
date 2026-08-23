@@ -1,0 +1,197 @@
+.window-controls {
+	position: fixed;
+	top: 4px;
+	left: 10px;
+	z-index: 10000;
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	height: 28px;
+	padding: 2px;
+	-webkit-app-region: no-drag;
+}
+
+.window-control {
+	--window-control-icon-opacity: 0;
+	--window-control-icon-scale: 1;
+	--window-control-lift: 0px;
+	--window-control-scale: 1;
+	position: relative;
+	display: grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	margin: 0;
+	padding: 3px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: #514941;
+	cursor: pointer;
+	transform: translateY(var(--window-control-lift)) scale(var(--window-control-scale));
+	transform-origin: center;
+	transition: transform 150ms cubic-bezier(0.25, 1, 0.35, 1);
+	-webkit-app-region: no-drag;
+}
+
+.window-control-triangle {
+	display: block;
+	width: 18px;
+	height: 18px;
+	transform-origin: center;
+	will-change: transform;
+}
+
+.window-control-triangle svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+	filter: var(--window-control-shadow);
+	transition: filter 160ms ease;
+}
+
+.window-control-fill {
+	fill: var(--window-control-fill);
+}
+
+.window-control-close {
+	--window-control-fill: #f1786e;
+	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(241, 120, 110, 0.34));
+}
+
+.window-control-minimize {
+	--window-control-fill: #f4c862;
+	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(244, 200, 98, 0.36));
+}
+
+.window-control-zoom {
+	--window-control-fill: #6bc98a;
+	--window-control-shadow: drop-shadow(0 1px 1px rgba(25, 35, 28, 0.16));
+	--window-control-active-shadow: drop-shadow(0 3px 5px rgba(107, 201, 138, 0.34));
+}
+
+.window-control-near {
+	--window-control-icon-opacity: 0.82;
+	--window-control-icon-scale: 1.1;
+	--window-control-lift: -1.8px;
+	--window-control-scale: 1.07;
+}
+
+.window-control-near .window-control-triangle svg,
+.window-control:hover .window-control-triangle svg {
+	filter: var(--window-control-active-shadow);
+}
+
+.window-control-near .window-control-triangle,
+.window-control:hover .window-control-triangle {
+	animation: window-control-triangle-spin 3.8s linear infinite;
+}
+
+.window-control:focus-visible {
+	--window-control-icon-opacity: 0.82;
+	--window-control-icon-scale: 1.08;
+	--window-control-lift: -1.4px;
+	--window-control-scale: 1.05;
+}
+
+.window-control:active {
+	transform: scale(0.96);
+}
+
+.window-control-glyph {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	display: block;
+	color: #4f463e;
+	opacity: var(--window-control-icon-opacity);
+	pointer-events: none;
+	transform: translate(-50%, -50%) scale(var(--window-control-icon-scale));
+	transition: opacity 100ms ease;
+}
+
+.window-control:hover .window-control-glyph,
+.window-control:focus-visible .window-control-glyph {
+	opacity: 0.82;
+}
+
+.window-control-glyph-close {
+	width: 8px;
+	height: 8px;
+}
+
+.window-control-glyph-close::before,
+.window-control-glyph-close::after {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 9px;
+	height: 1.4px;
+	border-radius: 999px;
+	background: currentColor;
+	content: "";
+}
+
+.window-control-glyph-close::before {
+	transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.window-control-glyph-close::after {
+	transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.window-control-glyph-minimize {
+	width: 8px;
+	height: 1.5px;
+	border-radius: 999px;
+	background: currentColor;
+}
+
+.window-control-glyph-zoom {
+	width: 10px;
+	height: 10px;
+}
+
+.window-control-glyph-zoom::before,
+.window-control-glyph-zoom::after {
+	position: absolute;
+	width: 5px;
+	height: 5px;
+	content: "";
+}
+
+.window-control-glyph-zoom::before {
+	top: 0;
+	right: 0;
+	border-top: 1.4px solid currentColor;
+	border-right: 1.4px solid currentColor;
+}
+
+.window-control-glyph-zoom::after {
+	bottom: 0;
+	left: 0;
+	border-bottom: 1.4px solid currentColor;
+	border-left: 1.4px solid currentColor;
+}
+
+@keyframes window-control-triangle-spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.window-control-triangle,
+	.window-control-triangle svg,
+	.window-control-glyph,
+	.window-control {
+		transition: none;
+		animation: none !important;
+	}
+}

@@ -2740,6 +2740,9 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("communication-messages-open-settings") }),
 	z.object({ type: z.literal("browser-get-state") }),
 	z.object({
+		type: z.enum(["window-minimize", "window-toggle-zoom", "window-close"]),
+	}),
+	z.object({
 		type: z.literal("browser-create-tab"),
 		input: z.string().max(8_192).optional(),
 		active: z.boolean().default(true),
