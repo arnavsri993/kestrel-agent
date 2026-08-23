@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  browserSiteLabel,
-  frequentBrowserSites,
-  originFaviconMap,
+	browserSiteLabel,
+	frequentBrowserSites,
+	NEW_TAB_BACKGROUND_OPTIONS,
+	originFaviconMap,
   siteInitial,
   suggestedAgentActions,
 } from "./new-tab";
@@ -10,6 +11,20 @@ import {
 const tabId = "tab-00000000-0000-4000-8000-000000000000";
 
 describe("new tab shortcuts", () => {
+	it("ships a readable set of bundled background choices", () => {
+		expect(NEW_TAB_BACKGROUND_OPTIONS.map((option) => option.value)).toEqual([
+			"graphite",
+			"meadow",
+			"dawn",
+			"mountains",
+			"paper",
+		]);
+		expect(NEW_TAB_BACKGROUND_OPTIONS[0]).toMatchObject({
+			label: "Kestrel default",
+			description: expect.stringContaining("sage"),
+		});
+	});
+
   it("groups history by origin and keeps the most recent useful URL", () => {
     const sites = frequentBrowserSites([
       {

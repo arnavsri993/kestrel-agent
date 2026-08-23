@@ -3,9 +3,21 @@ import type {
   InstalledExtension,
   UserBrowserSettings,
 } from "@kestrel/shared-types";
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { Icon } from "../Icon";
 import { Status } from "../ui";
+import {
+  CUSTOM_BACKGROUND_MAX_BYTES,
+  NEW_TAB_BACKGROUND_OPTIONS,
+  readBackgroundFile,
+  SUPPORTED_BACKGROUND_MIME_TYPES,
+} from "./new-tab";
 
 const SEARCH_ENGINE_OPTIONS = [
   { value: "google", label: "Google (Default)" },
@@ -50,6 +62,9 @@ export function BrowserSettings({
   const [isDefaultBrowser, setIsDefaultBrowser] = useState<boolean | null>(null);
   const [canSetAsDefault, setCanSetAsDefault] = useState<boolean | null>(null);
   const [defaultBrowserBusy, setDefaultBrowserBusy] = useState(false);
+  const [backgroundError, setBackgroundError] = useState("");
+  const [backgroundBusy, setBackgroundBusy] = useState(false);
+  const backgroundInputRef = useRef<HTMLInputElement | null>(null);
 
   // Custom search engine state
   const [customName, setCustomName] = useState(settings?.customSearchName ?? "");
@@ -133,6 +148,70 @@ export function BrowserSettings({
       searchEngine: "custom",
       customSearchName: customName.trim(),
       customSearchUrl: customUrl.trim(),
+    });
+  };
+
+  const handleSelectBackground = async (
+    background: Exclude<UserBrowserSettings["newTabBackground"], "custom">,
+  ) => {
+    if (!settings) return;
+    setBackgroundError("");
+    await browser.updateSettings({
+      ...settings,
+      newTabBackground: background,
+    });
+  };
+
+  const handleUploadBackground = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !settings) return;
+
+    if (
+      !SUPPORTED_BACKGROUND_MIME_TYPES.includes(
+        file.type as (typeof SUPPORTED_BACKGROUND_MIME_TYPES)[number],
+      )
+    ) {
+      setBackgroundError("Choose a PNG, JPEG, WebP, AVIF, or GIF image.");
+      return;
+    }
+    if (file.size > CUSTOM_BACKGROUND_MAX_BYTES) {
+      setBackgroundError("Choose an image smaller than 5 MB.");
+      return;
+    }
+
+    setBackgroundBusy(true);
+    setBackgroundError("");
+    try {
+      const dataUrl = await readBackgroundFile(file);
+      await browser.updateSettings({
+        ...settings,
+        newTabBackground: "custom",
+        newTabBackgroundCustomDataUrl: dataUrl,
+      });
+    } catch (cause) {
+      setBackgroundError(
+        cause instanceof Error
+          ? cause.message
+          : "The selected image could not be saved.",
+      );
+    } finally {
+      setBackgroundBusy(false);
+    }
+  };
+
+  const handleRemoveUploadedBackground = async () => {
+    if (!settings) return;
+    setBackgroundError("");
+    await browser.updateSettings({
+      ...settings,
+      newTabBackground:
+        settings.newTabBackground === "custom"
+          ? "graphite"
+          : settings.newTabBackground,
+      newTabBackgroundCustomDataUrl: undefined,
     });
   };
 
@@ -269,6 +348,136 @@ export function BrowserSettings({
 
   return (
     <div className="browser-settings-wrapper">
+      <header className="browser-settings-intro">
+        <span className="eyebrow">Browser settings</span>
+        <h2>Make the browser feel like yours.</h2>
+        <p>
+          Keep browser controls here. Agent behavior, models, memory, and
+          approvals live in the separate Agent settings area.
+        </p>
+      </header>
+
+      {/* New tab appearance */}
+      <section
+        className="settings-stack browser-settings-panel browser-background-panel"
+        aria-labelledby="browser-background-title"
+      >
+        <header className="settings-panel-header">
+          <h2 id="browser-background-title">
+            <Icon name="artifacts" /> New tab background
+          </h2>
+          <p>
+            Start with Kestrel’s light default, choose a bundled scene, or add
+            a local image. Your upload stays in this Kestrel profile.
+          </p>
+        </header>
+
+        <div
+          className="background-option-grid"
+          role="radiogroup"
+          aria-label="New tab background presets"
+        >
+          {NEW_TAB_BACKGROUND_OPTIONS.map((option) => (
+            <label
+              key={option.value}
+              className={`background-option ${
+                settings.newTabBackground === option.value ? "selected" : ""
+              }`}
+            >
+              <input
+                type="radio"
+                name="new-tab-background"
+                value={option.value}
+                checked={settings.newTabBackground === option.value}
+                onChange={() => void handleSelectBackground(option.value)}
+              />
+              <span
+                className={`background-option-preview background-option-preview-${option.value}`}
+                aria-hidden="true"
+              >
+                {settings.newTabBackground === option.value && (
+                  <span className="background-option-check">
+                    <Icon name="check" />
+                  </span>
+                )}
+              </span>
+              <span className="background-option-copy">
+                <strong>{option.label}</strong>
+                <small>{option.description}</small>
+              </span>
+            </label>
+          ))}
+
+          <div
+            className={`background-upload-card ${
+              settings.newTabBackground === "custom" &&
+              settings.newTabBackgroundCustomDataUrl
+                ? "selected"
+                : ""
+            }`}
+          >
+            <span
+              className="background-option-preview background-option-preview-custom"
+              aria-hidden="true"
+              style={
+                settings.newTabBackgroundCustomDataUrl
+                  ? {
+                      backgroundImage: `url("${settings.newTabBackgroundCustomDataUrl}")`,
+                    }
+                  : undefined
+              }
+            >
+              {settings.newTabBackground === "custom" &&
+                settings.newTabBackgroundCustomDataUrl && (
+                  <span className="background-option-check">
+                    <Icon name="check" />
+                  </span>
+                )}
+            </span>
+            <span className="background-upload-copy">
+              <strong>Your image</strong>
+              <small>PNG, JPEG, WebP, AVIF, or GIF up to 5 MB.</small>
+              <span className="background-upload-actions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => backgroundInputRef.current?.click()}
+                  disabled={backgroundBusy}
+                  aria-controls="new-tab-background-upload"
+                >
+                  {backgroundBusy ? "Reading image…" : "Choose image"}
+                </button>
+                {settings.newTabBackgroundCustomDataUrl && (
+                  <button
+                    type="button"
+                    className="quiet-link"
+                    onClick={() => void handleRemoveUploadedBackground()}
+                  >
+                    Remove upload
+                  </button>
+                )}
+              </span>
+              <input
+                ref={backgroundInputRef}
+                id="new-tab-background-upload"
+                className="sr-only"
+                type="file"
+                accept="image/avif,image/gif,image/jpeg,image/png,image/webp"
+                onChange={(event) => void handleUploadBackground(event)}
+                disabled={backgroundBusy}
+                tabIndex={-1}
+                aria-hidden="true"
+              />
+            </span>
+          </div>
+        </div>
+        {backgroundError && (
+          <p className="browser-background-error" role="alert">
+            {backgroundError}
+          </p>
+        )}
+      </section>
+
       {/* Search engine */}
       <section className="settings-stack browser-settings-panel" aria-label="Search engine preferences">
         <header className="settings-panel-header">

@@ -115,6 +115,7 @@
 	object-fit: contain;
 }
 
+
 .browser-bookmarks-bar-link > span:not(.browser-bookmarks-bar-glyph),
 .browser-bookmarks-bar-label {
 	flex: 1 1 auto;
