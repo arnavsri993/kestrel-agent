@@ -2834,6 +2834,7 @@ function RuntimeConversation({
 	newAgentRequestId,
 	newAgentPrompt,
 	newAgentWorkspace,
+	newAgentFocusTarget,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -2852,6 +2853,7 @@ function RuntimeConversation({
 	newAgentRequestId: number;
 	newAgentPrompt: string;
 	newAgentWorkspace: string | null;
+	newAgentFocusTarget: "prompt" | "task-settings";
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -2914,6 +2916,7 @@ function RuntimeConversation({
 	const streamSessionIdRef = useRef<string | null>(null);
 	const activeSessionIdRef = useRef(activeSessionId);
 	const previousNewAgentRequestIdRef = useRef(newAgentRequestId);
+	const taskSettingsRef = useRef<HTMLDetailsElement>(null);
 	const externalIntakeRequestIdRef = useRef(0);
 	const sessionLoadSequenceRef = useRef(0);
 	const recorderRef = useRef<MediaRecorder | null>(null);
@@ -3010,10 +3013,21 @@ function RuntimeConversation({
 		setAttachments([]);
 		setCheckpointSummary("");
 		setError("");
-		window.setTimeout(() => promptRef.current?.focus(), 0);
+		window.setTimeout(() => {
+			if (newAgentFocusTarget === "task-settings") {
+				const details = taskSettingsRef.current;
+				if (details) {
+					details.open = true;
+					details.querySelector<HTMLElement>("summary")?.focus();
+					return;
+				}
+			}
+			promptRef.current?.focus();
+		}, 0);
 		if (newAgentPrompt.trim()) void submit(newAgentPrompt);
 	}, [
 		busy,
+		newAgentFocusTarget,
 		newAgentPrompt,
 		newAgentRequestId,
 		newAgentWorkspace,
@@ -3474,33 +3488,6 @@ function RuntimeConversation({
 
 	async function submit(promptOverride?: string) {
 		const prompt = (promptOverride ?? input).trim();
-		// #region agent log
-		fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Debug-Session-Id": "91c7b0",
-			},
-			body: JSON.stringify({
-				sessionId: "91c7b0",
-				runId: "post-fix",
-				hypothesisId: "D",
-				location: "App.tsx:submit",
-				message: "Runtime submit entered",
-				data: {
-					promptLength: prompt.length,
-					fromOverride: Boolean(promptOverride),
-					busy,
-					executionReady,
-					executionMode,
-					providerId,
-					hasModel: Boolean(model.trim()),
-					activeSessionId,
-				},
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
 		if (!prompt) return;
 		if (busy) {
 			const streamId = streamIdRef.current;
@@ -3599,29 +3586,6 @@ function RuntimeConversation({
 					? { browserContext: activeBrowserContext }
 					: {}),
 			})) as CoreResponse;
-			// #region agent log
-			fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Debug-Session-Id": "91c7b0",
-				},
-				body: JSON.stringify({
-					sessionId: "91c7b0",
-					runId: "post-fix",
-					hypothesisId: "D",
-					location: "App.tsx:runtime-run-agent",
-					message: "runtime-run-agent response",
-					data: {
-						ok: response.ok,
-						error: response.ok ? undefined : response.error,
-						runStatus:
-							"run" in response ? response.run?.status : undefined,
-					},
-					timestamp: Date.now(),
-				}),
-			}).catch(() => {});
-			// #endregion
 			if (!response.ok) throw new Error(response.error);
 			if (activeSessionIdRef.current === sessionId) {
 				setPending(
@@ -4365,7 +4329,7 @@ function RuntimeConversation({
 								choice={modelChoice}
 								onChange={applyModelChoice}
 							/>
-							<details className="task-settings">
+							<details className="task-settings" ref={taskSettingsRef}>
 								<summary
 									aria-label="Task settings"
 									title={`Model: ${
@@ -5278,7 +5242,7 @@ function Research() {
 			)}
 			{!query.trim() && results.length === 0 && !page && !busy && (
 				<Empty
-					title="Search with sources"
+					title="Start with a question"
 					text="Enter a query to find web results Kestrel can cite in answers."
 				/>
 			)}
@@ -8794,6 +8758,9 @@ export function App() {
 	>(null);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
+	const [newAgentFocusTarget, setNewAgentFocusTarget] = useState<
+		"prompt" | "task-settings"
+	>("prompt");
 	const [externalIntake, setExternalIntake] = useState<ExternalIntake | null>(
 		null,
 	);
@@ -8811,6 +8778,7 @@ export function App() {
 	);
 	const [showDefaultBrowserPrompt, setShowDefaultBrowserPrompt] = useState(false);
 	const [showShortcuts, setShowShortcuts] = useState(false);
+	const [greetingName, setGreetingName] = useState<string | undefined>();
 	const reduced = useReducedMotion();
 
 	useEffect(() => {
@@ -8873,6 +8841,22 @@ export function App() {
 		if (!onboarded) return;
 		let active = true;
 		void window.kestrel
+			.request({ type: "get-system-state" })
+			.then((response) => {
+				if (!active || !response.ok || !("userName" in response)) return;
+				setGreetingName(
+					typeof response.userName === "string" ? response.userName : undefined,
+				);
+			})
+			.catch(() => undefined);
+		return () => {
+			active = false;
+		};
+	}, [onboarded]);
+	useEffect(() => {
+		if (!onboarded) return;
+		let active = true;
+		void window.kestrel
 			.request({ type: "get-workspace-grants" })
 			.then((response) => {
 				if (
@@ -8915,58 +8899,29 @@ export function App() {
 		},
 		[acceptExternalIntake],
 	);
-	const startNewAgent = useCallback((prompt = "", workspaceRoot?: string) => {
+	const startNewAgent = useCallback((
+		prompt = "",
+		workspaceRoot?: string,
+		focusTarget: "prompt" | "task-settings" = "prompt",
+	) => {
 		const trimmed = prompt.trim();
-		if (!trimmed && Date.now() - lastPromptedNewAgentAtRef.current < 500) {
-			// #region agent log
-			fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Debug-Session-Id": "91c7b0",
-				},
-				body: JSON.stringify({
-					sessionId: "91c7b0",
-					runId: "post-fix",
-					hypothesisId: "L",
-					location: "App.tsx:startNewAgent",
-					message: "Ignored steal-click empty startNewAgent",
-					data: {
-						msSincePrompted: Date.now() - lastPromptedNewAgentAtRef.current,
-					},
-					timestamp: Date.now(),
-				}),
-			}).catch(() => {});
-			// #endregion
+		if (
+			focusTarget === "prompt" &&
+			!trimmed &&
+			Date.now() - lastPromptedNewAgentAtRef.current < 500
+		) {
 			return;
 		}
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
 		setNewAgentWorkspace(workspaceRoot ?? null);
+		setNewAgentFocusTarget(focusTarget);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
-		// #region agent log
-		fetch("http://localhost:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Debug-Session-Id": "91c7b0",
-			},
-			body: JSON.stringify({
-				sessionId: "91c7b0",
-				runId: "post-fix",
-				hypothesisId: "B",
-				location: "App.tsx:startNewAgent",
-				message: "startNewAgent invoked",
-				data: {
-					promptLength: prompt.length,
-					hadPrompt: Boolean(trimmed),
-				},
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
 	}, [revealAgentSidebar]);
+	const openTaskSettings = useCallback(() => {
+		startNewAgent("", undefined, "task-settings");
+	}, [startNewAgent]);
 	const focusRuntimeApproval = useCallback(() => {
 		revealAgentSidebar();
 		window.requestAnimationFrame(() => {
@@ -9179,7 +9134,6 @@ export function App() {
 						browserConfig.historyRetentionDays);
 			if (isDiff) {
 				void browser.updateSettings({
-					...current,
 					...(browserConfig.searchEngine
 						? { searchEngine: browserConfig.searchEngine }
 						: {}),
@@ -9496,9 +9450,11 @@ export function App() {
 					<BrowserWorkspace
 						browser={browser}
 						agentName={activeAgentName}
+						greetingName={greetingName}
 						agentOpen={agentSidebarOpen}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
+						onOpenTaskSettings={openTaskSettings}
 						onOpenSettings={() => openSettings("browser")}
 						onOpenHistory={openBrowserHistory}
 						onOpenDownloads={openBrowserDownloads}
@@ -9563,6 +9519,7 @@ export function App() {
 						newAgentRequestId={newAgentRequestId}
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
+						newAgentFocusTarget={newAgentFocusTarget}
 						mentionTabs={browser.state?.tabs ?? []}
 						mentionBookmarks={browser.state?.bookmarks ?? []}
 						{...(browserContextEnabled

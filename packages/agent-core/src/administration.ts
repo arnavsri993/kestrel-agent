@@ -501,12 +501,22 @@ export class ManagedPolicyStore {
 				throw new Error("Managed SSO public key is invalid.");
 			}
 		}
-		const current = this.get();
-		if (current && policy.version <= current.version)
-			throw new Error("Managed policy updates require a newer version.");
-		const stored = {
+		const normalized = {
 			...policy,
 			deniedTools: [...new Set(policy.deniedTools)],
+		};
+		const current = this.get();
+		if (current && policy.version <= current.version) {
+			const { updatedAt: _updatedAt, ...currentPolicy } = current;
+			if (
+				policy.version === current.version &&
+				canonical(normalized) === canonical(currentPolicy)
+			)
+				return current;
+			throw new Error("Managed policy updates require a newer version.");
+		}
+		const stored = {
+			...normalized,
 			updatedAt: this.now().toISOString(),
 		};
 		this.database.setPrivateState(this.key, stored);

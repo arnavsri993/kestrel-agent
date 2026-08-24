@@ -111,4 +111,21 @@ describe("usage governor", () => {
 		});
 		database.close();
 	});
+
+	it("counts ephemeral model work without creating a transcript run", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let now = new Date("2026-07-22T18:00:00.000Z");
+		const governor = new UsageGovernor(database, () => now);
+		governor.recordEphemeralCost(0.4);
+		expect(governor.spending()).toMatchObject({
+			dailyUsd: 0.4,
+			monthlyUsd: 0.4,
+		});
+		now = new Date("2026-07-23T18:00:00.000Z");
+		expect(governor.spending()).toMatchObject({
+			dailyUsd: 0,
+			monthlyUsd: 0.4,
+		});
+		database.close();
+	});
 });

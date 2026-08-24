@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+
+const mainBundle = readFileSync(resolve("apps/desktop/out/main/index.js"), "utf8");
+assert.match(
+	mainBundle,
+	/installMacFileIconCrashGuard\s*\(\s*app\s*\)/,
+	"The packaged main process must install the macOS file-icon crash guard.",
+);
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-layout-"));
 const userData = join(root, "user-data");
@@ -15,6 +22,16 @@ const executablePath = packagedExecutable
 const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
 	: [resolve("apps/desktop")];
+const mainBundle = readFileSync(
+	resolve("apps/desktop/out/main/index.js"),
+	"utf8",
+);
+
+assert.doesNotMatch(
+	mainBundle,
+	/getFileIcon\s*\(\s*process\.execPath/,
+	"The packaged startup path must not ask Electron to resolve its own executable icon.",
+);
 
 let application;
 const pageErrors = [];
@@ -116,6 +133,237 @@ function assertOpenLayout(layout) {
 	assertTheme(layout);
 }
 
+async function setDesktopZoom(application, page, zoomFactor) {
+	const appliedZoom = await application.evaluate(
+		({ BrowserWindow }, requestedZoom) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.isDestroyed(),
+			);
+			if (!window) throw new Error("The Kestrel window is unavailable.");
+			window.webContents.setZoomFactor(requestedZoom);
+			return window.webContents.getZoomFactor();
+		},
+		zoomFactor,
+	);
+	assertNear(appliedZoom, zoomFactor, "Electron zoom factor");
+	await page.waitForFunction(
+		(expectedCompact) =>
+			expectedCompact ? innerWidth <= 700 : innerWidth >= 1_200,
+		zoomFactor > 1,
+	);
+}
+
+async function readZoomReflow(page) {
+	return page.evaluate(() => {
+		const root = document.documentElement;
+		const body = document.body;
+		const shell = document.querySelector(".ai-browser-app");
+		const viewport = document.querySelector("#browser-viewport");
+		if (!shell || !viewport) {
+			throw new Error("The Kestrel browser layout is unavailable.");
+		}
+
+		const readControl = (selector) => {
+			const element = document.querySelector(selector);
+			if (!element) throw new Error(`Missing ${selector}.`);
+			const rect = element.getBoundingClientRect();
+			const style = getComputedStyle(element);
+			return {
+				selector,
+				display: style.display,
+				visibility: style.visibility,
+				left: rect.left,
+				right: rect.right,
+				top: rect.top,
+				bottom: rect.bottom,
+				width: rect.width,
+				height: rect.height,
+			};
+		};
+
+		return {
+			innerWidth,
+			innerHeight,
+			rootOverflow: root.scrollWidth - root.clientWidth,
+			bodyOverflow: body.scrollWidth - body.clientWidth,
+			shellOverflow: shell.scrollWidth - shell.clientWidth,
+			viewportOverflow: viewport.scrollWidth - viewport.clientWidth,
+			overflowingElements: Array.from(shell.querySelectorAll("*"))
+				.map((element) => {
+					const rect = element.getBoundingClientRect();
+					return {
+						tag: element.tagName.toLowerCase(),
+						className:
+							typeof element.className === "string" ? element.className : "",
+						left: rect.left,
+						right: rect.right,
+						clientWidth: element.clientWidth,
+						scrollWidth: element.scrollWidth,
+					};
+				})
+				.filter(
+					(element) =>
+						element.left < -1 ||
+						element.right > innerWidth + 1 ||
+						element.scrollWidth > element.clientWidth + 1,
+				)
+				.slice(0, 12),
+			sidebarLabelDisplay: getComputedStyle(
+				document.querySelector(".kestrel-sidebar-nav-item span"),
+			).display,
+			agentToggleLabelDisplay: getComputedStyle(
+				document.querySelector(
+					".browser-agent-toggle > span:not(.pragmatic-logo)",
+				),
+			).display,
+			controls: [
+				readControl(".kestrel-sidebar-new-task"),
+				readControl(".browser-new-tab"),
+				readControl("#browser-address-input"),
+				readControl(".browser-agent-toggle"),
+			],
+		};
+	});
+}
+
+function assertZoomReflow(layout, reflow) {
+	assert.ok(
+		reflow.innerWidth <= 700,
+		`Expected a compact CSS viewport at 200% zoom, got ${reflow.innerWidth}px.`,
+	);
+	assertNear(layout.navigation.width, 56, "zoomed navigation width");
+	assertNear(
+		layout.main.left,
+		layout.navigation.right,
+		"zoomed browser starts after compact navigation",
+	);
+	assertNear(
+		layout.main.right,
+		layout.innerWidth,
+		"zoomed browser reaches the window edge",
+	);
+	assertNear(
+		layout.viewport.right,
+		layout.innerWidth,
+		"zoomed page viewport reaches the window edge",
+	);
+	assertNear(layout.agent.width, 0, "zoomed collapsed Pragmatic width");
+	assert.equal(reflow.sidebarLabelDisplay, "none");
+	assert.equal(reflow.agentToggleLabelDisplay, "none");
+	for (const [surface, overflow] of Object.entries({
+		document: reflow.rootOverflow,
+		body: reflow.bodyOverflow,
+		shell: reflow.shellOverflow,
+		viewport: reflow.viewportOverflow,
+	})) {
+		assert.ok(
+			overflow <= 1,
+			`The zoomed ${surface} overflowed horizontally by ${overflow}px: ${JSON.stringify(reflow.overflowingElements)}.`,
+		);
+	}
+	for (const control of reflow.controls) {
+		assert.notEqual(control.display, "none", `${control.selector} was hidden.`);
+		assert.notEqual(
+			control.visibility,
+			"hidden",
+			`${control.selector} was invisible.`,
+		);
+		assert.ok(
+			control.width > 0 && control.height > 0,
+			`${control.selector} had no visible size.`,
+		);
+		assert.ok(
+			control.left >= -1 && control.right <= reflow.innerWidth + 1,
+			`${control.selector} escaped the horizontal viewport (${control.left}, ${control.right}).`,
+		);
+		assert.ok(
+			control.top >= -1 && control.bottom <= reflow.innerHeight + 1,
+			`${control.selector} escaped the vertical viewport (${control.top}, ${control.bottom}).`,
+		);
+	}
+	assertTheme(layout);
+}
+
+async function assertWindowControlMotion(page) {
+	const control = page.locator(".window-control-close");
+	await control.waitFor();
+	await page.bringToFront();
+	const box = await control.boundingBox();
+	assert.ok(box, "The close window control has no visible bounds.");
+
+	const readMotion = () =>
+		control.evaluate((element) => {
+			const style = getComputedStyle(element);
+			const triangle = element.querySelector(".window-control-triangle");
+			const shade = element.querySelector(".window-control-shade");
+			return {
+				tilt: Number.parseFloat(
+					style.getPropertyValue("--window-control-tilt"),
+				),
+				triangleX: Number.parseFloat(
+					style.getPropertyValue("--window-control-triangle-x"),
+				),
+				fillShade: Number.parseFloat(
+					style.getPropertyValue("--window-control-fill-shade"),
+				),
+				triangleTransform: triangle
+					? getComputedStyle(triangle).transform
+					: "missing",
+				shadeOpacity: shade ? Number.parseFloat(getComputedStyle(shade).opacity) : -1,
+			};
+		});
+	const sample = async (x, y, ready) => {
+		await page.mouse.move(x, y, { steps: 4 });
+		let motion = await readMotion();
+		for (let attempt = 0; attempt < 20 && !ready(motion); attempt += 1) {
+			await page.waitForTimeout(25);
+			motion = await readMotion();
+		}
+		return motion;
+	};
+
+	await page.mouse.move(box.x + 140, box.y + 140);
+	const left = await sample(
+		box.x + 5,
+		box.y + box.height / 2,
+		(motion) => motion.tilt < 0,
+	);
+	const right = await sample(
+		box.x + box.width - 5,
+		box.y + box.height / 2,
+		(motion) => motion.tilt > 0,
+	);
+	assert.ok(left.tilt < 0, `Expected a left tilt, got ${left.tilt}.`);
+	assert.ok(right.tilt > 0, `Expected a right tilt, got ${right.tilt}.`);
+	assert.ok(
+		left.triangleX < right.triangleX,
+		`Pointer travel did not update the triangle position (${left.triangleX}, ${right.triangleX}).`,
+	);
+	assert.ok(
+		right.fillShade >= 0.1 && right.shadeOpacity >= 0.08,
+		`The hovered triangle did not deepen (${right.fillShade}, ${right.shadeOpacity}).`,
+	);
+
+	await page.mouse.move(box.x + 140, box.y + 140);
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	const reduced = await sample(
+		box.x + box.width / 2,
+		box.y + box.height / 2,
+		(motion) => motion.shadeOpacity >= 0.08,
+	);
+	assert.equal(
+		reduced.triangleTransform,
+		"none",
+		"Reduced motion must remove cursor-following travel.",
+	);
+	assert.ok(
+		reduced.shadeOpacity >= 0.08,
+		`Reduced motion must retain the darker hover cue (${JSON.stringify(reduced)}).`,
+	);
+	await page.emulateMedia({ reducedMotion: "no-preference" });
+	await page.mouse.move(box.x + 140, box.y + 140);
+}
+
 try {
 	application = await electron.launch({
 		executablePath,
@@ -141,6 +389,7 @@ try {
 	});
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();
+	await assertWindowControlMotion(page);
 
 	assertCollapsedLayout(await readLayout(page));
 	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
@@ -171,9 +420,14 @@ try {
 	});
 	assertCollapsedLayout(await readLayout(page));
 
+	await setDesktopZoom(application, page, 2);
+	assertZoomReflow(await readLayout(page), await readZoomReflow(page));
+	await setDesktopZoom(application, page, 1);
+	assertCollapsedLayout(await readLayout(page));
+
 	assert.deepEqual(pageErrors, []);
 	process.stdout.write(
-		"Desktop layout smoke passed: graphite theme, preload bridge, global navigation, browser plane, and open/collapsed Pragmatic geometry.\n",
+		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, and 200% zoom reflow.\n",
 	);
 } finally {
 	await application?.close();

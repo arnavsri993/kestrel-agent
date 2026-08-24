@@ -231,6 +231,47 @@ describe("context usage", () => {
 	});
 });
 
+describe("retention", () => {
+	it("removes encrypted memory dependents before their expired parent", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		database.upsertMemory({
+			id: "memory-expired",
+			type: "semantic",
+			content: "Expired fixture",
+			structuredData: {},
+			sourceIds: ["source-expired"],
+			sourceType: "fixture",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+			confidence: 1,
+			importance: 0.5,
+			sensitivity: "personal",
+			status: "active",
+			entityIds: [],
+			userConfirmed: true,
+			inferred: false,
+		});
+		database.saveMemoryVersion({
+			id: "memory-version-expired",
+			memoryId: "memory-expired",
+			version: 1,
+			content: "Expired fixture",
+			structuredData: {},
+			sourceIds: ["source-expired"],
+			sourceType: "fixture",
+			changedAt: "2026-01-01T00:00:00.000Z",
+			changedBy: "user",
+		});
+
+		expect(
+			database.enforceRetention("2026-02-01T00:00:00.000Z"),
+		).toMatchObject({ memories: 1 });
+		expect(database.getMemory("memory-expired")).toBeUndefined();
+		expect(database.listMemoryVersions("memory-expired")).toEqual([]);
+		database.close();
+	});
+});
+
 describe("runtime message paging", () => {
 	it("returns the newest bounded page and walks backward by message cursor", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());

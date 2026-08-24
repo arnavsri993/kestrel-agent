@@ -242,13 +242,15 @@ describe("managed organization policy", () => {
 			database,
 			() => new Date("2026-07-22T21:00:00.000Z"),
 		);
-		store.set({
+		const policy = {
 			organizationId: "org-test",
 			version: 1,
 			deniedTools: ["workspace.read"],
 			allowedProviders: ["local"],
 			maximumWorkers: 2,
-		});
+		};
+		const storedPolicy = store.set(policy);
+		expect(store.set(policy)).toEqual(storedPolicy);
 		expect(() => store.assertProviderAllowed("hosted")).toThrow(
 			"blocked by managed policy",
 		);

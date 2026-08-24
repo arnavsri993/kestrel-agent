@@ -94,6 +94,7 @@ export function TabStrip({
 	const [dragIntent, setDragIntent] = useState<"none" | "reorder" | "detach">(
 		"none",
 	);
+	const draggingTabIdRef = useRef<string | null>(null);
 	const dragStartRef = useRef<{ x: number; y: number } | null>(null);
 	const suppressClickRef = useRef(false);
 	const tabsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -241,6 +242,7 @@ export function TabStrip({
 	}
 
 	function resetDrag() {
+		draggingTabIdRef.current = null;
 		dragStartRef.current = null;
 		setDraggingTabId(null);
 		setDragIntent("none");
@@ -249,6 +251,7 @@ export function TabStrip({
 	function handleTabPointerDown(event: ReactPointerEvent, tabId: string) {
 		if (event.button !== 0) return;
 		if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
+		draggingTabIdRef.current = tabId;
 		dragStartRef.current = { x: event.clientX, y: event.clientY };
 		setDraggingTabId(tabId);
 		setDragIntent("none");
@@ -256,7 +259,7 @@ export function TabStrip({
 	}
 
 	function handleTabPointerMove(event: ReactPointerEvent) {
-		if (!draggingTabId || !dragStartRef.current) return;
+		if (!draggingTabIdRef.current || !dragStartRef.current) return;
 		const dx = event.clientX - dragStartRef.current.x;
 		const dy = event.clientY - dragStartRef.current.y;
 		if (orientation === "horizontal") {
@@ -282,7 +285,11 @@ export function TabStrip({
 	}
 
 	function handleTabPointerUp(event: ReactPointerEvent, tabId: string) {
-		if (!draggingTabId || draggingTabId !== tabId || !dragStartRef.current) {
+		if (
+			!draggingTabIdRef.current ||
+			draggingTabIdRef.current !== tabId ||
+			!dragStartRef.current
+		) {
 			resetDrag();
 			return;
 		}

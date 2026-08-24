@@ -268,8 +268,7 @@
 	line-height: 18px;
 }
 
-.agent-conversation-host .composer-status,
-.agent-conversation-host .task-settings {
+.agent-conversation-host .composer-status {
 	display: none;
 }
 

@@ -1,9 +1,10 @@
 import {
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type FormEvent,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+	type FormEvent,
 } from "react";
 import type {
 	RuntimeSession,
@@ -17,6 +18,9 @@ import type {
 import { Icon } from "../Icon";
 import {
 	frequentBrowserSites,
+	newTabGreetingContext,
+	newTabGreetingFallback,
+	validateNewTabGreeting,
 	originFaviconMap,
 	suggestedAgentActions,
 } from "./new-tab";
@@ -40,6 +44,7 @@ function homeInputLooksLikeBrowse(value: string): boolean {
 }
 
 export function NewTabPage({
+	tabId,
 	history,
 	bookmarks = [],
 	downloads = [],
@@ -48,16 +53,21 @@ export function NewTabPage({
 	background,
 	backgroundCustomDataUrl,
 	agentName,
+	greetingName,
 	sessions = [],
+	greetingActivity,
 	widgetSettings,
 	onUpdateWidgetSettings,
+	onRecordGreetingVisit,
 	onNavigate,
 	onNewAgent,
+	onOpenTaskSettings,
 	onOpenHistory,
 	onOpenDownloads,
 	onOpenBookmarks,
 	onOpenSession,
 }: {
+	tabId: string;
 	history: UserBrowserHistoryEntry[];
 	bookmarks?: UserBrowserBookmark[] | undefined;
 	downloads?: UserBrowserDownload[] | undefined;
@@ -68,26 +78,78 @@ export function NewTabPage({
 	background: UserBrowserSettings["newTabBackground"];
 	backgroundCustomDataUrl?: UserBrowserSettings["newTabBackgroundCustomDataUrl"];
 	agentName: string;
+	greetingName?: string | undefined;
 	sessions?: RuntimeSession[] | undefined;
+	greetingActivity: UserBrowserSettings["newTabGreetingActivity"];
 	widgetSettings: UserBrowserSettings["newTabWidgets"];
 	onUpdateWidgetSettings(next: UserBrowserSettings["newTabWidgets"]): void;
+	onRecordGreetingVisit(now: Date): void;
 	onNavigate(input: string): void;
 	onNewAgent(prompt?: string): void;
+	onOpenTaskSettings(): void;
 	onOpenHistory(): void;
 	onOpenDownloads(): void;
 	onOpenBookmarks(): void;
 	onOpenSession?: ((sessionId: string) => void) | undefined;
 }) {
-  const [input, setInput] = useState("");
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const faviconByOrigin = useMemo(
-    () => originFaviconMap(originFavicons, tabs),
-    [originFavicons, tabs],
-  );
-  const frequent = useMemo(
-    () => frequentBrowserSites(history, 7, faviconByOrigin),
-    [faviconByOrigin, history],
-  );
+	const [input, setInput] = useState("");
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const greetingSessionRef = useRef<{
+		tabId: string;
+		now: Date;
+		activity: UserBrowserSettings["newTabGreetingActivity"];
+	} | null>(null);
+	if (greetingSessionRef.current?.tabId !== tabId) {
+		greetingSessionRef.current = {
+			tabId,
+			now: new Date(),
+			activity: greetingActivity,
+		};
+	}
+	const greetingSession = greetingSessionRef.current;
+	const greetingNow = greetingSession!.now;
+	const greetingActivityAtOpen = greetingSession!.activity;
+	const greetingContext = useMemo(
+		() =>
+			newTabGreetingContext(
+				greetingActivityAtOpen,
+				greetingName,
+				greetingNow,
+			),
+		[greetingActivityAtOpen, greetingName, greetingNow],
+	);
+	const [greeting, setGreeting] = useState(() =>
+		newTabGreetingFallback(greetingName),
+	);
+	const recordedGreetingTabRef = useRef<string | undefined>(undefined);
+	useEffect(() => {
+		if (recordedGreetingTabRef.current === tabId) return;
+		recordedGreetingTabRef.current = tabId;
+		onRecordGreetingVisit(greetingNow);
+	}, [greetingNow, onRecordGreetingVisit, tabId]);
+	useEffect(() => {
+		let active = true;
+		setGreeting(newTabGreetingFallback(greetingName));
+		void window.kestrel
+			.request({ type: "new-tab-greeting", ...greetingContext })
+			.then((response) => {
+				if (!active || !response.ok || !("newTabGreeting" in response)) return;
+				const generated = validateNewTabGreeting(response.newTabGreeting);
+				if (generated) setGreeting(generated);
+			})
+			.catch(() => undefined);
+		return () => {
+			active = false;
+		};
+	}, [greetingContext, greetingName]);
+	const faviconByOrigin = useMemo(
+		() => originFaviconMap(originFavicons, tabs),
+		[originFavicons, tabs],
+	);
+	const frequent = useMemo(
+		() => frequentBrowserSites(history, 7, faviconByOrigin),
+		[faviconByOrigin, history],
+	);
 	const suggestedActions = useMemo(
 		() => suggestedAgentActions(history, 5),
 		[history],
@@ -125,7 +187,7 @@ export function NewTabPage({
       />
       <div className="kestrel-home-content">
         <header className="kestrel-home-hero">
-          <h1 id="new-tab-title">Hi there, what should we dive into today?</h1>
+          <h1 id="new-tab-title">{greeting}</h1>
 
           <form className="kestrel-home-composer" onSubmit={submitChat}>
             <details className="kestrel-home-model-selector">
@@ -136,9 +198,15 @@ export function NewTabPage({
               <div className="kestrel-home-model-popover">
                 <strong>Smart routing</strong>
                 <p>Model and thinking level live in task settings.</p>
-                <button type="button" onClick={() => onNewAgent()}>
-                  Open task settings
-                </button>
+				<button
+					type="button"
+					onClick={(event) => {
+						event.currentTarget.closest("details")?.removeAttribute("open");
+						onOpenTaskSettings();
+					}}
+				>
+				  Open task settings
+				</button>
               </div>
             </details>
 
@@ -158,8 +226,8 @@ export function NewTabPage({
             <button
               type="submit"
               className="kestrel-home-send"
-              aria-label={`Open message in ${agentName} composer`}
-              title={`Open message in ${agentName} composer`}
+              aria-label={`Send message to ${agentName}`}
+              title={`Send message to ${agentName}`}
               disabled={!input.trim()}
             >
               <Icon name="arrow" />

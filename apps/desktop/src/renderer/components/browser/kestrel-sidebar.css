@@ -38,6 +38,24 @@
 	width: 100%;
 	min-width: 0;
 	height: 100vh;
+	/* Keep the tab strip's full-window fixed layer out of this grid item's
+	 * stacking context so it can sit above the navigation rail without lifting
+	 * the browser content or Agent panel with it. */
+	z-index: auto;
+}
+
+.ai-browser-app .browser-tab-row-horizontal {
+	position: fixed;
+	top: 0;
+	right: 0;
+	left: 0;
+	z-index: 20;
+	width: 100vw;
+	padding-left: 96px;
+}
+
+.ai-browser-app .browser-tab-row-vertical {
+	padding-top: 8px;
 }
 
 .kestrel-sidebar {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { existsSync, realpathSync, statSync, appendFileSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -13,7 +13,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { arch, cpus, platform, totalmem } from "node:os";
+import { arch, cpus, platform, totalmem, userInfo } from "node:os";
 import {
   app,
   BrowserWindow,
@@ -86,6 +86,7 @@ import {
 } from "./deep-links";
 import {
 	externalPayloadIdFromDeepLink,
+	filePathsFromArgv,
 	parseExternalServicePayload,
 } from "./external-intake";
 import { MacMessagesSource } from "./mac-messages-source";
@@ -117,11 +118,13 @@ import {
 	svgDataUrl,
 	visualStateForAgentState,
 } from "./macos-integration";
+import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
 
 // Chromium encrypts cookies with macOS Keychain under "Kestrel Safe Storage"
 // unless this switch is set before ready. Kestrel stores its own secrets as
 // local files and does not use Keychain.
 app.commandLine.appendSwitch("use-mock-keychain");
+installMacFileIconCrashGuard(app);
 
 let mainWindow: BrowserWindow | null = null;
 let petOverlayWindow: BrowserWindow | null = null;
@@ -217,6 +220,7 @@ const isPackagedKestrelApp = isPackagedKestrelRuntime(
   process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
+let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
 let googleOAuthController: AbortController | null = null;
@@ -233,6 +237,57 @@ const pendingCommunicationScans = new Map<
     expiresAt: number;
   }
 >();
+
+function safeGreetingName(value: string): string | undefined {
+	const normalized = value.normalize("NFKC").trim();
+	if (
+		!normalized ||
+		normalized.length > 80 ||
+		!/^[\p{L}\p{M}'\-\s]+$/u.test(normalized)
+	)
+		return undefined;
+	const token = normalized.split(/\s+/)[0];
+	if (
+		!token ||
+		token.length > 40 ||
+		!/^[\p{L}\p{M}][\p{L}\p{M}'-]*$/u.test(token)
+	)
+		return undefined;
+	return token;
+}
+
+function localGreetingName(): Promise<string | undefined> {
+	if (localGreetingNamePromise) return localGreetingNamePromise;
+	localGreetingNamePromise = (async () => {
+		let displayName = "";
+		if (platform() === "darwin") {
+			try {
+				const result = await execFileAsync("/usr/bin/id", ["-F"], {
+					maxBuffer: 4_096,
+					timeout: 750,
+				});
+				displayName = String(result.stdout).trim();
+			} catch {
+				// Fall back to the local account name below.
+			}
+		}
+		if (!displayName) {
+			try {
+				displayName = userInfo().username;
+			} catch {
+				return undefined;
+			}
+		}
+		const safeDisplayName = safeGreetingName(displayName);
+		if (safeDisplayName) return safeDisplayName;
+		try {
+			return safeGreetingName(userInfo().username);
+		} catch {
+			return undefined;
+		}
+	})();
+	return localGreetingNamePromise;
+}
 
 function trustedRendererUrl(value: string): boolean {
   return isTrustedRendererUrl(
@@ -833,7 +888,7 @@ supervisor.on("recovered", () => {
   notification.show();
 });
 supervisor.on("recovery-failed", (error: Error) => {
-  debugAgentLog("supervisor recovery-failed", { error: error.message });
+	console.warn("Kestrel Agent Core recovery failed.", error.message);
   if (!Notification.isSupported()) return;
   const notification = new Notification({
     title: `${PRODUCT_IDENTITY.productName} · Agent Core needs attention`,
@@ -947,21 +1002,6 @@ export function setAsDefaultBrowser(): boolean {
 }
 
 const pendingWebUrls: string[] = [];
-
-function filePathsFromArgv(argv: readonly string[]): string[] {
-	return [
-		...new Set(
-			argv.slice(1).filter((value) => {
-				if (!value.startsWith("/") || value === process.execPath) return false;
-				try {
-					return statSync(value).isFile();
-				} catch {
-					return false;
-				}
-			}),
-		),
-	];
-}
 
 function servicePayloadPath(id: string): string | undefined {
 	if (!/^[a-f0-9-]{36}$/.test(id)) return undefined;
@@ -1116,30 +1156,6 @@ function queueDeepLink(value: unknown): boolean {
   return true;
 }
 
-function debugAgentLog(
-  message: string,
-  data: Record<string, unknown> = {},
-): void {
-  // #region agent log
-  try {
-    appendFileSync(
-      "/Users/arnavsrivastava/Documents/Agent/.cursor/debug-91c7b0.log",
-      `${JSON.stringify({
-        sessionId: "91c7b0",
-        runId: "post-fix",
-        hypothesisId: "H",
-        location: "main/index.ts",
-        message,
-        data,
-        timestamp: Date.now(),
-      })}\n`,
-    );
-  } catch {
-    /* ignore debug log failures */
-  }
-  // #endregion
-}
-
 let macWidgetsStore: MacWidgetsStore | null = null;
 let latestWorkspaceSnapshot: WorkspaceSnapshot | null = null;
 
@@ -1152,9 +1168,10 @@ function publishMacWidgetSnapshot(snapshot: WorkspaceSnapshot): void {
   void macWidgetsStore
     .write(widgetSnapshotFromWorkspace(snapshot))
     .catch((error: unknown) => {
-      debugAgentLog("macOS widgets update failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+			console.warn(
+				"Kestrel could not update its local macOS widget snapshot.",
+				error instanceof Error ? error.message : String(error),
+			);
     });
 }
 
@@ -1297,17 +1314,7 @@ function createMainWindow(): BrowserWindow {
   if (DEVELOPMENT_RENDERER_URL)
     void window.loadURL(DEVELOPMENT_RENDERER_URL);
   else void window.loadFile(RENDERER_ENTRY_PATH);
-  window.webContents.on("console-message", (_event, level, message) => {
-    if (level >= 2)
-      debugAgentLog("renderer console", {
-        level,
-        message: String(message).slice(0, 400),
-      });
-  });
   window.once("ready-to-show", () => {
-    debugAgentLog("main window ready-to-show", {
-      packaged: app.isPackaged,
-    });
     window.show();
   });
   return window;
@@ -1392,13 +1399,6 @@ function createDetachedBrowserWindow(
   if (DEVELOPMENT_RENDERER_URL)
     void window.loadURL(DEVELOPMENT_RENDERER_URL);
   else void window.loadFile(RENDERER_ENTRY_PATH);
-  window.webContents.on("console-message", (_event, level, message) => {
-    if (level >= 2)
-      debugAgentLog("detached browser window renderer console", {
-        level,
-        message: String(message).slice(0, 400),
-      });
-  });
   window.once("ready-to-show", () => window.show());
   return window;
 }
@@ -1762,21 +1762,7 @@ async function initializeCore(
       secureEnvironment.KESTREL_OLLAMA_MODEL ??=
         (await localRuntime.preferredModel(localModels)) ?? localModels[0]!.name;
     }
-    // #region agent log
-    debugAgentLog("ollama discovery", {
-      hypothesisId: "K",
-      modelCount: localModels.length,
-      ollamaEnabled: localModels.length > 0,
-      preferredModel: secureEnvironment.KESTREL_OLLAMA_MODEL ?? "",
-    });
-    // #endregion
-  } catch (error) {
-    // #region agent log
-    debugAgentLog("ollama discovery failed", {
-      hypothesisId: "K",
-      error: error instanceof Error ? error.message : String(error),
-    });
-    // #endregion
+  } catch {
     // A local model server is optional and must not delay or block startup.
   }
   const workspaceGrantStore = new WorkspaceGrantStore(
@@ -1810,13 +1796,7 @@ async function initializeCore(
       throw new Error("Agent Core returned no workspace state during startup.");
 		setAgentState(response.snapshot.agentState);
     publishMacWidgetSnapshot(response.snapshot);
-    debugAgentLog("initializeCore succeeded", {});
   } catch (error) {
-    // #region agent log
-    debugAgentLog("initializeCore failed", {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    // #endregion
     // A bootstrap can fail after the utility process has been created. Tear it
     // down before the recovery dialog retries, or the next attempt sees a
     // stale supervisor and reports only “Agent Core is unavailable.”
@@ -1990,13 +1970,6 @@ function registerIpc(): void {
       throw new Error("Kestrel rejected a request from an untrusted renderer.");
     const request = RendererRequestSchema.parse(raw);
     const requestBrowserService = browserServiceForWindow(senderWindow);
-    if (
-      request.type === "runtime-run-agent" ||
-      request.type === "runtime-create-session" ||
-      request.type === "runtime-list-providers"
-    ) {
-      debugAgentLog("renderer ipc", { type: request.type });
-    }
     if (request.type === "runtime-run-agent") {
       await localRuntimeManager()
         .ensureChatReady()
@@ -2590,6 +2563,7 @@ function registerIpc(): void {
         launchStatus:
           state.status ?? (state.openAtLogin ? "enabled" : "not-registered"),
         isDefaultBrowser: isDefaultBrowser(),
+        userName: await localGreetingName(),
       };
     }
     if (request.type === "get-default-browser-status") {
@@ -3472,30 +3446,6 @@ async function initializeCoreForStartup(): Promise<boolean> {
       await initializeCore();
       return true;
     } catch (cause) {
-      debugAgentLog("initializeCoreForStartup failed", {
-        error: cause instanceof Error ? cause.message : String(cause),
-      });
-      // #region agent log
-      fetch("http://127.0.0.1:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "b84a5b",
-        },
-        body: JSON.stringify({
-          sessionId: "b84a5b",
-          runId: "pre-fix",
-          hypothesisId: "A",
-          location: "main/index.ts:initializeCoreForStartup",
-          message: "startup recovery dialog",
-          data: {
-            error:
-              cause instanceof Error ? cause.message.slice(0, 240) : String(cause),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       const copy = startupRecoveryCopy(cause);
       if (!mainWindow && app.isReady()) {
         // Give the native recovery dialog an owning window. Without one,
@@ -3622,28 +3572,6 @@ app.on("window-all-closed", () => {
 void app
   .whenReady()
   .then(async () => {
-    // #region agent log
-    fetch("http://127.0.0.1:7291/ingest/aa3a285e-f52d-4491-a53a-d9f78fc9d272", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "b84a5b",
-      },
-      body: JSON.stringify({
-        sessionId: "b84a5b",
-        runId: "pre-fix",
-        hypothesisId: "D",
-        location: "main/index.ts:whenReady",
-        message: "app ready",
-        data: {
-          singleInstance,
-          packaged: app.isPackaged,
-          coreStartupComplete,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (!singleInstance) return;
     if (canRegisterAsDefaultBrowser(isPackagedKestrelApp))
       app.setAsDefaultProtocolClient(PRODUCT_IDENTITY.protocol);

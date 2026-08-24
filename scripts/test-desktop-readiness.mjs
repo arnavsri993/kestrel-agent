@@ -127,12 +127,20 @@ try {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await openKestrelDestination(page, "Settings");
-	const subscriptionSetting = page.locator(".subscription-setting");
-	await subscriptionSetting
-		.getByText("ChatGPT plan through Codex", { exact: true })
+	await page
+		.locator(".settings-nav")
+		.getByRole("button", { name: "Connections", exact: true })
+		.click();
+	const chatGptConnection = page
+		.locator(".oauth-connection")
+		.filter({ has: page.getByText("ChatGPT", { exact: true }) });
+	await chatGptConnection.waitFor();
+	await chatGptConnection
+		.getByRole("button", { name: "Enable model route" })
+		.click();
+	await chatGptConnection
+		.getByRole("button", { name: "Disable model route" })
 		.waitFor();
-	await subscriptionSetting.getByRole("button", { name: "Enable" }).click();
-	await subscriptionSetting.getByRole("button", { name: "Disable" }).waitFor();
 	await openKestrelDestination(page, "Extensions");
 	await page
 		.getByRole("button", { name: "Open readiness", exact: true })
