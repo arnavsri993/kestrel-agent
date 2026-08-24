@@ -2174,7 +2174,7 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
-        browserState: await requestBrowserService.reopenClosedTab(),
+        browserState: await requestBrowserService.reopenClosedTab(request.index),
       };
     }
     if (request.type === "browser-close-tab") {

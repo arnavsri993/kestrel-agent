@@ -2474,6 +2474,15 @@ export const UserBrowserTabSchema = z.object({
 });
 export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
 
+export const UserBrowserRecentlyClosedTabSchema = z.object({
+	title: z.string().min(1).max(500),
+	url: z.string().url().max(8_192),
+	closedAt: z.string().datetime(),
+});
+export type UserBrowserRecentlyClosedTab = z.infer<
+	typeof UserBrowserRecentlyClosedTabSchema
+>;
+
 export const UserBrowserOriginFaviconSchema = z.object({
 	origin: z.string().url().max(8_192),
 	faviconDataUrl: UserBrowserFaviconDataUrlSchema,
@@ -2700,6 +2709,10 @@ export const UserBrowserStateSchema = z.object({
 		.default([]),
 	downloads: z.array(UserBrowserDownloadSchema).max(500),
 	bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
+	recentlyClosedTabs: z
+		.array(UserBrowserRecentlyClosedTabSchema)
+		.max(32)
+		.default([]),
 	sitePermissions: z
 		.array(UserBrowserSitePermissionSchema)
 		.max(500)
@@ -2883,7 +2896,10 @@ export const RendererRequestSchema = z.union([
 		input: z.string().max(8_192).optional(),
 		active: z.boolean().default(true),
 	}),
-	z.object({ type: z.literal("browser-reopen-closed-tab") }),
+	z.object({
+		type: z.literal("browser-reopen-closed-tab"),
+		index: z.number().int().min(0).max(31).default(0),
+	}),
 	z.object({
 		type: z.literal("browser-close-tab"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),

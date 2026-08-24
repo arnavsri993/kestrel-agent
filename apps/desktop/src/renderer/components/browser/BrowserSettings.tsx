@@ -938,7 +938,10 @@ export function BrowserSettings({
             type="button"
             className="button secondary"
             onClick={() => void browser.clearHistory()}
-            disabled={!browser.state?.history.length}
+            disabled={
+              !browser.state?.history.length &&
+              !browser.state?.recentlyClosedTabs.length
+            }
           >
             Clear browsing history
           </button>

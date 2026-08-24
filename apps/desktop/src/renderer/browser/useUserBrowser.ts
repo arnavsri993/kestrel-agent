@@ -23,7 +23,7 @@ export interface UserBrowserController {
 	filePreview(tabId: string): Promise<FilePreview | undefined>;
 	openFileDefault(tabId: string): Promise<void>;
 	createTab(input?: string, active?: boolean): Promise<void>;
-	reopenClosedTab(): Promise<void>;
+	reopenClosedTab(index?: number): Promise<void>;
 	closeTab(tabId: string): Promise<void>;
 	selectTab(tabId: string): Promise<void>;
 	navigate(tabId: string, input: string): Promise<void>;
@@ -183,7 +183,7 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const reopenClosedTab = useCallback(
-		() => requestState({ type: "browser-reopen-closed-tab" }),
+		(index = 0) => requestState({ type: "browser-reopen-closed-tab", index }),
 		[requestState],
 	);
 	const closeTab = useCallback(

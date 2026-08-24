@@ -854,12 +854,37 @@ describe("UserBrowserService", () => {
     // Close third tab
     await service.closeTab(third.id);
     expect(service.getState().tabs.length).toBe(2);
+    expect(service.getState().recentlyClosedTabs).toHaveLength(1);
 
     // Reopen closed tab
     const restored = await service.reopenClosedTab();
     expect(restored.tabs.length).toBe(3);
     const lastTab = restored.tabs[restored.tabs.length - 1]!;
     expect(lastTab.url).toBe("https://third.example/");
+    expect(restored.recentlyClosedTabs).toEqual([]);
+  });
+
+  it("reopens a selected recently closed tab and clears that list with history", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://first.example");
+    const second = (await service.createTab("https://second.example", true)).tabs.at(-1)!;
+
+    await service.closeTab(second.id);
+    await service.closeTab(first.id);
+    expect(service.getState().recentlyClosedTabs.map((tab) => tab.url)).toEqual([
+      "https://first.example/",
+      "https://second.example/",
+    ]);
+
+    const reopened = await service.reopenClosedTab(1);
+    expect(reopened.tabs.at(-1)?.url).toBe("https://second.example/");
+    expect(reopened.recentlyClosedTabs.map((tab) => tab.url)).toEqual([
+      "https://first.example/",
+    ]);
+
+    service.clearHistory();
+    expect(service.getState().recentlyClosedTabs).toEqual([]);
   });
 
   it("supports zoom in, zoom out, and zoom reset", async () => {

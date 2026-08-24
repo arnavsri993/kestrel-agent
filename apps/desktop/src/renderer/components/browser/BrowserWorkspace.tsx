@@ -11,6 +11,7 @@ import type {
 	FilePreview,
 	RuntimeSession,
 	UserBrowserFile,
+	UserBrowserTab,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import {
@@ -25,6 +26,25 @@ import { NewTabPage } from "./NewTabPage";
 import { TabStrip } from "./TabStrip";
 import { recordNewTabGreetingVisit } from "./new-tab";
 
+function tabOrganizationCompare(
+  left: UserBrowserTab,
+  right: UserBrowserTab,
+): number {
+  if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+  const hostname = (tab: UserBrowserTab) => {
+    try {
+      return new URL(tab.url).hostname.replace(/^www\./, "").toLowerCase();
+    } catch {
+      return "kestrel";
+    }
+  };
+  return (
+    hostname(left).localeCompare(hostname(right)) ||
+    left.title.localeCompare(right.title) ||
+    left.createdAt.localeCompare(right.createdAt)
+  );
+}
+
 export function BrowserWorkspace({
   browser,
   agentName,
@@ -34,6 +54,7 @@ export function BrowserWorkspace({
   onNewAgent,
 	onOpenTaskSettings,
   onOpenSettings,
+  onOpenWorkspaces,
   onOpenHistory,
   onOpenDownloads,
   onOpenBookmarks,
@@ -53,6 +74,7 @@ export function BrowserWorkspace({
   onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
   onOpenSettings(): void;
+  onOpenWorkspaces?(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
   onOpenBookmarks(): void;
@@ -99,6 +121,23 @@ export function BrowserWorkspace({
     moveTab,
     detachTab,
   } = browser;
+
+  const organizeTabs = useCallback(async () => {
+    if (!state || state.tabs.length < 2) return;
+    const order = state.tabs.map((tab) => tab.id);
+    const sortedIds = [...state.tabs]
+      .sort(tabOrganizationCompare)
+      .map((tab) => tab.id);
+    for (let targetIndex = 0; targetIndex < sortedIds.length; targetIndex += 1) {
+      const tabId = sortedIds[targetIndex];
+      if (!tabId) continue;
+      const currentIndex = order.indexOf(tabId);
+      if (currentIndex < 0 || currentIndex === targetIndex) continue;
+      await moveTab(tabId, targetIndex);
+      order.splice(currentIndex, 1);
+      order.splice(targetIndex, 0, tabId);
+    }
+  }, [moveTab, state]);
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
   const activeFilePage = activeTab ? parseKestrelFilePage(activeTab.url) : undefined;
@@ -433,7 +472,10 @@ export function BrowserWorkspace({
         onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => void moveTab(tabId, toIndex)}
         onDetachTab={(tabId) => void detachTab(tabId)}
-        onReopenClosedTab={() => void reopenClosedTab()}
+        onReopenClosedTab={(index) => void reopenClosedTab(index)}
+        recentlyClosedTabs={state.recentlyClosedTabs}
+        onOrganizeTabs={organizeTabs}
+        onOpenWorkspaces={onOpenWorkspaces}
         onToggleOrientation={() => {
           void browser.updateSettings({
             tabLayout:
