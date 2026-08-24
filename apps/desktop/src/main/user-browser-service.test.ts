@@ -133,7 +133,11 @@ afterEach(() => {
     rmSync(directory, { recursive: true, force: true });
 });
 
-function createService(options: { partitionName?: string; now?: () => Date } = {}) {
+function createService(options: {
+  partitionName?: string;
+  now?: () => Date;
+  onLastTabClosed?: () => void;
+} = {}) {
   const directory = mkdtempSync(join(tmpdir(), "kestrel-user-browser-"));
   directories.push(directory);
   const children: unknown[] = [];
@@ -168,8 +172,9 @@ async function navigateNewTab(service: UserBrowserService, url: string) {
 }
 
 describe("UserBrowserService", () => {
-  it("creates, selects, and closes tabs with a deterministic fallback and a replacement tab", async () => {
-    const { service } = createService();
+  it("creates, selects, and closes tabs, leaving no tabs when the last one closes", async () => {
+    const onLastTabClosed = vi.fn();
+    const { service } = createService({ onLastTabClosed });
     const first = service.getState().activeTabId!;
     const second = (await service.createTab()).activeTabId!;
     const third = (await service.createTab()).activeTabId!;
@@ -182,9 +187,9 @@ describe("UserBrowserService", () => {
     await service.closeTab(third);
     await service.closeTab(first);
     const state = service.getState();
-    expect(state.tabs).toHaveLength(1);
-    expect(state.activeTabId).toBe(state.tabs[0]?.id);
-    expect(state.tabs[0]).toMatchObject({ title: "New Tab", url: "" });
+    expect(state.tabs).toHaveLength(0);
+    expect(state.activeTabId).toBeNull();
+    expect(onLastTabClosed).toHaveBeenCalledOnce();
   });
 
 	it("opens kestrel app pages as tabs without creating a web view", async () => {

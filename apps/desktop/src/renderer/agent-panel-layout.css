@@ -615,15 +615,43 @@
 	}
 }
 
-.browser-tab-row-vertical .browser-tab.active {
-	box-shadow: inset 2px 0 0 var(--solid);
+/* Tabs use a quiet surface change for selection instead of a white accent line. */
+.browser-tab.active {
+	background: var(--surface);
+	box-shadow: none;
 }
 
-/* Sleeping tabs use the same neutral surface treatment in every shell. */
-.browser-tab.tab-sleeping:not(.active) {
-	transition:
-		background-color var(--motion-state) var(--ease-kestrel),
-		color var(--motion-state) var(--ease-kestrel);
+.browser-tab-row-vertical .browser-tab.active {
+	background: var(--surface);
+	box-shadow: none;
+}
+
+/* Live tabs keep their title and fallback/inline favicon at full brightness. */
+.browser-tab:not(.tab-sleeping),
+.browser-tab:hover:not(.active):not(.tab-sleeping),
+.browser-tab:not(.tab-sleeping) .browser-favicon,
+.browser-tab:not(.tab-sleeping) .browser-favicon svg,
+.browser-tab:not(.tab-sleeping) .browser-favicon-letter {
+	color: var(--ink);
+}
+
+/* Sleeping tabs dim their content without fading the tab surface or controls. */
+.browser-tab.tab-sleeping,
+.browser-tab.tab-sleeping:hover {
+	opacity: 1;
+	transition: color var(--motion-state) var(--ease-kestrel);
+}
+
+.browser-tab.tab-sleeping .browser-tab-title,
+.browser-tab.tab-sleeping .browser-favicon,
+.browser-tab.tab-sleeping .browser-favicon svg,
+.browser-tab.tab-sleeping .browser-favicon-letter,
+.browser-tab.tab-sleeping .tab-sleep-badge {
+	color: var(--faint);
+}
+
+.browser-tab.tab-sleeping .browser-favicon img {
+	filter: grayscale(1) saturate(0.2) opacity(0.62);
 }
 
 /* Approval affordance keeps its shape-coded fill but responds like a button. */

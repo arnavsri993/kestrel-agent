@@ -38,6 +38,7 @@ export interface UserBrowserController {
 		bounds: { x: number; y: number; width: number; height: number },
 		visible: boolean,
 	): Promise<void>;
+	toggleCalculator(bounds?: BrowserContentBounds): Promise<void>;
 	pageContext(tabId?: string): Promise<UserBrowserPageContext | undefined>;
 	updateSettings(settings: Partial<UserBrowserSettings>): Promise<void>;
 	clearHistory(): Promise<void>;
@@ -73,6 +74,13 @@ export interface UserBrowserController {
 	): Promise<void>;
 	sleepTab(tabId: string): Promise<void>;
 	sleepInactiveTabs(): Promise<void>;
+}
+
+export interface BrowserContentBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
 }
 
 export function useUserBrowser(): UserBrowserController {
@@ -258,6 +266,26 @@ export function useUserBrowser(): UserBrowserController {
 				visible,
 			});
 			if (!response.ok) throw new Error(responseError(response));
+		},
+		[],
+	);
+	const toggleCalculator = useCallback(
+		async (bounds?: BrowserContentBounds) => {
+			try {
+				const response = await window.kestrel.request({
+					type: "browser-toggle-calculator",
+					bounds,
+				});
+				if (!response.ok) throw new Error(responseError(response));
+				setError("");
+			} catch (cause) {
+				const message =
+					cause instanceof Error
+						? cause.message
+						: "The calculator could not be opened.";
+				setError(message);
+				throw cause;
+			}
 		},
 		[],
 	);
@@ -447,6 +475,7 @@ export function useUserBrowser(): UserBrowserController {
 			zoomReset,
 			stop,
 			setContentBounds,
+			toggleCalculator,
 			pageContext,
 			updateSettings,
 			clearHistory,
@@ -491,6 +520,7 @@ export function useUserBrowser(): UserBrowserController {
 			zoomReset,
 			stop,
 			setContentBounds,
+			toggleCalculator,
 			pageContext,
 			updateSettings,
 			clearHistory,

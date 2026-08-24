@@ -104,6 +104,7 @@ export function BrowserWorkspace({
     reload,
     selectTab,
     setContentBounds,
+    toggleCalculator,
     updateSettings,
     stop,
     zoomIn,
@@ -520,6 +521,17 @@ export function BrowserWorkspace({
         onSaveScreenshot={() => browser.saveScreenshot(activeTab.id)}
         onToggleBookmark={() => void toggleBookmark()}
         onOpenSettings={onOpenSettings}
+        onToggleCalculator={() => {
+          const node = viewportRef.current;
+          if (!node) return;
+          const rect = node.getBoundingClientRect();
+          void toggleCalculator({
+            x: Math.max(0, Math.round(rect.left)),
+            y: Math.max(0, Math.round(rect.top)),
+            width: Math.max(0, Math.round(rect.width)),
+            height: Math.max(0, Math.round(rect.height)),
+          }).catch(() => undefined);
+        }}
         onOpenMenu={onOpenMenu}
       />
       {state.settings.showBookmarksBar && (
@@ -638,6 +650,7 @@ export function BrowserWorkspace({
 				})
 			}
             onNavigate={(input) => void navigate(activeTab.id, input)}
+			onOpenTab={(tabId) => void selectTab(tabId)}
             onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
             onOpenHistory={onOpenHistory}
