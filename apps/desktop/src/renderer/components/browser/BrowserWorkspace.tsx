@@ -596,6 +596,7 @@ export function BrowserWorkspace({
 				})
 			}
             onNavigate={(input) => void navigate(activeTab.id, input)}
+			onOpenTab={(tabId) => void selectTab(tabId)}
             onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
             onOpenHistory={onOpenHistory}

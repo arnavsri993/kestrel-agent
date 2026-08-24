@@ -1,7 +1,7 @@
 .kestrel-widget-canvas {
 	--kestrel-widget-columns: 1;
 	display: grid;
-	gap: 14px;
+	gap: 12px;
 	width: 100%;
 	min-width: 0;
 	container-type: inline-size;
@@ -45,7 +45,7 @@
 .kestrel-widget-canvas-header h2 {
 	margin: 0;
 	color: var(--ink);
-	font: 650 18px / 1.2 var(--display);
+	font: 650 16px / 1.25 var(--display);
 	letter-spacing: -0.015em;
 }
 
@@ -138,8 +138,10 @@
 }
 
 .kestrel-widget-add-popover {
-	right: auto;
-	left: 0;
+	right: 0;
+	left: auto;
+	max-height: min(420px, calc(100vh - 180px));
+	overflow: auto;
 }
 
 /* The existing agent rail is an intentional overlay at narrow widths. Keep
@@ -265,7 +267,7 @@
 .kestrel-widget-grid {
 	display: grid;
 	grid-template-columns: repeat(var(--kestrel-widget-columns), minmax(0, 1fr));
-	grid-auto-rows: minmax(124px, auto);
+	grid-auto-rows: minmax(116px, auto);
 	align-items: stretch;
 	gap: 12px;
 	min-width: 0;
@@ -279,10 +281,10 @@
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
-	border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+	border: 1px solid transparent;
 	border-radius: var(--radius-surface);
-	background: color-mix(in srgb, var(--panel) 88%, transparent);
-	box-shadow: var(--shadow-sm);
+	background: color-mix(in srgb, var(--panel) 92%, transparent);
+	box-shadow: none;
 	contain: layout style;
 	transition:
 		transform var(--motion-state) var(--ease-kestrel),
@@ -293,7 +295,7 @@
 
 .kestrel-widget-card:hover {
 	border-color: var(--line-strong);
-	box-shadow: var(--shadow-md);
+	box-shadow: var(--shadow-sm);
 }
 
 .kestrel-widget-card.is-dragging {
@@ -361,6 +363,10 @@
 	line-height: 1.3;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.kestrel-widget-canvas:not(.is-editing) .kestrel-widget-card-heading p {
+	display: none;
 }
 
 .kestrel-widget-card-actions {
@@ -452,7 +458,7 @@
 .kestrel-widget-card-body {
 	flex: 1 1 auto;
 	min-height: 0;
-	padding: 0 10px 11px;
+	padding: 0 10px 10px;
 	overflow: hidden;
 }
 
@@ -715,6 +721,17 @@
 
 	.kestrel-widget-card-heading p {
 		display: none;
+	}
+}
+
+@media (max-width: 680px) {
+	.kestrel-widget-add-popover {
+		position: fixed;
+		top: min(50vh, 420px);
+		right: auto;
+		left: 64px;
+		width: min(300px, calc(100vw - 80px));
+		max-height: calc(100vh - min(50vh, 420px) - 24px);
 	}
 }
 

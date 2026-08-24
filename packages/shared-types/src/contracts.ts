@@ -2535,12 +2535,13 @@ export const NEW_TAB_WIDGET_IDS = [
 	"downloads",
 	"recent-work",
 	"quick-actions",
+	"open-tabs",
+	"pinned-tabs",
+	"recent-pages",
 ] as const;
 
 export const DEFAULT_NEW_TAB_WIDGET_IDS = [
 	"frequent-tabs",
-	"bookmarks",
-	"downloads",
 	"recent-work",
 	"quick-actions",
 ] as const;

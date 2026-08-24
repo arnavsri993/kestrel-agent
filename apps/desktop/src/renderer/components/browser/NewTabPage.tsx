@@ -60,6 +60,7 @@ export function NewTabPage({
 	onUpdateWidgetSettings,
 	onRecordGreetingVisit,
 	onNavigate,
+	onOpenTab,
 	onNewAgent,
 	onOpenTaskSettings,
 	onOpenHistory,
@@ -71,7 +72,10 @@ export function NewTabPage({
 	history: UserBrowserHistoryEntry[];
 	bookmarks?: UserBrowserBookmark[] | undefined;
 	downloads?: UserBrowserDownload[] | undefined;
-	tabs?: Pick<UserBrowserTab, "url" | "faviconDataUrl">[] | undefined;
+	tabs?: Pick<
+		UserBrowserTab,
+		"id" | "title" | "url" | "faviconDataUrl" | "pinned"
+	>[] | undefined;
   originFavicons?:
     | Pick<UserBrowserOriginFavicon, "origin" | "faviconDataUrl">[]
     | undefined;
@@ -85,6 +89,7 @@ export function NewTabPage({
 	onUpdateWidgetSettings(next: UserBrowserSettings["newTabWidgets"]): void;
 	onRecordGreetingVisit(now: Date): void;
 	onNavigate(input: string): void;
+	onOpenTab(tabId: string): void;
 	onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
 	onOpenHistory(): void;
@@ -237,12 +242,15 @@ export function NewTabPage({
 
 		<NewTabWidgets
 			frequent={frequent}
+			history={history}
 			bookmarks={bookmarks}
 			downloads={downloads}
+			tabs={tabs}
 			sessions={sessions}
 			suggestedActions={suggestedActions}
 			agentName={agentName}
 			onNavigate={onNavigate}
+			onOpenTab={onOpenTab}
 			onNewAgent={chooseAction}
 			onOpenSession={onOpenSession}
 			onOpenHistory={onOpenHistory}
