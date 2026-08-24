@@ -92,6 +92,10 @@ export function BrowserWorkspace({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [fileDragActive, setFileDragActive] = useState(false);
+  const [openChromeMenus, setOpenChromeMenus] = useState({
+    tab: false,
+    toolbar: false,
+  });
   const lastBoundsRef = useRef("");
   const state = browser.state;
   const {
@@ -142,9 +146,22 @@ export function BrowserWorkspace({
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
   const activeFilePage = activeTab ? parseKestrelFilePage(activeTab.url) : undefined;
-  const nativePageVisible = Boolean(
+  const nativePageEligible = Boolean(
     activeTab?.url && !activeTab.error && !activeAppPage && !activeFilePage,
   );
+  const nativePageVisible =
+    nativePageEligible && !openChromeMenus.tab && !openChromeMenus.toolbar;
+
+  const handleTabMenuOpenChange = useCallback((open: boolean) => {
+    setOpenChromeMenus((current) =>
+      current.tab === open ? current : { ...current, tab: open },
+    );
+  }, []);
+  const handleToolbarMenuOpenChange = useCallback((open: boolean) => {
+    setOpenChromeMenus((current) =>
+      current.toolbar === open ? current : { ...current, toolbar: open },
+    );
+  }, []);
 
   useEffect(
     () => window.kestrel.onFileDrag(({ active }) => setFileDragActive(active)),
@@ -477,6 +494,7 @@ export function BrowserWorkspace({
         recentlyClosedTabs={state.recentlyClosedTabs}
         onOrganizeTabs={organizeTabs}
         onOpenWorkspaces={onOpenWorkspaces}
+        onMenuOpenChange={handleTabMenuOpenChange}
         onToggleOrientation={() => {
           void browser.updateSettings({
             tabLayout:
@@ -519,6 +537,7 @@ export function BrowserWorkspace({
         onPrint={() => void printTab(activeTab.id)}
         onOpenDevTools={() => void openDevTools(activeTab.id)}
         onSaveScreenshot={() => browser.saveScreenshot(activeTab.id)}
+        onMenuOpenChange={handleToolbarMenuOpenChange}
         onToggleBookmark={() => void toggleBookmark()}
         onOpenSettings={onOpenSettings}
         onToggleCalculator={() => {

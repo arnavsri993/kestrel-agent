@@ -77,6 +77,7 @@ export function TabStrip({
 	recentlyClosedTabs = [],
 	orientation,
 	onToggleOrientation,
+	onMenuOpenChange,
 }: {
 	tabs: UserBrowserTab[];
 	originFavicons?: readonly Pick<
@@ -99,6 +100,7 @@ export function TabStrip({
 	recentlyClosedTabs?: UserBrowserRecentlyClosedTab[];
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
+	onMenuOpenChange?(open: boolean): void;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
 	const [lockedWidth, setLockedWidth] = useState<number | null>(null);
@@ -192,6 +194,10 @@ export function TabStrip({
 			document.removeEventListener("keydown", onKeyDown);
 		};
 	}, [closeTabTools, tabSearch, tabToolsOpen]);
+
+	useEffect(() => {
+		onMenuOpenChange?.(Boolean(menu || tabToolsOpen));
+	}, [menu, onMenuOpenChange, tabToolsOpen]);
 
 	const lockTabWidthBeforeClose = useCallback(() => {
 		if (!shouldRetainTabWidthOnClose(orientation, tabs.length)) {
