@@ -17,13 +17,17 @@
 	padding-right: var(--agent-panel-width);
 }
 
-/* Toolbar menus must be able to open over the rail when Pragmatic is visible. */
-.browser-main-plane:has(.browser-toolbar-popover) {
+/* Browser chrome menus must be able to open over the rail when Pragmatic is
+ * visible. Keep the page itself inert while the menu is open, but leave the
+ * owning chrome row interactive so the overlay does not become a dead layer. */
+.browser-main-plane:has(.browser-toolbar-popover),
+.browser-main-plane:has(.browser-tab-tools-menu) {
 	z-index: 7;
 	pointer-events: none;
 }
 
-.browser-main-plane:has(.browser-toolbar-popover) .browser-toolbar {
+.browser-main-plane:has(.browser-toolbar-popover) .browser-toolbar,
+.browser-main-plane:has(.browser-tab-tools-menu) .browser-tab-row {
 	pointer-events: auto;
 }
 

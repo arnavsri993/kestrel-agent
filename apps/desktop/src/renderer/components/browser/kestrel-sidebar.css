@@ -126,6 +126,24 @@
 	padding: 8px 6px;
 }
 
+/* The vertical rail fills the lower workspace, but the tab-tools popover
+ * should be anchored to its trigger rather than positioned below the whole
+ * rail. Keep the menu above the page and Agent surfaces when it opens. */
+.browser-workspace-vertical
+	.browser-tab-row-vertical
+	.browser-tab-leading-actions {
+	position: relative;
+	z-index: 1;
+}
+
+.browser-workspace-vertical .browser-tab-tools-menu {
+	width: min(318px, calc(100vw - var(--kestrel-sidebar-width) - 12px));
+	max-height: min(
+		640px,
+		calc(100vh - var(--browser-chrome-height) - 16px)
+	);
+}
+
 .browser-workspace-vertical .browser-viewport {
 	position: absolute;
 	top: var(--browser-chrome-height);
