@@ -160,6 +160,20 @@ const pendingExternalIntakes: Array<{
 const browserService = new ElectronBrowserService();
 let userBrowserService: UserBrowserService | null = null;
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
+interface CalculatorAnchorBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface CalculatorOverlayRecord {
+  window: BrowserWindow;
+  updateAnchor: (anchor: CalculatorAnchorBounds) => void;
+}
+
+const calculatorOverlays = new Map<BrowserWindow, CalculatorOverlayRecord>();
+const calculatorOverlayWindows = new Set<BrowserWindow>();
 const supervisor = new CoreSupervisor(
   (request, signal) => {
     if (isUserBrowserBackendWireRequest(request)) {
@@ -301,6 +315,127 @@ function browserServiceForWindow(
   window: BrowserWindow | null,
 ): UserBrowserService | null {
   return window ? browserWindowServices.get(window) ?? null : null;
+}
+
+function calculatorOverlayBounds(
+  owner: BrowserWindow,
+  anchor?: CalculatorAnchorBounds,
+) {
+  const content = owner.getContentBounds();
+  const page = anchor
+    ? {
+        x: content.x + anchor.x,
+        y: content.y + anchor.y,
+        width: anchor.width,
+        height: anchor.height,
+      }
+    : {
+        x: content.x + 16,
+        y: content.y + 88,
+        width: Math.max(0, content.width - 32),
+        height: Math.max(0, content.height - 104),
+      };
+  const width = Math.min(372, Math.max(320, page.width - 24));
+  const height = Math.min(600, Math.max(520, page.height - 24));
+  return {
+    x: Math.round(
+      Math.max(page.x + 12, page.x + page.width - width - 16),
+    ),
+    y: Math.round(Math.max(page.y + 12, page.y + 16)),
+    width,
+    height,
+  };
+}
+
+function closeCalculatorOverlay(owner: BrowserWindow): void {
+  const record = calculatorOverlays.get(owner);
+  if (!record) return;
+  if (record.window.isDestroyed()) {
+    calculatorOverlays.delete(owner);
+    calculatorOverlayWindows.delete(record.window);
+    return;
+  }
+  record.window.close();
+}
+
+function updateCalculatorOverlayAnchor(
+  owner: BrowserWindow,
+  anchor: CalculatorAnchorBounds,
+): void {
+  calculatorOverlays.get(owner)?.updateAnchor(anchor);
+}
+
+function toggleCalculatorOverlay(
+  owner: BrowserWindow,
+  anchor?: CalculatorAnchorBounds,
+): void {
+  const existing = calculatorOverlays.get(owner);
+  if (existing) {
+    closeCalculatorOverlay(owner);
+    return;
+  }
+
+  const overlay = new BrowserWindow({
+    ...calculatorOverlayBounds(owner, anchor),
+    parent: owner,
+    modal: false,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    hasShadow: true,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: !DEVELOPMENT_RENDERER_URL,
+      webSecurity: true,
+      devTools: !isPackagedKestrelApp,
+    },
+  });
+  let currentAnchor = anchor;
+  const reposition = () => {
+    if (!overlay.isDestroyed())
+      overlay.setBounds(calculatorOverlayBounds(owner, currentAnchor));
+  };
+  const updateAnchor = (nextAnchor: CalculatorAnchorBounds) => {
+    currentAnchor = nextAnchor;
+    reposition();
+  };
+  const record: CalculatorOverlayRecord = {
+    window: overlay,
+    updateAnchor,
+  };
+  calculatorOverlays.set(owner, record);
+  calculatorOverlayWindows.add(overlay);
+  owner.on("move", reposition);
+  owner.on("resize", reposition);
+  const cleanup = () => {
+    owner.removeListener("move", reposition);
+    owner.removeListener("resize", reposition);
+    calculatorOverlayWindows.delete(overlay);
+    if (calculatorOverlays.get(owner)?.window === overlay)
+      calculatorOverlays.delete(owner);
+  };
+  overlay.on("closed", cleanup);
+  overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  protectRendererNavigation(overlay.webContents, trustedRendererUrl);
+  if (DEVELOPMENT_RENDERER_URL) {
+    const url = new URL(DEVELOPMENT_RENDERER_URL);
+    url.searchParams.set("calculatorOverlay", "1");
+    void overlay.loadURL(url.toString()).catch(() => overlay.close());
+  } else {
+    void overlay
+      .loadFile(RENDERER_ENTRY_PATH, { query: { calculatorOverlay: "1" } })
+      .catch(() => overlay.close());
+  }
+  overlay.once("ready-to-show", () => {
+    if (overlay.isDestroyed()) return;
+    overlay.show();
+    overlay.focus();
+  });
 }
 
 function browserServiceForTab(tabId?: string): UserBrowserService | null {
@@ -1238,6 +1373,7 @@ function createMainWindow(): BrowserWindow {
   });
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);
   if (userBrowserService) {
+    if (mainWindow) closeCalculatorOverlay(mainWindow);
     userBrowserService.dispose();
     if (mainWindow) browserWindowServices.delete(mainWindow);
     userBrowserService = null;
@@ -1296,11 +1432,13 @@ function createMainWindow(): BrowserWindow {
   );
   window.on("close", (event) => {
     if (!quitting && process.platform === "darwin") {
+      closeCalculatorOverlay(window);
       event.preventDefault();
       window.hide();
     }
   });
   window.on("closed", () => {
+    closeCalculatorOverlay(window);
     const service = browserServiceForWindow(window);
     if (service) service.dispose();
     browserWindowServices.delete(window);
@@ -1957,9 +2095,13 @@ function registerIpc(): void {
 
 	ipcMain.handle("kestrel:request", async (event, raw) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    const isCalculatorOverlayWindow = Boolean(
+      senderWindow && calculatorOverlayWindows.has(senderWindow),
+    );
     if (
       !senderWindow ||
       (!browserWindowServices.has(senderWindow) &&
+        !isCalculatorOverlayWindow &&
         senderWindow !== petOverlayWindow) ||
       !isTrustedRendererFrame(
         event.senderFrame,
@@ -1969,6 +2111,11 @@ function registerIpc(): void {
     )
       throw new Error("Kestrel rejected a request from an untrusted renderer.");
     const request = RendererRequestSchema.parse(raw);
+    if (
+      isCalculatorOverlayWindow &&
+      request.type !== "browser-close-calculator"
+    )
+      throw new Error("Calculator overlays can only close themselves.");
     const requestBrowserService = browserServiceForWindow(senderWindow);
     if (request.type === "runtime-run-agent") {
       await localRuntimeManager()
@@ -1983,6 +2130,17 @@ function registerIpc(): void {
       if (!overlayAccess)
         throw new Error("Kestrel rejected a stale pet overlay request.");
       overlayAccess.assertAllowed(request);
+    }
+    if (request.type === "browser-toggle-calculator") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      toggleCalculatorOverlay(senderWindow, request.bounds);
+      return { ok: true };
+    }
+    if (request.type === "browser-close-calculator") {
+      if (isCalculatorOverlayWindow) senderWindow.close();
+      else closeCalculatorOverlay(senderWindow);
+      return { ok: true };
     }
     if (
       request.type === "window-minimize" ||
@@ -2275,6 +2433,8 @@ function registerIpc(): void {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       await requestBrowserService.setContentBounds(request.bounds, request.visible);
+      if (request.bounds.width > 0 && request.bounds.height > 0)
+        updateCalculatorOverlayAnchor(senderWindow, request.bounds);
       return { ok: true };
     }
     if (request.type === "browser-update-settings") {

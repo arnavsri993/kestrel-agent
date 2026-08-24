@@ -2922,6 +2922,18 @@ export const RendererRequestSchema = z.union([
 		visible: z.boolean(),
 	}),
 	z.object({
+		type: z.literal("browser-toggle-calculator"),
+		bounds: z
+			.object({
+				x: z.number().int().min(0).max(20_000),
+				y: z.number().int().min(0).max(20_000),
+				width: z.number().int().min(0).max(20_000),
+				height: z.number().int().min(0).max(20_000),
+			})
+			.optional(),
+	}),
+	z.object({ type: z.literal("browser-close-calculator") }),
+	z.object({
 		type: z.literal("browser-update-settings"),
 		settings: UserBrowserSettingsSchema,
 	}),
