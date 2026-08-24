@@ -23,10 +23,12 @@ import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { NewTabPage } from "./NewTabPage";
 import { TabStrip } from "./TabStrip";
+import { recordNewTabGreetingVisit } from "./new-tab";
 
 export function BrowserWorkspace({
   browser,
   agentName,
+	greetingName,
   agentOpen,
   onToggleAgent,
   onNewAgent,
@@ -45,6 +47,7 @@ export function BrowserWorkspace({
 }: {
   browser: UserBrowserController;
   agentName: string;
+	greetingName?: string | undefined;
   agentOpen: boolean;
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
@@ -567,6 +570,7 @@ export function BrowserWorkspace({
         )}
         {!activeTab.url && (
           <NewTabPage
+            tabId={activeTab.id}
             history={state.history}
             bookmarks={state.bookmarks}
             downloads={state.downloads}
@@ -575,11 +579,22 @@ export function BrowserWorkspace({
             background={state.settings.newTabBackground}
             backgroundCustomDataUrl={state.settings.newTabBackgroundCustomDataUrl}
             agentName={agentName}
+			greetingName={greetingName}
+			greetingActivity={state.settings.newTabGreetingActivity}
             sessions={sessions}
             widgetSettings={state.settings.newTabWidgets}
             onUpdateWidgetSettings={(newTabWidgets) =>
               void updateSettings({ newTabWidgets })
             }
+			onRecordGreetingVisit={(now) =>
+				void updateSettings({
+					...state.settings,
+					newTabGreetingActivity: recordNewTabGreetingVisit(
+						state.settings.newTabGreetingActivity,
+						now,
+					),
+				})
+			}
             onNavigate={(input) => void navigate(activeTab.id, input)}
             onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}

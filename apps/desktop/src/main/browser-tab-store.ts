@@ -10,6 +10,7 @@ import {
 import { dirname } from "node:path";
 import {
 	DEFAULT_NEW_TAB_WIDGET_IDS,
+	emptyNewTabGreetingActivity,
 	type UserBrowserOriginFavicon,
 	type UserBrowserSettings,
 	type UserBrowserState,
@@ -24,6 +25,7 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	searchEngine: "google",
 	tabLayout: "horizontal",
 	newTabBackground: "graphite",
+	newTabGreetingActivity: emptyNewTabGreetingActivity(),
 	newTabWidgets: {
 		version: 1,
 		enabled: [...DEFAULT_NEW_TAB_WIDGET_IDS],

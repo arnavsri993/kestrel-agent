@@ -202,6 +202,75 @@ describe("core agent request path", () => {
 		await core.close();
 	});
 
+	it("generates a New Tab greeting from bounded presence labels only", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let received:
+			| {
+					messages: Array<{
+						role: string;
+						content: Array<{ type: string; text?: string }>;
+					}>;
+				}
+			| undefined;
+		const provider: ModelProvider = {
+			id: "greeting-provider",
+			defaultModel: "greeting-model",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			profileHints: { features: { reasoningLevels: true } },
+			complete: async (request) => {
+				received = request;
+				return {
+					providerId: "greeting-provider",
+					model: request.model,
+					text: "Up this late again, Arnav?",
+					toolCalls: [],
+					usage: { inputTokens: 40, outputTokens: 7 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const core = new AgentCore({
+			database,
+			modelProviders: [provider],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+		const mainSession = core.runtime.ensureMainSession();
+		const messagesBefore = core.runtime.listMessages(mainSession.id).length;
+		const response = await core.handle({
+			type: "new-tab-greeting",
+			firstName: "Arnav",
+			currentTimeOfDay: "late-night",
+			usualVisitTime: "early-morning",
+			visitFrequency: "regular",
+			todayVisit: "returning-today",
+		});
+
+		expect(response).toMatchObject({
+			ok: true,
+			newTabGreeting: "Up this late again, Arnav?",
+			routing: { model: "greeting-model" },
+		});
+		const userMessage = received?.messages.find(
+			(message) => message.role === "user",
+		);
+		expect(userMessage?.content[0]?.text).toContain('First name: "Arnav"');
+		expect(userMessage?.content[0]?.text).toContain(
+			"Visit frequency: regular",
+		);
+		expect(userMessage?.content[0]?.text).not.toMatch(
+			/example\.com|Project notes|https?:\/\/|@/i,
+		);
+		expect(core.runtime.listMessages(mainSession.id)).toHaveLength(messagesBefore);
+		await core.close();
+	});
+
 	it("passes a manual thinking level through to the selected provider", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		let received: { model?: string; reasoningEffort?: string } | undefined;

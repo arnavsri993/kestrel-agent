@@ -1,8 +1,16 @@
-import type {
-	UserBrowserHistoryEntry,
-	UserBrowserOriginFavicon,
-	UserBrowserSettings,
-	UserBrowserTab,
+import {
+	NewTabGreetingActivitySchema,
+	newTabGreetingFallback,
+	safeNewTabGreetingName,
+	validateNewTabGreeting,
+	type NewTabGreetingActivity,
+	type NewTabGreetingContext,
+	type NewTabGreetingTimeBucket,
+	type NewTabGreetingTimeBucketCounts,
+	type UserBrowserHistoryEntry,
+	type UserBrowserOriginFavicon,
+	type UserBrowserSettings,
+	type UserBrowserTab,
 } from "@kestrel/shared-types";
 
 export const CUSTOM_BACKGROUND_MAX_BYTES = 5 * 1024 * 1024;
@@ -77,6 +85,167 @@ export interface SuggestedAgentAction {
   prompt: string;
   personalized: boolean;
 }
+
+export interface NewTabGreetingActivityProfile {
+	currentTimeOfDay: NewTabGreetingTimeBucket;
+	usualVisitTime: NewTabGreetingContext["usualVisitTime"];
+	visitFrequency: NewTabGreetingContext["visitFrequency"];
+	todayVisit: NewTabGreetingContext["todayVisit"];
+}
+
+function usableNow(value: Date): Date {
+	return Number.isFinite(value.getTime()) ? value : new Date();
+}
+
+function localDayKey(value: Date): string {
+	const now = usableNow(value);
+	const pad = (part: number) => String(part).padStart(2, "0");
+	return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+function localDayKeyOffset(value: Date, days: number): string {
+	const now = usableNow(value);
+	const shifted = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+	shifted.setDate(shifted.getDate() + days);
+	return localDayKey(shifted);
+}
+
+export function newTabGreetingTimeBucket(
+	now = new Date(),
+): NewTabGreetingTimeBucket {
+	const hour = usableNow(now).getHours();
+	if (hour < 5) return "late-night";
+	if (hour < 10) return "early-morning";
+	if (hour < 13) return "morning";
+	if (hour < 17) return "afternoon";
+	if (hour < 22) return "evening";
+	return "late-night";
+}
+
+function normalizedGreetingActivity(
+	activity: NewTabGreetingActivity | undefined,
+): NewTabGreetingActivity {
+	const parsed = NewTabGreetingActivitySchema.safeParse(activity);
+	return parsed.success
+		? parsed.data
+		: NewTabGreetingActivitySchema.parse({});
+}
+
+function copiedBucketCounts(
+	counts: NewTabGreetingTimeBucketCounts,
+): NewTabGreetingTimeBucketCounts {
+	return { ...counts };
+}
+
+/**
+ * Record only a local day, a bounded visit count, and a coarse time bucket.
+ * URLs, titles, and browser history never enter this aggregate.
+ */
+export function recordNewTabGreetingVisit(
+	activity: NewTabGreetingActivity | undefined,
+	now = new Date(),
+): NewTabGreetingActivity {
+	const current = normalizedGreetingActivity(activity);
+	const today = localDayKey(now);
+	const minimumDay = localDayKeyOffset(now, -30);
+	const retainedDays = current.days
+		.filter((day) => day.day >= minimumDay && day.day <= today)
+		.map((day) => ({ ...day, buckets: copiedBucketCounts(day.buckets) }));
+	const bucket = newTabGreetingTimeBucket(now);
+	const existing = retainedDays.find((day) => day.day === today);
+	if (existing) {
+		existing.visits = Math.min(100, existing.visits + 1);
+		existing.buckets[bucket] = Math.min(100, existing.buckets[bucket] + 1);
+	} else {
+		retainedDays.push({
+			day: today,
+			visits: 1,
+			buckets: {
+				"late-night": 0,
+				"early-morning": 0,
+				morning: 0,
+				afternoon: 0,
+				evening: 0,
+				[bucket]: 1,
+			},
+		});
+	}
+	return NewTabGreetingActivitySchema.parse({
+		version: 1,
+		days: retainedDays
+			.sort((left, right) => left.day.localeCompare(right.day))
+			.slice(-31),
+	});
+}
+
+export function newTabGreetingActivityProfile(
+	activity: NewTabGreetingActivity | undefined,
+	now = new Date(),
+): NewTabGreetingActivityProfile {
+	const current = normalizedGreetingActivity(activity);
+	const today = localDayKey(now);
+	const minimumDay = localDayKeyOffset(now, -30);
+	const days = current.days.filter(
+		(day) => day.day >= minimumDay && day.day <= today,
+	);
+	const currentTimeOfDay = newTabGreetingTimeBucket(now);
+	const totalVisits = days.reduce((total, day) => total + day.visits, 0);
+	const visitFrequency =
+		totalVisits === 0
+			? "first-time"
+			: totalVisits <= 2
+				? "occasional"
+				: totalVisits <= 8
+					? "regular"
+					: "frequent";
+	const todayVisit = days.some((day) => day.day === today)
+		? "returning-today"
+		: "first-today";
+	const counts: NewTabGreetingTimeBucketCounts = {
+		"late-night": 0,
+		"early-morning": 0,
+		morning: 0,
+		afternoon: 0,
+		evening: 0,
+	};
+	for (const day of days) {
+		for (const bucket of Object.keys(counts) as NewTabGreetingTimeBucket[])
+			counts[bucket] += day.buckets[bucket];
+	}
+	const ranked = (Object.keys(counts) as NewTabGreetingTimeBucket[]).sort(
+		(left, right) => counts[right] - counts[left],
+	);
+	const top = ranked[0]!;
+	const second = ranked[1]!;
+	const usualVisitTime =
+		totalVisits < 3
+			? "unknown"
+			: counts[top] / Math.max(1, totalVisits) >= 0.6 &&
+				counts[top] > counts[second]
+				? top
+				: "varied";
+
+	return { currentTimeOfDay, usualVisitTime, visitFrequency, todayVisit };
+}
+
+export function newTabGreetingContext(
+	activity: NewTabGreetingActivity | undefined,
+	name: string | undefined,
+	now = new Date(),
+): NewTabGreetingContext {
+	const profile = newTabGreetingActivityProfile(activity, now);
+	const firstName = safeNewTabGreetingName(name);
+	return {
+		...(firstName ? { firstName } : {}),
+		...profile,
+	};
+}
+
+export {
+	newTabGreetingFallback,
+	safeNewTabGreetingName,
+	validateNewTabGreeting,
+};
 
 const STARTER_ACTIONS: readonly SuggestedAgentAction[] = [
   {

@@ -8778,6 +8778,7 @@ export function App() {
 	);
 	const [showDefaultBrowserPrompt, setShowDefaultBrowserPrompt] = useState(false);
 	const [showShortcuts, setShowShortcuts] = useState(false);
+	const [greetingName, setGreetingName] = useState<string | undefined>();
 	const reduced = useReducedMotion();
 
 	useEffect(() => {
@@ -8832,6 +8833,22 @@ export function App() {
 			})
 			.catch(() => undefined);
 
+		return () => {
+			active = false;
+		};
+	}, [onboarded]);
+	useEffect(() => {
+		if (!onboarded) return;
+		let active = true;
+		void window.kestrel
+			.request({ type: "get-system-state" })
+			.then((response) => {
+				if (!active || !response.ok || !("userName" in response)) return;
+				setGreetingName(
+					typeof response.userName === "string" ? response.userName : undefined,
+				);
+			})
+			.catch(() => undefined);
 		return () => {
 			active = false;
 		};
@@ -9433,6 +9450,7 @@ export function App() {
 					<BrowserWorkspace
 						browser={browser}
 						agentName={activeAgentName}
+						greetingName={greetingName}
 						agentOpen={agentSidebarOpen}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
