@@ -37,5 +37,14 @@ describe("default browser requests", () => {
 		expect(
 			RendererRequestSchema.safeParse({ type: "get-system-state" }).success,
 		).toBe(true);
+		expect(
+			RendererRequestSchema.safeParse({ type: "window-minimize" }).success,
+		).toBe(true);
+		expect(
+			RendererRequestSchema.safeParse({ type: "window-toggle-zoom" }).success,
+		).toBe(true);
+		expect(
+			RendererRequestSchema.safeParse({ type: "window-close" }).success,
+		).toBe(true);
 	});
 });
