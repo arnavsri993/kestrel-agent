@@ -186,6 +186,89 @@ async function waitForNativeViewInAnyWindow(expectedUrl, label) {
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
 }
 
+async function assertBrowserChromeLayout({ vertical = false } = {}) {
+	const layout = await page.evaluate(() => {
+		const bounds = (selector) => {
+			const node = document.querySelector(selector);
+			if (!node) return null;
+			const rect = node.getBoundingClientRect();
+			return {
+				x: Math.round(rect.x),
+				y: Math.round(rect.y),
+				width: Math.round(rect.width),
+				height: Math.round(rect.height),
+				right: Math.round(rect.right),
+				bottom: Math.round(rect.bottom),
+			};
+		};
+		return {
+			window: { width: Math.round(innerWidth), height: Math.round(innerHeight) },
+			app: bounds(".ai-browser-app"),
+			horizontalTabs: bounds(".browser-tab-row-horizontal"),
+			verticalTabs: bounds(".browser-tab-row-vertical"),
+			toolbar: bounds(".browser-toolbar"),
+			bookmarks: bounds(".browser-bookmarks-bar"),
+			kestrel: bounds(".kestrel-sidebar"),
+			viewport: bounds("#browser-viewport"),
+			agent: bounds(".agent-sidebar"),
+		};
+	});
+	const tabs = vertical ? layout.verticalTabs : layout.horizontalTabs;
+	assert(layout.app);
+	assert(tabs);
+	assert(layout.toolbar);
+	assert(layout.kestrel);
+	assert(layout.viewport);
+	const chromeBottom = Math.max(
+		vertical ? layout.toolbar.bottom : tabs.bottom,
+		layout.toolbar.bottom,
+		layout.bookmarks?.bottom ?? 0,
+	);
+	if (vertical) {
+		assert(
+			tabs.x >= layout.kestrel.right,
+			"Vertical tabs must begin after the lower Kestrel navigation rail",
+		);
+		assert(tabs.y >= chromeBottom);
+		assert.equal(tabs.bottom, layout.app.bottom);
+	} else {
+		assert.equal(tabs.x, layout.app.x);
+		assert.equal(tabs.width, layout.app.width);
+	}
+	assert.equal(layout.toolbar.x, layout.app.x);
+	assert.equal(layout.toolbar.width, layout.app.width);
+	assert(
+		layout.kestrel.y >= chromeBottom,
+		"Kestrel navigation must begin below full-width browser chrome",
+	);
+	assert.equal(layout.kestrel.x, layout.app.x);
+	assert.equal(layout.kestrel.bottom, layout.app.bottom);
+	assert(
+		layout.viewport.x >= layout.kestrel.right,
+		"Browser content must begin after the lower Kestrel navigation rail",
+	);
+	if (vertical) {
+		assert(
+			layout.viewport.x >= tabs.right,
+			"Vertical browser content must begin after the lower tab rail",
+		);
+	}
+	assert(
+		layout.viewport.bottom <= layout.app.bottom,
+		"Browser content must stay inside the window",
+	);
+	if (layout.agent && layout.agent.width > 0) {
+		assert(
+			layout.viewport.right <= layout.agent.x,
+			"Browser content must stay before the lower Agent rail",
+		);
+		assert(
+			layout.agent.y >= chromeBottom,
+			"Agent rail must begin below full-width browser chrome",
+		);
+	}
+}
+
 async function activeViewScript(source) {
 	return application.evaluate(async ({ BrowserWindow }, script) => {
 		const window = BrowserWindow.getAllWindows().find(
@@ -258,6 +341,7 @@ try {
 	await page.locator("#new-tab-chat-input").waitFor();
 	assert.equal(await page.locator(".kestrel-home-model-selector summary").count(), 1);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
+	await assertBrowserChromeLayout();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
 	});
@@ -986,6 +1070,7 @@ try {
 			.getAttribute("aria-orientation"),
 		"vertical",
 	);
+	await assertBrowserChromeLayout({ vertical: true });
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after leaving Settings",
