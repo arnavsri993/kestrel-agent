@@ -48,21 +48,26 @@ try {
 	await page.reload();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator('summary[aria-label="Task settings"]').click();
-	await page.getByLabel("Project").waitFor();
-	const execution = page.getByLabel("Execution");
-	await execution.waitFor();
-	assert.equal(await execution.inputValue(), "automatic");
-	await execution.selectOption("manual");
-	await page
-		.locator(".runtime-task-controls label", { hasText: /^Provider/ })
-		.locator("select")
-		.waitFor();
-	await page
-		.locator(".runtime-task-controls label", { hasText: /^Model/ })
-		.locator("input, select")
-		.waitFor();
+	const taskSettings = page.locator(".task-settings[open]");
+	await taskSettings.locator(".runtime-project-picker select").waitFor();
+	await taskSettings.getByText(/Auto routes model, thinking level/).waitFor();
+	await page.getByRole("button", { name: /^Model:/ }).click();
+	const modelMenu = page.getByRole("menu", {
+		name: "Choose provider, model, and thinking level",
+	});
+	await modelMenu.waitFor();
 	assert.equal(
-		await page.getByRole("button", { name: "Send message" }).isDisabled(),
+		await modelMenu
+			.getByRole("switch", { name: "Automatically choose a model" })
+			.getAttribute("aria-checked"),
+		"true",
+	);
+	await page.keyboard.press("Escape");
+	await modelMenu.waitFor({ state: "detached" });
+	assert.equal(
+		await page
+			.getByRole("button", { name: "Send message", exact: true })
+			.isDisabled(),
 		true,
 	);
 	await openKestrelDestination(page, "Settings");

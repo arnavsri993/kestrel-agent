@@ -259,7 +259,7 @@ try {
 	assert.equal(await page.locator(".kestrel-home-model-selector summary").count(), 1);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
 	const homeSend = page.getByRole("button", {
-		name: "Open message in Pragmatic composer",
+		name: "Send message to Pragmatic",
 	});
 	assert.equal(await homeSend.isDisabled(), true);
 	const homePrompt = "Start with the smallest useful fix.";
@@ -273,10 +273,17 @@ try {
 	});
 	await page.locator("#new-tab-chat-input").fill(homePrompt);
 	await homeSend.click();
-	await page.waitForFunction((expected) => {
-		const prompt = document.querySelector("#runtime-prompt");
-		return prompt instanceof HTMLTextAreaElement && prompt.value === expected;
-	}, homePrompt);
+	await page.waitForFunction(async (expected) => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		return (
+			response.ok &&
+			"sessions" in response &&
+			(response.sessions ?? []).length === expected
+		);
+	}, homeSessionsBefore + 1);
+	assert.equal(await page.locator("#runtime-prompt").inputValue(), "");
 	const homeSessionsAfter = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
 			type: "runtime-list-sessions",
@@ -285,20 +292,26 @@ try {
 			? (response.sessions ?? []).length
 			: -1;
 	});
-	assert.equal(homeSessionsAfter, homeSessionsBefore);
-	await page.getByRole("button", { name: "New chat" }).click();
+	assert.equal(homeSessionsAfter, homeSessionsBefore + 1);
+	await page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "New task" })
+		.click();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
 	await openKestrelDestination(page, "Settings");
 	await page
-		.getByRole("navigation", { name: "Settings sections" })
-		.getByRole("button", { name: /^Browser/ })
+		.locator(".settings-scope-switcher")
+		.getByRole("tab", { name: /^Browser/ })
 		.click();
 	await page
 		.getByRole("heading", { name: "Make the browser feel like yours." })
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
-	await page.getByRole("button", { name: "Back to Browser" }).click();
+	await page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "Browser", exact: true })
+		.click();
 	await page
 		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
 		.waitFor();
@@ -335,37 +348,11 @@ try {
 	assert.equal(await agentSidebar.evaluate((sidebar) => sidebar.inert), false);
 	await page.locator("#runtime-prompt").waitFor();
 
-	const suggestedActions = page.getByRole("button", {
-		name: /^Add to Pragmatic composer:/,
-	});
-	assert.equal(await suggestedActions.count(), 5);
-	const sessionsBeforeSuggestion = await page.evaluate(async () => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return response.ok && "sessions" in response
-			? (response.sessions ?? []).length
-			: -1;
-	});
-	await suggestedActions.first().click();
-	await page.waitForFunction(() => {
-		const prompt = document.querySelector("#runtime-prompt");
-		return (
-			prompt instanceof HTMLTextAreaElement &&
-			prompt.value ===
-				"Review the current project and context. Identify the highest-impact issues, explain why they matter, and recommend the smallest useful next step. Do not change anything until the review is clear."
-		);
-	});
-	const sessionsAfterSuggestion = await page.evaluate(async () => {
-		const response = await window.kestrel.request({
-			type: "runtime-list-sessions",
-		});
-		return response.ok && "sessions" in response
-			? (response.sessions ?? []).length
-			: -1;
-	});
-	assert.equal(sessionsAfterSuggestion, sessionsBeforeSuggestion);
-	await page.getByRole("button", { name: "New task", exact: true }).click();
+	assert.equal(await page.locator(".runtime-suggestions").count(), 0);
+	await page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "New task" })
+		.click();
 
 	const initialSessions = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
@@ -472,12 +459,28 @@ try {
 	await page.evaluate(async (tabId) => {
 		await window.kestrel.request({ type: "browser-close-tab", tabId });
 	}, addedBlankTab);
+	state = await browserState();
+	const rendererSourceTab = state.tabs.find((tab) => tab.url === "");
+	assert(rendererSourceTab);
+	await page.evaluate(
+		async (tabId) =>
+			window.kestrel.request({ type: "browser-select-tab", tabId }),
+		rendererSourceTab.id,
+	);
+	await waitForBrowserState(
+		(value) => value.activeTabId === rendererSourceTab.id,
+		"selecting the renderer-managed source tab",
+	);
+	await page.locator(".new-tab-page").waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over the New Tab page",
 	);
 	await page.locator("#runtime-prompt").fill("Draft that must be cleared");
-	await page.getByRole("button", { name: "New task", exact: true }).click();
+	await page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "New task" })
+		.click();
 	const clearedDraft = await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");
 		return (
@@ -495,14 +498,22 @@ try {
 		true,
 	);
 	assert.equal((await browserState()).tabs.length, initialTabs);
-	const rendererSourceTabId = (await browserState()).activeTabId;
-	assert(rendererSourceTabId);
+	const rendererSourceTabId = rendererSourceTab.id;
 	await page.evaluate((href) => {
 		const link = document.createElement("a");
 		link.id = "renderer-managed-tab-fixture";
 		link.href = href;
 		link.target = "_blank";
 		link.textContent = "Open renderer link";
+		Object.assign(link.style, {
+			position: "fixed",
+			top: "140px",
+			left: "260px",
+			zIndex: "20000",
+			padding: "8px",
+			background: "white",
+			color: "black",
+		});
 		document.querySelector(".new-tab-page")?.append(link);
 	}, `${origin}/renderer-link`);
 	await page.locator("#renderer-managed-tab-fixture").click();
@@ -696,15 +707,36 @@ try {
 		(value) => value.views[0]?.url === `${origin}/two`,
 		"Second page did not load",
 	);
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/two` && active.canGoBack === true;
+		},
+		"Back navigation did not become available",
+	);
 	await page.getByRole("button", { name: "Back" }).click();
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Back navigation failed",
 	);
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/one` && active.canGoForward === true;
+		},
+		"Forward navigation did not become available",
+	);
 	await page.getByRole("button", { name: "Forward" }).click();
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/two`,
 		"Forward navigation failed",
+	);
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/two` && active.canGoBack === true;
+		},
+		"Back navigation did not recover after moving forward",
 	);
 	await page.getByRole("button", { name: "Back" }).click();
 	await waitForNativeView(
@@ -712,10 +744,11 @@ try {
 		"Return to fixture failed",
 	);
 
+	const tabsBeforePagePopup = (await browserState()).tabs.length;
 	await activeViewScript("document.querySelector('#popup').click() ");
 	state = await waitForBrowserState(
 		(value) =>
-			value.tabs.length === 2 &&
+			value.tabs.length === tabsBeforePagePopup + 1 &&
 			value.tabs.some((tab) => tab.url.endsWith("/popup")),
 		"Popup tab did not open from in-page click",
 	);
@@ -740,6 +773,9 @@ try {
 		"Original tab was not restored after popup close",
 	);
 
+	const sourceTabIdsBeforeDetach = (await browserState()).tabs.map(
+		(tab) => tab.id,
+	);
 	const detachableTabId = await page.evaluate(async (input) => {
 		const response = await window.kestrel.request({
 			type: "browser-create-tab",
@@ -787,10 +823,17 @@ try {
 	assert.equal(detachedWindowState.length, 2);
 	await detachedPage.close();
 	await waitForBrowserState(
-		(value) => value.tabs.length === 1 && value.tabs[0]?.url === `${origin}/one`,
+		(value) =>
+			value.tabs.length === sourceTabIdsBeforeDetach.length &&
+			sourceTabIdsBeforeDetach.every((id) =>
+				value.tabs.some((tab) => tab.id === id),
+			) &&
+			!value.tabs.some((tab) => tab.id === detachableTabId) &&
+			value.tabs.some((tab) => tab.id === tabId && tab.url === `${origin}/one`),
 		"Source browser did not retain its remaining tab after detachment",
 	);
 
+	const tabsBeforeToolPopup = (await browserState()).tabs.length;
 	const openedPopup = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",
@@ -803,7 +846,7 @@ try {
 	assert.equal(openedPopup?.status, "verified");
 	state = await waitForBrowserState(
 		(value) =>
-			value.tabs.length === 2 &&
+			value.tabs.length === tabsBeforeToolPopup + 1 &&
 			value.tabs.some((tab) => tab.url.endsWith("/popup")),
 		"Popup tab did not open from tool act",
 	);
@@ -875,7 +918,7 @@ try {
 
 	await page.keyboard.press("Meta+H");
 	await page
-		.getByRole("heading", { name: "Pages you visited", exact: true })
+		.getByRole("heading", { name: "History", exact: true })
 		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
@@ -889,7 +932,7 @@ try {
 
 	await page.keyboard.press("Meta+J");
 	await page
-		.getByRole("heading", { name: "Files from the web", exact: true })
+		.getByRole("heading", { name: "Downloads", exact: true })
 		.waitFor();
 	await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
 	await openKestrelDestination(page, "Settings");
@@ -897,14 +940,17 @@ try {
 		.getByRole("heading", { name: "Preferences", exact: true })
 		.waitFor();
 	const browserSettings = page
-		.locator(".settings-nav")
-		.getByRole("button", { name: /^Browser/ });
+		.locator(".settings-scope-switcher")
+		.getByRole("tab", { name: /^Browser/ });
 	await browserSettings.click();
-	assert.equal(await browserSettings.getAttribute("aria-current"), "page");
+	assert.equal(await browserSettings.getAttribute("aria-selected"), "true");
 	await page
 		.getByRole("heading", { name: "Make the browser feel like yours.", exact: true })
 		.waitFor();
-	await page.getByRole("radio", { name: /Mountain valley/ }).check();
+	await page
+		.locator("label.background-option")
+		.filter({ hasText: "Mountain valley" })
+		.click();
 	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
 	await page.getByLabel("Tab layout").selectOption("vertical");
 	state = await waitForBrowserState(
@@ -917,17 +963,22 @@ try {
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
 	assert.equal(state.settings.newTabBackground, "mountains");
-	const useCurrentPage = page.getByRole("checkbox", {
-		name: /Use current page/,
+	const useCurrentPage = page.getByRole("switch", {
+		name: "Use current page context with agent",
 	});
-	await useCurrentPage.uncheck();
+	if ((await useCurrentPage.getAttribute("aria-checked")) === "true")
+		await useCurrentPage.click();
 	assert.equal(
 		await page.evaluate(() => localStorage.getItem("kestrel:browser-context")),
 		"off",
 	);
-	await useCurrentPage.check();
+	await useCurrentPage.click();
+	assert.equal(await useCurrentPage.getAttribute("aria-checked"), "true");
 
-	await page.getByRole("button", { name: "Back to Browser" }).click();
+	await page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "Browser", exact: true })
+		.click();
 	await page.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	assert.equal(
 		await page
@@ -981,6 +1032,7 @@ try {
 			process.env.KESTREL_BROWSER_SCREENSHOT ?? join(root, "browser-shell.png"),
 		fullPage: false,
 	});
+	const urlsBeforeRestart = (await browserState()).tabs.map((tab) => tab.url);
 
 	await application.close();
 	application = undefined;
@@ -989,8 +1041,11 @@ try {
 	await launch();
 	await page.getByRole("tab", { name: /Page one/ }).waitFor();
 	state = await browserState();
-	assert.equal(state.tabs.length, 1);
-	assert.equal(state.tabs[0]?.url, `${origin}/one`);
+	assert.deepEqual(
+		state.tabs.map((tab) => tab.url),
+		urlsBeforeRestart,
+	);
+	assert(state.tabs.some((tab) => tab.url === `${origin}/one`));
 	assert(state.history.some((entry) => entry.title === "Page one"));
 	assert(state.history.some((entry) => entry.title === "Page two"));
 	assert.equal(state.settings.searchEngine, "ecosia");

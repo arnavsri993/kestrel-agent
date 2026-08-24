@@ -249,6 +249,29 @@ describe("UserBrowserService", () => {
     expect(attachedAt).toBeLessThan(loadedAt);
   });
 
+  it("retains one healthy web view and its navigation history across addresses", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+
+    await service.navigate(tab.id, "https://example.com/one");
+    const view = electron.state.views[0]!;
+    view.webContents.navigationHistory.canGoBack.mockReturnValue(true);
+
+    await service.navigate(tab.id, "https://example.com/two");
+    view.webContents.emit("did-stop-loading");
+
+    expect(electron.state.views).toEqual([view]);
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(view.webContents.loadURL.mock.calls).toEqual([
+      ["https://example.com/one"],
+      ["https://example.com/two"],
+    ]);
+    expect(service.getState().tabs[0]).toMatchObject({
+      url: "https://example.com/two",
+      canGoBack: true,
+    });
+  });
+
   it("uses the production persistent partition by default and preserves an explicit custom partition", () => {
     const first = createService();
     expect(electron.state.partitions[0]).toMatchObject({

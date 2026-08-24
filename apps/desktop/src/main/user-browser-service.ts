@@ -591,9 +591,12 @@ export class UserBrowserService {
 			this.state.settings.searchEngine,
 			this.state.settings.customSearchUrl,
 		);
-		this.closeView(tabId);
 		delete tab.file;
-		const record = this.ensureView(tab);
+		// Keep a healthy WebContentsView alive across normal web navigations so
+		// Electron can retain the tab's native back/forward history. App pages,
+		// file tabs, discarded views, and crashed renderers still cross an
+		// explicit lifecycle boundary and receive a fresh view when needed.
+		const record = this.ensureView(tab, false);
 		this.elementRefs.delete(tabId);
 		tab.error = undefined;
 		tab.crashed = false;
@@ -1557,11 +1560,15 @@ export class UserBrowserService {
 		});
 	}
 
-	private ensureView(tab: UserBrowserTab): ViewRecord {
+	private ensureView(
+		tab: UserBrowserTab,
+		loadStoredUrl = true,
+	): ViewRecord {
 		if (tab.file || isKestrelAppPageUrl(tab.url))
 			throw new Error("App pages do not use a web view.");
 		const existing = this.views.get(tab.id);
 		if (existing && !existing.view.webContents.isDestroyed()) return existing;
+		if (existing) this.closeView(tab.id, false);
 		const view = new WebContentsView({
 			webPreferences: {
 				preload: join(__dirname, "../preload/userBrowser.cjs"),
@@ -1587,7 +1594,7 @@ export class UserBrowserService {
 		) {
 			view.webContents.setAudioMuted(true);
 		}
-		if (tab.url) {
+		if (loadStoredUrl && tab.url) {
 			tab.discarded = false;
 			tab.loading = true;
 			void view.webContents.loadURL(tab.url).catch((cause) => {

@@ -376,7 +376,9 @@ try {
 			.waitFor();
 		await page.getByRole("button", { name: "Not Now" }).click();
 	}
-	const newAgentButton = page.getByRole("button", { name: "New chat" });
+	const newAgentButton = page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "New task" });
 	await newAgentButton.click();
 	assert.equal(
 		await newAgentButton.getAttribute("aria-keyshortcuts"),
@@ -425,8 +427,15 @@ try {
 	);
 	await page.keyboard.press("Meta+K");
 	await page.getByLabel("Search Kestrel").waitFor();
-	const compactCommands = await page
-		.locator(".command-center")
+	const compactCommandCenter = page.locator(".command-center");
+	await compactCommandCenter.evaluate(async (element) => {
+		await Promise.all(
+			element
+				.getAnimations({ subtree: true })
+				.map((animation) => animation.finished.catch(() => undefined)),
+		);
+	});
+	const compactCommands = await compactCommandCenter
 		.evaluate((element) => {
 			const bounds = element.getBoundingClientRect();
 			return {
@@ -441,6 +450,9 @@ try {
 		.locator(".command-groups button")
 		.filter({ hasText: "Readiness" })
 		.click();
+	await page
+		.getByRole("heading", { name: /Ready for work|Needs attention/ })
+		.waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
 		.getByRole("heading", { name: "Capabilities", exact: true })
@@ -456,7 +468,7 @@ try {
 	await page.getByRole("heading", { name: "Preferences" }).waitFor();
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
-	await page.getByRole("heading", { name: "Connections" }).waitFor();
+	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ hasText: "ChatGPT" });

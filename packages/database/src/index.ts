@@ -1262,16 +1262,45 @@ export class KestrelDatabase {
 			const messages = remove(
 				"DELETE FROM runtime_messages WHERE created_at < ?",
 			);
+			// Memory metadata and version history have deliberately restrictive
+			// foreign keys so a stray write cannot orphan encrypted context. Retention
+			// is the authorized parent deletion path, so remove those dependents in the
+			// same transaction before deleting the expired memories themselves.
+			this.db
+				.prepare(
+					"DELETE FROM memory_versions WHERE memory_id IN (SELECT id FROM memories WHERE updated_at < ?)",
+				)
+				.run(cutoff);
+			this.db
+				.prepare(
+					"DELETE FROM memory_metadata WHERE memory_id IN (SELECT id FROM memories WHERE updated_at < ?)",
+				)
+				.run(cutoff);
 			const memories = remove("DELETE FROM memories WHERE updated_at < ?");
-			const workspaceMutations = remove(
-				"DELETE FROM workspace_mutations WHERE created_at < ?",
-			);
+			// A mutation may finish just after its tool execution crosses the cutoff.
+			// Delete that dependent row with the expired execution instead of either
+			// violating the foreign key or retaining the parent past policy.
+			const workspaceMutations = this.db
+				.prepare(
+					`DELETE FROM workspace_mutations
+					 WHERE created_at < ?
+					    OR tool_execution_id IN (
+					      SELECT id FROM tool_executions WHERE started_at < ?
+					    )`,
+				)
+				.run(cutoff, cutoff).changes;
 			const toolExecutions = remove(
 				"DELETE FROM tool_executions WHERE started_at < ?",
 			);
-			const modelCalls = remove(
-				"DELETE FROM model_call_audits WHERE started_at < ?",
-			);
+			const modelCalls = this.db
+				.prepare(
+					`DELETE FROM model_call_audits
+					 WHERE started_at < ?
+					    OR run_id IN (
+					      SELECT id FROM agent_runs WHERE updated_at < ?
+					    )`,
+				)
+				.run(cutoff, cutoff).changes;
 			const runs = remove("DELETE FROM agent_runs WHERE updated_at < ?");
 			const activity = remove("DELETE FROM audit_events WHERE created_at < ?");
 			const browserActivity = remove(

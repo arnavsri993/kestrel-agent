@@ -4,6 +4,12 @@ import {
 	useRef,
 	useState,
 } from "react";
+import {
+	activeWindowControlIndex,
+	calculateWindowControlMotion,
+	type WindowControlBounds,
+	type WindowControlPoint,
+} from "./window-controls-motion";
 
 const controls = [
 	{
@@ -37,9 +43,6 @@ const glyphPaths: Record<WindowControlGlyph, string> = {
 	zoom:
 		"M2.35 7.65 7.65 2.35M4.15 2.35h3.5v3.5M5.85 7.65h-3.5v-3.5",
 };
-
-const WINDOW_CONTROL_REVEAL_RADIUS = 72;
-const WINDOW_CONTROL_ACTIVE_RADIUS = 34;
 
 function WindowControlGlyph({ glyph }: { glyph: WindowControlGlyph }) {
 	return (
@@ -76,6 +79,9 @@ export function WindowControls() {
 				button.style.setProperty("--window-control-lift", "0px");
 				button.style.setProperty("--window-control-scale", "1");
 				button.style.setProperty("--window-control-tilt", "0deg");
+				button.style.setProperty("--window-control-triangle-x", "0px");
+				button.style.setProperty("--window-control-triangle-y", "0px");
+				button.style.setProperty("--window-control-fill-shade", "0");
 				button.classList.remove("window-control-active");
 			});
 	}, []);
@@ -83,23 +89,26 @@ export function WindowControls() {
 	useEffect(() => {
 		if (!isMacOS()) return;
 		const handleFocus = () => setWindowActive(true);
-		const handleBlur = () => {
-			setWindowActive(false);
-			resetProximity();
-		};
+		let animationFrame = 0;
+		let geometryDirty = true;
+		let proximityActive = false;
+		let latestPointer: WindowControlPoint | null = null;
+		let measurements: Array<{
+			button: HTMLElement;
+			bounds: WindowControlBounds;
+		}> = [];
 
-		function updateProximity(event: PointerEvent) {
+		function measureControls() {
 			const node = controlsRef.current;
-			if (!node) return;
+			if (!node) return [];
 			const nodeBounds = node.getBoundingClientRect();
-			const buttons = Array.from(
+			return Array.from(
 				node.querySelectorAll<HTMLElement>(".window-control"),
-			);
-			const measurements = buttons.map((button) => {
+			).map((button) => {
 				// Use the untransformed layout box. Measuring the transformed button
 				// makes the pointer target move underneath the cursor as proximity
 				// scaling and lift are applied, which causes visible jitter.
-				const bounds = {
+				const bounds: WindowControlBounds = {
 					left: nodeBounds.left + button.offsetLeft,
 					top: nodeBounds.top + button.offsetTop,
 					width: button.offsetWidth,
@@ -107,80 +116,123 @@ export function WindowControls() {
 					right: nodeBounds.left + button.offsetLeft + button.offsetWidth,
 					bottom: nodeBounds.top + button.offsetTop + button.offsetHeight,
 				};
-				const dx = event.clientX - (bounds.left + bounds.width / 2);
-				const dy = event.clientY - (bounds.top + bounds.height / 2);
-				return {
-					button,
-					bounds,
-					dx,
-					distance: Math.hypot(dx, dy),
-				};
+				return { button, bounds };
 			});
-			let nearestIndex = -1;
-			let nearestDistance = Number.POSITIVE_INFINITY;
-			measurements.forEach(({ distance }, index) => {
-				if (distance < nearestDistance) {
-					nearestDistance = distance;
-					nearestIndex = index;
-				}
-			});
-			const activeIndex =
-				nearestDistance <= WINDOW_CONTROL_ACTIVE_RADIUS ? nearestIndex : -1;
+		}
 
-			measurements.forEach(({ button, bounds, distance, dx }, index) => {
-				const raw = Math.max(
-					0,
-					Math.min(1, 1 - distance / WINDOW_CONTROL_REVEAL_RADIUS),
-				);
-				const eased = raw * raw * (3 - 2 * raw);
-				const isInside =
-					event.clientX >= bounds.left &&
-					event.clientX <= bounds.right &&
-					event.clientY >= bounds.top &&
-					event.clientY <= bounds.bottom;
-				const tilt = isInside
-					? 0
-					: Math.max(-8, Math.min(8, (-dx / 28) * eased * 8));
+		function renderProximity() {
+			animationFrame = 0;
+			if (!latestPointer) return;
+			if (geometryDirty) {
+				measurements = measureControls();
+				geometryDirty = false;
+			}
+			const motions = measurements.map(({ bounds }) =>
+				calculateWindowControlMotion(latestPointer!, bounds),
+			);
+			if (!motions.some((motion) => motion.iconOpacity > 0)) {
+				if (proximityActive) resetProximity();
+				proximityActive = false;
+				return;
+			}
+			proximityActive = true;
+			const activeIndex = activeWindowControlIndex(motions);
+
+			measurements.forEach(({ button }, index) => {
+				const motion = motions[index]!;
 				button.classList.toggle(
 					"window-control-active",
 					index === activeIndex,
 				);
 				button.style.setProperty(
 					"--window-control-icon-opacity",
-					(eased * 0.86).toFixed(3),
+					motion.iconOpacity.toFixed(3),
 				);
 				button.style.setProperty(
 					"--window-control-icon-scale",
-					(1 + eased * 0.08).toFixed(3),
+					motion.iconScale.toFixed(3),
 				);
 				button.style.setProperty(
 					"--window-control-scale",
-					(1 + eased * 0.07).toFixed(3),
+					motion.controlScale.toFixed(3),
 				);
 				button.style.setProperty(
 					"--window-control-lift",
-					`${(-eased * 1.8).toFixed(2)}px`,
+					`${motion.lift.toFixed(2)}px`,
 				);
 				button.style.setProperty(
 					"--window-control-tilt",
-					`${tilt.toFixed(2)}deg`,
+					`${motion.tilt.toFixed(2)}deg`,
+				);
+				button.style.setProperty(
+					"--window-control-triangle-x",
+					`${motion.triangleX.toFixed(2)}px`,
+				);
+				button.style.setProperty(
+					"--window-control-triangle-y",
+					`${motion.triangleY.toFixed(2)}px`,
+				);
+				button.style.setProperty(
+					"--window-control-fill-shade",
+					motion.fillShade.toFixed(3),
 				);
 			});
 		}
 
+		function scheduleProximity() {
+			if (!animationFrame)
+				animationFrame = window.requestAnimationFrame(renderProximity);
+		}
+
+		function updateProximity(event: PointerEvent) {
+			latestPointer = { x: event.clientX, y: event.clientY };
+			scheduleProximity();
+		}
+
+		function invalidateGeometry() {
+			geometryDirty = true;
+			if (latestPointer) scheduleProximity();
+		}
+
+		function clearProximity() {
+			latestPointer = null;
+			if (animationFrame) window.cancelAnimationFrame(animationFrame);
+			animationFrame = 0;
+			proximityActive = false;
+			resetProximity();
+		}
+
+		const handleBlur = () => {
+			setWindowActive(false);
+			clearProximity();
+		};
+
 		function resetWhenPointerLeavesWindow(event: PointerEvent) {
-			if (event.relatedTarget === null) resetProximity();
+			if (event.relatedTarget === null) clearProximity();
+		}
+
+		const resizeObserver = new ResizeObserver(invalidateGeometry);
+		const node = controlsRef.current;
+		if (node) {
+			resizeObserver.observe(node);
+			node
+				.querySelectorAll<HTMLElement>(".window-control")
+				.forEach((button) => resizeObserver.observe(button));
 		}
 
 		window.addEventListener("pointermove", updateProximity, { passive: true });
 		window.addEventListener("pointerout", resetWhenPointerLeavesWindow);
-		window.addEventListener("pointercancel", resetProximity);
+		window.addEventListener("pointercancel", clearProximity);
+		window.addEventListener("resize", invalidateGeometry, { passive: true });
 		window.addEventListener("focus", handleFocus);
 		window.addEventListener("blur", handleBlur);
 		return () => {
+			if (animationFrame) window.cancelAnimationFrame(animationFrame);
+			resizeObserver.disconnect();
 			window.removeEventListener("pointermove", updateProximity);
 			window.removeEventListener("pointerout", resetWhenPointerLeavesWindow);
-			window.removeEventListener("pointercancel", resetProximity);
+			window.removeEventListener("pointercancel", clearProximity);
+			window.removeEventListener("resize", invalidateGeometry);
 			window.removeEventListener("focus", handleFocus);
 			window.removeEventListener("blur", handleBlur);
 		};
@@ -208,6 +260,11 @@ export function WindowControls() {
 						<svg viewBox="0 0 24 22" focusable="false">
 							<path
 								className="window-control-fill"
+								transform="translate(0 -0.8)"
+								d="M10.55 3.83c.62-1.09 2.28-1.09 2.9 0l7.72 13.55c.66 1.15-.18 2.57-1.51 2.57H4.34c-1.33 0-2.17-1.42-1.51-2.57l7.72-13.55Z"
+							/>
+							<path
+								className="window-control-shade"
 								transform="translate(0 -0.8)"
 								d="M10.55 3.83c.62-1.09 2.28-1.09 2.9 0l7.72 13.55c.66 1.15-.18 2.57-1.51 2.57H4.34c-1.33 0-2.17-1.42-1.51-2.57l7.72-13.55Z"
 							/>

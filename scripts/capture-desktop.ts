@@ -130,7 +130,11 @@ async function assertDistinctVisibleCopy(
 		);
 }
 
-async function openTool(page: Page, label: string) {
+async function openTool(
+	page: Page,
+	label: string,
+	options: { allowMatchingTitleAndHeading?: boolean } = {},
+) {
 	await page.keyboard.press("Meta+K");
 	await page
 		.getByRole("heading", { name: "Capabilities", exact: true })
@@ -150,10 +154,11 @@ async function openTool(page: Page, label: string) {
 		.waitFor({ timeout: 5_000 })
 		.catch(() => {});
 	await settle(page);
-	await assertDistinctVisibleCopy(page, `${label} surface`, [
-		".browser-tab.active [role='tab'] .browser-tab-title",
-		".browser-app-page h1",
-	]);
+	if (!options.allowMatchingTitleAndHeading)
+		await assertDistinctVisibleCopy(page, `${label} surface`, [
+			".browser-tab.active [role='tab'] .browser-tab-title",
+			".browser-app-page h1",
+		]);
 }
 
 const launchOutput: string[] = [];
@@ -223,7 +228,7 @@ try {
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
 	await page
-		.getByRole("heading", { name: "Connect a free account." })
+		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();
 	await capture(page, "setup-04-free-providers.png");
 
@@ -253,14 +258,14 @@ try {
 
 	await page.getByRole("button", { name: /Open Kestrel/ }).click();
 	await page.locator("#runtime-prompt").waitFor();
+	await capture(page, "workspace-new-agent-and-tab.png", 360);
 	await page
 		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
 		.waitFor();
-	await capture(page, "workspace-new-agent-and-tab.png", 360);
 
 	await page.keyboard.press("Meta+H");
 	await page
-		.getByRole("heading", { name: "Pages you visited", exact: true })
+		.getByRole("heading", { name: "History", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "History surface", [
 		".browser-library h1",
@@ -269,22 +274,43 @@ try {
 
 	await page.keyboard.press("Meta+J");
 	await page
-		.getByRole("heading", { name: "Files from the web", exact: true })
+		.getByRole("heading", { name: "Downloads", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "Downloads surface", [
 		".browser-library h1",
 	]);
 	await capture(page, "surface-downloads.png");
 
-	await page.getByRole("button", { name: "Back to Browser" }).click();
+	await page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "Browser", exact: true })
+		.click();
 	await page
 		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
 		.waitFor();
+	await page.locator(".kestrel-home-content").evaluate(async (element) => {
+		await Promise.all(
+			element
+				.getAnimations({ subtree: true })
+				.map((animation) => animation.finished.catch(() => undefined)),
+		);
+	});
 
-	await page.getByLabel("Task settings").click();
-	await page.getByText("Task settings", { exact: true }).waitFor();
+	const modelSelector = page.locator(".kestrel-home-model-selector");
+	await modelSelector.locator("summary").click();
+	await modelSelector
+		.getByRole("button", { name: "Open task settings", exact: true })
+		.click();
+	if ((await modelSelector.getAttribute("open")) !== null)
+		throw new Error("The model shortcut stayed open over task settings.");
+	const taskSettings = page.locator(
+		".agent-conversation-host .task-settings[open]",
+	);
+	await taskSettings.waitFor();
+	if (!(await taskSettings.locator("summary").evaluate((node) => node === document.activeElement)))
+		throw new Error("Open task settings did not focus the revealed disclosure.");
 	await capture(page, "workspace-task-settings.png", 120);
-	await page.getByLabel("Task settings").click();
+	await taskSettings.locator("summary").click();
 
 	const firstSession = page
 		.locator(".agent-sidebar-history-list > button")
@@ -315,9 +341,11 @@ try {
 		.waitFor();
 	await capture(page, "surface-approvals.png");
 
-	await openTool(page, "Life Context");
+	await openTool(page, "Life Context", {
+		allowMatchingTitleAndHeading: true,
+	});
 	await page
-		.getByRole("heading", { name: "Your context", exact: true })
+		.getByRole("heading", { name: "Life", exact: true })
 		.waitFor();
 	await capture(page, "surface-life-calendar.png");
 	await page.getByRole("button", { name: "Memory", exact: true }).click();
@@ -379,10 +407,22 @@ try {
 		["Advanced", "settings-advanced.png"],
 	] as const;
 	for (const [label, filename] of settingsSections) {
-		await page
-			.locator(".settings-nav")
-			.getByRole("button", { name: new RegExp(`^${label}`) })
-			.click();
+		if (label === "Browser") {
+			await page
+				.locator(".settings-scope-switcher")
+				.getByRole("tab", { name: /^Browser/ })
+				.click();
+		} else {
+			if (label === "General")
+				await page
+					.locator(".settings-scope-switcher")
+					.getByRole("tab", { name: /^Agent/ })
+					.click();
+			await page
+				.locator(".settings-nav")
+				.getByRole("button", { name: new RegExp(`^${label}`) })
+				.click();
+		}
 		await assertDistinctVisibleCopy(page, `${label} settings`, [
 			".settings-nav button[aria-current='page'] > span",
 			".settings-content .settings-panel-header h2",
@@ -391,7 +431,10 @@ try {
 		await capture(page, filename, 120);
 	}
 
-	await page.getByRole("button", { name: "Back to Browser" }).click();
+	await page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "Browser", exact: true })
+		.click();
 	await page
 		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
 		.waitFor();
@@ -402,9 +445,16 @@ try {
 
 	await page.keyboard.press("Meta+K");
 	await page.getByLabel("Search Kestrel").waitFor();
-	await capture(page, "compact-command-center.png", 160);
-	const commandBounds = await page
-		.locator(".command-center")
+	const compactCommandCenter = page.locator(".command-center");
+	await compactCommandCenter.evaluate(async (element) => {
+		await Promise.all(
+			element
+				.getAnimations({ subtree: true })
+				.map((animation) => animation.finished.catch(() => undefined)),
+		);
+	});
+	await capture(page, "compact-command-center.png", 20);
+	const commandBounds = await compactCommandCenter
 		.evaluate((element) => {
 			const bounds = element.getBoundingClientRect();
 			return {
@@ -426,7 +476,9 @@ try {
 	await capture(page, "compact-settings.png");
 	await assertNoPageOverflow(page, "Compact Settings");
 
-	const focusTrigger = page.getByRole("button", { name: "New chat" });
+	const focusTrigger = page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "New task" });
 	// Verify focus the way a keyboard user reaches this control. Programmatic
 	// focus intentionally does not always match :focus-visible in Chromium.
 	await focusTrigger.focus();
@@ -445,7 +497,7 @@ try {
 		};
 	});
 	if (
-		focusStyle.label !== "New chat" ||
+		focusStyle.label !== "New task" ||
 		focusStyle.outline === "none" ||
 		focusStyle.width === "0px"
 	)
@@ -454,7 +506,10 @@ try {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.reload();
 	await page.waitForLoadState("domcontentloaded");
-	await page.getByRole("button", { name: "New chat" }).waitFor();
+	await page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "New task" })
+		.waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
 		.locator(".command-groups button")
