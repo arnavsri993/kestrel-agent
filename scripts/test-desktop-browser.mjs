@@ -394,6 +394,13 @@ try {
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await page.locator(".kestrel-sidebar-brand").click();
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === "";
+		},
+		"Browser did not return to the New Tab page",
+	);
 	await page.locator("#new-tab-title").waitFor();
 	await page.reload();
 	await page.locator("#new-tab-title").waitFor();
@@ -1052,6 +1059,13 @@ try {
 	assert.equal(state.settings.newTabBackground, "mountains");
 
 	await page.locator(".kestrel-sidebar-brand").click();
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/one`;
+		},
+		"Browser did not return to Page one after leaving Settings",
+	);
 	await page.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	assert.equal(
 		await page
@@ -1059,6 +1073,14 @@ try {
 			.getAttribute("aria-orientation"),
 		"vertical",
 	);
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		const agent = document.querySelector(".agent-sidebar");
+		if (!viewport || !agent) return false;
+		const viewportBounds = viewport.getBoundingClientRect();
+		const agentBounds = agent.getBoundingClientRect();
+		return viewportBounds.width > 0 && viewportBounds.right <= agentBounds.x;
+	});
 	await assertBrowserChromeLayout({ vertical: true });
 	const tabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
 	await tabToolsTrigger.click();
