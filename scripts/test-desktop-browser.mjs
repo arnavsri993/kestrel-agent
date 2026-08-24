@@ -211,6 +211,13 @@ async function assertBrowserChromeLayout({ vertical = false } = {}) {
 			kestrel: bounds(".kestrel-sidebar"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
+			toolbarDragFill: bounds(".browser-toolbar-drag-fill"),
+			toolbarAppRegion: getComputedStyle(document.querySelector(".browser-toolbar")).getPropertyValue(
+				"-webkit-app-region",
+			),
+			toolbarDragFillAppRegion: getComputedStyle(
+				document.querySelector(".browser-toolbar-drag-fill"),
+			).getPropertyValue("-webkit-app-region"),
 		};
 	});
 	const tabs = vertical ? layout.verticalTabs : layout.horizontalTabs;
@@ -225,6 +232,13 @@ async function assertBrowserChromeLayout({ vertical = false } = {}) {
 		layout.bookmarks?.bottom ?? 0,
 	);
 	if (vertical) {
+		assert(layout.toolbarDragFill);
+		assert(
+			layout.toolbarDragFill.width >= 32,
+			"Vertical browser chrome must leave a trailing window-drag area",
+		);
+		assert.equal(layout.toolbarAppRegion, "drag");
+		assert.equal(layout.toolbarDragFillAppRegion, "drag");
 		assert(
 			tabs.x >= layout.kestrel.right,
 			"Vertical tabs must begin after the lower Kestrel navigation rail",
@@ -798,6 +812,11 @@ try {
 		},
 		"Back navigation did not become available",
 	);
+	assert.equal(
+		await page.getByRole("button", { name: "Forward" }).count(),
+		0,
+		"Forward should be hidden until forward navigation is available",
+	);
 	await page.getByRole("button", { name: "Back" }).click();
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
@@ -810,6 +829,7 @@ try {
 		},
 		"Forward navigation did not become available",
 	);
+	await page.getByRole("button", { name: "Forward" }).waitFor();
 	await page.getByRole("button", { name: "Forward" }).click();
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/two`,

@@ -1232,6 +1232,10 @@ body:has(.ai-browser-app),
 	border-bottom: 1px solid var(--line);
 }
 
+.browser-toolbar-drag-fill {
+	display: none;
+}
+
 .browser-navigation,
 .browser-toolbar-actions {
 	display: flex;
@@ -1241,6 +1245,33 @@ body:has(.ai-browser-app),
 .browser-toolbar-actions {
 	position: relative;
 	min-width: 0;
+}
+
+/* Vertical tabs move the tab strip out of the titlebar. Keep the remaining
+ * browser chrome a real titlebar instead: controls and the address field stay
+ * clickable, while the spaces around them and the trailing area can move the
+ * macOS window. The left inset clears the custom traffic lights. */
+.browser-workspace-vertical .browser-toolbar {
+	grid-template-columns: auto minmax(180px, 1fr) auto 48px;
+	gap: 10px;
+	padding: 6px 14px 6px 96px;
+	-webkit-app-region: drag;
+}
+.browser-workspace-vertical .browser-navigation,
+.browser-workspace-vertical .browser-toolbar-actions {
+	gap: 6px;
+}
+.browser-workspace-vertical .browser-address,
+.browser-workspace-vertical .browser-navigation button,
+.browser-workspace-vertical .browser-toolbar-actions button,
+.browser-workspace-vertical .browser-toolbar-popover {
+	-webkit-app-region: no-drag;
+}
+.browser-workspace-vertical .browser-toolbar-drag-fill {
+	display: block;
+	align-self: stretch;
+	min-width: 0;
+	-webkit-app-region: drag;
 }
 .browser-navigation button,
 .browser-toolbar-actions button {
