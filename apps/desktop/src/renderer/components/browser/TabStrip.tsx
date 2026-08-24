@@ -1,5 +1,6 @@
 import type {
 	UserBrowserOriginFavicon,
+	UserBrowserRecentlyClosedTab,
 	UserBrowserTab,
 } from "@kestrel/shared-types";
 import {
@@ -27,6 +28,17 @@ import { tabFaviconDataUrl } from "./tab-favicon";
 
 const DETACH_DRAG_THRESHOLD_PX = 36;
 const REORDER_DRAG_THRESHOLD_PX = 12;
+
+function relativeClosedTime(value: string): string {
+	const elapsed = Math.max(0, Date.now() - Date.parse(value));
+	if (!Number.isFinite(elapsed) || elapsed < 60_000) return "Just now";
+	const minutes = Math.floor(elapsed / 60_000);
+	if (minutes < 60) return `${minutes}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+	const days = Math.floor(hours / 24);
+	return `${days}d ago`;
+}
 
 function tabDropIndex(
 	pointer: number,
@@ -60,6 +72,9 @@ export function TabStrip({
 	onMoveTab,
 	onDetachTab,
 	onReopenClosedTab,
+	onOrganizeTabs,
+	onOpenWorkspaces,
+	recentlyClosedTabs = [],
 	orientation,
 	onToggleOrientation,
 }: {
@@ -78,7 +93,10 @@ export function TabStrip({
 	onCloseOthers?(tabId: string): void;
 	onMoveTab?(tabId: string, toIndex: number): void;
 	onDetachTab?(tabId: string): void;
-	onReopenClosedTab?(): void;
+	onReopenClosedTab?(index?: number): void;
+	onOrganizeTabs?(): void | Promise<void>;
+	onOpenWorkspaces?: (() => void) | undefined;
+	recentlyClosedTabs?: UserBrowserRecentlyClosedTab[];
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
 }) {
@@ -90,6 +108,8 @@ export function TabStrip({
 	);
 	const [tabToolsOpen, setTabToolsOpen] = useState(false);
 	const [tabSearch, setTabSearch] = useState("");
+	const [openTabsExpanded, setOpenTabsExpanded] = useState(false);
+	const [recentlyClosedExpanded, setRecentlyClosedExpanded] = useState(true);
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragIntent, setDragIntent] = useState<"none" | "reorder" | "detach">(
 		"none",
@@ -356,6 +376,27 @@ export function TabStrip({
 		}
 	}
 
+	function getRecentFaviconContent(tab: UserBrowserRecentlyClosedTab) {
+		try {
+			const host = new URL(tab.url).hostname.replace(/^www\./, "");
+			return <span className="browser-favicon-letter">{host.charAt(0).toUpperCase()}</span>;
+		} catch {
+			return <Icon name="history" />;
+		}
+	}
+
+	function tabHost(tab: UserBrowserTab | UserBrowserRecentlyClosedTab): string {
+		try {
+			return new URL(tab.url).hostname.replace(/^www\./, "");
+		} catch {
+			return "Kestrel";
+		}
+	}
+
+	const filteredTabs = tabs.filter((tab) =>
+		`${tab.title} ${tab.url}`.toLowerCase().includes(tabSearch.toLowerCase()),
+	);
+
 	const tabStyle = computeLockedTabStyle(lockedWidth, orientation);
 
 	return (
@@ -391,15 +432,56 @@ export function TabStrip({
 						role="menu"
 						aria-label="Tab tools"
 					>
-						<header>
-							<Icon name="tabActions" />
-							<span>
-								<strong>Tab tools</strong>
-								<small>Keep the strip tidy</small>
-							</span>
-						</header>
+						{onToggleOrientation && (
+							<button
+								type="button"
+								className="browser-tab-tools-action"
+								role="menuitem"
+								onClick={() => {
+									onToggleOrientation();
+									closeTabTools();
+								}}
+							>
+								<Icon name="verticalTabs" />
+								<span>
+									{orientation === "horizontal"
+										? "Turn On Vertical Tabs"
+										: "Turn Off Vertical Tabs"}
+								</span>
+							</button>
+						)}
+						{onOrganizeTabs && (
+							<button
+								type="button"
+								className="browser-tab-tools-action"
+								role="menuitem"
+								onClick={() => {
+									void Promise.resolve(onOrganizeTabs()).catch(() => undefined);
+									closeTabTools();
+								}}
+							>
+								<Icon name="tabActions" />
+								<span>Organize Tabs</span>
+							</button>
+						)}
+						{onOpenWorkspaces && (
+							<button
+								type="button"
+								className="browser-tab-tools-action"
+								role="menuitem"
+								onClick={() => {
+									onOpenWorkspaces();
+									closeTabTools();
+								}}
+							>
+								<Icon name="work" />
+								<span>Manage Workspaces</span>
+							</button>
+						)}
+						<div className="browser-tab-tools-divider" />
 						<button
 							type="button"
+							className="browser-tab-tools-action browser-tab-tools-secondary-action"
 							role="menuitemcheckbox"
 							aria-checked={compact}
 							onClick={() => setCompact((value) => !value)}
@@ -408,57 +490,59 @@ export function TabStrip({
 							<span>Compact tabs to favicons</span>
 							<Icon name={compact ? "check" : "close"} />
 						</button>
-						{onToggleOrientation && (
-							<button
-								type="button"
-								role="menuitemcheckbox"
-								aria-checked={orientation === "vertical"}
-								onClick={() => {
-									onToggleOrientation();
-									closeTabTools();
-								}}
-							>
-								<Icon name="verticalTabs" />
-								<span>Use vertical tabs</span>
-								<Icon name={orientation === "vertical" ? "check" : "close"} />
-							</button>
-						)}
 						{onReopenClosedTab && (
 							<button
 								type="button"
+								className="browser-tab-tools-action browser-tab-tools-secondary-action"
 								role="menuitem"
+								disabled={recentlyClosedTabs.length === 0}
 								onClick={() => {
 									onReopenClosedTab();
 									closeTabTools();
 								}}
 							>
 								<Icon name="history" />
-								<span>Reopen closed tab</span>
+								<span>Reopen most recent tab</span>
 							</button>
 						)}
 						<label className="browser-tab-tools-search">
 							<Icon name="search" />
-							<span className="sr-only">Search open tabs</span>
+							<span className="sr-only">Search Tabs</span>
 							<input
 								ref={tabSearchRef}
+								type="search"
 								value={tabSearch}
-								placeholder="Search open tabs"
-								onChange={(event) => setTabSearch(event.target.value)}
+								aria-label="Search Tabs"
+								placeholder="Search Tabs"
+								onChange={(event) => {
+									setTabSearch(event.target.value);
+									setOpenTabsExpanded(true);
+								}}
 							/>
 						</label>
-						{tabSearch && (
-							<div className="browser-tab-search-results">
-								{tabs
-									.filter((tab) =>
-										`${tab.title} ${tab.url}`
-											.toLowerCase()
-											.includes(tabSearch.toLowerCase()),
-									)
-										.map((tab) => (
+						<section className="browser-tab-tools-section">
+							<button
+								type="button"
+								role="menuitem"
+								aria-expanded={openTabsExpanded}
+								onClick={() => setOpenTabsExpanded((value) => !value)}
+							>
+								<Icon name="browser" />
+								<span>Open Tabs</span>
+								<Icon
+									name="chevron"
+									className={`browser-tab-tools-chevron ${openTabsExpanded ? "expanded" : ""}`}
+								/>
+							</button>
+							{openTabsExpanded && (
+								<div className="browser-tab-tools-list browser-tab-search-results">
+									{filteredTabs.length > 0 ? (
+										filteredTabs.map((tab) => (
 											<button
 												type="button"
 												role="menuitem"
 												key={tab.id}
+												aria-current={tab.id === activeTabId ? "page" : undefined}
 												onClick={() => {
 													onSelect(tab.id);
 													closeTabTools();
@@ -467,17 +551,62 @@ export function TabStrip({
 												<span className="browser-tab-search-favicon">
 													{getFaviconContent(tab)}
 												</span>
-												<span>{tab.title}</span>
+												<span>
+													<strong>{tab.title}</strong>
+													<small>{tabHost(tab)}</small>
+												</span>
 											</button>
-										))}
-								{tabs.every(
-									(tab) =>
-										!`${tab.title} ${tab.url}`
-											.toLowerCase()
-											.includes(tabSearch.toLowerCase()),
-									) && <small>No matching tabs</small>}
-							</div>
-						)}
+										))
+									) : (
+										<small>No matching tabs</small>
+									)}
+								</div>
+							)}
+						</section>
+						<section className="browser-tab-tools-section">
+							<button
+								type="button"
+								role="menuitem"
+								aria-expanded={recentlyClosedExpanded}
+								onClick={() => setRecentlyClosedExpanded((value) => !value)}
+							>
+								<Icon name="history" />
+								<span>Recently Closed</span>
+								<Icon
+									name="chevron"
+									className={`browser-tab-tools-chevron ${recentlyClosedExpanded ? "expanded" : ""}`}
+								/>
+							</button>
+							{recentlyClosedExpanded && (
+								<div className="browser-tab-tools-list browser-tab-search-results">
+									{recentlyClosedTabs.length > 0 ? (
+										recentlyClosedTabs.slice(0, 8).map((tab, index) => (
+											<button
+												type="button"
+												role="menuitem"
+												key={`${tab.url}-${tab.closedAt}-${index}`}
+												onClick={() => {
+													onReopenClosedTab?.(index);
+													closeTabTools();
+												}}
+											>
+												<span className="browser-tab-search-favicon">
+													{getRecentFaviconContent(tab)}
+												</span>
+												<span>
+													<strong>{tab.title}</strong>
+													<small>
+														{tabHost(tab)} · {relativeClosedTime(tab.closedAt)}
+													</small>
+												</span>
+											</button>
+										))
+									) : (
+										<small>No recently closed tabs</small>
+									)}
+								</div>
+							)}
+						</section>
 					</div>
 				)}
 			</div>

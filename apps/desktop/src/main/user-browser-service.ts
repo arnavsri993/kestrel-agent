@@ -490,11 +490,14 @@ export class UserBrowserService {
 
 	async closeTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
-		if (tab.url && !tab.error) {
-			this.recentlyClosedTabs.unshift({ url: tab.url, title: tab.title });
-			if (this.recentlyClosedTabs.length > 32) {
-				this.recentlyClosedTabs.pop();
-			}
+		const url = sanitizeBrowserUrl(tab.url);
+		if (url && safePageUrl(url) && !tab.error) {
+			this.state.recentlyClosedTabs.unshift({
+				url,
+				title: redactUntrustedBrowserText(tab.title, 500) || hostnameTitle(url),
+				closedAt: this.now().toISOString(),
+			});
+			this.state.recentlyClosedTabs = this.state.recentlyClosedTabs.slice(0, 32);
 		}
 		const index = this.state.tabs.findIndex((item) => item.id === tabId);
 		this.closeView(tabId);
@@ -514,9 +517,16 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
-	async reopenClosedTab(): Promise<UserBrowserState> {
-		const recent = this.recentlyClosedTabs.shift();
+	async reopenClosedTab(index = 0): Promise<UserBrowserState> {
+		if (
+			!Number.isInteger(index) ||
+			index < 0 ||
+			index >= this.state.recentlyClosedTabs.length
+		)
+			return this.getState();
+		const recent = this.state.recentlyClosedTabs.splice(index, 1)[0];
 		if (!recent) return this.getState();
+		this.commit();
 		return this.createTab(recent.url, true);
 	}
 
@@ -721,6 +731,7 @@ export class UserBrowserService {
 	clearHistory(): UserBrowserState {
 		this.state.history = [];
 		this.state.originFavicons = [];
+		this.state.recentlyClosedTabs = [];
 		this.state.settings = {
 			...this.state.settings,
 			newTabGreetingActivity: emptyNewTabGreetingActivity(),
@@ -768,6 +779,7 @@ export class UserBrowserService {
 		if (options.history) {
 			this.state.history = [];
 			this.state.originFavicons = [];
+			this.state.recentlyClosedTabs = [];
 			this.state.settings = {
 				...this.state.settings,
 				newTabGreetingActivity: emptyNewTabGreetingActivity(),

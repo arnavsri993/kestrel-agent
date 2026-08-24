@@ -9456,6 +9456,7 @@ export function App() {
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
 						onOpenSettings={() => openSettings("browser")}
+						onOpenWorkspaces={() => openSettings("connections")}
 						onOpenHistory={openBrowserHistory}
 						onOpenDownloads={openBrowserDownloads}
 						onOpenBookmarks={openBrowserBookmarks}

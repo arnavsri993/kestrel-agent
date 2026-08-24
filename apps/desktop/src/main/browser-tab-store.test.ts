@@ -287,6 +287,32 @@ describe("browser tab persistence", () => {
 		expect(store.load().originFavicons).toEqual(saved.originFavicons);
 	});
 
+	it("persists recently closed tabs without retaining sensitive URL data", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+		state.recentlyClosedTabs = [
+			{
+				title: "Open https://example.com/private?token=secret",
+				url: "https://example.com/callback?q=browser&code=do-not-store",
+				closedAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
+
+		store.save(state);
+
+		expect(store.load().recentlyClosedTabs).toEqual([
+			{
+				title: "Open https://example.com/private",
+				url: "https://example.com/callback?q=browser",
+				closedAt: "2026-08-11T12:00:00.000Z",
+			},
+		]);
+		const persisted = readFileSync(path, "utf8");
+		expect(persisted).not.toContain("do-not-store");
+		expect(persisted).not.toContain("token=secret");
+	});
+
 	it("restores kestrel app pages without treating them as sleeping web views", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);

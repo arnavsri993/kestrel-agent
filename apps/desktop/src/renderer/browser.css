@@ -770,42 +770,24 @@ body:has(.ai-browser-app),
 	z-index: 50;
 	display: grid;
 	gap: 3px;
-	width: min(300px, calc(100vw - 24px));
+	width: min(318px, calc(100vw - 24px));
+	max-height: min(640px, calc(100vh - 68px));
+	overflow-y: auto;
 	padding: 8px;
 	border: 1px solid var(--line-strong);
 	border-radius: 13px;
 	background: var(--overlay);
 	box-shadow: 0 16px 40px rgb(0 0 0 / 0.35);
+	overscroll-behavior: contain;
 }
-.browser-tab-tools-menu > header {
-	display: flex;
+
+.browser-tab-tools-action,
+.browser-tab-tools-section > button {
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr);
 	align-items: center;
 	gap: 9px;
-	padding: 5px 7px 8px;
-	border-bottom: 1px solid var(--line);
-}
-.browser-tab-tools-menu > header > svg {
-	width: 16px;
-	height: 16px;
-	color: var(--solid);
-}
-.browser-tab-tools-menu > header > span {
-	display: grid;
-	gap: 2px;
-}
-.browser-tab-tools-menu > header strong {
-	font-size: 12px;
-	font-weight: 650;
-}
-.browser-tab-tools-menu > header small {
-	color: var(--faint);
-	font-size: 11px;
-}
-.browser-tab-tools-menu > button {
-	display: grid;
-	grid-template-columns: 18px minmax(0, 1fr) 18px;
-	align-items: center;
-	gap: 9px;
+	width: 100%;
 	min-height: 35px;
 	padding: 0 7px;
 	border: 0;
@@ -816,20 +798,52 @@ body:has(.ai-browser-app),
 	text-align: left;
 	cursor: pointer;
 }
-.browser-tab-tools-menu > button:hover,
-.browser-tab-tools-menu > button:focus-visible {
+.browser-tab-tools-secondary-action {
+	grid-template-columns: 18px minmax(0, 1fr) 18px;
+}
+.browser-tab-tools-action:hover,
+.browser-tab-tools-action:focus-visible,
+.browser-tab-tools-section > button:hover,
+.browser-tab-tools-section > button:focus-visible {
 	background: var(--selected);
 	color: var(--ink);
 }
-.browser-tab-tools-menu > button > svg {
+.browser-tab-tools-action:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+.browser-tab-tools-action:disabled:hover,
+.browser-tab-tools-action:disabled:focus-visible {
+	background: transparent;
+	color: var(--ink-secondary);
+}
+.browser-tab-tools-action > svg,
+.browser-tab-tools-section > button > svg {
 	width: 15px;
 	height: 15px;
 	color: var(--muted);
 }
-.browser-tab-tools-menu > button > svg:last-child {
+.browser-tab-tools-secondary-action > svg:last-child,
+.browser-tab-tools-section > button > svg:last-child {
 	justify-self: end;
 	width: 13px;
 	height: 13px;
+}
+.browser-tab-tools-divider {
+	height: 1px;
+	margin: 4px 2px;
+	background: var(--line);
+}
+.browser-tab-tools-section {
+	display: grid;
+	gap: 2px;
+}
+.browser-tab-tools-chevron {
+	transform: rotate(90deg);
+	transition: transform var(--motion-feedback) var(--ease-kestrel);
+}
+.browser-tab-tools-chevron.expanded {
+	transform: rotate(270deg);
 }
 .browser-tab-tools-search {
 	display: grid;
@@ -837,7 +851,7 @@ body:has(.ai-browser-app),
 	align-items: center;
 	gap: 7px;
 	min-height: 34px;
-	margin-top: 5px;
+	margin: 4px 2px 5px;
 	padding: 0 8px;
 	border: 1px solid var(--line-strong);
 	border-radius: 8px;
@@ -861,12 +875,16 @@ body:has(.ai-browser-app),
 	color: var(--ink);
 	font-size: 11.5px;
 }
+.browser-tab-tools-search input::placeholder {
+	color: var(--faint);
+	opacity: 1;
+}
 .browser-tab-search-results {
 	display: grid;
 	gap: 2px;
-	max-height: 160px;
+	max-height: 300px;
 	overflow-y: auto;
-	padding-top: 4px;
+	padding: 1px 2px 3px 4px;
 }
 .browser-tab-search-results button {
 	display: grid;
@@ -890,9 +908,26 @@ body:has(.ai-browser-app),
 	color: var(--ink);
 }
 .browser-tab-search-results button > span:last-child {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+.browser-tab-search-results button strong,
+.browser-tab-search-results button small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.browser-tab-search-results button strong {
+	font-size: 11px;
+	font-weight: 550;
+}
+.browser-tab-search-results button small {
+	color: var(--faint);
+	font-size: 10px;
 }
 .browser-tab-search-favicon,
 .browser-tab-search-favicon img {

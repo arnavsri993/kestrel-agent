@@ -156,6 +156,14 @@ export function sanitizeBrowserUrl(value: string): string {
 	}
 }
 
+function hostnameForUrl(value: string): string {
+	try {
+		return new URL(value).hostname.replace(/^www\./, "") || "New Tab";
+	} catch {
+		return "New Tab";
+	}
+}
+
 export function normalizeBrowserAddress(
 	value: string,
 	searchEngine: UserBrowserSettings["searchEngine"] = "google",
@@ -249,6 +257,7 @@ export function freshBrowserState(
 		originFavicons: [],
 		downloads: [],
 		bookmarks: [],
+		recentlyClosedTabs: [],
 		sitePermissions: [],
 		settings: { ...DEFAULT_BROWSER_SETTINGS },
 	};
@@ -288,6 +297,7 @@ export class BrowserTabStore {
 					history: state.history,
 					originFavicons: state.originFavicons,
 					bookmarks: state.bookmarks,
+					recentlyClosedTabs: state.recentlyClosedTabs,
 					sitePermissions: state.sitePermissions,
 					downloads: state.downloads.map((download) => ({
 						...download,
@@ -326,6 +336,19 @@ export class BrowserTabStore {
 			history: state.history.flatMap((entry) => {
 				const url = sanitizeBrowserUrl(entry.url);
 				return url ? [{ ...entry, url }] : [];
+			}),
+			recentlyClosedTabs: state.recentlyClosedTabs.flatMap((tab) => {
+				const url = sanitizeBrowserUrl(tab.url);
+				if (!url) return [];
+				return [
+					{
+						...tab,
+						url,
+						title:
+							redactUntrustedBrowserText(tab.title, 500) ||
+							hostnameForUrl(url),
+					},
+				];
 			}),
 			originFavicons: state.originFavicons.flatMap((item) => {
 				try {
