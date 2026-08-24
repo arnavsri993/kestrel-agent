@@ -6,11 +6,9 @@ import "./browser.css";
 import "./components/ui/ui.css";
 import "./agent-panel-layout.css";
 import "./components/browser/model-selector.css";
-import "./components/window-controls.css";
 import "./motion.css";
 import "./components/browser/kestrel-sidebar.css";
 import { App } from "./App";
-import { WindowControls } from "./components/WindowControls";
 
 const isPetOverlay =
 	new URLSearchParams(location.search).get("petOverlay") === "1";
@@ -23,7 +21,5 @@ if (isPetOverlay) {
 }
 
 ReactDOM.createRoot(root).render(
-	<React.StrictMode>
-		{isPetOverlay ? null : <><WindowControls /><App /></>}
-	</React.StrictMode>,
+	<React.StrictMode>{isPetOverlay ? null : <App />}</React.StrictMode>,
 );
