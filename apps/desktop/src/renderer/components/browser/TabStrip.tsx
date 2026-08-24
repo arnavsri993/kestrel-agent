@@ -624,13 +624,14 @@ export function TabStrip({
 							const active = tab.id === activeTabId;
 							const isSleeping = tab.discarded && Boolean(tab.url);
 							const isDragging = draggingTabId === tab.id;
+							const isDragActive = isDragging && dragIntent !== "none";
 							return (
 								<motion.div
-									className={`browser-tab no-drag ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""} ${isDragging ? "is-dragging" : ""}`}
+									className={`browser-tab no-drag ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""} ${isDragActive ? "is-dragging" : ""}`}
 									key={tab.id}
 									layout="position"
 									initial={reducedMotion ? false : { opacity: 0, y: 5, scale: 0.98 }}
-									animate={{ opacity: 1, y: 0, scale: 1 }}
+									animate={{ opacity: isDragActive ? 0.72 : 1, y: 0, scale: 1 }}
 									exit={
 										reducedMotion
 											? { opacity: 1 }
