@@ -2,8 +2,11 @@
  * references while keeping Kestrel's quiet, local-first surface language. */
 .ai-browser-app {
 	--kestrel-sidebar-width: 248px;
-	display: grid;
-	grid-template-columns: var(--kestrel-sidebar-width) minmax(0, 1fr);
+	--browser-tab-rail-width: 208px;
+	--browser-chrome-height: 88px;
+	--agent-panel-top: var(--browser-chrome-height);
+	position: relative;
+	display: block;
 	width: 100vw;
 	height: 100vh;
 	min-width: 0;
@@ -15,48 +18,126 @@
 	--kestrel-sidebar-width: 60px;
 }
 
-/* browser.css still carries the pre-navigation two-column shell. Repeat the
- * global navigation grid at the stronger collapsed-state specificity so
- * hiding Pragmatic cannot turn the navigation rail into the whole window. */
-.ai-browser-app.agent-sidebar-collapsed {
-	grid-template-columns: var(--kestrel-sidebar-width) minmax(0, 1fr);
+/* Bookmarks are part of the browser chrome too. Keep the lower workspace
+ * rails below them instead of letting either rail cover the bookmark row. */
+.ai-browser-app:has(.browser-workspace-bookmarks) {
+	--browser-chrome-height: 120px;
+}
+
+/* Vertical tabs use a single 48px toolbar row before their lower tab rail. */
+.ai-browser-app:has(.browser-workspace-vertical) {
+	--browser-chrome-height: 48px;
+}
+
+.ai-browser-app:has(.browser-workspace-vertical.browser-workspace-bookmarks) {
+	--browser-chrome-height: 80px;
 }
 
 .browser-main-plane {
-	grid-column: 2;
-	width: auto;
+	position: relative;
+	width: 100%;
 	min-width: 0;
-}
-
-.ai-browser-app .browser-tab-row-horizontal {
-	padding-left: 8px;
-}
-
-.ai-browser-app .browser-tab-row-vertical {
-	padding-top: 8px;
+	height: 100vh;
 }
 
 .kestrel-sidebar {
-	position: relative;
+	position: absolute;
+	top: var(--browser-chrome-height);
+	left: 0;
+	bottom: 0;
 	z-index: 8;
-	grid-column: 1;
-	grid-row: 1;
 	display: flex;
 	flex-direction: column;
+	width: var(--kestrel-sidebar-width);
 	min-width: 0;
-	height: 100vh;
+	height: auto;
 	overflow: hidden;
-	padding: 0 10px 12px;
+	padding: 8px 10px 12px;
+	border-top: 1px solid var(--line);
 	border-right: 1px solid var(--line);
 	background: var(--sidebar);
 	color: var(--ink);
 }
 
 .kestrel-sidebar-drag {
-	height: 36px;
+	display: none;
 	flex: 0 0 auto;
-	margin-inline: -10px;
-	-webkit-app-region: drag;
+}
+
+/* Browser chrome owns the full-width drag region. The viewport begins after
+ * the navigation rail while tabs, toolbar, and bookmarks remain edge to edge. */
+.browser-workspace:not(.browser-workspace-vertical) .browser-viewport {
+	width: calc(
+		100% - var(--kestrel-sidebar-width) - var(--agent-panel-width)
+	);
+	margin-left: var(--kestrel-sidebar-width);
+}
+
+/* Keep vertical tabs in the lower workspace as well. The toolbar and optional
+ * bookmarks remain full-width chrome, while Kestrel and the vertical tab rail
+ * sit beside the page content below them. */
+.browser-workspace-vertical {
+	display: block;
+}
+
+.browser-workspace-vertical .browser-toolbar {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	width: auto;
+	height: 48px;
+}
+
+.browser-workspace-vertical .browser-bookmarks-bar {
+	position: absolute;
+	top: 48px;
+	left: 0;
+	right: 0;
+	width: auto;
+}
+
+.browser-workspace-vertical .browser-tab-row-vertical {
+	position: absolute;
+	top: var(--browser-chrome-height);
+	left: var(--kestrel-sidebar-width);
+	right: auto;
+	bottom: 0;
+	width: var(--browser-tab-rail-width);
+	height: auto;
+	padding: 8px 6px;
+}
+
+.browser-workspace-vertical .browser-viewport {
+	position: absolute;
+	top: var(--browser-chrome-height);
+	left: calc(var(--kestrel-sidebar-width) + var(--browser-tab-rail-width));
+	right: var(--agent-panel-width);
+	bottom: 0;
+	width: auto;
+	height: auto;
+	margin: 0;
+}
+
+.browser-workspace-vertical .browser-loading-line {
+	top: var(--browser-chrome-height);
+	left: calc(var(--kestrel-sidebar-width) + var(--browser-tab-rail-width));
+	width: 35%;
+}
+
+.browser-workspace-vertical .browser-inline-error {
+	top: calc(var(--browser-chrome-height) + 6px);
+	left: calc(
+		var(--kestrel-sidebar-width) + var(--browser-tab-rail-width) + 50%
+	);
+}
+
+.browser-workspace-vertical .browser-find-bar {
+	position: absolute;
+	top: var(--browser-chrome-height);
+	left: calc(var(--kestrel-sidebar-width) + var(--browser-tab-rail-width));
+	right: var(--agent-panel-width);
+	z-index: 9;
 }
 
 .kestrel-sidebar-header {
@@ -416,6 +497,7 @@
 	.ai-browser-app,
 	.ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
 		--kestrel-sidebar-width: 56px;
+		--browser-tab-rail-width: 180px;
 	}
 	.kestrel-sidebar {
 		padding-inline: 8px;
@@ -482,7 +564,20 @@
 /* The full Agent page keeps the global navigation at the left and gives the
  * durable conversation/workspace the remaining surface. */
 .ai-browser-app.agent-full-page {
+	display: grid;
 	grid-template-columns: var(--kestrel-sidebar-width) minmax(0, 1fr);
+}
+
+.ai-browser-app.agent-full-page .kestrel-sidebar {
+	position: relative;
+	top: auto;
+	left: auto;
+	bottom: auto;
+	grid-column: 1;
+	grid-row: 1;
+	width: auto;
+	height: 100vh;
+	border-top: 0;
 }
 
 .ai-browser-app.agent-full-page .browser-main-plane {
