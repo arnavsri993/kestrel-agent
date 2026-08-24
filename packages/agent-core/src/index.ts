@@ -20,6 +20,7 @@ import {
 	AgentStateSchema,
 	PRODUCT_IDENTITY,
 	WorkspaceSnapshotSchema,
+	validateNewTabGreeting,
 } from "@kestrel/shared-types";
 import {
 	installManagedPolicy,
@@ -103,6 +104,9 @@ import {
 	type ModelContentPart,
 	type ModelProvider,
 	ProviderPool,
+	ProviderPoolError,
+	type ModelResult,
+	type ProviderAttempt,
 	textContent,
 } from "./providers";
 import {
@@ -122,6 +126,10 @@ import {
 	type WebAccessOptions,
 } from "./web-tools";
 import type { BrowserMcpCallSession } from "./browser-mcp-session";
+import {
+	NEW_TAB_GREETING_SYSTEM_PROMPT,
+	newTabGreetingUserPrompt,
+} from "./new-tab-greeting";
 
 function persistedCompactionCount(value: unknown): number {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
@@ -760,6 +768,163 @@ export class AgentCore {
 		};
 	}
 
+	private providerAllowed(providerId: string, poolId?: string): boolean {
+		try {
+			this.managedPolicy.assertProviderAllowed(poolId ?? providerId);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	private estimateEphemeralGreetingCost(
+		attempts: ProviderAttempt[],
+		result?: ModelResult,
+	): number {
+		let actualCostUsd = 0;
+		for (const attempt of attempts) {
+			const winning =
+				attempt.status === "completed" &&
+				attempt.providerId === result?.providerId;
+			const estimatedCostUsd = winning
+				? this.usageGovernor.estimateCost(
+						attempt.providerId,
+						result.model,
+						result.usage,
+					)
+				: 0;
+			actualCostUsd += estimatedCostUsd;
+		}
+		return actualCostUsd;
+	}
+
+	private finishNewTabGreetingRoute(
+		automatic: ReturnType<AgentCore["automaticRoute"]>,
+		status: "completed" | "failed",
+		result?: ModelResult,
+		actualCostUsd = 0,
+	): void {
+		const winning = result
+			? this.modelRegistry
+					.list()
+					.find(
+						(profile) =>
+							profile.endpointId === result.providerId &&
+							profile.model === result.model,
+					)
+			: undefined;
+		this.modelRegistry.recordOutcome({
+			modelId: winning?.id ?? automatic.decision.selectedModelId,
+			capabilities: automatic.requirements.capabilities,
+			succeeded: status === "completed",
+			validationPassed: status === "completed",
+			...(result ? { refused: detectModelRefusal(result).refused } : {}),
+			actualCostUsd,
+			observedAt: this.now(),
+		});
+		if (automatic.decision.traceId)
+			this.modelRouter.completeTrace(automatic.decision.traceId, {
+				status,
+				actualCostUsd,
+				escalated: winning?.id !== automatic.decision.selectedModelId,
+			});
+	}
+
+	private async generateNewTabGreeting(
+		request: Extract<CoreRequest, { type: "new-tab-greeting" }>,
+	): Promise<CoreResponse> {
+		const context = {
+			currentTimeOfDay: request.currentTimeOfDay,
+			usualVisitTime: request.usualVisitTime,
+			visitFrequency: request.visitFrequency,
+			todayVisit: request.todayVisit,
+			...(request.firstName ? { firstName: request.firstName } : {}),
+		};
+		const prompt = newTabGreetingUserPrompt(context);
+		const automatic = this.automaticRoute(
+			"new-tab-greeting",
+			prompt,
+			["auto"],
+		);
+		let lease: { release(): void } | undefined;
+		try {
+			lease = this.usageGovernor.acquire();
+			const poolResult = await this.providerPool.complete(
+				{
+					model: automatic.execution.model,
+					reasoningEffort: automatic.route.reasoningEffort,
+					serviceTier: automatic.route.serviceTier,
+					messages: [
+						{
+							role: "system",
+							content: textContent(NEW_TAB_GREETING_SYSTEM_PROMPT),
+						},
+						{ role: "user", content: textContent(prompt) },
+					],
+					maxOutputTokens: Math.min(
+						automatic.maximumOutputTokens,
+						64,
+					),
+					temperature: automatic.temperature,
+					metadata: { surface: "new-tab-greeting" },
+				},
+				{
+					providerIds: automatic.execution.providerIds,
+					providerModels: automatic.execution.providerModels,
+					automaticRouting: false,
+					canAttempt: (_providerId, _model, attemptIndex) =>
+						this.usageGovernor.canAttempt(attemptIndex),
+					providerAllowed: (providerId, poolId) =>
+						this.providerAllowed(providerId, poolId),
+					signal: AbortSignal.timeout(8_000),
+				},
+			);
+			const actualCostUsd = this.estimateEphemeralGreetingCost(
+				poolResult.attempts,
+				poolResult.result,
+			);
+			this.usageGovernor.recordEphemeralCost(actualCostUsd);
+			const greeting = validateNewTabGreeting(poolResult.result.text);
+			if (!greeting) {
+				this.finishNewTabGreetingRoute(
+					automatic,
+					"failed",
+					poolResult.result,
+					actualCostUsd,
+				);
+				throw new Error("The generated New Tab greeting failed its safety checks.");
+			}
+			this.finishNewTabGreetingRoute(
+				automatic,
+				"completed",
+				poolResult.result,
+				actualCostUsd,
+			);
+			return {
+				ok: true,
+				newTabGreeting: greeting,
+				routing: automatic.route,
+			};
+		} catch (error) {
+			if (error instanceof ProviderPoolError) {
+				const actualCostUsd = this.estimateEphemeralGreetingCost(
+					error.attempts,
+				);
+				this.finishNewTabGreetingRoute(
+					automatic,
+					"failed",
+					undefined,
+					actualCostUsd,
+				);
+			} else if (!(error instanceof Error) || !error.message.includes("safety checks")) {
+				this.finishNewTabGreetingRoute(automatic, "failed");
+			}
+			throw error;
+		} finally {
+			lease?.release();
+		}
+	}
+
 	private recordAutomaticOutcome(
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		result: AgentLoopResult,
@@ -1248,6 +1413,8 @@ export class AgentCore {
 						routing: this.currentRouting,
 						snapshot: this.snapshot(),
 					};
+				case "new-tab-greeting":
+					return await this.generateNewTabGreeting(request);
 				case "set-paused":
 					return { ok: true, snapshot: this.setPaused(request.paused) };
 				case "set-personality":

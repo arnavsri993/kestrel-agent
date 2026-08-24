@@ -30,6 +30,7 @@ function storePath(): string {
 it("defaults new browser settings to Google", () => {
 	expect(freshBrowserState().settings.searchEngine).toBe("google");
 	expect(freshBrowserState().settings.showBookmarksBar).toBe(true);
+	expect(freshBrowserState().settings.newTabGreetingActivity.days).toEqual([]);
 	expect(UserBrowserSettingsSchema.parse({}).searchEngine).toBe("google");
 	expect(UserBrowserSettingsSchema.parse({}).showBookmarksBar).toBe(true);
 });
@@ -52,6 +53,36 @@ it("accepts bundled backgrounds and bounded local image data", () => {
 			newTabBackgroundCustomDataUrl: "file:///tmp/private.png",
 		}).success,
 	).toBe(false);
+});
+
+it("persists only the bounded New Tab presence aggregate", () => {
+	const path = storePath();
+	const store = new BrowserTabStore(path);
+	const state = freshBrowserState();
+	state.settings.newTabGreetingActivity = {
+		version: 1,
+		days: [
+			{
+				day: "2026-08-23",
+				visits: 3,
+				buckets: {
+					"late-night": 0,
+					"early-morning": 3,
+					morning: 0,
+					afternoon: 0,
+					evening: 0,
+				},
+			},
+		],
+	};
+	store.save(state);
+
+	expect(store.load().settings.newTabGreetingActivity).toEqual(
+		state.settings.newTabGreetingActivity,
+	);
+	expect(readFileSync(path, "utf8")).not.toMatch(
+		/example\.com|Project notes|https?:\/\/|@/i,
+	);
 });
 
 it("redacts embedded URLs from untrusted browser text", () => {

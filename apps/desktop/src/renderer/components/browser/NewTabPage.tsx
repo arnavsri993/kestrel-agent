@@ -1,9 +1,10 @@
 import {
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type FormEvent,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+	type FormEvent,
 } from "react";
 import type {
 	RuntimeSession,
@@ -17,7 +18,9 @@ import type {
 import { Icon } from "../Icon";
 import {
 	frequentBrowserSites,
-	newTabGreeting,
+	newTabGreetingContext,
+	newTabGreetingFallback,
+	validateNewTabGreeting,
 	originFaviconMap,
 	suggestedAgentActions,
 } from "./new-tab";
@@ -41,6 +44,7 @@ function homeInputLooksLikeBrowse(value: string): boolean {
 }
 
 export function NewTabPage({
+	tabId,
 	history,
 	bookmarks = [],
 	downloads = [],
@@ -51,8 +55,10 @@ export function NewTabPage({
 	agentName,
 	greetingName,
 	sessions = [],
+	greetingActivity,
 	widgetSettings,
 	onUpdateWidgetSettings,
+	onRecordGreetingVisit,
 	onNavigate,
 	onNewAgent,
 	onOpenHistory,
@@ -60,6 +66,7 @@ export function NewTabPage({
 	onOpenBookmarks,
 	onOpenSession,
 }: {
+	tabId: string;
 	history: UserBrowserHistoryEntry[];
 	bookmarks?: UserBrowserBookmark[] | undefined;
 	downloads?: UserBrowserDownload[] | undefined;
@@ -72,8 +79,10 @@ export function NewTabPage({
 	agentName: string;
 	greetingName?: string | undefined;
 	sessions?: RuntimeSession[] | undefined;
+	greetingActivity: UserBrowserSettings["newTabGreetingActivity"];
 	widgetSettings: UserBrowserSettings["newTabWidgets"];
 	onUpdateWidgetSettings(next: UserBrowserSettings["newTabWidgets"]): void;
+	onRecordGreetingVisit(now: Date): void;
 	onNavigate(input: string): void;
 	onNewAgent(prompt?: string): void;
 	onOpenHistory(): void;
@@ -81,21 +90,64 @@ export function NewTabPage({
 	onOpenBookmarks(): void;
 	onOpenSession?: ((sessionId: string) => void) | undefined;
 }) {
-  const [input, setInput] = useState("");
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [greetingVariant] = useState(() => Math.floor(Math.random() * 3));
-  const greeting = useMemo(
-    () => newTabGreeting({ name: greetingName, variant: greetingVariant }),
-    [greetingName, greetingVariant],
-  );
-  const faviconByOrigin = useMemo(
-    () => originFaviconMap(originFavicons, tabs),
-    [originFavicons, tabs],
-  );
-  const frequent = useMemo(
-    () => frequentBrowserSites(history, 7, faviconByOrigin),
-    [faviconByOrigin, history],
-  );
+	const [input, setInput] = useState("");
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const greetingSessionRef = useRef<{
+		tabId: string;
+		now: Date;
+		activity: UserBrowserSettings["newTabGreetingActivity"];
+	} | null>(null);
+	if (greetingSessionRef.current?.tabId !== tabId) {
+		greetingSessionRef.current = {
+			tabId,
+			now: new Date(),
+			activity: greetingActivity,
+		};
+	}
+	const greetingSession = greetingSessionRef.current;
+	const greetingNow = greetingSession!.now;
+	const greetingActivityAtOpen = greetingSession!.activity;
+	const greetingContext = useMemo(
+		() =>
+			newTabGreetingContext(
+				greetingActivityAtOpen,
+				greetingName,
+				greetingNow,
+			),
+		[greetingActivityAtOpen, greetingName, greetingNow],
+	);
+	const [greeting, setGreeting] = useState(() =>
+		newTabGreetingFallback(greetingName),
+	);
+	const recordedGreetingTabRef = useRef<string | undefined>(undefined);
+	useEffect(() => {
+		if (recordedGreetingTabRef.current === tabId) return;
+		recordedGreetingTabRef.current = tabId;
+		onRecordGreetingVisit(greetingNow);
+	}, [greetingNow, onRecordGreetingVisit, tabId]);
+	useEffect(() => {
+		let active = true;
+		setGreeting(newTabGreetingFallback(greetingName));
+		void window.kestrel
+			.request({ type: "new-tab-greeting", ...greetingContext })
+			.then((response) => {
+				if (!active || !response.ok || !("newTabGreeting" in response)) return;
+				const generated = validateNewTabGreeting(response.newTabGreeting);
+				if (generated) setGreeting(generated);
+			})
+			.catch(() => undefined);
+		return () => {
+			active = false;
+		};
+	}, [greetingContext, greetingName]);
+	const faviconByOrigin = useMemo(
+		() => originFaviconMap(originFavicons, tabs),
+		[originFavicons, tabs],
+	);
+	const frequent = useMemo(
+		() => frequentBrowserSites(history, 7, faviconByOrigin),
+		[faviconByOrigin, history],
+	);
 	const suggestedActions = useMemo(
 		() => suggestedAgentActions(history, 5),
 		[history],

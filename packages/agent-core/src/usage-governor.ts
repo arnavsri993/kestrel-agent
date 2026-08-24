@@ -18,6 +18,7 @@ export const DEFAULT_USAGE_POLICY: UsagePolicy = UsagePolicySchema.parse({
 
 export class UsageGovernor {
 	private readonly key = "runtime.usage-policy";
+	private readonly ephemeralUsageKey = "runtime.ephemeral-model-spending";
 	private activeCalls = 0;
 
 	constructor(
@@ -106,6 +107,49 @@ export class UsageGovernor {
 		);
 	}
 
+	/**
+	 * Account for small model calls that intentionally have no durable agent
+	 * run or transcript, such as the privacy-bounded New Tab welcome.
+	 */
+	recordEphemeralCost(costUsd: number): void {
+		if (!Number.isFinite(costUsd) || costUsd <= 0) return;
+		const now = this.now();
+		const dayStart = new Date(
+			Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+		).toISOString();
+		const monthStart = new Date(
+			Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+		).toISOString();
+		const stored = this.database.getPrivateState<unknown>(
+			this.ephemeralUsageKey,
+		) as
+			| {
+					dayStart?: unknown;
+					monthStart?: unknown;
+					dailyUsd?: unknown;
+					monthlyUsd?: unknown;
+				}
+			| undefined;
+		const dailyUsd =
+			stored?.dayStart === dayStart &&
+			typeof stored.dailyUsd === "number" &&
+			Number.isFinite(stored.dailyUsd)
+				? stored.dailyUsd
+				: 0;
+		const monthlyUsd =
+			stored?.monthStart === monthStart &&
+			typeof stored.monthlyUsd === "number" &&
+			Number.isFinite(stored.monthlyUsd)
+				? stored.monthlyUsd
+				: 0;
+		this.database.setPrivateState(this.ephemeralUsageKey, {
+			dayStart,
+			monthStart,
+			dailyUsd: dailyUsd + costUsd,
+			monthlyUsd: monthlyUsd + costUsd,
+		});
+	}
+
 	spending(): { dailyUsd: number; monthlyUsd: number; activeCalls: number } {
 		const now = this.now();
 		const dayStartIso = new Date(
@@ -115,11 +159,37 @@ export class UsageGovernor {
 			Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
 		).toISOString();
 
-		const { dailyUsd, monthlyUsd } = this.database.calculateSpending(
+		const persisted = this.database.calculateSpending(
 			dayStartIso,
 			monthStartIso,
 		);
+		const stored = this.database.getPrivateState<unknown>(
+			this.ephemeralUsageKey,
+		) as
+			| {
+					dayStart?: unknown;
+					monthStart?: unknown;
+					dailyUsd?: unknown;
+					monthlyUsd?: unknown;
+				}
+			| undefined;
+		const ephemeralDaily =
+			stored?.dayStart === dayStartIso &&
+			typeof stored.dailyUsd === "number" &&
+			Number.isFinite(stored.dailyUsd)
+				? stored.dailyUsd
+				: 0;
+		const ephemeralMonthly =
+			stored?.monthStart === monthStartIso &&
+			typeof stored.monthlyUsd === "number" &&
+			Number.isFinite(stored.monthlyUsd)
+				? stored.monthlyUsd
+				: 0;
 
-		return { dailyUsd, monthlyUsd, activeCalls: this.activeCalls };
+		return {
+			dailyUsd: persisted.dailyUsd + ephemeralDaily,
+			monthlyUsd: persisted.monthlyUsd + ephemeralMonthly,
+			activeCalls: this.activeCalls,
+		};
 	}
 }

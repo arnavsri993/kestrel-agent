@@ -22,6 +22,7 @@ import {
 	type InstalledExtension,
 	type FilePreview,
 	type SelectedAttachment,
+	emptyNewTabGreetingActivity,
 } from "@kestrel/shared-types";
 import {
 	BrowserWindow,
@@ -712,6 +713,10 @@ export class UserBrowserService {
 	clearHistory(): UserBrowserState {
 		this.state.history = [];
 		this.state.originFavicons = [];
+		this.state.settings = {
+			...this.state.settings,
+			newTabGreetingActivity: emptyNewTabGreetingActivity(),
+		};
 		for (const record of this.views.values())
 			record.view.webContents.navigationHistory.clear();
 		this.commit();
@@ -755,6 +760,10 @@ export class UserBrowserService {
 		if (options.history) {
 			this.state.history = [];
 			this.state.originFavicons = [];
+			this.state.settings = {
+				...this.state.settings,
+				newTabGreetingActivity: emptyNewTabGreetingActivity(),
+			};
 		}
 		if (options.cache && typeof this.partition.clearCache === "function")
 			await this.partition.clearCache();

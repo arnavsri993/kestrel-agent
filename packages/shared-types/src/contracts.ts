@@ -4,6 +4,10 @@ import {
 	CommunicationCodeMatchSchema,
 	CommunicationSourceStatusSchema,
 } from "./communication";
+import {
+	NewTabGreetingActivitySchema,
+	NewTabGreetingContextSchema,
+} from "./new-tab-greeting";
 
 export const SensitivitySchema = z.enum([
 	"public",
@@ -1689,6 +1693,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("troubleshoot"),
 		message: z.string().min(1).max(4000),
 	}),
+	z.object({
+		type: z.literal("new-tab-greeting"),
+		...NewTabGreetingContextSchema.shape,
+	}),
 	z.object({ type: z.literal("set-paused"), paused: z.boolean() }),
 	z.object({
 		type: z.literal("set-personality"),
@@ -2254,6 +2262,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		ok: z.literal(true),
 		snapshot: WorkspaceSnapshotSchema.optional(),
 		answer: z.string().optional(),
+		newTabGreeting: z.string().max(120).optional(),
 		routing: ModelRoutingDecisionSchema.optional(),
 		delegationRouting: DelegatedWorkerRouteSchema.optional(),
 		sessions: z.array(RuntimeSessionSchema).optional(),
@@ -2633,6 +2642,7 @@ export const UserBrowserSettingsSchema = z.object({
 			/^data:image\/(?:avif|gif|jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/,
 		)
 		.optional(),
+	newTabGreetingActivity: NewTabGreetingActivitySchema,
 	newTabWidgets: NewTabWidgetSettingsSchema,
 	restoreSession: z.boolean().default(true),
 	historyRetentionDays: z

@@ -3,10 +3,14 @@ import {
 	browserSiteLabel,
 	frequentBrowserSites,
 	NEW_TAB_BACKGROUND_OPTIONS,
-	newTabGreeting,
+	newTabGreetingActivityProfile,
+	newTabGreetingContext,
+	newTabGreetingFallback,
 	originFaviconMap,
-  siteInitial,
-  suggestedAgentActions,
+	recordNewTabGreetingVisit,
+	siteInitial,
+	suggestedAgentActions,
+	validateNewTabGreeting,
 } from "./new-tab";
 
 const tabId = "tab-00000000-0000-4000-8000-000000000000";
@@ -166,47 +170,72 @@ describe("new tab shortcuts", () => {
 });
 
 describe("new tab contextual greetings", () => {
-  function localTime(hour: number): Date {
-    return new Date(2026, 7, 23, hour, 0, 0, 0);
+  function localTime(hour: number, day = 23): Date {
+    return new Date(2026, 7, day, hour, 0, 0, 0);
   }
 
-  it("uses time-of-day rules and only the user's first name", () => {
+  it("builds only coarse time and presence labels", () => {
+    let activity = undefined;
+    for (const day of [18, 19, 20, 21])
+      activity = recordNewTabGreetingVisit(activity, localTime(7, day));
+
+    expect(newTabGreetingActivityProfile(activity, localTime(2))).toEqual({
+      currentTimeOfDay: "late-night",
+      usualVisitTime: "early-morning",
+      visitFrequency: "regular",
+      todayVisit: "first-today",
+    });
     expect(
-      newTabGreeting({
-        name: "Arnav Srivastava",
-        now: localTime(2),
-        variant: 0,
-      }),
-    ).toBe("Up this late again, Arnav?");
-    expect(
-      newTabGreeting({
-        name: "Arnav Srivastava",
-        now: localTime(7),
-        variant: 0,
-      }),
-    ).toBe("Early start, Arnav?");
-    expect(
-      newTabGreeting({
-        name: "Arnav Srivastava",
-        now: localTime(19),
-        variant: 0,
-      }),
-    ).toBe("Good evening, Arnav.");
+      newTabGreetingContext(activity, "Arnav Srivastava", localTime(7)),
+    ).toEqual({
+      firstName: "Arnav",
+      currentTimeOfDay: "early-morning",
+      usualVisitTime: "early-morning",
+      visitFrequency: "regular",
+      todayVisit: "first-today",
+    });
+    expect(JSON.stringify(activity)).not.toMatch(
+      /example\.com|Project notes|@|https?:/i,
+    );
   });
 
-  it("fails closed for unsafe names and changes the line without user data", () => {
+	it("retains a bounded daily aggregate and recognizes a return today", () => {
+		let activity = recordNewTabGreetingVisit(undefined, localTime(22, 1));
+		for (let index = 2; index <= 40; index += 1)
+			activity = recordNewTabGreetingVisit(activity, localTime(22, index));
+		activity = recordNewTabGreetingVisit(activity, localTime(22, 40));
+
+    expect(activity.days.length).toBeLessThanOrEqual(31);
     expect(
-      newTabGreeting({
-        name: "Arnav <private@example.com>",
-        now: localTime(22),
-        variant: 0,
-      }),
-    ).toBe("Up this late again?");
-    expect(
-      newTabGreeting({
-        now: localTime(22),
-        variant: 1,
-      }),
-    ).toBe("Night owl mode?");
-  });
+      newTabGreetingActivityProfile(activity, localTime(22, 40)).todayVisit,
+    ).toBe("returning-today");
+		expect(newTabGreetingFallback("Arnav Srivastava")).toBe("Hello, Arnav.");
+		expect(newTabGreetingFallback("Arnav <private@example.com>")).toBe("Hello.");
+	});
+
+	it("uses visit frequency without retaining visit details", () => {
+		let activity = recordNewTabGreetingVisit(undefined, localTime(7));
+		for (let index = 0; index < 8; index += 1)
+			activity = recordNewTabGreetingVisit(activity, localTime(7));
+
+		expect(newTabGreetingActivityProfile(activity, localTime(7)).visitFrequency).toBe(
+			"frequent",
+		);
+	});
+
+	it("accepts one vague generated sentence and rejects data-bearing output", () => {
+    expect(validateNewTabGreeting("Up this late again, Arnav?")).toBe(
+      "Up this late again, Arnav?",
+    );
+    expect(validateNewTabGreeting("Good morning, Arnav!\nHere we go.")).toBe(
+      undefined,
+    );
+		expect(validateNewTabGreeting("I remember your project from yesterday.")).toBe(
+			undefined,
+		);
+		expect(validateNewTabGreeting("Welcome back twice today.")).toBe(undefined);
+		expect(validateNewTabGreeting('"Good morning, Arnav."')).toBe(undefined);
+		expect(validateNewTabGreeting("Sorry, I can't do that.")).toBe(undefined);
+		expect(validateNewTabGreeting("Good morning, Arnav! 👋")).toBe(undefined);
+	});
 });
