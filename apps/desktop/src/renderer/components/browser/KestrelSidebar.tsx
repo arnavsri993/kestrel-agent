@@ -153,13 +153,6 @@ export function KestrelSidebar({
 					<kbd>⌘N</kbd>
 				</button>
 				<SidebarNavItem
-					icon="browser"
-					label="Browser"
-					destination="browser"
-					active={activeDestination === "browser"}
-					onClick={onOpenBrowser}
-				/>
-				<SidebarNavItem
 					icon="agent"
 					label="Agent"
 					destination="agent"
