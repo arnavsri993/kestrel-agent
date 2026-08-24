@@ -7,6 +7,8 @@ import type {
 	RuntimeSession,
 	UserBrowserBookmark,
 	UserBrowserDownload,
+	UserBrowserHistoryEntry,
+	UserBrowserTab,
 } from "@kestrel/shared-types";
 import { motion, useReducedMotion, type MotionStyle } from "motion/react";
 import {
@@ -42,12 +44,18 @@ import "./new-tab-widgets.css";
 
 type WidgetContext = {
 	frequent: FrequentBrowserSite[];
+	history: UserBrowserHistoryEntry[];
 	bookmarks: UserBrowserBookmark[];
 	downloads: UserBrowserDownload[];
+	tabs: Pick<
+		UserBrowserTab,
+		"id" | "title" | "url" | "faviconDataUrl" | "pinned"
+	>[];
 	sessions: RuntimeSession[];
 	suggestedActions: SuggestedAgentAction[];
 	agentName: string;
 	onNavigate(input: string): void;
+	onOpenTab(tabId: string): void;
 	onNewAgent(prompt?: string): void;
 	onOpenSession?: ((sessionId: string) => void) | undefined;
 	onOpenHistory(): void;
@@ -76,17 +84,40 @@ function widgetText(value: string, maxLength = 46): string {
 	return `${normalized.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
 }
 
-function SiteGlyph({ site }: { site: FrequentBrowserSite }) {
+function hostnameForUrl(value: string): string {
+	try {
+		return new URL(value).hostname || value;
+	} catch {
+		return value;
+	}
+}
+
+function FaviconGlyph({
+	faviconDataUrl,
+	hostname,
+}: {
+	faviconDataUrl?: string | undefined;
+	hostname: string;
+}) {
 	const [broken, setBroken] = useState(false);
-	const showFavicon = Boolean(site.faviconDataUrl) && !broken;
+	const showFavicon = Boolean(faviconDataUrl) && !broken;
 	return (
 		<span className="kestrel-widget-site-glyph" aria-hidden="true">
 			{showFavicon ? (
-				<img src={site.faviconDataUrl} alt="" onError={() => setBroken(true)} />
+				<img src={faviconDataUrl} alt="" onError={() => setBroken(true)} />
 			) : (
-				(site.hostname[0] ?? "?").toUpperCase()
+				(hostname[0] ?? "?").toUpperCase()
 			)}
 		</span>
+	);
+}
+
+function SiteGlyph({ site }: { site: FrequentBrowserSite }) {
+	return (
+		<FaviconGlyph
+			faviconDataUrl={site.faviconDataUrl}
+			hostname={site.hostname}
+		/>
 	);
 }
 
@@ -327,6 +358,102 @@ function QuickActionsWidget({
 	);
 }
 
+function OpenTabsWidget({
+	tabs,
+	size,
+	onOpenTab,
+	pinnedOnly = false,
+}: Pick<WidgetContext, "tabs" | "onOpenTab"> & {
+	size: NewTabWidgetSize;
+	pinnedOnly?: boolean;
+}) {
+	const items = tabs
+		.filter((tab) => Boolean(tab.url) && (!pinnedOnly || tab.pinned))
+		.slice(0, visibleItemCount(size));
+	if (items.length === 0) {
+		return (
+			<EmptyWidgetState icon={pinnedOnly ? "pin" : "browser"}>
+				{pinnedOnly
+					? "Pin a tab to keep it ready here."
+					: "Tabs you open will be ready to pick up here."}
+			</EmptyWidgetState>
+		);
+	}
+	return (
+		<ul className="kestrel-widget-list">
+			{items.map((tab) => (
+				<li key={tab.id}>
+					<button
+						type="button"
+						onClick={() => onOpenTab(tab.id)}
+						title={tab.url}
+					>
+						<FaviconGlyph
+							faviconDataUrl={tab.faviconDataUrl}
+							hostname={hostnameForUrl(tab.url)}
+						/>
+						<span>
+							<strong>
+								{widgetText(tab.title || hostnameForUrl(tab.url), 38)}
+							</strong>
+							<small>{hostnameForUrl(tab.url)}</small>
+						</span>
+						<Icon name="forward" />
+					</button>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+function RecentPagesWidget({
+	history,
+	size,
+	onNavigate,
+}: Pick<WidgetContext, "history" | "onNavigate"> & {
+	size: NewTabWidgetSize;
+}) {
+	const seen = new Set<string>();
+	const items = history
+		.slice()
+		.sort((left, right) => right.visitedAt.localeCompare(left.visitedAt))
+		.filter((entry) => {
+			if (seen.has(entry.url)) return false;
+			seen.add(entry.url);
+			return true;
+		})
+		.slice(0, visibleItemCount(size));
+	if (items.length === 0) {
+		return (
+			<EmptyWidgetState icon="history">
+				Pages you visit will appear here for a quick return.
+			</EmptyWidgetState>
+		);
+	}
+	return (
+		<ul className="kestrel-widget-list">
+			{items.map((entry) => (
+				<li key={entry.id}>
+					<button
+						type="button"
+						onClick={() => onNavigate(entry.url)}
+						title={entry.url}
+					>
+						<FaviconGlyph hostname={hostnameForUrl(entry.url)} />
+						<span>
+							<strong>{widgetText(entry.title, 38)}</strong>
+							<small>
+								{hostnameForUrl(entry.url)} · {agentSessionRecency(entry.visitedAt)}
+							</small>
+						</span>
+						<Icon name="forward" />
+					</button>
+				</li>
+			))}
+		</ul>
+	);
+}
+
 function WidgetBody({
 	definition,
 	context,
@@ -345,6 +472,12 @@ function WidgetBody({
 			return <RecentWorkWidget {...context} />;
 		case "quick-actions":
 			return <QuickActionsWidget {...context} />;
+		case "open-tabs":
+			return <OpenTabsWidget {...context} />;
+		case "pinned-tabs":
+			return <OpenTabsWidget {...context} pinnedOnly />;
+		case "recent-pages":
+			return <RecentPagesWidget {...context} />;
 	}
 }
 
@@ -742,11 +875,8 @@ export function NewTabWidgets({
 		>
 			<header className="kestrel-widget-canvas-header">
 				<div>
-					<span className="kestrel-widget-canvas-kicker">Make it yours</span>
-					<h2 id="new-tab-widgets-title">Your widgets</h2>
-					<p>
-						A quiet place for the links and work you return to most.
-					</p>
+					<span className="kestrel-widget-canvas-kicker">Home</span>
+					<h2 id="new-tab-widgets-title">At a glance</h2>
 				</div>
 				<div className="kestrel-widget-canvas-actions">
 					{editing && (

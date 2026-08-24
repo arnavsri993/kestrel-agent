@@ -29,6 +29,14 @@ export const WIDGET_SIZE_DESCRIPTIONS: Record<NewTabWidgetSize, string> = {
 	large: "More room to explore",
 };
 
+const LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS: readonly NewTabWidgetId[] = [
+	"frequent-tabs",
+	"bookmarks",
+	"downloads",
+	"recent-work",
+	"quick-actions",
+];
+
 export interface NewTabWidgetDefinition {
 	id: NewTabWidgetId;
 	title: string;
@@ -92,6 +100,33 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 		defaultSize: "medium",
 		priority: 50,
 	},
+	"open-tabs": {
+		id: "open-tabs",
+		title: "Open tabs",
+		description: "Jump back into tabs already open in Kestrel",
+		icon: "browser",
+		supportedSizes: ["small", "medium", "large"],
+		defaultSize: "medium",
+		priority: 60,
+	},
+	"pinned-tabs": {
+		id: "pinned-tabs",
+		title: "Pinned tabs",
+		description: "Keep your always-ready tabs close at hand",
+		icon: "pin",
+		supportedSizes: ["small", "medium", "large"],
+		defaultSize: "small",
+		priority: 70,
+	},
+	"recent-pages": {
+		id: "recent-pages",
+		title: "Recent pages",
+		description: "Pick up where your local browsing history left off",
+		icon: "readiness",
+		supportedSizes: ["small", "medium", "large"],
+		defaultSize: "medium",
+		priority: 80,
+	},
 };
 
 export function layoutClassForWidth(width: number): NewTabWidgetLayoutClass {
@@ -110,9 +145,9 @@ export function columnsForLayoutClass(
 		case "standard":
 			return 2;
 		case "wide":
-			return 4;
+			return 3;
 		case "ultrawide":
-			return 6;
+			return 4;
 	}
 }
 
@@ -121,7 +156,7 @@ export function columnSpanForSize(
 	layoutClass: NewTabWidgetLayoutClass,
 ): number {
 	if (layoutClass === "compact") return 1;
-	if (size === "small") return 1;
+	if (size !== "large") return 1;
 	return Math.min(2, columnsForLayoutClass(layoutClass));
 }
 
@@ -175,6 +210,27 @@ function normalizeItems(
 	return result;
 }
 
+function isLegacyDefaultSettings(settings: NewTabWidgetSettings): boolean {
+	const savedLayouts = Object.values(settings.layouts).filter(
+		(layout): layout is NewTabWidgetLayout => Boolean(layout),
+	);
+	const untouchedLegacyLayouts = savedLayouts.every(
+		(layout) =>
+			!layout.customized &&
+			layout.items.length === LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+			new Set(layout.items.map((item) => item.id)).size ===
+				LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+			layout.items.every((item) =>
+				LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS.includes(item.id),
+			),
+	);
+	return (
+		settings.enabled.length === LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS.length &&
+		LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS.every((id) => settings.enabled.includes(id)) &&
+		untouchedLegacyLayouts
+	);
+}
+
 function sourceLayoutFor(
 	settings: NewTabWidgetSettings,
 	excluded: NewTabWidgetLayoutClass,
@@ -220,7 +276,9 @@ export function layoutItemsForClass(
 export function normalizedWidgetSettings(
 	settings: NewTabWidgetSettings,
 ): NewTabWidgetSettings {
-	const enabled = normalizeEnabled(settings.enabled);
+	const enabled = normalizeEnabled(
+		isLegacyDefaultSettings(settings) ? DEFAULT_NEW_TAB_WIDGET_IDS : settings.enabled,
+	);
 	const layouts = Object.fromEntries(
 		NEW_TAB_WIDGET_LAYOUT_CLASSES.flatMap((layoutClass) => {
 			const saved = settings.layouts[layoutClass];

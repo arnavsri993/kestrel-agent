@@ -1,5 +1,28 @@
 # Kestrel design system
 
+## New Tab widget shelf — August 2026
+
+- Thesis: New Tab should offer a calm starting surface, not a dashboard. The
+  composer stays dominant; a small curated set of local widgets gives the
+  person useful context without making every available source visible at once.
+- Default density: Frequent tabs, Recent work, and Quick actions are the
+  recommended first view. Bookmarks, Downloads, Open tabs, Pinned tabs, and
+  Recent pages remain available through Customize and are all backed by local
+  browser or Kestrel data—no fabricated calendar, weather, or task metrics.
+- Layout: measured content width uses one, two, three, or four columns. Small
+  and medium widgets occupy one column; large widgets span two where space
+  allows. Cards are matte and borderless at rest, with descriptions and
+  reorder/resize controls disclosed only in Customize mode.
+- Interaction: every widget is a real destination or local empty state. Open
+  and pinned tabs select an existing tab, history-based widgets navigate the
+  current tab, and the catalog is scroll-bounded so adding choices does not
+  create page-level horizontal overflow.
+- Avoid list: no default widget wall, decorative metrics, remote integrations
+  without a source contract, or extra card chrome competing with the composer.
+- Why this is not generic: the catalog follows Kestrel's actual browser and
+  agent surfaces, while the first view intentionally shows only the three
+  things that help a person start or resume work.
+
 ## Desktop stability and interaction refinement — August 2026
 
 This pass is a `motion-refinement` and product-wide quality audit, not a new

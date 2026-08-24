@@ -1,4 +1,8 @@
 import type { NewTabWidgetSettings } from "@kestrel/shared-types";
+import {
+	DEFAULT_NEW_TAB_WIDGET_IDS,
+	NEW_TAB_WIDGET_IDS,
+} from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
 	addWidget,
@@ -6,6 +10,8 @@ import {
 	layoutClassForWidth,
 	layoutItemsForClass,
 	moveWidget,
+	NEW_TAB_WIDGET_DEFINITIONS,
+	normalizedWidgetSettings,
 	removeWidget,
 	reorderWidget,
 	resizeWidget,
@@ -14,13 +20,7 @@ import {
 
 const baseSettings: NewTabWidgetSettings = {
 	version: 1,
-	enabled: [
-		"frequent-tabs",
-		"bookmarks",
-		"downloads",
-		"recent-work",
-		"quick-actions",
-	],
+	enabled: [...NEW_TAB_WIDGET_IDS],
 	layouts: {},
 };
 
@@ -32,8 +32,21 @@ describe("New Tab widget layout model", () => {
 		expect(layoutClassForWidth(1_440)).toBe("ultrawide");
 		expect(columnsForLayoutClass("compact")).toBe(1);
 		expect(columnsForLayoutClass("standard")).toBe(2);
-		expect(columnsForLayoutClass("wide")).toBe(4);
-		expect(columnsForLayoutClass("ultrawide")).toBe(6);
+		expect(columnsForLayoutClass("wide")).toBe(3);
+		expect(columnsForLayoutClass("ultrawide")).toBe(4);
+	});
+
+	it("keeps the first view curated while exposing more local widget sources", () => {
+		expect(DEFAULT_NEW_TAB_WIDGET_IDS).toEqual([
+			"frequent-tabs",
+			"recent-work",
+			"quick-actions",
+		]);
+		expect(NEW_TAB_WIDGET_DEFINITIONS["open-tabs"]?.defaultSize).toBe("medium");
+		expect(NEW_TAB_WIDGET_DEFINITIONS["pinned-tabs"]?.icon).toBe("pin");
+		expect(NEW_TAB_WIDGET_DEFINITIONS["recent-pages"]?.description).toContain(
+			"local browsing history",
+		);
 	});
 
 	it("derives a new class from a saved semantic order and preserves enabled widgets", () => {
@@ -53,7 +66,39 @@ describe("New Tab widget layout model", () => {
 			{ id: "bookmarks", size: "medium" },
 			{ id: "downloads", size: "small" },
 			{ id: "quick-actions", size: "medium" },
+			{ id: "open-tabs", size: "medium" },
+			{ id: "pinned-tabs", size: "small" },
+			{ id: "recent-pages", size: "medium" },
 		]);
+	});
+
+	it("migrates the untouched five-widget default to the calmer first view", () => {
+		const legacySettings: NewTabWidgetSettings = {
+			version: 1,
+			enabled: [
+				"frequent-tabs",
+				"bookmarks",
+				"downloads",
+				"recent-work",
+				"quick-actions",
+			],
+			layouts: {},
+		};
+
+		expect(normalizedWidgetSettings(legacySettings).enabled).toEqual(
+			DEFAULT_NEW_TAB_WIDGET_IDS,
+		);
+		expect(
+			normalizedWidgetSettings({
+				...legacySettings,
+				layouts: {
+					standard: {
+						customized: false,
+						items: legacySettings.enabled.map((id) => ({ id, size: "medium" })),
+					},
+				},
+			}).enabled,
+		).toEqual(DEFAULT_NEW_TAB_WIDGET_IDS);
 	});
 
 	it("keeps reorder and size changes discrete and supported", () => {
