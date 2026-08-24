@@ -335,8 +335,8 @@ function calculatorOverlayBounds(
         width: Math.max(0, content.width - 32),
         height: Math.max(0, content.height - 104),
       };
-  const width = Math.min(372, Math.max(320, page.width - 24));
-  const height = Math.min(600, Math.max(520, page.height - 24));
+  const width = Math.min(620, Math.max(500, page.width - 24));
+  const height = Math.min(720, Math.max(600, page.height - 24));
   return {
     x: Math.round(
       Math.max(page.x + 12, page.x + page.width - width - 16),
@@ -382,7 +382,11 @@ function toggleCalculatorOverlay(
     show: false,
     frame: false,
     transparent: true,
-    resizable: false,
+    resizable: true,
+    minWidth: 440,
+    minHeight: 520,
+    maxWidth: 900,
+    maxHeight: 1_000,
     skipTaskbar: true,
     hasShadow: true,
     backgroundColor: "#00000000",
