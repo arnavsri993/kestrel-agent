@@ -144,7 +144,6 @@ export function BrowserSettings({
   const handleSaveCustomSearch = async () => {
     if (!settings) return;
     await browser.updateSettings({
-      ...settings,
       searchEngine: "custom",
       customSearchName: customName.trim(),
       customSearchUrl: customUrl.trim(),
@@ -157,7 +156,6 @@ export function BrowserSettings({
     if (!settings) return;
     setBackgroundError("");
     await browser.updateSettings({
-      ...settings,
       newTabBackground: background,
     });
   };
@@ -187,7 +185,6 @@ export function BrowserSettings({
     try {
       const dataUrl = await readBackgroundFile(file);
       await browser.updateSettings({
-        ...settings,
         newTabBackground: "custom",
         newTabBackgroundCustomDataUrl: dataUrl,
       });
@@ -206,7 +203,6 @@ export function BrowserSettings({
     if (!settings) return;
     setBackgroundError("");
     await browser.updateSettings({
-      ...settings,
       newTabBackground:
         settings.newTabBackground === "custom"
           ? "graphite"
@@ -223,7 +219,6 @@ export function BrowserSettings({
     const existing = settings.sleepingTabExcludedDomains ?? [];
     if (!existing.includes(cleanDomain)) {
       await browser.updateSettings({
-        ...settings,
         sleepingTabExcludedDomains: [...existing, cleanDomain],
       });
     }
@@ -234,7 +229,6 @@ export function BrowserSettings({
     if (!settings) return;
     const existing = settings.sleepingTabExcludedDomains ?? [];
     await browser.updateSettings({
-      ...settings,
       sleepingTabExcludedDomains: existing.filter((d) => d !== domain),
     });
   };
@@ -495,7 +489,6 @@ export function BrowserSettings({
             value={settings.searchEngine}
             onChange={(event) =>
               void browser.updateSettings({
-                ...settings,
                 searchEngine: event.target.value as typeof settings.searchEngine,
               })
             }
@@ -564,7 +557,6 @@ export function BrowserSettings({
             aria-checked={settings.sleepingTabsEnabled ?? true}
             onClick={() =>
               void browser.updateSettings({
-                ...settings,
                 sleepingTabsEnabled: !(settings.sleepingTabsEnabled ?? true),
               })
             }
@@ -584,7 +576,6 @@ export function BrowserSettings({
                 value={settings.sleepingTabTimeoutMinutes ?? 30}
                 onChange={(event) =>
                   void browser.updateSettings({
-                    ...settings,
                     sleepingTabTimeoutMinutes: Number(
                       event.target.value,
                     ) as typeof settings.sleepingTabTimeoutMinutes,
@@ -611,7 +602,6 @@ export function BrowserSettings({
                 aria-checked={settings.memorySaverMode ?? true}
                 onClick={() =>
                   void browser.updateSettings({
-                    ...settings,
                     memorySaverMode: !(settings.memorySaverMode ?? true),
                   })
                 }
@@ -845,7 +835,6 @@ export function BrowserSettings({
             aria-checked={settings.showBookmarksBar}
             onClick={() =>
               void browser.updateSettings({
-                ...settings,
                 showBookmarksBar: !settings.showBookmarksBar,
               })
             }
@@ -863,7 +852,6 @@ export function BrowserSettings({
             value={settings.tabLayout}
             onChange={(event) =>
               void browser.updateSettings({
-                ...settings,
                 tabLayout: event.target.value as typeof settings.tabLayout,
               })
             }
@@ -885,7 +873,6 @@ export function BrowserSettings({
             aria-checked={settings.restoreSession}
             onClick={() =>
               void browser.updateSettings({
-                ...settings,
                 restoreSession: !settings.restoreSession,
               })
             }
@@ -929,7 +916,6 @@ export function BrowserSettings({
             value={settings.historyRetentionDays}
             onChange={(event) =>
               void browser.updateSettings({
-                ...settings,
                 historyRetentionDays: Number(
                   event.target.value,
                 ) as typeof settings.historyRetentionDays,

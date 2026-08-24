@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { z } from "zod";
 
 export const ExternalServicePayloadSchema = z
@@ -13,6 +14,32 @@ export const ExternalServicePayloadSchema = z
 export type ExternalServicePayload = z.infer<
 	typeof ExternalServicePayloadSchema
 >;
+
+export function filePathsFromArgv(
+	argv: readonly string[],
+	options: {
+		defaultApp?: boolean;
+		executablePath?: string;
+	} = {},
+): string[] {
+	const defaultApp = options.defaultApp ?? Boolean(process.defaultApp);
+	const executablePath = options.executablePath ?? process.execPath;
+	// Electron inserts the development entrypoint at argv[1] when it launches as
+	// the default app. It is implementation detail, not a user-opened file.
+	const candidates = argv.slice(defaultApp ? 2 : 1);
+	return [
+		...new Set(
+			candidates.filter((value) => {
+				if (!value.startsWith("/") || value === executablePath) return false;
+				try {
+					return statSync(value).isFile();
+				} catch {
+					return false;
+				}
+			}),
+		),
+	];
+}
 
 export function externalPayloadIdFromDeepLink(
 	value: unknown,

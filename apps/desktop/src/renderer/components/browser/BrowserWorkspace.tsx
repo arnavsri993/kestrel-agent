@@ -30,6 +30,7 @@ export function BrowserWorkspace({
   agentOpen,
   onToggleAgent,
   onNewAgent,
+	onOpenTaskSettings,
   onOpenSettings,
   onOpenHistory,
   onOpenDownloads,
@@ -47,6 +48,7 @@ export function BrowserWorkspace({
   agentOpen: boolean;
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
+	onOpenTaskSettings(): void;
   onOpenSettings(): void;
   onOpenHistory(): void;
   onOpenDownloads(): void;
@@ -350,7 +352,6 @@ export function BrowserWorkspace({
         event.preventDefault();
         if (event.shiftKey && state) {
           void browser.updateSettings({
-            ...state.settings,
             showBookmarksBar: !state.settings.showBookmarksBar,
           });
         } else {
@@ -432,7 +433,6 @@ export function BrowserWorkspace({
         onReopenClosedTab={() => void reopenClosedTab()}
         onToggleOrientation={() => {
           void browser.updateSettings({
-            ...state.settings,
             tabLayout:
               state.settings.tabLayout === "vertical"
                 ? "horizontal"
@@ -448,13 +448,11 @@ export function BrowserWorkspace({
         sleepingTabsEnabled={state.settings.sleepingTabsEnabled}
         onToggleBookmarksBar={() =>
           void browser.updateSettings({
-            ...state.settings,
             showBookmarksBar: !state.settings.showBookmarksBar,
           })
         }
         onToggleSleepingTabs={() =>
           void browser.updateSettings({
-            ...state.settings,
             sleepingTabsEnabled: !state.settings.sleepingTabsEnabled,
           })
         }
@@ -580,10 +578,11 @@ export function BrowserWorkspace({
             sessions={sessions}
             widgetSettings={state.settings.newTabWidgets}
             onUpdateWidgetSettings={(newTabWidgets) =>
-              void updateSettings({ ...state.settings, newTabWidgets })
+              void updateSettings({ newTabWidgets })
             }
             onNavigate={(input) => void navigate(activeTab.id, input)}
             onNewAgent={onNewAgent}
+			onOpenTaskSettings={onOpenTaskSettings}
             onOpenHistory={onOpenHistory}
             onOpenDownloads={onOpenDownloads}
             onOpenBookmarks={onOpenBookmarks}

@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	externalPayloadIdFromDeepLink,
+	filePathsFromArgv,
 	parseExternalServicePayload,
 } from "./external-intake";
 
@@ -57,5 +61,29 @@ describe("external macOS intake payloads", () => {
 		expect(
 			parseExternalServicePayload({ kind: "ask", paths: [], text }),
 		).toBeUndefined();
+	});
+
+	it("does not treat Electron's development entrypoint as a user-opened file", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-intake-argv-"));
+		const entrypoint = join(root, "index.js");
+		const userFile = join(root, "notes.txt");
+		writeFileSync(entrypoint, "export {};\n");
+		writeFileSync(userFile, "Review these notes.\n");
+		try {
+			expect(
+				filePathsFromArgv(["/Applications/Electron", entrypoint, userFile], {
+					defaultApp: true,
+					executablePath: "/Applications/Electron",
+				}),
+			).toEqual([userFile]);
+			expect(
+				filePathsFromArgv(["/Applications/Kestrel", userFile], {
+					defaultApp: false,
+					executablePath: "/Applications/Kestrel",
+				}),
+			).toEqual([userFile]);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });

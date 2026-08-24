@@ -32,7 +32,10 @@
 	}
 
 	.ai-browser-app:not(.agent-full-page) .agent-sidebar.is-collapsed {
-		transform: translateX(14px) scaleX(0.98);
+		/* The collapsed rail has zero layout width. Keep its exit transform
+		 * inside the window so high-zoom/reflow layouts do not acquire a
+		 * clipped horizontal overflow from an invisible child. */
+		transform: scaleX(0.98);
 	}
 
 	.ai-browser-app:not(.agent-full-page) .browser-workspace .browser-viewport {

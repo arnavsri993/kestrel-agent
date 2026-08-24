@@ -123,7 +123,7 @@ try {
 	await openKestrelDestination(page, "Life Context");
 	const life = page.locator(".legacy-product-surface");
 	await life
-		.getByRole("heading", { name: "Your context", exact: true })
+		.getByRole("heading", { name: "Life", exact: true })
 		.waitFor();
 
 	await life.getByText("Deep work · Kestrel", { exact: true }).waitFor();

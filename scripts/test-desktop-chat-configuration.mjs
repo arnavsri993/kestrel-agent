@@ -205,27 +205,29 @@ try {
 	await page.reload();
 	await page.locator("#runtime-prompt").waitFor();
 	assert.equal(
-		(
-			await page.locator(".agent-task-line .ui-status > span").textContent()
-		)?.trim(),
-		"Ready",
+		(await page.locator(".agent-chat-heading strong").textContent())?.trim(),
+		"New task",
+	);
+	assert.equal(
+		await page.getByText("Your decision is needed", { exact: true }).count(),
+		0,
 	);
 
-	await page.locator('summary[aria-label="Task settings"]').click();
-	await page.getByLabel("Execution").selectOption("manual");
-	await page
-		.locator(".runtime-task-controls label", { hasText: /^Provider/ })
-		.locator("select")
-		.selectOption("nous");
-	await page
-		.locator(".runtime-task-controls label", { hasText: /^Model/ })
-		.locator("input")
-		.fill("fixture-model");
-	await page.locator('summary[aria-label="Task settings"]').click();
+	await page.getByRole("button", { name: /^Model:/ }).click();
+	const modelMenu = page.getByRole("menu", {
+		name: "Choose provider, model, and thinking level",
+	});
+	await modelMenu.getByRole("menuitem", { name: /^Nous/ }).click();
+	await modelMenu.getByLabel("Custom model ID").fill("fixture-model");
+	await modelMenu.getByLabel("Custom model ID").press("Enter");
+	await modelMenu.waitFor({ state: "detached" });
 	await page
 		.getByRole("textbox", { name: "Message Kestrel" })
 		.fill("Use concise replies and a compact chat layout from now on.");
-	await page.getByRole("button", { name: "Send message" }).click();
+	await page
+		.locator(".agent-conversation-host")
+		.getByRole("button", { name: "Send message", exact: true })
+		.click();
 
 	await page.getByText("Configuration plan staged", { exact: true }).waitFor();
 	const applyButton = page.getByRole("button", {
@@ -310,13 +312,12 @@ try {
 		.evaluate((element) => {
 			element.scrollTop = element.scrollHeight;
 		});
-	await page.waitForFunction(
-		() =>
-			document
-				.querySelector(".agent-task-line .ui-status > span")
-				?.textContent?.trim()
-				.toLowerCase() === "ready",
-	);
+	await page
+		.getByText(
+			"The concise response style and compact chat density are verified and active. The prior version remains available as the undo target.",
+			{ exact: true },
+		)
+		.waitFor();
 	await page.screenshot({ path: appliedScreenshot });
 
 	const snapshot = await page.evaluate(() =>
@@ -329,7 +330,7 @@ try {
 	application = undefined;
 	page = await launch();
 	await page
-		.locator(".agent-sidebar-history-list > button")
+		.locator(".kestrel-sidebar-chats button")
 		.filter({ hasText: session.title })
 		.click();
 	await page
@@ -341,10 +342,8 @@ try {
 		1,
 	);
 	assert.equal(
-		(
-			await page.locator(".agent-task-line .ui-status > span").textContent()
-		)?.trim(),
-		"Ready",
+		(await page.locator(".agent-chat-heading strong").textContent())?.trim(),
+		session.title,
 	);
 	await page
 		.locator(".configuration-applied")

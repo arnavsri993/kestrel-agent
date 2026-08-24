@@ -39,7 +39,7 @@ export interface UserBrowserController {
 		visible: boolean,
 	): Promise<void>;
 	pageContext(tabId?: string): Promise<UserBrowserPageContext | undefined>;
-	updateSettings(settings: UserBrowserSettings): Promise<void>;
+	updateSettings(settings: Partial<UserBrowserSettings>): Promise<void>;
 	clearHistory(): Promise<void>;
 	clearBrowsingData(options: {
 		history?: boolean;
@@ -80,7 +80,12 @@ export function useUserBrowser(): UserBrowserController {
 	const [error, setError] = useState("");
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
+	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
 	stateRef.current = state;
+	const applyState = useCallback((nextState: UserBrowserState) => {
+		stateRef.current = nextState;
+		setState(nextState);
+	}, []);
 
 	const requestState = useCallback(
 		async (request: Parameters<typeof window.kestrel.request>[0]) => {
@@ -88,7 +93,7 @@ export function useUserBrowser(): UserBrowserController {
 				const response = await window.kestrel.request(request);
 				if (!response.ok || !("browserState" in response))
 					throw new Error(responseError(response));
-				setState(response.browserState);
+				applyState(response.browserState);
 				setError("");
 			} catch (cause) {
 				const message =
@@ -99,7 +104,7 @@ export function useUserBrowser(): UserBrowserController {
 				throw cause;
 			}
 		},
-		[],
+		[applyState],
 	);
 	const openFileTabs = useCallback(
 		async (paths: string[], active = true) => {
@@ -110,13 +115,13 @@ export function useUserBrowser(): UserBrowserController {
 			});
 			if (!response.ok || !("browserState" in response))
 				throw new Error(responseError(response));
-			setState(response.browserState);
+			applyState(response.browserState);
 			setError("");
 			return "selectedAttachments" in response
 				? response.selectedAttachments
 				: [];
 		},
-		[],
+		[applyState],
 	);
 	const filePreview = useCallback(async (tabId: string) => {
 		const response = await window.kestrel.request({
@@ -140,7 +145,7 @@ export function useUserBrowser(): UserBrowserController {
 		const unsubscribe = window.kestrel.onBrowserEvent((event) => {
 			if (!active) return;
 			if (event.type === "state") {
-				setState(event.state);
+				applyState(event.state);
 				setError("");
 			} else if (event.type === "find-in-page") {
 				setFindMatch(event.match);
@@ -152,7 +157,7 @@ export function useUserBrowser(): UserBrowserController {
 				if (!active) return;
 				if (!response.ok || !("browserState" in response))
 					throw new Error(responseError(response));
-				setState(response.browserState);
+				applyState(response.browserState);
 			})
 			.catch((cause) => {
 				if (active)
@@ -166,7 +171,7 @@ export function useUserBrowser(): UserBrowserController {
 			active = false;
 			unsubscribe();
 		};
-	}, []);
+	}, [applyState]);
 
 	const createTab = useCallback(
 		(input?: string, active = true) =>
@@ -273,8 +278,23 @@ export function useUserBrowser(): UserBrowserController {
 		}
 	}, []);
 	const updateSettings = useCallback(
-		(settings: UserBrowserSettings) =>
-			requestState({ type: "browser-update-settings", settings }),
+		(settings: Partial<UserBrowserSettings>) => {
+			// Settings controls can be changed faster than IPC state round-trips.
+			// Serialize partial updates and merge each one into the latest observed
+			// state so a later control never restores stale values from its render.
+			const pending = settingsRequestRef.current
+				.catch(() => undefined)
+				.then(async () => {
+					const current = stateRef.current?.settings;
+					if (!current) throw new Error("Browser settings are unavailable.");
+					await requestState({
+						type: "browser-update-settings",
+						settings: { ...current, ...settings },
+					});
+				});
+			settingsRequestRef.current = pending;
+			return pending;
+		},
 		[requestState],
 	);
 	const clearHistory = useCallback(

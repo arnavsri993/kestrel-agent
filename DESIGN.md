@@ -1,5 +1,51 @@
 # Kestrel design system
 
+## Desktop stability and interaction refinement — August 2026
+
+This pass is a `motion-refinement` and product-wide quality audit, not a new
+theme or information architecture. It preserves the current renderer palette,
+type, density, routes, and native-feeling shell while tightening behavior that
+has drifted after many small changes.
+
+### Visual and motion lock
+
+- Thesis: Kestrel should feel like a quiet Mac instrument whose controls react
+  continuously and predictably to the person, never like a sequence of canned
+  hover frames.
+- Material and color: retain the shipped role-based surfaces and native traffic
+  colors. The triangular window controls may darken their inner fill and glyph
+  with proximity, but they do not glow, bloom, or introduce a new accent system.
+- Geometry and density: preserve existing shell, route, and control dimensions;
+  this pass fixes alignment and interaction defects rather than reflowing the
+  product.
+- Intentional minimalism and spatial intent: the wide center plane belongs to the active browser or
+  route-level task, while the narrow persistent agent pane remains a secondary
+  action boundary. Empty states use that space to isolate one status and one
+  recovery/next action instead of filling it with fake cards; setup screens use
+  the same restraint to stage one consequential choice at a time. Compact mode
+  recomposes navigation and content rather than shrinking the wide layout.
+- Motion role 1 — focal feedback: the triangular window controls track pointer
+  position with a small, interruptible tilt and offset while the fill deepens.
+- Motion role 2 — state continuity: existing route, tab, menu, disclosure, and
+  panel transitions remain restrained and explain state changes.
+- Motion role 3 — direct feedback: hover, press, focus, success, and error
+  changes stay short and local. No ambient or scroll-reveal animation is added.
+- Performance budget and evidence: high-frequency pointer input is coalesced to
+  at most one style-update batch per animation frame; geometry is measured
+  outside the hot path and invalidated only on real layout changes. Animations
+  use transform, opacity, and color only. `test-desktop-layout.mjs` exercises
+  the pointer path and 200% zoom overflow budget; a dedicated FPS number is not
+  claimed because headless Electron has no stable display clock.
+- Accessibility: keyboard focus remains explicit, window controls keep native
+  accessible names and hit targets, and reduced motion removes travel/tilt
+  while retaining an immediate darker fill and visible glyph.
+- Avoid list: no demo-reel motion, spring overshoot, blur trails, perpetual
+  loops, layout-shifting hover, hover-only meaning, or ornamental animation on
+  dense operational screens.
+- Why this is not generic: the signature triangular traffic controls respond as
+  one continuous physical cluster while Kestrel's approval, provenance, and
+  recovery surfaces remain calm enough for daily work.
+
 ## Monochrome — August 2026
 
 This is the authoritative desktop visual system. It supersedes every older

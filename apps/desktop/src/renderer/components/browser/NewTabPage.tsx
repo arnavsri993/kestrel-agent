@@ -53,6 +53,7 @@ export function NewTabPage({
 	onUpdateWidgetSettings,
 	onNavigate,
 	onNewAgent,
+	onOpenTaskSettings,
 	onOpenHistory,
 	onOpenDownloads,
 	onOpenBookmarks,
@@ -73,6 +74,7 @@ export function NewTabPage({
 	onUpdateWidgetSettings(next: UserBrowserSettings["newTabWidgets"]): void;
 	onNavigate(input: string): void;
 	onNewAgent(prompt?: string): void;
+	onOpenTaskSettings(): void;
 	onOpenHistory(): void;
 	onOpenDownloads(): void;
 	onOpenBookmarks(): void;
@@ -136,9 +138,15 @@ export function NewTabPage({
               <div className="kestrel-home-model-popover">
                 <strong>Smart routing</strong>
                 <p>Model and thinking level live in task settings.</p>
-                <button type="button" onClick={() => onNewAgent()}>
-                  Open task settings
-                </button>
+				<button
+					type="button"
+					onClick={(event) => {
+						event.currentTarget.closest("details")?.removeAttribute("open");
+						onOpenTaskSettings();
+					}}
+				>
+				  Open task settings
+				</button>
               </div>
             </details>
 
@@ -158,8 +166,8 @@ export function NewTabPage({
             <button
               type="submit"
               className="kestrel-home-send"
-              aria-label={`Open message in ${agentName} composer`}
-              title={`Open message in ${agentName} composer`}
+              aria-label={`Send message to ${agentName}`}
+              title={`Send message to ${agentName}`}
               disabled={!input.trim()}
             >
               <Icon name="arrow" />
