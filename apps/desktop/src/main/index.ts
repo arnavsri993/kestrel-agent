@@ -1400,6 +1400,9 @@ function createMainWindow(): BrowserWindow {
               window.webContents.send("kestrel:browser-command", command);
             }
           },
+          onLastTabClosed: () => {
+            if (!window.isDestroyed()) window.close();
+          },
         });
   if (userBrowserService) browserWindowServices.set(window, userBrowserService);
   deliverPendingWebUrls();
@@ -1431,10 +1434,14 @@ function createMainWindow(): BrowserWindow {
     },
   );
   window.on("close", (event) => {
+    const browserState = browserServiceForWindow(window)?.getState();
+    const closingLastTab = browserState?.tabs.length === 0;
     if (!quitting && process.platform === "darwin") {
       closeCalculatorOverlay(window);
-      event.preventDefault();
-      window.hide();
+      if (!closingLastTab) {
+        event.preventDefault();
+        window.hide();
+      }
     }
   });
   window.on("closed", () => {
@@ -1521,6 +1528,9 @@ function createDetachedBrowserWindow(
         window.webContents.focus();
         window.webContents.send("kestrel:browser-command", command);
       }
+    },
+    onLastTabClosed: () => {
+      if (!window.isDestroyed()) window.close();
     },
   });
   browserWindowServices.set(window, service);
