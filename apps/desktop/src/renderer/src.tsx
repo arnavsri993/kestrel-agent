@@ -10,13 +10,16 @@ import "./components/window-controls.css";
 import "./motion.css";
 import "./components/browser/kestrel-sidebar.css";
 import { App } from "./App";
+import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
 import { WindowControls } from "./components/WindowControls";
 
 const isPetOverlay =
 	new URLSearchParams(location.search).get("petOverlay") === "1";
+const isCalculatorOverlay =
+	new URLSearchParams(location.search).get("calculatorOverlay") === "1";
 const root = document.getElementById("root")!;
 
-if (isPetOverlay) {
+if (isPetOverlay || isCalculatorOverlay) {
 	document.documentElement.style.background = "transparent";
 	document.body.style.background = "transparent";
 	root.style.background = "transparent";
@@ -24,6 +27,13 @@ if (isPetOverlay) {
 
 ReactDOM.createRoot(root).render(
 	<React.StrictMode>
-		{isPetOverlay ? null : <><WindowControls /><App /></>}
+		{isPetOverlay ? null : isCalculatorOverlay ? (
+			<CalculatorOverlay />
+		) : (
+			<>
+				<WindowControls />
+				<App />
+			</>
+		)}
 	</React.StrictMode>,
 );

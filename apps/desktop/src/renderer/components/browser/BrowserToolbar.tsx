@@ -9,7 +9,6 @@ import {
 } from "react";
 import type { InstalledExtension, UserBrowserTab } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
-import { evaluateCalculatorExpression } from "./calculator";
 
 type ToolbarMenu = "extensions" | "tools" | "screen" | null;
 
@@ -55,6 +54,7 @@ export function BrowserToolbar({
   onSaveScreenshot,
   onToggleBookmark,
   onOpenSettings,
+  onToggleCalculator,
   onOpenMenu,
 }: {
   tab: UserBrowserTab;
@@ -80,6 +80,7 @@ export function BrowserToolbar({
   onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
   onOpenSettings(): void;
+  onToggleCalculator(): void;
   onOpenMenu(): void;
 }) {
   const [address, setAddress] = useState(tab.url);
@@ -88,13 +89,9 @@ export function BrowserToolbar({
   const [pinnedExtensionIds, setPinnedExtensionIds] = useState(
     readPinnedExtensions,
   );
-  const [calculatorOpen, setCalculatorOpen] = useState(false);
-  const [calculatorExpression, setCalculatorExpression] = useState("");
-  const [calculatorResult, setCalculatorResult] = useState<string | null>(null);
   const [toolNotice, setToolNotice] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const calculatorInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => setAddress(tab.url), [tab.id, tab.url]);
 
@@ -128,10 +125,6 @@ export function BrowserToolbar({
   useEffect(() => {
     if (!openMenu) return;
     const frame = window.requestAnimationFrame(() => {
-      if (calculatorOpen) {
-        calculatorInputRef.current?.focus();
-        return;
-      }
       menuRef.current
         ?.querySelector<HTMLElement>(
           "button[role='menuitem'], button[role='menuitemcheckbox']",
@@ -173,7 +166,7 @@ export function BrowserToolbar({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [calculatorOpen, closeMenu, openMenu]);
+  }, [closeMenu, openMenu]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -184,10 +177,6 @@ export function BrowserToolbar({
     lastTriggerRef.current = event.currentTarget as HTMLButtonElement;
     setToolNotice("");
     setOpenMenu((current) => (current === menu ? null : menu));
-    if (menu !== "tools") {
-      setCalculatorOpen(false);
-      setCalculatorResult(null);
-    }
   }
 
   function updatePinnedExtensions(id: string) {
@@ -207,10 +196,6 @@ export function BrowserToolbar({
   function runAndClose(action: () => void) {
     action();
     closeMenu();
-  }
-
-  function calculate() {
-    setCalculatorResult(evaluateCalculatorExpression(calculatorExpression));
   }
 
   async function saveScreenshot() {
@@ -508,11 +493,7 @@ export function BrowserToolbar({
                   <button
                     type="button"
                     role="menuitem"
-                    className={calculatorOpen ? "active" : ""}
-                    onClick={() => {
-                      setCalculatorOpen((current) => !current);
-                      setCalculatorResult(null);
-                    }}
+                    onClick={() => runAndClose(onToggleCalculator)}
                   >
                     <Icon name="calculator" />
                     <span>Calculator</span>
@@ -544,33 +525,6 @@ export function BrowserToolbar({
                     <span>Developer tools</span>
                   </button>
                 </div>
-                {calculatorOpen && (
-                  <div className="browser-calculator" role="group" aria-label="Calculator">
-                    <label htmlFor="browser-calculator-input">Calculate</label>
-                    <div>
-                      <input
-                        id="browser-calculator-input"
-                        ref={calculatorInputRef}
-                        value={calculatorExpression}
-                        placeholder="12 * (3 + 4)"
-                        inputMode="decimal"
-                        onChange={(event) => setCalculatorExpression(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            calculate();
-                          }
-                        }}
-                      />
-                      <button type="button" onClick={calculate} aria-label="Calculate">
-                        <Icon name="arrow" />
-                      </button>
-                    </div>
-                    <output aria-live="polite">
-                      {calculatorResult ?? "Enter an expression"}
-                    </output>
-                  </div>
-                )}
                 {toolNotice && (
                   <p className="browser-toolbar-popover-notice" role="status">
                     {toolNotice}

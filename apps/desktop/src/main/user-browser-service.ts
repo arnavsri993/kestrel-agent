@@ -103,6 +103,7 @@ export interface UserBrowserServiceOptions {
 	now?: () => Date;
 	onEvent(event: UserBrowserEvent): void;
 	onCommand?(command: UserBrowserCommand): void;
+	onLastTabClosed?(): void;
 	confirmSitePermission?(origin: string, permission: string): Promise<boolean>;
 }
 
@@ -287,6 +288,7 @@ export class UserBrowserService {
 	private readonly partitionParticipant: BrowserPartitionParticipant;
 	private readonly onEvent: UserBrowserServiceOptions["onEvent"];
 	private readonly onCommand?: UserBrowserServiceOptions["onCommand"];
+	private readonly onLastTabClosed?: UserBrowserServiceOptions["onLastTabClosed"];
 	private readonly recentlyClosedTabs: Array<{ url: string; title: string }> = [];
 	private sleepingTabsInterval?: ReturnType<typeof setInterval>;
 	private state: UserBrowserState;
@@ -305,6 +307,7 @@ export class UserBrowserService {
 		this.downloadDirectory = options.downloadDirectory;
 		this.onEvent = options.onEvent;
 		this.onCommand = options.onCommand;
+		this.onLastTabClosed = options.onLastTabClosed;
 		this.confirmSitePermission =
 			options.confirmSitePermission ??
 			(async (origin, permission) => {
@@ -497,14 +500,16 @@ export class UserBrowserService {
 		this.closeView(tabId);
 		this.state.tabs.splice(index, 1);
 		if (this.state.tabs.length === 0) {
-			const replacement = createEmptyBrowserTab(this.now);
-			this.state.tabs.push(replacement);
-			this.state.activeTabId = replacement.id;
+			this.state.activeTabId = null;
 		} else if (this.state.activeTabId === tabId) {
 			this.state.activeTabId =
 				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
 		}
 		this.commit();
+		if (this.state.tabs.length === 0) {
+			this.onLastTabClosed?.();
+			return this.getState();
+		}
 		await this.syncActiveView();
 		return this.getState();
 	}
