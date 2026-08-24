@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+
+const mainBundle = readFileSync(resolve("apps/desktop/out/main/index.js"), "utf8");
+assert.match(
+	mainBundle,
+	/installMacFileIconCrashGuard\s*\(\s*app\s*\)/,
+	"The packaged main process must install the macOS file-icon crash guard.",
+);
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-layout-"));
 const userData = join(root, "user-data");
