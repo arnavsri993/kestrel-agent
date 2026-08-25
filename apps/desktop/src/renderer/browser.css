@@ -958,7 +958,7 @@ body:has(.ai-browser-app),
 	align-items: flex-end;
 	min-width: 0;
 	max-width: 100%;
-	overflow-x: auto;
+	overflow: hidden;
 	scrollbar-width: none;
 }
 .browser-tabs::-webkit-scrollbar {
@@ -970,8 +970,8 @@ body:has(.ai-browser-app),
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) 26px;
 	flex: 1 1 260px;
-	/* Keep tabs generous; only compress once the strip is genuinely full. */
-	min-width: 144px;
+	/* Let every tab share the available strip before the title gets clipped. */
+	min-width: 0;
 	max-width: 520px;
 	height: 34px;
 	border-radius: 10px 10px 0 0;
