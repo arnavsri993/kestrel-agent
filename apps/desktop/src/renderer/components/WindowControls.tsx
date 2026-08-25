@@ -1,12 +1,14 @@
 import {
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useState,
 } from "react";
 import {
 	activeWindowControlIndex,
 	calculateWindowControlMotion,
+	centeredWindowControlsTop,
 	type WindowControlBounds,
 	type WindowControlPoint,
 } from "./window-controls-motion";
@@ -84,6 +86,80 @@ export function WindowControls() {
 				button.style.setProperty("--window-control-fill-shade", "0");
 				button.classList.remove("window-control-active");
 			});
+	}, []);
+
+	useLayoutEffect(() => {
+		const controlsNode = controlsRef.current;
+		if (controlsNode === null) return;
+		const controlsElement = controlsNode as HTMLDivElement;
+
+		const barSelectors = [
+			".onboarding-bar",
+			".browser-workspace-vertical .browser-toolbar",
+			".browser-tab-row-horizontal",
+			".secondary-surface-bar",
+			".drag-region",
+		];
+		let animationFrame = 0;
+
+		function alignToTopBar() {
+			const bar = barSelectors
+				.map((selector) => document.querySelector<HTMLElement>(selector))
+				.find(
+					(candidate) =>
+						candidate && candidate.getBoundingClientRect().height > 0,
+				);
+			const controlHeight =
+				controlsElement.getBoundingClientRect().height || 28;
+			const barBounds = bar?.getBoundingClientRect();
+			const top = centeredWindowControlsTop(
+				barBounds?.top ?? 0,
+				barBounds?.height ?? 40,
+				controlHeight,
+			);
+			controlsElement.style.setProperty("--window-controls-top", `${top}px`);
+		}
+
+		function scheduleAlignment() {
+			if (animationFrame) return;
+			animationFrame = window.requestAnimationFrame(() => {
+				animationFrame = 0;
+				alignToTopBar();
+			});
+		}
+
+		alignToTopBar();
+		window.addEventListener("resize", scheduleAlignment, { passive: true });
+		const resizeObserver =
+			typeof ResizeObserver === "undefined"
+				? null
+				: new ResizeObserver(scheduleAlignment);
+		resizeObserver?.observe(controlsElement);
+		const root = document.getElementById("root");
+		let mutationObserver: MutationObserver | null = null;
+		if (typeof MutationObserver !== "undefined" && root) {
+			mutationObserver = new MutationObserver((records) => {
+				if (
+					records.some(
+						({ target }) => !controlsElement.contains(target),
+					)
+				)
+					scheduleAlignment();
+			});
+			mutationObserver.observe(root, {
+				attributes: true,
+				attributeFilter: ["class"],
+				subtree: true,
+				childList: true,
+			});
+		}
+
+		return () => {
+			if (animationFrame) window.cancelAnimationFrame(animationFrame);
+			resizeObserver?.disconnect();
+			mutationObserver?.disconnect();
+			window.removeEventListener("resize", scheduleAlignment);
+		};
 	}, []);
 
 	useEffect(() => {

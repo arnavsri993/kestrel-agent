@@ -361,7 +361,11 @@ function assertCollapsedLayout(layout) {
 	assert.match(layout.classes, /agent-sidebar-collapsed/);
 	assertNear(layout.navigation.left, 0, "collapsed navigation left");
 	assertNear(layout.navigation.width, 248, "collapsed navigation width");
-	assertNear(layout.main.left, 0, "collapsed browser plane starts at the window edge");
+	assertNear(
+		layout.main.left,
+		0,
+		"collapsed browser plane starts at the window edge",
+	);
 	assert.ok(
 		layout.main.width > layout.innerWidth / 2,
 		`The collapsed browser plane was only ${layout.main.width}px (${layout.columns}).`,
@@ -388,7 +392,11 @@ function assertOpenLayout(layout) {
 	assert.doesNotMatch(layout.classes, /agent-sidebar-collapsed/);
 	assertNear(layout.navigation.left, 0, "open navigation left");
 	assertNear(layout.navigation.width, 248, "open navigation width");
-	assertNear(layout.main.left, 0, "open browser plane starts at the window edge");
+	assertNear(
+		layout.main.left,
+		0,
+		"open browser plane starts at the window edge",
+	);
 	assert.ok(
 		layout.main.width > 500,
 		`The open browser plane was only ${layout.main.width}px (${layout.columns}).`,
@@ -422,6 +430,18 @@ async function setDesktopZoom(application, page, zoomFactor) {
 			expectedCompact ? innerWidth <= 700 : innerWidth >= 1_200,
 		zoomFactor > 1,
 	);
+}
+
+async function waitForCollapsedLayout(page) {
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		const agent = document.querySelector(".agent-sidebar");
+		if (!viewport || !agent) return false;
+		return (
+			Math.abs(agent.getBoundingClientRect().width) <= 1 &&
+			Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1
+		);
+	});
 }
 
 async function readZoomReflow(page) {
@@ -503,7 +523,11 @@ function assertZoomReflow(layout, reflow) {
 		`Expected a compact CSS viewport at 200% zoom, got ${reflow.innerWidth}px.`,
 	);
 	assertNear(layout.navigation.width, 56, "zoomed navigation width");
-	assertNear(layout.main.left, 0, "zoomed browser plane starts at the window edge");
+	assertNear(
+		layout.main.left,
+		0,
+		"zoomed browser plane starts at the window edge",
+	);
 	assertNear(
 		layout.main.right,
 		layout.innerWidth,
@@ -670,6 +694,7 @@ try {
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();
 	await assertWindowControlMotion(page);
+	await waitForCollapsedLayout(page);
 	await assertMotionContract(page);
 	await assertReducedMotionStyles(page);
 	await page.getByRole("button", { name: "New Tab", exact: true }).click();
@@ -706,15 +731,18 @@ try {
 			Math.abs(agent.getBoundingClientRect().width) <= 1
 		);
 	});
+	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 
 	await setDesktopZoom(application, page, 2);
+	await waitForCollapsedLayout(page);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
 	});
 	assertZoomReflow(await readLayout(page), await readZoomReflow(page));
 	await setDesktopZoom(application, page, 1);
+	await waitForCollapsedLayout(page);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;

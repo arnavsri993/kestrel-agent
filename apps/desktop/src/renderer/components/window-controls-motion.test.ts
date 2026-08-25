@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	activeWindowControlIndex,
 	calculateWindowControlMotion,
+	centeredWindowControlsTop,
 	type WindowControlBounds,
 } from "./window-controls-motion";
 
@@ -17,6 +18,14 @@ function bounds(left: number): WindowControlBounds {
 }
 
 describe("window control motion", () => {
+	it("centers the control group within each top-bar height", () => {
+		expect(centeredWindowControlsTop(0, 36, 28)).toBe(4);
+		expect(centeredWindowControlsTop(0, 48, 28)).toBe(10);
+		expect(centeredWindowControlsTop(8, 48, 28)).toBe(18);
+		expect(centeredWindowControlsTop(0, 72, 28)).toBe(22);
+		expect(centeredWindowControlsTop(0, 76, 28)).toBe(24);
+	});
+
 	it("keeps changing as the pointer moves inside one control", () => {
 		const target = bounds(10);
 		const left = calculateWindowControlMotion({ x: 14, y: 22 }, target);

@@ -1,6 +1,6 @@
 .window-controls {
 	position: fixed;
-	top: 4px;
+	top: var(--window-controls-top, 6px);
 	left: 10px;
 	z-index: 10000;
 	display: flex;

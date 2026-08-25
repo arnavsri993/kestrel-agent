@@ -89,6 +89,7 @@ export function useUserBrowser(): UserBrowserController {
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
+	const contentBoundsRequestRef = useRef<Promise<void>>(Promise.resolve());
 	stateRef.current = state;
 	const applyState = useCallback((nextState: UserBrowserState) => {
 		stateRef.current = nextState;
@@ -256,16 +257,26 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const setContentBounds = useCallback(
-		async (
+		(
 			bounds: { x: number; y: number; width: number; height: number },
 			visible: boolean,
 		) => {
-			const response = await window.kestrel.request({
-				type: "browser-set-content-bounds",
-				bounds,
-				visible,
-			});
-			if (!response.ok) throw new Error(responseError(response));
+			// Layout effects hide the native view during cleanup and reveal it
+			// again after a route or orientation change. Serialize those IPC
+			// updates so an older cleanup cannot arrive after the newer visible
+			// bounds and leave the active page detached.
+			const pending = contentBoundsRequestRef.current
+				.catch(() => undefined)
+				.then(async () => {
+					const response = await window.kestrel.request({
+						type: "browser-set-content-bounds",
+						bounds,
+						visible,
+					});
+					if (!response.ok) throw new Error(responseError(response));
+				});
+			contentBoundsRequestRef.current = pending;
+			return pending;
 		},
 		[],
 	);

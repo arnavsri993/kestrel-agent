@@ -1230,6 +1230,10 @@ body:has(.ai-browser-app),
 	border-bottom: 1px solid var(--line);
 }
 
+.browser-toolbar-drag-fill {
+	display: none;
+}
+
 .browser-navigation,
 .browser-toolbar-actions {
 	display: flex;
@@ -1239,6 +1243,33 @@ body:has(.ai-browser-app),
 .browser-toolbar-actions {
 	position: relative;
 	min-width: 0;
+}
+
+/* Vertical tabs move the tab strip out of the titlebar. Keep the remaining
+ * browser chrome a real titlebar instead: controls and the address field stay
+ * clickable, while the spaces around them and the trailing area can move the
+ * macOS window. The left inset clears the custom traffic lights. */
+.browser-workspace-vertical .browser-toolbar {
+	grid-template-columns: auto minmax(180px, 1fr) auto 48px;
+	gap: 10px;
+	padding: 6px 14px 6px 96px;
+	-webkit-app-region: drag;
+}
+.browser-workspace-vertical .browser-navigation,
+.browser-workspace-vertical .browser-toolbar-actions {
+	gap: 6px;
+}
+.browser-workspace-vertical .browser-address,
+.browser-workspace-vertical .browser-navigation button,
+.browser-workspace-vertical .browser-toolbar-actions button,
+.browser-workspace-vertical .browser-toolbar-popover {
+	-webkit-app-region: no-drag;
+}
+.browser-workspace-vertical .browser-toolbar-drag-fill {
+	display: block;
+	align-self: stretch;
+	min-width: 0;
+	-webkit-app-region: drag;
 }
 .browser-navigation button,
 .browser-toolbar-actions button {
@@ -3505,9 +3536,9 @@ body:has(.calculator-overlay),
 	color: var(--ink);
 }
 .calculator-card {
-	display: grid;
-	grid-template-rows: auto auto minmax(0, 1fr);
-	gap: 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
 	width: 100%;
 	height: 100%;
 	min-width: 0;
@@ -3526,6 +3557,10 @@ body:has(.calculator-overlay),
 	gap: 12px;
 	min-width: 0;
 	-webkit-app-region: drag;
+	cursor: grab;
+}
+.calculator-drag-handle:active {
+	cursor: grabbing;
 }
 .calculator-heading {
 	display: flex;
@@ -3586,16 +3621,74 @@ body:has(.calculator-overlay),
 	width: 15px;
 	height: 15px;
 }
+.calculator-modes {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 4px;
+	padding: 3px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--canvas);
+	-webkit-app-region: no-drag;
+}
+.calculator-modes button {
+	min-width: 0;
+	min-height: 30px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 7px;
+	background: transparent;
+	color: var(--muted);
+	font: 650 11px var(--sans);
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+}
+.calculator-modes button:hover,
+.calculator-modes button:focus-visible {
+	background: var(--surface);
+	color: var(--ink);
+}
+.calculator-modes button.active {
+	background: var(--surface-strong);
+	box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
+	color: var(--ink);
+}
+.calculator-mode-panel {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 10px;
+	min-height: 0;
+	overflow: auto;
+	padding: 1px;
+	-webkit-app-region: no-drag;
+}
 .calculator-display {
 	display: grid;
-	grid-template-rows: minmax(52px, auto) minmax(20px, auto);
-	gap: 5px;
+	grid-template-rows: auto minmax(48px, auto) minmax(20px, auto);
+	gap: 4px;
+	flex: 0 0 auto;
 	min-width: 0;
 	padding: 9px 11px 8px;
 	border: 1px solid var(--line-strong);
 	border-radius: 12px;
 	background: var(--canvas);
 	-webkit-app-region: no-drag;
+}
+.calculator-display-topline {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+	color: var(--faint);
+	font: 650 9px var(--mono);
+	letter-spacing: .08em;
+	text-transform: uppercase;
+}
+.calculator-display-topline span:last-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .calculator-display input {
 	width: 100%;
@@ -3625,17 +3718,25 @@ body:has(.calculator-overlay),
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+.calculator-scientific-keys {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	grid-auto-rows: minmax(32px, auto);
+	gap: 6px;
+	flex: 0 0 auto;
+}
 .calculator-keypad {
 	display: grid;
 	grid-template-columns: repeat(4, minmax(0, 1fr));
-	grid-auto-rows: minmax(42px, 1fr);
+	grid-auto-rows: minmax(40px, auto);
 	gap: 8px;
+	flex: 0 0 auto;
 	min-height: 0;
 	-webkit-app-region: no-drag;
 }
 .calculator-key {
 	min-width: 0;
-	min-height: 42px;
+	min-height: 40px;
 	padding: 0 8px;
 	border: 1px solid var(--line);
 	border-radius: 10px;
@@ -3648,6 +3749,9 @@ body:has(.calculator-overlay),
 		border-color var(--motion-feedback) var(--ease-kestrel),
 		transform var(--motion-feedback) var(--ease-kestrel);
 	-webkit-app-region: no-drag;
+}
+.calculator-key.wide {
+	grid-column: span 2;
 }
 .calculator-key:hover,
 .calculator-key:focus-visible {
@@ -3667,6 +3771,15 @@ body:has(.calculator-overlay),
 	background: color-mix(in srgb, var(--solid) 12%, var(--surface));
 	color: var(--status-ink);
 }
+.calculator-key.function {
+	background: color-mix(in srgb, var(--surface-strong) 75%, var(--canvas));
+	color: var(--ink-secondary);
+	font-size: 13px;
+}
+.calculator-key.constant {
+	border-color: color-mix(in srgb, var(--solid) 20%, var(--line));
+	color: var(--status-ink);
+}
 .calculator-key.equals {
 	grid-column: 1 / -1;
 	min-height: 44px;
@@ -3679,6 +3792,143 @@ body:has(.calculator-overlay),
 .calculator-key.equals:focus-visible {
 	border-color: var(--solid-hover);
 	background: var(--solid-hover);
+}
+.calculator-graph-panel {
+	gap: 8px;
+}
+.calculator-graph-input {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: 11px;
+	background: var(--canvas);
+}
+.calculator-graph-input label {
+	color: var(--status-ink);
+	font: 700 15px var(--mono);
+}
+.calculator-graph-input input {
+	min-width: 0;
+	padding: 2px 0;
+	border: 0;
+	outline: 0;
+	background: transparent;
+	color: var(--ink);
+	font: 600 17px var(--mono);
+}
+.calculator-graph-input input:focus-visible {
+	box-shadow: 0 2px 0 var(--solid);
+}
+.calculator-graph-options {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+	align-items: end;
+	gap: 5px;
+}
+.calculator-graph-options label {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+	color: var(--faint);
+	font: 650 9px var(--mono);
+	text-transform: uppercase;
+}
+.calculator-graph-options input {
+	width: 100%;
+	min-width: 0;
+	padding: 5px 4px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--canvas);
+	color: var(--ink);
+	font: 600 11px var(--mono);
+}
+.calculator-angle-toggle {
+	min-height: 27px;
+	padding: 0 7px;
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	background: var(--surface);
+	color: var(--muted);
+	font: 700 10px var(--mono);
+	cursor: pointer;
+}
+.calculator-angle-toggle:hover,
+.calculator-angle-toggle:focus-visible {
+	background: var(--surface-strong);
+	color: var(--ink);
+}
+.calculator-plot {
+	position: relative;
+	flex: 1 1 210px;
+	min-height: 175px;
+	overflow: hidden;
+	border: 1px solid var(--line-strong);
+	border-radius: 11px;
+	background: var(--canvas);
+}
+.calculator-plot-empty {
+	display: grid;
+	place-items: center;
+	min-height: 175px;
+	padding: 20px;
+	color: var(--muted);
+	font: 11px / 1.4 var(--sans);
+	text-align: center;
+}
+.calculator-plot svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	min-height: 175px;
+}
+.calculator-plot-grid {
+	stroke: color-mix(in srgb, var(--line) 72%, transparent);
+	stroke-width: 1;
+}
+.calculator-plot-axis {
+	stroke: color-mix(in srgb, var(--ink) 55%, var(--line));
+	stroke-width: 1.3;
+}
+.calculator-plot-function {
+	fill: none;
+	stroke: var(--status-ink);
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	stroke-width: 2.5;
+}
+.calculator-plot-labels {
+	display: flex;
+	position: absolute;
+	right: 8px;
+	bottom: 5px;
+	left: 8px;
+	justify-content: space-between;
+	pointer-events: none;
+	color: var(--faint);
+	font: 9px var(--mono);
+}
+.calculator-graph-status {
+	min-height: 16px;
+	margin: 0;
+	color: var(--muted);
+	font: 10px var(--mono);
+	text-align: right;
+}
+.calculator-graph-keypad {
+	display: grid;
+	grid-template-columns: repeat(6, minmax(0, 1fr));
+	grid-auto-rows: minmax(31px, auto);
+	gap: 5px;
+	flex: 0 0 auto;
+}
+.calculator-graph-keypad .calculator-key {
+	min-height: 31px;
+	padding-inline: 4px;
+	font-size: 12px;
 }
 .pragmatic-logo {
 	display: grid;

@@ -56,6 +56,7 @@ export function BrowserToolbar({
   onOpenSettings,
   onToggleCalculator,
   onOpenMenu,
+  onMenuOpenChange,
 }: {
   tab: UserBrowserTab;
   agentOpen: boolean;
@@ -82,6 +83,7 @@ export function BrowserToolbar({
   onOpenSettings(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
+  onMenuOpenChange?(open: boolean): void;
 }) {
   const [address, setAddress] = useState(tab.url);
   const [openMenu, setOpenMenu] = useState<ToolbarMenu>(null);
@@ -168,6 +170,10 @@ export function BrowserToolbar({
     };
   }, [closeMenu, openMenu]);
 
+  useEffect(() => {
+    onMenuOpenChange?.(Boolean(openMenu));
+  }, [onMenuOpenChange, openMenu]);
+
   function submit(event: FormEvent) {
     event.preventDefault();
     if (address.trim()) onNavigate(address);
@@ -237,16 +243,17 @@ export function BrowserToolbar({
         >
           <Icon name="back" />
         </button>
-        <button
-          type="button"
-          aria-label="Forward"
-          aria-keyshortcuts="Meta+]"
-          title="Forward (⌘])"
-          disabled={!tab.canGoForward}
-          onClick={onForward}
-        >
-          <Icon name="forward" />
-        </button>
+        {tab.canGoForward && (
+          <button
+            type="button"
+            aria-label="Forward"
+            aria-keyshortcuts="Meta+]"
+            title="Forward (⌘])"
+            onClick={onForward}
+          >
+            <Icon name="forward" />
+          </button>
+        )}
         <button
           type="button"
           aria-label={tab.loading ? "Stop loading" : "Reload"}
@@ -578,6 +585,7 @@ export function BrowserToolbar({
           </div>
         )}
       </div>
+      <span className="browser-toolbar-drag-fill" aria-hidden="true" />
     </div>
   );
 }

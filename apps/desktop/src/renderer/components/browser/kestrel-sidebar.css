@@ -91,6 +91,14 @@
 	margin-left: var(--kestrel-sidebar-width);
 }
 
+.ai-browser-app.agent-sidebar-collapsed
+	.browser-workspace:not(.browser-workspace-vertical)
+	.browser-viewport {
+	width: calc(
+		100% - var(--kestrel-sidebar-width) - var(--agent-panel-width)
+	);
+}
+
 /* Keep vertical tabs in the lower workspace as well. The toolbar and optional
  * bookmarks remain full-width chrome, while Kestrel and the vertical tab rail
  * sit beside the page content below them. */
@@ -126,13 +134,35 @@
 	padding: 8px 6px;
 }
 
+/* The vertical rail fills the lower workspace, but the tab-tools popover
+ * should be anchored to its trigger rather than positioned below the whole
+ * rail. Keep the menu above the page and Agent surfaces when it opens. */
+.browser-workspace-vertical
+	.browser-tab-row-vertical
+	.browser-tab-leading-actions {
+	position: relative;
+	z-index: 1;
+}
+
+.browser-workspace-vertical .browser-tab-tools-menu {
+	width: min(318px, calc(100vw - var(--kestrel-sidebar-width) - 12px));
+	max-height: min(
+		640px,
+		calc(100vh - var(--browser-chrome-height) - 16px)
+	);
+}
+
 .browser-workspace-vertical .browser-viewport {
+	grid-area: auto;
 	position: absolute;
 	top: var(--browser-chrome-height);
 	left: calc(var(--kestrel-sidebar-width) + var(--browser-tab-rail-width));
-	right: var(--agent-panel-width);
+	right: auto;
 	bottom: 0;
-	width: auto;
+	width: calc(
+		100vw - var(--kestrel-sidebar-width) - var(--browser-tab-rail-width) -
+			var(--agent-panel-width)
+	);
 	height: auto;
 	margin: 0;
 }
