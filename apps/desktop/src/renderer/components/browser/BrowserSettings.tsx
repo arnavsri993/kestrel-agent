@@ -825,7 +825,7 @@ export function BrowserSettings({
         <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
             <strong>Show bookmarks bar</strong>
-            <p>Pins saved pages under the address bar. Toggle with ⌘⇧B.</p>
+            <p>Shows saved pages on New Tab under the address bar. Toggle with ⌘⇧B.</p>
           </div>
           <button
             type="button"

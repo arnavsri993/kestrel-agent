@@ -469,10 +469,12 @@ export function BrowserWorkspace({
     );
   }
 
+  const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
+
   return (
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
-        state.settings.showBookmarksBar ? " browser-workspace-bookmarks" : ""
+        showBookmarksBar ? " browser-workspace-bookmarks" : ""
       }`}
       aria-label="Browser"
     >
@@ -553,7 +555,7 @@ export function BrowserWorkspace({
         }}
         onOpenMenu={onOpenMenu}
       />
-      {state.settings.showBookmarksBar && (
+      {showBookmarksBar && (
         <BookmarksBar
           bookmarks={state.bookmarks}
           originFavicons={state.originFavicons}
