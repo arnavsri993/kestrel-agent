@@ -497,7 +497,10 @@ try {
 		clientWidth: node.clientWidth,
 		scrollWidth: node.scrollWidth,
 	}));
-	assert(railMetrics.scrollWidth > railMetrics.clientWidth);
+	assert(
+		railMetrics.scrollWidth <= railMetrics.clientWidth + 1,
+		`Crowded tabs overflowed their rail: ${railMetrics.scrollWidth}px > ${railMetrics.clientWidth}px`,
+	);
 	const railBounds = await tabRail.boundingBox();
 	const newTabBounds = await newTabControl.boundingBox();
 	const windowWidth = await page.evaluate(() => window.innerWidth);
