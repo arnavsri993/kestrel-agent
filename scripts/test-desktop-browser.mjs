@@ -334,9 +334,10 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 	});
 	await page.reload();
-	await page
-		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
-		.waitFor();
+	// The New Tab greeting is intentionally contextual and may be generated
+	// from the local time and recent activity. Wait for the stable semantic
+	// heading instead of coupling this smoke test to one fallback sentence.
+	await page.locator("#new-tab-title").waitFor();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator("#new-tab-chat-input").waitFor();
 	assert.equal(await page.locator(".kestrel-home-model-selector summary").count(), 1);
@@ -392,17 +393,17 @@ try {
 		.getByRole("heading", { name: "Make the browser feel like yours." })
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
-	await page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "Browser", exact: true })
-		.click();
-	await page
-		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
-		.waitFor();
+	await page.locator(".kestrel-sidebar-brand").click();
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === "";
+		},
+		"Browser did not return to the New Tab page",
+	);
+	await page.locator("#new-tab-title").waitFor();
 	await page.reload();
-	await page
-		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
-		.waitFor();
+	await page.locator("#new-tab-title").waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
@@ -424,9 +425,7 @@ try {
 	);
 	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).waitFor();
 	await page.reload();
-	await page
-		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
-		.waitFor();
+	await page.locator("#new-tab-title").waitFor();
 	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().waitFor();
 	assert.equal(await agentSidebar.evaluate((sidebar) => sidebar.inert), false);
@@ -1036,17 +1035,6 @@ try {
 		.filter({ hasText: "Mountain valley" })
 		.click();
 	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
-	await page.getByLabel("Tab layout").selectOption("vertical");
-	state = await waitForBrowserState(
-		(candidate) =>
-			candidate.settings.searchEngine === "ecosia" &&
-			candidate.settings.tabLayout === "vertical" &&
-			candidate.settings.newTabBackground === "mountains",
-		"browser settings update",
-	);
-	assert.equal(state.settings.searchEngine, "ecosia");
-	assert.equal(state.settings.tabLayout, "vertical");
-	assert.equal(state.settings.newTabBackground, "mountains");
 	const useCurrentPage = page.getByRole("switch", {
 		name: "Use current page context with agent",
 	});
@@ -1058,11 +1046,26 @@ try {
 	);
 	await useCurrentPage.click();
 	assert.equal(await useCurrentPage.getAttribute("aria-checked"), "true");
+	await page.getByLabel("Tab layout").selectOption("vertical");
+	state = await waitForBrowserState(
+		(candidate) =>
+			candidate.settings.searchEngine === "ecosia" &&
+			candidate.settings.tabLayout === "vertical" &&
+			candidate.settings.newTabBackground === "mountains",
+		"browser settings update",
+	);
+	assert.equal(state.settings.searchEngine, "ecosia");
+	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.newTabBackground, "mountains");
 
-	await page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "Browser", exact: true })
-		.click();
+	await page.locator(".kestrel-sidebar-brand").click();
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/one`;
+		},
+		"Browser did not return to Page one after leaving Settings",
+	);
 	await page.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	assert.equal(
 		await page
@@ -1070,7 +1073,34 @@ try {
 			.getAttribute("aria-orientation"),
 		"vertical",
 	);
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		const agent = document.querySelector(".agent-sidebar");
+		if (!viewport || !agent) return false;
+		const viewportBounds = viewport.getBoundingClientRect();
+		const agentBounds = agent.getBoundingClientRect();
+		return viewportBounds.width > 0 && viewportBounds.right <= agentBounds.x;
+	});
 	await assertBrowserChromeLayout({ vertical: true });
+	const tabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
+	await tabToolsTrigger.click();
+	const tabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await tabToolsMenu.waitFor();
+	const tabToolsBounds = await tabToolsMenu.boundingBox();
+	const windowBounds = await page.evaluate(() => ({
+		width: window.innerWidth,
+		height: window.innerHeight,
+	}));
+	assert(tabToolsBounds, "Vertical tab tools menu did not receive a layout box");
+	assert(
+		tabToolsBounds.x >= 0 &&
+			tabToolsBounds.y >= 0 &&
+			tabToolsBounds.x + tabToolsBounds.width <= windowBounds.width &&
+			tabToolsBounds.y + tabToolsBounds.height <= windowBounds.height,
+		`Vertical tab tools menu escaped the window: ${JSON.stringify({ tabToolsBounds, windowBounds })}`,
+	);
+	await page.keyboard.press("Escape");
+	await tabToolsMenu.waitFor({ state: "detached" });
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after leaving Settings",

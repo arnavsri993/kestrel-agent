@@ -22,10 +22,6 @@ const executablePath = packagedExecutable
 const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
 	: [resolve("apps/desktop")];
-const mainBundle = readFileSync(
-	resolve("apps/desktop/out/main/index.js"),
-	"utf8",
-);
 
 assert.doesNotMatch(
 	mainBundle,
@@ -92,8 +88,8 @@ function assertCollapsedLayout(layout) {
 	assertNear(layout.navigation.width, 248, "collapsed navigation width");
 	assertNear(
 		layout.main.left,
-		layout.navigation.right,
-		"collapsed browser starts after navigation",
+		layout.navigation.left,
+		"collapsed browser chrome keeps a full-window origin",
 	);
 	assert.ok(
 		layout.main.width > layout.innerWidth / 2,
@@ -119,8 +115,8 @@ function assertOpenLayout(layout) {
 	assertNear(layout.navigation.width, 248, "open navigation width");
 	assertNear(
 		layout.main.left,
-		layout.navigation.right,
-		"open browser starts after navigation",
+		layout.navigation.left,
+		"open browser chrome keeps a full-window origin",
 	);
 	assert.ok(
 		layout.main.width > 500,
@@ -151,6 +147,18 @@ async function setDesktopZoom(application, page, zoomFactor) {
 			expectedCompact ? innerWidth <= 700 : innerWidth >= 1_200,
 		zoomFactor > 1,
 	);
+}
+
+async function waitForCollapsedLayout(page) {
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		const agent = document.querySelector(".agent-sidebar");
+		if (!viewport || !agent) return false;
+		return (
+			Math.abs(agent.getBoundingClientRect().width) <= 1 &&
+			Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1
+		);
+	});
 }
 
 async function readZoomReflow(page) {
@@ -234,8 +242,8 @@ function assertZoomReflow(layout, reflow) {
 	assertNear(layout.navigation.width, 56, "zoomed navigation width");
 	assertNear(
 		layout.main.left,
-		layout.navigation.right,
-		"zoomed browser starts after compact navigation",
+		layout.navigation.left,
+		"zoomed browser chrome keeps a full-window origin",
 	);
 	assertNear(
 		layout.main.right,
@@ -390,6 +398,7 @@ try {
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();
 	await assertWindowControlMotion(page);
+	await waitForCollapsedLayout(page);
 
 	assertCollapsedLayout(await readLayout(page));
 	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
@@ -418,11 +427,14 @@ try {
 			Math.abs(agent.getBoundingClientRect().width) <= 1
 		);
 	});
+	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 
 	await setDesktopZoom(application, page, 2);
+	await waitForCollapsedLayout(page);
 	assertZoomReflow(await readLayout(page), await readZoomReflow(page));
 	await setDesktopZoom(application, page, 1);
+	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 
 	assert.deepEqual(pageErrors, []);
