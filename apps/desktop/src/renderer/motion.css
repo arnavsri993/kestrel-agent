@@ -28,7 +28,6 @@
 			opacity 180ms var(--ease-soft),
 			transform var(--motion-panel) var(--ease-smooth),
 			border-color var(--motion-smooth) var(--ease-soft);
-		will-change: width, transform;
 	}
 
 	.ai-browser-app:not(.agent-full-page) .agent-sidebar.is-collapsed {
@@ -38,8 +37,16 @@
 		transform: scaleX(0.98);
 	}
 
-	.ai-browser-app:not(.agent-full-page) .browser-workspace .browser-viewport {
+	.ai-browser-app:not(.agent-full-page)
+		.browser-workspace:not(.browser-workspace-vertical)
+		.browser-viewport {
 		transition: width var(--motion-panel) var(--ease-smooth);
+	}
+
+	.ai-browser-app:not(.agent-full-page)
+		.browser-workspace.browser-workspace-vertical
+		.browser-viewport {
+		transition: right var(--motion-panel) var(--ease-smooth);
 	}
 
 	/* Feedback: controls lift a fraction of a pixel; the click still wins. */
@@ -53,11 +60,11 @@
 	.button,
 	.ui-button {
 		transition:
-			background-color var(--motion-smooth) var(--ease-soft),
-			border-color var(--motion-smooth) var(--ease-soft),
-			color var(--motion-smooth) var(--ease-soft),
-			box-shadow var(--motion-smooth) var(--ease-soft),
-			transform var(--motion-smooth) var(--ease-smooth);
+			background-color var(--motion-feedback) var(--ease-soft),
+			border-color var(--motion-feedback) var(--ease-soft),
+			color var(--motion-feedback) var(--ease-soft),
+			box-shadow var(--motion-state) var(--ease-soft),
+			transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.browser-navigation button:not(:disabled):hover,
@@ -84,10 +91,10 @@
 
 	.browser-address {
 		transition:
-			background-color var(--motion-smooth) var(--ease-soft),
-			border-color var(--motion-smooth) var(--ease-soft),
-			box-shadow var(--motion-smooth) var(--ease-soft),
-			transform var(--motion-smooth) var(--ease-smooth);
+			background-color var(--motion-state) var(--ease-soft),
+			border-color var(--motion-state) var(--ease-soft),
+			box-shadow var(--motion-state) var(--ease-soft),
+			transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.browser-address:focus-within {
@@ -101,7 +108,7 @@
 	.agent-sidebar-expand svg,
 	.agent-sidebar-collapse svg,
 	.surface-back-button svg {
-		transition: transform var(--motion-smooth) var(--ease-smooth);
+		transition: transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.agent-sidebar-new:hover svg {
@@ -126,10 +133,9 @@
 	   still give the pointer a quiet tactile response. */
 	.browser-tab {
 		transition:
-			background-color var(--motion-smooth) var(--ease-soft),
-			color var(--motion-smooth) var(--ease-soft),
-			box-shadow var(--motion-smooth) var(--ease-soft),
-			opacity 180ms var(--ease-soft);
+			background-color var(--motion-state) var(--ease-soft),
+			color var(--motion-feedback) var(--ease-soft),
+			box-shadow var(--motion-state) var(--ease-soft);
 	}
 
 	.browser-tab:hover:not(.active) {
@@ -137,7 +143,7 @@
 	}
 
 	.browser-tab .browser-favicon {
-		transition: transform var(--motion-smooth) var(--ease-smooth);
+		transition: transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.browser-tab:hover .browser-favicon,
@@ -147,10 +153,10 @@
 
 	.browser-tab-close {
 		transition:
-			background-color var(--motion-smooth) var(--ease-soft),
-			color var(--motion-smooth) var(--ease-soft),
-			opacity var(--motion-smooth) var(--ease-soft),
-			transform var(--motion-smooth) var(--ease-smooth);
+			background-color var(--motion-feedback) var(--ease-soft),
+			color var(--motion-feedback) var(--ease-soft),
+			opacity var(--motion-feedback) var(--ease-soft),
+			transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.browser-tab-close:hover {
@@ -159,7 +165,7 @@
 
 	.browser-new-tab svg,
 	.browser-tab-actions-btn svg {
-		transition: transform var(--motion-smooth) var(--ease-smooth);
+		transition: transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.browser-new-tab:hover svg {
@@ -177,9 +183,9 @@
 
 	.new-tab-sidebar-toggle {
 		transition:
-			background-color var(--motion-smooth) var(--ease-soft),
-			border-color var(--motion-smooth) var(--ease-soft),
-			transform var(--motion-smooth) var(--ease-smooth);
+			background-color var(--motion-feedback) var(--ease-soft),
+			border-color var(--motion-feedback) var(--ease-soft),
+			transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.new-tab-sidebar-toggle:hover {
@@ -187,7 +193,7 @@
 	}
 
 	.new-tab-sidebar-toggle svg {
-		transition: transform var(--motion-smooth) var(--ease-smooth);
+		transition: transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.new-tab-sidebar-toggle:hover svg {
@@ -196,9 +202,9 @@
 
 	.kestrel-home-composer {
 		transition:
-			border-color var(--motion-smooth) var(--ease-soft),
-			box-shadow var(--motion-smooth) var(--ease-smooth),
-			transform var(--motion-smooth) var(--ease-smooth);
+			border-color var(--motion-state) var(--ease-soft),
+			box-shadow var(--motion-state) var(--ease-smooth),
+			transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.kestrel-home-composer:focus-within {
@@ -214,10 +220,10 @@
 	.kestrel-home-shortcut-glyph,
 	.kestrel-home-action-chip {
 		transition:
-			background-color var(--motion-smooth) var(--ease-soft),
-			border-color var(--motion-smooth) var(--ease-soft),
-			box-shadow var(--motion-smooth) var(--ease-soft),
-			transform var(--motion-smooth) var(--ease-smooth);
+			background-color var(--motion-feedback) var(--ease-soft),
+			border-color var(--motion-feedback) var(--ease-soft),
+			box-shadow var(--motion-state) var(--ease-soft),
+			transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.kestrel-home-shortcut:hover .kestrel-home-shortcut-glyph,
@@ -258,10 +264,10 @@
 
 	.agent-approval-action {
 		transition:
-			background-color var(--motion-smooth) var(--ease-soft),
-			border-color var(--motion-smooth) var(--ease-soft),
-			box-shadow var(--motion-smooth) var(--ease-soft),
-			transform var(--motion-smooth) var(--ease-smooth);
+			background-color var(--motion-feedback) var(--ease-soft),
+			border-color var(--motion-feedback) var(--ease-soft),
+			box-shadow var(--motion-state) var(--ease-soft),
+			transform var(--motion-feedback) var(--ease-smooth);
 	}
 
 	.agent-approval-action:hover {
@@ -300,5 +306,18 @@
 	to {
 		opacity: 1;
 		transform: translateY(0);
+	}
+}
+
+/* Keep every older surface rule accessible too. Some browser and settings
+ * styles predate this motion layer, so a single reduced-motion boundary
+ * prevents a forgotten animation or transition from leaking through. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation: none !important;
+		transition: none !important;
+		scroll-behavior: auto !important;
 	}
 }

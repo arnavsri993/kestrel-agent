@@ -82,14 +82,289 @@ function assertTheme(layout) {
 	assert.equal(layout.bridgeReady, true);
 }
 
+function assertNoLayoutTransition(properties, label) {
+	for (const property of ["width", "max-width", "flex-basis", "height"]) {
+		assert.equal(
+			properties.includes(property),
+			false,
+			`${label} must not transition ${property}; layout motion has a single owner.`,
+		);
+	}
+}
+
+function transitionDurationsInSeconds(value) {
+	return value.split(",").map((part) => {
+		const trimmed = part.trim();
+		if (trimmed.endsWith("ms")) return Number.parseFloat(trimmed) / 1_000;
+		if (trimmed.endsWith("s")) return Number.parseFloat(trimmed);
+		return 0;
+	});
+}
+
+async function assertMotionContract(page) {
+	const motion = await page.evaluate(() => {
+		const read = (selector) => {
+			const element = document.querySelector(selector);
+			if (!element) throw new Error(`Missing ${selector}.`);
+			const style = getComputedStyle(element);
+			return {
+				transitionProperty: style.transitionProperty,
+				transitionDuration: style.transitionDuration,
+				animationName: style.animationName,
+				willChange: style.willChange,
+			};
+		};
+		return {
+			tab: read(".browser-tab"),
+			control: read(".browser-toolbar-actions button:not(:disabled)"),
+			agent: read(".agent-sidebar"),
+			widget: document.querySelector(".kestrel-widget-card")
+				? read(".kestrel-widget-card")
+				: null,
+		};
+	});
+	const tabProperties = motion.tab.transitionProperty
+		.split(",")
+		.map((property) => property.trim());
+	assertNoLayoutTransition(tabProperties, "Browser tabs");
+	assert.equal(
+		tabProperties.includes("opacity"),
+		false,
+		"Motion owns tab lifecycle and drag opacity; CSS must not trail it.",
+	);
+	assert.equal(
+		motion.agent.willChange,
+		"auto",
+		"The agent rail must not stay GPU-promoted at rest.",
+	);
+	assert.ok(
+		Math.max(...transitionDurationsInSeconds(motion.control.transitionDuration)) <= 0.15,
+		`Control feedback is too slow: ${motion.control.transitionDuration}.`,
+	);
+	if (motion.widget) {
+		const widgetProperties = motion.widget.transitionProperty
+			.split(",")
+			.map((property) => property.trim());
+		assert.equal(
+			widgetProperties.includes("transform"),
+			false,
+			"New Tab widget transform motion must have a single Motion owner.",
+		);
+	}
+}
+
+async function assertReducedMotionStyles(page) {
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	const reduced = await page.evaluate(() => {
+		const read = (selector) => {
+			const element = document.querySelector(selector);
+			if (!element) throw new Error(`Missing ${selector}.`);
+			const style = getComputedStyle(element);
+			return {
+				transitionDuration: style.transitionDuration,
+				animationName: style.animationName,
+				scrollBehavior: style.scrollBehavior,
+			};
+		};
+		return {
+			tab: read(".browser-tab"),
+			home: read(".kestrel-home-content"),
+		};
+	});
+	assert.ok(
+		reduced.tab.transitionDuration
+			.split(",")
+			.every((duration) => Number.parseFloat(duration) === 0),
+		`Reduced motion left a tab transition active: ${reduced.tab.transitionDuration}.`,
+	);
+	assert.equal(reduced.home.animationName, "none");
+	assert.equal(reduced.tab.scrollBehavior, "auto");
+	await page.emulateMedia({ reducedMotion: "no-preference" });
+}
+
+async function assertTabDragMotion(page, orientation = "horizontal") {
+	const tab = page.locator(".browser-tab").first();
+	await tab.waitFor();
+	const box = await tab.boundingBox();
+	assert(box, "The browser tab has no visible bounds.");
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await page.mouse.down();
+	if (orientation === "vertical") {
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 24, {
+			steps: 4,
+		});
+	} else {
+		await page.mouse.move(box.x + box.width / 2 + 24, box.y + box.height / 2, {
+			steps: 4,
+		});
+	}
+	await page.waitForFunction(() => {
+		const dragging = document.querySelector(".browser-tab.is-dragging");
+		return dragging && Number.parseFloat(getComputedStyle(dragging).opacity) < 0.95;
+	});
+	await page.mouse.up();
+}
+
+async function waitForVerticalTabsToSettle(page) {
+	await page.waitForFunction(
+		() => document.querySelectorAll(".browser-tab-row-vertical .browser-tab").length >= 2,
+	);
+	await page.waitForFunction(() => {
+		const rail = document.querySelector(".browser-tab-row-vertical");
+		if (!rail) return false;
+		const railRect = rail.getBoundingClientRect();
+		return Array.from(rail.querySelectorAll(".browser-tab")).every((tab) => {
+			const rect = tab.getBoundingClientRect();
+			return (
+				getComputedStyle(tab).transform === "none" &&
+				rect.left >= railRect.left - 1 &&
+				rect.right <= railRect.right + 1
+			);
+		});
+	});
+}
+
+async function readVerticalTabLayout(page) {
+	return page.evaluate(() => {
+		const rail = document.querySelector(".browser-tab-row-vertical");
+		const tabs = document.querySelector(".browser-tab-row-vertical .browser-tabs");
+		const viewport = document.querySelector("#browser-viewport");
+		if (!rail || !tabs || !viewport) throw new Error("Vertical tab layout is unavailable.");
+		const railRect = rail.getBoundingClientRect();
+		const viewportRect = viewport.getBoundingClientRect();
+		const tabRects = Array.from(rail.querySelectorAll(".browser-tab")).map((tab) => {
+			const rect = tab.getBoundingClientRect();
+			return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+		});
+		return {
+			innerWidth,
+			trailingOverflow:
+				document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			rail: { left: railRect.left, right: railRect.right, width: railRect.width },
+			tabs: {
+				left: tabs.getBoundingClientRect().left,
+				right: tabs.getBoundingClientRect().right,
+				scrollWidth: tabs.scrollWidth,
+				clientWidth: tabs.clientWidth,
+			},
+			viewport: { left: viewportRect.left, right: viewportRect.right },
+			tabRects,
+		};
+	});
+}
+
+function assertVerticalTabGeometry(layout, agentWidth) {
+	assertNear(
+		layout.rail.left,
+		layout.viewport.left - 208,
+		"vertical tab rail position",
+	);
+	assertNear(layout.rail.width, 208, "vertical tab rail width");
+	assert.ok(
+		layout.viewport.left >= layout.rail.right - 1,
+		"Vertical tabs overlap the page viewport.",
+	);
+	assert.ok(
+		layout.viewport.right <= layout.innerWidth + 1,
+		"Vertical tabs caused page overflow.",
+	);
+	assertNear(
+		layout.viewport.right,
+		layout.innerWidth - agentWidth,
+		"Vertical page viewport ends before the active agent rail",
+	);
+	assert.ok(layout.trailingOverflow <= 1, "Vertical tabs caused document overflow.");
+	assert.ok(
+		layout.tabs.scrollWidth <= layout.tabs.clientWidth + 1,
+		"Vertical tabs overflow horizontally instead of scrolling vertically.",
+	);
+	for (const rect of layout.tabRects) {
+		assert.ok(
+			rect.left >= layout.rail.left - 1 && rect.right <= layout.rail.right + 1,
+		);
+	}
+}
+
+async function assertVerticalTabLayout(page) {
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page
+		.getByRole("menuitem", { name: "Turn On Vertical Tabs", exact: true })
+		.click();
+	await page.locator(".browser-workspace-vertical").waitFor();
+	await waitForVerticalTabsToSettle(page);
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
+	});
+	assertVerticalTabGeometry(await readVerticalTabLayout(page), 0);
+	const verticalViewportProperties = await page.locator("#browser-viewport").evaluate(
+		(element) =>
+			getComputedStyle(element)
+				.transitionProperty.split(",")
+				.map((property) => property.trim()),
+	);
+	assert.equal(
+		verticalViewportProperties.includes("right"),
+		true,
+		"Vertical browser content must animate with the agent rail instead of jumping.",
+	);
+
+	await assertTabDragMotion(page, "vertical");
+	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
+	await page.waitForFunction(() => {
+		const shell = document.querySelector(".ai-browser-app");
+		const agent = document.querySelector(".agent-sidebar");
+		return (
+			shell &&
+			agent &&
+			!shell.classList.contains("agent-sidebar-collapsed") &&
+			Math.abs(agent.getBoundingClientRect().width - 360) <= 1
+		);
+	});
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		const agent = document.querySelector(".agent-sidebar");
+		return (
+			viewport &&
+			agent &&
+			Math.abs(
+				viewport.getBoundingClientRect().right - agent.getBoundingClientRect().left,
+			) <= 1
+		);
+	});
+	assertVerticalTabGeometry(await readVerticalTabLayout(page), 360);
+
+	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
+	await page.waitForFunction(() => {
+		const shell = document.querySelector(".ai-browser-app");
+		const agent = document.querySelector(".agent-sidebar");
+		return (
+			shell?.classList.contains("agent-sidebar-collapsed") &&
+			agent &&
+			Math.abs(agent.getBoundingClientRect().width) <= 1
+		);
+	});
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
+	});
+	assertVerticalTabGeometry(await readVerticalTabLayout(page), 0);
+
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page
+		.getByRole("menuitem", { name: "Turn Off Vertical Tabs", exact: true })
+		.click();
+	await page.locator(".browser-tab-row-horizontal").waitFor();
+}
+
 function assertCollapsedLayout(layout) {
 	assert.match(layout.classes, /agent-sidebar-collapsed/);
 	assertNear(layout.navigation.left, 0, "collapsed navigation left");
 	assertNear(layout.navigation.width, 248, "collapsed navigation width");
 	assertNear(
 		layout.main.left,
-		layout.navigation.left,
-		"collapsed browser chrome keeps a full-window origin",
+		0,
+		"collapsed browser plane starts at the window edge",
 	);
 	assert.ok(
 		layout.main.width > layout.innerWidth / 2,
@@ -99,6 +374,10 @@ function assertCollapsedLayout(layout) {
 		layout.main.right,
 		layout.innerWidth,
 		"collapsed browser reaches the window edge",
+	);
+	assert.ok(
+		layout.viewport.left >= layout.navigation.right - 1,
+		"collapsed page viewport overlaps the navigation rail",
 	);
 	assertNear(
 		layout.viewport.right,
@@ -115,14 +394,18 @@ function assertOpenLayout(layout) {
 	assertNear(layout.navigation.width, 248, "open navigation width");
 	assertNear(
 		layout.main.left,
-		layout.navigation.left,
-		"open browser chrome keeps a full-window origin",
+		0,
+		"open browser plane starts at the window edge",
 	);
 	assert.ok(
 		layout.main.width > 500,
 		`The open browser plane was only ${layout.main.width}px (${layout.columns}).`,
 	);
 	assertNear(layout.main.right, layout.innerWidth, "open browser plane reaches the window edge");
+	assert.ok(
+		layout.viewport.left >= layout.navigation.right - 1,
+		"open page viewport overlaps the navigation rail",
+	);
 	assertNear(layout.viewport.right, layout.agent.left, "page viewport ends at Pragmatic");
 	assertNear(layout.agent.right, layout.innerWidth, "Pragmatic reaches window edge");
 	assertNear(layout.agent.width, 360, "open Pragmatic width");
@@ -242,13 +525,17 @@ function assertZoomReflow(layout, reflow) {
 	assertNear(layout.navigation.width, 56, "zoomed navigation width");
 	assertNear(
 		layout.main.left,
-		layout.navigation.left,
-		"zoomed browser chrome keeps a full-window origin",
+		0,
+		"zoomed browser plane starts at the window edge",
 	);
 	assertNear(
 		layout.main.right,
 		layout.innerWidth,
 		"zoomed browser reaches the window edge",
+	);
+	assert.ok(
+		layout.viewport.left >= layout.navigation.right - 1,
+		"zoomed page viewport overlaps the compact navigation rail",
 	);
 	assertNear(
 		layout.viewport.right,
@@ -330,14 +617,17 @@ async function assertWindowControlMotion(page) {
 		return motion;
 	};
 
-	await page.mouse.move(box.x + 140, box.y + 140);
+	await page.mouse.move(
+		box.x + box.width / 2,
+		box.y + box.height / 2,
+	);
 	const left = await sample(
-		box.x + 5,
+		box.x + 1,
 		box.y + box.height / 2,
 		(motion) => motion.tilt < 0,
 	);
 	const right = await sample(
-		box.x + box.width - 5,
+		box.x + box.width - 1,
 		box.y + box.height / 2,
 		(motion) => motion.tilt > 0,
 	);
@@ -352,7 +642,10 @@ async function assertWindowControlMotion(page) {
 		`The hovered triangle did not deepen (${right.fillShade}, ${right.shadeOpacity}).`,
 	);
 
-	await page.mouse.move(box.x + 140, box.y + 140);
+	await page.mouse.move(
+		box.x + box.width / 2,
+		box.y + box.height / 2,
+	);
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	const reduced = await sample(
 		box.x + box.width / 2,
@@ -369,7 +662,10 @@ async function assertWindowControlMotion(page) {
 		`Reduced motion must retain the darker hover cue (${JSON.stringify(reduced)}).`,
 	);
 	await page.emulateMedia({ reducedMotion: "no-preference" });
-	await page.mouse.move(box.x + 140, box.y + 140);
+	await page.mouse.move(
+		box.x + box.width / 2,
+		box.y + box.height / 2,
+	);
 }
 
 try {
@@ -399,6 +695,14 @@ try {
 	await page.locator(".new-tab-page").waitFor();
 	await assertWindowControlMotion(page);
 	await waitForCollapsedLayout(page);
+	await assertMotionContract(page);
+	await assertReducedMotionStyles(page);
+	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await page.waitForFunction(
+		() => document.querySelectorAll(".browser-tabs .browser-tab").length >= 2,
+	);
+	await assertTabDragMotion(page);
+	await assertVerticalTabLayout(page);
 
 	assertCollapsedLayout(await readLayout(page));
 	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
@@ -432,9 +736,17 @@ try {
 
 	await setDesktopZoom(application, page, 2);
 	await waitForCollapsedLayout(page);
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
+	});
 	assertZoomReflow(await readLayout(page), await readZoomReflow(page));
 	await setDesktopZoom(application, page, 1);
 	await waitForCollapsedLayout(page);
+	await page.waitForFunction(() => {
+		const viewport = document.querySelector("#browser-viewport");
+		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
+	});
 	assertCollapsedLayout(await readLayout(page));
 
 	assert.deepEqual(pageErrors, []);

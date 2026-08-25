@@ -549,7 +549,7 @@ function WidgetCard({
 	onDragStart(id: NewTabWidgetId, event: ReactPointerEvent<HTMLButtonElement>): void;
 }) {
 	const definitionForItem = definition;
-	const reducedMotion = useReducedMotion();
+	const reducedMotion = useReducedMotion() ?? false;
 	const style = {
 		"--kestrel-widget-column-span": columnSpanForSize(item.size, layoutClass),
 		"--kestrel-widget-row-span": rowSpanForSize(item.size),
@@ -570,7 +570,14 @@ function WidgetCard({
 				dragging
 					? { duration: 0 }
 					: {
-							layout: { duration: reducedMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] },
+							default: {
+								duration: reducedMotion ? 0 : 0.18,
+								ease: [0.22, 1, 0.36, 1],
+							},
+							layout: {
+								duration: reducedMotion ? 0 : 0.22,
+								ease: [0.22, 1, 0.36, 1],
+							},
 						}
 			}
 			data-kestrel-widget-id={item.id}

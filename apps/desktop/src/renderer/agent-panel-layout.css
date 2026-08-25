@@ -42,14 +42,12 @@
 }
 
 .browser-workspace .browser-viewport {
-	width: calc(100% - var(--agent-panel-width));
-	justify-self: start;
 	z-index: 1;
 	overflow: hidden;
 }
 
-.ai-browser-app.agent-sidebar-collapsed .browser-workspace .browser-viewport {
-	width: 100%;
+.browser-workspace:not(.browser-workspace-vertical) .browser-viewport {
+	justify-self: start;
 }
 
 .agent-sidebar {

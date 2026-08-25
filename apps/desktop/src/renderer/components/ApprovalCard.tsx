@@ -23,7 +23,7 @@ export function ApprovalCard({
 	const editButtonRef = useRef<HTMLButtonElement>(null);
 	const titleRef = useRef<HTMLHeadingElement>(null);
 	const focusTargetRef = useRef<HTMLElement | "edit" | null>(null);
-	const reduced = useReducedMotion();
+	const reduced = useReducedMotion() ?? false;
 	const pending = approval.status === "pending";
 
 	useEffect(() => {
@@ -161,7 +161,11 @@ export function ApprovalCard({
 						className="approval-actions"
 						initial={reduced ? false : { opacity: 0, y: 8 }}
 						animate={{ opacity: 1, y: 0 }}
-						exit={{ opacity: 0 }}
+						exit={reduced ? { opacity: 1, y: 0 } : { opacity: 0, y: 4 }}
+						transition={{
+							duration: reduced ? 0 : 0.16,
+							ease: [0.22, 1, 0.36, 1],
+						}}
 					>
 						<label className="policy-check">
 							<input

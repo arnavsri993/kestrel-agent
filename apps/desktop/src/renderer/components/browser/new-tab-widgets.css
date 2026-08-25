@@ -287,7 +287,6 @@
 	box-shadow: none;
 	contain: layout style;
 	transition:
-		transform var(--motion-state) var(--ease-kestrel),
 		border-color var(--motion-feedback) var(--ease-kestrel),
 		box-shadow var(--motion-state) var(--ease-kestrel),
 		background-color var(--motion-state) var(--ease-kestrel);
