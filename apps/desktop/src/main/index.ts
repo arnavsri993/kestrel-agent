@@ -1510,6 +1510,7 @@ function createDetachedBrowserWindow(
       devTools: !isPackagedKestrelApp,
     },
   });
+  if (process.platform === "darwin") window.setWindowButtonVisibility(false);
   const statePath = join(
     app.getPath("userData"),
     "browser",
@@ -2161,7 +2162,9 @@ function registerIpc(): void {
       request.type === "window-toggle-zoom" ||
       request.type === "window-close"
     ) {
-      if (process.platform !== "darwin" || senderWindow !== mainWindow)
+      const isKestrelBrowserWindow =
+        senderWindow === mainWindow || browserWindowServices.has(senderWindow);
+      if (process.platform !== "darwin" || !isKestrelBrowserWindow)
         throw new Error("Custom window controls are available only on macOS.");
       if (request.type === "window-minimize") {
         senderWindow.minimize();
