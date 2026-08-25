@@ -676,6 +676,31 @@ try {
 		width: Math.round(viewport.width),
 		height: Math.round(viewport.height),
 	});
+	// Browser pages are native WebContentsViews layered beside the renderer.
+	// Menus opened from the browser chrome must temporarily release that view;
+	// DOM z-index alone cannot place a renderer menu above a native sibling.
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page.getByRole("menu", { name: "Tab tools" }).waitFor();
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the tab tools menu",
+	);
+	await page.keyboard.press("Escape");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing tab tools",
+	);
+	await page.getByRole("button", { name: "Tools", exact: true }).click();
+	await page.getByRole("menu", { name: "Tools" }).waitFor();
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the toolbar tools menu",
+	);
+	await page.keyboard.press("Escape");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing toolbar tools",
+	);
 	await application.evaluate(({ BrowserWindow }) => {
 		const window = BrowserWindow.getAllWindows().find(
 			(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),

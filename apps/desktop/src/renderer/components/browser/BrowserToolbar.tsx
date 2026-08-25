@@ -56,6 +56,7 @@ export function BrowserToolbar({
   onOpenSettings,
   onToggleCalculator,
   onOpenMenu,
+  onMenuOpenChange,
 }: {
   tab: UserBrowserTab;
   agentOpen: boolean;
@@ -82,6 +83,7 @@ export function BrowserToolbar({
   onOpenSettings(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
+  onMenuOpenChange?(open: boolean): void;
 }) {
   const [address, setAddress] = useState(tab.url);
   const [openMenu, setOpenMenu] = useState<ToolbarMenu>(null);
@@ -167,6 +169,10 @@ export function BrowserToolbar({
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [closeMenu, openMenu]);
+
+  useEffect(() => {
+    onMenuOpenChange?.(Boolean(openMenu));
+  }, [onMenuOpenChange, openMenu]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
