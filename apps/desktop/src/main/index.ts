@@ -42,14 +42,16 @@ import {
   type CommunicationCodeCandidate,
   type CommunicationCodeScan,
   type CommunicationSourceStatus,
-  type InstalledExtension,
-  type UserBrowserState,
+	type InstalledExtension,
+	type PasswordPrompt,
+	type UserBrowserState,
   type UserBrowserTab,
   type WorkspaceGrant,
   type WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
+import { PasswordVault } from "./password-vault";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
 import { MigrationManager, PluginInstaller, readBoundedResponseBytes } from "@kestrel/agent-core";
 import { PluginTrustStore } from "./plugin-trust-store";
@@ -174,6 +176,154 @@ interface CalculatorOverlayRecord {
 
 const calculatorOverlays = new Map<BrowserWindow, CalculatorOverlayRecord>();
 const calculatorOverlayWindows = new Set<BrowserWindow>();
+
+interface PasswordOverlayRecord {
+	window: BrowserWindow;
+	owner: BrowserWindow;
+	prompt: PasswordPrompt;
+	ready: boolean;
+	}
+
+const passwordOverlays = new Map<BrowserWindow, PasswordOverlayRecord>();
+const passwordOverlayWindows = new Set<BrowserWindow>();
+const passwordOverlayOwners = new WeakMap<BrowserWindow, BrowserWindow>();
+
+function passwordOverlaySize(prompt: PasswordPrompt): {
+	width: number;
+	height: number;
+} {
+	return prompt.mode === "field"
+		? { width: 326, height: 158 }
+		: { width: 382, height: 236 };
+}
+
+function passwordOverlayBounds(
+	owner: BrowserWindow,
+	prompt: PasswordPrompt,
+): Electron.Rectangle {
+	const content = owner.getContentBounds();
+	const size = passwordOverlaySize(prompt);
+	const anchor = prompt.anchor;
+	const screenX = content.x + anchor.x;
+	const screenY = content.y + anchor.y;
+	const display = screen.getDisplayNearestPoint({ x: screenX, y: screenY });
+	const workArea = display.workArea;
+	const preferredX = screenX;
+	const preferredY = screenY + anchor.height + 8;
+	const y =
+		preferredY + size.height <= workArea.y + workArea.height - 12
+			? preferredY
+			: screenY - size.height - 8;
+	return {
+		x: Math.round(
+			Math.max(
+				workArea.x + 12,
+				Math.min(preferredX, workArea.x + workArea.width - size.width - 12),
+			),
+		),
+		y: Math.round(
+			Math.max(
+				workArea.y + 12,
+				Math.min(y, workArea.y + workArea.height - size.height - 12),
+			),
+		),
+		...size,
+	};
+}
+
+function closePasswordOverlay(owner: BrowserWindow): void {
+	const record = passwordOverlays.get(owner);
+	if (!record) return;
+	if (record.window.isDestroyed()) {
+		passwordOverlays.delete(owner);
+		passwordOverlayWindows.delete(record.window);
+		return;
+	}
+	record.window.close();
+}
+
+function updatePasswordOverlay(
+	owner: BrowserWindow,
+	prompt: PasswordPrompt | null,
+): void {
+	if (!prompt) {
+		closePasswordOverlay(owner);
+		return;
+	}
+	let record = passwordOverlays.get(owner);
+	if (!record) {
+		const overlay = new BrowserWindow({
+			...passwordOverlayBounds(owner, prompt),
+			parent: owner,
+			modal: false,
+			show: false,
+			frame: false,
+			transparent: true,
+			resizable: false,
+			skipTaskbar: true,
+			hasShadow: true,
+			backgroundColor: "#00000000",
+			webPreferences: {
+				preload: join(__dirname, "../preload/index.cjs"),
+				nodeIntegration: false,
+				contextIsolation: true,
+				sandbox: !DEVELOPMENT_RENDERER_URL,
+				webSecurity: true,
+				devTools: !isPackagedKestrelApp,
+			},
+		});
+		record = {
+			window: overlay,
+			owner,
+			prompt,
+			ready: false,
+		};
+		passwordOverlays.set(owner, record);
+		passwordOverlayWindows.add(overlay);
+		passwordOverlayOwners.set(overlay, owner);
+		const reposition = () => {
+			const current = passwordOverlays.get(owner);
+			if (current?.window === overlay && !overlay.isDestroyed())
+				overlay.setBounds(passwordOverlayBounds(owner, current.prompt));
+		};
+		owner.on("move", reposition);
+		owner.on("resize", reposition);
+		overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+		protectRendererNavigation(overlay.webContents, trustedRendererUrl);
+		overlay.webContents.on("did-finish-load", () => {
+			const current = passwordOverlays.get(owner);
+			if (!current || current.window !== overlay || overlay.isDestroyed()) return;
+			current.ready = true;
+			overlay.webContents.send("kestrel:password-prompt", current.prompt);
+		});
+		overlay.once("ready-to-show", () => {
+			if (!overlay.isDestroyed() && passwordOverlays.get(owner)?.window === overlay)
+				overlay.showInactive();
+		});
+		overlay.on("closed", () => {
+			owner.removeListener("move", reposition);
+			owner.removeListener("resize", reposition);
+			passwordOverlayWindows.delete(overlay);
+			if (passwordOverlays.get(owner)?.window === overlay)
+				passwordOverlays.delete(owner);
+		});
+		if (DEVELOPMENT_RENDERER_URL) {
+			const url = new URL(DEVELOPMENT_RENDERER_URL);
+			url.searchParams.set("passwordOverlay", "1");
+			void overlay.loadURL(url.toString()).catch(() => overlay.close());
+		} else {
+			void overlay
+				.loadFile(RENDERER_ENTRY_PATH, { query: { passwordOverlay: "1" } })
+				.catch(() => overlay.close());
+		}
+	} else {
+		record.prompt = prompt;
+		record.window.setBounds(passwordOverlayBounds(owner, prompt));
+		if (record.ready && !record.window.isDestroyed())
+			record.window.webContents.send("kestrel:password-prompt", prompt);
+	}
+}
+
 const supervisor = new CoreSupervisor(
   (request, signal) => {
     if (isUserBrowserBackendWireRequest(request)) {
@@ -237,6 +387,7 @@ const execFileAsync = promisify(execFile);
 let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
+let appPasswordVault: PasswordVault | null = null;
 let googleOAuthController: AbortController | null = null;
 let chatGptOAuthController: AbortController | null = null;
 let activeChatGptOAuthManager: ChatGptOAuthManager | null = null;
@@ -556,8 +707,13 @@ function localRuntimeManager(): LocalRuntimeManager {
 }
 
 function credentialBroker(): CredentialBroker {
-  appCredentialBroker ??= new CredentialBroker(app.getPath("userData"));
-  return appCredentialBroker;
+	appCredentialBroker ??= new CredentialBroker(app.getPath("userData"));
+	return appCredentialBroker;
+}
+
+function passwordVault(): PasswordVault {
+	appPasswordVault ??= new PasswordVault(credentialBroker());
+	return appPasswordVault;
 }
 
 function googleWorkspaceOAuthManager(): GoogleWorkspaceOAuthManager {
@@ -1378,6 +1534,7 @@ function createMainWindow(): BrowserWindow {
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);
   if (userBrowserService) {
     if (mainWindow) closeCalculatorOverlay(mainWindow);
+    if (mainWindow) closePasswordOverlay(mainWindow);
     userBrowserService.dispose();
     if (mainWindow) browserWindowServices.delete(mainWindow);
     userBrowserService = null;
@@ -1391,10 +1548,12 @@ function createMainWindow(): BrowserWindow {
           downloadDirectory: process.env.KESTREL_TEST_USER_DATA
             ? join(app.getPath("userData"), "browser-downloads")
             : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+          passwordVault: passwordVault(),
           onEvent: (event) => {
             if (!window.isDestroyed())
               window.webContents.send("kestrel:browser-event", event);
           },
+          onPasswordPrompt: (prompt) => updatePasswordOverlay(window, prompt),
           onCommand: (command) => {
             if (!window.isDestroyed()) {
               // Native WebContentsView pages own focus while the user is browsing.
@@ -1442,6 +1601,7 @@ function createMainWindow(): BrowserWindow {
     const closingLastTab = browserState?.tabs.length === 0;
     if (!quitting && process.platform === "darwin") {
       closeCalculatorOverlay(window);
+      closePasswordOverlay(window);
       if (!closingLastTab) {
         event.preventDefault();
         window.hide();
@@ -1450,6 +1610,7 @@ function createMainWindow(): BrowserWindow {
   });
   window.on("closed", () => {
     closeCalculatorOverlay(window);
+    closePasswordOverlay(window);
     const service = browserServiceForWindow(window);
     if (service) service.dispose();
     browserWindowServices.delete(window);
@@ -1524,10 +1685,12 @@ function createDetachedBrowserWindow(
     downloadDirectory: process.env.KESTREL_TEST_USER_DATA
       ? join(app.getPath("userData"), "browser-downloads")
       : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+    passwordVault: passwordVault(),
     onEvent: (event) => {
       if (!window.isDestroyed())
         window.webContents.send("kestrel:browser-event", event);
     },
+    onPasswordPrompt: (prompt) => updatePasswordOverlay(window, prompt),
     onCommand: (command) => {
       if (!window.isDestroyed()) {
         window.webContents.focus();
@@ -1545,6 +1708,7 @@ function createDetachedBrowserWindow(
   });
   protectRendererNavigation(window.webContents, trustedRendererUrl);
   window.on("closed", () => {
+    closePasswordOverlay(window);
     service.dispose();
     browserWindowServices.delete(window);
     void rm(statePath, { force: true }).catch(() => undefined);
@@ -2113,10 +2277,15 @@ function registerIpc(): void {
     const isCalculatorOverlayWindow = Boolean(
       senderWindow && calculatorOverlayWindows.has(senderWindow),
     );
+    const passwordOverlayOwner = senderWindow
+      ? passwordOverlayOwners.get(senderWindow)
+      : undefined;
+    const isPasswordOverlayWindow = Boolean(passwordOverlayOwner);
     if (
       !senderWindow ||
       (!browserWindowServices.has(senderWindow) &&
         !isCalculatorOverlayWindow &&
+        !isPasswordOverlayWindow &&
         senderWindow !== petOverlayWindow) ||
       !isTrustedRendererFrame(
         event.senderFrame,
@@ -2131,7 +2300,19 @@ function registerIpc(): void {
       request.type !== "browser-close-calculator"
     )
       throw new Error("Calculator overlays can only close themselves.");
+    if (
+      isPasswordOverlayWindow &&
+      ![
+        "password-fill-page",
+        "password-fill-field",
+        "password-dismiss",
+      ].includes(request.type)
+    )
+      throw new Error("Password overlays can only fill or dismiss themselves.");
     const requestBrowserService = browserServiceForWindow(senderWindow);
+    const passwordService = passwordOverlayOwner
+      ? browserServiceForWindow(passwordOverlayOwner)
+      : null;
     if (request.type === "runtime-run-agent") {
       await localRuntimeManager()
         .ensureChatReady()
@@ -2155,6 +2336,17 @@ function registerIpc(): void {
     if (request.type === "browser-close-calculator") {
       if (isCalculatorOverlayWindow) senderWindow.close();
       else closeCalculatorOverlay(senderWindow);
+      return { ok: true };
+    }
+    if (isPasswordOverlayWindow && passwordService) {
+      if (request.type === "password-fill-page")
+        await passwordService.fillPasswordPage(request.passwordId);
+      else if (request.type === "password-fill-field")
+        await passwordService.fillPasswordField(
+          request.passwordId,
+          request.fieldId,
+        );
+      else passwordService.dismissPasswordPrompt();
       return { ok: true };
     }
     if (
@@ -3170,6 +3362,31 @@ function registerIpc(): void {
         }),
       };
     }
+    if (
+      request.type === "password-list" ||
+      request.type === "password-save" ||
+      request.type === "password-remove"
+    ) {
+      const service = requestBrowserService ?? userBrowserService;
+      if (!service)
+        throw new Error("The visible user browser is unavailable.");
+      if (request.type === "password-list")
+        return { ok: true, passwords: await service.listPasswords() };
+      if (request.type === "password-save")
+        return {
+          ok: true,
+          passwords: await service.savePassword({
+            origin: request.origin,
+            ...(request.title ? { title: request.title } : {}),
+            username: request.username,
+            password: request.password,
+          }),
+        };
+      return {
+        ok: true,
+        passwords: await service.removePassword(request.passwordId),
+      };
+    }
     if (request.type === "credential-list")
       return {
         ok: true,
@@ -3659,6 +3876,7 @@ async function initializeCoreForStartup(): Promise<boolean> {
           // The failed attempt cached the old key. A new broker is required so
           // the first-run path creates a fresh protected key after the archive.
           appCredentialBroker = null;
+          appPasswordVault = null;
           continue;
         } catch (archiveCause) {
           const detail =

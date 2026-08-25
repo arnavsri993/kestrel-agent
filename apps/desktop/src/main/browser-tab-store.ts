@@ -38,6 +38,7 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	sleepingTabExcludedDomains: [],
 	memorySaverMode: true,
 	showBookmarksBar: true,
+	passwordAutofillEnabled: true,
 };
 const SEARCH_ENGINES: Record<
 	Exclude<UserBrowserSettings["searchEngine"], "custom">,

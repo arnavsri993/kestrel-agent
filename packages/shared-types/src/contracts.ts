@@ -2474,6 +2474,60 @@ export const UserBrowserTabSchema = z.object({
 });
 export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
 
+export const PasswordEntryIdSchema = z.string().regex(/^password-[a-f0-9-]{36}$/);
+export type PasswordEntryId = z.infer<typeof PasswordEntryIdSchema>;
+
+export const PasswordEntrySummarySchema = z.object({
+	id: PasswordEntryIdSchema,
+	origin: z.string().url().max(8_192),
+	title: z.string().min(1).max(200),
+	username: z.string().max(500),
+	updatedAt: z.string().datetime(),
+});
+export type PasswordEntrySummary = z.infer<typeof PasswordEntrySummarySchema>;
+
+/**
+ * The secret-bearing shape is used only inside the main process vault. Keep it
+ * next to the public summary so storage and IPC validation cannot drift apart.
+ */
+export const PasswordEntrySchema = PasswordEntrySummarySchema.extend({
+	password: z.string().min(1).max(100_000),
+	createdAt: z.string().datetime(),
+});
+export type PasswordEntry = z.infer<typeof PasswordEntrySchema>;
+
+export const PasswordFormFieldSchema = z.object({
+	id: z.string().regex(/^field-[0-9]+$/),
+	kind: z.enum(["username", "password", "other"]),
+	label: z.string().max(500),
+	type: z.string().max(100),
+	autocomplete: z.string().max(100),
+	rect: z.object({
+		x: z.number().int().min(0).max(20_000),
+		y: z.number().int().min(0).max(20_000),
+		width: z.number().int().min(0).max(20_000),
+		height: z.number().int().min(0).max(20_000),
+	}),
+});
+export type PasswordFormField = z.infer<typeof PasswordFormFieldSchema>;
+
+export const PasswordPromptSchema = z.object({
+	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	origin: z.string().url().max(8_192),
+	title: z.string().min(1).max(500),
+	mode: z.enum(["page", "field"]),
+	fields: z.array(PasswordFormFieldSchema).max(32),
+	focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
+	entries: z.array(PasswordEntrySummarySchema).max(24),
+	anchor: z.object({
+		x: z.number().int().min(0).max(20_000),
+		y: z.number().int().min(0).max(20_000),
+		width: z.number().int().min(0).max(20_000),
+		height: z.number().int().min(0).max(20_000),
+	}),
+});
+export type PasswordPrompt = z.infer<typeof PasswordPromptSchema>;
+
 export const UserBrowserRecentlyClosedTabSchema = z.object({
 	title: z.string().min(1).max(500),
 	url: z.string().url().max(8_192),
@@ -2680,6 +2734,7 @@ export const UserBrowserSettingsSchema = z.object({
 	sleepingTabExcludedDomains: z.array(z.string().max(200)).default([]),
 	memorySaverMode: z.boolean().default(true),
 	showBookmarksBar: z.boolean().default(true),
+	passwordAutofillEnabled: z.boolean().default(true),
 });
 export type UserBrowserSettings = z.infer<typeof UserBrowserSettingsSchema>;
 
@@ -3113,6 +3168,28 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("oauth-google-cancel") }),
 	z.object({ type: z.literal("oauth-google-disconnect") }),
+	z.object({ type: z.literal("password-list") }),
+	z.object({
+		type: z.literal("password-save"),
+		origin: z.string().url().max(8_192),
+		title: z.string().max(200).optional(),
+		username: z.string().max(500),
+		password: z.string().min(1).max(100_000),
+	}),
+	z.object({
+		type: z.literal("password-remove"),
+		passwordId: PasswordEntryIdSchema,
+	}),
+	z.object({
+		type: z.literal("password-fill-page"),
+		passwordId: PasswordEntryIdSchema,
+	}),
+	z.object({
+		type: z.literal("password-fill-field"),
+		passwordId: PasswordEntryIdSchema,
+		fieldId: z.string().regex(/^field-[0-9]+$/),
+	}),
+	z.object({ type: z.literal("password-dismiss") }),
 	z.object({ type: z.literal("credential-list") }),
 	z.object({
 		type: z.literal("credential-set"),
@@ -3396,6 +3473,7 @@ export type RendererResponse =
 	| { ok: true; selectedAttachments: SelectedAttachment[]; cancelled?: boolean }
 	| { ok: true; workspaceFiles: SelectedAttachment[] }
 	| { ok: true; microphoneAccess: boolean }
+	| { ok: true; passwords: PasswordEntrySummary[] }
 	| { ok: true; credentials: BrokeredCredentialSummary[] }
 	| {
 			ok: true;
@@ -3437,6 +3515,7 @@ export interface RendererBridge {
 	request(request: RendererRequest): Promise<RendererResponse>;
 	getPathForFile(file: unknown): string;
 	onBrowserEvent(callback: (event: UserBrowserEvent) => void): () => void;
+	onPasswordPrompt(callback: (prompt: PasswordPrompt | null) => void): () => void;
 	onBrowserCommand(callback: (command: UserBrowserCommand) => void): () => void;
 	onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
 	onExternalIntake(callback: (intake: ExternalIntake) => void): () => void;
