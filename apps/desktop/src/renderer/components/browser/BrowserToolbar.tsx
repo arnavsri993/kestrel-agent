@@ -237,16 +237,17 @@ export function BrowserToolbar({
         >
           <Icon name="back" />
         </button>
-        <button
-          type="button"
-          aria-label="Forward"
-          aria-keyshortcuts="Meta+]"
-          title="Forward (⌘])"
-          disabled={!tab.canGoForward}
-          onClick={onForward}
-        >
-          <Icon name="forward" />
-        </button>
+        {tab.canGoForward && (
+          <button
+            type="button"
+            aria-label="Forward"
+            aria-keyshortcuts="Meta+]"
+            title="Forward (⌘])"
+            onClick={onForward}
+          >
+            <Icon name="forward" />
+          </button>
+        )}
         <button
           type="button"
           aria-label={tab.loading ? "Stop loading" : "Reload"}
@@ -578,6 +579,7 @@ export function BrowserToolbar({
           </div>
         )}
       </div>
+      <span className="browser-toolbar-drag-fill" aria-hidden="true" />
     </div>
   );
 }
