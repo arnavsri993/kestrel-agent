@@ -171,7 +171,7 @@
 	}
 
 	.browser-new-tab:hover svg {
-		transform: rotate(90deg) scale(1.06);
+		transform: scale(1.08);
 	}
 
 	/* The new-tab sidebar is a genuine mode switch, so its width and icon
