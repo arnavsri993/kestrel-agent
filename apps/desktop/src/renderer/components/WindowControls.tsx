@@ -332,21 +332,23 @@ export function WindowControls() {
 					title={control.title}
 					onClick={() => activate(control.type)}
 				>
-					<span className="window-control-triangle" aria-hidden="true">
-						<svg viewBox="0 0 24 22" focusable="false">
-							<path
-								className="window-control-fill"
-								transform="translate(0 -0.8)"
-								d="M10.55 3.83c.62-1.09 2.28-1.09 2.9 0l7.72 13.55c.66 1.15-.18 2.57-1.51 2.57H4.34c-1.33 0-2.17-1.42-1.51-2.57l7.72-13.55Z"
-							/>
-							<path
-								className="window-control-shade"
-								transform="translate(0 -0.8)"
-								d="M10.55 3.83c.62-1.09 2.28-1.09 2.9 0l7.72 13.55c.66 1.15-.18 2.57-1.51 2.57H4.34c-1.33 0-2.17-1.42-1.51-2.57l7.72-13.55Z"
-							/>
-						</svg>
+					<span className="window-control-visual" aria-hidden="true">
+						<span className="window-control-triangle">
+							<svg viewBox="0 0 24 22" focusable="false">
+								<path
+									className="window-control-fill"
+									transform="translate(0 -0.8)"
+									d="M10.55 3.83c.62-1.09 2.28-1.09 2.9 0l7.72 13.55c.66 1.15-.18 2.57-1.51 2.57H4.34c-1.33 0-2.17-1.42-1.51-2.57l7.72-13.55Z"
+								/>
+								<path
+									className="window-control-shade"
+									transform="translate(0 -0.8)"
+									d="M10.55 3.83c.62-1.09 2.28-1.09 2.9 0l7.72 13.55c.66 1.15-.18 2.57-1.51 2.57H4.34c-1.33 0-2.17-1.42-1.51-2.57l7.72-13.55Z"
+								/>
+							</svg>
+						</span>
+						<WindowControlGlyph glyph={control.glyph} />
 					</span>
-					<WindowControlGlyph glyph={control.glyph} />
 				</button>
 			))}
 		</div>
