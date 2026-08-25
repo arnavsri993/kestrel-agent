@@ -635,7 +635,6 @@ export function TabStrip({
 								<motion.div
 									className={`browser-tab no-drag ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""} ${isDragActive ? "is-dragging" : ""}`}
 									key={tab.id}
-									layout="position"
 									initial={reducedMotion ? false : { opacity: 0, y: 5, scale: 0.98 }}
 									animate={{ opacity: isDragActive ? 0.72 : 1, y: 0, scale: 1 }}
 									exit={
@@ -651,10 +650,7 @@ export function TabStrip({
 									transition={
 										reducedMotion
 											? { duration: 0 }
-											: {
-													default: { duration: 0.2, ease: [0.22, 1, 0.36, 1] },
-													layout: { type: "spring", stiffness: 520, damping: 38, mass: 0.72 },
-												}
+											: { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
 									}
 									style={tabStyle as MotionStyle}
 									onAuxClick={(event) => handleTabAuxClick(event, tab.id)}

@@ -129,8 +129,10 @@
 		transform: scale(1.08);
 	}
 
-	/* Tab continuity: Motion owns the layout transform; child affordances can
-	   still give the pointer a quiet tactile response. */
+	/* Tab lifecycle: Motion animates the tab being created or closed. Remaining
+	   tabs reflow immediately instead of swiping in response to another tab's
+	   close; child affordances can still give the pointer a quiet tactile
+	   response. */
 	.browser-tab {
 		transition:
 			background-color var(--motion-state) var(--ease-soft),
