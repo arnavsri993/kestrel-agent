@@ -32,6 +32,14 @@ function clamp(value: number, minimum: number, maximum: number): number {
 	return Math.max(minimum, Math.min(maximum, value));
 }
 
+export function centeredWindowControlsTop(
+	barTop: number,
+	barHeight: number,
+	controlHeight: number,
+): number {
+	return barTop + Math.max(0, (barHeight - controlHeight) / 2);
+}
+
 export function calculateWindowControlMotion(
 	pointer: WindowControlPoint,
 	bounds: WindowControlBounds,
