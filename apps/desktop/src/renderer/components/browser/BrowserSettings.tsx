@@ -12,6 +12,7 @@ import {
 } from "react";
 import { Icon } from "../Icon";
 import { Status } from "../ui";
+import { PasswordSettings } from "./PasswordSettings";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -350,6 +351,8 @@ export function BrowserSettings({
           approvals live in the separate Agent settings area.
         </p>
       </header>
+
+      <PasswordSettings browser={browser} />
 
       {/* New tab appearance */}
       <section

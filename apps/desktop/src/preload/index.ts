@@ -3,6 +3,7 @@ import {
 	ExternalIntakeSchema,
 	KestrelDeepLinkSchema,
 	LocalRuntimeProgressSchema,
+	PasswordPromptSchema,
 	PetActivityStateSchema,
 	PetStatusSchema,
 	type RendererBridge,
@@ -30,6 +31,12 @@ const bridge: RendererBridge = {
 			callback(UserBrowserEventSchema.parse(value));
 		ipcRenderer.on("kestrel:browser-event", listener);
 		return () => ipcRenderer.off("kestrel:browser-event", listener);
+	},
+	onPasswordPrompt(callback) {
+		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
+			callback(value === null ? null : PasswordPromptSchema.parse(value));
+		ipcRenderer.on("kestrel:password-prompt", listener);
+		return () => ipcRenderer.off("kestrel:password-prompt", listener);
 	},
 	onBrowserCommand(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>

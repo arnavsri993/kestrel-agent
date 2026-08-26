@@ -8897,3 +8897,138 @@ select {
 	transform: translateY(-1px);
 	box-shadow: 0 2px 8px rgb(0 0 0 / 0.15);
 }
+.password-settings-panel {
+	border-color: color-mix(in srgb, var(--line) 82%, var(--solid) 18%);
+}
+
+.password-settings-panel .settings-panel-header h2 svg {
+	color: var(--solid);
+}
+
+.password-autofill-toggle {
+	margin-top: 0;
+	border-top: 1px solid var(--line);
+}
+
+.password-save-form {
+	display: grid;
+	gap: 12px;
+	margin-top: 2px;
+	padding: 14px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+.password-form-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.password-form-grid label {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.password-form-grid label small {
+	font-size: inherit;
+	opacity: 0.72;
+}
+
+.password-form-grid input {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.password-settings-message {
+	margin: 10px 0 0;
+	font-size: 12px;
+}
+
+.password-settings-message.error {
+	color: #d98989;
+}
+
+.password-settings-message.success {
+	color: #8fc49e;
+}
+
+.password-entry-list {
+	display: grid;
+	gap: 8px;
+	margin-top: 14px;
+}
+
+.password-empty-state,
+.password-entry-card {
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--surface) 65%, transparent);
+}
+
+.password-empty-state {
+	display: grid;
+	gap: 4px;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.password-empty-state strong {
+	color: var(--ink);
+	font-size: 13px;
+}
+
+.password-entry-card {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+}
+
+.password-entry-card > div {
+	display: grid;
+	min-width: 0;
+	gap: 3px;
+}
+
+.password-entry-card strong,
+.password-entry-card span,
+.password-entry-card small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.password-entry-card strong {
+	color: var(--ink);
+	font-size: 13px;
+}
+
+.password-entry-card span,
+.password-entry-card small {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.password-settings-footnote {
+	margin: 12px 0 0;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+	.password-form-grid {
+		grid-template-columns: 1fr;
+	}
+	.password-entry-card {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+}

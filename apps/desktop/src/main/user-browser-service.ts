@@ -14,6 +14,12 @@ import {
 	type UserBrowserEvent,
 	type UserBrowserHistoryEntry,
 	type UserBrowserPageContext,
+	PasswordFormFieldSchema,
+	PasswordPromptSchema,
+	type PasswordEntryId,
+	type PasswordEntrySummary,
+	type PasswordFormField,
+	type PasswordPrompt,
 	UserBrowserPageContextSchema,
 	type UserBrowserSettings,
 	type UserBrowserState,
@@ -72,6 +78,7 @@ import {
 	isKestrelAppPageUrl,
 	parseKestrelAppPage,
 } from "../utility/browser-app-pages";
+import type { PasswordVault } from "./password-vault";
 
 const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
@@ -101,7 +108,9 @@ export interface UserBrowserServiceOptions {
 	initialState?: UserBrowserState;
 	partitionName?: string;
 	now?: () => Date;
+	passwordVault?: PasswordVault;
 	onEvent(event: UserBrowserEvent): void;
+	onPasswordPrompt?(prompt: PasswordPrompt | null): void;
 	onCommand?(command: UserBrowserCommand): void;
 	onLastTabClosed?(): void;
 	confirmSitePermission?(origin: string, permission: string): Promise<boolean>;
@@ -169,6 +178,148 @@ function resolveFaviconReference(
 
 function cloneState(state: UserBrowserState): UserBrowserState {
 	return UserBrowserStateSchema.parse(structuredClone(state));
+}
+
+const PASSWORD_FORM_SCAN_SCRIPT = String.raw`(() => {
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 &&
+      rect.bottom >= 0 && rect.right >= 0 &&
+      rect.top <= innerHeight && rect.left <= innerWidth &&
+      style.visibility !== "hidden" && style.display !== "none" &&
+      Number(style.opacity) > 0;
+  };
+  const describe = (node) => {
+    const type = String(node.type || node.tagName || "").toLowerCase();
+    const autocomplete = String(node.autocomplete || "").toLowerCase();
+    const hint = [
+      autocomplete,
+      node.name,
+      node.id,
+      node.placeholder,
+      node.getAttribute("aria-label"),
+      node.labels?.[0]?.innerText,
+    ].filter(Boolean).join(" ").toLowerCase();
+    if (autocomplete === "new-password") return null;
+    const isPassword = type === "password" || autocomplete === "current-password";
+    const isUsername = autocomplete === "username" ||
+      autocomplete === "email" || /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(hint);
+    if (!isPassword && !isUsername) return null;
+    const rect = node.getBoundingClientRect();
+    const label = String(
+      node.labels?.[0]?.innerText || node.getAttribute("aria-label") ||
+      node.placeholder || node.name || (isPassword ? "Password" : "Username")
+    ).replace(/\s+/g, " ").trim().slice(0, 500);
+    return {
+      kind: isPassword ? "password" : "username",
+      label,
+      type: type.slice(0, 100),
+      autocomplete: autocomplete.slice(0, 100),
+      rect: {
+        x: Math.max(0, Math.round(rect.left)),
+        y: Math.max(0, Math.round(rect.top)),
+        width: Math.max(0, Math.round(rect.width)),
+        height: Math.max(0, Math.round(rect.height)),
+      },
+      node,
+    };
+  };
+  const fields = Array.from(document.querySelectorAll("input,select,textarea"))
+    .filter(visible)
+    .map(describe)
+    .filter(Boolean)
+    .slice(0, 32)
+    .map((field, index) => ({ id: "field-" + index, ...field }));
+  const active = document.activeElement;
+  const focusedFieldId = fields.find((field) => field.node === active)?.id;
+  return {
+    fields: fields.map(({ node, ...field }) => field),
+    ...(focusedFieldId ? { focusedFieldId } : {}),
+  };
+})()`;
+
+interface PasswordFormSnapshot {
+	fields: PasswordFormField[];
+	focusedFieldId?: string;
+}
+
+function parsePasswordFormSnapshot(raw: unknown): PasswordFormSnapshot {
+	if (!raw || typeof raw !== "object") return { fields: [] };
+	const candidate = raw as { fields?: unknown; focusedFieldId?: unknown };
+	const fields = Array.isArray(candidate.fields)
+		? candidate.fields.flatMap((field) => {
+			const parsed = PasswordFormFieldSchema.safeParse(field);
+			return parsed.success ? [parsed.data] : [];
+		})
+		: [];
+	const focusedFieldId =
+		typeof candidate.focusedFieldId === "string" &&
+		fields.some((field) => field.id === candidate.focusedFieldId)
+			? candidate.focusedFieldId
+			: undefined;
+	return { fields, ...(focusedFieldId ? { focusedFieldId } : {}) };
+}
+
+function passwordFillScript(
+	username: string,
+	password: string,
+	fieldIndex?: number,
+	expectedOrigin?: string,
+): string {
+	const usernameLiteral = JSON.stringify(username);
+	const passwordLiteral = JSON.stringify(password);
+	const targetIndex = fieldIndex === undefined ? "undefined" : String(fieldIndex);
+	const originLiteral = JSON.stringify(expectedOrigin ?? "");
+	return String.raw`(() => {
+  if (${originLiteral} && location.origin !== ${originLiteral}) return false;
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 &&
+      rect.bottom >= 0 && rect.right >= 0 &&
+      rect.top <= innerHeight && rect.left <= innerWidth &&
+      style.visibility !== "hidden" && style.display !== "none" &&
+      Number(style.opacity) > 0;
+  };
+  const describe = (node) => {
+    const type = String(node.type || node.tagName || "").toLowerCase();
+    const autocomplete = String(node.autocomplete || "").toLowerCase();
+    const hint = [autocomplete, node.name, node.id, node.placeholder,
+      node.getAttribute("aria-label"), node.labels?.[0]?.innerText]
+      .filter(Boolean).join(" ").toLowerCase();
+    if (autocomplete === "new-password") return null;
+    const isPassword = type === "password" || autocomplete === "current-password";
+    const isUsername = autocomplete === "username" || autocomplete === "email" ||
+      /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(hint);
+    if (!isPassword && !isUsername) return null;
+    return { node, kind: isPassword ? "password" : "username" };
+  };
+  const fields = Array.from(document.querySelectorAll("input,select,textarea"))
+    .filter(visible).map(describe).filter(Boolean).slice(0, 32);
+  const setValue = (node, value) => {
+    const prototype = Object.getPrototypeOf(node);
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (setter) setter.call(node, value); else node.value = value;
+    node.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    node.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  };
+  const index = ${targetIndex};
+  if (index !== undefined) {
+    const target = fields[index];
+    if (!target) return false;
+    setValue(target.node, target.kind === "password" ? ${passwordLiteral} : ${usernameLiteral});
+    target.node.focus();
+    return true;
+  }
+  let filled = 0;
+  const usernameField = fields.find((field) => field.kind === "username");
+  const passwordField = fields.find((field) => field.kind === "password");
+  if (usernameField) { setValue(usernameField.node, ${usernameLiteral}); filled += 1; }
+  if (passwordField) { setValue(passwordField.node, ${passwordLiteral}); filled += 1; }
+  if (passwordField) passwordField.node.focus();
+  return filled > 0;
+})()`;
 }
 
 interface BrowserPartitionParticipant {
@@ -287,6 +438,8 @@ export class UserBrowserService {
 	private readonly partitionCoordinator: BrowserPartitionCoordinator;
 	private readonly partitionParticipant: BrowserPartitionParticipant;
 	private readonly onEvent: UserBrowserServiceOptions["onEvent"];
+	private readonly onPasswordPrompt?: UserBrowserServiceOptions["onPasswordPrompt"];
+	private readonly passwordVault: PasswordVault | undefined;
 	private readonly onCommand?: UserBrowserServiceOptions["onCommand"];
 	private readonly onLastTabClosed?: UserBrowserServiceOptions["onLastTabClosed"];
 	private readonly recentlyClosedTabs: Array<{ url: string; title: string }> = [];
@@ -295,6 +448,11 @@ export class UserBrowserService {
 	private contentBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
 	private contentVisible = false;
 	private disposed = false;
+	private passwordPollInterval: ReturnType<typeof setInterval> | undefined;
+	private passwordScanInFlight = false;
+	private passwordPromptKey = "";
+	private passwordPrompt: PasswordPrompt | undefined;
+	private readonly passwordPromptSuppressedUntil = new Map<string, number>();
 
 	constructor(options: UserBrowserServiceOptions) {
 		this.window = options.window;
@@ -306,6 +464,8 @@ export class UserBrowserService {
 		this.now = options.now ?? (() => new Date());
 		this.downloadDirectory = options.downloadDirectory;
 		this.onEvent = options.onEvent;
+		this.onPasswordPrompt = options.onPasswordPrompt;
+		this.passwordVault = options.passwordVault;
 		this.onCommand = options.onCommand;
 		this.onLastTabClosed = options.onLastTabClosed;
 		this.confirmSitePermission =
@@ -337,6 +497,12 @@ export class UserBrowserService {
 		});
 		void this.extensionManager.loadAll(this.partition);
 		this.startSleepingTabsMonitor();
+		if (this.passwordVault) {
+			this.passwordPollInterval = setInterval(() => {
+				void this.refreshPasswordPrompt();
+			}, 450);
+			this.passwordPollInterval.unref?.();
+		}
 		this.partitionCoordinator = browserPartitionCoordinator(this.partition);
 		this.partitionParticipant = {
 			ownsWebContents: (webContents) =>
@@ -480,11 +646,13 @@ export class UserBrowserService {
 
 	async selectTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
+		this.clearPasswordPrompt();
 		this.state.activeTabId = tabId;
 		tab.lastActiveAt = this.now().toISOString();
 		this.commit();
 		await this.syncActiveView();
 		this.discardLeastRecentViews();
+		void this.refreshPasswordPrompt(tabId);
 		return this.getState();
 	}
 
@@ -588,6 +756,7 @@ export class UserBrowserService {
 		const tab = this.requireTab(tabId);
 		const appPage = parseKestrelAppPage(input);
 		if (appPage) {
+			if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
 			this.closeView(tabId);
 			delete tab.file;
 			tab.error = undefined;
@@ -607,6 +776,7 @@ export class UserBrowserService {
 			this.state.settings.searchEngine,
 			this.state.settings.customSearchUrl,
 		);
+		if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
 		delete tab.file;
 		// Keep a healthy WebContentsView alive across normal web navigations so
 		// Electron can retain the tab's native back/forward history. App pages,
@@ -725,6 +895,8 @@ export class UserBrowserService {
 		this.state.settings = { ...settings };
 		this.pruneHistory();
 		this.commit();
+		if (settings.passwordAutofillEnabled === false) this.clearPasswordPrompt();
+		else void this.refreshPasswordPrompt();
 		return this.getState();
 	}
 
@@ -1050,6 +1222,222 @@ export class UserBrowserService {
 			capturedAt: this.now().toISOString(),
 			trust: "untrusted_browser",
 		});
+	}
+
+	async listPasswords(): Promise<PasswordEntrySummary[]> {
+		return this.passwordVault?.list() ?? [];
+	}
+
+	async savePassword(input: {
+		origin: string;
+		title?: string;
+		username: string;
+		password: string;
+	}): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault)
+			throw new Error("The protected password store is unavailable.");
+		return this.passwordVault.save(input);
+	}
+
+	async removePassword(id: PasswordEntryId): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault)
+			throw new Error("The protected password store is unavailable.");
+		return this.passwordVault.remove(id);
+	}
+
+	async fillPasswordPage(id: PasswordEntryId): Promise<void> {
+		const { tab, webContents, entry, origin } =
+			await this.passwordEntryForActiveTab(id);
+		const filled = await webContents.executeJavaScript(
+			passwordFillScript(entry.username, entry.password, undefined, origin),
+		);
+		if (filled !== true)
+			throw new Error("Kestrel could not find a login field on this page.");
+		this.suppressPasswordPrompt(tab.id, origin, 4_000);
+		this.clearPasswordPrompt();
+	}
+
+	async fillPasswordField(
+		id: PasswordEntryId,
+		fieldId: string,
+	): Promise<void> {
+		const { tab, webContents, entry, origin } =
+			await this.passwordEntryForActiveTab(id);
+		const snapshot = await this.readPasswordFormSnapshot(webContents);
+		const field = snapshot.fields.find((candidate) => candidate.id === fieldId);
+		if (!field || field.kind === "other")
+			throw new Error("That form field is no longer available.");
+		const fieldIndex = Number(field.id.slice("field-".length));
+		const filled = await webContents.executeJavaScript(
+			passwordFillScript(entry.username, entry.password, fieldIndex, origin),
+		);
+		if (filled !== true)
+			throw new Error("Kestrel could not fill that form field.");
+		this.suppressPasswordPrompt(tab.id, origin, 4_000);
+		this.clearPasswordPrompt();
+	}
+
+	dismissPasswordPrompt(): void {
+		const tab = this.state.tabs.find(
+			(candidate) => candidate.id === this.state.activeTabId,
+		);
+		const url = tab?.url ? safePageUrl(tab.url) : undefined;
+		if (tab && url?.protocol === "https:")
+			this.suppressPasswordPrompt(tab.id, url.origin, 30_000);
+		this.clearPasswordPrompt();
+	}
+
+	private async passwordEntryForActiveTab(id: PasswordEntryId): Promise<{
+		tab: UserBrowserTab;
+		webContents: WebContents;
+		entry: NonNullable<Awaited<ReturnType<PasswordVault["getForOrigin"]>>>;
+		origin: string;
+	}> {
+		if (!this.passwordVault)
+			throw new Error("The protected password store is unavailable.");
+		const tab = this.requireActiveTab();
+		const record = this.requireView(tab.id);
+		const webContents = record.view.webContents;
+		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		if (!url || url.protocol !== "https:")
+			throw new Error("Passwords can only be filled on HTTPS websites.");
+		const entry = await this.passwordVault.getForOrigin(id, url.origin);
+		if (!entry)
+			throw new Error("That saved login is not available for this website.");
+		return { tab, webContents, entry, origin: url.origin };
+	}
+
+	private async readPasswordFormSnapshot(
+		webContents: WebContents,
+	): Promise<PasswordFormSnapshot> {
+		return parsePasswordFormSnapshot(
+			await webContents.executeJavaScript(PASSWORD_FORM_SCAN_SCRIPT),
+		);
+	}
+
+	private async refreshPasswordPrompt(tabId?: string): Promise<void> {
+		if (
+			this.disposed ||
+			!this.passwordVault ||
+			this.passwordScanInFlight ||
+			this.state.settings.passwordAutofillEnabled === false
+		)
+			return;
+		if (tabId && tabId !== this.state.activeTabId) return;
+		const tab = this.state.tabs.find(
+			(candidate) => candidate.id === (tabId ?? this.state.activeTabId),
+		);
+		const record = tab ? this.views.get(tab.id) : undefined;
+		const webContents = record?.view.webContents;
+		const url = tab?.url
+			? safePageUrl(webContents?.getURL() || tab.url)
+			: undefined;
+		if (
+			!tab ||
+			!webContents ||
+			webContents.isDestroyed() ||
+			!url ||
+			url.protocol !== "https:" ||
+			isKestrelAppPageUrl(tab.url)
+		) {
+			this.clearPasswordPrompt();
+			return;
+		}
+		const suppressionKey = `${tab.id}:${url.origin}`;
+		if (
+			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
+			this.now().getTime()
+		) {
+			this.clearPasswordPrompt();
+			return;
+		}
+
+		this.passwordScanInFlight = true;
+		try {
+			const snapshot = await this.readPasswordFormSnapshot(webContents);
+			if (!snapshot.fields.length) {
+				this.clearPasswordPrompt();
+				return;
+			}
+			const entries = await this.passwordVault.listForOrigin(url.origin);
+			if (!entries.length) {
+				this.clearPasswordPrompt();
+				return;
+			}
+			const focused = snapshot.focusedFieldId
+				? snapshot.fields.find((field) => field.id === snapshot.focusedFieldId)
+				: undefined;
+			const pageWidth =
+				this.contentBounds.width || this.window.getContentSize()[0] || 800;
+			const pageHeight =
+				this.contentBounds.height || this.window.getContentSize()[1] || 600;
+			const anchor = focused
+				? {
+					x: Math.max(0, this.contentBounds.x + focused.rect.x),
+					y: Math.max(0, this.contentBounds.y + focused.rect.y),
+					width: focused.rect.width,
+					height: focused.rect.height,
+				}
+				: {
+					x: Math.max(0, this.contentBounds.x + pageWidth - 368),
+					y: Math.max(0, this.contentBounds.y + 16),
+					width: 348,
+					height: Math.min(96, Math.max(1, pageHeight - 32)),
+				};
+			const prompt = PasswordPromptSchema.parse({
+				tabId: tab.id,
+				origin: url.origin,
+				title: redactUntrustedBrowserText(
+					webContents.getTitle() || hostnameTitle(url.toString()),
+					500,
+				),
+				mode: focused ? "field" : "page",
+				fields: snapshot.fields,
+				...(focused ? { focusedFieldId: focused.id } : {}),
+				entries,
+				anchor,
+			});
+			this.setPasswordPrompt(prompt);
+		} catch {
+			// A navigation or renderer restart can invalidate a scan. The next
+			// interval will retry without surfacing a page-owned error to the user.
+			this.clearPasswordPrompt();
+		} finally {
+			this.passwordScanInFlight = false;
+		}
+	}
+
+	private setPasswordPrompt(prompt: PasswordPrompt): void {
+		const key = JSON.stringify({
+			tabId: prompt.tabId,
+			origin: prompt.origin,
+			mode: prompt.mode,
+			focusedFieldId: prompt.focusedFieldId,
+			entries: prompt.entries.map((entry) => entry.id),
+			fields: prompt.fields.map((field) => [field.id, field.rect]),
+		});
+		if (key === this.passwordPromptKey) return;
+		this.passwordPromptKey = key;
+		this.passwordPrompt = prompt;
+		this.onPasswordPrompt?.(prompt);
+	}
+
+	private clearPasswordPrompt(): void {
+		if (!this.passwordPrompt && !this.passwordPromptKey) return;
+		this.passwordPrompt = undefined;
+		this.passwordPromptKey = "";
+		this.onPasswordPrompt?.(null);
+	}
+
+	private suppressPasswordPrompt(
+		tabId: string,
+		origin: string,
+		durationMs: number,
+	): void {
+		this.passwordPromptSuppressedUntil.set(
+			`${tabId}:${origin}`,
+			this.now().getTime() + durationMs,
+		);
 	}
 
 	isActiveTab(tabId: string): boolean {
@@ -1519,6 +1907,9 @@ export class UserBrowserService {
 		if (this.disposed) return;
 		this.disposed = true;
 		if (this.sleepingTabsInterval) clearInterval(this.sleepingTabsInterval);
+		if (this.passwordPollInterval) clearInterval(this.passwordPollInterval);
+		this.passwordPollInterval = undefined;
+		this.clearPasswordPrompt();
 		this.partitionCoordinator.unregister(this.partitionParticipant);
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
 		this.elementRefs.clear();
@@ -1664,6 +2055,7 @@ export class UserBrowserService {
 				const origin = safePageUrl(tab.url)?.origin;
 				if (origin) void this.loadFavicon(tab, `${origin}/favicon.ico`);
 			}
+			void this.refreshPasswordPrompt(tab.id);
 		});
 		webContents.on("page-title-updated", (_event, title) => {
 			tab.title = title.trim().slice(0, 500) || hostnameTitle(tab.url);
@@ -1682,11 +2074,17 @@ export class UserBrowserService {
 		webContents.on(
 			"did-navigate",
 			(_event, url, _httpResponseCode, _httpStatusText) => {
+				if (tab.id === this.state.activeTabId) this.clearPasswordPrompt();
 				this.didNavigate(tab, webContents, url);
+				void this.refreshPasswordPrompt(tab.id);
 			},
 		);
 		webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
-			if (isMainFrame) this.didNavigate(tab, webContents, url);
+			if (isMainFrame) {
+				if (tab.id === this.state.activeTabId) this.clearPasswordPrompt();
+				this.didNavigate(tab, webContents, url);
+				void this.refreshPasswordPrompt(tab.id);
+			}
 		});
 		webContents.on(
 			"did-fail-load",
