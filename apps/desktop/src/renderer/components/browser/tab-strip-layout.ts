@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react";
 
+export const TAB_CLOSE_REFIT_DELAY_MS = 450;
+
 export function shouldRetainTabWidthOnClose(
 	orientation: "horizontal" | "vertical",
 	tabCount: number,
@@ -9,8 +11,8 @@ export function shouldRetainTabWidthOnClose(
 
 export function clampTabWidth(
 	width: number,
-	minWidth = 80,
-	maxWidth = 220,
+	minWidth = 0,
+	maxWidth = 520,
 ): number {
 	if (!Number.isFinite(width)) return maxWidth;
 	return Math.max(minWidth, Math.min(maxWidth, Math.round(width)));
@@ -25,7 +27,7 @@ export function computeLockedTabStyle(
 	}
 	const clamped = clampTabWidth(lockedWidth);
 	return {
-		flex: "0 0 auto",
+		flex: `0 0 ${clamped}px`,
 		width: `${clamped}px`,
 		maxWidth: `${clamped}px`,
 	};

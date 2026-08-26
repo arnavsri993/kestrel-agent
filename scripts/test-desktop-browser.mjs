@@ -574,10 +574,43 @@ try {
 		return tab.left >= rail.left && tab.right <= rail.right;
 	});
 	assert(activeTabVisibility);
+	const widthsBeforeClose = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(widthsBeforeClose.length >= 5);
+	await tabRail.locator(".browser-tab.active .browser-tab-close").click();
+	state = await waitForBrowserState(
+		(value) => value.tabs.length === initialTabs + crowdedTabIds.length,
+		"closing one crowded tab from the tab strip",
+	);
+	await page.waitForFunction(
+		(count) => document.querySelectorAll(".browser-tabs .browser-tab").length === count,
+		widthsBeforeClose.length - 1,
+	);
+	const widthsDuringClose = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	for (const width of widthsDuringClose) {
+		assert(
+			Math.abs(width - widthsBeforeClose[0]) <= 1.5,
+			`Tabs resized during a close burst: ${width}px vs ${widthsBeforeClose[0]}px`,
+		);
+	}
+	await page.waitForTimeout(700);
+	const widthsAfterClose = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(
+		widthsAfterClose[0] > widthsBeforeClose[0] + 1,
+		`Tabs did not refit after the close burst: ${widthsAfterClose[0]}px vs ${widthsBeforeClose[0]}px`,
+	);
+	const remainingCrowdedTabIds = crowdedTabIds.filter(
+		(tabId) => tabId !== lastCrowdedTabId,
+	);
 	await page.evaluate(async (tabIds) => {
 		for (const tabId of tabIds)
 			await window.kestrel.request({ type: "browser-close-tab", tabId });
-	}, crowdedTabIds);
+	}, remainingCrowdedTabIds);
 	await waitForBrowserState(
 		(value) => value.tabs.length === initialTabs + 1,
 		"crowded tab cleanup",
