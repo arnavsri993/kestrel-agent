@@ -11,9 +11,11 @@ import "./motion.css";
 import "./components/browser/kestrel-sidebar.css";
 import "./components/browser/writing-studio.css";
 import "./components/browser/password-overlay.css";
+import "./components/browser/payment-overlay.css";
 import { App } from "./App";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
 import { PasswordOverlay } from "./components/browser/PasswordOverlay";
+import { PaymentOverlay } from "./components/browser/PaymentOverlay";
 import { WindowControls } from "./components/WindowControls";
 
 const isPetOverlay =
@@ -22,9 +24,11 @@ const isCalculatorOverlay =
 	new URLSearchParams(location.search).get("calculatorOverlay") === "1";
 const isPasswordOverlay =
 	new URLSearchParams(location.search).get("passwordOverlay") === "1";
+const isPaymentOverlay =
+	new URLSearchParams(location.search).get("paymentOverlay") === "1";
 const root = document.getElementById("root")!;
 
-if (isPetOverlay || isCalculatorOverlay || isPasswordOverlay) {
+if (isPetOverlay || isCalculatorOverlay || isPasswordOverlay || isPaymentOverlay) {
 	document.documentElement.style.background = "transparent";
 	document.body.style.background = "transparent";
 	root.style.background = "transparent";
@@ -36,6 +40,8 @@ ReactDOM.createRoot(root).render(
 			<CalculatorOverlay />
 		) : isPasswordOverlay ? (
 			<PasswordOverlay />
+		) : isPaymentOverlay ? (
+			<PaymentOverlay />
 		) : (
 			<>
 				<WindowControls />

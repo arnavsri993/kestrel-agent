@@ -124,6 +124,10 @@ vi.mock("electron", () => ({
 
 import { nativeImage } from "electron";
 import { UserBrowserService } from "./user-browser-service";
+import type {
+	PaymentCardVault,
+	SavePaymentCardInput,
+} from "./payment-card-vault";
 
 const directories: string[] = [];
 
@@ -137,6 +141,8 @@ function createService(options: {
   partitionName?: string;
   now?: () => Date;
   onLastTabClosed?: () => void;
+  paymentCardVault?: PaymentCardVault;
+  onPaymentPrompt?: (prompt: unknown) => void;
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "kestrel-user-browser-"));
   directories.push(directory);
@@ -155,14 +161,24 @@ function createService(options: {
   };
   const events: unknown[] = [];
   const commands: string[] = [];
-  const service = new UserBrowserService({
-    window: window as never,
-    statePath: join(directory, "state.json"),
-    downloadDirectory: join(directory, "downloads"),
-    onEvent: (event) => events.push(event),
-    onCommand: (command) => commands.push(command),
-    ...options,
-  });
+	const service = new UserBrowserService({
+		window: window as never,
+		statePath: join(directory, "state.json"),
+		downloadDirectory: join(directory, "downloads"),
+		onEvent: (event) => events.push(event),
+		onCommand: (command) => commands.push(command),
+		...(options.partitionName ? { partitionName: options.partitionName } : {}),
+		...(options.now ? { now: options.now } : {}),
+		...(options.onLastTabClosed
+			? { onLastTabClosed: options.onLastTabClosed }
+			: {}),
+		...(options.onPaymentPrompt
+			? { onPaymentPrompt: options.onPaymentPrompt }
+			: {}),
+		...(options.paymentCardVault
+			? { paymentCardVault: options.paymentCardVault }
+			: {}),
+	});
   return { service, window, events, commands };
 }
 
@@ -252,6 +268,100 @@ describe("UserBrowserService", () => {
     const attachedAt = window.contentView.addChildView.mock.invocationCallOrder[0]!;
     const loadedAt = view.webContents.loadURL.mock.invocationCallOrder[0]!;
     expect(attachedAt).toBeLessThan(loadedAt);
+  });
+
+  it("offers to save a complete card without exposing its number to the prompt", async () => {
+		const save = vi.fn(async (_input: SavePaymentCardInput) => []);
+    const paymentCardVault = {
+      list: vi.fn(async () => []),
+      save,
+      get: vi.fn(),
+      remove: vi.fn(),
+    } as unknown as PaymentCardVault;
+    const prompts: unknown[] = [];
+    const { service } = createService({
+      paymentCardVault,
+      onPaymentPrompt: (prompt) => prompts.push(prompt),
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://pay.example/checkout");
+    const contents = electron.state.views[0]!.webContents;
+    contents.executeJavaScript.mockResolvedValueOnce({
+      fields: [{
+        id: "payment-field-0",
+        kind: "card-number",
+        label: "Card number",
+        type: "text",
+        autocomplete: "cc-number",
+        rect: { x: 20, y: 30, width: 300, height: 42 },
+      }],
+      candidate: {
+        brand: "Mastercard",
+        last4: "4444",
+        expirationMonth: "03",
+        expirationYear: "31",
+      },
+    });
+
+    contents.emit("did-stop-loading");
+    await vi.waitFor(() => expect(prompts).toHaveLength(1));
+    expect(prompts[0]).toMatchObject({
+      mode: "save",
+      candidate: { brand: "Mastercard", last4: "4444" },
+    });
+    expect(JSON.stringify(prompts[0])).not.toContain("5555555555554444");
+  });
+
+  it("reads card fields only in the main process and never includes the security code", async () => {
+		const save = vi.fn(async (_input: SavePaymentCardInput) => []);
+    const paymentCardVault = {
+      save,
+    } as unknown as PaymentCardVault;
+    const { service } = createService({ paymentCardVault });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://pay.example/checkout");
+    const contents = electron.state.views[0]!.webContents;
+    contents.executeJavaScript.mockResolvedValueOnce({
+      fields: [
+        {
+          id: "payment-field-0",
+          kind: "card-number",
+          label: "Card number",
+          type: "text",
+          autocomplete: "cc-number",
+          rect: { x: 20, y: 30, width: 300, height: 42 },
+          value: "5555 5555 5555 4444",
+        },
+        {
+          id: "payment-field-1",
+          kind: "expiration",
+          label: "Expiration",
+          type: "text",
+          autocomplete: "cc-exp",
+          rect: { x: 20, y: 80, width: 120, height: 42 },
+          value: "03/31",
+        },
+        {
+          id: "payment-field-2",
+          kind: "security-code",
+          label: "Security code",
+          type: "password",
+          autocomplete: "cc-csc",
+          rect: { x: 160, y: 80, width: 120, height: 42 },
+          value: "123",
+        },
+      ],
+    });
+
+    await service.savePaymentCardFromActiveTab("https://pay.example");
+    expect(save).toHaveBeenCalledWith({
+      cardNumber: "5555 5555 5555 4444",
+      expirationMonth: "03",
+      expirationYear: "31",
+      cardholderName: "",
+      postalCode: "",
+    });
+    expect(save.mock.calls[0]?.[0]).not.toHaveProperty("securityCode");
   });
 
   it("retains one healthy web view and its navigation history across addresses", async () => {

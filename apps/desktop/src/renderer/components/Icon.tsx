@@ -7,6 +7,7 @@ const paths: Record<string, string[]> = {
 	forward: ["M9 5l7 7-7 7"],
 	reload: ["M19 8a7.5 7.5 0 10.3 7.6", "M19 3v5h-5"],
 	lock: ["M7 10h10v10H7z", "M9 10V7a3 3 0 016 0v3"],
+	card: ["M3 6h18v12H3z", "M3 10h18", "M7 15h4"],
 	context: ["M5 6h14v12H5z", "M8 9h8M8 12h5M16 15h1"],
 	browser: ["M4 5h16v14H4z", "M4 9h16", "M7 7h.01M10 7h.01"],
 	globe: [

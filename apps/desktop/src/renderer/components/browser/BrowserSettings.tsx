@@ -13,6 +13,7 @@ import {
 import { Icon } from "../Icon";
 import { Status } from "../ui";
 import { PasswordSettings } from "./PasswordSettings";
+import { PaymentSettings } from "./PaymentSettings";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -353,6 +354,7 @@ export function BrowserSettings({
       </header>
 
       <PasswordSettings browser={browser} />
+      <PaymentSettings browser={browser} />
 
       {/* New tab appearance */}
       <section

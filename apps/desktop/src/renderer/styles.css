@@ -9032,3 +9032,102 @@ select {
 		flex-direction: column;
 	}
 }
+
+.payment-settings-panel {
+	border-color: color-mix(in srgb, var(--line) 82%, var(--solid) 18%);
+}
+
+.payment-settings-panel .settings-panel-header h2 svg {
+	color: var(--solid);
+}
+
+.payment-autofill-toggle {
+	margin-top: 0;
+	border-top: 1px solid var(--line);
+}
+
+.payment-settings-message {
+	margin: 10px 0 0;
+	font-size: 12px;
+}
+
+.payment-settings-message.error {
+	color: #d98989;
+}
+
+.payment-settings-message.success {
+	color: #8fc49e;
+}
+
+.payment-entry-list {
+	display: grid;
+	gap: 8px;
+	margin-top: 14px;
+}
+
+.payment-empty-state,
+.payment-entry-card {
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--surface) 65%, transparent);
+}
+
+.payment-empty-state {
+	display: grid;
+	gap: 4px;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.payment-empty-state strong {
+	color: var(--ink);
+	font-size: 13px;
+}
+
+.payment-entry-card {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+}
+
+.payment-entry-card-copy {
+	display: grid;
+	min-width: 0;
+	gap: 3px;
+}
+
+.payment-entry-card-copy strong,
+.payment-entry-card-copy span,
+.payment-entry-card-copy small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.payment-entry-card-copy strong {
+	color: var(--ink);
+	font-size: 13px;
+}
+
+.payment-entry-card-copy span,
+.payment-entry-card-copy small {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.payment-settings-footnote {
+	margin: 12px 0 0;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+	.payment-entry-card {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+}

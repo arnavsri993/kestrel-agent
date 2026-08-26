@@ -30,9 +30,11 @@ function storePath(): string {
 it("defaults new browser settings to Google", () => {
 	expect(freshBrowserState().settings.searchEngine).toBe("google");
 	expect(freshBrowserState().settings.showBookmarksBar).toBe(true);
+	expect(freshBrowserState().settings.paymentAutofillEnabled).toBe(true);
 	expect(freshBrowserState().settings.newTabGreetingActivity.days).toEqual([]);
 	expect(UserBrowserSettingsSchema.parse({}).searchEngine).toBe("google");
 	expect(UserBrowserSettingsSchema.parse({}).showBookmarksBar).toBe(true);
+	expect(UserBrowserSettingsSchema.parse({}).paymentAutofillEnabled).toBe(true);
 });
 
 it("accepts bundled backgrounds and bounded local image data", () => {
