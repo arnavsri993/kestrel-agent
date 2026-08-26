@@ -82,6 +82,14 @@ export function CommandCenter({
             </span>
             <Icon name="chevron" />
           </button>
+          <button type="button" onClick={() => onSelect("writing")}>
+            <Icon name="writing" />
+            <span>
+              <strong>Writing Studio</strong>
+              <small>Draft with context and voice signals</small>
+            </span>
+            <Icon name="chevron" />
+          </button>
           <button type="button" onClick={() => onSelect("approvals")}>
             <Icon name="approvals" />
             <span>

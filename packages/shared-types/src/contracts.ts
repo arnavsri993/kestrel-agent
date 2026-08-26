@@ -8,6 +8,14 @@ import {
 	NewTabGreetingActivitySchema,
 	NewTabGreetingContextSchema,
 } from "./new-tab-greeting";
+import {
+	WritingAdaptationStrengthSchema,
+	WritingContextPreviewSchema,
+	WritingGenreSchema,
+	WritingProfileConfigSchema,
+	WritingProfileStatusSchema,
+	WritingResultSchema,
+} from "./writing";
 
 export const SensitivitySchema = z.enum([
 	"public",
@@ -1898,6 +1906,43 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		includeSensitive: z.boolean().default(false),
 		includeRestricted: z.boolean().default(false),
 	}),
+	z.object({ type: z.literal("writing-profile-get") }),
+	z.object({
+		type: z.literal("writing-profile-configure"),
+		config: WritingProfileConfigSchema,
+	}),
+	z.object({
+		type: z.literal("writing-profile-ingest"),
+		text: z.string().trim().min(1).max(20_000),
+		consent: z.literal(true),
+		useAsExemplar: z.boolean().default(false),
+	}),
+	z.object({
+		type: z.literal("writing-profile-reset"),
+		confirm: z.literal(true),
+	}),
+	z.object({
+		type: z.literal("writing-context-preview"),
+		recipient: z.string().trim().max(300).optional(),
+		purpose: z.string().trim().min(1).max(10_000),
+		genre: WritingGenreSchema.default("email"),
+		tone: z.string().trim().max(300).optional(),
+		includeSensitive: z.boolean().default(false),
+	}),
+	z.object({
+		type: z.literal("writing-generate"),
+		recipient: z.string().trim().max(300).optional(),
+		purpose: z.string().trim().min(1).max(10_000),
+		sourceText: z.string().trim().max(20_000).optional(),
+		genre: WritingGenreSchema.default("email"),
+		tone: z.string().trim().max(300).optional(),
+		adaptationStrength: WritingAdaptationStrengthSchema.default("balanced"),
+		includeSensitive: z.boolean().default(false),
+		providerIds: z.array(z.string().min(1).max(100)).min(1).max(8).default(["auto"]),
+		providerModels: z.record(z.string(), z.string().min(1).max(200)).optional(),
+		writerModel: z.string().min(1).max(200).optional(),
+		reviewerModel: z.string().min(1).max(200).optional(),
+	}),
 	z.object({ type: z.literal("honcho-memory-get") }),
 	z.object({
 		type: z.literal("honcho-memory-configure"),
@@ -2287,6 +2332,10 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		calendarEvents: z.array(UnifiedCalendarEventSchema).optional(),
 		calendarProviders: z.array(CalendarProviderStatusSchema).optional(),
 		contextBundle: AgentContextBundleSchema.optional(),
+		writingProfile: WritingProfileStatusSchema.optional(),
+		writingContextPreview: WritingContextPreviewSchema.optional(),
+		writingResult: WritingResultSchema.optional(),
+		writingRoutes: z.array(ModelRoutingDecisionSchema).max(4).optional(),
 		skillProposals: z.array(SkillLearningProposalSchema).optional(),
 		skillFeedback: z.array(SkillLearningFeedbackSchema).optional(),
 		usage: SessionUsageSummarySchema.optional(),

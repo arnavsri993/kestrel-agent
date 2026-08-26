@@ -748,6 +748,8 @@ export class TaskRequirementAnalyzer {
 			requiresTools?: boolean;
 			requiresVision?: boolean;
 			requiresStructuredOutput?: boolean;
+			requiresWriting?: boolean;
+			requiresReview?: boolean;
 		} = {},
 	): TaskRequirements {
 		const normalized = prompt.toLowerCase();
@@ -856,6 +858,11 @@ export class TaskRequirementAnalyzer {
 			(/\bschema\b/.test(normalized) && softwareContext)
 		)
 			mark("structured_output", 0.86);
+		if (input.requiresWriting) {
+			mark("creative_writing", 0.9);
+			mark("structured_output", 0.9);
+		}
+		if (input.requiresReview) mark("code_review", 0.9);
 
 		if (isSecurityOrAdminAudit) {
 			mark("debugging", 0.88);

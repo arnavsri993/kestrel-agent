@@ -85,6 +85,8 @@ import {
 	ModelRegistry,
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
+import { WritingAssistant } from "./writing-assistant";
+import { WritingProfileStore } from "./writing-profile";
 import { NativeNodeManager } from "./native-nodes";
 import { ObservabilityManager } from "./observability";
 import { OpportunityEngine } from "./opportunity-engine";
@@ -195,6 +197,8 @@ export class AgentCore {
 	readonly context: PreResponseContextResolver;
 	readonly memory: MemoryManager;
 	readonly lifeContext: LifeContextService;
+	readonly writingProfile: WritingProfileStore;
+	readonly writingAssistant: WritingAssistant;
 	readonly remote: RemoteControl;
 	readonly remoteBackendManager?: RemoteBackendManager;
 	readonly web?: NetworkPolicyWebClient;
@@ -448,6 +452,24 @@ export class AgentCore {
 		);
 		if (this.deps.routingPolicy)
 			this.modelRouter.setPolicy(this.deps.routingPolicy);
+		this.writingProfile = new WritingProfileStore(
+			deps.database,
+			() => new Date(this.now()),
+		);
+		this.writingAssistant = new WritingAssistant({
+			providerPool: this.providerPool,
+			modelRegistry: this.modelRegistry,
+			modelRouter: this.modelRouter,
+			usageGovernor: this.usageGovernor,
+			lifeContext: this.lifeContext,
+			userModel: this.userModel,
+			writingProfile: this.writingProfile,
+			resolveRoute: (taskId, prompt, providerIds, role) =>
+				this.automaticRoute(taskId, prompt, providerIds, [], role),
+			providerAllowed: (providerId, poolId) =>
+				this.providerAllowed(providerId, poolId),
+			now: () => this.now(),
+		});
 		this.agentLoop = new AgentLoop(
 			this.deps.database,
 			this.runtime,
@@ -688,6 +710,7 @@ export class AgentCore {
 		message: string,
 		providerIds: string[] = ["auto"],
 		attachments: SelectedAttachment[] = [],
+		role: "worker" | "writer" | "reviewer" = "worker",
 	): {
 		route: ModelRoutingDecision;
 		execution: ReturnType<AdaptiveModelRouter["executionPlan"]>;
@@ -707,13 +730,23 @@ export class AgentCore {
 			requiresVision: attachments.some((attachment) =>
 				attachment.mediaType.startsWith("image/"),
 			),
+			requiresStructuredOutput: role === "writer" || role === "reviewer",
+			requiresWriting: role === "writer" || role === "reviewer",
+			requiresReview: role === "reviewer",
 		});
 		const taskPolicy = this.requirementAnalyzer.routingPolicy(
 			message,
 			this.modelRouter.policy(),
 		);
 		const decision = this.modelRouter.route(requirements, {
-			role: requirements.parallelizable ? "orchestrator" : "worker",
+			role:
+				role === "reviewer"
+					? "reviewer"
+					: role === "worker"
+						? "worker"
+						: requirements.parallelizable
+							? "orchestrator"
+							: "worker",
 			allowedProviderIds: routedProviderIds,
 			policy: taskPolicy,
 		});
@@ -1941,6 +1974,68 @@ export class AgentCore {
 							persistUsage: false,
 						}),
 					};
+				case "writing-profile-get":
+					return {
+						ok: true,
+						writingProfile: this.writingProfile.status(),
+					};
+				case "writing-profile-configure":
+					return {
+						ok: true,
+						writingProfile: this.writingProfile.configure(request.config),
+					};
+				case "writing-profile-ingest":
+					return {
+						ok: true,
+						writingProfile: this.writingProfile.ingest({
+							text: request.text,
+							consent: request.consent,
+							useAsExemplar: request.useAsExemplar,
+						}),
+					};
+				case "writing-profile-reset":
+					return {
+						ok: true,
+						writingProfile: this.writingProfile.reset(),
+					};
+				case "writing-context-preview":
+					return {
+						ok: true,
+						writingContextPreview: this.writingAssistant.preview({
+							...(request.recipient ? { recipient: request.recipient } : {}),
+							purpose: request.purpose,
+							includeSensitive: request.includeSensitive,
+						}),
+					};
+				case "writing-generate": {
+					const generated = await this.writingAssistant.generate({
+						...(request.recipient ? { recipient: request.recipient } : {}),
+						purpose: request.purpose,
+						...(request.sourceText ? { sourceText: request.sourceText } : {}),
+						genre: request.genre,
+						...(request.tone ? { tone: request.tone } : {}),
+						adaptationStrength: request.adaptationStrength,
+						includeSensitive: request.includeSensitive,
+						providerIds: request.providerIds,
+						...(request.providerModels
+							? { providerModels: request.providerModels }
+							: {}),
+						...(request.writerModel
+							? { writerModel: request.writerModel }
+							: {}),
+						...(request.reviewerModel
+							? { reviewerModel: request.reviewerModel }
+							: {}),
+						signal: AbortSignal.timeout(25 * 60_000),
+					});
+					return {
+						ok: true,
+						writingResult: generated.result,
+						writingRoutes: generated.routes,
+						writingProfile: generated.profile,
+						writingContextPreview: generated.context,
+					};
+				}
 				case "honcho-memory-get":
 					return { ok: true, honchoMemoryStatus: this.honchoMemory.status() };
 				case "honcho-memory-configure": {
@@ -3325,3 +3420,12 @@ export {
 	type WebSearchProvider,
 	type WebSearchResult,
 } from "./web-tools";
+export {
+	WritingAssistant,
+	type WritingAutomaticRoute,
+	type WritingRouteResolver,
+} from "./writing-assistant";
+export {
+	WritingProfileStore,
+	WRITING_PROFILE_STORAGE_KEY,
+} from "./writing-profile";

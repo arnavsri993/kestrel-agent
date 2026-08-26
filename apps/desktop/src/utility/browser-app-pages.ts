@@ -4,6 +4,7 @@ export const KESTREL_APP_PAGES = {
 	bookmarks: "Bookmarks",
 	downloads: "Downloads",
 	commands: "Capabilities",
+	writing: "Writing Studio",
 	agent: "Agent",
 	readiness: "Readiness",
 	approvals: "Approvals",

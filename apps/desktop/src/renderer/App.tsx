@@ -100,6 +100,7 @@ import { BrowserSettings } from "./components/browser/BrowserSettings";
 import { BrowserWorkspace } from "./components/browser/BrowserWorkspace";
 import { CommunicationCodeAssistant } from "./components/browser/CommunicationCodeAssistant";
 import { DefaultBrowserPrompt } from "./components/browser/DefaultBrowserPrompt";
+import { WritingStudio } from "./components/browser/WritingStudio";
 import { KeyboardShortcutsModal } from "./components/browser/KeyboardShortcutsModal";
 import {
 	CommandCenter,
@@ -185,6 +186,7 @@ const pages = [
 	["bookmarks", "Bookmarks"],
 	["downloads", "Downloads"],
 	["commands", "Capabilities"],
+	["writing", "Writing Studio"],
 	["readiness", "Readiness"],
 	["approvals", "Approvals"],
 	["memory", "Life"],
@@ -220,6 +222,13 @@ const commandDestinations: CommandDestination[] = [
 		label: "Agent",
 		detail: "Start, find, and resume your work",
 		icon: "agent",
+		group: "Agent",
+	},
+	{
+		id: "writing",
+		label: "Writing Studio",
+		detail: "Draft with your context and confirmed voice signals",
+		icon: "writing",
 		group: "Agent",
 	},
 	{
@@ -9008,6 +9017,9 @@ export function App() {
 	const openAgent = useCallback(() => {
 		void openAppPage("agent");
 	}, [openAppPage]);
+	const openWritingStudio = useCallback(() => {
+		void openAppPage("writing");
+	}, [openAppPage]);
 	const openBrowserHistory = useCallback(() => {
 		void openAppPage("history");
 	}, [openAppPage]);
@@ -9364,6 +9376,7 @@ export function App() {
 					pendingApprovals={pendingApprovalCount}
 				/>
 			)}
+			{appPageId === "writing" && <WritingStudio />}
 			{appPageId === "settings" && (
 				<Settings
 					snapshot={snapshot}
@@ -9421,6 +9434,7 @@ export function App() {
 					activeDestination={
 						activeSidebarDestination === "browser" ||
 						activeSidebarDestination === "agent" ||
+						activeSidebarDestination === "writing" ||
 						activeSidebarDestination === "approvals" ||
 						activeSidebarDestination === "settings"
 							? activeSidebarDestination
@@ -9434,6 +9448,7 @@ export function App() {
 					onNewTask={() => startNewAgent()}
 					onOpenBrowser={openBrowser}
 					onOpenAgent={openAgent}
+					onOpenWriting={openWritingStudio}
 					onReviewApprovals={reviewApprovals}
 					onOpenCapabilities={openCommandCenter}
 					onOpenSettings={() => openSettings("browser")}

@@ -86,8 +86,14 @@ const paths: Record<string, string[]> = {
 	arrow: ["M5 12h14", "M14 7l5 5-5 5"],
 	expand: ["M8 3H3v5", "M3 3l6 6", "M16 21h5v-5", "M21 21l-6-6"],
 	check: ["M5 12l4 4L19 6"],
+	copy: ["M8 8h11v12H8z", "M5 16H4V4h12v1"],
 	pause: ["M8 5v14M16 5v14"],
 	voice: ["M5 10v4M9 7v10M13 5v14M17 8v8M21 10v4"],
+	writing: [
+		"M4 20l4.2-1 10.7-10.7a2.1 2.1 0 00-3-3L5.2 16z",
+		"M14.5 6.5l3 3",
+		"M4 20h4",
+	],
 	welcome: [
 		"M12 3v3M12 18v3M3 12h3M18 12h3",
 		"M6.6 6.6l2.1 2.1M15.3 15.3l2.1 2.1M17.4 6.6l-2.1 2.1M8.7 15.3l-2.1 2.1",

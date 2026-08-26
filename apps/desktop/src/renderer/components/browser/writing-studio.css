@@ -1,0 +1,742 @@
+.writing-studio {
+	max-width: 1120px;
+}
+
+.writing-studio-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 28px;
+	margin-bottom: 30px;
+}
+
+.writing-studio-header > div {
+	max-width: 700px;
+}
+
+.writing-studio-header h1 {
+	max-width: 12ch;
+	margin-bottom: 12px;
+}
+
+.writing-studio-header p {
+	max-width: 64ch;
+}
+
+.writing-studio-badge,
+.writing-profile-status,
+.writing-quality {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	border: 1px solid var(--surface-rule-strong);
+	border-radius: 999px;
+	padding: 7px 10px;
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 570;
+	white-space: nowrap;
+}
+
+.writing-studio-badge svg {
+	width: 14px;
+	height: 14px;
+	color: var(--solid);
+}
+
+.writing-studio-error,
+.writing-inline-error {
+	margin: 0 0 18px;
+	border: 1px solid color-mix(in srgb, var(--danger) 48%, var(--line));
+	border-radius: var(--radius-control);
+	padding: 10px 12px;
+	background: color-mix(in srgb, var(--danger) 9%, transparent);
+	color: var(--danger-ink);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.writing-studio-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.75fr);
+	align-items: start;
+	gap: 14px;
+}
+
+.writing-brief-panel,
+.writing-context-panel,
+.writing-profile-panel,
+.writing-result-panel {
+	border: 1px solid var(--surface-rule-strong);
+	border-radius: var(--radius-surface);
+	background: var(--surface-fill);
+	box-shadow: none;
+}
+
+.writing-brief-panel,
+.writing-context-panel,
+.writing-profile-panel,
+.writing-result-panel {
+	overflow: hidden;
+}
+
+.writing-brief-panel > header,
+.writing-context-panel > header,
+.writing-profile-panel > header,
+.writing-result-panel > header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 18px 20px 14px;
+	border-bottom: 1px solid var(--surface-rule);
+}
+
+.writing-brief-panel h2,
+.writing-context-panel h2,
+.writing-profile-panel h2,
+.writing-result-panel h2 {
+	margin: 5px 0 0;
+	font: 620 18px / 1.2 var(--display);
+	letter-spacing: -0.02em;
+}
+
+.writing-step-mark {
+	display: grid;
+	place-items: center;
+	width: 27px;
+	height: 27px;
+	border: 1px solid var(--surface-rule-strong);
+	border-radius: 50%;
+	color: var(--muted);
+	font: 600 11px var(--mono);
+}
+
+.writing-brief-panel > form {
+	display: grid;
+	gap: 17px;
+	padding: 18px 20px 20px;
+}
+
+.writing-form-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.writing-studio label,
+.writing-strength-fieldset {
+	display: grid;
+	gap: 7px;
+	min-width: 0;
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 570;
+}
+
+.writing-studio label > span,
+.writing-strength-fieldset legend {
+	display: block;
+	color: var(--ink-secondary);
+	font-size: 11px;
+	font-weight: 620;
+}
+
+.writing-studio label > span small {
+	color: var(--faint);
+	font-weight: 480;
+}
+
+.writing-studio textarea {
+	min-height: 104px;
+	resize: vertical;
+	line-height: 1.55;
+}
+
+.writing-studio .writing-form-grid textarea {
+	min-height: 92px;
+}
+
+.writing-strength-fieldset {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.writing-strength-options {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 7px;
+}
+
+.writing-strength-options label {
+	position: relative;
+	display: grid;
+	gap: 3px;
+	min-height: 58px;
+	padding: 10px;
+	border: 1px solid var(--surface-rule);
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--surface-fill) 80%, transparent);
+	cursor: pointer;
+	transition: border-color var(--motion-feedback), background var(--motion-feedback);
+}
+
+.writing-strength-options label:hover,
+.writing-strength-options label.selected {
+	border-color: var(--solid);
+	background: var(--selection-fill);
+}
+
+.writing-strength-options label:has(input:focus-visible) {
+	outline: 2px solid var(--solid);
+	outline-offset: 2px;
+}
+
+.writing-strength-options input {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.writing-strength-options strong {
+	color: var(--ink);
+	font-size: 11px;
+}
+
+.writing-strength-options small {
+	color: var(--faint);
+	font-size: 10px;
+	font-weight: 480;
+	line-height: 1.35;
+}
+
+.writing-strength-fieldset > p {
+	margin: 8px 0 0;
+	color: var(--faint);
+	font-size: 10px;
+	font-weight: 480;
+	line-height: 1.45;
+}
+
+.writing-sensitive-toggle,
+.writing-profile-toggle {
+	display: flex !important;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: flex-start;
+	gap: 9px !important;
+	padding: 10px 11px;
+	border: 1px solid var(--surface-rule);
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--surface-fill) 75%, transparent);
+	cursor: pointer;
+}
+
+.writing-sensitive-toggle input,
+.writing-profile-toggle input,
+.writing-sample-actions input {
+	accent-color: var(--solid);
+	margin-top: 2px;
+}
+
+.writing-sensitive-toggle span,
+.writing-profile-toggle span {
+	display: grid;
+	gap: 3px;
+}
+
+.writing-sensitive-toggle strong,
+.writing-profile-toggle strong {
+	color: var(--ink);
+	font-size: 11px;
+}
+
+.writing-sensitive-toggle small,
+.writing-profile-toggle small {
+	color: var(--faint);
+	font-size: 10px;
+	font-weight: 480;
+	line-height: 1.4;
+}
+
+.writing-submit-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.writing-submit-row > small {
+	color: var(--faint);
+	font-size: 10px;
+}
+
+.writing-submit-row .button svg {
+	width: 14px;
+	height: 14px;
+}
+
+.writing-context-panel {
+	position: sticky;
+	top: 18px;
+}
+
+.writing-context-panel > header > svg {
+	width: 15px;
+	height: 15px;
+	color: var(--muted);
+	animation: writing-studio-spin 0.9s linear infinite;
+}
+
+.writing-context-panel > .writing-inline-error {
+	margin: 14px 16px 0;
+}
+
+.writing-context-match {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 16px;
+	padding: 11px;
+	border: 1px solid var(--surface-rule);
+	border-radius: var(--radius-control);
+	background: color-mix(in srgb, var(--solid) 8%, var(--surface-fill));
+}
+
+.writing-context-orb {
+	width: 25px;
+	height: 25px;
+	flex: 0 0 auto;
+	border-radius: 50%;
+	background: radial-gradient(circle at 35% 30%, var(--solid), color-mix(in srgb, var(--solid) 35%, transparent) 64%, transparent 66%);
+	box-shadow: 0 0 0 5px color-mix(in srgb, var(--solid) 8%, transparent);
+}
+
+.writing-context-match div {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
+.writing-context-match strong {
+	overflow: hidden;
+	color: var(--ink);
+	font-size: 11px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.writing-context-match small {
+	color: var(--muted);
+	font-size: 10px;
+}
+
+.writing-context-counts {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1px;
+	margin: 0 16px;
+	border-block: 1px solid var(--surface-rule);
+}
+
+.writing-context-counts div {
+	display: grid;
+	gap: 3px;
+	padding: 12px 7px;
+	text-align: center;
+}
+
+.writing-context-counts strong {
+	color: var(--ink);
+	font: 650 17px var(--display);
+}
+
+.writing-context-counts span {
+	color: var(--faint);
+	font-size: 9px;
+	line-height: 1.25;
+}
+
+.writing-context-categories {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	padding: 14px 16px 0;
+}
+
+.writing-context-categories span {
+	border: 1px solid var(--surface-rule);
+	border-radius: 999px;
+	padding: 4px 7px;
+	color: var(--muted);
+	font-size: 9px;
+	font-weight: 570;
+}
+
+.writing-context-notes {
+	display: grid;
+	gap: 8px;
+	margin: 14px 16px 17px;
+	padding: 0 0 0 16px;
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 480;
+	line-height: 1.45;
+}
+
+.writing-context-empty {
+	display: grid;
+	justify-items: start;
+	gap: 8px;
+	padding: 28px 20px 30px;
+}
+
+.writing-context-empty svg {
+	width: 22px;
+	height: 22px;
+	color: var(--faint);
+}
+
+.writing-context-empty strong {
+	color: var(--ink);
+	font-size: 12px;
+}
+
+.writing-context-empty p {
+	margin: 0;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.5;
+}
+
+.writing-profile-panel,
+.writing-result-panel {
+	margin-top: 14px;
+}
+
+.writing-profile-panel > header > div:first-child {
+	max-width: 690px;
+}
+
+.writing-profile-panel > header p {
+	max-width: 660px;
+	margin: 8px 0 0;
+	color: var(--muted);
+	font-size: 11px;
+	font-weight: 480;
+	line-height: 1.5;
+}
+
+.writing-profile-status,
+.writing-quality {
+	border-color: color-mix(in srgb, var(--solid) 42%, var(--surface-rule));
+	background: color-mix(in srgb, var(--solid) 8%, transparent);
+	color: var(--ink-secondary);
+}
+
+.writing-profile-status > span,
+.writing-quality > span {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--solid);
+}
+
+.writing-profile-status.disabled > span,
+.writing-quality.needs_attention > span {
+	background: var(--warning);
+}
+
+.writing-profile-status.disabled {
+	border-color: var(--surface-rule);
+	background: transparent;
+	color: var(--muted);
+}
+
+.writing-profile-content {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 16px 22px;
+	padding: 18px 20px 20px;
+}
+
+.writing-profile-controls {
+	display: grid;
+	grid-template-columns: minmax(170px, 1fr) 122px minmax(190px, 1fr);
+	align-items: start;
+	gap: 10px;
+}
+
+.writing-profile-controls > label:not(.writing-profile-toggle) {
+	gap: 7px;
+}
+
+.writing-profile-metrics {
+	display: flex;
+	align-items: stretch;
+	gap: 0;
+	min-width: 240px;
+	border: 1px solid var(--surface-rule);
+	border-radius: var(--radius-control);
+	overflow: hidden;
+}
+
+.writing-profile-metrics div {
+	display: grid;
+	align-content: center;
+	gap: 3px;
+	min-width: 78px;
+	padding: 10px 9px;
+	border-right: 1px solid var(--surface-rule);
+	text-align: center;
+}
+
+.writing-profile-metrics div:last-child {
+	border-right: 0;
+}
+
+.writing-profile-metrics strong {
+	color: var(--ink);
+	font: 650 16px var(--display);
+}
+
+.writing-profile-metrics span {
+	color: var(--faint);
+	font-size: 9px;
+	line-height: 1.3;
+}
+
+.writing-sample-form {
+	display: grid;
+	grid-column: 1 / -1;
+	gap: 9px;
+	padding-top: 2px;
+	border-top: 1px solid var(--surface-rule);
+}
+
+.writing-sample-form textarea {
+	min-height: 90px;
+	margin-top: 1px;
+}
+
+.writing-sample-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.writing-sample-actions > label {
+	display: flex !important;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: flex-start;
+	gap: 7px !important;
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 480;
+	line-height: 1.35;
+}
+
+.writing-sample-actions > label span {
+	display: block;
+}
+
+.writing-sample-actions > label:nth-child(2) {
+	margin-right: auto;
+}
+
+.writing-reset-button {
+	grid-column: 1 / -1;
+	justify-self: start;
+	border: 0;
+	padding: 0;
+	background: transparent;
+	color: var(--muted);
+	font-size: 10px;
+	cursor: pointer;
+}
+
+.writing-reset-button:hover:not(:disabled) {
+	color: var(--danger-ink);
+}
+
+.writing-reset-button:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
+}
+
+.writing-profile-loading {
+	margin: 0;
+	padding: 20px;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.writing-result-panel > header {
+	align-items: center;
+}
+
+.writing-result-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.writing-quality.needs_attention {
+	border-color: color-mix(in srgb, var(--warning) 48%, var(--surface-rule));
+	background: color-mix(in srgb, var(--warning) 8%, transparent);
+	color: var(--warning-ink);
+}
+
+.writing-result-editor {
+	display: grid;
+	gap: 14px;
+	padding: 18px 20px;
+}
+
+.writing-result-editor textarea {
+	min-height: 230px;
+	font-size: 13px;
+	line-height: 1.65;
+}
+
+.writing-result-footer {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 20px;
+	padding: 14px 20px;
+	border-top: 1px solid var(--surface-rule);
+	background: color-mix(in srgb, var(--surface-fill) 65%, transparent);
+}
+
+.writing-result-footer strong {
+	color: var(--ink-secondary);
+	font-size: 11px;
+}
+
+.writing-result-footer p {
+	max-width: 60ch;
+	margin: 4px 0 0;
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 480;
+	line-height: 1.45;
+}
+
+.writing-result-footer ul {
+	display: grid;
+	gap: 4px;
+	max-width: 360px;
+	margin: 0;
+	padding-left: 16px;
+	color: var(--warning-ink);
+	font-size: 10px;
+	line-height: 1.4;
+}
+
+.writing-route-details {
+	border-top: 1px solid var(--surface-rule);
+	padding: 12px 20px 14px;
+	color: var(--muted);
+	font-size: 10px;
+}
+
+.writing-route-details summary {
+	color: var(--ink-secondary);
+	cursor: pointer;
+	font-weight: 570;
+}
+
+.writing-route-details > div {
+	display: grid;
+	gap: 5px;
+	margin-top: 9px;
+}
+
+.writing-route-details span {
+	line-height: 1.4;
+}
+
+.writing-route-details strong {
+	display: inline-block;
+	min-width: 118px;
+	color: var(--ink);
+}
+
+@keyframes writing-studio-spin {
+	to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.writing-context-panel > header > svg {
+		animation: none;
+	}
+}
+
+@media (max-width: 900px) {
+	.writing-studio-header {
+		flex-direction: column;
+	}
+
+	.writing-studio-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.writing-context-panel {
+		position: static;
+	}
+
+	.writing-profile-content {
+		grid-template-columns: 1fr;
+	}
+
+	.writing-profile-metrics {
+		justify-self: start;
+	}
+}
+
+@media (max-width: 600px) {
+	.writing-studio {
+		width: min(100% - 30px, 1120px) !important;
+		padding-top: 28px !important;
+	}
+
+	.writing-studio-header h1 {
+		font-size: 29px;
+	}
+
+	.writing-form-grid,
+	.writing-strength-options,
+	.writing-profile-controls {
+		grid-template-columns: 1fr;
+	}
+
+	.writing-brief-panel > header,
+	.writing-context-panel > header,
+	.writing-profile-panel > header,
+	.writing-result-panel > header,
+	.writing-brief-panel > form,
+	.writing-profile-content,
+	.writing-result-editor {
+		padding-inline: 15px;
+	}
+
+	.writing-result-panel > header,
+	.writing-result-footer,
+	.writing-sample-actions {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.writing-result-actions {
+		flex-wrap: wrap;
+	}
+
+	.writing-sample-actions > label:nth-child(2) {
+		margin-right: 0;
+	}
+
+	.writing-sample-actions .button {
+		width: 100%;
+	}
+}

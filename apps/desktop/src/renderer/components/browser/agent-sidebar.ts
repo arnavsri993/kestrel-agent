@@ -6,6 +6,7 @@ export const SIDEBAR_RECENT_LIMIT = 3;
 export type SidebarDestination =
 	| "browser"
 	| "agent"
+	| "writing"
 	| "approvals"
 	| "capabilities"
 	| "settings";
@@ -48,6 +49,7 @@ export function sidebarActiveDestination(page: string): SidebarDestination {
 	const appPage = parseKestrelAppPage(page)?.id ?? page;
 	if (
 		appPage === "agent" ||
+		appPage === "writing" ||
 		appPage === "approvals" ||
 		appPage === "settings" ||
 		appPage === "commands"
