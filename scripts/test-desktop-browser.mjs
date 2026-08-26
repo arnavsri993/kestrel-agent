@@ -1236,6 +1236,116 @@ try {
 			window.kestrel.request({ type: "browser-close-tab", tabId }),
 		inactiveVerticalTabId,
 	);
+	const organizationFixtureUrls = [`${origin}/two`, `${origin}/one`];
+	const organizationFixtureTabIds = await page.evaluate(async (urls) => {
+		const ids = [];
+		for (const input of urls) {
+			const response = await window.kestrel.request({
+				type: "browser-create-tab",
+				input,
+				active: false,
+			});
+			if (!response.ok)
+				throw new Error("Organization fixture tab could not be created.");
+			if (!("browserState" in response))
+				throw new Error("Organization fixture state was not returned.");
+			const created = response.browserState.tabs.at(-1);
+			if (!created) throw new Error("Organization fixture tab had no id.");
+			ids.push(created.id);
+		}
+		return ids;
+	}, organizationFixtureUrls);
+	state = await waitForBrowserState(
+		(value) =>
+			organizationFixtureUrls.every((url) =>
+				value.tabs.some((tab) => tab.url === url),
+			),
+		"organization fixture tabs",
+	);
+	const tabOrderBeforeOrganization = state.tabs.map((tab) => tab.id);
+	const organizationPreview = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "browser-preview-organize-tabs",
+		});
+		if (!response.ok || !("browserOrganization" in response))
+			throw new Error("The tab organization preview was unavailable.");
+		return response.browserOrganization;
+	});
+	const previewFolderOrder = [];
+	for (const tab of organizationPreview.tabs) {
+		if (tab.tabFolderId && !previewFolderOrder.includes(tab.tabFolderId))
+			previewFolderOrder.push(tab.tabFolderId);
+	}
+	assert.deepEqual(
+		previewFolderOrder,
+		organizationPreview.tabFolders.map((folder) => folder.id),
+		"Organization preview must preserve first-seen group order",
+	);
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page
+		.getByRole("menuitem", { name: "Organize Tabs", exact: true })
+		.click();
+	const organizeDialog = page.getByRole("dialog", { name: "Organize Tabs" });
+	await organizeDialog.waitFor();
+	assert.equal(
+		await organizeDialog.getByText("Done! How Did We Do?", { exact: true }).count(),
+		1,
+	);
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained attached over the organize tabs dialog",
+	);
+	await organizeDialog.getByRole("button", { name: "Close Organize Tabs" }).click();
+	await organizeDialog.waitFor({ state: "detached" });
+	assert.deepEqual(
+		(await browserState()).tabs.map((tab) => tab.id),
+		tabOrderBeforeOrganization,
+		"Canceling tab organization must leave tab order unchanged",
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after canceling tab organization",
+	);
+	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
+	await page
+		.getByRole("menuitem", { name: "Organize Tabs", exact: true })
+		.click();
+	await organizeDialog.waitFor();
+	await organizeDialog.getByRole("button", { name: /^Edit / }).first().click();
+	await organizeDialog.getByLabel("Group name").fill("Local Pages");
+	await organizeDialog.getByRole("button", { name: "Rose", exact: true }).click();
+	await organizeDialog.getByRole("button", { name: "Save", exact: true }).click();
+	await organizeDialog.getByRole("button", { name: "Group Tabs", exact: true }).click();
+	await organizeDialog.waitFor({ state: "detached" });
+	state = await waitForBrowserState(
+		(value) => value.tabFolders.some((folder) => folder.name === "Local Pages"),
+		"reviewed tab organization",
+	);
+	assert.deepEqual(
+		state.tabs.map((tab) => tab.id),
+		organizationPreview.tabs.map((tab) => tab.id),
+		"Applying reviewed organization must preserve the proposed group/tab order",
+	);
+	const reviewedFolder = state.tabFolders.find((folder) => folder.name === "Local Pages");
+	assert(reviewedFolder);
+	assert.equal(reviewedFolder.color, "rose");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after applying tab organization",
+	);
+	await page.evaluate(async (tabIds) => {
+		for (const tabId of tabIds) {
+			const response = await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId,
+			});
+			if (!response.ok) throw new Error("Organization fixture cleanup failed.");
+		}
+	}, organizationFixtureTabIds);
+	await waitForBrowserState(
+		(value) => !organizationFixtureTabIds.some((tabId) => value.tabs.some((tab) => tab.id === tabId)),
+		"organization fixture cleanup",
+	);
 	await page.screenshot({
 		path:
 			process.env.KESTREL_BROWSER_SCREENSHOT ?? join(root, "browser-shell.png"),

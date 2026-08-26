@@ -996,6 +996,477 @@ body:has(.ai-browser-app),
 	font-variant-numeric: tabular-nums;
 }
 
+/* Microsoft-inspired tab organization review dialog. The proposal stays in
+   the renderer until the person presses Group Tabs, so Cancel is lossless. */
+.organize-tabs-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	background: rgb(0 0 0 / 0.66);
+	backdrop-filter: blur(2px);
+}
+
+.organize-tabs-dialog {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: min(580px, calc(100vw - 32px));
+	max-height: min(720px, calc(100vh - 32px));
+	overflow: hidden;
+	border: 1px solid rgb(255 255 255 / 0.15);
+	border-radius: 15px;
+	background: color-mix(in srgb, var(--panel) 95%, #000 5%);
+	box-shadow: 0 28px 70px rgb(0 0 0 / 0.52), 0 0 0 1px rgb(255 255 255 / 0.03) inset;
+}
+
+.organize-tabs-dialog-header,
+.organize-tabs-dialog-footer,
+.organize-tabs-group-header,
+.organize-tabs-feedback {
+	display: flex;
+	align-items: center;
+}
+
+.organize-tabs-dialog-header {
+	justify-content: space-between;
+	gap: 16px;
+	padding: 18px 20px 15px;
+	border-bottom: 1px solid var(--line);
+}
+
+.organize-tabs-dialog-header h2 {
+	margin: 0;
+	font: 650 19px / 1.2 var(--sans);
+	letter-spacing: -0.02em;
+}
+
+.organize-tabs-dialog-header p {
+	margin: 5px 0 0;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.4;
+}
+
+.organize-tabs-close,
+.organize-tabs-edit,
+.organize-tabs-feedback button {
+	display: grid;
+	place-items: center;
+	flex: 0 0 auto;
+	border: 0;
+	color: var(--muted);
+	background: transparent;
+	cursor: pointer;
+}
+
+.organize-tabs-close {
+	width: 30px;
+	height: 30px;
+	border-radius: 8px;
+}
+
+.organize-tabs-close:hover,
+.organize-tabs-close:focus-visible,
+.organize-tabs-edit:hover,
+.organize-tabs-edit:focus-visible {
+	color: var(--ink);
+	background: var(--selected);
+	outline: none;
+}
+
+.organize-tabs-close svg {
+	width: 17px;
+	height: 17px;
+}
+
+.organize-tabs-feedback {
+	justify-content: space-between;
+	gap: 12px;
+	margin: 0 20px;
+	padding: 12px 0;
+	border-bottom: 1px solid var(--line);
+}
+
+.organize-tabs-feedback strong {
+	font-size: 13px;
+	font-weight: 620;
+}
+
+.organize-tabs-feedback > div {
+	display: flex;
+	gap: 6px;
+}
+
+.organize-tabs-feedback button {
+	width: 30px;
+	height: 30px;
+	border: 1px solid transparent;
+	border-radius: 8px;
+	font-size: 18px;
+	line-height: 1;
+}
+
+.organize-tabs-feedback button:hover,
+.organize-tabs-feedback button:focus-visible,
+.organize-tabs-feedback button.selected {
+	border-color: var(--line-strong);
+	color: var(--ink);
+	background: var(--selected);
+	outline: none;
+}
+
+.organize-tabs-feedback button svg {
+	width: 17px;
+	height: 17px;
+}
+
+.organize-tabs-scroll {
+	min-height: 120px;
+	margin: 12px 6px 0 20px;
+	overflow: auto;
+	padding: 0 10px 4px 0;
+	overscroll-behavior: contain;
+}
+
+.organize-tabs-group {
+	--organize-tabs-color: var(--muted);
+	position: relative;
+	margin: 0 0 12px;
+	padding: 0 0 0 10px;
+}
+
+.organize-tabs-group::before {
+	position: absolute;
+	top: 4px;
+	bottom: 2px;
+	left: 0;
+	width: 3px;
+	border-radius: 3px;
+	background: var(--organize-tabs-color);
+	content: "";
+}
+
+.organize-tabs-group-blue { --organize-tabs-color: #78a8ff; }
+.organize-tabs-group-green { --organize-tabs-color: #75d39e; }
+.organize-tabs-group-amber { --organize-tabs-color: #f1bd68; }
+.organize-tabs-group-rose { --organize-tabs-color: #f28fa3; }
+.organize-tabs-group-violet { --organize-tabs-color: #b59af7; }
+.organize-tabs-group-teal { --organize-tabs-color: #58c8c2; }
+.organize-tabs-group-slate { --organize-tabs-color: #9aa5b5; }
+
+.organize-tabs-group-header {
+	justify-content: space-between;
+	gap: 10px;
+	min-height: 32px;
+}
+
+.organize-tabs-group-toggle {
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	text-align: left;
+	cursor: pointer;
+}
+
+.organize-tabs-folder-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	max-width: 100%;
+	padding: 5px 8px 5px 5px;
+	border: 1px solid color-mix(in srgb, var(--organize-tabs-color) 52%, transparent);
+	border-radius: 5px;
+	color: color-mix(in srgb, var(--organize-tabs-color) 80%, var(--ink));
+	background: color-mix(in srgb, var(--organize-tabs-color) 16%, var(--surface));
+	font-size: 12px;
+	font-weight: 620;
+	line-height: 1;
+}
+
+.organize-tabs-folder-chip > svg {
+	width: 12px;
+	height: 12px;
+	transition: transform var(--motion-feedback) var(--ease-kestrel);
+}
+
+.organize-tabs-folder-chip > svg.expanded {
+	transform: rotate(90deg);
+}
+
+.organize-tabs-folder-chip > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.organize-tabs-folder-chip small {
+	color: color-mix(in srgb, var(--organize-tabs-color) 72%, var(--muted));
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+}
+
+.organize-tabs-edit {
+	width: 26px;
+	height: 26px;
+	border-radius: 7px;
+}
+
+.organize-tabs-edit svg {
+	width: 14px;
+	height: 14px;
+}
+
+.organize-tabs-group-tabs {
+	overflow: hidden;
+}
+
+.organize-tabs-tab {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-width: 0;
+	min-height: 36px;
+	padding: 4px 8px;
+	border-radius: 7px;
+	color: var(--ink-secondary);
+}
+
+.organize-tabs-tab:hover {
+	background: color-mix(in srgb, var(--surface) 76%, transparent);
+}
+
+.organize-tabs-tab-favicon,
+.organize-tabs-tab-favicon img {
+	display: grid;
+	place-items: center;
+	flex: 0 0 auto;
+	width: 18px;
+	height: 18px;
+}
+
+.organize-tabs-tab-favicon {
+	overflow: hidden;
+	border-radius: 4px;
+	color: var(--muted);
+	background: color-mix(in srgb, var(--ink) 8%, transparent);
+	font-size: 10px;
+	font-weight: 650;
+}
+
+.organize-tabs-tab-favicon svg {
+	width: 15px;
+	height: 15px;
+}
+
+.organize-tabs-tab-copy {
+	display: grid;
+	min-width: 0;
+	gap: 2px;
+}
+
+.organize-tabs-tab-copy strong,
+.organize-tabs-tab-copy small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.organize-tabs-tab-copy strong {
+	font-size: 11.5px;
+	font-weight: 540;
+}
+
+.organize-tabs-tab-copy small {
+	color: var(--faint);
+	font-size: 10px;
+}
+
+.organize-tabs-edit-form {
+	display: grid;
+	gap: 9px;
+	margin: 4px 0 8px;
+	padding: 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.organize-tabs-edit-form label {
+	display: grid;
+	gap: 5px;
+	color: var(--muted);
+	font-size: 10px;
+}
+
+.organize-tabs-edit-form input {
+	width: 100%;
+	min-height: 30px;
+	padding: 0 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: 6px;
+	color: var(--ink);
+	background: var(--panel);
+	font-size: 12px;
+}
+
+.organize-tabs-color-picker {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+}
+
+.organize-tabs-color-swatch {
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 2px solid transparent;
+	border-radius: 50%;
+	background: var(--organize-tabs-color);
+	cursor: pointer;
+}
+
+.organize-tabs-color-swatch[aria-pressed="true"] {
+	border-color: var(--ink);
+	box-shadow: 0 0 0 2px var(--panel);
+}
+
+.organize-tabs-color-swatch-blue { --organize-tabs-color: #78a8ff; }
+.organize-tabs-color-swatch-green { --organize-tabs-color: #75d39e; }
+.organize-tabs-color-swatch-amber { --organize-tabs-color: #f1bd68; }
+.organize-tabs-color-swatch-rose { --organize-tabs-color: #f28fa3; }
+.organize-tabs-color-swatch-violet { --organize-tabs-color: #b59af7; }
+.organize-tabs-color-swatch-teal { --organize-tabs-color: #58c8c2; }
+.organize-tabs-color-swatch-slate { --organize-tabs-color: #9aa5b5; }
+
+.organize-tabs-edit-actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 7px;
+}
+
+.organize-tabs-edit-actions button,
+.organize-tabs-secondary,
+.organize-tabs-primary {
+	min-height: 30px;
+	padding: 0 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: 7px;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.organize-tabs-edit-actions button:first-child,
+.organize-tabs-secondary {
+	color: var(--ink-secondary);
+	background: var(--surface);
+}
+
+.organize-tabs-edit-actions button:last-child,
+.organize-tabs-primary {
+	border-color: var(--solid);
+	color: var(--on-solid);
+	background: var(--solid);
+	font-weight: 620;
+}
+
+.organize-tabs-edit-actions button:hover,
+.organize-tabs-edit-actions button:focus-visible,
+.organize-tabs-secondary:hover,
+.organize-tabs-secondary:focus-visible {
+	background: var(--selected);
+	color: var(--ink);
+	outline: none;
+}
+
+.organize-tabs-primary:hover,
+.organize-tabs-primary:focus-visible {
+	background: var(--solid-hover);
+	outline: none;
+}
+
+.organize-tabs-unassigned,
+.organize-tabs-error {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	margin: 0 20px 10px;
+	font-size: 10.5px;
+	line-height: 1.35;
+}
+
+.organize-tabs-unassigned {
+	color: var(--muted);
+}
+
+.organize-tabs-unassigned svg {
+	flex: 0 0 auto;
+	width: 14px;
+	height: 14px;
+}
+
+.organize-tabs-error {
+	color: var(--warning);
+}
+
+.organize-tabs-empty {
+	display: grid;
+	place-items: center;
+	gap: 7px;
+	min-height: 180px;
+	padding: 24px;
+	color: var(--muted);
+	text-align: center;
+}
+
+.organize-tabs-empty svg {
+	width: 24px;
+	height: 24px;
+	color: var(--ink-secondary);
+}
+
+.organize-tabs-empty strong {
+	color: var(--ink);
+	font-size: 12px;
+}
+
+.organize-tabs-empty span {
+	max-width: 30ch;
+	font-size: 11px;
+}
+
+.organize-tabs-dialog-footer {
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: auto;
+	padding: 14px 20px 18px;
+	border-top: 1px solid var(--line);
+}
+
+.organize-tabs-dialog-footer button:disabled,
+.organize-tabs-close:disabled {
+	opacity: 0.55;
+	cursor: wait;
+}
+
+@media (max-width: 620px) {
+	.organize-tabs-overlay { padding: 12px; }
+	.organize-tabs-dialog { width: min(100%, 580px); max-height: calc(100vh - 24px); }
+	.organize-tabs-dialog-header,
+	.organize-tabs-dialog-footer { padding-inline: 14px; }
+	.organize-tabs-feedback,
+	.organize-tabs-unassigned,
+	.organize-tabs-error { margin-inline: 14px; }
+	.organize-tabs-scroll { margin-left: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.organize-tabs-folder-chip > svg { transition: none; }
+}
+
 .browser-tabs {
 	display: flex;
 	/* Shrink-wrap the tabs so the new-tab control stays beside the last tab. */

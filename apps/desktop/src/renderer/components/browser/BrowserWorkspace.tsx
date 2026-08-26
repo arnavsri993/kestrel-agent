@@ -11,6 +11,7 @@ import type {
 	FilePreview,
 	RuntimeSession,
 	UserBrowserFile,
+	UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import {
@@ -22,6 +23,7 @@ import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { NewTabPage } from "./NewTabPage";
+import { OrganizeTabsDialog } from "./OrganizeTabsDialog";
 import { TabStrip } from "./TabStrip";
 import { recordNewTabGreetingVisit } from "./new-tab";
 
@@ -45,6 +47,7 @@ export function BrowserWorkspace({
 	appPage,
 	sessions = [],
 	onOpenSession,
+	organizeTabsRequestId = 0,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -65,6 +68,7 @@ export function BrowserWorkspace({
 	appPage?: ReactNode;
 	sessions?: RuntimeSession[];
 	onOpenSession?(sessionId: string): void;
+	organizeTabsRequestId?: number;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -76,6 +80,10 @@ export function BrowserWorkspace({
     tab: false,
     toolbar: false,
   });
+  const [organizeTabsPreview, setOrganizeTabsPreview] =
+    useState<UserBrowserTabOrganizationPreview | null>(null);
+  const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
+  const organizeTabsRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
   const state = browser.state;
   const {
@@ -104,9 +112,34 @@ export function BrowserWorkspace({
     printTab,
     openDevTools,
     moveTab,
-    organizeTabs,
+    applyTabOrganization,
     detachTab,
+    previewOrganizeTabs,
   } = browser;
+
+  const openOrganizeTabs = useCallback(async () => {
+    if (organizeTabsOpening || organizeTabsPreview) return;
+    setOrganizeTabsOpening(true);
+    try {
+      const preview = await previewOrganizeTabs();
+      setOrganizeTabsPreview(preview);
+    } catch {
+      // The browser controller reports request failures in its own error area;
+      // avoid leaving a partially opened dialog behind.
+    } finally {
+      setOrganizeTabsOpening(false);
+    }
+  }, [organizeTabsOpening, organizeTabsPreview, previewOrganizeTabs]);
+
+  useEffect(() => {
+    if (
+      organizeTabsRequestId <= 0 ||
+      organizeTabsRequestRef.current === organizeTabsRequestId
+    )
+      return;
+    organizeTabsRequestRef.current = organizeTabsRequestId;
+    void openOrganizeTabs();
+  }, [openOrganizeTabs, organizeTabsRequestId]);
 
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
@@ -115,7 +148,10 @@ export function BrowserWorkspace({
     activeTab?.url && !activeTab.error && !activeAppPage && !activeFilePage,
   );
   const nativePageVisible =
-    nativePageEligible && !openChromeMenus.tab && !openChromeMenus.toolbar;
+    nativePageEligible &&
+    !openChromeMenus.tab &&
+    !openChromeMenus.toolbar &&
+    !organizeTabsPreview;
 
   const handleTabMenuOpenChange = useCallback((open: boolean) => {
     setOpenChromeMenus((current) =>
@@ -435,6 +471,23 @@ export function BrowserWorkspace({
   }
 
   const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
+  const closeOrganizeTabs = useCallback(() => {
+    setOrganizeTabsPreview(null);
+  }, []);
+  const applyOrganizeTabs = useCallback(
+    async (organization: UserBrowserTabOrganizationPreview) => {
+      await applyTabOrganization({
+        tabOrder: organization.tabs.map((tab) => tab.id),
+        assignments: organization.tabs.map(({ id, tabFolderId }) => ({
+          tabId: id,
+          ...(tabFolderId ? { tabFolderId } : {}),
+        })),
+        tabFolders: organization.tabFolders,
+      });
+      setOrganizeTabsPreview(null);
+    },
+    [applyTabOrganization],
+  );
 
   return (
     <main
@@ -460,7 +513,7 @@ export function BrowserWorkspace({
         onDetachTab={(tabId) => void detachTab(tabId)}
         onReopenClosedTab={(index) => void reopenClosedTab(index)}
         recentlyClosedTabs={state.recentlyClosedTabs}
-        onOrganizeTabs={organizeTabs}
+        onOrganizeTabs={openOrganizeTabs}
         onOpenWorkspaces={onOpenWorkspaces}
         onMenuOpenChange={handleTabMenuOpenChange}
         onToggleOrientation={() => {
@@ -685,6 +738,14 @@ export function BrowserWorkspace({
       )}
       {activeTab.loading && (
         <span className="browser-loading-line" aria-label="Page loading" />
+      )}
+      {organizeTabsPreview && (
+        <OrganizeTabsDialog
+          preview={organizeTabsPreview}
+          originFavicons={state.originFavicons}
+          onCancel={closeOrganizeTabs}
+          onApply={applyOrganizeTabs}
+        />
       )}
     </main>
   );

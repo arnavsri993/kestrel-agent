@@ -485,7 +485,7 @@ export function TabStrip({
 								}}
 							>
 								<Icon name="folder" />
-								<span>Organize tabs into folders</span>
+								<span>Organize Tabs</span>
 							</button>
 						)}
 						{onOpenWorkspaces && (
@@ -812,7 +812,7 @@ export function TabStrip({
 								setMenu(null);
 							}}
 						>
-							Organize tabs into folders
+							Organize Tabs
 						</button>
 					)}
 					<button

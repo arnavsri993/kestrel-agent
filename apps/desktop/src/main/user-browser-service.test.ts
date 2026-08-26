@@ -1074,6 +1074,48 @@ describe("UserBrowserService", () => {
     );
   });
 
+  it("previews organization without mutating tabs and applies reviewed folder edits", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://notion.so/team/roadmap");
+    const second = await navigateNewTab(
+      service,
+      "https://www.google.com/search?q=browser",
+    );
+    const third = await navigateNewTab(service, "https://github.com/kestrel/app");
+
+    const preview = service.previewOrganizeTabs();
+    expect(service.getState().tabFolders).toEqual([]);
+
+    const reviewedFolders = preview.tabFolders.map((folder, index) => ({
+      ...folder,
+      name: `Reviewed ${index + 1}`,
+      color: "slate" as const,
+    }));
+    const applied = service.applyTabOrganization({
+      tabOrder: preview.tabs.map((tab) => tab.id),
+      assignments: preview.tabs.map(({ id, tabFolderId }) => ({
+        tabId: id,
+        ...(tabFolderId ? { tabFolderId } : {}),
+      })),
+      tabFolders: reviewedFolders,
+    });
+
+    expect(applied.tabs.map((tab) => tab.id)).toEqual([
+      first.id,
+      second.id,
+      third.id,
+    ]);
+    expect(applied.tabFolders.map((folder) => folder.name)).toEqual([
+      "Reviewed 1",
+      "Reviewed 2",
+      "Reviewed 3",
+    ]);
+    expect(applied.tabFolders.every((folder) => folder.color === "slate")).toBe(
+      true,
+    );
+  });
+
   it("allows 'Continue with Google' and OAuth links to open as a managed tab", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;

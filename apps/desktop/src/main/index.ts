@@ -2950,6 +2950,22 @@ function registerIpc(): void {
         browserState: requestBrowserService.organizeTabs(),
       };
     }
+    if (request.type === "browser-preview-organize-tabs") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserOrganization: requestBrowserService.previewOrganizeTabs(),
+      };
+    }
+    if (request.type === "browser-apply-tab-organization") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.applyTabOrganization(request),
+      };
+    }
     if (request.type === "browser-detach-tab") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
