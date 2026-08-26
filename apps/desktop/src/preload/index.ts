@@ -3,6 +3,7 @@ import {
 	ExternalIntakeSchema,
 	KestrelDeepLinkSchema,
 	LocalRuntimeProgressSchema,
+	PaymentPromptSchema,
 	PasswordPromptSchema,
 	PetActivityStateSchema,
 	PetStatusSchema,
@@ -37,6 +38,12 @@ const bridge: RendererBridge = {
 			callback(value === null ? null : PasswordPromptSchema.parse(value));
 		ipcRenderer.on("kestrel:password-prompt", listener);
 		return () => ipcRenderer.off("kestrel:password-prompt", listener);
+	},
+	onPaymentPrompt(callback) {
+		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
+			callback(value === null ? null : PaymentPromptSchema.parse(value));
+		ipcRenderer.on("kestrel:payment-prompt", listener);
+		return () => ipcRenderer.off("kestrel:payment-prompt", listener);
 	},
 	onBrowserCommand(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>

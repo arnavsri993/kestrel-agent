@@ -43,6 +43,7 @@ import {
   type CommunicationCodeScan,
   type CommunicationSourceStatus,
 	type InstalledExtension,
+	type PaymentPrompt,
 	type PasswordPrompt,
 	type UserBrowserState,
   type UserBrowserTab,
@@ -52,6 +53,7 @@ import {
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
 import { PasswordVault } from "./password-vault";
+import { PaymentCardVault } from "./payment-card-vault";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
 import { MigrationManager, PluginInstaller, readBoundedResponseBytes } from "@kestrel/agent-core";
 import { PluginTrustStore } from "./plugin-trust-store";
@@ -324,6 +326,148 @@ function updatePasswordOverlay(
 	}
 }
 
+interface PaymentOverlayRecord {
+	window: BrowserWindow;
+	owner: BrowserWindow;
+	prompt: PaymentPrompt;
+	ready: boolean;
+}
+
+const paymentOverlays = new Map<BrowserWindow, PaymentOverlayRecord>();
+const paymentOverlayWindows = new Set<BrowserWindow>();
+const paymentOverlayOwners = new WeakMap<BrowserWindow, BrowserWindow>();
+
+function paymentOverlaySize(prompt: PaymentPrompt): {
+	width: number;
+	height: number;
+} {
+	return prompt.mode === "save"
+		? { width: 398, height: 270 }
+		: { width: 410, height: 304 };
+}
+
+function paymentOverlayBounds(
+	owner: BrowserWindow,
+	prompt: PaymentPrompt,
+): Electron.Rectangle {
+	const content = owner.getContentBounds();
+	const size = paymentOverlaySize(prompt);
+	const anchor = prompt.anchor;
+	const screenX = content.x + anchor.x;
+	const screenY = content.y + anchor.y;
+	const display = screen.getDisplayNearestPoint({ x: screenX, y: screenY });
+	const workArea = display.workArea;
+	const preferredX = screenX;
+	const preferredY = screenY + anchor.height + 8;
+	const y =
+		preferredY + size.height <= workArea.y + workArea.height - 12
+			? preferredY
+			: screenY - size.height - 8;
+	return {
+		x: Math.round(
+			Math.max(
+				workArea.x + 12,
+				Math.min(preferredX, workArea.x + workArea.width - size.width - 12),
+			),
+		),
+		y: Math.round(
+			Math.max(
+				workArea.y + 12,
+				Math.min(y, workArea.y + workArea.height - size.height - 12),
+			),
+		),
+		...size,
+	};
+}
+
+function closePaymentOverlay(owner: BrowserWindow): void {
+	const record = paymentOverlays.get(owner);
+	if (!record) return;
+	if (record.window.isDestroyed()) {
+		paymentOverlays.delete(owner);
+		paymentOverlayWindows.delete(record.window);
+		return;
+	}
+	record.window.close();
+}
+
+function updatePaymentOverlay(
+	owner: BrowserWindow,
+	prompt: PaymentPrompt | null,
+): void {
+	if (!prompt) {
+		closePaymentOverlay(owner);
+		return;
+	}
+	let record = paymentOverlays.get(owner);
+	if (!record) {
+		const overlay = new BrowserWindow({
+			...paymentOverlayBounds(owner, prompt),
+			parent: owner,
+			modal: false,
+			show: false,
+			frame: false,
+			transparent: true,
+			resizable: false,
+			skipTaskbar: true,
+			hasShadow: true,
+			backgroundColor: "#00000000",
+			webPreferences: {
+				preload: join(__dirname, "../preload/index.cjs"),
+				nodeIntegration: false,
+				contextIsolation: true,
+				sandbox: !DEVELOPMENT_RENDERER_URL,
+				webSecurity: true,
+				devTools: !isPackagedKestrelApp,
+			},
+		});
+		record = { window: overlay, owner, prompt, ready: false };
+		paymentOverlays.set(owner, record);
+		paymentOverlayWindows.add(overlay);
+		paymentOverlayOwners.set(overlay, owner);
+		const reposition = () => {
+			const current = paymentOverlays.get(owner);
+			if (current?.window === overlay && !overlay.isDestroyed())
+				overlay.setBounds(paymentOverlayBounds(owner, current.prompt));
+		};
+		owner.on("move", reposition);
+		owner.on("resize", reposition);
+		overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+		protectRendererNavigation(overlay.webContents, trustedRendererUrl);
+		overlay.webContents.on("did-finish-load", () => {
+			const current = paymentOverlays.get(owner);
+			if (!current || current.window !== overlay || overlay.isDestroyed()) return;
+			current.ready = true;
+			overlay.webContents.send("kestrel:payment-prompt", current.prompt);
+		});
+		overlay.once("ready-to-show", () => {
+			if (!overlay.isDestroyed() && paymentOverlays.get(owner)?.window === overlay)
+				overlay.showInactive();
+		});
+		overlay.on("closed", () => {
+			owner.removeListener("move", reposition);
+			owner.removeListener("resize", reposition);
+			paymentOverlayWindows.delete(overlay);
+			if (paymentOverlays.get(owner)?.window === overlay)
+				paymentOverlays.delete(owner);
+		});
+		if (DEVELOPMENT_RENDERER_URL) {
+			const url = new URL(DEVELOPMENT_RENDERER_URL);
+			url.searchParams.set("paymentOverlay", "1");
+			void overlay.loadURL(url.toString()).catch(() => overlay.close());
+		} else {
+			void overlay
+				.loadFile(RENDERER_ENTRY_PATH, { query: { paymentOverlay: "1" } })
+				.catch(() => overlay.close());
+		}
+	} else {
+		record.prompt = prompt;
+		record.window.setBounds(paymentOverlayBounds(owner, prompt));
+		if (record.ready && !record.window.isDestroyed())
+			record.window.webContents.send("kestrel:payment-prompt", prompt);
+	}
+}
+
 const supervisor = new CoreSupervisor(
   (request, signal) => {
     if (isUserBrowserBackendWireRequest(request)) {
@@ -388,6 +532,7 @@ let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
 let appPasswordVault: PasswordVault | null = null;
+let appPaymentCardVault: PaymentCardVault | null = null;
 let googleOAuthController: AbortController | null = null;
 let chatGptOAuthController: AbortController | null = null;
 let activeChatGptOAuthManager: ChatGptOAuthManager | null = null;
@@ -714,6 +859,11 @@ function credentialBroker(): CredentialBroker {
 function passwordVault(): PasswordVault {
 	appPasswordVault ??= new PasswordVault(credentialBroker());
 	return appPasswordVault;
+}
+
+function paymentCardVault(): PaymentCardVault {
+	appPaymentCardVault ??= new PaymentCardVault(credentialBroker());
+	return appPaymentCardVault;
 }
 
 function googleWorkspaceOAuthManager(): GoogleWorkspaceOAuthManager {
@@ -1535,6 +1685,7 @@ function createMainWindow(): BrowserWindow {
   if (userBrowserService) {
     if (mainWindow) closeCalculatorOverlay(mainWindow);
     if (mainWindow) closePasswordOverlay(mainWindow);
+    if (mainWindow) closePaymentOverlay(mainWindow);
     userBrowserService.dispose();
     if (mainWindow) browserWindowServices.delete(mainWindow);
     userBrowserService = null;
@@ -1549,11 +1700,13 @@ function createMainWindow(): BrowserWindow {
             ? join(app.getPath("userData"), "browser-downloads")
             : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
           passwordVault: passwordVault(),
+          paymentCardVault: paymentCardVault(),
           onEvent: (event) => {
             if (!window.isDestroyed())
               window.webContents.send("kestrel:browser-event", event);
           },
           onPasswordPrompt: (prompt) => updatePasswordOverlay(window, prompt),
+          onPaymentPrompt: (prompt) => updatePaymentOverlay(window, prompt),
           onCommand: (command) => {
             if (!window.isDestroyed()) {
               // Native WebContentsView pages own focus while the user is browsing.
@@ -1602,6 +1755,7 @@ function createMainWindow(): BrowserWindow {
     if (!quitting && process.platform === "darwin") {
       closeCalculatorOverlay(window);
       closePasswordOverlay(window);
+      closePaymentOverlay(window);
       if (!closingLastTab) {
         event.preventDefault();
         window.hide();
@@ -1611,6 +1765,7 @@ function createMainWindow(): BrowserWindow {
   window.on("closed", () => {
     closeCalculatorOverlay(window);
     closePasswordOverlay(window);
+    closePaymentOverlay(window);
     const service = browserServiceForWindow(window);
     if (service) service.dispose();
     browserWindowServices.delete(window);
@@ -1686,11 +1841,13 @@ function createDetachedBrowserWindow(
       ? join(app.getPath("userData"), "browser-downloads")
       : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
     passwordVault: passwordVault(),
+    paymentCardVault: paymentCardVault(),
     onEvent: (event) => {
       if (!window.isDestroyed())
         window.webContents.send("kestrel:browser-event", event);
     },
     onPasswordPrompt: (prompt) => updatePasswordOverlay(window, prompt),
+    onPaymentPrompt: (prompt) => updatePaymentOverlay(window, prompt),
     onCommand: (command) => {
       if (!window.isDestroyed()) {
         window.webContents.focus();
@@ -1709,6 +1866,7 @@ function createDetachedBrowserWindow(
   protectRendererNavigation(window.webContents, trustedRendererUrl);
   window.on("closed", () => {
     closePasswordOverlay(window);
+    closePaymentOverlay(window);
     service.dispose();
     browserWindowServices.delete(window);
     void rm(statePath, { force: true }).catch(() => undefined);
@@ -2281,11 +2439,16 @@ function registerIpc(): void {
       ? passwordOverlayOwners.get(senderWindow)
       : undefined;
     const isPasswordOverlayWindow = Boolean(passwordOverlayOwner);
+    const paymentOverlayOwner = senderWindow
+      ? paymentOverlayOwners.get(senderWindow)
+      : undefined;
+    const isPaymentOverlayWindow = Boolean(paymentOverlayOwner);
     if (
       !senderWindow ||
       (!browserWindowServices.has(senderWindow) &&
         !isCalculatorOverlayWindow &&
         !isPasswordOverlayWindow &&
+        !isPaymentOverlayWindow &&
         senderWindow !== petOverlayWindow) ||
       !isTrustedRendererFrame(
         event.senderFrame,
@@ -2309,9 +2472,22 @@ function registerIpc(): void {
       ].includes(request.type)
     )
       throw new Error("Password overlays can only fill or dismiss themselves.");
+    if (
+      isPaymentOverlayWindow &&
+      ![
+        "payment-save",
+        "payment-fill-page",
+        "payment-fill-field",
+        "payment-dismiss",
+      ].includes(request.type)
+    )
+      throw new Error("Payment overlays can only save, fill, or dismiss themselves.");
     const requestBrowserService = browserServiceForWindow(senderWindow);
     const passwordService = passwordOverlayOwner
       ? browserServiceForWindow(passwordOverlayOwner)
+      : null;
+    const paymentService = paymentOverlayOwner
+      ? browserServiceForWindow(paymentOverlayOwner)
       : null;
     if (request.type === "runtime-run-agent") {
       await localRuntimeManager()
@@ -2347,6 +2523,19 @@ function registerIpc(): void {
           request.fieldId,
         );
       else passwordService.dismissPasswordPrompt();
+      return { ok: true };
+    }
+    if (isPaymentOverlayWindow && paymentService) {
+      if (request.type === "payment-save")
+        await paymentService.savePaymentCardFromActiveTab(request.origin);
+      else if (request.type === "payment-fill-page")
+        await paymentService.fillPaymentCardPage(request.paymentCardId);
+      else if (request.type === "payment-fill-field")
+        await paymentService.fillPaymentCardField(
+          request.paymentCardId,
+          request.fieldId,
+        );
+      else paymentService.dismissPaymentPrompt();
       return { ok: true };
     }
     if (
@@ -3387,6 +3576,28 @@ function registerIpc(): void {
         passwords: await service.removePassword(request.passwordId),
       };
     }
+    if (
+      request.type === "payment-list" ||
+      request.type === "payment-save" ||
+      request.type === "payment-remove"
+    ) {
+      const service = requestBrowserService ?? userBrowserService;
+      if (!service)
+        throw new Error("The visible user browser is unavailable.");
+      if (request.type === "payment-list")
+        return { ok: true, paymentCards: await service.listPaymentCards() };
+      if (request.type === "payment-save")
+        return {
+          ok: true,
+          paymentCards: await service.savePaymentCardFromActiveTab(
+            request.origin,
+          ),
+        };
+      return {
+        ok: true,
+        paymentCards: await service.removePaymentCard(request.paymentCardId),
+      };
+    }
     if (request.type === "credential-list")
       return {
         ok: true,
@@ -3877,6 +4088,7 @@ async function initializeCoreForStartup(): Promise<boolean> {
           // the first-run path creates a fresh protected key after the archive.
           appCredentialBroker = null;
           appPasswordVault = null;
+          appPaymentCardVault = null;
           continue;
         } catch (archiveCause) {
           const detail =

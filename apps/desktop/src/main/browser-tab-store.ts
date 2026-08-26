@@ -39,6 +39,7 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	memorySaverMode: true,
 	showBookmarksBar: true,
 	passwordAutofillEnabled: true,
+	paymentAutofillEnabled: true,
 };
 const SEARCH_ENGINES: Record<
 	Exclude<UserBrowserSettings["searchEngine"], "custom">,

@@ -2528,6 +2528,84 @@ export const PasswordPromptSchema = z.object({
 });
 export type PasswordPrompt = z.infer<typeof PasswordPromptSchema>;
 
+export const PaymentCardEntryIdSchema = z
+	.string()
+	.regex(/^payment-card-[a-f0-9-]{36}$/);
+export type PaymentCardEntryId = z.infer<typeof PaymentCardEntryIdSchema>;
+
+export const PaymentCardEntrySummarySchema = z.object({
+	id: PaymentCardEntryIdSchema,
+	brand: z.string().min(1).max(40),
+	last4: z.string().regex(/^\d{4}$/),
+	expirationMonth: z.string().regex(/^\d{2}$/),
+	expirationYear: z.string().regex(/^\d{2}$/),
+	cardholderName: z.string().max(200),
+	updatedAt: z.string().datetime(),
+});
+export type PaymentCardEntrySummary = z.infer<
+	typeof PaymentCardEntrySummarySchema
+>;
+
+/**
+ * The secret-bearing shape is kept in the main-process payment vault. The
+ * renderer only receives the masked summary above.
+ */
+export const PaymentCardEntrySchema = PaymentCardEntrySummarySchema.extend({
+	cardNumber: z.string().regex(/^\d{12,19}$/),
+	postalCode: z.string().max(100),
+	createdAt: z.string().datetime(),
+});
+export type PaymentCardEntry = z.infer<typeof PaymentCardEntrySchema>;
+
+export const PaymentFormFieldSchema = z.object({
+	id: z.string().regex(/^payment-field-[0-9]+$/),
+	kind: z.enum([
+		"card-number",
+		"expiration",
+		"expiration-month",
+		"expiration-year",
+		"cardholder-name",
+		"postal-code",
+		"security-code",
+	]),
+	label: z.string().max(500),
+	type: z.string().max(100),
+	autocomplete: z.string().max(100),
+	rect: z.object({
+		x: z.number().int().min(0).max(20_000),
+		y: z.number().int().min(0).max(20_000),
+		width: z.number().int().min(0).max(20_000),
+		height: z.number().int().min(0).max(20_000),
+	}),
+});
+export type PaymentFormField = z.infer<typeof PaymentFormFieldSchema>;
+
+export const PaymentCardCandidateSchema = z.object({
+	brand: z.string().min(1).max(40),
+	last4: z.string().regex(/^\d{4}$/),
+	expirationMonth: z.string().regex(/^\d{2}$/).optional(),
+	expirationYear: z.string().regex(/^\d{2}$/).optional(),
+});
+export type PaymentCardCandidate = z.infer<typeof PaymentCardCandidateSchema>;
+
+export const PaymentPromptSchema = z.object({
+	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	origin: z.string().url().max(8_192),
+	title: z.string().min(1).max(500),
+	mode: z.enum(["save", "fill"]),
+	fields: z.array(PaymentFormFieldSchema).max(32),
+	focusedFieldId: z.string().regex(/^payment-field-[0-9]+$/).optional(),
+	entries: z.array(PaymentCardEntrySummarySchema).max(24),
+	candidate: PaymentCardCandidateSchema.optional(),
+	anchor: z.object({
+		x: z.number().int().min(0).max(20_000),
+		y: z.number().int().min(0).max(20_000),
+		width: z.number().int().min(0).max(20_000),
+		height: z.number().int().min(0).max(20_000),
+	}),
+});
+export type PaymentPrompt = z.infer<typeof PaymentPromptSchema>;
+
 export const UserBrowserRecentlyClosedTabSchema = z.object({
 	title: z.string().min(1).max(500),
 	url: z.string().url().max(8_192),
@@ -2735,6 +2813,7 @@ export const UserBrowserSettingsSchema = z.object({
 	memorySaverMode: z.boolean().default(true),
 	showBookmarksBar: z.boolean().default(true),
 	passwordAutofillEnabled: z.boolean().default(true),
+	paymentAutofillEnabled: z.boolean().default(true),
 });
 export type UserBrowserSettings = z.infer<typeof UserBrowserSettingsSchema>;
 
@@ -3190,6 +3269,25 @@ export const RendererRequestSchema = z.union([
 		fieldId: z.string().regex(/^field-[0-9]+$/),
 	}),
 	z.object({ type: z.literal("password-dismiss") }),
+	z.object({ type: z.literal("payment-list") }),
+	z.object({
+		type: z.literal("payment-save"),
+		origin: z.string().url().max(8_192),
+	}),
+	z.object({
+		type: z.literal("payment-remove"),
+		paymentCardId: PaymentCardEntryIdSchema,
+	}),
+	z.object({
+		type: z.literal("payment-fill-page"),
+		paymentCardId: PaymentCardEntryIdSchema,
+	}),
+	z.object({
+		type: z.literal("payment-fill-field"),
+		paymentCardId: PaymentCardEntryIdSchema,
+		fieldId: z.string().regex(/^payment-field-[0-9]+$/),
+	}),
+	z.object({ type: z.literal("payment-dismiss") }),
 	z.object({ type: z.literal("credential-list") }),
 	z.object({
 		type: z.literal("credential-set"),
@@ -3474,6 +3572,7 @@ export type RendererResponse =
 	| { ok: true; workspaceFiles: SelectedAttachment[] }
 	| { ok: true; microphoneAccess: boolean }
 	| { ok: true; passwords: PasswordEntrySummary[] }
+	| { ok: true; paymentCards: PaymentCardEntrySummary[] }
 	| { ok: true; credentials: BrokeredCredentialSummary[] }
 	| {
 			ok: true;
@@ -3516,6 +3615,7 @@ export interface RendererBridge {
 	getPathForFile(file: unknown): string;
 	onBrowserEvent(callback: (event: UserBrowserEvent) => void): () => void;
 	onPasswordPrompt(callback: (prompt: PasswordPrompt | null) => void): () => void;
+	onPaymentPrompt(callback: (prompt: PaymentPrompt | null) => void): () => void;
 	onBrowserCommand(callback: (command: UserBrowserCommand) => void): () => void;
 	onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
 	onExternalIntake(callback: (intake: ExternalIntake) => void): () => void;

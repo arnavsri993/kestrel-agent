@@ -14,6 +14,12 @@ import {
 	type UserBrowserEvent,
 	type UserBrowserHistoryEntry,
 	type UserBrowserPageContext,
+	PaymentFormFieldSchema,
+	PaymentPromptSchema,
+	type PaymentCardEntryId,
+	type PaymentCardEntrySummary,
+	type PaymentFormField,
+	type PaymentPrompt,
 	PasswordFormFieldSchema,
 	PasswordPromptSchema,
 	type PasswordEntryId,
@@ -79,6 +85,8 @@ import {
 	parseKestrelAppPage,
 } from "../utility/browser-app-pages";
 import type { PasswordVault } from "./password-vault";
+import type { SavePaymentCardInput } from "./payment-card-vault";
+import type { PaymentCardVault } from "./payment-card-vault";
 
 const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
@@ -109,8 +117,10 @@ export interface UserBrowserServiceOptions {
 	partitionName?: string;
 	now?: () => Date;
 	passwordVault?: PasswordVault;
+	paymentCardVault?: PaymentCardVault;
 	onEvent(event: UserBrowserEvent): void;
 	onPasswordPrompt?(prompt: PasswordPrompt | null): void;
+	onPaymentPrompt?(prompt: PaymentPrompt | null): void;
 	onCommand?(command: UserBrowserCommand): void;
 	onLastTabClosed?(): void;
 	confirmSitePermission?(origin: string, permission: string): Promise<boolean>;
@@ -259,6 +269,346 @@ function parsePasswordFormSnapshot(raw: unknown): PasswordFormSnapshot {
 			? candidate.focusedFieldId
 			: undefined;
 	return { fields, ...(focusedFieldId ? { focusedFieldId } : {}) };
+}
+
+const PAYMENT_FORM_SCAN_SCRIPT = String.raw`(() => {
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 &&
+      rect.bottom >= 0 && rect.right >= 0 &&
+      rect.top <= innerHeight && rect.left <= innerWidth &&
+      style.visibility !== "hidden" && style.display !== "none" &&
+      Number(style.opacity) > 0;
+  };
+  const text = (node) => [
+    node.autocomplete,
+    node.name,
+    node.id,
+    node.placeholder,
+    node.getAttribute("aria-label"),
+    node.labels?.[0]?.innerText,
+  ].filter(Boolean).join(" ").toLowerCase();
+  const describe = (node) => {
+    const type = String(node.type || node.tagName || "").toLowerCase();
+    const autocomplete = String(node.autocomplete || "").toLowerCase();
+    const hint = text(node);
+    let kind = null;
+    if (autocomplete === "cc-number" ||
+      /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(hint))
+      kind = "card-number";
+    else if (autocomplete === "cc-exp-month" ||
+      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(hint))
+      kind = "expiration-month";
+    else if (autocomplete === "cc-exp-year" ||
+      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(hint))
+      kind = "expiration-year";
+    else if (autocomplete === "cc-exp" ||
+      /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(hint))
+      kind = "expiration";
+    else if (autocomplete === "cc-name" ||
+      /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(hint))
+      kind = "cardholder-name";
+    else if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" ||
+      /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(hint))
+      kind = "security-code";
+    else if (autocomplete === "postal-code" ||
+      /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(hint))
+      kind = "postal-code";
+    if (!kind) return null;
+    const rect = node.getBoundingClientRect();
+    const label = String(
+      node.labels?.[0]?.innerText || node.getAttribute("aria-label") ||
+      node.placeholder || node.name || kind
+    ).replace(/\s+/g, " ").trim().slice(0, 500);
+    return {
+      kind,
+      label,
+      type: type.slice(0, 100),
+      autocomplete: autocomplete.slice(0, 100),
+      rect: {
+        x: Math.max(0, Math.round(rect.left)),
+        y: Math.max(0, Math.round(rect.top)),
+        width: Math.max(0, Math.round(rect.width)),
+        height: Math.max(0, Math.round(rect.height)),
+      },
+      node,
+    };
+  };
+  const rawFields = Array.from(document.querySelectorAll("input,select,textarea"))
+    .filter(visible)
+    .map(describe)
+    .filter(Boolean)
+    .slice(0, 32)
+    .map((field, index) => ({ id: "payment-field-" + index, ...field }));
+  const numberField = rawFields.find((field) => field.kind === "card-number");
+  if (!numberField) return { fields: [] };
+  const valueOf = (field) => String(field?.node?.value || "").trim();
+  const cardDigits = valueOf(numberField).replace(/\D/g, "");
+  const brand = (digits) => {
+    if (/^4/.test(digits)) return "Visa";
+    if (/^(5[1-5]|2(2[2-9]|[3-6]\d))/.test(digits)) return "Mastercard";
+    if (/^3[47]/.test(digits)) return "American Express";
+    if (/^(6011|65|64[4-9])/.test(digits)) return "Discover";
+    if (/^(35|2131|1800)/.test(digits)) return "JCB";
+    if (/^3(?:0[0-5]|[68])/.test(digits)) return "Diners Club";
+    return "Card";
+  };
+  const expirationField = rawFields.find((field) => field.kind === "expiration");
+  const monthField = rawFields.find((field) => field.kind === "expiration-month");
+  const yearField = rawFields.find((field) => field.kind === "expiration-year");
+  const normalizeMonth = (value) => {
+    const digits = value.replace(/\D/g, "");
+    return digits.length === 1 ? digits.padStart(2, "0") : digits.slice(-2);
+  };
+  const normalizeYear = (value) => value.replace(/\D/g, "").slice(-2);
+  const expirationValue = valueOf(expirationField);
+  let month = normalizeMonth(valueOf(monthField));
+  let year = normalizeYear(valueOf(yearField));
+  if ((!month || !year) && /^\d{4}-\d{2}$/.test(expirationValue)) {
+    month ||= expirationValue.slice(5, 7);
+    year ||= expirationValue.slice(2, 4);
+  }
+  if (!month || !year) {
+    const combinedDigits = expirationValue.replace(/\D/g, "");
+    if (combinedDigits.length === 3) {
+      month ||= normalizeMonth(combinedDigits.slice(0, 1));
+      year ||= combinedDigits.slice(-2);
+    } else if (combinedDigits.length >= 4) {
+      month ||= normalizeMonth(combinedDigits.slice(0, 2));
+      year ||= combinedDigits.slice(-2);
+    }
+  }
+  const passesLuhn = (digits) => {
+    let sum = 0;
+    let doubleDigit = false;
+    for (let index = digits.length - 1; index >= 0; index -= 1) {
+      let digit = Number(digits[index]);
+      if (doubleDigit) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+      doubleDigit = !doubleDigit;
+    }
+    return sum % 10 === 0;
+  };
+  const active = document.activeElement;
+  const focusedFieldId = rawFields.find((field) => field.node === active)?.id;
+  const candidate = cardDigits.length >= 12 && cardDigits.length <= 19 &&
+    passesLuhn(cardDigits) && /^(0[1-9]|1[0-2])$/.test(month) && /^\d{2}$/.test(year) ? {
+    brand: brand(cardDigits),
+    last4: cardDigits.slice(-4),
+    ...(month && /^(0[1-9]|1[0-2])$/.test(month) ? { expirationMonth: month } : {}),
+    ...(year && /^\d{2}$/.test(year) ? { expirationYear: year } : {}),
+  } : undefined;
+  return {
+    fields: rawFields.map(({ node, ...field }) => field),
+    ...(focusedFieldId ? { focusedFieldId } : {}),
+    ...(candidate ? { candidate } : {}),
+  };
+})()`;
+
+const PAYMENT_FORM_VALUES_SCRIPT = String.raw`(() => {
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 &&
+      rect.bottom >= 0 && rect.right >= 0 &&
+      rect.top <= innerHeight && rect.left <= innerWidth &&
+      style.visibility !== "hidden" && style.display !== "none" &&
+      Number(style.opacity) > 0;
+  };
+  const text = (node) => [
+    node.autocomplete, node.name, node.id, node.placeholder,
+    node.getAttribute("aria-label"), node.labels?.[0]?.innerText,
+  ].filter(Boolean).join(" ").toLowerCase();
+  const describe = (node) => {
+    const type = String(node.type || node.tagName || "").toLowerCase();
+    const autocomplete = String(node.autocomplete || "").toLowerCase();
+    const hint = text(node);
+    let kind = null;
+    if (autocomplete === "cc-number" || /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(hint)) kind = "card-number";
+    else if (autocomplete === "cc-exp-month" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(hint)) kind = "expiration-month";
+    else if (autocomplete === "cc-exp-year" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(hint)) kind = "expiration-year";
+    else if (autocomplete === "cc-exp" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(hint)) kind = "expiration";
+    else if (autocomplete === "cc-name" || /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(hint)) kind = "cardholder-name";
+    else if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" || /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(hint)) kind = "security-code";
+    else if (autocomplete === "postal-code" || /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(hint)) kind = "postal-code";
+    if (!kind) return null;
+    const rect = node.getBoundingClientRect();
+    const label = String(node.labels?.[0]?.innerText || node.getAttribute("aria-label") || node.placeholder || node.name || kind).replace(/\s+/g, " ").trim().slice(0, 500);
+    return { kind, label, type: type.slice(0, 100), autocomplete: autocomplete.slice(0, 100), rect: { x: Math.max(0, Math.round(rect.left)), y: Math.max(0, Math.round(rect.top)), width: Math.max(0, Math.round(rect.width)), height: Math.max(0, Math.round(rect.height)) }, node };
+  };
+  const fields = Array.from(document.querySelectorAll("input,select,textarea"))
+    .filter(visible).map(describe).filter(Boolean).slice(0, 32)
+    .map((field, index) => ({ id: "payment-field-" + index, ...field }));
+  if (!fields.some((field) => field.kind === "card-number")) return { fields: [] };
+  return { fields: fields.map(({ node, ...field }) => ({ ...field, value: field.kind === "security-code" ? "" : String(node.value || "").slice(0, 2_000) })) };
+})()`;
+
+interface PaymentFormSnapshot {
+	fields: PaymentFormField[];
+	focusedFieldId?: string;
+	candidate?: PaymentPrompt["candidate"];
+}
+
+function parsePaymentFormSnapshot(raw: unknown): PaymentFormSnapshot {
+	if (!raw || typeof raw !== "object") return { fields: [] };
+	const candidate = raw as {
+		fields?: unknown;
+		focusedFieldId?: unknown;
+		candidate?: unknown;
+	};
+	const fields = Array.isArray(candidate.fields)
+		? candidate.fields.flatMap((field) => {
+			const parsed = PaymentFormFieldSchema.safeParse(field);
+			return parsed.success ? [parsed.data] : [];
+		})
+		: [];
+	const focusedFieldId =
+		typeof candidate.focusedFieldId === "string" &&
+		fields.some((field) => field.id === candidate.focusedFieldId)
+			? candidate.focusedFieldId
+			: undefined;
+	const parsedCandidate = PaymentPromptSchema.shape.candidate.safeParse(
+		candidate.candidate,
+	);
+	return {
+		fields,
+		...(focusedFieldId ? { focusedFieldId } : {}),
+		...(parsedCandidate.success && parsedCandidate.data
+			? { candidate: parsedCandidate.data }
+			: {}),
+	};
+}
+
+interface PaymentFormValues {
+	fields: PaymentFormField[];
+	values: Record<string, string>;
+}
+
+function parsePaymentFormValues(raw: unknown): PaymentFormValues {
+	if (!raw || typeof raw !== "object") return { fields: [], values: {} };
+	const candidate = raw as { fields?: unknown };
+	const fields: PaymentFormField[] = [];
+	const values: Record<string, string> = {};
+	if (!Array.isArray(candidate.fields)) return { fields, values };
+	for (const field of candidate.fields) {
+		if (!field || typeof field !== "object") continue;
+		const parsed = PaymentFormFieldSchema.safeParse(field);
+		if (!parsed.success) continue;
+		fields.push(parsed.data);
+		const value = (field as { value?: unknown }).value;
+		values[parsed.data.id] = typeof value === "string" ? value : "";
+	}
+	return { fields, values };
+}
+
+function paymentCardInputFromForm(
+	snapshot: PaymentFormValues,
+): SavePaymentCardInput {
+	const valueFor = (kind: PaymentFormField["kind"]): string => {
+		const field = snapshot.fields.find((candidate) => candidate.kind === kind);
+		return field ? snapshot.values[field.id] ?? "" : "";
+	};
+	const combinedExpiration = valueFor("expiration");
+	const monthValue = valueFor("expiration-month");
+	const yearValue = valueFor("expiration-year");
+	let expirationMonth = monthValue;
+	let expirationYear = yearValue;
+	if (!expirationMonth || !expirationYear) {
+		if (/^\d{4}-\d{2}$/.test(combinedExpiration)) {
+			const [year, month] = combinedExpiration.split("-");
+			expirationMonth ||= month ?? "";
+			expirationYear ||= year?.slice(-2) ?? "";
+		} else {
+			const digits = combinedExpiration.replace(/\D/g, "");
+			if (digits.length >= 4) {
+			expirationMonth ||= digits.slice(0, 2);
+			expirationYear ||= digits.slice(-2);
+			}
+		}
+	}
+	return {
+		cardNumber: valueFor("card-number"),
+		expirationMonth,
+		expirationYear,
+		cardholderName: valueFor("cardholder-name"),
+		postalCode: valueFor("postal-code"),
+	};
+}
+
+function paymentFillScript(
+	card: {
+		cardNumber: string;
+		expirationMonth: string;
+		expirationYear: string;
+		cardholderName: string;
+		postalCode: string;
+	},
+	fieldIndex?: number,
+	expectedOrigin?: string,
+): string {
+	const cardLiteral = JSON.stringify(card);
+	const targetIndex = fieldIndex === undefined ? "undefined" : String(fieldIndex);
+	const originLiteral = JSON.stringify(expectedOrigin ?? "");
+	return String.raw`(() => {
+  if (${originLiteral} && location.origin !== ${originLiteral}) return false;
+  const visible = (node) => {
+    const rect = node.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
+  };
+  const hint = (node) => [node.autocomplete, node.name, node.id, node.placeholder, node.getAttribute("aria-label"), node.labels?.[0]?.innerText].filter(Boolean).join(" ").toLowerCase();
+  const describe = (node) => {
+    const autocomplete = String(node.autocomplete || "").toLowerCase();
+    const value = hint(node);
+    if (autocomplete === "cc-number" || /(?:cc[-_ ]?number|card[-_ ]?(?:number|no)|cardnumber|pan)/i.test(value)) return "card-number";
+    if (autocomplete === "cc-exp-month" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*month|month.*(?:exp|expiry|expiration)/i.test(value)) return "expiration-month";
+    if (autocomplete === "cc-exp-year" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)).*year|year.*(?:exp|expiry|expiration)/i.test(value)) return "expiration-year";
+    if (autocomplete === "cc-exp" || /(?:cc[-_ ]?exp|card[-_ ]?(?:exp|expiry|expiration)|expir(?:y|ation))/i.test(value)) return "expiration";
+    if (autocomplete === "cc-name" || /(?:cardholder|card[-_ ]?name|name[-_ ]?on[-_ ]?card)/i.test(value)) return "cardholder-name";
+    if (autocomplete === "cc-csc" || autocomplete === "cc-cvv" || /(?:security|verification|cvv|cvc|csc|card[-_ ]?code)/i.test(value)) return "security-code";
+    if (autocomplete === "postal-code" || /(?:billing[-_ ]?)?(?:postal|post[-_ ]?code|zip)/i.test(value)) return "postal-code";
+    return null;
+  };
+  const fields = Array.from(document.querySelectorAll("input,select,textarea")).filter(visible).map((node) => ({ node, kind: describe(node) })).filter((field) => field.kind).slice(0, 32);
+  const setValue = (node, value) => {
+    const prototype = Object.getPrototypeOf(node);
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (setter) setter.call(node, value); else node.value = value;
+    node.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    node.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  };
+  const formattedExpiry = ${cardLiteral}.expirationMonth + "/" + ${cardLiteral}.expirationYear;
+  const valueFor = (kind) => {
+    if (kind === "card-number") return ${cardLiteral}.cardNumber;
+    if (kind === "expiration") return formattedExpiry;
+    if (kind === "expiration-month") return ${cardLiteral}.expirationMonth;
+    if (kind === "expiration-year") return ${cardLiteral}.expirationYear;
+    if (kind === "cardholder-name") return ${cardLiteral}.cardholderName;
+    if (kind === "postal-code") return ${cardLiteral}.postalCode;
+    return "";
+  };
+  const index = ${targetIndex};
+  if (index !== undefined) {
+    const target = fields[index];
+    if (!target || target.kind === "security-code") return false;
+    setValue(target.node, valueFor(target.kind));
+    target.node.focus();
+    return true;
+  }
+  let filled = 0;
+  for (const field of fields) {
+    if (field.kind === "security-code") continue;
+    const value = valueFor(field.kind);
+    if (!value) continue;
+    setValue(field.node, value);
+    filled += 1;
+  }
+  return filled > 0;
+})()`;
 }
 
 function passwordFillScript(
@@ -440,6 +790,8 @@ export class UserBrowserService {
 	private readonly onEvent: UserBrowserServiceOptions["onEvent"];
 	private readonly onPasswordPrompt?: UserBrowserServiceOptions["onPasswordPrompt"];
 	private readonly passwordVault: PasswordVault | undefined;
+	private readonly onPaymentPrompt?: UserBrowserServiceOptions["onPaymentPrompt"];
+	private readonly paymentCardVault: PaymentCardVault | undefined;
 	private readonly onCommand?: UserBrowserServiceOptions["onCommand"];
 	private readonly onLastTabClosed?: UserBrowserServiceOptions["onLastTabClosed"];
 	private readonly recentlyClosedTabs: Array<{ url: string; title: string }> = [];
@@ -453,6 +805,10 @@ export class UserBrowserService {
 	private passwordPromptKey = "";
 	private passwordPrompt: PasswordPrompt | undefined;
 	private readonly passwordPromptSuppressedUntil = new Map<string, number>();
+	private paymentScanInFlight = false;
+	private paymentPromptKey = "";
+	private paymentPrompt: PaymentPrompt | undefined;
+	private readonly paymentPromptSuppressedUntil = new Map<string, number>();
 
 	constructor(options: UserBrowserServiceOptions) {
 		this.window = options.window;
@@ -466,6 +822,8 @@ export class UserBrowserService {
 		this.onEvent = options.onEvent;
 		this.onPasswordPrompt = options.onPasswordPrompt;
 		this.passwordVault = options.passwordVault;
+		this.onPaymentPrompt = options.onPaymentPrompt;
+		this.paymentCardVault = options.paymentCardVault;
 		this.onCommand = options.onCommand;
 		this.onLastTabClosed = options.onLastTabClosed;
 		this.confirmSitePermission =
@@ -497,9 +855,10 @@ export class UserBrowserService {
 		});
 		void this.extensionManager.loadAll(this.partition);
 		this.startSleepingTabsMonitor();
-		if (this.passwordVault) {
+		if (this.passwordVault || this.paymentCardVault) {
 			this.passwordPollInterval = setInterval(() => {
 				void this.refreshPasswordPrompt();
+				void this.refreshPaymentPrompt();
 			}, 450);
 			this.passwordPollInterval.unref?.();
 		}
@@ -647,17 +1006,23 @@ export class UserBrowserService {
 	async selectTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
 		this.clearPasswordPrompt();
+		this.clearPaymentPrompt();
 		this.state.activeTabId = tabId;
 		tab.lastActiveAt = this.now().toISOString();
 		this.commit();
 		await this.syncActiveView();
 		this.discardLeastRecentViews();
 		void this.refreshPasswordPrompt(tabId);
+		void this.refreshPaymentPrompt(tabId);
 		return this.getState();
 	}
 
 	async closeTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
+		if (tabId === this.state.activeTabId) {
+			this.clearPasswordPrompt();
+			this.clearPaymentPrompt();
+		}
 		const url = sanitizeBrowserUrl(tab.url);
 		if (url && safePageUrl(url) && !tab.error) {
 			this.state.recentlyClosedTabs.unshift({
@@ -756,7 +1121,10 @@ export class UserBrowserService {
 		const tab = this.requireTab(tabId);
 		const appPage = parseKestrelAppPage(input);
 		if (appPage) {
-			if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
+			if (tabId === this.state.activeTabId) {
+				this.clearPasswordPrompt();
+				this.clearPaymentPrompt();
+			}
 			this.closeView(tabId);
 			delete tab.file;
 			tab.error = undefined;
@@ -776,7 +1144,10 @@ export class UserBrowserService {
 			this.state.settings.searchEngine,
 			this.state.settings.customSearchUrl,
 		);
-		if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
+		if (tabId === this.state.activeTabId) {
+			this.clearPasswordPrompt();
+			this.clearPaymentPrompt();
+		}
 		delete tab.file;
 		// Keep a healthy WebContentsView alive across normal web navigations so
 		// Electron can retain the tab's native back/forward history. App pages,
@@ -897,6 +1268,8 @@ export class UserBrowserService {
 		this.commit();
 		if (settings.passwordAutofillEnabled === false) this.clearPasswordPrompt();
 		else void this.refreshPasswordPrompt();
+		if (settings.paymentAutofillEnabled === false) this.clearPaymentPrompt();
+		else void this.refreshPaymentPrompt();
 		return this.getState();
 	}
 
@@ -1245,6 +1618,85 @@ export class UserBrowserService {
 		return this.passwordVault.remove(id);
 	}
 
+	async listPaymentCards(): Promise<PaymentCardEntrySummary[]> {
+		return this.paymentCardVault?.list() ?? [];
+	}
+
+	async savePaymentCardFromActiveTab(
+		expectedOrigin?: string,
+	): Promise<PaymentCardEntrySummary[]> {
+		if (!this.paymentCardVault)
+			throw new Error("The protected payment card store is unavailable.");
+		const tab = this.requireActiveTab();
+		const record = this.requireView(tab.id);
+		const webContents = record.view.webContents;
+		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		if (!url || url.protocol !== "https:")
+			throw new Error("Payment cards can only be saved on HTTPS websites.");
+		if (expectedOrigin && expectedOrigin !== url.origin)
+			throw new Error("The payment page changed before the card was saved.");
+		const snapshot = parsePaymentFormValues(
+			await webContents.executeJavaScript(PAYMENT_FORM_VALUES_SCRIPT),
+		);
+		const card = paymentCardInputFromForm(snapshot);
+		const summaries = await this.paymentCardVault.save(card);
+		this.suppressPaymentPrompt(tab.id, url.origin, 4_000);
+		this.clearPaymentPrompt();
+		return summaries;
+	}
+
+	async removePaymentCard(
+		id: PaymentCardEntryId,
+	): Promise<PaymentCardEntrySummary[]> {
+		if (!this.paymentCardVault)
+			throw new Error("The protected payment card store is unavailable.");
+		const entries = await this.paymentCardVault.remove(id);
+		void this.refreshPaymentPrompt();
+		return entries;
+	}
+
+	async fillPaymentCardPage(id: PaymentCardEntryId): Promise<void> {
+		const { tab, webContents, entry, origin } =
+			await this.paymentCardForActiveTab(id);
+		const filled = await webContents.executeJavaScript(
+			paymentFillScript(entry, undefined, origin),
+		);
+		if (filled !== true)
+			throw new Error("Kestrel could not find a payment field on this page.");
+		this.suppressPaymentPrompt(tab.id, origin, 4_000);
+		this.clearPaymentPrompt();
+	}
+
+	async fillPaymentCardField(
+		id: PaymentCardEntryId,
+		fieldId: string,
+	): Promise<void> {
+		const { tab, webContents, entry, origin } =
+			await this.paymentCardForActiveTab(id);
+		const snapshot = await this.readPaymentFormSnapshot(webContents);
+		const field = snapshot.fields.find((candidate) => candidate.id === fieldId);
+		if (!field || field.kind === "security-code")
+			throw new Error("That payment field is no longer available.");
+		const fieldIndex = Number(field.id.slice("payment-field-".length));
+		const filled = await webContents.executeJavaScript(
+			paymentFillScript(entry, fieldIndex, origin),
+		);
+		if (filled !== true)
+			throw new Error("Kestrel could not fill that payment field.");
+		this.suppressPaymentPrompt(tab.id, origin, 4_000);
+		this.clearPaymentPrompt();
+	}
+
+	dismissPaymentPrompt(): void {
+		const tab = this.state.tabs.find(
+			(candidate) => candidate.id === this.state.activeTabId,
+		);
+		const url = tab?.url ? safePageUrl(tab.url) : undefined;
+		if (tab && url?.protocol === "https:")
+			this.suppressPaymentPrompt(tab.id, url.origin, 30_000);
+		this.clearPaymentPrompt();
+	}
+
 	async fillPasswordPage(id: PasswordEntryId): Promise<void> {
 		const { tab, webContents, entry, origin } =
 			await this.passwordEntryForActiveTab(id);
@@ -1312,6 +1764,40 @@ export class UserBrowserService {
 	): Promise<PasswordFormSnapshot> {
 		return parsePasswordFormSnapshot(
 			await webContents.executeJavaScript(PASSWORD_FORM_SCAN_SCRIPT),
+		);
+	}
+
+	private async paymentCardForActiveTab(id: PaymentCardEntryId): Promise<{
+		tab: UserBrowserTab;
+		webContents: WebContents;
+		entry: NonNullable<Awaited<ReturnType<PaymentCardVault["get"]>>>;
+		origin: string;
+	}> {
+		if (!this.paymentCardVault)
+			throw new Error("The protected payment card store is unavailable.");
+		const tab = this.requireActiveTab();
+		const record = this.requireView(tab.id);
+		const webContents = record.view.webContents;
+		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		if (!url || url.protocol !== "https:")
+			throw new Error("Payment cards can only be filled on HTTPS websites.");
+		if (
+			!this.paymentPrompt ||
+			this.paymentPrompt.tabId !== tab.id ||
+			this.paymentPrompt.origin !== url.origin ||
+			!this.paymentPrompt.entries.some((entry) => entry.id === id)
+		)
+			throw new Error("That payment suggestion is no longer available.");
+		const entry = await this.paymentCardVault.get(id);
+		if (!entry) throw new Error("That saved payment card is not available.");
+		return { tab, webContents, entry, origin: url.origin };
+	}
+
+	private async readPaymentFormSnapshot(
+		webContents: WebContents,
+	): Promise<PaymentFormSnapshot> {
+		return parsePaymentFormSnapshot(
+			await webContents.executeJavaScript(PAYMENT_FORM_SCAN_SCRIPT),
 		);
 	}
 
@@ -1435,6 +1921,149 @@ export class UserBrowserService {
 		durationMs: number,
 	): void {
 		this.passwordPromptSuppressedUntil.set(
+			`${tabId}:${origin}`,
+			this.now().getTime() + durationMs,
+		);
+	}
+
+	private async refreshPaymentPrompt(tabId?: string): Promise<void> {
+		if (
+			this.disposed ||
+			!this.paymentCardVault ||
+			this.paymentScanInFlight ||
+			this.state.settings.paymentAutofillEnabled === false
+		)
+			return;
+		if (tabId && tabId !== this.state.activeTabId) return;
+		const tab = this.state.tabs.find(
+			(candidate) => candidate.id === (tabId ?? this.state.activeTabId),
+		);
+		const record = tab ? this.views.get(tab.id) : undefined;
+		const webContents = record?.view.webContents;
+		const url = tab?.url
+			? safePageUrl(webContents?.getURL() || tab.url)
+			: undefined;
+		if (
+			!tab ||
+			!webContents ||
+			webContents.isDestroyed() ||
+			!url ||
+			url.protocol !== "https:" ||
+			isKestrelAppPageUrl(tab.url)
+		) {
+			this.clearPaymentPrompt();
+			return;
+		}
+		const suppressionKey = `${tab.id}:${url.origin}`;
+		if (
+			(this.paymentPromptSuppressedUntil.get(suppressionKey) ?? 0) >
+			this.now().getTime()
+		) {
+			this.clearPaymentPrompt();
+			return;
+		}
+
+		this.paymentScanInFlight = true;
+		try {
+			const snapshot = await this.readPaymentFormSnapshot(webContents);
+			const numberField = snapshot.fields.find(
+				(field) => field.kind === "card-number",
+			);
+			if (!numberField) {
+				this.clearPaymentPrompt();
+				return;
+			}
+			const entries = (await this.paymentCardVault.list()).slice(0, 24);
+			const candidate = snapshot.candidate;
+			const savedCandidate = candidate
+				? entries.find(
+						(entry) =>
+							entry.last4 === candidate.last4 &&
+							entry.brand === candidate.brand &&
+							(!candidate.expirationMonth ||
+								entry.expirationMonth === candidate.expirationMonth) &&
+							(!candidate.expirationYear ||
+								entry.expirationYear === candidate.expirationYear),
+					)
+				: undefined;
+			if (!candidate && !entries.length) {
+				this.clearPaymentPrompt();
+				return;
+			}
+			const focused = snapshot.focusedFieldId
+				? snapshot.fields.find((field) => field.id === snapshot.focusedFieldId)
+				: undefined;
+			const pageWidth =
+				this.contentBounds.width || this.window.getContentSize()[0] || 800;
+			const pageHeight =
+				this.contentBounds.height || this.window.getContentSize()[1] || 600;
+			const anchorField = focused ?? numberField;
+			const anchor = anchorField
+				? {
+					x: Math.max(0, this.contentBounds.x + anchorField.rect.x),
+					y: Math.max(0, this.contentBounds.y + anchorField.rect.y),
+					width: anchorField.rect.width,
+					height: anchorField.rect.height,
+				}
+				: {
+					x: Math.max(0, this.contentBounds.x + pageWidth - 430),
+					y: Math.max(0, this.contentBounds.y + 16),
+					width: 410,
+					height: Math.min(96, Math.max(1, pageHeight - 32)),
+				};
+			const prompt = PaymentPromptSchema.parse({
+				tabId: tab.id,
+				origin: url.origin,
+				title: redactUntrustedBrowserText(
+					webContents.getTitle() || hostnameTitle(url.toString()),
+					500,
+				),
+				mode: candidate && !savedCandidate ? "save" : "fill",
+				fields: snapshot.fields,
+				...(focused ? { focusedFieldId: focused.id } : {}),
+				entries,
+				...(candidate && !savedCandidate ? { candidate } : {}),
+				anchor,
+			});
+			this.setPaymentPrompt(prompt);
+		} catch {
+			// Navigation and renderer restarts can invalidate a scan. Retry on the
+			// next interval without surfacing a page-owned error.
+			this.clearPaymentPrompt();
+		} finally {
+			this.paymentScanInFlight = false;
+		}
+	}
+
+	private setPaymentPrompt(prompt: PaymentPrompt): void {
+		const key = JSON.stringify({
+			tabId: prompt.tabId,
+			origin: prompt.origin,
+			mode: prompt.mode,
+			candidate: prompt.candidate,
+			focusedFieldId: prompt.focusedFieldId,
+			entries: prompt.entries.map((entry) => entry.id),
+			fields: prompt.fields.map((field) => [field.id, field.rect]),
+		});
+		if (key === this.paymentPromptKey) return;
+		this.paymentPromptKey = key;
+		this.paymentPrompt = prompt;
+		this.onPaymentPrompt?.(prompt);
+	}
+
+	private clearPaymentPrompt(): void {
+		if (!this.paymentPrompt && !this.paymentPromptKey) return;
+		this.paymentPrompt = undefined;
+		this.paymentPromptKey = "";
+		this.onPaymentPrompt?.(null);
+	}
+
+	private suppressPaymentPrompt(
+		tabId: string,
+		origin: string,
+		durationMs: number,
+	): void {
+		this.paymentPromptSuppressedUntil.set(
 			`${tabId}:${origin}`,
 			this.now().getTime() + durationMs,
 		);
@@ -1910,6 +2539,7 @@ export class UserBrowserService {
 		if (this.passwordPollInterval) clearInterval(this.passwordPollInterval);
 		this.passwordPollInterval = undefined;
 		this.clearPasswordPrompt();
+		this.clearPaymentPrompt();
 		this.partitionCoordinator.unregister(this.partitionParticipant);
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
 		this.elementRefs.clear();
@@ -2056,6 +2686,7 @@ export class UserBrowserService {
 				if (origin) void this.loadFavicon(tab, `${origin}/favicon.ico`);
 			}
 			void this.refreshPasswordPrompt(tab.id);
+			void this.refreshPaymentPrompt(tab.id);
 		});
 		webContents.on("page-title-updated", (_event, title) => {
 			tab.title = title.trim().slice(0, 500) || hostnameTitle(tab.url);
@@ -2074,16 +2705,24 @@ export class UserBrowserService {
 		webContents.on(
 			"did-navigate",
 			(_event, url, _httpResponseCode, _httpStatusText) => {
-				if (tab.id === this.state.activeTabId) this.clearPasswordPrompt();
+				if (tab.id === this.state.activeTabId) {
+					this.clearPasswordPrompt();
+					this.clearPaymentPrompt();
+				}
 				this.didNavigate(tab, webContents, url);
 				void this.refreshPasswordPrompt(tab.id);
+				void this.refreshPaymentPrompt(tab.id);
 			},
 		);
 		webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
 			if (isMainFrame) {
-				if (tab.id === this.state.activeTabId) this.clearPasswordPrompt();
+				if (tab.id === this.state.activeTabId) {
+					this.clearPasswordPrompt();
+					this.clearPaymentPrompt();
+				}
 				this.didNavigate(tab, webContents, url);
 				void this.refreshPasswordPrompt(tab.id);
+				void this.refreshPaymentPrompt(tab.id);
 			}
 		});
 		webContents.on(
@@ -2096,6 +2735,10 @@ export class UserBrowserService {
 			},
 		);
 		webContents.on("render-process-gone", () => {
+			if (tab.id === this.state.activeTabId) {
+				this.clearPasswordPrompt();
+				this.clearPaymentPrompt();
+			}
 			tab.loading = false;
 			tab.crashed = true;
 			tab.error = "This tab stopped responding. Reload it to continue.";
