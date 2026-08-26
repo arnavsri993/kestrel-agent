@@ -2942,6 +2942,14 @@ function registerIpc(): void {
         browserState: requestBrowserService.moveTab(request.tabId, request.toIndex),
       };
     }
+    if (request.type === "browser-organize-tabs") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.organizeTabs(),
+      };
+    }
     if (request.type === "browser-detach-tab") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");

@@ -2,6 +2,7 @@ import type {
 	UserBrowserOriginFavicon,
 	UserBrowserRecentlyClosedTab,
 	UserBrowserTab,
+	UserBrowserTabFolder,
 } from "@kestrel/shared-types";
 import {
 	AnimatePresence,
@@ -18,6 +19,7 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent,
 	type MouseEvent as ReactMouseEvent,
 	type PointerEvent as ReactPointerEvent,
+	type ReactNode,
 } from "react";
 import { Icon } from "../Icon";
 import {
@@ -61,6 +63,7 @@ function tabDropIndex(
 export function TabStrip({
 	tabs,
 	originFavicons,
+	tabFolders,
 	activeTabId,
 	onSelect,
 	onClose,
@@ -84,6 +87,7 @@ export function TabStrip({
 		UserBrowserOriginFavicon,
 		"origin" | "faviconDataUrl"
 	>[];
+	tabFolders: UserBrowserTabFolder[];
 	activeTabId: string | null;
 	onSelect(tabId: string): void;
 	onClose(tabId: string): void;
@@ -357,6 +361,15 @@ export function TabStrip({
 	}
 
 	const menuTab = tabs.find((tab) => tab.id === menu?.tabId);
+	const folderById = new Map(tabFolders.map((folder) => [folder.id, folder]));
+	const folderTabCounts = new Map<string, number>();
+	for (const tab of tabs) {
+		if (tab.tabFolderId)
+			folderTabCounts.set(
+				tab.tabFolderId,
+				(folderTabCounts.get(tab.tabFolderId) ?? 0) + 1,
+			);
+	}
 
 	function getFaviconContent(tab: UserBrowserTab) {
 		if (tab.file) return <Icon name="artifacts" />;
@@ -404,6 +417,7 @@ export function TabStrip({
 	);
 
 	const tabStyle = computeLockedTabStyle(lockedWidth, orientation);
+	const renderedFolderIds = new Set<string>();
 
 	return (
 		<div
@@ -470,8 +484,8 @@ export function TabStrip({
 									closeTabTools();
 								}}
 							>
-								<Icon name="tabActions" />
-								<span>Organize Tabs</span>
+								<Icon name="folder" />
+								<span>Organize tabs into folders</span>
 							</button>
 						)}
 						{onOpenWorkspaces && (
@@ -630,12 +644,48 @@ export function TabStrip({
 			>
 				<LayoutGroup id="kestrel-browser-tabs">
 					<AnimatePresence initial={false} mode="popLayout">
-						{tabs.map((tab) => {
+						{tabs.flatMap((tab) => {
 							const active = tab.id === activeTabId;
 							const isSleeping = tab.discarded && Boolean(tab.url);
 							const isDragging = draggingTabId === tab.id;
 							const isDragActive = isDragging && dragIntent !== "none";
-							return (
+							const folder = tab.tabFolderId
+								? folderById.get(tab.tabFolderId)
+								: undefined;
+							const shouldRenderFolder = folder
+								? !renderedFolderIds.has(folder.id)
+								: false;
+							const rows: ReactNode[] = [];
+							if (folder && shouldRenderFolder) {
+								renderedFolderIds.add(folder.id);
+								rows.push(
+									<motion.div
+										className={`browser-tab-folder browser-tab-folder-${folder.color} no-drag`}
+										key={`folder-${folder.id}`}
+										layout="position"
+										initial={
+											reducedMotion ? false : { opacity: 0, scale: 0.96 }
+										}
+										animate={{ opacity: 1, scale: 1 }}
+										exit={
+											reducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.96 }
+										}
+										transition={
+											reducedMotion ? { duration: 0 } : { duration: 0.16 }
+										}
+										role="presentation"
+										aria-hidden="true"
+										title={`${folder.name} folder · ${folderTabCounts.get(folder.id) ?? 0} tabs`}
+									>
+										<span className="browser-tab-folder-dot" aria-hidden="true" />
+										<span className="browser-tab-folder-name">{folder.name}</span>
+										<span className="browser-tab-folder-count">
+											{folderTabCounts.get(folder.id) ?? 0}
+										</span>
+									</motion.div>,
+								);
+							}
+							rows.push(
 								<motion.div
 									className={`browser-tab no-drag ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""} ${isDragActive ? "is-dragging" : ""}`}
 									key={tab.id}
@@ -678,6 +728,7 @@ export function TabStrip({
 										aria-selected={active}
 										aria-controls="browser-viewport"
 										tabIndex={active ? 0 : -1}
+										aria-label={`${tab.title}${folder ? `, ${folder.name} folder` : ""}${isSleeping ? " (Sleeping)" : ""}`}
 										title={`${tab.title}${isSleeping ? " (Sleeping — click to wake)" : ""}${tab.url ? ` — ${tab.url}` : ""}`}
 									>
 										<span className="browser-favicon" aria-hidden="true">
@@ -725,6 +776,7 @@ export function TabStrip({
 									</button>
 								</motion.div>
 							);
+							return rows;
 						})}
 					</AnimatePresence>
 				</LayoutGroup>
@@ -751,6 +803,18 @@ export function TabStrip({
 					style={{ left: menu.x, top: menu.y }}
 					role="menu"
 				>
+					{onOrganizeTabs && (
+						<button
+							type="button"
+							role="menuitem"
+							onClick={() => {
+								void Promise.resolve(onOrganizeTabs()).catch(() => undefined);
+								setMenu(null);
+							}}
+						>
+							Organize tabs into folders
+						</button>
+					)}
 					<button
 						type="button"
 						role="menuitem"

@@ -28,10 +28,12 @@ function storePath(): string {
 }
 
 it("defaults new browser settings to Google", () => {
-	expect(freshBrowserState().settings.searchEngine).toBe("google");
-	expect(freshBrowserState().settings.showBookmarksBar).toBe(true);
-	expect(freshBrowserState().settings.paymentAutofillEnabled).toBe(true);
-	expect(freshBrowserState().settings.newTabGreetingActivity.days).toEqual([]);
+	const state = freshBrowserState();
+	expect(state.settings.searchEngine).toBe("google");
+	expect(state.settings.showBookmarksBar).toBe(true);
+	expect(state.settings.paymentAutofillEnabled).toBe(true);
+	expect(state.settings.newTabGreetingActivity.days).toEqual([]);
+	expect(state.tabFolders).toEqual([]);
 	expect(UserBrowserSettingsSchema.parse({}).searchEngine).toBe("google");
 	expect(UserBrowserSettingsSchema.parse({}).showBookmarksBar).toBe(true);
 	expect(UserBrowserSettingsSchema.parse({}).paymentAutofillEnabled).toBe(true);
@@ -329,6 +331,34 @@ describe("browser tab persistence", () => {
 			title: "Settings",
 			url: "kestrel://settings",
 			discarded: false,
+		});
+	});
+
+	it("persists tab folders with their tab assignments", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+		const folderId = "tab-folder-00000000-0000-0000-0000-000000000001";
+		state.tabs[0] = {
+			...state.tabs[0]!,
+			url: "https://github.com/kestrel/app",
+			title: "Kestrel repository",
+			tabFolderId: folderId,
+		};
+		state.tabFolders = [
+			{
+				id: folderId,
+				name: "Development",
+				color: "teal",
+				createdAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
+
+		store.save(state);
+
+		expect(store.load()).toMatchObject({
+			tabFolders: state.tabFolders,
+			tabs: [{ tabFolderId: folderId }],
 		});
 	});
 

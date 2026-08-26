@@ -218,6 +218,13 @@ const commandDestinations: CommandDestination[] = [
 		group: "Browse",
 	},
 	{
+		id: "organize-tabs",
+		label: "Organize tabs",
+		detail: "Group open tabs by topic and preserve tab order",
+		icon: "folder",
+		group: "Browse",
+	},
+	{
 		id: "agent",
 		label: "Agent",
 		detail: "Start, find, and resume your work",
@@ -9328,6 +9335,10 @@ export function App() {
 		}
 		if (destination === "browser") {
 			void openBrowserWorkspace();
+			return;
+		}
+		if (destination === "organize-tabs") {
+			void browser.organizeTabs().then(() => openBrowserWorkspace());
 			return;
 		}
 		if (destination === "connections") {

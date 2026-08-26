@@ -73,6 +73,7 @@ import {
 	sanitizeUntrustedBrowserValue,
 	upsertOriginFavicon,
 } from "./browser-tab-store";
+import { organizeBrowserTabs } from "./browser-tab-folders";
 import {
 	fileAttachment,
 	fileStillExists,
@@ -1041,6 +1042,7 @@ export class UserBrowserService {
 			this.state.activeTabId =
 				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
 		}
+		this.pruneEmptyTabFolders();
 		this.commit();
 		if (this.state.tabs.length === 0) {
 			this.onLastTabClosed?.();
@@ -1383,9 +1385,11 @@ export class UserBrowserService {
 	pinTab(tabId: string, pinned: boolean): UserBrowserState {
 		const tab = this.requireTab(tabId);
 		tab.pinned = pinned;
+		if (pinned) tab.tabFolderId = undefined;
 		const pinnedTabs = this.state.tabs.filter((item) => item.pinned);
 		const rest = this.state.tabs.filter((item) => !item.pinned);
 		this.state.tabs = [...pinnedTabs, ...rest];
+		this.pruneEmptyTabFolders();
 		this.commit();
 		return this.getState();
 	}
@@ -1431,6 +1435,14 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
+	organizeTabs(): UserBrowserState {
+		const organized = organizeBrowserTabs(this.state.tabs, this.now);
+		this.state.tabs = organized.tabs;
+		this.state.tabFolders = organized.tabFolders;
+		this.commit();
+		return this.getState();
+	}
+
 	async detachTab(tabId: string): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
 		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
@@ -1447,6 +1459,7 @@ export class UserBrowserService {
 			this.state.activeTabId =
 				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
 		}
+		this.pruneEmptyTabFolders();
 		this.commit();
 		await this.syncActiveView();
 		return this.getState();
@@ -3213,6 +3226,17 @@ export class UserBrowserService {
 	private commit(): void {
 		this.store.save(this.state);
 		this.emit();
+	}
+
+	private pruneEmptyTabFolders(): void {
+		const usedFolderIds = new Set(
+			this.state.tabs.flatMap((tab) =>
+				tab.tabFolderId ? [tab.tabFolderId] : [],
+			),
+		);
+		this.state.tabFolders = this.state.tabFolders.filter((folder) =>
+			usedFolderIds.has(folder.id),
+		);
 	}
 
 	private emit(): void {
