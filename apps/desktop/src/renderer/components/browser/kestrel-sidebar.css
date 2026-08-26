@@ -1,7 +1,7 @@
-/* The global rail mirrors the information architecture of the OpenAI
- * references while keeping Kestrel's quiet, local-first surface language. */
+/* Browser chrome owns the full window. Navigation is available from the
+ * command center and keyboard shortcuts rather than a persistent left rail. */
 .ai-browser-app {
-	--kestrel-sidebar-width: 248px;
+	--kestrel-sidebar-width: 0px;
 	--browser-tab-rail-width: 208px;
 	--browser-chrome-height: 88px;
 	--agent-panel-top: var(--browser-chrome-height);
@@ -15,7 +15,7 @@
 }
 
 .ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
-	--kestrel-sidebar-width: 60px;
+	--kestrel-sidebar-width: 0px;
 }
 
 /* Bookmarks are part of the browser chrome too. Keep the lower workspace
@@ -75,6 +75,7 @@
 	border-right: 1px solid var(--line);
 	background: var(--sidebar);
 	color: var(--ink);
+	display: none;
 }
 
 .kestrel-sidebar-drag {
@@ -82,8 +83,8 @@
 	flex: 0 0 auto;
 }
 
-/* Browser chrome owns the full-width drag region. The viewport begins after
- * the navigation rail while tabs, toolbar, and bookmarks remain edge to edge. */
+/* Browser chrome owns the full-width drag region. Tabs, toolbar, bookmarks,
+ * and native page content all begin at the window edge. */
 .browser-workspace:not(.browser-workspace-vertical) .browser-viewport {
 	width: calc(
 		100% - var(--kestrel-sidebar-width) - var(--agent-panel-width)
@@ -544,7 +545,7 @@
 @media (max-width: 1120px) {
 	.ai-browser-app,
 	.ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
-		--kestrel-sidebar-width: 56px;
+		--kestrel-sidebar-width: 0px;
 		--browser-tab-rail-width: 180px;
 	}
 	.kestrel-sidebar {

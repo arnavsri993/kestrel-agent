@@ -43,9 +43,12 @@ async function readLayout(page) {
 	return page.evaluate(() => {
 		const shell = document.querySelector(".ai-browser-app");
 		if (!shell) throw new Error("The Kestrel browser shell is unavailable.");
-		const bounds = (selector) => {
+		const bounds = (selector, required = true) => {
 			const rect = document.querySelector(selector)?.getBoundingClientRect();
-			if (!rect) throw new Error(`Missing ${selector}.`);
+			if (!rect) {
+				if (!required) return null;
+				throw new Error(`Missing ${selector}.`);
+			}
 			return {
 				left: rect.left,
 				right: rect.right,
@@ -57,7 +60,7 @@ async function readLayout(page) {
 			innerWidth,
 			classes: shell.className,
 			columns: getComputedStyle(shell).gridTemplateColumns,
-			navigation: bounds(".kestrel-sidebar"),
+			navigation: bounds(".kestrel-sidebar", false),
 			main: bounds(".browser-main-plane"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
@@ -359,8 +362,7 @@ async function assertVerticalTabLayout(page) {
 
 function assertCollapsedLayout(layout) {
 	assert.match(layout.classes, /agent-sidebar-collapsed/);
-	assertNear(layout.navigation.left, 0, "collapsed navigation left");
-	assertNear(layout.navigation.width, 248, "collapsed navigation width");
+	assert.equal(layout.navigation, null, "the persistent navigation rail is removed");
 	assertNear(
 		layout.main.left,
 		0,
@@ -375,10 +377,7 @@ function assertCollapsedLayout(layout) {
 		layout.innerWidth,
 		"collapsed browser reaches the window edge",
 	);
-	assert.ok(
-		layout.viewport.left >= layout.navigation.right - 1,
-		"collapsed page viewport overlaps the navigation rail",
-	);
+	assertNear(layout.viewport.left, 0, "collapsed page viewport starts at the window edge");
 	assertNear(
 		layout.viewport.right,
 		layout.innerWidth,
@@ -390,8 +389,7 @@ function assertCollapsedLayout(layout) {
 
 function assertOpenLayout(layout) {
 	assert.doesNotMatch(layout.classes, /agent-sidebar-collapsed/);
-	assertNear(layout.navigation.left, 0, "open navigation left");
-	assertNear(layout.navigation.width, 248, "open navigation width");
+	assert.equal(layout.navigation, null, "the persistent navigation rail is removed");
 	assertNear(
 		layout.main.left,
 		0,
@@ -402,10 +400,7 @@ function assertOpenLayout(layout) {
 		`The open browser plane was only ${layout.main.width}px (${layout.columns}).`,
 	);
 	assertNear(layout.main.right, layout.innerWidth, "open browser plane reaches the window edge");
-	assert.ok(
-		layout.viewport.left >= layout.navigation.right - 1,
-		"open page viewport overlaps the navigation rail",
-	);
+	assertNear(layout.viewport.left, 0, "open page viewport starts at the window edge");
 	assertNear(layout.viewport.right, layout.agent.left, "page viewport ends at Pragmatic");
 	assertNear(layout.agent.right, layout.innerWidth, "Pragmatic reaches window edge");
 	assertNear(layout.agent.width, 360, "open Pragmatic width");
@@ -499,16 +494,13 @@ async function readZoomReflow(page) {
 						element.scrollWidth > element.clientWidth + 1,
 				)
 				.slice(0, 12),
-			sidebarLabelDisplay: getComputedStyle(
-				document.querySelector(".kestrel-sidebar-nav-item span"),
-			).display,
+			navigationPresent: Boolean(document.querySelector(".kestrel-sidebar")),
 			agentToggleLabelDisplay: getComputedStyle(
 				document.querySelector(
 					".browser-agent-toggle > span:not(.pragmatic-logo)",
 				),
 			).display,
 			controls: [
-				readControl(".kestrel-sidebar-new-task"),
 				readControl(".browser-new-tab"),
 				readControl("#browser-address-input"),
 				readControl(".browser-agent-toggle"),
@@ -522,7 +514,7 @@ function assertZoomReflow(layout, reflow) {
 		reflow.innerWidth <= 700,
 		`Expected a compact CSS viewport at 200% zoom, got ${reflow.innerWidth}px.`,
 	);
-	assertNear(layout.navigation.width, 56, "zoomed navigation width");
+	assert.equal(reflow.navigationPresent, false, "the persistent navigation rail is removed");
 	assertNear(
 		layout.main.left,
 		0,
@@ -533,17 +525,13 @@ function assertZoomReflow(layout, reflow) {
 		layout.innerWidth,
 		"zoomed browser reaches the window edge",
 	);
-	assert.ok(
-		layout.viewport.left >= layout.navigation.right - 1,
-		"zoomed page viewport overlaps the compact navigation rail",
-	);
+	assertNear(layout.viewport.left, 0, "zoomed page viewport starts at the window edge");
 	assertNear(
 		layout.viewport.right,
 		layout.innerWidth,
 		"zoomed page viewport reaches the window edge",
 	);
 	assertNear(layout.agent.width, 0, "zoomed collapsed Pragmatic width");
-	assert.equal(reflow.sidebarLabelDisplay, "none");
 	assert.equal(reflow.agentToggleLabelDisplay, "none");
 	for (const [surface, overflow] of Object.entries({
 		document: reflow.rootOverflow,

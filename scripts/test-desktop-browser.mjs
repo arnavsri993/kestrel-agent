@@ -115,6 +115,11 @@ async function browserState() {
 	return response.browserState;
 }
 
+async function startNewTask() {
+	await page.keyboard.press("Meta+N");
+	await page.locator("#runtime-prompt").waitFor();
+}
+
 async function waitForBrowserState(predicate, label) {
 	const deadline = Date.now() + 30_000;
 	let latest;
@@ -224,7 +229,7 @@ async function assertBrowserChromeLayout({ vertical = false } = {}) {
 	assert(layout.app);
 	assert(tabs);
 	assert(layout.toolbar);
-	assert(layout.kestrel);
+	assert.equal(layout.kestrel, null, "The persistent Kestrel rail must be absent");
 	assert(layout.viewport);
 	const chromeBottom = Math.max(
 		vertical ? layout.toolbar.bottom : tabs.bottom,
@@ -239,10 +244,7 @@ async function assertBrowserChromeLayout({ vertical = false } = {}) {
 		);
 		assert.equal(layout.toolbarAppRegion, "drag");
 		assert.equal(layout.toolbarDragFillAppRegion, "drag");
-		assert(
-			tabs.x >= layout.kestrel.right,
-			"Vertical tabs must begin after the lower Kestrel navigation rail",
-		);
+		assert.equal(tabs.x, layout.app.x, "Vertical tabs must begin at the window edge");
 		assert(tabs.y >= chromeBottom);
 		assert.equal(tabs.bottom, layout.app.bottom);
 	} else {
@@ -251,21 +253,13 @@ async function assertBrowserChromeLayout({ vertical = false } = {}) {
 	}
 	assert.equal(layout.toolbar.x, layout.app.x);
 	assert.equal(layout.toolbar.width, layout.app.width);
-	assert(
-		layout.kestrel.y >= chromeBottom,
-		"Kestrel navigation must begin below full-width browser chrome",
-	);
-	assert.equal(layout.kestrel.x, layout.app.x);
-	assert.equal(layout.kestrel.bottom, layout.app.bottom);
-	assert(
-		layout.viewport.x >= layout.kestrel.right,
-		"Browser content must begin after the lower Kestrel navigation rail",
-	);
 	if (vertical) {
 		assert(
 			layout.viewport.x >= tabs.right,
 			"Vertical browser content must begin after the lower tab rail",
 		);
+	} else {
+		assert.equal(layout.viewport.x, layout.app.x, "Browser content must begin at the window edge");
 	}
 	assert(
 		layout.viewport.bottom <= layout.app.bottom,
@@ -392,10 +386,7 @@ try {
 			: -1;
 	});
 	assert.equal(homeSessionsAfter, homeSessionsBefore + 1);
-	await page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
-		.click();
+	await startNewTask();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
 	await openKestrelDestination(page, "Settings");
@@ -407,7 +398,7 @@ try {
 		.getByRole("heading", { name: "Make the browser feel like yours." })
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
-	await page.locator(".kestrel-sidebar-brand").click();
+	await openKestrelDestination(page, "Browser");
 	await waitForBrowserState(
 		(value) => {
 			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
@@ -446,10 +437,7 @@ try {
 	await page.locator("#runtime-prompt").waitFor();
 
 	assert.equal(await page.locator(".runtime-suggestions").count(), 0);
-	await page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
-		.click();
+	await startNewTask();
 
 	const initialSessions = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
@@ -577,10 +565,7 @@ try {
 		"Native page remained attached over the New Tab page",
 	);
 	await page.locator("#runtime-prompt").fill("Draft that must be cleared");
-	await page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
-		.click();
+	await startNewTask();
 	const clearedDraft = await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");
 		return (
@@ -1106,7 +1091,7 @@ try {
 	assert.equal(state.settings.tabLayout, "vertical");
 	assert.equal(state.settings.newTabBackground, "mountains");
 
-	await page.locator(".kestrel-sidebar-brand").click();
+	await openKestrelDestination(page, "Browser");
 	await waitForBrowserState(
 		(value) => {
 			const active = value.tabs.find((tab) => tab.id === value.activeTabId);

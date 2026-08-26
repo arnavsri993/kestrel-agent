@@ -376,14 +376,7 @@ try {
 			.waitFor();
 		await page.getByRole("button", { name: "Not Now" }).click();
 	}
-	const newAgentButton = page
-		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" });
-	await newAgentButton.click();
-	assert.equal(
-		await newAgentButton.getAttribute("aria-keyshortcuts"),
-		"Meta+N",
-	);
+	await page.keyboard.press("Meta+N");
 	await page
 		.getByRole("button", {
 			name: /Add (?:context files|files or choose folder)/,
@@ -410,7 +403,7 @@ try {
 	);
 	await page.getByLabel("Message Kestrel").fill("");
 	await page.setViewportSize({ width: 640, height: 760 });
-	await newAgentButton.waitFor();
+	await page.locator("#runtime-prompt").waitFor();
 	assert.equal(await page.locator(".agent-sidebar-footer").count(), 0);
 	assert.equal(
 		await page.getByRole("navigation", { name: "Kestrel destinations" }).count(),

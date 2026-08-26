@@ -78,11 +78,7 @@ import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
-import {
-	sidebarActiveDestination,
-	sidebarReviewTarget,
-} from "./components/browser/agent-sidebar";
-import { KestrelSidebar } from "./components/browser/KestrelSidebar";
+import { sidebarReviewTarget } from "./components/browser/agent-sidebar";
 import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -1213,6 +1209,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			transition={{ duration: reduced ? 0 : 0.14 }}
 		>
 			<header className="onboarding-bar">
+				<div
+					className="window-controls-clearance no-drag"
+					aria-hidden="true"
+				/>
 				<nav className="setup-rail" aria-label="Setup progress">
 					<span className="setup-stage-name" aria-live="polite">
 						{setupSteps[step]!.label}
@@ -8758,7 +8758,6 @@ export function App() {
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
-	const [workspaceGrants, setWorkspaceGrants] = useState<WorkspaceGrant[]>([]);
 	const [runtimeAgentState, setRuntimeAgentState] = useState<AgentState | null>(
 		null,
 	);
@@ -8856,25 +8855,6 @@ export function App() {
 				setGreetingName(
 					typeof response.userName === "string" ? response.userName : undefined,
 				);
-			})
-			.catch(() => undefined);
-		return () => {
-			active = false;
-		};
-	}, [onboarded]);
-	useEffect(() => {
-		if (!onboarded) return;
-		let active = true;
-		void window.kestrel
-			.request({ type: "get-workspace-grants" })
-			.then((response) => {
-				if (
-					active &&
-					response.ok &&
-					"workspaceGrants" in response
-				) {
-					setWorkspaceGrants(response.workspaceGrants);
-				}
 			})
 			.catch(() => undefined);
 		return () => {
@@ -9313,9 +9293,6 @@ export function App() {
 	const pendingApprovalCount =
 		snapshot.approvals.filter((approval) => approval.status === "pending")
 			.length + (runtimeAgentState === "waiting_approval" ? 1 : 0);
-	const activeSidebarDestination = sidebarActiveDestination(
-		activeBrowserTab?.url ?? "",
-	);
 	function navigate(destination: string) {
 		if (destination === "shortcuts") {
 			setShowShortcuts(true);
@@ -9430,32 +9407,6 @@ export function App() {
 				exit={{ opacity: reduced ? 1 : 0 }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
-				<KestrelSidebar
-					activeDestination={
-						activeSidebarDestination === "browser" ||
-						activeSidebarDestination === "agent" ||
-						activeSidebarDestination === "writing" ||
-						activeSidebarDestination === "approvals" ||
-						activeSidebarDestination === "settings"
-							? activeSidebarDestination
-							: "capabilities"
-					}
-					activeSessionId={activeRuntimeSessionId}
-					agentName={activeAgentName}
-					pendingApprovals={pendingApprovalCount}
-					sessions={runtimeSessions}
-					projects={availableWorkspaceGrants(workspaceGrants)}
-					onNewTask={() => startNewAgent()}
-					onOpenBrowser={openBrowser}
-					onOpenAgent={openAgent}
-					onOpenWriting={openWritingStudio}
-					onReviewApprovals={reviewApprovals}
-					onOpenCapabilities={openCommandCenter}
-					onOpenSettings={() => openSettings("browser")}
-					onOpenProject={(project) => startNewAgent("", project.path)}
-					onOpenSession={openSidebarSession}
-					onOpenTaskHistory={() => void openAppPage("work")}
-				/>
 				<section className="browser-main-plane">
 					{deepLinkNotice && (
 						<small className="browser-notice" role="status">
