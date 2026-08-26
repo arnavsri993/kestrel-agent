@@ -1,7 +1,8 @@
-/* Browser chrome owns the full window. Navigation is available from the
- * command center and keyboard shortcuts rather than a persistent left rail. */
+/* The New Tab rail mirrors the information architecture of the OpenAI
+ * references while keeping Kestrel's quiet, local-first surface language. */
 .ai-browser-app {
-	--kestrel-sidebar-width: 0px;
+	--kestrel-sidebar-width: 248px;
+	--kestrel-sidebar-space: 0px;
 	--browser-tab-rail-width: 208px;
 	--browser-chrome-height: 88px;
 	--agent-panel-top: var(--browser-chrome-height);
@@ -14,8 +15,12 @@
 	background: var(--canvas);
 }
 
+.ai-browser-app.kestrel-sidebar-visible {
+	--kestrel-sidebar-space: var(--kestrel-sidebar-width);
+}
+
 .ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
-	--kestrel-sidebar-width: 0px;
+	--kestrel-sidebar-width: 60px;
 }
 
 /* Bookmarks are part of the browser chrome too. Keep the lower workspace
@@ -75,7 +80,6 @@
 	border-right: 1px solid var(--line);
 	background: var(--sidebar);
 	color: var(--ink);
-	display: none;
 }
 
 .kestrel-sidebar-drag {
@@ -83,20 +87,20 @@
 	flex: 0 0 auto;
 }
 
-/* Browser chrome owns the full-width drag region. Tabs, toolbar, bookmarks,
- * and native page content all begin at the window edge. */
+/* Browser chrome owns the full-width drag region. The viewport begins after
+ * the navigation rail while tabs, toolbar, and bookmarks remain edge to edge. */
 .browser-workspace:not(.browser-workspace-vertical) .browser-viewport {
 	width: calc(
-		100% - var(--kestrel-sidebar-width) - var(--agent-panel-width)
+		100% - var(--kestrel-sidebar-space) - var(--agent-panel-width)
 	);
-	margin-left: var(--kestrel-sidebar-width);
+	margin-left: var(--kestrel-sidebar-space);
 }
 
 .ai-browser-app.agent-sidebar-collapsed
 	.browser-workspace:not(.browser-workspace-vertical)
 	.browser-viewport {
 	width: calc(
-		100% - var(--kestrel-sidebar-width) - var(--agent-panel-width)
+		100% - var(--kestrel-sidebar-space) - var(--agent-panel-width)
 	);
 }
 
@@ -127,7 +131,7 @@
 .browser-workspace-vertical .browser-tab-row-vertical {
 	position: absolute;
 	top: var(--browser-chrome-height);
-	left: var(--kestrel-sidebar-width);
+	left: var(--kestrel-sidebar-space);
 	right: auto;
 	bottom: 0;
 	width: var(--browser-tab-rail-width);
@@ -146,7 +150,7 @@
 }
 
 .browser-workspace-vertical .browser-tab-tools-menu {
-	width: min(318px, calc(100vw - var(--kestrel-sidebar-width) - 12px));
+	width: min(318px, calc(100vw - var(--kestrel-sidebar-space) - 12px));
 	max-height: min(
 		640px,
 		calc(100vh - var(--browser-chrome-height) - 16px)
@@ -157,11 +161,11 @@
 	grid-area: auto;
 	position: absolute;
 	top: var(--browser-chrome-height);
-	left: calc(var(--kestrel-sidebar-width) + var(--browser-tab-rail-width));
+	left: calc(var(--kestrel-sidebar-space) + var(--browser-tab-rail-width));
 	right: auto;
 	bottom: 0;
 	width: calc(
-		100vw - var(--kestrel-sidebar-width) - var(--browser-tab-rail-width) -
+		100vw - var(--kestrel-sidebar-space) - var(--browser-tab-rail-width) -
 			var(--agent-panel-width)
 	);
 	height: auto;
@@ -170,21 +174,21 @@
 
 .browser-workspace-vertical .browser-loading-line {
 	top: var(--browser-chrome-height);
-	left: calc(var(--kestrel-sidebar-width) + var(--browser-tab-rail-width));
+	left: calc(var(--kestrel-sidebar-space) + var(--browser-tab-rail-width));
 	width: 35%;
 }
 
 .browser-workspace-vertical .browser-inline-error {
 	top: calc(var(--browser-chrome-height) + 6px);
 	left: calc(
-		var(--kestrel-sidebar-width) + var(--browser-tab-rail-width) + 50%
+		var(--kestrel-sidebar-space) + var(--browser-tab-rail-width) + 50%
 	);
 }
 
 .browser-workspace-vertical .browser-find-bar {
 	position: absolute;
 	top: var(--browser-chrome-height);
-	left: calc(var(--kestrel-sidebar-width) + var(--browser-tab-rail-width));
+	left: calc(var(--kestrel-sidebar-space) + var(--browser-tab-rail-width));
 	right: var(--agent-panel-width);
 	z-index: 9;
 }
@@ -545,7 +549,7 @@
 @media (max-width: 1120px) {
 	.ai-browser-app,
 	.ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
-		--kestrel-sidebar-width: 0px;
+		--kestrel-sidebar-width: 56px;
 		--browser-tab-rail-width: 180px;
 	}
 	.kestrel-sidebar {
@@ -610,11 +614,11 @@
 	}
 }
 
-/* The full Agent page keeps the global navigation at the left and gives the
- * durable conversation/workspace the remaining surface. */
+/* The full Agent page gives the durable conversation/workspace the remaining
+ * surface when the New Tab navigation rail is not mounted. */
 .ai-browser-app.agent-full-page {
 	display: grid;
-	grid-template-columns: var(--kestrel-sidebar-width) minmax(0, 1fr);
+	grid-template-columns: var(--kestrel-sidebar-space) minmax(0, 1fr);
 }
 
 .ai-browser-app.agent-full-page .kestrel-sidebar {
