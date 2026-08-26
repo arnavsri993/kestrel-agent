@@ -376,7 +376,14 @@ try {
 			.waitFor();
 		await page.getByRole("button", { name: "Not Now" }).click();
 	}
-	await page.keyboard.press("Meta+N");
+	const newAgentButton = page
+		.locator(".kestrel-sidebar")
+		.getByRole("button", { name: "New task" });
+	await newAgentButton.click();
+	assert.equal(
+		await newAgentButton.getAttribute("aria-keyshortcuts"),
+		"Meta+N",
+	);
 	await page
 		.getByRole("button", {
 			name: /Add (?:context files|files or choose folder)/,
@@ -403,7 +410,12 @@ try {
 	);
 	await page.getByLabel("Message Kestrel").fill("");
 	await page.setViewportSize({ width: 640, height: 760 });
-	await page.locator("#runtime-prompt").waitFor();
+	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
+	assert.equal(
+		await page.locator(".kestrel-sidebar").count(),
+		0,
+		"The Kestrel navigation rail must hide outside the New Tab page",
+	);
 	assert.equal(await page.locator(".agent-sidebar-footer").count(), 0);
 	assert.equal(
 		await page.getByRole("navigation", { name: "Kestrel destinations" }).count(),
