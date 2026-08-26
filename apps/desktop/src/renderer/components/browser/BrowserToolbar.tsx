@@ -232,6 +232,10 @@ export function BrowserToolbar({
 
   return (
     <div className="browser-toolbar" aria-label="Browser toolbar">
+      <div
+        className="window-controls-clearance no-drag"
+        aria-hidden="true"
+      />
       <div className="browser-navigation">
         <button
           type="button"

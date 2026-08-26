@@ -14,6 +14,31 @@
 	-webkit-app-region: no-drag;
 }
 
+/* Electron's native drag hit testing is calculated from the drag region's
+ * descendants. Keep a real no-drag area under the fixed custom controls so a
+ * later full-width titlebar cannot swallow their pointer events. */
+.window-controls-clearance {
+	position: absolute;
+	top: 0;
+	left: 0;
+	bottom: 0;
+	display: none;
+	width: 96px;
+	min-width: 96px;
+	-webkit-app-region: no-drag;
+}
+
+.onboarding-bar,
+.browser-tab-row {
+	position: relative;
+}
+
+.onboarding-bar > .window-controls-clearance,
+.browser-tab-row-horizontal > .window-controls-clearance,
+.browser-workspace-vertical .browser-toolbar > .window-controls-clearance {
+	display: block;
+}
+
 .window-controls-inactive {
 	opacity: 0.62;
 	filter: saturate(0.58);
