@@ -254,6 +254,7 @@ export function freshBrowserState(
 	const tab = createEmptyBrowserTab(now);
 	return {
 		tabs: [tab],
+		tabFolders: [],
 		activeTabId: tab.id,
 		history: [],
 		originFavicons: [],
@@ -296,6 +297,7 @@ export class BrowserTabStore {
 			if (tabs.length === 0)
 				return {
 					...freshBrowserState(now),
+					tabFolders: [],
 					history: state.history,
 					originFavicons: state.originFavicons,
 					bookmarks: state.bookmarks,
@@ -309,12 +311,25 @@ export class BrowserTabStore {
 					})),
 					settings: state.settings,
 				};
+			const tabFolderIds = new Set(
+				state.tabFolders
+					.filter((folder) => tabs.some((tab) => tab.tabFolderId === folder.id))
+					.map((folder) => folder.id),
+			);
+			const normalizedTabs = tabs.map((tab) =>
+				tab.tabFolderId && tabFolderIds.has(tab.tabFolderId)
+					? tab
+					: { ...tab, tabFolderId: undefined },
+			);
 			const activeTabId = tabs.some((tab) => tab.id === state.activeTabId)
 				? state.activeTabId
-				: tabs[0]!.id;
+				: normalizedTabs[0]!.id;
 			return {
 				...state,
-				tabs,
+			tabs: normalizedTabs,
+				tabFolders: state.tabFolders.filter((folder) =>
+					tabFolderIds.has(folder.id),
+				),
 				activeTabId,
 				downloads: state.downloads.map((download) => ({
 					...download,

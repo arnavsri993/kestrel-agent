@@ -79,6 +79,7 @@ const paths: Record<string, string[]> = {
 	pin: ["M12 3v10", "M8 7h8", "M12 13l-3 8", "M12 13l3 8"],
 	research: ["M11 18a7 7 0 100-14 7 7 0 000 14z", "M20 20l-4-4"],
 	work: ["M5 6h14v13H5z", "M9 6V4h6v2M8 11h8M8 15h5"],
+	folder: ["M3.5 6.5h6l2 2h9v9h-17z", "M3.5 6.5v-1h6l2 2"],
 	events: ["M5 4h14v16H5z", "M8 2v4M16 2v4M5 8h14", "M9 13l2 2 4-5"],
 	artifacts: ["M4 5h6l2 2h8v12H4z", "M8 12l2-2 3 4 2-2 3 4H7z"],
 	extensions: [

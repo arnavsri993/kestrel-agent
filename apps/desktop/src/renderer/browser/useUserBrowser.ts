@@ -57,6 +57,7 @@ export interface UserBrowserController {
 	duplicateTab(tabId: string): Promise<void>;
 	closeOtherTabs(tabId: string): Promise<void>;
 	moveTab(tabId: string, toIndex: number): Promise<void>;
+	organizeTabs(): Promise<void>;
 	detachTab(tabId: string): Promise<void>;
 	findInPage(
 		tabId: string,
@@ -406,6 +407,10 @@ export function useUserBrowser(): UserBrowserController {
 			requestState({ type: "browser-move-tab", tabId, toIndex }),
 		[requestState],
 	);
+	const organizeTabs = useCallback(
+		() => requestState({ type: "browser-organize-tabs" }),
+		[requestState],
+	);
 	const detachTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-detach-tab", tabId }),
 		[requestState],
@@ -501,6 +506,7 @@ export function useUserBrowser(): UserBrowserController {
 			duplicateTab,
 			closeOtherTabs,
 			moveTab,
+			organizeTabs,
 			detachTab,
 			findInPage,
 			stopFindInPage,
@@ -546,6 +552,7 @@ export function useUserBrowser(): UserBrowserController {
 			duplicateTab,
 			closeOtherTabs,
 			moveTab,
+			organizeTabs,
 			detachTab,
 			findInPage,
 			stopFindInPage,

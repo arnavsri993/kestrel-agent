@@ -1047,6 +1047,33 @@ describe("UserBrowserService", () => {
     expect(contents.print).toHaveBeenCalled();
   });
 
+  it("organizes visible tabs into semantic folders without sorting them alphabetically", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://notion.so/team/roadmap");
+    const second = await navigateNewTab(
+      service,
+      "https://www.google.com/search?q=browser",
+    );
+    const third = await navigateNewTab(service, "https://github.com/kestrel/app");
+
+    const organized = service.organizeTabs();
+
+    expect(organized.tabFolders.map((folder) => folder.name)).toEqual([
+      "Work",
+      "Research",
+      "Development",
+    ]);
+    expect(organized.tabs.map((tab) => tab.id)).toEqual([
+      first.id,
+      second.id,
+      third.id,
+    ]);
+    expect(organized.tabs.map((tab) => tab.tabFolderId)).toEqual(
+      organized.tabFolders.map((folder) => folder.id),
+    );
+  });
+
   it("allows 'Continue with Google' and OAuth links to open as a managed tab", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;

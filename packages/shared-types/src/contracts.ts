@@ -2504,6 +2504,27 @@ export type UserBrowserFaviconDataUrl = z.infer<
 	typeof UserBrowserFaviconDataUrlSchema
 >;
 
+export const UserBrowserTabFolderColorSchema = z.enum([
+	"blue",
+	"green",
+	"amber",
+	"rose",
+	"violet",
+	"teal",
+	"slate",
+]);
+export type UserBrowserTabFolderColor = z.infer<
+	typeof UserBrowserTabFolderColorSchema
+>;
+
+export const UserBrowserTabFolderSchema = z.object({
+	id: z.string().regex(/^tab-folder-[a-f0-9-]{36}$/),
+	name: z.string().min(1).max(80),
+	color: UserBrowserTabFolderColorSchema,
+	createdAt: z.string().datetime(),
+});
+export type UserBrowserTabFolder = z.infer<typeof UserBrowserTabFolderSchema>;
+
 export const UserBrowserTabSchema = z.object({
 	id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	title: z.string().min(1).max(500),
@@ -2518,6 +2539,7 @@ export const UserBrowserTabSchema = z.object({
 	error: z.string().min(1).max(500).optional(),
 	pinned: z.boolean().default(false),
 	muted: z.boolean().default(false),
+	tabFolderId: z.string().regex(/^tab-folder-[a-f0-9-]{36}$/).optional(),
 	createdAt: z.string().datetime(),
 	lastActiveAt: z.string().datetime(),
 });
@@ -2882,6 +2904,7 @@ export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
 export const UserBrowserStateSchema = z.object({
 	tabs: z.array(UserBrowserTabSchema).max(32),
+	tabFolders: z.array(UserBrowserTabFolderSchema).max(32).default([]),
 	activeTabId: z
 		.string()
 		.regex(/^tab-[a-f0-9-]{36}$/)
@@ -3188,6 +3211,7 @@ export const RendererRequestSchema = z.union([
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 		toIndex: z.number().int().min(0).max(31),
 	}),
+	z.object({ type: z.literal("browser-organize-tabs") }),
 	z.object({
 		type: z.literal("browser-detach-tab"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
