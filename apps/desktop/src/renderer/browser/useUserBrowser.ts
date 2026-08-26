@@ -49,6 +49,7 @@ export interface UserBrowserController {
 	}): Promise<void>;
 	revealDownload(downloadId: string): Promise<void>;
 	openDownload(downloadId: string): Promise<void>;
+	startDownloadDrag(downloadId: string): Promise<void>;
 	cancelDownload(downloadId: string): Promise<void>;
 	toggleBookmark(url?: string, title?: string): Promise<void>;
 	removeBookmark(bookmarkId: string): Promise<void>;
@@ -364,6 +365,13 @@ export function useUserBrowser(): UserBrowserController {
 		});
 		if (!response.ok) throw new Error(responseError(response));
 	}, []);
+	const startDownloadDrag = useCallback(async (downloadId: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-start-download-drag",
+			downloadId,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
 	const cancelDownload = useCallback(
 		(downloadId: string) =>
 			requestState({ type: "browser-cancel-download", downloadId }),
@@ -493,6 +501,7 @@ export function useUserBrowser(): UserBrowserController {
 			clearBrowsingData,
 			revealDownload,
 			openDownload,
+			startDownloadDrag,
 			cancelDownload,
 			toggleBookmark,
 			removeBookmark,
@@ -538,6 +547,7 @@ export function useUserBrowser(): UserBrowserController {
 			clearBrowsingData,
 			revealDownload,
 			openDownload,
+			startDownloadDrag,
 			cancelDownload,
 			toggleBookmark,
 			removeBookmark,

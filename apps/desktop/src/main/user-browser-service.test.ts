@@ -58,6 +58,7 @@ const electron = vi.hoisted(() => {
     stopFindInPage = vi.fn();
     print = vi.fn();
     openDevTools = vi.fn();
+    startDrag = vi.fn();
     setAudioMuted = vi.fn();
     navigationHistory = {
       canGoBack: vi.fn(() => false),
@@ -113,6 +114,7 @@ vi.mock("electron", () => ({
     showMessageBox: vi.fn(async () => ({ response: 1 })),
   },
   nativeImage: {
+    createEmpty: vi.fn(() => ({ isEmpty: () => true })),
     createFromBuffer: vi.fn(() => ({ isEmpty: () => true })),
     createFromDataURL: vi.fn(() => ({
       isEmpty: () => false,
@@ -144,6 +146,7 @@ function createService(options: {
   const window = {
     getContentSize: vi.fn(() => [300, 200]),
     isDestroyed: vi.fn(() => false),
+    webContents: { startDrag: vi.fn() },
     contentView: {
       children,
       addChildView: vi.fn((view: unknown) => children.push(view)),
@@ -237,6 +240,44 @@ describe("UserBrowserService", () => {
 		expect(preview).toMatchObject({
 			kind: "text",
 			text: "A report from a local file tab.",
+		});
+	});
+
+	it("starts a native drag for a completed download", async () => {
+		const { service, window } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		const partition = electron.state.partitions[0]!.instance;
+		let savePath = "";
+		let done: ((event: unknown, status: string) => void) | undefined;
+		const item = {
+			getFilename: vi.fn(() => "report.txt"),
+			getURL: vi.fn(() => "https://example.com/report.txt"),
+			getReceivedBytes: vi.fn(() => 12),
+			getTotalBytes: vi.fn(() => 12),
+			setSavePath: vi.fn((path: string) => {
+				savePath = path;
+			}),
+			on: vi.fn(),
+			once: vi.fn(
+				(_event: string, callback: (event: unknown, status: string) => void) => {
+					done = callback;
+				},
+			),
+			cancel: vi.fn(),
+		};
+
+		partition.emit("will-download", {}, item, contents);
+		writeFileSync(savePath, "downloaded file");
+		done?.({}, "completed");
+		const download = service.getState().downloads[0]!;
+
+		service.startDownloadDrag(download.id);
+
+		expect(window.webContents.startDrag).toHaveBeenCalledWith({
+			file: savePath,
+			icon: expect.anything(),
 		});
 	});
 

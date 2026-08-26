@@ -13,19 +13,12 @@ import {
 	UserBrowserEventSchema,
 	WorkspaceSnapshotSchema,
 } from "@kestrel/shared-types";
-import { contextBridge, ipcRenderer, webUtils } from "electron";
-import { installFileDragBridge } from "./file-drag";
+import { contextBridge, ipcRenderer } from "electron";
+import { installFileDropGuard } from "./file-drag";
 
 const bridge: RendererBridge = {
 	request: (request) =>
 		ipcRenderer.invoke("kestrel:request", RendererRequestSchema.parse(request)),
-	getPathForFile: (file) => {
-		try {
-			return webUtils.getPathForFile(file as File);
-		} catch {
-			return "";
-		}
-	},
 	onBrowserEvent(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
 			callback(UserBrowserEventSchema.parse(value));
@@ -60,15 +53,6 @@ const bridge: RendererBridge = {
 		ipcRenderer.on("kestrel:external-intake", listener);
 		ipcRenderer.send("kestrel:external-intake-ready");
 		return () => ipcRenderer.off("kestrel:external-intake", listener);
-	},
-	onFileDrag(callback) {
-		const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
-			if (!value || typeof value !== "object" || Array.isArray(value)) return;
-			const active = (value as { active?: unknown }).active;
-			if (typeof active === "boolean") callback({ active });
-		};
-		ipcRenderer.on("kestrel:file-drag", listener);
-		return () => ipcRenderer.off("kestrel:file-drag", listener);
 	},
 	onSnapshot(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown) =>
@@ -108,16 +92,6 @@ const bridge: RendererBridge = {
 	},
 };
 
-installFileDragBridge({
-	getPathForFile: (file) => {
-		try {
-			return webUtils.getPathForFile(file as File);
-		} catch {
-			return "";
-		}
-	},
-	onDrag: (active) => ipcRenderer.send("kestrel:user-browser-file-drag", { active }),
-	onDrop: (paths) => ipcRenderer.send("kestrel:user-browser-file-drop", { paths }),
-});
+installFileDropGuard(window);
 
 contextBridge.exposeInMainWorld("kestrel", bridge);

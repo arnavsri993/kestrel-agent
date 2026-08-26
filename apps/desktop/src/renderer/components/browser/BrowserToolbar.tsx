@@ -7,10 +7,15 @@ import {
   type MouseEvent,
   type RefObject,
 } from "react";
-import type { InstalledExtension, UserBrowserTab } from "@kestrel/shared-types";
+import type {
+  InstalledExtension,
+  UserBrowserDownload,
+  UserBrowserTab,
+} from "@kestrel/shared-types";
 import { Icon } from "../Icon";
 
-type ToolbarMenu = "extensions" | "tools" | "screen" | null;
+type ToolbarMenuName = "extensions" | "tools" | "screen";
+type ToolbarMenu = ToolbarMenuName | "downloads" | null;
 
 type MenuTriggerEvent = FormEvent | MouseEvent<HTMLButtonElement>;
 
@@ -30,6 +35,163 @@ function readPinnedExtensions(): string[] {
   }
 }
 
+function compactDownloadBytes(value: number): string {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)} KB`;
+  return `${value} B`;
+}
+
+function downloadStatusLabel(status: UserBrowserDownload["status"]): string {
+  return {
+    completed: "Completed",
+    cancelled: "Cancelled",
+    failed: "Failed",
+    progressing: "Downloading",
+  }[status];
+}
+
+function BrowserDownloadsPopover({
+  downloads,
+  closeMenu,
+  onOpenDownload,
+  onRevealDownload,
+  onCancelDownload,
+  onStartDownloadDrag,
+}: {
+  downloads: UserBrowserDownload[];
+  closeMenu(restoreFocus?: boolean): void;
+  onOpenDownload(downloadId: string): void;
+  onRevealDownload(downloadId: string): void;
+  onCancelDownload(downloadId: string): void;
+  onStartDownloadDrag(downloadId: string): void;
+}) {
+  return (
+    <>
+      <header className="browser-toolbar-popover-header">
+        <Icon name="downloads" />
+        <span>
+          <strong>Downloads</strong>
+          <small>Drag a finished file onto a website upload field</small>
+        </span>
+      </header>
+      {downloads.length === 0 ? (
+        <p className="browser-toolbar-popover-empty">No downloads yet.</p>
+      ) : (
+        <ul className="browser-download-popover-list">
+          {downloads.slice(0, 30).map((download) => {
+            const progress =
+              download.totalBytes > 0
+                ? Math.min(
+                    100,
+                    Math.round(
+                      (download.receivedBytes / download.totalBytes) * 100,
+                    ),
+                  )
+                : 0;
+            const canDrag =
+              download.status === "completed" && download.canReveal;
+            return (
+              <li key={download.id} className="browser-download-popover-row">
+                <span className={`download-state ${download.status}`}>
+                  <Icon
+                    name={
+                      download.status === "completed"
+                        ? "check"
+                        : download.status === "progressing"
+                          ? "downloads"
+                          : "warning"
+                    }
+                  />
+                </span>
+                <div className="browser-download-popover-copy">
+                  <strong title={download.filename}>{download.filename}</strong>
+                  <small>
+                    {download.status === "progressing"
+                      ? `Downloading · ${progress}% · ${compactDownloadBytes(download.receivedBytes)}`
+                      : `${downloadStatusLabel(download.status)} · ${compactDownloadBytes(download.receivedBytes)}`}
+                  </small>
+                  {download.status === "progressing" && (
+                    <progress
+                      value={download.receivedBytes}
+                      max={Math.max(
+                        download.totalBytes,
+                        download.receivedBytes,
+                        1,
+                      )}
+                    />
+                  )}
+                </div>
+                <div className="browser-download-popover-actions">
+                  {canDrag && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="browser-download-drag"
+                      draggable
+                      aria-label={`Drag ${download.filename} to a website upload field`}
+                      title="Drag to a website upload field"
+                      onDragStart={(event) => {
+                        // Electron's native drag must replace the browser's
+                        // text drag so the receiving website gets a real file.
+                        event.preventDefault();
+                        closeMenu(false);
+                        onStartDownloadDrag(download.id);
+                      }}
+                    >
+                      <Icon name="upload" />
+                      <span>Drag</span>
+                    </button>
+                  )}
+                  {download.canReveal && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="browser-download-action"
+                      onClick={() => {
+                        closeMenu();
+                        onOpenDownload(download.id);
+                      }}
+                    >
+                      Open
+                    </button>
+                  )}
+                  {download.canReveal && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="browser-download-action"
+                      onClick={() => {
+                        closeMenu();
+                        onRevealDownload(download.id);
+                      }}
+                    >
+                      Finder
+                    </button>
+                  )}
+                  {download.status === "progressing" && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="browser-download-action"
+                      onClick={() => {
+                        closeMenu();
+                        onCancelDownload(download.id);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+}
+
 export function BrowserToolbar({
   tab,
   agentOpen,
@@ -37,6 +199,8 @@ export function BrowserToolbar({
   bookmarked,
   showBookmarksBar,
   sleepingTabsEnabled,
+  downloads,
+  downloadsOpen,
   onToggleAgent,
   onToggleBookmarksBar,
   onToggleSleepingTabs,
@@ -46,7 +210,11 @@ export function BrowserToolbar({
   onReload,
   onStop,
   onOpenHistory,
-  onOpenDownloads,
+  onDownloadsOpenChange,
+  onStartDownloadDrag,
+  onOpenDownload,
+  onRevealDownload,
+  onCancelDownload,
   onOpenBookmarks,
   onOpenFind,
   onPrint,
@@ -64,6 +232,8 @@ export function BrowserToolbar({
   bookmarked: boolean;
   showBookmarksBar: boolean;
   sleepingTabsEnabled: boolean;
+  downloads: UserBrowserDownload[];
+  downloadsOpen: boolean;
   onToggleAgent(): void;
   onToggleBookmarksBar(): void;
   onToggleSleepingTabs(): void;
@@ -73,7 +243,11 @@ export function BrowserToolbar({
   onReload(): void;
   onStop(): void;
   onOpenHistory(): void;
-  onOpenDownloads(): void;
+  onDownloadsOpenChange(open: boolean): void;
+  onStartDownloadDrag(downloadId: string): void;
+  onOpenDownload(downloadId: string): void;
+  onRevealDownload(downloadId: string): void;
+  onCancelDownload(downloadId: string): void;
   onOpenBookmarks(): void;
   onOpenFind(): void;
   onPrint(): void;
@@ -86,7 +260,7 @@ export function BrowserToolbar({
   onMenuOpenChange?(open: boolean): void;
 }) {
   const [address, setAddress] = useState(tab.url);
-  const [openMenu, setOpenMenu] = useState<ToolbarMenu>(null);
+  const [openMenu, setOpenMenu] = useState<ToolbarMenuName | null>(null);
   const [extensions, setExtensions] = useState<InstalledExtension[]>([]);
   const [pinnedExtensionIds, setPinnedExtensionIds] = useState(
     readPinnedExtensions,
@@ -94,6 +268,7 @@ export function BrowserToolbar({
   const [toolNotice, setToolNotice] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const visibleMenu: ToolbarMenu = downloadsOpen ? "downloads" : openMenu;
 
   useEffect(() => setAddress(tab.url), [tab.id, tab.url]);
 
@@ -117,15 +292,24 @@ export function BrowserToolbar({
     if (openMenu === "extensions") void loadExtensions();
   }, [loadExtensions, openMenu]);
 
-  const closeMenu = useCallback(() => {
-    setOpenMenu(null);
-    window.requestAnimationFrame(() => {
-      lastTriggerRef.current?.focus();
-    });
-  }, []);
+  const closeMenu = useCallback(
+    (restoreFocus = true) => {
+      setOpenMenu(null);
+      onDownloadsOpenChange(false);
+      if (restoreFocus)
+        window.requestAnimationFrame(() => {
+          lastTriggerRef.current?.focus();
+        });
+    },
+    [onDownloadsOpenChange],
+  );
 
   useEffect(() => {
-    if (!openMenu) return;
+    if (downloadsOpen) setOpenMenu(null);
+  }, [downloadsOpen]);
+
+  useEffect(() => {
+    if (!visibleMenu) return;
     const frame = window.requestAnimationFrame(() => {
       menuRef.current
         ?.querySelector<HTMLElement>(
@@ -168,21 +352,29 @@ export function BrowserToolbar({
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [closeMenu, openMenu]);
+  }, [closeMenu, visibleMenu]);
 
   useEffect(() => {
-    onMenuOpenChange?.(Boolean(openMenu));
-  }, [onMenuOpenChange, openMenu]);
+    onMenuOpenChange?.(Boolean(visibleMenu));
+  }, [onMenuOpenChange, visibleMenu]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (address.trim()) onNavigate(address);
   }
 
-  function toggleMenu(menu: Exclude<ToolbarMenu, null>, event: MenuTriggerEvent) {
+  function toggleMenu(menu: ToolbarMenuName, event: MenuTriggerEvent) {
     lastTriggerRef.current = event.currentTarget as HTMLButtonElement;
     setToolNotice("");
+    onDownloadsOpenChange(false);
     setOpenMenu((current) => (current === menu ? null : menu));
+  }
+
+  function toggleDownloads(event: MenuTriggerEvent) {
+    lastTriggerRef.current = event.currentTarget as HTMLButtonElement;
+    setToolNotice("");
+    setOpenMenu(null);
+    onDownloadsOpenChange(!downloadsOpen);
   }
 
   function updatePinnedExtensions(id: string) {
@@ -315,10 +507,10 @@ export function BrowserToolbar({
         <div className="browser-extension-cluster">
           <button
             type="button"
-            className={`browser-toolbar-menu-trigger ${openMenu === "extensions" ? "active" : ""}`}
+            className={`browser-toolbar-menu-trigger ${visibleMenu === "extensions" ? "active" : ""}`}
             aria-label="Extensions"
             aria-haspopup="menu"
-            aria-expanded={openMenu === "extensions"}
+            aria-expanded={visibleMenu === "extensions"}
             title="Extensions"
             onClick={(event) => toggleMenu("extensions", event)}
           >
@@ -339,10 +531,10 @@ export function BrowserToolbar({
         </div>
         <button
           type="button"
-          className={`browser-toolbar-menu-trigger ${openMenu === "tools" ? "active" : ""}`}
+          className={`browser-toolbar-menu-trigger ${visibleMenu === "tools" ? "active" : ""}`}
           aria-label="Tools"
           aria-haspopup="menu"
-          aria-expanded={openMenu === "tools"}
+          aria-expanded={visibleMenu === "tools"}
           title="Tools"
           onClick={(event) => toggleMenu("tools", event)}
         >
@@ -350,10 +542,10 @@ export function BrowserToolbar({
         </button>
         <button
           type="button"
-          className={`browser-toolbar-menu-trigger ${openMenu === "screen" ? "active" : ""}`}
+          className={`browser-toolbar-menu-trigger ${visibleMenu === "screen" ? "active" : ""}`}
           aria-label="Page options"
           aria-haspopup="menu"
-          aria-expanded={openMenu === "screen"}
+          aria-expanded={visibleMenu === "screen"}
           title="Page options"
           onClick={(event) => toggleMenu("screen", event)}
         >
@@ -379,10 +571,13 @@ export function BrowserToolbar({
         </button>
         <button
           type="button"
+          className={`browser-toolbar-menu-trigger ${downloadsOpen ? "active" : ""}`}
           aria-label="Downloads"
           aria-keyshortcuts="Meta+J"
+          aria-haspopup="menu"
+          aria-expanded={downloadsOpen}
           title="Downloads (⌘J)"
-          onClick={onOpenDownloads}
+          onClick={toggleDownloads}
         >
           <Icon name="downloads" />
         </button>
@@ -410,20 +605,32 @@ export function BrowserToolbar({
           <span>Pragmatic</span>
         </button>
 
-        {openMenu && (
+        {visibleMenu && (
           <div
             ref={menuRef}
-            className={`browser-toolbar-popover browser-toolbar-popover-${openMenu}`}
+            className={`browser-toolbar-popover browser-toolbar-popover-${visibleMenu}`}
             role="menu"
             aria-label={
-              openMenu === "extensions"
+              visibleMenu === "extensions"
                 ? "Extensions"
-                : openMenu === "tools"
+                : visibleMenu === "tools"
                   ? "Tools"
-                  : "Page options"
-              }
+                  : visibleMenu === "screen"
+                    ? "Page options"
+                    : "Downloads"
+            }
           >
-            {openMenu === "extensions" && (
+            {visibleMenu === "downloads" && (
+              <BrowserDownloadsPopover
+                downloads={downloads}
+                closeMenu={closeMenu}
+                onOpenDownload={onOpenDownload}
+                onRevealDownload={onRevealDownload}
+                onCancelDownload={onCancelDownload}
+                onStartDownloadDrag={onStartDownloadDrag}
+              />
+            )}
+            {visibleMenu === "extensions" && (
               <>
                 <header className="browser-toolbar-popover-header">
                   <Icon name="extensions" />
@@ -479,7 +686,7 @@ export function BrowserToolbar({
                 </button>
               </>
             )}
-            {openMenu === "tools" && (
+            {visibleMenu === "tools" && (
               <>
                 <header className="browser-toolbar-popover-header">
                   <Icon name="tools" />
@@ -513,7 +720,7 @@ export function BrowserToolbar({
                     <Icon name="star" />
                     <span>Bookmarks</span>
                   </button>
-                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenDownloads)}>
+                  <button type="button" role="menuitem" onClick={toggleDownloads}>
                     <Icon name="downloads" />
                     <span>Downloads</span>
                   </button>
@@ -539,7 +746,7 @@ export function BrowserToolbar({
                 )}
               </>
             )}
-            {openMenu === "screen" && (
+            {visibleMenu === "screen" && (
               <>
                 <header className="browser-toolbar-popover-header">
                   <Icon name="sliders" />

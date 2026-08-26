@@ -31,6 +31,7 @@ const paths: Record<string, string[]> = {
 		"M12 8v4l3 2",
 	],
 	downloads: ["M12 3v12", "M7 10l5 5 5-5", "M5 20h14"],
+	upload: ["M12 21V9", "M7 14l5-5 5 5", "M5 3h14"],
 	tools: ["M14.5 6.5a4 4 0 00-5.3 5.3L4 17v3h3l5.2-5.2a4 4 0 005.3-5.3l-2.1 2.1-2.2-2.2z", "M17 4l3 3"],
 	sliders: ["M4 6h16", "M4 12h16", "M4 18h16", "M8 4v4M16 10v4M10 16v4"],
 	screenshot: ["M5 5h5M5 5v5M19 5h-5M19 5v5M5 19h5M5 19v-5M19 19h-5M19 19v-5"],

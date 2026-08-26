@@ -602,20 +602,6 @@ function browserServiceForTab(tabId?: string): UserBrowserService | null {
   return userBrowserService;
 }
 
-function browserOwnerForDragSender(sender: Electron.WebContents):
-	| { window: BrowserWindow; service: UserBrowserService; mainRenderer: boolean }
-	| undefined {
-	for (const [window, service] of browserWindowServices) {
-		if (window.webContents === sender)
-			return { window, service, mainRenderer: true };
-	}
-	for (const [window, service] of browserWindowServices) {
-		if (service.ownsWebContents(sender))
-			return { window, service, mainRenderer: false };
-	}
-	return undefined;
-}
-
 async function communicationSourceStatuses(): Promise<CommunicationSourceStatus[]> {
   const google = await googleWorkspaceOAuthManager().status();
   const gmail: CommunicationSourceStatus = google.connected
@@ -1399,10 +1385,6 @@ async function deliverPendingExternalIntakes(): Promise<void> {
 	} finally {
 		deliveringExternalIntakes = false;
 	}
-}
-
-function handleIncomingFileDrop(paths: string[]): void {
-	queueExternalIntake(paths, { kind: "ask" });
 }
 
 function openIncomingWebUrl(url: string): void {
@@ -2221,57 +2203,6 @@ function registerIpc(): void {
 		void deliverPendingExternalIntakes();
 	};
 	ipcMain.on("kestrel:external-intake-ready", setExternalIntakeReadiness);
-	ipcMain.on("kestrel:user-browser-file-drag", (event, raw) => {
-		const owner = browserOwnerForDragSender(event.sender);
-		if (!owner || owner.window.isDestroyed()) return;
-		if (
-			owner.mainRenderer &&
-			!isTrustedRendererFrame(
-				event.senderFrame,
-				event.sender.mainFrame,
-				trustedRendererUrl,
-			)
-		)
-			return;
-		const active =
-			raw && typeof raw === "object" && !Array.isArray(raw)
-			? (raw as { active?: unknown }).active
-			: undefined;
-		if (typeof active !== "boolean") return;
-		if (trustedRendererUrl(owner.window.webContents.getURL()))
-			owner.window.webContents.send("kestrel:file-drag", { active });
-	});
-	ipcMain.on("kestrel:user-browser-file-drop", (event, raw) => {
-		const owner = browserOwnerForDragSender(event.sender);
-		if (!owner || owner.window.isDestroyed()) return;
-		if (
-			owner.mainRenderer &&
-			!isTrustedRendererFrame(
-				event.senderFrame,
-				event.sender.mainFrame,
-				trustedRendererUrl,
-			)
-		)
-			return;
-		const paths =
-			raw && typeof raw === "object" && !Array.isArray(raw) &&
-			Array.isArray((raw as { paths?: unknown }).paths)
-				? (raw as { paths: unknown[] }).paths.filter(
-						(value): value is string =>
-							typeof value === "string" &&
-								value.startsWith("/") &&
-								value.length <= 4_096 &&
-								!/[\u0000-\u001f\u007f]/.test(value),
-					  )
-						.slice(0, 8)
-				: [];
-		queueExternalIntake(paths, {
-			kind: "ask",
-			targetService: owner.service,
-			targetWindow: owner.window,
-		});
-	});
-
 	ipcMain.handle("kestrel:request", async (event, raw) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     const isCalculatorOverlayWindow = Boolean(
@@ -2684,6 +2615,12 @@ function registerIpc(): void {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       await requestBrowserService.openDownload(request.downloadId);
+      return { ok: true };
+    }
+    if (request.type === "browser-start-download-drag") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      requestBrowserService.startDownloadDrag(request.downloadId);
       return { ok: true };
     }
     if (request.type === "browser-cancel-download") {

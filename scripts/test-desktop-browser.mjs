@@ -1001,7 +1001,6 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Original tab was not restored after popup close",
 	);
-
 	await activeViewScript("document.querySelector('#download').click() ");
 	state = await waitForBrowserState(
 		(value) =>
@@ -1022,6 +1021,33 @@ try {
 	assert.equal(
 		existsSync(join(userData, "browser-downloads", download.filename)),
 		true,
+	);
+	const tabsBeforeDownloadMenu = (await browserState()).tabs.map((tab) => ({
+		id: tab.id,
+		url: tab.url,
+	}));
+	await page.keyboard.press("Meta+J");
+	const downloadsMenu = page.getByRole("menu", { name: "Downloads" });
+	await downloadsMenu.waitFor();
+	await downloadsMenu.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	const dragDownload = downloadsMenu.getByRole("menuitem", {
+		name: "Drag kestrel-browser.txt to a website upload field",
+	});
+	assert.equal(await dragDownload.getAttribute("draggable"), "true");
+	assert.equal(await page.getByRole("heading", { name: "Downloads", exact: true }).count(), 0);
+	assert.deepEqual(
+		(await browserState()).tabs.map((tab) => ({ id: tab.id, url: tab.url })),
+		tabsBeforeDownloadMenu,
+		"Opening Downloads must not create or select a downloads tab",
+	);
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the Downloads menu",
+	);
+	await page.keyboard.press("Escape");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing the Downloads menu",
 	);
 	const historyTool = await callTool(
 		runtimeSessionId,
@@ -1061,11 +1087,6 @@ try {
 		.first()
 		.waitFor();
 
-	await page.keyboard.press("Meta+J");
-	await page
-		.getByRole("heading", { name: "Downloads", exact: true })
-		.waitFor();
-	await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
 	await openKestrelDestination(page, "Settings");
 	await page
 		.getByRole("heading", { name: "Preferences", exact: true })
@@ -1229,7 +1250,7 @@ try {
 
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, hidden-view routing, and restart restore.\n",
+		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads flyout, search settings, hidden-view routing, and restart restore.\n",
 	);
 } finally {
 	await application?.close();

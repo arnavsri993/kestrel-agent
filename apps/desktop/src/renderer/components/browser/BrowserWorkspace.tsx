@@ -91,7 +91,7 @@ export function BrowserWorkspace({
   const findRef = useRef<HTMLInputElement | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
-  const [fileDragActive, setFileDragActive] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [openChromeMenus, setOpenChromeMenus] = useState({
     tab: false,
     toolbar: false,
@@ -163,11 +163,6 @@ export function BrowserWorkspace({
     );
   }, []);
 
-  useEffect(
-    () => window.kestrel.onFileDrag(({ active }) => setFileDragActive(active)),
-    [],
-  );
-
   const syncBounds = useCallback(() => {
     const node = viewportRef.current;
     if (!node) return;
@@ -216,7 +211,7 @@ export function BrowserWorkspace({
         else if (command === "new-agent") onNewAgent();
         else if (command === "open-commands") onOpenMenu();
         else if (command === "open-history") onOpenHistory();
-        else if (command === "open-downloads") onOpenDownloads();
+        else if (command === "open-downloads") setDownloadsOpen(true);
         else if (command === "open-bookmarks") onOpenBookmarks();
         else if (command === "open-settings") onOpenSettings?.();
         else if (command === "show-shortcuts") onShowShortcuts?.();
@@ -234,7 +229,6 @@ export function BrowserWorkspace({
       onNewAgent,
       onOpenMenu,
       onOpenHistory,
-      onOpenDownloads,
       onOpenBookmarks,
       onOpenSettings,
       onShowShortcuts,
@@ -382,7 +376,7 @@ export function BrowserWorkspace({
         onOpenHistory();
       } else if (key === "j") {
         event.preventDefault();
-        onOpenDownloads();
+        setDownloadsOpen(true);
       } else if (key === "f") {
         const target = event.target as HTMLElement | null;
         if (target?.closest("#runtime-prompt, textarea, input")) return;
@@ -439,7 +433,6 @@ export function BrowserWorkspace({
     forward,
     onNewAgent,
     onOpenBookmarks,
-    onOpenDownloads,
     onOpenHistory,
     onOpenMenu,
     onOpenSettings,
@@ -512,6 +505,8 @@ export function BrowserWorkspace({
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
         showBookmarksBar={state.settings.showBookmarksBar}
         sleepingTabsEnabled={state.settings.sleepingTabsEnabled}
+        downloads={[...state.downloads].reverse()}
+        downloadsOpen={downloadsOpen}
         onToggleBookmarksBar={() =>
           void browser.updateSettings({
             showBookmarksBar: !state.settings.showBookmarksBar,
@@ -530,7 +525,21 @@ export function BrowserWorkspace({
         onReload={() => void reload(activeTab.id)}
         onStop={() => void stop(activeTab.id)}
         onOpenHistory={onOpenHistory}
-        onOpenDownloads={onOpenDownloads}
+        onDownloadsOpenChange={setDownloadsOpen}
+        onStartDownloadDrag={(downloadId) => {
+          void browser.startDownloadDrag(downloadId).catch(() => undefined);
+        }}
+        onOpenDownload={(downloadId) => {
+          setDownloadsOpen(false);
+          void browser.openDownload(downloadId).catch(() => undefined);
+        }}
+        onRevealDownload={(downloadId) => {
+          setDownloadsOpen(false);
+          void browser.revealDownload(downloadId).catch(() => undefined);
+        }}
+        onCancelDownload={(downloadId) => {
+          void browser.cancelDownload(downloadId).catch(() => undefined);
+        }}
         onOpenBookmarks={onOpenBookmarks}
         onOpenFind={() => {
           setFindOpen(true);
@@ -706,17 +715,6 @@ export function BrowserWorkspace({
           </section>
         )}
       </div>
-      {fileDragActive && (
-        <div className="browser-file-drop-veil" aria-hidden="true">
-          <span className="browser-file-drop-mark">
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-back" />
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-mid" />
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-front" />
-          </span>
-          <strong>Release to open in Kestrel</strong>
-          <small>Files become tabs and task context</small>
-        </div>
-      )}
       {activeTab.loading && (
         <span className="browser-loading-line" aria-label="Page loading" />
       )}
