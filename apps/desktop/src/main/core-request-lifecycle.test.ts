@@ -68,6 +68,16 @@ describe("Agent Core request lifecycle", () => {
 		).toBe(30 * 60_000);
 		expect(
 			coreRequestTimeoutMs({
+				type: "writing-generate",
+				purpose: "Draft a note",
+				genre: "email",
+				adaptationStrength: "balanced",
+				includeSensitive: false,
+				providerIds: ["auto"],
+			}),
+		).toBe(30 * 60_000);
+		expect(
+			coreRequestTimeoutMs({
 				type: "orchestration-delegate",
 				parentSessionId: "session-1",
 				title: "Long task",

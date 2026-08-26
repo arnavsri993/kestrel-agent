@@ -1889,6 +1889,10 @@ export class KestrelDatabase {
 		return JSON.parse(value) as T;
 	}
 
+	deletePrivateState(key: string): void {
+		this.db.prepare("DELETE FROM private_runtime_state WHERE key = ?").run(key);
+	}
+
 	private writeAgentConfigurationRecord(
 		kind: AgentConfigurationRecordRow["kind"],
 		id: string,

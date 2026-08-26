@@ -11,6 +11,7 @@ export function coreRequestTimeoutMs(request: CoreRequest): number {
 		request.type === "runtime-retry-agent" ||
 		request.type === "runtime-call-tool" ||
 		request.type === "orchestration-delegate" ||
+		request.type === "writing-generate" ||
 		request.type === "pet-install" ||
 		request.type === "pet-hatch-drafts" ||
 		request.type === "pet-hatch-complete"

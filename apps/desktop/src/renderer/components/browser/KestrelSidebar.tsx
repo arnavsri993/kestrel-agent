@@ -59,6 +59,7 @@ export function KestrelSidebar({
 	onNewTask,
 	onOpenBrowser,
 	onOpenAgent,
+	onOpenWriting,
 	onReviewApprovals,
 	onOpenCapabilities,
 	onOpenSettings,
@@ -75,6 +76,7 @@ export function KestrelSidebar({
 	onNewTask(): void;
 	onOpenBrowser(): void;
 	onOpenAgent(): void;
+	onOpenWriting(): void;
 	onReviewApprovals(): void;
 	onOpenCapabilities(): void;
 	onOpenSettings(): void;
@@ -158,6 +160,13 @@ export function KestrelSidebar({
 					destination="agent"
 					active={activeDestination === "agent"}
 					onClick={onOpenAgent}
+				/>
+				<SidebarNavItem
+					icon="writing"
+					label="Writing Studio"
+					destination="writing"
+					active={activeDestination === "writing"}
+					onClick={onOpenWriting}
 				/>
 				<SidebarNavItem
 					icon="approvals"
