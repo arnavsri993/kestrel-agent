@@ -850,6 +850,27 @@ export function BrowserSettings({
 
         <div className="setting-row browser-setting-row">
           <div className="browser-setting-copy">
+            <strong>Address bar suggestions</strong>
+            <p>Suggests only local history, favorites, and open tabs. Typed text is not sent anywhere for suggestions.</p>
+          </div>
+          <button
+            type="button"
+            className={`switch ${settings.addressBarSuggestionsEnabled ? "on" : ""}`}
+            role="switch"
+            aria-label="Address bar suggestions"
+            aria-checked={settings.addressBarSuggestionsEnabled}
+            onClick={() =>
+              void browser.updateSettings({
+                addressBarSuggestionsEnabled: !settings.addressBarSuggestionsEnabled,
+              })
+            }
+          >
+            <span />
+          </button>
+        </div>
+
+        <div className="setting-row browser-setting-row">
+          <div className="browser-setting-copy">
             <strong>Tab layout</strong>
           </div>
           <select

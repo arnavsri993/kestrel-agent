@@ -38,6 +38,7 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	sleepingTabExcludedDomains: [],
 	memorySaverMode: true,
 	showBookmarksBar: true,
+	addressBarSuggestionsEnabled: true,
 	passwordAutofillEnabled: true,
 	paymentAutofillEnabled: true,
 };

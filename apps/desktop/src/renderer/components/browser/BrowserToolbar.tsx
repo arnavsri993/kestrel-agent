@@ -2,13 +2,29 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   useState,
+  type ChangeEvent,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent,
   type RefObject,
 } from "react";
-import type { InstalledExtension, UserBrowserTab } from "@kestrel/shared-types";
+import type {
+  InstalledExtension,
+  UserBrowserBookmark,
+  UserBrowserHistoryEntry,
+  UserBrowserOriginFavicon,
+  UserBrowserSettings,
+  UserBrowserTab,
+} from "@kestrel/shared-types";
 import { Icon } from "../Icon";
+import {
+  getAddressBarSuggestions,
+  getInlineAddressCompletion,
+  type AddressBarSuggestion,
+  type AddressBarSuggestionFilter,
+} from "./address-bar-suggestions";
 
 type ToolbarMenu = "extensions" | "tools" | "screen" | null;
 
@@ -32,6 +48,14 @@ function readPinnedExtensions(): string[] {
 
 export function BrowserToolbar({
   tab,
+  history,
+  bookmarks,
+  tabs,
+  activeTabId,
+  originFavicons,
+  searchEngine,
+  customSearchName,
+  addressBarSuggestionsEnabled,
   agentOpen,
   addressRef,
   bookmarked,
@@ -41,6 +65,7 @@ export function BrowserToolbar({
   onToggleBookmarksBar,
   onToggleSleepingTabs,
   onNavigate,
+  onSelectTab,
   onBack,
   onForward,
   onReload,
@@ -59,6 +84,14 @@ export function BrowserToolbar({
   onMenuOpenChange,
 }: {
   tab: UserBrowserTab;
+  history: readonly UserBrowserHistoryEntry[];
+  bookmarks: readonly UserBrowserBookmark[];
+  tabs: readonly UserBrowserTab[];
+  activeTabId: string | null;
+  originFavicons: readonly UserBrowserOriginFavicon[];
+  searchEngine: UserBrowserSettings["searchEngine"];
+  customSearchName?: string;
+  addressBarSuggestionsEnabled: boolean;
   agentOpen: boolean;
   addressRef: RefObject<HTMLInputElement | null>;
   bookmarked: boolean;
@@ -68,6 +101,7 @@ export function BrowserToolbar({
   onToggleBookmarksBar(): void;
   onToggleSleepingTabs(): void;
   onNavigate(input: string): void;
+  onSelectTab(tabId: string): void;
   onBack(): void;
   onForward(): void;
   onReload(): void;
@@ -86,6 +120,11 @@ export function BrowserToolbar({
   onMenuOpenChange?(open: boolean): void;
 }) {
   const [address, setAddress] = useState(tab.url);
+  const [suggestionQuery, setSuggestionQuery] = useState("");
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [suggestionFilter, setSuggestionFilter] =
+    useState<AddressBarSuggestionFilter>("all");
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const [openMenu, setOpenMenu] = useState<ToolbarMenu>(null);
   const [extensions, setExtensions] = useState<InstalledExtension[]>([]);
   const [pinnedExtensionIds, setPinnedExtensionIds] = useState(
@@ -94,8 +133,102 @@ export function BrowserToolbar({
   const [toolNotice, setToolNotice] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const suggestionsCloseTimerRef = useRef<number | null>(null);
+  const inlineCompletionRef = useRef<{ typed: string; completed: string } | null>(
+    null,
+  );
 
-  useEffect(() => setAddress(tab.url), [tab.id, tab.url]);
+  const suggestionSource = useMemo(
+    () => ({
+      history,
+      bookmarks,
+      tabs,
+      activeTabId,
+      originFavicons,
+      searchEngineName:
+        customSearchName?.trim() ||
+        ({
+          google: "Google",
+          duckduckgo: "DuckDuckGo",
+          bing: "Bing",
+          brave: "Brave Search",
+          ecosia: "Ecosia",
+          startpage: "Startpage",
+          yahoo: "Yahoo",
+          kagi: "Kagi",
+          qwant: "Qwant",
+          mojeek: "Mojeek",
+          baidu: "Baidu",
+          yandex: "Yandex",
+          custom: "Search",
+        }[searchEngine] ?? "Search"),
+    }),
+    [
+      activeTabId,
+      bookmarks,
+      customSearchName,
+      history,
+      originFavicons,
+      searchEngine,
+      tabs,
+    ],
+  );
+  const suggestions = useMemo(
+    () =>
+      getAddressBarSuggestions({
+        ...suggestionSource,
+        query: suggestionQuery,
+        filter: suggestionFilter,
+      }),
+    [suggestionFilter, suggestionQuery, suggestionSource],
+  );
+  const showSuggestions =
+    suggestionsOpen &&
+    addressBarSuggestionsEnabled &&
+    (suggestions.length > 0 ||
+      suggestionQuery.trim().length > 0 ||
+      suggestionFilter !== "all");
+
+  function clearSuggestionsCloseTimer() {
+    if (suggestionsCloseTimerRef.current === null) return;
+    window.clearTimeout(suggestionsCloseTimerRef.current);
+    suggestionsCloseTimerRef.current = null;
+  }
+
+  function closeSuggestions() {
+    clearSuggestionsCloseTimer();
+    setSuggestionsOpen(false);
+    setSuggestionFilter("all");
+    setActiveSuggestionIndex(-1);
+  }
+
+  function scheduleCloseSuggestions() {
+    clearSuggestionsCloseTimer();
+    suggestionsCloseTimerRef.current = window.setTimeout(() => {
+      suggestionsCloseTimerRef.current = null;
+      closeSuggestions();
+    }, 120);
+  }
+
+  useEffect(() => {
+    setAddress(tab.url);
+    setSuggestionQuery("");
+    setSuggestionsOpen(false);
+    setSuggestionFilter("all");
+    setActiveSuggestionIndex(-1);
+    inlineCompletionRef.current = null;
+  }, [tab.id, tab.url]);
+
+  useEffect(() => {
+    if (addressBarSuggestionsEnabled) return;
+    closeSuggestions();
+    inlineCompletionRef.current = null;
+  }, [addressBarSuggestionsEnabled]);
+
+  useEffect(
+    () => () => clearSuggestionsCloseTimer(),
+    [],
+  );
 
   const loadExtensions = useCallback(async () => {
     try {
@@ -171,12 +304,104 @@ export function BrowserToolbar({
   }, [closeMenu, openMenu]);
 
   useEffect(() => {
-    onMenuOpenChange?.(Boolean(openMenu));
-  }, [onMenuOpenChange, openMenu]);
+    onMenuOpenChange?.(Boolean(openMenu || showSuggestions));
+  }, [onMenuOpenChange, openMenu, showSuggestions]);
+
+  function chooseSuggestion(suggestion: AddressBarSuggestion) {
+    closeSuggestions();
+    inlineCompletionRef.current = null;
+    if (suggestion.kind === "tab" && suggestion.tabId) {
+      onSelectTab(suggestion.tabId);
+      return;
+    }
+    if (suggestion.value.trim()) onNavigate(suggestion.value);
+  }
+
+  function handleAddressChange(
+    event: ChangeEvent<HTMLInputElement>,
+  ): void {
+    const input = event.currentTarget;
+    const typed = input.value;
+    const inputType = (event.nativeEvent as InputEvent).inputType;
+    inlineCompletionRef.current = null;
+    setAddress(typed);
+    setSuggestionQuery(typed);
+    setSuggestionFilter("all");
+    setActiveSuggestionIndex(-1);
+    setSuggestionsOpen(addressBarSuggestionsEnabled);
+
+    // Deletions are an explicit correction signal. Do not immediately put the
+    // same suffix back after Backspace/Delete, which is one of the most
+    // frustrating omnibox behaviours in otherwise good browser UIs.
+    if (inputType?.startsWith("delete")) return;
+    if (!addressBarSuggestionsEnabled) return;
+    const nextSuggestions = getAddressBarSuggestions({
+      ...suggestionSource,
+      query: typed,
+      filter: "all",
+    });
+    const completion = getInlineAddressCompletion(typed, nextSuggestions);
+    if (!completion) return;
+    inlineCompletionRef.current = { typed, completed: completion.value };
+    setAddress(completion.value);
+    window.requestAnimationFrame(() => {
+      if (
+        document.activeElement === input &&
+        input.value === completion.value
+      )
+        input.setSelectionRange(typed.length, completion.value.length);
+    });
+  }
+
+  function handleAddressKeyDown(
+    event: ReactKeyboardEvent<HTMLInputElement>,
+  ): void {
+    if (event.key === "Escape" && (showSuggestions || inlineCompletionRef.current)) {
+      event.preventDefault();
+      const inline = inlineCompletionRef.current;
+      closeSuggestions();
+      inlineCompletionRef.current = null;
+      if (inline) {
+        setAddress(inline.typed);
+        setSuggestionQuery(inline.typed);
+        window.requestAnimationFrame(() => {
+          const input = addressRef.current;
+          if (input) {
+            input.focus();
+            input.setSelectionRange(inline.typed.length, inline.typed.length);
+          }
+        });
+      }
+      return;
+    }
+    if (
+      showSuggestions &&
+      (event.key === "ArrowDown" || event.key === "ArrowUp")
+    ) {
+      event.preventDefault();
+      setActiveSuggestionIndex((current) => {
+        if (suggestions.length === 0) return -1;
+        if (event.key === "ArrowDown")
+          return current < suggestions.length - 1 ? current + 1 : 0;
+        return current > 0 ? current - 1 : suggestions.length - 1;
+      });
+      return;
+    }
+    if (event.key === "Enter" && showSuggestions && activeSuggestionIndex >= 0) {
+      const suggestion = suggestions[activeSuggestionIndex];
+      if (suggestion) {
+        event.preventDefault();
+        chooseSuggestion(suggestion);
+      }
+    }
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (address.trim()) onNavigate(address);
+    const input = inlineCompletionRef.current?.completed ?? address;
+    closeSuggestions();
+    inlineCompletionRef.current = null;
+    if (input.trim()) onNavigate(input);
   }
 
   function toggleMenu(menu: Exclude<ToolbarMenu, null>, event: MenuTriggerEvent) {
@@ -268,53 +493,194 @@ export function BrowserToolbar({
           <Icon name={tab.loading ? "close" : "reload"} />
         </button>
       </div>
-      <form className="browser-address" onSubmit={submit}>
-        <span
-          className={`site-indicator ${secure ? "secure" : ""}`}
-          title={
-            secure
-              ? "Secure connection"
-              : tab.url
-                ? "Connection is not secure"
-                : "Search or address"
-          }
+      <div className="browser-address-shell">
+        <form
+          className={`browser-address ${showSuggestions ? "has-suggestions" : ""}`}
+          onSubmit={submit}
         >
-          <Icon name={secure ? "lock" : "search"} />
-        </span>
-        <label className="sr-only" htmlFor="browser-address-input">
-          Search or enter an address
-        </label>
-        <input
-          id="browser-address-input"
-          ref={addressRef}
-          value={address}
-          placeholder="Search or enter an address"
-          aria-keyshortcuts="Meta+L"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          onFocus={(event) => event.currentTarget.select()}
-          onChange={(event) => setAddress(event.target.value)}
-        />
-        {tab.url && (
-          <button
-            type="button"
-            className={`browser-bookmark ${bookmarked ? "active" : ""}`}
-            aria-label={bookmarked ? "Remove bookmark" : "Bookmark this page"}
-            aria-pressed={bookmarked}
-            aria-keyshortcuts="Meta+D"
-            title={bookmarked ? "Remove bookmark (⌘D)" : "Bookmark this page (⌘D)"}
-            onClick={onToggleBookmark}
+          <span
+            className={`site-indicator ${secure ? "secure" : ""}`}
+            title={
+              secure
+                ? "Secure connection"
+                : tab.url
+                  ? "Connection is not secure"
+                  : "Search or address"
+            }
           >
-            <Icon name="star" />
-          </button>
-        )}
-        {tab.url && (
-          <span className="browser-address-host" aria-hidden="true">
-            {host}
+            <Icon name={secure ? "lock" : "search"} />
           </span>
+          <label className="sr-only" htmlFor="browser-address-input">
+            Search or enter an address
+          </label>
+          <input
+            id="browser-address-input"
+            ref={addressRef}
+            value={address}
+            placeholder="Search or enter an address"
+            role="combobox"
+            aria-autocomplete="both"
+            aria-controls="browser-address-suggestions"
+            aria-expanded={showSuggestions}
+            aria-activedescendant={
+              activeSuggestionIndex >= 0
+                ? `browser-address-suggestion-${activeSuggestionIndex}`
+                : undefined
+            }
+            aria-keyshortcuts="Meta+L"
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+            onFocus={(event) => {
+              clearSuggestionsCloseTimer();
+              const nextQuery = address === tab.url ? "" : address;
+              setSuggestionQuery(nextQuery);
+              setSuggestionFilter("all");
+              setActiveSuggestionIndex(-1);
+              setSuggestionsOpen(addressBarSuggestionsEnabled);
+              inlineCompletionRef.current = null;
+              event.currentTarget.select();
+            }}
+            onBlur={scheduleCloseSuggestions}
+            onKeyDown={handleAddressKeyDown}
+            onChange={handleAddressChange}
+          />
+          {tab.url && (
+            <button
+              type="button"
+              className={`browser-bookmark ${bookmarked ? "active" : ""}`}
+              aria-label={bookmarked ? "Remove bookmark" : "Bookmark this page"}
+              aria-pressed={bookmarked}
+              aria-keyshortcuts="Meta+D"
+              title={bookmarked ? "Remove bookmark (⌘D)" : "Bookmark this page (⌘D)"}
+              onClick={onToggleBookmark}
+            >
+              <Icon name="star" />
+            </button>
+          )}
+          {tab.url && (
+            <span className="browser-address-host" aria-hidden="true">
+              {host}
+            </span>
+          )}
+        </form>
+        {showSuggestions && (
+          <div
+            className="browser-address-suggestions"
+            id="browser-address-suggestions"
+            aria-label="Address suggestions"
+          >
+            <div
+              className="browser-address-suggestion-list"
+              role="listbox"
+              aria-label="Address suggestions"
+            >
+              {suggestions.length === 0 ? (
+                <p className="browser-address-suggestions-empty">
+                  No local matches for this filter.
+                </p>
+              ) : (
+                suggestions.map((suggestion, index) => (
+                  <button
+                    type="button"
+                    role="option"
+                    id={`browser-address-suggestion-${index}`}
+                    className="browser-address-suggestion"
+                    data-active={activeSuggestionIndex === index || undefined}
+                    aria-selected={activeSuggestionIndex === index}
+                    key={suggestion.id}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActiveSuggestionIndex(index)}
+                    onClick={() => chooseSuggestion(suggestion)}
+                  >
+                    <span className="browser-address-suggestion-icon" aria-hidden="true">
+                      {suggestion.faviconDataUrl ? (
+                        <img src={suggestion.faviconDataUrl} alt="" />
+                      ) : (
+                        <Icon
+                          name={
+                            suggestion.kind === "search"
+                              ? "search"
+                              : suggestion.kind === "history"
+                                ? "history"
+                                : suggestion.kind === "bookmark"
+                                  ? "star"
+                                  : suggestion.kind === "tab"
+                                    ? "browser"
+                                    : "globe"
+                          }
+                        />
+                      )}
+                    </span>
+                    <span className="browser-address-suggestion-copy">
+                      <strong>{suggestion.title}</strong>
+                      <small>{suggestion.detail}</small>
+                    </span>
+                    {suggestion.kind === "tab" && suggestion.tabId !== activeTabId ? (
+                      <span className="browser-address-suggestion-action">
+                        Switch to this tab
+                      </span>
+                    ) : suggestion.kind === "tab" ? (
+                      <span className="browser-address-suggestion-action">
+                        Current tab
+                      </span>
+                    ) : (
+                      <Icon name="chevron" />
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+            <div className="browser-address-suggestions-footer">
+              <span className="browser-address-suggestions-local">
+                <Icon name="safety" />
+                Local only
+              </span>
+              <span className="browser-address-suggestions-filter-label">
+                Filter your search:
+              </span>
+              <div className="browser-address-suggestion-filters" role="group" aria-label="Suggestion filters">
+                {(
+                  [
+                    ["history", "History", "history"],
+                    ["bookmarks", "Favorites", "star"],
+                    ["tabs", "Tabs", "browser"],
+                  ] as const
+                ).map(([filter, label, icon]) => (
+                  <button
+                    type="button"
+                    className={suggestionFilter === filter ? "active" : ""}
+                    aria-pressed={suggestionFilter === filter}
+                    key={filter}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setSuggestionFilter(filter);
+                      setActiveSuggestionIndex(-1);
+                      setSuggestionsOpen(true);
+                    }}
+                  >
+                    <Icon name={icon} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="browser-address-suggestions-settings"
+                aria-label="Open browser settings"
+                title="Suggestion settings"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  closeSuggestions();
+                  onOpenSettings();
+                }}
+              >
+                <Icon name="settings" />
+              </button>
+            </div>
+          </div>
         )}
-      </form>
+      </div>
       <div className="browser-toolbar-actions">
         <div className="browser-extension-cluster">
           <button
