@@ -1213,6 +1213,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			transition={{ duration: reduced ? 0 : 0.14 }}
 		>
 			<header className="onboarding-bar">
+				<div
+					className="window-controls-clearance no-drag"
+					aria-hidden="true"
+				/>
 				<nav className="setup-rail" aria-label="Setup progress">
 					<span className="setup-stage-name" aria-live="polite">
 						{setupSteps[step]!.label}

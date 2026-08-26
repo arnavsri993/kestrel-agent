@@ -412,6 +412,10 @@ export function TabStrip({
 			}${dragIntent === "detach" ? " browser-tab-row-detaching" : ""}`}
 			onMouseLeave={handleRowMouseLeave}
 		>
+			<div
+				className="window-controls-clearance no-drag"
+				aria-hidden="true"
+			/>
 			<div className="browser-tab-leading-actions no-drag">
 				<button
 					type="button"
