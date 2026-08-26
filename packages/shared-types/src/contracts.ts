@@ -16,6 +16,10 @@ import {
 	WritingProfileStatusSchema,
 	WritingResultSchema,
 } from "./writing";
+import {
+	BrowserTabFolderNameSchema,
+	BrowserTabFolderNamingGroupSchema,
+} from "./browser-tab-organization";
 
 export const SensitivitySchema = z.enum([
 	"public",
@@ -1705,6 +1709,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("new-tab-greeting"),
 		...NewTabGreetingContextSchema.shape,
 	}),
+	z.object({
+		type: z.literal("browser-name-tab-folders"),
+		groups: z.array(BrowserTabFolderNamingGroupSchema).max(32),
+	}),
 	z.object({ type: z.literal("set-paused"), paused: z.boolean() }),
 	z.object({
 		type: z.literal("set-personality"),
@@ -2308,6 +2316,9 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		snapshot: WorkspaceSnapshotSchema.optional(),
 		answer: z.string().optional(),
 		newTabGreeting: z.string().max(120).optional(),
+		browserTabFolderNames: z.array(BrowserTabFolderNameSchema)
+			.max(32)
+			.optional(),
 		routing: ModelRoutingDecisionSchema.optional(),
 		delegationRouting: DelegatedWorkerRouteSchema.optional(),
 		sessions: z.array(RuntimeSessionSchema).optional(),

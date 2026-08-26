@@ -996,8 +996,9 @@ body:has(.ai-browser-app),
 	font-variant-numeric: tabular-nums;
 }
 
-/* Microsoft-inspired tab organization review dialog. The proposal stays in
-   the renderer until the person presses Group Tabs, so Cancel is lossless. */
+/* Keep the native page out of the way while the review surface is open. The
+   proposal stays in the renderer until the person applies the clusters, so
+   Cancel is lossless. */
 .organize-tabs-overlay {
 	position: fixed;
 	inset: 0;

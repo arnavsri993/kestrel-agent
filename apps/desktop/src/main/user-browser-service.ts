@@ -31,6 +31,8 @@ import {
 	type UserBrowserState,
 	UserBrowserStateSchema,
 	type UserBrowserTab,
+	type BrowserTabFolderName,
+	type BrowserTabFolderNamingGroup,
 	type UserBrowserTabOrganizationApply,
 	type UserBrowserTabOrganizationPreview,
 	type UserBrowserTabFolder,
@@ -38,6 +40,7 @@ import {
 	type FilePreview,
 	type SelectedAttachment,
 	emptyNewTabGreetingActivity,
+	validateBrowserTabFolderName,
 } from "@kestrel/shared-types";
 import {
 	BrowserWindow,
@@ -98,6 +101,7 @@ const MAX_DOWNLOAD_ENTRIES = 500;
 const POPUP_GESTURE_WINDOW_MS = 1_500;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
 const MAX_BOOKMARKS = 2_000;
+const MAX_TAB_FOLDER_NAMING_TABS = 8;
 const ALWAYS_ALLOW_PERMISSIONS = new Set([
 	"fullscreen",
 	"clipboard-sanitized-write",
@@ -127,6 +131,7 @@ export interface UserBrowserServiceOptions {
 	onPaymentPrompt?(prompt: PaymentPrompt | null): void;
 	onCommand?(command: UserBrowserCommand): void;
 	onLastTabClosed?(): void;
+	nameTabFolders?(groups: BrowserTabFolderNamingGroup[]): Promise<BrowserTabFolderName[]>;
 	confirmSitePermission?(origin: string, permission: string): Promise<boolean>;
 }
 
@@ -798,6 +803,7 @@ export class UserBrowserService {
 	private readonly paymentCardVault: PaymentCardVault | undefined;
 	private readonly onCommand?: UserBrowserServiceOptions["onCommand"];
 	private readonly onLastTabClosed?: UserBrowserServiceOptions["onLastTabClosed"];
+	private readonly nameTabFolders?: UserBrowserServiceOptions["nameTabFolders"];
 	private readonly recentlyClosedTabs: Array<{ url: string; title: string }> = [];
 	private sleepingTabsInterval?: ReturnType<typeof setInterval>;
 	private state: UserBrowserState;
@@ -830,6 +836,7 @@ export class UserBrowserService {
 		this.paymentCardVault = options.paymentCardVault;
 		this.onCommand = options.onCommand;
 		this.onLastTabClosed = options.onLastTabClosed;
+		this.nameTabFolders = options.nameTabFolders;
 		this.confirmSitePermission =
 			options.confirmSitePermission ??
 			(async (origin, permission) => {
@@ -1438,9 +1445,51 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
-	previewOrganizeTabs(): UserBrowserTabOrganizationPreview {
+	async previewOrganizeTabs(): Promise<UserBrowserTabOrganizationPreview> {
 		this.assertAvailable();
-		return organizeBrowserTabs(this.state.tabs, this.now);
+		const organized = organizeBrowserTabs(this.state.tabs, this.now);
+		if (!this.nameTabFolders || organized.tabFolders.length === 0)
+			return organized;
+
+		const namingGroups: BrowserTabFolderNamingGroup[] = organized.tabFolders.map(
+			(folder) => ({
+				id: folder.id,
+				fallbackName: folder.name,
+				tabs: organized.tabs
+					.filter((tab) => tab.tabFolderId === folder.id)
+					.slice(0, MAX_TAB_FOLDER_NAMING_TABS)
+					.map((tab) => ({
+						title:
+							tab.title
+								.normalize("NFKC")
+								.replace(/[\u0000-\u001f\u007f]/gu, " ")
+								.replace(/\s+/gu, " ")
+								.trim()
+								.slice(0, 160) || "Untitled page",
+						host: pageDomain(tab.url) ?? "unknown site",
+					})),
+			}),
+		);
+		let names: BrowserTabFolderName[] = [];
+		try {
+			names = await this.nameTabFolders(namingGroups);
+		} catch {
+			// AI labels are best effort. Keep the deterministic category labels when
+			// the configured provider is unavailable or returns an error.
+		}
+		const folderIds = new Set(organized.tabFolders.map((folder) => folder.id));
+		const namesById = new Map<string, string>();
+		for (const item of names) {
+			const name = validateBrowserTabFolderName(item.name);
+			if (folderIds.has(item.id) && name) namesById.set(item.id, name);
+		}
+		return {
+			...organized,
+			tabFolders: organized.tabFolders.map((folder) => ({
+				...folder,
+				name: namesById.get(folder.id) ?? folder.name,
+			})),
+		};
 	}
 
 	applyTabOrganization(input: UserBrowserTabOrganizationApply): UserBrowserState {
@@ -1490,8 +1539,8 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
-	organizeTabs(): UserBrowserState {
-		const organized = this.previewOrganizeTabs();
+	async organizeTabs(): Promise<UserBrowserState> {
+		const organized = await this.previewOrganizeTabs();
 		return this.applyTabOrganization({
 			tabOrder: organized.tabs.map((tab) => tab.id),
 			assignments: organized.tabs.map(({ id, tabFolderId }) => ({

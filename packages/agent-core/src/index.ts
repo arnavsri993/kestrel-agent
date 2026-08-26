@@ -6,6 +6,7 @@ import { mayExecute } from "@kestrel/policy-engine";
 import type {
 	AgentState,
 	Approval,
+	BrowserTabFolderNamingGroup,
 	CoreRequest,
 	CoreResponse,
 	MemoryRecord,
@@ -132,6 +133,12 @@ import {
 	NEW_TAB_GREETING_SYSTEM_PROMPT,
 	newTabGreetingUserPrompt,
 } from "./new-tab-greeting";
+import {
+	BROWSER_TAB_FOLDER_NAMING_SYSTEM_PROMPT,
+	browserTabFolderNamingPrompt,
+	fallbackBrowserTabFolderNames,
+	parseBrowserTabFolderNames,
+} from "./browser-tab-folder-naming";
 
 function persistedCompactionCount(value: unknown): number {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
@@ -810,7 +817,7 @@ export class AgentCore {
 		}
 	}
 
-	private estimateEphemeralGreetingCost(
+	private estimateEphemeralModelCost(
 		attempts: ProviderAttempt[],
 		result?: ModelResult,
 	): number {
@@ -831,7 +838,7 @@ export class AgentCore {
 		return actualCostUsd;
 	}
 
-	private finishNewTabGreetingRoute(
+	private finishEphemeralRoute(
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		status: "completed" | "failed",
 		result?: ModelResult,
@@ -912,14 +919,14 @@ export class AgentCore {
 					signal: AbortSignal.timeout(8_000),
 				},
 			);
-			const actualCostUsd = this.estimateEphemeralGreetingCost(
+			const actualCostUsd = this.estimateEphemeralModelCost(
 				poolResult.attempts,
 				poolResult.result,
 			);
 			this.usageGovernor.recordEphemeralCost(actualCostUsd);
 			const greeting = validateNewTabGreeting(poolResult.result.text);
 			if (!greeting) {
-				this.finishNewTabGreetingRoute(
+				this.finishEphemeralRoute(
 					automatic,
 					"failed",
 					poolResult.result,
@@ -927,7 +934,7 @@ export class AgentCore {
 				);
 				throw new Error("The generated New Tab greeting failed its safety checks.");
 			}
-			this.finishNewTabGreetingRoute(
+			this.finishEphemeralRoute(
 				automatic,
 				"completed",
 				poolResult.result,
@@ -940,19 +947,112 @@ export class AgentCore {
 			};
 		} catch (error) {
 			if (error instanceof ProviderPoolError) {
-				const actualCostUsd = this.estimateEphemeralGreetingCost(
+				const actualCostUsd = this.estimateEphemeralModelCost(
 					error.attempts,
 				);
-				this.finishNewTabGreetingRoute(
+				this.finishEphemeralRoute(
 					automatic,
 					"failed",
 					undefined,
 					actualCostUsd,
 				);
 			} else if (!(error instanceof Error) || !error.message.includes("safety checks")) {
-				this.finishNewTabGreetingRoute(automatic, "failed");
+				this.finishEphemeralRoute(automatic, "failed");
 			}
 			throw error;
+		} finally {
+			lease?.release();
+		}
+	}
+
+	private async generateBrowserTabFolderNames(
+		groups: BrowserTabFolderNamingGroup[],
+	): Promise<CoreResponse> {
+		const fallback = fallbackBrowserTabFolderNames(groups);
+		if (groups.length === 0 || this.providerPool.list().length === 0)
+			return { ok: true, browserTabFolderNames: fallback };
+
+		const prompt = browserTabFolderNamingPrompt(groups);
+		let automatic: ReturnType<AgentCore["automaticRoute"]>;
+		try {
+			automatic = this.automaticRoute(
+				"browser-tab-folder-names",
+				"Generate concise, topic-specific labels for related browser-tab clusters.",
+				["auto"],
+			);
+		} catch {
+			// Naming is an enhancement to the deterministic grouping plan. A missing
+			// or unavailable model must never prevent the user from reviewing tabs.
+			return { ok: true, browserTabFolderNames: fallback };
+		}
+
+		let lease: { release(): void } | undefined;
+		try {
+			lease = this.usageGovernor.acquire();
+			const poolResult = await this.providerPool.complete(
+				{
+					model: automatic.execution.model,
+					reasoningEffort: automatic.route.reasoningEffort,
+					serviceTier: automatic.route.serviceTier,
+					messages: [
+						{
+							role: "system",
+							content: textContent(BROWSER_TAB_FOLDER_NAMING_SYSTEM_PROMPT),
+						},
+						{ role: "user", content: textContent(prompt) },
+					],
+					maxOutputTokens: Math.min(automatic.maximumOutputTokens, 512),
+					temperature: Math.min(automatic.temperature, 0.3),
+					metadata: { surface: "browser-tab-folder-names" },
+				},
+				{
+					providerIds: automatic.execution.providerIds,
+					providerModels: automatic.execution.providerModels,
+					automaticRouting: false,
+					canAttempt: (_providerId, _model, attemptIndex) =>
+						this.usageGovernor.canAttempt(attemptIndex),
+					providerAllowed: (providerId, poolId) =>
+						this.providerAllowed(providerId, poolId),
+					signal: AbortSignal.timeout(8_000),
+				},
+			);
+			const actualCostUsd = this.estimateEphemeralModelCost(
+				poolResult.attempts,
+				poolResult.result,
+			);
+			this.usageGovernor.recordEphemeralCost(actualCostUsd);
+			const names = parseBrowserTabFolderNames(
+				poolResult.result.text,
+				groups,
+			);
+			if (!names) {
+				this.finishEphemeralRoute(
+					automatic,
+					"failed",
+					poolResult.result,
+					actualCostUsd,
+				);
+				return { ok: true, browserTabFolderNames: fallback };
+			}
+			this.finishEphemeralRoute(
+				automatic,
+				"completed",
+				poolResult.result,
+				actualCostUsd,
+			);
+			return { ok: true, browserTabFolderNames: names };
+		} catch (error) {
+			if (error instanceof ProviderPoolError) {
+				this.finishEphemeralRoute(
+					automatic,
+					"failed",
+					undefined,
+					this.estimateEphemeralModelCost(error.attempts),
+				);
+			} else {
+				this.finishEphemeralRoute(automatic, "failed");
+			}
+			return { ok: true, browserTabFolderNames: fallback };
 		} finally {
 			lease?.release();
 		}
@@ -1448,6 +1548,8 @@ export class AgentCore {
 					};
 				case "new-tab-greeting":
 					return await this.generateNewTabGreeting(request);
+				case "browser-name-tab-folders":
+					return await this.generateBrowserTabFolderNames(request.groups);
 				case "set-paused":
 					return { ok: true, snapshot: this.setPaused(request.paused) };
 				case "set-personality":

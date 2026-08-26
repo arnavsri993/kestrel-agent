@@ -271,6 +271,138 @@ describe("core agent request path", () => {
 		await core.close();
 	});
 
+	it("uses an AI-generated label for each tab cluster without sending full URLs", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let received:
+			| {
+					messages: Array<{
+						role: string;
+						content: Array<{ type: string; text?: string }>;
+					}>;
+			  }
+			| undefined;
+		const groups = [
+			{
+				id: "tab-folder-00000000-0000-0000-0000-000000000001",
+				fallbackName: "Work",
+				tabs: [{ title: "Product launch roadmap", host: "notion.so" }],
+			},
+			{
+				id: "tab-folder-00000000-0000-0000-0000-000000000002",
+				fallbackName: "Research",
+				tabs: [{ title: "Browser automation paper", host: "google.com" }],
+			},
+		];
+		const provider: ModelProvider = {
+			id: "tab-label-provider",
+			defaultModel: "tab-label-model",
+			capabilities: {
+				streaming: true,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			profileHints: { features: { reasoningLevels: true } },
+			complete: async (request) => {
+				received = request;
+				return {
+					providerId: "tab-label-provider",
+					model: request.model,
+					text: JSON.stringify([
+						{ id: groups[0]!.id, name: "Product launch" },
+						{ id: groups[1]!.id, name: "Browser research" },
+					]),
+					toolCalls: [],
+					usage: { inputTokens: 40, outputTokens: 12 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const core = new AgentCore({
+			database,
+			modelProviders: [provider],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+
+		const response = await core.handle({
+			type: "browser-name-tab-folders",
+			groups,
+		});
+
+		expect(response).toEqual({
+			ok: true,
+			browserTabFolderNames: [
+				{ id: groups[0]!.id, name: "Product launch" },
+				{ id: groups[1]!.id, name: "Browser research" },
+			],
+		});
+		const userPrompt = received?.messages.find(
+			(message) => message.role === "user",
+		)?.content[0]?.text;
+		expect(userPrompt).toContain("notion.so");
+		expect(userPrompt).not.toContain("https://");
+		expect(userPrompt).not.toContain("Product launch roadmap?full-url");
+		await core.close();
+	});
+
+	it("falls back to deterministic cluster labels when AI output is unsafe", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const provider: ModelProvider = {
+			id: "unsafe-tab-label-provider",
+			defaultModel: "unsafe-tab-label-model",
+			capabilities: {
+				streaming: true,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async (request) => ({
+				providerId: "unsafe-tab-label-provider",
+				model: request.model,
+				text: JSON.stringify([
+					{
+						id: "tab-folder-00000000-0000-0000-0000-000000000003",
+						name: "https://not-a-folder.example",
+					},
+				]),
+				toolCalls: [],
+				usage: { inputTokens: 10, outputTokens: 4 },
+				finishReason: "stop",
+			}),
+		};
+		const core = new AgentCore({
+			database,
+			modelProviders: [provider],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+
+		const response = await core.handle({
+			type: "browser-name-tab-folders",
+			groups: [
+				{
+					id: "tab-folder-00000000-0000-0000-0000-000000000003",
+					fallbackName: "Development",
+					tabs: [{ title: "Repository issues", host: "github.com" }],
+				},
+			],
+		});
+
+		expect(response).toEqual({
+			ok: true,
+			browserTabFolderNames: [
+				{
+					id: "tab-folder-00000000-0000-0000-0000-000000000003",
+					name: "Development",
+				},
+			],
+		});
+		await core.close();
+	});
+
 	it("passes a manual thinking level through to the selected provider", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		let received: { model?: string; reasoningEffort?: string } | undefined;

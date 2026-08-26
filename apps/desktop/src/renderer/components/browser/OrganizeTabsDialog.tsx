@@ -176,7 +176,7 @@ export function OrganizeTabsDialog({
 		if (!folder) return cancelEdit();
 		const name = editingName.trim();
 		if (!name) {
-			setError("Give this group a name before saving.");
+			setError("Give this cluster a name before saving.");
 			return;
 		}
 		setOrganization((current) => ({
@@ -238,15 +238,15 @@ export function OrganizeTabsDialog({
 			>
 				<header className="organize-tabs-dialog-header">
 					<div>
-						<h2 id="organize-tabs-title">Organize Tabs</h2>
+						<h2 id="organize-tabs-title">Tab clusters</h2>
 						<p id="organize-tabs-description">
-							Review the groups Kestrel found. Your tab order stays unchanged.
+							Kestrel suggests labels from tab titles and site names. Review the clusters before applying them.
 						</p>
 					</div>
 					<button
 						type="button"
 						className="organize-tabs-close"
-						aria-label="Close Organize Tabs"
+						aria-label="Close tab clusters"
 						data-organize-tabs-initial-focus={
 							organization.tabFolders.length === 0 ? true : undefined
 						}
@@ -258,12 +258,12 @@ export function OrganizeTabsDialog({
 				</header>
 
 				<section className="organize-tabs-feedback" aria-label="Organizer feedback">
-					<strong>Done! How Did We Do?</strong>
+					<strong>Does this grouping fit?</strong>
 					<div>
 						<button
 							type="button"
 							className={feedback === "up" ? "selected" : ""}
-							aria-label="Organize Tabs was helpful"
+							aria-label="This grouping works"
 							aria-pressed={feedback === "up"}
 							onClick={() => setFeedback("up")}
 						>
@@ -272,7 +272,7 @@ export function OrganizeTabsDialog({
 						<button
 							type="button"
 							className={feedback === "down" ? "selected" : ""}
-							aria-label="Organize Tabs needs improvement"
+							aria-label="This grouping needs changes"
 							aria-pressed={feedback === "down"}
 							onClick={() => setFeedback("down")}
 						>
@@ -281,12 +281,12 @@ export function OrganizeTabsDialog({
 					</div>
 				</section>
 
-				<div className="organize-tabs-scroll" role="list" aria-label="Suggested tab groups">
+				<div className="organize-tabs-scroll" role="list" aria-label="Suggested tab clusters">
 					{organization.tabFolders.length === 0 ? (
 						<div className="organize-tabs-empty" role="status">
 							<Icon name="folder" />
-							<strong>No related groups found</strong>
-							<span>Open a few tabs about the same topic and try again.</span>
+							<strong>No useful clusters yet</strong>
+							<span>Open a few related pages and try again.</span>
 						</div>
 					) : (
 						organization.tabFolders.map((folder) => {
@@ -299,7 +299,7 @@ export function OrganizeTabsDialog({
 									key={folder.id}
 									className={`organize-tabs-group organize-tabs-group-${folder.color}`}
 									role="listitem"
-									aria-label={`${folder.name} group`}
+									aria-label={`${folder.name} cluster`}
 								>
 									<div className="organize-tabs-group-header">
 										<button
@@ -324,7 +324,7 @@ export function OrganizeTabsDialog({
 										<button
 											type="button"
 											className="organize-tabs-edit"
-											aria-label={`Edit ${folder.name} group`}
+											aria-label={`Edit ${folder.name} cluster`}
 											onClick={() => beginEdit(folder.id)}
 										>
 											<Icon name="writing" />
@@ -336,7 +336,7 @@ export function OrganizeTabsDialog({
 											onSubmit={saveEdit}
 										>
 											<label>
-												<span>Group name</span>
+												<span>Cluster name</span>
 												<input
 													ref={editInputRef}
 													value={editingName}
@@ -351,7 +351,7 @@ export function OrganizeTabsDialog({
 													}}
 												/>
 											</label>
-											<div className="organize-tabs-color-picker" role="group" aria-label="Group color">
+											<div className="organize-tabs-color-picker" role="group" aria-label="Cluster color">
 												{FOLDER_COLORS.map((color) => (
 													<button
 														key={color}
@@ -401,7 +401,7 @@ export function OrganizeTabsDialog({
 					<p className="organize-tabs-unassigned" role="status">
 						<Icon name="info" />
 						<span>
-							{ungroupedCount} tab{ungroupedCount === 1 ? "" : "s"} will stay in the current order.
+							{ungroupedCount} tab{ungroupedCount === 1 ? "" : "s"} will stay where they are.
 						</span>
 					</p>
 				)}
@@ -421,7 +421,7 @@ export function OrganizeTabsDialog({
 						onClick={() => void apply()}
 						disabled={busy}
 					>
-						{busy ? "Grouping…" : "Group Tabs"}
+						{busy ? "Applying…" : "Apply clusters"}
 					</button>
 				</footer>
 			</motion.div>

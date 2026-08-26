@@ -1283,19 +1283,19 @@ try {
 	);
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	await page
-		.getByRole("menuitem", { name: "Organize Tabs", exact: true })
+		.getByRole("menuitem", { name: "Cluster related tabs", exact: true })
 		.click();
-	const organizeDialog = page.getByRole("dialog", { name: "Organize Tabs" });
+	const organizeDialog = page.getByRole("dialog", { name: "Tab clusters" });
 	await organizeDialog.waitFor();
 	assert.equal(
-		await organizeDialog.getByText("Done! How Did We Do?", { exact: true }).count(),
+		await organizeDialog.getByText("Does this grouping fit?", { exact: true }).count(),
 		1,
 	);
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over the organize tabs dialog",
 	);
-	await organizeDialog.getByRole("button", { name: "Close Organize Tabs" }).click();
+	await organizeDialog.getByRole("button", { name: "Close tab clusters" }).click();
 	await organizeDialog.waitFor({ state: "detached" });
 	assert.deepEqual(
 		(await browserState()).tabs.map((tab) => tab.id),
@@ -1308,14 +1308,14 @@ try {
 	);
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	await page
-		.getByRole("menuitem", { name: "Organize Tabs", exact: true })
+		.getByRole("menuitem", { name: "Cluster related tabs", exact: true })
 		.click();
 	await organizeDialog.waitFor();
 	await organizeDialog.getByRole("button", { name: /^Edit / }).first().click();
-	await organizeDialog.getByLabel("Group name").fill("Local Pages");
+	await organizeDialog.getByLabel("Cluster name").fill("Local Pages");
 	await organizeDialog.getByRole("button", { name: "Rose", exact: true }).click();
 	await organizeDialog.getByRole("button", { name: "Save", exact: true }).click();
-	await organizeDialog.getByRole("button", { name: "Group Tabs", exact: true }).click();
+	await organizeDialog.getByRole("button", { name: "Apply clusters", exact: true }).click();
 	await organizeDialog.waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(value) => value.tabFolders.some((folder) => folder.name === "Local Pages"),
