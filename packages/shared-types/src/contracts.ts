@@ -2545,6 +2545,40 @@ export const UserBrowserTabSchema = z.object({
 });
 export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
 
+/**
+ * A proposed tab organization is intentionally separate from browser state.
+ * The renderer can review and edit the proposal without mutating the
+ * profile; the main process remains the only place that applies it.
+ */
+export const UserBrowserTabOrganizationPreviewSchema = z.object({
+	tabs: z.array(UserBrowserTabSchema).max(32),
+	tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+});
+export type UserBrowserTabOrganizationPreview = z.infer<
+	typeof UserBrowserTabOrganizationPreviewSchema
+>;
+
+export const UserBrowserTabOrganizationApplySchema = z.object({
+	tabOrder: z
+		.array(z.string().regex(/^tab-[a-f0-9-]{36}$/))
+		.max(32),
+	assignments: z
+		.array(
+			z.object({
+				tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+				tabFolderId: z
+					.string()
+					.regex(/^tab-folder-[a-f0-9-]{36}$/)
+					.optional(),
+			}),
+		)
+		.max(32),
+	tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+});
+export type UserBrowserTabOrganizationApply = z.infer<
+	typeof UserBrowserTabOrganizationApplySchema
+>;
+
 export const PasswordEntryIdSchema = z.string().regex(/^password-[a-f0-9-]{36}$/);
 export type PasswordEntryId = z.infer<typeof PasswordEntryIdSchema>;
 
@@ -3212,6 +3246,25 @@ export const RendererRequestSchema = z.union([
 		toIndex: z.number().int().min(0).max(31),
 	}),
 	z.object({ type: z.literal("browser-organize-tabs") }),
+	z.object({ type: z.literal("browser-preview-organize-tabs") }),
+	z.object({
+		type: z.literal("browser-apply-tab-organization"),
+		tabOrder: z
+			.array(z.string().regex(/^tab-[a-f0-9-]{36}$/))
+			.max(32),
+		assignments: z
+			.array(
+				z.object({
+					tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+					tabFolderId: z
+						.string()
+						.regex(/^tab-folder-[a-f0-9-]{36}$/)
+						.optional(),
+				}),
+			)
+			.max(32),
+		tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+	}),
 	z.object({
 		type: z.literal("browser-detach-tab"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
@@ -3611,6 +3664,10 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 export type RendererResponse =
 	| CoreResponse
 	| { ok: true; browserState: UserBrowserState }
+	| {
+			ok: true;
+			browserOrganization: UserBrowserTabOrganizationPreview;
+	  }
 	| {
 			ok: true;
 			browserState: UserBrowserState;

@@ -8798,6 +8798,7 @@ export function App() {
 	);
 	const [showDefaultBrowserPrompt, setShowDefaultBrowserPrompt] = useState(false);
 	const [showShortcuts, setShowShortcuts] = useState(false);
+	const [organizeTabsRequestId, setOrganizeTabsRequestId] = useState(0);
 	const [greetingName, setGreetingName] = useState<string | undefined>();
 	const reduced = useReducedMotion();
 
@@ -9338,7 +9339,9 @@ export function App() {
 			return;
 		}
 		if (destination === "organize-tabs") {
-			void browser.organizeTabs().then(() => openBrowserWorkspace());
+			void openBrowserWorkspace().then(() =>
+				setOrganizeTabsRequestId((current) => current + 1),
+			);
 			return;
 		}
 		if (destination === "connections") {
@@ -9498,6 +9501,7 @@ export function App() {
 						onAskFile={askFileFromTab}
 						sessions={runtimeSessions}
 						onOpenSession={openSidebarSession}
+						organizeTabsRequestId={organizeTabsRequestId}
 						{...(appPage ? { appPage } : {})}
 					/>
 				</section>

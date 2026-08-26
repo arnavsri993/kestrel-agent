@@ -31,6 +31,9 @@ import {
 	type UserBrowserState,
 	UserBrowserStateSchema,
 	type UserBrowserTab,
+	type UserBrowserTabOrganizationApply,
+	type UserBrowserTabOrganizationPreview,
+	type UserBrowserTabFolder,
 	type InstalledExtension,
 	type FilePreview,
 	type SelectedAttachment,
@@ -1435,12 +1438,68 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
-	organizeTabs(): UserBrowserState {
-		const organized = organizeBrowserTabs(this.state.tabs, this.now);
-		this.state.tabs = organized.tabs;
-		this.state.tabFolders = organized.tabFolders;
+	previewOrganizeTabs(): UserBrowserTabOrganizationPreview {
+		this.assertAvailable();
+		return organizeBrowserTabs(this.state.tabs, this.now);
+	}
+
+	applyTabOrganization(input: UserBrowserTabOrganizationApply): UserBrowserState {
+		this.assertAvailable();
+		const currentTabs = new Map(this.state.tabs.map((tab) => [tab.id, tab]));
+		const folderIds = new Set(input.tabFolders.map((folder) => folder.id));
+		const assignments = new Map(
+			input.assignments.map((assignment) => [
+				assignment.tabId,
+				assignment.tabFolderId,
+			]),
+		);
+		const orderedIds = [...new Set(input.tabOrder)];
+		const orderedTabIds = new Set<string>();
+		const orderedTabs = orderedIds.flatMap((tabId) => {
+			const tab = currentTabs.get(tabId);
+			if (!tab) return [];
+			orderedTabIds.add(tabId);
+			const tabFolderId = assignments.get(tabId);
+			return [
+				{
+					...tab,
+					tabFolderId:
+						!tab.pinned && tabFolderId && folderIds.has(tabFolderId)
+							? tabFolderId
+							: undefined,
+				},
+			];
+		});
+		const remainingTabs = this.state.tabs
+			.filter((tab) => !orderedTabIds.has(tab.id))
+			.map((tab) => ({ ...tab, tabFolderId: undefined }));
+		const usedFolderIds = new Set(
+			[...orderedTabs, ...remainingTabs].flatMap((tab) =>
+				tab.tabFolderId ? [tab.tabFolderId] : [],
+			),
+		);
+		const tabFolders: UserBrowserTabFolder[] = input.tabFolders
+			.filter((folder) => usedFolderIds.has(folder.id))
+			.map((folder) => ({
+				...folder,
+				name: folder.name.trim().slice(0, 80) || "Untitled group",
+			}));
+		this.state.tabs = [...orderedTabs, ...remainingTabs];
+		this.state.tabFolders = tabFolders;
 		this.commit();
 		return this.getState();
+	}
+
+	organizeTabs(): UserBrowserState {
+		const organized = this.previewOrganizeTabs();
+		return this.applyTabOrganization({
+			tabOrder: organized.tabs.map((tab) => tab.id),
+			assignments: organized.tabs.map(({ id, tabFolderId }) => ({
+				tabId: id,
+				...(tabFolderId ? { tabFolderId } : {}),
+			})),
+			tabFolders: organized.tabFolders,
+		});
 	}
 
 	async detachTab(tabId: string): Promise<UserBrowserState> {

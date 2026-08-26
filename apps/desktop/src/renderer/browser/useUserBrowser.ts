@@ -6,6 +6,8 @@ import type {
 	UserBrowserPageContext,
 	UserBrowserSettings,
 	UserBrowserState,
+	UserBrowserTabOrganizationApply,
+	UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -58,6 +60,10 @@ export interface UserBrowserController {
 	closeOtherTabs(tabId: string): Promise<void>;
 	moveTab(tabId: string, toIndex: number): Promise<void>;
 	organizeTabs(): Promise<void>;
+	previewOrganizeTabs(): Promise<UserBrowserTabOrganizationPreview>;
+	applyTabOrganization(
+		organization: UserBrowserTabOrganizationApply,
+	): Promise<void>;
 	detachTab(tabId: string): Promise<void>;
 	findInPage(
 		tabId: string,
@@ -411,6 +417,22 @@ export function useUserBrowser(): UserBrowserController {
 		() => requestState({ type: "browser-organize-tabs" }),
 		[requestState],
 	);
+	const previewOrganizeTabs = useCallback(async () => {
+		const response = await window.kestrel.request({
+			type: "browser-preview-organize-tabs",
+		});
+		if (!response.ok || !("browserOrganization" in response))
+			throw new Error(responseError(response));
+		return response.browserOrganization;
+	}, []);
+	const applyTabOrganization = useCallback(
+		(organization: UserBrowserTabOrganizationApply) =>
+			requestState({
+				type: "browser-apply-tab-organization",
+				...organization,
+			}),
+		[requestState],
+	);
 	const detachTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-detach-tab", tabId }),
 		[requestState],
@@ -507,6 +529,8 @@ export function useUserBrowser(): UserBrowserController {
 			closeOtherTabs,
 			moveTab,
 			organizeTabs,
+			previewOrganizeTabs,
+			applyTabOrganization,
 			detachTab,
 			findInPage,
 			stopFindInPage,
@@ -553,6 +577,8 @@ export function useUserBrowser(): UserBrowserController {
 			closeOtherTabs,
 			moveTab,
 			organizeTabs,
+			previewOrganizeTabs,
+			applyTabOrganization,
 			detachTab,
 			findInPage,
 			stopFindInPage,
