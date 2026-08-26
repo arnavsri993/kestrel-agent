@@ -9290,6 +9290,7 @@ export function App() {
 		(tab) => tab.id === browser.state?.activeTabId,
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
+	const showKestrelSidebar = activeBrowserTab?.url === "";
 	const activeFileAttachment = activeBrowserTab?.file
 		? attachmentForExternalFile(activeBrowserTab.file)
 		: undefined;
@@ -9411,36 +9412,38 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${appPageId === "agent" ? " agent-full-page" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${appPageId === "agent" ? " agent-full-page" : ""}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0 }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
-				<KestrelSidebar
-					activeDestination={
-						activeSidebarDestination === "browser" ||
-						activeSidebarDestination === "agent" ||
-						activeSidebarDestination === "approvals" ||
-						activeSidebarDestination === "settings"
-							? activeSidebarDestination
-							: "capabilities"
-					}
-					activeSessionId={activeRuntimeSessionId}
-					agentName={activeAgentName}
-					pendingApprovals={pendingApprovalCount}
-					sessions={runtimeSessions}
-					projects={availableWorkspaceGrants(workspaceGrants)}
-					onNewTask={() => startNewAgent()}
-					onOpenBrowser={openBrowser}
-					onOpenAgent={openAgent}
-					onReviewApprovals={reviewApprovals}
-					onOpenCapabilities={openCommandCenter}
-					onOpenSettings={() => openSettings("browser")}
-					onOpenProject={(project) => startNewAgent("", project.path)}
-					onOpenSession={openSidebarSession}
-					onOpenTaskHistory={() => void openAppPage("work")}
-				/>
+				{showKestrelSidebar && (
+					<KestrelSidebar
+						activeDestination={
+							activeSidebarDestination === "browser" ||
+							activeSidebarDestination === "agent" ||
+							activeSidebarDestination === "approvals" ||
+							activeSidebarDestination === "settings"
+								? activeSidebarDestination
+								: "capabilities"
+						}
+						activeSessionId={activeRuntimeSessionId}
+						agentName={activeAgentName}
+						pendingApprovals={pendingApprovalCount}
+						sessions={runtimeSessions}
+						projects={availableWorkspaceGrants(workspaceGrants)}
+						onNewTask={() => startNewAgent()}
+						onOpenBrowser={openBrowser}
+						onOpenAgent={openAgent}
+						onReviewApprovals={reviewApprovals}
+						onOpenCapabilities={openCommandCenter}
+						onOpenSettings={() => openSettings("browser")}
+						onOpenProject={(project) => startNewAgent("", project.path)}
+						onOpenSession={openSidebarSession}
+						onOpenTaskHistory={() => void openAppPage("work")}
+					/>
+				)}
 				<section className="browser-main-plane">
 					{deepLinkNotice && (
 						<small className="browser-notice" role="status">

@@ -115,6 +115,17 @@ async function browserState() {
 	return response.browserState;
 }
 
+async function selectNewTab() {
+	const state = await browserState();
+	const newTab = state.tabs.find((tab) => tab.url === "");
+	assert(newTab, "The browser test has no New Tab to select");
+	await page.evaluate(
+		async (tabId) =>
+			window.kestrel.request({ type: "browser-select-tab", tabId }),
+		newTab.id,
+	);
+}
+
 async function waitForBrowserState(predicate, label) {
 	const deadline = Date.now() + 30_000;
 	let latest;
@@ -186,7 +197,10 @@ async function waitForNativeViewInAnyWindow(expectedUrl, label) {
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
 }
 
-async function assertBrowserChromeLayout({ vertical = false } = {}) {
+async function assertBrowserChromeLayout({
+	vertical = false,
+	sidebarVisible = true,
+} = {}) {
 	const layout = await page.evaluate(() => {
 		const bounds = (selector) => {
 			const node = document.querySelector(selector);
@@ -224,8 +238,12 @@ async function assertBrowserChromeLayout({ vertical = false } = {}) {
 	assert(layout.app);
 	assert(tabs);
 	assert(layout.toolbar);
-	assert(layout.kestrel);
 	assert(layout.viewport);
+	assert.equal(
+		Boolean(layout.kestrel),
+		sidebarVisible,
+		`Kestrel navigation visibility did not match the active tab: expected ${sidebarVisible}`,
+	);
 	const chromeBottom = Math.max(
 		vertical ? layout.toolbar.bottom : tabs.bottom,
 		layout.toolbar.bottom,
@@ -239,10 +257,18 @@ async function assertBrowserChromeLayout({ vertical = false } = {}) {
 		);
 		assert.equal(layout.toolbarAppRegion, "drag");
 		assert.equal(layout.toolbarDragFillAppRegion, "drag");
-		assert(
-			tabs.x >= layout.kestrel.right,
-			"Vertical tabs must begin after the lower Kestrel navigation rail",
-		);
+		if (sidebarVisible) {
+			assert(
+				tabs.x >= layout.kestrel.right,
+				"Vertical tabs must begin after the lower Kestrel navigation rail",
+			);
+		} else {
+			assert.equal(
+				tabs.x,
+				layout.app.x,
+				"Vertical tabs must begin at the window edge without Kestrel navigation",
+			);
+		}
 		assert(tabs.y >= chromeBottom);
 		assert.equal(tabs.bottom, layout.app.bottom);
 	} else {
@@ -251,16 +277,24 @@ async function assertBrowserChromeLayout({ vertical = false } = {}) {
 	}
 	assert.equal(layout.toolbar.x, layout.app.x);
 	assert.equal(layout.toolbar.width, layout.app.width);
-	assert(
-		layout.kestrel.y >= chromeBottom,
-		"Kestrel navigation must begin below full-width browser chrome",
-	);
-	assert.equal(layout.kestrel.x, layout.app.x);
-	assert.equal(layout.kestrel.bottom, layout.app.bottom);
-	assert(
-		layout.viewport.x >= layout.kestrel.right,
-		"Browser content must begin after the lower Kestrel navigation rail",
-	);
+	if (sidebarVisible) {
+		assert(
+			layout.kestrel.y >= chromeBottom,
+			"Kestrel navigation must begin below full-width browser chrome",
+		);
+		assert.equal(layout.kestrel.x, layout.app.x);
+		assert.equal(layout.kestrel.bottom, layout.app.bottom);
+		assert(
+			layout.viewport.x >= layout.kestrel.right,
+			"Browser content must begin after the lower Kestrel navigation rail",
+		);
+	} else if (!vertical) {
+		assert.equal(
+			layout.viewport.x,
+			layout.app.x,
+			"Browser content must begin at the window edge without Kestrel navigation",
+		);
+	}
 	if (vertical) {
 		assert(
 			layout.viewport.x >= tabs.right,
@@ -407,7 +441,7 @@ try {
 		.getByRole("heading", { name: "Make the browser feel like yours." })
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
-	await page.locator(".kestrel-sidebar-brand").click();
+	await selectNewTab();
 	await waitForBrowserState(
 		(value) => {
 			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
@@ -671,14 +705,25 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
+	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
+	await assertBrowserChromeLayout({ sidebarVisible: false });
 	const viewport = await page.locator("#browser-viewport").boundingBox();
 	assert(viewport);
-	assert.deepEqual(loaded.views[0].bounds, {
+	const expectedViewportBounds = {
 		x: Math.round(viewport.x),
 		y: Math.round(viewport.y),
 		width: Math.round(viewport.width),
 		height: Math.round(viewport.height),
-	});
+	};
+	const resized = await waitForNativeView(
+		(value) =>
+			value.views[0]?.bounds.x === expectedViewportBounds.x &&
+			value.views[0]?.bounds.y === expectedViewportBounds.y &&
+			value.views[0]?.bounds.width === expectedViewportBounds.width &&
+			value.views[0]?.bounds.height === expectedViewportBounds.height,
+		"Native page did not resize after Kestrel navigation hid",
+	);
+	assert.deepEqual(resized.views[0].bounds, expectedViewportBounds);
 	// Browser pages are native WebContentsViews layered beside the renderer.
 	// Menus opened from the browser chrome must temporarily release that view;
 	// DOM z-index alone cannot place a renderer menu above a native sibling.
@@ -1106,7 +1151,7 @@ try {
 	assert.equal(state.settings.tabLayout, "vertical");
 	assert.equal(state.settings.newTabBackground, "mountains");
 
-	await page.locator(".kestrel-sidebar-brand").click();
+	await page.getByRole("tab", { name: /Page one/ }).first().click();
 	await waitForBrowserState(
 		(value) => {
 			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
@@ -1129,7 +1174,8 @@ try {
 		const agentBounds = agent.getBoundingClientRect();
 		return viewportBounds.width > 0 && viewportBounds.right <= agentBounds.x;
 	});
-	await assertBrowserChromeLayout({ vertical: true });
+	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
+	await assertBrowserChromeLayout({ vertical: true, sidebarVisible: false });
 	const tabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
 	await tabToolsTrigger.click();
 	const tabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
