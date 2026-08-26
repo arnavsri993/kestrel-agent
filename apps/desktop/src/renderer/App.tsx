@@ -219,8 +219,8 @@ const commandDestinations: CommandDestination[] = [
 	},
 	{
 		id: "organize-tabs",
-		label: "Organize tabs",
-		detail: "Group open tabs by topic and preserve tab order",
+		label: "Cluster tabs",
+		detail: "Group related tabs by topic while keeping their order",
 		icon: "folder",
 		group: "Browse",
 	},

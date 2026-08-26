@@ -125,6 +125,10 @@ vi.mock("electron", () => ({
 import { nativeImage } from "electron";
 import { UserBrowserService } from "./user-browser-service";
 import type {
+  BrowserTabFolderName,
+  BrowserTabFolderNamingGroup,
+} from "@kestrel/shared-types";
+import type {
 	PaymentCardVault,
 	SavePaymentCardInput,
 } from "./payment-card-vault";
@@ -143,6 +147,9 @@ function createService(options: {
   onLastTabClosed?: () => void;
   paymentCardVault?: PaymentCardVault;
   onPaymentPrompt?: (prompt: unknown) => void;
+  nameTabFolders?: (
+    groups: BrowserTabFolderNamingGroup[],
+  ) => Promise<BrowserTabFolderName[]>;
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "kestrel-user-browser-"));
   directories.push(directory);
@@ -177,6 +184,9 @@ function createService(options: {
 			: {}),
 		...(options.paymentCardVault
 			? { paymentCardVault: options.paymentCardVault }
+			: {}),
+		...(options.nameTabFolders
+			? { nameTabFolders: options.nameTabFolders }
 			: {}),
 	});
   return { service, window, events, commands };
@@ -1057,7 +1067,7 @@ describe("UserBrowserService", () => {
     );
     const third = await navigateNewTab(service, "https://github.com/kestrel/app");
 
-    const organized = service.organizeTabs();
+    const organized = await service.organizeTabs();
 
     expect(organized.tabFolders.map((folder) => folder.name)).toEqual([
       "Work",
@@ -1074,6 +1084,42 @@ describe("UserBrowserService", () => {
     );
   });
 
+  it("uses AI labels from bounded tab metadata while retaining the grouping order", async () => {
+    const nameTabFolders = vi.fn(
+      async (groups: BrowserTabFolderNamingGroup[]) =>
+        groups.map((group, index) => ({
+          id: group.id,
+          name: ["Project planning", "Browser research", "Kestrel code"][index]!,
+        })),
+    );
+    const { service } = createService({ nameTabFolders });
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://notion.so/team/roadmap");
+    await navigateNewTab(service, "https://www.google.com/search?q=browser");
+    await navigateNewTab(service, "https://github.com/kestrel/app");
+
+    const preview = await service.previewOrganizeTabs();
+
+    expect(preview.tabFolders.map((folder) => folder.name)).toEqual([
+      "Project planning",
+      "Browser research",
+      "Kestrel code",
+    ]);
+    expect(nameTabFolders).toHaveBeenCalledOnce();
+    expect(nameTabFolders.mock.calls[0]?.[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fallbackName: "Work",
+          tabs: [expect.objectContaining({ host: "notion.so" })],
+        }),
+      ]),
+    );
+    expect(JSON.stringify(nameTabFolders.mock.calls[0]?.[0])).not.toContain(
+      "https://",
+    );
+    expect(service.getState().tabFolders).toEqual([]);
+  });
+
   it("previews organization without mutating tabs and applies reviewed folder edits", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
@@ -1084,7 +1130,7 @@ describe("UserBrowserService", () => {
     );
     const third = await navigateNewTab(service, "https://github.com/kestrel/app");
 
-    const preview = service.previewOrganizeTabs();
+    const preview = await service.previewOrganizeTabs();
     expect(service.getState().tabFolders).toEqual([]);
 
     const reviewedFolders = preview.tabFolders.map((folder, index) => ({

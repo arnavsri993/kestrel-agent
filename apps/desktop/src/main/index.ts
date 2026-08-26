@@ -37,7 +37,9 @@ import {
 	PRODUCT_IDENTITY,
 	RendererRequestSchema,
 	SelectedAttachmentSchema,
-  type AgentState,
+	type BrowserTabFolderName,
+	type BrowserTabFolderNamingGroup,
+	type AgentState,
   type BackgroundJobsEvent,
   type CommunicationCodeCandidate,
   type CommunicationCodeScan,
@@ -745,6 +747,17 @@ function browserServiceForTab(tabId?: string): UserBrowserService | null {
     }
   }
   return userBrowserService;
+}
+
+async function nameBrowserTabFolders(
+	groups: BrowserTabFolderNamingGroup[],
+): Promise<BrowserTabFolderName[]> {
+	const response = await supervisor.request({
+		type: "browser-name-tab-folders",
+		groups,
+	});
+	if (!response.ok) throw new Error(response.error);
+	return response.browserTabFolderNames ?? [];
 }
 
 function browserOwnerForDragSender(sender: Electron.WebContents):
@@ -1719,6 +1732,7 @@ function createMainWindow(): BrowserWindow {
           onLastTabClosed: () => {
             if (!window.isDestroyed()) window.close();
           },
+          nameTabFolders: nameBrowserTabFolders,
         });
   if (userBrowserService) browserWindowServices.set(window, userBrowserService);
   deliverPendingWebUrls();
@@ -1857,6 +1871,7 @@ function createDetachedBrowserWindow(
     onLastTabClosed: () => {
       if (!window.isDestroyed()) window.close();
     },
+    nameTabFolders: nameBrowserTabFolders,
   });
   browserWindowServices.set(window, service);
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -2947,7 +2962,7 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
-        browserState: requestBrowserService.organizeTabs(),
+        browserState: await requestBrowserService.organizeTabs(),
       };
     }
     if (request.type === "browser-preview-organize-tabs") {
@@ -2955,7 +2970,7 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
-        browserOrganization: requestBrowserService.previewOrganizeTabs(),
+        browserOrganization: await requestBrowserService.previewOrganizeTabs(),
       };
     }
     if (request.type === "browser-apply-tab-organization") {
