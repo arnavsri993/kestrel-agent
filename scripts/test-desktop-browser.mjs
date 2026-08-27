@@ -197,6 +197,33 @@ async function waitForNativeViewInAnyWindow(expectedUrl, label) {
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
 }
 
+async function waitForDetachedKestrelWindow(tabId, label) {
+	const deadline = Date.now() + 30_000;
+	let latest = [];
+	while (Date.now() < deadline) {
+		latest = application.windows().map((candidate) => candidate.url());
+		for (const candidate of application.windows()) {
+			if (candidate === page || candidate.isClosed()) continue;
+			try {
+				if (
+					(await candidate
+						.getByRole("tablist", { name: "Browser tabs" })
+						.count()) > 0 &&
+					(await candidate.locator("#browser-address-input").count()) > 0 &&
+					(await candidate
+						.locator(`.browser-tab[data-tab-id="${tabId}"]`)
+						.count()) > 0
+				)
+					return candidate;
+			} catch {
+				// A transient WebContents page may close while the detached renderer starts.
+			}
+		}
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	throw new Error(`${label}: ${JSON.stringify(latest)}`);
+}
+
 async function assertBrowserChromeLayout({
 	vertical = false,
 	sidebarVisible = true,
@@ -1000,11 +1027,12 @@ try {
 		(value) => value.tabs.some((tab) => tab.id === detachableTabId && tab.url === `${origin}/two`),
 		"Detachable tab did not load",
 	);
-	const detachableTab = page.getByRole("tab", { name: "Page two", exact: true });
+	const detachableTab = page.locator(
+		`.browser-tab[data-tab-id="${detachableTabId}"]`,
+	);
 	await detachableTab.waitFor();
 	const detachableBounds = await detachableTab.boundingBox();
 	assert(detachableBounds);
-	const detachedWindowPromise = application.waitForEvent("window");
 	await page.mouse.move(
 		detachableBounds.x + detachableBounds.width / 2,
 		detachableBounds.y + detachableBounds.height / 2,
@@ -1012,11 +1040,19 @@ try {
 	await page.mouse.down();
 	await page.mouse.move(
 		detachableBounds.x + detachableBounds.width / 2,
-		detachableBounds.y + detachableBounds.height + 80,
-		{ steps: 4 },
+		detachableBounds.y + detachableBounds.height / 2 + 48,
+		{ steps: 3 },
 	);
 	await page.mouse.up();
-	const detachedPage = await detachedWindowPromise;
+	const detachedWindowState = await waitForNativeViewInAnyWindow(
+		`${origin}/two`,
+		"Detached page did not attach to its new Kestrel window",
+	);
+	assert.equal(detachedWindowState.length, 2);
+	const detachedPage = await waitForDetachedKestrelWindow(
+		detachableTabId,
+		"Detached Kestrel renderer did not become available",
+	);
 	detachedPage.setDefaultTimeout(30_000);
 	detachedPage.on("console", (message) => {
 		if (message.type() === "error") runtimeErrors.push(message.text());
@@ -1025,11 +1061,6 @@ try {
 	await detachedPage.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	await detachedPage.locator("#browser-address-input").waitFor();
 	assert.equal(await detachedPage.getByRole("tab", { name: "Page two", exact: true }).count(), 1);
-	const detachedWindowState = await waitForNativeViewInAnyWindow(
-		`${origin}/two`,
-		"Detached page did not attach to its new Kestrel window",
-	);
-	assert.equal(detachedWindowState.length, 2);
 	await detachedPage.close();
 	await waitForBrowserState(
 		(value) =>

@@ -183,26 +183,49 @@ async function assertReducedMotionStyles(page) {
 }
 
 async function assertTabDragMotion(page, orientation = "horizontal") {
-	const tab = page.locator(".browser-tab").first();
-	await tab.waitFor();
-	const box = await tab.boundingBox();
-	assert(box, "The browser tab has no visible bounds.");
-	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-	await page.mouse.down();
-	if (orientation === "vertical") {
-		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 24, {
-			steps: 4,
-		});
-	} else {
-		await page.mouse.move(box.x + box.width / 2 + 24, box.y + box.height / 2, {
-			steps: 4,
-		});
+	let lastError;
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		const tab = page.locator(".browser-tab").first();
+		await tab.waitFor();
+		const box = await tab.boundingBox();
+		assert(box, "The browser tab has no visible bounds.");
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.down();
+		try {
+			if (orientation === "vertical") {
+				await page.mouse.move(
+					box.x + box.width / 2,
+					box.y + box.height / 2 + 24,
+					{ steps: 4 },
+				);
+			} else {
+				await page.mouse.move(
+					box.x + box.width / 2 + 24,
+					box.y + box.height / 2,
+					{ steps: 4 },
+				);
+			}
+			await page.waitForFunction(
+				() => {
+					const dragging = document.querySelector(".browser-tab.is-dragging");
+					return (
+						dragging &&
+						Number.parseFloat(getComputedStyle(dragging).opacity) < 0.95
+					);
+				},
+				undefined,
+				{ timeout: 5_000 },
+			);
+			return;
+		} catch (error) {
+			lastError = error;
+		} finally {
+			await page.mouse.up();
+		}
 	}
-	await page.waitForFunction(() => {
-		const dragging = document.querySelector(".browser-tab.is-dragging");
-		return dragging && Number.parseFloat(getComputedStyle(dragging).opacity) < 0.95;
+	throw new Error(`The ${orientation} tab drag feedback did not become visible.`, {
+		cause: lastError,
 	});
-	await page.mouse.up();
 }
 
 async function waitForVerticalTabsToSettle(page) {
@@ -583,6 +606,13 @@ async function assertWindowControlMotion(page) {
 	const control = page.locator(".window-control-close");
 	await control.waitFor();
 	await page.bringToFront();
+	await page.waitForFunction(() => document.hasFocus());
+	await page.evaluate(
+		() =>
+			new Promise((resolveFrame) =>
+				requestAnimationFrame(() => requestAnimationFrame(resolveFrame)),
+			),
+	);
 	const box = await control.boundingBox();
 	assert.ok(box, "The close window control has no visible bounds.");
 
@@ -606,29 +636,41 @@ async function assertWindowControlMotion(page) {
 					: "missing",
 				shadeOpacity: shade ? Number.parseFloat(getComputedStyle(shade).opacity) : -1,
 			};
-		});
+			});
 	const sample = async (x, y, ready) => {
-		await page.mouse.move(x, y, { steps: 4 });
 		let motion = await readMotion();
-		for (let attempt = 0; attempt < 20 && !ready(motion); attempt += 1) {
-			await page.waitForTimeout(25);
+		for (let attempt = 0; attempt < 8 && !ready(motion); attempt += 1) {
+			// Target the actual no-drag button instead of the titlebar coordinate. The
+			// one-pixel nudge prevents Chromium from coalescing a repeated hover after
+			// a focus or reduced-motion change.
+			const nudgeX = x <= box.width / 2 ? x + 1 : x - 1;
+			await control.hover({ position: { x: nudgeX, y } });
+			await control.hover({ position: { x, y } });
+			await page.evaluate(
+				() => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame)),
+			);
 			motion = await readMotion();
 		}
 		return motion;
 	};
 
-	await page.mouse.move(
-		box.x + box.width / 2,
-		box.y + box.height / 2,
+	const center = await sample(
+		box.width / 2,
+		box.height / 2,
+		(motion) => motion.fillShade >= 0.1 && motion.shadeOpacity >= 0.08,
+	);
+	assert.ok(
+		center.fillShade >= 0.1 && center.shadeOpacity >= 0.08,
+		`The focused window did not activate control motion (${JSON.stringify(center)}).`,
 	);
 	const left = await sample(
-		box.x + 1,
-		box.y + box.height / 2,
+		1,
+		box.height / 2,
 		(motion) => motion.tilt < 0,
 	);
 	const right = await sample(
-		box.x + box.width - 1,
-		box.y + box.height / 2,
+		box.width - 1,
+		box.height / 2,
 		(motion) => motion.tilt > 0,
 	);
 	assert.ok(left.tilt < 0, `Expected a left tilt, got ${left.tilt}.`);
@@ -642,14 +684,11 @@ async function assertWindowControlMotion(page) {
 		`The hovered triangle did not deepen (${right.fillShade}, ${right.shadeOpacity}).`,
 	);
 
-	await page.mouse.move(
-		box.x + box.width / 2,
-		box.y + box.height / 2,
-	);
+	await control.hover({ position: { x: box.width / 2, y: box.height / 2 } });
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	const reduced = await sample(
-		box.x + box.width / 2,
-		box.y + box.height / 2,
+		box.width / 2,
+		box.height / 2,
 		(motion) => motion.shadeOpacity >= 0.08,
 	);
 	assert.equal(
@@ -662,10 +701,7 @@ async function assertWindowControlMotion(page) {
 		`Reduced motion must retain the darker hover cue (${JSON.stringify(reduced)}).`,
 	);
 	await page.emulateMedia({ reducedMotion: "no-preference" });
-	await page.mouse.move(
-		box.x + box.width / 2,
-		box.y + box.height / 2,
-	);
+	await control.hover({ position: { x: box.width / 2, y: box.height / 2 } });
 }
 
 try {
@@ -704,6 +740,7 @@ try {
 	await assertTabDragMotion(page);
 	await assertVerticalTabLayout(page);
 
+	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
 	await page.waitForFunction(() => {
