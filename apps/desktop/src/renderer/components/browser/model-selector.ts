@@ -51,6 +51,19 @@ const PROVIDER_LABELS: Record<string, string> = {
 	"github-models": "GitHub Models",
 	cohere: "Cohere",
 	cloudflare: "Cloudflare",
+	tokenrouter: "TokenRouter",
+	bai: "B.AI",
+	inferx: "InferX",
+	zenmux: "ZenMux",
+	"opencode-zen": "OpenCode Zen",
+	sensenova: "SenseNova",
+	gmicloud: "GMI Cloud",
+	tokenharbor: "Token Harbor",
+	cline: "Cline",
+	"command-code": "Command Code",
+	kilo: "Kilo",
+	orcarouter: "OrcaRouter",
+	aihubmix: "AIHubMix",
 };
 
 const PROVIDER_MODEL_CATALOG: Record<string, readonly CatalogModel[]> = {
@@ -91,6 +104,71 @@ const PROVIDER_MODEL_CATALOG: Record<string, readonly CatalogModel[]> = {
 	deepseek: [{ id: "deepseek-chat", label: "Chat", reasoningLevels: false }],
 	"opencode-subscription": [
 		{ id: "opencode", label: "OpenCode", reasoningLevels: false },
+	],
+	tokenrouter: [
+		{
+			id: "qwen/qwen3.8-max-free",
+			label: "Qwen 3.8 Max Free",
+			reasoningLevels: false,
+		},
+	],
+	bai: [
+		{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", reasoningLevels: false },
+	],
+	inferx: [
+		{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", reasoningLevels: false },
+	],
+	zenmux: [
+		{
+			id: "z-ai/glm-4.7-flash-free",
+			label: "GLM 4.7 Flash Free",
+			reasoningLevels: false,
+		},
+	],
+	"opencode-zen": [
+		{ id: "mimo-v2.5-free", label: "MiMo V2.5 Free", reasoningLevels: false },
+	],
+	sensenova: [
+		{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", reasoningLevels: false },
+	],
+	gmicloud: [
+		{
+			id: "deepseek-ai/DeepSeek-V4-Pro",
+			label: "DeepSeek V4 Pro",
+			reasoningLevels: false,
+		},
+	],
+	tokenharbor: [
+		{
+			id: "deepseek-v4-flash:free",
+			label: "DeepSeek V4 Flash Free",
+			reasoningLevels: false,
+		},
+	],
+	cline: [
+		{
+			id: "anthropic/claude-sonnet-4-6",
+			label: "Claude Sonnet 4.6",
+			reasoningLevels: false,
+		},
+	],
+	"command-code": [
+		{
+			id: "poolside/laguna-s-2.1-free",
+			label: "Laguna S 2.1 Free",
+			reasoningLevels: false,
+		},
+	],
+	kilo: [{ id: "kilo-auto/free", label: "Auto Free", reasoningLevels: false }],
+	orcarouter: [
+		{ id: "orcarouter/free", label: "OrcaRouter Free", reasoningLevels: false },
+	],
+	aihubmix: [
+		{
+			id: "xiaomi-mimo-v2.5-free",
+			label: "MiMo V2.5 Free",
+			reasoningLevels: false,
+		},
 	],
 };
 

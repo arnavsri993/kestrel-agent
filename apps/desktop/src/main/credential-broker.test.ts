@@ -126,6 +126,55 @@ describe("desktop credential broker", () => {
 		});
 	});
 
+	it("forwards every added free-provider credential through protected storage", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-free-providers-"));
+		roots.push(root);
+		const broker = new CredentialBroker(root, {
+			isEncryptionAvailable: () => true,
+			encryptString: async (value: string) =>
+				Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`),
+			decryptString: async (value: Buffer) =>
+				Buffer.from(
+					value.toString().slice("sealed:".length),
+					"base64",
+				).toString(),
+		});
+		const credentials = [
+			["tokenrouter", "TOKENROUTER_API_KEY"],
+			["bai", "BAI_API_KEY"],
+			["inferx", "INFERX_API_KEY"],
+			["zenmux", "ZENMUX_API_KEY"],
+			["opencode-zen", "OPENCODE_API_KEY"],
+			["sensenova", "SENSENOVA_API_KEY"],
+			["gmicloud", "GMICLOUD_API_KEY"],
+			["tokenharbor", "TOKENHARBOR_API_KEY"],
+			["cline", "CLINE_API_KEY"],
+			["command-code", "COMMAND_CODE_API_KEY"],
+			["kilo", "KILO_API_KEY"],
+			["orcarouter", "ORCAROUTER_API_KEY"],
+			["aihubmix", "AIHUBMIX_API_KEY"],
+		] as const;
+		for (const [id] of credentials)
+			await broker.setCredential(id, `${id}-protected-secret`);
+
+		const environment = await broker.providerEnvironment({
+			TOKENROUTER_MODEL: "custom-tokenrouter-model",
+			TOKENROUTER_BASE_URL: "https://tokenrouter.example.test/v1",
+			OPENCODE_MODEL: "custom-opencode-model",
+			OPENCODE_BASE_URL: "https://opencode.example.test/v1",
+			UNRELATED_PROVIDER_MODEL: "must-not-forward",
+		});
+		for (const [id, environmentKey] of credentials)
+			expect(environment[environmentKey]).toBe(`${id}-protected-secret`);
+		expect(environment).toMatchObject({
+			TOKENROUTER_MODEL: "custom-tokenrouter-model",
+			TOKENROUTER_BASE_URL: "https://tokenrouter.example.test/v1",
+			OPENCODE_MODEL: "custom-opencode-model",
+			OPENCODE_BASE_URL: "https://opencode.example.test/v1",
+		});
+		expect(environment).not.toHaveProperty("UNRELATED_PROVIDER_MODEL");
+	});
+
 	it("stores the database key as a local plaintext file without OS encryption", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-plaintext-"));
 		roots.push(root);

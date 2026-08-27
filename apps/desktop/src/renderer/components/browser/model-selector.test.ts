@@ -4,6 +4,7 @@ import {
 	configuredProviders,
 	modelSupportsThinking,
 	modelsForProvider,
+	providerDisplayName,
 	selectAuto,
 	selectModel,
 	selectProvider,
@@ -22,6 +23,22 @@ const openai: ModelProviderSummary = {
 		local: false,
 	},
 };
+
+const freeProviderCatalog = [
+	["tokenrouter", "TokenRouter", "qwen/qwen3.8-max-free"],
+	["bai", "B.AI", "deepseek-v4-flash"],
+	["inferx", "InferX", "deepseek-v4-flash"],
+	["zenmux", "ZenMux", "z-ai/glm-4.7-flash-free"],
+	["opencode-zen", "OpenCode Zen", "mimo-v2.5-free"],
+	["sensenova", "SenseNova", "deepseek-v4-flash"],
+	["gmicloud", "GMI Cloud", "deepseek-ai/DeepSeek-V4-Pro"],
+	["tokenharbor", "Token Harbor", "deepseek-v4-flash:free"],
+	["cline", "Cline", "anthropic/claude-sonnet-4-6"],
+	["command-code", "Command Code", "poolside/laguna-s-2.1-free"],
+	["kilo", "Kilo", "kilo-auto/free"],
+	["orcarouter", "OrcaRouter", "orcarouter/free"],
+	["aihubmix", "AIHubMix", "xiaomi-mimo-v2.5-free"],
+] as const;
 
 describe("cascading model selector", () => {
 	it("hides the synthetic auto provider from the provider list", () => {
@@ -44,6 +61,19 @@ describe("cascading model selector", () => {
 		});
 		expect(models.map((model) => model.label)).toEqual(["Sol", "Luna", "Terra"]);
 		expect(modelSupportsThinking("openai", "gpt-5.6-terra")).toBe(true);
+	});
+
+	it("exposes every added free provider with its default model", () => {
+		for (const [providerId, label, modelId] of freeProviderCatalog) {
+			expect(providerDisplayName(providerId)).toBe(label);
+			expect(
+				modelsForProvider({
+					providerId,
+					localModels: [],
+					currentModel: "",
+				}),
+			).toMatchObject([{ id: modelId }]);
+		}
 	});
 
 	it("uses installed Ollama models instead of a static catalog", () => {
