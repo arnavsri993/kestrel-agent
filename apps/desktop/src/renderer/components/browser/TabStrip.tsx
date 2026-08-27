@@ -25,6 +25,7 @@ import { Icon } from "../Icon";
 import {
 	computeLockedTabStyle,
 	shouldRetainTabWidthOnClose,
+	TAB_CLOSE_REFIT_DELAY_MS,
 } from "./tab-strip-layout";
 import { tabFaviconDataUrl } from "./tab-favicon";
 
@@ -108,6 +109,7 @@ export function TabStrip({
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
 	const [lockedWidth, setLockedWidth] = useState<number | null>(null);
+	const tabRefitTimerRef = useRef<number | null>(null);
 	const [compact, setCompact] = useState(false);
 	const [menu, setMenu] = useState<{ tabId: string; x: number; y: number } | null>(
 		null,
@@ -128,15 +130,34 @@ export function TabStrip({
 	const tabToolsTriggerRef = useRef<HTMLButtonElement | null>(null);
 	const tabSearchRef = useRef<HTMLInputElement | null>(null);
 
-	const handleRowMouseLeave = useCallback(() => {
-		setLockedWidth(null);
+	const clearTabRefitTimer = useCallback(() => {
+		if (tabRefitTimerRef.current === null) return;
+		window.clearTimeout(tabRefitTimerRef.current);
+		tabRefitTimerRef.current = null;
 	}, []);
+
+	const releaseLockedTabWidth = useCallback(() => {
+		clearTabRefitTimer();
+		setLockedWidth(null);
+	}, [clearTabRefitTimer]);
+
+	const scheduleTabRefit = useCallback(() => {
+		clearTabRefitTimer();
+		tabRefitTimerRef.current = window.setTimeout(() => {
+			tabRefitTimerRef.current = null;
+			setLockedWidth(null);
+		}, TAB_CLOSE_REFIT_DELAY_MS);
+	}, [clearTabRefitTimer]);
+
+	useEffect(() => {
+		return () => clearTabRefitTimer();
+	}, [clearTabRefitTimer]);
 
 	useEffect(() => {
 		if (tabs.length <= 1 || orientation === "vertical") {
-			setLockedWidth(null);
+			releaseLockedTabWidth();
 		}
-	}, [tabs.length, orientation]);
+	}, [orientation, releaseLockedTabWidth, tabs.length]);
 
 	useEffect(() => {
 		const activeTab = tabsContainerRef.current?.querySelector<HTMLElement>(
@@ -205,20 +226,21 @@ export function TabStrip({
 
 	const lockTabWidthBeforeClose = useCallback(() => {
 		if (!shouldRetainTabWidthOnClose(orientation, tabs.length)) {
-			setLockedWidth(null);
+			releaseLockedTabWidth();
 			return;
 		}
+		let width = 0;
 		if (tabsContainerRef.current) {
 			const firstTab =
 				tabsContainerRef.current.querySelector<HTMLElement>(".browser-tab");
 			if (firstTab) {
 				const rect = firstTab.getBoundingClientRect();
-				if (rect.width > 0) {
-					setLockedWidth(rect.width);
-				}
+				width = rect.width;
 			}
 		}
-	}, [orientation, tabs.length]);
+		if (width > 0) setLockedWidth(width);
+		scheduleTabRefit();
+	}, [orientation, releaseLockedTabWidth, scheduleTabRefit, tabs.length]);
 
 	function handleTabClose(tabId: string) {
 		lockTabWidthBeforeClose();
@@ -256,13 +278,13 @@ export function TabStrip({
 	function handleDragFillAuxClick(event: ReactMouseEvent) {
 		if (event.button === 1) {
 			event.preventDefault();
-			setLockedWidth(null);
+			releaseLockedTabWidth();
 			onCreate();
 		}
 	}
 
 	function handleCreate() {
-		setLockedWidth(null);
+		releaseLockedTabWidth();
 		onCreate();
 	}
 
@@ -424,7 +446,6 @@ export function TabStrip({
 			className={`browser-tab-row browser-tab-row-${orientation} drag-region-browser${
 				compact ? " browser-tab-row-compact" : ""
 			}${dragIntent === "detach" ? " browser-tab-row-detaching" : ""}`}
-			onMouseLeave={handleRowMouseLeave}
 		>
 			<div
 				className="window-controls-clearance no-drag"

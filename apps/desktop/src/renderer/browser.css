@@ -1494,6 +1494,11 @@ body:has(.ai-browser-app),
 	border-radius: 10px 10px 0 0;
 	color: var(--muted);
 	cursor: pointer;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel),
+		flex-basis var(--motion-state) var(--ease-kestrel),
+		max-width var(--motion-state) var(--ease-kestrel);
 }
 
 .browser-tab.is-dragging {
