@@ -277,12 +277,13 @@ async function readVerticalTabLayout(page) {
 }
 
 function assertVerticalTabGeometry(layout, agentWidth) {
+	const expectedRailWidth = layout.innerWidth <= 1120 ? 180 : 208;
 	assertNear(
 		layout.rail.left,
-		layout.viewport.left - 208,
+		layout.viewport.left - expectedRailWidth,
 		"vertical tab rail position",
 	);
-	assertNear(layout.rail.width, 208, "vertical tab rail width");
+	assertNear(layout.rail.width, expectedRailWidth, "vertical tab rail width");
 	assert.ok(
 		layout.viewport.left >= layout.rail.right - 1,
 		"Vertical tabs overlap the page viewport.",
