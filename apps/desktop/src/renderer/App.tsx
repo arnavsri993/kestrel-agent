@@ -783,10 +783,83 @@ const paidProviderCredentialIds = new Set<string>(
 
 const freeCredentialGroups = [
 	{
+		name: "TokenRouter",
+		short: "TR",
+		note: "OpenAI-compatible access to its currently available free models.",
+		href: "https://www.tokenrouter.com/models",
+		access: "free",
+		credentials: ["tokenrouter"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "B.AI",
+		short: "BA",
+		note: "OpenAI-compatible hosted inference with a free route when available.",
+		href: "https://chat.b.ai/key",
+		access: "free",
+		credentials: ["bai"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "InferX",
+		short: "IX",
+		note: "OpenAI-compatible model endpoints with account-specific free offers.",
+		href: "https://inferx.net/models",
+		access: "free",
+		credentials: ["inferx"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "ZenMux",
+		short: "ZM",
+		note: "Model routing with selected free or promotional models.",
+		href: "https://zenmux.ai/models",
+		access: "free",
+		credentials: ["zenmux"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "OpenCode Zen",
+		short: "OZ",
+		note: "Curated OpenAI-compatible coding models, including free model IDs.",
+		href: "https://opencode.ai/zen",
+		access: "free",
+		credentials: ["opencode-zen"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "SenseNova",
+		short: "SN",
+		note: "OpenAI-compatible SenseNova access; plan and quota terms apply.",
+		href: "https://sensenova.ai/token-plan",
+		access: "free",
+		credentials: ["sensenova"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "GMI Cloud",
+		short: "GM",
+		note: "OpenAI-compatible MaaS inference; account pricing and credits apply.",
+		href: "https://console.gmicloud.ai",
+		access: "account",
+		credentials: ["gmicloud"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "Token Harbor",
+		short: "TH",
+		note: "OpenAI-compatible gateway with selected free model IDs.",
+		href: "https://tokenharbor.ai/models",
+		access: "free",
+		credentials: ["tokenharbor"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "Cline",
+		short: "CL",
+		note: "OpenAI-compatible Cline API; account and plan terms apply.",
+		href: "https://app.cline.bot",
+		access: "account",
+		credentials: ["cline"] as BrokeredCredentialSummary["id"][],
+	},
+	{
 		name: "OpenRouter",
 		short: "OR",
 		note: "One key for its currently available free-model router.",
 		href: "https://openrouter.ai/settings/keys",
+		access: "free",
 		credentials: ["openrouter"] as BrokeredCredentialSummary["id"][],
 	},
 	{
@@ -794,6 +867,7 @@ const freeCredentialGroups = [
 		short: "GQ",
 		note: "Fast free-tier inference. Automatically joins the fallback route.",
 		href: "https://console.groq.com/keys",
+		access: "free",
 		credentials: ["groq"] as BrokeredCredentialSummary["id"][],
 	},
 	{
@@ -801,6 +875,7 @@ const freeCredentialGroups = [
 		short: "GO",
 		note: "Google AI Studio free-tier access. Automatically joins the fallback route.",
 		href: "https://aistudio.google.com/app/apikey",
+		access: "free",
 		credentials: ["gemini"] as BrokeredCredentialSummary["id"][],
 	},
 	{
@@ -808,9 +883,47 @@ const freeCredentialGroups = [
 		short: "MI",
 		note: "Mistral API access. Current account limits and terms apply.",
 		href: "https://console.mistral.ai/api-keys",
+		access: "account",
 		credentials: ["mistral"] as BrokeredCredentialSummary["id"][],
 	},
+	{
+		name: "Command Code",
+		short: "CC",
+		note: "OpenAI-compatible coding models with free credits or offers that can change.",
+		href: "https://commandcode.ai",
+		access: "free",
+		credentials: ["command-code"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "Kilo",
+		short: "KI",
+		note: "OpenAI-compatible Kilo Auto Free routing with upstream privacy terms.",
+		href: "https://kilo.ai",
+		access: "free",
+		credentials: ["kilo"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "OrcaRouter",
+		short: "OR",
+		note: "OpenAI-compatible zero-markup gateway with a free route when available.",
+		href: "https://orcarouter.ai",
+		access: "free",
+		credentials: ["orcarouter"] as BrokeredCredentialSummary["id"][],
+	},
+	{
+		name: "AIHubMix",
+		short: "AH",
+		note: "OpenAI-compatible gateway with a broad catalog of free model IDs.",
+		href: "https://aihubmix.com",
+		access: "free",
+		credentials: ["aihubmix"] as BrokeredCredentialSummary["id"][],
+	},
 ] as const;
+
+const modelCredentialIds = new Set<string>([
+	...paidProviderCredentialIds,
+	...freeCredentialGroups.flatMap((group) => group.credentials),
+]);
 
 const openAccessDirectory = [
 	{
@@ -830,6 +943,24 @@ const openAccessDirectory = [
 		href: "https://opencode.ai",
 		detail:
 			"Local and multi-provider agent CLI and ACP runtime; connects your existing models and ACP workflows.",
+	},
+	{
+		name: "AutoClaw",
+		href: "https://autoclaw.z.ai",
+		detail:
+			"Official hosted and desktop agent. It is not exposed here as a public Kestrel API endpoint.",
+	},
+	{
+		name: "WorkBuddy",
+		href: "https://workbuddy.ai",
+		detail:
+			"Official provider-owned agent; its login/session route is not a public API-key connection.",
+	},
+	{
+		name: "Antigravity",
+		href: "https://antigravity.google",
+		detail:
+			"Google agent platform with provider-owned authentication and protocol, not a direct API-key route.",
 	},
 ] as const;
 
@@ -1168,7 +1299,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	);
 	const modelReady =
 		configuredCredentials.some((credential) =>
-			paidProviderCredentialIds.has(credential.id),
+			modelCredentialIds.has(credential.id),
 		) ||
 		localModels.length > 0 ||
 		subscriptionClis.some((cli) => cli.enabled);
@@ -2034,7 +2165,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										aria-label="Open access"
 									>
 										<div className="more-provider-lead">
-											<strong>Add the accounts you want to use.</strong>
+											<strong>Add a provider account or API key.</strong>
 										</div>
 										<div className="provider-groups">
 											{freeCredentialGroups.map((group) => {
@@ -2056,7 +2187,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																	target="_blank"
 																	rel="noreferrer"
 																>
-																	Get free API key ↗
+																	{group.access === "free"
+																		? "Open free route ↗"
+																		: "Open account setup ↗"}
 																</a>
 															</div>
 														</div>

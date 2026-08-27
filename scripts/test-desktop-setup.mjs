@@ -239,6 +239,40 @@ try {
 	await page
 		.getByRole("link", { name: /Hugging Face Inference Providers/ })
 		.waitFor();
+	const freeProviderNames = [
+		"TokenRouter",
+		"B.AI",
+		"InferX",
+		"ZenMux",
+		"OpenCode Zen",
+		"SenseNova",
+		"GMI Cloud",
+		"Token Harbor",
+		"Cline",
+		"OpenRouter",
+		"Groq Cloud",
+		"Google Gemini",
+		"Mistral",
+		"Command Code",
+		"Kilo",
+		"OrcaRouter",
+		"AIHubMix",
+	];
+	assert.deepEqual(
+		await page.locator(".provider-heading > div > strong").allTextContents(),
+		freeProviderNames,
+	);
+	assert.deepEqual(
+		await page.locator(".open-access-list a strong").allTextContents(),
+		[
+			"Hugging Face Inference Providers",
+			"Ollama model library",
+			"OpenCode AI",
+			"AutoClaw",
+			"WorkBuddy",
+			"Antigravity",
+		],
+	);
 
 	await page.setViewportSize({ width: 640, height: 760 });
 	const overflow = await page.evaluate(

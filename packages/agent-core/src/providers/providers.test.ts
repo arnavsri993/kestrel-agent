@@ -80,7 +80,7 @@ describe("model provider adapters", () => {
 		]);
 	});
 
-	it("registers free-tier OpenAI-compatible providers for automatic routing", () => {
+	it("registers configured OpenAI-compatible providers, including free routes", () => {
 		const providers = createEnvironmentModelProviders({
 			NOUS_API_KEY: "nous-key",
 			GROQ_API_KEY: "groq-key",
@@ -89,6 +89,19 @@ describe("model provider adapters", () => {
 			CLOUDFLARE_API_KEY: "cloudflare-key",
 			CLOUDFLARE_ACCOUNT_ID: "account",
 			COHERE_API_KEY: "cohere-key",
+			TOKENROUTER_API_KEY: "tokenrouter-key",
+			BAI_API_KEY: "bai-key",
+			INFERX_API_KEY: "inferx-key",
+			ZENMUX_API_KEY: "zenmux-key",
+			OPENCODE_API_KEY: "opencode-key",
+			SENSENOVA_API_KEY: "sensenova-key",
+			GMICLOUD_API_KEY: "gmicloud-key",
+			TOKENHARBOR_API_KEY: "tokenharbor-key",
+			CLINE_API_KEY: "cline-key",
+			COMMAND_CODE_API_KEY: "command-code-key",
+			KILO_API_KEY: "kilo-key",
+			ORCAROUTER_API_KEY: "orcarouter-key",
+			AIHUBMIX_API_KEY: "aihubmix-key",
 		});
 		expect(
 			providers.map((provider) => [provider.id, provider.defaultModel]),
@@ -98,6 +111,19 @@ describe("model provider adapters", () => {
 			["mistral", "mistral-small-latest"],
 			["openrouter", "openrouter/free"],
 			["cohere", "command-a-plus-05-2026"],
+			["tokenrouter", "qwen/qwen3.8-max-free"],
+			["bai", "deepseek-v4-flash"],
+			["inferx", "deepseek-v4-flash"],
+			["zenmux", "z-ai/glm-4.7-flash-free"],
+			["opencode-zen", "mimo-v2.5-free"],
+			["sensenova", "deepseek-v4-flash"],
+			["gmicloud", "deepseek-ai/DeepSeek-V4-Pro"],
+			["tokenharbor", "deepseek-v4-flash:free"],
+			["cline", "anthropic/claude-sonnet-4-6"],
+			["command-code", "poolside/laguna-s-2.1-free"],
+			["kilo", "kilo-auto/free"],
+			["orcarouter", "orcarouter/free"],
+			["aihubmix", "xiaomi-mimo-v2.5-free"],
 			["cloudflare", "@cf/openai/gpt-oss-20b"],
 		]);
 	});

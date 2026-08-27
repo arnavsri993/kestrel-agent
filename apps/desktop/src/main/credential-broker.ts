@@ -32,6 +32,19 @@ export type BrokeredCredentialId =
 	| "perplexity"
 	| "github-models"
 	| "cohere"
+	| "tokenrouter"
+	| "bai"
+	| "inferx"
+	| "zenmux"
+	| "opencode-zen"
+	| "sensenova"
+	| "gmicloud"
+	| "tokenharbor"
+	| "cline"
+	| "command-code"
+	| "kilo"
+	| "orcarouter"
+	| "aihubmix"
 	| "brave-search"
 	| "github"
 	| "honcho"
@@ -90,6 +103,43 @@ export const BROKERED_CREDENTIALS: Record<
 		label: "GitHub Models token",
 	},
 	cohere: { environmentKey: "COHERE_API_KEY", label: "Cohere API key" },
+	tokenrouter: {
+		environmentKey: "TOKENROUTER_API_KEY",
+		label: "TokenRouter API key",
+	},
+	bai: { environmentKey: "BAI_API_KEY", label: "B.AI API key" },
+	inferx: { environmentKey: "INFERX_API_KEY", label: "InferX API key" },
+	zenmux: { environmentKey: "ZENMUX_API_KEY", label: "ZenMux API key" },
+	"opencode-zen": {
+		environmentKey: "OPENCODE_API_KEY",
+		label: "OpenCode Zen API key",
+	},
+	sensenova: {
+		environmentKey: "SENSENOVA_API_KEY",
+		label: "SenseNova API key",
+	},
+	gmicloud: {
+		environmentKey: "GMICLOUD_API_KEY",
+		label: "GMI Cloud API key",
+	},
+	tokenharbor: {
+		environmentKey: "TOKENHARBOR_API_KEY",
+		label: "Token Harbor API key",
+	},
+	cline: { environmentKey: "CLINE_API_KEY", label: "Cline API key" },
+	"command-code": {
+		environmentKey: "COMMAND_CODE_API_KEY",
+		label: "Command Code API key",
+	},
+	kilo: { environmentKey: "KILO_API_KEY", label: "Kilo API key" },
+	orcarouter: {
+		environmentKey: "ORCAROUTER_API_KEY",
+		label: "OrcaRouter API key",
+	},
+	aihubmix: {
+		environmentKey: "AIHUBMIX_API_KEY",
+		label: "AIHubMix API key",
+	},
 	"brave-search": {
 		environmentKey: "BRAVE_SEARCH_API_KEY",
 		label: "Brave Search API key",
@@ -341,7 +391,7 @@ export class CredentialBroker {
 				Object.entries(base).filter(
 					([key, value]) =>
 						value &&
-						/^(NOUS|GROQ|MISTRAL|OPENROUTER|CLOUDFLARE|XAI|DEEPSEEK|TOGETHER|FIREWORKS|NVIDIA|HUGGINGFACE|PERPLEXITY|GITHUB_MODELS|COHERE)_(BASE_URL|MODEL|ACCOUNT_ID|SITE_URL|APP_NAME)$/.test(
+						/^(NOUS|GROQ|MISTRAL|OPENROUTER|CLOUDFLARE|XAI|DEEPSEEK|TOGETHER|FIREWORKS|NVIDIA|HUGGINGFACE|PERPLEXITY|GITHUB_MODELS|COHERE|TOKENROUTER|BAI|INFERX|ZENMUX|OPENCODE|SENSENOVA|GMICLOUD|TOKENHARBOR|CLINE|COMMAND_CODE|KILO|ORCAROUTER|AIHUBMIX)_(BASE_URL|MODEL|ACCOUNT_ID|SITE_URL|APP_NAME)$/.test(
 							key,
 						),
 				),
