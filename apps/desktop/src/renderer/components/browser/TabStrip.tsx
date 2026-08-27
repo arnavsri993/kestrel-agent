@@ -683,13 +683,12 @@ export function TabStrip({
 									<motion.div
 										className={`browser-tab-folder browser-tab-folder-${folder.color} no-drag`}
 										key={`folder-${folder.id}`}
-										layout="position"
 										initial={
-											reducedMotion ? false : { opacity: 0, scale: 0.96 }
+											reducedMotion ? false : { opacity: 0 }
 										}
-										animate={{ opacity: 1, scale: 1 }}
+										animate={{ opacity: 1 }}
 										exit={
-											reducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.96 }
+											reducedMotion ? { opacity: 1 } : { opacity: 0 }
 										}
 										transition={
 											reducedMotion ? { duration: 0 } : { duration: 0.16 }
@@ -706,19 +705,20 @@ export function TabStrip({
 									</motion.div>,
 								);
 							}
+							// Keep tab boxes on the same baseline while flexbox recalculates
+							// widths. Lifecycle feedback should not move neighbors or scale
+							// their hit targets.
 							rows.push(
 								<motion.div
 									className={`browser-tab no-drag ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""} ${isDragActive ? "is-dragging" : ""}`}
 									key={tab.id}
-									initial={reducedMotion ? false : { opacity: 0, y: 5, scale: 0.98 }}
-									animate={{ opacity: isDragActive ? 0.72 : 1, y: 0, scale: 1 }}
+									initial={reducedMotion ? false : { opacity: 0 }}
+									animate={{ opacity: isDragActive ? 0.72 : 1 }}
 									exit={
 										reducedMotion
 											? { opacity: 1 }
 											: {
 													opacity: 0,
-													y: -4,
-													scale: 0.96,
 													transition: { duration: 0.14, ease: [0.4, 0, 1, 1] },
 												}
 									}
