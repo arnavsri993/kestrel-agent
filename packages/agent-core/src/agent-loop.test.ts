@@ -497,6 +497,195 @@ describe("provider-neutral agent loop", () => {
 		database.close();
 	});
 
+	it("fails abandoned active work on restart, preserves approvals, and retries only after user direction", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-loop-restart-"));
+		directories.push(root);
+		const databasePath = join(root, "runtime.sqlite");
+		const encryptionKey = createEncryptionKey();
+		const startedAt = "2026-08-27T12:00:00.000Z";
+		const restartedAt = new Date("2026-08-27T12:01:00.000Z");
+		const runId = "run-abandoned-model";
+		const firstDatabase = new KestrelDatabase(databasePath, encryptionKey);
+		const firstRuntime = new AgentRuntime(
+			firstDatabase,
+			[],
+			() => startedAt,
+		);
+		const session = firstRuntime.createSession({ title: "Interrupted run" });
+		const userMessage = firstRuntime.appendMessage({
+			sessionId: session.id,
+			role: "user",
+			content: "Finish this after restart",
+		});
+		firstDatabase.saveAgentRun({
+			id: runId,
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: ["restart-provider"],
+			status: "running",
+			turn: 1,
+			createdAt: startedAt,
+			updatedAt: startedAt,
+		});
+		firstDatabase.setPrivateState(`agent-run-baseline.${runId}`, {
+			sessionId: session.id,
+			userMessageId: userMessage.id,
+			messageCount: 0,
+			mutationIds: [],
+		});
+		const runningExecution = {
+			id: "tool-abandoned-read",
+			sessionId: session.id,
+			toolName: "test.read",
+			status: "running" as const,
+			riskLevel: "read_only" as const,
+			input: {},
+			idempotencyKey: `${runId}:call-read`,
+			startedAt,
+		};
+		firstDatabase.saveToolExecution(runningExecution);
+		const toolClaimKey = `runtime-tool:${session.id}:test.read:${runId}:call-read`;
+		expect(
+			firstDatabase.claimIdempotentResult(
+				toolClaimKey,
+				"dead-runtime",
+				2_147_483_647,
+				runningExecution,
+			).state,
+		).toBe("claimed");
+		expect(
+			firstDatabase.claimIdempotentResult(
+				`agent-session-run:${session.id}`,
+				"dead-agent-loop",
+				2_147_483_647,
+				{ sessionId: session.id, status: "running" },
+			).state,
+		).toBe("claimed");
+
+		const waitingSession = firstRuntime.createSession({
+			title: "Durable approval",
+		});
+		firstDatabase.saveAgentRun({
+			id: "run-waiting-after-restart",
+			sessionId: waitingSession.id,
+			model: "fixture",
+			providerIds: ["restart-provider"],
+			status: "waiting_approval",
+			turn: 1,
+			pendingToolExecutionId: "tool-waiting-after-restart",
+			pendingProviderToolCallId: "call-write",
+			pendingToolName: "test.write",
+			createdAt: startedAt,
+			updatedAt: startedAt,
+		});
+		firstDatabase.saveToolExecution({
+			id: "tool-waiting-after-restart",
+			sessionId: waitingSession.id,
+			toolName: "test.write",
+			status: "blocked",
+			riskLevel: "sensitive",
+			input: { value: "do not execute" },
+			output: { approvalRequired: true, preview: "Write once" },
+			error: "Approval required.",
+			idempotencyKey: "run-waiting-after-restart:call-write",
+			startedAt,
+			completedAt: startedAt,
+		});
+		firstRuntime.close();
+		firstDatabase.close();
+
+		const restartedDatabase = new KestrelDatabase(
+			databasePath,
+			encryptionKey,
+		);
+		const restartedRuntime = new AgentRuntime(
+			restartedDatabase,
+			[],
+			() => restartedAt.toISOString(),
+		);
+		let providerCalls = 0;
+		const provider: ModelProvider = {
+			id: "restart-provider",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				providerCalls += 1;
+				return {
+					providerId: "restart-provider",
+					model: request.model,
+					text: "Completed after an explicit retry.",
+					toolCalls: [],
+					usage: { inputTokens: 4, outputTokens: 3 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const restartedLoop = new AgentLoop(
+			restartedDatabase,
+			restartedRuntime,
+			new ProviderPool([provider], () => restartedAt),
+			() => restartedAt,
+		);
+
+		expect(providerCalls).toBe(0);
+		expect(restartedDatabase.getAgentRun(runId)).toMatchObject({
+			status: "failed",
+			recovery: {
+				reason: "core_restarted",
+				action: "retry_last_turn",
+			},
+			error: expect.stringMatching(/no model or tool call was resumed/i),
+		});
+		expect(restartedDatabase.getToolExecution(runningExecution.id)).toMatchObject({
+			status: "failed",
+			outcomeUncertain: true,
+			error: expect.stringMatching(/will not be retried automatically/i),
+		});
+		expect(restartedDatabase.getIdempotentResult(toolClaimKey)).toMatchObject({
+			id: runningExecution.id,
+			status: "failed",
+			outcomeUncertain: true,
+		});
+		expect(
+			restartedDatabase.getIdempotentClaim(
+				`agent-session-run:${session.id}`,
+			),
+		).toBeUndefined();
+		expect(restartedDatabase.listWaitingAgentRuns()).toMatchObject([
+			{
+				id: "run-waiting-after-restart",
+				status: "waiting_approval",
+				pendingToolExecutionId: "tool-waiting-after-restart",
+			},
+		]);
+
+		await expect(
+			restartedLoop.retry({
+				sessionId: session.id,
+				model: "fixture",
+				providerIds: ["restart-provider"],
+			}),
+		).resolves.toMatchObject({
+			run: { status: "completed" },
+			assistantMessage: { content: "Completed after an explicit retry." },
+		});
+		expect(providerCalls).toBe(1);
+		expect(
+			restartedRuntime
+				.listMessages(session.id)
+				.filter((message) => message.role === "user")
+				.map((message) => message.content),
+		).toEqual(["Finish this after restart"]);
+		restartedRuntime.close();
+		restartedDatabase.close();
+	});
+
 	it("releases at approval boundaries while preventing run and resume overlap", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);

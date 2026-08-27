@@ -5771,6 +5771,49 @@ body:has(.calculator-overlay),
 	overflow-wrap: anywhere;
 }
 
+.agent-conversation-host .runtime-outcome-evidence {
+	grid-column: 2;
+	min-width: 0;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.agent-conversation-host .runtime-outcome-evidence summary {
+	cursor: pointer;
+	color: var(--status-ink);
+	font-weight: 650;
+}
+
+.agent-conversation-host .runtime-outcome-evidence p {
+	margin: 6px 0;
+	line-height: 1.45;
+}
+
+.agent-conversation-host .runtime-outcome-evidence ul {
+	display: grid;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.agent-conversation-host .runtime-outcome-evidence li {
+	display: grid;
+	gap: 2px;
+	padding-left: 8px;
+	border-left: 2px solid color-mix(in srgb, var(--status-ink) 36%, var(--line));
+}
+
+.agent-conversation-host .runtime-outcome-evidence li strong {
+	color: var(--ink);
+	font-size: 11px;
+}
+
+.agent-conversation-host .runtime-outcome-evidence li span {
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+
 .agent-conversation-host .runtime-outcome > .button {
 	grid-column: 2;
 	justify-self: start;

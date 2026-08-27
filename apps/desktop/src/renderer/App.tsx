@@ -143,7 +143,12 @@ import {
 	startupFailureMessage,
 } from "./startup-state";
 import { personalizedConfigurationPrompts } from "./configuration-prompts";
-import { policyGateCopy, runRouteLabel } from "./runtime-evidence";
+import {
+	policyGateCopy,
+	runRouteLabel,
+	runtimeOutcomeCopy,
+	uncertainExecutionsForRun,
+} from "./runtime-evidence";
 
 const MAX_RENDERER_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
@@ -2988,6 +2993,7 @@ function RuntimeConversation({
 	newAgentPrompt,
 	newAgentWorkspace,
 	newAgentFocusTarget,
+	refreshRevision,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -3007,6 +3013,7 @@ function RuntimeConversation({
 	newAgentPrompt: string;
 	newAgentWorkspace: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
+	refreshRevision: number;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -3057,6 +3064,7 @@ function RuntimeConversation({
 	const [toolActivity, setToolActivity] = useState<RuntimeEvent[]>([]);
 	const [usage, setUsage] = useState<SessionUsageSummary | null>(null);
 	const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
+	const [executions, setExecutions] = useState<RuntimeToolExecution[]>([]);
 	const [skillBusy, setSkillBusy] = useState(false);
 	const [skillNotice, setSkillNotice] = useState("");
 	const [checkpointSummary, setCheckpointSummary] = useState("");
@@ -3247,7 +3255,9 @@ function RuntimeConversation({
 		setHasEarlierMessages(messageResponse.hasMoreMessages === true);
 		setUsage(usageResponse.usage ?? null);
 		const runs = runResponse.runs ?? [];
+		const loadedExecutions = executionResponse.executions ?? [];
 		setLatestRun(runs[runs.length - 1] ?? null);
+		setExecutions(loadedExecutions);
 		const waiting = [...runs]
 			.reverse()
 			.find(
@@ -3255,7 +3265,7 @@ function RuntimeConversation({
 					run.status === "waiting_approval" && run.pendingToolExecutionId,
 			);
 		const execution = waiting
-			? (executionResponse.executions ?? []).find(
+			? loadedExecutions.find(
 					(item) => item.id === waiting.pendingToolExecutionId,
 				)
 			: undefined;
@@ -3370,6 +3380,29 @@ function RuntimeConversation({
 		};
 	}, [visible, onSessions]);
 
+	const previousRefreshRevisionRef = useRef(refreshRevision);
+	useEffect(() => {
+		if (previousRefreshRevisionRef.current === refreshRevision) return;
+		previousRefreshRevisionRef.current = refreshRevision;
+		if (!visible) return;
+		const sessionId = activeSessionIdRef.current;
+		void Promise.all([
+			refreshSessions(),
+			sessionId ? loadSession(sessionId) : Promise.resolve(false),
+		])
+			.then(([, loaded]) => {
+				if (loaded && activeSessionIdRef.current === sessionId) setError("");
+			})
+			.catch((cause) => {
+				if (activeSessionIdRef.current === sessionId)
+					setError(
+						cause instanceof Error
+							? cause.message
+							: "Could not refresh the recovered task.",
+					);
+			});
+	}, [refreshRevision, visible]);
+
 	useEffect(() => {
 		if (providerId === "auto") {
 			setModel("auto");
@@ -3403,6 +3436,7 @@ function RuntimeConversation({
 		setPending(null);
 		setUsage(null);
 		setLatestRun(null);
+		setExecutions([]);
 		setError("");
 		setSkillNotice("");
 		if (!activeSessionId) {
@@ -4081,6 +4115,11 @@ function RuntimeConversation({
 			latestRun?.status === "failed")
 			? latestRun.status
 			: null;
+	const outcomeCopy =
+		latestOutcome && latestRun ? runtimeOutcomeCopy(latestRun, error) : null;
+	const uncertainExecutions = latestRun
+		? uncertainExecutionsForRun(latestRun, executions)
+		: [];
 	const emptySession = Boolean(
 		activeSessionId &&
 			visibleMessages.length === 0 &&
@@ -4319,22 +4358,33 @@ function RuntimeConversation({
 								/>
 							</div>
 							<div className="runtime-outcome-copy">
-								<strong>
-									{latestOutcome === "completed"
-										? "Task complete"
-										: latestOutcome === "failed"
-											? "Task needs recovery"
-											: "Task cancelled"}
-								</strong>
-								<p>
-									{latestOutcome === "completed"
-										? "Kestrel finished this run. Continue with another message when you are ready."
-										: latestOutcome === "failed"
-											? error ||
-												"The last run did not complete. Review the task context, then retry when ready."
-											: "The run was cancelled before it completed. You can continue this chat or start a new task."}
-								</p>
+								<strong>{outcomeCopy?.title}</strong>
+								<p>{outcomeCopy?.detail}</p>
 							</div>
+							{uncertainExecutions.length > 0 && (
+								<details className="runtime-outcome-evidence">
+									<summary>
+										{uncertainExecutions.length === 1
+											? "1 action has an uncertain outcome"
+											: `${uncertainExecutions.length} actions have uncertain outcomes`}
+									</summary>
+									<p>
+										Kestrel will not repeat these actions automatically. Check the
+										destination before retrying, especially for consequential changes.
+									</p>
+									<ul>
+										{uncertainExecutions.map((execution) => (
+											<li key={execution.id}>
+												<strong>{execution.toolName}</strong>
+												<span>
+													{execution.error ||
+														"Kestrel could not confirm whether this action completed."}
+												</span>
+											</li>
+										))}
+									</ul>
+								</details>
+							)}
 							{latestOutcome === "failed" && (
 								<button
 									type="button"
@@ -8891,6 +8941,7 @@ function Empty({ title, text }: { title: string; text?: string }) {
 export function App() {
 	const browser = useUserBrowser();
 	const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
+	const [runtimeRefreshRevision, setRuntimeRefreshRevision] = useState(0);
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
 	);
@@ -9225,6 +9276,7 @@ export function App() {
 			if (active) {
 				setError(null);
 				setSnapshot(next);
+				setRuntimeRefreshRevision((current) => current + 1);
 			}
 		});
 		void loadInitialDesktopState((request) => window.kestrel.request(request))
@@ -9691,6 +9743,7 @@ export function App() {
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
 						newAgentFocusTarget={newAgentFocusTarget}
+						refreshRevision={runtimeRefreshRevision}
 						mentionTabs={browser.state?.tabs ?? []}
 						mentionBookmarks={browser.state?.bookmarks ?? []}
 						{...(browserContextEnabled
