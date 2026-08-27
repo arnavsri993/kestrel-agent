@@ -559,8 +559,6 @@ export class BrowserController {
 		if (!this.backend.visibleTabs)
 			throw new Error("The visible user browser is unavailable.");
 		const tabs = await this.backend.visibleTabs(signal);
-		if (tabs.length > 32)
-			throw new Error("The visible browser returned too many tabs.");
 		return { tabs, trust: "untrusted_browser" as const };
 	}
 

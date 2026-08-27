@@ -198,6 +198,25 @@ async function navigateNewTab(service: UserBrowserService, url: string) {
 }
 
 describe("UserBrowserService", () => {
+  it("continues creating tabs beyond the legacy 32-tab boundary", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://first.example");
+    const firstView = electron.state.views[0]?.webContents;
+
+    for (let index = 0; index < 32; index += 1)
+      await service.createTab(`https://tab-${index}.example`, false);
+
+    expect(service.getState().tabs).toHaveLength(33);
+    expect(service.getState().tabs.at(-1)?.url).toBe("https://tab-31.example/");
+
+    expect(firstView?.windowOpenHandler?.({
+      url: "https://opened-after-32.example/",
+      disposition: "foreground-tab",
+    })).toEqual({ action: "deny" });
+    await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(34));
+  });
+
   it("creates, selects, and closes tabs, leaving no tabs when the last one closes", async () => {
     const onLastTabClosed = vi.fn();
     const { service } = createService({ onLastTabClosed });

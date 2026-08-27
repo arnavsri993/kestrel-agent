@@ -461,9 +461,8 @@ persist live view objects as the source of truth.
 
 Current caps and behavior:
 
-- Up to 32 open tabs.
-- Up to 8 live WebContentsView instances; inactive views may be discarded and
-  recreated.
+- No fixed cap on open tabs; only up to 8 native WebContentsView instances are
+  kept live, and inactive views may be discarded and recreated.
 - Up to 5,000 history entries.
 - Up to 500 download records.
 - History retention: none, 7, 30, 90, or 365 days.

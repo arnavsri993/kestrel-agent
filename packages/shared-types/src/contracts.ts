@@ -2562,7 +2562,7 @@ export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
  * profile; the main process remains the only place that applies it.
  */
 export const UserBrowserTabOrganizationPreviewSchema = z.object({
-	tabs: z.array(UserBrowserTabSchema).max(32),
+	tabs: z.array(UserBrowserTabSchema),
 	tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
 });
 export type UserBrowserTabOrganizationPreview = z.infer<
@@ -2570,9 +2570,7 @@ export type UserBrowserTabOrganizationPreview = z.infer<
 >;
 
 export const UserBrowserTabOrganizationApplySchema = z.object({
-	tabOrder: z
-		.array(z.string().regex(/^tab-[a-f0-9-]{36}$/))
-		.max(32),
+	tabOrder: z.array(z.string().regex(/^tab-[a-f0-9-]{36}$/)),
 	assignments: z
 		.array(
 			z.object({
@@ -2582,8 +2580,7 @@ export const UserBrowserTabOrganizationApplySchema = z.object({
 					.regex(/^tab-folder-[a-f0-9-]{36}$/)
 					.optional(),
 			}),
-		)
-		.max(32),
+		),
 	tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
 });
 export type UserBrowserTabOrganizationApply = z.infer<
@@ -2949,7 +2946,7 @@ export const InstalledExtensionSchema = z.object({
 export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
 export const UserBrowserStateSchema = z.object({
-	tabs: z.array(UserBrowserTabSchema).max(32),
+	tabs: z.array(UserBrowserTabSchema),
 	tabFolders: z.array(UserBrowserTabFolderSchema).max(32).default([]),
 	activeTabId: z
 		.string()
@@ -3255,15 +3252,13 @@ export const RendererRequestSchema = z.union([
 	z.object({
 		type: z.literal("browser-move-tab"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
-		toIndex: z.number().int().min(0).max(31),
+		toIndex: z.number().int().min(0),
 	}),
 	z.object({ type: z.literal("browser-organize-tabs") }),
 	z.object({ type: z.literal("browser-preview-organize-tabs") }),
 	z.object({
 		type: z.literal("browser-apply-tab-organization"),
-		tabOrder: z
-			.array(z.string().regex(/^tab-[a-f0-9-]{36}$/))
-			.max(32),
+		tabOrder: z.array(z.string().regex(/^tab-[a-f0-9-]{36}$/)),
 		assignments: z
 			.array(
 				z.object({
@@ -3273,8 +3268,7 @@ export const RendererRequestSchema = z.union([
 						.regex(/^tab-folder-[a-f0-9-]{36}$/)
 						.optional(),
 				}),
-			)
-			.max(32),
+			),
 		tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
 	}),
 	z.object({

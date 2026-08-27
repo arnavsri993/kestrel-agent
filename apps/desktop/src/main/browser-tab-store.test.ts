@@ -1,10 +1,16 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
+import {
+	RendererRequestSchema,
+	UserBrowserSettingsSchema,
+	UserBrowserTabOrganizationApplySchema,
+	UserBrowserTabOrganizationPreviewSchema,
+} from "@kestrel/shared-types";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	BrowserTabStore,
+	createEmptyBrowserTab,
 	freshBrowserState,
 	MAX_ORIGIN_FAVICONS,
 	normalizeBrowserAddress,
@@ -229,6 +235,55 @@ describe("browser address normalization", () => {
 });
 
 describe("browser tab persistence", () => {
+	it("persists and restores more than 32 open tabs", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+
+		for (let index = 1; index < 40; index += 1) {
+			const tab = createEmptyBrowserTab(
+				() => new Date("2026-08-11T12:00:00.000Z"),
+			);
+			tab.title = `Tab ${index}`;
+			tab.url = `https://tab-${index}.example/`;
+			state.tabs.push(tab);
+		}
+
+		store.save(state);
+
+		expect(store.load().tabs).toHaveLength(40);
+		expect(
+			(JSON.parse(readFileSync(path, "utf8")) as { tabs: unknown[] }).tabs,
+		).toHaveLength(40);
+		expect(
+			UserBrowserTabOrganizationPreviewSchema.safeParse({
+				tabs: state.tabs,
+				tabFolders: [],
+			}).success,
+		).toBe(true);
+		const organization = {
+			tabOrder: state.tabs.map((tab) => tab.id),
+			assignments: state.tabs.map((tab) => ({ tabId: tab.id })),
+			tabFolders: [],
+		};
+		expect(UserBrowserTabOrganizationApplySchema.safeParse(organization).success).toBe(
+			true,
+		);
+		expect(
+			RendererRequestSchema.safeParse({
+				type: "browser-move-tab",
+				tabId: state.tabs[0]!.id,
+				toIndex: 39,
+			}).success,
+		).toBe(true);
+		expect(
+			RendererRequestSchema.safeParse({
+				type: "browser-apply-tab-organization",
+				...organization,
+			}).success,
+		).toBe(true);
+	});
+
 	it("restores safe tabs as discarded without persisting favicons", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);
