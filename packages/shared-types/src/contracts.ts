@@ -2928,6 +2928,7 @@ export const UserBrowserSettingsSchema = z.object({
 	sleepingTabExcludedDomains: z.array(z.string().max(200)).default([]),
 	memorySaverMode: z.boolean().default(true),
 	showBookmarksBar: z.boolean().default(true),
+	addressBarSuggestionsEnabled: z.boolean().default(true),
 	passwordAutofillEnabled: z.boolean().default(true),
 	paymentAutofillEnabled: z.boolean().default(true),
 });

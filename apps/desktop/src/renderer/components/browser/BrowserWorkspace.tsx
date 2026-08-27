@@ -527,6 +527,16 @@ export function BrowserWorkspace({
       />
       <BrowserToolbar
         tab={activeTab}
+        history={state.history}
+        bookmarks={state.bookmarks}
+        tabs={state.tabs}
+        activeTabId={state.activeTabId}
+        originFavicons={state.originFavicons}
+        searchEngine={state.settings.searchEngine}
+        {...(state.settings.customSearchName !== undefined
+          ? { customSearchName: state.settings.customSearchName }
+          : {})}
+        addressBarSuggestionsEnabled={state.settings.addressBarSuggestionsEnabled}
         agentOpen={agentOpen}
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
         showBookmarksBar={state.settings.showBookmarksBar}
@@ -544,6 +554,7 @@ export function BrowserWorkspace({
         bookmarked={state.bookmarks.some((item) => item.url === activeTab.url)}
         onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}
+        onSelectTab={(tabId) => void selectTab(tabId)}
         onBack={() => void back(activeTab.id)}
         onForward={() => void forward(activeTab.id)}
         onReload={() => void reload(activeTab.id)}

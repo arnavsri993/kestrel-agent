@@ -36,6 +36,7 @@ it("defaults new browser settings to Google", () => {
 	expect(state.tabFolders).toEqual([]);
 	expect(UserBrowserSettingsSchema.parse({}).searchEngine).toBe("google");
 	expect(UserBrowserSettingsSchema.parse({}).showBookmarksBar).toBe(true);
+	expect(UserBrowserSettingsSchema.parse({}).addressBarSuggestionsEnabled).toBe(true);
 	expect(UserBrowserSettingsSchema.parse({}).paymentAutofillEnabled).toBe(true);
 });
 
