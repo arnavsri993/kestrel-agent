@@ -95,6 +95,8 @@ import type { PasswordVault } from "./password-vault";
 import type { SavePaymentCardInput } from "./payment-card-vault";
 import type { PaymentCardVault } from "./payment-card-vault";
 
+// Only native WebContentsViews are capped; tab records remain unbounded and
+// inactive pages are discarded to keep memory use under control.
 const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
 const MAX_DOWNLOAD_ENTRIES = 500;
@@ -935,8 +937,6 @@ export class UserBrowserService {
 			),
 		);
 		const newFiles = inspected.filter((file) => !existing.has(file.path));
-		if (this.state.tabs.length + newFiles.length > 32)
-			throw new Error("Kestrel supports up to 32 open tabs.");
 
 		const opened: UserBrowserTab[] = [];
 		for (const file of inspected) {
@@ -1002,8 +1002,6 @@ export class UserBrowserService {
 
 	async createTab(input?: string, active = true): Promise<UserBrowserState> {
 		this.assertAvailable();
-		if (this.state.tabs.length >= 32)
-			throw new Error("Kestrel supports up to 32 open tabs.");
 		const timestamp = this.now().toISOString();
 		const tab = createEmptyBrowserTab(() => new Date(timestamp));
 		this.state.tabs.push(tab);
@@ -2781,7 +2779,7 @@ export class UserBrowserService {
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const { webContents } = record.view;
 		webContents.setWindowOpenHandler(({ url, disposition }) => {
-			if (safePageUrl(url) && this.state.tabs.length < 32) {
+			if (safePageUrl(url)) {
 				void this.createTab(url, disposition !== "background-tab").catch(
 					() => undefined,
 				);

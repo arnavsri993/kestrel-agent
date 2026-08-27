@@ -1573,7 +1573,7 @@ function openIncomingWebUrl(url: string): void {
     showMainWindow();
     void userBrowserService.createTab(url, true).catch(() => undefined);
   } else {
-    if (!pendingWebUrls.includes(url) && pendingWebUrls.length < 32) {
+    if (!pendingWebUrls.includes(url)) {
       pendingWebUrls.push(url);
     }
     showMainWindow();

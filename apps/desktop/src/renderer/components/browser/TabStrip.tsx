@@ -882,6 +882,7 @@ export function TabStrip({
 						type="button"
 						role="menuitem"
 						onClick={() => {
+							lockTabWidthBeforeClose();
 							onCloseOthers?.(menuTab.id);
 							setMenu(null);
 						}}
