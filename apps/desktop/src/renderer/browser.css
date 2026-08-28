@@ -4715,6 +4715,11 @@ body:has(.calculator-overlay),
 }
 
 @media (max-width: 620px) {
+  /* At high zoom, keep page tools, the command menu, and Pragmatic reachable.
+   * Direct destination shortcuts remain available through commands and keys. */
+  .browser-toolbar-actions > .browser-toolbar-secondary {
+    display: none;
+  }
   .browser-setting-row { grid-template-columns: 1fr; gap: 12px; }
   .browser-setting-row > :last-child { justify-self: start; }
   .agent-workspace { padding: 36px 18px 48px; }

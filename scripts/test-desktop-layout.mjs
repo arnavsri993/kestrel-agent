@@ -39,6 +39,17 @@ function assertNear(actual, expected, message) {
 	);
 }
 
+function expectedAgentPanelWidth(viewportWidth) {
+	if (viewportWidth <= 760) return 300;
+	if (viewportWidth <= 980) return 305;
+	if (viewportWidth <= 1_120) return 330;
+	return 360;
+}
+
+function expectedNavigationWidth(viewportWidth) {
+	return viewportWidth <= 1_120 ? 56 : 248;
+}
+
 async function readLayout(page) {
 	return page.evaluate(() => {
 		const shell = document.querySelector(".ai-browser-app");
@@ -335,16 +346,19 @@ async function assertVerticalTabLayout(page) {
 
 	await assertTabDragMotion(page, "vertical");
 	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
-	await page.waitForFunction(() => {
+	const agentWidth = expectedAgentPanelWidth(
+		await page.evaluate(() => innerWidth),
+	);
+	await page.waitForFunction((expectedWidth) => {
 		const shell = document.querySelector(".ai-browser-app");
 		const agent = document.querySelector(".agent-sidebar");
 		return (
 			shell &&
 			agent &&
 			!shell.classList.contains("agent-sidebar-collapsed") &&
-			Math.abs(agent.getBoundingClientRect().width - 360) <= 1
+			Math.abs(agent.getBoundingClientRect().width - expectedWidth) <= 1
 		);
-	});
+	}, agentWidth);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
 		const agent = document.querySelector(".agent-sidebar");
@@ -356,7 +370,7 @@ async function assertVerticalTabLayout(page) {
 			) <= 1
 		);
 	});
-	assertVerticalTabGeometry(await readVerticalTabLayout(page), 360);
+	assertVerticalTabGeometry(await readVerticalTabLayout(page), agentWidth);
 
 	await page.getByRole("button", { name: "Hide Pragmatic", exact: true }).first().click();
 	await page.waitForFunction(() => {
@@ -384,7 +398,11 @@ async function assertVerticalTabLayout(page) {
 function assertCollapsedLayout(layout) {
 	assert.match(layout.classes, /agent-sidebar-collapsed/);
 	assertNear(layout.navigation.left, 0, "collapsed navigation left");
-	assertNear(layout.navigation.width, 248, "collapsed navigation width");
+	assertNear(
+		layout.navigation.width,
+		expectedNavigationWidth(layout.innerWidth),
+		"collapsed navigation width",
+	);
 	assertNear(
 		layout.main.left,
 		0,
@@ -415,7 +433,11 @@ function assertCollapsedLayout(layout) {
 function assertOpenLayout(layout) {
 	assert.doesNotMatch(layout.classes, /agent-sidebar-collapsed/);
 	assertNear(layout.navigation.left, 0, "open navigation left");
-	assertNear(layout.navigation.width, 248, "open navigation width");
+	assertNear(
+		layout.navigation.width,
+		expectedNavigationWidth(layout.innerWidth),
+		"open navigation width",
+	);
 	assertNear(
 		layout.main.left,
 		0,
@@ -432,11 +454,20 @@ function assertOpenLayout(layout) {
 	);
 	assertNear(layout.viewport.right, layout.agent.left, "page viewport ends at Pragmatic");
 	assertNear(layout.agent.right, layout.innerWidth, "Pragmatic reaches window edge");
-	assertNear(layout.agent.width, 360, "open Pragmatic width");
+	assertNear(
+		layout.agent.width,
+		expectedAgentPanelWidth(layout.innerWidth),
+		"open Pragmatic width",
+	);
 	assertTheme(layout);
 }
 
-async function setDesktopZoom(application, page, zoomFactor) {
+async function setDesktopZoom(
+	application,
+	page,
+	zoomFactor,
+	expectedViewportWidth,
+) {
 	const appliedZoom = await application.evaluate(
 		({ BrowserWindow }, requestedZoom) => {
 			const window = BrowserWindow.getAllWindows().find(
@@ -450,9 +481,28 @@ async function setDesktopZoom(application, page, zoomFactor) {
 	);
 	assertNear(appliedZoom, zoomFactor, "Electron zoom factor");
 	await page.waitForFunction(
-		(expectedCompact) =>
-			expectedCompact ? innerWidth <= 700 : innerWidth >= 1_200,
-		zoomFactor > 1,
+		(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
+		Math.round(expectedViewportWidth),
+	);
+}
+
+async function setDesktopWindowWidth(application, page, width) {
+	const appliedWidth = await application.evaluate(
+		({ BrowserWindow }, requestedWidth) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.isDestroyed(),
+			);
+			if (!window) throw new Error("The Kestrel window is unavailable.");
+			const [, height] = window.getSize();
+			window.setSize(requestedWidth, height);
+			return window.getSize()[0];
+		},
+		width,
+	);
+	assertNear(appliedWidth, width, "Electron window width");
+	await page.waitForFunction(
+		(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
+		width,
 	);
 }
 
@@ -503,6 +553,9 @@ async function readZoomReflow(page) {
 			bodyOverflow: body.scrollWidth - body.clientWidth,
 			shellOverflow: shell.scrollWidth - shell.clientWidth,
 			viewportOverflow: viewport.scrollWidth - viewport.clientWidth,
+			secondaryToolbarDisplays: Array.from(
+				document.querySelectorAll(".browser-toolbar-secondary"),
+			).map((element) => getComputedStyle(element).display),
 			overflowingElements: Array.from(shell.querySelectorAll("*"))
 				.map((element) => {
 					const rect = element.getBoundingClientRect();
@@ -535,6 +588,11 @@ async function readZoomReflow(page) {
 				readControl(".kestrel-sidebar-new-task"),
 				readControl(".browser-new-tab"),
 				readControl("#browser-address-input"),
+				readControl('.browser-toolbar-actions button[aria-label="Tools"]'),
+				readControl('.browser-toolbar-actions button[aria-label="Page options"]'),
+				readControl(
+					'.browser-toolbar-actions button[aria-label="Capabilities and commands"]',
+				),
 				readControl(".browser-agent-toggle"),
 			],
 		};
@@ -569,6 +627,11 @@ function assertZoomReflow(layout, reflow) {
 	assertNear(layout.agent.width, 0, "zoomed collapsed Pragmatic width");
 	assert.equal(reflow.sidebarLabelDisplay, "none");
 	assert.equal(reflow.agentToggleLabelDisplay, "none");
+	assert.ok(
+		reflow.secondaryToolbarDisplays.length >= 4 &&
+			reflow.secondaryToolbarDisplays.every((display) => display === "none"),
+		"High zoom must hide direct toolbar shortcuts before primary controls overflow.",
+	);
 	for (const [surface, overflow] of Object.entries({
 		document: reflow.rootOverflow,
 		body: reflow.bodyOverflow,
@@ -744,16 +807,19 @@ try {
 	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
-	await page.waitForFunction(() => {
+	const openAgentWidth = expectedAgentPanelWidth(
+		await page.evaluate(() => innerWidth),
+	);
+	await page.waitForFunction((expectedWidth) => {
 		const shell = document.querySelector(".ai-browser-app");
 		const agent = document.querySelector(".agent-sidebar");
 		return (
 			shell &&
 			agent &&
 			!shell.classList.contains("agent-sidebar-collapsed") &&
-			Math.abs(agent.getBoundingClientRect().width - 360) <= 1
+			Math.abs(agent.getBoundingClientRect().width - expectedWidth) <= 1
 		);
-	});
+	}, openAgentWidth);
 	assertOpenLayout(await readLayout(page));
 
 	await page
@@ -772,14 +838,18 @@ try {
 	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 
-	await setDesktopZoom(application, page, 2);
+	await setDesktopWindowWidth(application, page, 920);
+	await waitForCollapsedLayout(page);
+	assertCollapsedLayout(await readLayout(page));
+	const baselineViewportWidth = await page.evaluate(() => innerWidth);
+	await setDesktopZoom(application, page, 2, baselineViewportWidth / 2);
 	await waitForCollapsedLayout(page);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
 	});
 	assertZoomReflow(await readLayout(page), await readZoomReflow(page));
-	await setDesktopZoom(application, page, 1);
+	await setDesktopZoom(application, page, 1, baselineViewportWidth);
 	await waitForCollapsedLayout(page);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
@@ -789,7 +859,7 @@ try {
 
 	assert.deepEqual(pageErrors, []);
 	process.stdout.write(
-		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, and 200% zoom reflow.\n",
+		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, and minimum-width 200% zoom reflow.\n",
 	);
 } finally {
 	await application?.close();
