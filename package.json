@@ -16,6 +16,8 @@
     "build": "pnpm -r --if-present build",
     "build:desktop": "pnpm --filter @kestrel/desktop build",
     "build:website": "pnpm --filter @kestrel/website build",
+    "benchmark:browser-agent": "node scripts/run-browser-agent-benchmark.mjs",
+    "benchmark:browser-agent:packaged:arm64": "KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel node scripts/run-browser-agent-benchmark.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -53,8 +55,8 @@
     "assets:posters": "tsx scripts/fal-generate-posters.ts",
     "assets:process": "tsx scripts/process-marketing-assets.ts",
     "assets:verify": "tsx scripts/verify-marketing-assets.ts",
-    "verify": "pnpm typecheck && pnpm test && pnpm audit:references && pnpm audit:market && pnpm build && pnpm test:e2e && pnpm test:desktop-smoke && pnpm test:desktop-layout && pnpm test:desktop-writing-studio && pnpm test:desktop-file-icon-guard && pnpm test:desktop-browser && pnpm test:desktop-setup && pnpm test:desktop-fresh-profile && pnpm test:desktop-kanban && pnpm test:desktop-model-routing && pnpm test:desktop-readiness && pnpm test:desktop-external-secrets && pnpm test:desktop-observability && pnpm test:desktop-life-context && pnpm test:desktop-approvals && pnpm test:desktop-chat-configuration && pnpm test:desktop-managed-policy && pnpm test:packaged-cli && pnpm test:editors && pnpm test:security",
-    "verify:meetup": "pnpm verify && pnpm assets:verify && pnpm test:local-ai:real && pnpm package:mac:dev && pnpm test:packaged-desktop:arm64"
+    "verify": "pnpm typecheck && pnpm test && pnpm audit:references && pnpm audit:market && pnpm build && pnpm benchmark:browser-agent && pnpm test:e2e && pnpm test:desktop-smoke && pnpm test:desktop-layout && pnpm test:desktop-writing-studio && pnpm test:desktop-file-icon-guard && pnpm test:desktop-browser && pnpm test:desktop-setup && pnpm test:desktop-fresh-profile && pnpm test:desktop-kanban && pnpm test:desktop-model-routing && pnpm test:desktop-readiness && pnpm test:desktop-external-secrets && pnpm test:desktop-observability && pnpm test:desktop-life-context && pnpm test:desktop-approvals && pnpm test:desktop-chat-configuration && pnpm test:desktop-managed-policy && pnpm test:packaged-cli && pnpm test:editors && pnpm test:security",
+    "verify:meetup": "pnpm verify && pnpm assets:verify && pnpm test:local-ai:real && pnpm package:mac:dev && pnpm test:packaged-desktop:arm64 && pnpm benchmark:browser-agent:packaged:arm64"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

@@ -34,8 +34,11 @@ import {
 	sanitizeUntrustedBrowserValue,
 } from "./browser-tab-store";
 import {
+	dispatchBrowserKey,
+	dispatchBrowserMouseClick,
 	publicInteractiveRefs,
 	rememberElementRefs,
+	selectBrowserOption,
 	targetPointFromBackendNode,
 } from "./browser-backend-node-target";
 
@@ -116,6 +119,39 @@ export function isolatedBrowserShouldCancelRequest(
 		return !origin || origin === "null" || !allowedOrigins.has(origin);
 	} catch {
 		return true;
+	}
+}
+
+export async function waitForBrowserPostClickFrame(
+	executeFrame: () => Promise<unknown>,
+	signal: AbortSignal,
+	maximumWaitMs = 250,
+): Promise<"frame" | "context_changed" | "bounded_wait"> {
+	if (signal.aborted) throw signal.reason;
+	if (!Number.isFinite(maximumWaitMs) || maximumWaitMs < 1)
+		throw new Error("Browser post-click wait must be positive and finite.");
+	let timeout: NodeJS.Timeout | undefined;
+	let abort: (() => void) | undefined;
+	try {
+		return await Promise.race([
+			executeFrame().then(
+				() => "frame" as const,
+				() => "context_changed" as const,
+			),
+			new Promise<"bounded_wait">((resolvePromise) => {
+				timeout = setTimeout(
+					() => resolvePromise("bounded_wait"),
+					maximumWaitMs,
+				);
+			}),
+			new Promise<never>((_resolvePromise, reject) => {
+				abort = () => reject(signal.reason);
+				signal.addEventListener("abort", abort, { once: true });
+			}),
+		]);
+	} finally {
+		if (timeout) clearTimeout(timeout);
+		if (abort) signal.removeEventListener("abort", abort);
 	}
 }
 
@@ -268,6 +304,9 @@ export class ElectronBrowserService {
 			show: false,
 			webPreferences: {
 				partition: partitionName,
+				// Agent sessions stay hidden but still require deterministic layout,
+				// animation-frame, and CDP input processing while work is active.
+				backgroundThrottling: false,
 				sandbox: true,
 				contextIsolation: true,
 				nodeIntegration: false,
@@ -355,6 +394,7 @@ export class ElectronBrowserService {
 		sessionId: string,
 		window: BrowserWindow,
 		selector: string,
+		signal: AbortSignal,
 		focus = false,
 	): Promise<{ x: number; y: number }> {
 		if (!selector || selector.length > 2_000)
@@ -368,6 +408,7 @@ export class ElectronBrowserService {
 				window.webContents,
 				backendNodeId,
 				focus,
+				signal,
 			);
 		}
 		const result = (await window.webContents.executeJavaScript(
@@ -428,79 +469,40 @@ export class ElectronBrowserService {
 		const { window } = this.require(id);
 		if (signal.aborted) throw signal.reason;
 		if (action.type === "click") {
-			const point = await this.targetPoint(id, window, action.target);
-			if (signal.aborted) throw signal.reason;
-			// BrowserWindow sessions stay hidden, so Electron's window-level input
-			// dispatch can be dropped by a headless runner. CDP input dispatch keeps
-			// the action semantic (real mouse events and default activation) without
-			// showing or focusing the user's desktop window.
-			if (!window.webContents.debugger.isAttached())
-				window.webContents.debugger.attach("1.3");
-			const pointer = {
-				x: point.x,
-				y: point.y,
-				modifiers: 0,
-				pointerType: "mouse",
-			};
-			await window.webContents.debugger.sendCommand(
-				"Input.dispatchMouseEvent",
-				{
-					...pointer,
-					type: "mouseMoved",
-					button: "none",
-					buttons: 0,
-					clickCount: 0,
-				},
+			const point = await this.targetPoint(
+				id,
+				window,
+				action.target,
+				signal,
 			);
 			if (signal.aborted) throw signal.reason;
-			let pressed = false;
-			try {
-				await window.webContents.debugger.sendCommand(
-					"Input.dispatchMouseEvent",
-					{
-						...pointer,
-						type: "mousePressed",
-						button: "left",
-						buttons: 1,
-						clickCount: 1,
-					},
-				);
-				pressed = true;
-				if (signal.aborted) throw signal.reason;
-				await window.webContents.debugger.sendCommand(
-					"Input.dispatchMouseEvent",
-					{
-						...pointer,
-						type: "mouseReleased",
-						button: "left",
-						buttons: 0,
-						clickCount: 1,
-					},
-				);
-				pressed = false;
-			} finally {
-				if (pressed)
-					await window.webContents.debugger
-						.sendCommand("Input.dispatchMouseEvent", {
-							...pointer,
-							type: "mouseReleased",
-							button: "left",
-							buttons: 0,
-							clickCount: 1,
-						})
-						.catch(() => undefined);
-			}
+			// BrowserWindow sessions stay hidden, so Electron's window-level input
+			// dispatch can be dropped by a headless runner. Bounded CDP dispatch keeps
+			// real pointer semantics without showing the user's desktop window.
+			await dispatchBrowserMouseClick(window.webContents, point, signal);
 			// Let the renderer process the click handler before the verified action
 			// returns. Generic clicks are never retried here because activation may
 			// be consequential and the browser service cannot infer idempotency.
-			await window.webContents.executeJavaScript(
-				"new Promise((resolve) => requestAnimationFrame(resolve))",
-				true,
+			await waitForBrowserPostClickFrame(
+				() =>
+					window.webContents.executeJavaScript(
+						"new Promise((resolve) => requestAnimationFrame(resolve))",
+						true,
+					),
+				signal,
 			);
 		} else if (action.type === "type") {
-			await this.targetPoint(id, window, action.target, true);
+			await this.targetPoint(id, window, action.target, signal, true);
 			if (signal.aborted) throw signal.reason;
 			window.webContents.insertText(action.text);
+		} else if (action.type === "select") {
+			await selectBrowserOption(
+				window.webContents,
+				action.target,
+				action.value,
+				this.elementRefs.get(id),
+				signal,
+			);
 		} else if (action.type === "key") {
 			if (
 				!/^[A-Za-z0-9]{1,20}$/.test(action.key) &&
@@ -516,11 +518,7 @@ export class ElectronBrowserService {
 				].includes(action.key)
 			)
 				throw new Error("Browser key is not allowed.");
-			window.webContents.sendInputEvent({
-				type: "keyDown",
-				keyCode: action.key,
-			});
-			window.webContents.sendInputEvent({ type: "keyUp", keyCode: action.key });
+			await dispatchBrowserKey(window.webContents, action.key, signal);
 		} else {
 			window.webContents.sendInputEvent({
 				type: "mouseWheel",

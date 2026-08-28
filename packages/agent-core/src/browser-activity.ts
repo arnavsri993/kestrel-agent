@@ -76,6 +76,7 @@ function intentFor(
 	if (
 		action.type !== "click" &&
 		action.type !== "type" &&
+		action.type !== "select" &&
 		action.type !== "key" &&
 		action.type !== "scroll"
 	)

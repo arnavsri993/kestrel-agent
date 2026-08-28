@@ -42,6 +42,7 @@ The packaged development build is Apple Silicon and ad-hoc signed. It is useful 
 - Rich outputs include approval-gated fal MiniMax Music 2.6 generation with verified local audio provenance and restart-restored interactive HTML/SVG widgets. Widgets run in an opaque-origin, no-network sandbox without Electron, parent DOM, storage-origin, workspace, or credential access.
 - Packaged macOS builds include native WidgetKit **Focus**, **Queue**, and **Pulse** widgets. They expose content-light local status and counts, deep-link back into Kestrel, and never approve or start work; see [macOS widgets](docs/macos-widgets.md).
 - Opportunities provides a Cerebral Valley-style event and hackathon application assistant: import an official page, let the local agent research eligibility and draft provenance-labeled answers, review sensitive fields, approve the application, then hand off to an isolated browser agent that pauses before submission and records only a verified receipt.
+- A versioned 50-workflow deterministic browser-agent benchmark runs the real Kestrel runtime and Electron browser tools against two loopback fixture origins, verifies completion or safe-stop outcomes from independent server state, and reports false positives, duration, retries, failed attempts, explicit approval grants, scripted recovery, and failure classes. It makes no model call or approval-UI claim, so token, cost, and user-prompt counts remain explicitly unmeasured; see [browser-agent reliability benchmark](docs/browser-agent-benchmark.md).
 - On macOS, the visible browser recognizes likely verification-code pages and offers a corner helper plus a native notification. After an explicit **Find code**, it can search read-only Messages on this Mac and a connected Google Workspace Gmail account, then insert a selected code without submitting the page. Only the short code and bounded metadata reach the trusted desktop surface; message bodies stay out of agent context and task history. See [communication code recovery](docs/communication-code-recovery.md).
 - Connections supports a user-owned Google Desktop OAuth client through external-browser PKCE and a random loopback callback. Kestrel stores only the encrypted refresh record, rotates access tokens in memory, can revoke the grant, sends through Gmail, performs read-only recent-message lookup for code recovery, and lists or read-back verifies approval-gated Calendar events.
 - First-run and daily checks now probe configured model accounts or local services, report local-core/project/macOS-permission/package status, and create a no-overwrite verified backup of encrypted Kestrel state without copying project folders.
@@ -63,7 +64,7 @@ Not yet complete: public Google OAuth app verification and bundled client regist
 
 ## Browser and agent workspace
 
-Kestrel’s default desktop destination is a local user browser beside a stable agent conversation. Browser and Agent are equal top-level destinations: the Browser owns tabs and pages, while the Agent workspace starts, finds, filters, and resumes durable tasks with project, status, approval, and recovery context. Tabs, History, Downloads, session restore, configurable local history retention, address/search navigation, and browser settings are implemented. The optional **Use current page** handoff sends bounded visible-page reference material to the conversation; page content remains untrusted and cannot authorize actions. User tabs use their own persistent browser profile, while autonomous agent browser sessions are isolated and origin-scoped. Consequential browser actions continue through Kestrel’s existing policy/approval path. See [AI-native browser](docs/ai-native-browser.md) for implemented boundaries and follow-up scope.
+Kestrel’s default desktop destination is a local user browser beside a stable agent conversation. Browser and Agent are equal top-level destinations: the Browser owns tabs and pages, while the Agent workspace starts, finds, filters, and resumes durable tasks with project, status, approval, and recovery context. Tabs, History, Downloads, session restore, configurable local history retention, address/search navigation, and browser settings are implemented. The optional **Use current page** handoff sends bounded visible-page reference material to the conversation; page content remains untrusted and cannot authorize actions. User tabs use their own persistent browser profile, while autonomous agent browser sessions are isolated and origin-scoped. Consequential browser actions continue through Kestrel’s existing policy/approval path. See [AI-native browser](docs/ai-native-browser.md) for implemented boundaries and follow-up scope, and [browser-agent reliability benchmark](docs/browser-agent-benchmark.md) for the reproducible deterministic evidence boundary.
 
 ## Architecture and research evidence
 
@@ -118,6 +119,10 @@ Run all non-paid verification:
 corepack pnpm verify
 corepack pnpm test:e2e
 corepack pnpm assets:verify
+
+# Run or filter the deterministic 50-workflow browser-agent track:
+corepack pnpm benchmark:browser-agent
+corepack pnpm benchmark:browser-agent --workflow forms-country-dropdown
 ```
 
 For the full Apple Silicon live-demo gate, including a real managed local-model

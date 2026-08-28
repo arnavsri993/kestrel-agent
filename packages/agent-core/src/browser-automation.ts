@@ -26,6 +26,7 @@ import type { AgentRuntime } from "./runtime";
 export type BrowserAction =
 	| { type: "click"; target: string }
 	| { type: "type"; target: string; text: string }
+	| { type: "select"; target: string; value: string }
 	| { type: "key"; key: string }
 	| { type: "scroll"; x: number; y: number };
 
@@ -316,13 +317,19 @@ export class BrowserController {
 	): Promise<BrowserActionResult> {
 		const session = this.require(ownerSessionId, id);
 		if (
-			(action.type === "click" || action.type === "type") &&
+			(action.type === "click" ||
+				action.type === "type" ||
+				action.type === "select") &&
 			(!action.target || action.target.length > 2_000)
 		)
 			throw new Error("Browser action target is invalid.");
 		if (action.type === "type" && action.text.length > 20_000)
 			throw new Error(
 				"Browser typing is limited to 20,000 characters per action.",
+			);
+		if (action.type === "select" && action.value.length > 2_000)
+			throw new Error(
+				"Browser select values are limited to 2,000 characters per action.",
 			);
 		if (
 			action.type === "scroll" &&
@@ -642,13 +649,19 @@ export class BrowserController {
 			throw new Error("The visible user browser is unavailable.");
 		this.validateVisibleTabId(tabId);
 		if (
-			(action.type === "click" || action.type === "type") &&
+			(action.type === "click" ||
+				action.type === "type" ||
+				action.type === "select") &&
 			(!action.target || action.target.length > 2_000)
 		)
 			throw new Error("Visible browser action target is invalid.");
 		if (action.type === "type" && action.text.length > 20_000)
 			throw new Error(
 				"Visible browser typing is limited to 20,000 characters.",
+			);
+		if (action.type === "select" && action.value.length > 2_000)
+			throw new Error(
+				"Visible browser select values are limited to 2,000 characters.",
 			);
 		const before =
 			this.lastVisibleSnapshots.get(tabId) ?? EMPTY_BROWSER_SNAPSHOT;
@@ -1170,6 +1183,16 @@ export function installBrowserTools(
 						{
 							type: "object",
 							properties: {
+								type: { const: "select" },
+								target: snapshotTargetSchema,
+								value: { type: "string", maxLength: 2_000 },
+							},
+							required: ["type", "target", "value"],
+							additionalProperties: false,
+						},
+						{
+							type: "object",
+							properties: {
 								type: { const: "key" },
 								key: { type: "string", minLength: 1, maxLength: 20 },
 							},
@@ -1479,6 +1502,16 @@ export function installBrowserTools(
 								text: { type: "string", maxLength: 20_000 },
 							},
 							required: ["type", "target", "text"],
+							additionalProperties: false,
+						},
+						{
+							type: "object",
+							properties: {
+								type: { const: "select" },
+								target: snapshotTargetSchema,
+								value: { type: "string", maxLength: 2_000 },
+							},
+							required: ["type", "target", "value"],
 							additionalProperties: false,
 						},
 						{

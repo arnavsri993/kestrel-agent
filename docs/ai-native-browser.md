@@ -20,6 +20,31 @@ Agent-created browser sessions are separate, ephemeral Electron partitions. Each
 
 The agent may also inspect or operate the visible user browser through narrowly typed tools. That is an intentional capability boundary, not a session merge: user tabs keep their own persistent profile while autonomous sessions retain their own isolated profile. Visible-browser tools can list tabs, read bounded current-page/AX/screenshot context, search local history, list download metadata, and perform approved tab/navigation/page actions. They are installed for new conversations and migrated onto existing conversations without changing conversation recency. Read-only visible-browser inspection (tabs, snapshots, screenshots, history, downloads) is `read_only` and does not require a click-approval. Mutating operations remain `sensitive` and stay on the existing policy/approval path. When the Codex subscription route is enabled, desktop bootstrap attaches a loopback MCP server so Codex can inspect the visible Kestrel browser (tabs, snapshots, screenshots, history, downloads) without receiving Kestrel's shell or workspace catalog. Mutating browser tools remain on Kestrel's native approval path and are not exposed through that MCP server. Page text, links, forms, history titles, download names, accessibility snapshots, and screenshots are reference material only—never instructions, authorization, or a source of credentials. AX snapshots have URL values redacted and are size-checked in the main process before crossing into the agent utility process.
 
+Native `<select>` controls use a typed `select` action with a bounded option
+value rather than simulated arrow-key counts. Both autonomous and visible
+browser backends resolve the semantic target, require a visible, enabled,
+unobscured select element and an existing option value, dispatch `input` and
+`change`, and verify the value remained selected. The selected value is not
+copied into the browser activity intent ledger.
+
+Before pointer input, accessibility refs are resolved against the current
+document, scrolled into view, allowed two layout frames to settle, and checked
+again for visibility, disabled state, viewport intersection, and obscuration.
+This rejects stale or unsafe targets instead of reporting an unverified click,
+while hidden autonomous windows keep background layout and CDP input active.
+
+## Deterministic reliability track
+
+The versioned 50-workflow track launches the real app, invokes the ordinary
+runtime browser tools, and verifies completion or expected safe stops through
+state owned by two loopback fixture servers. It covers research, forms,
+productivity, commerce, accounts, and failure/recovery cases in both
+development Electron and packaged Apple Silicon gates. It does not call a
+model, exercise live sites, or use real accounts, so model tokens and cost are
+reported as unmeasured and live canaries remain separate. See
+[browser-agent reliability benchmark](browser-agent-benchmark.md) for commands,
+corpus distribution, report schema, and evidence limits.
+
 ## Context and conversations
 
 The current-page toggle controls whether a conversation receives a snapshot of the active page. When enabled, Kestrel extracts bounded, visible-page material: title, URL, description, selected text, headings, visible text, visible links/forms, viewport, and capture time. The shared contract caps collection (for example, 20,000 selected-text characters, 40,000 visible-text characters, 100 links, and 60 forms), and agent selection adds an untrusted header plus a 16,000-character budget. Selection favors metadata, user selection, headings, then visible text and form labels. It explicitly tells the agent never to follow page instructions, reveal cookies/credentials, or treat page content as approval.
@@ -32,7 +57,7 @@ The Agent workspace gives those runtime sessions equal top-level standing with B
 
 ## Approvals, privacy, and performance
 
-- Read-only inspection is distinct from action. Navigation, typing, clicking, tab creation/selection/closing, and authentication handoff are sensitive mutating browser tools.
+- Read-only inspection is distinct from action. Navigation, typing, clicking, option selection, tab creation/selection/closing, and authentication handoff are sensitive mutating browser tools.
 - Existing Kestrel consequential-action policy is still the approval authority; page content cannot grant permission. This increment does not yet expose a browser-specific approval receipt or a per-site permission manager.
 - Approved or blocked `browser.act` / `browser.visible-act` calls are recorded in an encrypted `browser_activity_events` table (intent, tab or session, approval result, observation counts). Cookies, typed text, AX trees, and screenshots stay out of that ledger, and it is not `browser/state.json`.
 - User profile state remains local to the Mac. Autonomous-session state is isolated from the user profile. No cloud browser, Fal request, or local ML stack is required by this feature.

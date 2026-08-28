@@ -56,6 +56,7 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm build:desktop
+      - run: corepack pnpm benchmark:browser-agent --report .tmp/browser-agent-benchmark/ci-development.json
       - run: corepack pnpm test:desktop-file-icon-guard
       - run: corepack pnpm test
       - run: corepack pnpm test:desktop-smoke
@@ -80,3 +81,11 @@ jobs:
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-layout
       - run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-file-icon-guard
       - run: corepack pnpm test:packaged-desktop:arm64
+      - run: corepack pnpm benchmark:browser-agent:packaged:arm64 --report .tmp/browser-agent-benchmark/ci-packaged.json
+      - name: Upload browser-agent benchmark reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-agent-benchmark-${{ github.run_attempt }}
+          path: .tmp/browser-agent-benchmark/*.json
+          if-no-files-found: warn
