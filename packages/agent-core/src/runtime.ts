@@ -45,11 +45,15 @@ import {
 } from "@kestrel/shared-types";
 import { z } from "zod";
 import {
+	type ActionReceiptApprovalContext,
+	buildActionReceipt,
+} from "./action-receipts";
+import { summarizeBrowserActivity } from "./browser-activity";
+import {
 	type SandboxedCommandHandle,
 	SandboxedCommandRunner,
 } from "./command-runner";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
-import { summarizeBrowserActivity } from "./browser-activity";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
 
@@ -653,7 +657,7 @@ export class AgentRuntime extends EventEmitter {
 		const reason =
 			"Agent run and any pending approval were invalidated because the session was restored to an earlier checkpoint.";
 		this.abortActiveExecutionsForHistoryRollback(sessionId, reason);
-		this.database.retireActiveAgentHistory(sessionId, completedAt, reason);
+		this.retireActiveAgentHistory(sessionId, completedAt, reason);
 		const baseline = new Set(state.mutationIds);
 		for (const mutation of this.database
 			.listWorkspaceMutations(sessionId)
@@ -711,7 +715,7 @@ export class AgentRuntime extends EventEmitter {
 		const reason =
 			"Agent run and any pending approval were invalidated because the session turn was retried.";
 		this.abortActiveExecutionsForHistoryRollback(sessionId, reason);
-		this.database.retireActiveAgentHistory(sessionId, completedAt, reason);
+		this.retireActiveAgentHistory(sessionId, completedAt, reason);
 		if (baseline?.sessionId === sessionId) {
 			const mutationIds = new Set(baseline.mutationIds);
 			for (const mutation of this.database
@@ -1396,7 +1400,11 @@ export class AgentRuntime extends EventEmitter {
 		const repeated = idempotencyKey
 			? this.database.getIdempotentResult<RuntimeToolExecution>(idempotencyKey)
 			: undefined;
-		if (repeated) return RuntimeToolExecutionSchema.parse(repeated);
+		if (repeated) {
+			const execution = RuntimeToolExecutionSchema.parse(repeated);
+			this.ensureActionReceipt(execution, definition.descriptor);
+			return execution;
+		}
 
 		const activeExecution = idempotencyKey
 			? this.inFlightIdempotentExecutions.get(idempotencyKey)
@@ -1508,14 +1516,34 @@ export class AgentRuntime extends EventEmitter {
 					});
 		if (!policy.allowed && policy.approvalRequired && configuredPolicy.reason)
 			policy.reason = configuredPolicy.reason;
+		const receiptApprovalRequired =
+			alwaysRequireApproval ||
+			effectiveRisk === "external" ||
+			effectiveRisk === "sensitive" ||
+			effectiveRisk === "high_consequence";
+		const receiptApproval: ActionReceiptApprovalContext = !policy.allowed
+			? {
+					required: receiptApprovalRequired,
+					result: policy.approvalRequired ? "pending" : "denied",
+				}
+			: receiptApprovalRequired &&
+					(oneTimeApprovalGrant || options.approvalStatus === "approved")
+				? { required: receiptApprovalRequired, result: "approved_once" }
+				: receiptApprovalRequired && approvalRule?.decision === "allow"
+					? { required: receiptApprovalRequired, result: "allowed_by_rule" }
+					: { required: false, result: "not_required" };
 		const startedAt = this.now();
 		if (policy.allowed && oneTimeApprovalGrant) {
-			this.database.saveToolExecution({
-				...oneTimeApprovalGrant,
-				status: "cancelled",
-				error: "The approved one-time grant was consumed.",
-				completedAt: startedAt,
-			});
+			this.journalToolExecution(
+				RuntimeToolExecutionSchema.parse({
+					...oneTimeApprovalGrant,
+					status: "cancelled",
+					error: "The approved one-time grant was consumed.",
+					completedAt: startedAt,
+				}),
+				{ required: true, result: "approved_once" },
+				definition.descriptor,
+			);
 		}
 		let execution = RuntimeToolExecutionSchema.parse({
 			id: `tool-${randomUUID()}`,
@@ -1542,7 +1570,11 @@ export class AgentRuntime extends EventEmitter {
 				: {}),
 		});
 		if (!policy.allowed) {
-			this.journalToolExecution(execution);
+			this.journalToolExecution(
+				execution,
+				receiptApproval,
+				definition.descriptor,
+			);
 			this.emitRuntimeEvent(
 				"tool.started",
 				session.id,
@@ -1571,7 +1603,11 @@ export class AgentRuntime extends EventEmitter {
 				error: preHook.reason ?? "A pre-tool hook blocked execution.",
 				completedAt: this.now(),
 			});
-			this.journalToolExecution(execution);
+			this.journalToolExecution(
+				execution,
+				receiptApproval,
+				definition.descriptor,
+			);
 			this.emitRuntimeEvent(
 				"tool.started",
 				session.id,
@@ -1598,7 +1634,11 @@ export class AgentRuntime extends EventEmitter {
 						: "Execution cancelled by the user.",
 				completedAt: this.now(),
 			});
-			this.journalToolExecution(execution);
+			this.journalToolExecution(
+				execution,
+				receiptApproval,
+				definition.descriptor,
+			);
 			this.emitRuntimeEvent(
 				"tool.started",
 				session.id,
@@ -1620,7 +1660,10 @@ export class AgentRuntime extends EventEmitter {
 				execution,
 				options.signal,
 			);
-			if (repeatedExecution) return repeatedExecution;
+			if (repeatedExecution) {
+				this.ensureActionReceipt(repeatedExecution, definition.descriptor);
+				return repeatedExecution;
+			}
 		}
 
 		const activeExecutionId = execution.id;
@@ -1638,7 +1681,11 @@ export class AgentRuntime extends EventEmitter {
 			}
 		};
 		try {
-			this.database.saveToolExecution(execution);
+			this.journalToolExecution(
+				execution,
+				receiptApproval,
+				definition.descriptor,
+			);
 			this.emitRuntimeEvent(
 				"tool.started",
 				session.id,
@@ -1694,7 +1741,11 @@ export class AgentRuntime extends EventEmitter {
 				...(verification ? { verification } : {}),
 				completedAt: verifiedAt,
 			});
-			this.journalToolExecution(execution);
+			this.journalToolExecution(
+				execution,
+				receiptApproval,
+				definition.descriptor,
+			);
 			await this.runHooks(
 				"post_tool",
 				session,
@@ -1702,7 +1753,12 @@ export class AgentRuntime extends EventEmitter {
 				execution,
 			);
 			if (idempotencyKey) {
-				execution = this.completeIdempotentExecution(idempotencyKey, execution);
+				execution = this.completeIdempotentExecution(
+					idempotencyKey,
+					execution,
+					receiptApproval,
+					definition.descriptor,
+				);
 				claimOwned = false;
 			}
 			this.emitRuntimeEvent(
@@ -1734,9 +1790,18 @@ export class AgentRuntime extends EventEmitter {
 						: "Tool execution failed.",
 				completedAt: this.now(),
 			});
-			this.journalToolExecution(execution);
+			this.journalToolExecution(
+				execution,
+				receiptApproval,
+				definition.descriptor,
+			);
 			if (idempotencyKey && effectStarted) {
-				execution = this.completeIdempotentExecution(idempotencyKey, execution);
+				execution = this.completeIdempotentExecution(
+					idempotencyKey,
+					execution,
+					receiptApproval,
+					definition.descriptor,
+				);
 				claimOwned = false;
 			} else if (idempotencyKey && claimOwned) {
 				this.database.releaseIdempotentClaim(
@@ -1787,14 +1852,32 @@ export class AgentRuntime extends EventEmitter {
 					);
 					this.journalToolExecution(
 						RuntimeToolExecutionSchema.parse(completion.result),
+						receiptApproval,
+						definition.descriptor,
 					);
 				}
 			}
 		}
 	}
 
-	private journalToolExecution(execution: RuntimeToolExecution): void {
+	private journalToolExecution(
+		execution: RuntimeToolExecution,
+		approval?: ActionReceiptApprovalContext,
+		descriptor?: RuntimeToolDescriptor,
+	): void {
 		this.database.saveToolExecution(execution);
+		const previousReceipt = this.database.getActionReceiptForExecution(
+			execution.id,
+		);
+		const receiptDescriptor =
+			descriptor ?? this.tools.get(execution.toolName)?.descriptor;
+		const receiptApproval = approval ?? previousReceipt?.approval;
+		const receipt = buildActionReceipt({
+			execution,
+			...(receiptDescriptor ? { descriptor: receiptDescriptor } : {}),
+			...(receiptApproval ? { approval: receiptApproval } : {}),
+		});
+		if (receipt) this.database.saveActionReceipt(receipt);
 		if (execution.status === "running") return;
 		const event = summarizeBrowserActivity(execution);
 		if (!event) return;
@@ -1810,9 +1893,40 @@ export class AgentRuntime extends EventEmitter {
 		}
 	}
 
+	private retireActiveAgentHistory(
+		sessionId: string,
+		completedAt: string,
+		reason: string,
+	): void {
+		const retired = this.database.retireActiveAgentHistory(
+			sessionId,
+			completedAt,
+			reason,
+		);
+		for (const execution of retired.toolExecutions)
+			this.journalToolExecution(execution);
+	}
+
+	private ensureActionReceipt(
+		execution: RuntimeToolExecution,
+		descriptor?: RuntimeToolDescriptor,
+	): void {
+		const previousReceipt = this.database.getActionReceiptForExecution(
+			execution.id,
+		);
+		const receipt = buildActionReceipt({
+			execution,
+			...(descriptor ? { descriptor } : {}),
+			...(previousReceipt ? { approval: previousReceipt.approval } : {}),
+		});
+		if (receipt) this.database.saveActionReceipt(receipt);
+	}
+
 	private completeIdempotentExecution(
 		idempotencyKey: string,
 		execution: RuntimeToolExecution,
+		approval?: ActionReceiptApprovalContext,
+		descriptor?: RuntimeToolDescriptor,
 	): RuntimeToolExecution {
 		const completion = this.database.completeIdempotentResult(
 			idempotencyKey,
@@ -1820,7 +1934,7 @@ export class AgentRuntime extends EventEmitter {
 			execution,
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
-		this.journalToolExecution(result);
+		this.journalToolExecution(result, approval, descriptor);
 		return result;
 	}
 

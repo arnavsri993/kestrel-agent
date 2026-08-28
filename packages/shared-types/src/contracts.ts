@@ -708,23 +708,26 @@ export const WorkspaceMutationSchema = z.object({
 });
 export type WorkspaceMutation = z.infer<typeof WorkspaceMutationSchema>;
 
+export const RuntimeToolCategorySchema = z.enum([
+	"workspace",
+	"execution",
+	"web",
+	"browser",
+	"connector",
+	"memory",
+	"session",
+	"automation",
+	"media",
+	"extension",
+	"configuration",
+]);
+export type RuntimeToolCategory = z.infer<typeof RuntimeToolCategorySchema>;
+
 export const RuntimeToolDescriptorSchema = z.object({
 	name: z.string().regex(/^[a-z][a-z0-9_.-]+$/),
 	title: z.string().min(1),
 	description: z.string().min(1),
-	category: z.enum([
-		"workspace",
-		"execution",
-		"web",
-		"browser",
-		"connector",
-		"memory",
-		"session",
-		"automation",
-		"media",
-		"extension",
-		"configuration",
-	]),
+	category: RuntimeToolCategorySchema,
 	riskLevel: RiskLevelSchema,
 	readOnly: z.boolean(),
 	requiresWorkspace: z.boolean(),
@@ -755,6 +758,68 @@ export const RuntimeToolExecutionSchema = z.object({
 	completedAt: z.string().datetime().optional(),
 });
 export type RuntimeToolExecution = z.infer<typeof RuntimeToolExecutionSchema>;
+
+export const ActionReceiptSchema = z.strictObject({
+	id: z.string().min(1).max(300),
+	sessionId: z.string().min(1).max(200),
+	runId: z.string().min(1).max(200).optional(),
+	toolExecutionId: z.string().min(1).max(200),
+	toolName: z.string().regex(/^[a-z][a-z0-9_.-]+$/),
+	action: z.strictObject({
+		title: z.string().min(1).max(500),
+		category: RuntimeToolCategorySchema,
+		riskLevel: RiskLevelSchema,
+		summary: z.string().min(1).max(2_000),
+	}),
+	destination: z.strictObject({
+		kind: RuntimeToolCategorySchema,
+		label: z.string().min(1).max(2_000),
+	}),
+	approval: z.strictObject({
+		required: z.boolean(),
+		result: z.enum([
+			"not_required",
+			"approved_once",
+			"allowed_by_rule",
+			"pending",
+			"denied",
+			"unknown",
+		]),
+	}),
+	precondition: z.strictObject({
+		status: z.enum(["satisfied", "waiting", "blocked", "unknown"]),
+		summary: z.string().min(1).max(2_000),
+	}),
+	expectedState: z.string().min(1).max(2_000),
+	observedState: z.string().min(1).max(2_000),
+	outcome: z.enum([
+		"in_progress",
+		"waiting_approval",
+		"blocked",
+		"verified",
+		"failed",
+		"cancelled",
+		"uncertain",
+	]),
+	result: z.string().min(1).max(2_000).optional(),
+	verification: z
+		.strictObject({
+			method: z.string().min(1).max(500),
+			evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+			verifiedAt: z.string().datetime(),
+		})
+		.optional(),
+	rollback: z.strictObject({
+		status: z.enum(["available", "unavailable", "not_applicable"]),
+		method: z.string().min(1).max(200).optional(),
+		referenceId: z.string().min(1).max(500).optional(),
+		reason: z.string().min(1).max(2_000),
+	}),
+	startedAt: z.string().datetime(),
+	completedAt: z.string().datetime().optional(),
+	trust: z.literal("local_encrypted_bounded"),
+});
+export type ActionReceipt = z.infer<typeof ActionReceiptSchema>;
 
 export const ApprovalRuleSchema = z.object({
 	id: z.string().min(1),
@@ -1810,6 +1875,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		limit: z.number().int().positive().max(200).optional(),
 	}),
 	z.object({
+		type: z.literal("runtime-list-action-receipts"),
+		sessionId: z.string().min(1),
+		limit: z.number().int().positive().max(500).optional(),
+	}),
+	z.object({
 		type: z.literal("runtime-list-pending-tool-approvals"),
 	}),
 	z.object({
@@ -2330,6 +2400,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		messages: z.array(RuntimeMessageSchema).optional(),
 		hasMoreMessages: z.boolean().optional(),
 		executions: z.array(RuntimeToolExecutionSchema).optional(),
+		receipts: z.array(ActionReceiptSchema).optional(),
 		plugins: z.array(PluginSummarySchema).optional(),
 		providers: z.array(ModelProviderSummarySchema).optional(),
 		modelProfiles: z.array(ModelProfileSchema).optional(),

@@ -1,4 +1,5 @@
 import type {
+	ActionReceipt,
 	AgentRun,
 	AgentState,
 	ApprovalRule,
@@ -78,6 +79,7 @@ import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
+import { ActionReceiptList } from "./components/ActionReceiptList";
 import {
 	sidebarActiveDestination,
 	sidebarReviewTarget,
@@ -143,7 +145,11 @@ import {
 	startupFailureMessage,
 } from "./startup-state";
 import { personalizedConfigurationPrompts } from "./configuration-prompts";
-import { policyGateCopy, runRouteLabel } from "./runtime-evidence";
+import {
+	latestRunActionReceipts,
+	policyGateCopy,
+	runRouteLabel,
+} from "./runtime-evidence";
 
 const MAX_RENDERER_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
@@ -3057,6 +3063,7 @@ function RuntimeConversation({
 	const [toolActivity, setToolActivity] = useState<RuntimeEvent[]>([]);
 	const [usage, setUsage] = useState<SessionUsageSummary | null>(null);
 	const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
+	const [actionReceipts, setActionReceipts] = useState<ActionReceipt[]>([]);
 	const [skillBusy, setSkillBusy] = useState(false);
 	const [skillNotice, setSkillNotice] = useState("");
 	const [checkpointSummary, setCheckpointSummary] = useState("");
@@ -3214,7 +3221,13 @@ function RuntimeConversation({
 	async function loadSession(sessionId: string): Promise<boolean> {
 		if (activeSessionIdRef.current !== sessionId) return false;
 		const loadSequence = ++sessionLoadSequenceRef.current;
-		const [messageResponse, runResponse, executionResponse, usageResponse] =
+		const [
+			messageResponse,
+			runResponse,
+			executionResponse,
+			receiptResponse,
+			usageResponse,
+		] =
 			await Promise.all([
 				window.kestrel.request({
 					type: "runtime-list-messages",
@@ -3230,6 +3243,11 @@ function RuntimeConversation({
 					sessionId,
 				}) as Promise<CoreResponse>,
 				window.kestrel.request({
+					type: "runtime-list-action-receipts",
+					sessionId,
+					limit: 500,
+				}) as Promise<CoreResponse>,
+				window.kestrel.request({
 					type: "runtime-session-usage",
 					sessionId,
 				}) as Promise<CoreResponse>,
@@ -3237,6 +3255,7 @@ function RuntimeConversation({
 		if (!messageResponse.ok) throw new Error(messageResponse.error);
 		if (!runResponse.ok) throw new Error(runResponse.error);
 		if (!executionResponse.ok) throw new Error(executionResponse.error);
+		if (!receiptResponse.ok) throw new Error(receiptResponse.error);
 		if (!usageResponse.ok) throw new Error(usageResponse.error);
 		if (
 			activeSessionIdRef.current !== sessionId ||
@@ -3246,6 +3265,7 @@ function RuntimeConversation({
 		setMessages(messageResponse.messages ?? []);
 		setHasEarlierMessages(messageResponse.hasMoreMessages === true);
 		setUsage(usageResponse.usage ?? null);
+		setActionReceipts(receiptResponse.receipts ?? []);
 		const runs = runResponse.runs ?? [];
 		setLatestRun(runs[runs.length - 1] ?? null);
 		const waiting = [...runs]
@@ -3403,6 +3423,7 @@ function RuntimeConversation({
 		setPending(null);
 		setUsage(null);
 		setLatestRun(null);
+		setActionReceipts([]);
 		setError("");
 		setSkillNotice("");
 		if (!activeSessionId) {
@@ -4081,6 +4102,7 @@ function RuntimeConversation({
 			latestRun?.status === "failed")
 			? latestRun.status
 			: null;
+	const latestReceipts = latestRunActionReceipts(actionReceipts, latestRun);
 	const emptySession = Boolean(
 		activeSessionId &&
 			visibleMessages.length === 0 &&
@@ -4303,9 +4325,9 @@ function RuntimeConversation({
 						</div>
 					)}
 					{latestOutcome && (
-						<div
+						<section
 							className={`runtime-outcome runtime-outcome-${latestOutcome}`}
-							role="status"
+							aria-label="Latest task outcome"
 						>
 							<div className="runtime-outcome-icon">
 								<Icon
@@ -4348,7 +4370,8 @@ function RuntimeConversation({
 									Retry last turn
 								</button>
 							)}
-						</div>
+							<ActionReceiptList receipts={latestReceipts} />
+						</section>
 					)}
 					{latestRun?.status === "completed" &&
 						!busy &&

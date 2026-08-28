@@ -32,6 +32,11 @@ const [
 	workspace,
 	afterPack,
 	architectureAudit,
+	actionReceiptContracts,
+	actionReceiptDatabase,
+	actionReceiptBuilder,
+	actionReceiptRenderer,
+	actionReceiptSmoke,
 ] = await Promise.all([
 	read("apps/desktop/electron-builder.yml"),
 	read("apps/desktop/electron-builder.dev.yml"),
@@ -51,6 +56,11 @@ const [
 	read("pnpm-workspace.yaml"),
 	read("apps/desktop/build/after-pack.cjs"),
 	read("scripts/macos-architecture-audit.cjs"),
+	read("packages/shared-types/src/contracts.ts"),
+	read("packages/database/src/index.ts"),
+	read("packages/agent-core/src/action-receipts.ts"),
+	read("apps/desktop/src/renderer/App.tsx"),
+	read("scripts/test-desktop-chat-configuration.mjs"),
 ]);
 
 for (const [name, source] of [
@@ -184,6 +194,13 @@ if (!desktopSmoke.includes("--use-mock-keychain"))
 	fail(
 		"packaged desktop smoke must isolate its test-only keychain from production Safe Storage.",
 	);
+if (
+	!desktopSmoke.includes("runtime-list-action-receipts") ||
+	!desktopSmoke.includes("receipt-typed-body-sentinel")
+)
+	fail(
+		"packaged desktop smoke must verify privacy-bounded action-receipt persistence.",
+	);
 if (!desktopSetup.includes("--use-mock-keychain"))
 	fail(
 		"desktop setup smoke must isolate its test-only keychain from production Safe Storage.",
@@ -257,6 +274,54 @@ if (!rootPackage.includes("pnpm test:desktop-managed-policy"))
 	fail(
 		"the market verification command does not exercise signed managed-policy bootstrap.",
 	);
+if (!rootPackage.includes("pnpm test:desktop-chat-configuration"))
+	fail(
+		"the market verification command does not exercise consequential action receipts.",
+	);
+for (const marker of [
+	"export const ActionReceiptSchema",
+	'trust: z.literal("local_encrypted_bounded")',
+	'runtime-list-action-receipts',
+]) {
+	if (!actionReceiptContracts.includes(marker))
+		fail(`the action-receipt contract is missing ${marker}.`);
+}
+for (const marker of [
+	"CREATE TABLE IF NOT EXISTS action_receipts",
+	"encryptText(JSON.stringify(parsed)",
+	"MAX_ACTION_RECEIPTS_PER_SESSION",
+]) {
+	if (!actionReceiptDatabase.includes(marker))
+		fail(`encrypted action-receipt persistence is missing ${marker}.`);
+}
+for (const marker of [
+	"UNCERTAIN_OUTCOME",
+	'const result = outcome === "uncertain" ? undefined',
+	'outcome === "verified" && input.execution.verification',
+	"Raw tool error text is not copied into receipts.",
+	'"workspace.undo"',
+	'"agent.config.rollback-preview"',
+]) {
+	if (!actionReceiptBuilder.includes(marker))
+		fail(`the truthful action-receipt builder is missing ${marker}.`);
+}
+for (const marker of [
+	"latestRunActionReceipts",
+	"<ActionReceiptList receipts={latestReceipts} />",
+	'runtime-list-action-receipts',
+]) {
+	if (!actionReceiptRenderer.includes(marker))
+		fail(`the desktop action-receipt surface is missing ${marker}.`);
+}
+for (const marker of [
+	"receipt-raw-body-sentinel-do-not-display",
+	"details.action-receipts",
+	'runtime-list-action-receipts',
+	"persistedReceipts",
+]) {
+	if (!actionReceiptSmoke.includes(marker))
+		fail(`the desktop action-receipt smoke is missing ${marker}.`);
+}
 
 if (distributionMode) {
 	const requiredInputs = [

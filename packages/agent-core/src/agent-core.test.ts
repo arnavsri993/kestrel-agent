@@ -1519,6 +1519,35 @@ describe("runtime approval and audit listing", () => {
 			startedAt,
 			completedAt: startedAt,
 		});
+		database.saveActionReceipt({
+			id: "action-receipt-blocked",
+			sessionId: session.id,
+			runId: "run-waiting",
+			toolExecutionId: "tool-blocked",
+			toolName: "workspace.apply_patch",
+			action: {
+				title: "Apply workspace patch",
+				category: "workspace",
+				riskLevel: "sensitive",
+				summary: "Apply one bounded workspace patch.",
+			},
+			destination: { kind: "workspace", label: "Granted workspace · README.md" },
+			approval: { required: true, result: "pending" },
+			precondition: {
+				status: "waiting",
+				summary: "Kestrel is waiting for approval.",
+			},
+			expectedState: "README.md should contain the approved patch.",
+			observedState: "No action ran. Kestrel is waiting at the approval boundary.",
+			outcome: "waiting_approval",
+			rollback: {
+				status: "not_applicable",
+				reason: "No verified change was recorded.",
+			},
+			startedAt,
+			completedAt: startedAt,
+			trust: "local_encrypted_bounded",
+		});
 
 		await expect(
 			core.handle({ type: "runtime-list-pending-tool-approvals" }),
@@ -1534,6 +1563,21 @@ describe("runtime approval and audit listing", () => {
 			executions: [
 				{ id: "tool-blocked" },
 				{ id: "tool-verified", verification: { method: "workspace-read-digest" } },
+			],
+		});
+		await expect(
+			core.handle({
+				type: "runtime-list-action-receipts",
+				sessionId: session.id,
+			}),
+		).resolves.toMatchObject({
+			ok: true,
+			receipts: [
+				{
+					id: "action-receipt-blocked",
+					outcome: "waiting_approval",
+					approval: { result: "pending" },
+				},
 			],
 		});
 		await core.close();

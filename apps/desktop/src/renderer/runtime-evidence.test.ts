@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { AgentRun, RuntimeToolExecution } from "@kestrel/shared-types";
+import type {
+	ActionReceipt,
+	AgentRun,
+	RuntimeToolExecution,
+} from "@kestrel/shared-types";
 import {
+	actionReceiptApprovalLabel,
+	actionReceiptOutcomeLabel,
+	actionReceiptRollbackLabel,
+	actionReceiptVerificationLabel,
 	activityItemsFromExecutions,
+	isConsumedApprovalCheckpoint,
+	latestRunActionReceipts,
 	pendingToolApprovals,
 	policyGateCopy,
 	runRouteLabel,
@@ -37,6 +47,49 @@ function execution(
 		idempotencyKey: "run-1:call-1",
 		startedAt: "2026-08-19T12:01:00.000Z",
 		completedAt: "2026-08-19T12:01:00.000Z",
+		...overrides,
+	};
+}
+
+function receipt(overrides: Partial<ActionReceipt> = {}): ActionReceipt {
+	return {
+		id: "action-receipt-1",
+		sessionId: "session-1",
+		runId: "run-1",
+		toolExecutionId: "tool-1",
+		toolName: "workspace.write",
+		action: {
+			title: "Write workspace file",
+			category: "workspace",
+			riskLevel: "low",
+			summary: "Write one bounded workspace file.",
+		},
+		destination: {
+			kind: "workspace",
+			label: "Granted workspace · notes/today.md",
+		},
+		approval: { required: false, result: "not_required" },
+		precondition: {
+			status: "satisfied",
+			summary: "Policy and scope were checked.",
+		},
+		expectedState: "The file should match the requested content.",
+		observedState: "Filesystem read-back matched.",
+		outcome: "verified",
+		verification: {
+			method: "filesystem-content-readback",
+			evidenceSha256: "a".repeat(64),
+			verifiedAt: "2026-08-19T12:02:00.000Z",
+		},
+		rollback: {
+			status: "available",
+			method: "workspace.undo",
+			referenceId: "mutation-1",
+			reason: "An encrypted mutation is available.",
+		},
+		startedAt: "2026-08-19T12:01:00.000Z",
+		completedAt: "2026-08-19T12:02:00.000Z",
+		trust: "local_encrypted_bounded",
 		...overrides,
 	};
 }
@@ -103,5 +156,76 @@ describe("execution audit items", () => {
 			detail: `workspace-write-readback · ${"a".repeat(12)}`,
 		});
 		expect(items[1]?.sourceIds).toContain("a".repeat(64));
+	});
+});
+
+describe("action receipt presentation", () => {
+	it("selects only the latest run and hides consumed approval checkpoints", () => {
+		const consumed = receipt({
+			id: "action-receipt-consumed",
+			toolExecutionId: "tool-consumed",
+			approval: { required: true, result: "approved_once" },
+			outcome: "cancelled",
+			verification: undefined,
+			observedState: "The approved one-time grant was consumed.",
+		});
+		expect(isConsumedApprovalCheckpoint(consumed)).toBe(true);
+		expect(
+			latestRunActionReceipts(
+				[
+					receipt({
+						id: "action-receipt-later",
+						toolExecutionId: "tool-later",
+						startedAt: "2026-08-19T12:03:00.000Z",
+					}),
+					consumed,
+					receipt({
+						id: "action-receipt-other-run",
+						toolExecutionId: "tool-other-run",
+						runId: "run-2",
+					}),
+					receipt(),
+				],
+				run(),
+			).map((item) => item.id),
+		).toEqual(["action-receipt-1", "action-receipt-later"]);
+	});
+
+	it("uses truthful approval, outcome, verification, and rollback labels", () => {
+		const verified = receipt();
+		expect(actionReceiptApprovalLabel(verified.approval)).toBe("Not required");
+		expect(actionReceiptOutcomeLabel(verified.outcome)).toBe("Verified");
+		expect(actionReceiptVerificationLabel(verified)).toBe(
+			`Verified via filesystem-content-readback · ${"a".repeat(12)}`,
+		);
+		expect(actionReceiptRollbackLabel(verified.rollback)).toBe(
+			"Available via workspace.undo",
+		);
+
+		const uncertain = receipt({
+			outcome: "uncertain",
+			verification: undefined,
+			approval: { required: true, result: "unknown" },
+			rollback: {
+				status: "unavailable",
+				reason: "The result must be inspected before any compensating action.",
+			},
+		});
+		expect(actionReceiptOutcomeLabel(uncertain.outcome)).toBe(
+			"Outcome uncertain",
+		);
+		expect(actionReceiptApprovalLabel(uncertain.approval)).toBe(
+			"Required; provenance unavailable",
+		);
+		expect(
+			actionReceiptApprovalLabel(
+				{ required: true, result: "pending" },
+				"cancelled",
+			),
+		).toBe("Not granted; task cancelled");
+		expect(actionReceiptVerificationLabel(uncertain)).toBe(
+			"No independent verification recorded",
+		);
+		expect(actionReceiptRollbackLabel(uncertain.rollback)).toBe("Unavailable");
 	});
 });

@@ -3,6 +3,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { decryptText, encryptText } from "@kestrel/encryption";
 import {
+	type ActionReceipt,
+	ActionReceiptSchema,
 	type ActivityItem,
 	ActivitySchema,
 	type AgentConfigurationAuditEvent,
@@ -212,7 +214,26 @@ CREATE INDEX IF NOT EXISTS idx_browser_activity_owner_created
   ON browser_activity_events(owner_session_id, created_at);
 `;
 
+const migration011 = `
+CREATE TABLE IF NOT EXISTS action_receipts (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  tool_execution_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  payload_ciphertext TEXT NOT NULL,
+  payload_iv TEXT NOT NULL,
+  payload_auth_tag TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES runtime_sessions(id),
+  FOREIGN KEY(tool_execution_id) REFERENCES tool_executions(id)
+);
+CREATE INDEX IF NOT EXISTS idx_action_receipts_session_started
+  ON action_receipts(session_id, started_at);
+`;
+
 const MAX_BROWSER_ACTIVITY_PER_OWNER = 500;
+const MAX_ACTION_RECEIPTS_PER_SESSION = 500;
 
 export const PROTECTED_DATABASE_ERROR_CODE = "kestrel-protected-database";
 
@@ -355,6 +376,15 @@ interface BrowserActivityRow extends EncryptedPayloadRow {
 	created_at: string;
 }
 
+interface ActionReceiptRow extends EncryptedPayloadRow {
+	id: string;
+	session_id: string;
+	tool_execution_id: string;
+	status: ActionReceipt["outcome"];
+	started_at: string;
+	updated_at: string;
+}
+
 interface MemoryMetadataRow extends EncryptedPayloadRow {
 	memory_id: string;
 }
@@ -437,6 +467,12 @@ export class KestrelDatabase {
 					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
 				)
 				.run(10, new Date().toISOString());
+			this.db.exec(migration011);
+			this.db
+				.prepare(
+					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+				)
+				.run(11, new Date().toISOString());
 		})();
 	}
 
@@ -839,6 +875,85 @@ export class KestrelDatabase {
 				)
 				.all(sessionId) as Array<{ payload: string }>
 		).map((row) => RuntimeToolExecutionSchema.parse(JSON.parse(row.payload)));
+	}
+
+	saveActionReceipt(receipt: ActionReceipt): void {
+		const parsed = ActionReceiptSchema.parse(receipt);
+		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
+		const updatedAt = parsed.completedAt ?? parsed.startedAt;
+		this.db
+			.prepare(
+				`INSERT INTO action_receipts (
+          id, session_id, tool_execution_id, status, started_at, updated_at,
+          payload_ciphertext, payload_iv, payload_auth_tag
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          session_id=excluded.session_id,
+          tool_execution_id=excluded.tool_execution_id,
+          status=excluded.status,
+          started_at=excluded.started_at,
+          updated_at=excluded.updated_at,
+          payload_ciphertext=excluded.payload_ciphertext,
+          payload_iv=excluded.payload_iv,
+          payload_auth_tag=excluded.payload_auth_tag`,
+			)
+			.run(
+				parsed.id,
+				parsed.sessionId,
+				parsed.toolExecutionId,
+				parsed.outcome,
+				parsed.startedAt,
+				updatedAt,
+				encrypted.ciphertext,
+				encrypted.iv,
+				encrypted.authTag,
+			);
+		this.db
+			.prepare(
+				`DELETE FROM action_receipts
+         WHERE session_id = ?
+           AND id NOT IN (
+             SELECT id FROM action_receipts
+             WHERE session_id = ?
+             ORDER BY started_at DESC, rowid DESC
+             LIMIT ?
+           )`,
+			)
+			.run(
+				parsed.sessionId,
+				parsed.sessionId,
+				MAX_ACTION_RECEIPTS_PER_SESSION,
+			);
+	}
+
+	getActionReceiptForExecution(toolExecutionId: string): ActionReceipt | undefined {
+		if (!toolExecutionId) throw new Error("Tool execution ID is required.");
+		const row = this.db
+			.prepare(
+				`SELECT id, session_id, tool_execution_id, status, started_at, updated_at,
+                payload_ciphertext, payload_iv, payload_auth_tag
+           FROM action_receipts WHERE tool_execution_id = ?`,
+			)
+			.get(toolExecutionId) as ActionReceiptRow | undefined;
+		return row ? this.parseActionReceipt(row) : undefined;
+	}
+
+	listActionReceipts(sessionId: string, limit = 500): ActionReceipt[] {
+		if (!sessionId) throw new Error("Runtime session ID is required.");
+		const boundedLimit = Math.min(500, Math.max(1, Math.trunc(limit)));
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM (
+           SELECT id, session_id, tool_execution_id, status, started_at, updated_at,
+                  payload_ciphertext, payload_iv, payload_auth_tag
+             FROM action_receipts
+            WHERE session_id = ?
+            ORDER BY started_at DESC, rowid DESC
+            LIMIT ?
+         ) ORDER BY started_at ASC`,
+			)
+			.all(sessionId, boundedLimit) as ActionReceiptRow[];
+		return rows.map((row) => this.parseActionReceipt(row));
 	}
 
 	listAllToolExecutions(startedAt?: string): RuntimeToolExecution[] {
@@ -1248,6 +1363,7 @@ export class KestrelDatabase {
 		| "messages"
 		| "memories"
 		| "workspaceMutations"
+		| "actionReceipts"
 		| "toolExecutions"
 		| "modelCalls"
 		| "runs"
@@ -1289,6 +1405,15 @@ export class KestrelDatabase {
 					    )`,
 				)
 				.run(cutoff, cutoff).changes;
+			const actionReceipts = this.db
+				.prepare(
+					`DELETE FROM action_receipts
+					 WHERE updated_at < ?
+					    OR tool_execution_id IN (
+					      SELECT id FROM tool_executions WHERE started_at < ?
+					    )`,
+				)
+				.run(cutoff, cutoff).changes;
 			const toolExecutions = remove(
 				"DELETE FROM tool_executions WHERE started_at < ?",
 			);
@@ -1310,6 +1435,7 @@ export class KestrelDatabase {
 				messages,
 				memories,
 				workspaceMutations,
+				actionReceipts,
 				toolExecutions,
 				modelCalls,
 				runs,
@@ -2073,6 +2199,10 @@ export class KestrelDatabase {
 				this.encryptionKey,
 			),
 		);
+	}
+
+	private parseActionReceipt(row: ActionReceiptRow): ActionReceipt {
+		return ActionReceiptSchema.parse(this.decryptPayload(row));
 	}
 
 	private parseRuntimeMessage(row: RuntimeMessageRow): RuntimeMessage {

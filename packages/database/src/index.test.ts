@@ -569,6 +569,162 @@ describe("runtime history retirement", () => {
 	});
 });
 
+describe("encrypted action receipts", () => {
+	function seedExecution(database: KestrelDatabase) {
+		database.saveRuntimeSession({
+			id: "session-receipt",
+			title: "Receipt session",
+			allowedTools: ["workspace.write"],
+			status: "active",
+			checkpoints: [],
+			createdAt: "2026-08-27T20:00:00.000Z",
+			updatedAt: "2026-08-27T20:00:00.000Z",
+		});
+		database.saveToolExecution({
+			id: "tool-receipt",
+			sessionId: "session-receipt",
+			toolName: "workspace.write",
+			status: "verified",
+			riskLevel: "low",
+			input: { path: "private/report.md" },
+			startedAt: "2026-08-27T20:00:00.000Z",
+			completedAt: "2026-08-27T20:00:01.000Z",
+		});
+	}
+
+	function receipt(outcome: "in_progress" | "verified" = "verified") {
+		return {
+			id: "action-receipt-receipt",
+			sessionId: "session-receipt",
+			toolExecutionId: "tool-receipt",
+			toolName: "workspace.write",
+			action: {
+				title: "Write workspace file",
+				category: "workspace" as const,
+				riskLevel: "low" as const,
+				summary: "Write one bounded workspace file.",
+			},
+			destination: {
+				kind: "workspace" as const,
+				label: "Granted workspace · private/report.md",
+			},
+			approval: { required: false, result: "not_required" as const },
+			precondition: {
+				status: "satisfied" as const,
+				summary: "Policy and scope were checked.",
+			},
+			expectedState: "The file should match the requested content.",
+			observedState:
+				outcome === "verified"
+					? "Filesystem read-back matched."
+					: "The action is still running.",
+			outcome,
+			rollback: {
+				status: outcome === "verified" ? ("available" as const) : ("not_applicable" as const),
+				...(outcome === "verified"
+					? { method: "workspace.undo", referenceId: "mutation-secret" }
+					: {}),
+				reason:
+					outcome === "verified"
+						? "An encrypted mutation is available."
+						: "Nothing has been verified yet.",
+			},
+			startedAt: "2026-08-27T20:00:00.000Z",
+			...(outcome === "verified"
+				? { completedAt: "2026-08-27T20:00:01.000Z" }
+				: {}),
+			trust: "local_encrypted_bounded" as const,
+		};
+	}
+
+	it("encrypts bounded receipt details and updates one receipt per execution", () => {
+		const { first, second } = sharedDatabases();
+		try {
+			seedExecution(first);
+			first.saveActionReceipt(receipt("in_progress"));
+			first.saveActionReceipt(receipt("verified"));
+			const row = first.db
+				.prepare(
+					"SELECT payload_ciphertext, status FROM action_receipts WHERE tool_execution_id = ?",
+				)
+				.get("tool-receipt") as { payload_ciphertext: string; status: string };
+			expect(row.status).toBe("verified");
+			expect(row.payload_ciphertext).not.toContain("private/report.md");
+			expect(row.payload_ciphertext).not.toContain("mutation-secret");
+			expect(second.listActionReceipts("session-receipt")).toMatchObject([
+				{
+					outcome: "verified",
+					destination: { label: "Granted workspace · private/report.md" },
+					rollback: { referenceId: "mutation-secret" },
+				},
+			]);
+			expect(
+				second.getActionReceiptForExecution("tool-receipt"),
+			).toMatchObject({ outcome: "verified" });
+			expect(
+				first.db
+					.prepare("SELECT version FROM schema_migrations WHERE version = 11")
+					.get(),
+			).toEqual({ version: 11 });
+		} finally {
+			first.close();
+			second.close();
+		}
+	});
+
+	it("removes receipt dependents before expired tool executions", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		try {
+			seedExecution(database);
+			database.saveActionReceipt(receipt());
+			expect(
+				database.enforceRetention("2026-08-28T00:00:00.000Z"),
+			).toMatchObject({ actionReceipts: 1, toolExecutions: 1 });
+			expect(database.listActionReceipts("session-receipt")).toEqual([]);
+		} finally {
+			database.close();
+		}
+	});
+
+	it("bounds encrypted receipt history to the newest 500 records per session", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		try {
+			seedExecution(database);
+			database.saveActionReceipt(receipt());
+			const baseTime = Date.parse("2026-08-27T20:01:00.000Z");
+			for (let index = 0; index < 500; index += 1) {
+				const toolExecutionId = `tool-receipt-${index}`;
+				const startedAt = new Date(baseTime + index).toISOString();
+				database.saveToolExecution({
+					id: toolExecutionId,
+					sessionId: "session-receipt",
+					toolName: "workspace.write",
+					status: "verified",
+					riskLevel: "low",
+					input: { path: `bounded/${index}.md` },
+					startedAt,
+					completedAt: startedAt,
+				});
+				database.saveActionReceipt({
+					...receipt(),
+					id: `action-receipt-bounded-${index}`,
+					toolExecutionId,
+					startedAt,
+					completedAt: startedAt,
+				});
+			}
+			const receipts = database.listActionReceipts("session-receipt");
+			expect(receipts).toHaveLength(500);
+			expect(receipts.some((item) => item.id === "action-receipt-receipt")).toBe(
+				false,
+			);
+			expect(receipts[0]?.id).toBe("action-receipt-bounded-0");
+		} finally {
+			database.close();
+		}
+	});
+});
+
 describe("browser activity ledger", () => {
 	function event(
 		overrides: Partial<{

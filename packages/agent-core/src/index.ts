@@ -1868,6 +1868,14 @@ export class AgentCore {
 						executions: executions.slice(-limit),
 					};
 				}
+				case "runtime-list-action-receipts":
+					return {
+						ok: true,
+						receipts: this.deps.database.listActionReceipts(
+							request.sessionId,
+							request.limit,
+						),
+					};
 				case "runtime-list-pending-tool-approvals": {
 					const runs = this.deps.database.listWaitingAgentRuns();
 					const executions = runs.flatMap((run) => {

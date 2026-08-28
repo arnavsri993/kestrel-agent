@@ -13,10 +13,13 @@ const reviewScreenshot = resolve(
 const appliedScreenshot = resolve(
 	"artifacts/screenshots/desktop/setup-revised/chat-configuration-applied.png",
 );
+const rawReceiptInputSentinel = "receipt-raw-body-sentinel-do-not-display";
 mkdirSync(dirname(reviewScreenshot), { recursive: true });
 
 let providerCalls = 0;
+let welcomeCalls = 0;
 const providerErrors = [];
+const providerCallSummaries = [];
 const server = createServer(async (request, response) => {
 	try {
 		if (request.method === "GET" && request.url === "/v1/models") {
@@ -35,7 +38,42 @@ const server = createServer(async (request, response) => {
 		const chunks = [];
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+		const systemText = String(
+			(body.messages ?? []).find((message) => message.role === "system")
+				?.content ?? "",
+		);
+		if (systemText.includes("one-line welcome shown on Kestrel's New Tab")) {
+			welcomeCalls += 1;
+			const event = {
+				id: `fixture-welcome-${welcomeCalls}`,
+				model: "fixture-model",
+				choices: [
+					{
+						index: 0,
+						delta: { content: "Good evening. What should we get done?" },
+						finish_reason: "stop",
+					},
+				],
+				usage: { prompt_tokens: 8, completion_tokens: 8 },
+			};
+			response.writeHead(200, {
+				"content-type": "text/event-stream; charset=utf-8",
+				"cache-control": "no-store",
+			});
+			response.end(`data: ${JSON.stringify(event)}\n\ndata: [DONE]\n\n`);
+			return;
+		}
 		providerCalls += 1;
+		providerCallSummaries.push({
+			call: providerCalls,
+			lastRoles: (body.messages ?? []).slice(-4).map((message) => ({
+				role: message.role,
+				toolCallId: message.tool_call_id,
+				toolNames: (message.tool_calls ?? []).map(
+					(call) => call.function?.name,
+				),
+			})),
+		});
 		const tools = new Set(
 			(body.tools ?? []).map((tool) => tool.function?.name).filter(Boolean),
 		);
@@ -70,7 +108,7 @@ const server = createServer(async (request, response) => {
 				id: "visual-plan-call",
 				name: "agent.config.plan",
 				arguments: {
-					requestSummary: "Use concise replies and compact chat density.",
+					requestSummary: `Use concise replies and compact chat density. ${rawReceiptInputSentinel}`,
 					patch: [
 						{
 							op: "replace",
@@ -293,6 +331,56 @@ try {
 		1,
 	);
 
+	const receiptDisclosure = page.locator("details.action-receipts");
+	await receiptDisclosure.waitFor();
+	assert.equal(
+		await receiptDisclosure.getAttribute("open"),
+		null,
+		"Action receipts must remain collapsed until the user asks to inspect them.",
+	);
+	await receiptDisclosure.locator(":scope > summary").click();
+	const receiptText = (await receiptDisclosure.textContent()) ?? "";
+	assert.equal(
+		await receiptDisclosure.locator(".action-receipt").count(),
+		2,
+		"The consumed approval checkpoint should not appear as a separate user action.",
+	);
+	assert.match(receiptText, /Destination\s*Kestrel agent configuration/);
+	assert.match(receiptText, /Approval\s*Approved once/);
+	assert.match(
+		receiptText,
+		/Verification\s*Verified via encrypted-version-and-live-readback · [a-f0-9]{12}/,
+	);
+	assert.match(
+		receiptText,
+		/Rollback\s*Available via agent\.config\.rollback-preview/,
+	);
+	assert.match(
+		receiptText,
+		/Encrypted locally · bounded receipt metadata only/,
+	);
+	assert.doesNotMatch(receiptText, new RegExp(rawReceiptInputSentinel));
+	assert.doesNotMatch(receiptText, /\/behavior\/responseStyle/);
+	const persistedReceipts = await page.evaluate(async (sessionId) => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-action-receipts",
+			sessionId,
+		});
+		if (!response.ok) throw new Error(response.error);
+		return response.receipts ?? [];
+	}, session.id);
+	assert.equal(persistedReceipts.length, 3);
+	assert.equal(
+		persistedReceipts.every(
+			(receipt) => receipt.trust === "local_encrypted_bounded",
+		),
+		true,
+	);
+	assert.equal(
+		JSON.stringify(persistedReceipts).includes(rawReceiptInputSentinel),
+		false,
+	);
+
 	const prepareUndo = appliedCard.getByRole("button", {
 		name: "Prepare undo",
 		exact: true,
@@ -349,6 +437,14 @@ try {
 		.locator(".configuration-applied")
 		.getByRole("button", { name: "Prepare undo", exact: true })
 		.waitFor();
+	const restartedReceiptDisclosure = page.locator("details.action-receipts");
+	await restartedReceiptDisclosure.waitFor();
+	assert.equal(await restartedReceiptDisclosure.getAttribute("open"), null);
+	await restartedReceiptDisclosure.locator(":scope > summary").click();
+	assert.match(
+		(await restartedReceiptDisclosure.textContent()) ?? "",
+		/Available via agent\.config\.rollback-preview/,
+	);
 
 	const dimensions = await page.evaluate(() => ({
 		documentWidth: document.documentElement.scrollWidth,
@@ -358,11 +454,15 @@ try {
 		dimensions.documentWidth <= dimensions.viewportWidth,
 		`Configuration chat overflowed: ${JSON.stringify(dimensions)}`,
 	);
-	assert.equal(providerCalls, 4);
+	assert.equal(
+		providerCalls,
+		4,
+		`Unexpected provider call sequence: ${JSON.stringify(providerCallSummaries)}`,
+	);
 	assert.deepEqual(providerErrors, []);
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		`Chat configuration inspect, isolated plan, exact approval, verified apply, undo preparation, restart persistence, and rendered ledger passed. Screenshots: ${reviewScreenshot}, ${appliedScreenshot}\n`,
+		`Chat configuration inspect, isolated plan, exact approval, verified apply, privacy-bounded action receipts, undo preparation, restart persistence, and rendered ledger passed. Screenshots: ${reviewScreenshot}, ${appliedScreenshot}\n`,
 	);
 } finally {
 	await application?.close();
