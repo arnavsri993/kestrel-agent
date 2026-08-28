@@ -4,7 +4,11 @@ import {
 } from "@kestrel/agent-core";
 import type { WebContents } from "electron";
 
-const BROWSER_TARGET_OPERATION_TIMEOUT_MS = 2_000;
+// Hidden Chromium renderers can take more than two seconds to acknowledge a
+// CDP layout/input command on a cold or CPU-contended machine. Keep the guard
+// finite, but leave enough headroom for a legitimate command to settle before
+// reporting a recoverable target timeout.
+const BROWSER_TARGET_OPERATION_TIMEOUT_MS = 5_000;
 const BROWSER_INPUT_RELEASE_TIMEOUT_MS = 250;
 
 type BrowserDebuggerNode = {
