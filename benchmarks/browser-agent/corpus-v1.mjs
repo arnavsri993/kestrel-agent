@@ -1,4 +1,4 @@
-export const BROWSER_AGENT_BENCHMARK_CORPUS_VERSION = "1.0.0";
+export const BROWSER_AGENT_BENCHMARK_CORPUS_VERSION = "1.1.0";
 
 const target = (role, name) => ({ role, name });
 const navigate = (path, site = "primary") => ({ op: "navigate", site, path });
@@ -352,6 +352,13 @@ const forms = [
 		fields: [
 			{ kind: "text", name: "name", label: "Full name", required: true, benchmarkValue: "Aria Chen" },
 			{ kind: "text", name: "email", label: "Email address", required: true, benchmarkValue: "aria@example.test" },
+		],
+		stepsBeforeSubmit: [
+			{
+				op: "expect-approval-block",
+				action: { type: "click", target: target("button", "Submit fixture") },
+				predicates: [{ kind: "activation", id: "submit", equals: 0 }],
+			},
 		],
 	}),
 	{
@@ -761,6 +768,16 @@ const accounts = [
 			click("button", "Sign in to fixture account"),
 			{ op: "observe-text", text: "Authenticated fixture account area" },
 			type("textbox", "Account setting", "compact-notifications"),
+			{
+				op: "expect-approval-block",
+				action: {
+					type: "click",
+					target: target("button", "Save fixture account setting"),
+				},
+				predicates: [
+					{ kind: "activation", id: "save-setting", equals: 0 },
+				],
+			},
 			click("button", "Save fixture account setting"),
 		],
 		predicates: [
@@ -1006,6 +1023,17 @@ const failures = [
 		],
 		steps: [
 			navigate("/start"),
+			{
+				op: "expect-approval-block",
+				action: {
+					type: "click",
+					target: target("button", "Open fixture popup"),
+				},
+				predicates: [
+					{ kind: "activation", id: "popup-attempt", equals: 0 },
+					{ kind: "visited", site: "primary", path: "/popup", equals: 0 },
+				],
+			},
 			click("button", "Open fixture popup"),
 			{ op: "safe-stop", failureClass: "policy_block", reason: "The isolated browser denied the popup." },
 		],

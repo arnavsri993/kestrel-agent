@@ -181,6 +181,8 @@ function initialMetrics() {
 		retries: 0,
 		failedAttempts: 0,
 		interventions: 0,
+		approvalBlockAttempts: 0,
+		approvalBlocks: 0,
 		approvalGrants: 0,
 		scriptedRecoveries: 0,
 	};
@@ -372,19 +374,41 @@ async function main() {
 			let ordinal = 0;
 			let closeAttempted = false;
 
-			const callTool = async (toolName, input, { expectFailure = false } = {}) => {
+			const callTool = async (
+				toolName,
+				input,
+				{
+					expectFailure = false,
+					expectApprovalBlock = false,
+					approvalMode = "grant",
+				} = {},
+			) => {
 				const descriptor = descriptors.get(toolName);
 				if (!descriptor)
 					throw new Error(`Benchmark tool descriptor is unavailable: ${toolName}`);
+				if (!["grant", "omit"].includes(approvalMode))
+					throw new Error(`Unsupported benchmark approval mode: ${approvalMode}`);
 				ordinal += 1;
 				const mutating = descriptor.readOnly !== true;
+				if (expectApprovalBlock && (!mutating || approvalMode !== "omit"))
+					throw new Error(
+						"Approval-block expectations require a mutating call with no supplied grant.",
+					);
+				if (mutating && approvalMode === "omit" && !expectApprovalBlock)
+					throw new Error(
+						"A mutating benchmark call may omit approval only when it is required to prove a block.",
+					);
 				const idempotencyKey = mutating
 					? `browser-benchmark:${fixtureRunId}:${ordinal}:${toolName}`
 					: undefined;
-					if (mutating) {
-						metrics.actions += 1;
-						metrics.approvalGrants += 1;
-					} else metrics.observations += 1;
+				const approvalGrantSupplied = mutating && approvalMode === "grant";
+				const approvalBlockExpected =
+					mutating && approvalMode === "omit" && expectApprovalBlock;
+				if (mutating) {
+					metrics.actions += 1;
+					if (approvalGrantSupplied) metrics.approvalGrants += 1;
+					if (approvalBlockExpected) metrics.approvalBlockAttempts += 1;
+				} else metrics.observations += 1;
 				const callStarted = performance.now();
 				const requestPromise = page.evaluate(
 					async ({ sessionId, toolName, input, options }) => {
@@ -404,7 +428,9 @@ async function main() {
 						input,
 						options: mutating
 							? {
-									approvalStatus: "approved",
+									...(approvalGrantSupplied
+										? { approvalStatus: "approved" }
+										: {}),
 									idempotencyKey,
 								}
 							: {},
@@ -463,7 +489,8 @@ async function main() {
 							? { toolExecutionId: runningExecution.id }
 							: {}),
 							expectedFailure: expectFailure,
-							approvalGrantSupplied: mutating,
+							approvalGrantSupplied,
+							approvalBlockExpected,
 						});
 					throw error;
 				} finally {
@@ -476,8 +503,20 @@ async function main() {
 					durationMs,
 					...(response?.id ? { toolExecutionId: response.id } : {}),
 						expectedFailure: expectFailure,
-						approvalGrantSupplied: mutating,
+						approvalGrantSupplied,
+						approvalBlockExpected,
 					});
+				if (expectApprovalBlock) {
+					if (
+						response?.status !== "blocked" ||
+						response?.output?.approvalRequired !== true
+					)
+						throw new Error(
+							`${toolName} bypassed its required approval boundary: ${response?.status ?? "no status"}.`,
+						);
+					metrics.approvalBlocks += 1;
+					return response;
+				}
 				if (expectFailure) {
 					if (response?.status !== "failed")
 						throw new Error(
@@ -660,6 +699,19 @@ async function main() {
 								`Expected failure did not include ${step.errorIncludes}: ${execution.error ?? "no error"}`,
 							);
 						metrics.failedAttempts += 1;
+					} else if (step.op === "expect-approval-block") {
+						await executeAction(step.action, {
+							approvalMode: "omit",
+							expectApprovalBlock: true,
+						});
+						const evaluation = evaluateBenchmarkPredicates(
+							fixture.state(fixtureRunId),
+							step.predicates,
+						);
+						if (!predicatesPassed(evaluation))
+							throw new Error(
+								"An approval-blocked browser action changed independent fixture state.",
+							);
 					} else if (step.op === "expect-target-missing") {
 						const observed = await snapshot();
 						if (matchingInteractive(observed?.interactive, step.target))
@@ -768,7 +820,7 @@ async function main() {
 		track: {
 			id: BENCHMARK_TRACK_ID,
 			measures:
-				"Kestrel runtime, explicit approval-grant, browser-tool, Electron backend, accessibility targeting, scripted-recovery, and independent fixture-state reliability.",
+				"Kestrel runtime, missing-approval blocking, explicit approval grants, browser tools, Electron backend, accessibility targeting, scripted recovery, and independent fixture-state reliability.",
 			doesNotMeasure: [
 				"open-ended model planning",
 				"model reasoning quality",

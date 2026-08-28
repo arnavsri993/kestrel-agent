@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const BENCHMARK_REPORT_SCHEMA_VERSION = "1.0.0";
+export const BENCHMARK_REPORT_SCHEMA_VERSION = "1.1.0";
 export const BENCHMARK_TRACK_ID = "deterministic-scripted-browser-tools";
 export const BENCHMARK_CATEGORIES = Object.freeze([
 	"research",
@@ -84,6 +84,7 @@ export function validateBenchmarkCorpus(corpus, expectedCount = 50) {
 		"auth-handoff",
 		"capture-target",
 		"expect-tool-failure",
+		"expect-approval-block",
 		"expect-target-missing",
 		"safe-stop",
 	]);
@@ -250,7 +251,7 @@ export function validateBenchmarkCorpus(corpus, expectedCount = 50) {
 				if (step.op === "verify-state")
 					validatePredicates(step.predicates, `${label} step ${stepIndex + 1}`);
 				if (
-					step.op === "expect-tool-failure" &&
+					["expect-tool-failure", "expect-approval-block"].includes(step.op) &&
 					(!isRecord(step.action) ||
 						!["click", "type", "select", "key", "scroll"].includes(
 							step.action.type,
@@ -259,7 +260,22 @@ export function validateBenchmarkCorpus(corpus, expectedCount = 50) {
 							!step.action.capturedTarget &&
 							!isBoundedTarget(step.action.target)))
 				)
-					errors.push(`${label} step ${stepIndex + 1} has an invalid failed action.`);
+					errors.push(`${label} step ${stepIndex + 1} has an invalid guarded action.`);
+				if (step.op === "expect-approval-block") {
+					validatePredicates(step.predicates, `${label} step ${stepIndex + 1}`);
+					if (
+						!Array.isArray(step.predicates) ||
+						!step.predicates.some(
+							(predicate) =>
+								isRecord(predicate) &&
+								predicate.kind === "activation" &&
+								predicate.equals === 0,
+						)
+					)
+						errors.push(
+							`${label} step ${stepIndex + 1} must prove an untouched consequential activation.`,
+						);
+				}
 			}
 		}
 		validatePredicates(workflowPredicates, label);
@@ -328,6 +344,22 @@ export function validateBenchmarkCorpus(corpus, expectedCount = 50) {
 			errors.push(
 				`Corpus must contain exactly ${expected} ${category} workflows.`,
 			);
+	}
+	const approvalBoundaryWorkflows = corpus.filter(
+		(workflow) =>
+			isRecord(workflow) &&
+			Array.isArray(workflow.steps) &&
+			workflow.steps.some(
+				(step) => isRecord(step) && step.op === "expect-approval-block",
+			),
+	);
+	if (approvalBoundaryWorkflows.length < 3)
+		errors.push(
+			"Corpus must include approval-block evidence in at least three workflows.",
+		);
+	for (const category of ["forms", "accounts", "failures"]) {
+		if (!approvalBoundaryWorkflows.some((workflow) => workflow.category === category))
+			errors.push(`Corpus must include an approval-block workflow in ${category}.`);
 	}
 	return errors;
 }
@@ -429,6 +461,8 @@ export function summarizeBenchmarkResults(results) {
 				retries: 0,
 				failedAttempts: 0,
 				interventions: 0,
+				approvalBlockAttempts: 0,
+				approvalBlocks: 0,
 				approvalGrants: 0,
 				scriptedRecoveries: 0,
 			},
@@ -467,6 +501,25 @@ export function summarizeBenchmarkResults(results) {
 			completionClaims.length,
 		),
 		metrics,
+		approvalBoundary:
+			metrics.approvalBlockAttempts === 0
+				? {
+						status: "not_measured",
+						attemptedWithoutGrant: 0,
+						blockedWithoutMutation: 0,
+						blockRate: null,
+						reason:
+							"The selected workflow filter did not include an approval-block case.",
+					}
+				: {
+						status: "measured",
+						attemptedWithoutGrant: metrics.approvalBlockAttempts,
+						blockedWithoutMutation: metrics.approvalBlocks,
+						blockRate: rate(
+							metrics.approvalBlocks,
+							metrics.approvalBlockAttempts,
+						),
+					},
 		durationMs: {
 			total: results.reduce(
 				(total, result) => total + Number(result.durationMs ?? 0),
@@ -495,7 +548,7 @@ export function summarizeBenchmarkResults(results) {
 			status: "not_measured",
 			count: null,
 			reason:
-				"The harness supplies explicit per-call approval grants and does not render or measure user approval prompts.",
+				"The harness verifies missing-approval runtime blocks and explicit grants, but does not render or measure user approval prompts.",
 		},
 	};
 }

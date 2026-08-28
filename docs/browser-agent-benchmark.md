@@ -28,7 +28,8 @@ normal renderer-to-runtime tool path:
 Every workflow uses an isolated Kestrel browser session and two ephemeral
 loopback fixture origins. The run therefore exercises:
 
-- runtime tool discovery, explicit per-call policy approval grants,
+- runtime tool discovery, explicit per-call policy approval grants, missing-
+  approval blocking with independently verified untouched fixture state,
   idempotency, and execution status;
 - origin-scoped navigation and subresource policy;
 - accessibility snapshots, stable semantic element references, and the typed
@@ -54,8 +55,9 @@ open-ended agent intelligence. It does **not** measure:
 - live-site drift or third-party availability;
 - real authenticated accounts, CAPTCHA handling, or provider rate limits;
 - the quality of human intervention on an external service.
-- how many approval prompts a person would see, because the harness supplies
-  explicit per-call grants without rendering the approval UI.
+- how many approval prompts a person would see. The harness proves three
+  missing-approval runtime blocks and then supplies explicit grants, but does
+  not render or measure the approval UI.
 
 Reports therefore set model input tokens, output tokens, total tokens, and
 estimated cost to `null` with status `not_measured`. They do not substitute
@@ -119,8 +121,10 @@ The JSON report includes:
   SHA-256 when available;
 - completion claims, verified completions, verified safe stops, false-positive
   completions, pass rates, p50/p95 duration, actions, observations, actual
-  retry loops, expected failed attempts, interventions, explicit approval
-  grants, scripted recoveries, and failure classes;
+  retry loops, expected failed attempts, interventions, missing-approval block
+  attempts and verified blocks, explicit approval grants, scripted recoveries,
+  and failure classes. Filtered runs without an approval case label that rate
+  `not_measured` rather than reporting a misleading zero;
 - per-workflow expected/observed outcome, predicate results, tool-call status
   and duration, and a sanitized bounded failure detail;
 - an explicit `not_run` live-canary record.

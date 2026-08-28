@@ -15,7 +15,7 @@ import {
 
 describe("browser-agent benchmark corpus", () => {
 	it("pins the versioned 50-workflow corpus and category distribution", () => {
-		expect(BROWSER_AGENT_BENCHMARK_CORPUS_VERSION).toBe("1.0.0");
+		expect(BROWSER_AGENT_BENCHMARK_CORPUS_VERSION).toBe("1.1.0");
 		expect(validateBenchmarkCorpus(BROWSER_AGENT_BENCHMARK_CORPUS)).toEqual([]);
 		expect(BROWSER_AGENT_BENCHMARK_CORPUS).toHaveLength(50);
 		expect(
@@ -33,11 +33,16 @@ describe("browser-agent benchmark corpus", () => {
 				workflow.steps.filter((step) => step.op === "select"),
 			).every((step) => typeof step.value === "string"),
 		).toBe(true);
+		expect(
+			BROWSER_AGENT_BENCHMARK_CORPUS.filter((workflow) =>
+				workflow.steps.some((step) => step.op === "expect-approval-block"),
+			).map((workflow) => workflow.category),
+		).toEqual(["forms", "accounts", "failures"]);
 	});
 
 	it("uses a stable canonical corpus hash", () => {
 		expect(corpusSha256(BROWSER_AGENT_BENCHMARK_CORPUS)).toBe(
-			"8d0db240589aeb6f2781227e2ab6b21fcd0ee066ae0b86425202c8be11a6b067",
+			"0a3ce075553f906e001656a3be71aa2f7cba3ad390628b853d9ce430cad84c0e",
 		);
 		expect(corpusSha256([{ b: 2, a: 1 }])).toBe(
 			corpusSha256([{ a: 1, b: 2 }]),
@@ -65,6 +70,30 @@ describe("browser-agent benchmark corpus", () => {
 				error.includes("must have a bounded select value"),
 			),
 		).toBe(true);
+
+		const missingApprovalCoverage = structuredClone(
+			BROWSER_AGENT_BENCHMARK_CORPUS,
+		);
+		for (const workflow of missingApprovalCoverage)
+			workflow.steps = workflow.steps.filter(
+				(step) => step.op !== "expect-approval-block",
+			);
+		expect(validateBenchmarkCorpus(missingApprovalCoverage)).toContain(
+			"Corpus must include approval-block evidence in at least three workflows.",
+		);
+
+		const dishonestApprovalProof = structuredClone(
+			BROWSER_AGENT_BENCHMARK_CORPUS,
+		);
+		const guardedStep = dishonestApprovalProof
+			.flatMap((workflow) => workflow.steps)
+			.find((step) => step.op === "expect-approval-block");
+		guardedStep.predicates = [
+			{ kind: "activation", id: "submit", equals: 1 },
+		];
+		expect(validateBenchmarkCorpus(dishonestApprovalProof)).toContain(
+			"Workflow 11 step 4 must prove an untouched consequential activation.",
+		);
 	});
 
 	it("rejects workflows that do not prove declared browser-side effects", () => {
@@ -135,8 +164,10 @@ describe("browser-agent benchmark evaluation", () => {
 			retries: 3,
 			failedAttempts: 4,
 			interventions: 5,
-			approvalGrants: 6,
-			scriptedRecoveries: 7,
+			approvalBlockAttempts: 6,
+			approvalBlocks: 6,
+			approvalGrants: 7,
+			scriptedRecoveries: 8,
 		};
 		const results = [
 			{
@@ -199,27 +230,44 @@ describe("browser-agent benchmark evaluation", () => {
 			safeStopVerificationRate: 0.5,
 			benchmarkPassRate: 0.5,
 			falsePositiveCompletionRate: 0.666667,
-				metrics: {
-					actions: 4,
-					observations: 8,
-					retries: 12,
-					failedAttempts: 16,
-					interventions: 20,
-					approvalGrants: 24,
-					scriptedRecoveries: 28,
+			metrics: {
+				actions: 4,
+				observations: 8,
+				retries: 12,
+				failedAttempts: 16,
+				interventions: 20,
+				approvalBlockAttempts: 24,
+				approvalBlocks: 24,
+				approvalGrants: 28,
+				scriptedRecoveries: 32,
+			},
+			approvalBoundary: {
+				status: "measured",
+				attemptedWithoutGrant: 24,
+				blockedWithoutMutation: 24,
+				blockRate: 1,
 			},
 			durationMs: { total: 1_000, p50: 200, p95: 400 },
-				modelUsage: {
+			modelUsage: {
 				status: "not_measured",
 				inputTokens: null,
 				outputTokens: null,
 				totalTokens: null,
-					estimatedCostUsd: null,
-				},
-				approvalPrompts: {
-					status: "not_measured",
-					count: null,
-				},
-			});
+				estimatedCostUsd: null,
+			},
+			approvalPrompts: {
+				status: "not_measured",
+				count: null,
+			},
+		});
+
+		expect(summarizeBenchmarkResults([]).approvalBoundary).toEqual({
+			status: "not_measured",
+			attemptedWithoutGrant: 0,
+			blockedWithoutMutation: 0,
+			blockRate: null,
+			reason:
+				"The selected workflow filter did not include an approval-block case.",
+		});
 	});
 });
