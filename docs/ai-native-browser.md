@@ -38,6 +38,12 @@ The Agent workspace gives those runtime sessions equal top-level standing with B
 - User profile state remains local to the Mac. Autonomous-session state is isolated from the user profile. No cloud browser, Fal request, or local ML stack is required by this feature.
 - Session restore is configurable. Live web views are bounded and least-recent inactive views can be discarded; state is compactly persisted and temporary favicon data is excluded.
 
+## Typed failure recovery
+
+Recognized browser failures remain failed tool executions, but now include a bounded `output.recovery` envelope with one of seven stable reason codes: `stale_target`, `target_missing`, `obscured`, `navigation_changed`, `auth_required`, `popup_denied`, or `network_error`. The envelope records whether the failed operation was an observation, navigation, upload, or action; whether an effect was not started, may have started, or is unknown; and advisory next-step hints such as `snapshot`, `reobserve`, `diagnostics`, `auth_handoff`, and `safe_stop`.
+
+Recovery metadata is guidance, not execution or authorization. Every envelope sets `automaticReplayAllowed: false`; a failed click, upload, submit, or navigation is never silently replayed, and the existing idempotency record preserves the failed result. Snapshot, reobservation, and diagnostics hints are read-only. Authentication handoff is explicitly marked non-read-only and approval-requiring, and credentials still never enter model context. Unknown and cancelled errors are not forced into a misleading reason code.
+
 ## Keyboard and accessibility intent
 
 The browser uses named landmarks and controls: Browser is a labelled main region, the page viewport is a labelled tab panel, sidebar destinations expose current-page state, tabs and toolbar actions have accessible names, history/download lists use semantic list structures, status/recovery messages use status roles, and command/history search inputs have labels. Focus is restored to a specialist destination heading after command navigation. Intended shortcuts are `Cmd/Ctrl+L` (address), `Cmd/Ctrl+T` (new tab), `Cmd/Ctrl+W` (close active tab), `Cmd/Ctrl+Tab` / `Cmd/Ctrl+Shift+Tab` (cycle tabs), and `Cmd+N` (New task). All must retain visible Native Graphite focus treatment and functional reduced-motion/reduced-transparency states.

@@ -50,6 +50,7 @@ import {
 } from "./command-runner";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 import { summarizeBrowserActivity } from "./browser-activity";
+import { BrowserRecoveryError } from "./browser-recovery";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
 
@@ -1720,6 +1721,10 @@ export class AgentRuntime extends EventEmitter {
 				!definition.descriptor.readOnly &&
 				effectStarted &&
 				!effectVerified;
+			const recoveryOutput =
+				!cancelled && error instanceof BrowserRecoveryError
+					? { recovery: error.recovery }
+					: undefined;
 			execution = RuntimeToolExecutionSchema.parse({
 				...execution,
 				status: uncertainMutation
@@ -1732,6 +1737,7 @@ export class AgentRuntime extends EventEmitter {
 					: error instanceof Error
 						? error.message
 						: "Tool execution failed.",
+				...(recoveryOutput ? { output: recoveryOutput } : {}),
 				completedAt: this.now(),
 			});
 			this.journalToolExecution(execution);
