@@ -198,6 +198,15 @@ export function BrowserWorkspace({
     const root = document.getElementById("root");
     const mutationObserver = new MutationObserver(syncBounds);
     if (root) mutationObserver.observe(root, { childList: true });
+    const appShell = node.closest(".ai-browser-app");
+    const shellObserver = new MutationObserver(syncBounds);
+    if (appShell) {
+      shellObserver.observe(appShell, {
+        attributes: true,
+        attributeFilter: ["class"],
+        childList: true,
+      });
+    }
     window.addEventListener("resize", syncBounds);
     const frame = window.requestAnimationFrame(syncBounds);
     const settleTimer = window.setTimeout(syncBounds, 320);
@@ -205,6 +214,7 @@ export function BrowserWorkspace({
     return () => {
       observer.disconnect();
       mutationObserver.disconnect();
+      shellObserver.disconnect();
       window.removeEventListener("resize", syncBounds);
       window.cancelAnimationFrame(frame);
       window.clearTimeout(settleTimer);
