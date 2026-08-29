@@ -718,6 +718,66 @@ describe("agent runtime", () => {
 		});
 		expect(repeated).toEqual(first);
 		expect(calls).toBe(1);
+		const receipt = database.getActionReceiptForExecution(first.id);
+		expect(receipt).toMatchObject({
+			outcome: "uncertain",
+			rollback: { status: "unavailable" },
+		});
+		expect(receipt?.verification).toBeUndefined();
+		database.close();
+	});
+
+	it("reconstructs a legacy idempotent receipt without inventing approval provenance", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Legacy receipt" });
+		let calls = 0;
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "fixture.external-mutate",
+				title: "External mutation",
+				description: "Exercise legacy receipt recovery.",
+				category: "connector",
+				riskLevel: "external",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "plugin",
+				tags: ["test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => {
+				calls += 1;
+				return { receiptId: "external-1" };
+			},
+			verify: async () => ({
+				method: "fixture-external-readback",
+				evidence: { receiptId: "external-1" },
+			}),
+		});
+		runtime.allowTool(session.id, "fixture.external-mutate");
+		const first = await runtime.callTool(
+			session.id,
+			"fixture.external-mutate",
+			{},
+			{ approvalStatus: "approved", idempotencyKey: "legacy-action" },
+		);
+		expect(first.status).toBe("verified");
+		database.db
+			.prepare("DELETE FROM action_receipts WHERE tool_execution_id = ?")
+			.run(first.id);
+
+		const repeated = await runtime.callTool(
+			session.id,
+			"fixture.external-mutate",
+			{},
+			{ approvalStatus: "approved", idempotencyKey: "legacy-action" },
+		);
+		expect(repeated).toEqual(first);
+		expect(calls).toBe(1);
+		expect(database.getActionReceiptForExecution(first.id)).toMatchObject({
+			outcome: "verified",
+			approval: { required: true, result: "unknown" },
+		});
 		database.close();
 	});
 
@@ -780,6 +840,38 @@ describe("agent runtime", () => {
 		});
 		expect(second).toEqual(first);
 		expect(database.listToolExecutions(session.id)).toEqual([first]);
+		expect(database.listActionReceipts(session.id)).toMatchObject([
+			{
+				toolExecutionId: first.id,
+				outcome: "verified",
+				verification: { method: "fixture-readback" },
+			},
+		]);
+		const staleReceipt = database.getActionReceiptForExecution(first.id)!;
+		database.saveActionReceipt({
+			...staleReceipt,
+			outcome: "in_progress",
+			observedState: "The action is still running.",
+			verification: undefined,
+			completedAt: undefined,
+			rollback: {
+				status: "not_applicable",
+				reason: "No verified change was recorded yet.",
+			},
+		});
+		const repairedReplay = await runtime.callTool(
+			session.id,
+			"fixture.concurrent-mutate",
+			{},
+			{ idempotencyKey: "same-key" },
+		);
+		expect(repairedReplay).toEqual(first);
+		expect(database.getActionReceiptForExecution(first.id)).toMatchObject({
+			outcome: "verified",
+			verification: { method: "fixture-readback" },
+		});
+		expect(database.listActionReceipts(session.id)).toHaveLength(1);
+		expect(calls).toBe(1);
 		database.close();
 	});
 
@@ -1068,6 +1160,16 @@ describe("agent runtime", () => {
 			verification: { method: "fixture-readback" },
 		});
 		expect(replayed).toEqual(execution);
+		expect(database.getActionReceiptForExecution(execution.id)).toMatchObject({
+			outcome: "uncertain",
+			rollback: { status: "unavailable" },
+		});
+		expect(
+			database.getActionReceiptForExecution(execution.id),
+		).not.toHaveProperty("verification");
+		expect(database.getActionReceiptForExecution(execution.id)).not.toHaveProperty(
+			"result",
+		);
 		database.close();
 	});
 
@@ -1334,6 +1436,56 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it("terminally updates a pending action receipt when checkpoint restore invalidates its approval", async () => {
+		const { root, database, runtime, session } = fixture();
+		writeFileSync(join(root, "pending-delete.txt"), "keep me\n");
+		const checkpoint = runtime.checkpoint(session.id, "Before approval")
+			.checkpoints[0]!;
+		const runId = "run-retired-receipt";
+		const waiting = await runtime.callTool(
+			session.id,
+			"workspace.delete",
+			{ path: "pending-delete.txt" },
+			{ idempotencyKey: `${runId}:call-delete` },
+		);
+		expect(database.getActionReceiptForExecution(waiting.id)).toMatchObject({
+			outcome: "waiting_approval",
+			approval: { required: true, result: "pending" },
+			precondition: { status: "waiting" },
+		});
+		database.saveAgentRun({
+			id: runId,
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: ["fixture"],
+			status: "waiting_approval",
+			turn: 1,
+			pendingToolExecutionId: waiting.id,
+			pendingProviderToolCallId: "call-delete",
+			pendingToolName: "workspace.delete",
+			createdAt: waiting.startedAt,
+			updatedAt: waiting.completedAt ?? waiting.startedAt,
+		});
+
+		runtime.restoreCheckpoint(session.id, checkpoint.id);
+
+		expect(existsSync(join(root, "pending-delete.txt"))).toBe(true);
+		expect(database.getActionReceiptForExecution(waiting.id)).toMatchObject({
+			outcome: "cancelled",
+			approval: { required: true, result: "pending" },
+			precondition: {
+				status: "blocked",
+				summary: expect.stringContaining("invalidated"),
+			},
+			observedState: "The action was cancelled without a verified result.",
+			rollback: { status: "not_applicable" },
+		});
+		expect(database.getActionReceiptForExecution(waiting.id)).not.toHaveProperty(
+			"verification",
+		);
+		database.close();
+	});
+
 	it("rejects malformed checkpoint restoration state", () => {
 		const { database, runtime, session } = fixture();
 		const checkpoint = runtime.checkpoint(session.id, "Safe baseline")
@@ -1422,6 +1574,19 @@ describe("agent runtime", () => {
 			method: "filesystem-content-readback",
 			evidenceSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
 		});
+		expect(database.getActionReceiptForExecution(first.id)).toMatchObject({
+			outcome: "verified",
+			destination: { label: "Granted workspace · src/new.ts" },
+			approval: { required: false, result: "not_required" },
+			rollback: {
+				status: "available",
+				method: "workspace.undo",
+				referenceId: first.output?.mutationId,
+			},
+		});
+		expect(
+			JSON.stringify(database.getActionReceiptForExecution(first.id)),
+		).not.toContain("one\\n");
 		expect(readFileSync(join(root, "src", "new.ts"), "utf8")).toBe("one\n");
 
 		const stale = await runtime.callTool(

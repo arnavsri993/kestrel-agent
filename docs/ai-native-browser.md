@@ -4,7 +4,7 @@
 
 **Implemented in this increment:** Kestrel has a dual-primary Browser and Agent desktop workspace with a persistent user browser, an always-mounted agent conversation, a searchable durable-task workspace, independent conversations, History, Bookmarks, Downloads, a searchable capability launcher, browser settings, and command-routed access to existing specialist surfaces. The visible browser supports an unlimited number of tabs, HTTP(S) address/search navigation, back/forward/reload/stop, tab restoration, pin/mute/duplicate, find in page, print, inspect, local history retention, bookmarks with a toggleable bookmarks bar (`⌘⇧B`), downloads (open/reveal/cancel), current-page context handoff, and `@` mentions of open tabs, bookmarks, and granted workspace files.
 
-**Not a claim of a general-purpose browser or unrestricted autonomy:** Chrome-complete extensions, profile import/sync, private browsing, and a user-facing per-action browser approval receipt remain follow-up work. Site permission prompts now remember allow/deny per origin for this profile. Existing Kestrel policy and approval gates remain the authority for consequential agent actions.
+**Not a claim of a general-purpose browser or unrestricted autonomy:** Chrome-complete extensions, profile import/sync, private browsing, and a complete per-site agent-permission manager remain follow-up work. Site permission prompts now remember allow/deny per origin for this profile. Existing Kestrel policy and approval gates remain the authority for consequential agent actions, and mutating browser tools now contribute privacy-bounded receipts to the owning task outcome.
 
 ## Two browser boundaries
 
@@ -33,7 +33,7 @@ The Agent workspace gives those runtime sessions equal top-level standing with B
 ## Approvals, privacy, and performance
 
 - Read-only inspection is distinct from action. Navigation, typing, clicking, tab creation/selection/closing, and authentication handoff are sensitive mutating browser tools.
-- Existing Kestrel consequential-action policy is still the approval authority; page content cannot grant permission. This increment does not yet expose a browser-specific approval receipt or a per-site permission manager.
+- Existing Kestrel consequential-action policy is still the approval authority; page content cannot grant permission. Universal task receipts expose bounded browser destination, approval, observed state, verification, and rollback-unavailable truth without storing typed text, page content, screenshots, cookies, or credentials. A browser-specific receipt center and per-site agent-permission manager are still follow-up work.
 - Approved or blocked `browser.act` / `browser.visible-act` calls are recorded in an encrypted `browser_activity_events` table (intent, tab or session, approval result, observation counts). Cookies, typed text, AX trees, and screenshots stay out of that ledger, and it is not `browser/state.json`.
 - User profile state remains local to the Mac. Autonomous-session state is isolated from the user profile. No cloud browser, Fal request, or local ML stack is required by this feature.
 - Session restore is configurable. Live web views are bounded and least-recent inactive views can be discarded; state is compactly persisted and temporary favicon data is excluded.

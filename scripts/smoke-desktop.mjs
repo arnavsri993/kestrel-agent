@@ -91,8 +91,9 @@ try {
 	);
 	assert.match(petDecoder?.version ?? "", /^\d+\.\d+\.\d+/);
 
+	const typedReceiptSentinel = "receipt-typed-body-sentinel";
 	const browserSmoke = await page.evaluate(
-		async ({ browserOrigin }) => {
+		async ({ browserOrigin, typedReceiptSentinel }) => {
 			const sessions = await window.kestrel.request({
 				type: "runtime-list-sessions",
 			});
@@ -138,6 +139,7 @@ try {
 			);
 			const browserSessionId = String(created?.browserSessionId ?? "");
 			if (!browserSessionId) throw new Error("Browser session ID is missing.");
+			let browserResult;
 			try {
 				await call(
 					"browser.navigate",
@@ -148,7 +150,11 @@ try {
 					"browser.act",
 					{
 						browserSessionId,
-						action: { type: "type", target: "#name", text: "Kestrel" },
+						action: {
+							type: "type",
+							target: "#name",
+							text: typedReceiptSentinel,
+						},
 					},
 					"desktop-smoke-type",
 				);
@@ -172,7 +178,7 @@ try {
 						snapshot = await call("browser.snapshot", { browserSessionId });
 						if (
 							JSON.stringify(snapshot?.accessibilityTree).includes(
-								"Hello Kestrel",
+								`Hello ${typedReceiptSentinel}`,
 							)
 						)
 							break;
@@ -180,7 +186,7 @@ try {
 					}
 					if (
 						JSON.stringify(snapshot?.accessibilityTree).includes(
-							"Hello Kestrel",
+							`Hello ${typedReceiptSentinel}`,
 						)
 					)
 						break;
@@ -188,7 +194,7 @@ try {
 				const screenshot = await call("browser.screenshot", {
 					browserSessionId,
 				});
-				return {
+				browserResult = {
 					title: snapshot?.title,
 					snapshotText: JSON.stringify(snapshot?.accessibilityTree),
 					clickAttempts,
@@ -203,11 +209,23 @@ try {
 					"desktop-smoke-close",
 				);
 			}
+			const receiptResponse = await window.kestrel.request({
+				type: "runtime-list-action-receipts",
+				sessionId,
+			});
+			if (!receiptResponse.ok) throw new Error(receiptResponse.error);
+			const browserReceipts = (receiptResponse.receipts ?? []).filter(
+				(receipt) => receipt.toolName.startsWith("browser."),
+			);
+			return { ...browserResult, browserReceipts };
 		},
-		{ browserOrigin },
+		{ browserOrigin, typedReceiptSentinel },
 	);
 	assert.equal(browserSmoke.title, "Kestrel browser smoke");
-	assert.match(browserSmoke.snapshotText, /Hello Kestrel \/ activation 1/);
+	assert.match(
+		browserSmoke.snapshotText,
+		new RegExp(`Hello ${typedReceiptSentinel} / activation 1`),
+	);
 	assert.equal(
 		browserSmoke.clickAttempts,
 		1,
@@ -216,12 +234,33 @@ try {
 	assert.equal(typeof browserSmoke.screenshotWidth, "number");
 	assert.equal(typeof browserSmoke.screenshotHeight, "number");
 	assert.match(browserSmoke.pngBase64, /^iVBOR/);
+	assert.ok(browserSmoke.browserReceipts.length >= 5);
+	assert.equal(
+		browserSmoke.browserReceipts.every(
+			(receipt) =>
+				receipt.trust === "local_encrypted_bounded" &&
+				receipt.outcome === "verified",
+		),
+		true,
+	);
+	assert.equal(
+		JSON.stringify(browserSmoke.browserReceipts).includes(typedReceiptSentinel),
+		false,
+	);
+	assert.equal(
+		browserSmoke.browserReceipts.some(
+			(receipt) =>
+				receipt.toolName === "browser.navigate" &&
+				receipt.destination.label.startsWith(browserOrigin),
+		),
+		true,
+	);
 	await page.screenshot({
 		path: join(root, "desktop-smoke.png"),
 		fullPage: true,
 	});
 	process.stdout.write(
-		`Rendered desktop, native Sharp ${petDecoder.version}, and isolated browser-tool smoke test passed.\n`,
+		`Rendered ${packagedExecutable ? "packaged" : "development"} desktop, native Sharp ${petDecoder.version}, isolated browser tools, and privacy-bounded action receipts passed.\n`,
 	);
 } finally {
 	await application?.close();
