@@ -124,6 +124,7 @@ import { desktopDeepLinkAction } from "./deep-link-route";
 import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
 import {
 	isKestrelAppPageId,
+	isKestrelAppPageUrl,
 	kestrelAppPageUrl,
 	parseKestrelAppPage,
 	type KestrelAppPageId,
@@ -4186,7 +4187,7 @@ function RuntimeConversation({
 				{assistiveStatus}
 			</p>
 			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
-				<div className="chat-welcome">
+				<div className="chat-welcome" aria-hidden="true">
 					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>
 					<p>
 						{emptySession
@@ -9317,9 +9318,8 @@ export function App() {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
 	const openAgent = useCallback(() => {
-		revealAgentSidebar();
 		void openAppPage("agent");
-	}, [openAppPage, revealAgentSidebar]);
+	}, [openAppPage]);
 	const openWritingStudio = useCallback(() => {
 		void openAppPage("writing");
 	}, [openAppPage]);
@@ -9490,13 +9490,6 @@ export function App() {
 		const timer = window.setInterval(beacon, 45_000);
 		return () => window.clearInterval(timer);
 	}, []);
-	useEffect(() => {
-		const active = browser.state?.tabs.find(
-			(tab) => tab.id === browser.state?.activeTabId,
-		);
-		if (parseKestrelAppPage(active?.url ?? "")?.id !== "agent") return;
-		revealAgentSidebar();
-	}, [browser.state?.activeTabId, browser.state?.tabs, revealAgentSidebar]);
 	const focusToolRoute = useCallback((node: HTMLDivElement | null) => {
 		const expected = pendingToolRouteFocusRef.current;
 		if (!node || !expected) return;
@@ -9622,7 +9615,9 @@ export function App() {
 		(tab) => tab.id === browser.state?.activeTabId,
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
-	const showKestrelSidebar = activeBrowserTab?.url === "";
+	const showKestrelSidebar =
+		!activeBrowserTab?.url ||
+		isKestrelAppPageUrl(activeBrowserTab.url);
 	const activeFileAttachment = activeBrowserTab?.file
 		? attachmentForExternalFile(activeBrowserTab.file)
 		: undefined;
@@ -9679,7 +9674,9 @@ export function App() {
 				appPageId === "work" ||
 				appPageId === "events" ||
 				appPageId === "activity" ||
-				appPageId === "extensions"
+				appPageId === "extensions" ||
+				appPageId === "agent" ||
+				appPageId === "writing"
 					? " browser-secondary-surface"
 					: ""
 			}${appPageId === "memory" ? " legacy-product-surface" : ""}`}
@@ -9838,12 +9835,9 @@ export function App() {
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
 					collapsed={!agentSidebarOpen}
-					agentState={effectiveAgentState}
-					pendingApprovals={pendingApprovalCount}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
-					onReviewApprovals={reviewApprovals}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
             streams, steering, cancellation, and approval boundaries remain intact. */}

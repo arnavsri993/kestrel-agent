@@ -839,7 +839,7 @@ try {
 	assertCollapsedLayout(await readLayout(page));
 
 	// Opening Agent from the navigation rail should stay in the browser tab
-	// surface with the conversation rail beside it, not take over the window.
+	// surface like New Tab, with browser chrome visible and the chat rail optional.
 	await page.getByRole("button", { name: "New Tab", exact: true }).click();
 	await page.locator(".new-tab-page").waitFor();
 	await page.getByRole("button", { name: "Agent", exact: true }).click();
@@ -847,20 +847,18 @@ try {
 		const shell = document.querySelector(".ai-browser-app");
 		const workspace = document.querySelector("#browser-viewport .agent-workspace");
 		const browserPlane = document.querySelector(".browser-main-plane");
-		const agent = document.querySelector(".agent-sidebar");
+		const tabRow = document.querySelector(".browser-tab-row-horizontal");
 		return (
 			shell &&
 			!shell.classList.contains("agent-full-page") &&
-			!shell.classList.contains("agent-sidebar-collapsed") &&
+			shell.classList.contains("agent-sidebar-collapsed") &&
 			browserPlane &&
 			getComputedStyle(browserPlane).display !== "none" &&
-			workspace &&
-			agent &&
-			agent.getBoundingClientRect().width > 200 &&
-			getComputedStyle(agent).opacity !== "0"
+			tabRow &&
+			workspace
 		);
 	});
-	await page.getByRole("heading", { name: "Agent Workspace" }).waitFor();
+	await page.locator("#agent-workspace-title").waitFor();
 
 	await setDesktopWindowWidth(application, page, 920);
 	await waitForCollapsedLayout(page);
@@ -883,7 +881,7 @@ try {
 
 	assert.deepEqual(pageErrors, []);
 	process.stdout.write(
-		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, collapsed-to-agent full page, and minimum-width 200% zoom reflow.\n",
+		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, in-tab Agent route, and minimum-width 200% zoom reflow.\n",
 	);
 } finally {
 	await application?.close();

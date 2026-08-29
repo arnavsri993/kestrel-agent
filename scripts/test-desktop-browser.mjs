@@ -837,16 +837,16 @@ try {
 	const tabId = state.activeTabId;
 	assert(tabId);
 	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
-	await page.getByRole("button", { name: "Open chat in the full window" }).click();
+	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
-		.getByRole("heading", { name: "Agent Workspace", exact: true })
+		.getByRole("heading", { name: "Tasks", exact: true })
 		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
 	);
 	const taskRow = page.getByRole("button", {
-		name: /Visible browser test, Open, Conversation only/,
+		name: /Visible browser test, Open/,
 	});
 	await taskRow.waitFor();
 	await taskRow.click();

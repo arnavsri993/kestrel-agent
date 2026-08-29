@@ -546,6 +546,7 @@ export function BrowserWorkspace({
           ? { customSearchName: state.settings.customSearchName }
           : {})}
         addressBarSuggestionsEnabled={state.settings.addressBarSuggestionsEnabled}
+        agentName={agentName}
         agentOpen={agentOpen}
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
         showBookmarksBar={state.settings.showBookmarksBar}
