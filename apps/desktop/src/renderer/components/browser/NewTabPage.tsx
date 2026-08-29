@@ -124,7 +124,7 @@ export function NewTabPage({
 		[greetingActivityAtOpen, greetingName, greetingNow],
 	);
 	const [greeting, setGreeting] = useState(() =>
-		newTabGreetingFallback(greetingName),
+		newTabGreetingFallback(greetingName, greetingContext.currentTimeOfDay),
 	);
 	const recordedGreetingTabRef = useRef<string | undefined>(undefined);
 	useEffect(() => {
@@ -134,7 +134,9 @@ export function NewTabPage({
 	}, [greetingNow, onRecordGreetingVisit, tabId]);
 	useEffect(() => {
 		let active = true;
-		setGreeting(newTabGreetingFallback(greetingName));
+		setGreeting(
+			newTabGreetingFallback(greetingName, greetingContext.currentTimeOfDay),
+		);
 		void window.kestrel
 			.request({ type: "new-tab-greeting", ...greetingContext })
 			.then((response) => {
@@ -156,8 +158,8 @@ export function NewTabPage({
 		[faviconByOrigin, history],
 	);
 	const suggestedActions = useMemo(
-		() => suggestedAgentActions(history, 5),
-		[history],
+		() => suggestedAgentActions(history, 5, sessions),
+		[history, sessions],
 	);
   const customBackgroundStyle: CSSProperties | undefined =
     background === "custom" && backgroundCustomDataUrl

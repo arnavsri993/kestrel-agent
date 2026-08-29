@@ -93,8 +93,8 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	},
 	"quick-actions": {
 		id: "quick-actions",
-		title: "Quick actions",
-		description: "Useful starting points for your next task",
+		title: "Suggested next steps",
+		description: "Continue recent work or start from a proven prompt",
 		icon: "sparkle",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "medium",
