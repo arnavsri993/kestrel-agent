@@ -9317,6 +9317,8 @@ export function App() {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
 	const openAgent = useCallback(() => {
+		setAgentSidebarOpen(true);
+		localStorage.setItem("kestrel:agent-sidebar", "open");
 		void openAppPage("agent");
 	}, [openAppPage]);
 	const openWritingStudio = useCallback(() => {
@@ -9657,6 +9659,8 @@ export function App() {
 		localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
 	}
 	const appPageId = currentAppPage?.id;
+	const isAgentFullPage = appPageId === "agent";
+	const effectiveAgentSidebarOpen = isAgentFullPage || agentSidebarOpen;
 	const appPage = appPageId ? (
 		<div
 			key={appPageId}
@@ -9744,7 +9748,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${appPageId === "agent" ? " agent-full-page" : ""}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${effectiveAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${isAgentFullPage ? " agent-full-page" : ""}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0 }}
@@ -9788,7 +9792,7 @@ export function App() {
 						browser={browser}
 						agentName={activeAgentName}
 						greetingName={greetingName}
-						agentOpen={agentSidebarOpen}
+						agentOpen={effectiveAgentSidebarOpen}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
@@ -9833,7 +9837,7 @@ export function App() {
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
-					collapsed={!agentSidebarOpen}
+					collapsed={!effectiveAgentSidebarOpen}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
 					onNewAgent={startNewAgent}

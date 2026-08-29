@@ -838,6 +838,26 @@ try {
 	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 
+	// Opening Agent from the navigation rail must stay visible even when the
+	// overlay rail was collapsed, instead of hiding both browser and agent UI.
+	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await page.locator(".new-tab-page").waitFor();
+	await page.getByRole("button", { name: "Agent", exact: true }).click();
+	await page.waitForFunction(() => {
+		const shell = document.querySelector(".ai-browser-app");
+		const workspace = document.querySelector(".agent-workspace");
+		const agent = document.querySelector(".agent-sidebar");
+		return (
+			shell?.classList.contains("agent-full-page") &&
+			!shell.classList.contains("agent-sidebar-collapsed") &&
+			workspace &&
+			agent &&
+			agent.getBoundingClientRect().width > 200 &&
+			getComputedStyle(agent).opacity !== "0"
+		);
+	});
+	await page.getByRole("heading", { name: "Agent Workspace" }).waitFor();
+
 	await setDesktopWindowWidth(application, page, 920);
 	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
@@ -859,7 +879,7 @@ try {
 
 	assert.deepEqual(pageErrors, []);
 	process.stdout.write(
-		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, and minimum-width 200% zoom reflow.\n",
+		"Desktop layout smoke passed: startup guard, graphite theme, traffic-control motion, preload bridge, global navigation, browser plane, open/collapsed Pragmatic geometry, collapsed-to-agent full page, and minimum-width 200% zoom reflow.\n",
 	);
 } finally {
 	await application?.close();

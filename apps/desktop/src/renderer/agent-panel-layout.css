@@ -367,6 +367,8 @@
 
 .ai-browser-app.agent-full-page .agent-sidebar.is-collapsed {
 	width: 100%;
+	opacity: 1;
+	pointer-events: auto;
 }
 
 .ai-browser-app.agent-full-page .agent-sidebar-assist {
