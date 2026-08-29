@@ -3366,6 +3366,7 @@ export const RendererRequestSchema = z.union([
 				}),
 			),
 		tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+		closeTabIds: z.array(z.string().regex(/^tab-[a-f0-9-]{36}$/)).max(32).optional(),
 	}),
 	z.object({
 		type: z.literal("browser-detach-tab"),
