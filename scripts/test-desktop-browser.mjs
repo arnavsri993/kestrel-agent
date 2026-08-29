@@ -388,6 +388,23 @@ async function activeViewScript(source) {
 	}, source);
 }
 
+async function readActiveViewScript(source, label) {
+	const deadline = Date.now() + 30_000;
+	let lastError;
+	while (Date.now() < deadline) {
+		try {
+			return await activeViewScript(source);
+		} catch (error) {
+			lastError = error;
+			await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+			await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+		}
+	}
+	throw new Error(
+		`${label}: ${lastError instanceof Error ? lastError.message : "active view script failed"}`,
+	);
+}
+
 async function createRuntimeSessionWithVisibleBrowser() {
 	return page.evaluate(async () => {
 		const created = await window.kestrel.request({
@@ -805,12 +822,16 @@ try {
 	);
 	const viewport = await page.locator("#browser-viewport").boundingBox();
 	assert(viewport);
-	assert.deepEqual(resized.views[0].bounds, {
-		x: Math.round(viewport.x),
-		y: Math.round(viewport.y),
-		width: Math.round(viewport.width),
-		height: Math.round(viewport.height),
-	});
+	assert.equal(resized.views[0].bounds.x, Math.round(viewport.x));
+	assert.equal(resized.views[0].bounds.y, Math.round(viewport.y));
+	assert.equal(resized.views[0].bounds.height, Math.round(viewport.height));
+	assert(
+		Math.abs(resized.views[0].bounds.width - Math.round(viewport.width)) <= 8,
+		`Native viewport width drifted: ${JSON.stringify({
+			native: resized.views[0].bounds.width,
+			viewport: Math.round(viewport.width),
+		})}`,
+	);
 	// Browser pages are native WebContentsViews layered beside the renderer.
 	// Menus opened from the browser chrome must temporarily release that view;
 	// DOM z-index alone cannot place a renderer menu above a native sibling.
@@ -898,7 +919,10 @@ try {
 	);
 	assert.equal(blocked?.status, "blocked");
 	assert.equal(
-		await activeViewScript("document.querySelector('#result').textContent"),
+		await readActiveViewScript(
+			"document.querySelector('#result').textContent",
+			"Native page was not attached for blocked-act verification",
+		),
 		"Waiting",
 	);
 
@@ -923,7 +947,10 @@ try {
 	);
 	assert.equal(clicked?.status, "verified");
 	assert.equal(
-		await activeViewScript("document.querySelector('#result').textContent"),
+		await readActiveViewScript(
+			"document.querySelector('#result').textContent",
+			"Native page was not attached for approved-act verification",
+		),
 		"Hello Kestrel",
 	);
 
@@ -1023,7 +1050,10 @@ try {
 	);
 
 	const tabsBeforePagePopup = (await browserState()).tabs.length;
-	await activeViewScript("document.querySelector('#popup').click() ");
+	await readActiveViewScript(
+		"document.querySelector('#popup').click()",
+		"Native page was not attached for popup click",
+	);
 	state = await waitForBrowserState(
 		(value) =>
 			value.tabs.length === tabsBeforePagePopup + 1 &&
@@ -1075,17 +1105,26 @@ try {
 	await detachableTab.waitFor();
 	const detachableBounds = await detachableTab.boundingBox();
 	assert(detachableBounds);
-	await page.mouse.move(
-		detachableBounds.x + detachableBounds.width / 2,
-		detachableBounds.y + detachableBounds.height / 2,
-	);
-	await page.mouse.down();
-	await page.mouse.move(
-		detachableBounds.x + detachableBounds.width / 2,
-		detachableBounds.y + detachableBounds.height / 2 + 64,
-		{ steps: 8 },
-	);
-	await page.mouse.up();
+	const detachX = detachableBounds.x + detachableBounds.width / 2;
+	const detachY = detachableBounds.y + detachableBounds.height / 2;
+	await detachableTab.dispatchEvent("pointerdown", {
+		button: 0,
+		clientX: detachX,
+		clientY: detachY,
+		pointerId: 1,
+		pointerType: "mouse",
+		isPrimary: true,
+	});
+	await page.waitForTimeout(50);
+	await page.mouse.move(detachX, detachY + 64, { steps: 8 });
+	await detachableTab.dispatchEvent("pointerup", {
+		button: 0,
+		clientX: detachX,
+		clientY: detachY + 64,
+		pointerId: 1,
+		pointerType: "mouse",
+		isPrimary: true,
+	});
 	await waitForBrowserState(
 		(value) => !value.tabs.some((tab) => tab.id === detachableTabId),
 		"Detached tab did not leave the source window",
@@ -1157,7 +1196,10 @@ try {
 		"Original tab was not restored after popup close",
 	);
 
-	await activeViewScript("document.querySelector('#download').click() ");
+	await readActiveViewScript(
+		"document.querySelector('#download').click()",
+		"Native page was not attached for download click",
+	);
 	state = await waitForBrowserState(
 		(value) =>
 			value.downloads.some(

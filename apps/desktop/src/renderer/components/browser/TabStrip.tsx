@@ -153,6 +153,10 @@ export function TabStrip({
 	);
 	const draggingTabIdRef = useRef<string | null>(null);
 	const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+	const dragListenersRef = useRef<{
+		move: (event: PointerEvent) => void;
+		up: (event: PointerEvent) => void;
+	} | null>(null);
 	const suppressClickTabIdRef = useRef<string | null>(null);
 	const tabsContainerRef = useRef<HTMLDivElement | null>(null);
 	const tabToolsRef = useRef<HTMLDivElement | null>(null);
@@ -323,6 +327,19 @@ export function TabStrip({
 	}
 
 	function resetDrag() {
+		if (dragListenersRef.current) {
+			window.removeEventListener(
+				"pointermove",
+				dragListenersRef.current.move,
+				true,
+			);
+			window.removeEventListener(
+				"pointerup",
+				dragListenersRef.current.up,
+				true,
+			);
+			dragListenersRef.current = null;
+		}
 		draggingTabIdRef.current = null;
 		dragStartRef.current = null;
 		setDraggingTabId(null);
@@ -346,11 +363,21 @@ export function TabStrip({
 	function handleTabPointerDown(event: ReactPointerEvent, tabId: string) {
 		if (event.button !== 0) return;
 		if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
+		resetDrag();
 		draggingTabIdRef.current = tabId;
 		dragStartRef.current = { x: event.clientX, y: event.clientY };
 		setDraggingTabId(tabId);
 		setDragIntent("none");
 		event.currentTarget.setPointerCapture(event.pointerId);
+		const onPointerMove = (moveEvent: PointerEvent) =>
+			handleTabPointerMove(moveEvent);
+		const onPointerUp = (upEvent: PointerEvent) => {
+			handleTabPointerUp(upEvent, tabId);
+			resetDrag();
+		};
+		dragListenersRef.current = { move: onPointerMove, up: onPointerUp };
+		window.addEventListener("pointermove", onPointerMove, true);
+		window.addEventListener("pointerup", onPointerUp, true);
 	}
 
 	function handleTabPointerMove(
@@ -432,18 +459,7 @@ export function TabStrip({
 		resetDrag();
 	}
 
-	useEffect(() => {
-		if (!draggingTabId) return;
-		const onPointerMove = (event: PointerEvent) => handleTabPointerMove(event);
-		const onPointerUp = (event: PointerEvent) =>
-			handleTabPointerUp(event, draggingTabId);
-		window.addEventListener("pointermove", onPointerMove, true);
-		window.addEventListener("pointerup", onPointerUp, true);
-		return () => {
-			window.removeEventListener("pointermove", onPointerMove, true);
-			window.removeEventListener("pointerup", onPointerUp, true);
-		};
-	}, [draggingTabId, onDetachTab, onMoveTab, orientation, tabs]);
+	useEffect(() => () => resetDrag(), []);
 
 	const menuTab = tabs.find((tab) => tab.id === menu?.tabId);
 	const folderById = new Map(tabFolders.map((folder) => [folder.id, folder]));
