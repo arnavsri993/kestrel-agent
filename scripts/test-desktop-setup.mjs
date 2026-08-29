@@ -452,8 +452,10 @@ try {
 	await page.setViewportSize({ width: 640, height: 760 });
 	await page.locator(".kestrel-sidebar").waitFor({ state: "visible" });
 	assert.equal(
-		await page.locator(".kestrel-sidebar .kestrel-sidebar-nav-item span").count(),
-		0,
+		await page.locator(".kestrel-sidebar-brand span").evaluate(
+			(node) => window.getComputedStyle(node).display === "none",
+		),
+		true,
 		"The Kestrel navigation rail should collapse to icon-only mode on narrow widths",
 	);
 	assert.equal(
