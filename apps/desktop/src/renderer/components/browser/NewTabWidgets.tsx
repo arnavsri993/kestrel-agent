@@ -348,7 +348,7 @@ function QuickActionsWidget({
 				icon="arrow"
 				action={{ label: `Ask ${agentName}`, onClick: () => onNewAgent() }}
 			>
-				Suggested actions will appear as you browse and work.
+				Start a task above or browse a little to unlock tailored suggestions.
 			</EmptyWidgetState>
 		);
 	}
@@ -898,7 +898,7 @@ export function NewTabWidgets({
 			<header className="kestrel-widget-canvas-header">
 				<div>
 					<span className="kestrel-widget-canvas-kicker">Home</span>
-					<h2 id="new-tab-widgets-title">At a glance</h2>
+					<h2 id="new-tab-widgets-title">What to do next</h2>
 				</div>
 				<div className="kestrel-widget-canvas-actions">
 					{editing && (

@@ -7,6 +7,7 @@ import {
 	type NewTabGreetingContext,
 	type NewTabGreetingTimeBucket,
 	type NewTabGreetingTimeBucketCounts,
+	type RuntimeSession,
 	type UserBrowserHistoryEntry,
 	type UserBrowserOriginFavicon,
 	type UserBrowserSettings,
@@ -371,23 +372,83 @@ function httpOrigin(value: string): string | undefined {
   }
 }
 
+type SessionActionSource = Pick<
+	RuntimeSession,
+	"id" | "title" | "status" | "updatedAt"
+>;
+
+function sessionActionRank(status: RuntimeSession["status"]): number {
+	switch (status) {
+		case "waiting":
+			return 0;
+		case "active":
+			return 1;
+		case "completed":
+			return 2;
+		case "failed":
+			return 3;
+		case "cancelled":
+			return 4;
+	}
+}
+
+function displaySessionTitle(title: string): string {
+	if (title === "Main session") return "General";
+	return title.startsWith("Help me finish setting up Workstrand")
+		? title.replaceAll("Workstrand", "Kestrel")
+		: title;
+}
+
+function actionForSession(session: SessionActionSource): SuggestedAgentAction {
+	const title = displaySessionTitle(session.title);
+	const label = browserSiteLabel({ hostname: "task", title }, 42);
+	const promptTitle = browserSiteLabel({ hostname: "task", title }, 80);
+
+	if (session.status === "waiting") {
+		return {
+			id: `session-waiting-${session.id}`,
+			title: `Check on ${label}`,
+			description: "See what needs your approval or input.",
+			prompt: `Resume our task about ${JSON.stringify(promptTitle)}. Summarize the current state, any pending approvals, and the smallest next step.`,
+			personalized: true,
+		};
+	}
+
+	return {
+		id: `session-continue-${session.id}`,
+		title: `Continue ${label}`,
+		description: "Pick up where you left off.",
+		prompt: `Continue our task about ${JSON.stringify(promptTitle)}. Summarize where we left off and recommend the smallest useful next step.`,
+		personalized: true,
+	};
+}
+
 /**
- * Build exactly five editable prompt starters. Personalized rows are derived
- * only from the same local history used by Frequent tabs, then honest
- * general starters fill any remaining slots.
+ * Build exactly five editable prompt starters. Recent Kestrel tasks and local
+ * browsing history come first; honest general starters fill any remaining slots.
  */
 export function suggestedAgentActions(
   history: UserBrowserHistoryEntry[],
   limit = 5,
+  sessions: readonly SessionActionSource[] = [],
 ): SuggestedAgentAction[] {
   const count = Math.max(0, limit);
-  const sites = frequentBrowserSites(history, count);
+  const sessionActions = [...sessions]
+    .sort(
+      (left, right) =>
+        sessionActionRank(left.status) - sessionActionRank(right.status) ||
+        right.updatedAt.localeCompare(left.updatedAt),
+    )
+    .slice(0, 2)
+    .map((session) => actionForSession(session));
+  const historySlots = Math.max(0, count - sessionActions.length);
+  const sites = frequentBrowserSites(history, historySlots);
   const firstSite = sites[0];
-  const personalized = sites.map((site, index) =>
+  const historyActions = sites.map((site, index) =>
     actionForSite(site, index, firstSite),
   );
 
-  return [...personalized, ...STARTER_ACTIONS]
+  return [...sessionActions, ...historyActions, ...STARTER_ACTIONS]
     .slice(0, count)
     .map((action) => ({ ...action }));
 }

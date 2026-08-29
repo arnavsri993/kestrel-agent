@@ -172,9 +172,31 @@ export function validateNewTabGreeting(value: unknown): string | undefined {
 	return text;
 }
 
-export function newTabGreetingFallback(name?: string): string {
+export function newTabGreetingFallback(
+	name?: string,
+	timeOfDay?: NewTabGreetingTimeBucket,
+): string {
 	const firstName = safeNewTabGreetingName(name);
-	return firstName ? `Hello, ${firstName}.` : "What can I help with?";
+	if (timeOfDay) {
+		switch (timeOfDay) {
+			case "early-morning":
+			case "morning":
+				return firstName
+					? `Good morning, ${firstName}.`
+					: "Good morning. What should we work on?";
+			case "afternoon":
+				return firstName
+					? `Good afternoon, ${firstName}.`
+					: "Good afternoon. What should we work on?";
+			case "evening":
+				return firstName
+					? `Good evening, ${firstName}.`
+					: "Good evening. What should we work on?";
+			case "late-night":
+				break;
+		}
+	}
+	return firstName ? `Hello, ${firstName}.` : "What should we work on?";
 }
 
 export function emptyNewTabGreetingActivity(): NewTabGreetingActivity {

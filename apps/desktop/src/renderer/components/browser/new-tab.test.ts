@@ -134,6 +134,39 @@ describe("new tab shortcuts", () => {
     expect(new Set(actions.map((action) => action.id))).toHaveLength(5);
   });
 
+  it("prioritizes waiting and recent sessions ahead of generic starters", () => {
+    const actions = suggestedAgentActions(
+      [],
+      5,
+      [
+        {
+          id: "session-completed",
+          title: "Ship the landing page",
+          status: "completed",
+          updatedAt: "2026-08-18T12:00:00.000Z",
+        },
+        {
+          id: "session-waiting",
+          title: "Review deployment plan",
+          status: "waiting",
+          updatedAt: "2026-08-18T11:00:00.000Z",
+        },
+        {
+          id: "session-active",
+          title: "Fix flaky desktop test",
+          status: "active",
+          updatedAt: "2026-08-18T13:00:00.000Z",
+        },
+      ],
+    );
+
+    expect(actions).toHaveLength(5);
+    expect(actions[0]?.title).toBe("Check on Review deployment plan");
+    expect(actions[1]?.title).toBe("Continue Fix flaky desktop test");
+    expect(actions.filter((action) => action.personalized)).toHaveLength(2);
+    expect(actions.filter((action) => !action.personalized)).toHaveLength(3);
+  });
+
   it("personalizes actions from local links without carrying query secrets", () => {
     const actions = suggestedAgentActions([
       {
@@ -211,7 +244,13 @@ describe("new tab contextual greetings", () => {
     ).toBe("returning-today");
 		expect(newTabGreetingFallback("Arnav Srivastava")).toBe("Hello, Arnav.");
 		expect(newTabGreetingFallback("Arnav <private@example.com>")).toBe(
-			"What can I help with?",
+			"What should we work on?",
+		);
+		expect(newTabGreetingFallback("Arnav Srivastava", "morning")).toBe(
+			"Good morning, Arnav.",
+		);
+		expect(newTabGreetingFallback(undefined, "afternoon")).toBe(
+			"Good afternoon. What should we work on?",
 		);
 	});
 
