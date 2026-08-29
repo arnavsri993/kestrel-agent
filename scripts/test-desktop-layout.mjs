@@ -838,18 +838,22 @@ try {
 	await waitForCollapsedLayout(page);
 	assertCollapsedLayout(await readLayout(page));
 
-	// Opening Agent from the navigation rail must stay visible even when the
-	// overlay rail was collapsed, instead of hiding both browser and agent UI.
+	// Opening Agent from the navigation rail should stay in the browser tab
+	// surface with the conversation rail beside it, not take over the window.
 	await page.getByRole("button", { name: "New Tab", exact: true }).click();
 	await page.locator(".new-tab-page").waitFor();
 	await page.getByRole("button", { name: "Agent", exact: true }).click();
 	await page.waitForFunction(() => {
 		const shell = document.querySelector(".ai-browser-app");
-		const workspace = document.querySelector(".agent-workspace");
+		const workspace = document.querySelector("#browser-viewport .agent-workspace");
+		const browserPlane = document.querySelector(".browser-main-plane");
 		const agent = document.querySelector(".agent-sidebar");
 		return (
-			shell?.classList.contains("agent-full-page") &&
+			shell &&
+			!shell.classList.contains("agent-full-page") &&
 			!shell.classList.contains("agent-sidebar-collapsed") &&
+			browserPlane &&
+			getComputedStyle(browserPlane).display !== "none" &&
 			workspace &&
 			agent &&
 			agent.getBoundingClientRect().width > 200 &&

@@ -8,7 +8,6 @@ import { sidebarReviewVisible } from "./agent-sidebar";
 export function AgentSidebar({
 	children,
 	communicationAssistant,
-	workspace,
 	sessions,
 	activeSessionId,
 	agentName,
@@ -22,7 +21,6 @@ export function AgentSidebar({
 }: {
 	children: ReactNode;
 	communicationAssistant?: ReactNode;
-	workspace?: ReactNode;
 	sessions: RuntimeSession[];
 	activeSessionId: string | null;
 	agentName: string;
@@ -59,8 +57,8 @@ export function AgentSidebar({
 					<button
 						type="button"
 						className="agent-sidebar-expand"
-						aria-label="Open chat in the full window"
-						title="Open chat in the full window"
+						aria-label="Open Agent tab"
+						title="Open Agent tab"
 						onClick={onExpandChat}
 					>
 						<Icon name="expand" />
@@ -103,7 +101,6 @@ export function AgentSidebar({
 			</div>
 			<div className="agent-sidebar-assist">{communicationAssistant}</div>
 			<div className="agent-sidebar-main">
-				<div className="agent-full-page-workspace">{workspace}</div>
 				<div className="agent-conversation-host">{children}</div>
 			</div>
 		</aside>

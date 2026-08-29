@@ -622,31 +622,3 @@
 		transition: none;
 	}
 }
-
-/* The full Agent page gives the durable conversation/workspace the remaining
- * surface when the New Tab navigation rail is not mounted. */
-.ai-browser-app.agent-full-page {
-	display: grid;
-	grid-template-columns: var(--kestrel-sidebar-space) minmax(0, 1fr);
-}
-
-.ai-browser-app.agent-full-page .kestrel-sidebar {
-	position: relative;
-	top: auto;
-	left: auto;
-	bottom: auto;
-	grid-column: 1;
-	grid-row: 1;
-	width: auto;
-	height: 100vh;
-	border-top: 0;
-}
-
-.ai-browser-app.agent-full-page .browser-main-plane {
-	display: none;
-}
-
-.ai-browser-app.agent-full-page .agent-sidebar {
-	grid-column: 2;
-	grid-row: 1;
-}

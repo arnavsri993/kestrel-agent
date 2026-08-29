@@ -9317,10 +9317,9 @@ export function App() {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
 	const openAgent = useCallback(() => {
-		setAgentSidebarOpen(true);
-		localStorage.setItem("kestrel:agent-sidebar", "open");
+		revealAgentSidebar();
 		void openAppPage("agent");
-	}, [openAppPage]);
+	}, [openAppPage, revealAgentSidebar]);
 	const openWritingStudio = useCallback(() => {
 		void openAppPage("writing");
 	}, [openAppPage]);
@@ -9491,6 +9490,13 @@ export function App() {
 		const timer = window.setInterval(beacon, 45_000);
 		return () => window.clearInterval(timer);
 	}, []);
+	useEffect(() => {
+		const active = browser.state?.tabs.find(
+			(tab) => tab.id === browser.state?.activeTabId,
+		);
+		if (parseKestrelAppPage(active?.url ?? "")?.id !== "agent") return;
+		revealAgentSidebar();
+	}, [browser.state?.activeTabId, browser.state?.tabs, revealAgentSidebar]);
 	const focusToolRoute = useCallback((node: HTMLDivElement | null) => {
 		const expected = pendingToolRouteFocusRef.current;
 		if (!node || !expected) return;
@@ -9659,8 +9665,6 @@ export function App() {
 		localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
 	}
 	const appPageId = currentAppPage?.id;
-	const isAgentFullPage = appPageId === "agent";
-	const effectiveAgentSidebarOpen = isAgentFullPage || agentSidebarOpen;
 	const appPage = appPageId ? (
 		<div
 			key={appPageId}
@@ -9701,6 +9705,18 @@ export function App() {
 				/>
 			)}
 			{appPageId === "writing" && <WritingStudio />}
+			{appPageId === "agent" && (
+				<AgentWorkspace
+					sessions={runtimeSessions}
+					activeSessionId={activeRuntimeSessionId}
+					agentState={effectiveAgentState}
+					pendingApprovals={pendingApprovalCount}
+					onNewTask={() => startNewAgent()}
+					onOpenSession={openSidebarSession}
+					onOpenApprovals={() => navigate("approvals")}
+					onOpenWork={() => navigate("work")}
+				/>
+			)}
 			{appPageId === "settings" && (
 				<Settings
 					snapshot={snapshot}
@@ -9748,7 +9764,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${effectiveAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${isAgentFullPage ? " agent-full-page" : ""}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0 }}
@@ -9792,7 +9808,7 @@ export function App() {
 						browser={browser}
 						agentName={activeAgentName}
 						greetingName={greetingName}
-						agentOpen={effectiveAgentSidebarOpen}
+						agentOpen={agentSidebarOpen}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
@@ -9818,26 +9834,10 @@ export function App() {
 							onOpenConnections={() => openSettings("connections")}
 						/>
 					}
-					workspace={
-						<AgentWorkspace
-							sessions={runtimeSessions}
-							activeSessionId={activeRuntimeSessionId}
-							agentState={effectiveAgentState}
-							pendingApprovals={pendingApprovalCount}
-							onNewTask={() => {
-								startNewAgent();
-								openAgent();
-							}}
-							onOpenSession={openSidebarSession}
-							onOpenApprovals={() => navigate("approvals")}
-							onOpenWork={() => navigate("work")}
-							onBack={() => void openBrowserWorkspace()}
-						/>
-					}
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
-					collapsed={!effectiveAgentSidebarOpen}
+					collapsed={!agentSidebarOpen}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
 					onNewAgent={startNewAgent}
