@@ -180,19 +180,19 @@ async function waitForNativeViewportBounds(label) {
 				y: Math.round(viewport.y),
 				width: Math.round(viewport.width),
 				height: Math.round(viewport.height),
-			};
-			latest = await nativeViewState();
-			const view = latest.views[0];
-			if (
-				view &&
-				view.bounds.x === expected.x &&
-				view.bounds.y === expected.y &&
-				view.bounds.width === expected.width &&
-				view.bounds.height === expected.height
-			) {
-				return latest;
+				};
+				latest = await nativeViewState();
+				const view = latest.views[0];
+				if (
+					view &&
+					view.bounds.x === expected.x &&
+					view.bounds.y === expected.y &&
+					view.bounds.width === expected.width &&
+					view.bounds.height === expected.height
+				) {
+					return { ...latest, expectedViewport: expected };
+				}
 			}
-		}
 		await page.evaluate(() => window.dispatchEvent(new Event("resize")));
 		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
 	}
@@ -402,6 +402,36 @@ async function readActiveViewScript(source, label) {
 	}
 	throw new Error(
 		`${label}: ${lastError instanceof Error ? lastError.message : "active view script failed"}`,
+	);
+}
+
+async function sendInputToActiveView(input, label) {
+	const deadline = Date.now() + 30_000;
+	let lastError;
+	while (Date.now() < deadline) {
+		try {
+			return await application.evaluate(
+				({ BrowserWindow }, event) => {
+					const window = BrowserWindow.getAllWindows().find(
+						(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+					);
+					const view = window?.contentView.children.find(
+						(child) => "webContents" in child,
+					);
+					if (!view || !("webContents" in view))
+						throw new Error("No active user browser view is attached.");
+					view.webContents.sendInputEvent(event);
+				},
+				input,
+			);
+		} catch (error) {
+			lastError = error;
+			await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+			await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+		}
+	}
+	throw new Error(
+		`${label}: ${lastError instanceof Error ? lastError.message : "active view input failed"}`,
 	);
 }
 
@@ -849,7 +879,7 @@ try {
 	const resized = await waitForNativeViewportBounds(
 		"Native page did not resize after Kestrel navigation hid",
 	);
-	const viewport = await page.locator("#browser-viewport").boundingBox();
+	const viewport = resized.expectedViewport;
 	assert(viewport);
 	assert.equal(resized.views[0].bounds.x, Math.round(viewport.x));
 	assert.equal(resized.views[0].bounds.y, Math.round(viewport.y));
@@ -886,26 +916,22 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing toolbar tools",
 	);
-	await application.evaluate(({ BrowserWindow }) => {
-		const window = BrowserWindow.getAllWindows().find(
-			(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
-		);
-		const view = window?.contentView.children.find(
-			(child) => "webContents" in child,
-		);
-		if (!view || !("webContents" in view))
-			throw new Error("No active user browser view is attached.");
-		view.webContents.sendInputEvent({
+	await sendInputToActiveView(
+		{
 			type: "keyDown",
 			keyCode: "L",
 			modifiers: ["meta"],
-		});
-		view.webContents.sendInputEvent({
+		},
+		"The browser address-bar shortcut could not reach the active page",
+	);
+	await sendInputToActiveView(
+		{
 			type: "keyUp",
 			keyCode: "L",
 			modifiers: ["meta"],
-		});
-	});
+		},
+		"The browser address-bar shortcut could not finish on the active page",
+	);
 	await page.waitForFunction(
 		() => document.activeElement?.id === "browser-address-input",
 	);
