@@ -703,6 +703,9 @@ export class KestrelDatabase {
 					? { providerToolCallId: parsed.providerToolCallId }
 					: {}),
 				...(parsed.toolName ? { toolName: parsed.toolName } : {}),
+				...(parsed.memoryRecallReceipt
+					? { memoryRecallReceipt: parsed.memoryRecallReceipt }
+					: {}),
 			}),
 			this.encryptionKey,
 		);
@@ -2335,6 +2338,7 @@ export class KestrelDatabase {
 			modelToolCalls?: unknown;
 			providerToolCallId?: unknown;
 			toolName?: unknown;
+			memoryRecallReceipt?: unknown;
 		} = { content: decrypted };
 		try {
 			const candidate = JSON.parse(decrypted) as Record<string, unknown>;
@@ -2356,6 +2360,9 @@ export class KestrelDatabase {
 				: {}),
 			...(typeof stored.toolName === "string"
 				? { toolName: stored.toolName }
+				: {}),
+			...(stored.memoryRecallReceipt
+				? { memoryRecallReceipt: stored.memoryRecallReceipt }
 				: {}),
 			...(row.parent_message_id
 				? { parentMessageId: row.parent_message_id }

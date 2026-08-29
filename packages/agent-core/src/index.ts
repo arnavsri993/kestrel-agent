@@ -20,6 +20,7 @@ import type {
 } from "@kestrel/shared-types";
 import {
 	AgentStateSchema,
+	buildMemoryRecallReceipt,
 	PRODUCT_IDENTITY,
 	WorkspaceSnapshotSchema,
 	validateNewTabGreeting,
@@ -1762,6 +1763,14 @@ export class AgentCore {
 									query: priorMessage,
 								})
 							: undefined;
+						const userModelContext = this.userModel.promptContext();
+						const memoryRecallReceipt = buildMemoryRecallReceipt({
+							...(localContext
+								? { localMemoryCount: localContext.memories.length }
+								: {}),
+							userModelContext,
+							honchoContext,
+						});
 						const result = await this.agentLoop.retry({
 							sessionId: request.sessionId,
 							model: route?.execution.model ?? request.model,
@@ -1826,6 +1835,7 @@ export class AgentCore {
 							...(active
 								? { takeSteering: () => active.steering.splice(0) }
 								: {}),
+							...(memoryRecallReceipt ? { memoryRecallReceipt } : {}),
 						});
 						if (route) {
 							await this.ensureIndependentReview(
@@ -2893,6 +2903,14 @@ export class AgentCore {
 									query: request.message,
 								})
 							: undefined;
+						const userModelContext = this.userModel.promptContext();
+						const memoryRecallReceipt = buildMemoryRecallReceipt({
+							...(localContext
+								? { localMemoryCount: localContext.memories.length }
+								: {}),
+							userModelContext,
+							honchoContext,
+						});
 						const result = await this.agentLoop.run({
 							sessionId: request.sessionId,
 							model: route?.execution.model ?? selectedModel,
@@ -2989,6 +3007,7 @@ export class AgentCore {
 							...(active
 								? { takeSteering: () => active.steering.splice(0) }
 								: {}),
+							...(memoryRecallReceipt ? { memoryRecallReceipt } : {}),
 						});
 						if (route) {
 							await this.ensureIndependentReview(

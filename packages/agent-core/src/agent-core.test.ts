@@ -752,6 +752,19 @@ describe("core agent request path", () => {
 		expect(receivedSystem).toContain("launch brief is due Friday");
 		expect(receivedSystem).toContain("User-confirmed context");
 		expect(receivedSystem).toContain("Keep updates concise");
+		const runResult = await core.handle({
+			type: "runtime-list-messages",
+			sessionId: sessions.sessions[0].id,
+		});
+		if (!runResult.ok || !runResult.messages?.length)
+			throw new Error("Expected assistant message with recall receipt.");
+		const assistant = runResult.messages.find(
+			(message) => message.role === "assistant",
+		);
+		expect(assistant?.memoryRecallReceipt).toEqual({
+			memoryCount: 1,
+			preferenceCount: 1,
+		});
 		await core.close();
 		rmSync(root, { recursive: true, force: true });
 	});

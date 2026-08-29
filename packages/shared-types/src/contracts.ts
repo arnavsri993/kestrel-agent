@@ -673,11 +673,19 @@ export const RuntimeSessionSchema = z.object({
 });
 export type RuntimeSession = z.infer<typeof RuntimeSessionSchema>;
 
+export const MemoryRecallReceiptSchema = z.object({
+	memoryCount: z.number().int().nonnegative(),
+	preferenceCount: z.number().int().nonnegative(),
+	honchoIncluded: z.boolean().optional(),
+});
+export type MemoryRecallReceipt = z.infer<typeof MemoryRecallReceiptSchema>;
+
 export const RuntimeMessageSchema = z.object({
 	id: z.string().min(1),
 	sessionId: z.string().min(1),
 	role: z.enum(["system", "user", "assistant", "tool"]),
 	content: z.string().min(1).max(1_000_000),
+	memoryRecallReceipt: MemoryRecallReceiptSchema.optional(),
 	modelToolCalls: z
 		.array(
 			z.object({

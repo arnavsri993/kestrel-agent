@@ -4,5 +4,6 @@ export * from "./contracts";
 export * from "./browser-tab-organization";
 export * from "./identity";
 export * from "./memory-capture";
+export * from "./memory-recall-receipt";
 export * from "./new-tab-greeting";
 export * from "./writing";

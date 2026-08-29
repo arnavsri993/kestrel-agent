@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
 import type {
 	AgentRun,
+	MemoryRecallReceipt,
 	ModelCallAudit,
 	RuntimeMessage,
 	RuntimeSession,
@@ -94,6 +95,7 @@ export interface AgentLoopInput {
 	onTextDelta?: (delta: string) => void;
 	takeSteering?: () => string[];
 	onEvent?: (event: { type: string; detail: string }) => void;
+	memoryRecallReceipt?: MemoryRecallReceipt;
 }
 
 export interface AgentLoopResult {
@@ -359,6 +361,9 @@ export class AgentLoop {
 			...(input.signal ? { signal: input.signal } : {}),
 			...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
 			...(input.takeSteering ? { takeSteering: input.takeSteering } : {}),
+			...(input.memoryRecallReceipt
+				? { memoryRecallReceipt: input.memoryRecallReceipt }
+				: {}),
 		});
 	}
 
@@ -607,6 +612,7 @@ export class AgentLoop {
 			onTextDelta?: (delta: string) => void;
 			takeSteering?: () => string[];
 			onEvent?: (event: { type: string; detail: string }) => void;
+			memoryRecallReceipt?: MemoryRecallReceipt;
 		},
 	): Promise<AgentLoopResult> {
 		let run = initialRun;
@@ -758,6 +764,9 @@ export class AgentLoop {
 					content: assistantContent,
 					...(result.toolCalls.length
 						? { modelToolCalls: result.toolCalls }
+						: {}),
+					...(result.toolCalls.length === 0 && options.memoryRecallReceipt
+						? { memoryRecallReceipt: options.memoryRecallReceipt }
 						: {}),
 				});
 				this.onMessage?.(assistantMessage);
