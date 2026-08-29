@@ -145,6 +145,7 @@ afterEach(() => {
 function createService(options: {
   partitionName?: string;
   now?: () => Date;
+  allowDevTools?: boolean;
   onLastTabClosed?: () => void;
   paymentCardVault?: PaymentCardVault;
   onPaymentPrompt?: (prompt: unknown) => void;
@@ -177,6 +178,7 @@ function createService(options: {
 		onCommand: (command) => commands.push(command),
 		...(options.partitionName ? { partitionName: options.partitionName } : {}),
 		...(options.now ? { now: options.now } : {}),
+		...(options.allowDevTools === false ? { allowDevTools: false } : {}),
 		...(options.onLastTabClosed
 			? { onLastTabClosed: options.onLastTabClosed }
 			: {}),
@@ -1416,6 +1418,15 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     expect(contents.openDevTools).toHaveBeenCalled();
     service.printTab(first.id);
     expect(contents.print).toHaveBeenCalled();
+  });
+
+  it("does not open devtools when packaged production hardening disables them", async () => {
+    const { service } = createService({ allowDevTools: false });
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://docs.example/path");
+    const contents = electron.state.views[0]!.webContents;
+    service.openDevTools(first.id);
+    expect(contents.openDevTools).not.toHaveBeenCalled();
   });
 
   it("organizes visible tabs into semantic folders without sorting them alphabetically", async () => {

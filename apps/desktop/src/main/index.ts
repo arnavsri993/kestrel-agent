@@ -120,6 +120,7 @@ import {
   archiveProtectedProfile,
   startupRecoveryCopy,
 } from "./startup-recovery";
+import { assertBrowserDevToolsAllowed } from "./browser-devtools-guard";
 import {
 	canRegisterAsDefaultBrowser,
 	isPackagedKestrelRuntime,
@@ -1724,6 +1725,7 @@ function createMainWindow(): BrowserWindow {
       ? null
       : new UserBrowserService({
           window,
+          allowDevTools: !isPackagedKestrelApp,
           statePath: join(app.getPath("userData"), "browser", "state.json"),
           downloadDirectory: process.env.KESTREL_TEST_USER_DATA
             ? join(app.getPath("userData"), "browser-downloads")
@@ -1865,6 +1867,7 @@ function createDetachedBrowserWindow(
   );
   const service = new UserBrowserService({
     window,
+    allowDevTools: !isPackagedKestrelApp,
     statePath,
     initialState: detachedBrowserState(sourceState, tab),
     downloadDirectory: process.env.KESTREL_TEST_USER_DATA
@@ -3047,6 +3050,7 @@ function registerIpc(): void {
     if (request.type === "browser-open-devtools") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
+      assertBrowserDevToolsAllowed(isPackagedKestrelApp);
       return {
         ok: true,
         browserState: requestBrowserService.openDevTools(request.tabId),

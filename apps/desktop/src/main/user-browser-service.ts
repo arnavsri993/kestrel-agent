@@ -125,6 +125,7 @@ export type { UserBrowserBackendWireRequest };
 
 export interface UserBrowserServiceOptions {
 	window: BrowserWindow;
+	allowDevTools?: boolean;
 	statePath: string;
 	downloadDirectory: string;
 	initialState?: UserBrowserState;
@@ -828,9 +829,11 @@ export class UserBrowserService {
 	private readonly paymentPromptSuppressedUntil = new Map<string, number>();
 	private readonly agentTabPinCounts = new Map<string, number>();
 	private tabMutationQueue: Promise<void> = Promise.resolve();
+	private readonly allowDevTools: boolean;
 
 	constructor(options: UserBrowserServiceOptions) {
 		this.window = options.window;
+		this.allowDevTools = options.allowDevTools ?? true;
 		this.store = new BrowserTabStore(options.statePath);
 		this.state =
 			options.initialState && !existsSync(options.statePath)
@@ -1656,6 +1659,7 @@ export class UserBrowserService {
 	}
 
 	openDevTools(tabId: string): UserBrowserState {
+		if (!this.allowDevTools) return this.getState();
 		const record = this.requireView(tabId);
 		record.view.webContents.openDevTools({ mode: "detach" });
 		return this.getState();
@@ -3067,10 +3071,14 @@ export class UserBrowserService {
 					label: "Print…",
 					click: () => this.printTab(tab.id),
 				},
-				{
-					label: "Inspect",
-					click: () => this.openDevTools(tab.id),
-				},
+				...(this.allowDevTools
+					? [
+							{
+								label: "Inspect",
+								click: () => this.openDevTools(tab.id),
+							},
+						]
+					: []),
 			);
 			Menu.buildFromTemplate(template).popup({ window: this.window });
 		});
@@ -3214,7 +3222,7 @@ export class UserBrowserService {
 						this.onCommand?.("open-bookmarks");
 					}
 				}
-			} else if (key === "i" && input.shift) {
+			} else if (key === "i" && input.shift && this.allowDevTools) {
 				event.preventDefault();
 				this.openDevTools(tab.id);
 			} else if (key === "h" || key === "y") {
