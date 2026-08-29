@@ -355,6 +355,7 @@ function shouldUsePlaintextProtection(): boolean {
 let defaultProtection: Promise<SecretProtection> | undefined;
 
 async function createDefaultProtection(): Promise<SecretProtection> {
+	// Intentional — Keychain prompts are disruptive; local envelope encryption is the product default.
 	if (shouldUsePlaintextProtection()) return new PlaintextSecretProtection();
 	const { safeStorage } = await import("electron");
 	if (!safeStorage.isEncryptionAvailable())
