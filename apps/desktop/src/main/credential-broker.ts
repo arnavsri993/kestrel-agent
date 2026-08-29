@@ -212,8 +212,26 @@ interface SecretProtection {
 }
 
 export class PlaintextSecretProtection implements SecretProtection {
+	private safeStorage: SafeStorageLike | undefined;
+
+	constructor(private readonly migrationStorage?: SafeStorageLike) {}
+
 	isEncryptionAvailable(): boolean {
 		return true;
+	}
+
+	async prepare(): Promise<void> {
+		if (this.migrationStorage) {
+			this.safeStorage = this.migrationStorage;
+			return;
+		}
+		try {
+			const { safeStorage } = await import("electron");
+			if (safeStorage.isEncryptionAvailable())
+				this.safeStorage = safeStorage;
+		} catch {
+			// Electron is unavailable in isolated unit tests.
+		}
 	}
 
 	async encryptString(value: string): Promise<Buffer> {
@@ -234,9 +252,39 @@ export class PlaintextSecretProtection implements SecretProtection {
 				shouldReEncrypt: false,
 			};
 		}
+		const legacyPayload = this.extractSafeStoragePayload(value);
+		if (legacyPayload !== undefined) {
+			const storage = this.safeStorage;
+			if (!storage?.isEncryptionAvailable())
+				throw new SecureStorageError(
+					"Kestrel found a Keychain-protected database key from a previous build, but Keychain is unavailable on this machine. Restore the key from backup or set KESTREL_USE_SAFESTORAGE=1 on a machine that can unlock Keychain, then restart.",
+				);
+			try {
+				return {
+					result: storage.decryptString(legacyPayload),
+					shouldReEncrypt: true,
+				};
+			} catch (error) {
+				throw new SecureStorageError(
+					"Kestrel could not unlock a Keychain-protected database key from a previous build.",
+					error,
+				);
+			}
+		}
 		throw new SecureStorageError(
-			"Kestrel found a Keychain-protected secret, but this build only allows local plaintext storage in development or CI.",
+			"Kestrel found an unrecognized protected database key format.",
 		);
+	}
+
+	private extractSafeStoragePayload(value: Buffer): Buffer | undefined {
+		if (
+			value
+				.subarray(0, SAFESTORAGE_PROTECTION_PREFIX.length)
+				.equals(SAFESTORAGE_PROTECTION_PREFIX)
+		)
+			return value.subarray(SAFESTORAGE_PROTECTION_PREFIX.length);
+		if (value.length > 0) return value;
+		return undefined;
 	}
 }
 
@@ -300,18 +348,15 @@ export class SafeStorageSecretProtection implements SecretProtection {
 	}
 }
 
-function shouldUsePlaintextProtection(isPackaged: boolean): boolean {
-	return (
-		process.env.KESTREL_ALLOW_PLAINTEXT_SECRET_STORAGE === "1" || !isPackaged
-	);
+function shouldUsePlaintextProtection(): boolean {
+	return process.env.KESTREL_USE_SAFESTORAGE !== "1";
 }
 
 let defaultProtection: Promise<SecretProtection> | undefined;
 
 async function createDefaultProtection(): Promise<SecretProtection> {
-	const { app, safeStorage } = await import("electron");
-	if (shouldUsePlaintextProtection(app.isPackaged))
-		return new PlaintextSecretProtection();
+	if (shouldUsePlaintextProtection()) return new PlaintextSecretProtection();
+	const { safeStorage } = await import("electron");
 	if (!safeStorage.isEncryptionAvailable())
 		throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
 	return new SafeStorageSecretProtection(safeStorage);
@@ -617,7 +662,7 @@ export class CredentialBroker {
 						throw new ProtectedDatabaseError(
 							missingKeyFile
 								? "Kestrel found its encrypted database, but the protected database key is missing. The existing profile will not be overwritten."
-								: "Kestrel found its encrypted database, but this build no longer uses macOS Keychain to unlock the old key. The existing profile will not be overwritten.",
+								: "Kestrel found its encrypted database, but the protected database key could not be unlocked. The existing profile will not be overwritten.",
 						);
 				} catch (databaseError) {
 					if (databaseError instanceof ProtectedDatabaseError)

@@ -19,7 +19,8 @@ Five parallel audits at baseline `59cf7830` identified **14 release blockers** a
 | **Security/IPC** (audit `cd7f30f9`) | RB-1, RB-2 | #657 (supersedes closed #646) |
 | **Agent runtime** (audit `2314bc32`) | L1, T2, N1 | #647 (L1), #653 (T2), #656 (N1) |
 
-**Code blockers merged on `main`:** R1, R2, R3, R5, RB-1, RB-2, L1, P1-01, browser tab pin (BR-1), browser mutation mutex (BR-2), SIGKILL escalation (T2), provider connect timeout (N1).  
+**Code blockers merged on `main`:** R1, R2, R3, R5, L1, P1-01, browser tab pin (BR-1), browser mutation mutex (BR-2), SIGKILL escalation (T2), provider connect timeout (N1).  
+**Regressed (Keychain revert):** RB-1, RB-2 — #657 Keychain/safeStorage path disabled; plaintext + mock Keychain restored.  
 **Operator blockers (no code PR):** RB-01 (production signing/notarization), RB-02 (update feed hosting), RB-03 (Widget App Group registration) — **still open**.  
 **Deferred P1 items:** R4 (legacy idempotency), security P1-1–P1-4 (CSP, step-up auth, DevTools, extension sideload), lifecycle P1-03/P1-04.
 
@@ -33,8 +34,8 @@ Five parallel audits at baseline `59cf7830` identified **14 release blockers** a
 | --- | --- | --- | --- | --- |
 | **R1** | Persistence | No SQLite corruption detection on startup; corrupt DB undetected until hard failure | **fixed** | [#645](https://github.com/arnavsri993/kestrel-agent/pull/645) — `PRAGMA integrity_check` + `DatabaseIntegrityError` |
 | **R2** | Persistence | Schema migration has no backup gate; inline SQL drift from canonical migration files (v009 inline-only) | **fixed** | [#648](https://github.com/arnavsri993/kestrel-agent/pull/648) — pre-migrate backup + load `migrations/*.sql` |
-| **RB-1** | Security | Database root key stored without OS protection (`PlaintextSecretProtection`) | **fixed** | [#657](https://github.com/arnavsri993/kestrel-agent/pull/657) — `safeStorage` / Keychain in packaged builds |
-| **RB-2** | Security | Chromium cookie encryption disabled via `use-mock-keychain` in all builds | **fixed** | [#657](https://github.com/arnavsri993/kestrel-agent/pull/657) — real Keychain in packaged builds |
+| **RB-1** | Security | Database root key stored without OS protection (`PlaintextSecretProtection`) | **regressed** | [#657](https://github.com/arnavsri993/kestrel-agent/pull/657) merged Keychain/safeStorage; reverted — Keychain unreliable on user machines |
+| **RB-2** | Security | Chromium cookie encryption disabled via `use-mock-keychain` in all builds | **regressed** | [#657](https://github.com/arnavsri993/kestrel-agent/pull/657) enabled real Keychain in packaged builds; reverted — mock Keychain default restored |
 | **L1** | Agent runtime | Stale `waiting_approval` runs remain resumable after user sends new message in same session | **fixed** | [#647](https://github.com/arnavsri993/kestrel-agent/pull/647) — supersede on new `run()` |
 | **BR-1** | Browser | Agent browser tools vs tab discard/sleep/close races — WebContents destroyed mid-CDP | **fixed** | [#649](https://github.com/arnavsri993/kestrel-agent/pull/649) — ref-counted tab pins |
 | **BR-2** | Browser | No serialization between tab mutations (`closeTab`, organize, detach) and agent backend | **fixed** | [#651](https://github.com/arnavsri993/kestrel-agent/pull/651) — per-service tab mutation mutex |
@@ -115,9 +116,9 @@ All hardening PRs merged 2026-08-29. CI was green (Core + Desktop smoke **SUCCES
 | [#651](https://github.com/arnavsri993/kestrel-agent/pull/651) | Serialize tab mutations vs agent backend | BR-2 | ✅ 2026-08-29 |
 | [#653](https://github.com/arnavsri993/kestrel-agent/pull/653) | SIGKILL escalation for command-runner/subscription-cli | T2 | ✅ 2026-08-29 |
 | [#656](https://github.com/arnavsri993/kestrel-agent/pull/656) | Bound provider connect with 20s timeout | N1 | ✅ 2026-08-29 |
-| [#657](https://github.com/arnavsri993/kestrel-agent/pull/657) | Keychain safeStorage (RB-1, RB-2) | RB-1, RB-2 | ✅ 2026-08-29 |
+| [#657](https://github.com/arnavsri993/kestrel-agent/pull/657) | Keychain safeStorage (RB-1, RB-2) | RB-1, RB-2 | ✅ 2026-08-29 — **regressed** by Keychain revert PR |
 
-**Note:** [#646](https://github.com/arnavsri993/kestrel-agent/pull/646) was closed without merge; #657 landed the same RB-1/RB-2 changes directly on `main`.
+**Note:** [#646](https://github.com/arnavsri993/kestrel-agent/pull/646) was closed without merge; #657 landed RB-1/RB-2 on `main`, then Keychain/safeStorage was reverted because real Keychain is unreliable on user machines.
 
 **Open PRs:** None from the hardening sprint. Next work is operator RB-01–03 and deferred P1 items below.
 
@@ -151,7 +152,7 @@ All hardening PRs merged 2026-08-29. CI was green (Core + Desktop smoke **SUCCES
 - [ ] Quit during active agent run — no orphaned core/Ollama processes (#644).
 - [ ] DB corruption path surfaces recovery guidance (#645).
 - [ ] Pre-migration backup created before schema upgrade (#648).
-- [ ] Packaged build uses Keychain for DB key and cookies (#657).
+- [ ] Packaged build uses mock Keychain and plaintext database root key by default (Keychain revert).
 - [ ] Cancelled command-runner/subscription-cli children receive SIGKILL after grace period (#653).
 - [ ] Provider connect timeout fires within 20s on unreachable host (#656).
 

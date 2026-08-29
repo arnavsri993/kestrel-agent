@@ -133,10 +133,10 @@ import {
 } from "./macos-integration";
 import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
 
-// Packaged macOS builds use the real Keychain for Chromium cookies and the
-// database root key. Dev and CI runs isolate test profiles with a mock Keychain.
+// Real Keychain/safeStorage is unreliable across user machines. Dev, CI, and
+// packaged builds use mock Keychain by default; opt in with KESTREL_USE_REAL_KEYCHAIN=1.
 if (
-	!isPackagedKestrelRuntime(app.isPackaged) ||
+	process.env.KESTREL_USE_REAL_KEYCHAIN !== "1" ||
 	process.env.KESTREL_USE_MOCK_KEYCHAIN === "1"
 )
 	app.commandLine.appendSwitch("use-mock-keychain");
