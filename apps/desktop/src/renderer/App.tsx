@@ -6394,8 +6394,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 						<strong>Google Workspace</strong>
 						<p>
 							{googleStatus.connected
-								? `${googleStatus.email} · Gmail, Calendar, and login-code lookup`
-								: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar access."}
+								? `${googleStatus.email} · Gmail, Calendar events and availability, and login-code lookup`
+								: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar event and availability access."}
 						</p>
 						{!googleStatus.connected && (
 							<>
