@@ -3978,22 +3978,32 @@ input[type="radio"] {
 	width: 45px;
 	height: 25px;
 	padding: 3px;
-	border: 1px solid var(--line-strong);
+	border: 1px solid color-mix(in srgb, #d98989 58%, var(--line-strong));
 	border-radius: 20px;
-	background: transparent;
+	background: color-mix(in srgb, #d98989 20%, var(--surface));
 	cursor: pointer;
+	transition:
+		background 0.15s ease,
+		border-color 0.15s ease;
 }
 .switch span {
 	display: block;
 	width: 17px;
 	height: 17px;
 	border-radius: 50%;
-	background: var(--muted);
-	transition: transform 0.15s ease;
+	background: #e39a9a;
+	box-shadow: 0 1px 3px rgb(0 0 0 / 0.28);
+	transition:
+		transform 0.15s ease,
+		background 0.15s ease;
+}
+.switch.on {
+	border-color: color-mix(in srgb, #8fc49e 62%, var(--line-strong));
+	background: color-mix(in srgb, #8fc49e 24%, var(--surface));
 }
 .switch.on span {
 	transform: translateX(19px);
-	background: var(--ink);
+	background: #9ed4ad;
 }
 .segmented {
 	display: flex;
