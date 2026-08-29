@@ -341,4 +341,11 @@ describe("unified life context", () => {
 		expect(database.getMemory(unrelated.id)).toBeDefined();
 		database.close();
 	});
+
+	it("bounds assembleContext query to the schema max length", () => {
+		const { database, life } = fixture();
+		const bundle = life.assembleContext({ query: "x".repeat(20_000) });
+		expect(bundle.query).toHaveLength(10_000);
+		database.close();
+	});
 });
