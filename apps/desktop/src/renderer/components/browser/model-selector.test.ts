@@ -33,7 +33,7 @@ const freeProviderCatalog = [
 	["sensenova", "SenseNova", "deepseek-v4-flash"],
 	["gmicloud", "GMI Cloud", "deepseek-ai/DeepSeek-V4-Pro"],
 	["tokenharbor", "Token Harbor", "deepseek-v4-flash:free"],
-	["cline", "Cline", "anthropic/claude-sonnet-4-6"],
+	["cline", "Cline", "poolside/laguna-s-2.1:free"],
 	["command-code", "Command Code", "poolside/laguna-s-2.1-free"],
 	["kilo", "Kilo", "kilo-auto/free"],
 	["orcarouter", "OrcaRouter", "orcarouter/free"],

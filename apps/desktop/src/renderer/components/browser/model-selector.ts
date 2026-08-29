@@ -147,8 +147,8 @@ const PROVIDER_MODEL_CATALOG: Record<string, readonly CatalogModel[]> = {
 	],
 	cline: [
 		{
-			id: "anthropic/claude-sonnet-4-6",
-			label: "Claude Sonnet 4.6",
+			id: "poolside/laguna-s-2.1:free",
+			label: "Laguna S 2.1 Free",
 			reasoningLevels: false,
 		},
 	],

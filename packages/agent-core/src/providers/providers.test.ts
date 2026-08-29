@@ -119,7 +119,7 @@ describe("model provider adapters", () => {
 			["sensenova", "deepseek-v4-flash"],
 			["gmicloud", "deepseek-ai/DeepSeek-V4-Pro"],
 			["tokenharbor", "deepseek-v4-flash:free"],
-			["cline", "anthropic/claude-sonnet-4-6"],
+			["cline", "poolside/laguna-s-2.1:free"],
 			["command-code", "poolside/laguna-s-2.1-free"],
 			["kilo", "kilo-auto/free"],
 			["orcarouter", "orcarouter/free"],
