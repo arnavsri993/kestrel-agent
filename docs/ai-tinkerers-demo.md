@@ -46,6 +46,32 @@ before the audience arrives. On the presentation Mac, the first tool-enabled
 Send the warm-up within 10 minutes of going onstage, and repeat it if the slot
 is delayed, so Ollama's configured keep-alive does not expire.
 
+## First-value loop (fresh profile + local Ollama)
+
+After setup verification, tap **Try a first task**. Kestrel auto-sends a
+deterministic read-only prompt:
+
+- **No project folder:** `tools.search` with `read_only` and a count of active
+  tools — proves the agent loop, local model, and tool audit path without
+  network or approvals.
+- **With a project folder:** `workspace.list` plus `workspace.read` on
+  `README.md` or `package.json` — one concrete fact from disk.
+
+Expect the first local tool turn to take **1–2 minutes** on a cold 9B model;
+follow-ups are much faster. If nothing changes after **~3 minutes**, cancel and
+retry once. Do not treat provider reachability probes as a substitute for this
+end-to-end first task.
+
+**Rehearsal blockers (operator fixes):**
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Setup never offers **Try a first task** | Model route saved but not live-verified | Re-run local bootstrap; wait for a real response on the Model setup step |
+| First task stalls with no tools | Open-ended prompt or model chose browser/network | Use current guided prompt (pinned in `apps/desktop/src/renderer/first-task.ts`) |
+| `tools.search` succeeds but no assistant text | Small local model timeout or empty completion | Retry; warm model in Readiness before the slot |
+| Repo inspection fails | No project folder granted | Add a disposable checkout via **Add project** before the guided task |
+| `verify:meetup` fails on packaging | Stale `/Applications/Kestrel.app` vs `release/` artifact | Run `corepack pnpm install:mac:dev` and reopen the canonical app |
+
 ## Ten-minute live path
 
 1. Start on **Readiness** for about 30 seconds. Point out that the model and

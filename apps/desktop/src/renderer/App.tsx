@@ -142,6 +142,10 @@ import {
 	runtimeTaskWorkspace,
 	shouldPreserveActiveRun,
 } from "./runtime-session-state";
+import {
+	FIRST_TASK_PROMPT,
+	FIRST_TASK_SLOW_MODEL_NOTICE,
+} from "./first-task";
 import { canCompleteOnboarding } from "./setup-onboarding";
 import {
 	loadInitialDesktopState,
@@ -351,9 +355,6 @@ const commandDestinations: CommandDestination[] = [
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
 	"Help me finish setting up Kestrel. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings, or to provider-owned sign-in. Verify one working route before adding more.";
-const FIRST_TASK_PROMPT =
-	"I just finished Kestrel setup. Suggest one low-risk first task I can complete in about five minutes using what is already available on this Mac. Prefer read-only work first. Show a short plan, execute it, and verify a concrete result. Explain what stayed local.";
-
 function setupAssistantState({
 	credentials,
 	subscriptionClis,
@@ -2763,6 +2764,7 @@ function RuntimeConversation({
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
 	const shouldAutoSubmitFirstTaskRef = useRef(false);
+	const [guidedFirstTaskActive, setGuidedFirstTaskActive] = useState(false);
 	const [input, setInput] = useState(() => {
 		if (localStorage.getItem("kestrel:first-task") === "yes") {
 			localStorage.removeItem("kestrel:first-task");
@@ -3539,8 +3541,19 @@ function RuntimeConversation({
 	useEffect(() => {
 		if (!shouldAutoSubmitFirstTaskRef.current) return;
 		shouldAutoSubmitFirstTaskRef.current = false;
+		setGuidedFirstTaskActive(true);
 		void submit(FIRST_TASK_PROMPT);
 	}, []);
+
+	useEffect(() => {
+		if (!guidedFirstTaskActive || busy || pending) return;
+		if (
+			latestRun?.status === "completed" ||
+			latestRun?.status === "failed" ||
+			latestRun?.status === "cancelled"
+		)
+			setGuidedFirstTaskActive(false);
+	}, [guidedFirstTaskActive, busy, pending, latestRun?.status]);
 
 	async function decide(approvalDecision: "approved" | "rejected") {
 		if (!pending || busy) return;
@@ -4000,6 +4013,11 @@ function RuntimeConversation({
 							</div>
 							{streamText && (
 								<p className="runtime-stream-preview">{streamText}</p>
+							)}
+							{guidedFirstTaskActive && (
+								<p className="runtime-first-task-notice">
+									{FIRST_TASK_SLOW_MODEL_NOTICE}
+								</p>
 							)}
 						</div>
 					)}
