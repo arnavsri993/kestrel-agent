@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { providerFetch } from "./http";
+import { describe, expect, it, vi } from "vitest";
+import { PROVIDER_CONNECT_TIMEOUT_MS, providerFetch } from "./http";
 
 describe("provider HTTP helpers", () => {
 	it("fails closed on redirects so provider credentials stay on the configured host", async () => {
@@ -47,4 +47,100 @@ describe("provider HTTP helpers", () => {
 			globalThis.fetch = originalFetch;
 		}
 	});
+
+	it("bounds provider connect with AbortSignal.any and the caller signal", async () => {
+		let requestSignal: AbortSignal | undefined;
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async (_input, init) => {
+			requestSignal = init?.signal ?? undefined;
+			return new Response(null, { status: 204 });
+		};
+		const caller = new AbortController();
+		try {
+			await providerFetch("fixture", "https://provider.example.test", {
+				signal: caller.signal,
+			});
+			expect(requestSignal).toBeDefined();
+			expect(requestSignal!.aborted).toBe(false);
+			caller.abort();
+			expect(requestSignal!.aborted).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("times out hung provider connects before the agent-level deadline", async () => {
+		const timeoutController = new AbortController();
+		const timeoutSpy = vi
+			.spyOn(AbortSignal, "timeout")
+			.mockReturnValue(timeoutController.signal);
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async (_input, init) =>
+			new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => {
+					reject(
+						init.signal?.reason ?? new DOMException("Aborted", "AbortError"),
+					);
+				});
+			});
+		try {
+			const pending = providerFetch(
+				"fixture",
+				"https://provider.example.test",
+				{},
+			);
+			timeoutController.abort(new DOMException("Timed out", "TimeoutError"));
+			await expect(pending).rejects.toMatchObject({
+				message: `Provider connect timed out after ${PROVIDER_CONNECT_TIMEOUT_MS / 1_000}s.`,
+				providerId: "fixture",
+				retryable: true,
+			});
+			expect(timeoutSpy).toHaveBeenCalledWith(PROVIDER_CONNECT_TIMEOUT_MS);
+		} finally {
+			timeoutSpy.mockRestore();
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("rethrows when the caller abort signal fires first", async () => {
+		const originalFetch = globalThis.fetch;
+		const abortError = new DOMException("Caller aborted", "AbortError");
+		globalThis.fetch = async (_input, init) =>
+			new Promise((_resolve, reject) => {
+				init?.signal?.addEventListener("abort", () => reject(abortError));
+			});
+		const caller = new AbortController();
+		try {
+			const pending = providerFetch("fixture", "https://provider.example.test", {
+				signal: caller.signal,
+			});
+			caller.abort(abortError);
+			await expect(pending).rejects.toBe(abortError);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it.each(["ENOTFOUND", "ECONNREFUSED"] as const)(
+		"fast-fails on %s with a network unavailable error",
+		async (code) => {
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = async () => {
+				const error = new TypeError("fetch failed");
+				(error as { cause?: unknown }).cause = { code };
+				throw error;
+			};
+			try {
+				await expect(
+					providerFetch("fixture", "https://provider.example.test", {}),
+				).rejects.toMatchObject({
+					message: "Network unavailable: provider host could not be reached.",
+					providerId: "fixture",
+					retryable: false,
+				});
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		},
+	);
 });
