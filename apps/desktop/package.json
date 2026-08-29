@@ -8,7 +8,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "KESTREL_RELEASE_CHANNEL=development ELECTRON_EXEC_PATH=../../scripts/desktop-dev-electron-launcher.mjs electron-vite dev --watch",
-    "build": "electron-vite build && node ../../scripts/verify-desktop-preload-bundles.mjs && node ../../scripts/verify-macos-file-icon-usage.mjs",
+    "build": "electron-vite build && node ../../scripts/copy-database-migrations.mjs apps/desktop/out/main/migrations apps/desktop/out/main/chunks/migrations && node ../../scripts/verify-desktop-preload-bundles.mjs && node ../../scripts/verify-macos-file-icon-usage.mjs",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "preview": "KESTREL_RELEASE_CHANNEL=development electron-vite preview",
     "package:mac:dev": "KESTREL_RELEASE_CHANNEL=development pnpm build && CSC_FOR_PULL_REQUEST=true MACOSX_DEPLOYMENT_TARGET=13.0 npm_config_arch=arm64 npm_config_target_arch=arm64 KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac dir --arm64 --config electron-builder.dev.yml && node ../../scripts/verify-development-macos-app.mjs ../../release/mac-arm64/Kestrel.app",

@@ -11,6 +11,16 @@ function resolveMigrationsDirectory(): string {
 		join(moduleDirectory, "../migrations"),
 		join(moduleDirectory, "migrations"),
 	];
+	if (typeof process.resourcesPath === "string") {
+		candidates.push(join(process.resourcesPath, "database-migrations"));
+	}
+	let workspaceRoot = process.cwd();
+	for (let depth = 0; depth < 8; depth += 1) {
+		candidates.push(join(workspaceRoot, "packages/database/migrations"));
+		const parent = dirname(workspaceRoot);
+		if (parent === workspaceRoot) break;
+		workspaceRoot = parent;
+	}
 	try {
 		const require = createRequire(import.meta.url);
 		candidates.unshift(
