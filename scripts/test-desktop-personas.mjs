@@ -28,7 +28,7 @@ let application;
 
 const commandDestinationLabels = [
 	"Browser",
-	"Cluster tabs",
+	"Organize tabs",
 	"History",
 	"Bookmarks",
 	"Downloads",
@@ -281,9 +281,9 @@ async function runReturningPersona() {
 	await page.locator("#new-tab-title").waitFor();
 	assert.equal(await page.locator("[data-app-page]").count(), 0);
 
-	await selectDestination(page, "Cluster tabs");
-	await page.getByRole("dialog", { name: "Tab clusters" }).waitFor();
-	await page.getByRole("button", { name: "Close tab clusters" }).click();
+	await selectDestination(page, "Organize tabs");
+	await page.getByRole("dialog", { name: "Organize tabs" }).waitFor();
+	await page.getByRole("button", { name: "Close organize tabs" }).click();
 
 	for (const [label, id] of [
 		["Agent", "agent"],

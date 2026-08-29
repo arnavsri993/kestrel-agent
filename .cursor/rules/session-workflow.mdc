@@ -1,5 +1,5 @@
 ---
-description: Session start, PR, and desktop restart workflow
+description: Session start, PR, GitHub sync, and local Kestrel update workflow
 alwaysApply: true
 ---
 
@@ -21,5 +21,6 @@ Follow this in every conversation in this repo.
 ## Do not
 
 - Skip the GitHub update because a previous session already pulled.
+- Leave local Kestrel running stale code after pushing a change.
 - Assume Vite HMR is enough after main-process, preload, credential, or Electron startup changes.
 - Mix unrelated dirty-tree files into the PR.
