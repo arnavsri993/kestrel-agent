@@ -273,6 +273,33 @@ describe("unified life context", () => {
 		database.close();
 	});
 
+	it("includes explicit user-command memories even when the query does not overlap terms", () => {
+		const { database, life } = fixture();
+		life.memory.remember({
+			type: "semantic",
+			content: "Deployment notes belong in RELEASE.md",
+			structuredData: { capture: "explicit-command" },
+			sourceIds: ["message-explicit"],
+			sourceType: "explicit-user-command",
+			confidence: 1,
+			importance: 0.75,
+			sensitivity: "personal",
+			entityIds: [],
+			userConfirmed: true,
+			inferred: false,
+			confirmationStatus: "explicit",
+		});
+
+		const bundle = life.assembleContext({
+			query: "What should I work on next?",
+		});
+		expect(bundle.memories.map((memory) => memory.content)).toEqual([
+			"Deployment notes belong in RELEASE.md",
+		]);
+		expect(bundle.prompt).toContain("RELEASE.md");
+		database.close();
+	});
+
 	it("deletes a person and every directly related memory while preserving unrelated records", () => {
 		const { database, life } = fixture();
 		const person = life.upsertPerson({
