@@ -33,7 +33,7 @@ const freeProviderCatalog = [
 	["sensenova", "SenseNova", "deepseek-v4-flash"],
 	["gmicloud", "GMI Cloud", "deepseek-ai/DeepSeek-V4-Pro"],
 	["tokenharbor", "Token Harbor", "deepseek-v4-flash:free"],
-	["cline", "Cline", "anthropic/claude-sonnet-4-6"],
+	["cline", "Cline", "poolside/laguna-s-2.1:free"],
 	["command-code", "Command Code", "poolside/laguna-s-2.1-free"],
 	["kilo", "Kilo", "kilo-auto/free"],
 	["orcarouter", "OrcaRouter", "orcarouter/free"],
@@ -63,7 +63,40 @@ describe("cascading model selector", () => {
 		expect(modelSupportsThinking("openai", "gpt-5.6-terra")).toBe(true);
 	});
 
-	it("exposes every added free provider with its default model", () => {
+	it("lists the supported Codex app-server models in default order", () => {
+		expect(
+			modelsForProvider({
+				providerId: "codex-subscription",
+				localModels: [],
+				currentModel: "",
+			}).map((model) => model.id),
+		).toEqual([
+			"gpt-5.6-sol",
+			"gpt-5.6-terra",
+			"gpt-5.6-luna",
+		]);
+	});
+
+	it("lists every currently returned OpenCode Zen free model in API order", () => {
+		expect(
+			modelsForProvider({
+				providerId: "opencode-zen",
+				localModels: [],
+				currentModel: "",
+			}).map((model) => model.id),
+		).toEqual([
+			"deepseek-v4-flash-free",
+			"muse-spark-1.2-contributor-free",
+			"mimo-v2.5-free",
+			"hy3-free",
+			"ling-3.0-flash-fin-free",
+			"nemotron-3-ultra-free",
+			"nemotron-3.5-lightning-free",
+			"laguna-s-2.1-free",
+		]);
+	});
+
+	it("exposes every added free provider with its configured default model", () => {
 		for (const [providerId, label, modelId] of freeProviderCatalog) {
 			expect(providerDisplayName(providerId)).toBe(label);
 			expect(
@@ -72,7 +105,7 @@ describe("cascading model selector", () => {
 					localModels: [],
 					currentModel: "",
 				}),
-			).toMatchObject([{ id: modelId }]);
+			).toContainEqual(expect.objectContaining({ id: modelId }));
 		}
 	});
 
@@ -93,14 +126,17 @@ describe("cascading model selector", () => {
 		]);
 	});
 
-	it("keeps a custom model at the top when it is not in the catalog", () => {
+	it.each([
+		["openai", "gpt-4o-mini"],
+		["codex-subscription", "workspace-catalog-model"],
+	])("keeps a custom %s model at the top", (providerId, currentModel) => {
 		expect(
 			modelsForProvider({
-				providerId: "openai",
+				providerId,
 				localModels: [],
-				currentModel: "gpt-4o-mini",
+				currentModel,
 			})[0],
-		).toMatchObject({ id: "gpt-4o-mini", detail: "Custom" });
+		).toMatchObject({ id: currentModel, detail: "Custom" });
 	});
 
 	it("turns Auto on from the provider footer and labels the trigger Auto", () => {

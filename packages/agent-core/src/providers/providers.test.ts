@@ -80,6 +80,14 @@ describe("model provider adapters", () => {
 		]);
 	});
 
+	it("defaults the Codex app-server route to gpt-5.6-sol", () => {
+		expect(
+			createEnvironmentModelProviders({
+				KESTREL_ENABLE_CODEX_SUBSCRIPTION: "1",
+			}).map((provider) => [provider.id, provider.defaultModel]),
+		).toEqual([["codex-subscription", "gpt-5.6-sol"]]);
+	});
+
 	it("registers configured OpenAI-compatible providers, including free routes", () => {
 		const providers = createEnvironmentModelProviders({
 			NOUS_API_KEY: "nous-key",
@@ -119,7 +127,7 @@ describe("model provider adapters", () => {
 			["sensenova", "deepseek-v4-flash"],
 			["gmicloud", "deepseek-ai/DeepSeek-V4-Pro"],
 			["tokenharbor", "deepseek-v4-flash:free"],
-			["cline", "anthropic/claude-sonnet-4-6"],
+			["cline", "poolside/laguna-s-2.1:free"],
 			["command-code", "poolside/laguna-s-2.1-free"],
 			["kilo", "kilo-auto/free"],
 			["orcarouter", "orcarouter/free"],

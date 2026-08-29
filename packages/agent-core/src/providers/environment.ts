@@ -293,7 +293,7 @@ export function createEnvironmentModelProviders(
 			"CLINE_API_KEY",
 			"CLINE_MODEL",
 			"CLINE_BASE_URL",
-			"anthropic/claude-sonnet-4-6",
+			"poolside/laguna-s-2.1:free",
 			"https://api.cline.bot/api/v1",
 			true,
 		],

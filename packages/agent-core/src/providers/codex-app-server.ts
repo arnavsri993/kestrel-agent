@@ -227,7 +227,7 @@ export class CodexAppServerProvider {
 
 	constructor(options: CodexAppServerOptions = {}) {
 		this.executable = options.executable ?? "codex";
-		this.defaultModel = options.defaultModel ?? "gpt-5.4";
+		this.defaultModel = options.defaultModel ?? "gpt-5.6-sol";
 		this.environment = safeEnvironment(options.environment ?? process.env);
 		this.requestTimeoutMs = boundedTimeout(
 			options.requestTimeoutMs,
