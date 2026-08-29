@@ -1,6 +1,7 @@
 const { execFileSync } = require("node:child_process");
 const {
 	chmodSync,
+	cpSync,
 	existsSync,
 	mkdirSync,
 	rmSync,
@@ -36,6 +37,7 @@ exports.default = async function architectureAudit(context) {
 		{ stdio: "inherit" },
 	);
 	auditPackagedMacApp(appPath);
+	copyDatabaseMigrations(appPath);
 
 	const lsregister =
 		"/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
@@ -55,6 +57,15 @@ exports.default = async function architectureAudit(context) {
 		}
 	}
 };
+
+function copyDatabaseMigrations(appPath) {
+	const source = join(__dirname, "../../../packages/database/migrations");
+	const target = join(appPath, "Contents", "Resources", "database-migrations");
+	if (!existsSync(join(source, "001_initial.sql")))
+		throw new Error("Canonical database migrations are missing from the repository.");
+	mkdirSync(target, { recursive: true });
+	cpSync(source, target, { recursive: true });
+}
 
 function installAskKestrelService(appPath) {
 	const serviceSource = join(__dirname, "macos", "AskKestrelService");

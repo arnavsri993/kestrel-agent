@@ -83,7 +83,7 @@ Nothing is deleted, so undoing a rollback is another ordinary restoration.
 
 ## Persistence, history, and recovery
 
-Migration `008_agent_configuration.sql` adds one encrypted journal for
+Migration `009_agent_configuration.sql` adds one encrypted journal for
 configuration versions, proposals, audit events, and self-improvement
 proposals. The active head is persisted in encrypted private runtime state.
 Version application commits the new version, proposal status, audit record, and

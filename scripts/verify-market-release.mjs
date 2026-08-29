@@ -21,6 +21,7 @@ const [
 	developmentInheritedEntitlements,
 	desktopPackage,
 	desktopMain,
+	desktopViteConfig,
 	productIdentity,
 	workflow,
 	websiteWorkflow,
@@ -36,6 +37,8 @@ const [
 	architectureAudit,
 	actionReceiptContracts,
 	actionReceiptDatabase,
+	actionReceiptMigrationSql,
+	actionReceiptMigrations,
 	actionReceiptBuilder,
 	actionReceiptRenderer,
 	actionReceiptSmoke,
@@ -47,6 +50,7 @@ const [
 	read("apps/desktop/build/entitlements.mac.dev.inherit.plist"),
 	read("apps/desktop/package.json"),
 	read("apps/desktop/src/main/index.ts"),
+	read("apps/desktop/electron.vite.config.ts"),
 	read("packages/shared-types/src/identity.ts"),
 	read(".github/workflows/release-macos.yml"),
 	read(".github/workflows/deploy-website.yml"),
@@ -62,6 +66,8 @@ const [
 	read("scripts/macos-architecture-audit.cjs"),
 	read("packages/shared-types/src/contracts.ts"),
 	read("packages/database/src/index.ts"),
+	read("packages/database/migrations/011_action_receipts.sql"),
+	read("packages/database/src/migrations.ts"),
 	read("packages/agent-core/src/action-receipts.ts"),
 	read("apps/desktop/src/renderer/App.tsx"),
 	read("scripts/test-desktop-chat-configuration.mjs"),
@@ -253,6 +259,14 @@ if (
 		"desktop startup must use real Keychain in packaged builds and mock Keychain in dev/test.",
 	);
 for (const marker of [
+	"kestrel-database-migrations",
+	"packages/database/migrations",
+	"fileName: `migrations/${filename}`",
+]) {
+	if (!desktopViteConfig.includes(marker))
+		fail(`desktop packaging does not emit database migration assets (${marker}).`);
+}
+for (const marker of [
 	'runtimeApplicationName = "Kestrel"',
 	"keychainService: `${runtimeApplicationName} Safe Storage`",
 	"userDataDirectoryName: runtimeApplicationName",
@@ -335,6 +349,16 @@ for (const marker of [
 }
 for (const marker of [
 	"CREATE TABLE IF NOT EXISTS action_receipts",
+	"idx_action_receipts_session_started",
+]) {
+	if (!actionReceiptMigrationSql.includes(marker))
+		fail(`encrypted action-receipt migration is missing ${marker}.`);
+}
+if (!actionReceiptMigrations.includes('11: "011_action_receipts.sql"'))
+	fail(
+		"canonical database migrations must register action_receipts as version 11.",
+	);
+for (const marker of [
 	"encryptText(JSON.stringify(parsed)",
 	"MAX_ACTION_RECEIPTS_PER_SESSION",
 ]) {
