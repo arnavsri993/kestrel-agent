@@ -123,6 +123,51 @@ export function actionReceiptRollbackLabel(
 	return rollback.status === "unavailable" ? "Unavailable" : "Not applicable";
 }
 
+export function runtimeOutcomeCopy(
+	run: AgentRun,
+	transientError = "",
+): { title: string; detail: string } {
+	if (run.status === "completed")
+		return {
+			title: "Task complete",
+			detail:
+				"Kestrel finished this run. Continue with another message when you are ready.",
+		};
+	if (run.status === "cancelled")
+		return {
+			title: "Task cancelled",
+			detail:
+				"The run was cancelled before it completed. You can continue this chat or start a new task.",
+		};
+	if (run.recovery?.reason === "core_restarted")
+		return {
+			title: "Task interrupted",
+			detail:
+				run.error?.trim() ||
+				"Kestrel restarted before it could confirm the active work. Review the task, then choose whether to retry the last turn.",
+		};
+	return {
+		title: "Task needs recovery",
+		detail:
+			transientError.trim() ||
+			run.error?.trim() ||
+			"The last run did not complete. Review the task context, then retry when ready.",
+	};
+}
+
+export function uncertainExecutionsForRun(
+	run: AgentRun,
+	executions: RuntimeToolExecution[],
+): RuntimeToolExecution[] {
+	const keyPrefix = `${run.id}:`;
+	return executions.filter(
+		(execution) =>
+			execution.outcomeUncertain === true &&
+			execution.idempotencyKey?.startsWith(keyPrefix) === true,
+	);
+}
+
+
 export function activityItemsFromExecutions(
 	executions: RuntimeToolExecution[],
 ): ActivityItem[] {
@@ -144,7 +189,9 @@ export function activityItemsFromExecutions(
 								: "observed";
 			const detail = verified
 				? `${verified.method} · ${verified.evidenceSha256.slice(0, 12)}`
-				: execution.error?.trim() ||
+				: execution.outcomeUncertain
+					? `Outcome uncertain · ${execution.error?.trim() || "Kestrel could not confirm whether this action completed."}`
+					: execution.error?.trim() ||
 					(typeof execution.output?.preview === "string"
 						? execution.output.preview
 						: `${execution.status} tool execution`);

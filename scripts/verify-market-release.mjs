@@ -270,6 +270,10 @@ if (!rootPackage.includes("pnpm test:desktop-personas"))
 	fail(
 		"the market verification command does not exercise the full desktop persona matrix.",
 	);
+if (!rootPackage.includes("pnpm test:desktop-restart-recovery"))
+	fail(
+		"the market verification command does not exercise Agent Core restart recovery.",
+	);
 if (!rootPackage.includes("pnpm test:desktop-managed-policy"))
 	fail(
 		"the market verification command does not exercise signed managed-policy bootstrap.",

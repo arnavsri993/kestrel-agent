@@ -1194,6 +1194,122 @@ export class KestrelDatabase {
 		).map((row) => AgentRunSchema.parse(JSON.parse(row.payload)));
 	}
 
+	listRunningAgentRuns(): AgentRun[] {
+		return (
+			this.db
+				.prepare(
+					"SELECT payload FROM agent_runs WHERE status = 'running' ORDER BY updated_at ASC, id ASC",
+				)
+				.all() as Array<{ payload: string }>
+		).map((row) => AgentRunSchema.parse(JSON.parse(row.payload)));
+	}
+
+	interruptAgentRunAfterRestart(input: {
+		runId: string;
+		interruptedAt: string;
+		reason: string;
+		expectedSessionClaimOwnerToken?: string;
+	}): RetiredAgentHistory {
+		if (!input.runId) throw new Error("Interrupted agent run ID is required.");
+		if (!Number.isFinite(Date.parse(input.interruptedAt)))
+			throw new Error("Agent run interruption timestamp is invalid.");
+		if (!input.reason.trim())
+			throw new Error("Agent run interruption reason is required.");
+		if (input.expectedSessionClaimOwnerToken === "")
+			throw new Error("Agent run session claim owner is invalid.");
+
+		return this.db.transaction(() => {
+			const row = this.db
+				.prepare("SELECT payload FROM agent_runs WHERE id = ? AND status = 'running'")
+				.get(input.runId) as { payload: string } | undefined;
+			if (!row) return { runs: [], toolExecutions: [] };
+			const run = AgentRunSchema.parse(JSON.parse(row.payload));
+			const sessionClaimKey = `agent-session-run:${run.sessionId}`;
+			const currentSessionClaim = this.db
+				.prepare(
+					"SELECT owner_token FROM idempotency_claims WHERE key = ?",
+				)
+				.get(sessionClaimKey) as { owner_token: string } | undefined;
+			if (
+				currentSessionClaim &&
+				currentSessionClaim.owner_token !== input.expectedSessionClaimOwnerToken
+			)
+				return { runs: [], toolExecutions: [] };
+
+			const saveExecution = this.db.prepare(
+				"UPDATE tool_executions SET payload = ?, status = ? WHERE id = ? AND session_id = ? AND status = 'running'",
+			);
+			const toolExecutions = (
+				this.db
+					.prepare(
+						"SELECT payload FROM tool_executions WHERE session_id = ? AND status = 'running' ORDER BY started_at ASC",
+					)
+					.all(run.sessionId) as Array<{ payload: string }>
+			)
+				.map((executionRow) =>
+					RuntimeToolExecutionSchema.parse(JSON.parse(executionRow.payload)),
+				)
+				.filter((execution) =>
+					execution.idempotencyKey?.startsWith(`${run.id}:`),
+				)
+				.map((execution) => {
+					const interrupted = RuntimeToolExecutionSchema.parse({
+						...execution,
+						status: "failed",
+						outcomeUncertain: true,
+						error: `${input.reason} This tool was already running, so its outcome is uncertain and it will not be retried automatically.`,
+						completedAt: input.interruptedAt,
+					});
+					const saved = saveExecution.run(
+						JSON.stringify(interrupted),
+						interrupted.status,
+						interrupted.id,
+						interrupted.sessionId,
+					);
+					if (saved.changes !== 1)
+						throw new Error("Interrupted tool execution could not be retired.");
+					return interrupted;
+				});
+
+			const {
+				pendingToolExecutionId: _execution,
+				pendingProviderToolCallId: _call,
+				pendingToolName: _tool,
+				...base
+			} = run;
+			const interrupted = AgentRunSchema.parse({
+				...base,
+				status: "failed",
+				recovery: {
+					reason: "core_restarted",
+					action: "retry_last_turn",
+				},
+				error: input.reason,
+				updatedAt: input.interruptedAt,
+			});
+			const saved = this.db
+				.prepare(
+					"UPDATE agent_runs SET payload = ?, status = ?, updated_at = ? WHERE id = ? AND session_id = ? AND status = 'running'",
+				)
+				.run(
+					JSON.stringify(interrupted),
+					interrupted.status,
+					interrupted.updatedAt,
+					interrupted.id,
+					interrupted.sessionId,
+				);
+			if (saved.changes !== 1)
+				throw new Error("Interrupted agent run could not be retired.");
+			if (currentSessionClaim)
+				this.db
+					.prepare(
+						"DELETE FROM idempotency_claims WHERE key = ? AND owner_token = ?",
+					)
+					.run(sessionClaimKey, currentSessionClaim.owner_token);
+			return { runs: [interrupted], toolExecutions };
+		})();
+	}
+
 	listWaitingAgentRuns(): AgentRun[] {
 		return (
 			this.db
@@ -2384,6 +2500,7 @@ export class KestrelDatabase {
 			const retired = RuntimeToolExecutionSchema.parse({
 				...execution,
 				status: uncertain ? "failed" : "cancelled",
+				...(uncertain ? { outcomeUncertain: true } : {}),
 				...(output ? { output } : {}),
 				error: uncertain
 					? `${reason} This action was already running, so its outcome is uncertain and it will not be retried automatically.`

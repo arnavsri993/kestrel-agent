@@ -442,6 +442,138 @@ describe("tool execution history queries", () => {
 });
 
 describe("runtime history retirement", () => {
+	it("atomically fails one abandoned running run without touching durable approvals", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const sessionId = "session-restart";
+		const startedAt = "2026-08-27T12:00:00.000Z";
+		const interruptedAt = "2026-08-27T12:01:00.000Z";
+		const reason =
+			"Kestrel restarted while this run was active. No work resumed automatically.";
+		try {
+			database.saveRuntimeSession({
+				id: sessionId,
+				title: "Restart fixture",
+				allowedTools: ["test.read", "test.write"],
+				status: "active",
+				checkpoints: [],
+				createdAt: startedAt,
+				updatedAt: startedAt,
+			});
+			database.saveAgentRun({
+				id: "run-interrupted",
+				sessionId,
+				model: "fixture",
+				providerIds: ["fixture"],
+				status: "running",
+				turn: 1,
+				createdAt: startedAt,
+				updatedAt: startedAt,
+			});
+			database.saveAgentRun({
+				id: "run-waiting",
+				sessionId,
+				model: "fixture",
+				providerIds: ["fixture"],
+				status: "waiting_approval",
+				turn: 1,
+				pendingToolExecutionId: "tool-blocked",
+				pendingProviderToolCallId: "call-blocked",
+				pendingToolName: "test.write",
+				createdAt: startedAt,
+				updatedAt: startedAt,
+			});
+			database.saveToolExecution({
+				id: "tool-running",
+				sessionId,
+				toolName: "test.read",
+				status: "running",
+				riskLevel: "read_only",
+				input: {},
+				idempotencyKey: "run-interrupted:call-read",
+				startedAt,
+			});
+			database.saveToolExecution({
+				id: "tool-blocked",
+				sessionId,
+				toolName: "test.write",
+				status: "blocked",
+				riskLevel: "sensitive",
+				input: {},
+				output: { approvalRequired: true },
+				error: "Approval required.",
+				idempotencyKey: "run-waiting:call-blocked",
+				startedAt,
+				completedAt: startedAt,
+			});
+			expect(
+				database.claimIdempotentResult(
+					`agent-session-run:${sessionId}`,
+					"dead-agent-loop",
+					2_147_483_647,
+					{ sessionId, status: "running" },
+				).state,
+			).toBe("claimed");
+
+			expect(
+				database.interruptAgentRunAfterRestart({
+					runId: "run-interrupted",
+					interruptedAt,
+					reason,
+					expectedSessionClaimOwnerToken: "different-owner",
+				}),
+			).toEqual({ runs: [], toolExecutions: [] });
+			expect(database.getAgentRun("run-interrupted")?.status).toBe("running");
+
+			expect(
+				database.interruptAgentRunAfterRestart({
+					runId: "run-interrupted",
+					interruptedAt,
+					reason,
+					expectedSessionClaimOwnerToken: "dead-agent-loop",
+				}),
+			).toMatchObject({
+				runs: [
+					{
+						id: "run-interrupted",
+						status: "failed",
+						recovery: {
+							reason: "core_restarted",
+							action: "retry_last_turn",
+						},
+						error: reason,
+					},
+				],
+				toolExecutions: [
+					{
+						id: "tool-running",
+						status: "failed",
+						outcomeUncertain: true,
+						error: expect.stringMatching(
+							/outcome is uncertain.*not be retried automatically/i,
+						),
+					},
+				],
+			});
+			expect(database.listRunningAgentRuns()).toEqual([]);
+			expect(database.listWaitingAgentRuns()).toMatchObject([
+				{
+					id: "run-waiting",
+					status: "waiting_approval",
+					pendingToolExecutionId: "tool-blocked",
+				},
+			]);
+			expect(database.getToolExecution("tool-blocked")).toMatchObject({
+				status: "blocked",
+				output: { approvalRequired: true },
+			});
+			expect(
+				database.getIdempotentClaim(`agent-session-run:${sessionId}`),
+			).toBeUndefined();
+		} finally {
+			database.close();
+		}
+	});
+
 	it("atomically retires active runs and their approval executions without releasing an in-flight idempotency claim", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const sessionId = "session-rollback";

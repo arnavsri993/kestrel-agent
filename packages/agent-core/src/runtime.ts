@@ -1806,6 +1806,7 @@ export class AgentRuntime extends EventEmitter {
 					: error instanceof Error
 						? error.message
 						: "Tool execution failed.",
+				...(uncertainMutation ? { outcomeUncertain: true } : {}),
 				...(recoveryOutput ? { output: recoveryOutput } : {}),
 				completedAt: this.now(),
 			});
@@ -1860,6 +1861,7 @@ export class AgentRuntime extends EventEmitter {
 					const uncertain = RuntimeToolExecutionSchema.parse({
 						...execution,
 						status: "failed",
+						outcomeUncertain: true,
 						error:
 							"Kestrel lost the terminal journal update after this mutation started. The outcome is uncertain and the action will not be retried automatically.",
 						completedAt: this.now(),
@@ -2026,6 +2028,7 @@ export class AgentRuntime extends EventEmitter {
 				: RuntimeToolExecutionSchema.parse({
 						...pending,
 						status: "failed",
+						outcomeUncertain: true,
 						error:
 							"The previous Kestrel process stopped before it could confirm this tool's outcome. The action will not be retried automatically because it may already have completed.",
 						completedAt: this.now(),
