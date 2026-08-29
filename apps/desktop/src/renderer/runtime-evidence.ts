@@ -1,4 +1,5 @@
 import type {
+	ActionReceipt,
 	ActivityItem,
 	AgentRun,
 	RuntimeToolExecution,
@@ -51,6 +52,77 @@ export function runRouteLabel(run: AgentRun): string {
 		: run.model;
 }
 
+export function isConsumedApprovalCheckpoint(
+	receipt: ActionReceipt,
+): boolean {
+	return (
+		receipt.outcome === "cancelled" &&
+		receipt.approval.result === "approved_once" &&
+		/approved one-time grant was consumed/i.test(receipt.observedState)
+	);
+}
+
+export function latestRunActionReceipts(
+	receipts: ActionReceipt[],
+	latestRun: AgentRun | null,
+): ActionReceipt[] {
+	if (!latestRun) return [];
+	return receipts
+		.filter(
+			(receipt) =>
+				receipt.runId === latestRun.id &&
+				!isConsumedApprovalCheckpoint(receipt),
+		)
+		.sort((left, right) => left.startedAt.localeCompare(right.startedAt));
+}
+
+export function actionReceiptOutcomeLabel(
+	outcome: ActionReceipt["outcome"],
+): string {
+	return {
+		in_progress: "In progress",
+		waiting_approval: "Waiting for approval",
+		blocked: "Blocked",
+		verified: "Verified",
+		failed: "Failed",
+		cancelled: "Cancelled",
+		uncertain: "Outcome uncertain",
+	}[outcome];
+}
+
+export function actionReceiptApprovalLabel(
+	approval: ActionReceipt["approval"],
+	outcome?: ActionReceipt["outcome"],
+): string {
+	if (approval.result === "pending" && outcome === "cancelled")
+		return "Not granted; task cancelled";
+	return {
+		not_required: "Not required",
+		approved_once: "Approved once",
+		allowed_by_rule: "Allowed by saved rule",
+		pending: "Waiting for approval",
+		denied: "Denied",
+		unknown: approval.required
+			? "Required; provenance unavailable"
+			: "Not recorded",
+	}[approval.result];
+}
+
+export function actionReceiptVerificationLabel(
+	receipt: ActionReceipt,
+): string {
+	if (!receipt.verification) return "No independent verification recorded";
+	return `Verified via ${receipt.verification.method} · ${receipt.verification.evidenceSha256.slice(0, 12)}`;
+}
+
+export function actionReceiptRollbackLabel(
+	rollback: ActionReceipt["rollback"],
+): string {
+	if (rollback.status === "available")
+		return rollback.method ? `Available via ${rollback.method}` : "Available";
+	return rollback.status === "unavailable" ? "Unavailable" : "Not applicable";
+}
+
 export function runtimeOutcomeCopy(
 	run: AgentRun,
 	transientError = "",
@@ -94,6 +166,7 @@ export function uncertainExecutionsForRun(
 			execution.idempotencyKey?.startsWith(keyPrefix) === true,
 	);
 }
+
 
 export function activityItemsFromExecutions(
 	executions: RuntimeToolExecution[],

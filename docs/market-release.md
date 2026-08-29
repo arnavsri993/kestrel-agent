@@ -23,6 +23,17 @@ an arm64 PKG target for MDM deployment, hardened runtime,
 Developer ID signing and notarization steps, Gatekeeper assessment, an exact
 arm64 architecture check, checksums, and a release manifest.
 
+The repository gate also requires the mutating-tool action-receipt contract,
+encrypted receipt table, typed desktop listing path, and the real configuration
+agent smoke to remain wired into `pnpm verify`. That smoke performs a staged and
+approved configuration change, waits for independent read-back verification,
+opens the task's collapsed receipt disclosure, checks destination, approval,
+verification, and rollback copy, proves a raw-input sentinel is absent, and
+reopens the same encrypted receipt after an application restart. This is local
+development evidence. The ordinary packaged-app smoke separately executes
+isolated browser mutations, reads their receipts through packaged IPC, and
+proves typed browser text is absent before a signed build can pass.
+
 ## Public endpoints
 
 Deploy the static website over HTTPS and configure:
@@ -145,6 +156,8 @@ A candidate is ready for internet distribution only when:
    launches the app under the intended managed policy.
 5. The public privacy, support, download, and update paths are live.
 6. Rollback and update-channel behavior are verified.
+7. A consequential task exposes a privacy-bounded receipt after restart, and an
+   uncertain or unverified action is not presented as completed or undoable.
 
 An ad-hoc-signed local `.app` without a Developer ID identity or notarization is
 development evidence, not a public release.
