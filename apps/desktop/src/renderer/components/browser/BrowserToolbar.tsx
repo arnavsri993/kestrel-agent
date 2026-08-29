@@ -682,7 +682,7 @@ export function BrowserToolbar({
         )}
       </div>
       <div className="browser-toolbar-actions">
-        <div className="browser-extension-cluster">
+        <div className="browser-extension-cluster browser-toolbar-secondary">
           <button
             type="button"
             className={`browser-toolbar-menu-trigger ${openMenu === "extensions" ? "active" : ""}`}
@@ -731,6 +731,7 @@ export function BrowserToolbar({
         </button>
         <button
           type="button"
+          className="browser-toolbar-secondary"
           aria-label="History"
           aria-keyshortcuts="Meta+H"
           title="History (⌘H)"
@@ -740,6 +741,7 @@ export function BrowserToolbar({
         </button>
         <button
           type="button"
+          className="browser-toolbar-secondary"
           aria-label="Bookmarks"
           aria-keyshortcuts="Meta+Shift+D"
           title="Bookmarks (⌘⇧D)"
@@ -749,6 +751,7 @@ export function BrowserToolbar({
         </button>
         <button
           type="button"
+          className="browser-toolbar-secondary"
           aria-label="Downloads"
           aria-keyshortcuts="Meta+J"
           title="Downloads (⌘J)"

@@ -146,7 +146,9 @@
 	.browser-tab-row-vertical
 	.browser-tab-leading-actions {
 	position: relative;
-	z-index: 1;
+	/* Active and dragging tabs use levels 2 and 4. Keep the menu's parent above
+	 * those sibling stacking contexts so the visible controls receive clicks. */
+	z-index: 6;
 }
 
 .browser-workspace-vertical .browser-tab-tools-menu {

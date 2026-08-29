@@ -6394,8 +6394,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 						<strong>Google Workspace</strong>
 						<p>
 							{googleStatus.connected
-								? `${googleStatus.email} · Gmail, Calendar, and login-code lookup`
-								: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar access."}
+								? `${googleStatus.email} · Gmail, Calendar events and availability, and login-code lookup`
+								: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar event and availability access."}
 						</p>
 						{!googleStatus.connected && (
 							<>
@@ -9340,17 +9340,26 @@ export function App() {
 			routeFocusFrameRef.current = null;
 			if (pendingToolRouteFocusRef.current !== expected || !node.isConnected)
 				return;
-			const heading = node.querySelector<HTMLElement>("h1, h2");
-			if (!heading) return;
+			const target =
+				expected === "commands"
+					? node.querySelector<HTMLElement>(".command-search input")
+					: expected === "agent"
+						? document.getElementById("agent-workspace-title")
+						: node.querySelector<HTMLElement>("h1, h2");
+			if (!target) return;
 			pendingToolRouteFocusRef.current = null;
-			const previousTabIndex = heading.getAttribute("tabindex");
-			heading.tabIndex = -1;
-			heading.focus();
-			heading.addEventListener(
+			if (target.matches("input, button, select, textarea, [tabindex]")) {
+				target.focus();
+				return;
+			}
+			const previousTabIndex = target.getAttribute("tabindex");
+			target.tabIndex = -1;
+			target.focus();
+			target.addEventListener(
 				"blur",
 				() => {
-					if (previousTabIndex === null) heading.removeAttribute("tabindex");
-					else heading.setAttribute("tabindex", previousTabIndex);
+					if (previousTabIndex === null) target.removeAttribute("tabindex");
+					else target.setAttribute("tabindex", previousTabIndex);
 				},
 				{ once: true },
 			);
@@ -9492,6 +9501,7 @@ export function App() {
 	const appPageId = currentAppPage?.id;
 	const appPage = appPageId ? (
 		<div
+			key={appPageId}
 			ref={focusToolRoute}
 			className={`browser-app-page${
 				appPageId === "settings" ||

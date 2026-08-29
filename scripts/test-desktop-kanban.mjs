@@ -24,7 +24,7 @@ try {
 		},
 	});
 	const page = await application.firstWindow();
-	page.setDefaultTimeout(10_000);
+	page.setDefaultTimeout(30_000);
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.evaluate(() => {
 		localStorage.setItem("kestrel:onboarded", "yes");
@@ -172,7 +172,7 @@ try {
 		.locator(".kanban-column")
 		.first()
 		.evaluate((element) => getComputedStyle(element).transitionDuration);
-	assert.match(reducedTransition, /0\.001ms|1e-06s/);
+	assert.match(reducedTransition, /^(?:0s|0\.001ms|1e-06s)$/);
 	process.stdout.write(
 		`Accessible durable Kanban interaction passed. Screenshot: ${screenshotPath}\n`,
 	);

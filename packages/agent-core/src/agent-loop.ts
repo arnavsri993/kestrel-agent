@@ -22,6 +22,14 @@ import {
 	ProviderPoolError,
 	textContent,
 } from "./providers";
+import {
+	applyBrowserRecoveryBudget,
+	browserRecoveryBlockForTool,
+	browserRecoveryGuidanceFromOutput,
+	emptyBrowserRecoveryBudgetState,
+	recordBrowserRecoveryToolSuccess,
+	type BrowserRecoveryBudgetState,
+} from "./browser-recovery";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult } from "./tool-result-guardrails";
 import { UsageGovernor } from "./usage-governor";
@@ -147,6 +155,10 @@ function isManagedInstructionMessage(message: RuntimeMessage): boolean {
 		message.role === "system" &&
 		message.content.includes(CREDENTIAL_BOUNDARY_INSTRUCTIONS)
 	);
+}
+
+function browserRecoveryStateKey(runId: string): string {
+	return `agent-run-browser-recovery.${runId}`;
 }
 
 function processIsAlive(pid: number): boolean {
@@ -380,6 +392,29 @@ export class AgentLoop {
 			} else {
 				throw new Error("An explicit approval decision is required.");
 			}
+			const resolvedPendingToolName = run.pendingToolName;
+			if (execution.status === "verified") {
+				const descriptor = this.runtime
+					.modelTools(run.sessionId)
+					.find((tool) => tool.descriptor.name === resolvedPendingToolName)
+					?.descriptor;
+				if (descriptor?.category === "browser") {
+					const state =
+						this.database.getPrivateState<BrowserRecoveryBudgetState>(
+							browserRecoveryStateKey(run.id),
+						) ?? emptyBrowserRecoveryBudgetState();
+					const nextState = recordBrowserRecoveryToolSuccess(
+						state,
+						resolvedPendingToolName,
+						descriptor.readOnly,
+					);
+					if (nextState !== state)
+						this.database.setPrivateState(
+							browserRecoveryStateKey(run.id),
+							nextState,
+						);
+				}
+			}
 			this.saveActiveRun(run);
 			const content = modelVisibleToolResult(execution);
 			this.runtime.appendMessage({
@@ -563,6 +598,15 @@ export class AgentLoop {
 				tool.descriptor,
 			]),
 		);
+		let browserRecoveryState =
+			this.database.getPrivateState<BrowserRecoveryBudgetState>(
+				browserRecoveryStateKey(run.id),
+			) ?? emptyBrowserRecoveryBudgetState();
+		const saveBrowserRecoveryState = () =>
+			this.database.setPrivateState(
+				browserRecoveryStateKey(run.id),
+				browserRecoveryState,
+			);
 		let untrustedExternalContent = "";
 		try {
 			for (let turn = run.turn + 1; turn <= options.maximumTurns; turn += 1) {
@@ -752,6 +796,14 @@ export class AgentLoop {
 						});
 						continue;
 					}
+					const recoveryBlock =
+						descriptor.category === "browser"
+							? browserRecoveryBlockForTool(
+									browserRecoveryState,
+									call.name,
+									descriptor.readOnly,
+								)
+							: undefined;
 					const execution = await this.runtime.callTool(
 						session.id,
 						call.name,
@@ -762,11 +814,50 @@ export class AgentLoop {
 							...(!descriptor.readOnly && untrustedExternalContent
 								? { externalContent: untrustedExternalContent }
 								: {}),
+							...(recoveryBlock
+								? {
+										executionBlock: {
+											reason: recoveryBlock.reason,
+											output: { recoveryBudget: recoveryBlock.plan },
+										},
+									}
+								: {}),
 							...(options.signal ? { signal: options.signal } : {}),
 						},
 					);
 					this.saveActiveRun(run);
-					const content = modelVisibleToolResult(execution);
+					let modelExecution = execution;
+					if (descriptor.category === "browser") {
+						const recovery = browserRecoveryGuidanceFromOutput(
+							execution.output,
+						);
+						if (execution.status === "failed" && recovery) {
+							const budget = applyBrowserRecoveryBudget(
+								browserRecoveryState,
+								recovery,
+							);
+							browserRecoveryState = budget.state;
+							saveBrowserRecoveryState();
+							modelExecution = {
+								...execution,
+								output: {
+									...(execution.output ?? {}),
+									recoveryBudget: budget.plan,
+								},
+							};
+						} else if (execution.status === "verified") {
+							const nextState = recordBrowserRecoveryToolSuccess(
+								browserRecoveryState,
+								call.name,
+								descriptor.readOnly,
+							);
+							if (nextState !== browserRecoveryState) {
+								browserRecoveryState = nextState;
+								saveBrowserRecoveryState();
+							}
+						}
+					}
+					const content = modelVisibleToolResult(modelExecution);
 					if (execution.status === "blocked") {
 						if (execution.output?.approvalRequired === true) {
 							run = {
