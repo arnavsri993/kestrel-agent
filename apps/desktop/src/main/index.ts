@@ -132,10 +132,13 @@ import {
 } from "./macos-integration";
 import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
 
-// Chromium encrypts cookies with macOS Keychain under "Kestrel Safe Storage"
-// unless this switch is set before ready. Kestrel stores its own secrets as
-// local files and does not use Keychain.
-app.commandLine.appendSwitch("use-mock-keychain");
+// Packaged macOS builds use the real Keychain for Chromium cookies and the
+// database root key. Dev and CI runs isolate test profiles with a mock Keychain.
+if (
+	!isPackagedKestrelRuntime(app.isPackaged) ||
+	process.env.KESTREL_USE_MOCK_KEYCHAIN === "1"
+)
+	app.commandLine.appendSwitch("use-mock-keychain");
 installDiagnosticFailureHooks();
 installMacFileIconCrashGuard(app);
 
