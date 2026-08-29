@@ -1,2 +1,9 @@
 import type { MemoryRecord } from "@kestrel/shared-types";
-export function DreamingPanel({ memories, onMemoryChanged }: { memories: MemoryRecord[]; onMemoryChanged(): void }) { return null; }
+
+/** Dreaming insights are not available in this release. */
+export function DreamingPanel(_props: {
+	memories: MemoryRecord[];
+	onMemoryChanged(): void;
+}) {
+	return null;
+}

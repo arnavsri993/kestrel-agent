@@ -114,6 +114,7 @@ import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
+import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
 import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
@@ -141,6 +142,7 @@ import {
 	runtimeTaskWorkspace,
 	shouldPreserveActiveRun,
 } from "./runtime-session-state";
+import { canCompleteOnboarding } from "./setup-onboarding";
 import {
 	loadInitialDesktopState,
 	startupFailureMessage,
@@ -346,7 +348,6 @@ const commandDestinations: CommandDestination[] = [
 		group: "System",
 	},
 ];
-type Thread = "new" | "teacher" | "dji";
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
 	"Help me finish setting up Kestrel. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings, or to provider-owned sign-in. Verify one working route before adding more.";
@@ -386,12 +387,24 @@ function setupAssistantState({
 		`- Local AI: ${localRuntime?.verifiedModel ? `verified ${localRuntime.verifiedModel}` : localModels.length ? `${localModels.length} installed model(s), not live-verified in this setup` : "not configured"}.`,
 		`- Live-verified provider routes: ${verified.length ? verified.join(", ") : "none"}.`,
 		"- Project access, tools/MCP, skills/plugins, channels, and automations still need confirmation in their dedicated product screens.",
+		"- Life context and learned preferences apply when shared memory is enabled in Settings → Memory.",
 		"Use this state instead of asking me to repeat completed setup. Ask which unfinished category matters first, give one concrete UI step at a time, and check non-secret status after each step.",
 	].join("\n");
 }
 
 function modelLabel(model: ModelRoutingDecision["model"]): string {
 	return model === "local-rules" ? "Local rules" : model.replaceAll("-", " ");
+}
+
+function formatConnectionStatus(status: string): string {
+	switch (status) {
+		case "development_adapter":
+			return "Sample only";
+		case "not_connected":
+			return "Not connected";
+		default:
+			return status.replaceAll("_", " ");
+	}
 }
 
 const setupSteps = [
@@ -1354,6 +1367,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			? "The route is saved but not live-verified yet."
 			: "Explore now. Connect a model when you need live work.";
 	const finishPrimaryLabel = verifiedModelReady ? "Try a first task" : "Open Kestrel";
+	const onboardingCompleteAllowed = canCompleteOnboarding(
+		modelReady,
+		verifiedModelReady,
+	);
 
 	return (
 		<motion.main
@@ -1433,6 +1450,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									<br />
 									Kestrel gets it done.
 								</h1>
+								<p>
+									Kestrel is a local agent for your Mac. It browses the web,
+									drafts work, and takes action with your approval.
+								</p>
 							</div>
 						)}
 
@@ -1704,7 +1725,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													</span>
 												</header>
 												<div className="connection-method-list">
-													{selectedPaidProvider.methods.map((method) => {
+													{selectedPaidProvider.methods
+														.filter((method) => method.kind !== "planned")
+														.map((method) => {
 														if (method.kind === "cli") {
 															const cli = subscriptionClis.find(
 																(item) => item.id === method.cliId,
@@ -1766,22 +1789,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																			CLI not found
 																		</span>
 																	)}
-																</article>
-															);
-														}
-														if (method.kind === "planned") {
-															return (
-																<article
-																	className="connection-method unavailable"
-																	key={method.id}
-																>
-																	<div>
-																		<strong>{method.label}</strong>
-																		<p>{method.note}</p>
-																	</div>
-																	<span className="honest-status">
-																		Adapter coming later
-																	</span>
 																</article>
 															);
 														}
@@ -1881,6 +1888,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															</article>
 														);
 													})}
+													{selectedPaidProvider.methods.some(
+														(method) => method.kind === "planned",
+													) && (
+														<p className="honest-status">
+															Additional enterprise adapters for this provider
+															are not available in this build yet.
+														</p>
+													)}
 												</div>
 											</section>
 										</div>
@@ -2390,6 +2405,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						Choose an option above to continue.
 					</small>
 				)}
+				{step === finalSetupStep && modelReady && !verifiedModelReady && (
+					<small className="setup-continue-hint">
+						Verify one model route before opening Kestrel.
+					</small>
+				)}
 				<div className="button-row">
 					{step > 0 && (
 						<button
@@ -2407,6 +2427,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 					{step === finalSetupStep && (
 						<button
 							className="button secondary"
+							disabled={!onboardingCompleteAllowed}
 							onClick={() => {
 								localStorage.setItem("kestrel:setup-coach", "yes");
 								localStorage.setItem(
@@ -2428,7 +2449,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 					)}
 					<button
 						className="button primary"
-						disabled={(step === 1 && !warningAccepted) || step === 2}
+						disabled={
+							(step === 1 && !warningAccepted) ||
+							step === 2 ||
+							(step === finalSetupStep && !onboardingCompleteAllowed)
+						}
 						onClick={() => {
 							if (step === finalSetupStep) {
 								if (verifiedModelReady) {
@@ -2663,328 +2688,6 @@ function Artifacts() {
 	);
 }
 
-function Composer({
-	value,
-	onChange,
-	onSubmit,
-	busy,
-	compact = false,
-}: {
-	value: string;
-	onChange(value: string): void;
-	onSubmit(): void;
-	busy: boolean;
-	compact?: boolean;
-}) {
-	return (
-		<form
-			className={`composer ${compact ? "compact" : ""}`}
-			onSubmit={(event) => {
-				event.preventDefault();
-				onSubmit();
-			}}
-		>
-			<label className="sr-only" htmlFor={compact ? "follow-up" : "new-task"}>
-				Message Kestrel
-			</label>
-			<textarea
-				id={compact ? "follow-up" : "new-task"}
-				rows={1}
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-				onKeyDown={(event) => {
-					if (
-						event.key === "Enter" &&
-						!event.shiftKey &&
-						(event.metaKey || event.ctrlKey)
-					) {
-						event.preventDefault();
-						onSubmit();
-					}
-				}}
-				placeholder={
-					compact ? "Ask a follow-up" : "Ask Kestrel to help with anything"
-				}
-			/>
-			<div className="composer-footer">
-				<button
-					type="button"
-					className="composer-icon"
-					aria-label="Add context"
-					disabled
-					title="File context arrives with folder permissions"
-				>
-					<Icon name="plus" />
-				</button>
-				<span>Local context · ⌘ Enter to send</span>
-				<button
-					className="send-button"
-					aria-label="Send message"
-					disabled={busy || value.trim().length === 0}
-				>
-					<Icon name="arrow" />
-				</button>
-			</div>
-		</form>
-	);
-}
-
-function Home({
-	snapshot,
-	thread,
-	setThread,
-	navigate,
-	onTroubleshoot,
-}: {
-	snapshot: WorkspaceSnapshot;
-	thread: Thread;
-	setThread(thread: Thread): void;
-	navigate(page: Page): void;
-	onTroubleshoot(
-		message: string,
-	): Promise<{ answer: string; routing?: ModelRoutingDecision | undefined }>;
-}) {
-	const [input, setInput] = useState("");
-	const [answer, setAnswer] = useState<string | null>(null);
-	const [sentMessage, setSentMessage] = useState(
-		"RC not connected to mobile device.",
-	);
-	const [busy, setBusy] = useState(false);
-	const [chatError, setChatError] = useState("");
-	const [routing, setRouting] = useState<ModelRoutingDecision | null>(null);
-	const inputRef = useRef(input);
-	inputRef.current = input;
-	const approval = snapshot.approvals[0];
-
-	useEffect(() => {
-		if (thread !== "dji") return;
-		setSentMessage("RC not connected to mobile device.");
-	}, [thread]);
-
-	async function submit(message = inputRef.current) {
-		const clean = message.trim();
-		if (!clean || busy) return;
-		setBusy(true);
-		setChatError("");
-		setSentMessage(clean);
-		setInput("");
-		setThread("dji");
-		try {
-			const result = await onTroubleshoot(clean);
-			setAnswer(result.answer);
-			setRouting(result.routing ?? null);
-		} catch {
-			setChatError(
-				"Kestrel could not finish that response. Your message is still here—try again when the local core is available.",
-			);
-		} finally {
-			setBusy(false);
-		}
-	}
-
-	if (thread === "new")
-		return (
-			<section
-				className="conversation-view new-task-view"
-				aria-labelledby="new-task-title"
-			>
-				<div className="new-task-center">
-					<div className="welcome-mark" aria-hidden="true">
-						<BrandMark />
-					</div>
-					<h1 id="new-task-title">What can I help with?</h1>
-					<Composer
-						value={input}
-						onChange={setInput}
-						onSubmit={() => void submit()}
-						busy={busy}
-					/>
-					<div className="prompt-suggestions" aria-label="Preview examples">
-						<button
-							onClick={() => {
-								setAnswer(null);
-								setThread("dji");
-							}}
-						>
-							Troubleshoot my DJI connection
-							<Icon name="arrow" />
-						</button>
-						<button onClick={() => setThread("teacher")}>
-							Open the prepared test plan
-							<Icon name="arrow" />
-						</button>
-					</div>
-				</div>
-				<button
-					className="background-note"
-					onClick={() => navigate("approvals")}
-				>
-					<span className={`agent-dot ${snapshot.agentState}`} />
-					<span>
-						<strong>
-							{approval?.status === "pending"
-								? "1 approval waiting"
-								: "Background work is quiet"}
-						</strong>
-					</span>
-					<Icon name="chevron" />
-				</button>
-			</section>
-		);
-
-	if (thread === "teacher")
-		return (
-			<section
-				className="conversation-view"
-				aria-label="Choose the better test date conversation"
-			>
-				<div className="message-list">
-					<div className="assistant-message">
-						<span className="assistant-avatar">K</span>
-						<div>
-							<p>
-								I noticed Ms. Rivera offered Friday or Monday for the Algebra II
-								test. I checked the calendar and the study preferences you
-								confirmed.
-							</p>
-							<div className="work-summary">
-								<Icon name="check" />
-								<span>
-									Checked teacher email, Friday calendar, and study memory
-								</span>
-							</div>
-							<p>
-								<strong>Monday looks better.</strong> Friday runs into swim
-								practice; Monday leaves the weekend open for two study blocks.
-							</p>
-							<div className="inline-action">
-								<div>
-									<strong>
-										{approval?.status === "pending"
-											? "Plan ready for approval"
-											: "Plan completed"}
-									</strong>
-									<span>
-										{approval?.status === "pending"
-											? "Reply, calendar event, and study blocks"
-											: "Open the result and verification trail"}
-									</span>
-								</div>
-								<button
-									className="button secondary"
-									onClick={() => navigate("approvals")}
-								>
-									{approval?.status === "pending"
-										? "Review plan"
-										: "View result"}
-									<Icon name="arrow" />
-								</button>
-							</div>
-							<details className="message-details">
-								<summary>Why Kestrel suggested this</summary>
-								<p>{snapshot.opportunity.reasonDetected}</p>
-								<p>{snapshot.opportunity.description}</p>
-							</details>
-						</div>
-					</div>
-				</div>
-				<div className="thread-composer">
-					<Composer
-						compact
-						value={input}
-						onChange={setInput}
-						onSubmit={() => void submit()}
-						busy={busy}
-					/>
-				</div>
-			</section>
-		);
-
-	return (
-		<section
-			className="conversation-view"
-			aria-label="DJI controller troubleshooting conversation"
-		>
-			<div className="message-list">
-				<div className="user-message">
-					<p>{sentMessage}</p>
-				</div>
-				{busy && (
-					<div className="assistant-message">
-						<span className="assistant-avatar">K</span>
-						<div>
-							<p className="thinking">Checking relevant device context…</p>
-						</div>
-					</div>
-				)}
-				{answer && !busy && (
-					<div className="assistant-message">
-						<span className="assistant-avatar">K</span>
-						<div>
-							<p>{answer}</p>
-							{routing && (
-								<details className="route-strip">
-									<summary>How this task was routed</summary>
-									<div className="route-strip-values">
-										<strong>{modelLabel(routing.model)}</strong>
-										<span>{routing.reasoningEffort} reasoning</span>
-										<span>Fast {routing.fastMode ? "on" : "off"}</span>
-									</div>
-								</details>
-							)}
-							<details className="message-details">
-								<summary>Context used · 6 memories</summary>
-								<p>
-									DJI Mini 3 · iPhone 16 Pro · iOS developer beta · prior cable
-									test · prior restart
-								</p>
-							</details>
-						</div>
-					</div>
-				)}
-				{!answer && !busy && !chatError && (
-					<div className="assistant-message">
-						<span className="assistant-avatar">K</span>
-						<div>
-							<p>
-								I can check the device, OS, symptoms, and earlier attempts
-								before suggesting another step.
-							</p>
-							<button
-								className="text-action"
-								onClick={() => void submit(sentMessage)}
-							>
-								Check my context
-								<Icon name="arrow" />
-							</button>
-						</div>
-					</div>
-				)}
-				{chatError && (
-					<div className="chat-error" role="alert">
-						<p>{chatError}</p>
-						<button
-							className="text-action"
-							onClick={() => void submit(sentMessage)}
-						>
-							Try again
-						</button>
-					</div>
-				)}
-			</div>
-			<div className="thread-composer">
-				<Composer
-					compact
-					value={input}
-					onChange={setInput}
-					onSubmit={() => void submit()}
-					busy={busy}
-				/>
-			</div>
-		</section>
-	);
-}
-
 function RuntimeConversation({
 	visible,
 	activeSessionId,
@@ -3073,6 +2776,7 @@ function RuntimeConversation({
 			: SETUP_ASSISTANT_PROMPT;
 	});
 	const [busy, setBusy] = useState(false);
+	const [cancelling, setCancelling] = useState(false);
 	const [streamText, setStreamText] = useState("");
 	const [optimisticUser, setOptimisticUser] = useState("");
 	const [optimisticSteering, setOptimisticSteering] = useState<string[]>([]);
@@ -3901,9 +3605,13 @@ function RuntimeConversation({
 
 	async function cancel() {
 		const streamId = streamIdRef.current;
-		if (!streamId || streamSessionIdRef.current !== activeSessionIdRef.current)
-			return;
-		await window.kestrel.request({ type: "runtime-cancel-stream", streamId });
+		if (!streamId || !busy || cancelling) return;
+		setCancelling(true);
+		try {
+			await window.kestrel.request({ type: "runtime-cancel-stream", streamId });
+		} finally {
+			setCancelling(false);
+		}
 	}
 
 	async function createCheckpoint() {
@@ -4102,6 +3810,8 @@ function RuntimeConversation({
 		activeSessionId,
 		hasOptimisticNewTask: Boolean(optimisticUser),
 	});
+	const backgroundRunSessionId =
+		runScope === "background" ? streamSessionIdRef.current : null;
 	const latestRunHasConfigurationMessage = Boolean(
 		latestRun &&
 			messages.some(
@@ -4160,17 +3870,19 @@ function RuntimeConversation({
 			!pending &&
 			!error,
 	);
-	const assistiveStatus = activeSessionBusy
-		? streamText
-			? "Kestrel is responding in this chat."
-			: "Kestrel is working on this chat."
-		: backgroundSessionBusy
-			? "Kestrel is working in another chat."
-			: pending
-				? `Kestrel needs your approval for ${pending.execution.toolName}.`
-				: latestRun?.status === "completed"
-					? "Kestrel finished the latest response."
-					: "";
+	const assistiveStatus = cancelling
+		? "Stopping Kestrel…"
+		: activeSessionBusy
+			? streamText
+				? "Kestrel is responding in this chat."
+				: "Kestrel is working on this chat."
+			: backgroundSessionBusy
+				? "Kestrel is working in another chat."
+				: pending
+					? `Kestrel needs your approval for ${pending.execution.toolName}.`
+					: latestRun?.status === "completed"
+						? "Kestrel finished the latest response."
+						: "";
 	return (
 		<section
 			className={`conversation-view ${activeSessionId ? "" : "new-task-view"} ${emptySession ? "session-empty-view" : ""}`}
@@ -4186,6 +3898,18 @@ function RuntimeConversation({
 			>
 				{assistiveStatus}
 			</p>
+			{backgroundRunSessionId ? (
+				<div className="background-run-banner">
+					<p>Kestrel is still working in another chat.</p>
+					<button
+						type="button"
+						className="quiet-link"
+						onClick={() => onActiveSession(backgroundRunSessionId)}
+					>
+						Return to active task
+					</button>
+				</div>
+			) : null}
 			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
 				<div className="chat-welcome" aria-hidden="true">
 					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>
@@ -4718,22 +4442,25 @@ function RuntimeConversation({
 													? "Conversation only · start a new chat to add a project"
 													: "Conversation only"}
 						</span>
-						{activeSessionBusy ? (
+						{activeSessionBusy || backgroundSessionBusy ? (
 							<div className="button-row composer-send-actions">
 								{voiceButton}
-								<button
-									className="send-button"
-									aria-label="Send steering update"
-									disabled={!input.trim()}
-								>
-									<Icon name="arrow" />
-								</button>
+								{activeSessionBusy ? (
+									<button
+										className="send-button"
+										aria-label="Send steering update"
+										disabled={!input.trim() || cancelling}
+									>
+										<Icon name="arrow" />
+									</button>
+								) : null}
 								<button
 									type="button"
 									className="button secondary"
+									disabled={cancelling}
 									onClick={() => void cancel()}
 								>
-									Cancel
+									{cancelling ? "Stopping…" : "Stop"}
 								</button>
 							</div>
 						) : (
@@ -5528,6 +5255,12 @@ function Research() {
 					text="Enter a query to find web results Kestrel can cite in answers."
 				/>
 			)}
+			{query.trim() && results.length === 0 && !page && !busy && !error && (
+				<Empty
+					title="No results found"
+					text={`Nothing matched "${query.trim()}". Try different keywords or a shorter phrase.`}
+				/>
+			)}
 			<div className="research-layout">
 				<section className="research-results">
 					{results.map((result) => (
@@ -5603,6 +5336,7 @@ function Work({
 	const [handoffSummary, setHandoffSummary] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const createGoalFormRef = useRef<HTMLFormElement>(null);
 	const children = sessions.filter(
 		(session) => session.parentSessionId === parentSessionId,
 	);
@@ -5805,6 +5539,15 @@ function Work({
 				goals={goals}
 				sessions={sessions}
 				busy={busy}
+				onCreateGoal={() => {
+					createGoalFormRef.current?.scrollIntoView({
+						behavior: "smooth",
+						block: "nearest",
+					});
+					createGoalFormRef.current
+						?.querySelector<HTMLInputElement>("input")
+						?.focus();
+				}}
 				onTaskUpdate={({ goalId, taskId, taskStatus, assigneeSessionId }) =>
 					mutate({
 						type: "orchestration-goal-update",
@@ -5948,6 +5691,7 @@ function Work({
 					</button>
 				</form>
 				<form
+					ref={createGoalFormRef}
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
@@ -6689,9 +6433,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 							</p>
 						</div>
 						<span className="connection-status connected">connected</span>
-						<button className="button secondary" disabled>
-							Owner-configured
-						</button>
+						<span className="honest-status">Owner-configured</span>
 					</article>
 				))}
 				{snapshot.connections
@@ -6729,7 +6471,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								)}
 							</div>
 							<span className={`connection-status ${connection.status}`}>
-								{connection.status.replace("_", " ")}
+								{formatConnectionStatus(connection.status)}
 							</span>
 							{connection.id === "files" ? (
 								<button
@@ -6739,12 +6481,12 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								>
 									{busy ? "Updating…" : "Add folder"}
 								</button>
+							) : connection.status === "development_adapter" ? (
+								<span className="honest-status">
+									Connect Google in Settings for live data
+								</span>
 							) : (
-								<button className="button secondary" disabled>
-									{connection.status === "development_adapter"
-										? "Preview adapter"
-										: "Connect later"}
-								</button>
+								<span className="honest-status">Not available yet</span>
 							)}
 						</article>
 					))}
@@ -8940,6 +8682,7 @@ function Settings({
 							className="settings-stack"
 							aria-label="Memory and behavior settings"
 						>
+							<MemoryRecallStatus snapshot={snapshot} />
 							<HonchoMemorySettings />
 							<PresenceSettings />
 							<LearnedSkillsSettings />
@@ -9473,10 +9216,14 @@ export function App() {
 	}, [snapshot?.configuration, browser, browserContextEnabled]);
 	useEffect(() => {
 		const storageKey = "kestrel:presence-instance";
+		const legacyKey = "workstrand:presence-instance";
+		const legacyInstanceId = localStorage.getItem(legacyKey);
+		if (legacyInstanceId && !localStorage.getItem(storageKey)) {
+			localStorage.setItem(storageKey, legacyInstanceId);
+		}
+		localStorage.removeItem(legacyKey);
 		const instanceId =
-			localStorage.getItem(storageKey) ??
-			localStorage.getItem("workstrand:presence-instance") ??
-			`ui-${crypto.randomUUID()}`;
+			localStorage.getItem(storageKey) ?? `ui-${crypto.randomUUID()}`;
 		localStorage.setItem(storageKey, instanceId);
 		const beacon = () => {
 			void window.kestrel.request({
@@ -9596,6 +9343,10 @@ export function App() {
 					<span className="error-mark">!</span>
 					<h1>Kestrel could not start.</h1>
 					<p>{error}</p>
+					<p>
+						If this keeps happening, quit Kestrel completely and reopen it. Your
+						profile, tabs, and agent history are preserved.
+					</p>
 					<button
 						className="button secondary"
 						onClick={() => location.reload()}

@@ -400,6 +400,7 @@ export const ActivitySchema = z.object({
 		"verified",
 		"blocked",
 		"failed",
+		"cancelled",
 	]),
 	sourceIds: z.array(z.string()),
 });
@@ -1328,6 +1329,19 @@ export const BackgroundJobsEventSchema = z.object({
 });
 export type BackgroundJobsEvent = z.infer<typeof BackgroundJobsEventSchema>;
 
+export const MemoryRecallStatusSchema = z.object({
+	chatInjection: z.enum(["active", "off"]),
+	offReason: z.string().optional(),
+	activeMemories: z.number().int().nonnegative(),
+	confirmedPreferences: z.number().int().nonnegative(),
+	explicitCapture: z.boolean(),
+	personalityScope: z.enum(["shared", "isolated"]),
+	personalityName: z.string().min(1),
+	useSharedContext: z.boolean(),
+	honchoLastError: z.string().optional(),
+});
+export type MemoryRecallStatus = z.infer<typeof MemoryRecallStatusSchema>;
+
 export const WorkspaceSnapshotSchema = z.object({
 	productName: z.string(),
 	agentState: AgentStateSchema,
@@ -1389,6 +1403,7 @@ export const WorkspaceSnapshotSchema = z.object({
 			announceVerification: z.boolean(),
 		}),
 	}),
+	memoryRecall: MemoryRecallStatusSchema,
 	updatedAt: z.string().datetime(),
 });
 export type WorkspaceSnapshot = z.infer<typeof WorkspaceSnapshotSchema>;

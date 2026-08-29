@@ -184,17 +184,22 @@ export function activityItemsFromExecutions(
 							: "blocked"
 						: execution.status === "failed"
 							? "failed"
-							: execution.status === "running"
-								? "reasoned"
-								: "observed";
+							: execution.status === "cancelled"
+								? "cancelled"
+								: execution.status === "running"
+									? "reasoned"
+									: "observed";
 			const detail = verified
 				? `${verified.method} · ${verified.evidenceSha256.slice(0, 12)}`
 				: execution.outcomeUncertain
 					? `Outcome uncertain · ${execution.error?.trim() || "Kestrel could not confirm whether this action completed."}`
-					: execution.error?.trim() ||
-					(typeof execution.output?.preview === "string"
-						? execution.output.preview
-						: `${execution.status} tool execution`);
+					: execution.status === "cancelled"
+						? execution.error?.trim() ||
+							"Cancelled before this step completed."
+						: execution.error?.trim() ||
+							(typeof execution.output?.preview === "string"
+								? execution.output.preview
+								: `${execution.status} tool execution`);
 			return {
 				id: execution.id,
 				title: execution.toolName,

@@ -293,13 +293,17 @@ function RecentWorkWidget({
 	sessions,
 	size,
 	onOpenSession,
-}: Pick<WidgetContext, "sessions" | "onOpenSession"> & {
+	onNewAgent,
+}: Pick<WidgetContext, "sessions" | "onOpenSession" | "onNewAgent"> & {
 	size: NewTabWidgetSize;
 }) {
 	const items = sessions.slice(0, visibleItemCount(size));
 	if (items.length === 0) {
 		return (
-			<EmptyWidgetState icon="agent">
+			<EmptyWidgetState
+				icon="agent"
+				action={{ label: "Start a task", onClick: () => onNewAgent() }}
+			>
 				Your recent Kestrel conversations will appear here.
 			</EmptyWidgetState>
 		);
@@ -337,9 +341,20 @@ function QuickActionsWidget({
 }: Pick<WidgetContext, "suggestedActions" | "agentName" | "onNewAgent"> & {
 	size: NewTabWidgetSize;
 }) {
+	const items = suggestedActions.slice(0, visibleItemCount(size));
+	if (items.length === 0) {
+		return (
+			<EmptyWidgetState
+				icon="arrow"
+				action={{ label: `Ask ${agentName}`, onClick: () => onNewAgent() }}
+			>
+				Suggested actions will appear as you browse and work.
+			</EmptyWidgetState>
+		);
+	}
 	return (
 		<ul className="kestrel-widget-action-list">
-			{suggestedActions.slice(0, visibleItemCount(size)).map((action) => (
+			{items.map((action) => (
 				<li key={action.id}>
 					<button
 						type="button"

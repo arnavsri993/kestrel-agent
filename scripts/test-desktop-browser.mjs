@@ -415,7 +415,10 @@ try {
 	await page.locator("#new-tab-title").waitFor();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator("#new-tab-chat-input").waitFor();
-	assert.equal(await page.locator(".kestrel-home-model-selector summary").count(), 1);
+	assert.equal(
+		await page.getByRole("button", { name: "Open task settings" }).count(),
+		1,
+	);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
 	await assertBrowserChromeLayout();
 	const homeSend = page.getByRole("button", {

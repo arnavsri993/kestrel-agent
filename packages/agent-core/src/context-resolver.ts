@@ -62,8 +62,10 @@ export class PreResponseContextResolver {
 		const allowed = new Set(request.possibleContextCategories);
 		const now = Date.now();
 		const matches = this.memoryProvider()
-			.filter((item) =>
-				allowed.has(String(item.structuredData.category) as ContextCategory),
+			.filter(
+				(item) =>
+					item.structuredData.capture === "explicit-command" ||
+					allowed.has(String(item.structuredData.category) as ContextCategory),
 			)
 			.filter((item) => item.status === "active")
 			.sort(
@@ -72,16 +74,16 @@ export class PreResponseContextResolver {
 					b.importance - a.importance,
 			)
 			.slice(0, boundedRetrievedItems(request.maximumRetrievedItems));
+		const isStale = (item: MemoryRecord) =>
+			Boolean(item.validUntil && Date.parse(item.validUntil) < now);
 		return {
 			confirmed: matches.filter(
-				(item) =>
-					item.userConfirmed &&
-					(!item.validUntil || Date.parse(item.validUntil) >= now),
+				(item) => item.userConfirmed && !isStale(item),
 			),
-			inferred: matches.filter((item) => item.inferred),
-			possiblyStale: matches.filter((item) =>
-				Boolean(item.validUntil && Date.parse(item.validUntil) < now),
+			inferred: matches.filter(
+				(item) => item.inferred && !item.userConfirmed && !isStale(item),
 			),
+			possiblyStale: matches.filter(isStale),
 		};
 	}
 }

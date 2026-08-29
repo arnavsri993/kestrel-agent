@@ -180,7 +180,7 @@ export function useUserBrowser(): UserBrowserController {
 					setError(
 						cause instanceof Error
 							? cause.message
-							: "The browser could not start.",
+							: "The browser did not respond. Quit and reopen Kestrel, or open a new tab to continue.",
 					);
 			});
 		return () => {

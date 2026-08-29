@@ -72,6 +72,7 @@ import {
 import {
 	BrowserTabStore,
 	createEmptyBrowserTab,
+	describeBrowserLoadFailure,
 	MAX_AX_SNAPSHOT_BYTES,
 	MAX_AX_SNAPSHOT_NODES,
 	MAX_INTERACTIVE_REFS,
@@ -1186,10 +1187,10 @@ export class UserBrowserService {
 		} catch (cause) {
 			if (record.navigatingTo !== normalized.url) return this.getState();
 			tab.loading = false;
-			tab.error =
-				cause instanceof Error
-					? cause.message.slice(0, 500)
-					: "This page could not be opened.";
+			tab.error = describeBrowserLoadFailure(
+				0,
+				cause instanceof Error ? cause.message : "",
+			);
 			this.commit();
 		} finally {
 			if (record.navigatingTo === normalized.url) delete record.navigatingTo;
@@ -1219,6 +1220,7 @@ export class UserBrowserService {
 	reload(tabId: string, ignoreCache = false): UserBrowserState {
 		const tab = this.requireTab(tabId);
 		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
+		this.elementRefs.delete(tabId);
 		tab.error = undefined;
 		tab.crashed = false;
 		const record = this.ensureView(tab);
@@ -1229,10 +1231,10 @@ export class UserBrowserService {
 			void record.view.webContents.loadURL(tab.url).catch((cause) => {
 				if (record.view.webContents.isDestroyed()) return;
 				tab.loading = false;
-				tab.error =
-					cause instanceof Error
-						? cause.message.slice(0, 500)
-						: "This page could not be opened.";
+				tab.error = describeBrowserLoadFailure(
+					0,
+					cause instanceof Error ? cause.message : "",
+				);
 				this.commit();
 			});
 			return this.getState();
@@ -2754,10 +2756,10 @@ export class UserBrowserService {
 			void view.webContents.loadURL(tab.url).catch((cause) => {
 				if (view.webContents.isDestroyed()) return;
 				tab.loading = false;
-				tab.error =
-					cause instanceof Error
-						? cause.message.slice(0, 500)
-						: "This page could not be opened.";
+				tab.error = describeBrowserLoadFailure(
+					0,
+					cause instanceof Error ? cause.message : "",
+				);
 				this.commit();
 			});
 		}
@@ -2837,7 +2839,7 @@ export class UserBrowserService {
 			(_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
 				if (!isMainFrame || errorCode === -3) return;
 				tab.loading = false;
-				tab.error = `${errorDescription} (${errorCode})`.slice(0, 500);
+				tab.error = describeBrowserLoadFailure(errorCode, errorDescription);
 				this.updateNavigationState(tab, webContents);
 			},
 		);
@@ -3124,6 +3126,9 @@ export class UserBrowserService {
 	): void {
 		const url = safePageUrl(value);
 		if (!url) return;
+		// Snapshot element refs are tied to a specific DOM generation. Any main-frame
+		// navigation, including SPA route changes, must invalidate them before reuse.
+		this.elementRefs.delete(tab.id);
 		tab.url = sanitizeBrowserUrl(url.toString());
 		tab.title =
 			webContents.getTitle().trim().slice(0, 500) || hostnameTitle(tab.url);

@@ -30,6 +30,7 @@ import {
 	recordBrowserRecoveryToolSuccess,
 	type BrowserRecoveryBudgetState,
 } from "./browser-recovery";
+import { prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult } from "./tool-result-guardrails";
 import { UsageGovernor } from "./usage-governor";
@@ -148,6 +149,15 @@ function boundedMaximumTurns(value: number | undefined, fallback = 12): number {
 	return typeof value === "number" && Number.isFinite(value)
 		? Math.max(1, Math.min(50, Math.trunc(value)))
 		: fallback;
+}
+
+function agentRunErrorMessage(error: unknown, cancelled: boolean): string {
+	if (cancelled) return "Cancelled by the user.";
+	if (error instanceof Error) {
+		const message = error.message.trim();
+		if (message) return message;
+	}
+	return "Model or agent execution failed.";
 }
 
 function isManagedInstructionMessage(message: RuntimeMessage): boolean {
@@ -780,9 +790,17 @@ export class AgentLoop {
 
 				if (result.toolCalls.length === 0) {
 					if (consumeSteering() > 0) continue;
+					const prematureCompletion =
+						prematureBrowserCompletionErrorForRun(this.database, {
+							runId: run.id,
+							sessionId: session.id,
+							modelText: result.text,
+							browserRecoveryState,
+						});
 					run = {
 						...run,
-						status: "completed",
+						status: prematureCompletion ? "failed" : "completed",
+						...(prematureCompletion ? { error: prematureCompletion } : {}),
 						updatedAt: this.now().toISOString(),
 					};
 					this.saveActiveRun(run);
@@ -950,9 +968,7 @@ export class AgentLoop {
 			run = {
 				...run,
 				status: cancelled ? "cancelled" : "failed",
-				error: cancelled
-					? "Cancelled by the user."
-					: "Model or agent execution failed.",
+				error: agentRunErrorMessage(error, cancelled),
 				updatedAt: this.now().toISOString(),
 			};
 			this.database.saveAgentRunIfActive(run);

@@ -86,3 +86,30 @@ export function protectRendererNavigation(
 	target.on("will-navigate", preventUntrustedNavigation);
 	target.on("will-redirect", preventUntrustedNavigation);
 }
+
+/** Allow only credential-free http(s) links in the system browser. */
+export function safeExternalUrl(value: string): string | undefined {
+	if (!value || value.length > 8_192) return undefined;
+	try {
+		const url = new URL(value);
+		if (
+			!["http:", "https:"].includes(url.protocol) ||
+			url.username ||
+			url.password
+		)
+			return undefined;
+		return url.toString();
+	} catch {
+		return undefined;
+	}
+}
+
+export function openExternalSafely(
+	openExternal: (url: string) => Promise<void> | void,
+	value: string,
+): boolean {
+	const safe = safeExternalUrl(value);
+	if (!safe) return false;
+	void Promise.resolve(openExternal(safe)).catch(() => undefined);
+	return true;
+}

@@ -415,6 +415,35 @@
 	font-size: 12px;
 }
 
+.kestrel-sidebar-empty {
+	display: grid;
+	gap: 8px;
+	padding: 0 10px;
+}
+
+.kestrel-sidebar-empty p {
+	padding: 0;
+}
+
+.kestrel-sidebar-empty button {
+	justify-self: start;
+	min-height: 28px;
+	padding: 0 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink-secondary);
+	font-size: 11.5px;
+	font-weight: 550;
+	cursor: pointer;
+	transition: background-color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.kestrel-sidebar-empty button:hover {
+	background: var(--surface-strong);
+	color: var(--ink);
+}
+
 .kestrel-sidebar-section-heading {
 	display: flex;
 	align-items: center;

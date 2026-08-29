@@ -132,4 +132,63 @@ describe("durable memory manager", () => {
 		expect(manager.userModel.promptContext()).toBe("");
 		database.close();
 	});
+
+	it("deduplicates exact active remember content", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const manager = new MemoryManager(database);
+		const first = manager.remember({
+			type: "semantic",
+			content: "Release checklist lives in docs/release.md",
+			structuredData: {},
+			sourceIds: ["message-1"],
+			sourceType: "agent-proposal",
+			confidence: 0.7,
+			importance: 0.5,
+			sensitivity: "personal",
+			entityIds: [],
+			userConfirmed: false,
+			inferred: true,
+		});
+		const second = manager.remember({
+			type: "semantic",
+			content: "  Release checklist lives in docs/release.md  ",
+			structuredData: {},
+			sourceIds: ["message-2"],
+			sourceType: "agent-proposal",
+			confidence: 0.7,
+			importance: 0.5,
+			sensitivity: "personal",
+			entityIds: [],
+			userConfirmed: false,
+			inferred: true,
+		});
+		expect(second.id).toBe(first.id);
+		expect(manager.list()).toHaveLength(1);
+		database.close();
+	});
+
+	it("searches only active memories", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const manager = new MemoryManager(database);
+		const active = manager.remember({
+			type: "semantic",
+			content: "Release checklist lives in docs/release.md",
+			structuredData: {},
+			sourceIds: ["message-1"],
+			sourceType: "agent-proposal",
+			confidence: 0.7,
+			importance: 0.5,
+			sensitivity: "personal",
+			entityIds: [],
+			userConfirmed: false,
+			inferred: true,
+		});
+		database.upsertMemory({
+			...active,
+			status: "superseded",
+			updatedAt: new Date().toISOString(),
+		});
+		expect(manager.search("release checklist")).toEqual([]);
+		database.close();
+	});
 });

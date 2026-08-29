@@ -147,6 +147,36 @@
   color: var(--muted);
 }
 
+.kestrel-home-task-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-feedback) var(--ease-kestrel),
+    color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.kestrel-home-task-settings:hover {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.kestrel-home-task-settings svg {
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+}
+
 .kestrel-home-model-selector {
   position: relative;
   z-index: 10;
@@ -528,6 +558,7 @@
 /* Focus visibility — white is the focus accent. */
 .kestrel-home-shortcut:focus-visible,
 .kestrel-home-action:focus-visible,
+.kestrel-home-task-settings:focus-visible,
 .kestrel-home-model-selector summary:focus-visible,
 .kestrel-home-model-popover button:focus-visible,
 .kestrel-home-send:focus-visible {
@@ -550,15 +581,6 @@
 }
 
 @media (max-width: 680px) {
-  .new-tab-sidebar-open .new-tab-sidebar {
-    width: 56px;
-  }
-
-  .new-tab-sidebar-open .new-tab-sidebar-tabs,
-  .new-tab-sidebar-open .new-tab-sidebar-panel {
-    display: none;
-  }
-
   .kestrel-home-content {
     width: calc(100% - 32px);
     gap: 36px;

@@ -174,34 +174,7 @@
 		transform: scale(1.08);
 	}
 
-	/* The new-tab sidebar is a genuine mode switch, so its width and icon
-	   settle together instead of making the home layout jump. */
-	.new-tab-sidebar {
-		overflow: hidden;
-		transition:
-			width var(--motion-panel) var(--ease-smooth),
-			background-color var(--motion-smooth) var(--ease-soft);
-	}
-
-	.new-tab-sidebar-toggle {
-		transition:
-			background-color var(--motion-feedback) var(--ease-soft),
-			border-color var(--motion-feedback) var(--ease-soft),
-			transform var(--motion-feedback) var(--ease-smooth);
-	}
-
-	.new-tab-sidebar-toggle:hover {
-		transform: translateY(-1px);
-	}
-
-	.new-tab-sidebar-toggle svg {
-		transition: transform var(--motion-feedback) var(--ease-smooth);
-	}
-
-	.new-tab-sidebar-toggle:hover svg {
-		transform: rotate(90deg);
-	}
-
+	/* The new-tab home content eases in without shifting sibling layout. */
 	.kestrel-home-composer {
 		transition:
 			border-color var(--motion-state) var(--ease-soft),

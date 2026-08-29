@@ -205,7 +205,12 @@ export function KestrelSidebar({
 							))}
 						</ul>
 					) : (
-						<p>No projects yet</p>
+						<div className="kestrel-sidebar-empty">
+							<p>No projects yet</p>
+							<button type="button" onClick={onOpenSettings}>
+								Add folders in Settings
+							</button>
+						</div>
 					)}
 				</section>
 
@@ -240,7 +245,12 @@ export function KestrelSidebar({
 							))}
 						</ul>
 					) : (
-						<p>No chats yet</p>
+						<div className="kestrel-sidebar-empty">
+							<p>No chats yet</p>
+							<button type="button" onClick={onNewTask}>
+								Start a task
+							</button>
+						</div>
 					)}
 				</section>
 			</div>

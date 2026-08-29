@@ -10,6 +10,7 @@ import type {
 	CoreRequest,
 	CoreResponse,
 	MemoryRecord,
+	MemoryRecallStatus,
 	ModelProfile,
 	ModelRoutingDecision,
 	RoutingPolicy,
@@ -483,7 +484,7 @@ export class AgentCore {
 			this.providerPool,
 			undefined,
 			(message) => {
-				if (message.role === "user") {
+				if (message.role === "user" && this.sharedMemoryCaptureEnabled()) {
 					const captureExplicit =
 						this.configuration.current().memory.captureExplicit;
 					if (captureExplicit)
@@ -491,6 +492,7 @@ export class AgentCore {
 					if (captureExplicit)
 						this.lifeContext.captureConversation(message.content, message.id);
 				}
+				if (!this.sharedMemoryCaptureEnabled()) return;
 				const session = this.runtime.getSession(message.sessionId);
 				this.honchoMemory.captureMessage(message, session.workspaceRoot);
 			},
@@ -583,13 +585,13 @@ export class AgentCore {
 					id: "gmail",
 					name: "Gmail",
 					status: "development_adapter",
-					detail: "Deterministic adapter · OAuth not configured",
+					detail: "Sample data only · connect Google in Settings for live mail",
 				},
 				{
 					id: "calendar",
 					name: "Google Calendar",
 					status: "development_adapter",
-					detail: "Deterministic adapter · OAuth not configured",
+					detail: "Sample data only · connect Google in Settings for live calendar",
 				},
 				{
 					id: "files",
@@ -633,6 +635,7 @@ export class AgentCore {
 					),
 			},
 			configuration: this.configuration.status(),
+			memoryRecall: this.memoryRecallStatus(),
 			updatedAt: this.now(),
 		});
 	}
@@ -1392,6 +1395,53 @@ export class AgentCore {
 		return this.snapshot();
 	}
 
+	private sharedMemoryCaptureEnabled(): boolean {
+		return (
+			this.personalities.get(this.selectedPersonalityId).memoryScope ===
+			"shared"
+		);
+	}
+
+	private sharedMemoryInjectionEnabled(personalityId?: string): boolean {
+		const personality = this.personalities.get(
+			personalityId ?? this.selectedPersonalityId,
+		);
+		return (
+			personality.memoryScope === "shared" &&
+			this.configuration.current().memory.useSharedContext
+		);
+	}
+
+	private memoryRecallStatus(personalityId?: string): MemoryRecallStatus {
+		const configuration = this.configuration.current();
+		const personality = this.personalities.get(
+			personalityId ?? this.selectedPersonalityId,
+		);
+		const injectionEnabled = this.sharedMemoryInjectionEnabled(personality.id);
+		let offReason: string | undefined;
+		if (!injectionEnabled) {
+			if (personality.memoryScope === "isolated")
+				offReason = `${personality.name} uses isolated memory, so shared life context is not injected into chat.`;
+			else if (!configuration.memory.useSharedContext)
+				offReason =
+					"Shared context is disabled in agent configuration (memory.useSharedContext).";
+		}
+		const honcho = this.honchoMemory.status();
+		return {
+			chatInjection: injectionEnabled ? "active" : "off",
+			...(offReason ? { offReason } : {}),
+			activeMemories: this.memory.activeMemories().length,
+			confirmedPreferences: this.userModel.list("confirmed").length,
+			explicitCapture: configuration.memory.captureExplicit,
+			personalityScope: personality.memoryScope,
+			personalityName: personality.name,
+			useSharedContext: configuration.memory.useSharedContext,
+			...(honcho.configuration.enabled && honcho.state === "error"
+				? { honchoLastError: honcho.detail }
+				: {}),
+		};
+	}
+
 	createPersonality(
 		personality: Omit<AgentPersonality, "builtin">,
 	): WorkspaceSnapshot {
@@ -1697,8 +1747,7 @@ export class AgentCore {
 						const configuration = this.configuration.current();
 						const runtimeSession = this.runtime.getSession(request.sessionId);
 						const sharedMemoryEnabled =
-							personality.memoryScope === "shared" &&
-							configuration.memory.useSharedContext;
+							this.sharedMemoryInjectionEnabled(personality.id);
 						const honchoContext = sharedMemoryEnabled
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,
@@ -1708,6 +1757,11 @@ export class AgentCore {
 									query: priorMessage,
 								})
 							: "";
+						const localContext = sharedMemoryEnabled
+							? this.lifeContext.assembleContext({
+									query: priorMessage,
+								})
+							: undefined;
 						const result = await this.agentLoop.retry({
 							sessionId: request.sessionId,
 							model: route?.execution.model ?? request.model,
@@ -1748,7 +1802,11 @@ export class AgentCore {
 								personality.instructions,
 								this.configuration.instructions(),
 								...(sharedMemoryEnabled
-									? [this.userModel.promptContext(), honchoContext]
+									? [
+											this.userModel.promptContext(),
+											localContext?.prompt ?? "",
+											honchoContext,
+										]
 									: []),
 							]
 								.filter(Boolean)
@@ -2818,9 +2876,9 @@ export class AgentCore {
 									)
 								: undefined;
 						const runtimeSession = this.runtime.getSession(request.sessionId);
-						const sharedMemoryEnabled =
-							personality.memoryScope === "shared" &&
-							configuration.memory.useSharedContext;
+						const sharedMemoryEnabled = this.sharedMemoryInjectionEnabled(
+							personality.id,
+						);
 						const honchoContext = sharedMemoryEnabled
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,

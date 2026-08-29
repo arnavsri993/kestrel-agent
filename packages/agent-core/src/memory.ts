@@ -57,6 +57,10 @@ export class MemoryManager {
 		return this.database.listMemories();
 	}
 
+	activeMemories(): MemoryRecord[] {
+		return this.list().filter((memory) => memory.status === "active");
+	}
+
 	remember(input: MemoryInput): MemoryRecord {
 		if (
 			!input.content.trim() ||
@@ -64,6 +68,11 @@ export class MemoryManager {
 			input.sourceIds.length === 0
 		)
 			throw new Error("Memory content and provenance are required.");
+		const normalizedContent = input.content.trim().toLowerCase();
+		const duplicate = this.activeMemories().find(
+			(memory) => memory.content.trim().toLowerCase() === normalizedContent,
+		);
+		if (duplicate) return duplicate;
 		const timestamp = this.now().toISOString();
 		const prior = this.conflictsFor(input);
 		const obviousUpdate = prior.length > 0 && this.isAuthoritativeUpdate(input);
@@ -113,7 +122,7 @@ export class MemoryManager {
 		const searchLimit = Number.isFinite(limit)
 			? Math.max(1, Math.min(100, Math.trunc(limit)))
 			: 20;
-		return this.list()
+		return this.activeMemories()
 			.map((memory) => {
 				const body = terms(
 					`${memory.content} ${JSON.stringify(memory.structuredData)} ${memory.entityIds.join(" ")}`,
@@ -386,7 +395,7 @@ export function installMemoryTools(
 		"List durable memories",
 		true,
 		{ type: "object", properties: {}, additionalProperties: false },
-		async () => ({ memories: manager.list() }),
+		async () => ({ memories: manager.activeMemories() }),
 	);
 	register(
 		"memory.search",
