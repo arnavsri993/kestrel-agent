@@ -1,16 +1,16 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `7a9f97fe` (`Add in-chat memory recall receipt on assistant replies`, #633)
+**Snapshot commit:** `1ce93d0e` (docs #634 — engineering snapshot includes #631–#633 on `main`)
 
 **Merged sprint:** #617–#633 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
 demo surfacing, browser smoke hardening, meetup preflight guard (#631), persona
 Command Center smoke hardening (#632), in-chat memory recall receipt (#633).
 
-**Overall verdict:** **NOT COMPLETE** — last full `verify:meetup` pass recorded at
-`94924dac` (#629); #631–#633 landed on `main` without a fresh meetup run in this
-checklist. Operator rehearsal, Apple signing, Google OAuth, and crash reporting
-remain open. Gate must pass on the presentation Mac before the slot.
+**Overall verdict:** **NOT COMPLETE** — `verify:meetup` **PASS** at `1ce93d0e` (Aug 29,
+~198s) on engineering Mac after #631–#633; operator rehearsal, Apple signing,
+Google OAuth, and crash reporting remain open. Gate must pass again on the
+presentation Mac before the slot.
 
 Use this matrix before going on stage. Each row has an owner, evidence command
 or link, and an honest status as of the snapshot commit.
@@ -36,7 +36,7 @@ or link, and an honest status as of the snapshot commit.
 | # | Requirement | Owner | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | A1 | Full `pnpm verify` passes (typecheck, 985+ unit tests, desktop smokes, e2e) | Engineering | `corepack pnpm verify` | **COMPLETE** — passed at `94924dac` (Aug 29, run 2, ~198s); run 1 (~95s) failed `test-desktop-setup.mjs` when dev watcher lock was active — kill `dev:desktop` and clear `kestrel-electron-dev.lock` before gating |
-| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **COMPLETE** — passed at `94924dac` (Aug 29, run 2, ~198s): verify → assets → real local-ai → package → packaged smokes → packaged benchmark |
+| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **COMPLETE** — passed at `1ce93d0e` (Aug 29, ~198s): verify → assets → real local-ai → package → packaged smokes → packaged benchmark (#631–#633 on `main`) |
 | A3 | Website assets validate | Engineering | `corepack pnpm assets:verify` | **COMPLETE** — passed in `94924dac` run 2 (3 registry entries, 7 manifests) |
 | A4 | Real local model response | Engineering | `corepack pnpm test:local-ai:real` | **COMPLETE** — passed in `94924dac` run 2 (Ollama 0.32.1, smollm2:135m) |
 | A5 | Apple Silicon dev package builds | Engineering | `corepack pnpm package:mac:dev` | **COMPLETE** — passed in `94924dac` run 2 (ad-hoc dev signature) |
@@ -112,7 +112,7 @@ or link, and an honest status as of the snapshot commit.
 
 Run in order on the **presentation Mac** the morning of the demo:
 
-- [ ] `git fetch` && checkout presentation commit (`7a9f97fe` or later on `main`)
+- [ ] `git fetch` && checkout presentation commit (`1ce93d0e` or later on `main`)
 - [ ] `corepack pnpm install --frozen-lockfile`
 - [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present (**required** — `verify:meetup` now fails fast via preflight guard if either is still active)
 - [ ] `corepack pnpm verify:meetup` — **must pass**; preflight prints stop/clear instructions on failure; if a desktop smoke fails once after a clean preflight, retry once; if persistent, file engineering issue before relying on browser tools on stage
@@ -137,9 +137,10 @@ Run in order on the **presentation Mac** the morning of the demo:
 | `458bb8a6` | Aug 29, 2026 | **FAIL** (run 2, ~101s) | `pnpm verify` → `test:desktop-browser` — `Detached tab did not leave the source window` at `test-desktop-browser.mjs:1089` |
 | `94924dac` | Aug 29, 2026 | **FAIL** (run 1, ~95s) | `pnpm verify` → `test:desktop-setup` — timeout waiting for `just finished Kestrel setup` (dev watcher lock likely active) |
 | `94924dac` | Aug 29, 2026 | **PASS** (run 2, ~198s) | Full `verify:meetup` after #629 browser-smoke fix; includes packaged smokes and benchmark |
-| `7a9f97fe` | Aug 29, 2026 | **Not re-run** | Engineering snapshot after #633 memory recall receipt; meetup gate should be re-run before stage |
+| `7a9f97fe` | Aug 29, 2026 | **Superseded** | Engineering snapshot after #633; meetup re-run at `1ce93d0e` |
+| `1ce93d0e` | Aug 29, 2026 | **PASS** (~198s) | Full `verify:meetup` on `main` after #634 checklist merge; preflight clean; 998 unit tests; packaged smokes + 50/50 benchmark |
 
-**Engineering note:** #629 stabilized browser attach/detach; meetup gate green on `94924dac`. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear the lock before gating on presentation hardware. #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected.
+**Engineering note:** #629 stabilized browser attach/detach. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear `/tmp/kestrel-electron-dev.lock` before gating. Latest engineering meetup **PASS** at `1ce93d0e` (~198s). #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected.
 
 ---
 
