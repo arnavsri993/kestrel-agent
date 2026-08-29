@@ -76,9 +76,11 @@
 	height: auto;
 	overflow: hidden;
 	padding: 8px 10px 12px;
-	border-top: 1px solid var(--line);
-	border-right: 1px solid var(--line);
-	background: var(--sidebar);
+	border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+	border-right: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+	background: var(--vibrancy-sidebar);
+	backdrop-filter: var(--vibrancy-blur);
+	-webkit-backdrop-filter: var(--vibrancy-blur);
 	color: var(--ink);
 }
 
@@ -305,14 +307,15 @@
 		color var(--motion-feedback) var(--ease-kestrel);
 }
 
-.kestrel-sidebar-nav-item:hover,
-.kestrel-sidebar-nav-item.active {
-	background: var(--surface-strong);
+.kestrel-sidebar-nav-item:hover {
+	background: color-mix(in srgb, var(--ink) 6%, transparent);
 	color: var(--ink);
 }
 
 .kestrel-sidebar-nav-item.active {
-	font-weight: 650;
+	background: var(--selected-soft);
+	color: var(--ink);
+	font-weight: 600;
 }
 
 .kestrel-sidebar-nav-item svg,
@@ -349,15 +352,17 @@
 
 .kestrel-sidebar-new-task {
 	margin-bottom: 6px;
-	background: var(--solid);
-	box-shadow: var(--shadow-xs);
-	color: var(--on-solid);
-	font-weight: 650;
+	border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+	background: color-mix(in srgb, var(--ink) 5%, transparent);
+	box-shadow: none;
+	color: var(--ink);
+	font-weight: 600;
 }
 
 .kestrel-sidebar-new-task:hover {
-	background: var(--solid-hover);
-	color: var(--on-solid);
+	border-color: color-mix(in srgb, var(--line-strong) 70%, transparent);
+	background: color-mix(in srgb, var(--ink) 9%, transparent);
+	color: var(--ink);
 }
 
 .kestrel-sidebar-new-task svg {
@@ -388,9 +393,11 @@
 .kestrel-sidebar-section h2 {
 	margin: 0;
 	padding: 0 10px 7px;
-	color: var(--muted);
-	font-size: 12px;
-	font-weight: 650;
+	color: var(--faint);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
 }
 
 .kestrel-sidebar-section ul {
@@ -605,16 +612,17 @@
 		display: none;
 	}
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header {
-		align-items: center;
-		justify-content: center;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 4px;
 	}
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-brand {
+		justify-content: center;
 		padding: 5px;
 	}
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-header-actions {
-		position: absolute;
-		top: 36px;
-		right: 8px;
+		position: static;
+		justify-content: center;
 	}
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-primary {
 		margin-top: 4px;
@@ -650,32 +658,4 @@
 	.kestrel-sidebar-new-task {
 		transition: none;
 	}
-}
-
-/* The full Agent page gives the durable conversation/workspace the remaining
- * surface when the New Tab navigation rail is not mounted. */
-.ai-browser-app.agent-full-page {
-	display: grid;
-	grid-template-columns: var(--kestrel-sidebar-space) minmax(0, 1fr);
-}
-
-.ai-browser-app.agent-full-page .kestrel-sidebar {
-	position: relative;
-	top: auto;
-	left: auto;
-	bottom: auto;
-	grid-column: 1;
-	grid-row: 1;
-	width: auto;
-	height: 100vh;
-	border-top: 0;
-}
-
-.ai-browser-app.agent-full-page .browser-main-plane {
-	display: none;
-}
-
-.ai-browser-app.agent-full-page .agent-sidebar {
-	grid-column: 2;
-	grid-row: 1;
 }

@@ -722,6 +722,24 @@
 	grid-column: span 2;
 }
 
+.memory-recall-status {
+	display: grid;
+	gap: 4px;
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--surface-raised);
+}
+
+.memory-recall-status strong {
+	font-size: 0.95rem;
+}
+
+.memory-recall-status small {
+	color: var(--text-muted);
+	line-height: 1.4;
+}
+
 .memory-commandbar {
 	display: grid;
 	grid-template-columns: minmax(220px, 1fr) 170px auto;

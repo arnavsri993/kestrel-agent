@@ -19,6 +19,7 @@ import {
 import {
 	BrowserTabFolderNameSchema,
 	BrowserTabFolderNamingGroupSchema,
+	UserBrowserTabDeletionSuggestionSchema,
 } from "./browser-tab-organization";
 
 export const SensitivitySchema = z.enum([
@@ -1328,6 +1329,19 @@ export const BackgroundJobsEventSchema = z.object({
 });
 export type BackgroundJobsEvent = z.infer<typeof BackgroundJobsEventSchema>;
 
+export const MemoryRecallStatusSchema = z.object({
+	chatInjection: z.enum(["active", "off"]),
+	offReason: z.string().optional(),
+	activeMemories: z.number().int().nonnegative(),
+	confirmedPreferences: z.number().int().nonnegative(),
+	explicitCapture: z.boolean(),
+	personalityScope: z.enum(["shared", "isolated"]),
+	personalityName: z.string().min(1),
+	useSharedContext: z.boolean(),
+	honchoLastError: z.string().optional(),
+});
+export type MemoryRecallStatus = z.infer<typeof MemoryRecallStatusSchema>;
+
 export const WorkspaceSnapshotSchema = z.object({
 	productName: z.string(),
 	agentState: AgentStateSchema,
@@ -1389,6 +1403,7 @@ export const WorkspaceSnapshotSchema = z.object({
 			announceVerification: z.boolean(),
 		}),
 	}),
+	memoryRecall: MemoryRecallStatusSchema,
 	updatedAt: z.string().datetime(),
 });
 export type WorkspaceSnapshot = z.infer<typeof WorkspaceSnapshotSchema>;
@@ -2658,6 +2673,7 @@ export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
 export const UserBrowserTabOrganizationPreviewSchema = z.object({
 	tabs: z.array(UserBrowserTabSchema),
 	tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+	suggestedDeletions: z.array(UserBrowserTabDeletionSuggestionSchema).max(32).default([]),
 });
 export type UserBrowserTabOrganizationPreview = z.infer<
 	typeof UserBrowserTabOrganizationPreviewSchema
@@ -2676,6 +2692,7 @@ export const UserBrowserTabOrganizationApplySchema = z.object({
 			}),
 		),
 	tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+	closeTabIds: z.array(z.string().regex(/^tab-[a-f0-9-]{36}$/)).max(32).optional(),
 });
 export type UserBrowserTabOrganizationApply = z.infer<
 	typeof UserBrowserTabOrganizationApplySchema
@@ -3364,6 +3381,7 @@ export const RendererRequestSchema = z.union([
 				}),
 			),
 		tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+		closeTabIds: z.array(z.string().regex(/^tab-[a-f0-9-]{36}$/)).max(32).optional(),
 	}),
 	z.object({
 		type: z.literal("browser-detach-tab"),

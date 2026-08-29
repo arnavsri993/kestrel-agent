@@ -30,6 +30,7 @@ import {
 	recordBrowserRecoveryToolSuccess,
 	type BrowserRecoveryBudgetState,
 } from "./browser-recovery";
+import { prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult } from "./tool-result-guardrails";
 import { UsageGovernor } from "./usage-governor";
@@ -789,9 +790,17 @@ export class AgentLoop {
 
 				if (result.toolCalls.length === 0) {
 					if (consumeSteering() > 0) continue;
+					const prematureCompletion =
+						prematureBrowserCompletionErrorForRun(this.database, {
+							runId: run.id,
+							sessionId: session.id,
+							modelText: result.text,
+							browserRecoveryState,
+						});
 					run = {
 						...run,
-						status: "completed",
+						status: prematureCompletion ? "failed" : "completed",
+						...(prematureCompletion ? { error: prematureCompletion } : {}),
 						updatedAt: this.now().toISOString(),
 					};
 					this.saveActiveRun(run);

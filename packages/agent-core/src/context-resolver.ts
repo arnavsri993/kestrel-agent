@@ -62,8 +62,10 @@ export class PreResponseContextResolver {
 		const allowed = new Set(request.possibleContextCategories);
 		const now = Date.now();
 		const matches = this.memoryProvider()
-			.filter((item) =>
-				allowed.has(String(item.structuredData.category) as ContextCategory),
+			.filter(
+				(item) =>
+					item.structuredData.capture === "explicit-command" ||
+					allowed.has(String(item.structuredData.category) as ContextCategory),
 			)
 			.filter((item) => item.status === "active")
 			.sort(

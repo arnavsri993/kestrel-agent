@@ -664,6 +664,98 @@ describe("core agent request path", () => {
 		await core.close();
 	});
 
+	it("reports memory recall status and injects life context into chat when shared memory is enabled", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-core-memory-inject-"));
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		let receivedSystem = "";
+		const provider: ModelProvider = {
+			id: "memory-provider",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				const system = request.messages.find(
+					(message) => message.role === "system",
+				)?.content;
+				receivedSystem =
+					typeof system === "string"
+						? system
+						: Array.isArray(system)
+							? system
+									.filter((part) => part.type === "text")
+									.map((part) => part.text)
+									.join("\n")
+							: "";
+				return {
+					providerId: "memory-provider",
+					model: request.model,
+					text: "Acknowledged.",
+					toolCalls: [],
+					usage: { inputTokens: 3, outputTokens: 2 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const core = new AgentCore({
+			database,
+			workspaceRoots: [root],
+			modelProviders: [provider],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+		core.lifeContext.memory.remember({
+			type: "project",
+			content: "The launch brief is due Friday.",
+			structuredData: { category: "deadlines" },
+			sourceIds: ["message-deadline"],
+			sourceType: "direct-user-statement",
+			confidence: 1,
+			importance: 0.9,
+			sensitivity: "personal",
+			entityIds: [],
+			userConfirmed: true,
+			inferred: false,
+			confirmationStatus: "explicit",
+		});
+		const fact = core.userModel.propose({
+			kind: "preference",
+			key: "tone",
+			value: "Keep updates concise",
+			sourceIds: ["desktop-user"],
+			confidence: 1,
+			sensitivity: "normal",
+		});
+		core.userModel.review(fact.id, "confirm");
+		expect(core.snapshot().memoryRecall).toMatchObject({
+			chatInjection: "active",
+			activeMemories: 1,
+			confirmedPreferences: 1,
+			explicitCapture: true,
+			personalityScope: "shared",
+			useSharedContext: true,
+		});
+		const sessions = await core.handle({ type: "runtime-list-sessions" });
+		if (!sessions.ok || !sessions.sessions?.[0])
+			throw new Error("Main session missing");
+		await core.handle({
+			type: "runtime-run-agent",
+			sessionId: sessions.sessions[0].id,
+			message: "Help me plan the launch brief",
+			model: "memory-model",
+			providerIds: ["memory-provider"],
+		});
+		expect(receivedSystem).toContain("Selected local life context");
+		expect(receivedSystem).toContain("launch brief is due Friday");
+		expect(receivedSystem).toContain("User-confirmed context");
+		expect(receivedSystem).toContain("Keep updates concise");
+		await core.close();
+		rmSync(root, { recursive: true, force: true });
+	});
+
 	it("runs a configured provider through the durable agent loop", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-core-loop-"));
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());

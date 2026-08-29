@@ -114,6 +114,7 @@ import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
+import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
 import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
@@ -124,6 +125,7 @@ import { desktopDeepLinkAction } from "./deep-link-route";
 import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
 import {
 	isKestrelAppPageId,
+	isKestrelAppPageUrl,
 	kestrelAppPageUrl,
 	parseKestrelAppPage,
 	type KestrelAppPageId,
@@ -140,6 +142,7 @@ import {
 	runtimeTaskWorkspace,
 	shouldPreserveActiveRun,
 } from "./runtime-session-state";
+import { canCompleteOnboarding } from "./setup-onboarding";
 import {
 	loadInitialDesktopState,
 	startupFailureMessage,
@@ -227,8 +230,8 @@ const commandDestinations: CommandDestination[] = [
 	},
 	{
 		id: "organize-tabs",
-		label: "Cluster tabs",
-		detail: "Group related tabs by topic while keeping their order",
+		label: "Organize tabs",
+		detail: "Group related tabs into folders while keeping their order",
 		icon: "folder",
 		group: "Browse",
 	},
@@ -1364,6 +1367,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			? "The route is saved but not live-verified yet."
 			: "Explore now. Connect a model when you need live work.";
 	const finishPrimaryLabel = verifiedModelReady ? "Try a first task" : "Open Kestrel";
+	const onboardingCompleteAllowed = canCompleteOnboarding(
+		modelReady,
+		verifiedModelReady,
+	);
 
 	return (
 		<motion.main
@@ -2398,6 +2405,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						Choose an option above to continue.
 					</small>
 				)}
+				{step === finalSetupStep && modelReady && !verifiedModelReady && (
+					<small className="setup-continue-hint">
+						Verify one model route before opening Kestrel.
+					</small>
+				)}
 				<div className="button-row">
 					{step > 0 && (
 						<button
@@ -2415,6 +2427,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 					{step === finalSetupStep && (
 						<button
 							className="button secondary"
+							disabled={!onboardingCompleteAllowed}
 							onClick={() => {
 								localStorage.setItem("kestrel:setup-coach", "yes");
 								localStorage.setItem(
@@ -2436,7 +2449,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 					)}
 					<button
 						className="button primary"
-						disabled={(step === 1 && !warningAccepted) || step === 2}
+						disabled={
+							(step === 1 && !warningAccepted) ||
+							step === 2 ||
+							(step === finalSetupStep && !onboardingCompleteAllowed)
+						}
 						onClick={() => {
 							if (step === finalSetupStep) {
 								if (verifiedModelReady) {
@@ -3793,6 +3810,8 @@ function RuntimeConversation({
 		activeSessionId,
 		hasOptimisticNewTask: Boolean(optimisticUser),
 	});
+	const backgroundRunSessionId =
+		runScope === "background" ? streamSessionIdRef.current : null;
 	const latestRunHasConfigurationMessage = Boolean(
 		latestRun &&
 			messages.some(
@@ -3879,8 +3898,20 @@ function RuntimeConversation({
 			>
 				{assistiveStatus}
 			</p>
+			{backgroundRunSessionId ? (
+				<div className="background-run-banner">
+					<p>Kestrel is still working in another chat.</p>
+					<button
+						type="button"
+						className="quiet-link"
+						onClick={() => onActiveSession(backgroundRunSessionId)}
+					>
+						Return to active task
+					</button>
+				</div>
+			) : null}
 			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
-				<div className="chat-welcome">
+				<div className="chat-welcome" aria-hidden="true">
 					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>
 					<p>
 						{emptySession
@@ -5305,6 +5336,7 @@ function Work({
 	const [handoffSummary, setHandoffSummary] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const createGoalFormRef = useRef<HTMLFormElement>(null);
 	const children = sessions.filter(
 		(session) => session.parentSessionId === parentSessionId,
 	);
@@ -5507,6 +5539,15 @@ function Work({
 				goals={goals}
 				sessions={sessions}
 				busy={busy}
+				onCreateGoal={() => {
+					createGoalFormRef.current?.scrollIntoView({
+						behavior: "smooth",
+						block: "nearest",
+					});
+					createGoalFormRef.current
+						?.querySelector<HTMLInputElement>("input")
+						?.focus();
+				}}
 				onTaskUpdate={({ goalId, taskId, taskStatus, assigneeSessionId }) =>
 					mutate({
 						type: "orchestration-goal-update",
@@ -5650,6 +5691,7 @@ function Work({
 					</button>
 				</form>
 				<form
+					ref={createGoalFormRef}
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
@@ -6391,9 +6433,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 							</p>
 						</div>
 						<span className="connection-status connected">connected</span>
-						<button className="button secondary" disabled>
-							Owner-configured
-						</button>
+						<span className="honest-status">Owner-configured</span>
 					</article>
 				))}
 				{snapshot.connections
@@ -6446,9 +6486,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 									Connect Google in Settings for live data
 								</span>
 							) : (
-								<button className="button secondary" disabled>
-									Connect later
-								</button>
+								<span className="honest-status">Not available yet</span>
 							)}
 						</article>
 					))}
@@ -8644,6 +8682,7 @@ function Settings({
 							className="settings-stack"
 							aria-label="Memory and behavior settings"
 						>
+							<MemoryRecallStatus snapshot={snapshot} />
 							<HonchoMemorySettings />
 							<PresenceSettings />
 							<LearnedSkillsSettings />
@@ -9304,6 +9343,10 @@ export function App() {
 					<span className="error-mark">!</span>
 					<h1>Kestrel could not start.</h1>
 					<p>{error}</p>
+					<p>
+						If this keeps happening, quit Kestrel completely and reopen it. Your
+						profile, tabs, and agent history are preserved.
+					</p>
 					<button
 						className="button secondary"
 						onClick={() => location.reload()}
@@ -9323,7 +9366,9 @@ export function App() {
 		(tab) => tab.id === browser.state?.activeTabId,
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
-	const showKestrelSidebar = activeBrowserTab?.url === "";
+	const showKestrelSidebar =
+		!activeBrowserTab?.url ||
+		isKestrelAppPageUrl(activeBrowserTab.url);
 	const activeFileAttachment = activeBrowserTab?.file
 		? attachmentForExternalFile(activeBrowserTab.file)
 		: undefined;
@@ -9380,7 +9425,9 @@ export function App() {
 				appPageId === "work" ||
 				appPageId === "events" ||
 				appPageId === "activity" ||
-				appPageId === "extensions"
+				appPageId === "extensions" ||
+				appPageId === "agent" ||
+				appPageId === "writing"
 					? " browser-secondary-surface"
 					: ""
 			}${appPageId === "memory" ? " legacy-product-surface" : ""}`}
@@ -9406,6 +9453,18 @@ export function App() {
 				/>
 			)}
 			{appPageId === "writing" && <WritingStudio />}
+			{appPageId === "agent" && (
+				<AgentWorkspace
+					sessions={runtimeSessions}
+					activeSessionId={activeRuntimeSessionId}
+					agentState={effectiveAgentState}
+					pendingApprovals={pendingApprovalCount}
+					onNewTask={() => startNewAgent()}
+					onOpenSession={openSidebarSession}
+					onOpenApprovals={() => navigate("approvals")}
+					onOpenWork={() => navigate("work")}
+				/>
+			)}
 			{appPageId === "settings" && (
 				<Settings
 					snapshot={snapshot}
@@ -9453,7 +9512,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${appPageId === "agent" ? " agent-full-page" : ""}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0 }}
@@ -9523,32 +9582,13 @@ export function App() {
 							onOpenConnections={() => openSettings("connections")}
 						/>
 					}
-					workspace={
-						<AgentWorkspace
-							sessions={runtimeSessions}
-							activeSessionId={activeRuntimeSessionId}
-							agentState={effectiveAgentState}
-							pendingApprovals={pendingApprovalCount}
-							onNewTask={() => {
-								startNewAgent();
-								openAgent();
-							}}
-							onOpenSession={openSidebarSession}
-							onOpenApprovals={() => navigate("approvals")}
-							onOpenWork={() => navigate("work")}
-							onBack={() => void openBrowserWorkspace()}
-						/>
-					}
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
 					collapsed={!agentSidebarOpen}
-					agentState={effectiveAgentState}
-					pendingApprovals={pendingApprovalCount}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
-					onReviewApprovals={reviewApprovals}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
             streams, steering, cancellation, and approval boundaries remain intact. */}

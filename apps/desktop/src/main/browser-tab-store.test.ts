@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	BrowserTabStore,
 	createEmptyBrowserTab,
+	describeBrowserLoadFailure,
 	freshBrowserState,
 	MAX_ORIGIN_FAVICONS,
 	normalizeBrowserAddress,
@@ -205,6 +206,37 @@ describe("browser address normalization", () => {
 		expect(() => normalizeBrowserAddress("javascript:alert(1)")).toThrow(
 			"HTTP and HTTPS",
 		);
+	});
+
+	it("blocks unsafe custom search engine templates", () => {
+		expect(() =>
+			normalizeBrowserAddress("kestrel docs", "custom", "javascript:alert(1)"),
+		).toThrow("HTTP or HTTPS");
+		expect(() =>
+			normalizeBrowserAddress(
+				"kestrel docs",
+				"custom",
+				"https://search:secret@example.com/?q=",
+			),
+		).toThrow("embedded credentials");
+		expect(
+			normalizeBrowserAddress(
+				"kestrel docs",
+				"custom",
+				"https://kagi.com/search?q=%s",
+			).url,
+		).toBe("https://kagi.com/search?q=kestrel%20docs");
+	});
+
+	it("maps browser load failures to actionable copy", () => {
+		expect(describeBrowserLoadFailure(-105, "ERR_NAME_NOT_RESOLVED")).toMatch(
+			/could not be found/i,
+		);
+		expect(describeBrowserLoadFailure(-106)).toMatch(/offline/i);
+		expect(describeBrowserLoadFailure(-118)).toMatch(/timed out/i);
+		expect(
+			describeBrowserLoadFailure(0, "net::ERR_INTERNET_DISCONNECTED"),
+		).toMatch(/offline/i);
 	});
 
 	it("redacts credential-like URL values without discarding useful searches", () => {

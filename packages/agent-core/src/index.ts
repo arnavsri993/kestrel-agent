@@ -10,6 +10,7 @@ import type {
 	CoreRequest,
 	CoreResponse,
 	MemoryRecord,
+	MemoryRecallStatus,
 	ModelProfile,
 	ModelRoutingDecision,
 	RoutingPolicy,
@@ -634,6 +635,7 @@ export class AgentCore {
 					),
 			},
 			configuration: this.configuration.status(),
+			memoryRecall: this.memoryRecallStatus(),
 			updatedAt: this.now(),
 		});
 	}
@@ -1400,6 +1402,46 @@ export class AgentCore {
 		);
 	}
 
+	private sharedMemoryInjectionEnabled(personalityId?: string): boolean {
+		const personality = this.personalities.get(
+			personalityId ?? this.selectedPersonalityId,
+		);
+		return (
+			personality.memoryScope === "shared" &&
+			this.configuration.current().memory.useSharedContext
+		);
+	}
+
+	private memoryRecallStatus(personalityId?: string): MemoryRecallStatus {
+		const configuration = this.configuration.current();
+		const personality = this.personalities.get(
+			personalityId ?? this.selectedPersonalityId,
+		);
+		const injectionEnabled = this.sharedMemoryInjectionEnabled(personality.id);
+		let offReason: string | undefined;
+		if (!injectionEnabled) {
+			if (personality.memoryScope === "isolated")
+				offReason = `${personality.name} uses isolated memory, so shared life context is not injected into chat.`;
+			else if (!configuration.memory.useSharedContext)
+				offReason =
+					"Shared context is disabled in agent configuration (memory.useSharedContext).";
+		}
+		const honcho = this.honchoMemory.status();
+		return {
+			chatInjection: injectionEnabled ? "active" : "off",
+			...(offReason ? { offReason } : {}),
+			activeMemories: this.memory.activeMemories().length,
+			confirmedPreferences: this.userModel.list("confirmed").length,
+			explicitCapture: configuration.memory.captureExplicit,
+			personalityScope: personality.memoryScope,
+			personalityName: personality.name,
+			useSharedContext: configuration.memory.useSharedContext,
+			...(honcho.configuration.enabled && honcho.state === "error"
+				? { honchoLastError: honcho.detail }
+				: {}),
+		};
+	}
+
 	createPersonality(
 		personality: Omit<AgentPersonality, "builtin">,
 	): WorkspaceSnapshot {
@@ -1705,8 +1747,7 @@ export class AgentCore {
 						const configuration = this.configuration.current();
 						const runtimeSession = this.runtime.getSession(request.sessionId);
 						const sharedMemoryEnabled =
-							personality.memoryScope === "shared" &&
-							configuration.memory.useSharedContext;
+							this.sharedMemoryInjectionEnabled(personality.id);
 						const honchoContext = sharedMemoryEnabled
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,
@@ -2835,9 +2876,9 @@ export class AgentCore {
 									)
 								: undefined;
 						const runtimeSession = this.runtime.getSession(request.sessionId);
-						const sharedMemoryEnabled =
-							personality.memoryScope === "shared" &&
-							configuration.memory.useSharedContext;
+						const sharedMemoryEnabled = this.sharedMemoryInjectionEnabled(
+							personality.id,
+						);
 						const honchoContext = sharedMemoryEnabled
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,

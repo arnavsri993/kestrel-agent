@@ -79,6 +79,20 @@ const FOLDER_RULES: readonly FolderRule[] = [
 		],
 	},
 	{
+		key: "ai-tools",
+		name: "AI tools",
+		color: "violet",
+		hosts: [
+			"chatgpt.com",
+			"openai.com",
+			"claude.ai",
+			"anthropic.com",
+			"gemini.google.com",
+			"copilot.microsoft.com",
+		],
+		keywords: ["chatgpt", "copilot", "assistant", "llm"],
+	},
+	{
 		key: "travel",
 		name: "Travel",
 		color: "green",
@@ -188,6 +202,28 @@ const FOLDER_RULES: readonly FolderRule[] = [
 			"tutorial",
 		],
 	},
+	{
+		key: "calendar",
+		name: "Calendar",
+		color: "green",
+		hosts: ["calendar.google.com"],
+		keywords: ["calendar", "schedule", "agenda"],
+	},
+	{
+		key: "school",
+		name: "School",
+		color: "blue",
+		hosts: ["canvas.instructure.com", "schoology.com", "clever.com"],
+		keywords: [
+			"syllabus",
+			"course",
+			"assignment",
+			"homework",
+			"lecture",
+			"quiz",
+			"deadline",
+		],
+	},
 ];
 
 const SITE_COLORS: readonly UserBrowserTabFolderColor[] = [
@@ -198,6 +234,31 @@ const SITE_COLORS: readonly UserBrowserTabFolderColor[] = [
 	"violet",
 	"teal",
 ];
+
+const TITLE_STOP_WORDS = new Set([
+	"about",
+	"account",
+	"and",
+	"com",
+	"for",
+	"from",
+	"google",
+	"home",
+	"https",
+	"login",
+	"mail",
+	"new",
+	"online",
+	"page",
+	"search",
+	"sign",
+	"tab",
+	"the",
+	"untitled",
+	"welcome",
+	"www",
+	"your",
+]);
 
 function pageHost(url: string): string | undefined {
 	try {
@@ -242,6 +303,26 @@ function siteFolderName(host: string): string {
 		.join(" ");
 }
 
+function titleKeywords(title: string): string[] {
+	return [
+		...new Set(
+			title
+				.toLowerCase()
+				.split(/[^a-z0-9]+/)
+				.filter(
+					(token) =>
+						token.length >= 4 &&
+						!TITLE_STOP_WORDS.has(token) &&
+						!/^\d+$/.test(token),
+				),
+		),
+	];
+}
+
+function humanizeKeyword(keyword: string): string {
+	return `${keyword.charAt(0).toUpperCase()}${keyword.slice(1)}`;
+}
+
 function folderPlanForTab(
 	tab: UserBrowserTab,
 	hostCounts: ReadonlyMap<string, number>,
@@ -259,6 +340,60 @@ function folderPlanForTab(
 		name: siteFolderName(host),
 		color: siteFolderColor(host),
 	};
+}
+
+function assignTitleKeywordClusters(
+	tabs: UserBrowserTab[],
+	assignments: Map<string, string>,
+	plans: Map<string, FolderPlan>,
+) {
+	const keywordToTabIds = new Map<string, string[]>();
+	for (const tab of tabs) {
+		if (assignments.has(tab.id)) continue;
+		for (const keyword of titleKeywords(tab.title)) {
+			const current = keywordToTabIds.get(keyword) ?? [];
+			current.push(tab.id);
+			keywordToTabIds.set(keyword, current);
+		}
+	}
+
+	const rankedKeywords = [...keywordToTabIds.entries()]
+		.filter(([, tabIds]) => tabIds.length >= 2)
+		.sort((left, right) => right[1].length - left[1].length);
+
+	const assignedTabIds = new Set<string>();
+	for (const [keyword, tabIds] of rankedKeywords) {
+		const unassigned = tabIds.filter((tabId) => !assignedTabIds.has(tabId));
+		if (unassigned.length < 2) continue;
+		const key = `title:${keyword}`;
+		if (!plans.has(key)) {
+			plans.set(key, {
+				key,
+				name: humanizeKeyword(keyword),
+				color: siteFolderColor(keyword),
+			});
+		}
+		for (const tabId of unassigned) {
+			assignments.set(tabId, key);
+			assignedTabIds.add(tabId);
+		}
+	}
+}
+
+function pruneSingleTabGroups(
+	assignments: Map<string, string>,
+	plans: Map<string, FolderPlan>,
+) {
+	const tabsPerKey = new Map<string, number>();
+	for (const key of assignments.values())
+		tabsPerKey.set(key, (tabsPerKey.get(key) ?? 0) + 1);
+
+	for (const [tabId, key] of [...assignments.entries()]) {
+		if ((tabsPerKey.get(key) ?? 0) < 2) assignments.delete(tabId);
+	}
+	for (const key of [...plans.keys()]) {
+		if ((tabsPerKey.get(key) ?? 0) < 2) plans.delete(key);
+	}
 }
 
 export function organizeBrowserTabs(
@@ -281,6 +416,9 @@ export function organizeBrowserTabs(
 		if (!plans.has(plan.key)) plans.set(plan.key, plan);
 		assignments.set(tab.id, plan.key);
 	}
+
+	assignTitleKeywordClusters(unpinnedTabs, assignments, plans);
+	pruneSingleTabGroups(assignments, plans);
 
 	const createdAt = now().toISOString();
 	const folderIds = new Map<string, string>();

@@ -415,7 +415,10 @@ try {
 	await page.locator("#new-tab-title").waitFor();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator("#new-tab-chat-input").waitFor();
-	assert.equal(await page.locator(".kestrel-home-model-selector summary").count(), 1);
+	assert.equal(
+		await page.getByRole("button", { name: "Open task settings" }).count(),
+		1,
+	);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
 	await assertBrowserChromeLayout();
 	const homeSend = page.getByRole("button", {
@@ -837,24 +840,27 @@ try {
 	const tabId = state.activeTabId;
 	assert(tabId);
 	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
-	await page.getByRole("button", { name: "Open chat in the full window" }).click();
+	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
-		.getByRole("heading", { name: "Agent Workspace", exact: true })
+		.getByRole("heading", { name: "Tasks", exact: true })
 		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
 	);
 	const taskRow = page.getByRole("button", {
-		name: /Visible browser test, Open, Conversation only/,
+		name: /Visible browser test, Open/,
 	});
 	await taskRow.waitFor();
 	await taskRow.click();
 	assert.equal(await taskRow.getAttribute("aria-current"), "page");
-	await page.getByRole("button", { name: "Back to Browser" }).click();
-	await waitForNativeView(
-		(value) => value.views[0]?.url === `${origin}/one`,
-		"Native page did not return after leaving Agent",
+	await page.getByRole("tab", { name: /Page one/ }).first().click();
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/one`;
+		},
+		"Browser did not return to Page one after leaving Agent",
 	);
 	const blocked = await callTool(
 		runtimeSessionId,
@@ -1341,19 +1347,19 @@ try {
 	);
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	await page
-		.getByRole("menuitem", { name: "Cluster related tabs", exact: true })
+		.getByRole("menuitem", { name: "Organize tabs", exact: true })
 		.click();
-	const organizeDialog = page.getByRole("dialog", { name: "Tab clusters" });
+	const organizeDialog = page.getByRole("dialog", { name: "Organize tabs" });
 	await organizeDialog.waitFor();
 	assert.equal(
 		await organizeDialog.getByText("Does this grouping fit?", { exact: true }).count(),
-		1,
+		0,
 	);
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over the organize tabs dialog",
 	);
-	await organizeDialog.getByRole("button", { name: "Close tab clusters" }).click();
+	await organizeDialog.getByRole("button", { name: "Close organize tabs" }).click();
 	await organizeDialog.waitFor({ state: "detached" });
 	assert.deepEqual(
 		(await browserState()).tabs.map((tab) => tab.id),
@@ -1366,14 +1372,14 @@ try {
 	);
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	await page
-		.getByRole("menuitem", { name: "Cluster related tabs", exact: true })
+		.getByRole("menuitem", { name: "Organize tabs", exact: true })
 		.click();
 	await organizeDialog.waitFor();
 	await organizeDialog.getByRole("button", { name: /^Edit / }).first().click();
-	await organizeDialog.getByLabel("Cluster name").fill("Local Pages");
+	await organizeDialog.getByLabel("Folder name").fill("Local Pages");
 	await organizeDialog.getByRole("button", { name: "Rose", exact: true }).click();
 	await organizeDialog.getByRole("button", { name: "Save", exact: true }).click();
-	await organizeDialog.getByRole("button", { name: "Apply clusters", exact: true }).click();
+	await organizeDialog.getByRole("button", { name: "Group tabs", exact: true }).click();
 	await organizeDialog.waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(value) => value.tabFolders.some((folder) => folder.name === "Local Pages"),

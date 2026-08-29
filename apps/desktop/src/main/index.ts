@@ -85,6 +85,7 @@ import { shouldCheckForUpdates, updaterFeedChannel } from "./update-channel";
 import {
   isTrustedRendererFrame,
   isTrustedRendererUrl,
+  openExternalSafely,
   protectRendererNavigation,
   trustedDevelopmentRendererUrl,
 } from "./renderer-security";
@@ -888,7 +889,9 @@ function paymentCardVault(): PaymentCardVault {
 function googleWorkspaceOAuthManager(): GoogleWorkspaceOAuthManager {
   return new GoogleWorkspaceOAuthManager({
     broker: credentialBroker(),
-    openExternal: (url) => shell.openExternal(url),
+    openExternal: (url) => {
+      openExternalSafely((target) => shell.openExternal(target), url);
+    },
   });
 }
 
@@ -990,7 +993,9 @@ async function subscriptionCliStatuses() {
       id === "codex" && path
         ? await new ChatGptOAuthManager({
             executable: path,
-            openExternal: (url) => shell.openExternal(url),
+            openExternal: (url) => {
+      openExternalSafely((target) => shell.openExternal(target), url);
+    },
           })
             .status()
             .catch((): ChatGptOAuthStatus => ({ connected: false }))
@@ -1743,7 +1748,7 @@ function createMainWindow(): BrowserWindow {
   if (userBrowserService) browserWindowServices.set(window, userBrowserService);
   deliverPendingWebUrls();
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    openExternalSafely((target) => shell.openExternal(target), url);
     return { action: "deny" };
   });
   window.webContents.session.setPermissionRequestHandler(
@@ -1881,7 +1886,7 @@ function createDetachedBrowserWindow(
   });
   browserWindowServices.set(window, service);
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    openExternalSafely((target) => shell.openExternal(target), url);
     return { action: "deny" };
   });
   protectRendererNavigation(window.webContents, trustedRendererUrl);
@@ -2984,7 +2989,7 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
-        browserState: requestBrowserService.applyTabOrganization(request),
+        browserState: await requestBrowserService.applyTabOrganization(request),
       };
     }
     if (request.type === "browser-detach-tab") {
@@ -3462,7 +3467,9 @@ function registerIpc(): void {
       const controller = new AbortController();
       const manager = new ChatGptOAuthManager({
         executable: codexPath,
-        openExternal: (url) => shell.openExternal(url),
+        openExternal: (url) => {
+      openExternalSafely((target) => shell.openExternal(target), url);
+    },
       });
       chatGptOAuthController = controller;
       activeChatGptOAuthManager = manager;

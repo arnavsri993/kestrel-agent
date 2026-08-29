@@ -40,6 +40,30 @@ describe("pre-response context resolver", () => {
 		expect(resolved.confirmed).toEqual([]);
 	});
 
+	it("includes category-less explicit captures in any category scope", () => {
+		const memories: MemoryRecord[] = [
+			{
+				...fixtureMemories[0]!,
+				id: "memory-explicit",
+				content: "Keep release notes in docs/release.md",
+				userConfirmed: true,
+				inferred: false,
+				structuredData: { capture: "explicit-command" },
+			},
+		];
+		const resolver = new PreResponseContextResolver(() => memories);
+		const resolved = resolver.resolve({
+			userMessage: "",
+			detectedIntent: "",
+			detectedEntities: [],
+			possibleContextCategories: ["projects"],
+			maximumRetrievedItems: 10,
+		});
+		expect(resolved.confirmed.map((item) => item.id)).toEqual([
+			"memory-explicit",
+		]);
+	});
+
 	it.each([
 		[Number.NaN, 0],
 		[Number.POSITIVE_INFINITY, 0],
