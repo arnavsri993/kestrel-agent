@@ -130,9 +130,11 @@ injection **on** for the active personality.
    cloud profile.
 5. **New chat recall** — Start a fresh agent chat with a prompt that should use
    the preference, for example: `Draft a one-line project status for the
-   audience.` When shared context is on, Kestrel may inject the stored
-   preference; call out the mechanism, not a guarantee that every model cites
-   it verbatim.
+   audience.` When shared context is on, Kestrel injects the stored preference
+   and shows an in-chat **recall receipt** under the assistant reply (for
+   example, `Used 1 memory · 1 confirmed preference from Life → Memory for this
+   reply.`). Point at that receipt as visible proof of recall—not a guarantee
+   that every model cites the preference verbatim in the draft itself.
 
 If explicit capture is off, the widget shows an empty state linking to
 Settings → Memory. Do not improvise a cloud sync story.
