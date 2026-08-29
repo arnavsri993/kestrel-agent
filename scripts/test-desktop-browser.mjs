@@ -851,10 +851,13 @@ try {
 	await taskRow.waitFor();
 	await taskRow.click();
 	assert.equal(await taskRow.getAttribute("aria-current"), "page");
-	await page.getByRole("button", { name: "Back to Browser" }).click();
-	await waitForNativeView(
-		(value) => value.views[0]?.url === `${origin}/one`,
-		"Native page did not return after leaving Agent",
+	await page.getByRole("tab", { name: /Page one/ }).first().click();
+	await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/one`;
+		},
+		"Browser did not return to Page one after leaving Agent",
 	);
 	const blocked = await callTool(
 		runtimeSessionId,
