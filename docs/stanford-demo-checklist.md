@@ -1,6 +1,6 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `00d2d0ed` (docs gate refresh #637 on `main`; engineering gate at `8757ffff` / #636)
+**Snapshot commit:** `80baae38` (engineering gate on `main` after #638 usage policy settings fix; docs refresh #637 at `00d2d0ed`)
 
 **Merged sprint:** #617–#637 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
@@ -9,11 +9,11 @@ Command Center smoke hardening (#632), in-chat memory recall receipt (#633),
 Writing Studio profile panel dual loading/error fix (#636), usage-policy settings
 loading/error fix (#638).
 
-**Overall verdict:** **NOT COMPLETE** — `verify:meetup` **PASS** at `8757ffff` (Aug 29,
-~198s) on engineering Mac; operator rehearsal, Apple signing, Google OAuth, and
+**Overall verdict:** **NOT COMPLETE** — `verify:meetup` **PASS** at `80baae38` (Aug 29,
+~196s) on engineering Mac; operator rehearsal, Apple signing, Google OAuth, and
 crash reporting remain open. Gate must pass again on the presentation Mac before the slot.
 
-**Engineering handoff (Aug 29, `00d2d0ed`):** Repository gates A1–A7 and A9 are
+**Engineering handoff (Aug 29, `80baae38`):** Repository gates A1–A7 and A9 are
 **COMPLETE** on the engineering Mac. Hero pillars B2–B3, first-task contract C1–C4/C6,
 memory surfacing D1/D3–D4/D7, and New Tab home E1–E5 are **COMPLETE** in repo. Remaining
 demo risk is **operator-only**: presentation Mac `verify:meetup`, canonical install,
@@ -46,7 +46,7 @@ or link, and an honest status as of the snapshot commit.
 | # | Requirement | Owner | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | A1 | Full `pnpm verify` passes (typecheck, 985+ unit tests, desktop smokes, e2e) | Engineering | `corepack pnpm verify` | **COMPLETE** — passed at `94924dac` (Aug 29, run 2, ~198s); run 1 (~95s) failed `test-desktop-setup.mjs` when dev watcher lock was active — kill `dev:desktop` and clear `kestrel-electron-dev.lock` before gating |
-| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **COMPLETE** — passed at `8757ffff` (Aug 29, ~198s): verify → assets → real local-ai → package → packaged smokes → packaged benchmark (#636 on `main`; 1001 unit tests) |
+| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **COMPLETE** — passed at `80baae38` (Aug 29, ~196s): verify → assets → real local-ai → package → packaged smokes → packaged benchmark (#638 on `main`; 1001 unit tests) |
 | A3 | Website assets validate | Engineering | `corepack pnpm assets:verify` | **COMPLETE** — passed in `94924dac` run 2 (3 registry entries, 7 manifests) |
 | A4 | Real local model response | Engineering | `corepack pnpm test:local-ai:real` | **COMPLETE** — passed in `94924dac` run 2 (Ollama 0.32.1, smollm2:135m) |
 | A5 | Apple Silicon dev package builds | Engineering | `corepack pnpm package:mac:dev` | **COMPLETE** — passed in `94924dac` run 2 (ad-hoc dev signature) |
@@ -122,7 +122,7 @@ or link, and an honest status as of the snapshot commit.
 
 Run in order on the **presentation Mac** the morning of the demo:
 
-- [ ] `git fetch` && checkout presentation commit (`00d2d0ed` or later on `main`)
+- [ ] `git fetch` && checkout presentation commit (`80baae38` or later on `main`)
 - [ ] `corepack pnpm install --frozen-lockfile`
 - [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present (**required** — `verify:meetup` now fails fast via preflight guard if either is still active)
 - [ ] `corepack pnpm verify:meetup` — **must pass**; preflight prints stop/clear instructions on failure; if a desktop smoke fails once after a clean preflight, retry once; if persistent, file engineering issue before relying on browser tools on stage
@@ -151,8 +151,9 @@ Run in order on the **presentation Mac** the morning of the demo:
 | `1ce93d0e` | Aug 29, 2026 | **PASS** (~198s) | Full `verify:meetup` on `main` after #634 checklist merge; preflight clean; 998 unit tests; packaged smokes + 50/50 benchmark |
 | `8757ffff` | Aug 29, 2026 | **FAIL** (~0.3s) | Preflight only — dev watcher + Electron dev lock still active; cleared `/var/folders/.../T/kestrel-electron-dev.lock` and killed `electron-vite dev`, then re-ran |
 | `8757ffff` | Aug 29, 2026 | **PASS** (~198s) | Full `verify:meetup` on `main` after #636 Writing Studio profile panel fix; preflight clean; 1001 unit tests; packaged smokes + 50/50 benchmark |
+| `80baae38` | Aug 29, 2026 | **PASS** (~196s) | Full `verify:meetup` on `main` after #638 usage policy settings loading/error fix; preflight clean after killing stray `dev:desktop`; 1001 unit tests; packaged smokes + 50/50 benchmark |
 
-**Engineering note:** #629 stabilized browser attach/detach. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear `/tmp/kestrel-electron-dev.lock` before gating. Latest engineering meetup **PASS** at `8757ffff` (~198s). #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected. #636 fixes Writing Studio profile panel showing dual loading/error states. #638 fixes Usage policy settings showing loading text alongside a load error.
+**Engineering note:** #629 stabilized browser attach/detach. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear `/tmp/kestrel-electron-dev.lock` before gating. Latest engineering meetup **PASS** at `80baae38` (~196s). #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected. #636 fixes Writing Studio profile panel showing dual loading/error states. #638 fixes Usage policy settings showing loading text alongside a load error.
 
 ---
 
