@@ -198,6 +198,16 @@ export function BrowserWorkspace({
     void setContentBounds(bounds, nativePageVisible).catch(() => undefined);
   }, [nativePageVisible, setContentBounds]);
 
+  const scheduleBoundsSync = useCallback(() => {
+    syncBounds();
+    window.requestAnimationFrame(() => {
+      syncBounds();
+      for (const delay of [100, 320, 400]) {
+        window.setTimeout(syncBounds, delay);
+      }
+    });
+  }, [syncBounds]);
+
   useLayoutEffect(() => {
     const node = viewportRef.current;
     if (!node) return;
@@ -207,13 +217,6 @@ export function BrowserWorkspace({
     const mutationObserver = new MutationObserver(syncBounds);
     if (root) mutationObserver.observe(root, { childList: true });
     const appShell = node.closest(".ai-browser-app");
-    const scheduleBoundsSync = () => {
-      syncBounds();
-      window.requestAnimationFrame(() => {
-        syncBounds();
-        window.setTimeout(syncBounds, 100);
-      });
-    };
     const shellObserver = new MutationObserver(scheduleBoundsSync);
     if (appShell) {
       shellObserver.observe(appShell, {
@@ -223,6 +226,15 @@ export function BrowserWorkspace({
         subtree: true,
       });
     }
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (
+        event.target === node &&
+        (event.propertyName === "width" || event.propertyName === "margin-left")
+      ) {
+        scheduleBoundsSync();
+      }
+    };
+    node.addEventListener("transitionend", onTransitionEnd);
     window.addEventListener("resize", syncBounds);
     const frame = window.requestAnimationFrame(syncBounds);
     const settleTimer = window.setTimeout(syncBounds, 320);
@@ -231,6 +243,7 @@ export function BrowserWorkspace({
       observer.disconnect();
       mutationObserver.disconnect();
       shellObserver.disconnect();
+      node.removeEventListener("transitionend", onTransitionEnd);
       window.removeEventListener("resize", syncBounds);
       window.cancelAnimationFrame(frame);
       window.clearTimeout(settleTimer);
@@ -239,7 +252,15 @@ export function BrowserWorkspace({
         () => undefined,
       );
     };
-  }, [setContentBounds, syncBounds]);
+  }, [setContentBounds, scheduleBoundsSync, syncBounds]);
+
+  useEffect(() => {
+    scheduleBoundsSync();
+  }, [nativePageVisible, scheduleBoundsSync]);
+
+  useLayoutEffect(() => {
+    syncBounds();
+  }, [openChromeMenus, organizeTabsPreview, syncBounds]);
 
   useEffect(
     () =>
