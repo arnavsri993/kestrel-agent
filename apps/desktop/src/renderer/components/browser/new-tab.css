@@ -180,7 +180,9 @@
   color: var(--ink-secondary);
 }
 
-.kestrel-home-task-settings {
+.kestrel-home-model-selector {
+  position: relative;
+  z-index: 10;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -199,52 +201,12 @@
     color var(--motion-feedback) var(--ease-kestrel);
 }
 
-.kestrel-home-task-settings:hover {
+.kestrel-home-model-selector:hover {
   background: var(--surface-strong);
   color: var(--ink);
 }
 
-.kestrel-home-task-settings svg {
-  width: 13px;
-  height: 13px;
-  color: var(--muted);
-}
-
-.kestrel-home-model-selector {
-  position: relative;
-  z-index: 10;
-  flex: 0 0 auto;
-}
-
-.kestrel-home-model-selector summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  color: var(--ink-secondary);
-  font-size: 12.5px;
-  font-weight: 600;
-  list-style: none;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-feedback) var(--ease-kestrel),
-    color var(--motion-feedback) var(--ease-kestrel);
-}
-
-.kestrel-home-model-selector summary::-webkit-details-marker {
-  display: none;
-}
-
-.kestrel-home-model-selector summary:hover,
-.kestrel-home-model-selector[open] summary {
-  background: var(--surface-strong);
-  color: var(--ink);
-}
-
-.kestrel-home-model-selector summary svg {
+.kestrel-home-model-selector svg {
   width: 13px;
   height: 13px;
   color: var(--muted);
@@ -591,8 +553,7 @@
 /* Focus visibility — white is the focus accent. */
 .kestrel-home-shortcut:focus-visible,
 .kestrel-home-action:focus-visible,
-.kestrel-home-task-settings:focus-visible,
-.kestrel-home-model-selector summary:focus-visible,
+.kestrel-home-model-selector:focus-visible,
 .kestrel-home-model-popover button:focus-visible,
 .kestrel-home-send:focus-visible {
   outline: 2px solid var(--solid);
@@ -661,7 +622,7 @@
   }
 
   .kestrel-home-composer,
-  .kestrel-home-model-selector summary,
+  .kestrel-home-model-selector,
   .kestrel-home-model-popover button,
   .kestrel-home-send,
   .kestrel-home-shortcut,
