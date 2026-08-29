@@ -525,6 +525,17 @@ body:has(.ai-browser-app),
 	margin: 0;
 	white-space: pre-wrap;
 }
+
+.agent-conversation-host .memory-capture-confirmation {
+	margin: 6px 0 0;
+	padding: 8px 10px;
+	border-radius: var(--radius-sm);
+	background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+	color: var(--ink-secondary);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
 .agent-conversation-host .work-summary {
 	margin: 8px 0;
 	padding: 6px 8px;

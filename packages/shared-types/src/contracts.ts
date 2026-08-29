@@ -2899,6 +2899,7 @@ export const NEW_TAB_WIDGET_IDS = [
 	"bookmarks",
 	"downloads",
 	"recent-work",
+	"recent-memories",
 	"quick-actions",
 	"open-tabs",
 	"pinned-tabs",
@@ -2908,6 +2909,7 @@ export const NEW_TAB_WIDGET_IDS = [
 export const DEFAULT_NEW_TAB_WIDGET_IDS = [
 	"frequent-tabs",
 	"recent-work",
+	"recent-memories",
 	"quick-actions",
 ] as const;
 

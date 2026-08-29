@@ -4,6 +4,8 @@ import type {
 	NewTabWidgetLayoutItem,
 	NewTabWidgetSettings,
 	NewTabWidgetSize,
+	MemoryRecord,
+	MemoryRecallStatus,
 	RuntimeSession,
 	UserBrowserBookmark,
 	UserBrowserDownload,
@@ -53,10 +55,13 @@ type WidgetContext = {
 	>[];
 	sessions: RuntimeSession[];
 	suggestedActions: SuggestedAgentAction[];
+	memories: MemoryRecord[];
+	memoryRecall: MemoryRecallStatus;
 	agentName: string;
 	onNavigate(input: string): void;
 	onOpenTab(tabId: string): void;
 	onNewAgent(prompt?: string): void;
+	onOpenLifeMemory?(): void;
 	onOpenSession?: ((sessionId: string) => void) | undefined;
 	onOpenHistory(): void;
 	onOpenDownloads(): void;
@@ -333,6 +338,78 @@ function RecentWorkWidget({
 	);
 }
 
+function RecentMemoriesWidget({
+	memories,
+	size,
+	memoryRecall,
+	onOpenLifeMemory,
+	onNewAgent,
+}: Pick<
+	WidgetContext,
+	"memories" | "memoryRecall" | "onOpenLifeMemory" | "onNewAgent"
+> & {
+	size: NewTabWidgetSize;
+}) {
+	const items = useMemo(
+		() =>
+			memories
+				.filter((memory) => memory.status === "active")
+				.slice()
+				.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+				.slice(0, visibleItemCount(size)),
+		[memories, size],
+	);
+	if (items.length === 0) {
+		const emptyAction = memoryRecall.explicitCapture
+			? {
+					label: "Try a remember command",
+					onClick: () =>
+						onNewAgent("Remember that I prefer concise status updates"),
+				}
+			: onOpenLifeMemory
+				? { label: "Open Life → Memory", onClick: onOpenLifeMemory }
+				: undefined;
+		return (
+			<EmptyWidgetState
+				icon="memory"
+				{...(emptyAction ? { action: emptyAction } : {})}
+			>
+				{memoryRecall.explicitCapture
+					? "Say remember that … in chat to store a preference on this Mac."
+					: "Explicit memory capture is off in Settings → Memory."}
+			</EmptyWidgetState>
+		);
+	}
+	return (
+		<ul className="kestrel-widget-list">
+			{items.map((memory) => (
+				<li key={memory.id}>
+					<button
+						type="button"
+						onClick={() => onOpenLifeMemory?.()}
+						title={memory.content}
+					>
+						<span className="kestrel-widget-list-icon" aria-hidden="true">
+							<Icon name="memory" />
+						</span>
+						<span>
+							<strong>{widgetText(memory.subject ?? memory.content, 38)}</strong>
+							<small>
+								{memory.confirmationStatus === "explicit" ||
+								memory.userConfirmed
+									? "Confirmed"
+									: "Inferred"}{" "}
+								· {agentSessionRecency(memory.updatedAt)}
+							</small>
+						</span>
+						<Icon name="forward" />
+					</button>
+				</li>
+			))}
+		</ul>
+	);
+}
+
 function QuickActionsWidget({
 	suggestedActions,
 	size,
@@ -485,6 +562,8 @@ function WidgetBody({
 			return <DownloadsWidget {...context} />;
 		case "recent-work":
 			return <RecentWorkWidget {...context} />;
+		case "recent-memories":
+			return <RecentMemoriesWidget {...context} />;
 		case "quick-actions":
 			return <QuickActionsWidget {...context} />;
 		case "open-tabs":

@@ -147,6 +147,39 @@
   color: var(--muted);
 }
 
+.new-tab-memory-recall {
+  display: grid;
+  gap: 4px;
+  max-width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
+  text-align: left;
+}
+
+.new-tab-memory-recall-icon {
+  display: none;
+}
+
+.new-tab-memory-recall strong {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.new-tab-memory-recall small {
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.new-tab-memory-recall em {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
 .kestrel-home-task-settings {
   display: inline-flex;
   align-items: center;

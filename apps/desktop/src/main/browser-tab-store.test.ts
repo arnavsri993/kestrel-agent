@@ -505,7 +505,7 @@ describe("browser tab persistence", () => {
 		writeFileSync(path, `${JSON.stringify(malformed, null, 2)}\n`, "utf8");
 		expect(store.load().settings.newTabWidgets).toMatchObject({
 			version: 1,
-			enabled: ["frequent-tabs", "recent-work", "quick-actions"],
+			enabled: ["frequent-tabs", "recent-work", "recent-memories", "quick-actions"],
 			layouts: {},
 		});
 	});

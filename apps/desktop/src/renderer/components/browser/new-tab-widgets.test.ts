@@ -40,8 +40,10 @@ describe("New Tab widget layout model", () => {
 		expect(DEFAULT_NEW_TAB_WIDGET_IDS).toEqual([
 			"frequent-tabs",
 			"recent-work",
+			"recent-memories",
 			"quick-actions",
 		]);
+		expect(NEW_TAB_WIDGET_DEFINITIONS["recent-memories"]?.icon).toBe("memory");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["open-tabs"]?.defaultSize).toBe("medium");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["pinned-tabs"]?.icon).toBe("pin");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["recent-pages"]?.description).toContain(
@@ -65,6 +67,7 @@ describe("New Tab widget layout model", () => {
 			{ id: "frequent-tabs", size: "small" },
 			{ id: "bookmarks", size: "medium" },
 			{ id: "downloads", size: "small" },
+			{ id: "recent-memories", size: "medium" },
 			{ id: "quick-actions", size: "medium" },
 			{ id: "open-tabs", size: "medium" },
 			{ id: "pinned-tabs", size: "small" },

@@ -91,6 +91,15 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 		defaultSize: "medium",
 		priority: 40,
 	},
+	"recent-memories": {
+		id: "recent-memories",
+		title: "Recent memories",
+		description: "Facts Kestrel keeps for future chats",
+		icon: "memory",
+		supportedSizes: ["small", "medium", "large"],
+		defaultSize: "medium",
+		priority: 45,
+	},
 	"quick-actions": {
 		id: "quick-actions",
 		title: "Suggested next steps",

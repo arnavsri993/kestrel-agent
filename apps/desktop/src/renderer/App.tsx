@@ -55,6 +55,7 @@ import type {
 	WorkspaceGrant,
 	WorkspaceSnapshot,
 } from "@kestrel/shared-types";
+import { parseExplicitMemoryCapture } from "@kestrel/shared-types";
 import {
 	AnimatePresence,
 	LayoutGroup,
@@ -3958,6 +3959,12 @@ function RuntimeConversation({
 						message.role === "user" ? (
 							<div className="user-message" key={message.id}>
 								<p>{message.content}</p>
+								{parseExplicitMemoryCapture(message.content) && (
+									<p className="memory-capture-confirmation" role="status">
+										Saved to Life → Memory. Future chats can use this when shared
+										context is on.
+									</p>
+								)}
 							</div>
 						) : message.role === "assistant" ? (
 							<div className="assistant-message" key={message.id}>
@@ -9597,6 +9604,20 @@ export function App() {
 						sessions={runtimeSessions}
 						onOpenSession={openSidebarSession}
 						organizeTabsRequestId={organizeTabsRequestId}
+						memories={snapshot?.memories ?? []}
+						memoryRecall={
+							snapshot?.memoryRecall ?? {
+								chatInjection: "off",
+								activeMemories: 0,
+								confirmedPreferences: 0,
+								explicitCapture: true,
+								personalityScope: "shared",
+								personalityName: activeAgentName,
+								useSharedContext: true,
+								offReason: "Loading memory status…",
+							}
+						}
+						onOpenLifeMemory={() => void openAppPage("memory")}
 						{...(appPage ? { appPage } : {})}
 					/>
 				</section>
