@@ -174,7 +174,7 @@ export function validateNewTabGreeting(value: unknown): string | undefined {
 
 export function newTabGreetingFallback(name?: string): string {
 	const firstName = safeNewTabGreetingName(name);
-	return firstName ? `Hello, ${firstName}.` : "Hello.";
+	return firstName ? `Hello, ${firstName}.` : "What can I help with?";
 }
 
 export function emptyNewTabGreetingActivity(): NewTabGreetingActivity {

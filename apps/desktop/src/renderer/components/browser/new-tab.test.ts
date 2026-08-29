@@ -210,7 +210,9 @@ describe("new tab contextual greetings", () => {
       newTabGreetingActivityProfile(activity, localTime(22, 40)).todayVisit,
     ).toBe("returning-today");
 		expect(newTabGreetingFallback("Arnav Srivastava")).toBe("Hello, Arnav.");
-		expect(newTabGreetingFallback("Arnav <private@example.com>")).toBe("Hello.");
+		expect(newTabGreetingFallback("Arnav <private@example.com>")).toBe(
+			"What can I help with?",
+		);
 	});
 
 	it("uses visit frequency without retaining visit details", () => {
