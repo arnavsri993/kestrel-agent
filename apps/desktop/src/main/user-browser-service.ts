@@ -826,6 +826,7 @@ export class UserBrowserService {
 	private paymentPromptKey = "";
 	private paymentPrompt: PaymentPrompt | undefined;
 	private readonly paymentPromptSuppressedUntil = new Map<string, number>();
+	private readonly agentTabPinCounts = new Map<string, number>();
 
 	constructor(options: UserBrowserServiceOptions) {
 		this.window = options.window;
@@ -1032,6 +1033,11 @@ export class UserBrowserService {
 	}
 
 	async closeTab(tabId: string): Promise<UserBrowserState> {
+		if (this.isAgentTabPinned(tabId)) {
+			throw new Error(
+				"Browser tab is in use by an agent operation and cannot be closed.",
+			);
+		}
 		const tab = this.requireTab(tabId);
 		if (tabId === this.state.activeTabId) {
 			this.clearPasswordPrompt();
@@ -1048,6 +1054,7 @@ export class UserBrowserService {
 		}
 		const index = this.state.tabs.findIndex((item) => item.id === tabId);
 		this.closeView(tabId);
+		this.agentTabPinCounts.delete(tabId);
 		this.state.tabs.splice(index, 1);
 		if (this.state.tabs.length === 0) {
 			this.state.activeTabId = null;
@@ -1652,9 +1659,11 @@ export class UserBrowserService {
 	}
 
 	async pageContext(tabId?: string): Promise<UserBrowserPageContext> {
-		const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
-		if (!tab.url || tab.error || isKestrelAppPageUrl(tab.url))
-			throw new Error("The selected tab does not have a readable web page.");
+		const resolvedTabId = tabId ?? this.requireActiveTab().id;
+		return this.withAgentTabPin(resolvedTabId, async () => {
+			const tab = this.requireTab(resolvedTabId);
+			if (!tab.url || tab.error || isKestrelAppPageUrl(tab.url))
+				throw new Error("The selected tab does not have a readable web page.");
 		const record = this.ensureView(tab);
 		const raw = (await record.view.webContents.executeJavaScript(`(() => {
       const limit = (value, maximum) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, maximum);
@@ -1737,6 +1746,7 @@ export class UserBrowserService {
 			viewport: raw.viewport,
 			capturedAt: this.now().toISOString(),
 			trust: "untrusted_browser",
+		});
 		});
 	}
 
@@ -2274,8 +2284,10 @@ export class UserBrowserService {
 		tabId?: string,
 		signal?: AbortSignal,
 	): Promise<BrowserSnapshot> {
-		const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
-		const webContents = this.ensureView(tab).view.webContents;
+		const resolvedTabId = tabId ?? this.requireActiveTab().id;
+		return this.withAgentTabPin(resolvedTabId, async () => {
+			const tab = this.requireTab(resolvedTabId);
+			const webContents = this.ensureView(tab).view.webContents;
 		if (signal?.aborted) throw signal.reason;
 		const url =
 			sanitizeBrowserUrl(webContents.getURL()) ||
@@ -2327,6 +2339,7 @@ export class UserBrowserService {
 				nodes.length > MAX_AX_SNAPSHOT_NODES ||
 				annotated.interactive.length > MAX_INTERACTIVE_REFS,
 		};
+		});
 	}
 
 	searchHistory(
@@ -2374,50 +2387,53 @@ export class UserBrowserService {
 		tabId?: string,
 		signal?: AbortSignal,
 	): Promise<ScreenshotFrame> {
-		const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
-		let lastError: Error | undefined;
-		for (let attempt = 0; attempt < 8; attempt++) {
-			if (signal?.aborted) throw signal.reason;
-			await this.syncActiveView();
-			const record = this.ensureView(tab);
-			const view = record.view;
-			const webContents = view.webContents;
-			if (
-				!this.contentVisible ||
-				!this.window.contentView.children.includes(view)
-			) {
-				lastError = new Error(
-					"Active browser view is not attached for screenshot.",
-				);
-				await new Promise<void>((resolve) => setTimeout(resolve, 50));
-				continue;
-			}
-			try {
-				const image = await webContents.capturePage();
-				const { width, height } = image.getSize();
-				if (width < 1 || height < 1) {
-					throw new Error("Screenshot capture returned an empty frame.");
+		const resolvedTabId = tabId ?? this.requireActiveTab().id;
+		return this.withAgentTabPin(resolvedTabId, async () => {
+			const tab = this.requireTab(resolvedTabId);
+			let lastError: Error | undefined;
+			for (let attempt = 0; attempt < 8; attempt++) {
+				if (signal?.aborted) throw signal.reason;
+				await this.syncActiveView();
+				const record = this.ensureView(tab);
+				const view = record.view;
+				const webContents = view.webContents;
+				if (
+					!this.contentVisible ||
+					!this.window.contentView.children.includes(view)
+				) {
+					lastError = new Error(
+						"Active browser view is not attached for screenshot.",
+					);
+					await new Promise<void>((resolve) => setTimeout(resolve, 50));
+					continue;
 				}
-				const bgra = image.toBitmap();
-				const rgba = new Uint8Array(bgra.byteLength);
-				for (let offset = 0; offset < bgra.length; offset += 4) {
-					rgba[offset] = bgra[offset + 2]!;
-					rgba[offset + 1] = bgra[offset + 1]!;
-					rgba[offset + 2] = bgra[offset]!;
-					rgba[offset + 3] = bgra[offset + 3]!;
+				try {
+					const image = await webContents.capturePage();
+					const { width, height } = image.getSize();
+					if (width < 1 || height < 1) {
+						throw new Error("Screenshot capture returned an empty frame.");
+					}
+					const bgra = image.toBitmap();
+					const rgba = new Uint8Array(bgra.byteLength);
+					for (let offset = 0; offset < bgra.length; offset += 4) {
+						rgba[offset] = bgra[offset + 2]!;
+						rgba[offset + 1] = bgra[offset + 1]!;
+						rgba[offset + 2] = bgra[offset]!;
+						rgba[offset + 3] = bgra[offset + 3]!;
+					}
+					return { width, height, rgba, png: image.toPNG() };
+				} catch (cause) {
+					lastError =
+						cause instanceof Error
+							? cause
+							: new Error("Visible browser screenshot capture failed.");
+					await new Promise<void>((resolve) => setTimeout(resolve, 50));
 				}
-				return { width, height, rgba, png: image.toPNG() };
-			} catch (cause) {
-				lastError =
-					cause instanceof Error
-						? cause
-						: new Error("Visible browser screenshot capture failed.");
-				await new Promise<void>((resolve) => setTimeout(resolve, 50));
 			}
-		}
-		throw (
-			lastError ?? new Error("Visible browser screenshot capture failed.")
-		);
+			throw (
+				lastError ?? new Error("Visible browser screenshot capture failed.")
+			);
+		});
 	}
 
 	async act(
@@ -2425,7 +2441,8 @@ export class UserBrowserService {
 		action: BrowserAction,
 		signal: AbortSignal,
 	): Promise<void> {
-		const record = this.ensureView(this.requireTab(tabId));
+		return this.withAgentTabPin(tabId, async () => {
+			const record = this.ensureView(this.requireTab(tabId));
 		const webContents = record.view.webContents;
 		if (signal.aborted) throw signal.reason;
 		if (action.type === "click") {
@@ -2485,6 +2502,7 @@ export class UserBrowserService {
 			});
 		}
 		await this.syncActiveView();
+		});
 	}
 
 	async handleAgentRequest(
@@ -2492,6 +2510,23 @@ export class UserBrowserService {
 		signal: AbortSignal,
 	): Promise<unknown> {
 		if (signal.aborted) throw signal.reason;
+		const tabId = "tabId" in request ? request.tabId : undefined;
+		if (
+			tabId &&
+			(request.operation === "visible-navigate" ||
+				request.operation === "visible-select")
+		) {
+			return this.withAgentTabPin(tabId, () =>
+				this.dispatchAgentRequest(request, signal),
+			);
+		}
+		return this.dispatchAgentRequest(request, signal);
+	}
+
+	private async dispatchAgentRequest(
+		request: UserBrowserBackendWireRequest,
+		signal: AbortSignal,
+	): Promise<unknown> {
 		switch (request.operation) {
 			case "visible-tabs":
 				return this.getState().tabs.map((tab) => ({
@@ -2545,7 +2580,8 @@ export class UserBrowserService {
 	}
 
 	sleepTab(tabId: string): UserBrowserState {
-		if (tabId === this.state.activeTabId) return this.getState();
+		if (tabId === this.state.activeTabId || this.isAgentTabPinned(tabId))
+			return this.getState();
 		const tab = this.requireTab(tabId);
 		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
 		this.closeView(tabId);
@@ -2558,6 +2594,7 @@ export class UserBrowserService {
 		for (const tab of this.state.tabs) {
 			if (
 				tab.id === this.state.activeTabId ||
+				this.isAgentTabPinned(tab.id) ||
 				!tab.url ||
 				tab.discarded ||
 				isKestrelAppPageUrl(tab.url)
@@ -2595,6 +2632,7 @@ export class UserBrowserService {
 		for (const tab of this.state.tabs) {
 			if (
 				tab.id === this.state.activeTabId ||
+				this.isAgentTabPinned(tab.id) ||
 				!tab.url ||
 				tab.discarded ||
 				isKestrelAppPageUrl(tab.url)
@@ -3254,7 +3292,10 @@ export class UserBrowserService {
 		if (this.views.size <= MAX_LIVE_TABS) return;
 		const candidates = this.state.tabs
 			.filter(
-				(tab) => tab.id !== this.state.activeTabId && this.views.has(tab.id),
+				(tab) =>
+					tab.id !== this.state.activeTabId &&
+					!this.isAgentTabPinned(tab.id) &&
+					this.views.has(tab.id),
 			)
 			.sort((left, right) =>
 				left.lastActiveAt.localeCompare(right.lastActiveAt),
@@ -3282,6 +3323,36 @@ export class UserBrowserService {
 			if (record.view.webContents.debugger.isAttached())
 				record.view.webContents.debugger.detach();
 			record.view.webContents.close({ waitForBeforeUnload: false });
+		}
+	}
+
+
+	private isAgentTabPinned(tabId: string): boolean {
+		return (this.agentTabPinCounts.get(tabId) ?? 0) > 0;
+	}
+
+	private pinAgentTab(tabId: string): void {
+		this.agentTabPinCounts.set(
+			tabId,
+			(this.agentTabPinCounts.get(tabId) ?? 0) + 1,
+		);
+	}
+
+	private unpinAgentTab(tabId: string): void {
+		const next = (this.agentTabPinCounts.get(tabId) ?? 0) - 1;
+		if (next <= 0) this.agentTabPinCounts.delete(tabId);
+		else this.agentTabPinCounts.set(tabId, next);
+	}
+
+	private async withAgentTabPin<T>(
+		tabId: string,
+		fn: () => Promise<T>,
+	): Promise<T> {
+		this.pinAgentTab(tabId);
+		try {
+			return await fn();
+		} finally {
+			this.unpinAgentTab(tabId);
 		}
 	}
 
