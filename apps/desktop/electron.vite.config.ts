@@ -3,6 +3,10 @@ import { join, resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import type { Plugin } from "vite";
+import {
+	createRendererCspNonce,
+	rendererCspNoncePlugin,
+} from "./vite-plugins/renderer-csp-nonce";
 
 const workspacePackages = [
 	"@kestrel/agent-core",
@@ -49,6 +53,8 @@ const __dirname = import.meta.dirname;
 const require = __cjs_mod__.createRequire(import.meta.url);
 `;
 
+const rendererCspNonce = createRendererCspNonce();
+
 export default defineConfig({
 	main: {
 		plugins: [
@@ -83,6 +89,11 @@ export default defineConfig({
 	},
 	renderer: {
 		root: resolve(__dirname, "src/renderer"),
-		plugins: [react()],
+		plugins: [react(), rendererCspNoncePlugin(rendererCspNonce)],
+		html: {
+			// Per dev-server start / production build. Static in packaged file:// output;
+			// still blocks naive inline script injection without the matching nonce attribute.
+			cspNonce: rendererCspNonce,
+		},
 	},
 });
