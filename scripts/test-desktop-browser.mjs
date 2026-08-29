@@ -432,6 +432,24 @@ async function createRuntimeSessionWithVisibleBrowser() {
 	});
 }
 
+async function waitForRuntimeRunsToSettle(sessionId) {
+	const settled = await page.waitForFunction(async (id) => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-runs",
+			sessionId: id,
+		});
+		if (!response.ok || !("runs" in response)) return false;
+		const runs = response.runs ?? [];
+		return (
+			runs.length > 0 &&
+			runs.every((run) =>
+				["completed", "failed", "cancelled"].includes(run.status),
+			)
+		);
+	}, sessionId);
+	await settled.dispose();
+}
+
 async function callTool(sessionId, toolName, input, options = {}) {
 	return page.evaluate(
 		async ({ sessionId, toolName, input, options }) => {
@@ -473,13 +491,13 @@ try {
 	});
 	assert.equal(await homeSend.isDisabled(), true);
 	const homePrompt = "Start with the smallest useful fix.";
-	const homeSessionsBefore = await page.evaluate(async () => {
+	const homeSessionIdsBefore = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
 			type: "runtime-list-sessions",
 		});
 		return response.ok && "sessions" in response
-			? (response.sessions ?? []).length
-			: -1;
+			? (response.sessions ?? []).map((session) => session.id)
+			: [];
 	});
 	await page.locator("#new-tab-chat-input").fill(homePrompt);
 	await homeSend.click();
@@ -490,10 +508,21 @@ try {
 		return (
 			response.ok &&
 			"sessions" in response &&
-			(response.sessions ?? []).length === expected
+			(response.sessions ?? []).length === expected.length + 1
 		);
-	}, homeSessionsBefore + 1);
+	}, homeSessionIdsBefore);
 	assert.equal(await page.locator("#runtime-prompt").inputValue(), "");
+	const homeSessionId = await page.evaluate(async (existingIds) => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-sessions",
+		});
+		if (!response.ok || !("sessions" in response)) return null;
+		return (
+			response.sessions ?? []
+		).find((session) => !existingIds.includes(session.id))?.id ?? null;
+	}, homeSessionIdsBefore);
+	assert(homeSessionId, "The home task did not expose its new runtime session.");
+	await waitForRuntimeRunsToSettle(homeSessionId);
 	const homeSessionsAfter = await page.evaluate(async () => {
 		const response = await window.kestrel.request({
 			type: "runtime-list-sessions",
@@ -502,7 +531,7 @@ try {
 			? (response.sessions ?? []).length
 			: -1;
 	});
-	assert.equal(homeSessionsAfter, homeSessionsBefore + 1);
+	assert.equal(homeSessionsAfter, homeSessionIdsBefore.length + 1);
 	await page
 		.locator(".kestrel-sidebar")
 		.getByRole("button", { name: "New task" })
