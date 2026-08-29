@@ -60,20 +60,17 @@ jobs:
       - run: corepack pnpm test
       - run: corepack pnpm test:desktop-smoke
       - run: corepack pnpm test:desktop-restart-recovery
+      - run: corepack pnpm test:desktop-writing-studio
+      - run: corepack pnpm test:desktop-browser
       - run: corepack pnpm test:desktop-setup
+      - run: corepack pnpm test:desktop-fresh-profile
+      - run: corepack pnpm test:desktop-personas
       - run: corepack pnpm test:desktop-kanban
       - run: corepack pnpm test:desktop-model-routing
       - run: corepack pnpm test:desktop-readiness
       - run: corepack pnpm test:desktop-external-secrets
       - run: corepack pnpm test:desktop-observability
       - run: corepack pnpm test:desktop-life-context
-      - run: corepack pnpm test:desktop-ambient
-      - run: corepack pnpm test:desktop-skins
-      - run: corepack pnpm test:desktop-dashboard-extensions
-      - run: corepack pnpm test:desktop-honcho-memory
-      - run: corepack pnpm test:desktop-widgets
-      - run: corepack pnpm test:desktop-events
-      - run: corepack pnpm test:desktop-personas
       - run: corepack pnpm test:desktop-approvals
       - run: corepack pnpm test:desktop-chat-configuration
       - run: corepack pnpm test:desktop-managed-policy

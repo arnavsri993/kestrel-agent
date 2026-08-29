@@ -1,4 +1,5 @@
 export async function openKestrelDestination(page, label) {
+	await page.locator("#runtime-prompt").waitFor({ state: "attached" });
 	const capabilities = page.getByRole("button", {
 		name: "Capabilities and commands",
 		exact: true,
@@ -16,5 +17,5 @@ export async function openKestrelDestination(page, label) {
 		.filter({ has: page.getByText(label, { exact: true }) })
 		.first();
 	await destination.waitFor();
-	await destination.click();
+	await destination.evaluate((button) => button.click());
 }

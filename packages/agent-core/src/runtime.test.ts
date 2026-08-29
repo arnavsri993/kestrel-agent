@@ -109,6 +109,72 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it("journals a trusted execution block without running or offering approval", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Trusted execution block" });
+		let executions = 0;
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.visible-act",
+				title: "Visible browser mutation",
+				description: "Exercise an enforced browser recovery block.",
+				category: "browser",
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => {
+				executions += 1;
+				return { mutated: true };
+			},
+		});
+		runtime.allowTool(session.id, "browser.visible-act");
+		runtime.setToolPolicyResolver(() => {
+			throw new Error("The configurable policy must not outrank a trusted block.");
+		});
+
+		const blocked = await runtime.callTool(
+			session.id,
+			"browser.visible-act",
+			{},
+			{
+				approvalStatus: "approved",
+				idempotencyKey: "recovery-block",
+				executionBlock: {
+					reason: "The bounded recovery budget is exhausted.",
+					output: {
+						approvalRequired: true,
+						persistentApprovalAllowed: true,
+						recoveryBudget: {
+							phase: "stop_required",
+							mutationBlocked: true,
+						},
+					},
+				},
+			},
+		);
+
+		expect(blocked).toMatchObject({
+			status: "blocked",
+			error: "The bounded recovery budget is exhausted.",
+			output: {
+				approvalRequired: false,
+				persistentApprovalAllowed: false,
+				recoveryBudget: {
+					phase: "stop_required",
+					mutationBlocked: true,
+				},
+			},
+		});
+		expect(executions).toBe(0);
+		expect(database.listToolExecutions(session.id)).toEqual([blocked]);
+		database.close();
+	});
+
 	it("recovers from malformed persisted main-session identity", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		database.setState("runtimeMainSessionId", { id: "not-a-session-id" });

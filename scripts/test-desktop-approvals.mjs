@@ -33,11 +33,19 @@ try {
 
 	await openKestrelDestination(page, "Approvals");
 	await page.getByRole("heading", { name: "Review this action" }).waitFor();
+	await page.waitForFunction(
+		() => document.activeElement?.textContent?.trim() === "Review this action",
+	);
 
 	const edit = page.getByRole("button", { name: "Edit", exact: true });
 	await edit.click();
 	const messageBody = page.getByRole("textbox", { name: "Message body" });
 	await messageBody.waitFor();
+	await page.waitForFunction(
+		() =>
+			document.activeElement ===
+			document.querySelector(".edit-field textarea"),
+	);
 	assert.equal(
 		await messageBody.evaluate((field) => document.activeElement === field),
 		true,

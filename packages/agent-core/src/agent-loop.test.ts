@@ -9,6 +9,10 @@ import {
 	LOCAL_FIRST_TOOL_INSTRUCTIONS,
 	SessionRunBusyError,
 } from "./agent-loop";
+import {
+	toBrowserRecoveryError,
+	type BrowserRecoveryBudgetState,
+} from "./browser-recovery";
 import { ContextCompactor } from "./context-compactor";
 import {
 	contentText,
@@ -2288,6 +2292,216 @@ describe("provider-neutral agent loop", () => {
 				.listToolExecutions(session.id)
 				.map((execution) => execution.status),
 		).toEqual(["verified", "blocked"]);
+		database.close();
+	});
+
+	it("enforces one observed browser retry and blocks the surface after exhaustion", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Browser recovery budget" });
+		let mutationExecutions = 0;
+		let snapshotExecutions = 0;
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.visible-act",
+				title: "Visible browser action",
+				description: "Fail with a typed stale-target recovery fixture.",
+				category: "browser",
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: {
+				type: "object",
+				properties: { attempt: { type: "string" } },
+				required: ["attempt"],
+				additionalProperties: false,
+			},
+			execute: async () => {
+				mutationExecutions += 1;
+				throw toBrowserRecoveryError(
+					new Error(
+						"Browser target ref is stale. PRIVATE-PAGE-CONTENT must stay out of recovery state.",
+					),
+					{
+						operation: "act",
+						surface: "visible",
+						effectState: "not_started",
+					},
+				)!;
+			},
+		});
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.visible-snapshot",
+				title: "Visible browser snapshot",
+				description: "Take a fresh read-only browser observation.",
+				category: "browser",
+				riskLevel: "read_only",
+				readOnly: true,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["browser", "test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => {
+				snapshotExecutions += 1;
+				return { observed: true };
+			},
+		});
+		runtime.allowTools(session.id, [
+			"browser.visible-act",
+			"browser.visible-snapshot",
+		]);
+
+		let providerCalls = 0;
+		const provider: ModelProvider = {
+			id: "browser-recovery-budget",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				providerCalls += 1;
+				const toolCall = (
+					id: string,
+					name: string,
+					arguments_: Record<string, unknown>,
+				) => ({
+					providerId: "browser-recovery-budget",
+					model: request.model,
+					text: "",
+					toolCalls: [{ id, name, arguments: arguments_ }],
+					usage: { inputTokens: 2, outputTokens: 1 },
+					finishReason: "tool_calls" as const,
+				});
+				if (providerCalls === 1)
+					return toolCall("call-stale", "browser.visible-act", {
+						attempt: "initial",
+					});
+				if (providerCalls === 2)
+					return toolCall("call-before-snapshot", "browser.visible-act", {
+						attempt: "premature",
+					});
+				if (providerCalls === 3)
+					return toolCall(
+						"call-snapshot",
+						"browser.visible-snapshot",
+						{},
+					);
+				if (providerCalls === 4)
+					return toolCall("call-retry", "browser.visible-act", {
+						attempt: "retry",
+					});
+				if (providerCalls === 5)
+					return toolCall(
+						"call-after-exhaustion",
+						"browser.visible-act",
+						{ attempt: "exhausted" },
+					);
+				return {
+					providerId: "browser-recovery-budget",
+					model: request.model,
+					text: "Stopped after preserving the recovery evidence.",
+					toolCalls: [],
+					usage: { inputTokens: 4, outputTokens: 4 },
+					finishReason: "stop" as const,
+				};
+			},
+		};
+
+		const result = await new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		).run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Retry one stale browser action safely."),
+			approvalStatus: "approved",
+			maximumTurns: 8,
+		});
+
+		expect(result).toMatchObject({
+			run: { status: "completed", turn: 6 },
+			assistantMessage: {
+				content: "Stopped after preserving the recovery evidence.",
+			},
+		});
+		expect(mutationExecutions).toBe(2);
+		expect(snapshotExecutions).toBe(1);
+		expect(
+			database
+				.listToolExecutions(session.id)
+				.map((execution) => [execution.toolName, execution.status]),
+		).toEqual([
+			["browser.visible-act", "failed"],
+			["browser.visible-act", "blocked"],
+			["browser.visible-snapshot", "verified"],
+			["browser.visible-act", "failed"],
+			["browser.visible-act", "blocked"],
+		]);
+		const modelToolResults = runtime
+			.listMessages(session.id)
+			.filter((message) => message.role === "tool")
+			.map((message) => JSON.parse(message.content) as Record<string, unknown>);
+		expect(modelToolResults[0]).toMatchObject({
+			status: "failed",
+			output: {
+				recoveryBudget: {
+					failureCount: 1,
+					maximumFailures: 2,
+					phase: "observe_required",
+					mutationBlocked: true,
+				},
+			},
+		});
+		expect(modelToolResults[1]).toMatchObject({
+			status: "blocked",
+			output: {
+				approvalRequired: false,
+				persistentApprovalAllowed: false,
+				recoveryBudget: { phase: "observe_required" },
+			},
+		});
+		expect(modelToolResults[3]).toMatchObject({
+			status: "failed",
+			output: {
+				recoveryBudget: {
+					failureCount: 2,
+					phase: "stop_required",
+				},
+			},
+		});
+		expect(modelToolResults[4]).toMatchObject({
+			status: "blocked",
+			output: { recoveryBudget: { phase: "stop_required" } },
+		});
+		const recoveryState =
+			database.getPrivateState<BrowserRecoveryBudgetState>(
+				`agent-run-browser-recovery.${result.run.id}`,
+			);
+		expect(recoveryState).toMatchObject({
+			version: 1,
+			nextSequence: 3,
+			entries: [
+				{
+					signature: "visible:act:stale_target",
+					failureCount: 2,
+					maximumFailures: 2,
+					phase: "stop_required",
+					allowedToolNames: ["browser.visible-snapshot"],
+				},
+			],
+		});
+		expect(JSON.stringify(recoveryState)).not.toContain("PRIVATE-PAGE-CONTENT");
 		database.close();
 	});
 
