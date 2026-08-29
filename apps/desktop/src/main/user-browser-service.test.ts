@@ -724,6 +724,179 @@ describe("UserBrowserService", () => {
 		).unpinAgentTab(tab.id);
 	});
 
+it("serializes closeTab behind an in-flight agent act", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+    contents.title = "Example";
+
+    let releaseSnapshot!: () => void;
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    contents.debugger.sendCommand.mockImplementation(async () => {
+      await snapshotGate;
+      return { nodes: [] };
+    });
+
+    const snapshotPromise = service.handleAgentRequest(
+      { operation: "visible-snapshot", tabId: tab.id },
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => {
+      expect(contents.debugger.sendCommand).toHaveBeenCalled();
+    });
+
+    const closePromise = service.closeTab(tab.id);
+    await Promise.resolve();
+    expect(
+      service.getState().tabs.some((item) => item.id === tab.id),
+    ).toBe(true);
+
+    releaseSnapshot();
+    await snapshotPromise;
+    const closeState = await closePromise;
+    expect(
+      closeState.tabs.some((item) => item.id === tab.id),
+    ).toBe(false);
+  });
+
+  it("serializes closeTab behind an in-flight pageContext", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+    contents.title = "Example";
+
+    let releaseContext!: () => void;
+    const contextGate = new Promise<void>((resolve) => {
+      releaseContext = resolve;
+    });
+    contents.executeJavaScript.mockImplementation(async () => {
+      await contextGate;
+      return {
+        description: "Fixture",
+        selectedText: "",
+        visibleText: "Visible reference text",
+        headings: ["Fixture"],
+        links: [],
+        forms: [],
+        viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0 },
+      };
+    });
+
+    const contextPromise = service.pageContext(tab.id);
+    await vi.waitFor(() => {
+      expect(contents.executeJavaScript).toHaveBeenCalled();
+    });
+
+    const closePromise = service.closeTab(tab.id);
+    await Promise.resolve();
+    expect(
+      service.getState().tabs.some((item) => item.id === tab.id),
+    ).toBe(true);
+
+    releaseContext();
+    await contextPromise;
+    const closeState = await closePromise;
+    expect(
+      closeState.tabs.some((item) => item.id === tab.id),
+    ).toBe(false);
+  });
+
+  it("rejects queued agent requests aborted while waiting for the tab mutex", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+
+    let releaseSnapshot!: () => void;
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    contents.debugger.sendCommand.mockImplementation(async () => {
+      await snapshotGate;
+      return { nodes: [] };
+    });
+
+    const firstSnapshot = service.handleAgentRequest(
+      { operation: "visible-snapshot", tabId: tab.id },
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => {
+      expect(contents.debugger.sendCommand).toHaveBeenCalled();
+    });
+
+    const abort = new AbortController();
+    const reason = new Error("agent-turn-aborted");
+    const queued = service.handleAgentRequest(
+      { operation: "visible-tabs" },
+      abort.signal,
+    );
+    await Promise.resolve();
+    abort.abort(reason);
+
+    await expect(queued).rejects.toBe(reason);
+
+    releaseSnapshot();
+    await firstSnapshot;
+		await expect(service.closeTab(tab.id)).resolves.toBeDefined();
+	});
+
+	it("keeps later operations queued behind an aborted waiter", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		contents.url = "https://example.com/";
+
+		let releaseSnapshot!: () => void;
+		const snapshotGate = new Promise<void>((resolve) => {
+			releaseSnapshot = resolve;
+		});
+		contents.debugger.sendCommand.mockImplementation(async () => {
+			await snapshotGate;
+			return { nodes: [] };
+		});
+
+		const first = service.handleAgentRequest(
+			{ operation: "visible-snapshot", tabId: tab.id },
+			new AbortController().signal,
+		);
+		await vi.waitFor(() => {
+			expect(contents.debugger.sendCommand).toHaveBeenCalled();
+		});
+
+		const abort = new AbortController();
+		const second = service.handleAgentRequest(
+			{ operation: "visible-tabs" },
+			abort.signal,
+		);
+		let thirdSettled = false;
+		const third = service
+			.handleAgentRequest(
+				{ operation: "visible-tabs" },
+				new AbortController().signal,
+			)
+			.then((result) => {
+				thirdSettled = true;
+				return result;
+			});
+
+		abort.abort(new Error("queued operation cancelled"));
+		await expect(second).rejects.toThrow("queued operation cancelled");
+		await Promise.resolve();
+		expect(thirdSettled).toBe(false);
+
+		releaseSnapshot();
+		await first;
+		await expect(third).resolves.toEqual(expect.any(Array));
+	});
+
 	it("does not sleep a tab while an agent operation holds a pin", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
