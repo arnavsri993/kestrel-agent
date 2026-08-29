@@ -266,6 +266,50 @@ export function isProtectedDatabaseError(
 	);
 }
 
+export const DATABASE_INTEGRITY_ERROR_CODE = "kestrel-database-integrity";
+
+/**
+ * Signals that SQLite reported corruption or another integrity failure during
+ * startup verification. Callers must not continue writing to the profile.
+ */
+export class DatabaseIntegrityError extends Error {
+	readonly code = DATABASE_INTEGRITY_ERROR_CODE;
+
+	constructor(message: string, cause?: unknown) {
+		super(message);
+		this.name = "DatabaseIntegrityError";
+		if (cause !== undefined) this.cause = cause;
+	}
+}
+
+export function isDatabaseIntegrityError(
+	error: unknown,
+): error is DatabaseIntegrityError {
+	return (
+		error instanceof DatabaseIntegrityError ||
+		(typeof error === "object" &&
+			error !== null &&
+			(error as { code?: unknown }).code === DATABASE_INTEGRITY_ERROR_CODE)
+	);
+}
+
+const DATABASE_INTEGRITY_RECOVERY_MESSAGE =
+	"Do not continue using this profile. Restore from a verified backup in Settings or check the recovery folder under Application Support before opening Kestrel again.";
+
+function sqliteErrorDetail(error: unknown): string {
+	if (error instanceof Error && error.message.trim()) return error.message.trim();
+	return "unknown database error";
+}
+
+function isSqliteDatabaseIntegrityFailure(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	const code = (error as { code?: unknown }).code;
+	if (code === "SQLITE_CORRUPT" || code === "SQLITE_NOTADB") return true;
+	return /malformed|corrupt|not a database|database disk image/i.test(
+		error.message,
+	);
+}
+
 export interface IdempotencyClaim<T = unknown> {
 	key: string;
 	ownerToken: string;
@@ -398,11 +442,34 @@ export class KestrelDatabase {
 	) {
 		if (filename !== ":memory:")
 			mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
-		this.db = new Database(filename);
-		this.db.pragma("journal_mode = WAL");
-		this.db.pragma("foreign_keys = ON");
-		this.db.pragma("secure_delete = ON");
-		this.migrate();
+		try {
+			this.db = new Database(filename);
+			this.db.pragma("journal_mode = WAL");
+			this.db.pragma("foreign_keys = ON");
+			this.db.pragma("secure_delete = ON");
+			this.assertDatabaseIntegrity();
+			this.migrate();
+		} catch (error) {
+			if (error instanceof DatabaseIntegrityError) throw error;
+			if (isSqliteDatabaseIntegrityFailure(error)) {
+				throw new DatabaseIntegrityError(
+					`Kestrel's local database could not be opened safely (${sqliteErrorDetail(error)}). ${DATABASE_INTEGRITY_RECOVERY_MESSAGE}`,
+					error,
+				);
+			}
+			throw error;
+		}
+	}
+
+	private assertDatabaseIntegrity(): void {
+		const rows = this.db.pragma("integrity_check") as Array<{
+			integrity_check: string;
+		}>;
+		const result = rows[0]?.integrity_check ?? "unknown";
+		if (result === "ok") return;
+		throw new DatabaseIntegrityError(
+			`Kestrel's local database failed integrity verification (${result}). ${DATABASE_INTEGRITY_RECOVERY_MESSAGE}`,
+		);
 	}
 
 	private migrate(): void {
@@ -479,48 +546,6 @@ export class KestrelDatabase {
 	upsertMemory(memory: MemoryRecord): void {
 		const parsed = MemoryRecordSchema.parse(memory);
 		const encrypted = encryptText(parsed.content, this.encryptionKey);
-		this.db
-			.prepare(`
-      INSERT INTO memories (
-        id, type, content_ciphertext, content_iv, content_auth_tag, structured_data,
-        source_ids, source_type, created_at, updated_at, valid_from, valid_until,
-        confidence, importance, sensitivity, status, entity_ids, user_confirmed, inferred
-      ) VALUES (
-        @id, @type, @ciphertext, @iv, @authTag, @structuredData,
-        @sourceIds, @sourceType, @createdAt, @updatedAt, @validFrom, @validUntil,
-        @confidence, @importance, @sensitivity, @status, @entityIds, @userConfirmed, @inferred
-      )
-      ON CONFLICT(id) DO UPDATE SET
-        type=excluded.type,
-        content_ciphertext=excluded.content_ciphertext, content_iv=excluded.content_iv,
-        content_auth_tag=excluded.content_auth_tag, structured_data=excluded.structured_data,
-        source_ids=excluded.source_ids, source_type=excluded.source_type,
-        updated_at=excluded.updated_at, valid_from=excluded.valid_from, valid_until=excluded.valid_until,
-        confidence=excluded.confidence, importance=excluded.importance, sensitivity=excluded.sensitivity,
-        status=excluded.status, entity_ids=excluded.entity_ids,
-        user_confirmed=excluded.user_confirmed, inferred=excluded.inferred
-    `)
-			.run({
-				id: parsed.id,
-				type: parsed.type,
-				ciphertext: encrypted.ciphertext,
-				iv: encrypted.iv,
-				authTag: encrypted.authTag,
-				structuredData: JSON.stringify(parsed.structuredData),
-				sourceIds: JSON.stringify(parsed.sourceIds),
-				sourceType: parsed.sourceType,
-				createdAt: parsed.createdAt,
-				updatedAt: parsed.updatedAt,
-				validFrom: parsed.validFrom ?? null,
-				validUntil: parsed.validUntil ?? null,
-				confidence: parsed.confidence,
-				importance: parsed.importance,
-				sensitivity: parsed.sensitivity,
-				status: parsed.status,
-				entityIds: JSON.stringify(parsed.entityIds),
-				userConfirmed: parsed.userConfirmed ? 1 : 0,
-				inferred: parsed.inferred ? 1 : 0,
-			});
 		const metadata = {
 			...(parsed.subject ? { subject: parsed.subject } : {}),
 			...(parsed.layer ? { layer: parsed.layer } : {}),
@@ -542,13 +567,57 @@ export class KestrelDatabase {
 			conflictingMemoryIds: parsed.conflictingMemoryIds ?? [],
 			version: parsed.version ?? 1,
 		};
-		this.upsertEncryptedPayload(
-			"memory_metadata",
-			"memory_id",
-			parsed.id,
-			metadata,
-			parsed.updatedAt,
-		);
+		this.db.transaction(() => {
+			this.db
+				.prepare(`
+      INSERT INTO memories (
+        id, type, content_ciphertext, content_iv, content_auth_tag, structured_data,
+        source_ids, source_type, created_at, updated_at, valid_from, valid_until,
+        confidence, importance, sensitivity, status, entity_ids, user_confirmed, inferred
+      ) VALUES (
+        @id, @type, @ciphertext, @iv, @authTag, @structuredData,
+        @sourceIds, @sourceType, @createdAt, @updatedAt, @validFrom, @validUntil,
+        @confidence, @importance, @sensitivity, @status, @entityIds, @userConfirmed, @inferred
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        type=excluded.type,
+        content_ciphertext=excluded.content_ciphertext, content_iv=excluded.content_iv,
+        content_auth_tag=excluded.content_auth_tag, structured_data=excluded.structured_data,
+        source_ids=excluded.source_ids, source_type=excluded.source_type,
+        updated_at=excluded.updated_at, valid_from=excluded.valid_from, valid_until=excluded.valid_until,
+        confidence=excluded.confidence, importance=excluded.importance, sensitivity=excluded.sensitivity,
+        status=excluded.status, entity_ids=excluded.entity_ids,
+        user_confirmed=excluded.user_confirmed, inferred=excluded.inferred
+    `)
+				.run({
+					id: parsed.id,
+					type: parsed.type,
+					ciphertext: encrypted.ciphertext,
+					iv: encrypted.iv,
+					authTag: encrypted.authTag,
+					structuredData: JSON.stringify(parsed.structuredData),
+					sourceIds: JSON.stringify(parsed.sourceIds),
+					sourceType: parsed.sourceType,
+					createdAt: parsed.createdAt,
+					updatedAt: parsed.updatedAt,
+					validFrom: parsed.validFrom ?? null,
+					validUntil: parsed.validUntil ?? null,
+					confidence: parsed.confidence,
+					importance: parsed.importance,
+					sensitivity: parsed.sensitivity,
+					status: parsed.status,
+					entityIds: JSON.stringify(parsed.entityIds),
+					userConfirmed: parsed.userConfirmed ? 1 : 0,
+					inferred: parsed.inferred ? 1 : 0,
+				});
+			this.upsertEncryptedPayload(
+				"memory_metadata",
+				"memory_id",
+				parsed.id,
+				metadata,
+				parsed.updatedAt,
+			);
+		})();
 	}
 
 	getMemory(id: string): MemoryRecord | undefined {
@@ -884,9 +953,10 @@ export class KestrelDatabase {
 		const parsed = ActionReceiptSchema.parse(receipt);
 		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
 		const updatedAt = parsed.completedAt ?? parsed.startedAt;
-		this.db
-			.prepare(
-				`INSERT INTO action_receipts (
+		this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO action_receipts (
           id, session_id, tool_execution_id, status, started_at, updated_at,
           payload_ciphertext, payload_iv, payload_auth_tag
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -899,21 +969,21 @@ export class KestrelDatabase {
           payload_ciphertext=excluded.payload_ciphertext,
           payload_iv=excluded.payload_iv,
           payload_auth_tag=excluded.payload_auth_tag`,
-			)
-			.run(
-				parsed.id,
-				parsed.sessionId,
-				parsed.toolExecutionId,
-				parsed.outcome,
-				parsed.startedAt,
-				updatedAt,
-				encrypted.ciphertext,
-				encrypted.iv,
-				encrypted.authTag,
-			);
-		this.db
-			.prepare(
-				`DELETE FROM action_receipts
+				)
+				.run(
+					parsed.id,
+					parsed.sessionId,
+					parsed.toolExecutionId,
+					parsed.outcome,
+					parsed.startedAt,
+					updatedAt,
+					encrypted.ciphertext,
+					encrypted.iv,
+					encrypted.authTag,
+				);
+			this.db
+				.prepare(
+					`DELETE FROM action_receipts
          WHERE session_id = ?
            AND id NOT IN (
              SELECT id FROM action_receipts
@@ -921,12 +991,13 @@ export class KestrelDatabase {
              ORDER BY started_at DESC, rowid DESC
              LIMIT ?
            )`,
-			)
-			.run(
-				parsed.sessionId,
-				parsed.sessionId,
-				MAX_ACTION_RECEIPTS_PER_SESSION,
-			);
+				)
+				.run(
+					parsed.sessionId,
+					parsed.sessionId,
+					MAX_ACTION_RECEIPTS_PER_SESSION,
+				);
+		})();
 	}
 
 	getActionReceiptForExecution(toolExecutionId: string): ActionReceipt | undefined {
@@ -1813,26 +1884,27 @@ export class KestrelDatabase {
 	appendBrowserActivity(event: BrowserActivityEvent): void {
 		const parsed = BrowserActivityEventSchema.parse(event);
 		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
-		this.db
-			.prepare(
-				`INSERT INTO browser_activity_events (
+		this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO browser_activity_events (
           id, owner_session_id, surface, outcome, created_at,
           payload_ciphertext, payload_iv, payload_auth_tag
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			)
-			.run(
-				parsed.id,
-				parsed.ownerSessionId,
-				parsed.surface,
-				parsed.outcome,
-				parsed.createdAt,
-				encrypted.ciphertext,
-				encrypted.iv,
-				encrypted.authTag,
-			);
-		this.db
-			.prepare(
-				`DELETE FROM browser_activity_events
+				)
+				.run(
+					parsed.id,
+					parsed.ownerSessionId,
+					parsed.surface,
+					parsed.outcome,
+					parsed.createdAt,
+					encrypted.ciphertext,
+					encrypted.iv,
+					encrypted.authTag,
+				);
+			this.db
+				.prepare(
+					`DELETE FROM browser_activity_events
          WHERE owner_session_id = ?
            AND id NOT IN (
              SELECT id FROM browser_activity_events
@@ -1840,12 +1912,13 @@ export class KestrelDatabase {
              ORDER BY created_at DESC, rowid DESC
              LIMIT ?
            )`,
-			)
-			.run(
-				parsed.ownerSessionId,
-				parsed.ownerSessionId,
-				MAX_BROWSER_ACTIVITY_PER_OWNER,
-			);
+				)
+				.run(
+					parsed.ownerSessionId,
+					parsed.ownerSessionId,
+					MAX_BROWSER_ACTIVITY_PER_OWNER,
+				);
+		})();
 	}
 
 	listBrowserActivity(input: {
