@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Kestrel — a local-first work agent with visible approvals and verified delivery",
+  "description": "Kestrel \u2014 a local-first work agent with visible approvals and verified delivery",
   "packageManager": "pnpm@11.15.1",
   "engines": {
     "node": ">=22.12.0"
@@ -50,7 +50,7 @@
     "capture:desktop": "tsx scripts/capture-desktop.ts",
     "test:editors": "node scripts/verify-editor-integrations.mjs",
     "test:e2e": "playwright test",
-    "package:mac:dev": "pnpm --filter @kestrel/desktop package:mac:dev",
+    "package:mac:dev": "pnpm --filter @kestrel/desktop package:mac:dev && node scripts/cleanup-kestrel-macos-apps.mjs",
     "install:mac:dev": "pnpm package:mac:dev && node scripts/install-development-macos-app.mjs",
     "assets:hero": "tsx scripts/fal-generate-hero.ts",
     "assets:backgrounds": "tsx scripts/fal-generate-backgrounds.ts",
@@ -58,7 +58,8 @@
     "assets:process": "tsx scripts/process-marketing-assets.ts",
     "assets:verify": "tsx scripts/verify-marketing-assets.ts",
     "verify": "pnpm typecheck && pnpm test && pnpm audit:references && pnpm audit:market && pnpm build && pnpm benchmark:browser-agent && pnpm test:e2e && pnpm test:desktop-smoke && pnpm test:desktop-layout && pnpm test:desktop-writing-studio && pnpm test:desktop-file-icon-guard && pnpm test:desktop-browser && pnpm test:desktop-setup && pnpm test:desktop-fresh-profile && pnpm test:desktop-restart-recovery && pnpm test:desktop-personas && pnpm test:desktop-kanban && pnpm test:desktop-model-routing && pnpm test:desktop-readiness && pnpm test:desktop-external-secrets && pnpm test:desktop-observability && pnpm test:desktop-life-context && pnpm test:desktop-approvals && pnpm test:desktop-chat-configuration && pnpm test:desktop-managed-policy && pnpm test:packaged-cli && pnpm test:editors && pnpm test:security",
-    "verify:meetup": "pnpm verify && pnpm assets:verify && pnpm test:local-ai:real && pnpm package:mac:dev && pnpm test:packaged-desktop:arm64 && pnpm benchmark:browser-agent:packaged:arm64"
+    "verify:meetup": "pnpm verify && pnpm assets:verify && pnpm test:local-ai:real && pnpm package:mac:dev && pnpm test:packaged-desktop:arm64 && pnpm benchmark:browser-agent:packaged:arm64",
+    "cleanup:mac:apps": "node scripts/cleanup-kestrel-macos-apps.mjs"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.3.0",

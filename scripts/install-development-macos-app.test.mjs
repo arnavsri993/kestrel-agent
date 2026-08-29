@@ -40,14 +40,12 @@ function createBundle(
 }
 
 function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
-  addAskKestrelService(source);
-  const serviceRoot = join(trashRoot, "..", "Services");
   const environment = {
     ...process.env,
     KESTREL_MACOS_INSTALL_ROOT: installRoot,
     KESTREL_MACOS_SEARCH_ROOTS: searchRoots.join(":"),
     KESTREL_MACOS_TRASH_ROOT: trashRoot,
-    KESTREL_MACOS_SERVICE_ROOT: serviceRoot,
+    KESTREL_DOCUMENTS_ROOT: join(installRoot, "..", "Documents"),
     KESTREL_SKIP_LSREGISTER: "1",
   };
   if (mdfindPath) environment.KESTREL_MDFIND_PATH = mdfindPath;
@@ -56,29 +54,6 @@ function runInstaller(source, installRoot, searchRoots, trashRoot, mdfindPath) {
   return execFileSync(process.execPath, [script, source], {
     encoding: "utf8",
     env: environment,
-  });
-}
-
-function addAskKestrelService(bundle) {
-  const service = join(
-    bundle,
-    "Contents",
-    "Resources",
-    "Ask Kestrel.app",
-  );
-  mkdirSync(join(service, "Contents", "MacOS"), { recursive: true });
-  writeFileSync(
-    join(service, "Contents", "Info.plist"),
-    `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>com.kestrel.services.ask</string>
-<key>CFBundleName</key><string>Ask Kestrel</string>
-</dict></plist>
-`,
-  );
-  writeFileSync(join(service, "Contents", "MacOS", "Ask Kestrel"), "service", {
-    mode: 0o755,
   });
 }
 
@@ -99,15 +74,6 @@ testSuite("development macOS app installer", () => {
     const previous = createBundle(installRoot, "Kestrel.app");
     writeFileSync(join(previous, "Contents", "payload.txt"), "previous");
     const duplicate = createBundle(desktopRoot, "Kestrel 2.app");
-    const releaseNamedDuplicate = createBundle(
-      desktopRoot,
-      "Kestrel-release.app",
-    );
-    const developmentLauncher = createBundle(
-      desktopRoot,
-      "Kestrel launcher.app",
-      "com.kestrel.desktop.dev.launcher",
-    );
     const legacyVariant = createBundle(
       desktopRoot,
       "Kestrel Legacy.app",
@@ -123,11 +89,9 @@ testSuite("development macOS app installer", () => {
     expect(existsSync(join(canonical, "Contents", "payload.txt"))).toBe(true);
     expect(readPayload(canonical)).toBe("Kestrel.app");
     expect(existsSync(duplicate)).toBe(false);
-    expect(existsSync(releaseNamedDuplicate)).toBe(false);
-    expect(existsSync(developmentLauncher)).toBe(false);
     expect(existsSync(legacyVariant)).toBe(false);
     expect(existsSync(source)).toBe(true);
-    expect(readdirSync(trashRoot)).toHaveLength(5);
+    expect(readdirSync(trashRoot)).toHaveLength(3);
   });
 
   it("is safe to run repeatedly", () => {
@@ -162,7 +126,7 @@ testSuite("development macOS app installer", () => {
     const fakeMdfind = join(root, "mdfind");
     writeFileSync(
       fakeMdfind,
-      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(`${source}\n${stale}\n`)});\n`,
+      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(`${stale}\n`)});\n`,
       { mode: 0o755 },
     );
     chmodSync(fakeMdfind, 0o755);
@@ -170,7 +134,6 @@ testSuite("development macOS app installer", () => {
     runInstaller(source, installRoot, [installRoot], trashRoot, fakeMdfind);
 
     expect(existsSync(stale)).toBe(false);
-    expect(existsSync(source)).toBe(true);
     expect(readdirSync(trashRoot)).toHaveLength(1);
   });
 
