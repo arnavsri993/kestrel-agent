@@ -163,6 +163,10 @@ export interface ToolCallOptions {
 	approvalGrantExecutionId?: string;
 	idempotencyKey?: string;
 	externalContent?: string;
+	executionBlock?: {
+		reason: string;
+		output?: Record<string, unknown>;
+	};
 	signal?: AbortSignal;
 }
 
@@ -1442,12 +1446,13 @@ export class AgentRuntime extends EventEmitter {
 		const assessment = options.externalContent
 			? assessExternalContent(options.externalContent)
 			: undefined;
-		const configuredPolicy =
-			this.toolPolicyResolver?.({
-				session,
-				tool: definition.descriptor,
-				input,
-			}) ?? {};
+		const configuredPolicy = options.executionBlock
+			? {}
+			: (this.toolPolicyResolver?.({
+					session,
+					tool: definition.descriptor,
+					input,
+				}) ?? {});
 		const approvalRule = this.listApprovalRules()
 			.filter(
 				(rule) =>
@@ -1478,7 +1483,13 @@ export class AgentRuntime extends EventEmitter {
 				definition.descriptor.riskLevel === "low")
 				? "sensitive"
 				: definition.descriptor.riskLevel;
-		const policy = configuredPolicy.denied
+		const policy = options.executionBlock
+			? {
+					allowed: false,
+					approvalRequired: false,
+					reason: options.executionBlock.reason,
+				}
+			: configuredPolicy.denied
 			? {
 					allowed: false,
 					approvalRequired: false,
@@ -1531,9 +1542,11 @@ export class AgentRuntime extends EventEmitter {
 			...(!policy.allowed
 				? {
 						output: {
+							...(options.executionBlock?.output ?? {}),
 							preview: this.approvalPreview(session, toolName, input),
 							approvalRequired: policy.approvalRequired,
-							persistentApprovalAllowed: !alwaysRequireApproval,
+							persistentApprovalAllowed:
+								!options.executionBlock && !alwaysRequireApproval,
 						},
 					}
 				: {}),

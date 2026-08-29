@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+	applyBrowserRecoveryBudget,
+	browserRecoveryBlockForTool,
+	browserRecoveryGuidanceFromOutput,
 	browserRecoveryReason,
 	BrowserRecoveryError,
+	emptyBrowserRecoveryBudgetState,
+	recordBrowserRecoveryToolSuccess,
 	toBrowserRecoveryError,
 } from "./browser-recovery";
 
@@ -104,5 +109,192 @@ describe("typed browser recovery guidance", () => {
 				effectState: "unknown",
 			}),
 		).toBeUndefined();
+	});
+
+	it("requires a fresh observation before one retry and stops after the repeated failure", () => {
+		const recovery = toBrowserRecoveryError(
+			new Error("Browser target ref is stale. Take a new snapshot."),
+			{ operation: "act", surface: "visible", effectState: "possibly_started" },
+		)!.recovery;
+		const first = applyBrowserRecoveryBudget(
+			emptyBrowserRecoveryBudgetState(),
+			recovery,
+		);
+
+		expect(first.plan).toMatchObject({
+			failureCount: 1,
+			maximumFailures: 2,
+			phase: "observe_required",
+			mutationBlocked: true,
+		});
+		expect(
+			browserRecoveryBlockForTool(
+				first.state,
+				"browser.visible-act",
+				false,
+			),
+		).toMatchObject({ plan: { phase: "observe_required" } });
+		expect(
+			browserRecoveryBlockForTool(
+				first.state,
+				"browser.visible-snapshot",
+				false,
+			),
+		).toBeDefined();
+
+		const observed = recordBrowserRecoveryToolSuccess(
+			first.state,
+			"browser.visible-snapshot",
+			true,
+		);
+		expect(
+			browserRecoveryBlockForTool(
+				observed,
+				"browser.visible-act",
+				false,
+			),
+		).toBeUndefined();
+
+		const second = applyBrowserRecoveryBudget(observed, recovery);
+		expect(second.plan).toMatchObject({
+			failureCount: 2,
+			maximumFailures: 2,
+			phase: "stop_required",
+			mutationBlocked: true,
+		});
+		expect(
+			browserRecoveryBlockForTool(
+				second.state,
+				"browser.visible-act",
+				false,
+			),
+		).toMatchObject({ plan: { phase: "stop_required" } });
+	});
+
+	it("blocks replay immediately when an action may already have started", () => {
+		const recovery = toBrowserRecoveryError(
+			new Error("Execution context was destroyed after navigation."),
+			{ operation: "act", surface: "isolated", effectState: "possibly_started" },
+		)!.recovery;
+		const result = applyBrowserRecoveryBudget(
+			emptyBrowserRecoveryBudgetState(),
+			recovery,
+		);
+
+		expect(result.plan).toMatchObject({
+			failureCount: 1,
+			maximumFailures: 1,
+			phase: "stop_required",
+			automaticReplayAllowed: false,
+		});
+		expect(
+			browserRecoveryBlockForTool(result.state, "browser.act", false),
+		).toBeDefined();
+	});
+
+	it("allows an explicit authentication handoff without reopening arbitrary mutations", () => {
+		const recovery = toBrowserRecoveryError(
+			new Error("Authentication expired; sign-in is required."),
+			{ operation: "navigate", surface: "isolated", effectState: "unknown" },
+		)!.recovery;
+		const result = applyBrowserRecoveryBudget(
+			emptyBrowserRecoveryBudgetState(),
+			recovery,
+		);
+
+		expect(
+			browserRecoveryBlockForTool(
+				result.state,
+				"browser.auth-handoff",
+				false,
+			),
+		).toBeUndefined();
+		expect(
+			browserRecoveryBlockForTool(result.state, "browser.act", false),
+		).toBeDefined();
+		const handedOff = recordBrowserRecoveryToolSuccess(
+			result.state,
+			"browser.auth-handoff",
+			false,
+		);
+		expect(
+			browserRecoveryBlockForTool(handedOff, "browser.act", false),
+		).toBeUndefined();
+	});
+
+	it("keeps an authentication handoff available across an older surface stop", () => {
+		const staleRecovery = toBrowserRecoveryError(
+			new Error("Browser target ref is stale. Take a new snapshot."),
+			{ operation: "act", surface: "isolated", effectState: "not_started" },
+		)!.recovery;
+		const firstStale = applyBrowserRecoveryBudget(
+			emptyBrowserRecoveryBudgetState(),
+			staleRecovery,
+		);
+		const observed = recordBrowserRecoveryToolSuccess(
+			firstStale.state,
+			"browser.snapshot",
+			true,
+		);
+		const exhausted = applyBrowserRecoveryBudget(observed, staleRecovery);
+		const authRecovery = toBrowserRecoveryError(
+			new Error("Authentication expired; sign-in is required."),
+			{ operation: "observe", surface: "isolated", effectState: "unknown" },
+		)!.recovery;
+		const authRequired = applyBrowserRecoveryBudget(
+			exhausted.state,
+			authRecovery,
+		);
+
+		expect(
+			browserRecoveryBlockForTool(
+				authRequired.state,
+				"browser.auth-handoff",
+				false,
+			),
+		).toBeUndefined();
+		expect(
+			browserRecoveryBlockForTool(
+				authRequired.state,
+				"browser.navigate",
+				false,
+			),
+		).toBeDefined();
+	});
+
+	it("reconstructs allowed recovery tools instead of trusting output hints", () => {
+		const recovery = toBrowserRecoveryError(
+			new Error("Browser target ref is stale. Take a new snapshot."),
+			{ operation: "act", surface: "visible", effectState: "not_started" },
+		)!.recovery;
+		const parsed = browserRecoveryGuidanceFromOutput({
+			recovery: {
+				...recovery,
+				hints: [
+					{
+						kind: "snapshot",
+						description: "Untrusted widening attempt",
+						toolName: "browser.visible-act",
+						readOnly: true,
+						requiresApproval: false,
+					},
+				],
+			},
+		});
+		expect(parsed?.hints).toEqual(recovery.hints);
+		const budget = applyBrowserRecoveryBudget(
+			emptyBrowserRecoveryBudgetState(),
+			parsed!,
+		);
+		expect(budget.plan.allowedToolNames).toEqual([
+			"browser.visible-snapshot",
+		]);
+		expect(
+			browserRecoveryBlockForTool(
+				budget.state,
+				"browser.visible-act",
+				false,
+			),
+		).toBeDefined();
 	});
 });
