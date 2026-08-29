@@ -16,6 +16,8 @@ const appliedScreenshot = resolve(
 mkdirSync(dirname(reviewScreenshot), { recursive: true });
 
 let providerCalls = 0;
+let configurationProviderCalls = 0;
+let welcomeProviderCalls = 0;
 const providerErrors = [];
 const server = createServer(async (request, response) => {
 	try {
@@ -36,16 +38,29 @@ const server = createServer(async (request, response) => {
 		for await (const chunk of request) chunks.push(chunk);
 		const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 		providerCalls += 1;
+		const welcomeRequest = (body.messages ?? []).some(
+			(message) =>
+				message.role === "system" &&
+				String(message.content).includes(
+					"You write the one-line welcome shown on Kestrel's New Tab",
+				),
+		);
+		if (welcomeRequest) welcomeProviderCalls += 1;
+		else configurationProviderCalls += 1;
 		const tools = new Set(
 			(body.tools ?? []).map((tool) => tool.function?.name).filter(Boolean),
 		);
-		assert.equal(tools.has("agent.config.inspect"), true);
-		assert.equal(tools.has("agent.config.plan"), true);
-		assert.equal(tools.has("agent.config.apply"), true);
+		if (!welcomeRequest) {
+			assert.equal(tools.has("agent.config.inspect"), true);
+			assert.equal(tools.has("agent.config.plan"), true);
+			assert.equal(tools.has("agent.config.apply"), true);
+		}
 
 		let text;
 		let toolCall;
-		if (providerCalls === 1) {
+		if (welcomeRequest) {
+			text = "Welcome back, Arnav.";
+		} else if (configurationProviderCalls === 1) {
 			assert.equal(
 				body.messages.some(
 					(message) =>
@@ -63,7 +78,7 @@ const server = createServer(async (request, response) => {
 				name: "agent.config.inspect",
 				arguments: { query: "response style chat density" },
 			};
-		} else if (providerCalls === 2) {
+		} else if (configurationProviderCalls === 2) {
 			text =
 				"Both settings are editable. I’m staging the exact candidate and running its isolated checks now.";
 			toolCall = {
@@ -85,7 +100,7 @@ const server = createServer(async (request, response) => {
 					],
 				},
 			};
-		} else if (providerCalls === 3) {
+		} else if (configurationProviderCalls === 3) {
 			const lastToolMessage = [...body.messages]
 				.reverse()
 				.find((message) => message.role === "tool");
@@ -358,7 +373,8 @@ try {
 		dimensions.documentWidth <= dimensions.viewportWidth,
 		`Configuration chat overflowed: ${JSON.stringify(dimensions)}`,
 	);
-	assert.equal(providerCalls, 4);
+	assert.equal(configurationProviderCalls, 4);
+	assert.equal(providerCalls, configurationProviderCalls + welcomeProviderCalls);
 	assert.deepEqual(providerErrors, []);
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
