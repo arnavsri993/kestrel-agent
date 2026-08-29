@@ -1,9 +1,17 @@
-# AI Tinkerers live-demo runbook
+# AI Tinkerers / Stanford live-demo runbook
 
-This runbook prepares the local Apple Silicon build for the AI Tinkerers St.
-Louis meetup on August 19, 2026. The demo slot is short and code-first, so the
-goal is one visible outcome with real execution, an approval boundary, and
+This runbook prepares the local Apple Silicon build for short, code-first demos
+(AI Tinkerers St. Louis, August 19, 2026; Stanford presentation, August 2026).
+The goal is one visible outcome with real execution, an approval boundary, and
 verified evidence rather than a feature tour.
+
+## Hero pillars (on-stage story)
+
+| Pillar | What to show | Sprint evidence |
+| --- | --- | --- |
+| **Do This For Me** | Scoped local edit → approval → verified result | Core agent loop, approvals, Activity evidence |
+| **What Should I Do** | Contextual New Tab home with suggested next actions | #624 contextual new-tab widgets and greetings |
+| **It Remembers How I Work** | Explicit memory capture → confirmation → recall on New Tab and in chat | #625 memory demo surfacing |
 
 ## Final readiness gate
 
@@ -48,8 +56,8 @@ is delayed, so Ollama's configured keep-alive does not expire.
 
 ## First-value loop (fresh profile + local Ollama)
 
-After setup verification, tap **Try a first task**. Kestrel auto-sends a
-deterministic read-only prompt:
+After setup verification, tap **Try a first task**. Kestrel **auto-sends** a
+deterministic read-only prompt (no manual paste required):
 
 - **No project folder:** `tools.search` with `read_only` and a count of active
   tools — proves the agent loop, local model, and tool audit path without
@@ -57,10 +65,14 @@ deterministic read-only prompt:
 - **With a project folder:** `workspace.list` plus `workspace.read` on
   `README.md` or `package.json` — one concrete fact from disk.
 
+The pinned prompt lives in `apps/desktop/src/renderer/first-task.ts`. It
+requires **no network, browser, OAuth, or approvals** and ends with one
+sentence on what stayed local.
+
 Expect the first local tool turn to take **1–2 minutes** on a cold 9B model;
-follow-ups are much faster. If nothing changes after **~3 minutes**, cancel and
-retry once. Do not treat provider reachability probes as a substitute for this
-end-to-end first task.
+follow-ups are much faster. Kestrel shows a slow-model notice during the wait.
+If nothing changes after **~3 minutes**, cancel and retry once. Do not treat
+provider reachability probes as a substitute for this end-to-end first task.
 
 **Rehearsal blockers (operator fixes):**
 
@@ -71,6 +83,59 @@ end-to-end first task.
 | `tools.search` succeeds but no assistant text | Small local model timeout or empty completion | Retry; warm model in Readiness before the slot |
 | Repo inspection fails | No project folder granted | Add a disposable checkout via **Add project** before the guided task |
 | `verify:meetup` fails on packaging | Stale `/Applications/Kestrel.app` vs `release/` artifact | Run `corepack pnpm install:mac:dev` and reopen the canonical app |
+
+## Contextual New Tab home beat (~90 seconds)
+
+Open a **new browser tab** to land on Kestrel Home. This is the **What Should
+I Do** pillar.
+
+1. **Greeting** — A time-of-day greeting uses only coarse local signals (first
+   name, visit frequency, time bucket). No URLs, email, or page titles are sent
+   for the greeting. A local model may refine the line via `new-tab-greeting`.
+2. **Memory recall badge** — Below the greeting, a status line shows whether
+   shared memory is on, how many active memories exist, and how many preferences
+   are confirmed. When empty but capture is on, it prompts: *Say remember that
+   … in chat*.
+3. **Widgets** — Default layout includes **Frequent tabs**, **Recent work**,
+   **Recent memories**, and **Quick actions**. Widget bounds sync across window
+   sizes (#624).
+4. **Suggested actions** — Up to five chips derive from recent browsing and
+   open agent sessions (credentials stripped). Tap one to open a new agent chat
+   with a prefilled, read-only prompt.
+5. **Composer** — Type a task to start agent work, or a URL to browse. Task
+   settings are one click away.
+
+Rehearse once with a warmed profile so widgets and suggestions are populated.
+A cold profile still works but looks sparse until history and memory exist.
+
+## Memory beat (~2 minutes)
+
+This is the **It Remembers How I Work** pillar. Run it after first-task or
+between the edit-and-verify path and the closing summary.
+
+**Prerequisites:** Settings → Memory → explicit capture **on**; shared context
+injection **on** for the active personality.
+
+1. **Remember** — In any chat, send: `Remember that I prefer concise status
+   updates in demos.` Kestrel parses the explicit `remember that …` command
+   (`packages/shared-types/src/memory-capture.ts`).
+2. **Confirmation** — Point out the in-thread confirmation that the preference
+   was stored locally. In **Life → Memory**, the new row shows **Confirmed**
+   (explicit capture) with subject and timestamp.
+3. **New Tab widget** — Open a new browser tab. The **Recent memories** widget
+   lists the captured preference with a Confirmed badge. The memory recall
+   badge above the greeting increments active memory count.
+4. **Life → Memory** — Open Life from the sidebar, Memory tab. Show provenance,
+   confirmation status, and that the record is encrypted local state—not a
+   cloud profile.
+5. **New chat recall** — Start a fresh agent chat with a prompt that should use
+   the preference, for example: `Draft a one-line project status for the
+   audience.` When shared context is on, Kestrel may inject the stored
+   preference; call out the mechanism, not a guarantee that every model cites
+   it verbatim.
+
+If explicit capture is off, the widget shows an empty state linking to
+Settings → Memory. Do not improvise a cloud sync story.
 
 ## Ten-minute live path
 
@@ -88,7 +153,8 @@ end-to-end first task.
 5. Open **Activity** and show the verified file/test evidence. The visible
    result should be the changed artifact, the verification method, and the
    evidence hash—not a claim that the task worked.
-6. End by asking Kestrel to prepare—but not publish—a concise pull-request
+6. Optional: run the **memory beat** above if time allows.
+7. End by asking Kestrel to prepare—but not publish—a concise pull-request
    summary. Explain that sending, publishing, deleting, purchasing, and
    permission changes require a separate approval.
 
@@ -112,3 +178,6 @@ for a local live demo. It is ad-hoc signed, not Developer ID signed or
 notarized, and is not an internet-distribution release. Public download and
 automatic-update claims remain blocked until the signing, notarization, hosted
 artifact, and clean-machine release gates in `docs/market-release.md` pass.
+
+See `docs/stanford-demo-checklist.md` for the full requirement matrix and
+operator vs engineering ownership.
