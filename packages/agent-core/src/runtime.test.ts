@@ -1238,6 +1238,7 @@ describe("agent runtime", () => {
 		expect(recovered).toMatchObject({
 			id: "tool-abandoned",
 			status: "failed",
+			outcomeUncertain: true,
 			error: expect.stringContaining("will not be retried automatically"),
 		});
 		expect(

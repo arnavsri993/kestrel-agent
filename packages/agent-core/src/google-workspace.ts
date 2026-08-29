@@ -21,16 +21,20 @@ const MAX_CALENDAR_SLOT_DURATION_MS = 24 * 60 * 60 * 1_000;
 const MAX_CALENDAR_CONFLICTS_PER_SLOT = 20;
 const GMAIL_MESSAGES_ENDPOINT =
 	"https://gmail.googleapis.com/gmail/v1/users/me/messages";
+const GMAIL_DRAFTS_ENDPOINT =
+	"https://gmail.googleapis.com/gmail/v1/users/me/drafts";
+const GMAIL_THREADS_ENDPOINT =
+	"https://gmail.googleapis.com/gmail/v1/users/me/threads";
+const GMAIL_ID_PATTERN = /^[A-Za-z0-9_-]{1,200}$/;
+const MAX_GMAIL_SEARCH_RESULTS = 20;
+const MAX_GMAIL_THREAD_MESSAGES = 10;
+const MAX_GMAIL_QUERY_LENGTH = 500;
+const MAX_GMAIL_BODY_EXCERPT = 4_000;
+const MAX_GMAIL_ATTACHMENT_BYTES = 256_000;
 const REQUIRED_SCOPES = [
 	"https://www.googleapis.com/auth/gmail.send",
 	"https://www.googleapis.com/auth/calendar.events",
 ] as const;
-
-function boundedCalendarResultCount(value: number): number {
-	return Number.isFinite(value)
-		? Math.max(1, Math.min(100, Math.trunc(value)))
-		: 20;
-}
 
 interface CalendarAvailabilitySlot {
 	label?: string;
@@ -220,6 +224,13 @@ function visibleBusyInterval(interval: CalendarBusyInterval): Record<string, unk
 			};
 }
 
+
+function boundedCalendarResultCount(value: number): number {
+	return Number.isFinite(value)
+		? Math.max(1, Math.min(100, Math.trunc(value)))
+		: 20;
+}
+
 interface StoredGoogleWorkspaceAuthorization {
 	version: 1;
 	clientId: string;
@@ -375,6 +386,273 @@ export class GoogleWorkspaceClient {
 		return matches;
 	}
 
+	async searchMessages(input: {
+		query: string;
+		maxResults: number;
+		after?: string;
+		signal: AbortSignal;
+	}): Promise<Record<string, unknown>> {
+		this.requireReadMessages();
+		const query = input.query.trim().slice(0, MAX_GMAIL_QUERY_LENGTH);
+		if (!query) throw new Error("Gmail search query is required.");
+		const maxResults = Number.isFinite(input.maxResults)
+			? Math.max(1, Math.min(MAX_GMAIL_SEARCH_RESULTS, Math.trunc(input.maxResults)))
+			: 10;
+		const parts = [query];
+		if (input.after) {
+			const after = new Date(input.after);
+			if (!Number.isFinite(after.getTime()))
+				throw new Error("Gmail search after time is invalid.");
+			parts.unshift(`after:${Math.floor(after.getTime() / 1_000)}`);
+		}
+		const listUrl = new URL(GMAIL_MESSAGES_ENDPOINT);
+		listUrl.search = new URLSearchParams({
+			q: parts.join(" "),
+			maxResults: String(maxResults),
+			includeSpamTrash: "false",
+		}).toString();
+		const listed = await this.authorizedJson(listUrl, {
+			signal: input.signal,
+		});
+		const messageIds = Array.isArray(listed.messages)
+			? listed.messages.flatMap((value) => {
+					if (!value || typeof value !== "object") return [];
+					const id = (value as Record<string, unknown>).id;
+					return typeof id === "string" && GMAIL_ID_PATTERN.test(id) ? [id] : [];
+				})
+			: [];
+		const items = [];
+		for (const id of messageIds.slice(0, maxResults)) {
+			if (input.signal.aborted) throw input.signal.reason;
+			const messageUrl = new URL(`${GMAIL_MESSAGES_ENDPOINT}/${id}`);
+			messageUrl.search = new URLSearchParams({
+				format: "metadata",
+				metadataHeaders: "From,To,Subject,Date,Message-ID",
+			}).toString();
+			const message = await this.authorizedJson(messageUrl, {
+				signal: input.signal,
+			});
+			items.push(summarizeGmailMessage(message, this.now(), false));
+		}
+		return {
+			account: this.email,
+			query,
+			items,
+			trust: "untrusted_connector",
+		};
+	}
+
+	async getThread(input: {
+		threadId: string;
+		maxMessages: number;
+		includeBodyExcerpt?: boolean;
+		signal: AbortSignal;
+	}): Promise<Record<string, unknown>> {
+		this.requireReadMessages();
+		const threadId = input.threadId.trim();
+		if (!GMAIL_ID_PATTERN.test(threadId))
+			throw new Error("Gmail thread ID is invalid.");
+		const maxMessages = Number.isFinite(input.maxMessages)
+			? Math.max(
+					1,
+					Math.min(MAX_GMAIL_THREAD_MESSAGES, Math.trunc(input.maxMessages)),
+				)
+			: MAX_GMAIL_THREAD_MESSAGES;
+		const threadUrl = new URL(`${GMAIL_THREADS_ENDPOINT}/${threadId}`);
+		threadUrl.search = new URLSearchParams({ format: "full" }).toString();
+		const thread = await this.authorizedJson(threadUrl, {
+			signal: input.signal,
+			responseLimit: 1_000_000,
+		});
+		if (String(thread.id ?? "") !== threadId)
+			throw new Error("Gmail thread could not be read back.");
+		const messages = Array.isArray(thread.messages) ? thread.messages : [];
+		return {
+			threadId,
+			account: this.email,
+			messageCount: messages.length,
+			messages: messages
+				.slice(-maxMessages)
+				.map((raw) =>
+					summarizeGmailMessage(
+						raw && typeof raw === "object"
+							? (raw as Record<string, unknown>)
+							: {},
+						this.now(),
+						input.includeBodyExcerpt === true,
+					),
+				),
+			attachments: listGmailAttachments(messages),
+			trust: "untrusted_connector",
+		};
+	}
+
+	async getAttachment(input: {
+		messageId: string;
+		attachmentId: string;
+		signal: AbortSignal;
+	}): Promise<Record<string, unknown>> {
+		this.requireReadMessages();
+		const messageId = input.messageId.trim();
+		const attachmentId = input.attachmentId.trim();
+		if (!GMAIL_ID_PATTERN.test(messageId) || !GMAIL_ID_PATTERN.test(attachmentId))
+			throw new Error("Gmail attachment reference is invalid.");
+		const attachmentUrl = new URL(
+			`${GMAIL_MESSAGES_ENDPOINT}/${messageId}/attachments/${attachmentId}`,
+		);
+		const attachment = await this.authorizedJson(attachmentUrl, {
+			signal: input.signal,
+			responseLimit: MAX_GMAIL_ATTACHMENT_BYTES + 64_000,
+		});
+		const size = Number(attachment.size);
+		const data =
+			typeof attachment.data === "string" ? attachment.data.slice(0, 600_000) : "";
+		const decoded =
+			data.length > 0
+				? Buffer.from(data, "base64url").slice(0, MAX_GMAIL_ATTACHMENT_BYTES)
+				: Buffer.alloc(0);
+		return {
+			messageId,
+			attachmentId,
+			size: Number.isFinite(size) ? size : decoded.byteLength,
+			truncated:
+				Number.isFinite(size) && size > MAX_GMAIL_ATTACHMENT_BYTES
+					? true
+					: decoded.byteLength >= MAX_GMAIL_ATTACHMENT_BYTES,
+			sha256: createHash("sha256").update(decoded).digest("hex"),
+			dataBase64:
+				decoded.byteLength > 0 ? decoded.toString("base64url") : undefined,
+			trust: "untrusted_connector",
+		};
+	}
+
+	async createDraft(input: {
+		operationId: string;
+		to: string;
+		subject: string;
+		body: string;
+		threadId?: string;
+		inReplyTo?: string;
+		references?: string;
+		signal: AbortSignal;
+	}): Promise<Record<string, unknown>> {
+		const messageId = deterministicGmailMessageId(input.operationId, "draft");
+		const existing = await this.findMessageByRfc822Id(messageId, input.signal);
+		if (existing)
+			return {
+				draftId: existing.draftId ?? existing.messageId,
+				messageId: existing.messageId,
+				threadId: existing.threadId,
+				repeated: true,
+				verified: true,
+			};
+		const raw = buildGmailMime({
+			to: input.to,
+			subject: input.subject,
+			body: input.body,
+			messageId,
+			...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
+			...(input.references ? { references: input.references } : {}),
+		});
+		const created = await this.authorizedJson(new URL(GMAIL_DRAFTS_ENDPOINT), {
+			method: "POST",
+			signal: input.signal,
+			body: {
+				message: {
+					raw,
+					...(input.threadId && GMAIL_ID_PATTERN.test(input.threadId)
+						? { threadId: input.threadId }
+						: {}),
+				},
+			},
+		});
+		const draftId = String(created.id ?? "");
+		const draftMessageId = String(
+			(created.message as Record<string, unknown> | undefined)?.id ?? "",
+		);
+		if (!GMAIL_ID_PATTERN.test(draftId))
+			throw new Error("Google Gmail draft returned an unexpected draft ID.");
+		const verified = await this.authorizedJson(
+			new URL(`${GMAIL_DRAFTS_ENDPOINT}/${draftId}`),
+			{ signal: input.signal },
+		);
+		if (String(verified.id ?? "") !== draftId)
+			throw new Error("Google Gmail draft could not be read back.");
+		return {
+			draftId,
+			messageId: draftMessageId || undefined,
+			threadId:
+				typeof (verified.message as Record<string, unknown> | undefined)
+					?.threadId === "string"
+					? String(
+							(verified.message as Record<string, unknown>).threadId,
+						).slice(0, 200)
+					: input.threadId,
+			repeated: false,
+			verified: true,
+		};
+	}
+
+	async sendReply(input: {
+		operationId: string;
+		to: string;
+		subject: string;
+		body: string;
+		threadId?: string;
+		inReplyTo?: string;
+		references?: string;
+		signal: AbortSignal;
+	}): Promise<Record<string, unknown>> {
+		const messageId = deterministicGmailMessageId(input.operationId, "send");
+		const existing = await this.findMessageByRfc822Id(messageId, input.signal);
+		if (existing)
+			return {
+				messageId: existing.messageId,
+				threadId: existing.threadId,
+				repeated: true,
+				verified: true,
+			};
+		const raw = buildGmailMime({
+			to: input.to,
+			subject: input.subject,
+			body: input.body,
+			messageId,
+			...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
+			...(input.references ? { references: input.references } : {}),
+		});
+		const sent = await this.authorizedJson(
+			new URL(`${GMAIL_MESSAGES_ENDPOINT}/send`),
+			{
+				method: "POST",
+				signal: input.signal,
+				body: {
+					raw,
+					...(input.threadId && GMAIL_ID_PATTERN.test(input.threadId)
+						? { threadId: input.threadId }
+						: {}),
+				},
+			},
+		);
+		const sentMessageId = String(sent.id ?? "");
+		if (!GMAIL_ID_PATTERN.test(sentMessageId))
+			throw new Error("Google Gmail send returned an unexpected message ID.");
+		const verified = await this.authorizedJson(
+			new URL(`${GMAIL_MESSAGES_ENDPOINT}/${sentMessageId}`),
+			{ signal: input.signal },
+		);
+		if (String(verified.id ?? "") !== sentMessageId)
+			throw new Error("Google Gmail message could not be read back.");
+		return {
+			messageId: sentMessageId,
+			threadId:
+				typeof verified.threadId === "string"
+					? verified.threadId.slice(0, 200)
+					: input.threadId,
+			repeated: false,
+			verified: true,
+		};
+	}
+
 	async listEvents(input: {
 		timeMin: string;
 		timeMax?: string;
@@ -480,7 +758,7 @@ export class GoogleWorkspaceClient {
 					};
 				})
 			: [];
-		return { calendar: "primary", items, trust: "untrusted_connector" };
+		return { calendar: "primary", items };
 	}
 
 	async checkAvailability(input: {
@@ -545,16 +823,6 @@ export class GoogleWorkspaceClient {
 		location?: string;
 		signal: AbortSignal;
 	}): Promise<Record<string, unknown>> {
-		const startMs = parseExplicitCalendarInstant(
-			input.startsAt,
-			"Google Calendar event start",
-		);
-		const endMs = parseExplicitCalendarInstant(
-			input.endsAt,
-			"Google Calendar event end",
-		);
-		if (endMs <= startMs)
-			throw new Error("Google Calendar events must end after they start.");
 		const eventId = createHash("sha256")
 			.update(`workstrand-google-calendar\0${input.operationId}`)
 			.digest("hex")
@@ -573,8 +841,8 @@ export class GoogleWorkspaceClient {
 				body: {
 					id: eventId,
 					summary: input.title,
-					start: { dateTime: new Date(startMs).toISOString() },
-					end: { dateTime: new Date(endMs).toISOString() },
+					start: { dateTime: new Date(input.startsAt).toISOString() },
+					end: { dateTime: new Date(input.endsAt).toISOString() },
 					...(input.description ? { description: input.description } : {}),
 					...(input.location ? { location: input.location } : {}),
 				},
@@ -604,6 +872,81 @@ export class GoogleWorkspaceClient {
 			repeated,
 			verified: true,
 		};
+	}
+
+	private requireReadMessages(): void {
+		if (!this.canReadMessages)
+			throw new Error(
+				"Gmail read access is unavailable. Reconnect Google Workspace with the read-only Gmail grant.",
+			);
+	}
+
+	private async findMessageByRfc822Id(
+		messageId: string,
+		signal: AbortSignal,
+	): Promise<
+		| {
+				messageId: string;
+				threadId?: string;
+				draftId?: string;
+		  }
+		| undefined
+	> {
+		this.requireReadMessages();
+		const listUrl = new URL(GMAIL_MESSAGES_ENDPOINT);
+		const rfc822Id = messageId.startsWith("<") && messageId.endsWith(">")
+			? messageId.slice(1, -1)
+			: messageId;
+		listUrl.search = new URLSearchParams({
+			q: `rfc822msgid:${rfc822Id}`,
+			maxResults: "1",
+			includeSpamTrash: "true",
+		}).toString();
+		const listed = await this.authorizedJson(listUrl, { signal });
+		const first = Array.isArray(listed.messages) ? listed.messages[0] : undefined;
+		if (!first || typeof first !== "object") return undefined;
+		const id = (first as Record<string, unknown>).id;
+		if (typeof id !== "string" || !GMAIL_ID_PATTERN.test(id)) return undefined;
+		const message = await this.authorizedJson(
+			new URL(`${GMAIL_MESSAGES_ENDPOINT}/${id}`),
+			{ signal },
+		);
+		const isDraft =
+			Array.isArray(message.labelIds) && message.labelIds.includes("DRAFT");
+		const resolvedDraftId = isDraft
+			? await this.resolveDraftId(id, signal)
+			: undefined;
+		return {
+			messageId: id,
+			...(typeof message.threadId === "string"
+				? { threadId: message.threadId.slice(0, 200) }
+				: {}),
+			...(resolvedDraftId ? { draftId: resolvedDraftId } : {}),
+		};
+	}
+
+	private async resolveDraftId(
+		messageId: string,
+		signal: AbortSignal,
+	): Promise<string | undefined> {
+		const listUrl = new URL(GMAIL_DRAFTS_ENDPOINT);
+		listUrl.search = new URLSearchParams({ maxResults: "20" }).toString();
+		const listed = await this.authorizedJson(listUrl, { signal });
+		for (const raw of Array.isArray(listed.drafts) ? listed.drafts.slice(0, 20) : []) {
+			if (!raw || typeof raw !== "object") continue;
+			const draft = raw as Record<string, unknown>;
+			const draftId = typeof draft.id === "string" ? draft.id : "";
+			const message =
+				draft.message && typeof draft.message === "object"
+					? (draft.message as Record<string, unknown>)
+					: {};
+			if (
+				GMAIL_ID_PATTERN.test(draftId) &&
+				String(message.id ?? "") === messageId
+			)
+				return draftId;
+		}
+		return undefined;
 	}
 
 	private async availabilityBusyIntervals(input: {
@@ -771,13 +1114,29 @@ export class GoogleWorkspaceClient {
 
 function gmailHeaders(
 	message: Record<string, unknown>,
-): { from?: string; subject?: string } {
+): {
+	from?: string;
+	to?: string;
+	subject?: string;
+	date?: string;
+	messageId?: string;
+	inReplyTo?: string;
+	references?: string;
+} {
 	const payload =
 		message.payload && typeof message.payload === "object"
 			? (message.payload as Record<string, unknown>)
 			: {};
 	const headers = Array.isArray(payload.headers) ? payload.headers : [];
-	const values: { from?: string; subject?: string } = {};
+	const values: {
+		from?: string;
+		to?: string;
+		subject?: string;
+		date?: string;
+		messageId?: string;
+		inReplyTo?: string;
+		references?: string;
+	} = {};
 	for (const raw of headers) {
 		if (!raw || typeof raw !== "object") continue;
 		const header = raw as Record<string, unknown>;
@@ -785,9 +1144,133 @@ function gmailHeaders(
 		const value = typeof header.value === "string" ? header.value.trim() : "";
 		if (!value) continue;
 		if (name === "from") values.from = value.slice(0, 500);
+		if (name === "to") values.to = value.slice(0, 500);
 		if (name === "subject") values.subject = value.slice(0, 500);
+		if (name === "date") values.date = value.slice(0, 100);
+		if (name === "message-id") values.messageId = value.slice(0, 500);
+		if (name === "in-reply-to") values.inReplyTo = value.slice(0, 500);
+		if (name === "references") values.references = value.slice(0, 2_000);
 	}
 	return values;
+}
+
+function summarizeGmailMessage(
+	message: Record<string, unknown>,
+	now: Date,
+	includeBodyExcerpt: boolean,
+): Record<string, unknown> {
+	const headers = gmailHeaders(message);
+	const receivedAt = gmailReceivedAt(message, now);
+	return {
+		id: String(message.id ?? "").slice(0, 200),
+		threadId:
+			typeof message.threadId === "string"
+				? message.threadId.slice(0, 200)
+				: undefined,
+		...(headers.from ? { from: headers.from } : {}),
+		...(headers.to ? { to: headers.to } : {}),
+		...(headers.subject ? { subject: headers.subject } : {}),
+		...(headers.messageId ? { messageId: headers.messageId } : {}),
+		...(headers.inReplyTo ? { inReplyTo: headers.inReplyTo } : {}),
+		...(headers.references ? { references: headers.references } : {}),
+		...(receivedAt ? { receivedAt: receivedAt.toISOString() } : {}),
+		snippet:
+			typeof message.snippet === "string"
+				? message.snippet.slice(0, 1_000)
+				: undefined,
+		...(includeBodyExcerpt
+			? { bodyExcerpt: gmailText(message).slice(0, MAX_GMAIL_BODY_EXCERPT) }
+			: {}),
+	};
+}
+
+function listGmailAttachments(
+	messages: unknown[],
+): Array<Record<string, unknown>> {
+	const attachments: Array<Record<string, unknown>> = [];
+	for (const raw of messages.slice(-MAX_GMAIL_THREAD_MESSAGES)) {
+		if (!raw || typeof raw !== "object") continue;
+		const message = raw as Record<string, unknown>;
+		const messageId = String(message.id ?? "").slice(0, 200);
+		if (!GMAIL_ID_PATTERN.test(messageId)) continue;
+		collectGmailAttachmentParts(message.payload, messageId, attachments);
+	}
+	return attachments.slice(0, 20);
+}
+
+function collectGmailAttachmentParts(
+	payload: unknown,
+	messageId: string,
+	attachments: Array<Record<string, unknown>>,
+): void {
+	if (!payload || typeof payload !== "object") return;
+	const record = payload as Record<string, unknown>;
+	const body =
+		record.body && typeof record.body === "object"
+			? (record.body as Record<string, unknown>)
+			: {};
+	const filename =
+		typeof record.filename === "string" ? record.filename.slice(0, 500) : undefined;
+	const mimeType =
+		typeof record.mimeType === "string" ? record.mimeType.slice(0, 200) : undefined;
+	const attachmentId =
+		typeof body.attachmentId === "string" &&
+		GMAIL_ID_PATTERN.test(body.attachmentId)
+			? body.attachmentId
+			: undefined;
+	const size = Number(body.size);
+	if (attachmentId && filename)
+		attachments.push({
+			messageId,
+			attachmentId,
+			filename,
+			...(mimeType ? { mimeType } : {}),
+			...(Number.isFinite(size) ? { size } : {}),
+		});
+	if (Array.isArray(record.parts))
+		for (const part of record.parts.slice(0, 50))
+			collectGmailAttachmentParts(part, messageId, attachments);
+}
+
+function deterministicGmailMessageId(
+	operationId: string,
+	kind: "draft" | "send",
+): string {
+	const token = createHash("sha256")
+		.update(`workstrand-google-gmail\0${kind}\0${operationId}`)
+		.digest("hex")
+		.slice(0, 32);
+	return `<${token}@kestrel.local>`;
+}
+
+function buildGmailMime(input: {
+	to: string;
+	subject: string;
+	body: string;
+	messageId: string;
+	inReplyTo?: string;
+	references?: string;
+}): string {
+	const to = input.to.replace(/[\r\n]/g, "").slice(0, 500);
+	const subject = input.subject.replace(/[\r\n]/g, "").slice(0, 2_000);
+	const body = input.body.slice(0, 100_000);
+	const lines = [
+		`To: ${to}`,
+		`Subject: ${subject}`,
+		`Message-ID: ${input.messageId.replace(/[\r\n]/g, "")}`,
+		...(input.inReplyTo
+			? [`In-Reply-To: ${input.inReplyTo.replace(/[\r\n]/g, "").slice(0, 500)}`]
+			: []),
+		...(input.references
+			? [`References: ${input.references.replace(/[\r\n]/g, "").slice(0, 2_000)}`]
+			: []),
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		body,
+		"",
+	];
+	return Buffer.from(lines.join("\r\n")).toString("base64url");
 }
 
 function gmailReceivedAt(
@@ -887,47 +1370,6 @@ export function installGoogleWorkspaceTools(
 	});
 	runtime.registerExternalTool({
 		descriptor: {
-			name: "google.calendar.check-availability",
-			title: "Check Google Calendar availability",
-			description:
-				"Verify up to 20 exact candidate time slots against the connected primary calendar. Returns only bounded busy intervals, never event titles, descriptions, attendees, or message content.",
-			category: "connector",
-			riskLevel: "read_only",
-			readOnly: true,
-			requiresWorkspace: false,
-			source: "connector",
-			tags: ["google", "calendar", "availability", "conflicts", "schedule"],
-		},
-		inputSchema: {
-			type: "object",
-			properties: {
-				slots: {
-					type: "array",
-					minItems: 1,
-					maxItems: MAX_CALENDAR_AVAILABILITY_SLOTS,
-					items: {
-						type: "object",
-						properties: {
-							label: { type: "string", maxLength: 200 },
-							startsAt: { type: "string", format: "date-time" },
-							endsAt: { type: "string", format: "date-time" },
-						},
-						required: ["startsAt", "endsAt"],
-						additionalProperties: false,
-					},
-				},
-			},
-			required: ["slots"],
-			additionalProperties: false,
-		},
-		execute: ({ signal }, input) =>
-			client.checkAvailability({
-				slots: input.slots as CalendarAvailabilitySlot[],
-				signal,
-			}),
-	});
-	runtime.registerExternalTool({
-		descriptor: {
 			name: "google.calendar.create-event",
 			title: "Create Google Calendar event",
 			description:
@@ -973,6 +1415,205 @@ export function installGoogleWorkspaceTools(
 		}),
 	});
 	runtime.allowTool(sessionId, "google.calendar.list-events");
-	runtime.allowTool(sessionId, "google.calendar.check-availability");
 	runtime.allowTool(sessionId, "google.calendar.create-event");
+	runtime.registerExternalTool({
+		descriptor: {
+			name: "google.gmail.search-messages",
+			title: "Search Gmail messages",
+			description:
+				"Search the connected Gmail account and return bounded message metadata only. Message bodies are not returned.",
+			category: "connector",
+			riskLevel: "read_only",
+			readOnly: true,
+			requiresWorkspace: false,
+			source: "connector",
+			tags: ["google", "gmail", "search", "email"],
+		},
+		inputSchema: {
+			type: "object",
+			properties: {
+				query: { type: "string", minLength: 1, maxLength: MAX_GMAIL_QUERY_LENGTH },
+				maxResults: {
+					type: "integer",
+					minimum: 1,
+					maximum: MAX_GMAIL_SEARCH_RESULTS,
+					default: 10,
+				},
+				after: { type: "string", format: "date-time" },
+			},
+			required: ["query"],
+			additionalProperties: false,
+		},
+		execute: ({ signal }, input) =>
+			client.searchMessages({
+				query: String(input.query),
+				maxResults: Number(input.maxResults ?? 10),
+				...(input.after ? { after: String(input.after) } : {}),
+				signal,
+			}),
+	});
+	runtime.registerExternalTool({
+		descriptor: {
+			name: "google.gmail.get-thread",
+			title: "Get Gmail thread",
+			description:
+				"Read one Gmail thread with bounded metadata, optional body excerpts, and attachment references only.",
+			category: "connector",
+			riskLevel: "read_only",
+			readOnly: true,
+			requiresWorkspace: false,
+			source: "connector",
+			tags: ["google", "gmail", "thread", "email"],
+		},
+		inputSchema: {
+			type: "object",
+			properties: {
+				threadId: { type: "string", minLength: 1, maxLength: 200 },
+				maxMessages: {
+					type: "integer",
+					minimum: 1,
+					maximum: MAX_GMAIL_THREAD_MESSAGES,
+					default: MAX_GMAIL_THREAD_MESSAGES,
+				},
+				includeBodyExcerpt: { type: "boolean", default: false },
+			},
+			required: ["threadId"],
+			additionalProperties: false,
+		},
+		execute: ({ signal }, input) =>
+			client.getThread({
+				threadId: String(input.threadId),
+				maxMessages: Number(input.maxMessages ?? MAX_GMAIL_THREAD_MESSAGES),
+				includeBodyExcerpt: input.includeBodyExcerpt === true,
+				signal,
+			}),
+	});
+	runtime.registerExternalTool({
+		descriptor: {
+			name: "google.gmail.get-attachment",
+			title: "Get Gmail attachment",
+			description:
+				"Retrieve one bounded Gmail attachment by message and attachment ID. Large attachments return metadata and a truncated payload only.",
+			category: "connector",
+			riskLevel: "read_only",
+			readOnly: true,
+			requiresWorkspace: false,
+			source: "connector",
+			tags: ["google", "gmail", "attachment", "email"],
+		},
+		inputSchema: {
+			type: "object",
+			properties: {
+				messageId: { type: "string", minLength: 1, maxLength: 200 },
+				attachmentId: { type: "string", minLength: 1, maxLength: 200 },
+			},
+			required: ["messageId", "attachmentId"],
+			additionalProperties: false,
+		},
+		execute: ({ signal }, input) =>
+			client.getAttachment({
+				messageId: String(input.messageId),
+				attachmentId: String(input.attachmentId),
+				signal,
+			}),
+	});
+	runtime.registerExternalTool({
+		descriptor: {
+			name: "google.gmail.create-draft",
+			title: "Create Gmail draft",
+			description:
+				"Create or repeat one deterministic Gmail draft after explicit approval. Drafts do not send mail.",
+			category: "connector",
+			riskLevel: "external",
+			readOnly: false,
+			requiresWorkspace: false,
+			source: "connector",
+			tags: ["google", "gmail", "draft", "email"],
+		},
+		inputSchema: {
+			type: "object",
+			properties: {
+				operationId: { type: "string", minLength: 8, maxLength: 200 },
+				to: { type: "string", minLength: 3, maxLength: 500 },
+				subject: { type: "string", minLength: 1, maxLength: 2_000 },
+				body: { type: "string", minLength: 1, maxLength: 100_000 },
+				threadId: { type: "string", maxLength: 200 },
+				inReplyTo: { type: "string", maxLength: 500 },
+				references: { type: "string", maxLength: 2_000 },
+			},
+			required: ["operationId", "to", "subject", "body"],
+			additionalProperties: false,
+		},
+		execute: ({ signal }, input) =>
+			client.createDraft({
+				operationId: String(input.operationId),
+				to: String(input.to),
+				subject: String(input.subject),
+				body: String(input.body),
+				...(input.threadId ? { threadId: String(input.threadId) } : {}),
+				...(input.inReplyTo ? { inReplyTo: String(input.inReplyTo) } : {}),
+				...(input.references ? { references: String(input.references) } : {}),
+				signal,
+			}),
+		verify: (_context, _input, output) => ({
+			method: "google-gmail-draft-read-back",
+			evidence: {
+				draftId: output.draftId,
+				verified: output.verified,
+				repeated: output.repeated,
+			},
+		}),
+	});
+	runtime.registerExternalTool({
+		descriptor: {
+			name: "google.gmail.send-reply",
+			title: "Send Gmail reply",
+			description:
+				"Send one deterministic Gmail reply after explicit approval and read it back before verification completes.",
+			category: "connector",
+			riskLevel: "external",
+			readOnly: false,
+			requiresWorkspace: false,
+			source: "connector",
+			tags: ["google", "gmail", "reply", "email", "send"],
+		},
+		inputSchema: {
+			type: "object",
+			properties: {
+				operationId: { type: "string", minLength: 8, maxLength: 200 },
+				to: { type: "string", minLength: 3, maxLength: 500 },
+				subject: { type: "string", minLength: 1, maxLength: 2_000 },
+				body: { type: "string", minLength: 1, maxLength: 100_000 },
+				threadId: { type: "string", maxLength: 200 },
+				inReplyTo: { type: "string", maxLength: 500 },
+				references: { type: "string", maxLength: 2_000 },
+			},
+			required: ["operationId", "to", "subject", "body"],
+			additionalProperties: false,
+		},
+		execute: ({ signal }, input) =>
+			client.sendReply({
+				operationId: String(input.operationId),
+				to: String(input.to),
+				subject: String(input.subject),
+				body: String(input.body),
+				...(input.threadId ? { threadId: String(input.threadId) } : {}),
+				...(input.inReplyTo ? { inReplyTo: String(input.inReplyTo) } : {}),
+				...(input.references ? { references: String(input.references) } : {}),
+				signal,
+			}),
+		verify: (_context, _input, output) => ({
+			method: "google-gmail-send-read-back",
+			evidence: {
+				messageId: output.messageId,
+				verified: output.verified,
+				repeated: output.repeated,
+			},
+		}),
+	});
+	runtime.allowTool(sessionId, "google.gmail.search-messages");
+	runtime.allowTool(sessionId, "google.gmail.get-thread");
+	runtime.allowTool(sessionId, "google.gmail.get-attachment");
+	runtime.allowTool(sessionId, "google.gmail.create-draft");
+	runtime.allowTool(sessionId, "google.gmail.send-reply");
 }

@@ -5,6 +5,8 @@ import {
 	pendingToolApprovals,
 	policyGateCopy,
 	runRouteLabel,
+	runtimeOutcomeCopy,
+	uncertainExecutionsForRun,
 } from "./runtime-evidence";
 
 function run(overrides: Partial<AgentRun> = {}): AgentRun {
@@ -73,6 +75,26 @@ describe("policy and route copy", () => {
 		});
 		expect(runRouteLabel(run())).toBe("gpt-oss:20b-cloud · ollama");
 	});
+
+	it("uses persisted restart recovery copy instead of a transient IPC error", () => {
+		const interrupted = run({
+			status: "failed",
+			recovery: {
+				reason: "core_restarted",
+				action: "retry_last_turn",
+			},
+			error: "Kestrel restarted. No work resumed automatically.",
+		});
+		expect(
+			runtimeOutcomeCopy(
+				interrupted,
+				"Agent Core stopped before responding.",
+			),
+		).toEqual({
+			title: "Task interrupted",
+			detail: "Kestrel restarted. No work resumed automatically.",
+		});
+	});
 });
 
 describe("execution audit items", () => {
@@ -103,5 +125,25 @@ describe("execution audit items", () => {
 			detail: `workspace-write-readback · ${"a".repeat(12)}`,
 		});
 		expect(items[1]?.sourceIds).toContain("a".repeat(64));
+	});
+
+	it("surfaces uncertain outcomes only for the matching run", () => {
+		const uncertain = execution({
+			status: "failed",
+			outcomeUncertain: true,
+			error: "The action may already have completed.",
+		});
+		const otherRun = execution({
+			id: "tool-other-run",
+			status: "failed",
+			outcomeUncertain: true,
+			idempotencyKey: "run-other:call-1",
+		});
+		expect(uncertainExecutionsForRun(run(), [uncertain, otherRun])).toEqual([
+			uncertain,
+		]);
+		expect(activityItemsFromExecutions([uncertain])[0]?.detail).toContain(
+			"Outcome uncertain",
+		);
 	});
 });

@@ -113,6 +113,8 @@ jobs:
           name: signed-browser-agent-benchmark-${{ github.sha }}
           path: .tmp/browser-agent-benchmark/release-packaged.json
           if-no-files-found: warn
+      - name: Verify signed Agent Core restart recovery
+        run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
       - name: Create checksummed release manifest
         shell: bash
         run: |

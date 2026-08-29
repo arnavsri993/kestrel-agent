@@ -54,6 +54,7 @@ zones during pagination, or exceeds that density limit. This uses the existing
 - Access tokens are refreshed and cached only inside the isolated core process; they are not persisted or sent to the renderer/model.
 - Disconnect calls Google's revocation endpoint and removes the local encrypted record even if revocation cannot be confirmed.
 - Gmail sends and Calendar mutations remain approval- and idempotency-gated. Calendar creates use a deterministic provider event ID and are read back before verification.
+- Agent tools expose bounded Gmail search, thread metadata, attachment retrieval, draft creation, and reply sending. Search and thread reads return metadata and optional bounded excerpts only; full mailbox bodies are never bulk-loaded into agent context. Drafts and replies use deterministic RFC822 message IDs keyed by `operationId`, require explicit approval, and are read back before verification.
 - Availability checks are read-only, content-minimized, time-zone-aware reads. They return a verified busy/free result only after all bounded pages have been inspected.
 
 Google recommends PKCE for installed desktop apps, secure token storage, revocation, and loopback redirects for desktop flows:
