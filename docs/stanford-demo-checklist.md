@@ -1,6 +1,6 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `0ead20d1` (docs refresh recording engineering Mac install dry-run in #641; `verify:meetup` **PASS** evidence unchanged at `80baae38`)
+**Snapshot commit:** `8ba24d72` (main after #663 B1 Activity handoff; `verify:meetup` **PASS** evidence at `e20d539b`)
 
 **Merged sprint:** #617–#637 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
@@ -9,18 +9,18 @@ Command Center smoke hardening (#632), in-chat memory recall receipt (#633),
 Writing Studio profile panel dual loading/error fix (#636), usage-policy settings
 loading/error fix (#638).
 
-**Overall verdict:** **NOT COMPLETE** — `verify:meetup` **PASS** at `80baae38` (Aug 29,
-~196s) on engineering Mac; operator rehearsal, Apple signing, Google OAuth, and
+**Overall verdict:** **NOT COMPLETE** — `verify:meetup` **PASS** at `e20d539b` (Aug 29,
+~198s) on engineering Mac; operator rehearsal, Apple signing, Google OAuth, and
 crash reporting remain open. Gate must pass again on the presentation Mac before the slot.
 
-**Engineering handoff (Aug 29, `80baae38`):** Repository gates A1–A7 and A9 are
-**COMPLETE** on the engineering Mac. Hero pillars B2–B3, first-task contract C1–C4/C6,
-memory surfacing D1/D3–D4/D7, and New Tab home E1–E5 are **COMPLETE** in repo. Remaining
-demo risk is **operator-only**: presentation Mac `verify:meetup`, canonical install,
-Readiness warm-up, disposable project, memory beat rehearsal, and venue timing (sections
-F and G). No further P0 engineering blockers identified for the primary offline demo path;
-optional surfaces (Google OAuth, remote crash reporting, Honcho remote memory) are out of
-scope for the stage story.
+**Engineering handoff (Aug 29, `e20d539b`):** Repository gates A1–A7 and A9 are
+**COMPLETE** on the engineering Mac. Hero pillars B1–B3, first-task contract C1–C4/C6,
+memory surfacing D1/D3–D4/D7, and New Tab home E1–E5 are **COMPLETE** in repo (#663 adds
+in-thread Activity handoff after verified approvals). Remaining demo risk is **operator-only**:
+presentation Mac `verify:meetup`, canonical install, Readiness warm-up, disposable project,
+memory beat rehearsal, and venue timing (sections F and G). No further P0 engineering blockers
+identified for the primary offline demo path; optional surfaces (Google OAuth, remote crash
+reporting, Honcho remote memory) are out of scope for the stage story.
 
 Use this matrix before going on stage. Each row has an owner, evidence command
 or link, and an honest status as of the snapshot commit.
@@ -45,8 +45,8 @@ or link, and an honest status as of the snapshot commit.
 
 | # | Requirement | Owner | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| A1 | Full `pnpm verify` passes (typecheck, 985+ unit tests, desktop smokes, e2e) | Engineering | `corepack pnpm verify` | **COMPLETE** — passed at `94924dac` (Aug 29, run 2, ~198s); run 1 (~95s) failed `test-desktop-setup.mjs` when dev watcher lock was active — kill `dev:desktop` and clear `kestrel-electron-dev.lock` before gating |
-| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **COMPLETE** — passed at `80baae38` (Aug 29, ~196s): verify → assets → real local-ai → package → packaged smokes → packaged benchmark (#638 on `main`; 1001 unit tests) |
+| A1 | Full `pnpm verify` passes (typecheck, 1033 unit tests, desktop smokes, 50/50 e2e) | Engineering | `corepack pnpm verify` | **COMPLETE** — passed at `e20d539b` (Aug 29, ~198s); kill `dev:desktop` and clear `kestrel-electron-dev.lock` before gating |
+| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **COMPLETE** — passed at `e20d539b` (Aug 29, ~198s): verify → assets → real local-ai → package → packaged smokes → packaged benchmark; 1033 unit tests, 50/50 e2e, 50/50 browser benchmark packaged |
 | A3 | Website assets validate | Engineering | `corepack pnpm assets:verify` | **COMPLETE** — passed in `94924dac` run 2 (3 registry entries, 7 manifests) |
 | A4 | Real local model response | Engineering | `corepack pnpm test:local-ai:real` | **COMPLETE** — passed in `94924dac` run 2 (Ollama 0.32.1, smollm2:135m) |
 | A5 | Apple Silicon dev package builds | Engineering | `corepack pnpm package:mac:dev` | **COMPLETE** — passed in `94924dac` run 2 (ad-hoc dev signature) |
@@ -61,7 +61,7 @@ or link, and an honest status as of the snapshot commit.
 
 | # | Pillar | Requirement | Owner | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
-| B1 | **Do This For Me** | Read-only inspect → approve → local edit → verified test evidence | Both | Ten-minute path in [ai-tinkerers-demo.md](ai-tinkerers-demo.md); `pnpm test:desktop-approvals` | **PARTIAL** — automated smokes pass when verify runs; needs on-stage rehearsal with disposable checkout |
+| B1 | **Do This For Me** | Read-only inspect → approve → local edit → verified test evidence | Both | Ten-minute path in [ai-tinkerers-demo.md](ai-tinkerers-demo.md); #663 Activity handoff; `pnpm test:desktop-approvals` | **COMPLETE** in repo — operator must rehearse on-stage with disposable checkout |
 | B2 | **What Should I Do** | Contextual New Tab: greeting, widgets, suggested actions, bounds sync | Engineering | #624; `apps/desktop/src/renderer/components/browser/new-tab.test.ts`; `new-tab-widgets.test.ts` | **COMPLETE** in repo — operator should rehearse populated vs cold profile |
 | B3 | **It Remembers How I Work** | Remember → confirmation → New Tab widget → Life → Memory → new chat → recall receipt | Engineering | #625, #633; `MemoryRecallBadge.tsx`, `MemoryRecallReceiptLine.tsx`, `memory-recall-receipt.ts` | **COMPLETE** in repo — operator must run memory beat once on presentation profile |
 
@@ -122,7 +122,7 @@ or link, and an honest status as of the snapshot commit.
 
 Run in order on the **presentation Mac** the morning of the demo:
 
-- [ ] `git fetch` && checkout latest `main` (minimum `0ead20d1`; docs-only #642 merged at `ff388326`)
+- [ ] `git fetch` && checkout latest `main` (minimum `8ba24d72`; includes #663 B1 Activity handoff)
 - [ ] `corepack pnpm install --frozen-lockfile`
 - [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present (**required** — `verify:meetup` now fails fast via preflight guard if either is still active)
 - [ ] `corepack pnpm verify:meetup` — **must pass**; preflight prints stop/clear instructions on failure; if a desktop smoke fails once after a clean preflight, retry once; if persistent, file engineering issue before relying on browser tools on stage
@@ -139,7 +139,7 @@ Run in order on the **presentation Mac** the morning of the demo:
 
 ## Sprint close (engineering handoff → operator)
 
-**Engineering sprint closed at `0ead20d1`.** Repository gates A1–A7 and A9, hero pillars B2–B3,
+**Engineering sprint closed at `8ba24d72`.** Repository gates A1–A7 and A9, hero pillars B1–B3,
 first-task contract C1–C4/C6, memory surfacing D1/D3–D4/D7, and New Tab home E1–E5 are
 **COMPLETE** on the engineering Mac. No further P0 engineering blockers identified for the
 primary offline demo path.
@@ -148,14 +148,14 @@ primary offline demo path.
 presentation Mac:**
 
 1. **F2 — On-stage rehearsal** — full ten-minute path, memory beat, and first task with venue timing.
-2. **Presentation Mac `verify:meetup`** — must pass at commit `0ead20d1` (or later on `main`) after
+2. **Presentation Mac `verify:meetup`** — must pass at commit `8ba24d72` (or later on `main`) after
    stopping any `dev:desktop` watcher and clearing `kestrel-electron-dev.lock`.
 3. **F1 — Apple signing** — only if distributing beyond ad-hoc dev build; demo may proceed with
    `install:mac:dev` ad-hoc signature when rehearsal is green.
 
 **Morning-of (Sai, presentation Mac):**
 
-1. `git fetch` && checkout `0ead20d1` (or latest `main` if a docs-only follow-up merged).
+1. `git fetch` && checkout `8ba24d72` (or latest `main`).
 2. `corepack pnpm install --frozen-lockfile`
 3. Stop `dev:desktop`; clear `kestrel-electron-dev.lock` if present.
 4. `corepack pnpm verify:meetup` — must pass; retry once after clean preflight if a smoke flakes.
@@ -184,8 +184,10 @@ out of scope for the primary stage story.
 | `8757ffff` | Aug 29, 2026 | **PASS** (~198s) | Full `verify:meetup` on `main` after #636 Writing Studio profile panel fix; preflight clean; 1001 unit tests; packaged smokes + 50/50 benchmark |
 | `80baae38` | Aug 29, 2026 | **PASS** (~196s) | Full `verify:meetup` on `main` after #638 usage policy settings loading/error fix; preflight clean after killing stray `dev:desktop`; 1001 unit tests; packaged smokes + 50/50 benchmark |
 | `35782c1d` | Aug 29, 2026 | **Docs only** | #639 records engineering gate at `80baae38`; no code delta; sprint-close operator handoff |
+| `e20d539b` | Aug 29, 2026 | **PASS** (~198s) | Full `verify:meetup` on `main` after #661 DevTools block; preflight clean; 1033 unit tests, 50/50 e2e, 50/50 browser benchmark packaged |
+| `8ba24d72` | Aug 29, 2026 | **Docs only** | #663 B1 Activity handoff merged; meetup evidence unchanged at `e20d539b` |
 
-**Engineering note:** #629 stabilized browser attach/detach. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear `/tmp/kestrel-electron-dev.lock` before gating. Latest engineering meetup **PASS** at `80baae38` (~196s). #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected. #636 fixes Writing Studio profile panel showing dual loading/error states. #638 fixes Usage policy settings showing loading text alongside a load error.
+**Engineering note:** #629 stabilized browser attach/detach. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear `/tmp/kestrel-electron-dev.lock` before gating. Latest engineering meetup **PASS** at `e20d539b` (~198s; 1033 unit tests, 50/50 e2e, 50/50 browser benchmark packaged). #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected. #636 fixes Writing Studio profile panel showing dual loading/error states. #638 fixes Usage policy settings showing loading text alongside a load error. #661 blocks DevTools in packaged builds. #662 refines product-wide UI surfaces. #663 adds in-thread "View evidence in Activity" handoff after verified approvals (B1).
 
 ---
 
@@ -207,12 +209,12 @@ Operator dry-run used the **canonical packaged path** per AGENTS.md: stop `dev:d
 | Meetup preflight | `node scripts/verify-meetup-preflight.mjs` | **PASS** | No dev watcher or Electron dev lock |
 | Assets | `corepack pnpm assets:verify` | **PASS** | 3 registry entries, 7 manifests |
 | CLI probe | `corepack pnpm cli -- pets doctor` | **FAIL** (profile) | Encrypted agent config history could not decrypt with current profile key — environment-specific; not a packaging regression |
-| Full meetup gate | `corepack pnpm verify:meetup` | **NOT RUN** this dry-run | Already **PASS** at `80baae38` on engineering Mac (~196s); re-run on **presentation Mac** morning-of |
+| Full meetup gate | `corepack pnpm verify:meetup` | **NOT RUN** this dry-run | Already **PASS** at `e20d539b` on engineering Mac (~198s; 1033 unit tests, 50/50 e2e, 50/50 benchmark); re-run on **presentation Mac** morning-of |
 | Readiness UI | Settings → Readiness | **NOT VERIFIED** this dry-run | Requires manual UI check on presentation Mac |
 | On-stage rehearsal | Ten-minute path + memory beat | **NOT RUN** | Presentation Mac + Sai (F2, section G) |
 
 **Engineering Mac conclusion:** A8 install procedure is **verified** on this machine at `0c26599f`.
-Repository meetup evidence remains at `80baae38`. **Do not** mark Stanford demo complete until
+Repository meetup evidence remains at `e20d539b`. **Do not** mark Stanford demo complete until
 presentation Mac `verify:meetup`, Readiness green, and F2 rehearsal pass.
 
 **Presentation Mac + Sai only (cannot finish on engineering Mac):**
@@ -221,7 +223,7 @@ presentation Mac `verify:meetup`, Readiness green, and F2 rehearsal pass.
 - **F2** full on-stage rehearsal with venue timing
 - **C5** model warm-up within 10 minutes of stage time
 - **E6** profile history/widgets compelling for New Tab demo
-- **B1**, **D2**, **D5**, **D6** live chat/memory beats
+- **D2**, **D5**, **D6** live chat/memory beats (B1 Activity handoff verified in repo via #663; operator rehearsal still required)
 - **F1** Apple signing / notarization (if distributing beyond ad-hoc dev build)
 - **F3** Google OAuth (optional for primary path)
 - Readiness export + disposable project prep (section G)
