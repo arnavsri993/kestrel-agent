@@ -815,6 +815,7 @@ export class UserBrowserService {
 	private state: UserBrowserState;
 	private contentBounds: Rectangle = { x: 0, y: 0, width: 0, height: 0 };
 	private contentVisible = false;
+	private contentBoundsSeq = 0;
 	private disposed = false;
 	private passwordPollInterval: ReturnType<typeof setInterval> | undefined;
 	private passwordScanInFlight = false;
@@ -1259,6 +1260,7 @@ export class UserBrowserService {
 
 	async setContentBounds(bounds: Rectangle, visible: boolean): Promise<void> {
 		this.assertAvailable();
+		const seq = ++this.contentBoundsSeq;
 		const size = this.window.getContentSize();
 		const windowWidth = size[0] ?? 0;
 		const windowHeight = size[1] ?? 0;
@@ -1275,6 +1277,7 @@ export class UserBrowserService {
 		this.contentBounds = { x, y, width, height };
 		this.contentVisible = visible && width >= 160 && height >= 120;
 		await this.syncActiveView();
+		if (seq !== this.contentBoundsSeq) await this.syncActiveView();
 	}
 
 	updateSettings(settings: UserBrowserSettings): UserBrowserState {
@@ -2481,6 +2484,7 @@ export class UserBrowserService {
 				canScroll: true,
 			});
 		}
+		await this.syncActiveView();
 	}
 
 	async handleAgentRequest(

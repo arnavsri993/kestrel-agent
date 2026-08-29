@@ -94,6 +94,8 @@ export function BrowserWorkspace({
   const [historyPopoverRequestId, setHistoryPopoverRequestId] = useState(0);
   const organizeTabsRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
+  const syncBoundsRef = useRef<() => void>(() => undefined);
+  const scheduleBoundsSyncRef = useRef<() => void>(() => undefined);
   const state = browser.state;
   const {
     back,
@@ -208,16 +210,21 @@ export function BrowserWorkspace({
     });
   }, [syncBounds]);
 
+  syncBoundsRef.current = syncBounds;
+  scheduleBoundsSyncRef.current = scheduleBoundsSync;
+
   useLayoutEffect(() => {
     const node = viewportRef.current;
     if (!node) return;
-    const observer = new ResizeObserver(syncBounds);
+    const syncFromRef = () => syncBoundsRef.current();
+    const scheduleFromRef = () => scheduleBoundsSyncRef.current();
+    const observer = new ResizeObserver(syncFromRef);
     observer.observe(node);
     const root = document.getElementById("root");
-    const mutationObserver = new MutationObserver(syncBounds);
+    const mutationObserver = new MutationObserver(syncFromRef);
     if (root) mutationObserver.observe(root, { childList: true });
     const appShell = node.closest(".ai-browser-app");
-    const shellObserver = new MutationObserver(scheduleBoundsSync);
+    const shellObserver = new MutationObserver(scheduleFromRef);
     if (appShell) {
       shellObserver.observe(appShell, {
         attributes: true,
@@ -231,28 +238,34 @@ export function BrowserWorkspace({
         event.target === node &&
         (event.propertyName === "width" || event.propertyName === "margin-left")
       ) {
-        scheduleBoundsSync();
+        scheduleFromRef();
       }
     };
     node.addEventListener("transitionend", onTransitionEnd);
-    window.addEventListener("resize", syncBounds);
-    const frame = window.requestAnimationFrame(syncBounds);
-    const settleTimer = window.setTimeout(syncBounds, 320);
-    syncBounds();
+    window.addEventListener("resize", syncFromRef);
+    const frame = window.requestAnimationFrame(syncFromRef);
+    const settleTimer = window.setTimeout(syncFromRef, 320);
+    syncFromRef();
     return () => {
       observer.disconnect();
       mutationObserver.disconnect();
       shellObserver.disconnect();
       node.removeEventListener("transitionend", onTransitionEnd);
-      window.removeEventListener("resize", syncBounds);
+      window.removeEventListener("resize", syncFromRef);
       window.cancelAnimationFrame(frame);
       window.clearTimeout(settleTimer);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
       lastBoundsRef.current = "";
       void setContentBounds({ x: 0, y: 0, width: 0, height: 0 }, false).catch(
         () => undefined,
       );
-    };
-  }, [setContentBounds, scheduleBoundsSync, syncBounds]);
+    },
+    [setContentBounds],
+  );
 
   useEffect(() => {
     scheduleBoundsSync();
