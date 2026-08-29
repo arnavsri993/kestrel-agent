@@ -606,9 +606,28 @@ try {
 		await page.evaluate(() => localStorage.getItem("kestrel:onboarded")),
 		null,
 	);
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:onboarded", "yes");
+		localStorage.setItem("kestrel:first-task", "yes");
+	});
+	await page.reload();
+	await page.locator("#runtime-prompt").waitFor();
+	await page
+		.getByText(/just finished Kestrel setup/i)
+		.first()
+		.waitFor({ timeout: 10_000 });
+	assert.equal(
+		await page.getByLabel("Message Kestrel").inputValue(),
+		"",
+		"First-task onboarding should auto-send and clear the composer.",
+	);
+	assert.equal(
+		await page.evaluate(() => localStorage.getItem("kestrel:first-task")),
+		null,
+	);
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n",
+		"Five-step desktop setup persistence, automatic/manual local setup, setup-assistant handoff, guided first-task auto-send, ChatGPT and Google OAuth connection entries, compact reflow, completion, and Settings re-entry passed.\n",
 	);
 } finally {
 	await application?.close();
