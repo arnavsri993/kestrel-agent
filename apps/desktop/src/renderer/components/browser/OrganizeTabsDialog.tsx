@@ -44,7 +44,12 @@ function faviconForTab(
 		"origin" | "faviconDataUrl"
 	>[] | undefined,
 ) {
-	return <TabFavicon tab={tab} originFavicons={originFavicons} />;
+	return (
+		<TabFavicon
+			tab={tab}
+			{...(originFavicons ? { originFavicons } : {})}
+		/>
+	);
 }
 
 export function OrganizeTabsDialog({

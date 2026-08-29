@@ -889,7 +889,7 @@ function paymentCardVault(): PaymentCardVault {
 function googleWorkspaceOAuthManager(): GoogleWorkspaceOAuthManager {
   return new GoogleWorkspaceOAuthManager({
     broker: credentialBroker(),
-    openExternal: (url) => {
+    openExternal: async (url) => {
       openExternalSafely((target) => shell.openExternal(target), url);
     },
   });
@@ -993,7 +993,7 @@ async function subscriptionCliStatuses() {
       id === "codex" && path
         ? await new ChatGptOAuthManager({
             executable: path,
-            openExternal: (url) => {
+            openExternal: async (url) => {
       openExternalSafely((target) => shell.openExternal(target), url);
     },
           })
@@ -3467,7 +3467,7 @@ function registerIpc(): void {
       const controller = new AbortController();
       const manager = new ChatGptOAuthManager({
         executable: codexPath,
-        openExternal: (url) => {
+        openExternal: async (url) => {
       openExternalSafely((target) => shell.openExternal(target), url);
     },
       });
