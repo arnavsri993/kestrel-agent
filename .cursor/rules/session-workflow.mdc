@@ -1,25 +1,35 @@
 ---
-description: Session start, PR, GitHub sync, and local Kestrel update workflow
+description: Mandatory Kestrel workflow — commit, PR, GitHub sync, restart local app after every change
 alwaysApply: true
 ---
 
-# Session workflow
+# Session workflow (mandatory)
 
-Follow this in every conversation in this repo.
+Follow this in **every** conversation in this repo. This rule overrides generic "only commit when asked" guidance for Kestrel work unless Sai explicitly says not to commit or open a PR.
 
 ## Start of session
 
 1. Fetch and update from GitHub before editing (`git fetch` and fast-forward or rebase onto the tracked remote branch / `origin` default).
 2. Do not start from a stale checkout. If local work would be overwritten, stop and preserve it.
 
-## After every change
+## After every change (do not skip)
 
-1. Commit, push to GitHub, and open a pull request for that change. Keep the PR scoped to the work; do not dump unrelated local files, screenshots, or artifacts. Create the PR with `gh`. Treat this as the default end of every coding task unless the user explicitly says not to.
-2. Keep the local Kestrel instance current with GitHub: fetch, rebase or fast-forward onto the remote branch, then restart the desktop app from that checkout. Do not leave an old Electron process serving previous main-process code. Prefer stopping the existing `corepack pnpm dev:desktop` watcher and starting a fresh one. Only one desktop watcher should run.
-3. Before calling work done, confirm the running app matches the branch you pushed (renderer HMR alone is not enough after main-process, preload, credential, or Electron startup changes).
+When you finish a coding task — or even a small fix — complete **all** of these before saying work is done:
+
+1. **Commit** scoped changes with a clear message. Do not include unrelated local files, screenshots, or artifacts.
+2. **Push** to GitHub (`git push -u origin HEAD` when the branch is new).
+3. **Open or update a PR** with `gh pr create` or `gh pr edit`. Return the PR URL in your reply.
+4. **Sync local Kestrel** with GitHub:
+   - `git pull --ff-only` on the branch you pushed
+   - Stop any existing `corepack pnpm dev:desktop` watcher (`pkill -f "electron-vite dev"` if needed)
+   - Start one fresh `corepack pnpm dev:desktop` watcher
+5. **Verify** the running app matches the branch you pushed. Renderer HMR alone is not enough after main-process, preload, credential, or Electron startup changes.
+
+If any step fails, say so and fix it — do not mark the task complete.
 
 ## Do not
 
+- Edit files and stop without commit → push → PR → restart dev.
 - Skip the GitHub update because a previous session already pulled.
 - Leave local Kestrel running stale code after pushing a change.
 - Assume Vite HMR is enough after main-process, preload, credential, or Electron startup changes.
