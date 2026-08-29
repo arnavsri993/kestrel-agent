@@ -14,6 +14,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	CredentialBroker,
 	PlaintextSecretProtection,
+	SAFESTORAGE_PROTECTION_PREFIX,
+	SafeStorageSecretProtection,
 	SecureStorageError,
 } from "./credential-broker";
 
@@ -175,10 +177,10 @@ describe("desktop credential broker", () => {
 		expect(environment).not.toHaveProperty("UNRELATED_PROVIDER_MODEL");
 	});
 
-	it("stores the database key as a local plaintext file without OS encryption", async () => {
+	it("stores the database key as a local plaintext file in dev-only protection", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-plaintext-"));
 		roots.push(root);
-		const broker = new CredentialBroker(root);
+		const broker = new CredentialBroker(root, new PlaintextSecretProtection());
 		const key = await broker.getDatabaseKey();
 		expect(key).toHaveLength(32);
 		const stored = readFileSync(join(root, "secure", "database-key.bin"));
@@ -186,10 +188,53 @@ describe("desktop credential broker", () => {
 			stored.subarray(0, "kestrel-plaintext-v1\n".length).toString("utf8"),
 		).toBe("kestrel-plaintext-v1\n");
 		expect(stored.toString("utf8")).toContain(key.toString("base64"));
-		expect(await new CredentialBroker(root).getDatabaseKey()).toEqual(key);
+		expect(
+			await new CredentialBroker(root, new PlaintextSecretProtection()).getDatabaseKey(),
+		).toEqual(key);
 	});
 
-	it("refuses leftover Keychain ciphertext instead of prompting macOS", async () => {
+	it("seals the database key with safeStorage and migrates plaintext keys on first read", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-credentials-safestorage-"));
+		roots.push(root);
+		const key = Buffer.alloc(32, 9);
+		const keyPath = join(root, "secure", "database-key.bin");
+		mkdirSync(join(root, "secure"), { recursive: true });
+		writeFileSync(
+			keyPath,
+			Buffer.concat([
+				Buffer.from("kestrel-plaintext-v1\n", "utf8"),
+				Buffer.from(key.toString("base64"), "utf8"),
+			]),
+		);
+		const storage = {
+			available: true,
+			encryptString(value: string) {
+				return Buffer.from(`sealed:${Buffer.from(value, "utf8").toString("base64")}`);
+			},
+			decryptString(value: Buffer) {
+				return Buffer.from(value.toString().slice("sealed:".length), "base64").toString(
+					"utf8",
+				);
+			},
+			isEncryptionAvailable() {
+				return this.available;
+			},
+		};
+		const protection = new SafeStorageSecretProtection(storage);
+		const broker = new CredentialBroker(root, protection);
+
+		expect(await broker.getDatabaseKey()).toEqual(key);
+		expect(await broker.getDatabaseKey()).toEqual(key);
+		const migrated = readFileSync(keyPath);
+		expect(
+			migrated.subarray(0, SAFESTORAGE_PROTECTION_PREFIX.length).equals(
+				SAFESTORAGE_PROTECTION_PREFIX,
+			),
+		).toBe(true);
+		expect(migrated.toString("utf8")).not.toContain(key.toString("base64"));
+	});
+
+	it("refuses safeStorage ciphertext when only plaintext protection is enabled", async () => {
 		const protection = new PlaintextSecretProtection();
 		await expect(
 			protection.decryptString(Buffer.from([0x00, 0x01, 0x02, 0xff])),

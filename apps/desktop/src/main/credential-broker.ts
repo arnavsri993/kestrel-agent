@@ -9,6 +9,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { SafeStorage } from "electron";
 import { ProtectedDatabaseError } from "@kestrel/database";
 import { decryptText, encryptText } from "@kestrel/encryption";
 
@@ -163,6 +164,10 @@ const BROKERED_NON_SECRET_ENVIRONMENT_KEYS = [
 export const SECURE_STORAGE_UNAVAILABLE_MESSAGE =
 	"Protected storage is unavailable; Agent Core will not start with an unprotected key.";
 const SECRET_ENVELOPE_PREFIX = Buffer.from("kestrel-secret-v1\n", "utf8");
+export const SAFESTORAGE_PROTECTION_PREFIX = Buffer.from(
+	"kestrel-safestorage-v1\n",
+	"utf8",
+);
 const PLAINTEXT_PROTECTION_PREFIX = Buffer.from("kestrel-plaintext-v1\n", "utf8");
 const SECRET_KEY_SALT = Buffer.from("kestrel-credential-broker-v1", "utf8");
 const fileMutationQueues = new Map<string, Promise<void>>();
@@ -230,15 +235,90 @@ export class PlaintextSecretProtection implements SecretProtection {
 			};
 		}
 		throw new SecureStorageError(
-			"Kestrel found a Keychain-protected secret, but this build stores the database key as a local file instead of using macOS Keychain.",
+			"Kestrel found a Keychain-protected secret, but this build only allows local plaintext storage in development or CI.",
 		);
 	}
 }
 
+type SafeStorageLike = Pick<
+	SafeStorage,
+	"decryptString" | "encryptString" | "isEncryptionAvailable"
+>;
+
+export class SafeStorageSecretProtection implements SecretProtection {
+	constructor(private readonly storage: SafeStorageLike) {}
+
+	isEncryptionAvailable(): boolean {
+		return this.storage.isEncryptionAvailable();
+	}
+
+	async encryptString(value: string): Promise<Buffer> {
+		if (!this.storage.isEncryptionAvailable())
+			throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
+		return Buffer.concat([
+			SAFESTORAGE_PROTECTION_PREFIX,
+			this.storage.encryptString(value),
+		]);
+	}
+
+	async decryptString(value: Buffer): Promise<ProtectedDecryption> {
+		if (!this.storage.isEncryptionAvailable())
+			throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
+		if (
+			value
+				.subarray(0, SAFESTORAGE_PROTECTION_PREFIX.length)
+				.equals(SAFESTORAGE_PROTECTION_PREFIX)
+		) {
+			return {
+				result: this.storage.decryptString(
+					value.subarray(SAFESTORAGE_PROTECTION_PREFIX.length),
+				),
+				shouldReEncrypt: false,
+			};
+		}
+		if (
+			value
+				.subarray(0, PLAINTEXT_PROTECTION_PREFIX.length)
+				.equals(PLAINTEXT_PROTECTION_PREFIX)
+		) {
+			return {
+				result: value.subarray(PLAINTEXT_PROTECTION_PREFIX.length).toString("utf8"),
+				shouldReEncrypt: true,
+			};
+		}
+		try {
+			return {
+				result: this.storage.decryptString(value),
+				shouldReEncrypt: true,
+			};
+		} catch (error) {
+			throw new SecureStorageError(
+				"Kestrel could not unlock its protected database key with macOS Keychain.",
+				error,
+			);
+		}
+	}
+}
+
+function shouldUsePlaintextProtection(isPackaged: boolean): boolean {
+	return (
+		process.env.KESTREL_ALLOW_PLAINTEXT_SECRET_STORAGE === "1" || !isPackaged
+	);
+}
+
 let defaultProtection: Promise<SecretProtection> | undefined;
 
+async function createDefaultProtection(): Promise<SecretProtection> {
+	const { app, safeStorage } = await import("electron");
+	if (shouldUsePlaintextProtection(app.isPackaged))
+		return new PlaintextSecretProtection();
+	if (!safeStorage.isEncryptionAvailable())
+		throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);
+	return new SafeStorageSecretProtection(safeStorage);
+}
+
 function loadDefaultProtection(): Promise<SecretProtection> {
-	defaultProtection ??= Promise.resolve(new PlaintextSecretProtection());
+	defaultProtection ??= createDefaultProtection();
 	return defaultProtection;
 }
 
@@ -590,7 +670,7 @@ export class CredentialBroker {
 				return this.decryptSecret(encrypted, purpose, databaseKey);
 
 			// Older builds protected files individually with Electron safeStorage.
-			// This build never opens macOS Keychain, so leftover ciphertext is refused.
+			// Migrate them into the one-root-key envelope on first read.
 			const legacy = this.normalizedDecryption(
 				await this.decryptWithProtection(
 					await this.availableProtection(),
