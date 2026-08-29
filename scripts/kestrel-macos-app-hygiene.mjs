@@ -121,10 +121,14 @@ export function preventSpotlightIndexing(repositoryRoot) {
 	return marked;
 }
 
+export function repositoryReleaseBundle(repositoryRoot) {
+	return join(resolve(repositoryRoot), "release", "mac-arm64", "Kestrel.app");
+}
+
 export function worktreeReleaseCandidates(documentsRoot = resolveDocumentsRoot()) {
 	const candidates = [];
 	for (const root of agentRepositoryRoots(documentsRoot)) {
-		const bundle = join(root, "release", "mac-arm64", "Kestrel.app");
+		const bundle = repositoryReleaseBundle(root);
 		if (isKestrelBundle(bundle)) candidates.push(bundle);
 	}
 	return candidates;
@@ -305,8 +309,10 @@ export function cleanupDuplicateKestrelApps(options = {}) {
 		options.repositoryRoot ?? join(import.meta.dirname, ".."),
 	);
 	const canonicalApp = join(installRoot, "Kestrel.app");
+	const currentReleaseBundle = repositoryReleaseBundle(repositoryRoot);
 	const excludedPaths = uniquePaths([
 		canonicalApp,
+		currentReleaseBundle,
 		...(options.excludedPaths ?? []),
 	]);
 	const marked = preventSpotlightIndexing(repositoryRoot);
