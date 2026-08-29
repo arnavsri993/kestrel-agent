@@ -253,10 +253,10 @@ if (
 	);
 if (
 	!desktopMain.includes("use-mock-keychain") ||
-	!desktopMain.includes("isPackagedKestrelRuntime")
+	!desktopMain.includes("KESTREL_USE_REAL_KEYCHAIN")
 )
 	fail(
-		"desktop startup must use real Keychain in packaged builds and mock Keychain in dev/test.",
+		"desktop startup must use mock Keychain by default and opt in to real Keychain explicitly.",
 	);
 for (const marker of [
 	"kestrel-database-migrations",
