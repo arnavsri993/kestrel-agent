@@ -971,7 +971,7 @@ describe("task orchestration", () => {
 		item.database.close();
 	});
 
-	it("keeps scheduled runs in a review queue and resumes the same run after approval", async () => {
+	it("defers scheduled approval resume while interactive work is active and fails after supersede", async () => {
 		let calls = 0;
 		let reportInteractiveStarted: () => void = () => undefined;
 		let releaseInteractive: () => void = () => undefined;
@@ -1069,8 +1069,11 @@ describe("task orchestration", () => {
 		});
 
 		const resumed = await item.orchestrator.resumeJob(job.id);
-		expect(resumed.status).toBe("completed");
-		expect(existsSync(join(item.root, "review.txt"))).toBe(false);
+		expect(resumed).toMatchObject({
+			status: "failed",
+			error: "Scheduled agent resume failed.",
+		});
+		expect(existsSync(join(item.root, "review.txt"))).toBe(true);
 		item.database.close();
 	});
 
