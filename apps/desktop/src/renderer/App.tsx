@@ -5305,6 +5305,7 @@ function Work({
 	const [handoffSummary, setHandoffSummary] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const createGoalFormRef = useRef<HTMLFormElement>(null);
 	const children = sessions.filter(
 		(session) => session.parentSessionId === parentSessionId,
 	);
@@ -5507,6 +5508,15 @@ function Work({
 				goals={goals}
 				sessions={sessions}
 				busy={busy}
+				onCreateGoal={() => {
+					createGoalFormRef.current?.scrollIntoView({
+						behavior: "smooth",
+						block: "nearest",
+					});
+					createGoalFormRef.current
+						?.querySelector<HTMLInputElement>("input")
+						?.focus();
+				}}
 				onTaskUpdate={({ goalId, taskId, taskStatus, assigneeSessionId }) =>
 					mutate({
 						type: "orchestration-goal-update",
@@ -5650,6 +5660,7 @@ function Work({
 					</button>
 				</form>
 				<form
+					ref={createGoalFormRef}
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
@@ -6391,9 +6402,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 							</p>
 						</div>
 						<span className="connection-status connected">connected</span>
-						<button className="button secondary" disabled>
-							Owner-configured
-						</button>
+						<span className="honest-status">Owner-configured</span>
 					</article>
 				))}
 				{snapshot.connections
@@ -6446,9 +6455,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 									Connect Google in Settings for live data
 								</span>
 							) : (
-								<button className="button secondary" disabled>
-									Connect later
-								</button>
+								<span className="honest-status">Not available yet</span>
 							)}
 						</article>
 					))}

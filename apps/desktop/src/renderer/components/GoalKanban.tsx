@@ -8,6 +8,7 @@ interface GoalKanbanProps {
 	goals: GoalRecordContract[];
 	sessions: RuntimeSession[];
 	busy: boolean;
+	onCreateGoal?(): void;
 	onTaskUpdate(input: {
 		goalId: string;
 		taskId: string;
@@ -31,6 +32,7 @@ export function GoalKanban({
 	goals,
 	sessions,
 	busy,
+	onCreateGoal,
 	onTaskUpdate,
 	onCompleteGoal,
 }: GoalKanbanProps) {
@@ -188,6 +190,16 @@ export function GoalKanban({
 				<div className="kanban-empty-board">
 					<strong>No active goals</strong>
 					<p>Create a goal and its task lines will appear here.</p>
+					{onCreateGoal ? (
+						<button
+							type="button"
+							className="button secondary"
+							disabled={busy}
+							onClick={onCreateGoal}
+						>
+							Create a goal
+						</button>
+					) : null}
 				</div>
 			) : (
 				<div className="kanban-columns">

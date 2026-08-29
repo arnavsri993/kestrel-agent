@@ -581,15 +581,6 @@
 }
 
 @media (max-width: 680px) {
-  .new-tab-sidebar-open .new-tab-sidebar {
-    width: 56px;
-  }
-
-  .new-tab-sidebar-open .new-tab-sidebar-tabs,
-  .new-tab-sidebar-open .new-tab-sidebar-panel {
-    display: none;
-  }
-
   .kestrel-home-content {
     width: calc(100% - 32px);
     gap: 36px;
