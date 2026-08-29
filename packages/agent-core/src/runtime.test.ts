@@ -1633,7 +1633,9 @@ describe("agent runtime", () => {
 		expect(encryptedMutation.payload_iv.length).toBeGreaterThan(10);
 		expect(encryptedMutation.payload_auth_tag.length).toBeGreaterThan(10);
 		expect(encryptedMutation.payload_ciphertext).not.toBe("one\n");
-		expect(database.getWorkspaceMutation(mutationId as string)?.payload).toBeTruthy();
+		const restoredMutation = database.getWorkspaceMutation(mutationId as string);
+		expect(restoredMutation?.path).toBe("src/new.ts");
+		expect(restoredMutation?.beforeContent).toBeUndefined();
 		database.close();
 	});
 
