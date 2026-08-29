@@ -763,6 +763,50 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     ).toBe(false);
   });
 
+  it("serializes closeTab behind an in-flight pageContext", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+    contents.title = "Example";
+
+    let releaseContext!: () => void;
+    const contextGate = new Promise<void>((resolve) => {
+      releaseContext = resolve;
+    });
+    contents.executeJavaScript.mockImplementation(async () => {
+      await contextGate;
+      return {
+        description: "Fixture",
+        selectedText: "",
+        visibleText: "Visible reference text",
+        headings: ["Fixture"],
+        links: [],
+        forms: [],
+        viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0 },
+      };
+    });
+
+    const contextPromise = service.pageContext(tab.id);
+    await vi.waitFor(() => {
+      expect(contents.executeJavaScript).toHaveBeenCalled();
+    });
+
+    const closePromise = service.closeTab(tab.id);
+    await Promise.resolve();
+    expect(
+      service.getState().tabs.some((item) => item.id === tab.id),
+    ).toBe(true);
+
+    releaseContext();
+    await contextPromise;
+    const closeState = await closePromise;
+    expect(
+      closeState.tabs.some((item) => item.id === tab.id),
+    ).toBe(false);
+  });
+
   it("rejects queued agent requests aborted while waiting for the tab mutex", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;

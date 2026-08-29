@@ -1681,6 +1681,12 @@ export class UserBrowserService {
 	}
 
 	async pageContext(tabId?: string): Promise<UserBrowserPageContext> {
+		return this.runExclusiveTabMutation(() => this.pageContextWhilePinned(tabId));
+	}
+
+	private async pageContextWhilePinned(
+		tabId?: string,
+	): Promise<UserBrowserPageContext> {
 		const resolvedTabId = tabId ?? this.requireActiveTab().id;
 		return this.withAgentTabPin(resolvedTabId, async () => {
 			const tab = this.requireTab(resolvedTabId);
@@ -2306,6 +2312,16 @@ export class UserBrowserService {
 		tabId?: string,
 		signal?: AbortSignal,
 	): Promise<BrowserSnapshot> {
+		return this.runExclusiveTabMutation(
+			() => this.snapshotWhilePinned(tabId, signal),
+			signal,
+		);
+	}
+
+	private async snapshotWhilePinned(
+		tabId?: string,
+		signal?: AbortSignal,
+	): Promise<BrowserSnapshot> {
 		const resolvedTabId = tabId ?? this.requireActiveTab().id;
 		return this.withAgentTabPin(resolvedTabId, async () => {
 			const tab = this.requireTab(resolvedTabId);
@@ -2409,6 +2425,16 @@ export class UserBrowserService {
 		tabId?: string,
 		signal?: AbortSignal,
 	): Promise<ScreenshotFrame> {
+		return this.runExclusiveTabMutation(
+			() => this.screenshotWhilePinned(tabId, signal),
+			signal,
+		);
+	}
+
+	private async screenshotWhilePinned(
+		tabId?: string,
+		signal?: AbortSignal,
+	): Promise<ScreenshotFrame> {
 		const resolvedTabId = tabId ?? this.requireActiveTab().id;
 		return this.withAgentTabPin(resolvedTabId, async () => {
 			const tab = this.requireTab(resolvedTabId);
@@ -2459,6 +2485,17 @@ export class UserBrowserService {
 	}
 
 	async act(
+		tabId: string,
+		action: BrowserAction,
+		signal: AbortSignal,
+	): Promise<void> {
+		return this.runExclusiveTabMutation(
+			() => this.actWhilePinned(tabId, action, signal),
+			signal,
+		);
+	}
+
+	private async actWhilePinned(
 		tabId: string,
 		action: BrowserAction,
 		signal: AbortSignal,
@@ -2563,15 +2600,15 @@ export class UserBrowserService {
 					trust: "untrusted_browser" as const,
 				}));
 			case "visible-context":
-				return this.pageContext(request.tabId);
+				return this.pageContextWhilePinned(request.tabId);
 			case "visible-snapshot":
 				return {
-					...(await this.snapshot(request.tabId, signal)),
+					...(await this.snapshotWhilePinned(request.tabId, signal)),
 					trust: "untrusted_browser",
 				};
 			case "visible-screenshot":
 				return {
-					...(await this.screenshot(request.tabId, signal)),
+					...(await this.screenshotWhilePinned(request.tabId, signal)),
 					trust: "untrusted_browser",
 				};
 			case "visible-history":
@@ -2579,7 +2616,7 @@ export class UserBrowserService {
 			case "visible-downloads":
 				return this.visibleDownloads();
 			case "visible-act":
-				await this.act(request.tabId, request.action, signal);
+				await this.actWhilePinned(request.tabId, request.action, signal);
 				return { performed: true };
 			case "visible-navigate":
 				await this.navigate(request.tabId, request.input);
