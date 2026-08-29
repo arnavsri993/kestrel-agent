@@ -4,6 +4,10 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import {
+	dismissDefaultBrowserPrompt,
+	openCommandCenter as openCommandCenterSurface,
+} from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-personas-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -107,6 +111,7 @@ async function markReturningUser(page) {
 	await page.reload();
 	await page.locator("#runtime-prompt").waitFor();
 	await page.locator("#new-tab-title").waitFor();
+	await dismissDefaultBrowserPrompt(page);
 }
 
 async function readSnapshot(page) {
@@ -154,12 +159,7 @@ async function assertFreshState(page) {
 }
 
 async function openCommandCenter(page) {
-	await page.keyboard.press("Meta+K");
-	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
-		.waitFor();
-	const search = page.getByLabel("Search Kestrel");
-	await search.waitFor();
+	const search = await openCommandCenterSurface(page);
 	await page.waitForFunction(
 		() => document.activeElement === document.querySelector(".command-search input"),
 	);
