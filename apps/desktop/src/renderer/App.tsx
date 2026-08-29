@@ -140,6 +140,7 @@ import {
 	runtimeTaskWorkspace,
 	shouldPreserveActiveRun,
 } from "./runtime-session-state";
+import { canCompleteOnboarding } from "./setup-onboarding";
 import {
 	loadInitialDesktopState,
 	startupFailureMessage,
@@ -1364,6 +1365,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			? "The route is saved but not live-verified yet."
 			: "Explore now. Connect a model when you need live work.";
 	const finishPrimaryLabel = verifiedModelReady ? "Try a first task" : "Open Kestrel";
+	const onboardingCompleteAllowed = canCompleteOnboarding(
+		modelReady,
+		verifiedModelReady,
+	);
 
 	return (
 		<motion.main
@@ -2398,6 +2403,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						Choose an option above to continue.
 					</small>
 				)}
+				{step === finalSetupStep && modelReady && !verifiedModelReady && (
+					<small className="setup-continue-hint">
+						Verify one model route before opening Kestrel.
+					</small>
+				)}
 				<div className="button-row">
 					{step > 0 && (
 						<button
@@ -2415,6 +2425,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 					{step === finalSetupStep && (
 						<button
 							className="button secondary"
+							disabled={!onboardingCompleteAllowed}
 							onClick={() => {
 								localStorage.setItem("kestrel:setup-coach", "yes");
 								localStorage.setItem(
@@ -2436,7 +2447,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 					)}
 					<button
 						className="button primary"
-						disabled={(step === 1 && !warningAccepted) || step === 2}
+						disabled={
+							(step === 1 && !warningAccepted) ||
+							step === 2 ||
+							(step === finalSetupStep && !onboardingCompleteAllowed)
+						}
 						onClick={() => {
 							if (step === finalSetupStep) {
 								if (verifiedModelReady) {
@@ -3793,6 +3808,8 @@ function RuntimeConversation({
 		activeSessionId,
 		hasOptimisticNewTask: Boolean(optimisticUser),
 	});
+	const backgroundRunSessionId =
+		runScope === "background" ? streamSessionIdRef.current : null;
 	const latestRunHasConfigurationMessage = Boolean(
 		latestRun &&
 			messages.some(
@@ -3879,6 +3896,18 @@ function RuntimeConversation({
 			>
 				{assistiveStatus}
 			</p>
+			{backgroundRunSessionId ? (
+				<div className="background-run-banner">
+					<p>Kestrel is still working in another chat.</p>
+					<button
+						type="button"
+						className="quiet-link"
+						onClick={() => onActiveSession(backgroundRunSessionId)}
+					>
+						Return to active task
+					</button>
+				</div>
+			) : null}
 			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
 				<div className="chat-welcome">
 					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>

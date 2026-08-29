@@ -9,6 +9,7 @@ import {
 	LOCAL_FIRST_TOOL_INSTRUCTIONS,
 	SessionRunBusyError,
 } from "./agent-loop";
+import { PREMATURE_BROWSER_COMPLETION_ERROR } from "./agent-run-completion";
 import {
 	toBrowserRecoveryError,
 	type BrowserRecoveryBudgetState,
@@ -2830,6 +2831,82 @@ describe("provider-neutral agent loop", () => {
 			/Permissive fallback completed/i,
 		);
 		expect(callCount).toBe(2);
+		database.close();
+	});
+
+	it("marks a run failed when the model stops silently after browser work", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Silent browser stop" });
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "browser.test-step",
+				title: "Browser step",
+				description: "Perform one browser step.",
+				category: "browser",
+				riskLevel: "external",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "builtin",
+				tags: ["test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ clicked: true }),
+		});
+		runtime.allowTool(session.id, "browser.test-step");
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "fake",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) =>
+				++calls === 1
+					? {
+							providerId: "fake",
+							model: request.model,
+							text: "",
+							toolCalls: [
+								{
+									id: "call-browser",
+									name: "browser.test-step",
+									arguments: {},
+								},
+							],
+							usage: { inputTokens: 4, outputTokens: 2 },
+							finishReason: "tool_calls",
+						}
+					: {
+							providerId: "fake",
+							model: request.model,
+							text: "",
+							toolCalls: [],
+							usage: { inputTokens: 3, outputTokens: 1 },
+							finishReason: "stop",
+						},
+		};
+
+		const result = await new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		).run({
+			sessionId: session.id,
+			model: "fake",
+			providerIds: ["fake"],
+			userContent: textContent("Click the checkout button."),
+			approvalStatus: "approved",
+		});
+
+		expect(result.run).toMatchObject({
+			status: "failed",
+			error: PREMATURE_BROWSER_COMPLETION_ERROR,
+		});
 		database.close();
 	});
 });
