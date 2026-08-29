@@ -154,6 +154,7 @@ import {
 	startupFailureMessage,
 } from "./startup-state";
 import { personalizedConfigurationPrompts } from "./configuration-prompts";
+import { userFacingError } from "./error-copy";
 import {
 	latestRunActionReceipts,
 	policyGateCopy,
@@ -1068,7 +1069,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			setOllamaAvailable(response.ollamaAvailable);
 			setLocalModels(response.localModels);
 			setLocalRuntime(response.localRuntime);
-			setLocalError(response.localModelError ?? "");
+			setLocalError(
+				response.localModelError
+					? userFacingError(
+							response.localModelError,
+							"Could not check the local model service right now.",
+						)
+					: "",
+			);
 		}
 	}
 
@@ -1087,19 +1095,17 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	useEffect(() => {
 		void loadCredentials().catch((cause) =>
 			setCredentialError(
-				cause instanceof Error ? cause.message : "Credential status failed.",
+				userFacingError(cause, "Could not check saved accounts right now."),
 			),
 		);
 		void loadLocalModels().catch((cause) =>
 			setLocalError(
-				cause instanceof Error ? cause.message : "Local model check failed.",
+				userFacingError(cause, "Could not check local models right now."),
 			),
 		);
 		void loadSubscriptionClis().catch((cause) =>
 			setCredentialError(
-				cause instanceof Error
-					? cause.message
-					: "Subscription CLI check failed.",
+				userFacingError(cause, "Could not check local sign-in tools right now."),
 			),
 		);
 		return window.kestrel.onLocalRuntimeProgress(setLocalProgress);
@@ -1148,7 +1154,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			setCredentialValues((current) => ({ ...current, [credentialId]: "" }));
 		} catch (cause) {
 			setCredentialError(
-				cause instanceof Error ? cause.message : "Credential save failed.",
+				userFacingError(cause, "Could not save that account. Try again."),
 			);
 		} finally {
 			setCredentialBusy("");
@@ -1179,9 +1185,10 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			}
 		} catch (cause) {
 			setLocalError(
-				cause instanceof Error
-					? cause.message
-					: "Model download failed. Make sure Ollama is installed and open.",
+				userFacingError(
+					cause,
+					"Could not download that model. Make sure Ollama is installed and open.",
+				),
 			);
 		} finally {
 			setDownloading("");
@@ -1212,9 +1219,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			}
 		} catch (cause) {
 			setLocalError(
-				cause instanceof Error
-					? cause.message
-					: "Automatic local setup failed.",
+				userFacingError(cause, "Could not finish local setup. Try again."),
 			);
 		} finally {
 			setAutomaticBusy(false);
@@ -1253,7 +1258,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				);
 		} catch (cause) {
 			setProviderCheckError(
-				cause instanceof Error ? cause.message : "Live model check failed.",
+				userFacingError(cause, "Could not check the model route right now."),
 			);
 		} finally {
 			setProviderCheckBusy(false);
@@ -1284,9 +1289,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				setSubscriptionClis(response.subscriptionClis);
 		} catch (cause) {
 			setCredentialError(
-				cause instanceof Error
-					? cause.message
-					: "Subscription route update failed.",
+				userFacingError(cause, "Could not update that sign-in route. Try again."),
 			);
 		} finally {
 			setSubscriptionBusy("");
@@ -1314,7 +1317,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				setSubscriptionClis(response.subscriptionClis);
 		} catch (cause) {
 			setCredentialError(
-				cause instanceof Error ? cause.message : "ChatGPT sign-in failed.",
+				userFacingError(cause, "ChatGPT sign-in could not finish. Try again."),
 			);
 		} finally {
 			setSubscriptionBusy("");

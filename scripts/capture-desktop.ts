@@ -259,13 +259,11 @@ try {
 	await page.getByRole("button", { name: /Open Kestrel/ }).click();
 	await page.locator("#runtime-prompt").waitFor();
 	await capture(page, "workspace-new-agent-and-tab.png", 360);
-	await page
-		.getByRole("heading", { name: "Hi there, what should we dive into today?" })
-		.waitFor();
+	await page.locator("#new-tab-title").waitFor();
 
 	await page.keyboard.press("Meta+H");
 	await page
-		.getByRole("heading", { name: "History", exact: true })
+		.getByRole("heading", { name: "Browsing history", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "History surface", [
 		".browser-library h1",
@@ -274,7 +272,7 @@ try {
 
 	await page.keyboard.press("Meta+J");
 	await page
-		.getByRole("heading", { name: "Downloads", exact: true })
+		.getByRole("heading", { name: "Downloaded files", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "Downloads surface", [
 		".browser-library h1",
@@ -297,12 +295,7 @@ try {
 	});
 
 	const modelSelector = page.locator(".kestrel-home-model-selector");
-	await modelSelector.locator("summary").click();
-	await modelSelector
-		.getByRole("button", { name: "Open task settings", exact: true })
-		.click();
-	if ((await modelSelector.getAttribute("open")) !== null)
-		throw new Error("The model shortcut stayed open over task settings.");
+	await modelSelector.click();
 	const taskSettings = page.locator(
 		".agent-conversation-host .task-settings[open]",
 	);

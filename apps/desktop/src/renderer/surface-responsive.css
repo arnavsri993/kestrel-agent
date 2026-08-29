@@ -1,0 +1,287 @@
+/* Product-wide surface polish.
+ *
+ * The browser viewport is narrower than the Electron window when the
+ * navigation and chat rails are visible. Container queries let each surface
+ * respond to that real available width instead of the monitor width. */
+.browser-viewport {
+	container: kestrel-browser-viewport / inline-size;
+}
+
+@container kestrel-browser-viewport (max-width: 860px) {
+	.browser-secondary-surface > .page-frame,
+	.browser-secondary-surface .page-frame {
+		width: calc(100% - 40px);
+		padding-top: 36px;
+	}
+
+	.browser-secondary-surface .page-header {
+		margin-bottom: 24px;
+	}
+
+	.settings-scope-switcher {
+		width: 100%;
+		max-width: none;
+	}
+
+	.settings-layout {
+		grid-template-columns: 1fr;
+		gap: 24px;
+	}
+
+	.settings-nav {
+		position: static;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.settings-nav-heading,
+	.settings-nav-category-header {
+		grid-column: 1 / -1;
+	}
+
+	:is(.readiness-grid, .research-layout) {
+		grid-template-columns: 1fr;
+	}
+
+	.writing-studio-header {
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.writing-studio-badge {
+		align-self: flex-start;
+	}
+
+	.writing-studio-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.writing-context-panel {
+		position: static;
+	}
+
+	.event-applications-page {
+		max-width: none;
+		padding: 32px 20px 58px;
+	}
+
+	.event-applications-hero {
+		grid-template-columns: 1fr;
+		gap: 18px;
+	}
+
+	.event-applications-layout {
+		grid-template-columns: 1fr;
+		min-height: auto;
+	}
+
+	.event-application-rail {
+		padding: 22px 0 0;
+		border-right: 0;
+		border-bottom: 1px solid var(--line);
+	}
+
+	.event-application-rail ul {
+		grid-auto-flow: column;
+		grid-auto-columns: minmax(180px, 1fr);
+		overflow-x: auto;
+	}
+
+	.event-application-main {
+		padding: 24px 0 0;
+	}
+
+	:is(.work-grid, .dashboard-panel) {
+		grid-template-columns: 1fr;
+	}
+}
+
+@container kestrel-browser-viewport (max-width: 560px) {
+	.browser-secondary-surface > .page-frame,
+	.browser-secondary-surface .page-frame {
+		width: calc(100% - 28px);
+		padding-top: 28px;
+	}
+
+	.browser-library {
+		padding: 32px 18px 50px;
+	}
+
+	.browser-library > header {
+		grid-template-columns: 1fr;
+		gap: 12px;
+		margin-bottom: 22px;
+	}
+
+	.browser-library > header > label {
+		grid-column: auto;
+		grid-row: auto;
+		width: auto;
+	}
+
+	.browser-library > header > .quiet-link {
+		justify-self: start;
+	}
+
+	.history-list button {
+		grid-template-columns: 30px minmax(0, 1fr);
+		gap: 10px;
+	}
+
+	.history-list time {
+		grid-column: 2;
+		justify-self: start;
+	}
+
+	.download-list li {
+		grid-template-columns: 30px minmax(0, 1fr);
+		align-items: start;
+		gap: 10px;
+	}
+
+	.download-list li > .download-state {
+		grid-row: 1 / span 2;
+	}
+
+	.download-list li > .quiet-link {
+		grid-column: 2;
+		justify-self: start;
+	}
+
+	.command-center {
+		padding: 38px 18px 50px;
+	}
+
+	.command-search {
+		grid-template-columns: 20px minmax(0, 1fr);
+		height: auto;
+		min-height: 44px;
+		padding-block: 8px;
+	}
+
+	.command-search kbd {
+		grid-column: 2;
+		justify-self: start;
+	}
+
+	.settings-scope-switcher {
+		grid-template-columns: 1fr;
+	}
+
+	.settings-nav {
+		grid-template-columns: 1fr;
+	}
+
+	.settings-panel-header h2 {
+		font-size: 26px;
+	}
+
+	.connection-list article {
+		grid-template-columns: 40px minmax(0, 1fr);
+		align-items: start;
+		gap: 12px;
+	}
+
+	.connection-list article > .connection-status,
+	.connection-list article > .connection-actions,
+	.connection-list article > .honest-status {
+		grid-column: 2;
+		justify-self: start;
+	}
+
+	.connection-list article > .connection-actions {
+		width: 100%;
+	}
+
+	.connection-list article > .connection-actions .button {
+		max-width: 100%;
+	}
+
+	.event-applications-hero h1 {
+		font-size: 34px;
+	}
+
+	.event-import-form {
+		grid-template-columns: 1fr;
+	}
+
+	.event-import-form > div,
+	.event-import-form .wide {
+		grid-column: auto;
+	}
+
+	.event-review > header,
+	.event-review-actions,
+	.event-review footer {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.eligibility-list li {
+		grid-template-columns: 1fr;
+		gap: 8px;
+	}
+
+	.event-answer > span:first-child {
+		display: grid;
+	}
+
+	.writing-studio-header h1 {
+		font-size: 30px;
+	}
+
+	.writing-form-grid,
+	.writing-strength-options,
+	.writing-profile-controls {
+		grid-template-columns: 1fr;
+	}
+
+	.writing-brief-panel > header,
+	.writing-context-panel > header,
+	.writing-profile-panel > header,
+	.writing-result-panel > header,
+	.writing-brief-panel > form,
+	.writing-profile-content,
+	.writing-result-editor {
+		padding-inline: 15px;
+	}
+
+	.writing-result-panel > header,
+	.writing-result-footer,
+	.writing-sample-actions {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.writing-result-actions {
+		flex-wrap: wrap;
+	}
+
+	.writing-sample-actions > label:nth-child(2) {
+		margin-right: 0;
+	}
+
+	.writing-sample-actions .button {
+		width: 100%;
+	}
+}
+
+/* A narrow window cannot show a useful chat rail beside a tool surface. The
+ * rail stays mounted in the React tree for state continuity, but the browser
+ * pages reclaim the space and keep their navigation in the Kestrel rail. */
+@media (max-width: 760px) {
+	.ai-browser-app:has(.browser-app-page) .agent-sidebar {
+		display: none;
+	}
+
+	.ai-browser-app:has(.browser-app-page)
+		.browser-workspace:not(.browser-workspace-vertical)
+		.browser-viewport {
+		width: calc(100% - var(--kestrel-sidebar-space));
+	}
+
+	.ai-browser-app:has(.browser-app-page)
+		.browser-workspace-vertical
+		.browser-viewport {
+		width: calc(100vw - var(--kestrel-sidebar-space) - var(--browser-tab-rail-width));
+	}
+}
