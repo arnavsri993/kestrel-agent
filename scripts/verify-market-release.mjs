@@ -34,6 +34,8 @@ const [
 	architectureAudit,
 	actionReceiptContracts,
 	actionReceiptDatabase,
+	actionReceiptMigrationSql,
+	actionReceiptMigrations,
 	actionReceiptBuilder,
 	actionReceiptRenderer,
 	actionReceiptSmoke,
@@ -58,6 +60,8 @@ const [
 	read("scripts/macos-architecture-audit.cjs"),
 	read("packages/shared-types/src/contracts.ts"),
 	read("packages/database/src/index.ts"),
+	read("packages/database/migrations/011_action_receipts.sql"),
+	read("packages/database/src/migrations.ts"),
 	read("packages/agent-core/src/action-receipts.ts"),
 	read("apps/desktop/src/renderer/App.tsx"),
 	read("scripts/test-desktop-chat-configuration.mjs"),
@@ -292,6 +296,16 @@ for (const marker of [
 }
 for (const marker of [
 	"CREATE TABLE IF NOT EXISTS action_receipts",
+	"idx_action_receipts_session_started",
+]) {
+	if (!actionReceiptMigrationSql.includes(marker))
+		fail(`encrypted action-receipt migration is missing ${marker}.`);
+}
+if (!actionReceiptMigrations.includes('11: "011_action_receipts.sql"'))
+	fail(
+		"canonical database migrations must register action_receipts as version 11.",
+	);
+for (const marker of [
 	"encryptText(JSON.stringify(parsed)",
 	"MAX_ACTION_RECEIPTS_PER_SESSION",
 ]) {
