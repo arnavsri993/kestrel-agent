@@ -10,6 +10,15 @@ import {
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const CALENDAR_EVENTS_ENDPOINT =
 	"https://www.googleapis.com/calendar/v3/calendars/primary/events";
+const CALENDAR_AVAILABILITY_PAGE_SIZE = 250;
+const MAX_CALENDAR_AVAILABILITY_EVENTS = 1_000;
+const MAX_CALENDAR_AVAILABILITY_PAGES = Math.ceil(
+	MAX_CALENDAR_AVAILABILITY_EVENTS / CALENDAR_AVAILABILITY_PAGE_SIZE,
+);
+const MAX_CALENDAR_AVAILABILITY_SLOTS = 20;
+const MAX_CALENDAR_AVAILABILITY_SPAN_MS = 31 * 24 * 60 * 60 * 1_000;
+const MAX_CALENDAR_SLOT_DURATION_MS = 24 * 60 * 60 * 1_000;
+const MAX_CALENDAR_CONFLICTS_PER_SLOT = 20;
 const GMAIL_MESSAGES_ENDPOINT =
 	"https://gmail.googleapis.com/gmail/v1/users/me/messages";
 const GMAIL_DRAFTS_ENDPOINT =
@@ -26,6 +35,195 @@ const REQUIRED_SCOPES = [
 	"https://www.googleapis.com/auth/gmail.send",
 	"https://www.googleapis.com/auth/calendar.events",
 ] as const;
+
+interface CalendarAvailabilitySlot {
+	label?: string;
+	startsAt: string;
+	endsAt: string;
+}
+
+interface NormalizedCalendarAvailabilitySlot extends CalendarAvailabilitySlot {
+	startMs: number;
+	endMs: number;
+}
+
+type CalendarBusyInterval =
+	| {
+			allDay: false;
+			startMs: number;
+			endMs: number;
+	  }
+	| {
+			allDay: true;
+			startDate: string;
+			endDate: string;
+	  };
+
+function parseExplicitCalendarInstant(value: string, label: string): number {
+	if (
+		value.length > 100 ||
+		!/^\d{4}-\d{2}-\d{2}T.+(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+	)
+		throw new Error(`${label} must be an ISO date-time with an explicit offset.`);
+	const parsed = Date.parse(value);
+	if (!Number.isFinite(parsed)) throw new Error(`${label} is invalid.`);
+	return parsed;
+}
+
+function normalizeAvailabilitySlots(
+	slots: CalendarAvailabilitySlot[],
+): NormalizedCalendarAvailabilitySlot[] {
+	if (
+		!Array.isArray(slots) ||
+		slots.length < 1 ||
+		slots.length > MAX_CALENDAR_AVAILABILITY_SLOTS
+	)
+		throw new Error(
+			`Google Calendar availability requires 1 to ${MAX_CALENDAR_AVAILABILITY_SLOTS} candidate slots.`,
+		);
+	const normalized = slots.map((slot, index) => {
+		if (!slot || typeof slot !== "object")
+			throw new Error(`Calendar availability slot ${index + 1} is invalid.`);
+		if (
+			(slot.label !== undefined && typeof slot.label !== "string") ||
+			typeof slot.startsAt !== "string" ||
+			typeof slot.endsAt !== "string"
+		)
+			throw new Error(`Calendar availability slot ${index + 1} is invalid.`);
+		const label = slot.label?.trim();
+		if (label && label.length > 200)
+			throw new Error(
+				`Calendar availability slot ${index + 1} label is too long.`,
+			);
+		const startMs = parseExplicitCalendarInstant(
+			slot.startsAt,
+			`Calendar availability slot ${index + 1} start`,
+		);
+		const endMs = parseExplicitCalendarInstant(
+			slot.endsAt,
+			`Calendar availability slot ${index + 1} end`,
+		);
+		if (endMs <= startMs)
+			throw new Error(
+				`Calendar availability slot ${index + 1} must end after it starts.`,
+			);
+		if (endMs - startMs > MAX_CALENDAR_SLOT_DURATION_MS)
+			throw new Error(
+				`Calendar availability slot ${index + 1} cannot exceed 24 hours.`,
+			);
+		return {
+			...(label ? { label } : {}),
+			startsAt: new Date(startMs).toISOString(),
+			endsAt: new Date(endMs).toISOString(),
+			startMs,
+			endMs,
+		};
+	});
+	const timeMin = Math.min(...normalized.map((slot) => slot.startMs));
+	const timeMax = Math.max(...normalized.map((slot) => slot.endMs));
+	if (timeMax - timeMin > MAX_CALENDAR_AVAILABILITY_SPAN_MS)
+		throw new Error(
+			"Google Calendar availability candidates must fit within a 31-day window.",
+		);
+	return normalized;
+}
+
+function calendarTimeZone(value: unknown): string {
+	if (typeof value !== "string" || value.length < 1 || value.length > 200)
+		throw new Error("Google Calendar returned an invalid time zone.");
+	const timeZone = value;
+	try {
+		new Intl.DateTimeFormat("en", { timeZone }).format(0);
+	} catch {
+		throw new Error("Google Calendar returned an invalid time zone.");
+	}
+	return timeZone;
+}
+
+function calendarDateAt(
+	instant: number,
+	formatter: Intl.DateTimeFormat,
+): string {
+	const parts = formatter.formatToParts(instant);
+	const values = new Map(parts.map((part) => [part.type, part.value]));
+	return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
+}
+
+function isCalendarDate(value: string): boolean {
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value.startsWith("0000-"))
+		return false;
+	const parsed = new Date(`${value}T00:00:00.000Z`);
+	return (
+		Number.isFinite(parsed.getTime()) &&
+		parsed.toISOString().slice(0, 10) === value
+	);
+}
+
+function parseCalendarBusyInterval(raw: unknown): CalendarBusyInterval | undefined {
+	if (!raw || typeof raw !== "object")
+		throw new Error("Google Calendar returned an invalid event.");
+	const event = raw as Record<string, unknown>;
+	if (event.status === "cancelled" || event.transparency === "transparent")
+		return undefined;
+	const start =
+		event.start && typeof event.start === "object"
+			? (event.start as Record<string, unknown>)
+			: {};
+	const end =
+		event.end && typeof event.end === "object"
+			? (event.end as Record<string, unknown>)
+			: {};
+	if (typeof start.dateTime === "string" && typeof end.dateTime === "string") {
+		const startMs = parseExplicitCalendarInstant(
+			start.dateTime,
+			"Google Calendar event start",
+		);
+		const endMs = parseExplicitCalendarInstant(
+			end.dateTime,
+			"Google Calendar event end",
+		);
+		if (endMs <= startMs)
+			throw new Error("Google Calendar returned an invalid event interval.");
+		return { allDay: false, startMs, endMs };
+	}
+	if (
+		typeof start.date === "string" &&
+		typeof end.date === "string" &&
+		isCalendarDate(start.date) &&
+		isCalendarDate(end.date) &&
+		end.date > start.date
+	)
+		return { allDay: true, startDate: start.date, endDate: end.date };
+	throw new Error("Google Calendar returned an invalid event interval.");
+}
+
+function slotOverlapsBusyInterval(
+	slot: NormalizedCalendarAvailabilitySlot,
+	interval: CalendarBusyInterval,
+	slotStartDate: string,
+	slotEndDate: string,
+): boolean {
+	if (!interval.allDay)
+		return slot.startMs < interval.endMs && slot.endMs > interval.startMs;
+	return (
+		slotStartDate < interval.endDate && slotEndDate >= interval.startDate
+	);
+}
+
+function visibleBusyInterval(interval: CalendarBusyInterval): Record<string, unknown> {
+	return interval.allDay
+		? {
+				allDay: true,
+				startDate: interval.startDate,
+				endDate: interval.endDate,
+			}
+		: {
+				allDay: false,
+				startsAt: new Date(interval.startMs).toISOString(),
+				endsAt: new Date(interval.endMs).toISOString(),
+			};
+}
+
 
 function boundedCalendarResultCount(value: number): number {
 	return Number.isFinite(value)
@@ -563,6 +761,59 @@ export class GoogleWorkspaceClient {
 		return { calendar: "primary", items };
 	}
 
+	async checkAvailability(input: {
+		slots: CalendarAvailabilitySlot[];
+		signal: AbortSignal;
+	}): Promise<Record<string, unknown>> {
+		const slots = normalizeAvailabilitySlots(input.slots);
+		const timeMin = Math.min(...slots.map((slot) => slot.startMs));
+		const timeMax = Math.max(...slots.map((slot) => slot.endMs));
+		const { timeZone, intervals, eventsScanned } =
+			await this.availabilityBusyIntervals({
+				timeMin: new Date(timeMin).toISOString(),
+				timeMax: new Date(timeMax).toISOString(),
+				signal: input.signal,
+			});
+		const dateFormatter = new Intl.DateTimeFormat("en", {
+			timeZone,
+			year: "numeric",
+			month: "2-digit",
+			day: "2-digit",
+		});
+		return {
+			calendar: "primary",
+			calendarTimeZone: timeZone,
+			trust: "untrusted_connector",
+			verified: true,
+			eventsScanned,
+			busyIntervals: intervals.length,
+			slots: slots.map((slot) => {
+				const slotStartDate = calendarDateAt(slot.startMs, dateFormatter);
+				const slotEndDate = calendarDateAt(slot.endMs - 1, dateFormatter);
+				const conflicts = intervals.filter((interval) =>
+					slotOverlapsBusyInterval(
+						slot,
+						interval,
+						slotStartDate,
+						slotEndDate,
+					),
+				);
+				return {
+					...(slot.label ? { label: slot.label } : {}),
+					startsAt: slot.startsAt,
+					endsAt: slot.endsAt,
+					available: conflicts.length === 0,
+					conflictCount: conflicts.length,
+					conflicts: conflicts
+						.slice(0, MAX_CALENDAR_CONFLICTS_PER_SLOT)
+						.map(visibleBusyInterval),
+					conflictsTruncated:
+						conflicts.length > MAX_CALENDAR_CONFLICTS_PER_SLOT,
+				};
+			}),
+		};
+	}
+
 	async createEvent(input: {
 		operationId: string;
 		title: string;
@@ -696,6 +947,85 @@ export class GoogleWorkspaceClient {
 				return draftId;
 		}
 		return undefined;
+	}
+
+	private async availabilityBusyIntervals(input: {
+		timeMin: string;
+		timeMax: string;
+		signal: AbortSignal;
+	}): Promise<{
+		timeZone: string;
+		intervals: CalendarBusyInterval[];
+		eventsScanned: number;
+	}> {
+		const intervals: CalendarBusyInterval[] = [];
+		let eventsScanned = 0;
+		let nextPageToken: string | undefined;
+		let resolvedTimeZone: string | undefined;
+		for (let page = 1; page <= MAX_CALENDAR_AVAILABILITY_PAGES; page += 1) {
+			if (input.signal.aborted) throw input.signal.reason;
+			const url = new URL(CALENDAR_EVENTS_ENDPOINT);
+			url.search = new URLSearchParams({
+				timeMin: input.timeMin,
+				timeMax: input.timeMax,
+				maxResults: String(CALENDAR_AVAILABILITY_PAGE_SIZE),
+				singleEvents: "true",
+				orderBy: "startTime",
+				showDeleted: "false",
+				fields:
+					"items(status,transparency,start,end),nextPageToken,timeZone",
+				...(nextPageToken ? { pageToken: nextPageToken } : {}),
+			}).toString();
+			const body = await this.authorizedJson(url, {
+				signal: input.signal,
+				responseLimit: 512_000,
+			});
+			if (body.timeZone !== undefined) {
+				const pageTimeZone = calendarTimeZone(body.timeZone);
+				if (resolvedTimeZone && pageTimeZone !== resolvedTimeZone)
+					throw new Error(
+						"Google Calendar changed time zones during availability verification.",
+					);
+				resolvedTimeZone = pageTimeZone;
+			}
+			if (body.items !== undefined && !Array.isArray(body.items))
+				throw new Error("Google Calendar returned an invalid event list.");
+			const items = Array.isArray(body.items) ? body.items : [];
+			eventsScanned += items.length;
+			if (eventsScanned > MAX_CALENDAR_AVAILABILITY_EVENTS)
+				throw new Error(
+					"Google Calendar availability is too dense to verify safely. Narrow the candidate time range.",
+				);
+			for (const item of items) {
+				const interval = parseCalendarBusyInterval(item);
+				if (interval) intervals.push(interval);
+			}
+			const rawNextPageToken = body.nextPageToken;
+			if (rawNextPageToken === undefined) {
+				nextPageToken = undefined;
+				break;
+			}
+			if (
+				typeof rawNextPageToken !== "string" ||
+				rawNextPageToken.length < 1 ||
+				rawNextPageToken.length > 2_000
+			)
+				throw new Error("Google Calendar returned an invalid page token.");
+			nextPageToken = rawNextPageToken;
+			if (page === MAX_CALENDAR_AVAILABILITY_PAGES)
+				throw new Error(
+					"Google Calendar availability is too dense to verify safely. Narrow the candidate time range.",
+				);
+		}
+		if (!resolvedTimeZone)
+			throw new Error(
+				"Google Calendar did not return its time zone for availability verification.",
+			);
+		return {
+			timeZone: resolvedTimeZone,
+			intervals,
+			eventsScanned,
+		};
 	}
 
 	private async token(): Promise<string> {

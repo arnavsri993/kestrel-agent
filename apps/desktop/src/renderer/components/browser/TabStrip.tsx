@@ -61,6 +61,12 @@ function tabDropIndex(
 	return tabCount;
 }
 
+function tabCanDetach(tab: UserBrowserTab | undefined): boolean {
+	return Boolean(
+		tab?.url && !tab.file && !tab.error && !tab.url.startsWith("kestrel://"),
+	);
+}
+
 export function TabStrip({
 	tabs,
 	originFavicons,
@@ -124,7 +130,7 @@ export function TabStrip({
 	);
 	const draggingTabIdRef = useRef<string | null>(null);
 	const dragStartRef = useRef<{ x: number; y: number } | null>(null);
-	const suppressClickRef = useRef(false);
+	const suppressClickTabIdRef = useRef<string | null>(null);
 	const tabsContainerRef = useRef<HTMLDivElement | null>(null);
 	const tabToolsRef = useRef<HTMLDivElement | null>(null);
 	const tabToolsTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -300,6 +306,20 @@ export function TabStrip({
 		setDragIntent("none");
 	}
 
+	function detachDraggedTab() {
+		const tabId = draggingTabIdRef.current;
+		if (
+			!tabId ||
+			!onDetachTab ||
+			!tabCanDetach(tabs.find((tab) => tab.id === tabId))
+		)
+			return false;
+		suppressClickTabIdRef.current = tabId;
+		resetDrag();
+		onDetachTab(tabId);
+		return true;
+	}
+
 	function handleTabPointerDown(event: ReactPointerEvent, tabId: string) {
 		if (event.button !== 0) return;
 		if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
@@ -310,7 +330,9 @@ export function TabStrip({
 		event.currentTarget.setPointerCapture(event.pointerId);
 	}
 
-	function handleTabPointerMove(event: ReactPointerEvent) {
+	function handleTabPointerMove(
+		event: Pick<PointerEvent, "clientX" | "clientY">,
+	) {
 		if (!draggingTabIdRef.current || !dragStartRef.current) return;
 		const dx = event.clientX - dragStartRef.current.x;
 		const dy = event.clientY - dragStartRef.current.y;
@@ -319,7 +341,7 @@ export function TabStrip({
 				Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX &&
 				Math.abs(dy) > Math.abs(dx)
 			) {
-				setDragIntent("detach");
+				if (!detachDraggedTab()) setDragIntent("detach");
 				return;
 			}
 			if (Math.abs(dx) >= REORDER_DRAG_THRESHOLD_PX) {
@@ -328,7 +350,7 @@ export function TabStrip({
 			return;
 		}
 		if (Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX && Math.abs(dx) > Math.abs(dy)) {
-			setDragIntent("detach");
+			if (!detachDraggedTab()) setDragIntent("detach");
 			return;
 		}
 		if (Math.abs(dy) >= REORDER_DRAG_THRESHOLD_PX) {
@@ -336,7 +358,10 @@ export function TabStrip({
 		}
 	}
 
-	function handleTabPointerUp(event: ReactPointerEvent, tabId: string) {
+	function handleTabPointerUp(
+		event: Pick<PointerEvent, "clientX" | "clientY">,
+		tabId: string,
+	) {
 		if (
 			!draggingTabIdRef.current ||
 			draggingTabIdRef.current !== tabId ||
@@ -354,8 +379,10 @@ export function TabStrip({
 				: Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX &&
 					Math.abs(dx) > Math.abs(dy);
 		if (shouldDetach && onDetachTab) {
-			suppressClickRef.current = true;
-			onDetachTab(tabId);
+			if (tabCanDetach(tabs.find((tab) => tab.id === tabId))) {
+				suppressClickTabIdRef.current = tabId;
+				onDetachTab(tabId);
+			}
 		} else if (
 			onMoveTab &&
 			tabsContainerRef.current &&
@@ -375,12 +402,25 @@ export function TabStrip({
 			);
 			if (fromIndex >= 0 && toIndex > fromIndex) toIndex -= 1;
 			if (fromIndex >= 0 && toIndex !== fromIndex) {
-				suppressClickRef.current = true;
+				suppressClickTabIdRef.current = tabId;
 				onMoveTab(tabId, toIndex);
 			}
 		}
 		resetDrag();
 	}
+
+	useEffect(() => {
+		if (!draggingTabId) return;
+		const onPointerMove = (event: PointerEvent) => handleTabPointerMove(event);
+		const onPointerUp = (event: PointerEvent) =>
+			handleTabPointerUp(event, draggingTabId);
+		window.addEventListener("pointermove", onPointerMove, true);
+		window.addEventListener("pointerup", onPointerUp, true);
+		return () => {
+			window.removeEventListener("pointermove", onPointerMove, true);
+			window.removeEventListener("pointerup", onPointerUp, true);
+		};
+	}, [draggingTabId, onDetachTab, onMoveTab, orientation, tabs]);
 
 	const menuTab = tabs.find((tab) => tab.id === menu?.tabId);
 	const folderById = new Map(tabFolders.map((folder) => [folder.id, folder]));
@@ -728,12 +768,13 @@ export function TabStrip({
 											: { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
 									}
 									style={tabStyle as MotionStyle}
+									data-tab-id={tab.id}
 									onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
 									onContextMenu={(event) => openMenu(event, tab.id)}
 									onClick={(event) => {
 										if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
-										if (suppressClickRef.current) {
-											suppressClickRef.current = false;
+										if (suppressClickTabIdRef.current === tab.id) {
+											suppressClickTabIdRef.current = null;
 											return;
 										}
 										onSelect(tab.id);
@@ -866,7 +907,7 @@ export function TabStrip({
 					>
 						Duplicate tab
 					</button>
-					{onDetachTab && menuTab.url && !menuTab.error && (
+					{onDetachTab && tabCanDetach(menuTab) && (
 						<button
 							type="button"
 							role="menuitem"

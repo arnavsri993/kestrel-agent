@@ -50,6 +50,7 @@ import {
 } from "./command-runner";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 import { summarizeBrowserActivity } from "./browser-activity";
+import { BrowserRecoveryError } from "./browser-recovery";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
 
@@ -162,6 +163,10 @@ export interface ToolCallOptions {
 	approvalGrantExecutionId?: string;
 	idempotencyKey?: string;
 	externalContent?: string;
+	executionBlock?: {
+		reason: string;
+		output?: Record<string, unknown>;
+	};
 	signal?: AbortSignal;
 }
 
@@ -1441,12 +1446,13 @@ export class AgentRuntime extends EventEmitter {
 		const assessment = options.externalContent
 			? assessExternalContent(options.externalContent)
 			: undefined;
-		const configuredPolicy =
-			this.toolPolicyResolver?.({
-				session,
-				tool: definition.descriptor,
-				input,
-			}) ?? {};
+		const configuredPolicy = options.executionBlock
+			? {}
+			: (this.toolPolicyResolver?.({
+					session,
+					tool: definition.descriptor,
+					input,
+				}) ?? {});
 		const approvalRule = this.listApprovalRules()
 			.filter(
 				(rule) =>
@@ -1477,7 +1483,13 @@ export class AgentRuntime extends EventEmitter {
 				definition.descriptor.riskLevel === "low")
 				? "sensitive"
 				: definition.descriptor.riskLevel;
-		const policy = configuredPolicy.denied
+		const policy = options.executionBlock
+			? {
+					allowed: false,
+					approvalRequired: false,
+					reason: options.executionBlock.reason,
+				}
+			: configuredPolicy.denied
 			? {
 					allowed: false,
 					approvalRequired: false,
@@ -1530,9 +1542,11 @@ export class AgentRuntime extends EventEmitter {
 			...(!policy.allowed
 				? {
 						output: {
+							...(options.executionBlock?.output ?? {}),
 							preview: this.approvalPreview(session, toolName, input),
 							approvalRequired: policy.approvalRequired,
-							persistentApprovalAllowed: !alwaysRequireApproval,
+							persistentApprovalAllowed:
+								!options.executionBlock && !alwaysRequireApproval,
 						},
 					}
 				: {}),
@@ -1720,6 +1734,10 @@ export class AgentRuntime extends EventEmitter {
 				!definition.descriptor.readOnly &&
 				effectStarted &&
 				!effectVerified;
+			const recoveryOutput =
+				!cancelled && error instanceof BrowserRecoveryError
+					? { recovery: error.recovery }
+					: undefined;
 			execution = RuntimeToolExecutionSchema.parse({
 				...execution,
 				status: uncertainMutation
@@ -1732,6 +1750,7 @@ export class AgentRuntime extends EventEmitter {
 					: error instanceof Error
 						? error.message
 						: "Tool execution failed.",
+				...(recoveryOutput ? { output: recoveryOutput } : {}),
 				completedAt: this.now(),
 			});
 			this.journalToolExecution(execution);

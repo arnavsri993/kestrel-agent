@@ -95,6 +95,7 @@ describe("Google Workspace runtime connector", () => {
 			if (url.includes("/calendar/v3/calendars/primary/events"))
 				return new Response(
 					JSON.stringify({
+						timeZone: "America/Chicago",
 						items: [
 							{
 								id: "existing-1",
@@ -161,6 +162,7 @@ describe("Google Workspace runtime connector", () => {
 		);
 		expect(listed.output).toMatchObject({
 			calendar: "primary",
+			trust: "untrusted_connector",
 			items: [{ id: "existing-1", title: "Existing" }],
 		});
 		const malformedCount = await client!.listEvents({
@@ -181,6 +183,68 @@ describe("Google Workspace runtime connector", () => {
 		expect(new URL(requests.at(-1)!.url).searchParams.get("maxResults")).toBe(
 			"1",
 		);
+		const availability = await runtime.callTool(
+			session.id,
+			"google.calendar.check-availability",
+			{
+				slots: [
+					{
+						label: "Overlapping option",
+						startsAt: "2026-07-24T14:30:00.000Z",
+						endsAt: "2026-07-24T15:30:00.000Z",
+					},
+					{
+						label: "Adjacent option",
+						startsAt: "2026-07-24T15:00:00.000Z",
+						endsAt: "2026-07-24T16:00:00.000Z",
+					},
+				],
+			},
+		);
+		expect(availability).toMatchObject({
+			status: "verified",
+			output: {
+				calendar: "primary",
+				calendarTimeZone: "America/Chicago",
+				trust: "untrusted_connector",
+				verified: true,
+				eventsScanned: 1,
+				busyIntervals: 1,
+				slots: [
+					{
+						label: "Overlapping option",
+						available: false,
+						conflictCount: 1,
+					},
+					{
+						label: "Adjacent option",
+						available: true,
+						conflictCount: 0,
+					},
+				],
+			},
+		});
+		expect(JSON.stringify(availability.output)).not.toContain("Existing");
+		const availabilityRequest = requests.at(-1)!;
+		const availabilityUrl = new URL(availabilityRequest.url);
+		expect(availabilityUrl.searchParams.get("fields")).toBe(
+			"items(status,transparency,start,end),nextPageToken,timeZone",
+		);
+		expect(availabilityUrl.searchParams.get("timeMin")).toBe(
+			"2026-07-24T14:30:00.000Z",
+		);
+		expect(availabilityUrl.searchParams.get("timeMax")).toBe(
+			"2026-07-24T16:00:00.000Z",
+		);
+		await expect(
+			client!.createEvent({
+				operationId: "calendar-invalid-interval",
+				title: "Invalid",
+				startsAt: "2026-07-24T17:00:00.000Z",
+				endsAt: "2026-07-24T16:00:00.000Z",
+				signal: new AbortController().signal,
+			}),
+		).rejects.toThrow("end after");
 		const createInput = {
 			operationId: "calendar-operation-1",
 			title: "Project review",
@@ -559,6 +623,295 @@ describe("Google Workspace runtime connector", () => {
 		});
 		expect(repeatedSend).toMatchObject({ messageId: "sent-1", repeated: true });
 		database.close();
+	});
+
+	it("paginates bounded event metadata and handles time zones without exposing event content", async () => {
+		const calendarRequests: URL[] = [];
+		const fetcher: typeof fetch = async (input) => {
+			const url = new URL(String(input));
+			if (url.toString() === "https://oauth2.googleapis.com/token")
+				return new Response(
+					JSON.stringify({
+						access_token: "runtime-access-token-that-is-long-enough",
+						expires_in: 3600,
+					}),
+					{ status: 200 },
+				);
+			calendarRequests.push(url);
+			if (url.searchParams.get("pageToken") === "page-2")
+				return new Response(
+					JSON.stringify({
+						timeZone: "America/Los_Angeles",
+						items: [
+							{
+								status: "confirmed",
+								transparency: "transparent",
+								summary: "Private transparent event",
+								start: { dateTime: "2026-11-03T10:00:00-08:00" },
+								end: { dateTime: "2026-11-03T11:00:00-08:00" },
+							},
+							{
+								status: "cancelled",
+								summary: "Private cancelled event",
+							},
+						],
+					}),
+					{ status: 200 },
+				);
+			return new Response(
+				JSON.stringify({
+					timeZone: "America/Los_Angeles",
+					nextPageToken: "page-2",
+					items: [
+						{
+							status: "confirmed",
+							summary: "Private DST event",
+							description: "This content must never be requested or returned.",
+							attendees: [{ email: "private@example.test" }],
+							start: { dateTime: "2026-11-01T01:30:00-07:00" },
+							end: { dateTime: "2026-11-01T02:30:00-08:00" },
+						},
+						{
+							status: "confirmed",
+							summary: "Private all-day event",
+							start: { date: "2026-11-02" },
+							end: { date: "2026-11-03" },
+						},
+					],
+				}),
+				{ status: 200 },
+			);
+		};
+		const client = environmentGoogleWorkspaceClient(
+			{ KESTREL_GOOGLE_WORKSPACE_OAUTH: authorization },
+			fetcher,
+		)!;
+		const output = await client.checkAvailability({
+			slots: [
+				{
+					label: "DST overlap",
+					startsAt: "2026-11-01T01:45:00-07:00",
+					endsAt: "2026-11-01T01:45:00-08:00",
+				},
+				{
+					label: "After busy time",
+					startsAt: "2026-11-01T02:30:00-08:00",
+					endsAt: "2026-11-01T03:00:00-08:00",
+				},
+				{
+					label: "All-day conflict",
+					startsAt: "2026-11-02T10:00:00-08:00",
+					endsAt: "2026-11-02T11:00:00-08:00",
+				},
+				{
+					label: "Transparent event only",
+					startsAt: "2026-11-03T10:00:00-08:00",
+					endsAt: "2026-11-03T11:00:00-08:00",
+				},
+			],
+			signal: new AbortController().signal,
+		});
+		expect(output).toMatchObject({
+			calendarTimeZone: "America/Los_Angeles",
+			verified: true,
+			eventsScanned: 4,
+			busyIntervals: 2,
+			slots: [
+				{ label: "DST overlap", available: false, conflictCount: 1 },
+				{ label: "After busy time", available: true, conflictCount: 0 },
+				{ label: "All-day conflict", available: false, conflictCount: 1 },
+				{
+					label: "Transparent event only",
+					available: true,
+					conflictCount: 0,
+				},
+			],
+		});
+		expect(JSON.stringify(output)).not.toMatch(
+			/Private|description|attendees|private@example\.test/,
+		);
+		expect(calendarRequests).toHaveLength(2);
+		expect(calendarRequests[1]!.searchParams.get("pageToken")).toBe("page-2");
+		for (const url of calendarRequests)
+			expect(url.searchParams.get("fields")).toBe(
+				"items(status,transparency,start,end),nextPageToken,timeZone",
+			);
+	});
+
+	it("fails closed for invalid or unbounded availability checks", async () => {
+		const fetcher: typeof fetch = async (input) => {
+			const url = new URL(String(input));
+			if (url.toString() === "https://oauth2.googleapis.com/token")
+				return new Response(
+					JSON.stringify({
+						access_token: "runtime-access-token-that-is-long-enough",
+						expires_in: 3600,
+					}),
+					{ status: 200 },
+				);
+			const page = Number(url.searchParams.get("pageToken") ?? "0");
+			return new Response(
+				JSON.stringify({
+					timeZone: "UTC",
+					nextPageToken: String(page + 1),
+					items: [],
+				}),
+				{ status: 200 },
+			);
+		};
+		const client = environmentGoogleWorkspaceClient(
+			{ KESTREL_GOOGLE_WORKSPACE_OAUTH: authorization },
+			fetcher,
+		)!;
+		await expect(
+			client.checkAvailability({
+				slots: [
+					{
+						startsAt: "2026-07-24T14:00:00",
+						endsAt: "2026-07-24T15:00:00Z",
+					},
+				],
+				signal: new AbortController().signal,
+			}),
+		).rejects.toThrow("explicit offset");
+		await expect(
+			client.checkAvailability({
+				slots: Array.from({ length: 21 }, (_, index) => ({
+					startsAt: `2026-07-24T${String(index).padStart(2, "0")}:00:00Z`,
+					endsAt: `2026-07-24T${String(index).padStart(2, "0")}:30:00Z`,
+				})),
+				signal: new AbortController().signal,
+			}),
+		).rejects.toThrow("1 to 20");
+		await expect(
+			client.checkAvailability({
+				slots: [
+					{
+						startsAt: "2026-07-24T15:00:00Z",
+						endsAt: "2026-07-24T14:00:00Z",
+					},
+				],
+				signal: new AbortController().signal,
+			}),
+		).rejects.toThrow("end after");
+		await expect(
+			client.checkAvailability({
+				slots: [
+					{
+						startsAt: "2026-07-01T14:00:00Z",
+						endsAt: "2026-07-01T15:00:00Z",
+					},
+					{
+						startsAt: "2026-08-02T14:00:00Z",
+						endsAt: "2026-08-02T15:00:00Z",
+					},
+				],
+				signal: new AbortController().signal,
+			}),
+		).rejects.toThrow("31-day");
+		await expect(
+			client.checkAvailability({
+				slots: [
+					{
+						startsAt: "2026-07-24T14:00:00Z",
+						endsAt: "2026-07-24T15:00:00Z",
+					},
+				],
+				signal: new AbortController().signal,
+			}),
+		).rejects.toThrow("too dense to verify safely");
+	});
+
+	it("does not claim availability from incomplete calendar metadata", async () => {
+		const createClient = (calendarBody: Record<string, unknown>) =>
+			environmentGoogleWorkspaceClient(
+				{ KESTREL_GOOGLE_WORKSPACE_OAUTH: authorization },
+				async (input) =>
+					String(input) === "https://oauth2.googleapis.com/token"
+						? new Response(
+								JSON.stringify({
+									access_token:
+										"runtime-access-token-that-is-long-enough",
+									expires_in: 3600,
+								}),
+								{ status: 200 },
+							)
+						: new Response(JSON.stringify(calendarBody), { status: 200 }),
+			)!;
+		const input = {
+			slots: [
+				{
+					startsAt: "2026-07-24T14:00:00Z",
+					endsAt: "2026-07-24T15:00:00Z",
+				},
+			],
+			signal: new AbortController().signal,
+		};
+		await expect(createClient({ items: [] }).checkAvailability(input)).rejects.toThrow(
+			"did not return its time zone",
+		);
+		await expect(
+			createClient({
+				timeZone: "UTC",
+				items: [
+					{
+						status: "confirmed",
+						start: { date: "2026-02-30" },
+						end: { date: "2026-03-01" },
+					},
+				],
+			}).checkAvailability(input),
+		).rejects.toThrow("invalid event interval");
+	});
+
+	it("caps returned conflict detail even when the verified range is dense", async () => {
+		const client = environmentGoogleWorkspaceClient(
+			{ KESTREL_GOOGLE_WORKSPACE_OAUTH: authorization },
+			async (input) =>
+				String(input) === "https://oauth2.googleapis.com/token"
+					? new Response(
+							JSON.stringify({
+								access_token: "runtime-access-token-that-is-long-enough",
+								expires_in: 3600,
+							}),
+							{ status: 200 },
+						)
+					: new Response(
+							JSON.stringify({
+								timeZone: "UTC",
+								items: Array.from({ length: 25 }, (_, index) => ({
+									status: "confirmed",
+									summary: `Private event ${index}`,
+									start: { dateTime: "2026-07-24T14:00:00Z" },
+									end: { dateTime: "2026-07-24T15:00:00Z" },
+								})),
+							}),
+							{ status: 200 },
+						),
+		)!;
+		const output = await client.checkAvailability({
+			slots: [
+				{
+					startsAt: "2026-07-24T14:00:00Z",
+					endsAt: "2026-07-24T15:00:00Z",
+				},
+			],
+			signal: new AbortController().signal,
+		});
+		expect(output).toMatchObject({
+			eventsScanned: 25,
+			busyIntervals: 25,
+			slots: [
+				{
+					available: false,
+					conflictCount: 25,
+					conflictsTruncated: true,
+				},
+			],
+		});
+		const slots = output.slots as Array<{ conflicts: unknown[] }>;
+		expect(slots[0]!.conflicts).toHaveLength(20);
+		expect(JSON.stringify(output)).not.toContain("Private event");
 	});
 
 	it("rejects records without the exact narrow grants", () => {

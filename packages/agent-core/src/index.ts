@@ -3259,6 +3259,20 @@ export {
 	type BrowserObservationSnapshot,
 } from "./browser-observation";
 export {
+	BROWSER_RECOVERY_HINT_KINDS,
+	BROWSER_RECOVERY_REASON_CODES,
+	type BrowserEffectState,
+	BrowserRecoveryError,
+	type BrowserRecoveryGuidance,
+	type BrowserRecoveryHint,
+	type BrowserRecoveryHintKind,
+	type BrowserRecoveryOperation,
+	type BrowserRecoveryReasonCode,
+	type BrowserRecoverySurface,
+	browserRecoveryReason,
+	toBrowserRecoveryError,
+} from "./browser-recovery";
+export {
 	CAPABILITY_CATALOG,
 	type CapabilityCatalogEntry,
 	capabilitySummary,
