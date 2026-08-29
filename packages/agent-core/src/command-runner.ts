@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { delimiter, resolve } from "node:path";
 
@@ -130,6 +130,14 @@ function sandboxProfile(
 	return `(version 1) (allow default) ${mode === "workspace_write" ? "(deny network*)" : ""} ${userReadBoundary} (deny file-write* (require-all (require-not (subpath "${escapedRoot}")) (require-not (literal "/dev/null")) (require-not (literal "/dev/ptmx")) ${ptyDevices}))`;
 }
 
+function killChildProcess(child: ChildProcess): void {
+	if (child.exitCode !== null) return;
+	child.kill("SIGTERM");
+	setTimeout(() => {
+		if (child.exitCode === null) child.kill("SIGKILL");
+	}, 1_000).unref();
+}
+
 function cancelledHandle(signal: AbortSignal): SandboxedCommandHandle {
 	const completion = Promise.reject<SandboxedCommandResult>(
 		signal.reason instanceof Error
@@ -200,7 +208,7 @@ export class SandboxedCommandRunner {
 			outputBytes += chunk.byteLength;
 			if (outputBytes > maximumOutputBytes) {
 				overflowed = true;
-				child.kill("SIGTERM");
+				killChildProcess(child);
 				return;
 			}
 			if (stream === "stdout") stdout += text;
@@ -210,13 +218,13 @@ export class SandboxedCommandRunner {
 		child.stdout?.on("data", (chunk: Buffer) => capture("stdout", chunk));
 		child.stderr?.on("data", (chunk: Buffer) => capture("stderr", chunk));
 
-		const abort = () => child.kill("SIGTERM");
+		const abort = () => killChildProcess(child);
 		if (options.signal?.aborted) abort();
 		options.signal?.addEventListener("abort", abort, { once: true });
 		let timedOut = false;
 		const timeout = setTimeout(() => {
 			timedOut = true;
-			child.kill("SIGTERM");
+			killChildProcess(child);
 		}, timeoutMs);
 
 		let running = true;
@@ -270,7 +278,7 @@ export class SandboxedCommandRunner {
 				child.stdin.write(data);
 			},
 			stop: () => {
-				if (running) child.kill("SIGTERM");
+				if (running) killChildProcess(child);
 			},
 			snapshot: () => ({
 				running,
