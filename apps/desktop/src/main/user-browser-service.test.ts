@@ -844,10 +844,60 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 
     releaseSnapshot();
     await firstSnapshot;
-    await expect(service.closeTab(tab.id)).resolves.toBeDefined();
-  });
+		await expect(service.closeTab(tab.id)).resolves.toBeDefined();
+	});
 
-  it("does not sleep a tab while an agent operation holds a pin", async () => {
+	it("keeps later operations queued behind an aborted waiter", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		contents.url = "https://example.com/";
+
+		let releaseSnapshot!: () => void;
+		const snapshotGate = new Promise<void>((resolve) => {
+			releaseSnapshot = resolve;
+		});
+		contents.debugger.sendCommand.mockImplementation(async () => {
+			await snapshotGate;
+			return { nodes: [] };
+		});
+
+		const first = service.handleAgentRequest(
+			{ operation: "visible-snapshot", tabId: tab.id },
+			new AbortController().signal,
+		);
+		await vi.waitFor(() => {
+			expect(contents.debugger.sendCommand).toHaveBeenCalled();
+		});
+
+		const abort = new AbortController();
+		const second = service.handleAgentRequest(
+			{ operation: "visible-tabs" },
+			abort.signal,
+		);
+		let thirdSettled = false;
+		const third = service
+			.handleAgentRequest(
+				{ operation: "visible-tabs" },
+				new AbortController().signal,
+			)
+			.then((result) => {
+				thirdSettled = true;
+				return result;
+			});
+
+		abort.abort(new Error("queued operation cancelled"));
+		await expect(second).rejects.toThrow("queued operation cancelled");
+		await Promise.resolve();
+		expect(thirdSettled).toBe(false);
+
+		releaseSnapshot();
+		await first;
+		await expect(third).resolves.toEqual(expect.any(Array));
+	});
+
+	it("does not sleep a tab while an agent operation holds a pin", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     const second = await navigateNewTab(service, "https://second.example");

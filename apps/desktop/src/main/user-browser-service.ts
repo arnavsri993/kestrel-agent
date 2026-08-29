@@ -3394,16 +3394,19 @@ export class UserBrowserService {
 	): Promise<T> {
 		if (signal?.aborted) throw signal.reason;
 		let release!: () => void;
+		let acquired = false;
 		const previous = this.tabMutationQueue;
 		this.tabMutationQueue = new Promise<void>((resolve) => {
 			release = resolve;
 		});
 		try {
 			await this.waitForTabMutationTurn(previous, signal);
+			acquired = true;
 			if (signal?.aborted) throw signal.reason;
 			return await operation();
 		} finally {
-			release();
+			if (acquired) release();
+			else void previous.then(release, release);
 		}
 	}
 
