@@ -66,6 +66,7 @@ const LOOPBACK =
 const HOST_LIKE =
 	/^(?:[A-Za-z\d](?:[A-Za-z\d-]{0,62}[A-Za-z\d])?\.)+[A-Za-z]{2,63}(?::\d{1,5})?(?:[/?#]|$)/;
 const IPV4 = /^(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?(?:[/?#]|$)/;
+const CUSTOM_SEARCH_TEMPLATE = /%s/;
 const SENSITIVE_URL_KEY =
 	/^(?:access_?token|api_?key|assertion|auth(?:entication|orization)?(?:_?token|_?code)?|client_?secret|code|credential|id_?token|jwt|key|oauth(?:_?token|_?code)?|password|refresh_?token|samlresponse|secret|session(?:_?id|_?token)?|sig(?:nature)?|sso(?:_?token)?|ticket|token|x-amz-(?:credential|security-token|signature))$/i;
 
@@ -124,6 +125,67 @@ export function redactUntrustedBrowserText(
  * Keep navigationally useful URLs while excluding credential-like values from
  * durable history, session restore, downloads, and model-visible metadata.
  */
+function normalizeCustomSearchTemplate(template: string): string {
+	const trimmed = template.trim();
+	if (!trimmed || trimmed.length > 2_048)
+		throw new Error("Enter a valid search engine URL.");
+	const sample = CUSTOM_SEARCH_TEMPLATE.test(trimmed)
+		? trimmed.replace(/%s/g, "query")
+		: trimmed;
+	let parsed: URL;
+	try {
+		parsed = new URL(sample);
+	} catch {
+		throw new Error("Enter a valid search engine URL.");
+	}
+	if (!["http:", "https:"].includes(parsed.protocol))
+		throw new Error("Custom search engines must use HTTP or HTTPS URLs.");
+	if (parsed.username || parsed.password)
+		throw new Error(
+			"Search engine URLs with embedded credentials are blocked.",
+		);
+	return trimmed;
+}
+
+export function describeBrowserLoadFailure(
+	errorCode: number,
+	errorDescription = "",
+): string {
+	const description = errorDescription.trim();
+	switch (errorCode) {
+		case -105:
+			return "This address could not be found. Check the spelling or try a web search instead.";
+		case -106:
+			return "You appear to be offline. Check your internet connection and try again.";
+		case -109:
+		case -113:
+			return "Kestrel could not reach this site. It may be down or blocking connections.";
+		case -118:
+			return "The connection timed out. Try again in a moment or check your network.";
+		case -200:
+		case -201:
+		case -202:
+		case -207:
+			return "This site's security certificate could not be verified. Contact the site owner if you need access.";
+		case -501:
+			return "This page uses an insecure connection that Kestrel blocked.";
+		case -300:
+			return "This address is not valid. Check the URL and try again.";
+		case -10:
+			return "Access to this page was blocked.";
+		default:
+			if (/ERR_NAME_NOT_RESOLVED/i.test(description))
+				return "This address could not be found. Check the spelling or try a web search instead.";
+			if (/ERR_INTERNET_DISCONNECTED/i.test(description))
+				return "You appear to be offline. Check your internet connection and try again.";
+			if (/ERR_CONNECTION_TIMED_OUT/i.test(description))
+				return "The connection timed out. Try again in a moment or check your network.";
+			if (/ERR_CERT/i.test(description))
+				return "This site's security certificate could not be verified.";
+			return "This page could not be opened. Check the address or try again in a moment.";
+	}
+}
+
 export function sanitizeBrowserUrl(value: string): string {
 	if (!value || value.length > 8_192) return "";
 	try {
@@ -189,9 +251,9 @@ export function normalizeBrowserAddress(
 	const looksLikeHost = loopback || HOST_LIKE.test(input) || IPV4.test(input);
 	if (!explicitScheme && !looksLikeHost) {
 		if (searchEngine === "custom" && customSearchUrl) {
-			const template = customSearchUrl.trim();
+			const template = normalizeCustomSearchTemplate(customSearchUrl);
 			const encoded = encodeURIComponent(input);
-			const url = template.includes("%s")
+			const url = CUSTOM_SEARCH_TEMPLATE.test(template)
 				? template.replace(/%s/g, encoded)
 				: `${template}${template.includes("?") ? "&q=" : "?q="}${encoded}`;
 			return {

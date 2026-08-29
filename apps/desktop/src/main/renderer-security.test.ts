@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
 	isTrustedRendererFrame,
 	isTrustedRendererUrl,
+	openExternalSafely,
 	protectRendererNavigation,
+	safeExternalUrl,
 	trustedDevelopmentRendererUrl,
 } from "./renderer-security";
 
@@ -128,5 +130,27 @@ describe("renderer URL trust boundary", () => {
 		expect(
 			isTrustedRendererFrame({ url: "https://example.com/" }, mainFrame, trust),
 		).toBe(false);
+	});
+
+	it("allows only credential-free http(s) links in the system browser", () => {
+		expect(safeExternalUrl("https://example.com/docs")).toBe(
+			"https://example.com/docs",
+		);
+		expect(safeExternalUrl("javascript:alert(1)")).toBeUndefined();
+		expect(safeExternalUrl("file:///etc/passwd")).toBeUndefined();
+		expect(
+			safeExternalUrl("https://user:secret@example.com/"),
+		).toBeUndefined();
+
+		const opened: string[] = [];
+		expect(
+			openExternalSafely((url) => {
+				opened.push(url);
+			}, "https://example.com/"),
+		).toBe(true);
+		expect(opened).toEqual(["https://example.com/"]);
+		expect(openExternalSafely((url) => opened.push(url), "file:///tmp/x")).toBe(
+			false,
+		);
 	});
 });

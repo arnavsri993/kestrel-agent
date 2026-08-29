@@ -72,6 +72,7 @@ import {
 import {
 	BrowserTabStore,
 	createEmptyBrowserTab,
+	describeBrowserLoadFailure,
 	MAX_AX_SNAPSHOT_BYTES,
 	MAX_AX_SNAPSHOT_NODES,
 	MAX_INTERACTIVE_REFS,
@@ -1185,10 +1186,10 @@ export class UserBrowserService {
 		} catch (cause) {
 			if (record.navigatingTo !== normalized.url) return this.getState();
 			tab.loading = false;
-			tab.error =
-				cause instanceof Error
-					? cause.message.slice(0, 500)
-					: "This page could not be opened.";
+			tab.error = describeBrowserLoadFailure(
+				0,
+				cause instanceof Error ? cause.message : "",
+			);
 			this.commit();
 		} finally {
 			if (record.navigatingTo === normalized.url) delete record.navigatingTo;
@@ -1229,10 +1230,10 @@ export class UserBrowserService {
 			void record.view.webContents.loadURL(tab.url).catch((cause) => {
 				if (record.view.webContents.isDestroyed()) return;
 				tab.loading = false;
-				tab.error =
-					cause instanceof Error
-						? cause.message.slice(0, 500)
-						: "This page could not be opened.";
+				tab.error = describeBrowserLoadFailure(
+					0,
+					cause instanceof Error ? cause.message : "",
+				);
 				this.commit();
 			});
 			return this.getState();
@@ -2738,10 +2739,10 @@ export class UserBrowserService {
 			void view.webContents.loadURL(tab.url).catch((cause) => {
 				if (view.webContents.isDestroyed()) return;
 				tab.loading = false;
-				tab.error =
-					cause instanceof Error
-						? cause.message.slice(0, 500)
-						: "This page could not be opened.";
+				tab.error = describeBrowserLoadFailure(
+					0,
+					cause instanceof Error ? cause.message : "",
+				);
 				this.commit();
 			});
 		}
@@ -2821,7 +2822,7 @@ export class UserBrowserService {
 			(_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
 				if (!isMainFrame || errorCode === -3) return;
 				tab.loading = false;
-				tab.error = `${errorDescription} (${errorCode})`.slice(0, 500);
+				tab.error = describeBrowserLoadFailure(errorCode, errorDescription);
 				this.updateNavigationState(tab, webContents);
 			},
 		);

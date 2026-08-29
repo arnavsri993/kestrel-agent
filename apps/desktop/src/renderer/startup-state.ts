@@ -43,6 +43,6 @@ export function startupFailureMessage(cause: unknown): string {
 				? cause.trim()
 				: "";
 	return detail
-		? `Kestrel's local core could not start: ${detail}`
-		: "Kestrel's local core could not start. Try again.";
+		? `Kestrel's local core could not start: ${detail}. Quit Kestrel completely and reopen it to retry.`
+		: "Kestrel's local core could not start. Quit the app completely and reopen it to retry.";
 }

@@ -9342,6 +9342,10 @@ export function App() {
 					<span className="error-mark">!</span>
 					<h1>Kestrel could not start.</h1>
 					<p>{error}</p>
+					<p>
+						If this keeps happening, quit Kestrel completely and reopen it. Your
+						profile, tabs, and agent history are preserved.
+					</p>
 					<button
 						className="button secondary"
 						onClick={() => location.reload()}

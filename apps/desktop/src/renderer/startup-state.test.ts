@@ -28,10 +28,10 @@ describe("desktop startup state", () => {
 
 	it("turns unknown startup failures into an actionable message", () => {
 		expect(startupFailureMessage(new Error("core crashed"))).toBe(
-			"Kestrel's local core could not start: core crashed",
+			"Kestrel's local core could not start: core crashed. Quit Kestrel completely and reopen it to retry.",
 		);
 		expect(startupFailureMessage(undefined)).toBe(
-			"Kestrel's local core could not start. Try again.",
+			"Kestrel's local core could not start. Quit the app completely and reopen it to retry.",
 		);
 	});
 });
