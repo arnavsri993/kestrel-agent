@@ -9,6 +9,7 @@ import "./components/browser/model-selector.css";
 import "./components/window-controls.css";
 import "./motion.css";
 import "./components/browser/kestrel-sidebar.css";
+import "./components/browser/projects-workspace.css";
 import "./components/browser/writing-studio.css";
 import "./components/browser/password-overlay.css";
 import "./components/browser/payment-overlay.css";

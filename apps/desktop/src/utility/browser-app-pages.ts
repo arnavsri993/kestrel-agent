@@ -6,6 +6,7 @@ export const KESTREL_APP_PAGES = {
 	commands: "Capabilities",
 	writing: "Writing Studio",
 	agent: "Agent",
+	projects: "Projects",
 	readiness: "Readiness",
 	approvals: "Approvals",
 	memory: "Life",
