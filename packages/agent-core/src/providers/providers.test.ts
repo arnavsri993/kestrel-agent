@@ -80,6 +80,14 @@ describe("model provider adapters", () => {
 		]);
 	});
 
+	it("defaults the Codex app-server route to gpt-5.6-sol", () => {
+		expect(
+			createEnvironmentModelProviders({
+				KESTREL_ENABLE_CODEX_SUBSCRIPTION: "1",
+			}).map((provider) => [provider.id, provider.defaultModel]),
+		).toEqual([["codex-subscription", "gpt-5.6-sol"]]);
+	});
+
 	it("registers configured OpenAI-compatible providers, including free routes", () => {
 		const providers = createEnvironmentModelProviders({
 			NOUS_API_KEY: "nous-key",

@@ -73,7 +73,9 @@ const PROVIDER_MODEL_CATALOG: Record<string, readonly CatalogModel[]> = {
 		{ id: "gpt-5.6-terra", label: "Terra", reasoningLevels: true },
 	],
 	"codex-subscription": [
-		{ id: "gpt-5.4", label: "GPT-5.4", reasoningLevels: true },
+		{ id: "gpt-5.6-sol", label: "Sol", reasoningLevels: true },
+		{ id: "gpt-5.6-terra", label: "Terra", reasoningLevels: true },
+		{ id: "gpt-5.6-luna", label: "Luna", reasoningLevels: true },
 	],
 	anthropic: [
 		{ id: "claude-sonnet-4-5", label: "Sonnet 4.5", reasoningLevels: true },
@@ -126,7 +128,38 @@ const PROVIDER_MODEL_CATALOG: Record<string, readonly CatalogModel[]> = {
 		},
 	],
 	"opencode-zen": [
+		{
+			id: "deepseek-v4-flash-free",
+			label: "DeepSeek V4 Flash Free",
+			reasoningLevels: false,
+		},
+		{
+			id: "muse-spark-1.2-contributor-free",
+			label: "Muse Spark 1.2 Contributor Free",
+			reasoningLevels: false,
+		},
 		{ id: "mimo-v2.5-free", label: "MiMo V2.5 Free", reasoningLevels: false },
+		{ id: "hy3-free", label: "HY 3 Free", reasoningLevels: false },
+		{
+			id: "ling-3.0-flash-fin-free",
+			label: "Ling 3.0 Flash Fin Free",
+			reasoningLevels: false,
+		},
+		{
+			id: "nemotron-3-ultra-free",
+			label: "Nemotron 3 Ultra Free",
+			reasoningLevels: false,
+		},
+		{
+			id: "nemotron-3.5-lightning-free",
+			label: "Nemotron 3.5 Lightning Free",
+			reasoningLevels: false,
+		},
+		{
+			id: "laguna-s-2.1-free",
+			label: "Laguna S 2.1 Free",
+			reasoningLevels: false,
+		},
 	],
 	sensenova: [
 		{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", reasoningLevels: false },
