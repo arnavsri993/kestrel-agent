@@ -160,6 +160,7 @@ import {
 	runRouteLabel,
 	runtimeOutcomeCopy,
 	uncertainExecutionsForRun,
+	verifiedApprovalEvidenceForRun,
 } from "./runtime-evidence";
 
 const MAX_RENDERER_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -2711,6 +2712,7 @@ function RuntimeConversation({
 	newAgentWorkspace,
 	newAgentFocusTarget,
 	refreshRevision,
+	onOpenActivity,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -2731,6 +2733,7 @@ function RuntimeConversation({
 	newAgentWorkspace: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
 	refreshRevision: number;
+	onOpenActivity?(executionId: string): void;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -3885,6 +3888,14 @@ function RuntimeConversation({
 	const uncertainExecutions = latestRun
 		? uncertainExecutionsForRun(latestRun, executions)
 		: [];
+	const verifiedApprovalEvidence =
+		latestRun && !pending
+			? verifiedApprovalEvidenceForRun(
+					latestRun,
+					executions,
+					actionReceipts,
+				)
+			: null;
 	const emptySession = Boolean(
 		activeSessionId &&
 			visibleMessages.length === 0 &&
@@ -4062,6 +4073,23 @@ function RuntimeConversation({
 								))}
 							</div>
 						</details>
+					)}
+					{verifiedApprovalEvidence && onOpenActivity && (
+						<div className="runtime-activity-handoff" role="status">
+							<Icon name="check" />
+							<span>
+								{verifiedApprovalEvidence.toolName} verified.{" "}
+								<button
+									type="button"
+									className="quiet-link"
+									onClick={() =>
+										onOpenActivity(verifiedApprovalEvidence.executionId)
+									}
+								>
+									View evidence in Activity
+								</button>
+							</span>
+						</div>
 					)}
 					{pending && !busy && (
 						<div className="assistant-message approval-message">
@@ -8837,6 +8865,9 @@ export function App() {
 	);
 	const [settingsSectionRequest, setSettingsSectionRequest] =
 		useState<SettingsSection | null>(null);
+	const [activityFocusExecutionId, setActivityFocusExecutionId] = useState<
+		string | null
+	>(null);
 	const [browserContextEnabled, setBrowserContextEnabled] = useState(
 		() => localStorage.getItem("kestrel:browser-context") !== "off",
 	);
@@ -9537,7 +9568,10 @@ export function App() {
 				<EventApplications onOpenSession={openRuntimeSession} />
 			)}
 			{appPageId === "activity" && (
-				<RuntimeActivityTrail snapshot={snapshot} />
+				<RuntimeActivityTrail
+					snapshot={snapshot}
+					highlightExecutionId={activityFocusExecutionId}
+				/>
 			)}
 			{appPageId === "extensions" && (
 				<DashboardExtensions
@@ -9668,6 +9702,10 @@ export function App() {
 						{...(browserContextEnabled
 							? { browserContext: () => browser.pageContext() }
 							: {})}
+						onOpenActivity={(executionId) => {
+							setActivityFocusExecutionId(executionId);
+							navigate("activity");
+						}}
 					/>
 				</AgentSidebar>
 				<DefaultBrowserPrompt

@@ -9,8 +9,10 @@ import { activityItemsFromExecutions } from "../runtime-evidence";
 
 export function RuntimeActivityTrail({
 	snapshot,
+	highlightExecutionId,
 }: {
 	snapshot: WorkspaceSnapshot;
+	highlightExecutionId?: string | null;
 }) {
 	const [executions, setExecutions] = useState<ActivityItem[]>([]);
 	const [error, setError] = useState("");
@@ -45,6 +47,17 @@ export function RuntimeActivityTrail({
 		};
 	}, []);
 
+	useEffect(() => {
+		if (!highlightExecutionId) return;
+		const node = document.getElementById(
+			`activity-item-${highlightExecutionId}`,
+		);
+		if (!node) return;
+		node.scrollIntoView({ block: "nearest" });
+		node.classList.add("activity-item-focused");
+		return () => node.classList.remove("activity-item-focused");
+	}, [highlightExecutionId, items]);
+
 	return (
 		<div className="page-frame">
 			<header className="page-header">
@@ -67,7 +80,7 @@ export function RuntimeActivityTrail({
 			) : (
 				<ol className="activity-list">
 					{items.map((item, index) => (
-						<li key={item.id}>
+						<li key={item.id} id={`activity-item-${item.id}`}>
 							<span className={`activity-node node-${item.status}`}>
 								{String(index + 1).padStart(2, "0")}
 							</span>

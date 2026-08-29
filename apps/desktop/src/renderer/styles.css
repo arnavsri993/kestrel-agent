@@ -2796,6 +2796,11 @@ input[type="radio"] {
 	gap: 16px;
 	padding-bottom: 24px;
 }
+.activity-list li.activity-item-focused > div {
+	border-radius: 10px;
+	outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+	outline-offset: 4px;
+}
 .activity-list li:not(:last-child)::before {
 	content: "";
 	position: absolute;
