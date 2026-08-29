@@ -19,8 +19,9 @@ export function UsagePolicySettings() {
 			<article className="setting-row">
 				<div>
 					<strong>Usage and cost guardrails</strong>
-					<p>Loading encrypted budget policy…</p>
-					{error && <small role="alert">{error}</small>}
+					<p role={error ? "alert" : "status"}>
+						{error || "Loading encrypted budget policy…"}
+					</p>
 				</div>
 			</article>
 		);

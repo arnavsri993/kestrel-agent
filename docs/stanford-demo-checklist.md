@@ -1,17 +1,26 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `8757ffff` (Writing Studio #636 UX fix on `main`; prior gate at `1ce93d0e` / #634–#633)
+**Snapshot commit:** `00d2d0ed` (docs gate refresh #637 on `main`; engineering gate at `8757ffff` / #636)
 
-**Merged sprint:** #617–#636 — reliability, release gates, first-task auto-send,
+**Merged sprint:** #617–#637 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
 demo surfacing, browser smoke hardening, meetup preflight guard (#631), persona
 Command Center smoke hardening (#632), in-chat memory recall receipt (#633),
-Writing Studio profile panel dual loading/error fix (#636).
+Writing Studio profile panel dual loading/error fix (#636), usage-policy settings
+loading/error fix (#638).
 
 **Overall verdict:** **NOT COMPLETE** — `verify:meetup` **PASS** at `8757ffff` (Aug 29,
-~198s) on engineering Mac at `8757ffff` after #636; operator rehearsal, Apple signing,
-Google OAuth, and crash reporting remain open. Gate must pass again on the
-presentation Mac before the slot.
+~198s) on engineering Mac; operator rehearsal, Apple signing, Google OAuth, and
+crash reporting remain open. Gate must pass again on the presentation Mac before the slot.
+
+**Engineering handoff (Aug 29, `00d2d0ed`):** Repository gates A1–A7 and A9 are
+**COMPLETE** on the engineering Mac. Hero pillars B2–B3, first-task contract C1–C4/C6,
+memory surfacing D1/D3–D4/D7, and New Tab home E1–E5 are **COMPLETE** in repo. Remaining
+demo risk is **operator-only**: presentation Mac `verify:meetup`, canonical install,
+Readiness warm-up, disposable project, memory beat rehearsal, and venue timing (sections
+F and G). No further P0 engineering blockers identified for the primary offline demo path;
+optional surfaces (Google OAuth, remote crash reporting, Honcho remote memory) are out of
+scope for the stage story.
 
 Use this matrix before going on stage. Each row has an owner, evidence command
 or link, and an honest status as of the snapshot commit.
@@ -113,7 +122,7 @@ or link, and an honest status as of the snapshot commit.
 
 Run in order on the **presentation Mac** the morning of the demo:
 
-- [ ] `git fetch` && checkout presentation commit (`8757ffff` or later on `main`)
+- [ ] `git fetch` && checkout presentation commit (`00d2d0ed` or later on `main`)
 - [ ] `corepack pnpm install --frozen-lockfile`
 - [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present (**required** — `verify:meetup` now fails fast via preflight guard if either is still active)
 - [ ] `corepack pnpm verify:meetup` — **must pass**; preflight prints stop/clear instructions on failure; if a desktop smoke fails once after a clean preflight, retry once; if persistent, file engineering issue before relying on browser tools on stage
@@ -143,7 +152,7 @@ Run in order on the **presentation Mac** the morning of the demo:
 | `8757ffff` | Aug 29, 2026 | **FAIL** (~0.3s) | Preflight only — dev watcher + Electron dev lock still active; cleared `/var/folders/.../T/kestrel-electron-dev.lock` and killed `electron-vite dev`, then re-ran |
 | `8757ffff` | Aug 29, 2026 | **PASS** (~198s) | Full `verify:meetup` on `main` after #636 Writing Studio profile panel fix; preflight clean; 1001 unit tests; packaged smokes + 50/50 benchmark |
 
-**Engineering note:** #629 stabilized browser attach/detach. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear `/tmp/kestrel-electron-dev.lock` before gating. Latest engineering meetup **PASS** at `8757ffff` (~198s). #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected. #636 fixes Writing Studio profile panel showing dual loading/error states.
+**Engineering note:** #629 stabilized browser attach/detach. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear `/tmp/kestrel-electron-dev.lock` before gating. Latest engineering meetup **PASS** at `8757ffff` (~198s). #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected. #636 fixes Writing Studio profile panel showing dual loading/error states. #638 fixes Usage policy settings showing loading text alongside a load error.
 
 ---
 
