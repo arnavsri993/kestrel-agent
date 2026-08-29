@@ -1102,6 +1102,54 @@ body:has(.ai-browser-app),
 	overscroll-behavior: contain;
 }
 
+.organize-tabs-section-heading {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+	margin: 0 0 6px;
+	padding: 0 2px;
+}
+
+.organize-tabs-section-heading strong {
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.organize-tabs-section-heading span {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.organize-tabs-deletions {
+	margin: 0 0 12px;
+	padding: 0 0 10px;
+	border-bottom: 1px solid var(--line);
+}
+
+.organize-tabs-deletion {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 0 4px;
+	padding: 6px 8px;
+	border-radius: 8px;
+	cursor: pointer;
+}
+
+.organize-tabs-deletion:hover {
+	background: rgb(255 255 255 / 0.04);
+}
+
+.organize-tabs-deletion input {
+	flex: 0 0 auto;
+	margin: 0;
+}
+
+.organize-tabs-deletion .organize-tabs-tab-copy small {
+	color: color-mix(in srgb, var(--rose, #f28fa3) 72%, var(--muted));
+}
+
 .organize-tabs-group {
 	--organize-tabs-color: var(--muted);
 	position: relative;

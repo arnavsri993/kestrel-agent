@@ -63,7 +63,10 @@ export function OrganizeTabsDialog({
 		"origin" | "faviconDataUrl"
 	>[];
 	onCancel(): void;
-	onApply(organization: UserBrowserTabOrganizationPreview): Promise<void>;
+	onApply(
+		organization: UserBrowserTabOrganizationPreview,
+		closeTabIds: readonly string[],
+	): Promise<void>;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
 	const [organization, setOrganization] =
@@ -77,6 +80,9 @@ export function OrganizeTabsDialog({
 		useState<UserBrowserTabFolderColor>("blue");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const [selectedCloseTabIds, setSelectedCloseTabIds] = useState<Set<string>>(
+		() => new Set(),
+	);
 	const dialogRef = useRef<HTMLDivElement | null>(null);
 	const editInputRef = useRef<HTMLInputElement | null>(null);
 	const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -86,6 +92,9 @@ export function OrganizeTabsDialog({
 		setCollapsedFolderIds(new Set());
 		setEditingFolderId(null);
 		setError("");
+		setSelectedCloseTabIds(
+			new Set(preview.suggestedDeletions.map((item) => item.tabId)),
+		);
 	}, [preview]);
 
 	useEffect(() => {
@@ -149,6 +158,11 @@ export function OrganizeTabsDialog({
 		return result;
 	}, [organization.tabs]);
 
+	const tabsById = useMemo(
+		() => new Map(organization.tabs.map((tab) => [tab.id, tab])),
+		[organization.tabs],
+	);
+
 	const visibleFolders = useMemo(
 		() =>
 			organization.tabFolders.filter(
@@ -203,21 +217,40 @@ export function OrganizeTabsDialog({
 		});
 	}
 
+	function toggleCloseSuggestion(tabId: string) {
+		setSelectedCloseTabIds((current) => {
+			const next = new Set(current);
+			if (next.has(tabId)) next.delete(tabId);
+			else next.add(tabId);
+			return next;
+		});
+	}
+
 	async function apply() {
 		if (busy) return;
 		setBusy(true);
 		setError("");
 		try {
 			const validFolderIds = new Set(visibleFolders.map((folder) => folder.id));
-			await onApply({
-				...organization,
-				tabFolders: visibleFolders,
-				tabs: organization.tabs.map((tab) =>
-					tab.tabFolderId && !validFolderIds.has(tab.tabFolderId)
-						? { ...tab, tabFolderId: undefined }
-						: tab,
-				),
-			});
+			const closeTabIds = organization.suggestedDeletions
+				.map((item) => item.tabId)
+				.filter((tabId) => selectedCloseTabIds.has(tabId));
+			const remainingTabs = organization.tabs.filter(
+				(tab) => !closeTabIds.includes(tab.id),
+			);
+			await onApply(
+				{
+					...organization,
+					tabFolders: visibleFolders,
+					tabs: remainingTabs.map((tab) =>
+						tab.tabFolderId && !validFolderIds.has(tab.tabFolderId)
+							? { ...tab, tabFolderId: undefined }
+							: tab,
+					),
+					suggestedDeletions: [],
+				},
+				closeTabIds,
+			);
 		} catch (cause) {
 			setError(
 				cause instanceof Error
@@ -262,7 +295,40 @@ export function OrganizeTabsDialog({
 				</header>
 
 				<div className="organize-tabs-scroll" role="list" aria-label="Suggested tab folders">
-					{visibleFolders.length === 0 ? (
+					{organization.suggestedDeletions.length > 0 && (
+						<section
+							className="organize-tabs-deletions"
+							aria-label="Suggested tabs to close"
+						>
+							<div className="organize-tabs-section-heading">
+								<strong>Suggested to close</strong>
+								<span>{selectedCloseTabIds.size} selected</span>
+							</div>
+							{organization.suggestedDeletions.map((suggestion) => {
+								const tab = tabsById.get(suggestion.tabId);
+								if (!tab) return null;
+								const checked = selectedCloseTabIds.has(suggestion.tabId);
+								return (
+									<label className="organize-tabs-deletion" key={suggestion.tabId}>
+										<input
+											type="checkbox"
+											checked={checked}
+											onChange={() => toggleCloseSuggestion(suggestion.tabId)}
+										/>
+										<span className="organize-tabs-tab-favicon" aria-hidden="true">
+											{faviconForTab(tab, originFavicons)}
+										</span>
+										<span className="organize-tabs-tab-copy">
+											<strong>{tab.title}</strong>
+											<small>{suggestion.reason}</small>
+										</span>
+									</label>
+								);
+							})}
+						</section>
+					)}
+					{visibleFolders.length === 0 &&
+					organization.suggestedDeletions.length === 0 ? (
 						<div className="organize-tabs-empty" role="status">
 							<Icon name="folder" />
 							<strong>No groups to suggest</strong>
@@ -391,9 +457,18 @@ export function OrganizeTabsDialog({
 						type="button"
 						className="organize-tabs-primary"
 						onClick={() => void apply()}
-						disabled={busy || visibleFolders.length === 0}
+						disabled={
+							busy ||
+							(visibleFolders.length === 0 && selectedCloseTabIds.size === 0)
+						}
 					>
-						{busy ? "Organizing…" : "Group tabs"}
+						{busy
+							? "Applying…"
+							: selectedCloseTabIds.size > 0 && visibleFolders.length === 0
+								? "Close selected tabs"
+								: selectedCloseTabIds.size > 0
+									? "Apply changes"
+									: "Group tabs"}
 					</button>
 				</footer>
 			</motion.div>

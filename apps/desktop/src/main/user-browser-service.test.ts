@@ -1230,7 +1230,7 @@ describe("UserBrowserService", () => {
       name: `Reviewed ${index + 1}`,
       color: "slate" as const,
     }));
-    const applied = service.applyTabOrganization({
+    const applied = await service.applyTabOrganization({
       tabOrder: preview.tabs.map((tab) => tab.id),
       assignments: preview.tabs.map(({ id, tabFolderId }) => ({
         tabId: id,

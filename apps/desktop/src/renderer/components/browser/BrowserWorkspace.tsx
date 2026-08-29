@@ -480,7 +480,10 @@ export function BrowserWorkspace({
     setOrganizeTabsPreview(null);
   }, []);
   const applyOrganizeTabs = useCallback(
-    async (organization: UserBrowserTabOrganizationPreview) => {
+    async (
+      organization: UserBrowserTabOrganizationPreview,
+      closeTabIds: readonly string[],
+    ) => {
       await applyTabOrganization({
         tabOrder: organization.tabs.map((tab) => tab.id),
         assignments: organization.tabs.map(({ id, tabFolderId }) => ({
@@ -488,6 +491,7 @@ export function BrowserWorkspace({
           ...(tabFolderId ? { tabFolderId } : {}),
         })),
         tabFolders: organization.tabFolders,
+        ...(closeTabIds.length > 0 ? { closeTabIds: [...closeTabIds] } : {}),
       });
       setOrganizeTabsPreview(null);
     },
