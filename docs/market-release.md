@@ -14,6 +14,7 @@ Run:
 pnpm audit:market
 pnpm verify
 pnpm package:mac:dev
+pnpm package:mac:installable
 pnpm test:packaged-desktop:arm64
 ```
 
@@ -48,8 +49,10 @@ Deploy the static website over HTTPS and configure:
 - `PUBLIC_RELEASE_COMMIT`, matching the full tagged source commit
 - `PUBLIC_PUBLISHER_NAME`
 - `PUBLIC_SUPPORT_EMAIL`
-- `KESTREL_UPDATE_URL`, the stable HTTPS base containing `latest-mac.yml`, the
-  ZIP, and its blockmap
+- `KESTREL_UPDATE_URL`, used only by the website distribution gate and set to
+  `https://github.com/arnavsri993/kestrel-agent/releases/latest/download`,
+  which exposes `latest-mac.yml`, the ZIP, and its blockmap from the latest
+  stable GitHub release
 
 The tag workflow also publishes the signed PKG for MDM distribution. The public
 download URL remains the DMG; the PKG is for an organization's managed rollout
@@ -83,10 +86,12 @@ variables with these names: `PUBLIC_PUBLISHER_NAME`, `PUBLIC_SUPPORT_EMAIL`,
 development preview until `NEXT_PUBLIC_RELEASE_STATUS=verified` and all three
 artifact URLs plus the release version and source commit are supplied. When
 that status is `verified`, the workflow maps
-those values plus `KESTREL_UPDATE_URL` into the distribution gate and refuses
-to build the public-release state unless the site, privacy and support routes,
-DMG, manifest, checksums, and updater feed are reachable and mutually
-consistent over HTTPS.
+those values plus the GitHub Releases `KESTREL_UPDATE_URL` distribution-gate
+input into the distribution gate and refuses to build the public-release state
+unless the site, privacy and support routes, DMG, manifest, checksums, and
+updater feed are reachable and mutually consistent over HTTPS. The desktop
+updater itself uses the repository and `latest` channel compiled into the
+packaged app; this website variable cannot redirect it.
 
 After the signed workflow, Gatekeeper assessment, notarization validation, and
 clean-machine download test pass, build the website with:
@@ -128,15 +133,14 @@ Tagged builds verify the assembled bundle before and after the Actions artifact
 transfer, then upload the DMG, ZIP, PKG, updater blockmaps, electron-updater
 `latest-mac.yml`, `SHA256SUMS`, and `release-manifest.json` to a matching draft
 before making it public. Interrupted runs resume only their own commit-bound
-draft and revalidate every existing asset. The generic update provider is
-configured from the explicit
-`KESTREL_UPDATE_URL` repository variable instead of relying on a developer's
-local Git remote or embedding a private token. The website download control
-fails closed unless a semantic version and HTTPS URLs
-for the DMG, manifest, and checksums are all present. Stable packaged builds
-check the `latest` feed, download signed updates, and notify the user that the
-update will install after quit and reopen; development builds never check the
-production feed.
+draft and revalidate every existing asset. The packaged app pins the public
+GitHub owner/repository and stable release channel in both electron-builder
+metadata and the startup updater call; it does not rely on a developer's local
+Git remote, an arbitrary update URL, or a private token. The website download
+control fails closed unless a semantic version and HTTPS URLs for the DMG,
+manifest, and checksums are all present. Stable packaged builds check GitHub at
+startup, download signed updates, and install them on the next normal quit;
+development builds never check the production feed.
 
 The source `verify` gate runs the deterministic 50-workflow browser-agent
 track after building the desktop output. macOS pull-request CI runs the same

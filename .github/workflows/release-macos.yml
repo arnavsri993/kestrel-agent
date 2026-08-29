@@ -70,7 +70,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
         run: |
           test -n "$CSC_LINK"
           test -n "$CSC_KEY_PASSWORD"
@@ -79,7 +78,6 @@ jobs:
           test -n "$APPLE_ID"
           test -n "$APPLE_APP_SPECIFIC_PASSWORD"
           test -n "$APPLE_TEAM_ID"
-          [[ "$KESTREL_UPDATE_URL" == https://* ]]
       - name: Build signed Apple Silicon DMG, ZIP, and MDM PKG
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -89,7 +87,6 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          KESTREL_UPDATE_URL: ${{ vars.KESTREL_UPDATE_URL }}
           KESTREL_GOOGLE_OAUTH_CLIENT_ID: ${{ vars.KESTREL_GOOGLE_OAUTH_CLIENT_ID }}
           MACOSX_DEPLOYMENT_TARGET: "13.0"
           npm_config_arch: arm64

@@ -60,6 +60,7 @@ jobs:
       - run: corepack pnpm test:desktop-file-icon-guard
       - run: corepack pnpm test
       - run: corepack pnpm test:desktop-smoke
+      - run: corepack pnpm test:desktop-single-instance
       - run: corepack pnpm test:desktop-restart-recovery
       - run: corepack pnpm test:desktop-writing-studio
       - run: corepack pnpm test:desktop-browser

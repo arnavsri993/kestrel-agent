@@ -15,6 +15,7 @@ const fail = (message) => {
 
 const [
 	builder,
+	installableBuilder,
 	developmentBuilder,
 	inheritedEntitlements,
 	developmentInheritedEntitlements,
@@ -27,6 +28,7 @@ const [
 	support,
 	rootPackage,
 	developmentVerifier,
+	installableVerifier,
 	desktopSmoke,
 	desktopSetup,
 	workspace,
@@ -39,6 +41,7 @@ const [
 	actionReceiptSmoke,
 ] = await Promise.all([
 	read("apps/desktop/electron-builder.yml"),
+	read("apps/desktop/electron-builder.installable.yml"),
 	read("apps/desktop/electron-builder.dev.yml"),
 	read("apps/desktop/build/entitlements.mac.inherit.plist"),
 	read("apps/desktop/build/entitlements.mac.dev.inherit.plist"),
@@ -51,6 +54,7 @@ const [
 	read("apps/website/src/app/support/page.tsx"),
 	read("package.json"),
 	read("scripts/verify-development-macos-app.mjs"),
+	read("scripts/verify-installable-macos-app.mjs"),
 	read("scripts/smoke-desktop.mjs"),
 	read("scripts/test-desktop-setup.mjs"),
 	read("pnpm-workspace.yaml"),
@@ -78,8 +82,10 @@ for (const marker of [
 	"target: dmg",
 	"target: zip",
 	"target: pkg",
-	"provider: generic",
-	"${env.KESTREL_UPDATE_URL}",
+	"provider: github",
+	"owner: arnavsri993",
+	"repo: kestrel-agent",
+	"releaseType: release",
 	"channel: latest",
 	'minimumSystemVersion: "13.0.0"',
 	"npmRebuild: true",
@@ -87,6 +93,14 @@ for (const marker of [
 ]) {
 	if (!builder.includes(marker))
 		fail(`desktop packaging is missing ${marker}.`);
+}
+for (const marker of [
+	"extends: electron-builder.yml",
+	'identity: "-"',
+	"entitlementsInherit: build/entitlements.mac.dev.inherit.plist",
+]) {
+	if (!installableBuilder.includes(marker))
+		fail(`local installable packaging is missing ${marker}.`);
 }
 for (const forbidden of ["universal", "x64", "mas", "app-store"]) {
 	if (builder.toLowerCase().includes(forbidden))
@@ -102,7 +116,6 @@ for (const marker of [
 	"pkgutil --check-signature",
 	"lipo -archs",
 	'= "arm64"',
-	"KESTREL_UPDATE_URL",
 	"release/*.dmg",
 	"release/*.zip",
 	"release/*.pkg",
@@ -190,6 +203,27 @@ if (!desktopPackage.includes("verify-development-macos-app.mjs"))
 	fail(
 		"desktop development packaging must verify its documented ad-hoc signature.",
 	);
+if (
+	!desktopPackage.includes('"package:mac:installable"') ||
+	!desktopPackage.includes("electron-builder.installable.yml") ||
+	!desktopPackage.includes("verify-installable-macos-app.mjs")
+)
+	fail("desktop packaging must expose a verified local installable DMG/ZIP path.");
+for (const marker of [
+	"CFBundleIdentifier",
+	"com.kestrel.desktop",
+	"LSMinimumSystemVersion",
+	"/usr/bin/lipo",
+	'"--verify", "--deep", "--strict"',
+	"auditPackagedMacApp",
+	"app-update.yml",
+	"provider: github",
+	"owner: arnavsri993",
+	"repo: kestrel-agent",
+]) {
+	if (!installableVerifier.includes(marker))
+		fail(`installable app verification is missing ${marker}.`);
+}
 if (!desktopSmoke.includes("--use-mock-keychain"))
 	fail(
 		"packaged desktop smoke must isolate its test-only keychain from production Safe Storage.",
@@ -281,6 +315,10 @@ if (!rootPackage.includes("pnpm test:desktop-managed-policy"))
 if (!rootPackage.includes("pnpm test:desktop-chat-configuration"))
 	fail(
 		"the market verification command does not exercise consequential action receipts.",
+	);
+if (!rootPackage.includes("pnpm test:desktop-single-instance"))
+	fail(
+		"the market verification command does not exercise the single-instance boundary.",
 	);
 for (const marker of [
 	"export const ActionReceiptSchema",

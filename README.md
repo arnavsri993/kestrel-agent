@@ -27,9 +27,29 @@ copy a `release/**/Kestrel.app` artifact, create a `Kestrel-release.app`, or
 keep versioned Kestrel bundles beside the canonical app; the installer moves
 stale bundles to Trash instead of deleting user data.
 
+## Install a packaged build
+
+For an end-user install, download the Apple Silicon DMG from the [Kestrel
+GitHub Releases](https://github.com/arnavsri993/kestrel-agent/releases) page,
+open it, and drag **Kestrel** to **Applications**. Launch the copy in
+`/Applications`, not the copy inside the mounted DMG. Stable releases are
+published from matching `v<version>` tags by the signed macOS release workflow;
+the repository currently has an ad-hoc development preview rather than a
+notarized stable release.
+
+To build an installable local DMG/ZIP for an Apple Silicon Mac, run:
+
+```bash
+corepack pnpm package:mac:installable
+```
+
+That local target is ad-hoc signed for testing. Public downloads must come
+from the Developer ID-signed and notarized GitHub release workflow so macOS can
+verify the publisher without a manual Gatekeeper override.
+
 On first launch, Kestrel checks the local runtime, lets you connect a model only when needed, and opens a clean conversation. Choose **Add project** for folder-scoped work, or describe a question directly. Read-only work can proceed automatically; sending, publishing, deleting, purchasing, and permission changes pause with a plain-language review.
 
-The packaged development build is Apple Silicon and ad-hoc signed. It is useful for local testing, but it is not a public release: Developer ID signing, notarization, update hosting, and a public download are still external release requirements.
+The packaged development build is Apple Silicon and ad-hoc signed. It is useful for local testing, but it is not a public release. Stable packaged builds use the public GitHub Releases provider and check for signed updates at startup; Developer ID signing and notarization remain required for a normal end-user install.
 
 ## What works now
 
