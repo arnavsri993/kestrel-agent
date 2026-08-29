@@ -1,6 +1,7 @@
 const { execFileSync } = require("node:child_process");
 const {
 	chmodSync,
+	cpSync,
 	existsSync,
 	mkdirSync,
 	rmSync,

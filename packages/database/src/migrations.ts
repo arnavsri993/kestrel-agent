@@ -11,8 +11,11 @@ function resolveMigrationsDirectory(): string {
 		join(moduleDirectory, "../migrations"),
 		join(moduleDirectory, "migrations"),
 	];
-	if (typeof process.resourcesPath === "string") {
-		candidates.push(join(process.resourcesPath, "database-migrations"));
+	if (typeof process === "object" && process !== null) {
+		const resourcesPath = Reflect.get(process, "resourcesPath");
+		if (typeof resourcesPath === "string") {
+			candidates.push(join(resourcesPath, "database-migrations"));
+		}
 	}
 	let workspaceRoot = process.cwd();
 	for (let depth = 0; depth < 8; depth += 1) {
