@@ -1132,25 +1132,36 @@ describe("UserBrowserService", () => {
     await service.navigate(first.id, "https://notion.so/team/roadmap");
     const second = await navigateNewTab(
       service,
+      "https://notion.so/team/notes",
+    );
+    const third = await navigateNewTab(
+      service,
       "https://www.google.com/search?q=browser",
     );
-    const third = await navigateNewTab(service, "https://github.com/kestrel/app");
+    const fourth = await navigateNewTab(service, "https://github.com/kestrel/app");
+    const fifth = await navigateNewTab(
+      service,
+      "https://github.com/kestrel/app/issues",
+    );
 
     const organized = await service.organizeTabs();
 
     expect(organized.tabFolders.map((folder) => folder.name)).toEqual([
       "Work",
-      "Research",
       "Development",
     ]);
     expect(organized.tabs.map((tab) => tab.id)).toEqual([
       first.id,
       second.id,
+      fourth.id,
+      fifth.id,
       third.id,
     ]);
-    expect(organized.tabs.map((tab) => tab.tabFolderId)).toEqual(
-      organized.tabFolders.map((folder) => folder.id),
-    );
+    expect(organized.tabs[0]?.tabFolderId).toBe(organized.tabFolders[0]?.id);
+    expect(organized.tabs[1]?.tabFolderId).toBe(organized.tabFolders[0]?.id);
+    expect(organized.tabs[2]?.tabFolderId).toBe(organized.tabFolders[1]?.id);
+    expect(organized.tabs[3]?.tabFolderId).toBe(organized.tabFolders[1]?.id);
+    expect(organized.tabs[4]?.tabFolderId).toBeUndefined();
   });
 
   it("uses AI labels from bounded tab metadata while retaining the grouping order", async () => {
@@ -1158,28 +1169,32 @@ describe("UserBrowserService", () => {
       async (groups: BrowserTabFolderNamingGroup[]) =>
         groups.map((group, index) => ({
           id: group.id,
-          name: ["Project planning", "Browser research", "Kestrel code"][index]!,
+          name: ["Project planning", "Kestrel code"][index]!,
         })),
     );
     const { service } = createService({ nameTabFolders });
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://notion.so/team/roadmap");
+    await navigateNewTab(service, "https://notion.so/team/notes");
     await navigateNewTab(service, "https://www.google.com/search?q=browser");
     await navigateNewTab(service, "https://github.com/kestrel/app");
+    await navigateNewTab(service, "https://github.com/kestrel/app/issues");
 
     const preview = await service.previewOrganizeTabs();
 
     expect(preview.tabFolders.map((folder) => folder.name)).toEqual([
       "Project planning",
-      "Browser research",
       "Kestrel code",
     ]);
     expect(nameTabFolders).toHaveBeenCalledOnce();
+    expect(nameTabFolders.mock.calls[0]?.[0]).toHaveLength(2);
     expect(nameTabFolders.mock.calls[0]?.[0]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           fallbackName: "Work",
-          tabs: [expect.objectContaining({ host: "notion.so" })],
+        }),
+        expect.objectContaining({
+          fallbackName: "Development",
         }),
       ]),
     );
@@ -1195,9 +1210,17 @@ describe("UserBrowserService", () => {
     await service.navigate(first.id, "https://notion.so/team/roadmap");
     const second = await navigateNewTab(
       service,
+      "https://notion.so/team/notes",
+    );
+    const third = await navigateNewTab(
+      service,
       "https://www.google.com/search?q=browser",
     );
-    const third = await navigateNewTab(service, "https://github.com/kestrel/app");
+    const fourth = await navigateNewTab(service, "https://github.com/kestrel/app");
+    const fifth = await navigateNewTab(
+      service,
+      "https://github.com/kestrel/app/issues",
+    );
 
     const preview = await service.previewOrganizeTabs();
     expect(service.getState().tabFolders).toEqual([]);
@@ -1207,7 +1230,7 @@ describe("UserBrowserService", () => {
       name: `Reviewed ${index + 1}`,
       color: "slate" as const,
     }));
-    const applied = service.applyTabOrganization({
+    const applied = await service.applyTabOrganization({
       tabOrder: preview.tabs.map((tab) => tab.id),
       assignments: preview.tabs.map(({ id, tabFolderId }) => ({
         tabId: id,
@@ -1219,12 +1242,13 @@ describe("UserBrowserService", () => {
     expect(applied.tabs.map((tab) => tab.id)).toEqual([
       first.id,
       second.id,
+      fourth.id,
+      fifth.id,
       third.id,
     ]);
     expect(applied.tabFolders.map((folder) => folder.name)).toEqual([
       "Reviewed 1",
       "Reviewed 2",
-      "Reviewed 3",
     ]);
     expect(applied.tabFolders.every((folder) => folder.color === "slate")).toBe(
       true,

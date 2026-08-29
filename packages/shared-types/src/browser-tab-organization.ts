@@ -46,6 +46,16 @@ export const BrowserTabFolderNamesResponseSchema = z
  * This rejects prompt-like, URL-like, and control-character output before it
  * can cross back into the browser UI.
  */
+export const UserBrowserTabDeletionSuggestionSchema = z
+	.object({
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+		reason: z.string().min(1).max(120),
+	})
+	.strict();
+export type UserBrowserTabDeletionSuggestion = z.infer<
+	typeof UserBrowserTabDeletionSuggestionSchema
+>;
+
 export function validateBrowserTabFolderName(
 	value: unknown,
 ): string | undefined {

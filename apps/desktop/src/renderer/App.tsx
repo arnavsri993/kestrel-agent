@@ -124,6 +124,7 @@ import { desktopDeepLinkAction } from "./deep-link-route";
 import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
 import {
 	isKestrelAppPageId,
+	isKestrelAppPageUrl,
 	kestrelAppPageUrl,
 	parseKestrelAppPage,
 	type KestrelAppPageId,
@@ -227,8 +228,8 @@ const commandDestinations: CommandDestination[] = [
 	},
 	{
 		id: "organize-tabs",
-		label: "Cluster tabs",
-		detail: "Group related tabs by topic while keeping their order",
+		label: "Organize tabs",
+		detail: "Group related tabs into folders while keeping their order",
 		icon: "folder",
 		group: "Browse",
 	},
@@ -4186,7 +4187,7 @@ function RuntimeConversation({
 				{assistiveStatus}
 			</p>
 			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
-				<div className="chat-welcome">
+				<div className="chat-welcome" aria-hidden="true">
 					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>
 					<p>
 						{emptySession
@@ -9614,7 +9615,9 @@ export function App() {
 		(tab) => tab.id === browser.state?.activeTabId,
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
-	const showKestrelSidebar = activeBrowserTab?.url === "";
+	const showKestrelSidebar =
+		!activeBrowserTab?.url ||
+		isKestrelAppPageUrl(activeBrowserTab.url);
 	const activeFileAttachment = activeBrowserTab?.file
 		? attachmentForExternalFile(activeBrowserTab.file)
 		: undefined;
@@ -9671,7 +9674,9 @@ export function App() {
 				appPageId === "work" ||
 				appPageId === "events" ||
 				appPageId === "activity" ||
-				appPageId === "extensions"
+				appPageId === "extensions" ||
+				appPageId === "agent" ||
+				appPageId === "writing"
 					? " browser-secondary-surface"
 					: ""
 			}${appPageId === "memory" ? " legacy-product-surface" : ""}`}
@@ -9697,6 +9702,18 @@ export function App() {
 				/>
 			)}
 			{appPageId === "writing" && <WritingStudio />}
+			{appPageId === "agent" && (
+				<AgentWorkspace
+					sessions={runtimeSessions}
+					activeSessionId={activeRuntimeSessionId}
+					agentState={effectiveAgentState}
+					pendingApprovals={pendingApprovalCount}
+					onNewTask={() => startNewAgent()}
+					onOpenSession={openSidebarSession}
+					onOpenApprovals={() => navigate("approvals")}
+					onOpenWork={() => navigate("work")}
+				/>
+			)}
 			{appPageId === "settings" && (
 				<Settings
 					snapshot={snapshot}
@@ -9744,7 +9761,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${appPageId === "agent" ? " agent-full-page" : ""}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0 }}
@@ -9814,32 +9831,13 @@ export function App() {
 							onOpenConnections={() => openSettings("connections")}
 						/>
 					}
-					workspace={
-						<AgentWorkspace
-							sessions={runtimeSessions}
-							activeSessionId={activeRuntimeSessionId}
-							agentState={effectiveAgentState}
-							pendingApprovals={pendingApprovalCount}
-							onNewTask={() => {
-								startNewAgent();
-								openAgent();
-							}}
-							onOpenSession={openSidebarSession}
-							onOpenApprovals={() => navigate("approvals")}
-							onOpenWork={() => navigate("work")}
-							onBack={() => void openBrowserWorkspace()}
-						/>
-					}
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
 					collapsed={!agentSidebarOpen}
-					agentState={effectiveAgentState}
-					pendingApprovals={pendingApprovalCount}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}
-					onReviewApprovals={reviewApprovals}
 				>
 					{/* Conversation state stays mounted across browser and settings routes so
             streams, steering, cancellation, and approval boundaries remain intact. */}

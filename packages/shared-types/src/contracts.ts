@@ -19,6 +19,7 @@ import {
 import {
 	BrowserTabFolderNameSchema,
 	BrowserTabFolderNamingGroupSchema,
+	UserBrowserTabDeletionSuggestionSchema,
 } from "./browser-tab-organization";
 
 export const SensitivitySchema = z.enum([
@@ -2657,6 +2658,7 @@ export type UserBrowserTab = z.infer<typeof UserBrowserTabSchema>;
 export const UserBrowserTabOrganizationPreviewSchema = z.object({
 	tabs: z.array(UserBrowserTabSchema),
 	tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+	suggestedDeletions: z.array(UserBrowserTabDeletionSuggestionSchema).max(32).default([]),
 });
 export type UserBrowserTabOrganizationPreview = z.infer<
 	typeof UserBrowserTabOrganizationPreviewSchema
@@ -2675,6 +2677,7 @@ export const UserBrowserTabOrganizationApplySchema = z.object({
 			}),
 		),
 	tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+	closeTabIds: z.array(z.string().regex(/^tab-[a-f0-9-]{36}$/)).max(32).optional(),
 });
 export type UserBrowserTabOrganizationApply = z.infer<
 	typeof UserBrowserTabOrganizationApplySchema
@@ -3363,6 +3366,7 @@ export const RendererRequestSchema = z.union([
 				}),
 			),
 		tabFolders: z.array(UserBrowserTabFolderSchema).max(32),
+		closeTabIds: z.array(z.string().regex(/^tab-[a-f0-9-]{36}$/)).max(32).optional(),
 	}),
 	z.object({
 		type: z.literal("browser-detach-tab"),

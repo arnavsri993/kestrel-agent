@@ -82,6 +82,7 @@ import {
 	upsertOriginFavicon,
 } from "./browser-tab-store";
 import { organizeBrowserTabs } from "./browser-tab-folders";
+import { suggestTabDeletions } from "./browser-tab-deletion-suggestions";
 import {
 	fileAttachment,
 	fileStillExists,
@@ -1448,8 +1449,14 @@ export class UserBrowserService {
 	async previewOrganizeTabs(): Promise<UserBrowserTabOrganizationPreview> {
 		this.assertAvailable();
 		const organized = organizeBrowserTabs(this.state.tabs, this.now);
-		if (!this.nameTabFolders || organized.tabFolders.length === 0)
-			return organized;
+		const suggestedDeletions = suggestTabDeletions(
+			this.state.tabs,
+			this.state.activeTabId,
+			this.now,
+		);
+		if (!this.nameTabFolders || organized.tabFolders.length === 0) {
+			return { ...organized, suggestedDeletions };
+		}
 
 		const namingGroups: BrowserTabFolderNamingGroup[] = organized.tabFolders.map(
 			(folder) => ({
@@ -1489,11 +1496,21 @@ export class UserBrowserService {
 				...folder,
 				name: namesById.get(folder.id) ?? folder.name,
 			})),
+			suggestedDeletions,
 		};
 	}
 
-	applyTabOrganization(input: UserBrowserTabOrganizationApply): UserBrowserState {
+	async applyTabOrganization(
+		input: UserBrowserTabOrganizationApply,
+	): Promise<UserBrowserState> {
 		this.assertAvailable();
+		if (input.closeTabIds?.length) {
+			for (const tabId of [...new Set(input.closeTabIds)]) {
+				if (this.state.tabs.some((tab) => tab.id === tabId)) {
+					await this.closeTab(tabId);
+				}
+			}
+		}
 		const currentTabs = new Map(this.state.tabs.map((tab) => [tab.id, tab]));
 		const folderIds = new Set(input.tabFolders.map((folder) => folder.id));
 		const assignments = new Map(

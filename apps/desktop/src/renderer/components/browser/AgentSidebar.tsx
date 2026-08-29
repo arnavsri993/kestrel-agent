@@ -1,51 +1,36 @@
 import type { ReactNode } from "react";
-import type { AgentState, RuntimeSession } from "@kestrel/shared-types";
+import type { RuntimeSession } from "@kestrel/shared-types";
 import { agentWorkspaceName } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
 import { Icon } from "../Icon";
-import { sidebarReviewVisible } from "./agent-sidebar";
 
 export function AgentSidebar({
 	children,
 	communicationAssistant,
-	workspace,
 	sessions,
 	activeSessionId,
 	agentName,
 	collapsed,
-	agentState,
-	pendingApprovals = 0,
 	onNewAgent,
 	onToggleAgent,
 	onExpandChat,
-	onReviewApprovals,
 }: {
 	children: ReactNode;
 	communicationAssistant?: ReactNode;
-	workspace?: ReactNode;
 	sessions: RuntimeSession[];
 	activeSessionId: string | null;
 	agentName: string;
 	collapsed: boolean;
-	agentState: AgentState;
-	pendingApprovals?: number;
 	onNewAgent(prompt?: string): void;
 	onToggleAgent(): void;
 	onExpandChat(): void;
-	onReviewApprovals?(): void;
 }) {
 	const activeSession = sessions.find((session) => session.id === activeSessionId);
 	const currentTaskTitle = activeSession
 		? sessionTitleForDisplay(activeSession.title)
 		: "New task";
 	const projectName = agentWorkspaceName(activeSession?.workspaceRoot);
-	const showReview = Boolean(
-		onReviewApprovals &&
-			sidebarReviewVisible({
-				agentState,
-				pendingCount: pendingApprovals,
-			}),
-	);
+	const showProjectName = projectName.length > 0;
 	return (
 		<aside
 			className={`agent-sidebar ${collapsed ? "is-collapsed" : ""}`}
@@ -59,8 +44,8 @@ export function AgentSidebar({
 					<button
 						type="button"
 						className="agent-sidebar-expand"
-						aria-label="Open chat in the full window"
-						title="Open chat in the full window"
+						aria-label="Open Agent tab"
+						title="Open Agent tab"
 						onClick={onExpandChat}
 					>
 						<Icon name="expand" />
@@ -77,33 +62,23 @@ export function AgentSidebar({
 					</button>
 					<div className="agent-chat-heading">
 						<strong title={currentTaskTitle}>{currentTaskTitle}</strong>
-						<small title={projectName}>{projectName}</small>
+						{showProjectName ? (
+							<small title={projectName}>{projectName}</small>
+						) : null}
 					</div>
 					<button
 						type="button"
 						className="agent-sidebar-collapse"
-						aria-label={`Minimize ${agentName}`}
-						title={`Minimize ${agentName}`}
+						aria-label={`Hide ${agentName}`}
+						title={`Hide ${agentName}`}
 						onClick={onToggleAgent}
 					>
 						<Icon name="chevron" className="agent-sidebar-collapse-icon" />
 					</button>
 				</div>
-				{showReview && (
-					<button
-						type="button"
-						className="agent-approval-action"
-						onClick={() => onReviewApprovals?.()}
-					>
-						<Icon name="alert-triangle-filled" />
-						<span>Your decision is needed</span>
-						<strong>Review</strong>
-					</button>
-				)}
 			</div>
 			<div className="agent-sidebar-assist">{communicationAssistant}</div>
 			<div className="agent-sidebar-main">
-				<div className="agent-full-page-workspace">{workspace}</div>
 				<div className="agent-conversation-host">{children}</div>
 			</div>
 		</aside>

@@ -201,8 +201,8 @@ export function NewTabPage({
                 <Icon name="chevron" />
               </summary>
               <div className="kestrel-home-model-popover">
-                <strong>Smart routing</strong>
-                <p>Model and thinking level live in task settings.</p>
+                <strong>Model routing</strong>
+                <p>Choose provider and thinking level in task settings.</p>
 				<button
 					type="button"
 					onClick={(event) => {
@@ -216,13 +216,13 @@ export function NewTabPage({
             </details>
 
             <label className="sr-only" htmlFor="new-tab-chat-input">
-              Message {agentName} or enter a website
+              Message {agentName} or enter a URL
             </label>
             <input
               ref={inputRef}
               id="new-tab-chat-input"
               value={input}
-              placeholder={`Message ${agentName}, enter a website, or @ mention a tab`}
+              placeholder={`Ask ${agentName} or enter a URL`}
               autoCapitalize="sentences"
               autoCorrect="on"
               spellCheck

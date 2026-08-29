@@ -66,8 +66,12 @@
 	width: var(--agent-panel-width);
 	height: auto;
 	max-height: calc(100vh - var(--agent-panel-top));
-	border-top: 1px solid var(--line);
-	border-top-left-radius: var(--radius-surface);
+	border-left: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+	border-top: 0;
+	border-top-left-radius: 0;
+	background: var(--vibrancy-sidebar);
+	backdrop-filter: var(--vibrancy-blur);
+	-webkit-backdrop-filter: var(--vibrancy-blur);
 }
 
 .agent-sidebar.is-collapsed {
@@ -255,12 +259,7 @@
 }
 
 .agent-conversation-host .chat-welcome {
-	display: grid;
-	align-content: center;
-	justify-items: center;
-	min-height: 0;
-	padding: 24px 20px;
-	text-align: center;
+	display: none;
 }
 
 .agent-conversation-host .chat-welcome h1 {
@@ -367,6 +366,8 @@
 
 .ai-browser-app.agent-full-page .agent-sidebar.is-collapsed {
 	width: 100%;
+	opacity: 1;
+	pointer-events: auto;
 }
 
 .ai-browser-app.agent-full-page .agent-sidebar-assist {
