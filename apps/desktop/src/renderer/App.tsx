@@ -115,6 +115,7 @@ import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
+import { MemoryRecallReceiptLine } from "./components/MemoryRecallReceiptLine";
 import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
 import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
@@ -3971,6 +3972,11 @@ function RuntimeConversation({
 								<span className="assistant-avatar">K</span>
 								<div>
 									<p>{message.content}</p>
+									{message.memoryRecallReceipt && (
+										<MemoryRecallReceiptLine
+											receipt={message.memoryRecallReceipt}
+										/>
+									)}
 								</div>
 							</div>
 						) : message.toolName?.startsWith("agent.config.") ? (

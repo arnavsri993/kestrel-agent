@@ -536,6 +536,26 @@ body:has(.ai-browser-app),
 	line-height: 1.45;
 }
 
+.agent-conversation-host .memory-recall-receipt {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	margin: 6px 0 0;
+	padding: 8px 10px;
+	border-radius: var(--radius-sm);
+	background: color-mix(in srgb, var(--accent-soft) 35%, transparent);
+	color: var(--ink-secondary);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.agent-conversation-host .memory-recall-receipt-icon {
+	flex: 0 0 auto;
+	color: var(--accent);
+	font-size: 10px;
+	line-height: 1.6;
+}
+
 .agent-conversation-host .work-summary {
 	margin: 8px 0;
 	padding: 6px 8px;
