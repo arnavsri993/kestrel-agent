@@ -1,15 +1,15 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `458bb8a6` (`Fix flaky desktop browser smoke bounds and screenshot sync`, #627)
+**Snapshot commit:** `94924dac` (`Stabilize desktop browser smoke attach and detach races`, #629)
 
-**Merged sprint:** #617–#627 — reliability, release gates, first-task auto-send,
+**Merged sprint:** #617–#629 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
 demo surfacing, browser smoke hardening.
 
-**Overall verdict:** **NOT COMPLETE** — engineering demo path is largely wired;
-`verify:meetup` still fails on `test-desktop-browser.mjs` at `458bb8a6` despite
-#627. Operator rehearsal, Apple signing, Google OAuth, and crash reporting
-remain open. Gate must pass on the presentation Mac before the slot.
+**Overall verdict:** **NOT COMPLETE** — engineering meetup gate (`verify:meetup`)
+passed on `94924dac` after #629; operator rehearsal, Apple signing, Google OAuth,
+and crash reporting remain open. Gate must pass on the presentation Mac before
+the slot.
 
 Use this matrix before going on stage. Each row has an owner, evidence command
 or link, and an honest status as of the snapshot commit.
@@ -34,15 +34,15 @@ or link, and an honest status as of the snapshot commit.
 
 | # | Requirement | Owner | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| A1 | Full `pnpm verify` passes (typecheck, 985+ unit tests, desktop smokes, e2e) | Engineering | `corepack pnpm verify` | **NOT COMPLETE** — `test-desktop-browser.mjs` failed twice at `458bb8a6` (Aug 29): run 1 (~70s) `No active user browser view is attached`; run 2 (~101s) `Detached tab did not leave the source window`; prior pass on `b5031ef0` |
-| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **NOT COMPLETE** — failed at `pnpm verify` → `test:desktop-browser` (~70s / ~101s); packaging, local-ai, and packaged smokes not reached |
-| A3 | Website assets validate | Engineering | `corepack pnpm assets:verify` | **NOT RUN** — not reached after A1 failure in `458bb8a6` runs (passed in earlier `b5031ef0` / pre-failure stages of `20f7662e`) |
-| A4 | Real local model response | Engineering | `corepack pnpm test:local-ai:real` | **NOT RUN** — not reached after A1 failure |
-| A5 | Apple Silicon dev package builds | Engineering | `corepack pnpm package:mac:dev` | **NOT RUN** — not reached after A1 failure |
-| A6 | Packaged desktop smoke (arm64) | Engineering | `corepack pnpm test:packaged-desktop:arm64` | **NOT RUN** — part of `verify:meetup` |
-| A7 | Packaged browser-agent benchmark | Engineering | `corepack pnpm benchmark:browser-agent:packaged:arm64` | **NOT RUN** — part of `verify:meetup` |
+| A1 | Full `pnpm verify` passes (typecheck, 985+ unit tests, desktop smokes, e2e) | Engineering | `corepack pnpm verify` | **COMPLETE** — passed at `94924dac` (Aug 29, run 2, ~198s); run 1 (~95s) failed `test-desktop-setup.mjs` when dev watcher lock was active — kill `dev:desktop` and clear `kestrel-electron-dev.lock` before gating |
+| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **COMPLETE** — passed at `94924dac` (Aug 29, run 2, ~198s): verify → assets → real local-ai → package → packaged smokes → packaged benchmark |
+| A3 | Website assets validate | Engineering | `corepack pnpm assets:verify` | **COMPLETE** — passed in `94924dac` run 2 (3 registry entries, 7 manifests) |
+| A4 | Real local model response | Engineering | `corepack pnpm test:local-ai:real` | **COMPLETE** — passed in `94924dac` run 2 (Ollama 0.32.1, smollm2:135m) |
+| A5 | Apple Silicon dev package builds | Engineering | `corepack pnpm package:mac:dev` | **COMPLETE** — passed in `94924dac` run 2 (ad-hoc dev signature) |
+| A6 | Packaged desktop smoke (arm64) | Engineering | `corepack pnpm test:packaged-desktop:arm64` | **COMPLETE** — passed in `94924dac` run 2 |
+| A7 | Packaged browser-agent benchmark | Engineering | `corepack pnpm benchmark:browser-agent:packaged:arm64` | **COMPLETE** — 50/50 in `94924dac` run 2 |
 | A8 | Canonical app install path | Operator | `corepack pnpm install:mac:dev` then `open -a Kestrel` | **PARTIAL** — procedure documented in [ai-tinkerers-demo.md](ai-tinkerers-demo.md); operator must run on presentation Mac |
-| A9 | Market / release honesty gate | Engineering | `corepack pnpm audit:market` | **COMPLETE** — passed in both `458bb8a6` runs (within `pnpm verify` before browser smoke) |
+| A9 | Market / release honesty gate | Engineering | `corepack pnpm audit:market` | **COMPLETE** — passed in `94924dac` run 2 |
 
 ---
 
@@ -110,9 +110,10 @@ or link, and an honest status as of the snapshot commit.
 
 Run in order on the **presentation Mac** the morning of the demo:
 
-- [ ] `git fetch` && checkout presentation commit (`458bb8a6` or later on `main`)
+- [ ] `git fetch` && checkout presentation commit (`94924dac` or later on `main`)
 - [ ] `corepack pnpm install --frozen-lockfile`
-- [ ] `corepack pnpm verify:meetup` — **must pass**; if `test-desktop-browser` fails on screenshot, retry once; if persistent, file engineering issue before relying on browser tools on stage
+- [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present
+- [ ] `corepack pnpm verify:meetup` — **must pass**; if a desktop smoke fails once, retry after clearing the dev lock; if persistent, file engineering issue before relying on browser tools on stage
 - [ ] `corepack pnpm install:mac:dev` && `open -a Kestrel`
 - [ ] **Readiness** — protected store, database, local runtime, model route, packaged app all green
 - [ ] Warm local model (short chat) within 10 minutes of stage time
@@ -132,8 +133,10 @@ Run in order on the **presentation Mac** the morning of the demo:
 | `20f7662e` | Aug 29, 2026 | **FAIL** | `pnpm verify` stopped at `test-desktop-browser.mjs:935` — `browser.visible-screenshot` returned `failed` instead of `verified` |
 | `458bb8a6` | Aug 29, 2026 | **FAIL** (run 1, ~70s) | `pnpm verify` → `test:desktop-browser` — `No active user browser view is attached` at `test-desktop-browser.mjs:378` |
 | `458bb8a6` | Aug 29, 2026 | **FAIL** (run 2, ~101s) | `pnpm verify` → `test:desktop-browser` — `Detached tab did not leave the source window` at `test-desktop-browser.mjs:1089` |
+| `94924dac` | Aug 29, 2026 | **FAIL** (run 1, ~95s) | `pnpm verify` → `test:desktop-setup` — timeout waiting for `just finished Kestrel setup` (dev watcher lock likely active) |
+| `94924dac` | Aug 29, 2026 | **PASS** (run 2, ~198s) | Full `verify:meetup` after #629 browser-smoke fix; includes packaged smokes and benchmark |
 
-**Engineering follow-up:** `test-desktop-browser.mjs` remains flaky after #627; stabilize tab detach / browser-view attachment before declaring meetup gate green on latest `main`.
+**Engineering note:** #629 stabilized browser attach/detach; meetup gate green on `94924dac`. Kill `dev:desktop` and clear the product-scoped Electron dev lock before gating on presentation hardware.
 
 ---
 
