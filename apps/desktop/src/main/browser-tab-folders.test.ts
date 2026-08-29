@@ -60,21 +60,19 @@ describe("organizeBrowserTabs", () => {
 
 		expect(result.tabFolders.map((folder) => folder.name)).toEqual([
 			"Work",
-			"Research",
 			"Development",
 		]);
 		expect(result.tabFolders.map((folder) => folder.color)).toEqual([
 			"blue",
-			"violet",
 			"teal",
 		]);
 		expect(result.tabs.map((candidate) => candidate.id)).toEqual([
 			TAB_IDS[6],
 			TAB_IDS[0],
 			TAB_IDS[3],
-			TAB_IDS[1],
 			TAB_IDS[2],
 			TAB_IDS[4],
+			TAB_IDS[1],
 			TAB_IDS[5],
 		]);
 		expect(result.tabs[0]?.tabFolderId).toBeUndefined();
@@ -82,6 +80,33 @@ describe("organizeBrowserTabs", () => {
 		expect(result.tabs[1]?.tabFolderId).toBe(result.tabFolders[0]?.id);
 		expect(result.tabs[2]?.tabFolderId).toBe(result.tabFolders[0]?.id);
 		expect(result.tabFolders[0]?.createdAt).toBe("2026-08-26T12:30:00.000Z");
+	});
+
+	it("does not create a folder when only one tab matches a category", () => {
+		const result = organizeBrowserTabs([
+			tab(0, "https://www.google.com/search?q=browser", "Google Search"),
+			tab(1, "https://chatgpt.com/", "ChatGPT"),
+			tab(2, "https://example.com/one", "Example page"),
+		]);
+
+		expect(result.tabFolders).toEqual([]);
+		expect(result.tabs.every((candidate) => !candidate.tabFolderId)).toBe(true);
+	});
+
+	it("groups tabs that share a meaningful title keyword", () => {
+		const result = organizeBrowserTabs([
+			tab(0, "https://a.example.test/overview", "Public Speaking overview"),
+			tab(1, "https://b.example.test/notes", "Public Speaking notes"),
+			tab(2, "https://example.com/other", "Unrelated page"),
+		]);
+
+		expect(result.tabFolders).toHaveLength(1);
+		expect(result.tabFolders[0]?.name).toBe("Public");
+		expect(
+			result.tabs
+				.filter((candidate) => candidate.tabFolderId)
+				.map((candidate) => candidate.id),
+		).toEqual([TAB_IDS[0], TAB_IDS[1]]);
 	});
 
 	it("creates a site folder only when an otherwise unknown site has multiple tabs", () => {
