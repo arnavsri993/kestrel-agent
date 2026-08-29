@@ -43,194 +43,12 @@ import {
 	WorkspaceMutationSchema,
 } from "@kestrel/shared-types";
 import Database from "better-sqlite3";
-
-const migration001 = `
-CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS memories (
-  id TEXT PRIMARY KEY, type TEXT NOT NULL, content_ciphertext TEXT NOT NULL,
-  content_iv TEXT NOT NULL, content_auth_tag TEXT NOT NULL, structured_data TEXT NOT NULL,
-  source_ids TEXT NOT NULL, source_type TEXT NOT NULL, created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL, valid_from TEXT, valid_until TEXT, confidence REAL NOT NULL,
-  importance REAL NOT NULL, sensitivity TEXT NOT NULL, status TEXT NOT NULL,
-  entity_ids TEXT NOT NULL, user_confirmed INTEGER NOT NULL, inferred INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, payload TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS audit_events (id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS idempotency_keys (key TEXT PRIMARY KEY, result TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS runtime_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
-`;
-
-const migration002 = `
-CREATE TABLE IF NOT EXISTS runtime_sessions (
-  id TEXT PRIMARY KEY, payload TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS tool_executions (
-  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, tool_name TEXT NOT NULL,
-  payload TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL,
-  FOREIGN KEY(session_id) REFERENCES runtime_sessions(id)
-);
-`;
-
-const migration003 = `
-CREATE TABLE IF NOT EXISTS runtime_messages (
-  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
-  content_ciphertext TEXT NOT NULL, content_iv TEXT NOT NULL, content_auth_tag TEXT NOT NULL,
-  parent_message_id TEXT, tool_execution_id TEXT, created_at TEXT NOT NULL,
-  FOREIGN KEY(session_id) REFERENCES runtime_sessions(id)
-);
-CREATE TABLE IF NOT EXISTS runtime_message_terms (
-  message_id TEXT NOT NULL, term_hash TEXT NOT NULL,
-  PRIMARY KEY(message_id, term_hash),
-  FOREIGN KEY(message_id) REFERENCES runtime_messages(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_runtime_message_terms_hash ON runtime_message_terms(term_hash);
-CREATE INDEX IF NOT EXISTS idx_runtime_messages_session_created ON runtime_messages(session_id, created_at);
-CREATE TABLE IF NOT EXISTS workspace_mutations (
-  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, tool_execution_id TEXT NOT NULL,
-  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL, payload_auth_tag TEXT NOT NULL,
-  created_at TEXT NOT NULL, undone_at TEXT,
-  FOREIGN KEY(session_id) REFERENCES runtime_sessions(id),
-  FOREIGN KEY(tool_execution_id) REFERENCES tool_executions(id)
-);
-CREATE INDEX IF NOT EXISTS idx_workspace_mutations_session_created ON workspace_mutations(session_id, created_at);
-`;
-
-const migration004 = `
-CREATE TABLE IF NOT EXISTS agent_runs (
-  id TEXT PRIMARY KEY, session_id TEXT NOT NULL, payload TEXT NOT NULL,
-  status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-  FOREIGN KEY(session_id) REFERENCES runtime_sessions(id)
-);
-CREATE INDEX IF NOT EXISTS idx_agent_runs_session_created ON agent_runs(session_id, created_at);
-CREATE TABLE IF NOT EXISTS model_call_audits (
-  id TEXT PRIMARY KEY, run_id TEXT NOT NULL, session_id TEXT NOT NULL,
-  payload TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL,
-  FOREIGN KEY(run_id) REFERENCES agent_runs(id),
-  FOREIGN KEY(session_id) REFERENCES runtime_sessions(id)
-);
-CREATE INDEX IF NOT EXISTS idx_model_call_audits_run_started ON model_call_audits(run_id, started_at);
-`;
-
-const migration005 = `
-CREATE TABLE IF NOT EXISTS runtime_message_order (
-  session_id TEXT NOT NULL, message_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL,
-  UNIQUE(session_id, sequence),
-  FOREIGN KEY(session_id) REFERENCES runtime_sessions(id),
-  FOREIGN KEY(message_id) REFERENCES runtime_messages(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_runtime_message_order_session ON runtime_message_order(session_id, sequence);
-`;
-
-const migration006 = `
-CREATE TABLE IF NOT EXISTS private_runtime_state (
-  key TEXT PRIMARY KEY, value_ciphertext TEXT NOT NULL, value_iv TEXT NOT NULL,
-  value_auth_tag TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-`;
-
-const migration007 = `
-CREATE TABLE IF NOT EXISTS idempotency_claims (
-  key TEXT PRIMARY KEY,
-  owner_token TEXT NOT NULL,
-  owner_pid INTEGER NOT NULL CHECK(owner_pid > 0),
-  pending_result TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-`;
-
-const migration008 = `
-CREATE TABLE IF NOT EXISTS memory_metadata (
-  memory_id TEXT PRIMARY KEY,
-  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL, updated_at TEXT NOT NULL,
-  FOREIGN KEY(memory_id) REFERENCES memories(id)
-);
-CREATE TABLE IF NOT EXISTS memory_versions (
-  id TEXT PRIMARY KEY, memory_id TEXT NOT NULL,
-  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL, changed_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY(memory_id) REFERENCES memories(id)
-);
-CREATE INDEX IF NOT EXISTS idx_memory_versions_memory_changed
-  ON memory_versions(memory_id, changed_at);
-CREATE TABLE IF NOT EXISTS people (
-  id TEXT PRIMARY KEY,
-  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_people_status_updated ON people(status, updated_at);
-CREATE TABLE IF NOT EXISTS calendar_events (
-  id TEXT PRIMARY KEY,
-  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL, provider_id TEXT NOT NULL,
-  status TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_status
-  ON calendar_events(provider_id, status, updated_at);
-CREATE TABLE IF NOT EXISTS context_usage (
-  id TEXT PRIMARY KEY,
-  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL, created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_context_usage_created ON context_usage(created_at);
-CREATE TABLE IF NOT EXISTS calendar_sync_state (
-  provider_id TEXT PRIMARY KEY,
-  payload_ciphertext TEXT NOT NULL, payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL, updated_at TEXT NOT NULL
-);
-`;
-
-const migration009 = `
-CREATE TABLE IF NOT EXISTS agent_configuration_records (
-  id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK(kind IN ('version', 'proposal', 'audit', 'improvement')),
-  status TEXT NOT NULL,
-  payload_ciphertext TEXT NOT NULL,
-  payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_agent_configuration_records_kind_created
-  ON agent_configuration_records(kind, created_at);
-CREATE INDEX IF NOT EXISTS idx_agent_configuration_records_kind_status
-  ON agent_configuration_records(kind, status);
-`;
-
-const migration010 = `
-CREATE TABLE IF NOT EXISTS browser_activity_events (
-  id TEXT PRIMARY KEY,
-  owner_session_id TEXT NOT NULL,
-  surface TEXT NOT NULL CHECK(surface IN ('autonomous', 'visible')),
-  outcome TEXT NOT NULL CHECK(outcome IN ('performed', 'blocked', 'failed', 'cancelled')),
-  created_at TEXT NOT NULL,
-  payload_ciphertext TEXT NOT NULL,
-  payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_browser_activity_owner_created
-  ON browser_activity_events(owner_session_id, created_at);
-`;
-
-const migration011 = `
-CREATE TABLE IF NOT EXISTS action_receipts (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  tool_execution_id TEXT NOT NULL UNIQUE,
-  status TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  payload_ciphertext TEXT NOT NULL,
-  payload_iv TEXT NOT NULL,
-  payload_auth_tag TEXT NOT NULL,
-  FOREIGN KEY(session_id) REFERENCES runtime_sessions(id),
-  FOREIGN KEY(tool_execution_id) REFERENCES tool_executions(id)
-);
-CREATE INDEX IF NOT EXISTS idx_action_receipts_session_started
-  ON action_receipts(session_id, started_at);
-`;
+import {
+	backupDatabaseBeforeMigration,
+	LATEST_SCHEMA_VERSION,
+	listMigrationVersions,
+	loadMigrationSql,
+} from "./migrations.js";
 
 const MAX_BROWSER_ACTIVITY_PER_OWNER = 500;
 const MAX_ACTION_RECEIPTS_PER_SESSION = 500;
@@ -265,6 +83,86 @@ export function isProtectedDatabaseError(
 			(error as { code?: unknown }).code === PROTECTED_DATABASE_ERROR_CODE)
 	);
 }
+
+export const DATABASE_INTEGRITY_ERROR_CODE = "kestrel-database-integrity";
+
+/**
+ * Signals that SQLite reported corruption or another integrity failure during
+ * startup verification. Callers must not continue writing to the profile.
+ */
+export class DatabaseIntegrityError extends Error {
+	readonly code = DATABASE_INTEGRITY_ERROR_CODE;
+
+	constructor(message: string, cause?: unknown) {
+		super(message);
+		this.name = "DatabaseIntegrityError";
+		if (cause !== undefined) this.cause = cause;
+	}
+}
+
+export const DATABASE_MIGRATION_ERROR_CODE = "kestrel-database-migration";
+
+/**
+ * Signals that a schema migration failed after a pre-migration backup was taken.
+ * The original database file is preserved; callers should surface `backupPath`.
+ */
+export class DatabaseMigrationError extends Error {
+	readonly code = DATABASE_MIGRATION_ERROR_CODE;
+	readonly backupPath: string | undefined;
+
+	constructor(message: string, backupPath?: string, cause?: unknown) {
+		super(message);
+		this.name = "DatabaseMigrationError";
+		this.backupPath = backupPath;
+		if (cause !== undefined) this.cause = cause;
+	}
+}
+
+export function isDatabaseIntegrityError(
+	error: unknown,
+): error is DatabaseIntegrityError {
+	return (
+		error instanceof DatabaseIntegrityError ||
+		(typeof error === "object" &&
+			error !== null &&
+			(error as { code?: unknown }).code === DATABASE_INTEGRITY_ERROR_CODE)
+	);
+}
+
+export function isDatabaseMigrationError(
+	error: unknown,
+): error is DatabaseMigrationError {
+	return (
+		error instanceof DatabaseMigrationError ||
+		(typeof error === "object" &&
+			error !== null &&
+			(error as { code?: unknown }).code === DATABASE_MIGRATION_ERROR_CODE)
+	);
+}
+
+const DATABASE_INTEGRITY_RECOVERY_MESSAGE =
+	"Do not continue using this profile. Restore from a verified backup in Settings or check the recovery folder under Application Support before opening Kestrel again.";
+
+function sqliteErrorDetail(error: unknown): string {
+	if (error instanceof Error && error.message.trim()) return error.message.trim();
+	return "unknown database error";
+}
+
+function isSqliteDatabaseIntegrityFailure(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	const code = (error as { code?: unknown }).code;
+	if (code === "SQLITE_CORRUPT" || code === "SQLITE_NOTADB") return true;
+	return /malformed|corrupt|not a database|database disk image/i.test(
+		error.message,
+	);
+}
+
+export {
+	backupDatabaseBeforeMigration,
+	LATEST_SCHEMA_VERSION,
+	loadMigrationSql,
+	resolveMigrationBackupDirectory,
+} from "./migrations.js";
 
 export interface IdempotencyClaim<T = unknown> {
 	key: string;
@@ -391,136 +289,115 @@ interface MemoryMetadataRow extends EncryptedPayloadRow {
 
 export class KestrelDatabase {
 	readonly db: Database.Database;
+	readonly lastMigrationBackupPath: string | undefined;
 
 	constructor(
-		filename: string,
+		private readonly filename: string,
 		private readonly encryptionKey: Buffer,
 	) {
 		if (filename !== ":memory:")
 			mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
-		this.db = new Database(filename);
-		this.db.pragma("journal_mode = WAL");
-		this.db.pragma("foreign_keys = ON");
-		this.db.pragma("secure_delete = ON");
-		this.migrate();
+		let database: Database.Database | undefined;
+		try {
+			database = new Database(filename);
+			this.db = database;
+			this.db.pragma("journal_mode = WAL");
+			this.db.pragma("foreign_keys = ON");
+			this.db.pragma("secure_delete = ON");
+			this.assertDatabaseIntegrity();
+			this.lastMigrationBackupPath = this.migrate();
+		} catch (error) {
+			try {
+				database?.close();
+			} catch {
+				// Preserve the original startup error if cleanup also fails.
+			}
+			if (error instanceof DatabaseIntegrityError) throw error;
+			if (error instanceof DatabaseMigrationError) throw error;
+			if (isSqliteDatabaseIntegrityFailure(error)) {
+				throw new DatabaseIntegrityError(
+					`Kestrel's local database could not be opened safely (${sqliteErrorDetail(error)}). ${DATABASE_INTEGRITY_RECOVERY_MESSAGE}`,
+					error,
+				);
+			}
+			throw error;
+		}
 	}
 
-	private migrate(): void {
-		this.db.transaction(() => {
-			this.db.exec(migration001);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(1, new Date().toISOString());
-			this.db.exec(migration002);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(2, new Date().toISOString());
-			this.db.exec(migration003);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(3, new Date().toISOString());
-			this.db.exec(migration004);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(4, new Date().toISOString());
-			this.db.exec(migration005);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(5, new Date().toISOString());
-			this.db.exec(migration006);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(6, new Date().toISOString());
-			this.db.exec(migration007);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(7, new Date().toISOString());
-			this.db.exec(migration008);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(8, new Date().toISOString());
-			this.db.exec(migration009);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(9, new Date().toISOString());
-			this.db.exec(migration010);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(10, new Date().toISOString());
-			this.db.exec(migration011);
-			this.db
-				.prepare(
-					"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-				)
-				.run(11, new Date().toISOString());
-		})();
+	private assertDatabaseIntegrity(): void {
+		const rows = this.db.pragma("integrity_check") as Array<{
+			integrity_check: string;
+		}>;
+		const result = rows[0]?.integrity_check ?? "unknown";
+		if (result === "ok") return;
+		throw new DatabaseIntegrityError(
+			`Kestrel's local database failed integrity verification (${result}). ${DATABASE_INTEGRITY_RECOVERY_MESSAGE}`,
+		);
+	}
+
+	private getAppliedSchemaVersion(): number {
+		try {
+			const row = this.db
+				.prepare("SELECT MAX(version) AS version FROM schema_migrations")
+				.get() as { version: number | null } | undefined;
+			return row?.version ?? 0;
+		} catch {
+			return 0;
+		}
+	}
+
+	private pendingMigrationVersions(): number[] {
+		const appliedVersion = this.getAppliedSchemaVersion();
+		return listMigrationVersions().filter((version) => version > appliedVersion);
+	}
+
+	private migrate(): string | undefined {
+		const pendingVersions = this.pendingMigrationVersions();
+		let backupPath: string | undefined;
+		if (
+			this.filename !== ":memory:" &&
+			pendingVersions.length > 0 &&
+			this.getAppliedSchemaVersion() > 0
+		) {
+			this.db.pragma("wal_checkpoint(FULL)");
+			backupPath = backupDatabaseBeforeMigration(
+				this.filename,
+				pendingVersions[0] ?? LATEST_SCHEMA_VERSION,
+			);
+		}
+
+		try {
+			this.db.transaction(() => {
+				for (const version of listMigrationVersions()) {
+					this.db.exec(loadMigrationSql(version));
+					this.db
+						.prepare(
+							"INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+						)
+						.run(version, new Date().toISOString());
+				}
+			})();
+		} catch (error) {
+			const detail =
+				error instanceof Error && error.message.trim()
+					? error.message.trim()
+					: "unknown migration error";
+			const recoveryHint = backupPath
+				? `Your original database was preserved at ${backupPath}. Restore that copy before opening Kestrel again.`
+				: "No pre-migration backup was created because this database had not completed an earlier migration.";
+			throw new DatabaseMigrationError(
+				`Kestrel could not apply schema migrations (${detail}). ${recoveryHint}`,
+				backupPath,
+				error,
+			);
+		}
+
+		return backupPath;
 	}
 
 	upsertMemory(memory: MemoryRecord): void {
 		const parsed = MemoryRecordSchema.parse(memory);
 		const encrypted = encryptText(parsed.content, this.encryptionKey);
-		this.db
-			.prepare(`
-      INSERT INTO memories (
-        id, type, content_ciphertext, content_iv, content_auth_tag, structured_data,
-        source_ids, source_type, created_at, updated_at, valid_from, valid_until,
-        confidence, importance, sensitivity, status, entity_ids, user_confirmed, inferred
-      ) VALUES (
-        @id, @type, @ciphertext, @iv, @authTag, @structuredData,
-        @sourceIds, @sourceType, @createdAt, @updatedAt, @validFrom, @validUntil,
-        @confidence, @importance, @sensitivity, @status, @entityIds, @userConfirmed, @inferred
-      )
-      ON CONFLICT(id) DO UPDATE SET
-        type=excluded.type,
-        content_ciphertext=excluded.content_ciphertext, content_iv=excluded.content_iv,
-        content_auth_tag=excluded.content_auth_tag, structured_data=excluded.structured_data,
-        source_ids=excluded.source_ids, source_type=excluded.source_type,
-        updated_at=excluded.updated_at, valid_from=excluded.valid_from, valid_until=excluded.valid_until,
-        confidence=excluded.confidence, importance=excluded.importance, sensitivity=excluded.sensitivity,
-        status=excluded.status, entity_ids=excluded.entity_ids,
-        user_confirmed=excluded.user_confirmed, inferred=excluded.inferred
-    `)
-			.run({
-				id: parsed.id,
-				type: parsed.type,
-				ciphertext: encrypted.ciphertext,
-				iv: encrypted.iv,
-				authTag: encrypted.authTag,
-				structuredData: JSON.stringify(parsed.structuredData),
-				sourceIds: JSON.stringify(parsed.sourceIds),
-				sourceType: parsed.sourceType,
-				createdAt: parsed.createdAt,
-				updatedAt: parsed.updatedAt,
-				validFrom: parsed.validFrom ?? null,
-				validUntil: parsed.validUntil ?? null,
-				confidence: parsed.confidence,
-				importance: parsed.importance,
-				sensitivity: parsed.sensitivity,
-				status: parsed.status,
-				entityIds: JSON.stringify(parsed.entityIds),
-				userConfirmed: parsed.userConfirmed ? 1 : 0,
-				inferred: parsed.inferred ? 1 : 0,
-			});
 		const metadata = {
 			...(parsed.subject ? { subject: parsed.subject } : {}),
 			...(parsed.layer ? { layer: parsed.layer } : {}),
@@ -542,13 +419,57 @@ export class KestrelDatabase {
 			conflictingMemoryIds: parsed.conflictingMemoryIds ?? [],
 			version: parsed.version ?? 1,
 		};
-		this.upsertEncryptedPayload(
-			"memory_metadata",
-			"memory_id",
-			parsed.id,
-			metadata,
-			parsed.updatedAt,
-		);
+		this.db.transaction(() => {
+			this.db
+				.prepare(`
+      INSERT INTO memories (
+        id, type, content_ciphertext, content_iv, content_auth_tag, structured_data,
+        source_ids, source_type, created_at, updated_at, valid_from, valid_until,
+        confidence, importance, sensitivity, status, entity_ids, user_confirmed, inferred
+      ) VALUES (
+        @id, @type, @ciphertext, @iv, @authTag, @structuredData,
+        @sourceIds, @sourceType, @createdAt, @updatedAt, @validFrom, @validUntil,
+        @confidence, @importance, @sensitivity, @status, @entityIds, @userConfirmed, @inferred
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        type=excluded.type,
+        content_ciphertext=excluded.content_ciphertext, content_iv=excluded.content_iv,
+        content_auth_tag=excluded.content_auth_tag, structured_data=excluded.structured_data,
+        source_ids=excluded.source_ids, source_type=excluded.source_type,
+        updated_at=excluded.updated_at, valid_from=excluded.valid_from, valid_until=excluded.valid_until,
+        confidence=excluded.confidence, importance=excluded.importance, sensitivity=excluded.sensitivity,
+        status=excluded.status, entity_ids=excluded.entity_ids,
+        user_confirmed=excluded.user_confirmed, inferred=excluded.inferred
+    `)
+				.run({
+					id: parsed.id,
+					type: parsed.type,
+					ciphertext: encrypted.ciphertext,
+					iv: encrypted.iv,
+					authTag: encrypted.authTag,
+					structuredData: JSON.stringify(parsed.structuredData),
+					sourceIds: JSON.stringify(parsed.sourceIds),
+					sourceType: parsed.sourceType,
+					createdAt: parsed.createdAt,
+					updatedAt: parsed.updatedAt,
+					validFrom: parsed.validFrom ?? null,
+					validUntil: parsed.validUntil ?? null,
+					confidence: parsed.confidence,
+					importance: parsed.importance,
+					sensitivity: parsed.sensitivity,
+					status: parsed.status,
+					entityIds: JSON.stringify(parsed.entityIds),
+					userConfirmed: parsed.userConfirmed ? 1 : 0,
+					inferred: parsed.inferred ? 1 : 0,
+				});
+			this.upsertEncryptedPayload(
+				"memory_metadata",
+				"memory_id",
+				parsed.id,
+				metadata,
+				parsed.updatedAt,
+			);
+		})();
 	}
 
 	getMemory(id: string): MemoryRecord | undefined {
@@ -884,9 +805,10 @@ export class KestrelDatabase {
 		const parsed = ActionReceiptSchema.parse(receipt);
 		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
 		const updatedAt = parsed.completedAt ?? parsed.startedAt;
-		this.db
-			.prepare(
-				`INSERT INTO action_receipts (
+		this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO action_receipts (
           id, session_id, tool_execution_id, status, started_at, updated_at,
           payload_ciphertext, payload_iv, payload_auth_tag
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -899,21 +821,21 @@ export class KestrelDatabase {
           payload_ciphertext=excluded.payload_ciphertext,
           payload_iv=excluded.payload_iv,
           payload_auth_tag=excluded.payload_auth_tag`,
-			)
-			.run(
-				parsed.id,
-				parsed.sessionId,
-				parsed.toolExecutionId,
-				parsed.outcome,
-				parsed.startedAt,
-				updatedAt,
-				encrypted.ciphertext,
-				encrypted.iv,
-				encrypted.authTag,
-			);
-		this.db
-			.prepare(
-				`DELETE FROM action_receipts
+				)
+				.run(
+					parsed.id,
+					parsed.sessionId,
+					parsed.toolExecutionId,
+					parsed.outcome,
+					parsed.startedAt,
+					updatedAt,
+					encrypted.ciphertext,
+					encrypted.iv,
+					encrypted.authTag,
+				);
+			this.db
+				.prepare(
+					`DELETE FROM action_receipts
          WHERE session_id = ?
            AND id NOT IN (
              SELECT id FROM action_receipts
@@ -921,12 +843,13 @@ export class KestrelDatabase {
              ORDER BY started_at DESC, rowid DESC
              LIMIT ?
            )`,
-			)
-			.run(
-				parsed.sessionId,
-				parsed.sessionId,
-				MAX_ACTION_RECEIPTS_PER_SESSION,
-			);
+				)
+				.run(
+					parsed.sessionId,
+					parsed.sessionId,
+					MAX_ACTION_RECEIPTS_PER_SESSION,
+				);
+		})();
 	}
 
 	getActionReceiptForExecution(toolExecutionId: string): ActionReceipt | undefined {
@@ -1813,26 +1736,27 @@ export class KestrelDatabase {
 	appendBrowserActivity(event: BrowserActivityEvent): void {
 		const parsed = BrowserActivityEventSchema.parse(event);
 		const encrypted = encryptText(JSON.stringify(parsed), this.encryptionKey);
-		this.db
-			.prepare(
-				`INSERT INTO browser_activity_events (
+		this.db.transaction(() => {
+			this.db
+				.prepare(
+					`INSERT INTO browser_activity_events (
           id, owner_session_id, surface, outcome, created_at,
           payload_ciphertext, payload_iv, payload_auth_tag
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			)
-			.run(
-				parsed.id,
-				parsed.ownerSessionId,
-				parsed.surface,
-				parsed.outcome,
-				parsed.createdAt,
-				encrypted.ciphertext,
-				encrypted.iv,
-				encrypted.authTag,
-			);
-		this.db
-			.prepare(
-				`DELETE FROM browser_activity_events
+				)
+				.run(
+					parsed.id,
+					parsed.ownerSessionId,
+					parsed.surface,
+					parsed.outcome,
+					parsed.createdAt,
+					encrypted.ciphertext,
+					encrypted.iv,
+					encrypted.authTag,
+				);
+			this.db
+				.prepare(
+					`DELETE FROM browser_activity_events
          WHERE owner_session_id = ?
            AND id NOT IN (
              SELECT id FROM browser_activity_events
@@ -1840,12 +1764,13 @@ export class KestrelDatabase {
              ORDER BY created_at DESC, rowid DESC
              LIMIT ?
            )`,
-			)
-			.run(
-				parsed.ownerSessionId,
-				parsed.ownerSessionId,
-				MAX_BROWSER_ACTIVITY_PER_OWNER,
-			);
+				)
+				.run(
+					parsed.ownerSessionId,
+					parsed.ownerSessionId,
+					MAX_BROWSER_ACTIVITY_PER_OWNER,
+				);
+		})();
 	}
 
 	listBrowserActivity(input: {

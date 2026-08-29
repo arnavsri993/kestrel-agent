@@ -1,6 +1,8 @@
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import type { Plugin } from "vite";
 
 const workspacePackages = [
 	"@kestrel/agent-core",
@@ -9,6 +11,32 @@ const workspacePackages = [
 	"@kestrel/policy-engine",
 	"@kestrel/shared-types",
 ];
+
+const databaseMigrationsDirectory = resolve(
+	__dirname,
+	"../../packages/database/migrations",
+);
+
+function emitDatabaseMigrations(): Plugin {
+	return {
+		name: "kestrel-database-migrations",
+		apply: "build",
+		generateBundle() {
+			for (const filename of readdirSync(databaseMigrationsDirectory)
+				.filter((candidate) => /^\d+_[A-Za-z0-9_-]+\.sql$/.test(candidate))
+				.sort()) {
+				this.emitFile({
+					type: "asset",
+					fileName: `migrations/${filename}`,
+					source: readFileSync(
+						join(databaseMigrationsDirectory, filename),
+						"utf8",
+					),
+				});
+			}
+		},
+	};
+}
 
 // electron-vite injects this after the last `import` match. Bundled remote-web
 // HTML/JS strings can match that regex and leave a mid-chunk import that esbuild
@@ -24,6 +52,7 @@ const require = __cjs_mod__.createRequire(import.meta.url);
 export default defineConfig({
 	main: {
 		plugins: [
+			emitDatabaseMigrations(),
 			externalizeDepsPlugin({ exclude: [...workspacePackages, "zod"] }),
 		],
 		build: {
