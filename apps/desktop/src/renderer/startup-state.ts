@@ -3,6 +3,7 @@ import type {
 	RuntimeSession,
 	WorkspaceSnapshot,
 } from "@kestrel/shared-types";
+import { userFacingError } from "./error-copy";
 
 type StartupRequest = { type: "snapshot" } | { type: "runtime-list-sessions" };
 
@@ -36,12 +37,7 @@ export async function loadInitialDesktopState(
 }
 
 export function startupFailureMessage(cause: unknown): string {
-	const detail =
-		cause instanceof Error
-			? cause.message.trim()
-			: typeof cause === "string"
-				? cause.trim()
-				: "";
+	const detail = userFacingError(cause, "");
 	return detail
 		? `Kestrel's local core could not start: ${detail}. Quit Kestrel completely and reopen it to retry.`
 		: "Kestrel's local core could not start. Quit the app completely and reopen it to retry.";

@@ -79,7 +79,7 @@ export function BrowserHistory({
 					<span className="library-icon">
 						<Icon name="history" />
 					</span>
-					<h1 id="history-title">History</h1>
+					<h1 id="history-title">Browsing history</h1>
 				</div>
 				<label>
 					<Icon name="search" />
@@ -161,7 +161,7 @@ export function BrowserDownloads({
 					<span className="library-icon">
 						<Icon name="downloads" />
 					</span>
-					<h1 id="downloads-title">Downloads</h1>
+					<h1 id="downloads-title">Downloaded files</h1>
 				</div>
 			</header>
 			{downloads.length === 0 ? (
@@ -278,7 +278,7 @@ export function BrowserBookmarks({
 					<span className="library-icon">
 						<Icon name="star" />
 					</span>
-					<h1 id="bookmarks-title">Bookmarks</h1>
+					<h1 id="bookmarks-title">Saved pages</h1>
 				</div>
 				<label>
 					<Icon name="search" />

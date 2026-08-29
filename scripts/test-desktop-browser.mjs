@@ -1309,7 +1309,7 @@ try {
 
 	await page.keyboard.press("Meta+J");
 	await page
-		.getByRole("heading", { name: "Downloads", exact: true })
+		.getByRole("heading", { name: "Downloaded files", exact: true })
 		.waitFor();
 	await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
 	await openKestrelDestination(page, "Settings");

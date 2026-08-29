@@ -12,6 +12,7 @@ import "./components/browser/kestrel-sidebar.css";
 import "./components/browser/writing-studio.css";
 import "./components/browser/password-overlay.css";
 import "./components/browser/payment-overlay.css";
+import "./surface-responsive.css";
 import { App } from "./App";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
 import { PasswordOverlay } from "./components/browser/PasswordOverlay";
