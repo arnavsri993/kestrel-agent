@@ -349,6 +349,8 @@ type Thread = "new" | "teacher" | "dji";
 type ExecutionMode = "automatic" | "manual";
 const SETUP_ASSISTANT_PROMPT =
 	"Help me finish setting up Kestrel. First ask what I want to connect: an API provider, an OAuth-backed vendor CLI, tools or MCP, skills or plugins, a messaging channel, automations, or project access. Never ask me to paste a secret into chat; direct secret entry to protected native fields in Settings, or to provider-owned sign-in. Verify one working route before adding more.";
+const FIRST_TASK_PROMPT =
+	"I just finished Kestrel setup. Suggest one low-risk first task I can complete in about five minutes using what is already available on this Mac. Prefer read-only work first. Show a short plan, execute it, and verify a concrete result. Explain what stayed local.";
 
 function setupAssistantState({
 	credentials,
@@ -1342,13 +1344,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			void checkModelRoutes();
 	}, [step, modelReady, verifiedModelReady]);
 
-	const finishHeading = "You're set.";
+	const finishHeading = verifiedModelReady
+		? "Ready for a first task"
+		: "You're set.";
 	const finishDescription = verifiedModelReady
-		? "A real model route responded. Add access only when a task needs it."
+		? "A real model route responded. Try one guided task now, or open Kestrel and explore."
 		: modelReady
 			? "The route is saved but not live-verified yet."
 			: "Explore now. Connect a model when you need live work.";
-	const finishPrimaryLabel = "Open Kestrel";
+	const finishPrimaryLabel = verifiedModelReady ? "Try a first task" : "Open Kestrel";
 
 	return (
 		<motion.main
@@ -2426,6 +2430,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						disabled={(step === 1 && !warningAccepted) || step === 2}
 						onClick={() => {
 							if (step === finalSetupStep) {
+								if (verifiedModelReady) {
+									localStorage.setItem("kestrel:first-task", "yes");
+								}
 								localStorage.removeItem("kestrel:setup-step");
 								onDone();
 							} else go(step + 1);
@@ -3052,6 +3059,10 @@ function RuntimeConversation({
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
 	const [input, setInput] = useState(() => {
+		if (localStorage.getItem("kestrel:first-task") === "yes") {
+			localStorage.removeItem("kestrel:first-task");
+			return FIRST_TASK_PROMPT;
+		}
 		if (localStorage.getItem("kestrel:setup-coach") !== "yes") return "";
 		localStorage.removeItem("kestrel:setup-coach");
 		const context = localStorage.getItem("kestrel:setup-coach-context");
@@ -5098,7 +5109,7 @@ function Readiness() {
 	);
 	const [backup, setBackup] = useState<LocalBackupResult | null>(null);
 	const [busy, setBusy] = useState<
-		"refresh" | "models" | "backup" | "workspace" | ""
+		"refresh" | "models" | "backup" | "workspace" | "diagnostic" | ""
 	>("");
 	const [error, setError] = useState("");
 
@@ -5174,6 +5185,32 @@ function Readiness() {
 			}
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "Backup failed.");
+		} finally {
+			setBusy("");
+		}
+	}
+
+	async function exportDiagnostic() {
+		setBusy("diagnostic");
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "export-diagnostic-report",
+			});
+			if (!response.ok)
+				throw new Error(
+					"error" in response ? response.error : "Diagnostic export failed.",
+				);
+			if ("diagnosticReportPath" in response && response.diagnosticReportPath) {
+				await window.kestrel.request({
+					type: "reveal-local-backup",
+					path: response.diagnosticReportPath,
+				});
+			}
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Diagnostic export failed.",
+			);
 		} finally {
 			setBusy("");
 		}
@@ -5377,6 +5414,27 @@ function Readiness() {
 							{busy === "backup"
 								? "Stopping core and verifying…"
 								: "Choose backup folder"}
+						</button>
+					</section>
+
+					<section className="readiness-panel diagnostic-panel">
+						<header>
+							<div>
+								<span>Support</span>
+								<h2>Export a local diagnostic report</h2>
+							</div>
+						</header>
+						<p>
+							Saves a content-free JSON envelope with version, platform, readiness
+							counts, and failure class only. No prompts, page content,
+							credentials, or personal memory are included. Review before sharing.
+						</p>
+						<button
+							className="button secondary"
+							disabled={Boolean(busy)}
+							onClick={() => void exportDiagnostic()}
+						>
+							{busy === "diagnostic" ? "Saving…" : "Save diagnostic report"}
 						</button>
 					</section>
 				</aside>
@@ -6206,6 +6264,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 	const [googleStatus, setGoogleStatus] = useState<GoogleWorkspaceOAuthStatus>({
 		connected: false,
 		scopes: [],
+		bundledClientAvailable: false,
 	});
 	const [googleClientId, setGoogleClientId] = useState("");
 	const [googleBusy, setGoogleBusy] = useState(false);
@@ -6312,9 +6371,10 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 		setGoogleBusy(true);
 		setGoogleError("");
 		try {
+			const trimmedClientId = googleClientId.trim();
 			const response = await window.kestrel.request({
 				type: "oauth-google-connect",
-				clientId: googleClientId.trim(),
+				...(trimmedClientId ? { clientId: trimmedClientId } : {}),
 			});
 			if (!response.ok)
 				throw new Error(
@@ -6465,9 +6525,11 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 						<p>
 							{googleStatus.connected
 								? `${googleStatus.email} · Gmail, Calendar events and availability, and login-code lookup`
-								: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar event and availability access."}
+								: googleStatus.bundledClientAvailable
+									? "Connect Gmail and Calendar with Kestrel's verified Google sign-in."
+									: "Bring your own Google Desktop OAuth client. Kestrel requests Gmail send, read-only recent-message lookup, and Calendar event and availability access."}
 						</p>
-						{!googleStatus.connected && (
+						{!googleStatus.connected && !googleStatus.bundledClientAvailable && (
 							<>
 								<label>
 									Desktop OAuth client ID
@@ -6492,6 +6554,27 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 									browser.
 								</small>
 							</>
+						)}
+						{!googleStatus.connected && googleStatus.bundledClientAvailable && (
+							<small>
+								Kestrel uses its bundled Desktop OAuth client. Sign in in
+								Google&apos;s browser; no Cloud Console setup is required.
+							</small>
+						)}
+						{!googleStatus.connected && googleStatus.bundledClientAvailable && (
+							<details className="connection-advanced">
+								<summary>Use your own OAuth client instead</summary>
+								<label>
+									Desktop OAuth client ID
+									<input
+										value={googleClientId}
+										autoComplete="off"
+										spellCheck={false}
+										placeholder="…apps.googleusercontent.com"
+										onChange={(event) => setGoogleClientId(event.target.value)}
+									/>
+								</label>
+							</details>
 						)}
 						{googleStatus.connected && gmailSource?.state === "needs_reconnect" && (
 							<small role="status">
@@ -6532,7 +6615,10 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 						) : (
 							<button
 								className="button secondary"
-								disabled={!googleClientId.trim()}
+								disabled={
+									!googleStatus.bundledClientAvailable &&
+									!googleClientId.trim()
+								}
 								onClick={() => void connectGoogle()}
 							>
 								Connect with Google

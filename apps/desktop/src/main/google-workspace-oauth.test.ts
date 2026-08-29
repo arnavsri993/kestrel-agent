@@ -119,6 +119,7 @@ describe("Google Workspace desktop OAuth", () => {
 		expect(await manager.disconnect()).toEqual({
 			connected: false,
 			scopes: [],
+			bundledClientAvailable: false,
 		});
 		expect(
 			await broker.getOpaqueSecret("google-workspace-oauth"),
@@ -178,5 +179,37 @@ describe("Google Workspace desktop OAuth", () => {
 			),
 		).rejects.toThrow("did not complete");
 		expect(malformedStatus).toBe(400);
+	});
+
+	it("uses a bundled Desktop client ID when configured", async () => {
+		const bundledClientId =
+			"9876543210-bundledclientidforpublicrelease123456.apps.googleusercontent.com";
+		const previous = process.env.KESTREL_GOOGLE_OAUTH_CLIENT_ID;
+		process.env.KESTREL_GOOGLE_OAUTH_CLIENT_ID = bundledClientId;
+		try {
+			const { broker } = fixture();
+			let authorizationUrl = "";
+			const manager = new GoogleWorkspaceOAuthManager({
+				broker,
+				openExternal: async (url) => {
+					authorizationUrl = url;
+					throw new Error("Google sign-in was cancelled.");
+				},
+			});
+			expect(await manager.status()).toMatchObject({
+				connected: false,
+				bundledClientAvailable: true,
+			});
+			await expect(manager.connect(undefined)).rejects.toThrow(
+				"Google sign-in was cancelled.",
+			);
+			expect(
+				new URL(authorizationUrl).searchParams.get("client_id"),
+			).toBe(bundledClientId);
+		} finally {
+			if (previous === undefined)
+				delete process.env.KESTREL_GOOGLE_OAUTH_CLIENT_ID;
+			else process.env.KESTREL_GOOGLE_OAUTH_CLIENT_ID = previous;
+		}
 	});
 });

@@ -758,7 +758,7 @@ export class GoogleWorkspaceClient {
 					};
 				})
 			: [];
-		return { calendar: "primary", items };
+		return { calendar: "primary", items, trust: "untrusted_connector" };
 	}
 
 	async checkAvailability(input: {
@@ -823,6 +823,14 @@ export class GoogleWorkspaceClient {
 		location?: string;
 		signal: AbortSignal;
 	}): Promise<Record<string, unknown>> {
+		const startMs = Date.parse(input.startsAt);
+		const endMs = Date.parse(input.endsAt);
+		if (
+			!Number.isFinite(startMs) ||
+			!Number.isFinite(endMs) ||
+			endMs <= startMs
+		)
+			throw new Error("Calendar events must end after they start.");
 		const eventId = createHash("sha256")
 			.update(`workstrand-google-calendar\0${input.operationId}`)
 			.digest("hex")
@@ -1370,6 +1378,49 @@ export function installGoogleWorkspaceTools(
 	});
 	runtime.registerExternalTool({
 		descriptor: {
+			name: "google.calendar.check-availability",
+			title: "Check Google Calendar availability",
+			description:
+				"Verify up to 20 candidate intervals against the connected primary calendar using content-minimized event reads.",
+			category: "connector",
+			riskLevel: "read_only",
+			readOnly: true,
+			requiresWorkspace: false,
+			source: "connector",
+			tags: ["google", "calendar", "availability", "schedule"],
+		},
+		inputSchema: {
+			type: "object",
+			properties: {
+				slots: {
+					type: "array",
+					minItems: 1,
+					maxItems: MAX_CALENDAR_AVAILABILITY_SLOTS,
+					items: {
+						type: "object",
+						properties: {
+							label: { type: "string", maxLength: 200 },
+							startsAt: { type: "string", format: "date-time" },
+							endsAt: { type: "string", format: "date-time" },
+						},
+						required: ["startsAt", "endsAt"],
+						additionalProperties: false,
+					},
+				},
+			},
+			required: ["slots"],
+			additionalProperties: false,
+		},
+		execute: ({ signal }, input) =>
+			client.checkAvailability({
+				slots: Array.isArray(input.slots)
+					? (input.slots as CalendarAvailabilitySlot[])
+					: [],
+				signal,
+			}),
+	});
+	runtime.registerExternalTool({
+		descriptor: {
 			name: "google.calendar.create-event",
 			title: "Create Google Calendar event",
 			description:
@@ -1415,6 +1466,7 @@ export function installGoogleWorkspaceTools(
 		}),
 	});
 	runtime.allowTool(sessionId, "google.calendar.list-events");
+	runtime.allowTool(sessionId, "google.calendar.check-availability");
 	runtime.allowTool(sessionId, "google.calendar.create-event");
 	runtime.registerExternalTool({
 		descriptor: {

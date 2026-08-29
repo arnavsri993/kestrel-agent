@@ -68,6 +68,11 @@ import { LocalRuntimeManager } from "./local-runtime-manager";
 import { listWorkspaceFiles } from "./workspace-file-search";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
 import {
+	buildContentFreeDiagnosticEnvelope,
+	exportDiagnosticReport,
+	installDiagnosticFailureHooks,
+} from "./diagnostic-report";
+import {
   ChatGptOAuthManager,
   type ChatGptOAuthStatus,
 } from "./chatgpt-oauth";
@@ -130,6 +135,7 @@ import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
 // unless this switch is set before ready. Kestrel stores its own secrets as
 // local files and does not use Keychain.
 app.commandLine.appendSwitch("use-mock-keychain");
+installDiagnosticFailureHooks();
 installMacFileIconCrashGuard(app);
 
 let mainWindow: BrowserWindow | null = null;
@@ -3350,6 +3356,48 @@ function registerIpc(): void {
           checks,
         },
       };
+    }
+    if (request.type === "export-diagnostic-report") {
+      const options = {
+        title: "Save a content-free diagnostic report",
+        defaultPath: `kestrel-diagnostic-${app.getVersion()}.json`,
+        buttonLabel: "Save report",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      };
+      const selection = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, options)
+        : await dialog.showSaveDialog(options);
+      if (selection.canceled || !selection.filePath)
+        return { ok: true, cancelled: true };
+      const readiness = await (async () => {
+        const response = await supervisor
+          .request({ type: "snapshot" })
+          .catch(() => undefined);
+        const coreReady = Boolean(response?.ok && response.snapshot);
+        const providerState = coreReady
+          ? await supervisor
+              .request({ type: "runtime-list-providers" })
+              .catch(() => undefined)
+          : undefined;
+        const providers = providerState?.ok
+          ? (providerState.providers ?? []).filter(
+              (provider) => provider.id !== "auto",
+            )
+          : [];
+        const checks: Array<{
+          status: "pass" | "warning" | "fail";
+        }> = [
+          { status: coreReady ? "pass" : "fail" },
+          { status: providers.length > 0 ? "pass" : "fail" },
+        ];
+        return {
+          readyForLiveWork: coreReady && providers.length > 0,
+          checks,
+        };
+      })();
+      const envelope = await buildContentFreeDiagnosticEnvelope(readiness);
+      await exportDiagnosticReport(selection.filePath, envelope);
+      return { ok: true, diagnosticReportPath: selection.filePath };
     }
     if (request.type === "create-local-backup") {
       const options = {

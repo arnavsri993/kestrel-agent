@@ -36,6 +36,7 @@ export interface GoogleWorkspaceOAuthStatus {
 	scopes: string[];
 	connectedAt?: string;
 	clientIdSuffix?: string;
+	bundledClientAvailable: boolean;
 }
 
 interface GoogleWorkspaceOAuthManagerOptions {
@@ -69,6 +70,20 @@ function validClientId(clientId: string): boolean {
 	return /^[0-9]+-[A-Za-z0-9_-]{20,200}\.apps\.googleusercontent\.com$/.test(
 		clientId,
 	);
+}
+
+export function readBundledGoogleOAuthClientId(): string | undefined {
+	const clientId = process.env.KESTREL_GOOGLE_OAUTH_CLIENT_ID?.trim() ?? "";
+	return validClientId(clientId) ? clientId : undefined;
+}
+
+function withBundledAvailability(
+	status: Omit<GoogleWorkspaceOAuthStatus, "bundledClientAvailable">,
+): GoogleWorkspaceOAuthStatus {
+	return {
+		...status,
+		bundledClientAvailable: Boolean(readBundledGoogleOAuthClientId()),
+	};
 }
 
 function isLoopback(address: string | undefined): boolean {
@@ -111,24 +126,28 @@ export class GoogleWorkspaceOAuthManager {
 
 	async status(): Promise<GoogleWorkspaceOAuthStatus> {
 		const record = await this.readRecord();
-		if (!record) return { connected: false, scopes: [] };
-		return {
+		if (!record)
+			return withBundledAvailability({ connected: false, scopes: [] });
+		return withBundledAvailability({
 			connected: true,
 			email: record.email,
 			scopes: [...record.scopes],
 			connectedAt: record.connectedAt,
 			clientIdSuffix: record.clientId.slice(-24),
-		};
+		});
 	}
 
 	async connect(
-		rawClientId: string,
+		rawClientId: string | undefined,
 		signal?: AbortSignal,
 	): Promise<GoogleWorkspaceOAuthStatus> {
-		const clientId = rawClientId.trim();
+		const clientId =
+			rawClientId?.trim() || readBundledGoogleOAuthClientId() || "";
 		if (!validClientId(clientId))
 			throw new Error(
-				"Enter a Google OAuth client ID created for a Desktop app.",
+				readBundledGoogleOAuthClientId()
+					? "Google sign-in is unavailable because the bundled OAuth client is misconfigured."
+					: "Enter a Google OAuth client ID created for a Desktop app.",
 			);
 		if (signal?.aborted)
 			throw signal.reason instanceof Error
@@ -304,7 +323,7 @@ export class GoogleWorkspaceOAuthManager {
 				);
 			}
 		}
-		return { connected: false, scopes: [] };
+		return withBundledAvailability({ connected: false, scopes: [] });
 	}
 
 	private async exchangeCode(input: {

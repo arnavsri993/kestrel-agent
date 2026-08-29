@@ -60,8 +60,12 @@ clean-device rollout sequence are documented in
 [enterprise deployment](enterprise-deployment.md).
 
 Build the website with `NEXT_PUBLIC_PUBLISHER_NAME` and
-`NEXT_PUBLIC_SUPPORT_EMAIL` set to the verified operator values. Distribution
-mode fetches the deployed site, privacy, and support pages and verifies their
+`NEXT_PUBLIC_SUPPORT_EMAIL` set to the verified operator values. Set
+`KESTREL_GOOGLE_OAUTH_CLIENT_ID` in the macOS release workflow when Google has
+verified Kestrel's bundled Desktop OAuth client; the app hides the BYO client
+field when that value is present.
+
+Distribution mode fetches the deployed site, privacy, and support pages and verifies their
 status and Kestrel-specific content. It also requires one semantic release
 version and cross-checks that version across the DMG filename, schema-v2
 release manifest, `SHA256SUMS`, and `latest-mac.yml`. Manifest SHA-256 and
