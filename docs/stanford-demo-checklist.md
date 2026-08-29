@@ -189,6 +189,46 @@ out of scope for the primary stage story.
 
 ---
 
+## I. Engineering Mac operator dry-run
+
+**Date:** Aug 29, 2026 (engineering Mac)  
+**Commit:** `0c26599f` (#640 sprint-close handoff; same tree as `origin/main`)  
+**Overall verdict unchanged:** **NOT COMPLETE** — presentation Mac gates (F2, morning-of section G) still open.
+
+Operator dry-run used the **canonical packaged path** per AGENTS.md: stop `dev:desktop`, run
+`install:mac:dev`, launch `/Applications/Kestrel.app` (no profile reset, no demo-mode fakery).
+
+| Step | Command / action | Result | Notes |
+| --- | --- | --- | --- |
+| Sync | `git fetch`; HEAD `0c26599f` | **PASS** | `main` checked out in another worktree; reset on `codex/stanford-engineering-mac-dry-run` |
+| Stop dev watcher | `pkill -f "electron-vite dev"` | **PASS** | Required before install/gating |
+| Canonical install | `corepack pnpm install:mac:dev` | **PASS** (~21s) | Built arm64 dev bundle; ad-hoc sign; installed `/Applications/Kestrel.app`; prior bundle moved to Trash (`Kestrel-previous-20260829113852.app`) |
+| Launch packaged app | `open -a /Applications/Kestrel.app` | **PASS** | Main + Helper processes observed; uses existing `~/Library/Application Support/Kestrel` profile (not reset) |
+| Meetup preflight | `node scripts/verify-meetup-preflight.mjs` | **PASS** | No dev watcher or Electron dev lock |
+| Assets | `corepack pnpm assets:verify` | **PASS** | 3 registry entries, 7 manifests |
+| CLI probe | `corepack pnpm cli -- pets doctor` | **FAIL** (profile) | Encrypted agent config history could not decrypt with current profile key — environment-specific; not a packaging regression |
+| Full meetup gate | `corepack pnpm verify:meetup` | **NOT RUN** this dry-run | Already **PASS** at `80baae38` on engineering Mac (~196s); re-run on **presentation Mac** morning-of |
+| Readiness UI | Settings → Readiness | **NOT VERIFIED** this dry-run | Requires manual UI check on presentation Mac |
+| On-stage rehearsal | Ten-minute path + memory beat | **NOT RUN** | Presentation Mac + Sai (F2, section G) |
+
+**Engineering Mac conclusion:** A8 install procedure is **verified** on this machine at `0c26599f`.
+Repository meetup evidence remains at `80baae38`. **Do not** mark Stanford demo complete until
+presentation Mac `verify:meetup`, Readiness green, and F2 rehearsal pass.
+
+**Presentation Mac + Sai only (cannot finish on engineering Mac):**
+
+- Section **G** morning-of checklist (including `verify:meetup` at presentation commit)
+- **F2** full on-stage rehearsal with venue timing
+- **C5** model warm-up within 10 minutes of stage time
+- **E6** profile history/widgets compelling for New Tab demo
+- **B1**, **D2**, **D5**, **D6** live chat/memory beats
+- **F1** Apple signing / notarization (if distributing beyond ad-hoc dev build)
+- **F3** Google OAuth (optional for primary path)
+- Readiness export + disposable project prep (section G)
+
+
+---
+
 ## Related documents
 
 - [AI Tinkerers / Stanford live-demo runbook](ai-tinkerers-demo.md) — on-stage script and beats
