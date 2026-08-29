@@ -12,6 +12,7 @@ import type {
 } from "@kestrel/shared-types";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Icon } from "../Icon";
+import { writingProfilePanelPhase } from "./writing-studio-state";
 
 type SuccessfulCoreResponse = Extract<CoreResponse, { ok: true }>;
 
@@ -77,6 +78,7 @@ export function WritingStudio() {
 	const [providerId, setProviderId] = useState("auto");
 
 	const [profile, setProfile] = useState<WritingProfileStatus | null>(null);
+	const [profileLoading, setProfileLoading] = useState(true);
 	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
 	const [sampleText, setSampleText] = useState("");
 	const [sampleConsent, setSampleConsent] = useState(false);
@@ -111,6 +113,7 @@ export function WritingStudio() {
 
 	useEffect(() => {
 		let active = true;
+		setProfileLoading(true);
 		void request({ type: "writing-profile-get" })
 			.then((response) => {
 				if (active && response.writingProfile)
@@ -123,6 +126,9 @@ export function WritingStudio() {
 							? cause.message
 							: "Could not load the writing profile.",
 					);
+			})
+			.finally(() => {
+				if (active) setProfileLoading(false);
 			});
 		void request({ type: "runtime-list-providers" })
 			.then((response) => {
@@ -315,6 +321,10 @@ export function WritingStudio() {
 	};
 	const selectedStrength = adaptationStrengths.find(
 		(item) => item.id === adaptationStrength,
+	);
+	const profilePanelPhase = writingProfilePanelPhase(
+		profile !== null,
+		profileLoading,
 	);
 
 	return (
@@ -564,7 +574,7 @@ export function WritingStudio() {
 						</span>
 					)}
 				</header>
-				{profile ? (
+				{profilePanelPhase === "ready" && profile ? (
 					<div className="writing-profile-content">
 						<div className="writing-profile-controls">
 							<label className="writing-profile-toggle">
@@ -684,9 +694,11 @@ export function WritingStudio() {
 							Reset voice profile
 						</button>
 					</div>
-				) : (
-					<p className="writing-profile-loading">Loading the encrypted profile…</p>
-				)}
+				) : profilePanelPhase === "loading" ? (
+					<p className="writing-profile-loading" role="status">
+						Loading the encrypted profile…
+					</p>
+				) : null}
 			</section>
 
 			{draft && (
