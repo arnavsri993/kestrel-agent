@@ -1,9 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEncryptionKey, encryptText } from "@kestrel/encryption";
 import { afterEach, describe, expect, it } from "vitest";
-import { KestrelDatabase } from "./index";
+import { DatabaseIntegrityError, KestrelDatabase } from "./index";
 
 const temporaryDirectories: string[] = [];
 
@@ -22,6 +22,34 @@ afterEach(() => {
 	for (const directory of temporaryDirectories.splice(0)) {
 		rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+describe("database integrity", () => {
+	it("opens healthy in-memory and on-disk databases", () => {
+		const memoryDatabase = new KestrelDatabase(":memory:", createEncryptionKey());
+		memoryDatabase.close();
+
+		const { first } = sharedDatabases();
+		first.close();
+	});
+
+	it("refuses to open a corrupted on-disk database", () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-database-corrupt-"));
+		temporaryDirectories.push(directory);
+		const path = join(directory, "kestrel.sqlite");
+		const encryptionKey = createEncryptionKey();
+		const healthy = new KestrelDatabase(path, encryptionKey);
+		healthy.close();
+
+		writeFileSync(path, Buffer.alloc(4096, 0xff));
+
+		expect(() => new KestrelDatabase(path, encryptionKey)).toThrow(
+			DatabaseIntegrityError,
+		);
+		expect(() => new KestrelDatabase(path, encryptionKey)).toThrow(
+			/backup|recovery/i,
+		);
+	});
 });
 
 describe("idempotency claims", () => {
