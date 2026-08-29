@@ -199,12 +199,20 @@ export function BrowserWorkspace({
     const mutationObserver = new MutationObserver(syncBounds);
     if (root) mutationObserver.observe(root, { childList: true });
     const appShell = node.closest(".ai-browser-app");
-    const shellObserver = new MutationObserver(syncBounds);
+    const scheduleBoundsSync = () => {
+      syncBounds();
+      window.requestAnimationFrame(() => {
+        syncBounds();
+        window.setTimeout(syncBounds, 100);
+      });
+    };
+    const shellObserver = new MutationObserver(scheduleBoundsSync);
     if (appShell) {
       shellObserver.observe(appShell, {
         attributes: true,
         attributeFilter: ["class"],
         childList: true,
+        subtree: true,
       });
     }
     window.addEventListener("resize", syncBounds);
