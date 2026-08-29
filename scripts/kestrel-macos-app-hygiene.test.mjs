@@ -12,6 +12,7 @@ import {
 	cleanupDuplicateKestrelApps,
 	markDirectoryUnindexed,
 	preventSpotlightIndexing,
+	repositoryReleaseBundle,
 	worktreeReleaseCandidates,
 } from "./kestrel-macos-app-hygiene.mjs";
 
@@ -91,6 +92,43 @@ testSuite("kestrel macOS app hygiene", () => {
 		});
 
 		expect(existsSync(canonical)).toBe(true);
+		expect(existsSync(stale)).toBe(false);
+		expect(readdirSync(trashRoot)).toHaveLength(1);
+		expect(result.moved).toHaveLength(1);
+	});
+
+	it("keeps the current repository release bundle for packaged smoke tests", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-release-"));
+		const documentsRoot = join(root, "Documents");
+		const installRoot = join(root, "Applications");
+		const trashRoot = join(root, "Trash");
+		const repositoryRoot = join(documentsRoot, "Agent");
+		mkdirSync(installRoot);
+		const canonical = createBundle(installRoot, "Kestrel.app");
+		const releaseRoot = join(repositoryRoot, "release", "mac-arm64");
+		mkdirSync(releaseRoot, { recursive: true });
+		const currentRelease = createBundle(releaseRoot, "Kestrel.app");
+		const staleRoot = join(
+			documentsRoot,
+			"Agent-browser-recovery",
+			"release",
+			"mac-arm64",
+		);
+		mkdirSync(staleRoot, { recursive: true });
+		const stale = createBundle(staleRoot, "Kestrel.app");
+
+		const result = cleanupDuplicateKestrelApps({
+			installRoot,
+			trashRoot,
+			searchRoots: [installRoot],
+			repositoryRoot,
+			documentsRoot,
+			skipSpotlight: true,
+		});
+
+		expect(repositoryReleaseBundle(repositoryRoot)).toBe(currentRelease);
+		expect(existsSync(canonical)).toBe(true);
+		expect(existsSync(currentRelease)).toBe(true);
 		expect(existsSync(stale)).toBe(false);
 		expect(readdirSync(trashRoot)).toHaveLength(1);
 		expect(result.moved).toHaveLength(1);

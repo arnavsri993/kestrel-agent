@@ -17,7 +17,9 @@ corepack pnpm verify:meetup
 That command runs the complete deterministic suite, validates the website
 assets, downloads and verifies the pinned managed Ollama runtime, requires a
 real local model response, builds the Apple Silicon app, validates its
-development signature, and exercises the packaged executable.
+development signature, and exercises the packaged executable. The build keeps
+`release/mac-arm64/Kestrel.app` available for the packaged smoke and benchmark
+steps even when `/Applications/Kestrel.app` is already installed.
 
 Install the exact artifact produced by the gate into the one canonical app
 location, then open it:
