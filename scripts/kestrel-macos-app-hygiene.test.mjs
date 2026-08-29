@@ -1,0 +1,98 @@
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { describe, expect, it } from "vitest";
+import {
+	cleanupDuplicateKestrelApps,
+	markDirectoryUnindexed,
+	preventSpotlightIndexing,
+	worktreeReleaseCandidates,
+} from "./kestrel-macos-app-hygiene.mjs";
+
+function createBundle(root, name, identifier = "com.kestrel.desktop.dev") {
+	const bundle = join(root, name);
+	mkdirSync(join(bundle, "Contents"), { recursive: true });
+	writeFileSync(
+		join(bundle, "Contents", "Info.plist"),
+		`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>${identifier}</string>
+<key>CFBundleName</key><string>Kestrel</string>
+<key>CFBundleDisplayName</key><string>Kestrel</string>
+</dict></plist>
+`,
+	);
+	return bundle;
+}
+
+const testSuite = process.platform === "darwin" ? describe : describe.skip;
+
+testSuite("kestrel macOS app hygiene", () => {
+	it("finds Agent worktree release bundles under Documents", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-worktree-"));
+		const documentsRoot = join(root, "Documents");
+		const bundleRoot = join(
+			documentsRoot,
+			"Agent-browser-recovery",
+			"release",
+			"mac-arm64",
+		);
+		mkdirSync(bundleRoot, { recursive: true });
+		const bundle = createBundle(bundleRoot, "Kestrel.app");
+
+		expect(worktreeReleaseCandidates(documentsRoot)).toEqual([bundle]);
+	});
+
+	it("marks release trees unindexed across Agent worktrees", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-index-"));
+		const documentsRoot = join(root, "Documents");
+		const repoRoot = join(documentsRoot, "Agent");
+		const releaseDir = join(repoRoot, "release");
+		mkdirSync(releaseDir, { recursive: true });
+
+		const marked = preventSpotlightIndexing(repoRoot);
+
+		expect(marked).toContain(releaseDir);
+		expect(existsSync(join(releaseDir, ".metadata_never_index"))).toBe(true);
+		expect(markDirectoryUnindexed(releaseDir)).toBe(false);
+	});
+
+	it("trashes duplicate worktree bundles while keeping excluded paths", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-hygiene-trash-"));
+		const documentsRoot = join(root, "Documents");
+		const installRoot = join(root, "Applications");
+		const trashRoot = join(root, "Trash");
+		mkdirSync(installRoot);
+		const canonical = createBundle(installRoot, "Kestrel.app");
+		const staleRoot = join(
+			documentsRoot,
+			"Agent-action-receipts",
+			"release",
+			"mac-arm64",
+		);
+		mkdirSync(staleRoot, { recursive: true });
+		const stale = createBundle(staleRoot, "Kestrel.app");
+
+		const result = cleanupDuplicateKestrelApps({
+			installRoot,
+			trashRoot,
+			searchRoots: [installRoot],
+			repositoryRoot: join(documentsRoot, "Agent"),
+			documentsRoot,
+			excludedPaths: [canonical],
+			skipSpotlight: true,
+		});
+
+		expect(existsSync(canonical)).toBe(true);
+		expect(existsSync(stale)).toBe(false);
+		expect(readdirSync(trashRoot)).toHaveLength(1);
+		expect(result.moved).toHaveLength(1);
+	});
+});
