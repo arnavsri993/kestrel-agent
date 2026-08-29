@@ -23,7 +23,7 @@ The renderer owns presentation state only. Main owns OS lifecycle, notifications
 - `packages/database`: migrations, encrypted record persistence, and query adapters.
 - `packages/agent-core`: event pipeline, context resolver, opportunity engine, teacher workflow, verification, and audit trace.
 - `packages/policy-engine`: deterministic approval and untrusted-content rules.
-- `packages/ui`: shared visual tokens and small presentational primitives.
+- `apps/desktop/src/renderer/styles.css`: shared visual tokens and renderer primitives (no separate `packages/ui` package).
 - `scripts`: manual media generation/processing and release checks; excluded from browser output.
 
 ## Vertical slice

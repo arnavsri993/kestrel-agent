@@ -483,7 +483,7 @@ export class AgentCore {
 			this.providerPool,
 			undefined,
 			(message) => {
-				if (message.role === "user") {
+				if (message.role === "user" && this.sharedMemoryCaptureEnabled()) {
 					const captureExplicit =
 						this.configuration.current().memory.captureExplicit;
 					if (captureExplicit)
@@ -491,6 +491,7 @@ export class AgentCore {
 					if (captureExplicit)
 						this.lifeContext.captureConversation(message.content, message.id);
 				}
+				if (!this.sharedMemoryCaptureEnabled()) return;
 				const session = this.runtime.getSession(message.sessionId);
 				this.honchoMemory.captureMessage(message, session.workspaceRoot);
 			},
@@ -583,13 +584,13 @@ export class AgentCore {
 					id: "gmail",
 					name: "Gmail",
 					status: "development_adapter",
-					detail: "Deterministic adapter · OAuth not configured",
+					detail: "Sample data only · connect Google in Settings for live mail",
 				},
 				{
 					id: "calendar",
 					name: "Google Calendar",
 					status: "development_adapter",
-					detail: "Deterministic adapter · OAuth not configured",
+					detail: "Sample data only · connect Google in Settings for live calendar",
 				},
 				{
 					id: "files",
@@ -1392,6 +1393,13 @@ export class AgentCore {
 		return this.snapshot();
 	}
 
+	private sharedMemoryCaptureEnabled(): boolean {
+		return (
+			this.personalities.get(this.selectedPersonalityId).memoryScope ===
+			"shared"
+		);
+	}
+
 	createPersonality(
 		personality: Omit<AgentPersonality, "builtin">,
 	): WorkspaceSnapshot {
@@ -1708,6 +1716,11 @@ export class AgentCore {
 									query: priorMessage,
 								})
 							: "";
+						const localContext = sharedMemoryEnabled
+							? this.lifeContext.assembleContext({
+									query: priorMessage,
+								})
+							: undefined;
 						const result = await this.agentLoop.retry({
 							sessionId: request.sessionId,
 							model: route?.execution.model ?? request.model,
@@ -1748,7 +1761,11 @@ export class AgentCore {
 								personality.instructions,
 								this.configuration.instructions(),
 								...(sharedMemoryEnabled
-									? [this.userModel.promptContext(), honchoContext]
+									? [
+											this.userModel.promptContext(),
+											localContext?.prompt ?? "",
+											honchoContext,
+										]
 									: []),
 							]
 								.filter(Boolean)
