@@ -12,6 +12,16 @@ const workflow = readFileSync(
 	),
 	"utf8",
 );
+const builder = readFileSync(
+	resolve(
+		import.meta.dirname,
+		"..",
+		"apps",
+		"desktop",
+		"electron-builder.yml",
+	),
+	"utf8",
+);
 const websiteWorkflow = readFileSync(
 	resolve(
 		import.meta.dirname,
@@ -34,6 +44,17 @@ function between(start, end) {
 }
 
 describe("macOS release workflow security contract", () => {
+	it("uses GitHub Releases as the stable installation and update source", () => {
+		expect(builder).toContain("provider: github");
+		expect(builder).toContain("owner: arnavsri993");
+		expect(builder).toContain("repo: kestrel-agent");
+		expect(builder).toContain("releaseType: release");
+		expect(builder).toContain("channel: latest");
+		expect(builder).not.toContain("provider: generic");
+		expect(builder).not.toContain("KESTREL_UPDATE_URL");
+		expect(workflow).not.toContain("KESTREL_UPDATE_URL");
+	});
+
 	it("keeps verification read-only and release credentials step-local", () => {
 		expect(workflow).toContain("permissions:\n  contents: read");
 

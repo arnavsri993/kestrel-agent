@@ -1,0 +1,6 @@
+extends: electron-builder.yml
+mac:
+  # This target is for local installation checks only. Public releases must
+  # use the Developer ID signing and notarization job in CI.
+  identity: "-"
+  entitlementsInherit: build/entitlements.mac.dev.inherit.plist

@@ -23,15 +23,23 @@ Export both certificates as `.p12`, base64-encode, and store only in GitHub
 secrets. Restrict the environment to stable version tags (`v*`) and require a
 reviewer before signing jobs run.
 
-## 2. Update hosting
+## 2. GitHub Releases update feed
 
-Set the repository variable:
+The desktop updater is pinned to the public `arnavsri993/kestrel-agent` GitHub
+repository and the stable `latest` release channel in the packaged app. The
+tag workflow publishes `latest-mac.yml`, the updater ZIP, and its blockmap
+alongside the public DMG. Make the matching GitHub release public only after
+the signed artifact and clean-machine checks pass.
 
-- `KESTREL_UPDATE_URL` — HTTPS base URL containing `latest-mac.yml`, the signed
-  ZIP, and its blockmap
+For the website distribution gate, set the repository variable:
 
-After a successful tagged release workflow, host the DMG, manifest, and checksums
-at stable HTTPS URLs.
+- `KESTREL_UPDATE_URL` —
+  `https://github.com/arnavsri993/kestrel-agent/releases/latest/download`
+  (this verifies the GitHub-hosted feed for the website; it does not control
+  the desktop updater)
+
+After a successful tagged release workflow, host or reference the DMG, manifest,
+and checksums at stable HTTPS URLs.
 
 ## 3. Website and download gate
 

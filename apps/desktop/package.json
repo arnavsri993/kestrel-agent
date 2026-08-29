@@ -11,8 +11,9 @@
     "build": "electron-vite build && node ../../scripts/verify-desktop-preload-bundles.mjs && node ../../scripts/verify-macos-file-icon-usage.mjs",
     "typecheck": "tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "preview": "KESTREL_RELEASE_CHANNEL=development electron-vite preview",
-    "package:mac:dev": "KESTREL_RELEASE_CHANNEL=development pnpm build && CSC_FOR_PULL_REQUEST=true MACOSX_DEPLOYMENT_TARGET=13.0 npm_config_arch=arm64 npm_config_target_arch=arm64 KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac dir --arm64 --config electron-builder.dev.yml && node ../../scripts/verify-development-macos-app.mjs ../../release/mac-arm64/Kestrel.app",
-    "package:mac:mdm": "pnpm build && MACOSX_DEPLOYMENT_TARGET=13.0 npm_config_arch=arm64 npm_config_target_arch=arm64 KESTREL_UPDATE_URL=https://updates.invalid electron-builder --mac pkg --arm64 --config electron-builder.yml"
+    "package:mac:dev": "KESTREL_RELEASE_CHANNEL=development pnpm build && CSC_FOR_PULL_REQUEST=true MACOSX_DEPLOYMENT_TARGET=13.0 npm_config_arch=arm64 npm_config_target_arch=arm64 electron-builder --mac dir --arm64 --config electron-builder.dev.yml && node ../../scripts/verify-development-macos-app.mjs ../../release/mac-arm64/Kestrel.app",
+    "package:mac:installable": "KESTREL_RELEASE_CHANNEL=stable pnpm build && CSC_FOR_PULL_REQUEST=true MACOSX_DEPLOYMENT_TARGET=13.0 npm_config_arch=arm64 npm_config_target_arch=arm64 electron-builder --mac dmg zip --arm64 --publish never --config electron-builder.installable.yml && node ../../scripts/verify-installable-macos-app.mjs ../../release/mac-arm64/Kestrel.app",
+    "package:mac:mdm": "pnpm build && MACOSX_DEPLOYMENT_TARGET=13.0 npm_config_arch=arm64 npm_config_target_arch=arm64 electron-builder --mac pkg --arm64 --config electron-builder.yml"
   },
   "dependencies": {
     "@kestrel/agent-core": "workspace:*",
