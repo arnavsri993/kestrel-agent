@@ -2762,9 +2762,11 @@ function RuntimeConversation({
 	const [workspace, setWorkspace] = useState("");
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
+	const shouldAutoSubmitFirstTaskRef = useRef(false);
 	const [input, setInput] = useState(() => {
 		if (localStorage.getItem("kestrel:first-task") === "yes") {
 			localStorage.removeItem("kestrel:first-task");
+			shouldAutoSubmitFirstTaskRef.current = true;
 			return FIRST_TASK_PROMPT;
 		}
 		if (localStorage.getItem("kestrel:setup-coach") !== "yes") return "";
@@ -3533,6 +3535,12 @@ function RuntimeConversation({
 			setOptimisticSteering([]);
 		}
 	}
+
+	useEffect(() => {
+		if (!shouldAutoSubmitFirstTaskRef.current) return;
+		shouldAutoSubmitFirstTaskRef.current = false;
+		void submit(FIRST_TASK_PROMPT);
+	}, []);
 
 	async function decide(approvalDecision: "approved" | "rejected") {
 		if (!pending || busy) return;
