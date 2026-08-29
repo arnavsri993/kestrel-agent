@@ -749,6 +749,7 @@ export const RuntimeToolExecutionSchema = z.object({
 			verifiedAt: z.string().datetime(),
 		})
 		.optional(),
+	outcomeUncertain: z.boolean().optional(),
 	error: z.string().optional(),
 	idempotencyKey: z.string().min(1).optional(),
 	startedAt: z.string().datetime(),
@@ -819,6 +820,12 @@ export const AgentRunSchema = z.object({
 	pendingToolExecutionId: z.string().min(1).optional(),
 	pendingProviderToolCallId: z.string().min(1).optional(),
 	pendingToolName: z.string().min(1).optional(),
+	recovery: z
+		.object({
+			reason: z.literal("core_restarted"),
+			action: z.literal("retry_last_turn"),
+		})
+		.optional(),
 	error: z.string().optional(),
 	createdAt: z.string().datetime(),
 	updatedAt: z.string().datetime(),

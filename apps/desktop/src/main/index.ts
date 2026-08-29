@@ -1321,7 +1321,7 @@ supervisor.on(
       return;
     const notification = new Notification({
       title: `${PRODUCT_IDENTITY.productName} · Agent Core restarting`,
-      body: "Local agent work was interrupted. Kestrel is recovering it automatically.",
+      body: "Local agent work was interrupted. The core is restarting; review the task before choosing whether to retry.",
     });
     notification.on("click", showMainWindow);
     notification.show();
@@ -1340,7 +1340,7 @@ supervisor.on("recovered", () => {
   if (!Notification.isSupported()) return;
   const notification = new Notification({
     title: `${PRODUCT_IDENTITY.productName} · Agent Core recovered`,
-    body: "Local agent work is available again.",
+    body: "Local agent work is available again. Interrupted work was not resumed automatically.",
   });
   notification.on("click", showMainWindow);
   notification.show();

@@ -215,6 +215,76 @@ describe("CoreSupervisor recovery", () => {
 		expect(processes).toHaveLength(3);
 	});
 
+	it("rejects an in-flight request after a crash and never replays it", async () => {
+		vi.useFakeTimers();
+		const processes: FakeCoreProcess[] = [];
+		const supervisor = new CoreSupervisor(undefined, undefined, {
+			processFactory: () => {
+				const child = new FakeCoreProcess();
+				processes.push(child);
+				return child;
+			},
+			restartDelaysMs: [10],
+			stabilityWindowMs: 1_000,
+			startupTimeoutMs: 500,
+		});
+		const started = supervisor.start(config);
+		processes[0]!.ready();
+		await started;
+
+		const request = supervisor.request({
+			type: "runtime-run-agent",
+			sessionId: "session-interrupted",
+			message: "Do this exactly once",
+			model: "auto",
+			providerIds: ["auto"],
+			streamId: "stream-interrupted",
+		});
+		const rejected = expect(request).rejects.toThrow(
+			"stopped before responding",
+		);
+		expect(processes[0]!.messages).toContainEqual(
+			expect.objectContaining({
+				type: "request",
+				request: expect.objectContaining({
+					type: "runtime-run-agent",
+					streamId: "stream-interrupted",
+				}),
+			}),
+		);
+
+		const recovered = once(supervisor, "recovered");
+		processes[0]!.crash(7);
+		await rejected;
+		await vi.advanceTimersByTimeAsync(10);
+		expect(processes).toHaveLength(2);
+		expect(processes[1]!.messages).toHaveLength(1);
+		expect(processes[1]!.messages[0]).toMatchObject({ type: "bootstrap" });
+		processes[1]!.ready();
+		await recovered;
+		expect(
+			processes[1]!.messages.filter(
+				(message) =>
+					message &&
+					typeof message === "object" &&
+					(message as { type?: unknown }).type === "request",
+			),
+		).toEqual([]);
+
+		const snapshot = supervisor.request({ type: "snapshot" });
+		const snapshotRequest = processes[1]!.messages.at(-1) as {
+			requestId: string;
+		};
+		processes[1]!.emit("message", {
+			requestId: snapshotRequest.requestId,
+			response: { ok: true },
+		});
+		await expect(snapshot).resolves.toEqual({ ok: true });
+
+		processes[1]!.exitOnShutdown = true;
+		await supervisor.stop();
+	});
+
 	it("surfaces a bootstrap error and does not leave a dead core behind", async () => {
 		const child = new FakeCoreProcess();
 		const supervisor = new CoreSupervisor(undefined, undefined, {

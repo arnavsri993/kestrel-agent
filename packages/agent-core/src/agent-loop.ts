@@ -170,6 +170,9 @@ function processIsAlive(pid: number): boolean {
 	}
 }
 
+const CORE_RESTART_INTERRUPTION_REASON =
+	"Kestrel restarted while this run was active. No model or tool call was resumed automatically. Review any action that may have started, then retry the last turn when ready.";
+
 export class AgentLoop {
 	private readonly compactor = new ContextCompactor();
 	private readonly usageGovernor: UsageGovernor;
@@ -189,6 +192,24 @@ export class AgentLoop {
 		) => boolean,
 	) {
 		this.usageGovernor = usageGovernor ?? new UsageGovernor(database, now);
+		this.reconcileInterruptedRuns();
+	}
+
+	private reconcileInterruptedRuns(): void {
+		for (const run of this.database.listRunningAgentRuns()) {
+			const claim = this.database.getIdempotentClaim(
+				`agent-session-run:${run.sessionId}`,
+			);
+			if (claim && processIsAlive(claim.ownerPid)) continue;
+			this.database.interruptAgentRunAfterRestart({
+				runId: run.id,
+				interruptedAt: this.now().toISOString(),
+				reason: CORE_RESTART_INTERRUPTION_REASON,
+				...(claim
+					? { expectedSessionClaimOwnerToken: claim.ownerToken }
+					: {}),
+			});
+		}
 	}
 
 	async run(input: AgentLoopInput): Promise<AgentLoopResult> {
