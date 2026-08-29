@@ -86,6 +86,7 @@ import {
 	sidebarReviewTarget,
 } from "./components/browser/agent-sidebar";
 import { KestrelSidebar } from "./components/browser/KestrelSidebar";
+import { ProjectsWorkspace } from "./components/browser/ProjectsWorkspace";
 import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -201,6 +202,7 @@ function appendExternalText(current: string, incoming?: string): string {
 const pages = [
 	["browser", "Browser"],
 	["agent", "Agent"],
+	["projects", "Projects"],
 	["history", "History"],
 	["bookmarks", "Bookmarks"],
 	["downloads", "Downloads"],
@@ -248,6 +250,13 @@ const commandDestinations: CommandDestination[] = [
 		label: "Agent",
 		detail: "Start, find, and resume your work",
 		icon: "agent",
+		group: "Agent",
+	},
+	{
+		id: "projects",
+		label: "Projects",
+		detail: "Keep related chats and local context together",
+		icon: "folder",
 		group: "Agent",
 	},
 	{
@@ -8884,6 +8893,9 @@ export function App() {
 	const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState<
 		string | null
 	>(null);
+	const [activeProjectPath, setActiveProjectPath] = useState<string | null>(
+		() => localStorage.getItem("kestrel:active-project"),
+	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
 	const [newAgentFocusTarget, setNewAgentFocusTarget] = useState<
@@ -9004,6 +9016,10 @@ export function App() {
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
 		setActiveRuntimeSessionId(sessionId);
 	}, []);
+	const selectProject = useCallback((projectPath: string) => {
+		setActiveProjectPath(projectPath);
+		localStorage.setItem("kestrel:active-project", projectPath);
+	}, []);
 	const revealAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
@@ -9066,12 +9082,14 @@ export function App() {
 	const openSidebarSession = useCallback(
 		(sessionId: string) => {
 			revealAgentSidebar();
+			const session = runtimeSessions.find((item) => item.id === sessionId);
+			if (session?.workspaceRoot) selectProject(session.workspaceRoot);
 			openRuntimeSession(sessionId);
 			window.requestAnimationFrame(() => {
 				document.getElementById("runtime-prompt")?.focus();
 			});
 		},
-		[openRuntimeSession, revealAgentSidebar],
+		[openRuntimeSession, runtimeSessions, revealAgentSidebar, selectProject],
 	);
 	const snapshotPendingCount =
 		snapshot?.approvals.filter((approval) => approval.status === "pending")
@@ -9093,6 +9111,29 @@ export function App() {
 			await browser.createTab(kestrelAppPageUrl(id));
 		},
 		[browser],
+	);
+	const openProject = useCallback(
+		(project: WorkspaceGrant) => {
+			selectProject(project.path);
+			void openAppPage("projects");
+		},
+		[openAppPage, selectProject],
+	);
+	const startProjectChat = useCallback(
+		(project: WorkspaceGrant) => {
+			if (project.available === false) return;
+			selectProject(project.path);
+			startNewAgent("", project.path);
+			void openAppPage("agent");
+		},
+		[openAppPage, selectProject, startNewAgent],
+	);
+	const openProjectSession = useCallback(
+		(sessionId: string) => {
+			openSidebarSession(sessionId);
+			void openAppPage("agent");
+		},
+		[openAppPage, openSidebarSession],
 	);
 	const openBrowserWorkspace = useCallback(async () => {
 		const tabs = browser.state?.tabs ?? [];
@@ -9501,6 +9542,7 @@ export function App() {
 				appPageId === "activity" ||
 				appPageId === "extensions" ||
 				appPageId === "agent" ||
+				appPageId === "projects" ||
 				appPageId === "writing"
 					? " browser-secondary-surface"
 					: ""
@@ -9537,6 +9579,17 @@ export function App() {
 					onOpenSession={openSidebarSession}
 					onOpenApprovals={() => navigate("approvals")}
 					onOpenWork={() => navigate("work")}
+				/>
+			)}
+			{appPageId === "projects" && (
+				<ProjectsWorkspace
+					projects={workspaceGrants}
+					sessions={runtimeSessions}
+					activeProjectPath={activeProjectPath}
+					onSelectProject={selectProject}
+					onNewChat={startProjectChat}
+					onOpenSession={openProjectSession}
+					onOpenSettings={() => openSettings("connections")}
 				/>
 			)}
 			{appPageId === "settings" && (
@@ -9600,6 +9653,7 @@ export function App() {
 						activeDestination={
 							activeSidebarDestination === "browser" ||
 							activeSidebarDestination === "agent" ||
+							activeSidebarDestination === "projects" ||
 							activeSidebarDestination === "writing" ||
 							activeSidebarDestination === "approvals" ||
 							activeSidebarDestination === "settings"
@@ -9607,18 +9661,21 @@ export function App() {
 								: "capabilities"
 						}
 						activeSessionId={activeRuntimeSessionId}
+						activeProjectPath={activeProjectPath}
 						agentName={activeAgentName}
 						pendingApprovals={pendingApprovalCount}
 						sessions={runtimeSessions}
-						projects={availableWorkspaceGrants(workspaceGrants)}
+						projects={workspaceGrants}
 						onNewTask={() => startNewAgent()}
 						onOpenBrowser={openBrowser}
 						onOpenAgent={openAgent}
 						onOpenWriting={openWritingStudio}
 						onReviewApprovals={reviewApprovals}
 						onOpenCapabilities={openCommandCenter}
+						onOpenProjects={() => void openAppPage("projects")}
 						onOpenSettings={() => openSettings("browser")}
-						onOpenProject={(project) => startNewAgent("", project.path)}
+						onOpenProject={openProject}
+						onOpenProjectChat={startProjectChat}
 						onOpenSession={openSidebarSession}
 						onOpenTaskHistory={() => void openAppPage("work")}
 					/>

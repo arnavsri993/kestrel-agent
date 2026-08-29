@@ -124,6 +124,7 @@ describe("sidebar footer destination", () => {
 	it("keeps the four primary destinations", () => {
 		expect(sidebarActiveDestination("browser")).toBe("browser");
 		expect(sidebarActiveDestination("agent")).toBe("agent");
+		expect(sidebarActiveDestination("projects")).toBe("projects");
 		expect(sidebarActiveDestination("approvals")).toBe("approvals");
 		expect(sidebarActiveDestination("settings")).toBe("settings");
 		expect(sidebarActiveDestination("kestrel://settings")).toBe("settings");

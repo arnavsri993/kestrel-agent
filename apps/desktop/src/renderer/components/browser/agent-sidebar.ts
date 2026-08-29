@@ -7,6 +7,7 @@ export type SidebarDestination =
 	| "browser"
 	| "agent"
 	| "writing"
+	| "projects"
 	| "approvals"
 	| "capabilities"
 	| "settings";
@@ -50,6 +51,7 @@ export function sidebarActiveDestination(page: string): SidebarDestination {
 	if (
 		appPage === "agent" ||
 		appPage === "writing" ||
+		appPage === "projects" ||
 		appPage === "approvals" ||
 		appPage === "settings" ||
 		appPage === "commands"

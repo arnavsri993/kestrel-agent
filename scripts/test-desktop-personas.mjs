@@ -37,6 +37,7 @@ const commandDestinationLabels = [
 	"Bookmarks",
 	"Downloads",
 	"Agent",
+	"Projects",
 	"Writing Studio",
 	"Approvals",
 	"Work",
