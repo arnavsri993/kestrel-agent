@@ -442,14 +442,21 @@ export class KestrelDatabase {
 	) {
 		if (filename !== ":memory:")
 			mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
+		let database: Database.Database | undefined;
 		try {
-			this.db = new Database(filename);
+			database = new Database(filename);
+			this.db = database;
 			this.db.pragma("journal_mode = WAL");
 			this.db.pragma("foreign_keys = ON");
 			this.db.pragma("secure_delete = ON");
 			this.assertDatabaseIntegrity();
 			this.migrate();
 		} catch (error) {
+			try {
+				database?.close();
+			} catch {
+				// Preserve the original startup error if cleanup also fails.
+			}
 			if (error instanceof DatabaseIntegrityError) throw error;
 			if (isSqliteDatabaseIntegrityFailure(error)) {
 				throw new DatabaseIntegrityError(
