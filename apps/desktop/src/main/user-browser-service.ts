@@ -827,6 +827,7 @@ export class UserBrowserService {
 	private paymentPrompt: PaymentPrompt | undefined;
 	private readonly paymentPromptSuppressedUntil = new Map<string, number>();
 	private readonly agentTabPinCounts = new Map<string, number>();
+	private tabMutationQueue: Promise<void> = Promise.resolve();
 
 	constructor(options: UserBrowserServiceOptions) {
 		this.window = options.window;
@@ -1033,6 +1034,10 @@ export class UserBrowserService {
 	}
 
 	async closeTab(tabId: string): Promise<UserBrowserState> {
+		return this.runExclusiveTabMutation(() => this.closeTabInternal(tabId));
+	}
+
+	private async closeTabInternal(tabId: string): Promise<UserBrowserState> {
 		if (this.isAgentTabPinned(tabId)) {
 			throw new Error(
 				"Browser tab is in use by an agent operation and cannot be closed.",
@@ -1515,11 +1520,19 @@ export class UserBrowserService {
 	async applyTabOrganization(
 		input: UserBrowserTabOrganizationApply,
 	): Promise<UserBrowserState> {
+		return this.runExclusiveTabMutation(() =>
+			this.applyTabOrganizationInternal(input),
+		);
+	}
+
+	private async applyTabOrganizationInternal(
+		input: UserBrowserTabOrganizationApply,
+	): Promise<UserBrowserState> {
 		this.assertAvailable();
 		if (input.closeTabIds?.length) {
 			for (const tabId of [...new Set(input.closeTabIds)]) {
 				if (this.state.tabs.some((tab) => tab.id === tabId)) {
-					await this.closeTab(tabId);
+					await this.closeTabInternal(tabId);
 				}
 			}
 		}
@@ -1581,6 +1594,10 @@ export class UserBrowserService {
 	}
 
 	async detachTab(tabId: string): Promise<UserBrowserState> {
+		return this.runExclusiveTabMutation(() => this.detachTabInternal(tabId));
+	}
+
+	private async detachTabInternal(tabId: string): Promise<UserBrowserState> {
 		if (this.isAgentTabPinned(tabId)) {
 			throw new Error(
 				"Browser tab is in use by an agent operation and cannot be detached.",
@@ -2514,18 +2531,20 @@ export class UserBrowserService {
 		request: UserBrowserBackendWireRequest,
 		signal: AbortSignal,
 	): Promise<unknown> {
-		if (signal.aborted) throw signal.reason;
-		const tabId = "tabId" in request ? request.tabId : undefined;
-		if (
-			tabId &&
-			(request.operation === "visible-navigate" ||
-				request.operation === "visible-select")
-		) {
-			return this.withAgentTabPin(tabId, () =>
-				this.dispatchAgentRequest(request, signal),
-			);
-		}
-		return this.dispatchAgentRequest(request, signal);
+		return this.runExclusiveTabMutation(async () => {
+			if (signal.aborted) throw signal.reason;
+			const tabId = "tabId" in request ? request.tabId : undefined;
+			if (
+				tabId &&
+				(request.operation === "visible-navigate" ||
+					request.operation === "visible-select")
+			) {
+				return this.withAgentTabPin(tabId, () =>
+					this.dispatchAgentRequest(request, signal),
+				);
+			}
+			return this.dispatchAgentRequest(request, signal);
+		}, signal);
 	}
 
 	private async dispatchAgentRequest(
@@ -2570,7 +2589,7 @@ export class UserBrowserService {
 				return { tabId: state.activeTabId };
 			}
 			case "visible-close":
-				await this.closeTab(request.tabId);
+				await this.closeTabInternal(request.tabId);
 				return { closed: true };
 			case "visible-select":
 				await this.selectTab(request.tabId);
@@ -3331,6 +3350,52 @@ export class UserBrowserService {
 		}
 	}
 
+
+	private async runExclusiveTabMutation<T>(
+		operation: () => Promise<T>,
+		signal?: AbortSignal,
+	): Promise<T> {
+		if (signal?.aborted) throw signal.reason;
+		let release!: () => void;
+		const previous = this.tabMutationQueue;
+		this.tabMutationQueue = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		try {
+			await this.waitForTabMutationTurn(previous, signal);
+			if (signal?.aborted) throw signal.reason;
+			return await operation();
+		} finally {
+			release();
+		}
+	}
+
+	private waitForTabMutationTurn(
+		previous: Promise<void>,
+		signal?: AbortSignal,
+	): Promise<void> {
+		if (!signal) return previous;
+		if (signal.aborted) {
+			return Promise.reject(signal.reason);
+		}
+		return new Promise<void>((resolve, reject) => {
+			const onAbort = () => {
+				signal.removeEventListener("abort", onAbort);
+				reject(signal.reason);
+			};
+			signal.addEventListener("abort", onAbort);
+			void previous.then(
+				() => {
+					signal.removeEventListener("abort", onAbort);
+					resolve();
+				},
+				() => {
+					signal.removeEventListener("abort", onAbort);
+					resolve();
+				},
+			);
+		});
+	}
 
 	private isAgentTabPinned(tabId: string): boolean {
 		return (this.agentTabPinCounts.get(tabId) ?? 0) > 0;
