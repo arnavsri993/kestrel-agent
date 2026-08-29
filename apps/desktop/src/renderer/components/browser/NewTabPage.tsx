@@ -195,25 +195,34 @@ export function NewTabPage({
           <h1 id="new-tab-title">{greeting}</h1>
 
           <form className="kestrel-home-composer" onSubmit={submitChat}>
-            <button
-              type="button"
-              className="kestrel-home-task-settings"
-              onClick={onOpenTaskSettings}
-              aria-label="Open task settings"
-              title="Change model and thinking level"
-            >
-              <Icon name="sliders" />
-              <span>Task settings</span>
-            </button>
+            <details className="kestrel-home-model-selector">
+              <summary aria-label="Model selector: Smart" title="Model selector">
+                <span>Smart</span>
+                <Icon name="chevron" />
+              </summary>
+              <div className="kestrel-home-model-popover">
+                <strong>Model routing</strong>
+                <p>Choose provider and thinking level in task settings.</p>
+				<button
+					type="button"
+					onClick={(event) => {
+						event.currentTarget.closest("details")?.removeAttribute("open");
+						onOpenTaskSettings();
+					}}
+				>
+				  Open task settings
+				</button>
+              </div>
+            </details>
 
             <label className="sr-only" htmlFor="new-tab-chat-input">
-              Message {agentName} or enter a website
+              Message {agentName} or enter a URL
             </label>
             <input
               ref={inputRef}
               id="new-tab-chat-input"
               value={input}
-              placeholder={`Message ${agentName} or enter a website`}
+              placeholder={`Ask ${agentName} or enter a URL`}
               autoCapitalize="sentences"
               autoCorrect="on"
               spellCheck

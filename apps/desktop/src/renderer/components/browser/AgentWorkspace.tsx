@@ -52,6 +52,7 @@ export function AgentWorkspace({
 
 	return (
 		<main className="agent-workspace" aria-labelledby="agent-workspace-title">
+			<div className="page-frame">
 			<header className="agent-workspace-header">
 				{onBack && <SurfaceBackButton onBack={onBack} />}
 				<div className="agent-workspace-heading">
@@ -60,14 +61,10 @@ export function AgentWorkspace({
 					</span>
 					<div>
 						<h1 id="agent-workspace-title" tabIndex={-1}>
-							Agent Workspace
+							Tasks
 						</h1>
 					</div>
 				</div>
-				<button type="button" className="button primary" onClick={onNewTask}>
-					<Icon name="agent" />
-					New task
-				</button>
 			</header>
 
 			<section className="agent-workspace-status" aria-label="Agent status">
@@ -81,22 +78,10 @@ export function AgentWorkspace({
 				<div>
 					<Icon name="work" />
 					<span>
-						<small>Tasks</small>
-						<strong>{openCount} open</strong>
+						<small>Open</small>
+						<strong>{openCount} tasks</strong>
 					</span>
 				</div>
-				<button type="button" onClick={onOpenApprovals}>
-					<Icon name="approvals" />
-					<span>
-						<small>Approvals</small>
-						<strong>
-							{pendingApprovals
-								? `${pendingApprovals} pending`
-								: "None pending"}
-						</strong>
-					</span>
-					<Icon name="chevron" />
-				</button>
 				<button type="button" onClick={onOpenWork}>
 					<Icon name="work" />
 					<span>
@@ -113,7 +98,9 @@ export function AgentWorkspace({
 			>
 				<header>
 					<div>
-						<h2 id="agent-task-library-title">Tasks</h2>
+						<h2 id="agent-task-library-title" className="sr-only">
+							Task list
+						</h2>
 					</div>
 					<label className="agent-task-search">
 						<Icon name="search" />
@@ -145,7 +132,7 @@ export function AgentWorkspace({
 							const active = session.id === activeSessionId;
 							const workspaceName = agentWorkspaceName(session.workspaceRoot);
 							const lineage = parentTitle
-								? `Derived from ${sessionTitleForDisplay(parentTitle)} · ${workspaceName}`
+								? `From ${sessionTitleForDisplay(parentTitle)}${workspaceName ? ` · ${workspaceName}` : ""}`
 								: workspaceName;
 							return (
 								<li key={session.id}>
@@ -160,7 +147,7 @@ export function AgentWorkspace({
 												: undefined
 										}
 										aria-current={active ? "page" : undefined}
-										aria-label={`${sessionTitleForDisplay(session.title)}, ${agentSessionStatusLabel(session.status)}, ${lineage}`}
+										aria-label={`${sessionTitleForDisplay(session.title)}, ${agentSessionStatusLabel(session.status)}${lineage ? `, ${lineage}` : ""}`}
 										onClick={() => onOpenSession(session.id)}
 									>
 										<span
@@ -169,7 +156,7 @@ export function AgentWorkspace({
 										/>
 										<span className="agent-task-copy">
 											<strong>{sessionTitleForDisplay(session.title)}</strong>
-											<small>{lineage}</small>
+											{lineage ? <small>{lineage}</small> : null}
 										</span>
 										<span className="agent-task-meta">
 											<strong>{agentSessionStatusLabel(session.status)}</strong>
@@ -220,6 +207,7 @@ export function AgentWorkspace({
 					</div>
 				)}
 			</section>
+			</div>
 		</main>
 	);
 }

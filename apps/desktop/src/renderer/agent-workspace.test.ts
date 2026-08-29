@@ -57,7 +57,7 @@ describe("agent workspace presentation", () => {
 
 	it("keeps project and recency labels compact", () => {
 		expect(agentWorkspaceName("/Users/person/Store")).toBe("Store");
-		expect(agentWorkspaceName()).toBe("Conversation only");
+		expect(agentWorkspaceName()).toBe("");
 		const now = Date.parse("2026-08-11T14:00:00.000Z");
 		expect(agentSessionRecency("2026-08-11T13:59:30.000Z", now)).toBe(
 			"Just now",

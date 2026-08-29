@@ -216,7 +216,7 @@ export function KestrelSidebar({
 
 				<section className="kestrel-sidebar-section kestrel-sidebar-chats" aria-labelledby="kestrel-sidebar-chats">
 					<div className="kestrel-sidebar-section-heading">
-						<h2 id="kestrel-sidebar-chats">Chats</h2>
+						<h2 id="kestrel-sidebar-chats">Tasks</h2>
 						<button
 							type="button"
 							className="kestrel-sidebar-section-action"
@@ -256,9 +256,8 @@ export function KestrelSidebar({
 			</div>
 
 			<footer className="kestrel-sidebar-footer">
-				<div className="kestrel-sidebar-local-status">
-					<span aria-hidden="true" />
-					<span>Local workspace</span>
+				<div className="kestrel-sidebar-local-status" aria-hidden="true">
+					<span />
 				</div>
 				<SidebarNavItem
 					icon="settings"

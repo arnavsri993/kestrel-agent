@@ -27,10 +27,30 @@ import {
 	shouldRetainTabWidthOnClose,
 	TAB_CLOSE_REFIT_DELAY_MS,
 } from "./tab-strip-layout";
-import { tabFaviconDataUrl } from "./tab-favicon";
+import { recentTabFavicon, TabFavicon } from "./TabFavicon";
 
 const DETACH_DRAG_THRESHOLD_PX = 36;
 const REORDER_DRAG_THRESHOLD_PX = 12;
+const COLLAPSED_TAB_FOLDERS_KEY = "kestrel:collapsed-tab-folders";
+
+function readCollapsedTabFolders(): Set<string> {
+	try {
+		const raw = localStorage.getItem(COLLAPSED_TAB_FOLDERS_KEY);
+		if (!raw) return new Set();
+		const parsed = JSON.parse(raw) as unknown;
+		if (!Array.isArray(parsed)) return new Set();
+		return new Set(parsed.filter((value) => typeof value === "string"));
+	} catch {
+		return new Set();
+	}
+}
+
+function writeCollapsedTabFolders(folderIds: Set<string>) {
+	localStorage.setItem(
+		COLLAPSED_TAB_FOLDERS_KEY,
+		JSON.stringify([...folderIds]),
+	);
+}
 
 function relativeClosedTime(value: string): string {
 	const elapsed = Math.max(0, Date.now() - Date.parse(value));
@@ -124,6 +144,9 @@ export function TabStrip({
 	const [tabSearch, setTabSearch] = useState("");
 	const [openTabsExpanded, setOpenTabsExpanded] = useState(false);
 	const [recentlyClosedExpanded, setRecentlyClosedExpanded] = useState(true);
+	const [collapsedFolderIds, setCollapsedFolderIds] = useState(
+		readCollapsedTabFolders,
+	);
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragIntent, setDragIntent] = useState<"none" | "reorder" | "detach">(
 		"none",
@@ -424,6 +447,38 @@ export function TabStrip({
 
 	const menuTab = tabs.find((tab) => tab.id === menu?.tabId);
 	const folderById = new Map(tabFolders.map((folder) => [folder.id, folder]));
+
+	const toggleFolderCollapse = useCallback((folderId: string) => {
+		setCollapsedFolderIds((current) => {
+			const next = new Set(current);
+			if (next.has(folderId)) next.delete(folderId);
+			else next.add(folderId);
+			writeCollapsedTabFolders(next);
+			return next;
+		});
+	}, []);
+
+	const expandFolder = useCallback((folderId: string) => {
+		setCollapsedFolderIds((current) => {
+			if (!current.has(folderId)) return current;
+			const next = new Set(current);
+			next.delete(folderId);
+			writeCollapsedTabFolders(next);
+			return next;
+		});
+	}, []);
+
+	useEffect(() => {
+		const validFolderIds = new Set(tabFolders.map((folder) => folder.id));
+		setCollapsedFolderIds((current) => {
+			const next = new Set(
+				[...current].filter((folderId) => validFolderIds.has(folderId)),
+			);
+			if (next.size === current.size) return current;
+			writeCollapsedTabFolders(next);
+			return next;
+		});
+	}, [tabFolders]);
 	const folderTabCounts = new Map<string, number>();
 	for (const tab of tabs) {
 		if (tab.tabFolderId)
@@ -434,36 +489,11 @@ export function TabStrip({
 	}
 
 	function getFaviconContent(tab: UserBrowserTab) {
-		if (tab.file) return <Icon name="artifacts" />;
-		const faviconDataUrl = tabFaviconDataUrl(tab, originFavicons);
-		if (faviconDataUrl) {
-			return <img src={faviconDataUrl} alt="" />;
-		}
-		if (tab.loading) {
-			return <span className="browser-tab-spinner" />;
-		}
-		if (!tab.url) {
-			return <Icon name="globe" />;
-		}
-		try {
-			const host = new URL(tab.url).hostname.replace(/^www\./, "");
-			return (
-				<span className="browser-favicon-letter">
-					{host.charAt(0).toUpperCase()}
-				</span>
-			);
-		} catch {
-			return <Icon name="globe" />;
-		}
+		return <TabFavicon tab={tab} originFavicons={originFavicons} />;
 	}
 
 	function getRecentFaviconContent(tab: UserBrowserRecentlyClosedTab) {
-		try {
-			const host = new URL(tab.url).hostname.replace(/^www\./, "");
-			return <span className="browser-favicon-letter">{host.charAt(0).toUpperCase()}</span>;
-		} catch {
-			return <Icon name="history" />;
-		}
+		return recentTabFavicon(tab.url);
 	}
 
 	function tabHost(tab: UserBrowserTab | UserBrowserRecentlyClosedTab): string {
@@ -546,7 +576,7 @@ export function TabStrip({
 								}}
 							>
 								<Icon name="folder" />
-								<span>Cluster related tabs</span>
+								<span>Organize tabs</span>
 							</button>
 						)}
 						{onOpenWorkspaces && (
@@ -629,6 +659,7 @@ export function TabStrip({
 												key={tab.id}
 												aria-current={tab.id === activeTabId ? "page" : undefined}
 												onClick={() => {
+													if (tab.tabFolderId) expandFolder(tab.tabFolderId);
 													onSelect(tab.id);
 													closeTabTools();
 												}}
@@ -713,15 +744,27 @@ export function TabStrip({
 							const folder = tab.tabFolderId
 								? folderById.get(tab.tabFolderId)
 								: undefined;
+							const folderCollapsed = folder
+								? collapsedFolderIds.has(folder.id)
+								: false;
+							const folderHasActiveTab =
+								folder &&
+								tabs.some(
+									(candidate) =>
+										candidate.tabFolderId === folder.id &&
+										candidate.id === activeTabId,
+								);
 							const shouldRenderFolder = folder
 								? !renderedFolderIds.has(folder.id)
 								: false;
+							if (folder && folderCollapsed && !shouldRenderFolder) return [];
 							const rows: ReactNode[] = [];
 							if (folder && shouldRenderFolder) {
 								renderedFolderIds.add(folder.id);
 								rows.push(
-									<motion.div
-										className={`browser-tab-folder browser-tab-folder-${folder.color} no-drag`}
+									<motion.button
+										type="button"
+										className={`browser-tab-folder browser-tab-folder-${folder.color} no-drag${folderHasActiveTab ? " active" : ""}${folderCollapsed ? " collapsed" : ""}`}
 										key={`folder-${folder.id}`}
 										initial={
 											reducedMotion ? false : { opacity: 0 }
@@ -733,18 +776,24 @@ export function TabStrip({
 										transition={
 											reducedMotion ? { duration: 0 } : { duration: 0.16 }
 										}
-										role="presentation"
-										aria-hidden="true"
-										title={`${folder.name} folder · ${folderTabCounts.get(folder.id) ?? 0} tabs`}
+										aria-expanded={!folderCollapsed}
+										aria-label={`${folder.name}, ${folderTabCounts.get(folder.id) ?? 0} tabs`}
+										title={`${folder.name} · ${folderTabCounts.get(folder.id) ?? 0} tabs`}
+										onClick={() => toggleFolderCollapse(folder.id)}
 									>
+										<Icon
+											name="chevron"
+											className={`browser-tab-folder-chevron${folderCollapsed ? "" : " expanded"}`}
+										/>
 										<span className="browser-tab-folder-dot" aria-hidden="true" />
 										<span className="browser-tab-folder-name">{folder.name}</span>
 										<span className="browser-tab-folder-count">
 											{folderTabCounts.get(folder.id) ?? 0}
 										</span>
-									</motion.div>,
+									</motion.button>,
 								);
 							}
+							if (folder && folderCollapsed) return rows;
 							// Keep tab boxes on the same baseline while flexbox recalculates
 							// widths. Lifecycle feedback should not move neighbors or scale
 							// their hit targets.
@@ -874,7 +923,7 @@ export function TabStrip({
 								setMenu(null);
 							}}
 						>
-							Cluster related tabs
+							Organize tabs
 						</button>
 					)}
 					<button

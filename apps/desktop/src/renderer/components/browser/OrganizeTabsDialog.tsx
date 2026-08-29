@@ -7,7 +7,7 @@ import type {
 	UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
-import { tabFaviconDataUrl } from "./tab-favicon";
+import { TabFavicon } from "./TabFavicon";
 
 const FOLDER_COLORS: readonly UserBrowserTabFolderColor[] = [
 	"blue",
@@ -44,11 +44,7 @@ function faviconForTab(
 		"origin" | "faviconDataUrl"
 	>[] | undefined,
 ) {
-	if (tab.file) return <Icon name="artifacts" />;
-	const faviconDataUrl = tabFaviconDataUrl(tab, originFavicons);
-	if (faviconDataUrl) return <img src={faviconDataUrl} alt="" />;
-	if (!tab.url) return <Icon name="globe" />;
-	return <span>{hostForTab(tab).charAt(0).toUpperCase()}</span>;
+	return <TabFavicon tab={tab} originFavicons={originFavicons} />;
 }
 
 export function OrganizeTabsDialog({
@@ -63,7 +59,10 @@ export function OrganizeTabsDialog({
 		"origin" | "faviconDataUrl"
 	>[];
 	onCancel(): void;
-	onApply(organization: UserBrowserTabOrganizationPreview): Promise<void>;
+	onApply(
+		organization: UserBrowserTabOrganizationPreview,
+		closeTabIds: readonly string[],
+	): Promise<void>;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
 	const [organization, setOrganization] =
@@ -75,9 +74,11 @@ export function OrganizeTabsDialog({
 	const [editingName, setEditingName] = useState("");
 	const [editingColor, setEditingColor] =
 		useState<UserBrowserTabFolderColor>("blue");
-	const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const [selectedCloseTabIds, setSelectedCloseTabIds] = useState<Set<string>>(
+		() => new Set(),
+	);
 	const dialogRef = useRef<HTMLDivElement | null>(null);
 	const editInputRef = useRef<HTMLInputElement | null>(null);
 	const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -87,6 +88,9 @@ export function OrganizeTabsDialog({
 		setCollapsedFolderIds(new Set());
 		setEditingFolderId(null);
 		setError("");
+		setSelectedCloseTabIds(
+			new Set(preview.suggestedDeletions.map((item) => item.tabId)),
+		);
 	}, [preview]);
 
 	useEffect(() => {
@@ -150,9 +154,18 @@ export function OrganizeTabsDialog({
 		return result;
 	}, [organization.tabs]);
 
-	const ungroupedCount = organization.tabs.filter(
-		(tab) => !tab.tabFolderId,
-	).length;
+	const tabsById = useMemo(
+		() => new Map(organization.tabs.map((tab) => [tab.id, tab])),
+		[organization.tabs],
+	);
+
+	const visibleFolders = useMemo(
+		() =>
+			organization.tabFolders.filter(
+				(folder) => (tabsByFolderId.get(folder.id)?.length ?? 0) >= 2,
+			),
+		[organization.tabFolders, tabsByFolderId],
+	);
 
 	function beginEdit(folderId: string) {
 		const folder = organization.tabFolders.find((item) => item.id === folderId);
@@ -176,7 +189,7 @@ export function OrganizeTabsDialog({
 		if (!folder) return cancelEdit();
 		const name = editingName.trim();
 		if (!name) {
-			setError("Give this cluster a name before saving.");
+			setError("Give this folder a name before saving.");
 			return;
 		}
 		setOrganization((current) => ({
@@ -200,12 +213,40 @@ export function OrganizeTabsDialog({
 		});
 	}
 
+	function toggleCloseSuggestion(tabId: string) {
+		setSelectedCloseTabIds((current) => {
+			const next = new Set(current);
+			if (next.has(tabId)) next.delete(tabId);
+			else next.add(tabId);
+			return next;
+		});
+	}
+
 	async function apply() {
 		if (busy) return;
 		setBusy(true);
 		setError("");
 		try {
-			await onApply(organization);
+			const validFolderIds = new Set(visibleFolders.map((folder) => folder.id));
+			const closeTabIds = organization.suggestedDeletions
+				.map((item) => item.tabId)
+				.filter((tabId) => selectedCloseTabIds.has(tabId));
+			const remainingTabs = organization.tabs.filter(
+				(tab) => !closeTabIds.includes(tab.id),
+			);
+			await onApply(
+				{
+					...organization,
+					tabFolders: visibleFolders,
+					tabs: remainingTabs.map((tab) =>
+						tab.tabFolderId && !validFolderIds.has(tab.tabFolderId)
+							? { ...tab, tabFolderId: undefined }
+							: tab,
+					),
+					suggestedDeletions: [],
+				},
+				closeTabIds,
+			);
 		} catch (cause) {
 			setError(
 				cause instanceof Error
@@ -230,26 +271,18 @@ export function OrganizeTabsDialog({
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="organize-tabs-title"
-				aria-describedby="organize-tabs-description"
-				initial={reducedMotion ? false : { opacity: 0, scale: 0.97, y: 10 }}
+				initial={reducedMotion ? false : { opacity: 0, scale: 0.98, y: 8 }}
 				animate={{ opacity: 1, scale: 1, y: 0 }}
-				transition={{ duration: reducedMotion ? 0 : 0.18 }}
+				transition={{ duration: reducedMotion ? 0 : 0.16 }}
 				aria-busy={busy}
 			>
 				<header className="organize-tabs-dialog-header">
-					<div>
-						<h2 id="organize-tabs-title">Tab clusters</h2>
-						<p id="organize-tabs-description">
-							Kestrel suggests labels from tab titles and site names. Review the clusters before applying them.
-						</p>
-					</div>
+					<h2 id="organize-tabs-title">Organize tabs</h2>
 					<button
 						type="button"
 						className="organize-tabs-close"
-						aria-label="Close tab clusters"
-						data-organize-tabs-initial-focus={
-							organization.tabFolders.length === 0 ? true : undefined
-						}
+						aria-label="Close organize tabs"
+						data-organize-tabs-initial-focus
 						onClick={onCancel}
 						disabled={busy}
 					>
@@ -257,39 +290,48 @@ export function OrganizeTabsDialog({
 					</button>
 				</header>
 
-				<section className="organize-tabs-feedback" aria-label="Organizer feedback">
-					<strong>Does this grouping fit?</strong>
-					<div>
-						<button
-							type="button"
-							className={feedback === "up" ? "selected" : ""}
-							aria-label="This grouping works"
-							aria-pressed={feedback === "up"}
-							onClick={() => setFeedback("up")}
+				<div className="organize-tabs-scroll" role="list" aria-label="Suggested tab folders">
+					{organization.suggestedDeletions.length > 0 && (
+						<section
+							className="organize-tabs-deletions"
+							aria-label="Suggested tabs to close"
 						>
-							<Icon name="thumbUp" />
-						</button>
-						<button
-							type="button"
-							className={feedback === "down" ? "selected" : ""}
-							aria-label="This grouping needs changes"
-							aria-pressed={feedback === "down"}
-							onClick={() => setFeedback("down")}
-						>
-							<Icon name="thumbDown" />
-						</button>
-					</div>
-				</section>
-
-				<div className="organize-tabs-scroll" role="list" aria-label="Suggested tab clusters">
-					{organization.tabFolders.length === 0 ? (
+							<div className="organize-tabs-section-heading">
+								<strong>Suggested to close</strong>
+								<span>{selectedCloseTabIds.size} selected</span>
+							</div>
+							{organization.suggestedDeletions.map((suggestion) => {
+								const tab = tabsById.get(suggestion.tabId);
+								if (!tab) return null;
+								const checked = selectedCloseTabIds.has(suggestion.tabId);
+								return (
+									<label className="organize-tabs-deletion" key={suggestion.tabId}>
+										<input
+											type="checkbox"
+											checked={checked}
+											onChange={() => toggleCloseSuggestion(suggestion.tabId)}
+										/>
+										<span className="organize-tabs-tab-favicon" aria-hidden="true">
+											{faviconForTab(tab, originFavicons)}
+										</span>
+										<span className="organize-tabs-tab-copy">
+											<strong>{tab.title}</strong>
+											<small>{suggestion.reason}</small>
+										</span>
+									</label>
+								);
+							})}
+						</section>
+					)}
+					{visibleFolders.length === 0 &&
+					organization.suggestedDeletions.length === 0 ? (
 						<div className="organize-tabs-empty" role="status">
 							<Icon name="folder" />
-							<strong>No useful clusters yet</strong>
-							<span>Open a few related pages and try again.</span>
+							<strong>No groups to suggest</strong>
+							<span>Open a few related pages, then try again.</span>
 						</div>
 					) : (
-						organization.tabFolders.map((folder) => {
+						visibleFolders.map((folder) => {
 							const folderTabs = tabsByFolderId.get(folder.id) ?? [];
 							const collapsed = collapsedFolderIds.has(folder.id);
 							const editing = editingFolderId === folder.id;
@@ -299,7 +341,7 @@ export function OrganizeTabsDialog({
 									key={folder.id}
 									className={`organize-tabs-group organize-tabs-group-${folder.color}`}
 									role="listitem"
-									aria-label={`${folder.name} cluster`}
+									aria-label={`${folder.name} folder`}
 								>
 									<div className="organize-tabs-group-header">
 										<button
@@ -307,9 +349,6 @@ export function OrganizeTabsDialog({
 											className="organize-tabs-group-toggle"
 											aria-expanded={!collapsed}
 											aria-controls={groupId}
-											data-organize-tabs-initial-focus={
-												folder === organization.tabFolders[0] ? true : undefined
-											}
 											onClick={() => toggleFolder(folder.id)}
 										>
 											<span className="organize-tabs-folder-chip">
@@ -324,7 +363,7 @@ export function OrganizeTabsDialog({
 										<button
 											type="button"
 											className="organize-tabs-edit"
-											aria-label={`Edit ${folder.name} cluster`}
+											aria-label={`Edit ${folder.name} folder`}
 											onClick={() => beginEdit(folder.id)}
 										>
 											<Icon name="writing" />
@@ -336,7 +375,7 @@ export function OrganizeTabsDialog({
 											onSubmit={saveEdit}
 										>
 											<label>
-												<span>Cluster name</span>
+												<span>Folder name</span>
 												<input
 													ref={editInputRef}
 													value={editingName}
@@ -351,7 +390,7 @@ export function OrganizeTabsDialog({
 													}}
 												/>
 											</label>
-											<div className="organize-tabs-color-picker" role="group" aria-label="Cluster color">
+											<div className="organize-tabs-color-picker" role="group" aria-label="Folder color">
 												{FOLDER_COLORS.map((color) => (
 													<button
 														key={color}
@@ -371,40 +410,35 @@ export function OrganizeTabsDialog({
 											</div>
 										</form>
 									)}
-								<motion.div
-									id={groupId}
-									className="organize-tabs-group-tabs"
-									initial={false}
-									animate={{ opacity: collapsed ? 0 : 1, height: collapsed ? 0 : "auto" }}
-									transition={{ duration: reducedMotion ? 0 : 0.14 }}
-									aria-hidden={collapsed}
-								>
-									{folderTabs.map((tab) => (
-										<div className="organize-tabs-tab" key={tab.id}>
-											<span className="organize-tabs-tab-favicon" aria-hidden="true">
-												{faviconForTab(tab, originFavicons)}
-											</span>
-											<span className="organize-tabs-tab-copy">
-												<strong>{tab.title}</strong>
-												<small>{hostForTab(tab)}</small>
-											</span>
-										</div>
-									))}
-								</motion.div>
+									<motion.div
+										id={groupId}
+										className="organize-tabs-group-tabs"
+										initial={false}
+										animate={{
+											opacity: collapsed ? 0 : 1,
+											height: collapsed ? 0 : "auto",
+										}}
+										transition={{ duration: reducedMotion ? 0 : 0.14 }}
+										aria-hidden={collapsed}
+									>
+										{folderTabs.map((tab) => (
+											<div className="organize-tabs-tab" key={tab.id}>
+												<span className="organize-tabs-tab-favicon" aria-hidden="true">
+													{faviconForTab(tab, originFavicons)}
+												</span>
+												<span className="organize-tabs-tab-copy">
+													<strong>{tab.title}</strong>
+													<small>{hostForTab(tab)}</small>
+												</span>
+											</div>
+										))}
+									</motion.div>
 								</section>
 							);
 						})
 					)}
 				</div>
 
-				{ungroupedCount > 0 && (
-					<p className="organize-tabs-unassigned" role="status">
-						<Icon name="info" />
-						<span>
-							{ungroupedCount} tab{ungroupedCount === 1 ? "" : "s"} will stay where they are.
-						</span>
-					</p>
-				)}
 				{error && <p className="organize-tabs-error" role="alert">{error}</p>}
 				<footer className="organize-tabs-dialog-footer">
 					<button
@@ -419,9 +453,18 @@ export function OrganizeTabsDialog({
 						type="button"
 						className="organize-tabs-primary"
 						onClick={() => void apply()}
-						disabled={busy}
+						disabled={
+							busy ||
+							(visibleFolders.length === 0 && selectedCloseTabIds.size === 0)
+						}
 					>
-						{busy ? "Applying…" : "Apply clusters"}
+						{busy
+							? "Applying…"
+							: selectedCloseTabIds.size > 0 && visibleFolders.length === 0
+								? "Close selected tabs"
+								: selectedCloseTabIds.size > 0
+									? "Apply changes"
+									: "Group tabs"}
 					</button>
 				</footer>
 			</motion.div>

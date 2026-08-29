@@ -219,7 +219,7 @@
 
 .kestrel-home-model-popover {
   position: absolute;
-  z-index: 3;
+  z-index: 12;
   top: calc(100% + 10px);
   left: 0;
   width: 240px;

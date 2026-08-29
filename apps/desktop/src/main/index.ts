@@ -2989,7 +2989,7 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
-        browserState: requestBrowserService.applyTabOrganization(request),
+        browserState: await requestBrowserService.applyTabOrganization(request),
       };
     }
     if (request.type === "browser-detach-tab") {

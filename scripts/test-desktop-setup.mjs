@@ -451,18 +451,14 @@ try {
 	);
 	await page.getByLabel("Message Kestrel").fill("");
 	await page.setViewportSize({ width: 640, height: 760 });
-	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
+	await page.locator(".kestrel-sidebar").waitFor({ state: "visible" });
 	assert.equal(
-		await page.locator(".kestrel-sidebar").count(),
-		0,
-		"The Kestrel navigation rail must hide outside the New Tab page",
+		await page.locator(".kestrel-sidebar-brand span").evaluate(
+			(node) => window.getComputedStyle(node).display === "none",
+		),
+		true,
+		"The Kestrel navigation rail should collapse to icon-only mode on narrow widths",
 	);
-	assert.equal(await page.locator(".agent-sidebar-footer").count(), 0);
-	assert.equal(
-		await page.getByRole("navigation", { name: "Kestrel destinations" }).count(),
-		0,
-	);
-	assert.equal(await page.getByRole("button", { name: "More", exact: true }).count(), 0);
 	assert.equal(
 		await page.evaluate(
 			() =>

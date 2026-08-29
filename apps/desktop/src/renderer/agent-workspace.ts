@@ -41,7 +41,7 @@ export function agentSessionStatusLabel(status: RuntimeSessionStatus): string {
 }
 
 export function agentWorkspaceName(workspaceRoot?: string): string {
-	if (!workspaceRoot) return "Conversation only";
+	if (!workspaceRoot) return "";
 	const segments = workspaceRoot.split(/[\\/]/).filter(Boolean);
 	return segments.at(-1) ?? workspaceRoot;
 }

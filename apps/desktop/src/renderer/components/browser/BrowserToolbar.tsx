@@ -57,6 +57,7 @@ export function BrowserToolbar({
   searchEngine,
   customSearchName,
   addressBarSuggestionsEnabled,
+  agentName,
   agentOpen,
   addressRef,
   bookmarked,
@@ -95,6 +96,7 @@ export function BrowserToolbar({
   searchEngine: UserBrowserSettings["searchEngine"];
   customSearchName?: string;
   addressBarSuggestionsEnabled: boolean;
+  agentName: string;
   agentOpen: boolean;
   addressRef: RefObject<HTMLInputElement | null>;
   bookmarked: boolean;
@@ -808,15 +810,15 @@ export function BrowserToolbar({
           id="browser-agent-toggle"
           type="button"
           className={`browser-agent-toggle ${agentOpen ? "active" : ""}`}
-          aria-label={agentOpen ? "Hide Pragmatic" : "Show Pragmatic"}
+          aria-label={agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}
           aria-expanded={agentOpen}
-          title={agentOpen ? "Hide Pragmatic" : "Show Pragmatic"}
+          title={agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}
           onClick={onToggleAgent}
         >
           <span className="pragmatic-logo" aria-hidden="true">
             <Icon name="pragmatic" />
           </span>
-          <span>Pragmatic</span>
+          <span>{agentName}</span>
         </button>
 
         {openMenu && (
