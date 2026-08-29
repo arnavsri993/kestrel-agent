@@ -156,6 +156,8 @@ let dockAnimationTimer: ReturnType<typeof setInterval> | undefined;
 let dockCompletionTimer: ReturnType<typeof setTimeout> | undefined;
 let dockAnimationGeneration = 0;
 let quitting = false;
+let shutdownComplete = false;
+let shutdownPromise: Promise<void> | null = null;
 let coreStartupComplete = false;
 let startupRecoveryWindowCreated = false;
 let agentState: AgentState = "idle";
@@ -4246,22 +4248,46 @@ app.on("open-url", (event, url) => {
   event.preventDefault();
   handleIncomingUrl(url);
 });
-app.on("before-quit", () => {
-  quitting = true;
-});
-app.on("will-quit", () => {
-	providerAuthMonitor.stop();
-		if (dockAnimationTimer) clearInterval(dockAnimationTimer);
-		if (dockCompletionTimer) clearTimeout(dockCompletionTimer);
-		tray?.destroy();
-	tray = null;
-	for (const service of new Set(browserWindowServices.values())) service.dispose();
+
+async function cancelActiveOAuthFlows(): Promise<void> {
+  googleOAuthController?.abort(new Error("Kestrel is shutting down."));
+  chatGptOAuthController?.abort(new Error("Kestrel is shutting down."));
+  await activeChatGptOAuthManager?.cancel().catch(() => undefined);
+  googleOAuthController = null;
+  chatGptOAuthController = null;
+  activeChatGptOAuthManager = null;
+}
+
+async function performAppShutdown(): Promise<void> {
+  providerAuthMonitor.stop();
+  await cancelActiveOAuthFlows();
+  await Promise.all([
+    supervisor.stop().catch(() => undefined),
+    (managedLocalRuntime?.stop() ?? Promise.resolve()).catch(() => undefined),
+  ]);
+}
+
+function disposeAppResources(): void {
+  if (dockAnimationTimer) clearInterval(dockAnimationTimer);
+  if (dockCompletionTimer) clearTimeout(dockCompletionTimer);
+  tray?.destroy();
+  tray = null;
+  for (const service of new Set(browserWindowServices.values())) service.dispose();
   browserWindowServices.clear();
   userBrowserService = null;
-  void Promise.all([
-    supervisor.stop(),
-    managedLocalRuntime?.stop() ?? Promise.resolve(),
-  ]);
+}
+
+app.on("before-quit", (event) => {
+  quitting = true;
+  if (shutdownComplete) return;
+  event.preventDefault();
+  shutdownPromise ??= performAppShutdown().catch(() => undefined);
+  void shutdownPromise.then(() => {
+    if (shutdownComplete) return;
+    disposeAppResources();
+    shutdownComplete = true;
+    app.quit();
+  });
 });
 app.on("activate", () => {
   showMainWindow();
