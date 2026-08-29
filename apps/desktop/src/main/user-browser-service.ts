@@ -2372,19 +2372,49 @@ export class UserBrowserService {
 		signal?: AbortSignal,
 	): Promise<ScreenshotFrame> {
 		const tab = this.requireTab(tabId ?? this.requireActiveTab().id);
-		const webContents = this.ensureView(tab).view.webContents;
-		if (signal?.aborted) throw signal.reason;
-		const image = await webContents.capturePage();
-		const { width, height } = image.getSize();
-		const bgra = image.toBitmap();
-		const rgba = new Uint8Array(bgra.byteLength);
-		for (let offset = 0; offset < bgra.length; offset += 4) {
-			rgba[offset] = bgra[offset + 2]!;
-			rgba[offset + 1] = bgra[offset + 1]!;
-			rgba[offset + 2] = bgra[offset]!;
-			rgba[offset + 3] = bgra[offset + 3]!;
+		let lastError: Error | undefined;
+		for (let attempt = 0; attempt < 8; attempt++) {
+			if (signal?.aborted) throw signal.reason;
+			await this.syncActiveView();
+			const record = this.ensureView(tab);
+			const view = record.view;
+			const webContents = view.webContents;
+			if (
+				!this.contentVisible ||
+				!this.window.contentView.children.includes(view)
+			) {
+				lastError = new Error(
+					"Active browser view is not attached for screenshot.",
+				);
+				await new Promise<void>((resolve) => setTimeout(resolve, 50));
+				continue;
+			}
+			try {
+				const image = await webContents.capturePage();
+				const { width, height } = image.getSize();
+				if (width < 1 || height < 1) {
+					throw new Error("Screenshot capture returned an empty frame.");
+				}
+				const bgra = image.toBitmap();
+				const rgba = new Uint8Array(bgra.byteLength);
+				for (let offset = 0; offset < bgra.length; offset += 4) {
+					rgba[offset] = bgra[offset + 2]!;
+					rgba[offset + 1] = bgra[offset + 1]!;
+					rgba[offset + 2] = bgra[offset]!;
+					rgba[offset + 3] = bgra[offset + 3]!;
+				}
+				return { width, height, rgba, png: image.toPNG() };
+			} catch (cause) {
+				lastError =
+					cause instanceof Error
+						? cause
+						: new Error("Visible browser screenshot capture failed.");
+				await new Promise<void>((resolve) => setTimeout(resolve, 50));
+			}
 		}
-		return { width, height, rgba, png: image.toPNG() };
+		throw (
+			lastError ?? new Error("Visible browser screenshot capture failed.")
+		);
 	}
 
 	async act(

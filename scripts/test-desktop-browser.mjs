@@ -169,6 +169,36 @@ async function waitForNativeView(predicate, label) {
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
 }
 
+async function waitForNativeViewportBounds(label) {
+	const deadline = Date.now() + 30_000;
+	let latest;
+	while (Date.now() < deadline) {
+		const viewport = await page.locator("#browser-viewport").boundingBox();
+		if (viewport) {
+			const expected = {
+				x: Math.round(viewport.x),
+				y: Math.round(viewport.y),
+				width: Math.round(viewport.width),
+				height: Math.round(viewport.height),
+			};
+			latest = await nativeViewState();
+			const view = latest.views[0];
+			if (
+				view &&
+				view.bounds.x === expected.x &&
+				view.bounds.y === expected.y &&
+				view.bounds.width === expected.width &&
+				view.bounds.height === expected.height
+			) {
+				return latest;
+			}
+		}
+		await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	throw new Error(`${label}: ${JSON.stringify(latest)}`);
+}
+
 async function waitForNativeViewInAnyWindow(expectedUrl, label) {
 	const deadline = Date.now() + 30_000;
 	let latest;
@@ -770,23 +800,17 @@ try {
 	assert.equal(loaded.views[0].destroyed, false);
 	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
 	await assertBrowserChromeLayout({ sidebarVisible: false });
+	const resized = await waitForNativeViewportBounds(
+		"Native page did not resize after Kestrel navigation hid",
+	);
 	const viewport = await page.locator("#browser-viewport").boundingBox();
 	assert(viewport);
-	const expectedViewportBounds = {
+	assert.deepEqual(resized.views[0].bounds, {
 		x: Math.round(viewport.x),
 		y: Math.round(viewport.y),
 		width: Math.round(viewport.width),
 		height: Math.round(viewport.height),
-	};
-	const resized = await waitForNativeView(
-		(value) =>
-			value.views[0]?.bounds.x === expectedViewportBounds.x &&
-			value.views[0]?.bounds.y === expectedViewportBounds.y &&
-			value.views[0]?.bounds.width === expectedViewportBounds.width &&
-			value.views[0]?.bounds.height === expectedViewportBounds.height,
-		"Native page did not resize after Kestrel navigation hid",
-	);
-	assert.deepEqual(resized.views[0].bounds, expectedViewportBounds);
+	});
 	// Browser pages are native WebContentsViews layered beside the renderer.
 	// Menus opened from the browser chrome must temporarily release that view;
 	// DOM z-index alone cannot place a renderer menu above a native sibling.
@@ -862,6 +886,10 @@ try {
 		},
 		"Browser did not return to Page one after leaving Agent",
 	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not reattach after returning from Agent",
+	);
 	const blocked = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",
@@ -926,6 +954,14 @@ try {
 	);
 	assert.equal(snapshot?.status, "verified");
 	assert.equal(snapshot?.output?.trust, "untrusted_browser");
+	await waitForNativeView(
+		(value) =>
+			value.views.length === 1 &&
+			value.views[0]?.url === `${origin}/one` &&
+			value.views[0]?.bounds.width >= 160 &&
+			value.views[0]?.bounds.height >= 120,
+		"Native page was not ready for visible screenshot",
+	);
 	const screenshot = await callTool(
 		runtimeSessionId,
 		"browser.visible-screenshot",
@@ -1046,10 +1082,14 @@ try {
 	await page.mouse.down();
 	await page.mouse.move(
 		detachableBounds.x + detachableBounds.width / 2,
-		detachableBounds.y + detachableBounds.height / 2 + 48,
-		{ steps: 3 },
+		detachableBounds.y + detachableBounds.height / 2 + 64,
+		{ steps: 8 },
 	);
 	await page.mouse.up();
+	await waitForBrowserState(
+		(value) => !value.tabs.some((tab) => tab.id === detachableTabId),
+		"Detached tab did not leave the source window",
+	);
 	const detachedWindowState = await waitForNativeViewInAnyWindow(
 		`${origin}/two`,
 		"Detached page did not attach to its new Kestrel window",
