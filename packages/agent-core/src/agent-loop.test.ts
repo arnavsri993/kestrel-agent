@@ -265,7 +265,7 @@ describe("provider-neutral agent loop", () => {
 			execute: async () => ({ ok: true }),
 			verify: async () => ({
 				method: "fixture-readback",
-				evidenceSha256: "a".repeat(64),
+				evidence: { fixture: true },
 			}),
 		});
 		const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
