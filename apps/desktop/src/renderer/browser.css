@@ -1470,8 +1470,8 @@ body:has(.ai-browser-app),
 
 .browser-tabs {
 	display: flex;
-	/* Let tabs grow into the unused top-bar space before they need to compress. */
-	flex: 1 1 0;
+	/* Shrink-wrap tabs so the New Tab control stays beside the rightmost tab. */
+	flex: 0 1 auto;
 	align-items: flex-end;
 	min-width: 0;
 	max-width: 100%;
@@ -1738,8 +1738,8 @@ body:has(.ai-browser-app),
 	display: none;
 }
 .browser-tab-drag-fill {
-	/* Keep a small native drag target without taking room from the tabs. */
-	flex: 0 0 24px;
+	/* Let the empty strip remain a native drag target after the tabs. */
+	flex: 1 1 32px;
 	min-width: 24px;
 	height: 34px;
 	-webkit-app-region: drag;
