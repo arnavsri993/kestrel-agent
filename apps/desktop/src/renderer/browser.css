@@ -1876,6 +1876,13 @@ body:has(.ai-browser-app),
 	z-index: 3;
 	min-width: 0;
 }
+
+/* Address suggestions extend below the toolbar row. Let them paint above the
+ * viewport without being clipped by workspace overflow or competing widgets. */
+.browser-toolbar:has(.browser-address-suggestions) {
+	z-index: 20;
+	overflow: visible;
+}
 .browser-address input {
 	position: relative;
 	z-index: 2;

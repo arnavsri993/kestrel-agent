@@ -116,8 +116,14 @@
 	top: 0;
 	left: 0;
 	right: 0;
+	z-index: 10;
 	width: auto;
 	height: 48px;
+}
+
+.browser-workspace-vertical .browser-toolbar:has(.browser-address-suggestions) {
+	z-index: 20;
+	overflow: visible;
 }
 
 .browser-workspace-vertical .browser-bookmarks-bar {
@@ -166,6 +172,7 @@
 	left: calc(var(--kestrel-sidebar-space) + var(--browser-tab-rail-width));
 	right: auto;
 	bottom: 0;
+	z-index: 1;
 	width: calc(
 		100vw - var(--kestrel-sidebar-space) - var(--browser-tab-rail-width) -
 			var(--agent-panel-width)
