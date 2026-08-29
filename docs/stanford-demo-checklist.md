@@ -1,6 +1,6 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `80baae38` (engineering gate on `main` after #638 usage policy settings fix; docs refresh #637 at `00d2d0ed`)
+**Snapshot commit:** `35782c1d` (docs refresh recording `verify:meetup` **PASS** at `80baae38` in #639; engineering gate unchanged)
 
 **Merged sprint:** #617–#637 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
@@ -137,6 +137,37 @@ Run in order on the **presentation Mac** the morning of the demo:
 
 ---
 
+## Sprint close (engineering handoff → operator)
+
+**Engineering sprint closed at `35782c1d`.** Repository gates A1–A7 and A9, hero pillars B2–B3,
+first-task contract C1–C4/C6, memory surfacing D1/D3–D4/D7, and New Tab home E1–E5 are
+**COMPLETE** on the engineering Mac. No further P0 engineering blockers identified for the
+primary offline demo path.
+
+**Do not mark the product shippable for Stanford until all of the following PASS on the
+presentation Mac:**
+
+1. **F2 — On-stage rehearsal** — full ten-minute path, memory beat, and first task with venue timing.
+2. **Presentation Mac `verify:meetup`** — must pass at commit `35782c1d` (or later on `main`) after
+   stopping any `dev:desktop` watcher and clearing `kestrel-electron-dev.lock`.
+3. **F1 — Apple signing** — only if distributing beyond ad-hoc dev build; demo may proceed with
+   `install:mac:dev` ad-hoc signature when rehearsal is green.
+
+**Morning-of (Sai, presentation Mac):**
+
+1. `git fetch` && checkout `35782c1d` (or latest `main` if a docs-only follow-up merged).
+2. `corepack pnpm install --frozen-lockfile`
+3. Stop `dev:desktop`; clear `kestrel-electron-dev.lock` if present.
+4. `corepack pnpm verify:meetup` — must pass; retry once after clean preflight if a smoke flakes.
+5. `corepack pnpm install:mac:dev` && `open -a Kestrel`
+6. Readiness all green; warm local model within 10 min of stage time.
+7. Disposable project on disk; explicit memory capture on; rehearse first task **or** memory beat.
+
+Optional surfaces (Google OAuth F3, remote crash reporting F4, Honcho remote memory) remain
+out of scope for the primary stage story.
+
+---
+
 ## H. verify:meetup history
 
 | Commit | Date | Result | Notes |
@@ -152,6 +183,7 @@ Run in order on the **presentation Mac** the morning of the demo:
 | `8757ffff` | Aug 29, 2026 | **FAIL** (~0.3s) | Preflight only — dev watcher + Electron dev lock still active; cleared `/var/folders/.../T/kestrel-electron-dev.lock` and killed `electron-vite dev`, then re-ran |
 | `8757ffff` | Aug 29, 2026 | **PASS** (~198s) | Full `verify:meetup` on `main` after #636 Writing Studio profile panel fix; preflight clean; 1001 unit tests; packaged smokes + 50/50 benchmark |
 | `80baae38` | Aug 29, 2026 | **PASS** (~196s) | Full `verify:meetup` on `main` after #638 usage policy settings loading/error fix; preflight clean after killing stray `dev:desktop`; 1001 unit tests; packaged smokes + 50/50 benchmark |
+| `35782c1d` | Aug 29, 2026 | **Docs only** | #639 records engineering gate at `80baae38`; no code delta; sprint-close operator handoff |
 
 **Engineering note:** #629 stabilized browser attach/detach. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear `/tmp/kestrel-electron-dev.lock` before gating. Latest engineering meetup **PASS** at `80baae38` (~196s). #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected. #636 fixes Writing Studio profile panel showing dual loading/error states. #638 fixes Usage policy settings showing loading text alongside a load error.
 
