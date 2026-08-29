@@ -1,6 +1,6 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `35782c1d` (docs refresh recording `verify:meetup` **PASS** at `80baae38` in #639; engineering gate unchanged)
+**Snapshot commit:** `0ead20d1` (docs refresh recording engineering Mac install dry-run in #641; `verify:meetup` **PASS** evidence unchanged at `80baae38`)
 
 **Merged sprint:** #617–#637 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
@@ -122,7 +122,7 @@ or link, and an honest status as of the snapshot commit.
 
 Run in order on the **presentation Mac** the morning of the demo:
 
-- [ ] `git fetch` && checkout presentation commit (`80baae38` or later on `main`)
+- [ ] `git fetch` && checkout presentation commit (`0ead20d1` or later on `main`)
 - [ ] `corepack pnpm install --frozen-lockfile`
 - [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present (**required** — `verify:meetup` now fails fast via preflight guard if either is still active)
 - [ ] `corepack pnpm verify:meetup` — **must pass**; preflight prints stop/clear instructions on failure; if a desktop smoke fails once after a clean preflight, retry once; if persistent, file engineering issue before relying on browser tools on stage
@@ -139,7 +139,7 @@ Run in order on the **presentation Mac** the morning of the demo:
 
 ## Sprint close (engineering handoff → operator)
 
-**Engineering sprint closed at `35782c1d`.** Repository gates A1–A7 and A9, hero pillars B2–B3,
+**Engineering sprint closed at `0ead20d1`.** Repository gates A1–A7 and A9, hero pillars B2–B3,
 first-task contract C1–C4/C6, memory surfacing D1/D3–D4/D7, and New Tab home E1–E5 are
 **COMPLETE** on the engineering Mac. No further P0 engineering blockers identified for the
 primary offline demo path.
@@ -148,14 +148,14 @@ primary offline demo path.
 presentation Mac:**
 
 1. **F2 — On-stage rehearsal** — full ten-minute path, memory beat, and first task with venue timing.
-2. **Presentation Mac `verify:meetup`** — must pass at commit `35782c1d` (or later on `main`) after
+2. **Presentation Mac `verify:meetup`** — must pass at commit `0ead20d1` (or later on `main`) after
    stopping any `dev:desktop` watcher and clearing `kestrel-electron-dev.lock`.
 3. **F1 — Apple signing** — only if distributing beyond ad-hoc dev build; demo may proceed with
    `install:mac:dev` ad-hoc signature when rehearsal is green.
 
 **Morning-of (Sai, presentation Mac):**
 
-1. `git fetch` && checkout `35782c1d` (or latest `main` if a docs-only follow-up merged).
+1. `git fetch` && checkout `0ead20d1` (or latest `main` if a docs-only follow-up merged).
 2. `corepack pnpm install --frozen-lockfile`
 3. Stop `dev:desktop`; clear `kestrel-electron-dev.lock` if present.
 4. `corepack pnpm verify:meetup` — must pass; retry once after clean preflight if a smoke flakes.
