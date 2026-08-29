@@ -61,7 +61,14 @@ The packaged development build is Apple Silicon and ad-hoc signed. It is useful 
 - Static Next.js product site with accessible responsive states and provenance-tracked generated/fallback atmosphere.
 - Verified ad-hoc-signed Apple Silicon (`arm64`) `.app` packaging (not Developer ID signed and not notarized), plus release automation that can produce signed/notarized DMG and ZIP artifacts once organization-owned credentials are supplied.
 
-Not yet complete: public Google OAuth app verification and bundled client registration, additional mailbox/messaging connectors, Developer ID signing, notarization, a real update host, and a public download URL. Users can already connect their own Google Desktop OAuth client through PKCE for Gmail send, read-only code lookup, and Calendar event access.
+Not yet complete without operator setup: Developer ID signing, notarization, a
+verified public download host, Google OAuth app verification for the bundled
+Desktop client, and remote crash aggregation. The repository gate, website
+fail-closed download path, release workflow, bundled OAuth wiring, local
+diagnostic export, and guided first-task onboarding are ready in code. Users can
+already connect their own Google Desktop OAuth client through PKCE for Gmail
+send, read-only code lookup, and Calendar event access. See
+[public release operator checklist](docs/public-release-operator-checklist.md).
 
 ## Browser and agent workspace
 

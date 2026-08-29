@@ -3455,6 +3455,7 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("local-runtime-cancel") }),
 	z.object({ type: z.literal("system-readiness") }),
+	z.object({ type: z.literal("export-diagnostic-report") }),
 	z.object({ type: z.literal("create-local-backup") }),
 	z.object({ type: z.literal("reveal-local-backup"), path: z.string().min(1) }),
 	z.object({ type: z.literal("subscription-cli-status") }),
@@ -3468,7 +3469,7 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("oauth-google-status") }),
 	z.object({
 		type: z.literal("oauth-google-connect"),
-		clientId: z.string().min(30).max(300),
+		clientId: z.string().max(300).optional(),
 	}),
 	z.object({ type: z.literal("oauth-google-cancel") }),
 	z.object({ type: z.literal("oauth-google-disconnect") }),
@@ -3683,6 +3684,7 @@ export const GoogleWorkspaceOAuthStatusSchema = z.object({
 	scopes: z.array(z.string().min(1).max(500)),
 	connectedAt: z.string().datetime().optional(),
 	clientIdSuffix: z.string().min(1).max(100).optional(),
+	bundledClientAvailable: z.boolean(),
 });
 export type GoogleWorkspaceOAuthStatus = z.infer<
 	typeof GoogleWorkspaceOAuthStatusSchema
@@ -3746,6 +3748,7 @@ export type RendererResponse =
 	  }
 	| { ok: true; localRuntime: LocalRuntimeStatus }
 	| { ok: true; systemReadiness: SystemReadiness }
+	| { ok: true; diagnosticReportPath: string; cancelled?: boolean }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }

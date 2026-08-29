@@ -66,4 +66,14 @@ Google recommends PKCE for installed desktop apps, secure token storage, revocat
 
 ## Public distribution boundary
 
-A public Kestrel OAuth client still requires the final product identity, production domains and privacy-policy URLs, Google consent-screen configuration, API enablement, and Google's applicable verification process. Until those external release inputs exist, the app accurately presents the user-owned Desktop client path rather than shipping an unverifiable shared client ID.
+When `KESTREL_GOOGLE_OAUTH_CLIENT_ID` is set to a verified Google **Desktop app**
+client ID at build or launch time, Kestrel hides the bring-your-own client field
+and uses that bundled identity for Google sign-in. The client secret never belongs
+in a desktop app; PKCE, loopback, encrypted refresh storage, and revocation
+boundaries are unchanged.
+
+A public Kestrel OAuth client still requires the final product identity, production
+domains and privacy-policy URLs, Google consent-screen configuration, API
+enablement, and Google's applicable verification process. Until those external
+release inputs exist, the app accurately presents the user-owned Desktop client
+path rather than shipping an unverifiable shared client ID.
