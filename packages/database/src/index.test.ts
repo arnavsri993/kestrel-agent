@@ -1,9 +1,24 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEncryptionKey, encryptText } from "@kestrel/encryption";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { DatabaseIntegrityError, KestrelDatabase } from "./index";
+import {
+	DatabaseIntegrityError,
+	DatabaseMigrationError,
+	KestrelDatabase,
+	loadMigrationSql,
+	resolveMigrationBackupDirectory,
+} from "./index";
+import { setMigrationSqlOverridesForTests } from "./migrations";
 
 const temporaryDirectories: string[] = [];
 
@@ -13,12 +28,29 @@ function sharedDatabases() {
 	const path = join(directory, "kestrel.sqlite");
 	const encryptionKey = createEncryptionKey();
 	return {
+		directory,
+		path,
+		encryptionKey,
 		first: new KestrelDatabase(path, encryptionKey),
 		second: new KestrelDatabase(path, encryptionKey),
 	};
 }
 
+function rollbackSchemaToVersion(path: string, version: number): void {
+	const database = new Database(path);
+	database.pragma("foreign_keys = OFF");
+	database
+		.prepare("DELETE FROM schema_migrations WHERE version > ?")
+		.run(version);
+	if (version < 11) database.exec("DROP TABLE IF EXISTS action_receipts");
+	if (version < 10) database.exec("DROP TABLE IF EXISTS browser_activity_events");
+	if (version < 9)
+		database.exec("DROP TABLE IF EXISTS agent_configuration_records");
+	database.close();
+}
+
 afterEach(() => {
+	setMigrationSqlOverridesForTests(undefined);
 	for (const directory of temporaryDirectories.splice(0)) {
 		rmSync(directory, { recursive: true, force: true });
 	}
@@ -49,6 +81,98 @@ describe("database integrity", () => {
 		expect(() => new KestrelDatabase(path, encryptionKey)).toThrow(
 			/backup|recovery/i,
 		);
+	});
+});
+
+describe("schema migrations", () => {
+	it("loads migration v009 from the canonical SQL file", () => {
+		const sql = loadMigrationSql(9);
+		expect(sql).toContain("agent_configuration_records");
+		expect(sql).toContain("idx_agent_configuration_records_kind_status");
+		expect(sql).not.toContain("memory_metadata");
+	});
+
+	it("creates a timestamped backup before applying pending migrations", () => {
+		const { path, encryptionKey, first } = sharedDatabases();
+		first.saveIdempotentResult("migration-backup-fixture", { ok: true });
+		first.close();
+		rollbackSchemaToVersion(path, 8);
+
+		const reopened = new KestrelDatabase(path, encryptionKey);
+		try {
+			expect(reopened.lastMigrationBackupPath).toBeDefined();
+			expect(
+				reopened.lastMigrationBackupPath?.startsWith(
+					resolveMigrationBackupDirectory(path),
+				),
+			).toBe(true);
+			expect(
+				existsSync(reopened.lastMigrationBackupPath ?? ""),
+			).toBe(true);
+			expect(
+				reopened.db
+					.prepare("SELECT version FROM schema_migrations WHERE version = 11")
+					.get(),
+			).toEqual({ version: 11 });
+			const backups = readdirSync(resolveMigrationBackupDirectory(path));
+			expect(
+				backups.some((name) => name.startsWith("pre-migrate-v009-")),
+			).toBe(true);
+		} finally {
+			reopened.close();
+		}
+	});
+
+	it("preserves the original database when migration fails", () => {
+		const { path, encryptionKey, first } = sharedDatabases();
+		first.saveIdempotentResult("migration-failure-fixture", { preserved: true });
+		first.close();
+		rollbackSchemaToVersion(path, 8);
+		const originalBytes = readFileSync(path);
+
+		setMigrationSqlOverridesForTests(
+			new Map([[9, "CREATE TABLE this is not valid sql;"]]),
+		);
+
+		let migrationError: DatabaseMigrationError | undefined;
+		try {
+			new KestrelDatabase(path, encryptionKey);
+		} catch (error) {
+			migrationError = error as DatabaseMigrationError;
+		}
+
+		expect(migrationError).toBeInstanceOf(DatabaseMigrationError);
+		expect(migrationError?.backupPath).toBeDefined();
+		expect(existsSync(migrationError?.backupPath ?? "")).toBe(true);
+		expect(migrationError?.message).toMatch(/Restore that copy/i);
+
+		expect(readFileSync(path)).toEqual(originalBytes);
+		const rolledBack = new Database(path);
+		try {
+			expect(
+				rolledBack
+					.prepare(
+						"SELECT version FROM schema_migrations WHERE version = 9",
+					)
+					.get(),
+			).toBeUndefined();
+			expect(
+				rolledBack
+					.prepare(
+						"SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agent_configuration_records'",
+					)
+					.get(),
+			).toBeUndefined();
+			expect(
+				rolledBack
+					.prepare(
+						"SELECT result FROM idempotency_keys WHERE key = 'migration-failure-fixture'",
+					)
+					.get(),
+			).toEqual({ result: JSON.stringify({ preserved: true }) });
+		} finally {
+			rolledBack.close();
+		}
 	});
 });
 
