@@ -92,17 +92,13 @@ I Do** pillar.
 1. **Greeting** — A time-of-day greeting uses only coarse local signals (first
    name, visit frequency, time bucket). No URLs, email, or page titles are sent
    for the greeting. A local model may refine the line via `new-tab-greeting`.
-2. **Memory recall badge** — Below the greeting, a status line shows whether
-   shared memory is on, how many active memories exist, and how many preferences
-   are confirmed. When empty but capture is on, it prompts: *Say remember that
-   … in chat*.
-3. **Widgets** — Default layout includes **Frequent tabs**, **Recent work**,
+2. **Widgets** — Default layout includes **Frequent tabs**, **Recent work**,
    **Recent memories**, and **Quick actions**. Widget bounds sync across window
    sizes (#624).
-4. **Suggested actions** — Up to five chips derive from recent browsing and
+3. **Suggested actions** — Up to five chips derive from recent browsing and
    open agent sessions (credentials stripped). Tap one to open a new agent chat
    with a prefilled, read-only prompt.
-5. **Composer** — Type a task to start agent work, or a URL to browse. Task
+4. **Composer** — Type a task to start agent work, or a URL to browse. Task
    settings are one click away.
 
 Rehearse once with a warmed profile so widgets and suggestions are populated.
@@ -123,8 +119,7 @@ injection **on** for the active personality.
    was stored locally. In **Life → Memory**, the new row shows **Confirmed**
    (explicit capture) with subject and timestamp.
 3. **New Tab widget** — Open a new browser tab. The **Recent memories** widget
-   lists the captured preference with a Confirmed badge. The memory recall
-   badge above the greeting increments active memory count.
+   lists the captured preference with a Confirmed badge.
 4. **Life → Memory** — Open Life from the sidebar, Memory tab. Show provenance,
    confirmation status, and that the record is encrypted local state—not a
    cloud profile.

@@ -18,7 +18,6 @@ import type {
 	UserBrowserTab,
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
-import { MemoryRecallBadge } from "../MemoryRecallBadge";
 import {
 	frequentBrowserSites,
 	newTabGreetingContext,
@@ -240,7 +239,6 @@ export function NewTabPage({
               <Icon name="arrow" />
             </button>
           </form>
-          <MemoryRecallBadge recall={memoryRecall} />
         </header>
 
 		<NewTabWidgets
