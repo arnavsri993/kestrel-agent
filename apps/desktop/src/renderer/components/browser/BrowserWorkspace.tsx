@@ -9,6 +9,8 @@ import {
 } from "react";
 import type {
 	FilePreview,
+	MemoryRecord,
+	MemoryRecallStatus,
 	RuntimeSession,
 	UserBrowserFile,
 	UserBrowserTabOrganizationPreview,
@@ -48,6 +50,9 @@ export function BrowserWorkspace({
 	sessions = [],
 	onOpenSession,
 	organizeTabsRequestId = 0,
+	memories = [],
+	memoryRecall,
+	onOpenLifeMemory,
 }: {
   browser: UserBrowserController;
   agentName: string;
@@ -69,6 +74,9 @@ export function BrowserWorkspace({
 	sessions?: RuntimeSession[];
 	onOpenSession?(sessionId: string): void;
 	organizeTabsRequestId?: number;
+	memories?: MemoryRecord[];
+	memoryRecall: MemoryRecallStatus;
+	onOpenLifeMemory?(): void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
@@ -718,6 +726,8 @@ export function BrowserWorkspace({
 			greetingActivity={state.settings.newTabGreetingActivity}
             sessions={sessions}
             widgetSettings={state.settings.newTabWidgets}
+            memories={memories}
+            memoryRecall={memoryRecall}
             onUpdateWidgetSettings={(newTabWidgets) =>
               void updateSettings({ newTabWidgets })
             }
@@ -734,6 +744,7 @@ export function BrowserWorkspace({
 			onOpenTab={(tabId) => void selectTab(tabId)}
             onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
+            {...(onOpenLifeMemory ? { onOpenLifeMemory } : {})}
             onOpenHistory={openHistoryPopover}
             onOpenDownloads={onOpenDownloads}
             onOpenBookmarks={onOpenBookmarks}

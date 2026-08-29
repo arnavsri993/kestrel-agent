@@ -7,6 +7,8 @@ import {
 	type FormEvent,
 } from "react";
 import type {
+	MemoryRecord,
+	MemoryRecallStatus,
 	RuntimeSession,
 	UserBrowserBookmark,
 	UserBrowserDownload,
@@ -16,6 +18,7 @@ import type {
 	UserBrowserTab,
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
+import { MemoryRecallBadge } from "../MemoryRecallBadge";
 import {
 	frequentBrowserSites,
 	newTabGreetingContext,
@@ -57,12 +60,15 @@ export function NewTabPage({
 	sessions = [],
 	greetingActivity,
 	widgetSettings,
+	memories = [],
+	memoryRecall,
 	onUpdateWidgetSettings,
 	onRecordGreetingVisit,
 	onNavigate,
 	onOpenTab,
 	onNewAgent,
 	onOpenTaskSettings,
+	onOpenLifeMemory,
 	onOpenHistory,
 	onOpenDownloads,
 	onOpenBookmarks,
@@ -86,12 +92,15 @@ export function NewTabPage({
 	sessions?: RuntimeSession[] | undefined;
 	greetingActivity: UserBrowserSettings["newTabGreetingActivity"];
 	widgetSettings: UserBrowserSettings["newTabWidgets"];
+	memories?: MemoryRecord[] | undefined;
+	memoryRecall: MemoryRecallStatus;
 	onUpdateWidgetSettings(next: UserBrowserSettings["newTabWidgets"]): void;
 	onRecordGreetingVisit(now: Date): void;
 	onNavigate(input: string): void;
 	onOpenTab(tabId: string): void;
 	onNewAgent(prompt?: string): void;
 	onOpenTaskSettings(): void;
+	onOpenLifeMemory?(): void;
 	onOpenHistory(): void;
 	onOpenDownloads(): void;
 	onOpenBookmarks(): void;
@@ -231,6 +240,7 @@ export function NewTabPage({
               <Icon name="arrow" />
             </button>
           </form>
+          <MemoryRecallBadge recall={memoryRecall} />
         </header>
 
 		<NewTabWidgets
@@ -241,11 +251,14 @@ export function NewTabPage({
 			tabs={tabs}
 			sessions={sessions}
 			suggestedActions={suggestedActions}
+			memories={memories}
+			memoryRecall={memoryRecall}
 			agentName={agentName}
 			onNavigate={onNavigate}
 			onOpenTab={onOpenTab}
 			onNewAgent={chooseAction}
 			onOpenSession={onOpenSession}
+			{...(onOpenLifeMemory ? { onOpenLifeMemory } : {})}
 			onOpenHistory={onOpenHistory}
 			onOpenDownloads={onOpenDownloads}
 			onOpenBookmarks={onOpenBookmarks}

@@ -818,6 +818,10 @@ function MemoryView({
 	const [error, setError] = useState("");
 	const selected = snapshot.memories.find((memory) => memory.id === selectedId);
 	const memoryListRef = useRef<HTMLElement | null>(null);
+	const activeMemoryCount = useMemo(
+		() => snapshot.memories.filter((memory) => memory.status === "active").length,
+		[snapshot.memories],
+	);
 	const visible = useMemo(() => {
 		const needle = query.trim().toLowerCase();
 		return snapshot.memories.filter(
@@ -962,6 +966,20 @@ function MemoryView({
 				</select>
 				<strong>{visible.length} remembered</strong>
 			</section>
+
+			{activeMemoryCount === 0 && !busy && (
+				<section className="life-empty">
+					<Icon name="memory" />
+					<div>
+						<h2>No memories yet</h2>
+						<p>
+							Say <em>remember that …</em> in chat to store a preference, or add a
+							confirmed fact below. Inspect what Kestrel keeps before it influences
+							a new chat.
+						</p>
+					</div>
+				</section>
+			)}
 
 			<div className="memory-ledger">
 				<section

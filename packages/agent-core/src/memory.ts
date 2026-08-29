@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
-import type { MemoryRecord, MemoryVersion } from "@kestrel/shared-types";
+import {
+	parseExplicitMemoryCapture,
+	type MemoryRecord,
+	type MemoryVersion,
+} from "@kestrel/shared-types";
 import type { AgentRuntime } from "./runtime";
 import { UserModelStore } from "./user-model";
 
@@ -208,10 +212,7 @@ export class MemoryManager {
 		memory?: MemoryRecord;
 		userModelFacts: ReturnType<UserModelStore["proposeFromText"]>;
 	} {
-		const explicit = text
-			.trim()
-			.match(/^remember(?:\s+that)?\s+([\s\S]{1,100000})$/i)?.[1]
-			?.trim();
+		const explicit = parseExplicitMemoryCapture(text);
 		const existing = explicit
 			? this.list().find(
 					(memory) =>
