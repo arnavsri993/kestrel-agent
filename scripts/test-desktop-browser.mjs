@@ -1157,13 +1157,7 @@ try {
 	);
 
 	await page.keyboard.press("Meta+H");
-	await page
-		.getByRole("heading", { name: "History", exact: true })
-		.waitFor();
-	await waitForNativeView(
-		(value) => value.views.length === 0,
-		"Native page remained attached over History",
-	);
+	await page.getByPlaceholder("Search history").waitFor();
 	await page.getByPlaceholder("Search history").fill("Page one");
 	await page
 		.getByRole("button", { name: /Page one/ })

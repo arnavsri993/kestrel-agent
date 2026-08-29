@@ -25,8 +25,9 @@ import {
   type AddressBarSuggestion,
   type AddressBarSuggestionFilter,
 } from "./address-bar-suggestions";
+import { BrowserHistoryPopover } from "./BrowserHistoryPopover";
 
-type ToolbarMenu = "extensions" | "tools" | "screen" | null;
+type ToolbarMenu = "extensions" | "tools" | "screen" | "history" | null;
 
 type MenuTriggerEvent = FormEvent | MouseEvent<HTMLButtonElement>;
 
@@ -70,7 +71,9 @@ export function BrowserToolbar({
   onForward,
   onReload,
   onStop,
-  onOpenHistory,
+  onOpenHistoryFull,
+  onClearHistory,
+  historyPopoverRequestId = 0,
   onOpenDownloads,
   onOpenBookmarks,
   onOpenFind,
@@ -106,7 +109,9 @@ export function BrowserToolbar({
   onForward(): void;
   onReload(): void;
   onStop(): void;
-  onOpenHistory(): void;
+  onOpenHistoryFull(): void;
+  onClearHistory(): void;
+  historyPopoverRequestId?: number;
   onOpenDownloads(): void;
   onOpenBookmarks(): void;
   onOpenFind(): void;
@@ -133,6 +138,8 @@ export function BrowserToolbar({
   const [toolNotice, setToolNotice] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const historyPopoverRequestRef = useRef(0);
   const suggestionsCloseTimerRef = useRef<number | null>(null);
   const inlineCompletionRef = useRef<{ typed: string; completed: string } | null>(
     null,
@@ -249,6 +256,17 @@ export function BrowserToolbar({
   useEffect(() => {
     if (openMenu === "extensions") void loadExtensions();
   }, [loadExtensions, openMenu]);
+
+  useEffect(() => {
+    if (
+      historyPopoverRequestId <= 0 ||
+      historyPopoverRequestRef.current === historyPopoverRequestId
+    )
+      return;
+    historyPopoverRequestRef.current = historyPopoverRequestId;
+    lastTriggerRef.current = historyTriggerRef.current;
+    setOpenMenu("history");
+  }, [historyPopoverRequestId]);
 
   const closeMenu = useCallback(() => {
     setOpenMenu(null);
@@ -426,6 +444,21 @@ export function BrowserToolbar({
 
   function runAndClose(action: () => void) {
     action();
+    closeMenu();
+  }
+
+  function openHistoryEntry(url: string) {
+    onNavigate(url);
+    closeMenu();
+  }
+
+  function openHistoryFull() {
+    onOpenHistoryFull();
+    closeMenu();
+  }
+
+  function clearHistory() {
+    onClearHistory();
     closeMenu();
   }
 
@@ -730,12 +763,15 @@ export function BrowserToolbar({
           <Icon name="sliders" />
         </button>
         <button
+          ref={historyTriggerRef}
           type="button"
-          className="browser-toolbar-secondary"
+          className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${openMenu === "history" ? "active" : ""}`}
           aria-label="History"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "history"}
           aria-keyshortcuts="Meta+H"
           title="History (⌘H)"
-          onClick={onOpenHistory}
+          onClick={(event) => toggleMenu("history", event)}
         >
           <Icon name="history" />
         </button>
@@ -793,7 +829,9 @@ export function BrowserToolbar({
                 ? "Extensions"
                 : openMenu === "tools"
                   ? "Tools"
-                  : "Page options"
+                  : openMenu === "history"
+                    ? "History"
+                    : "Page options"
               }
           >
             {openMenu === "extensions" && (
@@ -878,7 +916,14 @@ export function BrowserToolbar({
                     <Icon name="calculator" />
                     <span>Calculator</span>
                   </button>
-                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenHistory)}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      lastTriggerRef.current = historyTriggerRef.current;
+                      setOpenMenu("history");
+                    }}
+                  >
                     <Icon name="history" />
                     <span>History</span>
                   </button>
@@ -911,6 +956,14 @@ export function BrowserToolbar({
                   </p>
                 )}
               </>
+            )}
+            {openMenu === "history" && (
+              <BrowserHistoryPopover
+                history={history}
+                onOpen={openHistoryEntry}
+                onOpenFull={openHistoryFull}
+                onClear={clearHistory}
+              />
             )}
             {openMenu === "screen" && (
               <>

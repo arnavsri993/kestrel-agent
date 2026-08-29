@@ -14,8 +14,9 @@ Follow this in every conversation in this repo.
 
 ## After every change
 
-1. Restart the Kestrel desktop app so the running process matches the current source. Do not leave an old Electron process serving previous main-process code. Prefer stopping the existing `corepack pnpm dev:desktop` watcher and starting a fresh one. Only one desktop watcher should run.
-2. Open a pull request for that change. Keep the PR scoped to the work from this change; do not dump unrelated local files, screenshots, or artifacts. Commit only when the user has asked for a PR or commit (this rule is that ask). Push the branch and create the PR with `gh`.
+1. Commit, push to GitHub, and open a pull request for that change. Keep the PR scoped to the work; do not dump unrelated local files, screenshots, or artifacts. Create the PR with `gh`. Treat this as the default end of every coding task unless the user explicitly says not to.
+2. Keep the local Kestrel instance current with GitHub: fetch, rebase or fast-forward onto the remote branch, then restart the desktop app from that checkout. Do not leave an old Electron process serving previous main-process code. Prefer stopping the existing `corepack pnpm dev:desktop` watcher and starting a fresh one. Only one desktop watcher should run.
+3. Before calling work done, confirm the running app matches the branch you pushed (renderer HMR alone is not enough after main-process, preload, credential, or Electron startup changes).
 
 ## Do not
 
