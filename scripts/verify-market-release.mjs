@@ -20,6 +20,7 @@ const [
 	developmentInheritedEntitlements,
 	desktopPackage,
 	desktopMain,
+	desktopViteConfig,
 	productIdentity,
 	workflow,
 	websiteWorkflow,
@@ -46,6 +47,7 @@ const [
 	read("apps/desktop/build/entitlements.mac.dev.inherit.plist"),
 	read("apps/desktop/package.json"),
 	read("apps/desktop/src/main/index.ts"),
+	read("apps/desktop/electron.vite.config.ts"),
 	read("packages/shared-types/src/identity.ts"),
 	read(".github/workflows/release-macos.yml"),
 	read(".github/workflows/deploy-website.yml"),
@@ -217,6 +219,14 @@ if (
 	);
 if (!desktopMain.includes('appendSwitch("use-mock-keychain")'))
 	fail("desktop startup must disable Chromium Keychain Safe Storage.");
+for (const marker of [
+	"kestrel-database-migrations",
+	"packages/database/migrations",
+	"fileName: `migrations/${filename}`",
+]) {
+	if (!desktopViteConfig.includes(marker))
+		fail(`desktop packaging does not emit database migration assets (${marker}).`);
+}
 for (const marker of [
 	'runtimeApplicationName = "Kestrel"',
 	"keychainService: `${runtimeApplicationName} Safe Storage`",

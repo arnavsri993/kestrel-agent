@@ -128,6 +128,9 @@ describe("schema migrations", () => {
 		first.saveIdempotentResult("migration-failure-fixture", { preserved: true });
 		first.close();
 		rollbackSchemaToVersion(path, 8);
+		const checkpointed = new Database(path);
+		checkpointed.pragma("wal_checkpoint(FULL)");
+		checkpointed.close();
 		const originalBytes = readFileSync(path);
 
 		setMigrationSqlOverridesForTests(
