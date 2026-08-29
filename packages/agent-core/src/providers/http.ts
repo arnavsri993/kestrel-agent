@@ -2,6 +2,62 @@ import { readBoundedResponseBytes } from "../bounded-http";
 import { ModelProviderError } from "./types";
 
 const MAX_PROVIDER_ERROR_BYTES = 64_000;
+export const PROVIDER_CONNECT_TIMEOUT_MS = 20_000;
+
+const NETWORK_UNAVAILABLE_CODES = new Set(["ENOTFOUND", "ECONNREFUSED"]);
+
+function providerConnectSignal(callerSignal?: AbortSignal | null): {
+	signal: AbortSignal;
+	connectTimeoutSignal: AbortSignal;
+} {
+	const connectTimeoutSignal = AbortSignal.timeout(PROVIDER_CONNECT_TIMEOUT_MS);
+	if (!callerSignal) return { signal: connectTimeoutSignal, connectTimeoutSignal };
+	return {
+		signal: AbortSignal.any([callerSignal, connectTimeoutSignal]),
+		connectTimeoutSignal,
+	};
+}
+
+function isNetworkUnavailableError(error: unknown): boolean {
+	for (
+		let current: unknown = error;
+		current && typeof current === "object";
+		current = (current as { cause?: unknown }).cause
+	) {
+		const code = (current as { code?: unknown }).code;
+		if (typeof code === "string" && NETWORK_UNAVAILABLE_CODES.has(code))
+			return true;
+	}
+	return false;
+}
+
+function providerFetchError(
+	error: unknown,
+	providerId: string,
+	callerSignal: AbortSignal | undefined,
+	connectTimeoutSignal: AbortSignal,
+): never {
+	if (callerSignal?.aborted) throw error;
+	if (connectTimeoutSignal.aborted && !callerSignal?.aborted) {
+		throw new ModelProviderError(
+			`Provider connect timed out after ${PROVIDER_CONNECT_TIMEOUT_MS / 1_000}s.`,
+			providerId,
+			true,
+		);
+	}
+	if (isNetworkUnavailableError(error)) {
+		throw new ModelProviderError(
+			"Network unavailable: provider host could not be reached.",
+			providerId,
+			false,
+		);
+	}
+	throw new ModelProviderError(
+		`Provider request failed before a response was received: ${error instanceof Error ? error.message : "network error"}`,
+		providerId,
+		true,
+	);
+}
 
 export function parseRetryAfterMs(
 	value: string | null,
@@ -95,19 +151,20 @@ export async function providerFetch(
 	url: string,
 	init: RequestInit,
 ): Promise<Response> {
+	const { signal, connectTimeoutSignal } = providerConnectSignal(init.signal);
 	let response: Response;
 	try {
 		// Provider requests carry protected credentials. A redirect could move
 		// those credentials to a different host, so fail closed instead of
 		// following it. Custom provider endpoints still work; their first hop is
 		// the explicit endpoint the user configured.
-		response = await fetch(url, { ...init, redirect: "error" });
+		response = await fetch(url, { ...init, redirect: "error", signal });
 	} catch (error) {
-		if (init.signal?.aborted) throw error;
-		throw new ModelProviderError(
-			`Provider request failed before a response was received: ${error instanceof Error ? error.message : "network error"}`,
+		providerFetchError(
+			error,
 			providerId,
-			true,
+			init.signal ?? undefined,
+			connectTimeoutSignal,
 		);
 	}
 	if (!response.ok) {
