@@ -83,6 +83,7 @@ export function BrowserWorkspace({
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
+  const [historyPopoverRequestId, setHistoryPopoverRequestId] = useState(0);
   const organizeTabsRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
   const state = browser.state;
@@ -130,6 +131,10 @@ export function BrowserWorkspace({
       setOrganizeTabsOpening(false);
     }
   }, [organizeTabsOpening, organizeTabsPreview, previewOrganizeTabs]);
+
+  const openHistoryPopover = useCallback(() => {
+    setHistoryPopoverRequestId((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (
@@ -216,7 +221,7 @@ export function BrowserWorkspace({
         if (command === "focus-address") addressRef.current?.focus();
         else if (command === "new-agent") onNewAgent();
         else if (command === "open-commands") onOpenMenu();
-        else if (command === "open-history") onOpenHistory();
+        else if (command === "open-history") openHistoryPopover();
         else if (command === "open-downloads") onOpenDownloads();
         else if (command === "open-bookmarks") onOpenBookmarks();
         else if (command === "open-settings") onOpenSettings?.();
@@ -234,7 +239,7 @@ export function BrowserWorkspace({
       activeTab,
       onNewAgent,
       onOpenMenu,
-      onOpenHistory,
+      openHistoryPopover,
       onOpenDownloads,
       onOpenBookmarks,
       onOpenSettings,
@@ -380,7 +385,7 @@ export function BrowserWorkspace({
         void reload(activeTab.id, event.shiftKey);
       } else if (key === "h" || key === "y") {
         event.preventDefault();
-        onOpenHistory();
+        openHistoryPopover();
       } else if (key === "j") {
         event.preventDefault();
         onOpenDownloads();
@@ -440,8 +445,8 @@ export function BrowserWorkspace({
     forward,
     onNewAgent,
     onOpenBookmarks,
+    openHistoryPopover,
     onOpenDownloads,
-    onOpenHistory,
     onOpenMenu,
     onOpenSettings,
     onShowShortcuts,
@@ -559,7 +564,9 @@ export function BrowserWorkspace({
         onForward={() => void forward(activeTab.id)}
         onReload={() => void reload(activeTab.id)}
         onStop={() => void stop(activeTab.id)}
-        onOpenHistory={onOpenHistory}
+        onOpenHistoryFull={onOpenHistory}
+        onClearHistory={() => void browser.clearHistory()}
+        historyPopoverRequestId={historyPopoverRequestId}
         onOpenDownloads={onOpenDownloads}
         onOpenBookmarks={onOpenBookmarks}
         onOpenFind={() => {
@@ -704,7 +711,7 @@ export function BrowserWorkspace({
 			onOpenTab={(tabId) => void selectTab(tabId)}
             onNewAgent={onNewAgent}
 			onOpenTaskSettings={onOpenTaskSettings}
-            onOpenHistory={onOpenHistory}
+            onOpenHistory={openHistoryPopover}
             onOpenDownloads={onOpenDownloads}
             onOpenBookmarks={onOpenBookmarks}
             onOpenSession={onOpenSession}
