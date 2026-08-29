@@ -83,6 +83,74 @@ async function readLayout(page) {
 	});
 }
 
+async function readTaskSettingsLayout(page) {
+	return page.evaluate(() => {
+		const button = document.querySelector(".kestrel-home-model-selector");
+		const panel = document.querySelector(
+			".agent-conversation-host .task-settings-panel",
+		);
+		const composer = document.querySelector(
+			".agent-conversation-host .runtime-new-composer",
+		);
+		const host = document.querySelector(".agent-conversation-host");
+		if (!button || !panel || !composer || !host) {
+			throw new Error("Task settings layout is unavailable.");
+		}
+		const rect = (element) => {
+			const bounds = element.getBoundingClientRect();
+			return {
+				top: bounds.top,
+				right: bounds.right,
+				bottom: bounds.bottom,
+				left: bounds.left,
+				width: bounds.width,
+				height: bounds.height,
+			};
+		};
+		const buttonStyle = getComputedStyle(button);
+		const chevron = button.querySelector("svg");
+		return {
+			button: rect(button),
+			buttonDisplay: buttonStyle.display,
+			chevron: chevron ? rect(chevron) : null,
+			panel: rect(panel),
+			composer: rect(composer),
+			host: rect(host),
+		};
+	});
+}
+
+function assertTaskSettingsLayout(layout) {
+	assert.ok(
+		["flex", "inline-flex"].includes(layout.buttonDisplay),
+		`New Tab task settings has an unexpected display mode: ${layout.buttonDisplay}.`,
+	);
+	assert.ok(
+		layout.button.height <= 40,
+		`New Tab task settings button is too tall: ${layout.button.height}px.`,
+	);
+	assert.ok(
+		layout.button.width <= 200,
+		`New Tab task settings button is too wide: ${layout.button.width}px.`,
+	);
+	assert.ok(
+		layout.chevron && layout.chevron.width <= 16 && layout.chevron.height <= 16,
+		`New Tab task settings chevron is too large: ${JSON.stringify(layout.chevron)}.`,
+	);
+	assert.ok(
+		layout.panel.top >= layout.host.top - 1,
+		`Task settings panel escaped above the Agent conversation host: ${layout.panel.top} < ${layout.host.top}.`,
+	);
+	assert.ok(
+		layout.panel.bottom <= layout.host.bottom + 1,
+		`Task settings panel is clipped below the Agent conversation host: ${layout.panel.bottom} > ${layout.host.bottom}.`,
+	);
+	assert.ok(
+		layout.composer.bottom >= layout.host.bottom - 1,
+		`New task composer is not anchored to the bottom of the Agent rail: ${layout.composer.bottom} < ${layout.host.bottom}.`,
+	);
+}
+
 function assertTheme(layout) {
 	assert.deepEqual(layout.theme, {
 		canvas: "#0d0e11",
@@ -793,6 +861,32 @@ try {
 	});
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();
+	await page.getByRole("button", { name: "Show Pragmatic", exact: true }).click();
+	await page.waitForFunction(() => {
+		const shell = document.querySelector(".ai-browser-app");
+		const agent = document.querySelector(".agent-sidebar");
+		return (
+			shell &&
+			agent &&
+			!shell.classList.contains("agent-sidebar-collapsed") &&
+			agent.getBoundingClientRect().width > 0
+		);
+	});
+	const homeTaskSettings = page.locator(".kestrel-home-model-selector");
+	await homeTaskSettings.waitFor();
+	await homeTaskSettings.click();
+	await page
+		.locator('.agent-conversation-host .task-settings[open] .task-settings-panel')
+		.waitFor();
+	assertTaskSettingsLayout(await readTaskSettingsLayout(page));
+	await page
+		.locator(".agent-conversation-host .task-settings")
+		.evaluate((details) => details.removeAttribute("open"));
+	await page
+		.locator(".agent-sidebar")
+		.getByRole("button", { name: "Hide Pragmatic", exact: true })
+		.click();
+	await waitForCollapsedLayout(page);
 	await assertWindowControlMotion(page);
 	await waitForCollapsedLayout(page);
 	await assertMotionContract(page);

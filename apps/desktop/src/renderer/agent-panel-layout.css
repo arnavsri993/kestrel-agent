@@ -334,6 +334,13 @@
 	flex-direction: column;
 }
 
+/* The rail hides the welcome copy, so a fresh task must keep its only visible
+ * control at the bottom instead of leaving the composer under the header. */
+.agent-conversation-host .new-task-view {
+	justify-content: flex-end;
+	align-items: stretch;
+}
+
 .agent-conversation-host .chat-welcome,
 .agent-conversation-host .message-list {
 	flex: 1 1 auto;
