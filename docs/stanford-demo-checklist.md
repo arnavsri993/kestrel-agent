@@ -63,7 +63,7 @@ or link, and an honest status as of the snapshot commit.
 | --- | --- | --- | --- | --- | --- |
 | B1 | **Do This For Me** | Read-only inspect → approve → local edit → verified test evidence | Both | Ten-minute path in [ai-tinkerers-demo.md](ai-tinkerers-demo.md); #663 Activity handoff; `pnpm test:desktop-approvals` | **COMPLETE** in repo — operator must rehearse on-stage with disposable checkout |
 | B2 | **What Should I Do** | Contextual New Tab: greeting, widgets, suggested actions, bounds sync | Engineering | #624; `apps/desktop/src/renderer/components/browser/new-tab.test.ts`; `new-tab-widgets.test.ts` | **COMPLETE** in repo — operator should rehearse populated vs cold profile |
-| B3 | **It Remembers How I Work** | Remember → confirmation → New Tab widget → Life → Memory → new chat → recall receipt | Engineering | #625, #633; `MemoryRecallBadge.tsx`, `MemoryRecallReceiptLine.tsx`, `memory-recall-receipt.ts` | **COMPLETE** in repo — operator must run memory beat once on presentation profile |
+| B3 | **It Remembers How I Work** | Remember → confirmation → New Tab widget → Life → Memory → new chat → recall receipt | Engineering | #625, #633; `MemoryRecallReceiptLine.tsx`, `memory-recall-receipt.ts` | **COMPLETE** in repo — operator must run memory beat once on presentation profile |
 
 ---
 
@@ -87,10 +87,9 @@ or link, and an honest status as of the snapshot commit.
 | D1 | `remember that …` explicit capture parsed | Engineering | `packages/shared-types/src/memory-capture.ts` | **COMPLETE** |
 | D2 | In-thread confirmation after capture | Engineering | Life/memory UI; agent-core memory path | **PARTIAL** — verify in live chat during rehearsal |
 | D3 | **Recent memories** widget on New Tab | Engineering | `NewTabWidgets.tsx`, default widget set | **COMPLETE** (#625) |
-| D4 | Memory recall badge on New Tab | Engineering | `MemoryRecallBadge.tsx` | **COMPLETE** (#625) |
-| D5 | Life → Memory shows confirmed preference | Operator | Memory beat step 4 in [ai-tinkerers-demo.md](ai-tinkerers-demo.md) | **NOT COMPLETE** — operator rehearsal |
-| D6 | New chat injects shared context when enabled | Both | Settings → Memory; `MemoryRecallStatus` | **PARTIAL** — mechanism exists; model may not always cite memory verbatim |
-| D7 | In-chat **recall receipt** on assistant replies when shared context was used | Engineering | #633; `MemoryRecallReceiptLine.tsx`, `formatMemoryRecallReceipt()` | **COMPLETE** in repo — operator should call out receipt in memory beat step 5 |
+| D4 | Life → Memory shows confirmed preference | Operator | Memory beat step 4 in [ai-tinkerers-demo.md](ai-tinkerers-demo.md) | **NOT COMPLETE** — operator rehearsal |
+| D5 | New chat injects shared context when enabled | Both | Settings → Memory; `MemoryRecallStatus` | **PARTIAL** — mechanism exists; model may not always cite memory verbatim |
+| D6 | In-chat **recall receipt** on assistant replies when shared context was used | Engineering | #633; `MemoryRecallReceiptLine.tsx`, `formatMemoryRecallReceipt()` | **COMPLETE** in repo — operator should call out receipt in memory beat step 5 |
 
 ---
 
