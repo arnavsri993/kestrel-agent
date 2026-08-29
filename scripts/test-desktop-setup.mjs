@@ -173,10 +173,11 @@ try {
 	await paidProviders.getByRole("button", { name: /Anthropic/ }).click();
 	await page.getByText("Claude Code CLI", { exact: true }).waitFor();
 	await paidProviders.getByRole("button", { name: /Microsoft Azure/ }).click();
-	await page.getByText("Azure CLI / Entra ID", { exact: true }).waitFor();
 	await page
-		.getByText("Adapter coming later", { exact: true })
-		.first()
+		.getByText(
+			"Additional enterprise adapters for this provider are not available in this build yet.",
+			{ exact: true },
+		)
 		.waitFor();
 	await page.getByLabel("Find a provider").fill("Groq");
 	assert.equal(await paidProviders.getByRole("button").count(), 1);
