@@ -1,7 +1,8 @@
 # Kestrel Production Release Risk Map
 
-**Baseline:** `origin/main` @ `3304218a` (`test(browser): wait for stable native view state (#658)`)  
+**Baseline:** `origin/main` @ `4b492f5c` (`docs: refresh Stanford demo gate evidence at e20d539b (#664)`)  
 **Audit date:** 2026-08-29  
+**Sprint closeout:** 2026-08-29 — see [Engineering ship verdict](#engineering-ship-verdict-sprint-closeout) below.
 **Scope:** Consolidated findings from five read-only production-readiness audits (persistence, lifecycle/packaging, browser, security/IPC, agent runtime).  
 **Status legend:** `fixed` = merged on `main`; `open` = code fix still needed; `operator` = requires operator/infrastructure action, not a code PR alone.
 
@@ -23,7 +24,21 @@ Five parallel audits at baseline `59cf7830` identified **14 release blockers** a
 **Operator blockers (no code PR):** RB-01 (production signing/notarization), RB-02 (update feed hosting), RB-03 (Widget App Group registration) — **still open**.  
 **Deferred P1 items:** R4 (legacy idempotency), security P1-1–P1-4 (CSP, step-up auth, DevTools, extension sideload), lifecycle P1-03/P1-04.
 
-**Release recommendation:** Do not ship public macOS builds until operator blockers **RB-01–03** are proven and deferred P1 security items are either fixed or explicitly accepted in the threat model. All hardening PRs are merged; remaining gaps are operator infrastructure and the next code sprint.
+**Release recommendation:** Do not ship public macOS builds until operator blockers **RB-01–03** are proven and deferred P1 security items are either fixed or explicitly accepted in the threat model. All hardening PRs are merged; remaining gaps are operator infrastructure and the next code sprint. For Stanford vs public release decisions, use the [Engineering ship verdict](#engineering-ship-verdict-sprint-closeout).
+
+---
+
+## Engineering ship verdict (sprint closeout)
+
+**Verdict date:** 2026-08-29  
+**Evidence baseline:** `verify:meetup` **PASS** at `e20d539b`; docs/B1 handoff at `8ba24d72`; sprint closeout docs at `4b492f5c` (#664).
+
+| Target | Verdict | Rationale |
+| --- | --- | --- |
+| **Stanford demo (offline primary path)** | **SHIP WITH KNOWN RISKS** | `verify:meetup` **PASS** at `e20d539b` (~198s; 1033 unit tests, 50/50 e2e, 50/50 browser benchmark packaged). Hero pillars **B1–B3 COMPLETE** in repo (#663 Activity handoff, #624/#625 New Tab + memory surfacing). Repository gates A1–A7 and A9 **COMPLETE** on engineering Mac. **Operator rehearsal required:** presentation Mac must re-run `verify:meetup` at `8ba24d72` or later, canonical install, Readiness warm-up, disposable project, memory beat, venue timing — see [stanford-demo-checklist.md](./stanford-demo-checklist.md). |
+| **Public macOS release** | **DO NOT SHIP** | Operator blockers **RB-01–03** unproven (production signing/notarization, update feed hosting, Widget App Group). Security **P1-2** (step-up auth for privileged IPC) and **P1-4** (extension sideload restriction) **deferred**. Run [public-release-operator-checklist.md](./public-release-operator-checklist.md) before any stable tag. |
+
+**Engineering sprint status:** Closed. No P0 code blockers remain for the offline demo path. Next work: operator RB-01–03, security P1-2/P1-4, and presentation Mac rehearsal.
 
 ---
 
