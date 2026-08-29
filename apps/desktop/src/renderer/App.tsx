@@ -3459,6 +3459,7 @@ function RuntimeConversation({
 		setSkillNotice("");
 		setStreamText("");
 		setToolActivity([]);
+		setPending(null);
 		setOptimisticUser(prompt);
 		setInput("");
 		let sessionId = activeSessionId;

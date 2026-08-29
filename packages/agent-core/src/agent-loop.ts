@@ -185,6 +185,9 @@ function processIsAlive(pid: number): boolean {
 const CORE_RESTART_INTERRUPTION_REASON =
 	"Kestrel restarted while this run was active. No model or tool call was resumed automatically. Review any action that may have started, then retry the last turn when ready.";
 
+const SUPERSEDED_BY_NEW_MESSAGE_REASON =
+	"Superseded by a new message. The pending approval is no longer available.";
+
 export class AgentLoop {
 	private readonly compactor = new ContextCompactor();
 	private readonly usageGovernor: UsageGovernor;
@@ -248,10 +251,22 @@ export class AgentLoop {
 		});
 	}
 
+	private supersedeWaitingApprovalRuns(sessionId: string): void {
+		const hasWaitingApproval = this.database
+			.listAgentRuns(sessionId)
+			.some((run) => run.status === "waiting_approval");
+		if (!hasWaitingApproval) return;
+		this.runtime.supersedeActiveAgentHistory(
+			sessionId,
+			SUPERSEDED_BY_NEW_MESSAGE_REASON,
+		);
+	}
+
 	private async startRun(
 		input: AgentLoopInput,
 		session: RuntimeSession,
 	): Promise<AgentLoopResult> {
+		this.supersedeWaitingApprovalRuns(session.id);
 		const messageCountBefore = this.runtime.listMessages(session.id).length;
 		const mutationIdsBefore = this.database.listWorkspaceMutationIds(
 			session.id,
