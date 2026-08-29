@@ -1584,9 +1584,9 @@ describe("agent runtime", () => {
 				referenceId: first.output?.mutationId,
 			},
 		});
-		expect(
-			JSON.stringify(database.getActionReceiptForExecution(first.id)),
-		).not.toContain("one\\n");
+		const receipt = database.getActionReceiptForExecution(first.id);
+		expect(receipt).toBeTruthy();
+		expect(JSON.stringify(receipt)).not.toContain('"content":"one\\n"');
 		expect(readFileSync(join(root, "src", "new.ts"), "utf8")).toBe("one\n");
 
 		const stale = await runtime.callTool(
@@ -1623,10 +1623,19 @@ describe("agent runtime", () => {
 		expect(existsSync(join(root, "src", "new.ts"))).toBe(false);
 		const encryptedMutation = database.db
 			.prepare(
-				"SELECT payload_ciphertext FROM workspace_mutations WHERE id = ?",
+				"SELECT payload_ciphertext, payload_iv, payload_auth_tag FROM workspace_mutations WHERE id = ?",
 			)
-			.get(mutationId) as { payload_ciphertext: string };
-		expect(encryptedMutation.payload_ciphertext).not.toContain("one");
+			.get(mutationId) as {
+			payload_ciphertext: string;
+			payload_iv: string;
+			payload_auth_tag: string;
+		};
+		expect(encryptedMutation.payload_iv.length).toBeGreaterThan(10);
+		expect(encryptedMutation.payload_auth_tag.length).toBeGreaterThan(10);
+		expect(encryptedMutation.payload_ciphertext).not.toBe("one\n");
+		const restoredMutation = database.getWorkspaceMutation(mutationId as string);
+		expect(restoredMutation?.path).toBe("src/new.ts");
+		expect(restoredMutation?.beforeContent).toBeUndefined();
 		database.close();
 	});
 

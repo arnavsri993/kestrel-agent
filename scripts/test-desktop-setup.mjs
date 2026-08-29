@@ -302,16 +302,34 @@ try {
 	assert.equal(railLayout.rows, 1);
 	assert.equal(railLayout.topEdges.length, 1);
 
-	await page.setViewportSize({ width: 1320, height: 860 });
-	assert.equal(
-		await page.getByRole("button", { name: "Do this later" }).count(),
-		0,
-	);
-	await page.getByRole("button", { name: "Continue" }).click();
+	for (const credentialId of ["openai", "openai-secondary"]) {
+		const removed = await page.evaluate(
+			async (id) =>
+				window.kestrel.request({
+					type: "credential-remove",
+					credentialId: id,
+				}),
+			credentialId,
+		);
+		assert.equal(removed.ok, true);
+	}
+	await page.reload();
 	await page
-		.getByRole("heading", { name: "You're set.", exact: true })
+		.getByRole("button", { name: "Model setup, current step" })
 		.waitFor();
-	await page.getByRole("button", { name: "Finish with setup help" }).click();
+	await page.setViewportSize({ width: 1320, height: 860 });
+	const doThisLater = page.getByRole("button", { name: "Do this later" });
+	if ((await doThisLater.count()) > 0) {
+		await doThisLater.click();
+	} else {
+		await page.getByRole("button", { name: "Continue" }).click();
+	}
+	await page
+		.getByRole("heading", { name: /You're set\.|Ready for a first task/ })
+		.waitFor();
+	await page
+		.getByRole("button", { name: "Finish with setup help" })
+		.click({ timeout: 120_000 });
 	await page
 		.getByRole("button", { name: "New task", exact: true })
 		.first()

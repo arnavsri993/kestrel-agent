@@ -489,7 +489,12 @@ export function TabStrip({
 	}
 
 	function getFaviconContent(tab: UserBrowserTab) {
-		return <TabFavicon tab={tab} originFavicons={originFavicons} />;
+		return (
+			<TabFavicon
+				tab={tab}
+				{...(originFavicons ? { originFavicons } : {})}
+			/>
+		);
 	}
 
 	function getRecentFaviconContent(tab: UserBrowserRecentlyClosedTab) {

@@ -149,7 +149,11 @@ describe("renderer URL trust boundary", () => {
 			}, "https://example.com/"),
 		).toBe(true);
 		expect(opened).toEqual(["https://example.com/"]);
-		expect(openExternalSafely((url) => opened.push(url), "file:///tmp/x")).toBe(
+		expect(
+			openExternalSafely((url) => {
+				opened.push(url);
+			}, "file:///tmp/x"),
+		).toBe(
 			false,
 		);
 	});

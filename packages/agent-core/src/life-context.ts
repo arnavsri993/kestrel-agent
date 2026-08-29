@@ -571,7 +571,8 @@ export class LifeContextService {
 			includeSensitive: input.includeSensitive ?? false,
 			includeRestricted: input.includeRestricted ?? false,
 		};
-		const terms = queryTerms(input.query);
+		const query = input.query.slice(0, 10_000);
+		const terms = queryTerms(query);
 		const timeIntent =
 			/\b(when|calendar|schedule|free|availability|meeting|deadline|leave|sleep|week|today|tomorrow)\b/i.test(
 				input.query,
@@ -606,7 +607,7 @@ export class LifeContextService {
 		const directlyNamedPeople = this.listPeople().filter((person) => {
 			const aliases = [person.displayName, ...person.nicknames].map(normalized);
 			return aliases.some(
-				(alias) => alias && normalized(input.query).includes(alias),
+				(alias) => alias && normalized(query).includes(alias),
 			);
 		});
 		const relatedPersonIds = new Set(
@@ -698,7 +699,7 @@ export class LifeContextService {
 				: "";
 		const bundle = AgentContextBundleSchema.parse({
 			id: `context-${randomUUID()}`,
-			query: input.query,
+			query,
 			memories,
 			people,
 			events,

@@ -216,7 +216,7 @@ export function KestrelSidebar({
 
 				<section className="kestrel-sidebar-section kestrel-sidebar-chats" aria-labelledby="kestrel-sidebar-chats">
 					<div className="kestrel-sidebar-section-heading">
-						<h2 id="kestrel-sidebar-chats">Tasks</h2>
+						<h2 id="kestrel-sidebar-chats">Recent tasks</h2>
 						<button
 							type="button"
 							className="kestrel-sidebar-section-action"
