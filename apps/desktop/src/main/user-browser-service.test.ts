@@ -681,7 +681,7 @@ describe("UserBrowserService", () => {
     ).toMatchObject({ discarded: false });
   });
 
-  it("rejects close while an agent operation holds a tab pin", async () => {
+	it("rejects close while an agent operation holds a tab pin", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
     await service.navigate(tab.id, "https://example.com");
@@ -704,10 +704,27 @@ describe("UserBrowserService", () => {
     (
       service as unknown as { unpinAgentTab: (tabId: string) => void }
     ).unpinAgentTab(tab.id);
-    await expect(service.closeTab(tab.id)).resolves.toBeDefined();
-  });
+		await expect(service.closeTab(tab.id)).resolves.toBeDefined();
+	});
 
-  it("does not sleep a tab while an agent operation holds a pin", async () => {
+	it("rejects detach while an agent operation holds a tab pin", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		(
+			service as unknown as { pinAgentTab: (tabId: string) => void }
+		).pinAgentTab(tab.id);
+
+		await expect(service.detachTab(tab.id)).rejects.toThrow(
+			"Browser tab is in use by an agent operation and cannot be detached.",
+		);
+		expect(service.getState().tabs.some((item) => item.id === tab.id)).toBe(true);
+		(
+			service as unknown as { unpinAgentTab: (tabId: string) => void }
+		).unpinAgentTab(tab.id);
+	});
+
+	it("does not sleep a tab while an agent operation holds a pin", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     const second = await navigateNewTab(service, "https://second.example");
