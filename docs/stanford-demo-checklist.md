@@ -75,7 +75,7 @@ or link, and an honest status as of the snapshot commit.
 | C2 | Prompt uses `tools.search` (no project) or `workspace.list` + read (with project) | Engineering | `FIRST_TASK_PROMPT` in `first-task.ts` | **COMPLETE** |
 | C3 | No network, browser, OAuth, or approvals on first task | Engineering | Prompt contract in `first-task.ts` | **COMPLETE** |
 | C4 | Cold 9B first turn **1–2 min** expectation surfaced in UI | Engineering | `FIRST_TASK_SLOW_MODEL_NOTICE` in `first-task.ts` | **COMPLETE** |
-| C5 | Operator warms model within 10 min of stage time | Operator | Readiness warm-up in [ai-tinkerers-demo.md](ai-tinkerers-demo.md) | **NOT COMPLETE** — requires rehearsal |
+| C5 | Operator warms model within 10 min of stage time | Operator | [presentation-day-warmup.md](presentation-day-warmup.md) step 5; [ai-tinkerers-demo.md](ai-tinkerers-demo.md) | **NOT COMPLETE** — requires rehearsal |
 | C6 | Fresh-profile setup smoke | Engineering | `pnpm test:desktop-setup`, `pnpm test:desktop-fresh-profile` | **COMPLETE** when verify runs |
 
 ---
@@ -103,7 +103,7 @@ or link, and an honest status as of the snapshot commit.
 | E3 | Widget layout defaults include recent-memories | Engineering | `new-tab-widgets.ts`, `DEFAULT_NEW_TAB_WIDGET_IDS` | **COMPLETE** |
 | E4 | Widget bounds sync across layout classes | Engineering | #624; `new-tab-widgets.test.ts` | **COMPLETE** |
 | E5 | Suggested actions from history (credentials stripped) | Engineering | `suggestedAgentActions` in `new-tab.ts` | **COMPLETE** |
-| E6 | Operator profile has enough history for compelling widgets | Operator | Browse/disposable project before demo | **NOT COMPLETE** |
+| E6 | Operator profile has enough history for compelling widgets | Operator | [presentation-day-warmup.md](presentation-day-warmup.md); `node scripts/presentation-warmup-check.mjs` | **NOT COMPLETE** |
 
 ---
 
@@ -113,6 +113,7 @@ or link, and an honest status as of the snapshot commit.
 | --- | --- | --- | --- | --- |
 | F1 | **Apple signing** | Operator | Developer ID cert, notarization, `macos-release` GitHub environment — see [public-release-operator-checklist.md](public-release-operator-checklist.md) | **NOT COMPLETE** — demo uses ad-hoc dev build only |
 | F2 | **On-stage rehearsal** | Operator | Full ten-minute path + memory beat + first task on presentation Mac with venue timing | **NOT COMPLETE** |
+| F5 | **Profile warm-up (E6 / C5)** | Operator | [presentation-day-warmup.md](presentation-day-warmup.md) (~15 min); optional `node scripts/presentation-warmup-check.mjs` | **NOT COMPLETE** — cold profile makes New Tab and memory beat look generic |
 | F3 | **Google OAuth** | Operator | Bundled Desktop client verification or BYO client — not required for primary demo path | **NOT COMPLETE** — optional for demo |
 | F4 | **Crash reporting** | Engineering / Operator | No remote crash aggregation by default; local diagnostic export from Readiness only — see [external-observability.md](external-observability.md) | **NOT COMPLETE** for production; **acceptable** for demo if local diagnostics suffice |
 
@@ -128,6 +129,7 @@ Run in order on the **presentation Mac** the morning of the demo:
 - [ ] `corepack pnpm verify:meetup` — **must pass**; preflight prints stop/clear instructions on failure; if a desktop smoke fails once after a clean preflight, retry once; if persistent, file engineering issue before relying on browser tools on stage
 - [ ] `corepack pnpm install:mac:dev` && `open -a Kestrel`
 - [ ] **Readiness** — protected store, database, local runtime, model route, packaged app all green
+- [ ] **Profile warm-up** — follow [presentation-day-warmup.md](presentation-day-warmup.md) (~15 min: browse, first task, memory, New Tab verify); optional `node scripts/presentation-warmup-check.mjs`
 - [ ] Warm local model (short chat) within 10 minutes of stage time
 - [ ] Disposable project checkout on disk with dependencies cached
 - [ ] Explicit memory capture **on** in Settings → Memory
@@ -160,8 +162,9 @@ presentation Mac:**
 3. Stop `dev:desktop`; clear `kestrel-electron-dev.lock` if present.
 4. `corepack pnpm verify:meetup` — must pass; retry once after clean preflight if a smoke flakes.
 5. `corepack pnpm install:mac:dev` && `open -a Kestrel`
-6. Readiness all green; warm local model within 10 min of stage time.
-7. Disposable project on disk; explicit memory capture on; rehearse first task **or** memory beat.
+6. [presentation-day-warmup.md](presentation-day-warmup.md) — profile warm-up (browse, first task, memory, New Tab); optional `node scripts/presentation-warmup-check.mjs`.
+7. Readiness all green; warm local model within 10 min of stage time.
+8. Disposable project on disk; explicit memory capture on; rehearse first task **or** memory beat.
 
 Optional surfaces (Google OAuth F3, remote crash reporting F4, Honcho remote memory) remain
 out of scope for the primary stage story.
@@ -235,6 +238,7 @@ presentation Mac `verify:meetup`, Readiness green, and F2 rehearsal pass.
 ## Related documents
 
 - [AI Tinkerers / Stanford live-demo runbook](ai-tinkerers-demo.md) — on-stage script and beats
+- [Presentation-day profile warm-up](presentation-day-warmup.md) — 15-minute operator script (E6, C5, F5)
 - [Public release operator checklist](public-release-operator-checklist.md) — signing, OAuth, clean-machine proof
 - [Market release](market-release.md) — full internet distribution gate
 - [Memory system](memory-system.md) — architecture behind the memory beat
