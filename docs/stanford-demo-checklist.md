@@ -1,15 +1,16 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `94924dac` (`Stabilize desktop browser smoke attach and detach races`, #629)
+**Snapshot commit:** `7a9f97fe` (`Add in-chat memory recall receipt on assistant replies`, #633)
 
-**Merged sprint:** #617–#629 — reliability, release gates, first-task auto-send,
+**Merged sprint:** #617–#633 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
-demo surfacing, browser smoke hardening.
+demo surfacing, browser smoke hardening, meetup preflight guard (#631), persona
+Command Center smoke hardening (#632), in-chat memory recall receipt (#633).
 
-**Overall verdict:** **NOT COMPLETE** — engineering meetup gate (`verify:meetup`)
-passed on `94924dac` after #629; operator rehearsal, Apple signing, Google OAuth,
-and crash reporting remain open. Gate must pass on the presentation Mac before
-the slot.
+**Overall verdict:** **NOT COMPLETE** — last full `verify:meetup` pass recorded at
+`94924dac` (#629); #631–#633 landed on `main` without a fresh meetup run in this
+checklist. Operator rehearsal, Apple signing, Google OAuth, and crash reporting
+remain open. Gate must pass on the presentation Mac before the slot.
 
 Use this matrix before going on stage. Each row has an owner, evidence command
 or link, and an honest status as of the snapshot commit.
@@ -52,7 +53,7 @@ or link, and an honest status as of the snapshot commit.
 | --- | --- | --- | --- | --- | --- |
 | B1 | **Do This For Me** | Read-only inspect → approve → local edit → verified test evidence | Both | Ten-minute path in [ai-tinkerers-demo.md](ai-tinkerers-demo.md); `pnpm test:desktop-approvals` | **PARTIAL** — automated smokes pass when verify runs; needs on-stage rehearsal with disposable checkout |
 | B2 | **What Should I Do** | Contextual New Tab: greeting, widgets, suggested actions, bounds sync | Engineering | #624; `apps/desktop/src/renderer/components/browser/new-tab.test.ts`; `new-tab-widgets.test.ts` | **COMPLETE** in repo — operator should rehearse populated vs cold profile |
-| B3 | **It Remembers How I Work** | Remember → confirmation → New Tab widget → Life → Memory → new chat | Engineering | #625; `MemoryRecallBadge.tsx`, `NewTabWidgets.tsx` recent-memories; `memory-capture.test.ts` | **COMPLETE** in repo — operator must run memory beat once on presentation profile |
+| B3 | **It Remembers How I Work** | Remember → confirmation → New Tab widget → Life → Memory → new chat → recall receipt | Engineering | #625, #633; `MemoryRecallBadge.tsx`, `MemoryRecallReceiptLine.tsx`, `memory-recall-receipt.ts` | **COMPLETE** in repo — operator must run memory beat once on presentation profile |
 
 ---
 
@@ -79,6 +80,7 @@ or link, and an honest status as of the snapshot commit.
 | D4 | Memory recall badge on New Tab | Engineering | `MemoryRecallBadge.tsx` | **COMPLETE** (#625) |
 | D5 | Life → Memory shows confirmed preference | Operator | Memory beat step 4 in [ai-tinkerers-demo.md](ai-tinkerers-demo.md) | **NOT COMPLETE** — operator rehearsal |
 | D6 | New chat injects shared context when enabled | Both | Settings → Memory; `MemoryRecallStatus` | **PARTIAL** — mechanism exists; model may not always cite memory verbatim |
+| D7 | In-chat **recall receipt** on assistant replies when shared context was used | Engineering | #633; `MemoryRecallReceiptLine.tsx`, `formatMemoryRecallReceipt()` | **COMPLETE** in repo — operator should call out receipt in memory beat step 5 |
 
 ---
 
@@ -110,7 +112,7 @@ or link, and an honest status as of the snapshot commit.
 
 Run in order on the **presentation Mac** the morning of the demo:
 
-- [ ] `git fetch` && checkout presentation commit (`94924dac` or later on `main`)
+- [ ] `git fetch` && checkout presentation commit (`7a9f97fe` or later on `main`)
 - [ ] `corepack pnpm install --frozen-lockfile`
 - [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present (**required** — `verify:meetup` now fails fast via preflight guard if either is still active)
 - [ ] `corepack pnpm verify:meetup` — **must pass**; preflight prints stop/clear instructions on failure; if a desktop smoke fails once after a clean preflight, retry once; if persistent, file engineering issue before relying on browser tools on stage
@@ -135,8 +137,9 @@ Run in order on the **presentation Mac** the morning of the demo:
 | `458bb8a6` | Aug 29, 2026 | **FAIL** (run 2, ~101s) | `pnpm verify` → `test:desktop-browser` — `Detached tab did not leave the source window` at `test-desktop-browser.mjs:1089` |
 | `94924dac` | Aug 29, 2026 | **FAIL** (run 1, ~95s) | `pnpm verify` → `test:desktop-setup` — timeout waiting for `just finished Kestrel setup` (dev watcher lock likely active) |
 | `94924dac` | Aug 29, 2026 | **PASS** (run 2, ~198s) | Full `verify:meetup` after #629 browser-smoke fix; includes packaged smokes and benchmark |
+| `7a9f97fe` | Aug 29, 2026 | **Not re-run** | Engineering snapshot after #633 memory recall receipt; meetup gate should be re-run before stage |
 
-**Engineering note:** #629 stabilized browser attach/detach; meetup gate green on `94924dac`. `verify:meetup` runs an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear the lock before gating on presentation hardware.
+**Engineering note:** #629 stabilized browser attach/detach; meetup gate green on `94924dac`. #631 added an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear the lock before gating on presentation hardware. #632 hardened persona Command Center opening in desktop smokes. #633 adds a bounded in-chat recall receipt when shared life context is injected.
 
 ---
 
