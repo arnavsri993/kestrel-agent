@@ -585,6 +585,56 @@ describe("UserBrowserService", () => {
     expect(contents.executeJavaScript).toHaveBeenCalledTimes(1);
   });
 
+  it("selects a native option in a visible tab through semantic CDP", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.debugger.sendCommand.mockImplementation(async (method, params) => {
+      if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
+      if (method === "DOM.querySelector") {
+        expect(params).toEqual({ nodeId: 1, selector: "select[name=country]" });
+        return { nodeId: 2 };
+      }
+      if (method === "DOM.describeNode")
+        return { node: { backendNodeId: 24 } };
+      if (method === "DOM.scrollIntoViewIfNeeded") return {};
+      if (method === "DOM.resolveNode")
+        return { object: { objectId: "country-select" } };
+      if (method === "Runtime.callFunctionOn") {
+        if (params.functionDeclaration?.includes("shouldFocus"))
+          return { result: { value: { ok: true, x: 20, y: 30 } } };
+        expect(params).toMatchObject({
+          objectId: "country-select",
+          arguments: [{ value: "ca" }],
+          returnByValue: true,
+          userGesture: true,
+        });
+        return { result: { value: { ok: true } } };
+      }
+      if (method === "Runtime.releaseObject") return {};
+      throw new Error(`unexpected command ${method}`);
+    });
+
+    await service.act(
+      tab.id,
+      { type: "select", target: "select[name=country]", value: "ca" },
+      new AbortController().signal,
+    );
+
+    expect(contents.debugger.attach).toHaveBeenCalledWith("1.3");
+    expect(contents.debugger.sendCommand).toHaveBeenCalledWith(
+      "DOM.scrollIntoViewIfNeeded",
+      { backendNodeId: 24 },
+    );
+    await vi.waitFor(() =>
+      expect(contents.debugger.sendCommand).toHaveBeenCalledWith(
+        "Runtime.releaseObject",
+        { objectId: "country-select" },
+      ),
+    );
+  });
+
   it("discards the least-recent inactive live view once more than eight are open", async () => {
     let tick = 0;
     const { service } = createService({ now: () => new Date(`2026-08-11T12:00:${String(tick++).padStart(2, "0")}.000Z`) });

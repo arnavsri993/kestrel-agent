@@ -14,6 +14,7 @@ import {
 	MAX_BROWSER_DOWNLOAD_RECORDS,
 	retainRecentBrowserDownloads,
 	uniqueIsolatedDownloadFilename,
+	waitForBrowserPostClickFrame,
 } from "./electron-browser-service";
 
 function download(id: string, status: "completed" | "progressing") {
@@ -97,6 +98,28 @@ describe("Electron browser download history", () => {
 });
 
 describe("Electron browser action cancellation", () => {
+	it("bounds the post-click frame wait when navigation strands the old context", async () => {
+		await expect(
+			waitForBrowserPostClickFrame(
+				() => new Promise(() => undefined),
+				new AbortController().signal,
+				5,
+			),
+		).resolves.toBe("bounded_wait");
+	});
+
+	it("stops a post-click frame wait when the browser action is cancelled", async () => {
+		const controller = new AbortController();
+		const waiting = waitForBrowserPostClickFrame(
+			() => new Promise(() => undefined),
+			controller.signal,
+			1_000,
+		);
+		controller.abort(new Error("cancelled post-click wait"));
+
+		await expect(waiting).rejects.toThrow("cancelled post-click wait");
+	});
+
 	it("does not type after cancellation while resolving the target", async () => {
 		let resolveTarget: (point: { x: number; y: number }) => void = () =>
 			undefined;
@@ -184,10 +207,136 @@ describe("Electron browser action cancellation", () => {
 		);
 		expect(loadURL).not.toHaveBeenCalled();
 	});
+
+	it("dispatches key actions through CDP for hidden browser sessions", async () => {
+		let attached = false;
+		const sendCommand = vi.fn(async () => ({}));
+		const service = new ElectronBrowserService();
+		const sessions = (
+			service as unknown as {
+				sessions: Map<string, unknown>;
+			}
+		).sessions;
+		sessions.set("browser-test", {
+			window: {
+				isDestroyed: () => false,
+				webContents: {
+					debugger: {
+						isAttached: () => attached,
+						attach: () => {
+							attached = true;
+						},
+						sendCommand,
+					},
+				},
+			},
+			partition: {},
+			allowedOrigins: new Set<string>(),
+			diagnostics: [],
+			downloads: [],
+			downloadDirectory: "/tmp/browser-test",
+		});
+
+		await service.handle(
+			{
+				operation: "act",
+				sessionId: "browser-test",
+				action: { type: "key", key: "ArrowDown" },
+			},
+			new AbortController().signal,
+		);
+
+		expect(sendCommand).toHaveBeenNthCalledWith(1, "Input.dispatchKeyEvent", {
+			type: "keyDown",
+			key: "ArrowDown",
+		});
+		expect(sendCommand).toHaveBeenNthCalledWith(2, "Input.dispatchKeyEvent", {
+			type: "keyUp",
+			key: "ArrowDown",
+		});
+	});
+
+	it("selects a native option through a bounded semantic CDP action", async () => {
+		let attached = false;
+		const sendCommand = vi.fn(async (method: string, params?: object) => {
+			if (method === "DOM.scrollIntoViewIfNeeded") return {};
+			if (method === "DOM.resolveNode")
+				return { object: { objectId: "select-object" } };
+			if (method === "Runtime.callFunctionOn") {
+				if (
+					(params as { functionDeclaration?: string }).functionDeclaration?.includes(
+						"shouldFocus",
+					)
+				)
+					return { result: { value: { ok: true, x: 20, y: 30 } } };
+				expect(params).toMatchObject({
+					objectId: "select-object",
+					arguments: [{ value: "us" }],
+					returnByValue: true,
+					userGesture: true,
+				});
+				expect((params as { functionDeclaration?: string }).functionDeclaration).toContain(
+					"HTMLSelectElement",
+				);
+				return { result: { value: { ok: true } } };
+			}
+			if (method === "Runtime.releaseObject") return {};
+			throw new Error(`unexpected command ${method}`);
+		});
+		const service = new ElectronBrowserService();
+		const sessions = (
+			service as unknown as {
+				sessions: Map<string, unknown>;
+			}
+		).sessions;
+		const elementRefs = (
+			service as unknown as {
+				elementRefs: Map<string, Map<string, number>>;
+			}
+		).elementRefs;
+		sessions.set("browser-test", {
+			window: {
+				isDestroyed: () => false,
+				webContents: {
+					debugger: {
+						isAttached: () => attached,
+						attach: () => {
+							attached = true;
+						},
+						sendCommand,
+					},
+				},
+			},
+			partition: {},
+			allowedOrigins: new Set<string>(),
+			diagnostics: [],
+			downloads: [],
+			downloadDirectory: "/tmp/browser-test",
+		});
+		elementRefs.set("browser-test", new Map([["e1", 42]]));
+
+		await service.handle(
+			{
+				operation: "act",
+				sessionId: "browser-test",
+				action: { type: "select", target: "e1", value: "us" },
+			},
+			new AbortController().signal,
+		);
+
+		expect(sendCommand).toHaveBeenCalledWith("DOM.scrollIntoViewIfNeeded", {
+			backendNodeId: 42,
+		});
+		await vi.waitFor(() =>
+			expect(sendCommand).toHaveBeenCalledWith("Runtime.releaseObject", {
+				objectId: "select-object",
+			}),
+		);
+	});
 });
 
 describe("Electron browser snapshot refs", () => {
-	it("resolves click targets from snapshot refs through the debugger box model", async () => {
+	it("resolves and preflights click targets from snapshot refs", async () => {
 		const executeJavaScript = vi.fn(async () => undefined);
 		const sendCommand = vi.fn(async (method: string, params?: object) => {
 			if (method === "Accessibility.getFullAXTree") {
@@ -203,10 +352,20 @@ describe("Electron browser snapshot refs", () => {
 				};
 			}
 			if (method === "DOM.scrollIntoViewIfNeeded") return {};
-			if (method === "DOM.getBoxModel") {
+			if (method === "DOM.resolveNode") {
 				expect(params).toMatchObject({ backendNodeId: 42 });
-				return { model: { content: [10, 20, 30, 20, 30, 40, 10, 40] } };
+				return { object: { objectId: "button-object" } };
 			}
+			if (method === "Runtime.callFunctionOn") {
+				expect(params).toMatchObject({
+					objectId: "button-object",
+					arguments: [{ value: false }],
+					awaitPromise: true,
+					returnByValue: true,
+				});
+				return { result: { value: { ok: true, x: 20, y: 30 } } };
+			}
+			if (method === "Runtime.releaseObject") return {};
 			if (method === "Input.dispatchMouseEvent") return {};
 			throw new Error(`unexpected command ${method}`);
 		});
@@ -261,7 +420,7 @@ describe("Electron browser snapshot refs", () => {
 			signal,
 		);
 
-		expect(sendCommand).toHaveBeenCalledWith("DOM.getBoxModel", {
+		expect(sendCommand).toHaveBeenCalledWith("DOM.resolveNode", {
 			backendNodeId: 42,
 		});
 		expect(sendCommand).toHaveBeenCalledWith(
@@ -272,6 +431,60 @@ describe("Electron browser snapshot refs", () => {
 		expect(executeJavaScript).toHaveBeenCalledWith(
 			expect.stringContaining("requestAnimationFrame"),
 			true,
+		);
+	});
+
+	it("rejects an obscured snapshot ref before dispatching pointer input", async () => {
+		const sendCommand = vi.fn(async (method: string) => {
+			if (method === "DOM.scrollIntoViewIfNeeded") return {};
+			if (method === "DOM.resolveNode")
+				return { object: { objectId: "obscured-button" } };
+			if (method === "Runtime.callFunctionOn")
+				return { result: { value: { ok: false, code: "obscured" } } };
+			if (method === "Runtime.releaseObject") return {};
+			throw new Error(`unexpected command ${method}`);
+		});
+		const service = new ElectronBrowserService();
+		const sessions = (
+			service as unknown as { sessions: Map<string, unknown> }
+		).sessions;
+		const elementRefs = (
+			service as unknown as {
+				elementRefs: Map<string, Map<string, number>>;
+			}
+		).elementRefs;
+		sessions.set("browser-test", {
+			window: {
+				isDestroyed: () => false,
+				webContents: {
+					debugger: {
+						isAttached: () => true,
+						attach: vi.fn(),
+						sendCommand,
+					},
+				},
+			},
+			partition: {},
+			allowedOrigins: new Set<string>(),
+			diagnostics: [],
+			downloads: [],
+			downloadDirectory: "/tmp/browser-test",
+		});
+		elementRefs.set("browser-test", new Map([["e1", 42]]));
+
+		await expect(
+			service.handle(
+				{
+					operation: "act",
+					sessionId: "browser-test",
+					action: { type: "click", target: "e1" },
+				},
+				new AbortController().signal,
+			),
+		).rejects.toThrow("obscured");
+		expect(sendCommand).not.toHaveBeenCalledWith(
+			"Input.dispatchMouseEvent",
+			expect.anything(),
 		);
 	});
 

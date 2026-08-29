@@ -58,8 +58,10 @@ import {
 import decodeIco from "decode-ico";
 import sharp from "sharp";
 import {
+	dispatchBrowserMouseClick,
 	publicInteractiveRefs,
 	rememberElementRefs,
+	selectBrowserOption,
 	targetPointFromBackendNode,
 } from "./browser-backend-node-target";
 import { BrowserExtensionManager } from "./browser-extension-manager";
@@ -2380,60 +2382,29 @@ export class UserBrowserService {
 				action.target,
 				false,
 				tabId,
+				signal,
 			);
 			if (signal.aborted) throw signal.reason;
-			if (!webContents.debugger.isAttached())
-				webContents.debugger.attach("1.3");
-			const pointer = {
-				x: point.x,
-				y: point.y,
-				modifiers: 0,
-				pointerType: "mouse",
-			};
-			await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-				...pointer,
-				type: "mouseMoved",
-				button: "none",
-				buttons: 0,
-				clickCount: 0,
-			});
-			if (signal.aborted) throw signal.reason;
-			let pressed = false;
-			try {
-				await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-					...pointer,
-					type: "mousePressed",
-					button: "left",
-					buttons: 1,
-					clickCount: 1,
-				});
-				pressed = true;
-				if (signal.aborted) throw signal.reason;
-				await webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
-					...pointer,
-					type: "mouseReleased",
-					button: "left",
-					buttons: 0,
-					clickCount: 1,
-				});
-				pressed = false;
-			} finally {
-				if (pressed)
-					await webContents.debugger
-						.sendCommand("Input.dispatchMouseEvent", {
-							...pointer,
-							type: "mouseReleased",
-							button: "left",
-							buttons: 0,
-							clickCount: 1,
-						})
-						.catch(() => undefined);
-			}
+			await dispatchBrowserMouseClick(webContents, point, signal);
 			await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
 		} else if (action.type === "type") {
-			await this.targetPoint(webContents, action.target, true, tabId);
+			await this.targetPoint(
+				webContents,
+				action.target,
+				true,
+				tabId,
+				signal,
+			);
 			if (signal.aborted) throw signal.reason;
 			webContents.insertText(action.text);
+		} else if (action.type === "select") {
+			await selectBrowserOption(
+				webContents,
+				action.target,
+				action.value,
+				this.elementRefs.get(tabId),
+				signal,
+			);
 		} else if (action.type === "key") {
 			if (
 				!/^[A-Za-z0-9]{1,20}$/.test(action.key) &&
@@ -3558,6 +3529,7 @@ export class UserBrowserService {
 		selector: string,
 		focus: boolean,
 		tabId: string,
+		signal: AbortSignal,
 	): Promise<{ x: number; y: number }> {
 		if (!selector || selector.length > 2_000)
 			throw new Error("Browser selector is invalid.");
@@ -3566,7 +3538,12 @@ export class UserBrowserService {
 			const backendNodeId = this.elementRefs.get(tabId)?.get(ref);
 			if (backendNodeId === undefined)
 				throw new Error("Browser target ref is stale. Take a new snapshot.");
-			return targetPointFromBackendNode(webContents, backendNodeId, focus);
+			return targetPointFromBackendNode(
+				webContents,
+				backendNodeId,
+				focus,
+				signal,
+			);
 		}
 		return webContents.executeJavaScript(`(() => {
       const node = document.querySelector(${JSON.stringify(selector)});

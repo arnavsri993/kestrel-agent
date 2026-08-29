@@ -134,6 +134,15 @@ check the `latest` feed, download signed updates, and notify the user that the
 update will install after quit and reopen; development builds never check the
 production feed.
 
+The source `verify` gate runs the deterministic 50-workflow browser-agent
+track after building the desktop output. macOS pull-request CI runs the same
+corpus against both development Electron and the newly packaged Apple Silicon
+application, uploads commit/environment/corpus-bound JSON reports, and fails on
+an unverified completion or expected safe stop. The signed release workflow
+runs the packaged track again. This is browser-tool and recovery evidence only:
+it does not call a model, use a live site or account, or merge future opt-in
+live-canary results into the deterministic rate.
+
 ## Release decision
 
 A candidate is ready for internet distribution only when:

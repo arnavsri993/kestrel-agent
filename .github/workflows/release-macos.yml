@@ -104,6 +104,15 @@ jobs:
           pkgutil --check-signature release/*.pkg
       - name: Smoke-test the signed packaged application
         run: corepack pnpm test:packaged-desktop:arm64
+      - name: Benchmark the signed packaged browser agent
+        run: corepack pnpm benchmark:browser-agent:packaged:arm64 --report .tmp/browser-agent-benchmark/release-packaged.json
+      - name: Upload signed browser-agent benchmark report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: signed-browser-agent-benchmark-${{ github.sha }}
+          path: .tmp/browser-agent-benchmark/release-packaged.json
+          if-no-files-found: warn
       - name: Verify signed Agent Core restart recovery
         run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
       - name: Create checksummed release manifest

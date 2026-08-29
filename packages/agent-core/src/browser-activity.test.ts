@@ -109,6 +109,30 @@ describe("browser activity summarizer", () => {
 		expect(summarized?.observation?.before.title).toHaveLength(500);
 		expect(summarized?.observation?.truncated).toBe(true);
 		expect(summarized?.observation?.before.url).not.toContain("token=");
+
+		const selected = summarizeBrowserActivity({
+			id: "tool-00000000-0000-4000-8000-000000000010",
+			sessionId: "session-1",
+			toolName: "browser.act",
+			status: "verified",
+			riskLevel: "sensitive",
+			input: {
+				browserSessionId: "browser-1",
+				action: {
+					type: "select",
+					target: "#country",
+					value: "private-option-value",
+				},
+			},
+			output: { performed: true },
+			startedAt: "2026-08-19T18:00:02.000Z",
+			completedAt: "2026-08-19T18:00:03.000Z",
+		});
+		expect(selected?.intent).toEqual({
+			type: "select",
+			target: "#country",
+		});
+		expect(JSON.stringify(selected)).not.toContain("private-option-value");
 	});
 
 	it("records autonomous performed acts and blocked visible acts", async () => {

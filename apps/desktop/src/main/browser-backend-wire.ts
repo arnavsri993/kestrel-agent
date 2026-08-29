@@ -29,6 +29,13 @@ export const BrowserActionSchema = z.discriminatedUnion("type", [
 		.strict(),
 	z
 		.object({
+			type: z.literal("select"),
+			target: z.string().min(1).max(2_000),
+			value: z.string().max(2_000),
+		})
+		.strict(),
+	z
+		.object({
 			type: z.literal("key"),
 			key: z.union([
 				z.enum(NAMED_KEYS),

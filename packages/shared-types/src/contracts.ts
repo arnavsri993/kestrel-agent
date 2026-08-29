@@ -3119,7 +3119,7 @@ export const BrowserActivityEventSchema = z.strictObject({
 		}),
 	]),
 	intent: z.strictObject({
-		type: z.enum(["click", "type", "key", "scroll"]),
+		type: z.enum(["click", "type", "select", "key", "scroll"]),
 		target: z.string().min(1).max(2_000).optional(),
 		key: z.string().min(1).max(40).optional(),
 		dx: z.number().finite().optional(),

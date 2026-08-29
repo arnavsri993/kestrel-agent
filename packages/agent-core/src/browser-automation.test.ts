@@ -298,6 +298,24 @@ describe("isolated browser automation and visual validation", () => {
 			(
 				await runtime.callTool(
 					session.id,
+					"browser.act",
+					{
+						browserSessionId,
+						action: { type: "select", target: "#country", value: "us" },
+					},
+					{ approvalStatus: "approved", idempotencyKey: "select-country" },
+				)
+			).status,
+		).toBe("verified");
+		expect(backend.actions).toContainEqual({
+			type: "select",
+			target: "#country",
+			value: "us",
+		});
+		expect(
+			(
+				await runtime.callTool(
+					session.id,
 					"browser.upload",
 					{
 						browserSessionId,

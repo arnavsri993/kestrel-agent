@@ -40,6 +40,28 @@ describe("browser backend wire schema", () => {
 		).toBe(false);
 	});
 
+	it("accepts bounded semantic select actions and rejects extra value fields", () => {
+		expect(
+			BrowserBackendWireRequestSchema.safeParse({
+				operation: "act",
+				sessionId: "electron-browser-1",
+				action: { type: "select", target: "e2", value: "us" },
+			}).success,
+		).toBe(true);
+		expect(
+			BrowserBackendWireRequestSchema.safeParse({
+				operation: "visible-act",
+				tabId: "tab-00000000-0000-4000-8000-000000000000",
+				action: {
+					type: "select",
+					target: "#country",
+					value: "us",
+					label: "United States",
+				},
+			}).success,
+		).toBe(false);
+	});
+
 	it("rejects unknown operations and extra keys", () => {
 		expect(
 			BrowserBackendWireRequestSchema.safeParse({
