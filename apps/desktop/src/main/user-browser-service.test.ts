@@ -66,6 +66,7 @@ const electron = vi.hoisted(() => {
       goForward: vi.fn(),
       clear: vi.fn(),
     };
+    isCurrentlyAudible = vi.fn(() => false);
     debugger = { isAttached: vi.fn(() => false), attach: vi.fn(), detach: vi.fn(), sendCommand: vi.fn() };
   }
   class MockView {
@@ -653,6 +654,74 @@ describe("UserBrowserService", () => {
       discarded: true,
     });
     expect(electron.state.views.filter((view) => !view.webContents.destroyed)).toHaveLength(8);
+  });
+
+  it("does not discard a tab while an agent snapshot holds a pin", async () => {
+    let tick = 0;
+    const { service } = createService({
+      now: () =>
+        new Date(`2026-08-11T12:00:${String(tick++).padStart(2, "0")}.000Z`),
+    });
+    const pinned = service as unknown as {
+      pinAgentTab: (tabId: string) => void;
+    };
+    const initial = service.getState().tabs[0]!;
+    await service.navigate(initial.id, "https://first.example");
+    const tabs = [initial];
+    for (let index = 0; index < 8; index += 1) {
+      const tab = await navigateNewTab(service, `https://${index}.example`);
+      tabs.push(tab);
+      if (index === 0) pinned.pinAgentTab(tab.id);
+    }
+
+    await service.selectTab(tabs.at(-1)!.id);
+
+    expect(
+      service.getState().tabs.find((tab) => tab.id === tabs[1]!.id),
+    ).toMatchObject({ discarded: false });
+  });
+
+  it("rejects close while an agent operation holds a tab pin", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    (
+      service as unknown as { pinAgentTab: (tabId: string) => void }
+    ).pinAgentTab(tab.id);
+
+    await expect(service.closeTab(tab.id)).rejects.toThrow(
+      "Browser tab is in use by an agent operation and cannot be closed.",
+    );
+    await expect(
+      service.handleAgentRequest(
+        { operation: "visible-close", tabId: tab.id },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(
+      "Browser tab is in use by an agent operation and cannot be closed.",
+    );
+
+    (
+      service as unknown as { unpinAgentTab: (tabId: string) => void }
+    ).unpinAgentTab(tab.id);
+    await expect(service.closeTab(tab.id)).resolves.toBeDefined();
+  });
+
+  it("does not sleep a tab while an agent operation holds a pin", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    const second = await navigateNewTab(service, "https://second.example");
+    await service.selectTab(second.id);
+    await service.navigate(first.id, "https://first.example");
+    (
+      service as unknown as { pinAgentTab: (tabId: string) => void }
+    ).pinAgentTab(first.id);
+
+    service.sleepInactiveTabs();
+
+    expect(
+      service.getState().tabs.find((tab) => tab.id === first.id),
+    ).toMatchObject({ discarded: false });
   });
 
   it("cleans up crashed views and recreates a destroyed view on the next navigation", async () => {
