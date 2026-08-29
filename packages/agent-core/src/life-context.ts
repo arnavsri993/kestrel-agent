@@ -29,6 +29,14 @@ function queryTerms(value: string): string[] {
 	return [...new Set(normalized(value).match(/[\p{L}\p{N}@.+-]{2,}/gu) ?? [])];
 }
 
+function isExplicitCapture(memory: MemoryRecord): boolean {
+	return (
+		memory.confirmationStatus === "explicit" ||
+		memory.structuredData.capture === "explicit-command" ||
+		memory.sourceType === "explicit-user-command"
+	);
+}
+
 function sensitivityAllowed(
 	sensitivity: SensitivityLevel,
 	options: { includeSensitive: boolean; includeRestricted: boolean },
@@ -586,7 +594,8 @@ export class LifeContextService {
 						schedule +
 						(memory.relevanceScore ?? memory.importance) * 2 +
 						memory.confidence +
-						(memory.userConfirmed ? 1 : 0),
+						(memory.userConfirmed ? 1 : 0) +
+						(isExplicitCapture(memory) ? 2 : 0),
 				};
 			})
 			.filter(({ score }) => score > 1.5)

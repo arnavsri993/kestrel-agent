@@ -15,6 +15,7 @@ function execution(
 		toolName: "browser.act",
 		riskLevel: "external",
 		status: "verified",
+		input: {},
 		startedAt: "2026-07-22T18:00:00.000Z",
 		completedAt: "2026-07-22T18:00:01.000Z",
 		...overrides,

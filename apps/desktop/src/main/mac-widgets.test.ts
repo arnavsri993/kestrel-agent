@@ -97,6 +97,15 @@ function snapshotFixture(): WorkspaceSnapshot {
 			},
 		},
 		updatedAt: "2026-08-23T07:00:00.000Z",
+		memoryRecall: {
+			chatInjection: "active",
+			activeMemories: 0,
+			confirmedPreferences: 0,
+			explicitCapture: true,
+			personalityScope: "shared",
+			personalityName: "Pragmatic",
+			useSharedContext: true,
+		},
 	};
 }
 

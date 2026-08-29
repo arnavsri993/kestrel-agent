@@ -114,6 +114,7 @@ import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
 import { GoalKanban } from "./components/GoalKanban";
 import { HonchoMemorySettings } from "./components/HonchoMemorySettings";
+import { MemoryRecallStatus } from "./components/MemoryRecallStatus";
 import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
@@ -8680,6 +8681,7 @@ function Settings({
 							className="settings-stack"
 							aria-label="Memory and behavior settings"
 						>
+							<MemoryRecallStatus snapshot={snapshot} />
 							<HonchoMemorySettings />
 							<PresenceSettings />
 							<LearnedSkillsSettings />

@@ -305,9 +305,11 @@ export class HonchoMemoryProvider {
 			this.database.setPrivateState(this.sessionsKey, states);
 			this.saveState(clearError(this.storedState()));
 		} catch (error) {
+			const message = safeError(error);
+			console.debug(`[honcho-memory] contextFor failed: ${message}`);
 			this.saveState({
 				...this.storedState(),
-				lastError: safeError(error),
+				lastError: message,
 			});
 			return "";
 		}
