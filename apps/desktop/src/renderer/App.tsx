@@ -2759,6 +2759,7 @@ function RuntimeConversation({
 			: SETUP_ASSISTANT_PROMPT;
 	});
 	const [busy, setBusy] = useState(false);
+	const [cancelling, setCancelling] = useState(false);
 	const [streamText, setStreamText] = useState("");
 	const [optimisticUser, setOptimisticUser] = useState("");
 	const [optimisticSteering, setOptimisticSteering] = useState<string[]>([]);
@@ -3587,9 +3588,13 @@ function RuntimeConversation({
 
 	async function cancel() {
 		const streamId = streamIdRef.current;
-		if (!streamId || streamSessionIdRef.current !== activeSessionIdRef.current)
-			return;
-		await window.kestrel.request({ type: "runtime-cancel-stream", streamId });
+		if (!streamId || !busy || cancelling) return;
+		setCancelling(true);
+		try {
+			await window.kestrel.request({ type: "runtime-cancel-stream", streamId });
+		} finally {
+			setCancelling(false);
+		}
 	}
 
 	async function createCheckpoint() {
@@ -3846,17 +3851,19 @@ function RuntimeConversation({
 			!pending &&
 			!error,
 	);
-	const assistiveStatus = activeSessionBusy
-		? streamText
-			? "Kestrel is responding in this chat."
-			: "Kestrel is working on this chat."
-		: backgroundSessionBusy
-			? "Kestrel is working in another chat."
-			: pending
-				? `Kestrel needs your approval for ${pending.execution.toolName}.`
-				: latestRun?.status === "completed"
-					? "Kestrel finished the latest response."
-					: "";
+	const assistiveStatus = cancelling
+		? "Stopping Kestrel…"
+		: activeSessionBusy
+			? streamText
+				? "Kestrel is responding in this chat."
+				: "Kestrel is working on this chat."
+			: backgroundSessionBusy
+				? "Kestrel is working in another chat."
+				: pending
+					? `Kestrel needs your approval for ${pending.execution.toolName}.`
+					: latestRun?.status === "completed"
+						? "Kestrel finished the latest response."
+						: "";
 	return (
 		<section
 			className={`conversation-view ${activeSessionId ? "" : "new-task-view"} ${emptySession ? "session-empty-view" : ""}`}
@@ -4404,22 +4411,25 @@ function RuntimeConversation({
 													? "Conversation only · start a new chat to add a project"
 													: "Conversation only"}
 						</span>
-						{activeSessionBusy ? (
+						{activeSessionBusy || backgroundSessionBusy ? (
 							<div className="button-row composer-send-actions">
 								{voiceButton}
-								<button
-									className="send-button"
-									aria-label="Send steering update"
-									disabled={!input.trim()}
-								>
-									<Icon name="arrow" />
-								</button>
+								{activeSessionBusy ? (
+									<button
+										className="send-button"
+										aria-label="Send steering update"
+										disabled={!input.trim() || cancelling}
+									>
+										<Icon name="arrow" />
+									</button>
+								) : null}
 								<button
 									type="button"
 									className="button secondary"
+									disabled={cancelling}
 									onClick={() => void cancel()}
 								>
-									Cancel
+									{cancelling ? "Stopping…" : "Stop"}
 								</button>
 							</div>
 						) : (
