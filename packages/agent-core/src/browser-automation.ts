@@ -21,6 +21,7 @@ import {
 	diffBrowserSnapshots,
 	type BrowserObservationDiff,
 } from "./browser-observation";
+import { withBrowserRecovery } from "./browser-recovery";
 import type { AgentRuntime } from "./runtime";
 
 export type BrowserAction =
@@ -300,10 +301,18 @@ export class BrowserController {
 		url.password = "";
 		url.hash = "";
 		delete session.lastSnapshot;
-		await this.backend.navigate(
-			session.backendSessionId,
-			url.toString(),
-			signal,
+		await withBrowserRecovery(
+			{
+				operation: "navigate",
+				surface: "isolated",
+				effectState: "possibly_started",
+			},
+			() =>
+				this.backend.navigate(
+					session.backendSessionId,
+					url.toString(),
+					signal,
+				),
 		);
 		return { url: url.toString(), trust: "untrusted_browser" };
 	}
@@ -332,8 +341,17 @@ export class BrowserController {
 		)
 			throw new Error("Browser scroll exceeds limits.");
 		const before = session.lastSnapshot ?? EMPTY_BROWSER_SNAPSHOT;
-		await this.backend.act(session.backendSessionId, action, signal);
-		const after = await this.snapshot(ownerSessionId, id, signal);
+		const after = await withBrowserRecovery(
+			{
+				operation: "act",
+				surface: "isolated",
+				effectState: "possibly_started",
+			},
+			async () => {
+				await this.backend.act(session.backendSessionId, action, signal);
+				return this.snapshot(ownerSessionId, id, signal);
+			},
+		);
 		return {
 			performed: true,
 			observation: diffBrowserSnapshots(before, after),
@@ -347,9 +365,13 @@ export class BrowserController {
 		signal: AbortSignal,
 	): Promise<BrowserSnapshot & { trust: "untrusted_browser" }> {
 		const session = this.require(ownerSessionId, id);
-		const snapshot = await this.backend.snapshot(
-			session.backendSessionId,
-			signal,
+		const snapshot = await withBrowserRecovery(
+			{
+				operation: "observe",
+				surface: "isolated",
+				effectState: "not_started",
+			},
+			() => this.backend.snapshot(session.backendSessionId, signal),
 		);
 		let serializedTree: string | undefined;
 		try {
@@ -427,7 +449,14 @@ export class BrowserController {
 	): Promise<{ diagnostics: BrowserDiagnostic[]; trust: "untrusted_browser" }> {
 		const session = this.require(ownerSessionId, id);
 		const diagnostics = this.backend.diagnostics
-			? await this.backend.diagnostics(session.backendSessionId, signal)
+			? await withBrowserRecovery(
+					{
+						operation: "observe",
+						surface: "isolated",
+						effectState: "not_started",
+					},
+					() => this.backend.diagnostics!(session.backendSessionId, signal),
+				)
 			: [];
 		if (
 			diagnostics.length > 2_000 ||
@@ -489,11 +518,19 @@ export class BrowserController {
 				);
 			return candidate;
 		});
-		await this.backend.upload(
-			session.backendSessionId,
-			selector,
-			canonical,
-			signal,
+		await withBrowserRecovery(
+			{
+				operation: "upload",
+				surface: "isolated",
+				effectState: "possibly_started",
+			},
+			() =>
+				this.backend.upload!(
+					session.backendSessionId,
+					selector,
+					canonical,
+					signal,
+				),
 		);
 		return { files: canonical.map((path) => path.slice(root.length + 1)) };
 	}
@@ -575,7 +612,14 @@ export class BrowserController {
 			throw new Error("The visible user browser is unavailable.");
 		if (tabId !== undefined && !/^tab-[a-f0-9-]{36}$/.test(tabId))
 			throw new Error("Visible browser tab ID is invalid.");
-		const snapshot = await this.backend.visibleSnapshot(tabId, signal);
+		const snapshot = await withBrowserRecovery(
+			{
+				operation: "observe",
+				surface: "visible",
+				effectState: "not_started",
+			},
+			() => this.backend.visibleSnapshot!(tabId, signal),
+		);
 		const serialized = JSON.stringify(snapshot.accessibilityTree);
 		if (serialized.length > 2_000_000)
 			throw new Error("Visible browser accessibility snapshot exceeds 2 MB.");
@@ -652,8 +696,17 @@ export class BrowserController {
 			);
 		const before =
 			this.lastVisibleSnapshots.get(tabId) ?? EMPTY_BROWSER_SNAPSHOT;
-		await this.backend.visibleAct(tabId, action, signal);
-		const after = await this.visibleSnapshot(tabId, signal);
+		const after = await withBrowserRecovery(
+			{
+				operation: "act",
+				surface: "visible",
+				effectState: "possibly_started",
+			},
+			async () => {
+				await this.backend.visibleAct!(tabId, action, signal);
+				return this.visibleSnapshot(tabId, signal);
+			},
+		);
 		return {
 			performed: true,
 			observation: diffBrowserSnapshots(before, after),
@@ -668,7 +721,14 @@ export class BrowserController {
 		if (!input.trim() || input.length > 8_192)
 			throw new Error("Visible browser navigation input is invalid.");
 		this.lastVisibleSnapshots.delete(tabId);
-		await this.backend.visibleNavigate(tabId, input, signal);
+		await withBrowserRecovery(
+			{
+				operation: "navigate",
+				surface: "visible",
+				effectState: "possibly_started",
+			},
+			() => this.backend.visibleNavigate!(tabId, input, signal),
+		);
 		return { navigated: true };
 	}
 
@@ -1086,6 +1146,8 @@ export function installBrowserTools(
 	};
 	const snapshotTargetDescription =
 		"The action target may be a snapshot ref like e12 or a CSS selector.";
+	const recoveryContractDescription =
+		"A failed browser operation may return typed advisory recovery metadata. Take fresh read-only observations before deciding what to do, and never automatically replay an action whose effect may have started.";
 	const snapshotTargetSchema = {
 		type: "string",
 		minLength: 1,
@@ -1137,6 +1199,7 @@ export function installBrowserTools(
 				String(input.url),
 				signal,
 			),
+		recoveryContractDescription,
 	);
 	add(
 		"browser.act",
@@ -1199,7 +1262,7 @@ export function installBrowserTools(
 				input.action as BrowserAction,
 				signal,
 			),
-		snapshotTargetDescription,
+		`${snapshotTargetDescription} ${recoveryContractDescription}`,
 	);
 	add(
 		"browser.snapshot",
@@ -1319,8 +1382,8 @@ export function installBrowserTools(
 		descriptor: {
 			name: "browser.upload",
 			title: "Upload workspace files",
-			description:
-				"Set a browser file input to bounded files contained by the current granted workspace.",
+		description:
+			`Set a browser file input to bounded files contained by the current granted workspace. ${recoveryContractDescription}`,
 			category: "browser",
 			riskLevel: "sensitive",
 			readOnly: false,
@@ -1512,7 +1575,7 @@ export function installBrowserTools(
 				input.action as BrowserAction,
 				signal,
 			),
-		snapshotTargetDescription,
+		`${snapshotTargetDescription} ${recoveryContractDescription}`,
 	);
 	addVisible(
 		"browser.navigate-tab",
@@ -1533,6 +1596,7 @@ export function installBrowserTools(
 				String(input.input),
 				signal,
 			),
+		recoveryContractDescription,
 	);
 	addVisible(
 		"browser.open-tab",

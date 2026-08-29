@@ -184,7 +184,7 @@ try {
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
-	await page.locator(".recommended-model-tiers article.preferred").waitFor();
+	await page.locator(".recommended-model-tiers article").first().waitFor();
 	const tierNames = page.locator(".model-tier-name strong");
 	await tierNames.first().waitFor();
 	const names = await tierNames.allTextContents();
@@ -192,9 +192,15 @@ try {
 	assert.ok(names.length >= 1 && names.length <= 3);
 	if (names.length === 3) {
 		assert.deepEqual(names, ["Light", "Balanced", "Power"]);
+		await page.locator(".recommended-model-tiers article.preferred").waitFor();
 		await page.getByText("Recommended", { exact: true }).waitFor();
 	} else {
 		assert.ok(!names.includes("Balanced"));
+		assert.equal(
+			await page.locator(".recommended-model-tiers article.preferred").count(),
+			0,
+			"A constrained CI device must not claim a nonexistent balanced tier is recommended.",
+		);
 	}
 	const tierDetails = page.locator(".model-tier-details");
 	const detailIndex = Math.min(1, (await tierDetails.count()) - 1);

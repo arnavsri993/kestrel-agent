@@ -336,6 +336,72 @@ describe("isolated browser automation and visual validation", () => {
 		database.close();
 	});
 
+	it("persists typed recovery guidance and never replays a failed browser action", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		let attempts = 0;
+		backend.act = async () => {
+			attempts += 1;
+			throw new Error("Browser target ref is stale. Take a new snapshot.");
+		};
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Recovery" });
+		installBrowserTools(runtime, new BrowserController(backend), session.id);
+		expect(
+			runtime
+				.discoverTools(session.id)
+				.find((tool) => tool.name === "browser.act")?.description,
+		).toContain("never automatically replay");
+		const created = await runtime.callTool(
+			session.id,
+			"browser.create",
+			{ allowedOrigins: ["https://example.test"] },
+			{ approvalStatus: "approved", idempotencyKey: "recovery-browser" },
+		);
+		const input = {
+			browserSessionId: String(created.output?.browserSessionId),
+			action: { type: "click", target: "e12" },
+		};
+		const failed = await runtime.callTool(session.id, "browser.act", input, {
+			approvalStatus: "approved",
+			idempotencyKey: "recovery-action",
+		});
+
+		expect(failed).toMatchObject({
+			status: "failed",
+			error: "Browser target ref is stale. Take a new snapshot.",
+			output: {
+				recovery: {
+					reasonCode: "stale_target",
+					effectState: "not_started",
+					automaticReplayAllowed: false,
+					advisoryOnly: true,
+				},
+			},
+		});
+		const recovery = failed.output?.recovery as {
+			hints?: Array<Record<string, unknown>>;
+		};
+		expect(recovery.hints).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					kind: "snapshot",
+					toolName: "browser.snapshot",
+					readOnly: true,
+					requiresApproval: false,
+				}),
+			]),
+		);
+		expect(attempts).toBe(1);
+		const repeated = await runtime.callTool(session.id, "browser.act", input, {
+			approvalStatus: "approved",
+			idempotencyKey: "recovery-action",
+		});
+		expect(repeated.id).toBe(failed.id);
+		expect(attempts).toBe(1);
+		database.close();
+	});
+
 	it("keeps visible tabs separate from autonomous sessions and approval-gates mutations", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const backend = new FakeBrowser();
