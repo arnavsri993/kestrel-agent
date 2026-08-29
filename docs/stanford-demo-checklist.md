@@ -1,15 +1,15 @@
 # Stanford demo readiness checklist
 
-**Snapshot commit:** `20f7662e` (`Surface memory on New Tab and chat for demo visibility`, #625)
+**Snapshot commit:** `458bb8a6` (`Fix flaky desktop browser smoke bounds and screenshot sync`, #627)
 
-**Merged sprint:** #617–#625 — reliability, release gates, first-task auto-send,
+**Merged sprint:** #617–#627 — reliability, release gates, first-task auto-send,
 meetup packaging, read-only first-task, contextual new-tab, bounds sync, memory
-demo surfacing.
+demo surfacing, browser smoke hardening.
 
 **Overall verdict:** **NOT COMPLETE** — engineering demo path is largely wired;
-operator rehearsal, Apple signing, Google OAuth, and crash reporting remain
-open. `verify:meetup` must be re-run and pass on the presentation Mac before
-the slot.
+`verify:meetup` still fails on `test-desktop-browser.mjs` at `458bb8a6` despite
+#627. Operator rehearsal, Apple signing, Google OAuth, and crash reporting
+remain open. Gate must pass on the presentation Mac before the slot.
 
 Use this matrix before going on stage. Each row has an owner, evidence command
 or link, and an honest status as of the snapshot commit.
@@ -34,15 +34,15 @@ or link, and an honest status as of the snapshot commit.
 
 | # | Requirement | Owner | Evidence | Status |
 | --- | --- | --- | --- | --- |
-| A1 | Full `pnpm verify` passes (typecheck, 985+ unit tests, desktop smokes, e2e) | Engineering | `corepack pnpm verify` | **PARTIAL** — failed `test-desktop-browser.mjs` on `browser.visible-screenshot` at `20f7662e` (Aug 29 local run); prior pass on `b5031ef0` |
-| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **NOT COMPLETE** — blocked by A1 failure before packaging stage |
-| A3 | Website assets validate | Engineering | `corepack pnpm assets:verify` | **COMPLETE** — passed in Aug 29 run before browser smoke failure |
+| A1 | Full `pnpm verify` passes (typecheck, 985+ unit tests, desktop smokes, e2e) | Engineering | `corepack pnpm verify` | **NOT COMPLETE** — `test-desktop-browser.mjs` failed twice at `458bb8a6` (Aug 29): run 1 (~70s) `No active user browser view is attached`; run 2 (~101s) `Detached tab did not leave the source window`; prior pass on `b5031ef0` |
+| A2 | Meetup gate (`verify:meetup`) passes end-to-end | Engineering | `corepack pnpm verify:meetup` | **NOT COMPLETE** — failed at `pnpm verify` → `test:desktop-browser` (~70s / ~101s); packaging, local-ai, and packaged smokes not reached |
+| A3 | Website assets validate | Engineering | `corepack pnpm assets:verify` | **NOT RUN** — not reached after A1 failure in `458bb8a6` runs (passed in earlier `b5031ef0` / pre-failure stages of `20f7662e`) |
 | A4 | Real local model response | Engineering | `corepack pnpm test:local-ai:real` | **NOT RUN** — not reached after A1 failure |
 | A5 | Apple Silicon dev package builds | Engineering | `corepack pnpm package:mac:dev` | **NOT RUN** — not reached after A1 failure |
 | A6 | Packaged desktop smoke (arm64) | Engineering | `corepack pnpm test:packaged-desktop:arm64` | **NOT RUN** — part of `verify:meetup` |
 | A7 | Packaged browser-agent benchmark | Engineering | `corepack pnpm benchmark:browser-agent:packaged:arm64` | **NOT RUN** — part of `verify:meetup` |
 | A8 | Canonical app install path | Operator | `corepack pnpm install:mac:dev` then `open -a Kestrel` | **PARTIAL** — procedure documented in [ai-tinkerers-demo.md](ai-tinkerers-demo.md); operator must run on presentation Mac |
-| A9 | Market / release honesty gate | Engineering | `corepack pnpm audit:market` | **COMPLETE** — passed in Aug 29 run |
+| A9 | Market / release honesty gate | Engineering | `corepack pnpm audit:market` | **COMPLETE** — passed in both `458bb8a6` runs (within `pnpm verify` before browser smoke) |
 
 ---
 
@@ -110,7 +110,7 @@ or link, and an honest status as of the snapshot commit.
 
 Run in order on the **presentation Mac** the morning of the demo:
 
-- [ ] `git fetch` && checkout presentation commit (`20f7662e` or later on `main`)
+- [ ] `git fetch` && checkout presentation commit (`458bb8a6` or later on `main`)
 - [ ] `corepack pnpm install --frozen-lockfile`
 - [ ] `corepack pnpm verify:meetup` — **must pass**; if `test-desktop-browser` fails on screenshot, retry once; if persistent, file engineering issue before relying on browser tools on stage
 - [ ] `corepack pnpm install:mac:dev` && `open -a Kestrel`
@@ -130,8 +130,10 @@ Run in order on the **presentation Mac** the morning of the demo:
 | --- | --- | --- | --- |
 | `b5031ef0` | Aug 29, 2026 | **PASS** | Baseline before memory surfacing merge |
 | `20f7662e` | Aug 29, 2026 | **FAIL** | `pnpm verify` stopped at `test-desktop-browser.mjs:935` — `browser.visible-screenshot` returned `failed` instead of `verified` |
+| `458bb8a6` | Aug 29, 2026 | **FAIL** (run 1, ~70s) | `pnpm verify` → `test:desktop-browser` — `No active user browser view is attached` at `test-desktop-browser.mjs:378` |
+| `458bb8a6` | Aug 29, 2026 | **FAIL** (run 2, ~101s) | `pnpm verify` → `test:desktop-browser` — `Detached tab did not leave the source window` at `test-desktop-browser.mjs:1089` |
 
-**Engineering follow-up:** Investigate flaky or environmental `browser.visible-screenshot` failure before declaring meetup gate green on latest `main`.
+**Engineering follow-up:** `test-desktop-browser.mjs` remains flaky after #627; stabilize tab detach / browser-view attachment before declaring meetup gate green on latest `main`.
 
 ---
 
