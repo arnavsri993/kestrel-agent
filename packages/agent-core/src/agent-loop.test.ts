@@ -859,9 +859,14 @@ describe("provider-neutral agent loop", () => {
 				approvalDecision: "approved",
 			}),
 		).rejects.toBeInstanceOf(SessionRunBusyError);
-		expect(database.getAgentRun(waiting.run.id)?.status).toBe(
-			"waiting_approval",
-		);
+		expect(database.getAgentRun(waiting.run.id)).toMatchObject({
+			status: "cancelled",
+			error: "Superseded by a new message. The pending approval is no longer available.",
+		});
+		expect(database.getToolExecution(waiting.pendingExecution!.id)).toMatchObject({
+			status: "cancelled",
+			output: { approvalRequired: false },
+		});
 		expect(executions).toBe(0);
 
 		releaseSecond();
@@ -873,8 +878,8 @@ describe("provider-neutral agent loop", () => {
 				runId: waiting.run.id,
 				approvalDecision: "approved",
 			}),
-		).resolves.toMatchObject({ run: { status: "completed" } });
-		expect(executions).toBe(1);
+		).rejects.toThrow("Agent run is not waiting at an approval boundary.");
+		expect(executions).toBe(0);
 		await expect(
 			loop.run({
 				sessionId: session.id,
@@ -884,6 +889,103 @@ describe("provider-neutral agent loop", () => {
 			}),
 		).resolves.toMatchObject({ run: { status: "completed" } });
 		expect(database.listIdempotentClaims("agent-session-run:")).toEqual([]);
+		database.close();
+	});
+
+	it("supersedes waiting approval when a new message starts", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Approval supersede" });
+		let executions = 0;
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "test.approval-supersede",
+				title: "Approval supersede fixture",
+				description: "Require approval before recording one fixture action.",
+				category: "connector",
+				riskLevel: "sensitive",
+				readOnly: false,
+				requiresWorkspace: false,
+				source: "plugin",
+				tags: ["test", "approval"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => {
+				executions += 1;
+				return { receipt: `execution-${executions}` };
+			},
+		});
+		runtime.allowTool(session.id, "test.approval-supersede");
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "approval",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				if (calls === 1) {
+					return {
+						providerId: "approval",
+						model: request.model,
+						text: "",
+						toolCalls: [
+							{
+								id: "call-approval-supersede",
+								name: "test.approval-supersede",
+								arguments: {},
+							},
+						],
+						usage: { inputTokens: 2, outputTokens: 1 },
+						finishReason: "tool_calls",
+					};
+				}
+				return {
+					providerId: "approval",
+					model: request.model,
+					text: "Moved on.",
+					toolCalls: [],
+					usage: { inputTokens: 2, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+		const waiting = await loop.run({
+			sessionId: session.id,
+			model: "approval",
+			providerIds: ["approval"],
+			userContent: textContent("Needs approval"),
+		});
+		expect(waiting.run.status).toBe("waiting_approval");
+
+		const next = await loop.run({
+			sessionId: session.id,
+			model: "approval",
+			providerIds: ["approval"],
+			userContent: textContent("New message instead"),
+		});
+		expect(next.run.status).toBe("completed");
+		expect(database.getAgentRun(waiting.run.id)).toMatchObject({
+			status: "cancelled",
+			error: "Superseded by a new message. The pending approval is no longer available.",
+		});
+		expect(database.getToolExecution(waiting.pendingExecution!.id)).toMatchObject({
+			status: "cancelled",
+			output: { approvalRequired: false },
+		});
+		await expect(
+			loop.resume({
+				runId: waiting.run.id,
+				approvalDecision: "approved",
+			}),
+		).rejects.toThrow("Agent run is not waiting at an approval boundary.");
+		expect(executions).toBe(0);
 		database.close();
 	});
 

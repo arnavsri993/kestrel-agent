@@ -1914,6 +1914,10 @@ export class AgentRuntime extends EventEmitter {
 		}
 	}
 
+	supersedeActiveAgentHistory(sessionId: string, reason: string): void {
+		this.retireActiveAgentHistory(sessionId, this.now(), reason);
+	}
+
 	private retireActiveAgentHistory(
 		sessionId: string,
 		completedAt: string,
