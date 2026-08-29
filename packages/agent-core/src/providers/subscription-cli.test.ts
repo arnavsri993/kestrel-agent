@@ -11,6 +11,24 @@ import { textContent } from "./types";
 
 const roots: string[] = [];
 
+async function fakeHangingCli(): Promise<{ executable: string; pidFile: string }> {
+	const root = await mkdtemp(join(tmpdir(), "kestrel-claude-hanging-"));
+	roots.push(root);
+	const executable = join(root, "claude");
+	const pidFile = `${executable}.pid`;
+	const body = `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(process.argv[1] + ".pid", String(process.pid));
+process.on("SIGTERM", () => {});
+process.stdin.on("data", () => {});
+process.stdin.on("end", () => {});
+setInterval(() => {}, 10_000);
+`;
+	await writeFile(executable, body, { mode: 0o700 });
+	await chmod(executable, 0o700);
+	return { executable, pidFile };
+}
+
 async function fakeCli(): Promise<{ executable: string; capture: string }> {
 	const root = await mkdtemp(join(tmpdir(), "kestrel-claude-fake-"));
 	roots.push(root);
@@ -207,5 +225,30 @@ describe("vendor subscription CLI providers", () => {
 			toolCalls: [],
 		});
 		expect(deltas).toEqual(["OpenCode ", "subscription result"]);
+	});
+
+	it("escalates to SIGKILL when the provider CLI ignores SIGTERM", async () => {
+		const fake = await fakeHangingCli();
+		const provider = new ClaudeSubscriptionProvider({
+			executable: fake.executable,
+			timeoutMs: 60_000,
+		});
+		const controller = new AbortController();
+		const completion = provider.complete(
+			{
+				model: "sonnet",
+				messages: [{ role: "user", content: textContent("Hang test") }],
+			},
+			{ signal: controller.signal },
+		);
+		for (let attempt = 0; attempt < 50 && !existsSync(fake.pidFile); attempt += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		expect(existsSync(fake.pidFile)).toBe(true);
+		controller.abort(new Error("cancelled for kill test"));
+		await expect(completion).rejects.toThrow("cancelled for kill test");
+		const pid = Number.parseInt(await readFile(fake.pidFile, "utf8"), 10);
+		await new Promise((resolve) => setTimeout(resolve, 1_500));
+		expect(() => process.kill(pid, 0)).toThrow();
 	});
 });

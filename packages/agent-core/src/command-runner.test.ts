@@ -76,6 +76,7 @@ describe("SandboxedCommandRunner", () => {
       stdin,
       kill,
       pid: 12345,
+      exitCode: null,
     }) as unknown as child_process.ChildProcess & {
       stdout: EventEmitter;
       stderr: EventEmitter;
@@ -127,7 +128,9 @@ describe("SandboxedCommandRunner", () => {
 
     vi.advanceTimersByTime(6000);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-    child.emit("close", null, "SIGTERM");
+    vi.advanceTimersByTime(1_000);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    child.emit("close", null, "SIGKILL");
 
     await expect(handle.completion).rejects.toThrow("exceeded its 5000 ms timeout");
 
@@ -135,6 +138,7 @@ describe("SandboxedCommandRunner", () => {
   });
 
   it("cancels execution if output exceeds 1MB", async () => {
+    vi.useFakeTimers();
     vi.mocked(fs.accessSync).mockImplementation(() => {});
 
     const child = mockSpawn();
@@ -143,9 +147,13 @@ describe("SandboxedCommandRunner", () => {
     // Send > 1MB of data
     child.stdout.emit("data", Buffer.alloc(1_000_001));
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-    child.emit("close", null, "SIGTERM");
+    vi.advanceTimersByTime(1_000);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    child.emit("close", null, "SIGKILL");
 
     await expect(handle.completion).rejects.toThrow("exceeded the 1 MB safety limit");
+
+    vi.useRealTimers();
   });
 
   it("handles interactive mode correctly", async () => {
@@ -168,6 +176,7 @@ describe("SandboxedCommandRunner", () => {
   });
 
   it("cancels via AbortSignal", async () => {
+    vi.useFakeTimers();
     vi.mocked(fs.accessSync).mockImplementation(() => {});
 
     const child = mockSpawn();
@@ -176,10 +185,29 @@ describe("SandboxedCommandRunner", () => {
 
     controller.abort(new Error("aborted manually"));
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    vi.advanceTimersByTime(1_000);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
 
-    child.emit("close", null, "SIGTERM");
+    child.emit("close", null, "SIGKILL");
 
     await expect(handle.completion).rejects.toThrow("aborted manually");
+
+    vi.useRealTimers();
+  });
+
+  it("escalates stop() to SIGKILL when SIGTERM does not exit the process", async () => {
+    vi.useFakeTimers();
+    vi.mocked(fs.accessSync).mockImplementation(() => {});
+
+    const child = mockSpawn();
+    const handle = runner.start(defaultInput, { onProgress: vi.fn() });
+
+    handle.stop();
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    vi.advanceTimersByTime(1_000);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+
+    vi.useRealTimers();
   });
 
   it("does not spawn when the command is already cancelled", async () => {

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +27,14 @@ interface SubscriptionCliOptions {
 	defaultModel?: string;
 	environment?: NodeJS.ProcessEnv;
 	timeoutMs?: number;
+}
+
+function killChildProcess(child: ChildProcess): void {
+	if (child.exitCode !== null) return;
+	child.kill("SIGTERM");
+	setTimeout(() => {
+		if (child.exitCode === null) child.kill("SIGKILL");
+	}, 1_000).unref();
 }
 
 function safeEnvironment(
@@ -92,7 +100,7 @@ function runCli(
 			else resolve(result!);
 		};
 		const stop = (reason: Error) => {
-			child.kill("SIGTERM");
+			killChildProcess(child);
 			finish(reason);
 		};
 		const abort = () =>
