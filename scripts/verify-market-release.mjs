@@ -245,8 +245,13 @@ if (
 	fail(
 		"desktop startup must preserve its compatibility runtime name for user data.",
 	);
-if (!desktopMain.includes('appendSwitch("use-mock-keychain")'))
-	fail("desktop startup must disable Chromium Keychain Safe Storage.");
+if (
+	!desktopMain.includes("use-mock-keychain") ||
+	!desktopMain.includes("isPackagedKestrelRuntime")
+)
+	fail(
+		"desktop startup must use real Keychain in packaged builds and mock Keychain in dev/test.",
+	);
 for (const marker of [
 	'runtimeApplicationName = "Kestrel"',
 	"keychainService: `${runtimeApplicationName} Safe Storage`",
