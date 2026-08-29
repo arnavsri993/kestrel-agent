@@ -1581,6 +1581,11 @@ export class UserBrowserService {
 	}
 
 	async detachTab(tabId: string): Promise<UserBrowserState> {
+		if (this.isAgentTabPinned(tabId)) {
+			throw new Error(
+				"Browser tab is in use by an agent operation and cannot be detached.",
+			);
+		}
 		const tab = this.requireTab(tabId);
 		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
 			throw new Error("Only loaded web pages can open in a separate window.");
