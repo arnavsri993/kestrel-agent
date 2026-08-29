@@ -167,6 +167,50 @@ export function uncertainExecutionsForRun(
 	);
 }
 
+export type VerifiedApprovalEvidence = {
+	executionId: string;
+	toolName: string;
+};
+
+export function verifiedApprovalEvidenceForRun(
+	run: AgentRun,
+	executions: RuntimeToolExecution[],
+	receipts: ActionReceipt[],
+): VerifiedApprovalEvidence | null {
+	const verifiedReceipt = [...latestRunActionReceipts(receipts, run)]
+		.reverse()
+		.find(
+			(receipt) =>
+				receipt.outcome === "verified" &&
+				receipt.verification &&
+				receipt.approval.required &&
+				(receipt.approval.result === "approved_once" ||
+					receipt.approval.result === "allowed_by_rule"),
+		);
+	if (verifiedReceipt)
+		return {
+			executionId: verifiedReceipt.toolExecutionId,
+			toolName: verifiedReceipt.toolName,
+		};
+
+	const keyPrefix = `${run.id}:`;
+	const verifiedExecution = [...executions]
+		.reverse()
+		.find(
+			(execution) =>
+				execution.status === "verified" &&
+				execution.verification &&
+				execution.output?.approvalRequired === true &&
+				execution.idempotencyKey?.startsWith(keyPrefix) === true,
+		);
+	if (verifiedExecution)
+		return {
+			executionId: verifiedExecution.id,
+			toolName: verifiedExecution.toolName,
+		};
+	return null;
+}
+
 
 export function activityItemsFromExecutions(
 	executions: RuntimeToolExecution[],

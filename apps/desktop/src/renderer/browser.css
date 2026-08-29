@@ -5874,6 +5874,32 @@ body:has(.calculator-overlay),
 	overflow-wrap: anywhere;
 }
 
+.agent-conversation-host .runtime-activity-handoff {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin: 10px 0;
+	padding: 8px 10px;
+	border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--canvas) 88%, var(--accent) 12%);
+	font-size: 11px;
+	line-height: 1.45;
+}
+
+.agent-conversation-host .runtime-activity-handoff svg {
+	flex: 0 0 auto;
+	width: 14px;
+	height: 14px;
+	margin-top: 1px;
+	color: var(--accent);
+}
+
+.agent-conversation-host .runtime-activity-handoff span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
 .agent-conversation-host .runtime-approval-owner {
 	display: block;
 	margin-top: 5px;

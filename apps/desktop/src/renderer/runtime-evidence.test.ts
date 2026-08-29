@@ -17,6 +17,7 @@ import {
 	runRouteLabel,
 	runtimeOutcomeCopy,
 	uncertainExecutionsForRun,
+	verifiedApprovalEvidenceForRun,
 } from "./runtime-evidence";
 
 function run(overrides: Partial<AgentRun> = {}): AgentRun {
@@ -214,6 +215,56 @@ describe("execution audit items", () => {
 		expect(activityItemsFromExecutions([uncertain])[0]?.detail).toContain(
 			"Outcome uncertain",
 		);
+	});
+});
+
+describe("verified approval evidence handoff", () => {
+	it("prefers the latest verified receipt that required approval", () => {
+		const evidence = verifiedApprovalEvidenceForRun(
+			run({ status: "running", pendingToolExecutionId: undefined }),
+			[],
+			[
+				receipt({
+					id: "receipt-earlier",
+					toolExecutionId: "tool-earlier",
+					startedAt: "2026-08-19T12:01:00.000Z",
+					approval: { required: true, result: "approved_once" },
+				}),
+				receipt({
+					id: "receipt-later",
+					toolExecutionId: "tool-later",
+					toolName: "workspace.write",
+					startedAt: "2026-08-19T12:03:00.000Z",
+					approval: { required: true, result: "allowed_by_rule" },
+				}),
+			],
+		);
+		expect(evidence).toEqual({
+			executionId: "tool-later",
+			toolName: "workspace.write",
+		});
+	});
+
+	it("falls back to verified executions when receipts are unavailable", () => {
+		const evidence = verifiedApprovalEvidenceForRun(
+			run({ status: "completed", pendingToolExecutionId: undefined }),
+			[
+				execution({
+					id: "tool-verified",
+					status: "verified",
+					verification: {
+						method: "workspace-write-readback",
+						evidenceSha256: "b".repeat(64),
+						verifiedAt: "2026-08-19T12:02:00.000Z",
+					},
+				}),
+			],
+			[],
+		);
+		expect(evidence).toEqual({
+			executionId: "tool-verified",
+			toolName: "workspace.apply_patch",
+		});
 	});
 });
 
