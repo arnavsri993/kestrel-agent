@@ -7,7 +7,7 @@ import type {
 	UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
-import { tabFaviconDataUrl } from "./tab-favicon";
+import { TabFavicon } from "./TabFavicon";
 
 const FOLDER_COLORS: readonly UserBrowserTabFolderColor[] = [
 	"blue",
@@ -44,11 +44,7 @@ function faviconForTab(
 		"origin" | "faviconDataUrl"
 	>[] | undefined,
 ) {
-	if (tab.file) return <Icon name="artifacts" />;
-	const faviconDataUrl = tabFaviconDataUrl(tab, originFavicons);
-	if (faviconDataUrl) return <img src={faviconDataUrl} alt="" />;
-	if (!tab.url) return <Icon name="globe" />;
-	return <span>{hostForTab(tab).charAt(0).toUpperCase()}</span>;
+	return <TabFavicon tab={tab} originFavicons={originFavicons} />;
 }
 
 export function OrganizeTabsDialog({

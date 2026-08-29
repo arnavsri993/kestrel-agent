@@ -27,7 +27,7 @@ import {
 	shouldRetainTabWidthOnClose,
 	TAB_CLOSE_REFIT_DELAY_MS,
 } from "./tab-strip-layout";
-import { tabFaviconDataUrl } from "./tab-favicon";
+import { recentTabFavicon, TabFavicon } from "./TabFavicon";
 
 const DETACH_DRAG_THRESHOLD_PX = 36;
 const REORDER_DRAG_THRESHOLD_PX = 12;
@@ -489,36 +489,11 @@ export function TabStrip({
 	}
 
 	function getFaviconContent(tab: UserBrowserTab) {
-		if (tab.file) return <Icon name="artifacts" />;
-		const faviconDataUrl = tabFaviconDataUrl(tab, originFavicons);
-		if (faviconDataUrl) {
-			return <img src={faviconDataUrl} alt="" />;
-		}
-		if (tab.loading) {
-			return <span className="browser-tab-spinner" />;
-		}
-		if (!tab.url) {
-			return <Icon name="globe" />;
-		}
-		try {
-			const host = new URL(tab.url).hostname.replace(/^www\./, "");
-			return (
-				<span className="browser-favicon-letter">
-					{host.charAt(0).toUpperCase()}
-				</span>
-			);
-		} catch {
-			return <Icon name="globe" />;
-		}
+		return <TabFavicon tab={tab} originFavicons={originFavicons} />;
 	}
 
 	function getRecentFaviconContent(tab: UserBrowserRecentlyClosedTab) {
-		try {
-			const host = new URL(tab.url).hostname.replace(/^www\./, "");
-			return <span className="browser-favicon-letter">{host.charAt(0).toUpperCase()}</span>;
-		} catch {
-			return <Icon name="history" />;
-		}
+		return recentTabFavicon(tab.url);
 	}
 
 	function tabHost(tab: UserBrowserTab | UserBrowserRecentlyClosedTab): string {
