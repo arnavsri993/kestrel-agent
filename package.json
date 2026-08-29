@@ -61,6 +61,7 @@
     "assets:verify": "tsx scripts/verify-marketing-assets.ts",
     "verify": "pnpm typecheck && pnpm test && pnpm audit:references && pnpm audit:market && pnpm build && pnpm benchmark:browser-agent && pnpm test:e2e && pnpm test:desktop-smoke && pnpm test:desktop-single-instance && pnpm test:desktop-layout && pnpm test:desktop-writing-studio && pnpm test:desktop-file-icon-guard && pnpm test:desktop-browser && pnpm test:desktop-setup && pnpm test:desktop-fresh-profile && pnpm test:desktop-restart-recovery && pnpm test:desktop-personas && pnpm test:desktop-kanban && pnpm test:desktop-model-routing && pnpm test:desktop-readiness && pnpm test:desktop-external-secrets && pnpm test:desktop-observability && pnpm test:desktop-life-context && pnpm test:desktop-approvals && pnpm test:desktop-chat-configuration && pnpm test:desktop-managed-policy && pnpm test:packaged-cli && pnpm test:editors && pnpm test:security",
     "verify:meetup": "node scripts/verify-meetup-preflight.mjs && pnpm verify && pnpm assets:verify && pnpm test:local-ai:real && pnpm package:mac:dev && pnpm test:packaged-desktop:arm64 && pnpm benchmark:browser-agent:packaged:arm64",
+    "check:presentation-warmup": "node scripts/presentation-warmup-check.mjs",
     "cleanup:mac:apps": "node scripts/cleanup-kestrel-macos-apps.mjs"
   },
   "devDependencies": {
