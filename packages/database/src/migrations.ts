@@ -1,11 +1,37 @@
+import { createRequire } from "node:module";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const migrationsDirectory = join(
-	dirname(fileURLToPath(import.meta.url)),
-	"../migrations",
-);
+const CANONICAL_INITIAL_MIGRATION = "001_initial.sql";
+
+function resolveMigrationsDirectory(): string {
+	const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		join(moduleDirectory, "../migrations"),
+		join(moduleDirectory, "migrations"),
+	];
+	try {
+		const require = createRequire(import.meta.url);
+		candidates.unshift(
+			dirname(
+				require.resolve(
+					`@kestrel/database/migrations/${CANONICAL_INITIAL_MIGRATION}`,
+				),
+			),
+		);
+	} catch {
+		// Packaged CLI bundles inline migration code without the workspace package.
+	}
+	for (const candidate of candidates) {
+		if (existsSync(join(candidate, CANONICAL_INITIAL_MIGRATION))) return candidate;
+	}
+	throw new Error(
+		`Kestrel database migrations are unavailable (searched: ${candidates.join(", ")}).`,
+	);
+}
+
+const migrationsDirectory = resolveMigrationsDirectory();
 
 export const MIGRATION_SQL_FILES: Record<number, string> = {
 	1: "001_initial.sql",
