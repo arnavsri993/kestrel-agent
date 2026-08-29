@@ -180,6 +180,22 @@ describe("execution audit items", () => {
 		expect(items[1]?.sourceIds).toContain("a".repeat(64));
 	});
 
+	it("labels cancelled tool executions distinctly from generic failures", () => {
+		const items = activityItemsFromExecutions([
+			execution({
+				id: "tool-cancelled",
+				status: "cancelled",
+				error: "Cancelled by the user.",
+				completedAt: "2026-08-19T12:02:00.000Z",
+			}),
+		]);
+		expect(items[0]).toMatchObject({
+			id: "tool-cancelled",
+			status: "cancelled",
+			detail: "Cancelled by the user.",
+		});
+	});
+
 	it("surfaces uncertain outcomes only for the matching run", () => {
 		const uncertain = execution({
 			status: "failed",

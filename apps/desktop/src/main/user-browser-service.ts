@@ -1218,6 +1218,7 @@ export class UserBrowserService {
 	reload(tabId: string, ignoreCache = false): UserBrowserState {
 		const tab = this.requireTab(tabId);
 		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
+		this.elementRefs.delete(tabId);
 		tab.error = undefined;
 		tab.crashed = false;
 		const record = this.ensureView(tab);
@@ -3107,6 +3108,9 @@ export class UserBrowserService {
 	): void {
 		const url = safePageUrl(value);
 		if (!url) return;
+		// Snapshot element refs are tied to a specific DOM generation. Any main-frame
+		// navigation, including SPA route changes, must invalidate them before reuse.
+		this.elementRefs.delete(tab.id);
 		tab.url = sanitizeBrowserUrl(url.toString());
 		tab.title =
 			webContents.getTitle().trim().slice(0, 500) || hostnameTitle(tab.url);

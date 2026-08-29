@@ -150,6 +150,15 @@ function boundedMaximumTurns(value: number | undefined, fallback = 12): number {
 		: fallback;
 }
 
+function agentRunErrorMessage(error: unknown, cancelled: boolean): string {
+	if (cancelled) return "Cancelled by the user.";
+	if (error instanceof Error) {
+		const message = error.message.trim();
+		if (message) return message;
+	}
+	return "Model or agent execution failed.";
+}
+
 function isManagedInstructionMessage(message: RuntimeMessage): boolean {
 	return (
 		message.role === "system" &&
@@ -950,9 +959,7 @@ export class AgentLoop {
 			run = {
 				...run,
 				status: cancelled ? "cancelled" : "failed",
-				error: cancelled
-					? "Cancelled by the user."
-					: "Model or agent execution failed.",
+				error: agentRunErrorMessage(error, cancelled),
 				updatedAt: this.now().toISOString(),
 			};
 			this.database.saveAgentRunIfActive(run);

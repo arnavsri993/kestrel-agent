@@ -399,6 +399,7 @@ export const ActivitySchema = z.object({
 		"verified",
 		"blocked",
 		"failed",
+		"cancelled",
 	]),
 	sourceIds: z.array(z.string()),
 });

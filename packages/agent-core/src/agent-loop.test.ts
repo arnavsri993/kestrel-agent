@@ -216,6 +216,76 @@ describe("provider-neutral agent loop", () => {
 		database.close();
 	});
 
+	it("persists actionable failure copy when the turn budget is exhausted", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Turn budget" });
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "turn-budget",
+			capabilities: {
+				streaming: false,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				return {
+					providerId: "turn-budget",
+					model: request.model,
+					text: "",
+					toolCalls: [
+						{
+							id: `call-${calls}`,
+							name: "test.read-only",
+							arguments: {},
+						},
+					],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "tool_calls",
+				};
+			},
+		};
+		runtime.registerExternalTool({
+			descriptor: {
+				name: "test.read-only",
+				title: "Read-only fixture",
+				description: "No-op read-only tool for turn budget tests.",
+				category: "connector",
+				riskLevel: "read_only",
+				readOnly: true,
+				requiresWorkspace: false,
+				source: "plugin",
+				tags: ["test"],
+			},
+			inputSchema: { type: "object", additionalProperties: false },
+			execute: async () => ({ ok: true }),
+			verify: async () => ({
+				method: "fixture-readback",
+				evidenceSha256: "a".repeat(64),
+			}),
+		});
+		const loop = new AgentLoop(database, runtime, new ProviderPool([provider]));
+		await expect(
+			loop.run({
+				sessionId: session.id,
+				model: "fixture",
+				providerIds: ["turn-budget"],
+				userContent: textContent("Keep calling tools"),
+				maximumTurns: 1,
+				approvalStatus: "approved",
+			}),
+		).rejects.toThrow("Agent loop reached its maximum of 1 model turns.");
+		expect(database.getAgentRun(database.listAgentRuns(session.id)[0]!.id)).toMatchObject({
+			status: "failed",
+			error: "Agent loop reached its maximum of 1 model turns.",
+		});
+		database.close();
+	});
+
 	it("rejects a reverse-completion race across database connections before the competing run mutates history", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-loop-single-flight-"));
 		directories.push(root);

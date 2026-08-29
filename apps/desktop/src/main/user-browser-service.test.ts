@@ -825,6 +825,39 @@ describe("UserBrowserService", () => {
     });
   });
 
+  it("invalidates snapshot refs after main-frame navigation events", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.url = "https://example.com/";
+    contents.title = "Example";
+    contents.debugger.sendCommand.mockResolvedValue({
+      nodes: [
+        {
+          nodeId: "1",
+          role: { value: "button" },
+          name: { value: "Save" },
+          backendDOMNodeId: 9,
+        },
+      ],
+    });
+
+    await service.snapshot(tab.id);
+    contents.emit("did-navigate-in-page", {}, "https://example.com/next", true);
+
+    await expect(
+      service.handleAgentRequest(
+        {
+          operation: "visible-act",
+          tabId: tab.id,
+          action: { type: "click", target: "e1" },
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Browser target ref is stale. Take a new snapshot.");
+  });
+
   it("inserts a selected code only into the active page's matching domain", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
