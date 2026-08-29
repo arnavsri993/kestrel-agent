@@ -112,8 +112,8 @@ Run in order on the **presentation Mac** the morning of the demo:
 
 - [ ] `git fetch` && checkout presentation commit (`94924dac` or later on `main`)
 - [ ] `corepack pnpm install --frozen-lockfile`
-- [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present
-- [ ] `corepack pnpm verify:meetup` — **must pass**; if a desktop smoke fails once, retry after clearing the dev lock; if persistent, file engineering issue before relying on browser tools on stage
+- [ ] Stop any local `dev:desktop` watcher; clear `kestrel-electron-dev.lock` if present (**required** — `verify:meetup` now fails fast via preflight guard if either is still active)
+- [ ] `corepack pnpm verify:meetup` — **must pass**; preflight prints stop/clear instructions on failure; if a desktop smoke fails once after a clean preflight, retry once; if persistent, file engineering issue before relying on browser tools on stage
 - [ ] `corepack pnpm install:mac:dev` && `open -a Kestrel`
 - [ ] **Readiness** — protected store, database, local runtime, model route, packaged app all green
 - [ ] Warm local model (short chat) within 10 minutes of stage time
@@ -136,7 +136,7 @@ Run in order on the **presentation Mac** the morning of the demo:
 | `94924dac` | Aug 29, 2026 | **FAIL** (run 1, ~95s) | `pnpm verify` → `test:desktop-setup` — timeout waiting for `just finished Kestrel setup` (dev watcher lock likely active) |
 | `94924dac` | Aug 29, 2026 | **PASS** (run 2, ~198s) | Full `verify:meetup` after #629 browser-smoke fix; includes packaged smokes and benchmark |
 
-**Engineering note:** #629 stabilized browser attach/detach; meetup gate green on `94924dac`. Kill `dev:desktop` and clear the product-scoped Electron dev lock before gating on presentation hardware.
+**Engineering note:** #629 stabilized browser attach/detach; meetup gate green on `94924dac`. `verify:meetup` runs an automated preflight that blocks when `electron-vite dev` or the product-scoped Electron dev lock is active — kill `dev:desktop` and clear the lock before gating on presentation hardware.
 
 ---
 
