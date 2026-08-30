@@ -156,6 +156,7 @@ import {
 } from "./startup-state";
 import { personalizedConfigurationPrompts } from "./configuration-prompts";
 import { userFacingError } from "./error-copy";
+import { learnedSkillDisplayName } from "./learned-skill-presentation";
 import {
 	latestRunActionReceipts,
 	policyGateCopy,
@@ -230,6 +231,10 @@ type SettingsSection =
 	| "privacy"
 	| "advanced";
 type SettingsScope = "browser" | "agent";
+type SkillReviewRequest = {
+	proposalId: string;
+	requestId: number;
+};
 const commandDestinations: CommandDestination[] = [
 	{
 		id: "browser",
@@ -2635,6 +2640,7 @@ function RuntimeConversation({
 	newAgentFocusTarget,
 	refreshRevision,
 	onOpenActivity,
+	onReviewLearnedSkill,
 }: {
 	visible: boolean;
 	activeSessionId: string | null;
@@ -2656,6 +2662,7 @@ function RuntimeConversation({
 	newAgentFocusTarget: "prompt" | "task-settings";
 	refreshRevision: number;
 	onOpenActivity?(executionId: string): void;
+	onReviewLearnedSkill(proposalId: string): void;
 }) {
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
@@ -2717,7 +2724,8 @@ function RuntimeConversation({
 	const [actionReceipts, setActionReceipts] = useState<ActionReceipt[]>([]);
 	const [executions, setExecutions] = useState<RuntimeToolExecution[]>([]);
 	const [skillBusy, setSkillBusy] = useState(false);
-	const [skillNotice, setSkillNotice] = useState("");
+	const [skillNotice, setSkillNotice] =
+		useState<SkillLearningProposal | null>(null);
 	const [checkpointSummary, setCheckpointSummary] = useState("");
 	const [pending, setPending] = useState<{
 		run: AgentRun;
@@ -3103,7 +3111,7 @@ function RuntimeConversation({
 		setActionReceipts([]);
 		setExecutions([]);
 		setError("");
-		setSkillNotice("");
+		setSkillNotice(null);
 		if (!activeSessionId) {
 			return;
 		}
@@ -3381,7 +3389,7 @@ function RuntimeConversation({
 		}
 		setBusy(true);
 		setError("");
-		setSkillNotice("");
+		setSkillNotice(null);
 		setStreamText("");
 		setToolActivity([]);
 		setPending(null);
@@ -3613,7 +3621,7 @@ function RuntimeConversation({
 		let streamId: string | null = null;
 		setBusy(true);
 		setError("");
-		setSkillNotice("");
+		setSkillNotice(null);
 		setStreamText("");
 		setToolActivity([]);
 		setOptimisticSteering([]);
@@ -3663,7 +3671,7 @@ function RuntimeConversation({
 		)
 			return;
 		setSkillBusy(true);
-		setSkillNotice("");
+		setSkillNotice(null);
 		setError("");
 		try {
 			const response = (await window.kestrel.request({
@@ -3672,11 +3680,9 @@ function RuntimeConversation({
 			})) as CoreResponse;
 			if (!response.ok) throw new Error(response.error);
 			const proposal = response.skillProposals?.[0];
-			setSkillNotice(
-				proposal
-					? `${proposal.name} is ready for review in Settings → Memory & behavior.`
-					: "The workflow is ready for review in Settings → Memory & behavior.",
-			);
+			if (!proposal)
+				throw new Error("Kestrel did not return a learned skill proposal.");
+			setSkillNotice(proposal);
 		} catch (cause) {
 			setError(
 				cause instanceof Error
@@ -4167,9 +4173,24 @@ function RuntimeConversation({
 							</div>
 						)}
 					{skillNotice && (
-						<p className="skill-notice" role="status">
-							{skillNotice}
-						</p>
+						<div
+							className="skill-notice"
+							data-skill-proposal-id={skillNotice.id}
+						>
+							<span role="status">
+								<strong title={skillNotice.name}>
+									{learnedSkillDisplayName(skillNotice.name)}
+								</strong>
+								<small>Ready to review before Kestrel installs it.</small>
+							</span>
+							<button
+								type="button"
+								className="quiet-link"
+								onClick={() => onReviewLearnedSkill(skillNotice.id)}
+							>
+								Review skill
+							</button>
+						</div>
 					)}
 				</div>
 			)}
@@ -6490,11 +6511,16 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 	);
 }
 
-function LearnedSkillsSettings() {
+function LearnedSkillsSettings({
+	focusRequest,
+}: {
+	focusRequest?: SkillReviewRequest;
+}) {
 	const [proposals, setProposals] = useState<SkillLearningProposal[]>([]);
 	const [feedbackCount, setFeedbackCount] = useState(0);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const proposalRefs = useRef(new Map<string, HTMLDetailsElement>());
 	async function load() {
 		const response = (await window.kestrel.request({
 			type: "skill-learning-list",
@@ -6512,6 +6538,23 @@ function LearnedSkillsSettings() {
 			),
 		);
 	}, []);
+	useEffect(() => {
+		if (!focusRequest) return;
+		const proposal = proposals.find(
+			(item) =>
+				item.id === focusRequest.proposalId && item.status === "proposed",
+		);
+		const details = proposal
+			? proposalRefs.current.get(proposal.id)
+			: undefined;
+		if (!details) return;
+		details.open = true;
+		const frame = window.requestAnimationFrame(() => {
+			details.scrollIntoView({ block: "center" });
+			details.querySelector<HTMLElement>("summary")?.focus();
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [focusRequest, proposals]);
 	async function review(id: string, decision: "install" | "reject") {
 		setBusy(true);
 		setError("");
@@ -6551,8 +6594,17 @@ function LearnedSkillsSettings() {
 				</small>
 				{error && <small role="alert">{error}</small>}
 				{waiting.map((proposal) => (
-					<details key={proposal.id}>
-						<summary>{proposal.name} · review proposal</summary>
+					<details
+						key={proposal.id}
+						data-skill-proposal-id={proposal.id}
+						ref={(node) => {
+							if (node) proposalRefs.current.set(proposal.id, node);
+							else proposalRefs.current.delete(proposal.id);
+						}}
+					>
+						<summary title={proposal.name}>
+							{learnedSkillDisplayName(proposal.name)} · review proposal
+						</summary>
 						<p>{proposal.description}</p>
 						<pre>{proposal.instructions}</pre>
 						<small>
@@ -7958,6 +8010,8 @@ function Settings({
 	snapshot,
 	update,
 	initialSection,
+	sectionRequestId,
+	focusSkillReview,
 	browser,
 	browserContextEnabled,
 	onToggleBrowserContext,
@@ -7966,6 +8020,8 @@ function Settings({
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
 	initialSection?: SettingsSection;
+	sectionRequestId?: number;
+	focusSkillReview?: SkillReviewRequest;
 	browser: UserBrowserController;
 	browserContextEnabled: boolean;
 	onToggleBrowserContext(): void;
@@ -7987,7 +8043,7 @@ function Settings({
 		if (!initialSection) return;
 		setSection(initialSection);
 		setScope(initialSection === "browser" ? "browser" : "agent");
-	}, [initialSection]);
+	}, [initialSection, sectionRequestId]);
 	useEffect(() => {
 		void window.kestrel
 			.request({ type: "get-system-state" })
@@ -8648,7 +8704,11 @@ function Settings({
 							<MemoryRecallStatus snapshot={snapshot} />
 							<HonchoMemorySettings />
 							<PresenceSettings />
-							<LearnedSkillsSettings />
+							<LearnedSkillsSettings
+								{...(focusSkillReview
+									? { focusRequest: focusSkillReview }
+									: {})}
+							/>
 						</section>
 						</section>
 					)}
@@ -8758,8 +8818,12 @@ export function App() {
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
 	);
-	const [settingsSectionRequest, setSettingsSectionRequest] =
-		useState<SettingsSection | null>(null);
+	const [settingsSectionRequest, setSettingsSectionRequest] = useState<{
+		section: SettingsSection | null;
+		requestId: number;
+	}>({ section: null, requestId: 0 });
+	const [skillReviewRequest, setSkillReviewRequest] =
+		useState<SkillReviewRequest | null>(null);
 	const [activityFocusExecutionId, setActivityFocusExecutionId] = useState<
 		string | null
 	>(null);
@@ -8980,7 +9044,11 @@ export function App() {
 	const runtimeWaiting = runtimeAgentState === "waiting_approval";
 	const openAppPage = useCallback(
 		async (id: KestrelAppPageId, section?: SettingsSection) => {
-			if (id === "settings") setSettingsSectionRequest(section ?? null);
+			if (id === "settings")
+				setSettingsSectionRequest((current) => ({
+					section: section ?? null,
+					requestId: current.requestId + 1,
+				}));
 			pendingToolRouteFocusRef.current = id;
 			const tabs = browser.state?.tabs ?? [];
 			const existing = tabs.find(
@@ -9082,6 +9150,16 @@ export function App() {
 		},
 		[openAppPage],
 	);
+	const reviewLearnedSkill = useCallback(
+		(proposalId: string) => {
+			setSkillReviewRequest((current) => ({
+				proposalId,
+				requestId: (current?.requestId ?? 0) + 1,
+			}));
+			void openAppPage("settings", "intelligence");
+		},
+		[openAppPage],
+	);
 	const closeCommandCenter = useCallback(() => {
 		const active = browser.state?.tabs.find(
 			(tab) => tab.id === browser.state?.activeTabId,
@@ -9103,7 +9181,6 @@ export function App() {
 				}
 				if (action === "settings") {
 					setDeepLinkNotice("");
-					setSettingsSectionRequest(null);
 					void openAppPage("settings");
 					return;
 				}
@@ -9479,8 +9556,12 @@ export function App() {
 				<Settings
 					snapshot={snapshot}
 					update={setSnapshot}
-					{...(settingsSectionRequest
-						? { initialSection: settingsSectionRequest }
+					{...(settingsSectionRequest.section
+						? { initialSection: settingsSectionRequest.section }
+						: {})}
+					sectionRequestId={settingsSectionRequest.requestId}
+					{...(skillReviewRequest
+						? { focusSkillReview: skillReviewRequest }
 						: {})}
 					browser={browser}
 					browserContextEnabled={browserContextEnabled}
@@ -9649,6 +9730,7 @@ export function App() {
 							setActivityFocusExecutionId(executionId);
 							navigate("activity");
 						}}
+						onReviewLearnedSkill={reviewLearnedSkill}
 					/>
 				</AgentSidebar>
 				<DefaultBrowserPrompt

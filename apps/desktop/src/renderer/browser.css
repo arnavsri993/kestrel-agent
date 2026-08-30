@@ -581,6 +581,9 @@ body:has(.ai-browser-app),
 	margin: 12px 0;
 	padding: 10px;
 }
+.agent-conversation-host .skill-notice {
+	margin: 8px 0 0;
+}
 
 .agent-conversation-host .runtime-new-composer,
 .agent-conversation-host .thread-composer {
