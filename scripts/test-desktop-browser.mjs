@@ -935,6 +935,26 @@ try {
 	await page.waitForFunction(
 		() => document.activeElement?.id === "browser-address-input",
 	);
+	await page.keyboard.press("Escape");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after leaving the address bar",
+	);
+	await page.evaluate(() => {
+		document.querySelector("#browser-address-input")?.blur();
+	});
+	await page.locator("#browser-address-input").click();
+	await page.waitForFunction(
+		() => document.activeElement?.id === "browser-address-input",
+	);
+	assert.equal(
+		await page.locator("#browser-address-input").inputValue(),
+		`${origin}/one`,
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page detached when the address bar was focused",
+	);
 
 	state = await browserState();
 	const tabId = state.activeTabId;
