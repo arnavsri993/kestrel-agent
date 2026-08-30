@@ -46,6 +46,8 @@ import {
 	type CalendarConnector,
 	DevelopmentCalendarConnector,
 	DevelopmentEmailConnector,
+	UnavailableCalendarConnector,
+	UnavailableEmailConnector,
 	type EmailConnector,
 } from "./connectors";
 import { PreResponseContextResolver } from "./context-resolver";
@@ -237,8 +239,12 @@ export class AgentCore {
 
 	constructor(private readonly deps: AgentCoreDependencies) {
 		const seedDevelopmentFixtures = deps.seedDevelopmentFixtures === true;
-		this.email = deps.email ?? new DevelopmentEmailConnector();
-		this.calendar = deps.calendar ?? new DevelopmentCalendarConnector();
+		this.email = deps.email ?? (seedDevelopmentFixtures
+			? new DevelopmentEmailConnector()
+			: new UnavailableEmailConnector());
+		this.calendar = deps.calendar ?? (seedDevelopmentFixtures
+			? new DevelopmentCalendarConnector()
+			: new UnavailableCalendarConnector());
 		const storedState = AgentStateSchema.safeParse(
 			deps.database.getState<unknown>("agentState"),
 		);
@@ -582,18 +588,24 @@ export class AgentCore {
 			memories: this.deps.database.listMemories(),
 			activity: this.deps.database.listActivity(),
 			connections: [
-				{
-					id: "gmail",
-					name: "Gmail",
-					status: "development_adapter",
-					detail: "Sample data only · connect Google in Settings for live mail",
-				},
-				{
-					id: "calendar",
-					name: "Google Calendar",
-					status: "development_adapter",
-					detail: "Sample data only · connect Google in Settings for live calendar",
-				},
+				...(this.deps.seedDevelopmentFixtures
+					? [
+							{
+								id: "gmail",
+								name: "Gmail",
+								status: "development_adapter" as const,
+								detail:
+									"Sample data only · connect Google in Settings for live mail",
+							},
+							{
+								id: "calendar",
+								name: "Google Calendar",
+								status: "development_adapter" as const,
+								detail:
+									"Sample data only · connect Google in Settings for live calendar",
+							},
+						]
+					: []),
 				{
 					id: "files",
 					name: "Selected folders",
@@ -601,18 +613,6 @@ export class AgentCore {
 					detail: workspaceRoots.length
 						? `${workspaceRoots.length} granted · ${workspaceRoots.map((root) => basename(root)).join(", ")}`
 						: "No folder access granted",
-				},
-				{
-					id: "browser",
-					name: "Browser extension",
-					status: "disconnected",
-					detail: "Pairing not configured",
-				},
-				{
-					id: "github",
-					name: "GitHub",
-					status: "disconnected",
-					detail: "Repository publishing deferred",
 				},
 			],
 			resourceUsage: {

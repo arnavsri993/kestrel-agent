@@ -1,5 +1,35 @@
 import { describe, test, expect } from "vitest";
-import { DevelopmentEmailConnector, DevelopmentCalendarConnector } from "./connectors";
+import {
+	DevelopmentCalendarConnector,
+	DevelopmentEmailConnector,
+	UnavailableCalendarConnector,
+	UnavailableEmailConnector,
+} from "./connectors";
+
+describe("production-safe connector defaults", () => {
+	test("fail closed instead of simulating external email or calendar writes", () => {
+		const email = new UnavailableEmailConnector();
+		const calendar = new UnavailableCalendarConnector();
+		expect(() =>
+			email.sendDraft({
+				operationId: "email-1",
+				to: "person@example.test",
+				subject: "Subject",
+				body: "Body",
+			}),
+		).toThrow("Email connector is not configured.");
+		expect(email.verifySent("message-1")).toBe(false);
+		expect(() =>
+			calendar.createEvent({
+				operationId: "event-1",
+				title: "Event",
+				startsAt: "2026-08-29T18:00:00.000Z",
+				durationMinutes: 30,
+			}),
+		).toThrow("Calendar connector is not configured.");
+		expect(calendar.verifyEvent("event-1")).toBe(false);
+	});
+});
 
 describe("DevelopmentEmailConnector", () => {
   test("creates and verifies an email draft", () => {

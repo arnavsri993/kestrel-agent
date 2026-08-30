@@ -44,7 +44,6 @@ import {
   type CommunicationCodeCandidate,
   type CommunicationCodeScan,
   type CommunicationSourceStatus,
-	type InstalledExtension,
 	type PaymentPrompt,
 	type PasswordPrompt,
 	type UserBrowserState,
@@ -71,6 +70,7 @@ import {
 	buildContentFreeDiagnosticEnvelope,
 	exportDiagnosticReport,
 	installDiagnosticFailureHooks,
+	recordDiagnosticFailure,
 } from "./diagnostic-report";
 import {
   ChatGptOAuthManager,
@@ -132,13 +132,11 @@ import {
 	visualStateForAgentState,
 } from "./macos-integration";
 import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
+import { shouldUseRealKeychain } from "./secure-storage-policy";
 
-// Real Keychain/safeStorage is unreliable across user machines. Dev, CI, and
-// packaged builds use mock Keychain by default; opt in with KESTREL_USE_REAL_KEYCHAIN=1.
-if (
-	process.env.KESTREL_USE_REAL_KEYCHAIN !== "1" ||
-	process.env.KESTREL_USE_MOCK_KEYCHAIN === "1"
-)
+// Stable releases use the real Keychain. Development and automated profiles
+// use an isolated mock because ad-hoc signatures cannot retain durable access.
+if (!shouldUseRealKeychain(process.env, PRODUCT_IDENTITY.updateChannel))
 	app.commandLine.appendSwitch("use-mock-keychain");
 installDiagnosticFailureHooks();
 installMacFileIconCrashGuard(app);
@@ -1726,6 +1724,7 @@ function createMainWindow(): BrowserWindow {
       : new UserBrowserService({
           window,
           allowDevTools: !isPackagedKestrelApp,
+          allowLocalExtensions: !isPackagedKestrelApp,
           statePath: join(app.getPath("userData"), "browser", "state.json"),
           downloadDirectory: process.env.KESTREL_TEST_USER_DATA
             ? join(app.getPath("userData"), "browser-downloads")
@@ -1868,6 +1867,7 @@ function createDetachedBrowserWindow(
   const service = new UserBrowserService({
     window,
     allowDevTools: !isPackagedKestrelApp,
+    allowLocalExtensions: !isPackagedKestrelApp,
     statePath,
     initialState: detachedBrowserState(sourceState, tab),
     downloadDirectory: process.env.KESTREL_TEST_USER_DATA
@@ -3113,34 +3113,6 @@ function registerIpc(): void {
       );
       return { ok: true, extension };
     }
-    if (request.type === "browser-install-extension-file") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
-      const result = await dialog.showOpenDialog(senderWindow, {
-        title: "Install Extension",
-        properties: ["openFile", "openDirectory"],
-        filters: [{ name: "Extension Package", extensions: ["crx", "zip"] }],
-      });
-      if (result.canceled || !result.filePaths[0]) {
-        return { ok: false, error: "Installation canceled" };
-      }
-      const selectedPath = result.filePaths[0];
-      const stats = existsSync(selectedPath);
-      if (!stats) return { ok: false, error: "File not found" };
-
-      let extension: InstalledExtension;
-      if (
-        selectedPath.endsWith(".crx") ||
-        selectedPath.endsWith(".zip")
-      ) {
-        extension = await requestBrowserService.installExtensionFile(selectedPath);
-      } else {
-        extension = await requestBrowserService.installExtensionFolder(
-          selectedPath,
-        );
-      }
-      return { ok: true, extension };
-    }
     if (request.type === "browser-toggle-extension") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -4311,6 +4283,7 @@ void app
       packaged: isPackagedKestrelApp,
       channel: PRODUCT_IDENTITY.updateChannel,
       updatesDisabled: process.env.KESTREL_DISABLE_UPDATES === "1",
+      onCheckFailure: recordDiagnosticFailure,
       subscribeToUpdate: (listener) =>
         autoUpdater.on("update-downloaded", listener),
       onUpdateDownloaded: (info) => {

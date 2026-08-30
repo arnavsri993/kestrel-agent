@@ -44,6 +44,7 @@ const electron = vi.hoisted(() => {
     focus = vi.fn();
     insertText = vi.fn();
     executeJavaScript = vi.fn();
+    invalidate = vi.fn();
     capturePage = vi.fn(async () => ({
       getSize: () => ({ width: 1, height: 1 }),
       toBitmap: () => Buffer.from([0, 0, 0, 255]),
@@ -1228,6 +1229,55 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     });
 
     await expect(service.snapshot(tab.id)).rejects.toThrow("exceeds 1.5 MB");
+  });
+
+  it("bounds a stalled Electron capture and retries after requesting a repaint", async () => {
+    vi.useFakeTimers();
+    try {
+      const { service } = createService();
+      const tab = service.getState().tabs[0]!;
+      await service.navigate(tab.id, "https://example.com");
+      const contents = electron.state.views[0]!.webContents;
+      contents.capturePage
+        .mockImplementationOnce(() => new Promise(() => undefined))
+        .mockResolvedValueOnce({
+          getSize: () => ({ width: 1, height: 1 }),
+          toBitmap: () => Buffer.from([0, 0, 0, 255]),
+          toPNG: () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        });
+      const pending = service.handleAgentRequest(
+        { operation: "visible-screenshot", tabId: tab.id },
+        new AbortController().signal,
+      );
+
+      await vi.advanceTimersByTimeAsync(5_050);
+      await expect(pending).resolves.toMatchObject({ width: 1, height: 1 });
+      expect(contents.capturePage).toHaveBeenCalledTimes(2);
+      expect(contents.invalidate).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a stalled Electron capture without retrying it", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    contents.capturePage.mockImplementationOnce(() => new Promise(() => undefined));
+    const controller = new AbortController();
+    const pending = service.handleAgentRequest(
+      { operation: "visible-screenshot", tabId: tab.id },
+      controller.signal,
+    );
+    const rejection = expect(pending).rejects.toThrow("stop screenshot");
+
+    await vi.waitFor(() => expect(contents.capturePage).toHaveBeenCalledOnce());
+    controller.abort(new Error("stop screenshot"));
+
+    await rejection;
+    expect(contents.capturePage).toHaveBeenCalledOnce();
+    expect(contents.invalidate).not.toHaveBeenCalled();
   });
 
   it("handles browser shortcuts while native page content has focus", async () => {

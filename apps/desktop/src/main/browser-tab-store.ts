@@ -334,76 +334,97 @@ export class BrowserTabStore {
 
 	load(now: () => Date = () => new Date()): UserBrowserState {
 		if (!existsSync(this.path)) return freshBrowserState(now);
+		let serialized: string;
 		try {
-			const state = UserBrowserStateSchema.parse(
-				JSON.parse(readFileSync(this.path, "utf8")),
-			);
-			const tabs = state.settings.restoreSession
-				? state.tabs
-						.filter(
-							(tab) =>
-								!tab.url ||
-								/^https?:\/\//.test(tab.url) ||
-								isKestrelAppPageUrl(tab.url),
-							)
-						.map((tab) => ({
-							...tab,
-							faviconDataUrl: undefined,
-							loading: false,
-							canGoBack: false,
-							canGoForward: false,
-							discarded: Boolean(tab.url) && !isKestrelAppPageUrl(tab.url),
-							crashed: false,
-							error: undefined,
-						}))
-				: [];
-			if (tabs.length === 0)
-				return {
-					...freshBrowserState(now),
-					tabFolders: [],
-					history: state.history,
-					originFavicons: state.originFavicons,
-					bookmarks: state.bookmarks,
-					recentlyClosedTabs: state.recentlyClosedTabs,
-					sitePermissions: state.sitePermissions,
-					downloads: state.downloads.map((download) => ({
-						...download,
-						status:
-							download.status === "progressing" ? "failed" : download.status,
-						canReveal: false,
-					})),
-					settings: state.settings,
-				};
-			const tabFolderIds = new Set(
-				state.tabFolders
-					.filter((folder) => tabs.some((tab) => tab.tabFolderId === folder.id))
-					.map((folder) => folder.id),
-			);
-			const normalizedTabs = tabs.map((tab) =>
-				tab.tabFolderId && tabFolderIds.has(tab.tabFolderId)
-					? tab
-					: { ...tab, tabFolderId: undefined },
-			);
-			const activeTabId = tabs.some((tab) => tab.id === state.activeTabId)
-				? state.activeTabId
-				: normalizedTabs[0]!.id;
+			serialized = readFileSync(this.path, "utf8");
+		} catch {
+			// A transient filesystem or permission failure is not evidence that the
+			// user's session is corrupt. Leave the original path untouched so a later
+			// launch can retry it.
+			return freshBrowserState(now);
+		}
+
+		let state: UserBrowserState;
+		try {
+			state = UserBrowserStateSchema.parse(JSON.parse(serialized));
+		} catch {
+			// Preserve malformed data for diagnosis or manual recovery rather than
+			// silently overwriting it the next time a fresh session is saved.
+			try {
+				renameSync(
+					this.path,
+					`${this.path}.corrupt-${Date.now()}-${randomUUID()}`,
+				);
+			} catch {
+				// The state is still unusable, but a failed archival rename must not
+				// prevent Kestrel from opening a safe fresh tab.
+			}
+			return freshBrowserState(now);
+		}
+
+		const tabs = state.settings.restoreSession
+			? state.tabs
+					.filter(
+						(tab) =>
+							!tab.url ||
+							/^https?:\/\//.test(tab.url) ||
+							isKestrelAppPageUrl(tab.url),
+					)
+					.map((tab) => ({
+						...tab,
+						faviconDataUrl: undefined,
+						loading: false,
+						canGoBack: false,
+						canGoForward: false,
+						discarded: Boolean(tab.url) && !isKestrelAppPageUrl(tab.url),
+						crashed: false,
+						error: undefined,
+					}))
+			: [];
+		if (tabs.length === 0)
 			return {
-				...state,
-			tabs: normalizedTabs,
-				tabFolders: state.tabFolders.filter((folder) =>
-					tabFolderIds.has(folder.id),
-				),
-				activeTabId,
+				...freshBrowserState(now),
+				tabFolders: [],
+				history: state.history,
+				originFavicons: state.originFavicons,
+				bookmarks: state.bookmarks,
+				recentlyClosedTabs: state.recentlyClosedTabs,
+				sitePermissions: state.sitePermissions,
 				downloads: state.downloads.map((download) => ({
 					...download,
 					status:
 						download.status === "progressing" ? "failed" : download.status,
 					canReveal: false,
 				})),
+				settings: state.settings,
 			};
-		} catch {
-			return freshBrowserState(now);
-		}
+		const tabFolderIds = new Set(
+			state.tabFolders
+				.filter((folder) => tabs.some((tab) => tab.tabFolderId === folder.id))
+				.map((folder) => folder.id),
+		);
+		const normalizedTabs = tabs.map((tab) =>
+			tab.tabFolderId && tabFolderIds.has(tab.tabFolderId)
+				? tab
+				: { ...tab, tabFolderId: undefined },
+		);
+		const activeTabId = tabs.some((tab) => tab.id === state.activeTabId)
+			? state.activeTabId
+			: normalizedTabs[0]!.id;
+		return {
+			...state,
+			tabs: normalizedTabs,
+			tabFolders: state.tabFolders.filter((folder) =>
+				tabFolderIds.has(folder.id),
+			),
+			activeTabId,
+			downloads: state.downloads.map((download) => ({
+				...download,
+				status:
+					download.status === "progressing" ? "failed" : download.status,
+				canReveal: false,
+			})),
+		};
 	}
 
 	save(state: UserBrowserState): void {

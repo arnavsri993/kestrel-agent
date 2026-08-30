@@ -300,11 +300,7 @@ function CalendarView() {
 					<span key={provider.id} data-state={provider.state}>
 						<i aria-hidden="true" />
 						<strong>{provider.label}</strong>
-						<small>
-							{provider.state === "unsupported"
-								? "Adapter planned"
-								: provider.state}
-						</small>
+						<small>{provider.state}</small>
 					</span>
 				))}
 			</div>

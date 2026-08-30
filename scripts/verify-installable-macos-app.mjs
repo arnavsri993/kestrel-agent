@@ -32,6 +32,7 @@ for (const [key, expected] of [
 	["CFBundleIdentifier", "com.kestrel.desktop"],
 	["CFBundleName", "Kestrel"],
 	["LSMinimumSystemVersion", "13.0.0"],
+	["LSEnvironment.KESTREL_RELEASE_CHANNEL", "stable"],
 ]) {
 	const actual = readPlistValue(key);
 	if (actual !== expected)

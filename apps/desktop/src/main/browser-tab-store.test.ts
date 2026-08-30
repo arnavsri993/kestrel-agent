@@ -1,6 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	RendererRequestSchema,
 	UserBrowserSettingsSchema,
@@ -532,17 +539,39 @@ describe("browser tab persistence", () => {
 		expect(persisted).not.toContain("session_token");
 	});
 
-	it("fails closed to a fresh tab when state is corrupt", () => {
+	it.each([
+		["invalid JSON", "{not json"],
+		["invalid state schema", JSON.stringify({ tabs: "not-an-array" })],
+	])("preserves %s and fails closed to a fresh tab", (_label, malformed) => {
 		const path = storePath();
-		writeFileSync(path, "{not json", "utf8");
+		writeFileSync(path, malformed, "utf8");
+
+		const state = new BrowserTabStore(path).load(
+			() => new Date("2026-08-11T12:00:00.000Z"),
+		);
+		const archived = readdirSync(dirname(path)).filter((entry) =>
+			entry.startsWith("browser-state.json.corrupt-"),
+		);
+
+		expect(state.tabs).toHaveLength(1);
+		expect(state.tabs[0]?.title).toBe("New Tab");
+		expect(state.history).toEqual([]);
+		expect(archived).toHaveLength(1);
+		expect(readFileSync(join(dirname(path), archived[0]!), "utf8")).toBe(
+			malformed,
+		);
+	});
+
+	it("does not classify an ordinary read failure as corrupt state", () => {
+		const path = storePath();
+		mkdirSync(path);
 
 		const state = new BrowserTabStore(path).load(
 			() => new Date("2026-08-11T12:00:00.000Z"),
 		);
 
 		expect(state.tabs).toHaveLength(1);
-		expect(state.tabs[0]?.title).toBe("New Tab");
-		expect(state.history).toEqual([]);
+		expect(readdirSync(dirname(path))).toEqual(["browser-state.json"]);
 	});
 
 	it("keeps history but starts blank when session restore is disabled", () => {

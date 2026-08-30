@@ -42,6 +42,13 @@ const [
 	actionReceiptBuilder,
 	actionReceiptRenderer,
 	actionReceiptSmoke,
+	rendererApp,
+	approvalCard,
+	lifeContextRenderer,
+	agentCoreIndex,
+	agentCoreLifeContext,
+	secureStoragePolicy,
+	credentialBroker,
 ] = await Promise.all([
 	read("apps/desktop/electron-builder.yml"),
 	read("apps/desktop/electron-builder.installable.yml"),
@@ -71,6 +78,13 @@ const [
 	read("packages/agent-core/src/action-receipts.ts"),
 	read("apps/desktop/src/renderer/App.tsx"),
 	read("scripts/test-desktop-chat-configuration.mjs"),
+	read("apps/desktop/src/renderer/App.tsx"),
+	read("apps/desktop/src/renderer/components/ApprovalCard.tsx"),
+	read("apps/desktop/src/renderer/components/LifeContext.tsx"),
+	read("packages/agent-core/src/index.ts"),
+	read("packages/agent-core/src/life-context.ts"),
+	read("apps/desktop/src/main/secure-storage-policy.ts"),
+	read("apps/desktop/src/main/credential-broker.ts"),
 ]);
 
 for (const [name, source] of [
@@ -80,6 +94,25 @@ for (const [name, source] of [
 	if (/TODO|TBD|example\.com|your[- ]?(email|company)/i.test(source))
 		fail(`${name} route contains a release placeholder.`);
 }
+
+// Release UI must not advertise unfinished integrations or fixture-only wiring.
+for (const [name, source, forbidden] of [
+	["desktop app surface", rendererApp, ["kind: \"planned\"", "cloudflare-api"]],
+	["approval surface", approvalCard, ["Policy suggestion preview only", "preview only"]],
+	["calendar surface", lifeContextRenderer + agentCoreLifeContext, ["Adapter planned", "Apple Calendar", "Outlook Calendar", "CalDAV"]],
+	["agent core", agentCoreIndex, [
+		"connections: [\n\t\t\t\t{\n\t\t\t\t\tid: \"gmail\"",
+		"this.email = deps.email ?? new DevelopmentEmailConnector()",
+		"Repository publishing deferred",
+		"Pairing not configured",
+	]],
+]) {
+	for (const marker of forbidden)
+		if (source.includes(marker)) fail(`${name} contains unfinished surface ${marker}.`);
+}
+if (!agentCoreIndex.includes("deps.email ?? (seedDevelopmentFixtures") ||
+	!agentCoreIndex.includes("deps.calendar ?? (seedDevelopmentFixtures"))
+	fail("agent core development connectors are not fixture-gated.");
 
 for (const marker of [
 	"arch: [arm64]",
@@ -104,6 +137,7 @@ for (const marker of [
 	"extends: electron-builder.yml",
 	'identity: "-"',
 	"entitlementsInherit: build/entitlements.mac.dev.inherit.plist",
+	"KESTREL_RELEASE_CHANNEL: stable",
 ]) {
 	if (!installableBuilder.includes(marker))
 		fail(`local installable packaging is missing ${marker}.`);
@@ -226,6 +260,8 @@ for (const marker of [
 	"provider: github",
 	"owner: arnavsri993",
 	"repo: kestrel-agent",
+	"LSEnvironment.KESTREL_RELEASE_CHANNEL",
+	'"stable"',
 ]) {
 	if (!installableVerifier.includes(marker))
 		fail(`installable app verification is missing ${marker}.`);
@@ -253,11 +289,26 @@ if (
 	);
 if (
 	!desktopMain.includes("use-mock-keychain") ||
-	!desktopMain.includes("KESTREL_USE_REAL_KEYCHAIN")
+	!desktopMain.includes("shouldUseRealKeychain")
 )
 	fail(
-		"desktop startup must use mock Keychain by default and opt in to real Keychain explicitly.",
+		"desktop startup must apply the stable/development Keychain policy.",
 	);
+for (const marker of [
+	"channel === \"stable\"",
+	"KESTREL_USE_MOCK_KEYCHAIN",
+	"KESTREL_USE_REAL_KEYCHAIN",
+	"KESTREL_ALLOW_PLAINTEXT_SECRET_STORAGE",
+	"KESTREL_USE_SAFESTORAGE",
+]) {
+	if (!secureStoragePolicy.includes(marker))
+		fail(`desktop secure-storage policy is missing ${marker}.`);
+}
+if (
+	!credentialBroker.includes("shouldUseSafeStorage") ||
+	!credentialBroker.includes("SafeStorageSecretProtection")
+)
+	fail("stable database keys must use Electron safeStorage without silent fallback.");
 for (const marker of [
 	"kestrel-database-migrations",
 	"packages/database/migrations",

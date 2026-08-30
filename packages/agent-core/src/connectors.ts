@@ -18,6 +18,26 @@ export interface CalendarConnector {
 	verifyEvent(eventId: string): boolean;
 }
 
+/** Production-safe default: external actions require an explicitly configured connector. */
+export class UnavailableEmailConnector implements EmailConnector {
+	sendDraft(_input: Parameters<EmailConnector["sendDraft"]>[0]): never {
+		throw new Error("Email connector is not configured.");
+	}
+	verifySent(_messageId: string): boolean {
+		return false;
+	}
+}
+
+/** Production-safe default: external actions require an explicitly configured connector. */
+export class UnavailableCalendarConnector implements CalendarConnector {
+	createEvent(_input: Parameters<CalendarConnector["createEvent"]>[0]): never {
+		throw new Error("Calendar connector is not configured.");
+	}
+	verifyEvent(_eventId: string): boolean {
+		return false;
+	}
+}
+
 export class DevelopmentEmailConnector implements EmailConnector {
 	readonly sent = new Map<
 		string,
