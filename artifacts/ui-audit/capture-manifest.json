@@ -1,0 +1,607 @@
+{
+  "capturedAt": "2026-08-30T06:00:59.487Z",
+  "viewports": {
+    "wide": {
+      "width": 1440,
+      "height": 900,
+      "label": "wide"
+    },
+    "normal": {
+      "width": 1280,
+      "height": 800,
+      "label": "normal"
+    },
+    "compact": {
+      "width": 640,
+      "height": 760,
+      "label": "compact"
+    }
+  },
+  "screenshots": [
+    {
+      "id": "normal/setup-01-welcome",
+      "viewport": "normal",
+      "file": "baseline/normal/setup-01-welcome.png",
+      "surface": "setup",
+      "state": "first-run"
+    },
+    {
+      "id": "normal/setup-02-before-you-begin",
+      "viewport": "normal",
+      "file": "baseline/normal/setup-02-before-you-begin.png",
+      "surface": "setup"
+    },
+    {
+      "id": "normal/setup-02-boundary-detail",
+      "viewport": "normal",
+      "file": "baseline/normal/setup-02-boundary-detail.png",
+      "surface": "setup",
+      "state": "detail-expanded"
+    },
+    {
+      "id": "normal/setup-03-choose-model",
+      "viewport": "normal",
+      "file": "baseline/normal/setup-03-choose-model.png",
+      "surface": "setup"
+    },
+    {
+      "id": "normal/setup-04-account",
+      "viewport": "normal",
+      "file": "baseline/normal/setup-04-account.png",
+      "surface": "setup",
+      "state": "model-accounts"
+    },
+    {
+      "id": "normal/setup-04-free-providers",
+      "viewport": "normal",
+      "file": "baseline/normal/setup-04-free-providers.png",
+      "surface": "setup",
+      "state": "model-open"
+    },
+    {
+      "id": "normal/setup-04-local-model",
+      "viewport": "normal",
+      "file": "baseline/normal/setup-04-local-model.png",
+      "surface": "setup",
+      "state": "model-local"
+    },
+    {
+      "id": "normal/setup-05-ready",
+      "viewport": "normal",
+      "file": "baseline/normal/setup-05-ready.png",
+      "surface": "setup",
+      "state": "ready"
+    },
+    {
+      "id": "wide/workspace-new-tab",
+      "viewport": "wide",
+      "file": "baseline/wide/workspace-new-tab.png",
+      "surface": "workspace",
+      "state": "populated-default"
+    },
+    {
+      "id": "wide/surface-agent",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-agent.png",
+      "surface": "agent"
+    },
+    {
+      "id": "wide/surface-projects",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-projects.png",
+      "surface": "projects"
+    },
+    {
+      "id": "wide/surface-writing-studio",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-writing-studio.png",
+      "surface": "writing"
+    },
+    {
+      "id": "wide/surface-history",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-history.png",
+      "surface": "history"
+    },
+    {
+      "id": "wide/surface-bookmarks",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-bookmarks.png",
+      "surface": "bookmarks"
+    },
+    {
+      "id": "wide/surface-downloads",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-downloads.png",
+      "surface": "downloads"
+    },
+    {
+      "id": "wide/workspace-command-center",
+      "viewport": "wide",
+      "file": "baseline/wide/workspace-command-center.png",
+      "surface": "command-center",
+      "state": "open"
+    },
+    {
+      "id": "wide/surface-readiness",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-readiness.png",
+      "surface": "readiness"
+    },
+    {
+      "id": "wide/surface-approvals-empty",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-approvals-empty.png",
+      "surface": "approvals",
+      "state": "empty"
+    },
+    {
+      "id": "wide/surface-life-calendar",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-life-calendar.png",
+      "surface": "life"
+    },
+    {
+      "id": "wide/surface-life-people",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-life-people.png",
+      "surface": "life"
+    },
+    {
+      "id": "wide/surface-life-memory",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-life-memory.png",
+      "surface": "life"
+    },
+    {
+      "id": "wide/surface-research",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-research.png",
+      "surface": "research"
+    },
+    {
+      "id": "wide/surface-artifacts",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-artifacts.png",
+      "surface": "artifacts"
+    },
+    {
+      "id": "wide/surface-work",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-work.png",
+      "surface": "work"
+    },
+    {
+      "id": "wide/surface-opportunities",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-opportunities.png",
+      "surface": "opportunities"
+    },
+    {
+      "id": "wide/surface-activity",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-activity.png",
+      "surface": "activity"
+    },
+    {
+      "id": "wide/surface-extensions",
+      "viewport": "wide",
+      "file": "baseline/wide/surface-extensions.png",
+      "surface": "extensions"
+    },
+    {
+      "id": "wide/settings-connections",
+      "viewport": "wide",
+      "file": "baseline/wide/settings-connections.png",
+      "surface": "settings"
+    },
+    {
+      "id": "wide/settings-browser",
+      "viewport": "wide",
+      "file": "baseline/wide/settings-browser.png",
+      "surface": "settings"
+    },
+    {
+      "id": "wide/settings-general",
+      "viewport": "wide",
+      "file": "baseline/wide/settings-general.png",
+      "surface": "settings"
+    },
+    {
+      "id": "wide/settings-models",
+      "viewport": "wide",
+      "file": "baseline/wide/settings-models.png",
+      "surface": "settings"
+    },
+    {
+      "id": "wide/settings-memory",
+      "viewport": "wide",
+      "file": "baseline/wide/settings-memory.png",
+      "surface": "settings"
+    },
+    {
+      "id": "wide/settings-extensions",
+      "viewport": "wide",
+      "file": "baseline/wide/settings-extensions.png",
+      "surface": "settings"
+    },
+    {
+      "id": "wide/settings-privacy",
+      "viewport": "wide",
+      "file": "baseline/wide/settings-privacy.png",
+      "surface": "settings"
+    },
+    {
+      "id": "wide/settings-advanced",
+      "viewport": "wide",
+      "file": "baseline/wide/settings-advanced.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/workspace-new-tab",
+      "viewport": "normal",
+      "file": "baseline/normal/workspace-new-tab.png",
+      "surface": "workspace",
+      "state": "populated-default"
+    },
+    {
+      "id": "normal/surface-agent",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-agent.png",
+      "surface": "agent"
+    },
+    {
+      "id": "normal/surface-projects",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-projects.png",
+      "surface": "projects"
+    },
+    {
+      "id": "normal/surface-writing-studio",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-writing-studio.png",
+      "surface": "writing"
+    },
+    {
+      "id": "normal/surface-history",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-history.png",
+      "surface": "history"
+    },
+    {
+      "id": "normal/surface-bookmarks",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-bookmarks.png",
+      "surface": "bookmarks"
+    },
+    {
+      "id": "normal/surface-downloads",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-downloads.png",
+      "surface": "downloads"
+    },
+    {
+      "id": "normal/workspace-command-center",
+      "viewport": "normal",
+      "file": "baseline/normal/workspace-command-center.png",
+      "surface": "command-center",
+      "state": "open"
+    },
+    {
+      "id": "normal/surface-readiness",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-readiness.png",
+      "surface": "readiness"
+    },
+    {
+      "id": "normal/surface-approvals-empty",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-approvals-empty.png",
+      "surface": "approvals",
+      "state": "empty"
+    },
+    {
+      "id": "normal/surface-life-calendar",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-life-calendar.png",
+      "surface": "life"
+    },
+    {
+      "id": "normal/surface-life-people",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-life-people.png",
+      "surface": "life"
+    },
+    {
+      "id": "normal/surface-life-memory",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-life-memory.png",
+      "surface": "life"
+    },
+    {
+      "id": "normal/surface-research",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-research.png",
+      "surface": "research"
+    },
+    {
+      "id": "normal/surface-artifacts",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-artifacts.png",
+      "surface": "artifacts"
+    },
+    {
+      "id": "normal/surface-work",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-work.png",
+      "surface": "work"
+    },
+    {
+      "id": "normal/surface-opportunities",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-opportunities.png",
+      "surface": "opportunities"
+    },
+    {
+      "id": "normal/surface-activity",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-activity.png",
+      "surface": "activity"
+    },
+    {
+      "id": "normal/surface-extensions",
+      "viewport": "normal",
+      "file": "baseline/normal/surface-extensions.png",
+      "surface": "extensions"
+    },
+    {
+      "id": "normal/settings-connections",
+      "viewport": "normal",
+      "file": "baseline/normal/settings-connections.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/settings-browser",
+      "viewport": "normal",
+      "file": "baseline/normal/settings-browser.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/settings-general",
+      "viewport": "normal",
+      "file": "baseline/normal/settings-general.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/settings-models",
+      "viewport": "normal",
+      "file": "baseline/normal/settings-models.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/settings-memory",
+      "viewport": "normal",
+      "file": "baseline/normal/settings-memory.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/settings-extensions",
+      "viewport": "normal",
+      "file": "baseline/normal/settings-extensions.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/settings-privacy",
+      "viewport": "normal",
+      "file": "baseline/normal/settings-privacy.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/settings-advanced",
+      "viewport": "normal",
+      "file": "baseline/normal/settings-advanced.png",
+      "surface": "settings"
+    },
+    {
+      "id": "compact/workspace-new-tab",
+      "viewport": "compact",
+      "file": "baseline/compact/workspace-new-tab.png",
+      "surface": "workspace",
+      "state": "populated-default"
+    },
+    {
+      "id": "compact/surface-agent",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-agent.png",
+      "surface": "agent"
+    },
+    {
+      "id": "compact/surface-projects",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-projects.png",
+      "surface": "projects"
+    },
+    {
+      "id": "compact/surface-writing-studio",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-writing-studio.png",
+      "surface": "writing"
+    },
+    {
+      "id": "compact/surface-history",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-history.png",
+      "surface": "history"
+    },
+    {
+      "id": "compact/surface-bookmarks",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-bookmarks.png",
+      "surface": "bookmarks"
+    },
+    {
+      "id": "compact/surface-downloads",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-downloads.png",
+      "surface": "downloads"
+    },
+    {
+      "id": "compact/workspace-command-center",
+      "viewport": "compact",
+      "file": "baseline/compact/workspace-command-center.png",
+      "surface": "command-center",
+      "state": "open"
+    },
+    {
+      "id": "compact/surface-readiness",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-readiness.png",
+      "surface": "readiness"
+    },
+    {
+      "id": "compact/surface-approvals-empty",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-approvals-empty.png",
+      "surface": "approvals",
+      "state": "empty"
+    },
+    {
+      "id": "compact/surface-life-calendar",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-life-calendar.png",
+      "surface": "life"
+    },
+    {
+      "id": "compact/surface-life-people",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-life-people.png",
+      "surface": "life"
+    },
+    {
+      "id": "compact/surface-life-memory",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-life-memory.png",
+      "surface": "life"
+    },
+    {
+      "id": "compact/surface-research",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-research.png",
+      "surface": "research"
+    },
+    {
+      "id": "compact/surface-artifacts",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-artifacts.png",
+      "surface": "artifacts"
+    },
+    {
+      "id": "compact/surface-work",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-work.png",
+      "surface": "work"
+    },
+    {
+      "id": "compact/surface-opportunities",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-opportunities.png",
+      "surface": "opportunities"
+    },
+    {
+      "id": "compact/surface-activity",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-activity.png",
+      "surface": "activity"
+    },
+    {
+      "id": "compact/surface-extensions",
+      "viewport": "compact",
+      "file": "baseline/compact/surface-extensions.png",
+      "surface": "extensions"
+    },
+    {
+      "id": "compact/settings-connections",
+      "viewport": "compact",
+      "file": "baseline/compact/settings-connections.png",
+      "surface": "settings"
+    },
+    {
+      "id": "compact/settings-browser",
+      "viewport": "compact",
+      "file": "baseline/compact/settings-browser.png",
+      "surface": "settings"
+    },
+    {
+      "id": "compact/settings-general",
+      "viewport": "compact",
+      "file": "baseline/compact/settings-general.png",
+      "surface": "settings"
+    },
+    {
+      "id": "compact/settings-models",
+      "viewport": "compact",
+      "file": "baseline/compact/settings-models.png",
+      "surface": "settings"
+    },
+    {
+      "id": "compact/settings-memory",
+      "viewport": "compact",
+      "file": "baseline/compact/settings-memory.png",
+      "surface": "settings"
+    },
+    {
+      "id": "compact/settings-extensions",
+      "viewport": "compact",
+      "file": "baseline/compact/settings-extensions.png",
+      "surface": "settings"
+    },
+    {
+      "id": "compact/settings-privacy",
+      "viewport": "compact",
+      "file": "baseline/compact/settings-privacy.png",
+      "surface": "settings"
+    },
+    {
+      "id": "compact/settings-advanced",
+      "viewport": "compact",
+      "file": "baseline/compact/settings-advanced.png",
+      "surface": "settings"
+    },
+    {
+      "id": "normal/workspace-model-selector-open",
+      "viewport": "normal",
+      "file": "baseline/normal/workspace-model-selector-open.png",
+      "surface": "new-tab",
+      "state": "popover-open"
+    },
+    {
+      "id": "normal/modal-keyboard-shortcuts",
+      "viewport": "normal",
+      "file": "baseline/normal/modal-keyboard-shortcuts.png",
+      "surface": "modal",
+      "state": "open"
+    },
+    {
+      "id": "normal/workspace-task-settings-open",
+      "viewport": "normal",
+      "file": "baseline/normal/workspace-task-settings-open.png",
+      "surface": "agent-sidebar",
+      "state": "disclosure-open"
+    },
+    {
+      "id": "compact/compact-reduced-motion",
+      "viewport": "compact",
+      "file": "baseline/compact/compact-reduced-motion.png",
+      "surface": "accessibility",
+      "state": "reduced-motion"
+    },
+    {
+      "id": "compact/compact-reduced-transparency",
+      "viewport": "compact",
+      "file": "baseline/compact/compact-reduced-transparency.png",
+      "surface": "accessibility",
+      "state": "reduced-transparency"
+    }
+  ],
+  "count": 94
+}
