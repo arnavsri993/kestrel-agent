@@ -50,6 +50,7 @@
     "test:desktop-chat-configuration": "node scripts/test-desktop-chat-configuration.mjs",
     "test:desktop-managed-policy": "node scripts/test-desktop-managed-policy.mjs",
     "capture:desktop": "tsx scripts/capture-desktop.ts",
+    "capture:ui-audit": "tsx scripts/capture-ui-audit.ts",
     "test:editors": "node scripts/verify-editor-integrations.mjs",
     "test:e2e": "playwright test",
     "package:mac:dev": "pnpm --filter @kestrel/desktop package:mac:dev && node scripts/cleanup-kestrel-macos-apps.mjs",
