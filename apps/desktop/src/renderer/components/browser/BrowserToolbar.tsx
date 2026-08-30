@@ -324,8 +324,11 @@ export function BrowserToolbar({
   }, [closeMenu, openMenu]);
 
   useEffect(() => {
-    onMenuOpenChange?.(Boolean(openMenu || showSuggestions));
-  }, [onMenuOpenChange, openMenu, showSuggestions]);
+    // Address suggestions live in the toolbar above the native viewport. Hiding
+    // the page when they open steals focus from the omnibox and makes the tab
+    // flicker without letting the URL be selected or copied.
+    onMenuOpenChange?.(Boolean(openMenu));
+  }, [onMenuOpenChange, openMenu]);
 
   function chooseSuggestion(suggestion: AddressBarSuggestion) {
     closeSuggestions();
@@ -568,13 +571,21 @@ export function BrowserToolbar({
             spellCheck={false}
             onFocus={(event) => {
               clearSuggestionsCloseTimer();
-              const nextQuery = address === tab.url ? "" : address;
-              setSuggestionQuery(nextQuery);
+              const input = event.currentTarget;
+              const needsUrlReset = Boolean(tab.url && address !== tab.url);
+              if (tab.url) setAddress(tab.url);
+              setSuggestionQuery("");
               setSuggestionFilter("all");
               setActiveSuggestionIndex(-1);
               setSuggestionsOpen(addressBarSuggestionsEnabled);
               inlineCompletionRef.current = null;
-              event.currentTarget.select();
+              const selectAll = () => {
+                if (document.activeElement === input) {
+                  input.setSelectionRange(0, input.value.length);
+                }
+              };
+              if (needsUrlReset) window.requestAnimationFrame(selectAll);
+              else selectAll();
             }}
             onBlur={scheduleCloseSuggestions}
             onKeyDown={handleAddressKeyDown}
