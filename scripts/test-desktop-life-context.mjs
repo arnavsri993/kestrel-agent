@@ -129,8 +129,9 @@ try {
 	await life.getByText("Deep work · Kestrel", { exact: true }).waitFor();
 	await life.getByText("Inferred · 76%", { exact: true }).waitFor();
 	await life.getByText("Suggested · 64%", { exact: true }).waitFor();
-	await life.getByText("Apple Calendar", { exact: true }).waitFor();
-	await life.getByText("Adapter planned", { exact: true }).first().waitFor();
+	assert.equal(await life.getByText("Apple Calendar", { exact: true }).count(), 0);
+	assert.equal(await life.getByText("Outlook Calendar", { exact: true }).count(), 0);
+	assert.equal(await life.getByText("Adapter planned", { exact: true }).count(), 0);
 	assert.equal(
 		await life.getByRole("button", { name: "Sync Google" }).isDisabled(),
 		true,

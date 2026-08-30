@@ -515,30 +515,6 @@ export class LifeContextService {
 					? { lastSyncedAt: googleState.lastSyncedAt }
 					: {}),
 			},
-			{
-				id: "apple",
-				label: "Apple Calendar",
-				state: "unsupported",
-				detail:
-					"Provider adapter boundary is defined; EventKit permission and sync are not in this increment.",
-				readOnly: true,
-			},
-			{
-				id: "outlook",
-				label: "Outlook Calendar",
-				state: "unsupported",
-				detail:
-					"Provider adapter boundary is defined; Microsoft OAuth and Graph sync are not in this increment.",
-				readOnly: true,
-			},
-			{
-				id: "caldav",
-				label: "Other calendars",
-				state: "unsupported",
-				detail:
-					"CalDAV and additional providers remain an explicit follow-up adapter.",
-				readOnly: true,
-			},
 		];
 	}
 

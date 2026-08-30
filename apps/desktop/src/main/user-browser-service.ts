@@ -108,6 +108,8 @@ const POPUP_GESTURE_WINDOW_MS = 1_500;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
 const MAX_BOOKMARKS = 2_000;
 const MAX_TAB_FOLDER_NAMING_TABS = 8;
+const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
+const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
 const ALWAYS_ALLOW_PERMISSIONS = new Set([
 	"fullscreen",
 	"clipboard-sanitized-write",
@@ -120,12 +122,56 @@ const ALWAYS_DENY_PERMISSIONS = new Set([
 	"windowManagement",
 ]);
 
+function screenshotCancellationError(signal: AbortSignal): Error {
+	return signal.reason instanceof Error
+		? signal.reason
+		: new Error("Screenshot capture was cancelled.");
+}
+
+function capturePageWithDeadline(
+	webContents: WebContents,
+	signal?: AbortSignal,
+): ReturnType<WebContents["capturePage"]> {
+	if (signal?.aborted)
+		return Promise.reject(screenshotCancellationError(signal));
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		const finish = (operation: () => void) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeout);
+			signal?.removeEventListener("abort", abort);
+			operation();
+		};
+		const abort = () =>
+			finish(() => reject(screenshotCancellationError(signal!)));
+		const timeout = setTimeout(
+			() =>
+				finish(() =>
+					reject(
+						new Error(
+							"Visible browser screenshot capture timed out while waiting for Electron.",
+						),
+					),
+				),
+			SCREENSHOT_CAPTURE_TIMEOUT_MS,
+		);
+		signal?.addEventListener("abort", abort, { once: true });
+		void webContents.capturePage().then(
+			(image) => finish(() => resolve(image)),
+			(cause) => finish(() => reject(cause)),
+		);
+	});
+}
+
 export { isUserBrowserBackendWireRequest };
 export type { UserBrowserBackendWireRequest };
 
 export interface UserBrowserServiceOptions {
 	window: BrowserWindow;
 	allowDevTools?: boolean;
+	/** Explicitly enables unpacked and local archive extensions for development only. */
+	allowLocalExtensions?: boolean;
 	statePath: string;
 	downloadDirectory: string;
 	initialState?: UserBrowserState;
@@ -865,9 +911,9 @@ export class UserBrowserService {
 				return response.response === 0;
 			});
 		mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
-		this.extensionManager = new BrowserExtensionManager(
-			dirname(options.statePath),
-		);
+		this.extensionManager = new BrowserExtensionManager(dirname(options.statePath), {
+			allowLocalExtensions: options.allowLocalExtensions === true,
+		});
 		this.partitionName = options.partitionName ?? USER_BROWSER_PARTITION;
 		if (!/^persist:[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(this.partitionName))
 			throw new Error(
@@ -2443,8 +2489,12 @@ export class UserBrowserService {
 		return this.withAgentTabPin(resolvedTabId, async () => {
 			const tab = this.requireTab(resolvedTabId);
 			let lastError: Error | undefined;
-			for (let attempt = 0; attempt < 8; attempt++) {
-				if (signal?.aborted) throw signal.reason;
+			for (
+				let attempt = 0;
+				attempt < SCREENSHOT_CAPTURE_ATTEMPTS;
+				attempt++
+			) {
+				if (signal?.aborted) throw screenshotCancellationError(signal);
 				await this.syncActiveView();
 				const record = this.ensureView(tab);
 				const view = record.view;
@@ -2460,7 +2510,7 @@ export class UserBrowserService {
 					continue;
 				}
 				try {
-					const image = await webContents.capturePage();
+					const image = await capturePageWithDeadline(webContents, signal);
 					const { width, height } = image.getSize();
 					if (width < 1 || height < 1) {
 						throw new Error("Screenshot capture returned an empty frame.");
@@ -2475,10 +2525,13 @@ export class UserBrowserService {
 					}
 					return { width, height, rgba, png: image.toPNG() };
 				} catch (cause) {
+					if (signal?.aborted)
+						throw screenshotCancellationError(signal);
 					lastError =
 						cause instanceof Error
 							? cause
 							: new Error("Visible browser screenshot capture failed.");
+					if (!webContents.isDestroyed()) webContents.invalidate();
 					await new Promise<void>((resolve) => setTimeout(resolve, 50));
 				}
 			}

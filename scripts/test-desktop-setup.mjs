@@ -172,13 +172,26 @@ try {
 	);
 	await paidProviders.getByRole("button", { name: /Anthropic/ }).click();
 	await page.getByText("Claude Code CLI", { exact: true }).waitFor();
-	await paidProviders.getByRole("button", { name: /Microsoft Azure/ }).click();
-	await page
-		.getByText(
-			"Additional enterprise adapters for this provider are not available in this build yet.",
-			{ exact: true },
-		)
-		.waitFor();
+	for (const unfinishedProvider of [
+		"Microsoft Azure",
+		"Amazon Bedrock",
+		"Cloudflare",
+		"Replicate",
+	]) {
+		assert.equal(
+			await paidProviders
+				.getByRole("button", { name: new RegExp(unfinishedProvider) })
+				.count(),
+			0,
+			`${unfinishedProvider} must stay hidden until its setup route is complete.`,
+		);
+	}
+	assert.equal(
+		await page
+			.getByText(/not available in this build yet|adapter planned/i)
+			.count(),
+		0,
+	);
 	await page.getByLabel("Find a provider").fill("Groq");
 	assert.equal(await paidProviders.getByRole("button").count(), 1);
 	await page.getByLabel("Find a provider").fill("");

@@ -3436,7 +3436,6 @@ export const RendererRequestSchema = z.union([
 		type: z.literal("browser-install-extension-url"),
 		urlOrId: z.string().min(1).max(8_192),
 	}),
-	z.object({ type: z.literal("browser-install-extension-file") }),
 	z.object({
 		type: z.literal("browser-toggle-extension"),
 		extensionId: z.string().min(1).max(100),

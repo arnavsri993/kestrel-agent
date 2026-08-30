@@ -276,35 +276,6 @@ export function BrowserSettings({
     }
   };
 
-  const handleInstallExtensionFile = async () => {
-    setExtensionLoading(true);
-    setExtensionMessage(null);
-    try {
-      const response = await window.kestrel.request({
-        type: "browser-install-extension-file",
-      });
-      if (response.ok && "extension" in response) {
-        setExtensionMessage({
-          type: "success",
-          text: `Successfully installed ${(response.extension as InstalledExtension).name}!`,
-        });
-        await fetchExtensions();
-      } else if (!response.ok && "error" in response && response.error !== "Installation canceled") {
-        setExtensionMessage({
-          type: "error",
-          text: String(response.error),
-        });
-      }
-    } catch (cause) {
-      setExtensionMessage({
-        type: "error",
-        text: cause instanceof Error ? cause.message : "Failed to install extension file.",
-      });
-    } finally {
-      setExtensionLoading(false);
-    }
-  };
-
   const handleToggleExtension = async (id: string, enabled: boolean) => {
     try {
       const response = await window.kestrel.request({
@@ -726,14 +697,6 @@ export function BrowserSettings({
         </div>
 
         <div className="extension-actions-row">
-          <button
-            type="button"
-            className="button secondary"
-            onClick={() => void handleInstallExtensionFile()}
-            disabled={extensionLoading}
-          >
-            <Icon name="plus" /> Load Unpacked or CRX File…
-          </button>
           <a
             href="https://chromewebstore.google.com"
             target="_blank"
@@ -747,13 +710,19 @@ export function BrowserSettings({
             <Icon name="globe" /> Browse Chrome Web Store ↗
           </a>
         </div>
+        <p className="honest-status">
+          Kestrel verifies each store package and keeps it only after Electron
+          loads its signed identity. Manifest V3 background workers must also
+          start successfully. Some Chrome extension APIs are not available in
+          Electron.
+        </p>
 
         <div className="installed-extensions-section">
           <h4>Installed Extensions ({extensions.length})</h4>
           {extensions.length === 0 ? (
             <div className="empty-extensions-state">
               <p>No browser extensions installed yet.</p>
-              <small>Install from the Chrome Web Store or a local file above.</small>
+              <small>Install from the Chrome Web Store above.</small>
             </div>
           ) : (
             <div className="extensions-grid">
@@ -767,7 +736,7 @@ export function BrowserSettings({
                       <strong>{ext.name}</strong>
                       <span className="extension-version">v{ext.version}</span>
                       <span className="extension-source-badge">
-                        {ext.source === "chrome_web_store" ? "Chrome Web Store" : ext.source === "unpacked" ? "Unpacked" : "Package File"}
+                        {ext.source === "chrome_web_store" ? "Chrome Web Store" : ext.source === "unpacked" ? "Unpacked (development)" : "Local package (development)"}
                       </span>
                     </div>
                   </div>

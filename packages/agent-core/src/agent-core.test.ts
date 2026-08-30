@@ -53,6 +53,14 @@ describe("fresh application state", () => {
 		expect(snapshot.approvals).toEqual([]);
 		expect(snapshot.memories).toEqual([]);
 		expect(snapshot.activity).toEqual([]);
+		expect(snapshot.connections).toEqual([
+			{
+				id: "files",
+				name: "Selected folders",
+				status: "disconnected",
+				detail: "No folder access granted",
+			},
+		]);
 		expect(snapshot.opportunity).toMatchObject({
 			id: "opportunity-empty",
 			status: "suggested",

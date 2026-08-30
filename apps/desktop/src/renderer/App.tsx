@@ -506,12 +506,6 @@ const paidProviderCatalog = [
 				href: "https://aistudio.google.com/app/apikey",
 				credentials: ["gemini"],
 			},
-			{
-				id: "vertex",
-				label: "Vertex AI",
-				kind: "planned",
-				note: "Google Cloud project credentials and regional Vertex endpoints.",
-			},
 		],
 	},
 	{
@@ -579,65 +573,6 @@ const paidProviderCatalog = [
 				note: "OpenAI-compatible access through Nous Portal.",
 				href: "https://portal.nousresearch.com/",
 				credentials: ["nous"],
-			},
-		],
-	},
-	{
-		id: "cloudflare",
-		name: "Cloudflare",
-		short: "CF",
-		category: "Cloud platforms",
-		description: "Workers AI models inside a Cloudflare account.",
-		methods: [
-			{
-				id: "cloudflare-api",
-				label: "Workers AI API",
-				kind: "api",
-				note: "Requires an API token and account ID. Account-ID setup is not available in this screen yet.",
-				href: "https://dash.cloudflare.com/profile/api-tokens",
-				credentials: ["cloudflare"],
-			},
-		],
-	},
-	{
-		id: "azure",
-		name: "Microsoft Azure",
-		short: "AZ",
-		category: "Cloud platforms",
-		description: "Azure OpenAI and Azure AI Foundry deployments.",
-		methods: [
-			{
-				id: "azure-key",
-				label: "Azure API key",
-				kind: "planned",
-				note: "Endpoint, deployment name, API version, and key.",
-			},
-			{
-				id: "azure-identity",
-				label: "Azure CLI / Entra ID",
-				kind: "planned",
-				note: "Uses your signed-in Azure identity without copying its token.",
-			},
-		],
-	},
-	{
-		id: "bedrock",
-		name: "Amazon Bedrock",
-		short: "AWS",
-		category: "Cloud platforms",
-		description: "Foundation models through your AWS account.",
-		methods: [
-			{
-				id: "aws-profile",
-				label: "AWS profile",
-				kind: "planned",
-				note: "Uses an AWS CLI profile and selected region.",
-			},
-			{
-				id: "aws-keys",
-				label: "AWS access keys",
-				kind: "planned",
-				note: "Access key, secret, optional session token, and region.",
 			},
 		],
 	},
@@ -757,21 +692,6 @@ const paidProviderCatalog = [
 				note: "User access token for routed inference.",
 				href: "https://huggingface.co/settings/tokens",
 				credentials: ["huggingface"],
-			},
-		],
-	},
-	{
-		id: "replicate",
-		name: "Replicate",
-		short: "RE",
-		category: "Inference clouds",
-		description: "Hosted public and private model deployments.",
-		methods: [
-			{
-				id: "replicate-token",
-				label: "Replicate API token",
-				kind: "planned",
-				note: "Direct Replicate API token.",
 			},
 		],
 	},
@@ -1679,7 +1599,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													id="paid-provider-search"
 													type="search"
 													value={providerQuery}
-													placeholder="Search OpenAI, Azure, Groq…"
+													placeholder="Search OpenAI, Anthropic, Groq…"
 													onChange={(event) =>
 														setProviderQuery(event.target.value)
 													}
@@ -1741,9 +1661,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													</span>
 												</header>
 												<div className="connection-method-list">
-													{selectedPaidProvider.methods
-														.filter((method) => method.kind !== "planned")
-														.map((method) => {
+													{selectedPaidProvider.methods.map((method) => {
 														if (method.kind === "cli") {
 															const cli = subscriptionClis.find(
 																(item) => item.id === method.cliId,
@@ -1904,14 +1822,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															</article>
 														);
 													})}
-													{selectedPaidProvider.methods.some(
-														(method) => method.kind === "planned",
-													) && (
-														<p className="honest-status">
-															Additional enterprise adapters for this provider
-															are not available in this build yet.
-														</p>
-													)}
 												</div>
 											</section>
 										</div>
@@ -6519,8 +6429,10 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 				{snapshot.connections
 					.filter(
 						(connection) =>
-							!googleStatus.connected ||
-							!["gmail", "calendar"].includes(connection.id),
+							(!googleStatus.connected ||
+								!["gmail", "calendar"].includes(connection.id)) &&
+							(connection.id === "files" ||
+								connection.status === "development_adapter"),
 					)
 					.map((connection) => (
 						<article key={connection.id}>
@@ -6561,12 +6473,10 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								>
 									{busy ? "Updating…" : "Add folder"}
 								</button>
-							) : connection.status === "development_adapter" ? (
+							) : (
 								<span className="honest-status">
 									Connect Google in Settings for live data
 								</span>
-							) : (
-								<span className="honest-status">Not available yet</span>
 							)}
 						</article>
 					))}
@@ -8506,33 +8416,6 @@ function Settings({
 									<span />
 								</button>
 							</article>
-						<article className="setting-row autonomy">
-							<div>
-								<strong>Initiative level</strong>
-								<p>
-									Assistant is the supported mode while other levels are in
-									review.
-								</p>
-							</div>
-							<div
-								className="segmented"
-								role="group"
-								aria-label="Initiative level"
-							>
-								{["Observer", "Assistant", "Operator", "High"].map(
-									(label) => (
-										<button
-											key={label}
-											disabled={label !== "Assistant"}
-											aria-pressed={label === "Assistant"}
-											className={label === "Assistant" ? "selected" : ""}
-										>
-											{label}
-										</button>
-									),
-								)}
-							</div>
-						</article>
 						</section>
 					</section>
 				)}

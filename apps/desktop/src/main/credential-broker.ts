@@ -12,6 +12,8 @@ import { dirname, join } from "node:path";
 import type { SafeStorage } from "electron";
 import { ProtectedDatabaseError } from "@kestrel/database";
 import { decryptText, encryptText } from "@kestrel/encryption";
+import { PRODUCT_IDENTITY } from "@kestrel/shared-types";
+import { shouldUseSafeStorage } from "./secure-storage-policy";
 
 export type BrokeredCredentialId =
 	| "openai"
@@ -348,15 +350,11 @@ export class SafeStorageSecretProtection implements SecretProtection {
 	}
 }
 
-function shouldUsePlaintextProtection(): boolean {
-	return process.env.KESTREL_USE_SAFESTORAGE !== "1";
-}
-
 let defaultProtection: Promise<SecretProtection> | undefined;
 
 async function createDefaultProtection(): Promise<SecretProtection> {
-	// Intentional — Keychain prompts are disruptive; local envelope encryption is the product default.
-	if (shouldUsePlaintextProtection()) return new PlaintextSecretProtection();
+	if (!shouldUseSafeStorage(process.env, PRODUCT_IDENTITY.updateChannel))
+		return new PlaintextSecretProtection();
 	const { safeStorage } = await import("electron");
 	if (!safeStorage.isEncryptionAvailable())
 		throw new SecureStorageError(SECURE_STORAGE_UNAVAILABLE_MESSAGE);

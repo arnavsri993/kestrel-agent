@@ -68,9 +68,19 @@ export function startAutomaticUpdates(
 			listener: (info: DownloadedUpdateInfo) => void,
 		) => void;
 		onUpdateDownloaded?: (info: DownloadedUpdateInfo) => void;
+		onCheckFailure?: (error: unknown) => void;
 	},
 ): boolean {
 	const feedChannel = updaterFeedChannel(options.channel);
+	const reportFailure = (error: unknown) => {
+		// The diagnostics hook receives the original error so it can retain only
+		// its safe classification. It must never make updater startup fatal.
+		try {
+			options.onCheckFailure?.(error);
+		} catch {
+			// Observability is best-effort and cannot block app startup.
+		}
+	};
 	if (
 		!shouldCheckForUpdates(
 			options.packaged,
@@ -92,9 +102,10 @@ export function startAutomaticUpdates(
 		updater.channel = feedChannel;
 		if (options.onUpdateDownloaded && options.subscribeToUpdate)
 			options.subscribeToUpdate(options.onUpdateDownloaded);
-	} catch {
+	} catch (error) {
 		// An updater configuration failure must never prevent the app from
-		// opening. The next startup can retry with a fresh packaged runtime.
+		// opening, but it must remain visible in content-free diagnostics.
+		reportFailure(error);
 		return false;
 	}
 
@@ -103,6 +114,6 @@ export function startAutomaticUpdates(
 	// adapter while keeping the launch path non-blocking.
 	void Promise.resolve()
 		.then(() => updater.checkForUpdates())
-		.catch(() => undefined);
+		.catch(reportFailure);
 	return true;
 }

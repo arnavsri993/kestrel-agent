@@ -4,3 +4,6 @@ mac:
   # use the Developer ID signing and notarization job in CI.
   identity: "-"
   entitlementsInherit: build/entitlements.mac.dev.inherit.plist
+  extendInfo:
+    LSEnvironment:
+      KESTREL_RELEASE_CHANNEL: stable
