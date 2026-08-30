@@ -1325,12 +1325,29 @@ input[type="radio"] {
 	font-size: 11px;
 }
 .workflow-memory-action small,
-.skill-notice {
+.skill-notice small {
 	color: var(--muted);
 	font-size: 11px;
 }
 .skill-notice {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 6px 12px;
 	margin: 8px 0 0 40px;
+}
+.skill-notice > span {
+	display: grid;
+	min-width: 0;
+	gap: 2px;
+}
+.skill-notice strong {
+	color: var(--text);
+	font-size: 11px;
+}
+.skill-notice .quiet-link {
+	flex: 0 0 auto;
 }
 .runtime-composer .chat-error,
 .runtime-new-composer .chat-error {

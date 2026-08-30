@@ -113,6 +113,8 @@ jobs:
           if-no-files-found: warn
       - name: Verify signed Agent Core restart recovery
         run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-restart-recovery
+      - name: Verify signed workflow reuse handoff
+        run: KESTREL_DESKTOP_EXECUTABLE=release/mac-arm64/Kestrel.app/Contents/MacOS/Kestrel corepack pnpm test:desktop-workflow-reuse
       - name: Create checksummed release manifest
         shell: bash
         run: |
