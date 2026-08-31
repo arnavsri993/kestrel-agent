@@ -89,7 +89,6 @@ export function BrowserWorkspace({
   const findTabIdRef = useRef<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
-  const [fileDragActive, setFileDragActive] = useState(false);
   const [openChromeMenus, setOpenChromeMenus] = useState({
     tab: false,
     toolbar: false,
@@ -217,11 +216,6 @@ export function BrowserWorkspace({
       current.toolbar === open ? current : { ...current, toolbar: open },
     );
   }, []);
-
-  useEffect(
-    () => window.kestrel.onFileDrag(({ active }) => setFileDragActive(active)),
-    [],
-  );
 
   const syncBounds = useCallback(() => {
     const node = viewportRef.current;
@@ -878,17 +872,6 @@ export function BrowserWorkspace({
           </section>
         )}
       </div>
-      {fileDragActive && (
-        <div className="browser-file-drop-veil" aria-hidden="true">
-          <span className="browser-file-drop-mark">
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-back" />
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-mid" />
-            <span className="browser-file-drop-triangle browser-file-drop-triangle-front" />
-          </span>
-          <strong>Release to open in Kestrel</strong>
-          <small>Files become tabs and task context</small>
-        </div>
-      )}
       {activeTab.loading && (
         <span className="browser-loading-line" aria-label="Page loading" />
       )}
