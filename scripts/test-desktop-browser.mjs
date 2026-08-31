@@ -673,6 +673,13 @@ try {
 	assert(addedBlankTab);
 	const horizontalTabs = page.getByRole("tab");
 	await horizontalTabs.nth(1).waitFor();
+	const roomierTabWidths = await tabList
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(
+		roomierTabWidths.length >= 2 && roomierTabWidths.every((width) => width >= 160),
+		`Ordinary tabs collapsed to their minimum instead of using available chrome: ${JSON.stringify(roomierTabWidths)}`,
+	);
 	const crowdedTabIds = await page.evaluate(async (count) => {
 		const ids = [];
 		for (let index = 0; index < count; index += 1) {
