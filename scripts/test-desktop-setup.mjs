@@ -91,15 +91,71 @@ try {
 			.evaluate((heading) => document.activeElement === heading),
 		true,
 	);
+	await page.locator(".setup-stage.setup-stage-0").waitFor({
+		state: "detached",
+	});
 	assert.equal(
 		await page.getByRole("button", { name: "Welcome, completed" }).isEnabled(),
 		true,
 	);
 	const continueButton = page.getByRole("button", { name: "Continue" });
 	assert.equal(await continueButton.isDisabled(), true);
+	const warningHeading = page.getByRole("heading", {
+		name: "Know what leaves this Mac.",
+	});
+	const warningHeadingBefore = await warningHeading.boundingBox();
+	assert.ok(warningHeadingBefore, "The warning heading should be measurable.");
+	const warningPanel = page.locator(".warning-panel");
+	const warningPanelBefore = await warningPanel.boundingBox();
+	assert.ok(warningPanelBefore, "The warning panel should be measurable.");
 	const firstBoundary = page.locator(".warning-panel details").first();
 	await firstBoundary.locator("summary").click();
 	await page.getByText(/retention and training terms/).waitFor();
+	const warningHeadingAfterFirstOpen = await warningHeading.boundingBox();
+	assert.ok(
+		warningHeadingAfterFirstOpen,
+		"The warning heading should remain measurable after opening a boundary.",
+	);
+	assert.ok(
+		Math.abs(
+			warningHeadingAfterFirstOpen.y - warningHeadingBefore.y,
+		) <= 1,
+		`Opening one boundary moved the warning heading by ${warningHeadingAfterFirstOpen.y - warningHeadingBefore.y}px.`,
+	);
+	const warningPanelAfterFirstOpen = await warningPanel.boundingBox();
+	assert.ok(
+		warningPanelAfterFirstOpen,
+		"The warning panel should remain measurable after opening a boundary.",
+	);
+	assert.ok(
+		Math.abs(warningPanelAfterFirstOpen.width - warningPanelBefore.width) <= 1,
+		`Opening one boundary changed the warning panel width by ${warningPanelAfterFirstOpen.width - warningPanelBefore.width}px.`,
+	);
+	for (const index of [2, 3]) {
+		await page
+			.locator(".warning-panel details")
+			.nth(index)
+			.locator("summary")
+			.click();
+	}
+	const warningHeadingAfterManyOpen = await warningHeading.boundingBox();
+	assert.ok(
+		warningHeadingAfterManyOpen,
+		"The warning heading should remain measurable after opening multiple boundaries.",
+	);
+	assert.ok(
+		Math.abs(warningHeadingAfterManyOpen.y - warningHeadingBefore.y) <= 1,
+		`Opening multiple boundaries moved the warning heading by ${warningHeadingAfterManyOpen.y - warningHeadingBefore.y}px.`,
+	);
+	const warningPanelAfterManyOpen = await warningPanel.boundingBox();
+	assert.ok(
+		warningPanelAfterManyOpen,
+		"The warning panel should remain measurable after opening multiple boundaries.",
+	);
+	assert.ok(
+		Math.abs(warningPanelAfterManyOpen.width - warningPanelBefore.width) <= 1,
+		`Opening multiple boundaries changed the warning panel width by ${warningPanelAfterManyOpen.width - warningPanelBefore.width}px.`,
+	);
 	await page.getByLabel("I understand these boundaries").check();
 	assert.equal(await continueButton.isEnabled(), true);
 
