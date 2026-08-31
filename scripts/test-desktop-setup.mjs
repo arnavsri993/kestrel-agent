@@ -348,7 +348,7 @@ try {
 		.getByRole("button", { name: "Finish with setup help" })
 		.click({ timeout: 120_000 });
 	await page
-		.getByRole("button", { name: "New task", exact: true })
+		.getByRole("button", { name: "New chat", exact: true })
 		.first()
 		.waitFor();
 	assert.equal(
@@ -454,7 +454,7 @@ try {
 	}
 	const newAgentButton = page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" });
+		.getByRole("button", { name: "New chat" });
 	await newAgentButton.click();
 	assert.equal(
 		await newAgentButton.getAttribute("aria-keyshortcuts"),

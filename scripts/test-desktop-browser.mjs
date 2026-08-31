@@ -589,7 +589,7 @@ try {
 	assert.equal(homeSessionsAfter, homeSessionIdsBefore.length + 1);
 	await page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
+		.getByRole("button", { name: "New chat" })
 		.click();
 
 	assert.equal(await page.getByRole("button", { name: "Personalize", exact: true }).count(), 0);
@@ -643,7 +643,7 @@ try {
 	assert.equal(await page.locator(".runtime-suggestions").count(), 0);
 	await page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
+		.getByRole("button", { name: "New chat" })
 		.click();
 
 	const initialSessions = await page.evaluate(async () => {
@@ -819,7 +819,7 @@ try {
 	await page.locator("#runtime-prompt").fill("Draft that must be cleared");
 	await page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
+		.getByRole("button", { name: "New chat" })
 		.click();
 	const clearedDraft = await page.waitForFunction(() => {
 		const prompt = document.querySelector("#runtime-prompt");

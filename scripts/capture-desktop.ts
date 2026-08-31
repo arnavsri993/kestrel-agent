@@ -314,7 +314,7 @@ try {
 		await capture(page, "workspace-conversation.png");
 	}
 	await page
-		.getByRole("button", { name: "New task", exact: true })
+		.getByRole("button", { name: "New chat", exact: true })
 		.first()
 		.click();
 
@@ -471,7 +471,7 @@ try {
 
 	const focusTrigger = page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" });
+		.getByRole("button", { name: "New chat" });
 	// Verify focus the way a keyboard user reaches this control. Programmatic
 	// focus intentionally does not always match :focus-visible in Chromium.
 	await focusTrigger.focus();
@@ -490,7 +490,7 @@ try {
 		};
 	});
 	if (
-		focusStyle.label !== "New task" ||
+		focusStyle.label !== "New chat" ||
 		focusStyle.outline === "none" ||
 		focusStyle.width === "0px"
 	)
@@ -501,7 +501,7 @@ try {
 	await page.waitForLoadState("domcontentloaded");
 	await page
 		.locator(".kestrel-sidebar")
-		.getByRole("button", { name: "New task" })
+		.getByRole("button", { name: "New chat" })
 		.waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
