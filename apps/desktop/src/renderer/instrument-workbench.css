@@ -656,7 +656,19 @@
 	display: none;
 }
 
+/* Keep the safety page anchored below the progress rail. Its disclosures can
+ * grow independently, so centering the whole stage makes the title jump every
+ * time another boundary is opened. The stage already scrolls when the open
+ * content is taller than the viewport. */
+.setup-onboarding .setup-stage-1 {
+	justify-content: flex-start;
+	padding-top: clamp(52px, 10vh, 104px);
+	overflow-anchor: none;
+}
+
 .setup-onboarding .setup-stage {
+	width: 100%;
+	box-sizing: border-box;
 	max-width: 1040px;
 	margin-inline: auto;
 }
