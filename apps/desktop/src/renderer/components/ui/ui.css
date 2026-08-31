@@ -2165,23 +2165,19 @@ body { font-family: var(--sans); }
 	outline-offset: 1px;
 }
 
-.agent-conversation-host .runtime-model-label {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+.agent-conversation-host .task-settings > summary.task-settings-trigger {
+	width: 32px;
+	min-width: 32px;
+	max-width: 32px;
+	justify-content: center;
+	padding: 0;
 }
 
-.agent-conversation-host .task-settings > summary > svg {
-	width: 12px;
-	height: 12px;
+.agent-conversation-host .task-settings > summary.task-settings-trigger > svg {
+	width: 15px;
+	height: 15px;
 	flex: 0 0 auto;
 	color: var(--muted);
-	transition: transform var(--motion-feedback) ease;
-}
-
-.agent-conversation-host .task-settings[open] > summary > svg {
-	transform: rotate(90deg);
 }
 
 .agent-conversation-host .task-settings .task-settings-panel {

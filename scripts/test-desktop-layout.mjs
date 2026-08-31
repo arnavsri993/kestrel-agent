@@ -92,8 +92,25 @@ async function readTaskSettingsLayout(page) {
 		const composer = document.querySelector(
 			".agent-conversation-host .runtime-new-composer",
 		);
+		const modelTrigger = document.querySelector(
+			".agent-conversation-host .model-selector-trigger",
+		);
+		const taskTrigger = document.querySelector(
+			".agent-conversation-host .task-settings-trigger",
+		);
+		const sendActions = document.querySelector(
+			".agent-conversation-host .composer-send-actions",
+		);
 		const host = document.querySelector(".agent-conversation-host");
-		if (!button || !panel || !composer || !host) {
+		if (
+			!button ||
+			!panel ||
+			!composer ||
+			!modelTrigger ||
+			!taskTrigger ||
+			!sendActions ||
+			!host
+		) {
 			throw new Error("Task settings layout is unavailable.");
 		}
 		const rect = (element) => {
@@ -113,6 +130,12 @@ async function readTaskSettingsLayout(page) {
 			button: rect(button),
 			buttonDisplay: buttonStyle.display,
 			chevron: chevron ? rect(chevron) : null,
+			modelTrigger: rect(modelTrigger),
+			taskTrigger: {
+				...rect(taskTrigger),
+				ariaLabel: taskTrigger.getAttribute("aria-label"),
+			},
+			sendActions: rect(sendActions),
 			panel: rect(panel),
 			composer: rect(composer),
 			host: rect(host),
@@ -136,6 +159,23 @@ function assertTaskSettingsLayout(layout) {
 	assert.ok(
 		layout.chevron && layout.chevron.width <= 16 && layout.chevron.height <= 16,
 		`New Tab task settings chevron is too large: ${JSON.stringify(layout.chevron)}.`,
+	);
+	assert.equal(
+		layout.taskTrigger.ariaLabel,
+		"Task settings",
+		"The task-settings trigger must keep its accessible name.",
+	);
+	assert.ok(
+		layout.taskTrigger.width <= 40,
+		`Task settings duplicated the model selector label: ${layout.taskTrigger.width}px.`,
+	);
+	assert.ok(
+		layout.modelTrigger.right <= layout.taskTrigger.left + 1,
+		`Model and task-settings triggers overlap: ${JSON.stringify({ model: layout.modelTrigger, task: layout.taskTrigger })}.`,
+	);
+	assert.ok(
+		layout.taskTrigger.right <= layout.sendActions.left + 1,
+		`Task-settings trigger overlaps send actions: ${JSON.stringify({ task: layout.taskTrigger, send: layout.sendActions })}.`,
 	);
 	assert.ok(
 		layout.panel.top >= layout.host.top - 1,
