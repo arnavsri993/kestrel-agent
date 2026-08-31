@@ -3800,14 +3800,12 @@ export type RendererResponse =
 
 export interface RendererBridge {
 	request(request: RendererRequest): Promise<RendererResponse>;
-	getPathForFile(file: unknown): string;
 	onBrowserEvent(callback: (event: UserBrowserEvent) => void): () => void;
 	onPasswordPrompt(callback: (prompt: PasswordPrompt | null) => void): () => void;
 	onPaymentPrompt(callback: (prompt: PaymentPrompt | null) => void): () => void;
 	onBrowserCommand(callback: (command: UserBrowserCommand) => void): () => void;
 	onDeepLink(callback: (deepLink: KestrelDeepLink) => void): () => void;
 	onExternalIntake(callback: (intake: ExternalIntake) => void): () => void;
-	onFileDrag(callback: (event: { active: boolean }) => void): () => void;
 	onSnapshot(callback: (snapshot: WorkspaceSnapshot) => void): () => void;
 	onPetStatus(callback: (status: PetStatus) => void): () => void;
 	onPetActivity(callback: (activity: PetActivityState) => void): () => void;
