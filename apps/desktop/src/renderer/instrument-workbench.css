@@ -144,7 +144,26 @@
 	transform: scale(0.98);
 }
 
-.unified-ui :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+.unified-ui
+	:is(
+		input:not([type]),
+		input[type="text"],
+		input[type="search"],
+		input[type="email"],
+		input[type="url"],
+		input[type="password"],
+		input[type="tel"],
+		input[type="number"],
+		input[type="datetime-local"]
+	) {
+	border-color: var(--line-strong);
+	border-radius: var(--radius-text-entry);
+	background: var(--surface);
+	color: var(--ink);
+	font: 450 13px / 18px var(--sans);
+}
+
+.unified-ui :is(select, textarea) {
 	border-color: var(--line-strong);
 	border-radius: var(--radius-control);
 	background: var(--surface);
@@ -152,7 +171,19 @@
 	font: 450 13px / 18px var(--sans);
 }
 
-.unified-ui :is(input:not([type="checkbox"]):not([type="radio"]), select):not(.browser-address-input) {
+.unified-ui
+	:is(
+		input:not([type]),
+		input[type="text"],
+		input[type="search"],
+		input[type="email"],
+		input[type="url"],
+		input[type="password"],
+		input[type="tel"],
+		input[type="number"],
+		input[type="datetime-local"],
+		select
+	):not(.browser-address-input) {
 	min-height: var(--control-normal);
 }
 
@@ -160,6 +191,65 @@
 	border-color: var(--focus);
 	box-shadow: var(--focus-ring);
 	outline: none;
+}
+
+/* Some search and address controls place their text input inside a visual
+ * wrapper. Apply the same true end caps to that wrapper, not the transparent
+ * inner input, so the visible field is consistently capsule-shaped. */
+.unified-ui
+	:is(
+		.browser-address,
+		.browser-tab-tools-search,
+		.browser-library .library-search,
+		.command-search,
+		.agent-task-search,
+		.browser-history-popover-search,
+		.projects-workspace-search
+	) {
+	border-radius: var(--radius-text-entry);
+}
+
+/* Composite fields own their outline, fill, and focus treatment. Their inner
+ * inputs stay transparent so a command, address, or home composer never reads
+ * as a second field nested inside the first. */
+.unified-ui
+	:is(
+		.browser-address input,
+		.browser-tab-tools-search input,
+		.browser-library .library-search input,
+		.command-search input,
+		.agent-task-search input,
+		.browser-history-popover-search input,
+		.projects-workspace-search input,
+		.kestrel-home-composer > input
+	) {
+	min-height: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.unified-ui
+	:is(
+		.browser-address input,
+		.browser-tab-tools-search input,
+		.browser-library .library-search input,
+		.command-search input,
+		.agent-task-search input,
+		.browser-history-popover-search input,
+		.projects-workspace-search input,
+		.kestrel-home-composer > input
+	):focus {
+	border-color: transparent;
+	box-shadow: none;
+}
+/* The calculator is a separate overlay window rather than a child of
+ * `.unified-ui`. Its visible expression shell and numeric fields therefore
+ * need the capsule geometry explicitly. */
+.calculator-overlay :is(.calculator-graph-input, .calculator-graph-options input) {
+	border-radius: var(--radius-text-entry);
 }
 
 /* Settings ---------------------------------------------------------------- */
