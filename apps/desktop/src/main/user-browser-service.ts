@@ -109,6 +109,7 @@ const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
 const MAX_BOOKMARKS = 2_000;
 const MAX_TAB_FOLDER_NAMING_TABS = 8;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
+const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
 const ALWAYS_ALLOW_PERMISSIONS = new Set([
 	"fullscreen",
@@ -121,6 +122,9 @@ const ALWAYS_DENY_PERMISSIONS = new Set([
 	"fileSystem",
 	"windowManagement",
 ]);
+const DOWNLOAD_DRAG_ICON = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+	'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#25282d"/><path d="M32 12v27m0 0L21 28m11 11 11-11M16 51h32" fill="none" stroke="#f0f1f2" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+)}`;
 
 function screenshotCancellationError(signal: AbortSignal): Error {
 	return signal.reason instanceof Error
@@ -131,6 +135,7 @@ function screenshotCancellationError(signal: AbortSignal): Error {
 function capturePageWithDeadline(
 	webContents: WebContents,
 	signal?: AbortSignal,
+	timeoutMs = SCREENSHOT_CAPTURE_TIMEOUT_MS,
 ): ReturnType<WebContents["capturePage"]> {
 	if (signal?.aborted)
 		return Promise.reject(screenshotCancellationError(signal));
@@ -154,7 +159,7 @@ function capturePageWithDeadline(
 						),
 					),
 				),
-			SCREENSHOT_CAPTURE_TIMEOUT_MS,
+			timeoutMs,
 		);
 		signal?.addEventListener("abort", abort, { once: true });
 		void webContents.capturePage().then(
@@ -1319,8 +1324,19 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
-	async setContentBounds(bounds: Rectangle, visible: boolean): Promise<void> {
+	async setContentBounds(
+		bounds: Rectangle,
+		visible: boolean,
+	): Promise<string | undefined> {
 		this.assertAvailable();
+		// Renderer menus live in the main window's renderer, while web pages are
+		// native WebContentsViews painted above that renderer. Capture the page
+		// before releasing the native view so opening a menu does not turn the
+		// entire page area into an empty canvas.
+		const pagePreview =
+			!visible && bounds.width >= 160 && bounds.height >= 120
+				? await this.captureNativePagePreview()
+				: undefined;
 		const seq = ++this.contentBoundsSeq;
 		const size = this.window.getContentSize();
 		const windowWidth = size[0] ?? 0;
@@ -1339,6 +1355,44 @@ export class UserBrowserService {
 		this.contentVisible = visible && width >= 160 && height >= 120;
 		await this.syncActiveView();
 		if (seq !== this.contentBoundsSeq) await this.syncActiveView();
+		return pagePreview;
+	}
+
+	private async captureNativePagePreview(): Promise<string | undefined> {
+		if (!this.contentVisible) return undefined;
+		const tab = this.state.tabs.find(
+			(candidate) => candidate.id === this.state.activeTabId,
+		);
+		if (
+			!tab ||
+			!tab.url ||
+			tab.error ||
+			tab.file ||
+			isKestrelAppPageUrl(tab.url)
+		)
+			return undefined;
+		const record = this.views.get(tab.id);
+		if (
+			!record ||
+			record.view.webContents.isDestroyed() ||
+			!this.window.contentView.children.includes(record.view)
+		)
+			return undefined;
+		try {
+			const image = await capturePageWithDeadline(
+				record.view.webContents,
+				undefined,
+				PAGE_PREVIEW_CAPTURE_TIMEOUT_MS,
+			);
+			const { width, height } = image.getSize();
+			if (width < 1 || height < 1) return undefined;
+			return `data:image/png;base64,${image.toPNG().toString("base64")}`;
+		} catch {
+			// The native view is still hidden even if Electron cannot provide a
+			// frame. The menu remains usable and the renderer falls back to its
+			// normal canvas background.
+			return undefined;
+		}
 	}
 
 	updateSettings(settings: UserBrowserSettings): UserBrowserState {
@@ -1367,24 +1421,29 @@ export class UserBrowserService {
 	}
 
 	revealDownload(downloadId: string): void {
-		const download = this.state.downloads.find(
-			(item) => item.id === downloadId,
-		);
-		const path = this.downloadPaths.get(downloadId);
-		if (!download || !path || !download.canReveal || !existsSync(path))
+		const available = this.availableDownload(downloadId);
+		if (!available)
 			throw new Error("This download is no longer available to reveal.");
-		shell.showItemInFolder(path);
+		shell.showItemInFolder(available.path);
 	}
 
 	async openDownload(downloadId: string): Promise<void> {
-		const download = this.state.downloads.find(
-			(item) => item.id === downloadId,
-		);
-		const path = this.downloadPaths.get(downloadId);
-		if (!download || !path || !download.canReveal || !existsSync(path))
+		const available = this.availableDownload(downloadId);
+		if (!available)
 			throw new Error("This download is no longer available to open.");
-		const error = await shell.openPath(path);
+		const error = await shell.openPath(available.path);
 		if (error) throw new Error(error);
+	}
+
+	startDownloadDrag(downloadId: string): void {
+		this.assertAvailable();
+		const available = this.availableDownload(downloadId);
+		if (!available || available.download.status !== "completed")
+			throw new Error("This download is no longer available to drag.");
+		this.window.webContents.startDrag({
+			file: available.path,
+			icon: nativeImage.createFromDataURL(DOWNLOAD_DRAG_ICON),
+		});
 	}
 
 	cancelDownload(downloadId: string): UserBrowserState {
@@ -3537,6 +3596,24 @@ export class UserBrowserService {
 	private requireActiveTab(): UserBrowserTab {
 		if (!this.state.activeTabId) throw new Error("No browser tab is active.");
 		return this.requireTab(this.state.activeTabId);
+	}
+
+	private availableDownload(
+		downloadId: string,
+	): { download: UserBrowserDownload; path: string } | undefined {
+		const download = this.state.downloads.find(
+			(item) => item.id === downloadId,
+		);
+		if (!download || !download.canReveal) return undefined;
+		const storedPath = this.downloadPaths.get(downloadId);
+		const filename = basename(download.filename);
+		const path =
+			storedPath ??
+			(filename === download.filename
+				? join(this.downloadDirectory, filename)
+				: undefined);
+		if (!path || !existsSync(path)) return undefined;
+		return { download, path };
 	}
 
 	private requireView(tabId: string): ViewRecord {

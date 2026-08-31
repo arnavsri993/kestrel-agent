@@ -2180,6 +2180,22 @@ body:has(.ai-browser-app),
 	background: var(--canvas);
 }
 
+/* Native web pages sit above the renderer, so browser menus temporarily use
+ * a captured frame to preserve the page beneath the interactive menu while
+ * the native view is released for pointer input. */
+.browser-native-page-preview {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	object-fit: fill;
+	pointer-events: none;
+	user-select: none;
+}
+
 .file-tab-view {
 	position: absolute;
 	inset: 0;
@@ -4051,6 +4067,9 @@ body:has(.ai-browser-app),
 	max-height: min(760px, calc(100vh - 24px));
 	padding: 8px;
 }
+.browser-toolbar-popover-downloads {
+	width: min(470px, calc(100vw - 24px));
+}
 .browser-toolbar-popover button {
 	width: auto;
 	height: auto;
@@ -4194,6 +4213,95 @@ body:has(.ai-browser-app),
 .browser-toolbar-menu-zoom button:last-child {
 	font-size: 18px;
 	font-weight: 400;
+}
+.browser-download-popover-list {
+	display: grid;
+	gap: 2px;
+	max-height: min(420px, 55vh);
+	margin: 3px 0 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+}
+.browser-download-popover-row {
+	display: grid;
+	grid-template-columns: 30px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	min-height: 48px;
+	padding: 4px 5px;
+	border-radius: 9px;
+}
+.browser-download-popover-row:hover {
+	background: color-mix(in srgb, var(--surface) 78%, transparent);
+}
+.browser-download-popover-row .download-state {
+	width: 28px;
+	height: 28px;
+}
+.browser-download-popover-copy {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.browser-download-popover-copy strong {
+	overflow: hidden;
+	font-size: 11.5px;
+	font-weight: 580;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.browser-download-popover-copy small {
+	overflow: hidden;
+	color: var(--faint);
+	font-size: 10.5px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.browser-download-popover-copy progress {
+	width: min(220px, 100%);
+	height: 2px;
+	margin-top: 2px;
+	accent-color: var(--solid);
+}
+.browser-download-popover-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 2px;
+	white-space: nowrap;
+}
+.browser-download-popover-actions button {
+	min-height: 26px;
+	padding: 0 6px;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--muted);
+	font-size: 10px;
+	cursor: pointer;
+}
+.browser-download-popover-actions button:hover,
+.browser-download-popover-actions button:focus-visible {
+	border-color: var(--line);
+	background: var(--selected);
+	color: var(--ink);
+}
+.browser-download-popover-actions .browser-download-drag {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	border-color: color-mix(in srgb, var(--solid) 28%, var(--line));
+	background: color-mix(in srgb, var(--solid) 10%, transparent);
+	color: var(--status-ink);
+	cursor: grab;
+}
+.browser-download-popover-actions .browser-download-drag:active {
+	cursor: grabbing;
+}
+.browser-download-drag svg {
+	width: 12px;
+	height: 12px;
 }
 .browser-toolbar-popover-history {
 	width: min(380px, calc(100vw - 24px));

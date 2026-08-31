@@ -39,7 +39,7 @@ export interface UserBrowserController {
 	setContentBounds(
 		bounds: { x: number; y: number; width: number; height: number },
 		visible: boolean,
-	): Promise<void>;
+	): Promise<string | undefined>;
 	toggleCalculator(bounds?: BrowserContentBounds): Promise<void>;
 	pageContext(tabId?: string): Promise<UserBrowserPageContext | undefined>;
 	updateSettings(settings: Partial<UserBrowserSettings>): Promise<void>;
@@ -51,6 +51,7 @@ export interface UserBrowserController {
 	}): Promise<void>;
 	revealDownload(downloadId: string): Promise<void>;
 	openDownload(downloadId: string): Promise<void>;
+	startDownloadDrag(downloadId: string): Promise<void>;
 	cancelDownload(downloadId: string): Promise<void>;
 	toggleBookmark(url?: string, title?: string): Promise<void>;
 	removeBookmark(bookmarkId: string): Promise<void>;
@@ -96,7 +97,9 @@ export function useUserBrowser(): UserBrowserController {
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
-	const contentBoundsRequestRef = useRef<Promise<void>>(Promise.resolve());
+	const contentBoundsRequestRef = useRef<Promise<string | undefined>>(
+		Promise.resolve(undefined),
+	);
 	stateRef.current = state;
 	const applyState = useCallback((nextState: UserBrowserState) => {
 		stateRef.current = nextState;
@@ -281,6 +284,9 @@ export function useUserBrowser(): UserBrowserController {
 						visible,
 					});
 					if (!response.ok) throw new Error(responseError(response));
+					return "browserPagePreview" in response
+						? response.browserPagePreview
+						: undefined;
 				});
 			contentBoundsRequestRef.current = pending;
 			return pending;
@@ -367,6 +373,13 @@ export function useUserBrowser(): UserBrowserController {
 	const openDownload = useCallback(async (downloadId: string) => {
 		const response = await window.kestrel.request({
 			type: "browser-open-download",
+			downloadId,
+		});
+		if (!response.ok) throw new Error(responseError(response));
+	}, []);
+	const startDownloadDrag = useCallback(async (downloadId: string) => {
+		const response = await window.kestrel.request({
+			type: "browser-start-download-drag",
 			downloadId,
 		});
 		if (!response.ok) throw new Error(responseError(response));
@@ -520,6 +533,7 @@ export function useUserBrowser(): UserBrowserController {
 			clearBrowsingData,
 			revealDownload,
 			openDownload,
+			startDownloadDrag,
 			cancelDownload,
 			toggleBookmark,
 			removeBookmark,
@@ -568,6 +582,7 @@ export function useUserBrowser(): UserBrowserController {
 			clearBrowsingData,
 			revealDownload,
 			openDownload,
+			startDownloadDrag,
 			cancelDownload,
 			toggleBookmark,
 			removeBookmark,

@@ -4302,19 +4302,11 @@ function RuntimeConversation({
 							/>
 							<details className="task-settings" ref={taskSettingsRef}>
 								<summary
+									className="task-settings-trigger"
 									aria-label="Task settings"
-									title={`Model: ${
-										executionMode === "automatic"
-											? "Smart"
-											: model.trim() || "Choose a model"
-									}`}
+									title="Task settings"
 								>
-									<span className="runtime-model-label">
-										{executionMode === "automatic"
-											? "Smart"
-											: model.trim() || "Choose model"}
-									</span>
-									<Icon name="chevron" />
+									<Icon name="sliders" />
 								</summary>
 								<div className="task-settings-panel">
 									<header>

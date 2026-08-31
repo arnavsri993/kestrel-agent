@@ -2803,10 +2803,16 @@ function registerIpc(): void {
     if (request.type === "browser-set-content-bounds") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      await requestBrowserService.setContentBounds(request.bounds, request.visible);
+      const browserPagePreview = await requestBrowserService.setContentBounds(
+        request.bounds,
+        request.visible,
+      );
       if (request.bounds.width > 0 && request.bounds.height > 0)
         updateCalculatorOverlayAnchor(senderWindow, request.bounds);
-      return { ok: true };
+      return {
+        ok: true,
+        ...(browserPagePreview ? { browserPagePreview } : {}),
+      };
     }
     if (request.type === "browser-update-settings") {
       if (!requestBrowserService)
@@ -2846,6 +2852,12 @@ function registerIpc(): void {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       await requestBrowserService.openDownload(request.downloadId);
+      return { ok: true };
+    }
+    if (request.type === "browser-start-download-drag") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      requestBrowserService.startDownloadDrag(request.downloadId);
       return { ok: true };
     }
     if (request.type === "browser-cancel-download") {
