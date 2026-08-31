@@ -1451,11 +1451,38 @@ try {
 		.first()
 		.waitFor();
 
+	const tabIdsBeforeDownloads = (await browserState()).tabs.map(
+		(tab) => tab.id,
+	);
 	await page.keyboard.press("Meta+J");
-	await page
-		.getByRole("heading", { name: "Downloaded files", exact: true })
-		.waitFor();
-	await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	const downloadsMenu = page.getByRole("menu", { name: "Downloads" });
+	await downloadsMenu.waitFor();
+	await downloadsMenu.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	const dragDownload = downloadsMenu.getByRole("menuitem", {
+		name: "Drag kestrel-browser.txt to a website upload field",
+	});
+	await dragDownload.waitFor();
+	assert.equal(await dragDownload.getAttribute("draggable"), "true");
+	assert.equal(
+		await page.getByRole("heading", { name: "Downloaded files", exact: true }).count(),
+		0,
+		"Toolbar Downloads opened the full-page library",
+	);
+	assert.deepEqual(
+		(await browserState()).tabs.map((tab) => tab.id),
+		tabIdsBeforeDownloads,
+		"Opening toolbar Downloads changed the tab list",
+	);
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the Downloads popover",
+	);
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(downloadsMenu, "Downloads popover");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing Downloads",
+	);
 	await openKestrelDestination(page, "Settings");
 	await page
 		.getByRole("heading", { name: "Settings", exact: true })

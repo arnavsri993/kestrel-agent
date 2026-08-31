@@ -3372,6 +3372,10 @@ export const RendererRequestSchema = z.union([
 		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
 	}),
 	z.object({
+		type: z.literal("browser-start-download-drag"),
+		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.literal("browser-cancel-download"),
 		downloadId: z.string().regex(/^download-[a-f0-9-]{36}$/),
 	}),
