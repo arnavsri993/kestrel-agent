@@ -40,14 +40,14 @@ function assertNear(actual, expected, message) {
 }
 
 function expectedAgentPanelWidth(viewportWidth) {
-	if (viewportWidth <= 760) return 300;
-	if (viewportWidth <= 980) return 305;
-	if (viewportWidth <= 1_120) return 330;
-	return 360;
+	if (viewportWidth <= 760) return 0;
+	if (viewportWidth <= 980) return 288;
+	if (viewportWidth <= 1_120) return 312;
+	return 336;
 }
 
 function expectedNavigationWidth(viewportWidth) {
-	return viewportWidth <= 1_120 ? 56 : 248;
+	return viewportWidth <= 1_120 ? 56 : 216;
 }
 
 async function readLayout(page) {
@@ -153,9 +153,9 @@ function assertTaskSettingsLayout(layout) {
 
 function assertTheme(layout) {
 	assert.deepEqual(layout.theme, {
-		canvas: "#0d0e11",
-		sidebar: "#131519",
-		solid: "#f3f4f6",
+		canvas: "#0b0c0e",
+		sidebar: "#111317",
+		solid: "#f5f5f7",
 		colorScheme: "dark",
 	});
 	assert.equal(layout.bridgeReady, true);
@@ -216,6 +216,12 @@ async function assertMotionContract(page) {
 		"auto",
 		"The agent rail must not stay GPU-promoted at rest.",
 	);
+	assertNoLayoutTransition(
+		motion.agent.transitionProperty
+			.split(",")
+			.map((property) => property.trim()),
+		"Agent rail",
+	);
 	assert.ok(
 		Math.max(...transitionDurationsInSeconds(motion.control.transitionDuration)) <= 0.15,
 		`Control feedback is too slow: ${motion.control.transitionDuration}.`,
@@ -259,6 +265,89 @@ async function assertReducedMotionStyles(page) {
 	assert.equal(reduced.home.animationName, "none");
 	assert.equal(reduced.tab.scrollBehavior, "auto");
 	await page.emulateMedia({ reducedMotion: "no-preference" });
+}
+
+async function assertAgentRailInterruption(page) {
+	const toggle = page.locator("#browser-agent-toggle");
+	const expectedWidth = expectedAgentPanelWidth(
+		await page.evaluate(() => innerWidth),
+	);
+	const readWidth = () =>
+		page.locator(".agent-sidebar").evaluate((element) =>
+			element.getBoundingClientRect().width,
+		);
+	const afterTwoFrames = () =>
+		page.evaluate(
+			() =>
+				new Promise((resolve) =>
+					requestAnimationFrame(() => requestAnimationFrame(resolve)),
+				),
+		);
+
+	await toggle.click();
+	await page.waitForFunction(
+		(target) => {
+			const shell = document.querySelector(".ai-browser-app");
+			const agent = document.querySelector(".agent-sidebar");
+			const width = agent?.getBoundingClientRect().width ?? 0;
+			return (
+				shell?.classList.contains("agent-sidebar-settling") &&
+				width > 8 &&
+				width < target - 8
+			);
+		},
+		expectedWidth,
+	);
+	const openingWidth = await readWidth();
+
+	// Reverse while the spring is live. The rail may briefly carry its incoming
+	// velocity, but it must not jump to either endpoint or lock the toggle.
+	await toggle.click();
+	await afterTwoFrames();
+	const reversedWidth = await readWidth();
+	assert.ok(
+		reversedWidth > 0 && reversedWidth < expectedWidth,
+		`Rail reversal jumped to an endpoint (${reversedWidth}px).`,
+	);
+	assert.ok(
+		Math.abs(reversedWidth - openingWidth) < expectedWidth * 0.36,
+		`Rail reversal jumped from ${openingWidth}px to ${reversedWidth}px.`,
+	);
+	await page.waitForFunction(
+		(before) =>
+			(document.querySelector(".agent-sidebar")?.getBoundingClientRect().width ?? 0) <
+			before - 4,
+		openingWidth,
+	);
+	const closingWidth = await readWidth();
+
+	// Re-open before the close finishes. This proves the next input is accepted
+	// during motion and that the new spring starts from the rendered width.
+	await toggle.click();
+	await afterTwoFrames();
+	const reopenedWidth = await readWidth();
+	assert.ok(
+		reopenedWidth > 0 && reopenedWidth < expectedWidth,
+		`Interrupted re-open jumped to an endpoint (${reopenedWidth}px).`,
+	);
+	assert.ok(
+		Math.abs(reopenedWidth - closingWidth) < expectedWidth * 0.36,
+		`Interrupted re-open jumped from ${closingWidth}px to ${reopenedWidth}px.`,
+	);
+	await page.waitForFunction(
+		(target) => {
+			const shell = document.querySelector(".ai-browser-app");
+			const agent = document.querySelector(".agent-sidebar");
+			return (
+				!shell?.classList.contains("agent-sidebar-settling") &&
+				Math.abs((agent?.getBoundingClientRect().width ?? 0) - target) <= 1
+			);
+		},
+		expectedWidth,
+	);
+
+	await toggle.click();
+	await waitForCollapsedLayout(page);
 }
 
 async function assertTabDragMotion(page, orientation = "horizontal") {
@@ -408,8 +497,8 @@ async function assertVerticalTabLayout(page) {
 	);
 	assert.equal(
 		verticalViewportProperties.includes("right"),
-		true,
-		"Vertical browser content must animate with the agent rail instead of jumping.",
+		false,
+		"The rAF spring owns vertical browser geometry; CSS must not trail it.",
 	);
 
 	await assertTabDragMotion(page, "vertical");
@@ -613,6 +702,9 @@ async function readZoomReflow(page) {
 				height: rect.height,
 			};
 		};
+		const agentToggleLabel = document.querySelector(
+			".browser-agent-toggle > span:not(.pragmatic-logo)",
+		);
 
 		return {
 			innerWidth,
@@ -647,11 +739,9 @@ async function readZoomReflow(page) {
 			sidebarLabelDisplay: getComputedStyle(
 				document.querySelector(".kestrel-sidebar-nav-item span"),
 			).display,
-			agentToggleLabelDisplay: getComputedStyle(
-				document.querySelector(
-					".browser-agent-toggle > span:not(.pragmatic-logo)",
-				),
-			).display,
+			agentToggleLabelDisplay: agentToggleLabel
+				? getComputedStyle(agentToggleLabel).display
+				: "none",
 			controls: [
 				readControl(".kestrel-sidebar-new-task"),
 				readControl(".browser-new-tab"),
@@ -891,6 +981,7 @@ try {
 	await waitForCollapsedLayout(page);
 	await assertMotionContract(page);
 	await assertReducedMotionStyles(page);
+	await assertAgentRailInterruption(page);
 	await page.getByRole("button", { name: "New Tab", exact: true }).click();
 	await page.waitForFunction(
 		() => document.querySelectorAll(".browser-tabs .browser-tab").length >= 2,

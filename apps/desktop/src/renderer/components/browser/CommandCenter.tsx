@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../Icon";
 import { SurfaceBackButton } from "./SurfaceBackButton";
+import { PageFrame } from "../ui";
+import "./surface-pages.css";
 
 export interface CommandDestination {
   id: string;
@@ -47,16 +49,15 @@ export function CommandCenter({
   }, [onClose]);
 
   return (
-    <main className="command-center" aria-labelledby="command-center-title">
-      <header>
-        {onBack && <SurfaceBackButton onBack={onBack} />}
-        <span className="command-mark">
-          <Icon name="command" />
-        </span>
-        <div>
-          <h1 id="command-center-title">Capabilities</h1>
-        </div>
-      </header>
+    <PageFrame
+      as="main"
+      className="command-center"
+      title="Capabilities"
+      titleId="command-center-title"
+      description="Find a Kestrel surface or start a focused task without leaving the workbench."
+      measure="standard"
+      actions={onBack ? <SurfaceBackButton onBack={onBack} /> : undefined}
+    >
       <label className="command-search">
         <Icon name="search" />
         <span className="sr-only">Search Kestrel</span>
@@ -157,6 +158,6 @@ export function CommandCenter({
           )}
         </div>
       )}
-    </main>
+    </PageFrame>
   );
 }

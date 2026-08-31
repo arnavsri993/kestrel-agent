@@ -1,5 +1,7 @@
-import { useEffect } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { useCallback, useEffect, useRef } from "react";
 import { Icon } from "../Icon";
+import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 
 interface ShortcutItem {
 	keys: string[];
@@ -13,7 +15,7 @@ interface ShortcutCategory {
 
 const isMac =
 	typeof navigator !== "undefined" &&
-	/Mac|iPod|iPhone|iPad/.test(navigator.platform);
+	/Mac|iPod|iPhone|iPad/.test(`${navigator.userAgent} ${navigator.platform}`);
 
 const cmd = isMac ? "⌘" : "Ctrl";
 const opt = isMac ? "⌥" : "Alt";
@@ -39,8 +41,14 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
 			{ keys: [cmd, "L"], description: "Focus address bar" },
 			{ keys: [cmd, "R"], description: "Reload page" },
 			{ keys: [cmd, shift, "R"], description: "Hard reload (ignore cache)" },
-			{ keys: [cmd, "["], description: "Go back in history" },
-			{ keys: [cmd, "]"], description: "Go forward in history" },
+			{
+				keys: isMac ? [cmd, "["] : [opt, "←"],
+				description: "Go back in history",
+			},
+			{
+				keys: isMac ? [cmd, "]"] : [opt, "→"],
+				description: "Go forward in history",
+			},
 			{ keys: [cmd, "F"], description: "Find in page" },
 			{ keys: [cmd, "D"], description: "Bookmark this page" },
 			{ keys: [cmd, shift, "B"], description: "Show or hide the bookmarks bar" },
@@ -74,28 +82,82 @@ const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
 ];
 
 export function KeyboardShortcutsModal({ onClose }: { onClose(): void }) {
+	const reducedMotion = useReducedMotion() ?? false;
+	const cardRef = useRef<HTMLDivElement | null>(null);
+	const closeRef = useRef<HTMLButtonElement | null>(null);
+	const returnFocusRef = useRef<HTMLElement | null>(null);
+	const close = useCallback(() => {
+		returnFocusRef.current?.focus();
+		onClose();
+	}, [onClose]);
+
 	useEffect(() => {
+		if (document.activeElement instanceof HTMLElement)
+			returnFocusRef.current = document.activeElement;
+		const frame = window.requestAnimationFrame(() => closeRef.current?.focus());
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
+				if (event.defaultPrevented) return;
 				event.preventDefault();
-				onClose();
+				close();
+				return;
+			}
+			if (event.key !== "Tab" || !cardRef.current) return;
+			const focusable = Array.from(
+				cardRef.current.querySelectorAll<HTMLElement>(
+					"button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])",
+				),
+			);
+			if (focusable.length === 0) return;
+			const first = focusable[0];
+			const last = focusable.at(-1);
+			if (event.shiftKey && document.activeElement === first) {
+				event.preventDefault();
+				last?.focus();
+			} else if (!event.shiftKey && document.activeElement === last) {
+				event.preventDefault();
+				first?.focus();
 			}
 		};
 		document.addEventListener("keydown", handleKeyDown);
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [onClose]);
+		return () => {
+			window.cancelAnimationFrame(frame);
+			document.removeEventListener("keydown", handleKeyDown);
+			if (cardRef.current?.contains(document.activeElement))
+				returnFocusRef.current?.focus();
+		};
+	}, [close]);
 
 	return (
-		<div
+		<motion.div
 			className="shortcuts-modal-overlay"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="shortcuts-modal-title"
+			initial={reducedMotion ? false : { opacity: 0 }}
+			animate={{ opacity: 1 }}
+			exit={
+				reducedMotion
+					? { opacity: 1, pointerEvents: "none" }
+					: { opacity: 0, pointerEvents: "none" }
+			}
+			transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 			onClick={(event) => {
-				if (event.target === event.currentTarget) onClose();
+				if (event.target === event.currentTarget) close();
 			}}
 		>
-			<div className="shortcuts-modal-card">
+			<motion.div
+				ref={cardRef}
+				className="shortcuts-modal-card"
+				initial={reducedMotion ? false : { opacity: 0, scale: 0.985, y: 8 }}
+				animate={{ opacity: 1, scale: 1, y: 0 }}
+				exit={
+					reducedMotion
+						? { opacity: 1, scale: 1, y: 0 }
+						: { opacity: 0, scale: 0.985, y: 8 }
+				}
+				transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+			>
 				<header className="shortcuts-modal-header">
 					<div className="shortcuts-modal-title-group">
 						<span className="shortcuts-modal-icon">
@@ -106,10 +168,11 @@ export function KeyboardShortcutsModal({ onClose }: { onClose(): void }) {
 						</div>
 					</div>
 					<button
+						ref={closeRef}
 						type="button"
 						className="shortcuts-modal-close"
 						aria-label="Close keyboard shortcuts"
-						onClick={onClose}
+						onClick={close}
 					>
 						<Icon name="close" />
 					</button>
@@ -145,7 +208,7 @@ export function KeyboardShortcutsModal({ onClose }: { onClose(): void }) {
 						Press <kbd>Esc</kbd> or <kbd>{cmd}</kbd> <kbd>/</kbd> to dismiss
 					</span>
 				</footer>
-			</div>
-		</div>
+			</motion.div>
+		</motion.div>
 	);
 }

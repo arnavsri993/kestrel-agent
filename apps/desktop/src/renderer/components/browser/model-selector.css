@@ -280,3 +280,13 @@
 		transition: none;
 	}
 }
+
+/* Menus are positioned from the live trigger rectangle in ModelSelector, so
+ * their opening edge describes the relationship instead of floating vaguely. */
+.model-selector-menu {
+	transform-origin: bottom left;
+}
+
+.model-selector-menu[data-placement="below"] {
+	transform-origin: top left;
+}

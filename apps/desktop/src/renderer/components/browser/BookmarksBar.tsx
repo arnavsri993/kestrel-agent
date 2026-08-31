@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
 	UserBrowserBookmark,
 	UserBrowserOriginFavicon,
@@ -10,6 +11,7 @@ import {
 	bookmarkBarLabel,
 } from "./bookmarks-bar";
 import "./bookmarks-bar.css";
+import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 
 export function BookmarksBar({
 	bookmarks,
@@ -29,22 +31,83 @@ export function BookmarksBar({
 	onRemove(bookmarkId: string): void;
 	onManage(): void;
 }) {
+	const reducedMotion = useReducedMotion() ?? false;
 	const [menu, setMenu] = useState<{
 		x: number;
 		y: number;
+		anchorX: number;
+		anchorY: number;
 		bookmark: UserBrowserBookmark;
 	} | null>(null);
+	const menuRef = useRef<HTMLDivElement | null>(null);
+
+	const dismissMenu = useCallback(() => {
+		setMenu(null);
+	}, []);
+
+	const closeMenu = useCallback(() => {
+		const bookmarkId = menu?.bookmark.id;
+		dismissMenu();
+		if (!bookmarkId) return;
+		window.requestAnimationFrame(() =>
+			document
+				.querySelector<HTMLElement>(
+					`[data-bookmark-id="${CSS.escape(bookmarkId)}"]`,
+				)
+				?.focus(),
+		);
+	}, [dismissMenu, menu?.bookmark.id]);
+
+	useLayoutEffect(() => {
+		if (!menu || !menuRef.current) return;
+		const rect = menuRef.current.getBoundingClientRect();
+		const gutter = 8;
+		const x = Math.max(gutter, Math.min(menu.anchorX, window.innerWidth - rect.width - gutter));
+		const y = Math.max(gutter, Math.min(menu.anchorY, window.innerHeight - rect.height - gutter));
+		if (x !== menu.x || y !== menu.y)
+			setMenu((current) => (current ? { ...current, x, y } : current));
+	}, [menu]);
 
 	useEffect(() => {
 		if (!menu) return;
-		const close = () => setMenu(null);
-		window.addEventListener("click", close);
-		window.addEventListener("blur", close);
-		return () => {
-			window.removeEventListener("click", close);
-			window.removeEventListener("blur", close);
+		const frame = window.requestAnimationFrame(() =>
+			menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus(),
+		);
+		const onPointerDown = (event: PointerEvent) => {
+			const target = event.target as Node | null;
+			if (target && !menuRef.current?.contains(target)) dismissMenu();
 		};
-	}, [menu]);
+		const onFocusIn = (event: FocusEvent) => {
+			const target = event.target as Node | null;
+			if (target && !menuRef.current?.contains(target)) dismissMenu();
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				if (event.defaultPrevented) return;
+				event.preventDefault();
+				closeMenu();
+				return;
+			}
+			if (!menuRef.current || !["ArrowDown", "ArrowUp"].includes(event.key)) return;
+			const items = Array.from(menuRef.current.querySelectorAll<HTMLButtonElement>("button"));
+			if (items.length === 0) return;
+			const current = items.indexOf(document.activeElement as HTMLButtonElement);
+			const delta = event.key === "ArrowDown" ? 1 : -1;
+			event.preventDefault();
+			items[(current + delta + items.length) % items.length]?.focus();
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		document.addEventListener("focusin", onFocusIn);
+		document.addEventListener("keydown", onKeyDown);
+		window.addEventListener("blur", dismissMenu);
+		return () => {
+			window.cancelAnimationFrame(frame);
+			document.removeEventListener("pointerdown", onPointerDown);
+			document.removeEventListener("focusin", onFocusIn);
+			document.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("blur", dismissMenu);
+		};
+	}, [closeMenu, dismissMenu, menu]);
 
 	return (
 		<div className="browser-bookmarks-bar" aria-label="Bookmarks bar">
@@ -65,6 +128,7 @@ export function BookmarksBar({
 								<button
 									type="button"
 									className="browser-bookmarks-bar-link"
+									data-bookmark-id={bookmark.id}
 									title={bookmark.url}
 									onClick={(event) => {
 										if (event.metaKey || event.ctrlKey)
@@ -82,6 +146,8 @@ export function BookmarksBar({
 										setMenu({
 											x: event.clientX,
 											y: event.clientY,
+											anchorX: event.clientX,
+											anchorY: event.clientY,
 											bookmark,
 										});
 									}}
@@ -110,19 +176,33 @@ export function BookmarksBar({
 				<Icon name="star" />
 				Manage
 			</button>
+			<AnimatePresence initial={false}>
 			{menu && (
-				<div
+				<motion.div
+					key={`bookmark-menu-${menu.bookmark.id}`}
+					ref={menuRef}
 					className="browser-tab-menu"
-					style={{ left: menu.x, top: menu.y }}
+					style={{
+						left: menu.x,
+						top: menu.y,
+						transformOrigin: `${Math.max(8, menu.anchorX - menu.x)}px ${Math.max(8, menu.anchorY - menu.y)}px`,
+					}}
 					role="menu"
-					onClick={(event) => event.stopPropagation()}
+					initial={reducedMotion ? false : { opacity: 0, scale: 0.985 }}
+					animate={{ opacity: 1, scale: 1 }}
+					exit={
+						reducedMotion
+							? { opacity: 1, scale: 1, pointerEvents: "none" }
+							: { opacity: 0, scale: 0.985, pointerEvents: "none" }
+					}
+					transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 				>
 					<button
 						type="button"
 						role="menuitem"
-						onClick={() => {
-							onOpen(menu.bookmark.url);
-							setMenu(null);
+							onClick={() => {
+								onOpen(menu.bookmark.url);
+								closeMenu();
 						}}
 					>
 						Open
@@ -130,9 +210,9 @@ export function BookmarksBar({
 					<button
 						type="button"
 						role="menuitem"
-						onClick={() => {
-							onOpenInNewTab(menu.bookmark.url);
-							setMenu(null);
+							onClick={() => {
+								onOpenInNewTab(menu.bookmark.url);
+								closeMenu();
 						}}
 					>
 						Open in new tab
@@ -140,15 +220,16 @@ export function BookmarksBar({
 					<button
 						type="button"
 						role="menuitem"
-						onClick={() => {
-							onRemove(menu.bookmark.id);
-							setMenu(null);
+							onClick={() => {
+								onRemove(menu.bookmark.id);
+								closeMenu();
 						}}
 					>
 						Remove
 					</button>
-				</div>
+				</motion.div>
 			)}
+			</AnimatePresence>
 		</div>
 	);
 }

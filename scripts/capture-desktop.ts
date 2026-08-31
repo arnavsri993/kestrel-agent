@@ -378,7 +378,7 @@ try {
 
 	await openTool(page, "Settings");
 	await page
-		.getByRole("heading", { name: "Preferences", exact: true })
+		.getByRole("heading", { name: "Settings", exact: true })
 		.waitFor();
 	await assertDistinctVisibleCopy(page, "Settings shell", [
 		".page-header h1",
@@ -394,8 +394,8 @@ try {
 		["Browser", "settings-browser.png"],
 		["General", "settings-general.png"],
 		["Models", "settings-models.png"],
-		["Intelligence & Memory", "settings-memory.png"],
-		["Agent Plugins", "settings-extensions.png"],
+		["Memory", "settings-memory.png"],
+		["Plugins", "settings-extensions.png"],
 		["Privacy", "settings-privacy.png"],
 		["Advanced", "settings-advanced.png"],
 	] as const;

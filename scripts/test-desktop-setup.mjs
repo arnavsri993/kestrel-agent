@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { selectSettingsSection } from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-setup-test-"));
 const testHome = join(root, "home");
@@ -55,15 +56,15 @@ try {
 			colorScheme: getComputedStyle(element).colorScheme,
 			color: getComputedStyle(element).color,
 		}));
-	assert.equal(setupTheme.canvas, "#0d0e11");
-	assert.equal(setupTheme.solid, "#f3f4f6");
+	assert.equal(setupTheme.canvas, "#0b0c0e");
+	assert.equal(setupTheme.solid, "#f5f5f7");
 	assert.equal(setupTheme.colorScheme, "dark");
-	assert.equal(setupTheme.color, "rgb(243, 244, 246)");
+	assert.equal(setupTheme.color, "rgb(245, 245, 247)");
 	await page.waitForFunction(
 		() =>
 			getComputedStyle(document.documentElement)
 				.getPropertyValue("--canvas")
-			.trim() === "#0d0e11",
+			.trim() === "#0b0c0e",
 	);
 	assert.equal(await page.locator(".setup-product-anchor").count(), 0);
 	assert.deepEqual(
@@ -207,7 +208,10 @@ try {
 	if (names.length === 3) {
 		assert.deepEqual(names, ["Light", "Balanced", "Power"]);
 		await page.locator(".recommended-model-tiers article.preferred").waitFor();
-		await page.getByText("Recommended", { exact: true }).waitFor();
+		await page
+			.locator(".recommended-model-tiers")
+			.getByText("Recommended", { exact: true })
+			.waitFor();
 	} else {
 		assert.ok(!names.includes("Balanced"));
 		assert.equal(
@@ -475,7 +479,7 @@ try {
 		.filter({ has: page.getByText("Settings", { exact: true }) })
 		.first()
 		.click();
-	await page.getByRole("heading", { name: "Preferences" }).waitFor();
+	await page.getByRole("heading", { name: "Settings" }).waitFor();
 	assert.equal(
 		await page.getByLabel("Message Kestrel").inputValue(),
 		preservedDraft,
@@ -524,7 +528,7 @@ try {
 		.filter({ hasText: "Readiness" })
 		.click();
 	await page
-		.getByRole("heading", { name: /Ready for work|Needs attention/ })
+		.getByRole("heading", { name: "Readiness", exact: true })
 		.waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
@@ -538,7 +542,7 @@ try {
 	await page.locator(".command-center").waitFor({ state: "detached" });
 	assert.equal(await page.locator(".command-center").count(), 0);
 	await page.setViewportSize({ width: 1320, height: 860 });
-	await page.getByRole("heading", { name: "Preferences" }).waitFor();
+	await page.getByRole("heading", { name: "Settings" }).waitFor();
 	assert.equal(await page.locator(".page-header .eyebrow").count(), 0);
 	assert.equal(await page.locator(".page-header > p").count(), 0);
 	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
@@ -571,10 +575,7 @@ try {
 		true,
 	);
 	await page.getByRole("link", { name: "Google Cloud Console" }).waitFor();
-	await page
-		.getByRole("navigation", { name: "Settings sections" })
-		.getByRole("button", { name: /General & Autonomy/ })
-		.click();
+	await selectSettingsSection(page, "general", "General");
 	const communicationStyle = page.getByRole("group", {
 		name: "Communication style",
 	});
@@ -609,10 +610,7 @@ try {
 		.filter({ has: page.getByText("Settings", { exact: true }) })
 		.first()
 		.click();
-	await page
-		.getByRole("navigation", { name: "Settings sections" })
-		.getByRole("button", { name: /General & Autonomy/ })
-		.click();
+	await selectSettingsSection(page, "general", "General");
 	await page.getByRole("button", { name: "Open setup guide" }).click();
 	await page.getByRole("heading", { name: /Your AI answers/ }).waitFor();
 	assert.equal(

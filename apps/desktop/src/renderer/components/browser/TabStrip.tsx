@@ -14,6 +14,7 @@ import {
 import {
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useState,
 	type KeyboardEvent as ReactKeyboardEvent,
@@ -22,6 +23,10 @@ import {
 	type ReactNode,
 } from "react";
 import { Icon } from "../Icon";
+import {
+	KESTREL_CRITICAL_SPRING,
+	KESTREL_STATE_TRANSITION,
+} from "../../motion-contract";
 import {
 	computeLockedTabStyle,
 	shouldRetainTabWidthOnClose,
@@ -123,8 +128,8 @@ export function TabStrip({
 	onMute?(tabId: string, muted: boolean): void;
 	onDuplicate?(tabId: string): void;
 	onCloseOthers?(tabId: string): void;
-	onMoveTab?(tabId: string, toIndex: number): void;
-	onDetachTab?(tabId: string): void;
+	onMoveTab?(tabId: string, toIndex: number): void | Promise<void>;
+	onDetachTab?(tabId: string): void | Promise<void>;
 	onReopenClosedTab?(index?: number): void;
 	onOrganizeTabs?(): void | Promise<void>;
 	onOpenWorkspaces?: (() => void) | undefined;
@@ -137,10 +142,15 @@ export function TabStrip({
 	const [lockedWidth, setLockedWidth] = useState<number | null>(null);
 	const tabRefitTimerRef = useRef<number | null>(null);
 	const [compact, setCompact] = useState(false);
-	const [menu, setMenu] = useState<{ tabId: string; x: number; y: number } | null>(
-		null,
-	);
+	const [menu, setMenu] = useState<{
+		tabId: string;
+		x: number;
+		y: number;
+		anchorX: number;
+		anchorY: number;
+	} | null>(null);
 	const [tabToolsOpen, setTabToolsOpen] = useState(false);
+	const menuOpenRef = useRef(false);
 	const [tabSearch, setTabSearch] = useState("");
 	const [openTabsExpanded, setOpenTabsExpanded] = useState(false);
 	const [recentlyClosedExpanded, setRecentlyClosedExpanded] = useState(true);
@@ -152,14 +162,32 @@ export function TabStrip({
 		"none",
 	);
 	const draggingTabIdRef = useRef<string | null>(null);
-	const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+	const [dragDelta, setDragDelta] = useState({ x: 0, y: 0 });
+	const [provisionalTabOrder, setProvisionalTabOrder] = useState<string[] | null>(
+		null,
+	);
+	const provisionalTabOrderRef = useRef<string[] | null>(null);
+	const reorderFrameRef = useRef<number | null>(null);
+	const reorderPendingRef = useRef(false);
+	const dragStartRef = useRef<{
+		pointerId: number;
+		x: number;
+		y: number;
+		lastX: number;
+		lastY: number;
+		lastAt: number;
+		velocityX: number;
+		velocityY: number;
+	} | null>(null);
 	const dragListenersRef = useRef<{
 		move: (event: PointerEvent) => void;
 		up: (event: PointerEvent) => void;
+		cancel: (event: PointerEvent) => void;
 	} | null>(null);
 	const suppressClickTabIdRef = useRef<string | null>(null);
 	const tabsContainerRef = useRef<HTMLDivElement | null>(null);
 	const tabToolsRef = useRef<HTMLDivElement | null>(null);
+	const contextMenuRef = useRef<HTMLDivElement | null>(null);
 	const tabToolsTriggerRef = useRef<HTMLButtonElement | null>(null);
 	const tabSearchRef = useRef<HTMLInputElement | null>(null);
 
@@ -199,11 +227,15 @@ export function TabStrip({
 		activeTab?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
 	}, [activeTabId, orientation, tabs.length]);
 
-	const closeTabTools = useCallback(() => {
+	const dismissTabTools = useCallback(() => {
 		setTabToolsOpen(false);
 		setTabSearch("");
-		window.requestAnimationFrame(() => tabToolsTriggerRef.current?.focus());
 	}, []);
+
+	const closeTabTools = useCallback(() => {
+		dismissTabTools();
+		window.requestAnimationFrame(() => tabToolsTriggerRef.current?.focus());
+	}, [dismissTabTools]);
 
 	useEffect(() => {
 		if (!tabToolsOpen) return;
@@ -223,10 +255,20 @@ export function TabStrip({
 				!tabToolsRef.current?.contains(target) &&
 				!tabToolsTriggerRef.current?.contains(target)
 			)
-				closeTabTools();
+				dismissTabTools();
+		};
+		const onFocusIn = (event: FocusEvent) => {
+			const target = event.target as Node | null;
+			if (
+				target &&
+				!tabToolsRef.current?.contains(target) &&
+				!tabToolsTriggerRef.current?.contains(target)
+			)
+				dismissTabTools();
 		};
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
+				if (event.defaultPrevented) return;
 				event.preventDefault();
 				closeTabTools();
 				return;
@@ -245,17 +287,33 @@ export function TabStrip({
 			items[(index + delta + items.length) % items.length]?.focus();
 		};
 		document.addEventListener("pointerdown", onPointerDown);
+		document.addEventListener("focusin", onFocusIn);
 		document.addEventListener("keydown", onKeyDown);
 		return () => {
 			window.cancelAnimationFrame(frame);
 			document.removeEventListener("pointerdown", onPointerDown);
+			document.removeEventListener("focusin", onFocusIn);
 			document.removeEventListener("keydown", onKeyDown);
 		};
-	}, [closeTabTools, tabSearch, tabToolsOpen]);
+	}, [closeTabTools, dismissTabTools, tabSearch, tabToolsOpen]);
 
-	useEffect(() => {
-		onMenuOpenChange?.(Boolean(menu || tabToolsOpen));
-	}, [menu, onMenuOpenChange, tabToolsOpen]);
+	const menuOpen = Boolean(menu || tabToolsOpen);
+	menuOpenRef.current = menuOpen;
+
+	useLayoutEffect(() => {
+		if (menuOpen) onMenuOpenChange?.(true);
+	}, [menuOpen, onMenuOpenChange]);
+
+	useEffect(
+		() => () => {
+			onMenuOpenChange?.(false);
+		},
+		[onMenuOpenChange],
+	);
+
+	const handleMenuExitComplete = useCallback(() => {
+		if (!menuOpenRef.current) onMenuOpenChange?.(false);
+	}, [onMenuOpenChange]);
 
 	const lockTabWidthBeforeClose = useCallback(() => {
 		if (!shouldRetainTabWidthOnClose(orientation, tabs.length)) {
@@ -323,10 +381,90 @@ export function TabStrip({
 
 	function openMenu(event: ReactMouseEvent, tabId: string) {
 		event.preventDefault();
-		setMenu({ tabId, x: event.clientX, y: event.clientY });
+		setTabToolsOpen(false);
+		setMenu({
+			tabId,
+			x: event.clientX,
+			y: event.clientY,
+			anchorX: event.clientX,
+			anchorY: event.clientY,
+		});
 	}
 
-	function resetDrag() {
+	const dismissContextMenu = useCallback(() => {
+		setMenu(null);
+	}, []);
+
+	const closeContextMenu = useCallback(() => {
+		const tabId = menu?.tabId;
+		dismissContextMenu();
+		if (!tabId) return;
+		window.requestAnimationFrame(() =>
+			tabsContainerRef.current
+				?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(tabId)}"] [role="tab"]`)
+				?.focus(),
+		);
+	}, [dismissContextMenu, menu?.tabId]);
+
+	useLayoutEffect(() => {
+		if (!menu || !contextMenuRef.current) return;
+		const rect = contextMenuRef.current.getBoundingClientRect();
+		const gutter = 8;
+		const x = Math.max(
+			gutter,
+			Math.min(menu.anchorX, window.innerWidth - rect.width - gutter),
+		);
+		const y = Math.max(
+			gutter,
+			Math.min(menu.anchorY, window.innerHeight - rect.height - gutter),
+		);
+		if (x !== menu.x || y !== menu.y)
+			setMenu((current) => (current ? { ...current, x, y } : current));
+	}, [menu]);
+
+	useEffect(() => {
+		if (!menu) return;
+		const frame = window.requestAnimationFrame(() =>
+			contextMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus(),
+		);
+		const onPointerDown = (event: PointerEvent) => {
+			const target = event.target as Node | null;
+			if (target && !contextMenuRef.current?.contains(target)) dismissContextMenu();
+		};
+		const onFocusIn = (event: FocusEvent) => {
+			const target = event.target as Node | null;
+			if (target && !contextMenuRef.current?.contains(target)) dismissContextMenu();
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				if (event.defaultPrevented) return;
+				event.preventDefault();
+				closeContextMenu();
+				return;
+			}
+			if (!contextMenuRef.current || !["ArrowDown", "ArrowUp"].includes(event.key))
+				return;
+			const items = Array.from(
+				contextMenuRef.current.querySelectorAll<HTMLButtonElement>("button:not([disabled])"),
+			);
+			if (items.length === 0) return;
+			const current = items.indexOf(document.activeElement as HTMLButtonElement);
+			const delta = event.key === "ArrowDown" ? 1 : -1;
+			event.preventDefault();
+			items[(current + delta + items.length) % items.length]?.focus();
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		document.addEventListener("focusin", onFocusIn);
+		document.addEventListener("keydown", onKeyDown);
+		return () => {
+			window.cancelAnimationFrame(frame);
+			document.removeEventListener("pointerdown", onPointerDown);
+			document.removeEventListener("focusin", onFocusIn);
+			document.removeEventListener("keydown", onKeyDown);
+		};
+	}, [closeContextMenu, dismissContextMenu, menu]);
+
+	function resetDrag({ preserveProvisional = false } = {}) {
 		if (dragListenersRef.current) {
 			window.removeEventListener(
 				"pointermove",
@@ -338,12 +476,27 @@ export function TabStrip({
 				dragListenersRef.current.up,
 				true,
 			);
+			window.removeEventListener(
+				"pointercancel",
+				dragListenersRef.current.cancel,
+				true,
+			);
 			dragListenersRef.current = null;
 		}
+		if (reorderFrameRef.current !== null) {
+			window.cancelAnimationFrame(reorderFrameRef.current);
+			reorderFrameRef.current = null;
+		}
+		reorderPendingRef.current = false;
 		draggingTabIdRef.current = null;
 		dragStartRef.current = null;
+		setDragDelta({ x: 0, y: 0 });
 		setDraggingTabId(null);
 		setDragIntent("none");
+		if (!preserveProvisional) {
+			provisionalTabOrderRef.current = null;
+			setProvisionalTabOrder(null);
+		}
 	}
 
 	function detachDraggedTab() {
@@ -356,7 +509,9 @@ export function TabStrip({
 			return false;
 		suppressClickTabIdRef.current = tabId;
 		resetDrag();
-		onDetachTab(tabId);
+		void Promise.resolve()
+			.then(() => onDetachTab(tabId))
+			.catch(() => undefined);
 		return true;
 	}
 
@@ -365,27 +520,121 @@ export function TabStrip({
 		if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
 		resetDrag();
 		draggingTabIdRef.current = tabId;
-		dragStartRef.current = { x: event.clientX, y: event.clientY };
+		const initialOrder = tabs.map((tab) => tab.id);
+		provisionalTabOrderRef.current = initialOrder;
+		setProvisionalTabOrder(initialOrder);
+		dragStartRef.current = {
+			pointerId: event.pointerId,
+			x: event.clientX,
+			y: event.clientY,
+			lastX: event.clientX,
+			lastY: event.clientY,
+			lastAt: event.timeStamp,
+			velocityX: 0,
+			velocityY: 0,
+		};
+		setDragDelta({ x: 0, y: 0 });
 		setDraggingTabId(tabId);
 		setDragIntent("none");
 		event.currentTarget.setPointerCapture(event.pointerId);
 		const onPointerMove = (moveEvent: PointerEvent) =>
 			handleTabPointerMove(moveEvent);
 		const onPointerUp = (upEvent: PointerEvent) => {
+			if (dragStartRef.current?.pointerId !== upEvent.pointerId) return;
 			handleTabPointerUp(upEvent, tabId);
+		};
+		const onPointerCancel = (cancelEvent: PointerEvent) => {
+			if (dragStartRef.current?.pointerId !== cancelEvent.pointerId) return;
 			resetDrag();
 		};
-		dragListenersRef.current = { move: onPointerMove, up: onPointerUp };
+		dragListenersRef.current = {
+			move: onPointerMove,
+			up: onPointerUp,
+			cancel: onPointerCancel,
+		};
 		window.addEventListener("pointermove", onPointerMove, true);
 		window.addEventListener("pointerup", onPointerUp, true);
+		window.addEventListener("pointercancel", onPointerCancel, true);
+	}
+
+	function updateProvisionalOrder(event: PointerEvent) {
+		const tabId = draggingTabIdRef.current;
+		const drag = dragStartRef.current;
+		const order = provisionalTabOrderRef.current;
+		const container = tabsContainerRef.current;
+		if (
+			!tabId ||
+			!drag ||
+			!order ||
+			!container ||
+			reorderPendingRef.current
+		)
+			return;
+		const candidates = Array.from(
+			container.querySelectorAll<HTMLElement>(".browser-tab"),
+		).filter((node) => node.dataset.tabId !== tabId);
+		if (candidates.length === 0) return;
+		const pointer = orientation === "horizontal" ? event.clientX : event.clientY;
+		const slot = tabDropIndex(pointer, candidates, candidates.length, orientation);
+		const withoutDragged = order.filter((id) => id !== tabId);
+		const targetId =
+			slot < candidates.length
+				? candidates[slot]?.dataset.tabId
+				: candidates.at(-1)?.dataset.tabId;
+		if (!targetId) return;
+		const targetIndex = withoutDragged.indexOf(targetId);
+		if (targetIndex < 0) return;
+		const insertionIndex =
+			slot < candidates.length ? targetIndex : targetIndex + 1;
+		const next = [...withoutDragged];
+		next.splice(insertionIndex, 0, tabId);
+		if (next.every((id, index) => id === order[index])) return;
+
+		const draggedNode = container.querySelector<HTMLElement>(
+			`[data-tab-id="${CSS.escape(tabId)}"]`,
+		);
+		const before = draggedNode?.getBoundingClientRect();
+		provisionalTabOrderRef.current = next;
+		setProvisionalTabOrder(next);
+		reorderPendingRef.current = true;
+		reorderFrameRef.current = window.requestAnimationFrame(() => {
+			reorderFrameRef.current = null;
+			const activeDrag = dragStartRef.current;
+			const node = tabsContainerRef.current?.querySelector<HTMLElement>(
+				`[data-tab-id="${CSS.escape(tabId)}"]`,
+			);
+			const after = node?.getBoundingClientRect();
+			if (activeDrag && before && after) {
+				/* React moved the tab's layout box. Offset the gesture origin by
+				 * that exact shift so the presentation stays under the pointer. */
+				activeDrag.x += after.left - before.left;
+				activeDrag.y += after.top - before.top;
+				setDragDelta({
+					x: activeDrag.lastX - activeDrag.x,
+					y: activeDrag.lastY - activeDrag.y,
+				});
+			}
+			reorderPendingRef.current = false;
+		});
 	}
 
 	function handleTabPointerMove(
-		event: Pick<PointerEvent, "clientX" | "clientY">,
+		event: PointerEvent,
 	) {
 		if (!draggingTabIdRef.current || !dragStartRef.current) return;
-		const dx = event.clientX - dragStartRef.current.x;
-		const dy = event.clientY - dragStartRef.current.y;
+		const drag = dragStartRef.current;
+		if (event.pointerId !== drag.pointerId) return;
+		const dx = event.clientX - drag.x;
+		const dy = event.clientY - drag.y;
+		const elapsed = Math.max(8, event.timeStamp - drag.lastAt) / 1000;
+		const sampleVelocityX = (event.clientX - drag.lastX) / elapsed;
+		const sampleVelocityY = (event.clientY - drag.lastY) / elapsed;
+		drag.velocityX = drag.velocityX * 0.65 + sampleVelocityX * 0.35;
+		drag.velocityY = drag.velocityY * 0.65 + sampleVelocityY * 0.35;
+		drag.lastX = event.clientX;
+		drag.lastY = event.clientY;
+		drag.lastAt = event.timeStamp;
+		setDragDelta({ x: dx, y: dy });
 		if (orientation === "horizontal") {
 			if (
 				Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX &&
@@ -396,6 +645,7 @@ export function TabStrip({
 			}
 			if (Math.abs(dx) >= REORDER_DRAG_THRESHOLD_PX) {
 				setDragIntent("reorder");
+				updateProvisionalOrder(event);
 			}
 			return;
 		}
@@ -405,11 +655,12 @@ export function TabStrip({
 		}
 		if (Math.abs(dy) >= REORDER_DRAG_THRESHOLD_PX) {
 			setDragIntent("reorder");
+			updateProvisionalOrder(event);
 		}
 	}
 
 	function handleTabPointerUp(
-		event: Pick<PointerEvent, "clientX" | "clientY">,
+		event: PointerEvent,
 		tabId: string,
 	) {
 		if (
@@ -420,46 +671,64 @@ export function TabStrip({
 			resetDrag();
 			return;
 		}
-		const dx = event.clientX - dragStartRef.current.x;
-		const dy = event.clientY - dragStartRef.current.y;
-		const shouldDetach =
+		const drag = dragStartRef.current;
+		if (event.pointerId !== drag.pointerId) return;
+		const dx = event.clientX - drag.x;
+		const dy = event.clientY - drag.y;
+		const fastDetach =
 			orientation === "horizontal"
+				? Math.abs(drag.velocityY) >= 900 &&
+					Math.abs(dy) >= 10 &&
+					Math.abs(drag.velocityY) > Math.abs(drag.velocityX)
+				: Math.abs(drag.velocityX) >= 900 &&
+					Math.abs(dx) >= 10 &&
+					Math.abs(drag.velocityX) > Math.abs(drag.velocityY);
+		const shouldDetach =
+			fastDetach || (orientation === "horizontal"
 				? Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX &&
 					Math.abs(dy) > Math.abs(dx)
 				: Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX &&
-					Math.abs(dx) > Math.abs(dy);
+					Math.abs(dx) > Math.abs(dy));
 		if (shouldDetach && onDetachTab) {
 			if (tabCanDetach(tabs.find((tab) => tab.id === tabId))) {
 				suppressClickTabIdRef.current = tabId;
-				onDetachTab(tabId);
+				void Promise.resolve()
+					.then(() => onDetachTab(tabId))
+					.catch(() => undefined);
 			}
 		} else if (
 			onMoveTab &&
-			tabsContainerRef.current &&
 			((orientation === "horizontal" && Math.abs(dx) >= REORDER_DRAG_THRESHOLD_PX) ||
 				(orientation === "vertical" && Math.abs(dy) >= REORDER_DRAG_THRESHOLD_PX))
 		) {
-			const tabElements = Array.from(
-				tabsContainerRef.current.querySelectorAll<HTMLElement>(".browser-tab"),
-			);
 			const fromIndex = tabs.findIndex((tab) => tab.id === tabId);
-			const pointer = orientation === "horizontal" ? event.clientX : event.clientY;
-			let toIndex = tabDropIndex(
-				pointer,
-				tabElements,
-				tabs.length,
-				orientation,
-			);
-			if (fromIndex >= 0 && toIndex > fromIndex) toIndex -= 1;
+			const toIndex = provisionalTabOrderRef.current?.indexOf(tabId) ?? fromIndex;
 			if (fromIndex >= 0 && toIndex !== fromIndex) {
 				suppressClickTabIdRef.current = tabId;
-				onMoveTab(tabId, toIndex);
+				resetDrag({ preserveProvisional: true });
+				void Promise.resolve().then(() => onMoveTab(tabId, toIndex)).catch(() => {
+					provisionalTabOrderRef.current = null;
+					setProvisionalTabOrder(null);
+				});
+				return;
 			}
 		}
 		resetDrag();
 	}
 
 	useEffect(() => () => resetDrag(), []);
+
+	useEffect(() => {
+		if (draggingTabId || !provisionalTabOrder) return;
+		const current = tabs.map((tab) => tab.id);
+		if (
+			current.length === provisionalTabOrder.length &&
+			current.every((id, index) => id === provisionalTabOrder[index])
+		) {
+			provisionalTabOrderRef.current = null;
+			setProvisionalTabOrder(null);
+		}
+	}, [draggingTabId, provisionalTabOrder, tabs]);
 
 	const menuTab = tabs.find((tab) => tab.id === menu?.tabId);
 	const folderById = new Map(tabFolders.map((folder) => [folder.id, folder]));
@@ -530,6 +799,16 @@ export function TabStrip({
 	);
 
 	const tabStyle = computeLockedTabStyle(lockedWidth, orientation);
+	const tabById = new Map(tabs.map((tab) => [tab.id, tab]));
+	const renderedTabs = provisionalTabOrder
+		? [
+				...provisionalTabOrder.flatMap((id) => {
+					const tab = tabById.get(id);
+					return tab ? [tab] : [];
+				}),
+				...tabs.filter((tab) => !provisionalTabOrder.includes(tab.id)),
+			]
+		: tabs;
 	const renderedFolderIds = new Set<string>();
 
 	return (
@@ -561,12 +840,23 @@ export function TabStrip({
 				>
 					<Icon name="tabActions" />
 				</button>
+				<AnimatePresence initial={false} onExitComplete={handleMenuExitComplete}>
 				{tabToolsOpen && (
-					<div
+					<motion.div
+						key="browser-tab-tools"
 						ref={tabToolsRef}
 						className="browser-tab-tools-menu no-drag"
 						role="menu"
 						aria-label="Tab tools"
+						initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.99 }}
+						animate={{ opacity: 1, y: 0, scale: 1 }}
+						exit={
+							reducedMotion
+								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+								: { opacity: 0, y: -4, scale: 0.99, pointerEvents: "none" }
+						}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+						style={{ transformOrigin: "top left" }}
 					>
 						{onToggleOrientation && (
 							<button
@@ -592,7 +882,9 @@ export function TabStrip({
 								className="browser-tab-tools-action"
 								role="menuitem"
 								onClick={() => {
-									void Promise.resolve(onOrganizeTabs()).catch(() => undefined);
+									void Promise.resolve()
+										.then(() => onOrganizeTabs())
+										.catch(() => undefined);
 									closeTabTools();
 								}}
 							>
@@ -623,7 +915,7 @@ export function TabStrip({
 							onClick={() => setCompact((value) => !value)}
 						>
 							<Icon name="tabActions" />
-							<span>Compact tabs to favicons</span>
+							<span>Use narrow tabs</span>
 							<Icon name={compact ? "check" : "close"} />
 						</button>
 						{onReopenClosedTab && (
@@ -744,8 +1036,9 @@ export function TabStrip({
 								</div>
 							)}
 						</section>
-					</div>
+					</motion.div>
 				)}
+				</AnimatePresence>
 			</div>
 			<div
 				ref={tabsContainerRef}
@@ -757,7 +1050,7 @@ export function TabStrip({
 			>
 				<LayoutGroup id="kestrel-browser-tabs">
 					<AnimatePresence initial={false} mode="popLayout">
-						{tabs.flatMap((tab) => {
+						{renderedTabs.flatMap((tab) => {
 							const active = tab.id === activeTabId;
 							const isSleeping = tab.discarded && Boolean(tab.url);
 							const isDragging = draggingTabId === tab.id;
@@ -792,7 +1085,9 @@ export function TabStrip({
 										}
 										animate={{ opacity: 1 }}
 										exit={
-											reducedMotion ? { opacity: 1 } : { opacity: 0 }
+											reducedMotion
+												? { opacity: 1, pointerEvents: "none" }
+												: { opacity: 0, pointerEvents: "none" }
 										}
 										transition={
 											reducedMotion ? { duration: 0 } : { duration: 0.16 }
@@ -822,23 +1117,36 @@ export function TabStrip({
 								<motion.div
 									className={`browser-tab no-drag ${active ? "active" : ""} ${isSleeping ? "tab-sleeping" : ""} ${tab.pinned ? "tab-pinned" : ""} ${isDragActive ? "is-dragging" : ""}`}
 									key={tab.id}
+									layout={draggingTabId && !reducedMotion ? "position" : false}
 									initial={reducedMotion ? false : { opacity: 0 }}
-									animate={{ opacity: isDragActive ? 0.72 : 1 }}
-									exit={
-										reducedMotion
-											? { opacity: 1 }
-											: {
-													opacity: 0,
+									animate={{
+										opacity: isDragActive ? 0.82 : 1,
+										x: isDragging ? dragDelta.x : 0,
+										y: isDragging ? dragDelta.y : 0,
+										scale: isDragActive && !reducedMotion ? 1.015 : 1,
+									}}
+										exit={
+											reducedMotion
+												? { opacity: 1, pointerEvents: "none" }
+												: {
+														opacity: 0,
+														pointerEvents: "none",
 													transition: { duration: 0.14, ease: [0.4, 0, 1, 1] },
 												}
 									}
 									transition={
-										reducedMotion
+										isDragging || reducedMotion
 											? { duration: 0 }
-											: { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
+											: draggingTabId
+												? {
+													default: KESTREL_STATE_TRANSITION,
+													layout: KESTREL_CRITICAL_SPRING,
+												}
+												: KESTREL_STATE_TRANSITION
 									}
 									style={tabStyle as MotionStyle}
 									data-tab-id={tab.id}
+									data-drag-intent={isDragging ? dragIntent : undefined}
 									onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
 									onContextMenu={(event) => openMenu(event, tab.id)}
 									onClick={(event) => {
@@ -850,9 +1158,7 @@ export function TabStrip({
 										onSelect(tab.id);
 									}}
 									onPointerDown={(event) => handleTabPointerDown(event, tab.id)}
-									onPointerMove={handleTabPointerMove}
-									onPointerUp={(event) => handleTabPointerUp(event, tab.id)}
-									onPointerCancel={resetDrag}
+									onPointerCancel={() => resetDrag()}
 								>
 									<button
 										type="button"
@@ -929,19 +1235,36 @@ export function TabStrip({
 				onDoubleClick={handleCreate}
 				onAuxClick={handleDragFillAuxClick}
 			/>
+			<AnimatePresence initial={false} onExitComplete={handleMenuExitComplete}>
 			{menu && menuTab && (
-				<div
+				<motion.div
+					key={`browser-tab-menu-${menu.tabId}`}
+					ref={contextMenuRef}
 					className="browser-tab-menu no-drag"
-					style={{ left: menu.x, top: menu.y }}
+					style={{
+						left: menu.x,
+						top: menu.y,
+						transformOrigin: `${Math.max(8, menu.anchorX - menu.x)}px ${Math.max(8, menu.anchorY - menu.y)}px`,
+					}}
 					role="menu"
+					initial={reducedMotion ? false : { opacity: 0, scale: 0.985 }}
+					animate={{ opacity: 1, scale: 1 }}
+				exit={
+					reducedMotion
+						? { opacity: 1, scale: 1, pointerEvents: "none" }
+						: { opacity: 0, scale: 0.985, pointerEvents: "none" }
+				}
+					transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 				>
 					{onOrganizeTabs && (
 						<button
 							type="button"
 							role="menuitem"
 							onClick={() => {
-								void Promise.resolve(onOrganizeTabs()).catch(() => undefined);
-								setMenu(null);
+								void Promise.resolve()
+									.then(() => onOrganizeTabs())
+									.catch(() => undefined);
+								closeContextMenu();
 							}}
 						>
 							Organize tabs
@@ -952,7 +1275,7 @@ export function TabStrip({
 						role="menuitem"
 						onClick={() => {
 							onPin?.(menuTab.id, !menuTab.pinned);
-							setMenu(null);
+							closeContextMenu();
 						}}
 					>
 						{menuTab.pinned ? "Unpin tab" : "Pin tab"}
@@ -962,7 +1285,7 @@ export function TabStrip({
 						role="menuitem"
 						onClick={() => {
 							onMute?.(menuTab.id, !menuTab.muted);
-							setMenu(null);
+							closeContextMenu();
 						}}
 					>
 						{menuTab.muted ? "Unmute tab" : "Mute tab"}
@@ -972,7 +1295,7 @@ export function TabStrip({
 						role="menuitem"
 						onClick={() => {
 							onDuplicate?.(menuTab.id);
-							setMenu(null);
+							closeContextMenu();
 						}}
 					>
 						Duplicate tab
@@ -982,8 +1305,10 @@ export function TabStrip({
 							type="button"
 							role="menuitem"
 							onClick={() => {
-								onDetachTab(menuTab.id);
-								setMenu(null);
+								void Promise.resolve()
+									.then(() => onDetachTab(menuTab.id))
+									.catch(() => undefined);
+								closeContextMenu();
 							}}
 						>
 							Move tab to new window
@@ -995,7 +1320,7 @@ export function TabStrip({
 						onClick={() => {
 							lockTabWidthBeforeClose();
 							onCloseOthers?.(menuTab.id);
-							setMenu(null);
+							closeContextMenu();
 						}}
 					>
 						Close other tabs
@@ -1005,16 +1330,17 @@ export function TabStrip({
 						role="menuitem"
 						onClick={() => {
 							handleTabClose(menuTab.id);
-							setMenu(null);
+							closeContextMenu();
 						}}
 					>
 						Close tab
 					</button>
-					<button type="button" role="menuitem" onClick={() => setMenu(null)}>
+					<button type="button" role="menuitem" onClick={closeContextMenu}>
 						Cancel
 					</button>
-				</div>
+				</motion.div>
 			)}
+			</AnimatePresence>
 		</div>
 	);
 }

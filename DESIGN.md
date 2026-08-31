@@ -1,5 +1,73 @@
 # Kestrel design system
 
+## Instrument Workbench — August 2026
+
+This is the authoritative desktop system for the product-wide redesign based
+on `main` at `524acf82`. It refines Kimi's selected Instrument Console after
+direct inspection of the renderer, 94 supplied captures, a fresh exact-base
+capture, and the original Apple Design, Sonner, Vaul, and Frontend Taste
+Engineer repositories. The full evidence and decision record is in
+`artifacts/ui-redesign/DESIGN_SYNTHESIS.md`.
+
+- **Thesis:** two quiet structural rails frame one unmistakably active graphite
+  work plane; the browser or task stays primary while the persistent agent,
+  approvals, and provenance remain continuously available.
+- **Density:** `dense-app`, with sparse composition reserved for setup, Browser
+  Home, a new task, and true empty states.
+- **Type:** platform-native variable system typography is an intentional
+  desktop-instrument choice: SF Pro/SF Mono on macOS and Segoe UI
+  Variable/Consolas on Windows. Page title is `26/32 680`, section `16/21 630`,
+  body `14/21 450`, control `13/18 560`, support `12.5/18 450`, metadata
+  `11.5/15 580`, and evidence `11/16 500`. Nothing is below 11px.
+- **Spacing and shape:** 4px base with `4/8/12/16/20/24/32/40/56/72`. Controls
+  use 8–10px radii; meaningful independent surfaces use 12–14px; ordinary page
+  grouping has no container radius. Targets are 32px compact, 40px normal, and
+  44px for primary or consequential decisions.
+- **Color/material:** a semantic monochrome ramp from canvas through chrome,
+  rail, workbench, surface, raised, and overlay. Content is opaque. macOS may
+  progressively enhance under-scroll structural chrome with blur; Windows and
+  reduced-transparency modes are opaque.
+- **Page architecture:** every `kestrel://` destination uses one PageFrame with
+  an optional real-state eyebrow, one title, one useful description, optional
+  actions/local navigation, and a declared reading/standard/wide/full measure.
+  Pages are never giant rounded cards inside the browser.
+- **Controls:** one Button vocabulary (`solid`, `bordered`, `quiet`,
+  `destructive`), one input treatment, one continuous Row, cause-specific
+  EmptyState, shape-plus-label Status, and Card only for independent objects or
+  layers. The legacy `.button` system is retired rather than restyled in
+  parallel.
+- **Motion roles:** feedback (70–90ms), state/orientation (120–180ms), and
+  direct manipulation only where a person drags. Popovers originate at the
+  trigger, reversible transitions use the same path, and gesture motion starts
+  from the rendered value. Reduced motion retains feedback with opacity or an
+  immediate state swap.
+- **Motion quality gate:** buttons, tab lifecycle/reorder, rail resize,
+  overlays, command center, dialogs, approvals, routes, disclosures, Settings,
+  selectors, New Tab, direct manipulation, async state changes, and compact
+  recomposition must be manually exercised in Electron. Feedback begins on
+  pointer-down; input never waits for motion; reversal starts from the rendered
+  value; enter/exit paths agree; trigger geometry anchors overlays; physical
+  travel uses near-critical springs without ornamental bounce; tracked gestures
+  preserve grab offset and relevant release velocity; transform/opacity motion
+  causes no layout shift; reduced motion remains explicit. Screenshots and the
+  mere presence of transitions do not satisfy this release-blocking gate.
+- **Responsive:** shell and component breakpoints occur where content stops
+  working. The navigation rail becomes a 56px accessible icon rail at compact
+  width; the agent remains available through a persistent bottom agent dock.
+  Settings moves from local side navigation to a labelled compact section
+  control before content becomes narrow. No page-level horizontal scrolling.
+- **State/access:** native semantics and visible focus are mandatory. Overlays
+  define focus entry, traversal, Escape, and restoration. Every supported
+  surface represents loading, empty, populated, error/retry, disconnected,
+  disabled, running, approval, verified, and recovery honestly.
+- **Avoid:** generic dashboard composition, card walls, glass stacks, glow,
+  gradients, pill forests, duplicated headings, hover-only meaning, ambient
+  motion, macOS Settings cosplay, mobile-sheet navigation, hue-only state, and
+  fake metrics.
+- **Why this is not generic:** Kestrel's visual identity is the real
+  browser-and-agent workbench, angular brand/control language, and visible
+  approval/provenance loop—not a theme, accent color, or component catalog.
+
 ## New Tab widget shelf — August 2026
 
 - Thesis: New Tab should offer a calm starting surface, not a dashboard. The

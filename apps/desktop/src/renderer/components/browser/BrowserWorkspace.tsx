@@ -1,5 +1,5 @@
 import {
-  useCallback,
+	useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type {
 	FilePreview,
 	MemoryRecord,
@@ -28,6 +29,7 @@ import { NewTabPage } from "./NewTabPage";
 import { OrganizeTabsDialog } from "./OrganizeTabsDialog";
 import { TabStrip } from "./TabStrip";
 import { recordNewTabGreetingVisit } from "./new-tab";
+import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 
 export function BrowserWorkspace({
   browser,
@@ -78,9 +80,11 @@ export function BrowserWorkspace({
 	memoryRecall: MemoryRecallStatus;
 	onOpenLifeMemory?(): void;
 }) {
+  const reducedMotion = useReducedMotion() ?? false;
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const addressRef = useRef<HTMLInputElement | null>(null);
   const findRef = useRef<HTMLInputElement | null>(null);
+  const findTabIdRef = useRef<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [fileDragActive, setFileDragActive] = useState(false);
@@ -91,6 +95,7 @@ export function BrowserWorkspace({
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
+  const [organizeTabsPresent, setOrganizeTabsPresent] = useState(false);
   const [historyPopoverRequestId, setHistoryPopoverRequestId] = useState(0);
   const organizeTabsRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
@@ -133,6 +138,7 @@ export function BrowserWorkspace({
     setOrganizeTabsOpening(true);
     try {
       const preview = await previewOrganizeTabs();
+      setOrganizeTabsPresent(true);
       setOrganizeTabsPreview(preview);
     } catch {
       // The browser controller reports request failures in its own error area;
@@ -166,7 +172,38 @@ export function BrowserWorkspace({
     nativePageEligible &&
     !openChromeMenus.tab &&
     !openChromeMenus.toolbar &&
-    !organizeTabsPreview;
+    !organizeTabsOpening &&
+    !organizeTabsPreview &&
+    !organizeTabsPresent;
+
+  const openFind = useCallback(() => {
+    findTabIdRef.current = activeTab?.id ?? null;
+    setFindOpen(true);
+    window.requestAnimationFrame(() => {
+      findRef.current?.focus();
+      findRef.current?.select();
+    });
+  }, [activeTab?.id]);
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindQuery("");
+    const searchedTabId = findTabIdRef.current ?? activeTab?.id;
+    findTabIdRef.current = null;
+    if (searchedTabId) void stopFindInPage(searchedTabId);
+    // The native page cannot reliably receive renderer focus, so return to the
+    // nearest stable browser control instead of leaving focus in an exiting row.
+    window.requestAnimationFrame(() => addressRef.current?.focus());
+  }, [activeTab, stopFindInPage]);
+
+  useEffect(() => {
+    const searchedTabId = findTabIdRef.current;
+    if (!findOpen || !searchedTabId || searchedTabId === activeTab?.id) return;
+    setFindOpen(false);
+    setFindQuery("");
+    findTabIdRef.current = null;
+    void stopFindInPage(searchedTabId);
+  }, [activeTab?.id, findOpen, stopFindInPage]);
 
   const handleTabMenuOpenChange = useCallback((open: boolean) => {
     setOpenChromeMenus((current) =>
@@ -201,14 +238,14 @@ export function BrowserWorkspace({
   }, [nativePageVisible, setContentBounds]);
 
   const scheduleBoundsSync = useCallback(() => {
-    syncBounds();
+    syncBoundsRef.current();
     window.requestAnimationFrame(() => {
-      syncBounds();
+      syncBoundsRef.current();
       for (const delay of [100, 320, 400]) {
-        window.setTimeout(syncBounds, delay);
+        window.setTimeout(() => syncBoundsRef.current(), delay);
       }
     });
-  }, [syncBounds]);
+  }, []);
 
   syncBoundsRef.current = syncBounds;
   scheduleBoundsSyncRef.current = scheduleBoundsSync;
@@ -288,10 +325,7 @@ export function BrowserWorkspace({
         else if (command === "show-shortcuts") onShowShortcuts?.();
         else if (command === "toggle-sidebar") onToggleSidebar?.();
         else if (command === "reopen-closed-tab") void reopenClosedTab();
-        else if (command === "find-in-page") {
-          setFindOpen(true);
-          window.requestAnimationFrame(() => findRef.current?.focus());
-        }
+        else if (command === "find-in-page") openFind();
         else if (command === "print-page" && activeTab?.url)
           void printTab(activeTab.id);
       }),
@@ -305,6 +339,7 @@ export function BrowserWorkspace({
       onOpenSettings,
       onShowShortcuts,
       onToggleSidebar,
+      openFind,
       printTab,
       reopenClosedTab,
     ],
@@ -315,11 +350,13 @@ export function BrowserWorkspace({
       if (event.defaultPrevented) return;
 
       if (event.key === "Escape") {
-        if (findOpen && activeTab) {
+		const foregroundOverlay = document.querySelector(
+			'[aria-modal="true"], .model-selector-menu, [role="menu"], .browser-address-suggestions',
+		);
+		if (foregroundOverlay) return;
+        if (findOpen) {
           event.preventDefault();
-          setFindOpen(false);
-          setFindQuery("");
-          void stopFindInPage(activeTab.id);
+          closeFind();
           return;
         }
         if (activeTab?.loading) {
@@ -453,8 +490,7 @@ export function BrowserWorkspace({
         const target = event.target as HTMLElement | null;
         if (target?.closest("#runtime-prompt, textarea, input")) return;
         event.preventDefault();
-        setFindOpen(true);
-        window.requestAnimationFrame(() => findRef.current?.focus());
+        openFind();
       } else if (key === "d") {
         event.preventDefault();
         if (event.shiftKey) onOpenBookmarks();
@@ -501,11 +537,13 @@ export function BrowserWorkspace({
     back,
     browser,
     closeTab,
+    closeFind,
     createTab,
     forward,
     onNewAgent,
     onOpenBookmarks,
     openHistoryPopover,
+    openFind,
     onOpenDownloads,
     onOpenMenu,
     onOpenSettings,
@@ -578,8 +616,8 @@ export function BrowserWorkspace({
         onMute={(tabId, muted) => void muteTab(tabId, muted)}
         onDuplicate={(tabId) => void duplicateTab(tabId)}
         onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
-        onMoveTab={(tabId, toIndex) => void moveTab(tabId, toIndex)}
-        onDetachTab={(tabId) => void detachTab(tabId)}
+        onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
+        onDetachTab={(tabId) => detachTab(tabId)}
         onReopenClosedTab={(index) => void reopenClosedTab(index)}
         recentlyClosedTabs={state.recentlyClosedTabs}
         onOrganizeTabs={openOrganizeTabs}
@@ -635,8 +673,7 @@ export function BrowserWorkspace({
         onOpenDownloads={onOpenDownloads}
         onOpenBookmarks={onOpenBookmarks}
         onOpenFind={() => {
-          setFindOpen(true);
-          window.requestAnimationFrame(() => findRef.current?.focus());
+          openFind();
         }}
         onPrint={() => void printTab(activeTab.id)}
         onOpenDevTools={() => void openDevTools(activeTab.id)}
@@ -667,9 +704,23 @@ export function BrowserWorkspace({
           onManage={onOpenBookmarks}
         />
       )}
+			<AnimatePresence initial={false}>
       {findOpen && (
-        <form
+        <motion.form
+          key="browser-find-bar"
           className="browser-find-bar"
+          initial={
+            reducedMotion
+              ? false
+              : { height: 0, opacity: 0, y: -4, pointerEvents: "none" }
+          }
+          animate={{ height: 40, opacity: 1, y: 0, pointerEvents: "auto" }}
+          exit={
+            reducedMotion
+              ? { height: 0, opacity: 1, y: 0, pointerEvents: "none" }
+              : { height: 0, opacity: 0, y: -4, pointerEvents: "none" }
+          }
+          transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
           onSubmit={(event) => {
             event.preventDefault();
             if (activeTab?.url)
@@ -714,21 +765,32 @@ export function BrowserWorkspace({
           <button
             type="button"
             aria-label="Close find"
-            onClick={() => {
-              setFindOpen(false);
-              setFindQuery("");
-              if (activeTab) void stopFindInPage(activeTab.id);
-            }}
+            onClick={closeFind}
           >
             <Icon name="close" />
           </button>
-        </form>
+        </motion.form>
       )}
-      {browser.error && (
-        <p className="browser-inline-error" role="status">
-          {browser.error}
-        </p>
-      )}
+      </AnimatePresence>
+			<AnimatePresence initial={false}>
+				{browser.error && (
+          <motion.p
+            key="browser-inline-error"
+            className="browser-inline-error"
+            role="status"
+            initial={reducedMotion ? false : { opacity: 0, x: "-50%", y: -4 }}
+            animate={{ opacity: 1, x: "-50%", y: 0 }}
+            exit={
+              reducedMotion
+                ? { opacity: 1, x: "-50%", y: 0, pointerEvents: "none" }
+                : { opacity: 0, x: "-50%", y: -4, pointerEvents: "none" }
+            }
+            transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+          >
+            {browser.error}
+          </motion.p>
+        )}
+      </AnimatePresence>
       <div
         id="browser-viewport"
         ref={viewportRef}
@@ -736,7 +798,9 @@ export function BrowserWorkspace({
         role="tabpanel"
         aria-label={activeTab.title}
       >
-        {activeAppPage && appPage}
+		<AnimatePresence initial={false} mode="sync">
+			{activeAppPage && appPage}
+		</AnimatePresence>
         {activeFilePage && activeTab.file && (
           <FileTabView
             tabId={activeFilePage.tabId}
@@ -825,14 +889,20 @@ export function BrowserWorkspace({
       {activeTab.loading && (
         <span className="browser-loading-line" aria-label="Page loading" />
       )}
-      {organizeTabsPreview && (
+			<AnimatePresence
+				initial={false}
+				onExitComplete={() => setOrganizeTabsPresent(false)}
+			>
+			{organizeTabsPreview && (
         <OrganizeTabsDialog
+          key="organize-tabs-dialog"
           preview={organizeTabsPreview}
           originFavicons={state.originFavicons}
           onCancel={closeOrganizeTabs}
           onApply={applyOrganizeTabs}
         />
       )}
+      </AnimatePresence>
     </main>
   );
 }

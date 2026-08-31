@@ -169,6 +169,24 @@ async function waitForNativeView(predicate, label) {
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
 }
 
+async function assertNativeViewHiddenThroughOverlayExit(locator, label) {
+	const reducedMotion = await page.evaluate(
+		() => matchMedia("(prefers-reduced-motion: reduce)").matches,
+	);
+	// Electron/Playwright can yield between the Escape key event and this
+	// assertion. If the short exit has already completed there is no live
+	// renderer surface left to cover; when it is still mounted, the native view
+	// must remain hidden for its whole visible exit interval.
+	if (!reducedMotion && (await locator.count()) > 0) {
+		assert.equal(
+			(await nativeViewState()).views.length,
+			0,
+			`${label} restored the native page before its renderer exit completed`,
+		);
+	}
+	await locator.waitFor({ state: "detached" });
+}
+
 async function waitForNativeViewportBounds(label) {
 	const deadline = Date.now() + 30_000;
 	let latest;
@@ -668,8 +686,8 @@ try {
 		scrollWidth: node.scrollWidth,
 	}));
 	assert(
-		railMetrics.scrollWidth <= railMetrics.clientWidth + 1,
-		`Crowded tabs overflowed their rail: ${railMetrics.scrollWidth}px > ${railMetrics.clientWidth}px`,
+		railMetrics.scrollWidth > railMetrics.clientWidth + 1,
+		`Crowded tabs collapsed instead of using the bounded tab rail: ${railMetrics.scrollWidth}px <= ${railMetrics.clientWidth}px`,
 	);
 	const railBounds = await tabRail.boundingBox();
 	const newTabBounds = await newTabControl.boundingBox();
@@ -714,6 +732,10 @@ try {
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
 	assert(widthsBeforeClose.length >= 5);
+	assert(
+		widthsBeforeClose.every((width) => width >= 110),
+		`Crowded tabs fell below the readable minimum: ${JSON.stringify(widthsBeforeClose)}`,
+	);
 	await tabRail.locator(".browser-tab.active .browser-tab-close").click();
 	state = await waitForBrowserState(
 		(value) => value.tabs.length === initialTabs + crowdedTabIds.length,
@@ -736,10 +758,12 @@ try {
 	const widthsAfterClose = await tabRail
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
-	assert(
-		widthsAfterClose[0] > widthsBeforeClose[0] + 1,
-		`Tabs did not refit after the close burst: ${widthsAfterClose[0]}px vs ${widthsBeforeClose[0]}px`,
-	);
+	for (const width of widthsAfterClose) {
+		assert(
+			Math.abs(width - widthsBeforeClose[0]) <= 1.5,
+			`The still-crowded strip snapped after its close settle: ${width}px vs ${widthsBeforeClose[0]}px`,
+		);
+	}
 	const remainingCrowdedTabIds = crowdedTabIds.filter(
 		(tabId) => tabId !== lastCrowdedTabId,
 	);
@@ -750,6 +774,12 @@ try {
 	await waitForBrowserState(
 		(value) => value.tabs.length === initialTabs + 1,
 		"crowded tab cleanup",
+	);
+	await page.waitForFunction(
+		(before) =>
+			(document.querySelector(".browser-tabs .browser-tab")?.getBoundingClientRect()
+				.width ?? 0) > before + 1,
+		widthsBeforeClose[0],
 	);
 	await horizontalTabs.first().focus();
 	await horizontalTabs.first().press("ArrowRight");
@@ -895,23 +925,27 @@ try {
 	// Menus opened from the browser chrome must temporarily release that view;
 	// DOM z-index alone cannot place a renderer menu above a native sibling.
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
-	await page.getByRole("menu", { name: "Tab tools" }).waitFor();
+	const initialTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await initialTabToolsMenu.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained above the tab tools menu",
 	);
 	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(initialTabToolsMenu, "Tab tools menu");
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing tab tools",
 	);
 	await page.getByRole("button", { name: "Tools", exact: true }).click();
-	await page.getByRole("menu", { name: "Tools" }).waitFor();
+	const toolbarToolsMenu = page.getByRole("menu", { name: "Tools" });
+	await toolbarToolsMenu.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained above the toolbar tools menu",
 	);
 	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(toolbarToolsMenu, "Toolbar tools menu");
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing toolbar tools",
@@ -936,6 +970,10 @@ try {
 		() => document.activeElement?.id === "browser-address-input",
 	);
 	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(
+		page.locator("#browser-address-suggestions"),
+		"Address suggestions",
+	);
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after leaving the address bar",
@@ -951,9 +989,15 @@ try {
 		await page.locator("#browser-address-input").inputValue(),
 		`${origin}/one`,
 	);
+	await page.locator("#browser-address-suggestions").waitFor();
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the address suggestions",
+	);
+	await page.keyboard.press("Escape");
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
-		"Native page detached when the address bar was focused",
+		"Native page did not return after closing address suggestions",
 	);
 
 	state = await browserState();
@@ -1182,24 +1226,11 @@ try {
 	assert(detachableBounds);
 	const detachX = detachableBounds.x + detachableBounds.width / 2;
 	const detachY = detachableBounds.y + detachableBounds.height / 2;
-	await detachableTab.dispatchEvent("pointerdown", {
-		button: 0,
-		clientX: detachX,
-		clientY: detachY,
-		pointerId: 1,
-		pointerType: "mouse",
-		isPrimary: true,
-	});
+	await page.mouse.move(detachX, detachY);
+	await page.mouse.down();
 	await page.waitForTimeout(50);
 	await page.mouse.move(detachX, detachY + 64, { steps: 8 });
-	await detachableTab.dispatchEvent("pointerup", {
-		button: 0,
-		clientX: detachX,
-		clientY: detachY + 64,
-		pointerId: 1,
-		pointerType: "mouse",
-		isPrimary: true,
-	});
+	await page.mouse.up();
 	await waitForBrowserState(
 		(value) => !value.tabs.some((tab) => tab.id === detachableTabId),
 		"Detached tab did not leave the source window",
@@ -1334,7 +1365,7 @@ try {
 	await page.getByText("kestrel-browser.txt", { exact: true }).waitFor();
 	await openKestrelDestination(page, "Settings");
 	await page
-		.getByRole("heading", { name: "Preferences", exact: true })
+		.getByRole("heading", { name: "Settings", exact: true })
 		.waitFor();
 	const browserSettings = page
 		.locator(".settings-scope-switcher")
@@ -1517,7 +1548,7 @@ try {
 		"Native page remained attached over the organize tabs dialog",
 	);
 	await organizeDialog.getByRole("button", { name: "Close organize tabs" }).click();
-	await organizeDialog.waitFor({ state: "detached" });
+	await assertNativeViewHiddenThroughOverlayExit(organizeDialog, "Organize tabs dialog");
 	assert.deepEqual(
 		(await browserState()).tabs.map((tab) => tab.id),
 		tabOrderBeforeOrganization,

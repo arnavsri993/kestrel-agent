@@ -12,7 +12,10 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	selectSettingsSection,
+} from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-readiness-test-"));
 const userData = join(root, "user-data");
@@ -84,7 +87,7 @@ try {
 	await page.reload();
 
 	await openKestrelDestination(page, "Settings");
-	await page.getByRole("button", { name: /^Agent Plugins/ }).click();
+	await selectSettingsSection(page, "extensions", "Plugins");
 	const readinessPlugin = page
 		.locator("article.setting-row")
 		.filter({ hasText: "Readiness Test" });
@@ -94,9 +97,7 @@ try {
 	await page
 		.getByRole("button", { name: "Open readiness", exact: true })
 		.click();
-	await page
-		.getByRole("heading", { name: /Needs attention|Ready for work/ })
-		.waitFor();
+	await page.locator("h1").filter({ hasText: "Readiness" }).waitFor();
 	await page
 		.getByRole("heading", { name: "What can work right now" })
 		.waitFor();
@@ -127,10 +128,7 @@ try {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await openKestrelDestination(page, "Settings");
-	await page
-		.locator(".settings-nav")
-		.getByRole("button", { name: "Connections", exact: true })
-		.click();
+	await selectSettingsSection(page, "connections", "Connections");
 	const chatGptConnection = page
 		.locator(".oauth-connection")
 		.filter({ has: page.getByText("ChatGPT", { exact: true }) });
@@ -145,7 +143,10 @@ try {
 	await page
 		.getByRole("button", { name: "Open readiness", exact: true })
 		.click();
-	await page.getByRole("heading", { name: "Ready for work" }).waitFor();
+	await page
+		.locator(".ui-page-frame-eyebrow")
+		.getByText("Ready for work", { exact: true })
+		.waitFor();
 	await page.getByRole("button", { name: "Verify model access" }).click();
 	await page.getByText("codex-subscription", { exact: true }).waitFor();
 	const codexCheck = page

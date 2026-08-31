@@ -122,7 +122,11 @@ import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
-import { EmptyState } from "./components/ui";
+import {
+	EmptyState,
+	PageFrame as SurfacePageFrame,
+	type PageMeasure,
+} from "./components/ui";
 import { SurfaceBackButton } from "./components/browser/SurfaceBackButton";
 import { desktopDeepLinkAction } from "./deep-link-route";
 import { userBrowserRouteForRendererLink } from "./renderer-link-routing";
@@ -165,6 +169,7 @@ import {
 	uncertainExecutionsForRun,
 	verifiedApprovalEvidenceForRun,
 } from "./runtime-evidence";
+import { KESTREL_STATE_TRANSITION } from "./motion-contract";
 
 const MAX_RENDERER_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
@@ -937,7 +942,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const reduced = useReducedMotion();
 	const [step, setStep] = useState(() => readPersistedSetupStep());
 	const setupStageRef = useRef<HTMLElement | null>(null);
-	const activeSetupStepRef = useRef(step);
 	const focusSetupHeadingRef = useRef(false);
 	const [warningAccepted, setWarningAccepted] = useState(
 		() => localStorage.getItem("kestrel:setup-warning") === "yes",
@@ -1052,11 +1056,16 @@ function Onboarding({ onDone }: { onDone(): void }) {
 		stage
 			?.closest<HTMLElement>(".setup-onboarding")
 			?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+		if (focusSetupHeadingRef.current) {
+			stage
+				?.querySelector<HTMLElement>("h1")
+				?.focus({ preventScroll: true });
+			focusSetupHeadingRef.current = false;
+		}
 	}, [modelView, step]);
 
 	function go(next: number) {
 		const bounded = Math.min(finalSetupStep, Math.max(0, next));
-		activeSetupStepRef.current = bounded;
 		focusSetupHeadingRef.current = bounded !== step;
 		localStorage.setItem("kestrel:setup-step", setupSteps[bounded]!.id);
 		setStep(bounded);
@@ -1318,7 +1327,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 			className="onboarding setup-onboarding"
 			initial={false}
 			animate={{ opacity: 1 }}
-			exit={{ opacity: reduced ? 1 : 0 }}
+			exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 			transition={{ duration: reduced ? 0 : 0.14 }}
 		>
 			<header className="onboarding-bar">
@@ -1355,31 +1364,19 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				</nav>
 			</header>
 			<div className="setup-body">
-				<AnimatePresence mode="wait" initial={false}>
+				<AnimatePresence mode="sync" initial={false}>
 					<motion.section
 						ref={setupStageRef}
 						key={step}
 						className={`setup-stage setup-stage-${step}`}
 						initial={reduced ? false : { opacity: 0, y: 6 }}
 						animate={{ opacity: 1, y: 0 }}
-						exit={{ opacity: reduced ? 1 : 0, y: reduced ? 0 : -6 }}
-						transition={{ duration: reduced ? 0 : 0.14 }}
-						onAnimationComplete={() => {
-							if (
-								activeSetupStepRef.current !== step ||
-								!focusSetupHeadingRef.current
-							)
-								return;
-							const stage = setupStageRef.current;
-							stage?.scrollTo({ top: 0, left: 0, behavior: "auto" });
-							stage
-								?.closest<HTMLElement>(".setup-onboarding")
-								?.scrollTo({ top: 0, left: 0, behavior: "auto" });
-							stage
-								?.querySelector<HTMLElement>("h1")
-								?.focus({ preventScroll: true });
-							focusSetupHeadingRef.current = false;
+						exit={{
+							opacity: reduced ? 1 : 0,
+							y: reduced ? 0 : -6,
+							pointerEvents: "none",
 						}}
+						transition={{ duration: reduced ? 0 : 0.14 }}
 					>
 						{step === 0 && (
 							<div className="setup-welcome">
@@ -2455,7 +2452,7 @@ function Loading() {
 			className="loading-screen"
 			initial={reduced ? false : { opacity: 0 }}
 			animate={{ opacity: 1 }}
-			exit={{ opacity: reduced ? 1 : 0 }}
+			exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 			transition={{ duration: reduced ? 0 : 0.14 }}
 		>
 			<ProductAnchor detail="Starting on this Mac…" />
@@ -2514,7 +2511,12 @@ function Artifacts() {
 		);
 	}, []);
 	return (
-		<PageFrame title="Verified results">
+		<PageFrame
+			eyebrow="Verified results"
+			title="Artifacts"
+			text="Inspect locally stored outputs together with their source, model, and verification hash."
+			measure="wide"
+		>
 			<div className="artifact-toolbar">
 				<span>
 					{artifacts.length} verified file{artifacts.length === 1 ? "" : "s"}
@@ -4262,8 +4264,7 @@ function RuntimeConversation({
 								: "Describe the outcome. @ for context."
 						}
 					/>
-					{activeMention !== null && (
-						<ComposerMentionPicker
+					<ComposerMentionPicker
 							query={activeMention}
 							tabs={mentionTabs}
 							bookmarks={mentionBookmarks}
@@ -4277,8 +4278,8 @@ function RuntimeConversation({
 										[...current, mention.attachment!].slice(0, 8),
 									);
 							}}
+							onDismiss={() => setInput((current) => `${current} `)}
 						/>
-					)}
 					<div className="composer-footer">
 						<div className="button-row composer-context-actions">
 							<button
@@ -4631,7 +4632,11 @@ function Memory({
 	}
 
 	return (
-		<PageFrame title="Memory">
+		<PageFrame
+			title="Memory"
+			text="Review confirmed facts, provenance, and transcript matches before they shape future work."
+			measure="wide"
+		>
 			<form
 				className="memory-create"
 				onSubmit={(event) => {
@@ -4988,7 +4993,19 @@ function Readiness() {
 
 	return (
 		<PageFrame
-			title={readiness?.readyForLiveWork ? "Ready for work" : "Needs attention"}
+			eyebrow={readiness?.readyForLiveWork ? "Ready for work" : "Needs attention"}
+			title="Readiness"
+			text="Check what is configured, what is reachable, and which recovery boundaries are available on this Mac."
+			measure="wide"
+			actions={
+				<button
+					className="button secondary"
+					disabled={Boolean(busy)}
+					onClick={() => void refresh()}
+				>
+					{busy === "refresh" ? "Checking…" : "Run checks"}
+				</button>
+			}
 		>
 			<section
 				className={`readiness-hero ${readiness?.readyForLiveWork ? "ready" : "attention"}`}
@@ -5010,13 +5027,6 @@ function Readiness() {
 							: "Reading local status without sending project data anywhere."}
 					</p>
 				</div>
-				<button
-					className="button secondary"
-					disabled={Boolean(busy)}
-					onClick={() => void refresh()}
-				>
-					{busy === "refresh" ? "Checking…" : "Run checks"}
-				</button>
 			</section>
 
 			<div className="readiness-grid">
@@ -5232,7 +5242,12 @@ function Research() {
 		}
 	}
 	return (
-		<PageFrame title="Search with sources">
+		<PageFrame
+			eyebrow="Search with sources"
+			title="Research"
+			text="Search the web directly, open a result in a bounded reader, and retain its retrieval evidence."
+			measure="wide"
+		>
 			<form
 				className="research-search"
 				onSubmit={(event) => {
@@ -5476,7 +5491,12 @@ function Work({
 				: 100;
 
 	return (
-		<PageFrame title="Plan and track">
+		<PageFrame
+			eyebrow="Plan and track"
+			title="Work"
+			text="Coordinate goals, delegates, schedules, and handoffs while keeping routing and approval evidence visible."
+			measure="wide"
+		>
 			{routedTask && (
 				<section
 					className={`orchestration-status status-${routedTask.status}`}
@@ -8027,6 +8047,7 @@ function Settings({
 	onToggleBrowserContext(): void;
 	onBack?(): void;
 }) {
+	const reduced = useReducedMotion();
 	const [login, setLogin] = useState<{
 		enabled: boolean;
 		status: string;
@@ -8233,19 +8254,25 @@ function Settings({
 	});
 	const route = snapshot.modelRouting.currentDecision;
 	const browserSections = [
-		["browser", "Browser Preferences"],
+		["browser", "Browser"],
 	] as const;
 	const agentSections = [
-		["general", "General & Autonomy"],
+		["general", "General"],
 		["connections", "Connections"],
-		["models", "Models & Routing"],
-		["intelligence", "Intelligence & Memory"],
-		["extensions", "Agent Plugins"],
-		["privacy", "Privacy & Safety"],
-		["advanced", "Advanced System"],
+		["models", "Models"],
+		["intelligence", "Memory"],
+		["extensions", "Plugins"],
+		["privacy", "Privacy"],
+		["advanced", "Advanced"],
 	] as const;
 	return (
-		<PageFrame title="Preferences" {...(onBack ? { onBack } : {})}>
+		<PageFrame
+			title="Settings"
+			text="Configure Browser and Agent behavior without weakening current approval, privacy, or recovery boundaries."
+			measure="wide"
+			className="settings-page-frame"
+			{...(onBack ? { onBack } : {})}
+		>
 			<div
 				className="settings-scope-switcher"
 				role="tablist"
@@ -8284,23 +8311,32 @@ function Settings({
 					</span>
 				</button>
 			</div>
-			<div className="settings-layout">
+			<label className="settings-section-picker">
+				<span>Settings section</span>
+				<select
+					value={section}
+					onChange={(event) => {
+						const next = event.target.value as SettingsSection;
+						setScope(next === "browser" ? "browser" : "agent");
+						setSection(next);
+					}}
+				>
+					<optgroup label="Browser">
+						{browserSections.map(([id, label]) => (
+							<option key={id} value={id}>{label}</option>
+						))}
+					</optgroup>
+					<optgroup label="Agent">
+						{agentSections.map(([id, label]) => (
+							<option key={id} value={id}>{label}</option>
+						))}
+					</optgroup>
+				</select>
+			</label>
+				<div className="settings-layout">
 				<nav className="settings-nav" aria-label="Settings sections">
-					<div className="settings-nav-heading">
-						<span>Settings for</span>
-						<strong>{scope === "browser" ? "Browser" : "Agent"}</strong>
-						<small>
-							{scope === "browser"
-								? "Keep browsing controls in one place."
-								: "Configure how Kestrel works with you."}
-						</small>
-					</div>
 					{scope === "browser" ? (
 						<>
-							<div className="settings-nav-category-header">
-								<Icon name="browser" />
-								<span>Browser settings</span>
-							</div>
 							{browserSections.map(([id, label]) => (
 								<button
 									key={id}
@@ -8317,10 +8353,6 @@ function Settings({
 						</>
 					) : (
 						<>
-							<div className="settings-nav-category-header">
-								<Icon name="agent" />
-								<span>Agent settings</span>
-							</div>
 							{agentSections.map(([id, label]) => (
 								<button
 									key={id}
@@ -8337,7 +8369,16 @@ function Settings({
 						</>
 					)}
 				</nav>
-				<div className="settings-content">
+					<div className="settings-content-stage">
+					<AnimatePresence initial={false} mode="popLayout">
+					<motion.div
+						key={section}
+						className="settings-content"
+						initial={reduced ? false : { opacity: 0 }}
+						animate={{ opacity: 1 }}
+						exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
+						transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+					>
 					{section === "general" && (
 						<div className="agent-config-banner" role="region" aria-label="Agent configuration">
 							<div className="agent-config-banner-header">
@@ -8370,7 +8411,7 @@ function Settings({
 								))}
 							</div>
 						</div>
-					)}
+						)}
 					{section === "browser" && (
 						<BrowserSettings
 							browser={browser}
@@ -8522,7 +8563,7 @@ function Settings({
 											<small>Auto</small>
 										</div>
 									</div>
-								</article>
+									</article>
 							</details>
 						<ProviderVerificationSettings />
 						<UsagePolicySettings />
@@ -8542,7 +8583,7 @@ function Settings({
 							</p>
 						</header>
 					<section className="settings-stack" aria-label="Extension settings">
-						<article className="setting-row">
+						<article className="setting-row plugin-supply-setting">
 								<div>
 									<strong>Plugin supply chain</strong>
 									<p>
@@ -8771,13 +8812,15 @@ function Settings({
 						<section className="settings-stack" aria-label="Advanced settings">
 							<ObservabilitySettings />
 							<EnterpriseSettings />
-							<CustomAgentsSettings snapshot={snapshot} update={update} />
-						</section>
-						</section>
-					)}
+								<CustomAgentsSettings snapshot={snapshot} update={update} />
+							</section>
+							</section>
+						)}
+						</motion.div>
+					</AnimatePresence>
 				</div>
 			</div>
-		</PageFrame>
+			</PageFrame>
 	);
 }
 
@@ -8786,24 +8829,33 @@ function PageFrame({
 	title,
 	text,
 	onBack,
+	actions,
+	measure = "standard",
+	className,
 	children,
 }: {
 	eyebrow?: string;
 	title: string;
 	text?: string;
 	onBack?(): void;
+	actions?: ReactNode;
+	measure?: PageMeasure;
+	className?: string;
 	children: ReactNode;
 }) {
 	return (
-		<div className="page-frame">
-			{onBack && <SurfaceBackButton onBack={onBack} />}
-			<header className="page-header">
-				{eyebrow && <span className="eyebrow">{eyebrow}</span>}
-				<h1>{title}</h1>
-				{text && <p>{text}</p>}
-			</header>
+		<SurfacePageFrame
+			as="div"
+			eyebrow={eyebrow}
+			title={title}
+			description={text}
+			actions={actions}
+			measure={measure}
+			className={className}
+			navigation={onBack ? <SurfaceBackButton onBack={onBack} /> : undefined}
+		>
 			{children}
-		</div>
+		</SurfacePageFrame>
 	);
 }
 
@@ -9413,7 +9465,7 @@ export function App() {
 					className="loading-screen error-screen"
 					initial={reduced ? false : { opacity: 0 }}
 					animate={{ opacity: 1 }}
-					exit={{ opacity: reduced ? 1 : 0 }}
+					exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 				>
 					<span className="error-mark">!</span>
 					<h1>Kestrel could not start.</h1>
@@ -9487,7 +9539,7 @@ export function App() {
 	}
 	const appPageId = currentAppPage?.id;
 	const appPage = appPageId ? (
-		<div
+		<motion.div
 			key={appPageId}
 			ref={focusToolRoute}
 			className={`browser-app-page${
@@ -9506,8 +9558,16 @@ export function App() {
 				appPageId === "writing"
 					? " browser-secondary-surface"
 					: ""
-			}${appPageId === "memory" ? " legacy-product-surface" : ""}`}
+			}${appPageId === "memory" ? " life-product-surface" : ""}`}
 			data-app-page={appPageId}
+			initial={reduced ? false : { opacity: 0, y: 3 }}
+			animate={{ opacity: 1, y: 0 }}
+			exit={
+				reduced
+					? { opacity: 1, y: 0, pointerEvents: "none" }
+					: { opacity: 0, y: -3, pointerEvents: "none" }
+			}
+			transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 		>
 			{appPageId === "history" && (
 				<BrowserHistory browser={browser} onOpenBrowser={openBrowser} />
@@ -9600,7 +9660,7 @@ export function App() {
 					onNavigate={navigate}
 				/>
 			)}
-		</div>
+		</motion.div>
 	) : undefined;
 	return (
 		<ProductShellTransition>
@@ -9609,7 +9669,7 @@ export function App() {
 				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
-				exit={{ opacity: reduced ? 1 : 0 }}
+				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
 				{showKestrelSidebar && (
@@ -9644,12 +9704,26 @@ export function App() {
 						onOpenTaskHistory={() => void openAppPage("work")}
 					/>
 				)}
-				<section className="browser-main-plane">
-					{deepLinkNotice && (
-						<small className="browser-notice" role="status">
-							{deepLinkNotice}
-						</small>
-					)}
+					<section className="browser-main-plane">
+						<AnimatePresence initial={false}>
+							{deepLinkNotice && (
+								<motion.small
+									key="deep-link-notice"
+									className="browser-notice"
+									role="status"
+									initial={reduced ? false : { opacity: 0, x: "-50%", y: 8 }}
+									animate={{ opacity: 1, x: "-50%", y: 0 }}
+									exit={
+										reduced
+											? { opacity: 1, x: "-50%", y: 0, pointerEvents: "none" }
+											: { opacity: 0, x: "-50%", y: 8, pointerEvents: "none" }
+									}
+									transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+								>
+									{deepLinkNotice}
+								</motion.small>
+							)}
+						</AnimatePresence>
 					<BrowserWorkspace
 						browser={browser}
 						agentName={activeAgentName}
@@ -9744,9 +9818,11 @@ export function App() {
 						setShowDefaultBrowserPrompt(false);
 					}}
 				/>
+				<AnimatePresence initial={false}>
 				{showShortcuts && (
 					<KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />
 				)}
+				</AnimatePresence>
 			</motion.div>
 		</ProductShellTransition>
 	);

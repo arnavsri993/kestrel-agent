@@ -65,7 +65,7 @@
 }
 
 .kestrel-widget-customize,
-.kestrel-widget-add-menu summary {
+.kestrel-widget-add-menu > button {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -87,38 +87,28 @@
 }
 
 .kestrel-widget-customize svg,
-.kestrel-widget-add-menu summary svg {
+.kestrel-widget-add-menu > button svg {
 	width: 14px;
 	height: 14px;
 }
 
 .kestrel-widget-customize:hover,
 .kestrel-widget-customize.is-active,
-.kestrel-widget-add-menu[open] summary,
-.kestrel-widget-add-menu summary:hover {
+.kestrel-widget-add-menu[data-open="true"] > button,
+.kestrel-widget-add-menu > button:hover {
 	border-color: var(--line-strong);
 	background: var(--surface-strong);
 	color: var(--ink);
 }
 
 .kestrel-widget-customize:active,
-.kestrel-widget-add-menu summary:active {
+.kestrel-widget-add-menu > button:active {
 	transform: scale(0.98);
 }
 
 .kestrel-widget-add-menu,
 .kestrel-widget-size-menu {
 	position: relative;
-}
-
-.kestrel-widget-add-menu summary,
-.kestrel-widget-size-menu summary {
-	list-style: none;
-}
-
-.kestrel-widget-add-menu summary::-webkit-details-marker,
-.kestrel-widget-size-menu summary::-webkit-details-marker {
-	display: none;
 }
 
 .kestrel-widget-add-popover,
@@ -146,15 +136,15 @@
 
 /* The existing agent rail is an intentional overlay at narrow widths. Keep
    the widget picker interactive when it has to extend across that boundary. */
-.browser-main-plane:has(.kestrel-widget-add-menu[open]) {
+.browser-main-plane:has(.kestrel-widget-add-menu[data-open="true"]) {
 	position: relative;
 	z-index: 7;
 	pointer-events: none;
 }
 
-.browser-main-plane:has(.kestrel-widget-add-menu[open])
+.browser-main-plane:has(.kestrel-widget-add-menu[data-open="true"])
 	.kestrel-widget-add-menu,
-.browser-main-plane:has(.kestrel-widget-add-menu[open])
+.browser-main-plane:has(.kestrel-widget-add-menu[data-open="true"])
 	.kestrel-widget-add-popover {
 	pointer-events: auto;
 }
@@ -306,7 +296,7 @@
 
 /* Layout containment gives each card its own paint order. Raise the card that
    owns an open size menu so the menu can float over the following row. */
-.kestrel-widget-card:has(.kestrel-widget-size-menu[open]) {
+.kestrel-widget-card:has(.kestrel-widget-size-menu[data-open="true"]) {
 	z-index: 5;
 }
 
@@ -381,7 +371,7 @@
 
 .kestrel-widget-drag-handle,
 .kestrel-widget-small-action,
-.kestrel-widget-size-menu summary {
+.kestrel-widget-size-menu > button {
 	display: grid;
 	place-items: center;
 	width: 26px;
@@ -405,7 +395,7 @@
 
 .kestrel-widget-drag-handle:hover,
 .kestrel-widget-small-action:hover:not(:disabled),
-.kestrel-widget-size-menu summary:hover {
+.kestrel-widget-size-menu > button:hover {
 	background: var(--surface);
 	color: var(--ink);
 }
@@ -417,12 +407,12 @@
 
 .kestrel-widget-drag-handle svg,
 .kestrel-widget-small-action svg,
-.kestrel-widget-size-menu summary svg {
+.kestrel-widget-size-menu > button svg {
 	width: 13px;
 	height: 13px;
 }
 
-.kestrel-widget-size-menu summary {
+.kestrel-widget-size-menu > button {
 	outline: none;
 }
 
@@ -687,9 +677,9 @@
 }
 
 .kestrel-widget-customize:focus-visible,
-.kestrel-widget-add-menu summary:focus-visible,
+.kestrel-widget-add-menu > button:focus-visible,
 .kestrel-widget-add-popover button:focus-visible,
-.kestrel-widget-size-menu summary:focus-visible,
+.kestrel-widget-size-menu > button:focus-visible,
 .kestrel-widget-size-popover button:focus-visible,
 .kestrel-widget-card button:focus-visible,
 .kestrel-widget-empty button:focus-visible,
@@ -736,7 +726,7 @@
 
 @media (prefers-reduced-motion: reduce) {
 	.kestrel-widget-customize,
-	.kestrel-widget-add-menu summary,
+	.kestrel-widget-add-menu > button,
 	.kestrel-widget-card,
 	.kestrel-widget-list li button,
 	.kestrel-widget-action-list li button {
@@ -744,7 +734,7 @@
 	}
 
 	.kestrel-widget-customize:active,
-	.kestrel-widget-add-menu summary:active {
+	.kestrel-widget-add-menu > button:active {
 		transform: none;
 	}
 }
@@ -758,4 +748,119 @@
 	.kestrel-widget-list-icon {
 		border-color: var(--line-strong);
 	}
+}
+
+/* Instrument Workbench shelves: widgets remain independently configurable,
+ * but read as continuous rows of useful local context instead of card walls. */
+.kestrel-widget-canvas {
+	gap: 14px;
+}
+
+.kestrel-widget-canvas-header {
+	align-items: center;
+	padding-bottom: 2px;
+}
+
+.kestrel-widget-canvas-kicker {
+	margin-bottom: 4px;
+	font-size: 11px;
+	line-height: 15px;
+}
+
+.kestrel-widget-canvas-header h2 {
+	font-size: 16px;
+	line-height: 21px;
+}
+
+.kestrel-widget-canvas-header p {
+	font-size: 12px;
+	line-height: 18px;
+}
+
+.kestrel-widget-shelves {
+	gap: 0;
+	border-top: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+	background: color-mix(in srgb, var(--surface) 28%, transparent);
+}
+
+.kestrel-widget-shelves .kestrel-widget-card {
+	min-height: 142px;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.kestrel-widget-shelves .kestrel-widget-card:hover {
+	border-color: transparent;
+	background: color-mix(in srgb, var(--surface) 48%, transparent);
+	box-shadow: none;
+}
+
+.kestrel-widget-shelves .kestrel-widget-card:not(:last-child) {
+	border-right: 1px solid var(--line);
+}
+
+.kestrel-widget-shelves .kestrel-widget-card:nth-child(n + 5) {
+	border-top: 1px solid var(--line);
+}
+
+.kestrel-widget-card-header {
+	padding: 13px 14px 6px;
+}
+
+.kestrel-widget-card-heading h3 {
+	font-size: 13px;
+	line-height: 18px;
+}
+
+.kestrel-widget-card-heading p,
+.kestrel-widget-add-popover small,
+.kestrel-widget-size-popover small,
+.kestrel-widget-list small,
+.kestrel-widget-empty button,
+.kestrel-widget-canvas-empty button {
+	font-size: 11px;
+}
+
+.kestrel-widget-list strong,
+.kestrel-widget-action-list li button,
+.kestrel-widget-empty strong {
+	font-size: 11.5px;
+}
+
+.kestrel-widget-card-body {
+	padding: 0 12px 12px;
+}
+
+.kestrel-widget-list li button,
+.kestrel-widget-action-list li button {
+	border-radius: 7px;
+}
+
+.kestrel-widget-canvas.is-editing .kestrel-widget-shelves {
+	border-color: color-mix(in srgb, var(--solid) 38%, var(--line));
+}
+
+@media (max-width: 920px) {
+	.kestrel-widget-shelves .kestrel-widget-card:nth-child(n) {
+		border-top: 0;
+	}
+	.kestrel-widget-shelves .kestrel-widget-card:nth-child(2n + 1) {
+		border-right: 1px solid var(--line);
+	}
+	.kestrel-widget-shelves .kestrel-widget-card:nth-child(n + 3) {
+		border-top: 1px solid var(--line);
+	}
+}
+
+@media (max-width: 560px) {
+	.kestrel-widget-canvas-header { align-items: flex-start; }
+	.kestrel-widget-shelves .kestrel-widget-card:nth-child(n) {
+		min-height: 128px;
+		border-right: 0;
+		border-top: 1px solid var(--line);
+	}
+	.kestrel-widget-shelves .kestrel-widget-card:first-child { border-top: 0; }
 }

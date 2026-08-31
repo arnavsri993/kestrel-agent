@@ -4,7 +4,10 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	selectSettingsSection,
+} from "./desktop-browser-test-helpers.mjs";
 
 function canonical(value) {
 	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -74,11 +77,8 @@ try {
 	await page.reload();
 	await page.locator("#runtime-prompt").waitFor();
 	await openKestrelDestination(page, "Settings");
-	await page.getByRole("heading", { name: "Preferences" }).waitFor();
-	await page
-		.locator(".settings-nav button")
-		.filter({ hasText: "Advanced" })
-		.click();
+	await page.getByRole("heading", { name: "Settings" }).waitFor();
+	await selectSettingsSection(page, "advanced", "Advanced");
 
 	const managedCard = page
 		.locator(".setting-row")

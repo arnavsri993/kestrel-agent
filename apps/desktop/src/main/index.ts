@@ -1698,7 +1698,9 @@ function createMainWindow(): BrowserWindow {
     minWidth: 920,
     minHeight: 680,
     show: false,
-    titleBarStyle: "hiddenInset",
+    // Windows keeps its opaque native caption buttons. The custom triangular
+    // controls are rendered only on macOS, so this avoids duplicate chrome.
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     backgroundColor: "#0a0a0a",
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
@@ -1845,7 +1847,7 @@ function createDetachedBrowserWindow(
     minWidth: 920,
     minHeight: 680,
     show: false,
-    titleBarStyle: "hiddenInset",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     backgroundColor: "#0a0a0a",
     title: tab.title || PRODUCT_IDENTITY.productName,
     webPreferences: {

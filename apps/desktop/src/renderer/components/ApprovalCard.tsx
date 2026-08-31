@@ -161,7 +161,11 @@ export function ApprovalCard({
 						className="approval-actions"
 						initial={reduced ? false : { opacity: 0, y: 8 }}
 						animate={{ opacity: 1, y: 0 }}
-						exit={reduced ? { opacity: 1, y: 0 } : { opacity: 0, y: 4 }}
+						exit={
+							reduced
+								? { opacity: 1, y: 0, pointerEvents: "none" }
+								: { opacity: 0, y: 4, pointerEvents: "none" }
+						}
 						transition={{
 							duration: reduced ? 0 : 0.16,
 							ease: [0.22, 1, 0.36, 1],

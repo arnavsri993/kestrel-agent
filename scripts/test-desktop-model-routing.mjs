@@ -3,7 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	selectSettingsSection,
+} from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-model-routing-test-"));
 const screenshotPath = process.env.KESTREL_ROUTING_SCREENSHOT;
@@ -37,11 +40,7 @@ try {
 	await page.reload();
 
 	await openKestrelDestination(page, "Settings");
-	await page.locator(".settings-nav").waitFor();
-	await page
-		.locator(".settings-nav button")
-		.filter({ hasText: "Models" })
-		.click();
+	await selectSettingsSection(page, "models", "Models");
 	await page.getByText("How Kestrel chooses models", { exact: true }).waitFor();
 
 	const modes = page.locator(".routing-mode-grid [role=radio]");

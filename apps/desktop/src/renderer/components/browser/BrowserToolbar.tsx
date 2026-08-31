@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useMemo,
   useState,
@@ -10,6 +11,7 @@ import {
   type MouseEvent,
   type RefObject,
 } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type {
   InstalledExtension,
   UserBrowserBookmark,
@@ -26,6 +28,7 @@ import {
   type AddressBarSuggestionFilter,
 } from "./address-bar-suggestions";
 import { BrowserHistoryPopover } from "./BrowserHistoryPopover";
+import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 
 type ToolbarMenu = "extensions" | "tools" | "screen" | "history" | null;
 
@@ -126,6 +129,7 @@ export function BrowserToolbar({
   onOpenMenu(): void;
   onMenuOpenChange?(open: boolean): void;
 }) {
+  const reducedMotion = useReducedMotion() ?? false;
   const [address, setAddress] = useState(tab.url);
   const [suggestionQuery, setSuggestionQuery] = useState("");
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
@@ -138,10 +142,13 @@ export function BrowserToolbar({
     readPinnedExtensions,
   );
   const [toolNotice, setToolNotice] = useState("");
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const [menuOrigin, setMenuOrigin] = useState({ x: 0, y: 0 });
   const menuRef = useRef<HTMLDivElement | null>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyPopoverRequestRef = useRef(0);
+  const overlayOpenRef = useRef(false);
   const suggestionsCloseTimerRef = useRef<number | null>(null);
   const inlineCompletionRef = useRef<{ typed: string; completed: string } | null>(
     null,
@@ -197,6 +204,8 @@ export function BrowserToolbar({
     (suggestions.length > 0 ||
       suggestionQuery.trim().length > 0 ||
       suggestionFilter !== "all");
+  const overlayOpen = Boolean(openMenu || showSuggestions);
+  overlayOpenRef.current = overlayOpen;
 
   function clearSuggestionsCloseTimer() {
     if (suggestionsCloseTimerRef.current === null) return;
@@ -270,12 +279,52 @@ export function BrowserToolbar({
     setOpenMenu("history");
   }, [historyPopoverRequestId]);
 
-  const closeMenu = useCallback(() => {
+  const dismissMenu = useCallback(() => {
     setOpenMenu(null);
+  }, []);
+
+  const closeMenu = useCallback(() => {
+    dismissMenu();
     window.requestAnimationFrame(() => {
       lastTriggerRef.current?.focus();
     });
+  }, [dismissMenu]);
+
+  const positionMenu = useCallback(() => {
+    const trigger = lastTriggerRef.current;
+    const menu = menuRef.current;
+    if (!trigger || !menu) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const gutter = 12;
+    const top = Math.max(gutter, Math.min(
+      window.innerHeight - menuRect.height - gutter,
+      triggerRect.bottom + 8,
+    ));
+    const left = Math.max(
+      gutter,
+      Math.min(triggerRect.right - menuRect.width, window.innerWidth - menuRect.width - gutter),
+    );
+    setMenuPosition({ top, left });
+    setMenuOrigin({
+      x: Math.max(12, Math.min(menuRect.width - 12, triggerRect.left + triggerRect.width / 2 - left)),
+      y: top < triggerRect.top ? menuRect.height : 0,
+    });
   }, []);
+
+  useLayoutEffect(() => {
+    if (!openMenu) return;
+    /* Layout effects run before paint, preventing a one-frame jump from the
+       default origin to the trigger-anchored position. */
+    positionMenu();
+    const reposition = () => positionMenu();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [openMenu, positionMenu]);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -293,10 +342,20 @@ export function BrowserToolbar({
         !menuRef.current?.contains(target) &&
         !lastTriggerRef.current?.contains(target)
       )
-        closeMenu();
+        dismissMenu();
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target as Node | null;
+      if (
+        target &&
+        !menuRef.current?.contains(target) &&
+        !lastTriggerRef.current?.contains(target)
+      )
+        dismissMenu();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (event.defaultPrevented) return;
         event.preventDefault();
         closeMenu();
         return;
@@ -315,20 +374,35 @@ export function BrowserToolbar({
       items[(index + delta + items.length) % items.length]?.focus();
     };
     document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("focusin", onFocusIn);
     document.addEventListener("keydown", onKeyDown);
     return () => {
       window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [closeMenu, openMenu]);
+  }, [closeMenu, dismissMenu, openMenu]);
 
-  useEffect(() => {
-    // Address suggestions live in the toolbar above the native viewport. Hiding
-    // the page when they open steals focus from the omnibox and makes the tab
-    // flicker without letting the URL be selected or copied.
-    onMenuOpenChange?.(Boolean(openMenu));
-  }, [onMenuOpenChange, openMenu]);
+  useLayoutEffect(() => {
+    // Suggestions extend over the native WebContentsView. Renderer z-index
+    // cannot cover that sibling, so use the same visibility boundary as the
+    // other browser-chrome overlays while keeping the omnibox itself mounted.
+    // The close notification comes from AnimatePresence so the native sibling
+    // stays hidden until the renderer exit has actually finished.
+    if (overlayOpen) onMenuOpenChange?.(true);
+  }, [onMenuOpenChange, overlayOpen]);
+
+  useEffect(
+    () => () => {
+      onMenuOpenChange?.(false);
+    },
+    [onMenuOpenChange],
+  );
+
+  const handleOverlayExitComplete = useCallback(() => {
+    if (!overlayOpenRef.current) onMenuOpenChange?.(false);
+  }, [onMenuOpenChange]);
 
   function chooseSuggestion(suggestion: AddressBarSuggestion) {
     closeSuggestions();
@@ -499,7 +573,7 @@ export function BrowserToolbar({
         className="window-controls-clearance no-drag"
         aria-hidden="true"
       />
-      <div className="browser-navigation">
+      <div className="browser-navigation" role="group" aria-label="Navigation">
         <button
           type="button"
           aria-label="Back"
@@ -610,11 +684,22 @@ export function BrowserToolbar({
             </span>
           )}
         </form>
+        <AnimatePresence initial={false} onExitComplete={handleOverlayExitComplete}>
         {showSuggestions && (
-          <div
+          <motion.div
+            key="browser-address-suggestions"
             className="browser-address-suggestions"
             id="browser-address-suggestions"
             aria-label="Address suggestions"
+            initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.992 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={
+              reducedMotion
+                ? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+                : { opacity: 0, y: -4, scale: 0.992, pointerEvents: "none" }
+            }
+            transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+            style={{ transformOrigin: "top center" }}
           >
             <div
               className="browser-address-suggestion-list"
@@ -724,10 +809,11 @@ export function BrowserToolbar({
                 <Icon name="settings" />
               </button>
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
-      <div className="browser-toolbar-actions">
+      <div className="browser-toolbar-actions" role="group" aria-label="Page actions">
         <div className="browser-extension-cluster browser-toolbar-secondary">
           <button
             type="button"
@@ -820,7 +906,7 @@ export function BrowserToolbar({
         <button
           id="browser-agent-toggle"
           type="button"
-          className={`browser-agent-toggle ${agentOpen ? "active" : ""}`}
+          className={`browser-agent-toggle browser-agent-toggle-quick ${agentOpen ? "active" : ""}`}
           aria-label={agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}
           aria-expanded={agentOpen}
           title={agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}
@@ -829,13 +915,27 @@ export function BrowserToolbar({
           <span className="pragmatic-logo" aria-hidden="true">
             <Icon name="pragmatic" />
           </span>
-          <span>{agentName}</span>
         </button>
 
+        <AnimatePresence initial={false} onExitComplete={handleOverlayExitComplete}>
         {openMenu && (
-          <div
+          <motion.div
+            key="browser-toolbar-popover"
             ref={menuRef}
             className={`browser-toolbar-popover browser-toolbar-popover-${openMenu}`}
+            style={{
+              top: menuPosition.top,
+              left: menuPosition.left,
+              transformOrigin: `${menuOrigin.x}px ${menuOrigin.y}px`,
+            }}
+            initial={reducedMotion ? false : { opacity: 0, scale: 0.985 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={
+              reducedMotion
+                ? { opacity: 1, scale: 1, pointerEvents: "none" }
+                : { opacity: 0, scale: 0.985, pointerEvents: "none" }
+            }
+            transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
             role="menu"
             aria-label={
               openMenu === "extensions"
@@ -948,7 +1048,16 @@ export function BrowserToolbar({
                     <Icon name="downloads" />
                     <span>Downloads</span>
                   </button>
-                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenFind)}>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      // Find owns focus as soon as it opens. Do not let the
+                      // closing toolbar menu steal focus back one frame later.
+                      setOpenMenu(null);
+                      onOpenFind();
+                    }}
+                  >
                     <Icon name="search" />
                     <span>Find in page</span>
                     <kbd>⌘F</kbd>
@@ -1008,6 +1117,20 @@ export function BrowserToolbar({
                     <span>Sleep inactive tabs</span>
                     <Icon name={sleepingTabsEnabled ? "check" : "close"} />
                   </button>
+                  <button
+                    type="button"
+                    className={`browser-agent-toggle browser-agent-toggle-menu ${agentOpen ? "active" : ""}`}
+                    role="menuitemcheckbox"
+                    aria-checked={agentOpen}
+                    aria-label={agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}
+                    onClick={() => runAndClose(onToggleAgent)}
+                  >
+                    <span className="pragmatic-logo" aria-hidden="true">
+                      <Icon name="pragmatic" />
+                    </span>
+                    <span>{agentOpen ? `Hide ${agentName}` : `Show ${agentName}`}</span>
+                    <Icon name={agentOpen ? "check" : "chevron"} />
+                  </button>
                   <button type="button" role="menuitem" onClick={() => runAndClose(onOpenSettings)}>
                     <Icon name="settings" />
                     <span>All browser settings</span>
@@ -1021,8 +1144,9 @@ export function BrowserToolbar({
                 </div>
               </>
             )}
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
       <span className="browser-toolbar-drag-fill" aria-hidden="true" />
     </div>

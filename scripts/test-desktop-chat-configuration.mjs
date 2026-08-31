@@ -252,10 +252,10 @@ try {
 	);
 
 	await page.getByRole("button", { name: /^Model:/ }).click();
-	const modelMenu = page.getByRole("menu", {
+	const modelMenu = page.getByRole("dialog", {
 		name: "Choose provider, model, and thinking level",
 	});
-	await modelMenu.getByRole("menuitem", { name: /^Nous/ }).click();
+	await modelMenu.getByRole("button", { name: /^Nous/ }).click();
 	await modelMenu.getByLabel("Custom model ID").fill("fixture-model");
 	await modelMenu.getByLabel("Custom model ID").press("Enter");
 	await modelMenu.waitFor({ state: "detached" });
