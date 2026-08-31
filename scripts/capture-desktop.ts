@@ -137,7 +137,7 @@ async function openTool(
 ) {
 	await page.keyboard.press("Meta+K");
 	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
+		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
 	await page
 		.locator(".command-groups button")

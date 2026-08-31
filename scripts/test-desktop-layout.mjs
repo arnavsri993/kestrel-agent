@@ -749,7 +749,7 @@ async function readZoomReflow(page) {
 				readControl('.browser-toolbar-actions button[aria-label="Tools"]'),
 				readControl('.browser-toolbar-actions button[aria-label="Page options"]'),
 				readControl(
-					'.browser-toolbar-actions button[aria-label="Capabilities and commands"]',
+					'.browser-toolbar-actions button[aria-label="Browser menu"]',
 				),
 				readControl(".browser-agent-toggle"),
 			],

@@ -944,6 +944,43 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing tab tools",
 	);
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	const browserMenu = page.getByRole("menu", { name: "Browser menu" });
+	await browserMenu.waitFor();
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the browser menu",
+	);
+	for (const label of [
+		"New tab",
+		"Zoom out",
+		"Reset zoom to 100 percent",
+		"Zoom in",
+		"Favorites",
+		"History",
+		"Tab groups",
+		"Downloads",
+		"Extensions",
+		"Passwords",
+		"Clear browsing data…",
+		"Print page",
+		"Screenshot",
+		"Find in page…",
+		"More tools",
+		"Settings",
+		"Command Center",
+	])
+		assert.equal(
+			await browserMenu.getByRole("menuitem", { name: label }).count(),
+			1,
+			`Browser menu is missing ${label}`,
+		);
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(browserMenu, "Browser menu");
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Native page did not return after closing browser menu",
+	);
 	await page.getByRole("button", { name: "Tools", exact: true }).click();
 	const toolbarToolsMenu = page.getByRole("menu", { name: "Tools" });
 	await toolbarToolsMenu.waitFor();

@@ -85,7 +85,7 @@ export function KestrelSidebar({
 	onOpenAgent,
 	onOpenWriting,
 	onReviewApprovals,
-	onOpenCapabilities,
+	onOpenCommandCenter,
 	onOpenProjects,
 	onOpenSettings,
 	onOpenProject,
@@ -105,7 +105,7 @@ export function KestrelSidebar({
 	onOpenAgent(): void;
 	onOpenWriting(): void;
 	onReviewApprovals(): void;
-	onOpenCapabilities(): void;
+	onOpenCommandCenter(): void;
 	onOpenProjects(): void;
 	onOpenSettings(): void;
 	onOpenProject(project: WorkspaceGrant): void;
@@ -160,9 +160,9 @@ export function KestrelSidebar({
 					<button
 						type="button"
 						className="kestrel-sidebar-icon-button"
-						aria-label="Search capabilities and shortcuts"
-						title="Search capabilities and shortcuts"
-						onClick={onOpenCapabilities}
+						aria-label="Open command center"
+						title="Open command center (⌘K)"
+						onClick={onOpenCommandCenter}
 					>
 						<Icon name="search" />
 					</button>
@@ -213,13 +213,6 @@ export function KestrelSidebar({
 					badge={pendingApprovals}
 					active={activeDestination === "approvals"}
 					onClick={onReviewApprovals}
-				/>
-				<SidebarNavItem
-					icon="command"
-					label="Capabilities"
-					destination="capabilities"
-					active={activeDestination === "capabilities"}
-					onClick={onOpenCapabilities}
 				/>
 			</nav>
 

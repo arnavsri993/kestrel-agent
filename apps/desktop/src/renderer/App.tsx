@@ -212,7 +212,7 @@ const pages = [
 	["history", "History"],
 	["bookmarks", "Bookmarks"],
 	["downloads", "Downloads"],
-	["commands", "Capabilities"],
+	["commands", "Command Center"],
 	["writing", "Writing Studio"],
 	["readiness", "Readiness"],
 	["approvals", "Approvals"],
@@ -9735,7 +9735,7 @@ export function App() {
 			onOpenAgent={openAgent}
 			onOpenWriting={openWritingStudio}
 			onReviewApprovals={reviewApprovals}
-			onOpenCapabilities={openCommandCenter}
+			onOpenCommandCenter={openCommandCenter}
 			onOpenProjects={() => void openAppPage("projects")}
 			onOpenSettings={() => openSettings("browser")}
 			onOpenProject={openProject}

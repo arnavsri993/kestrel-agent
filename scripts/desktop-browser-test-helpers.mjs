@@ -1,5 +1,5 @@
 const commandCenterHeading = (page) =>
-	page.getByRole("heading", { name: "Capabilities", exact: true });
+	page.getByRole("heading", { name: "Command Center", exact: true });
 
 export async function dismissDefaultBrowserPrompt(page) {
 	const defaultBrowserModal = page.locator(".default-browser-modal");
@@ -25,30 +25,13 @@ export async function openCommandCenter(page) {
 
 	const openers = [
 		async () => {
-			const toolbarButton = page.getByRole("button", {
-				name: "Capabilities and commands",
+			const commandCenterButton = page.getByRole("button", {
+				name: "Open command center",
 				exact: true,
 			});
-			if (!(await toolbarButton.isVisible().catch(() => false)))
-				throw new Error("Capabilities toolbar button is not visible.");
-			await toolbarButton.click();
-		},
-		async () => {
-			const sidebarSearch = page.getByRole("button", {
-				name: "Search capabilities and shortcuts",
-				exact: true,
-			});
-			if (!(await sidebarSearch.isVisible().catch(() => false)))
-				throw new Error("Sidebar capabilities search button is not visible.");
-			await sidebarSearch.click();
-		},
-		async () => {
-			const sidebarCapabilities = page
-				.locator(".kestrel-sidebar-primary")
-				.getByRole("button", { name: "Capabilities", exact: true });
-			if (!(await sidebarCapabilities.isVisible().catch(() => false)))
-				throw new Error("Sidebar Capabilities button is not visible.");
-			await sidebarCapabilities.click();
+			if (!(await commandCenterButton.isVisible().catch(() => false)))
+				throw new Error("Command Center button is not visible.");
+			await commandCenterButton.click();
 		},
 		async () => {
 			await page.locator("#new-tab-title").click({ force: true });

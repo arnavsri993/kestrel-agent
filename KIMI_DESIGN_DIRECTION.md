@@ -34,7 +34,7 @@ The following are **not** design choices. They are the Kestrel product model, an
 
 - **Persistent agent capability.** The agent is a durable co-resident surface, not a modal or a page you navigate away from. It may be collapsed/resized/reanchored — but never removed.
 - **Browser ↔ agent relationship.** Browser context and agent continuity stay coupled, with the "Current page" context mechanism as honest glue.
-- **Navigation concepts.** The triad: brand → browser; rail → agent/writing/approvals/capabilities (+ Settings bottom); `⌘K` → everything else. Specialist tools open as `kestrel://` browser tabs. Command center remains the launcher.
+- **Navigation concepts.** The triad: brand → browser; rail → agent/writing/approvals (+ Settings bottom); browser menu → familiar browser controls; `⌘K` → everything else. Specialist tools open as `kestrel://` browser tabs. Command Center remains the launcher.
 - **Approvals, safety, provenance.** Gates, boundary acknowledgments, edit-before-approve, restart-safe queue, recovery paths, provenance hierarchy of Life (source/confidence/sensitivity/correction), and truth-in-ui for model/provider/migration states.
 - **Existing product functionality.** Browser, agent tasks, Life (Calendar/People/Memory), Work, Approvals, Library tools (History/Bookmarks/Downloads), Research, Artifacts, Activity, Extensions, Opportunities, Readiness, Projects, Writing, Settings, Command Center, Setup flow, and all behavioral capabilities behind them.
 
@@ -196,7 +196,7 @@ Direction A is then developed fully below.
 
 ### 6.1 Shell triad (per viewport, with geometry negotiable)
 
-- **Left rail (`KestrelSidebar`):** brand row (mark + name), New task primary action, destination list (Agent, Writing, Approvals, Capabilities), Projects section, Recent tasks, Settings bottom anchor. Expanded width guidance ~232px; compact → icon-only. Geometry itself is unlocked.
+- **Left rail (`KestrelSidebar`):** brand row (mark + name), New task primary action, destination list (Agent, Writing, Approvals), Projects section, Recent tasks, Settings bottom anchor. Expanded width guidance ~232px; compact → icon-only. Geometry itself is unlocked. Command Center is opened from search or `⌘K`, not treated as a persistent destination.
 - **Content viewport:** bounded or flow content per page scaffold (see §6.2).
 - **Agent rail (`AgentSidebar`):** default 360px; geometry renegotiable; at compact it collapses to an icon+composer anchor. Never fully hidden.
 - **Window chrome:** macOS custom `WindowControls` triangular traffic lights; Windows opaque chrome with native buttons or an opaque minimal set.
@@ -523,7 +523,7 @@ The matrix lives in `ui/Status` + `ui/EmptyState` + scaffold.
 1. **Exact hex tokens:** Design updates reference ramp; live `styles.css` wins.
 2. **"No blur ever":** macOS may blur under-scroll nav/chrome with opaque fallback; Windows/reduced-transparency opaque.
 3. **Fixed 360px rail:** defaults to 360; negotiable by breakpoint and recomposition.
-4. **"Four destinations":** rail shows Agent/Writing/Approvals/Capabilities + Settings; Browser on brand.
+4. **"Four destinations":** rail shows Agent/Writing/Approvals + Settings; Browser on brand and Command Center through search/`⌘K`.
 5. **Browser home exactly-three-suggestion rows:** kept as first-view max only.
 6. **`SkinSettings.tsx` orphan:** delete (monochrome is the identity).
 7. **`capture-desktop.ts` Browser nav:** superseded by brand button navigation.

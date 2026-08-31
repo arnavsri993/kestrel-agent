@@ -193,8 +193,8 @@ modern, fast, and honest about approval and data boundaries.
   destinations remain: Browser, Agent, Approvals, and Settings. Pending
   approval appears as Review in the rail and as a white dot on Approvals.
   History, Downloads, Settings, and specialist tools open as browser tabs
-  rather than covering the workspace. They remain reachable from Capabilities
-  and keyboard commands.
+  rather than covering the workspace. They remain reachable from the Command
+  Center, the browser menu, and keyboard commands.
 - Browser Home is flat canvas. Its focal point is the 56px composer below a
   40px greeting. Frequent tabs appear only when local history exists.
   Suggestions are exactly three text rows; there are no thumbnails, duplicate
@@ -356,13 +356,14 @@ palette, navigation, material, motion, or visible customization conflicts.
 
 ### Information architecture and copy
 
-- Primary navigation is Browser, Agent, History, Downloads, Settings, and More; the
-  agent conversation is a stable adjacent surface with New task and Task
-  history. Urgent approval status remains visible. Specialist routes are fully
-  retained through More and the searchable command center.
-- More is a grouped launcher for specialist destinations. It closes after
-  navigation and on Escape. Compact windows keep the browser return path and
-  place overflow navigation in a bounded scroll region.
+- Primary navigation is Browser, Agent, Writing Studio, Approvals, and Settings;
+  the agent conversation is a stable adjacent surface with New task and Task
+  history. Urgent approval status remains visible. Browser utilities live in
+  the browser menu, while specialist routes remain available through the
+  searchable Command Center.
+- The browser menu groups familiar tab, history, page-tool, and settings
+  actions. It closes after navigation and on Escape. Compact windows keep the
+  browser return path and place overflow navigation in a bounded scroll region.
 - Page headers name the surface directly. Eyebrows are reserved for real state
   or trust boundaries, not decoration. Support copy appears only when it
   explains consequence, provenance, privacy, recovery, or an empty state.

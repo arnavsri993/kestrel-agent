@@ -30,7 +30,13 @@ import {
 import { BrowserHistoryPopover } from "./BrowserHistoryPopover";
 import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 
-type ToolbarMenu = "extensions" | "tools" | "screen" | "history" | null;
+type ToolbarMenu =
+  | "browser"
+  | "extensions"
+  | "tools"
+  | "screen"
+  | "history"
+  | null;
 
 type MenuTriggerEvent = FormEvent | MouseEvent<HTMLButtonElement>;
 
@@ -69,6 +75,11 @@ export function BrowserToolbar({
   onToggleAgent,
   onToggleBookmarksBar,
   onToggleSleepingTabs,
+  onNewTab,
+  onOrganizeTabs,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
   onNavigate,
   onSelectTab,
   onBack,
@@ -108,6 +119,11 @@ export function BrowserToolbar({
   onToggleAgent(): void;
   onToggleBookmarksBar(): void;
   onToggleSleepingTabs(): void;
+  onNewTab(): void;
+  onOrganizeTabs(): void;
+  onZoomIn(): void;
+  onZoomOut(): void;
+  onZoomReset(): void;
   onNavigate(input: string): void;
   onSelectTab(tabId: string): void;
   onBack(): void;
@@ -917,10 +933,12 @@ export function BrowserToolbar({
         </button>
         <button
           type="button"
-          aria-label="Capabilities and commands"
-          aria-keyshortcuts="Meta+K"
-          title="Capabilities (⌘K)"
-          onClick={onOpenMenu}
+          className={`browser-toolbar-menu-trigger ${openMenu === "browser" ? "active" : ""}`}
+          aria-label="Browser menu"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "browser"}
+          title="Browser menu"
+          onClick={(event) => toggleMenu("browser", event)}
         >
           <Icon name="more" />
         </button>
@@ -959,15 +977,204 @@ export function BrowserToolbar({
             transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
             role="menu"
             aria-label={
-              openMenu === "extensions"
+              openMenu === "browser"
+                ? "Browser menu"
+                : openMenu === "extensions"
                 ? "Extensions"
                 : openMenu === "tools"
                   ? "Tools"
                   : openMenu === "history"
-                    ? "History"
-                    : "Page options"
-              }
+                  ? "History"
+                  : "Page options"
+            }
           >
+            {openMenu === "browser" && (
+              <>
+                <header className="browser-toolbar-popover-header">
+                  <Icon name="more" />
+                  <span>
+                    <strong>Browser menu</strong>
+                    <small>Tabs, history, page tools, and settings</small>
+                  </span>
+                </header>
+                <div className="browser-toolbar-menu-list">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onNewTab)}
+                  >
+                    <Icon name="plus" />
+                    <span>New tab</span>
+                    <kbd>⌘T</kbd>
+                  </button>
+                </div>
+                <div
+                  className="browser-toolbar-menu-section browser-toolbar-menu-zoom"
+                  aria-label="Zoom"
+                >
+                  <span className="browser-toolbar-menu-section-label">
+                    Zoom
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label="Zoom out"
+                      onClick={() => runAndClose(onZoomOut)}
+                    >
+                      <span aria-hidden="true">−</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label="Reset zoom to 100 percent"
+                      onClick={() => runAndClose(onZoomReset)}
+                    >
+                      <span>Reset</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label="Zoom in"
+                      onClick={() => runAndClose(onZoomIn)}
+                    >
+                      <span aria-hidden="true">+</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="browser-toolbar-menu-list">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenBookmarks)}
+                  >
+                    <Icon name="star" />
+                    <span>Favorites</span>
+                    <kbd>⌘⇧D</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setOpenMenu("history")}
+                  >
+                    <Icon name="history" />
+                    <span>History</span>
+                    <kbd>⌘H</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOrganizeTabs)}
+                  >
+                    <Icon name="folder" />
+                    <span>Tab groups</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenDownloads)}
+                  >
+                    <Icon name="downloads" />
+                    <span>Downloads</span>
+                    <kbd>⌘J</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setOpenMenu("extensions")}
+                  >
+                    <Icon name="extensions" />
+                    <span>Extensions</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenSettings)}
+                  >
+                    <Icon name="lock" />
+                    <span>Passwords</span>
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                <div className="browser-toolbar-menu-list browser-toolbar-menu-list-separated">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenSettings)}
+                  >
+                    <Icon name="trash" />
+                    <span>Clear browsing data…</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onPrint)}
+                  >
+                    <Icon name="print" />
+                    <span>Print page</span>
+                    <kbd>⌘P</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void saveScreenshot()}
+                  >
+                    <Icon name="screenshot" />
+                    <span>Screenshot</span>
+                    <kbd>⇧⌘S</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpenMenu(null);
+                      onOpenFind();
+                    }}
+                  >
+                    <Icon name="search" />
+                    <span>Find in page…</span>
+                    <kbd>⌘F</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setOpenMenu("tools")}
+                  >
+                    <Icon name="tools" />
+                    <span>More tools</span>
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                <div className="browser-toolbar-menu-list browser-toolbar-menu-list-separated">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenSettings)}
+                  >
+                    <Icon name="settings" />
+                    <span>Settings</span>
+                    <Icon name="chevron" />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => runAndClose(onOpenMenu)}
+                  >
+                    <Icon name="command" />
+                    <span>Command Center</span>
+                    <Icon name="chevron" />
+                  </button>
+                </div>
+                {toolNotice && (
+                  <p className="browser-toolbar-popover-notice" role="status">
+                    {toolNotice}
+                  </p>
+                )}
+              </>
+            )}
             {openMenu === "extensions" && (
               <>
                 <header className="browser-toolbar-popover-header">
@@ -1157,11 +1364,11 @@ export function BrowserToolbar({
                     <span>All browser settings</span>
                     <Icon name="chevron" />
                   </button>
-                  <button type="button" role="menuitem" onClick={() => runAndClose(onOpenMenu)}>
-                    <Icon name="command" />
-                    <span>Capabilities and commands</span>
-                    <Icon name="chevron" />
-                  </button>
+                <button type="button" role="menuitem" onClick={() => runAndClose(onOpenMenu)}>
+                  <Icon name="command" />
+                  <span>Command Center</span>
+                  <Icon name="chevron" />
+                </button>
                 </div>
               </>
             )}

@@ -52,9 +52,9 @@ export function CommandCenter({
     <PageFrame
       as="main"
       className="command-center"
-      title="Capabilities"
+      title="Command Center"
       titleId="command-center-title"
-      description="Find a Kestrel surface or start a focused task without leaving the workbench."
+      description="Search Kestrel surfaces, shortcuts, and focused ways to start work."
       measure="standard"
       actions={onBack ? <SurfaceBackButton onBack={onBack} /> : undefined}
     >
@@ -64,7 +64,7 @@ export function CommandCenter({
         <input
           autoFocus
           value={query}
-          placeholder="Search capabilities"
+          placeholder="Search Kestrel surfaces and shortcuts"
           onChange={(event) => setQuery(event.target.value)}
         />
         <kbd>⌘ K</kbd>
