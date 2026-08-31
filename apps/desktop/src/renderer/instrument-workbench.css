@@ -580,11 +580,6 @@
 	box-shadow: none;
 }
 
-.setup-onboarding .setup-rail li.current button {
-	background: var(--selected);
-	box-shadow: inset 0 0 0 1px var(--line-strong);
-}
-
 .setup-onboarding .model-source-picker,
 .setup-onboarding .finish-checks {
 	border-radius: 12px;
