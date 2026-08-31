@@ -109,6 +109,7 @@ const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
 const MAX_BOOKMARKS = 2_000;
 const MAX_TAB_FOLDER_NAMING_TABS = 8;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
+const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
 const ALWAYS_ALLOW_PERMISSIONS = new Set([
 	"fullscreen",
@@ -131,6 +132,7 @@ function screenshotCancellationError(signal: AbortSignal): Error {
 function capturePageWithDeadline(
 	webContents: WebContents,
 	signal?: AbortSignal,
+	timeoutMs = SCREENSHOT_CAPTURE_TIMEOUT_MS,
 ): ReturnType<WebContents["capturePage"]> {
 	if (signal?.aborted)
 		return Promise.reject(screenshotCancellationError(signal));
@@ -154,7 +156,7 @@ function capturePageWithDeadline(
 						),
 					),
 				),
-			SCREENSHOT_CAPTURE_TIMEOUT_MS,
+			timeoutMs,
 		);
 		signal?.addEventListener("abort", abort, { once: true });
 		void webContents.capturePage().then(
@@ -1319,8 +1321,19 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
-	async setContentBounds(bounds: Rectangle, visible: boolean): Promise<void> {
+	async setContentBounds(
+		bounds: Rectangle,
+		visible: boolean,
+	): Promise<string | undefined> {
 		this.assertAvailable();
+		// Renderer menus live in the main window's renderer, while web pages are
+		// native WebContentsViews painted above that renderer. Capture the page
+		// before releasing the native view so opening a menu does not turn the
+		// entire page area into an empty canvas.
+		const pagePreview =
+			!visible && bounds.width >= 160 && bounds.height >= 120
+				? await this.captureNativePagePreview()
+				: undefined;
 		const seq = ++this.contentBoundsSeq;
 		const size = this.window.getContentSize();
 		const windowWidth = size[0] ?? 0;
@@ -1339,6 +1352,44 @@ export class UserBrowserService {
 		this.contentVisible = visible && width >= 160 && height >= 120;
 		await this.syncActiveView();
 		if (seq !== this.contentBoundsSeq) await this.syncActiveView();
+		return pagePreview;
+	}
+
+	private async captureNativePagePreview(): Promise<string | undefined> {
+		if (!this.contentVisible) return undefined;
+		const tab = this.state.tabs.find(
+			(candidate) => candidate.id === this.state.activeTabId,
+		);
+		if (
+			!tab ||
+			!tab.url ||
+			tab.error ||
+			tab.file ||
+			isKestrelAppPageUrl(tab.url)
+		)
+			return undefined;
+		const record = this.views.get(tab.id);
+		if (
+			!record ||
+			record.view.webContents.isDestroyed() ||
+			!this.window.contentView.children.includes(record.view)
+		)
+			return undefined;
+		try {
+			const image = await capturePageWithDeadline(
+				record.view.webContents,
+				undefined,
+				PAGE_PREVIEW_CAPTURE_TIMEOUT_MS,
+			);
+			const { width, height } = image.getSize();
+			if (width < 1 || height < 1) return undefined;
+			return `data:image/png;base64,${image.toPNG().toString("base64")}`;
+		} catch {
+			// The native view is still hidden even if Electron cannot provide a
+			// frame. The menu remains usable and the renderer falls back to its
+			// normal canvas background.
+			return undefined;
+		}
 	}
 
 	updateSettings(settings: UserBrowserSettings): UserBrowserState {

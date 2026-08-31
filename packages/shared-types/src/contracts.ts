@@ -3763,6 +3763,7 @@ export type RendererResponse =
 			selectedAttachments: SelectedAttachment[];
 		}
 	| { ok: true; filePreview: FilePreview }
+	| { ok: true; browserPagePreview?: string }
 	| { ok: true; extensions: InstalledExtension[] }
 	| { ok: true; extension: InstalledExtension }
 	| { ok: true; screenshotPath?: string; cancelled?: boolean }

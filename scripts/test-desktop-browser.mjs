@@ -187,6 +187,15 @@ async function assertNativeViewHiddenThroughOverlayExit(locator, label) {
 	await locator.waitFor({ state: "detached" });
 }
 
+async function assertNativePagePreviewVisible() {
+	const preview = page.locator(".browser-native-page-preview");
+	await preview.waitFor({ state: "visible" });
+	await page.waitForFunction(() => {
+		const image = document.querySelector(".browser-native-page-preview");
+		return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+	});
+}
+
 async function waitForNativeViewportBounds(label) {
 	const deadline = Date.now() + 30_000;
 	let latest;
@@ -934,6 +943,7 @@ try {
 	await page.getByRole("button", { name: "Tab tools", exact: true }).click();
 	const initialTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
 	await initialTabToolsMenu.waitFor();
+	await assertNativePagePreviewVisible();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained above the tab tools menu",
@@ -947,6 +957,7 @@ try {
 	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
 	const browserMenu = page.getByRole("menu", { name: "Browser menu" });
 	await browserMenu.waitFor();
+	await assertNativePagePreviewVisible();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained above the browser menu",
@@ -984,6 +995,7 @@ try {
 	await page.getByRole("button", { name: "Tools", exact: true }).click();
 	const toolbarToolsMenu = page.getByRole("menu", { name: "Tools" });
 	await toolbarToolsMenu.waitFor();
+	await assertNativePagePreviewVisible();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained above the toolbar tools menu",
@@ -1013,6 +1025,7 @@ try {
 	await page.waitForFunction(
 		() => document.activeElement?.id === "browser-address-input",
 	);
+	await assertNativePagePreviewVisible();
 	await page.keyboard.press("Escape");
 	await assertNativeViewHiddenThroughOverlayExit(
 		page.locator("#browser-address-suggestions"),
