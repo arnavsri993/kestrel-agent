@@ -472,7 +472,7 @@ try {
 	await page.getByLabel("Message Kestrel").fill(preservedDraft);
 	await page.keyboard.press("Meta+K");
 	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
+		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
 	await page
 		.locator(".command-groups button")
@@ -532,7 +532,7 @@ try {
 		.waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
+		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
 	await page
 		.locator(".command-groups button")
@@ -603,7 +603,7 @@ try {
 	await page.locator("#runtime-prompt").waitFor();
 	await page.keyboard.press("Meta+K");
 	await page
-		.getByRole("heading", { name: "Capabilities", exact: true })
+		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
 	await page
 		.locator(".command-groups button")

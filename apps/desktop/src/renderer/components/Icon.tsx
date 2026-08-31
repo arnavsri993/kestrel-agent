@@ -36,6 +36,7 @@ const paths: Record<string, string[]> = {
 	sliders: ["M4 6h16", "M4 12h16", "M4 18h16", "M8 4v4M16 10v4M10 16v4"],
 	screenshot: ["M5 5h5M5 5v5M19 5h-5M19 5v5M5 19h5M5 19v-5M19 19h-5M19 19v-5"],
 	calculator: ["M5 3h14v18H5z", "M8 7h8", "M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15h.01M8 18h8"],
+	trash: ["M5 7h14", "M10 11v6M14 11v6", "M6 7l1 13h10l1-13", "M9 7V4h6v3"],
 	print: ["M6 9V4h12v5", "M6 18H4v-6h16v6h-2", "M6 15h12v6H6z", "M17 12h.01"],
 	devtools: ["M4 5h16v14H4z", "M8 9l3 3-3 3", "M13 15h3"],
 	sleep: ["M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"],

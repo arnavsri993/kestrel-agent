@@ -656,6 +656,11 @@ export function BrowserWorkspace({
             sleepingTabsEnabled: !state.settings.sleepingTabsEnabled,
           })
         }
+        onNewTab={() => void createTab()}
+        onOrganizeTabs={() => void openOrganizeTabs()}
+        onZoomIn={() => void zoomIn(activeTab.id)}
+        onZoomOut={() => void zoomOut(activeTab.id)}
+        onZoomReset={() => void zoomReset(activeTab.id)}
         bookmarked={state.bookmarks.some((item) => item.url === activeTab.url)}
         onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}
