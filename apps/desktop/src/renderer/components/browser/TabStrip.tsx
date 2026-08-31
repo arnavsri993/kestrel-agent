@@ -34,7 +34,10 @@ import {
 } from "./tab-strip-layout";
 import { recentTabFavicon, TabFavicon } from "./TabFavicon";
 
-const DETACH_DRAG_THRESHOLD_PX = 36;
+// A tab only needs to leave the chrome by roughly two-thirds of its height to
+// tear off. Do not require the cross-axis movement to dominate: real pointer
+// drags are often diagonal, especially when moving a tab down and away.
+const DETACH_DRAG_THRESHOLD_PX = 24;
 const REORDER_DRAG_THRESHOLD_PX = 12;
 const COLLAPSED_TAB_FOLDERS_KEY = "kestrel:collapsed-tab-folders";
 
@@ -636,10 +639,7 @@ export function TabStrip({
 		drag.lastAt = event.timeStamp;
 		setDragDelta({ x: dx, y: dy });
 		if (orientation === "horizontal") {
-			if (
-				Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX &&
-				Math.abs(dy) > Math.abs(dx)
-			) {
+			if (Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX) {
 				if (!detachDraggedTab()) setDragIntent("detach");
 				return;
 			}
@@ -649,7 +649,7 @@ export function TabStrip({
 			}
 			return;
 		}
-		if (Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX && Math.abs(dx) > Math.abs(dy)) {
+		if (Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX) {
 			if (!detachDraggedTab()) setDragIntent("detach");
 			return;
 		}
@@ -678,17 +678,13 @@ export function TabStrip({
 		const fastDetach =
 			orientation === "horizontal"
 				? Math.abs(drag.velocityY) >= 900 &&
-					Math.abs(dy) >= 10 &&
-					Math.abs(drag.velocityY) > Math.abs(drag.velocityX)
+					Math.abs(dy) >= 10
 				: Math.abs(drag.velocityX) >= 900 &&
-					Math.abs(dx) >= 10 &&
-					Math.abs(drag.velocityX) > Math.abs(drag.velocityY);
+					Math.abs(dx) >= 10;
 		const shouldDetach =
 			fastDetach || (orientation === "horizontal"
-				? Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX &&
-					Math.abs(dy) > Math.abs(dx)
-				: Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX &&
-					Math.abs(dx) > Math.abs(dy));
+				? Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX
+				: Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX);
 		if (shouldDetach && onDetachTab) {
 			if (tabCanDetach(tabs.find((tab) => tab.id === tabId))) {
 				suppressClickTabIdRef.current = tabId;
