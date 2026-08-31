@@ -150,6 +150,7 @@ export function BrowserToolbar({
   const historyPopoverRequestRef = useRef(0);
   const overlayOpenRef = useRef(false);
   const suggestionsCloseTimerRef = useRef<number | null>(null);
+  const selectAddressAfterPointerRef = useRef(false);
   const inlineCompletionRef = useRef<{ typed: string; completed: string } | null>(
     null,
   );
@@ -643,6 +644,14 @@ export function BrowserToolbar({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
+            onPointerDown={(event) => {
+              // The browser's default click placement runs after onFocus and
+              // collapses the selection that onFocus creates. Remember a
+              // first pointer focus so the click handler can restore the
+              // full-URL selection after that default placement.
+              selectAddressAfterPointerRef.current =
+                document.activeElement !== event.currentTarget;
+            }}
             onFocus={(event) => {
               clearSuggestionsCloseTimer();
               const input = event.currentTarget;
@@ -660,6 +669,18 @@ export function BrowserToolbar({
               };
               if (needsUrlReset) window.requestAnimationFrame(selectAll);
               else selectAll();
+            }}
+            onClick={(event) => {
+              if (!selectAddressAfterPointerRef.current) return;
+              selectAddressAfterPointerRef.current = false;
+              const input = event.currentTarget;
+              const selectAll = () => {
+                if (document.activeElement === input) input.select();
+              };
+              // Select synchronously so an immediate ⌘C copies the URL, then
+              // repeat after React's controlled-value update settles.
+              selectAll();
+              window.requestAnimationFrame(selectAll);
             }}
             onBlur={scheduleCloseSuggestions}
             onKeyDown={handleAddressKeyDown}

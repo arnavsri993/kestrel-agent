@@ -989,13 +989,49 @@ try {
 		document.querySelector("#browser-address-input")?.blur();
 	});
 	await page.locator("#browser-address-input").click();
+	await page.waitForFunction(() => {
+		const input = document.querySelector("#browser-address-input");
+		return (
+			input instanceof HTMLInputElement &&
+			document.activeElement === input &&
+			input.selectionStart === 0 &&
+			input.selectionEnd === input.value.length
+		);
+	});
 	await page.waitForFunction(
 		() => document.activeElement?.id === "browser-address-input",
 	);
+	const addressInput = page.locator("#browser-address-input");
+	const currentAddress = `${origin}/one`;
+	assert.equal(await addressInput.inputValue(), currentAddress);
+	const selection = await addressInput.evaluate((node) => ({
+		start: node.selectionStart,
+		end: node.selectionEnd,
+		length: node.value.length,
+	}));
+	assert.deepEqual(selection, {
+		start: 0,
+		end: selection.length,
+		length: selection.length,
+	});
+	await addressInput.press("Meta+C");
 	assert.equal(
-		await page.locator("#browser-address-input").inputValue(),
-		`${origin}/one`,
+		await application.evaluate(({ clipboard }) => clipboard.readText()),
+		currentAddress,
 	);
+	const pastedAddress = `${origin}/two`;
+	await application.evaluate(
+		({ clipboard }, text) => clipboard.writeText(text),
+		pastedAddress,
+	);
+	await addressInput.press("Meta+V");
+	await page.waitForFunction(
+		(expected) =>
+			document.querySelector("#browser-address-input")?.value === expected,
+		pastedAddress,
+	);
+	assert.equal(await addressInput.inputValue(), pastedAddress);
+	await addressInput.fill(currentAddress);
 	await page.locator("#browser-address-suggestions").waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
