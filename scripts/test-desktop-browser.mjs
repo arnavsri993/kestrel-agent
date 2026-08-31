@@ -298,6 +298,7 @@ async function assertBrowserChromeLayout({
 			toolbar: bounds(".browser-toolbar"),
 			bookmarks: bounds(".browser-bookmarks-bar"),
 			kestrel: bounds(".kestrel-sidebar"),
+			recommendations: bounds(".kestrel-widget-canvas"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
 			toolbarDragFill: bounds(".browser-toolbar-drag-fill"),
@@ -363,6 +364,12 @@ async function assertBrowserChromeLayout({
 			layout.viewport.x >= layout.kestrel.right,
 			"Browser content must begin after the lower Kestrel navigation rail",
 		);
+		if (layout.recommendations) {
+			assert(
+				layout.recommendations.x >= layout.kestrel.right,
+				"New Tab recommendations must sit beside the Kestrel navigation rail",
+			);
+		}
 	} else if (!vertical) {
 		assert.equal(
 			layout.viewport.x,
