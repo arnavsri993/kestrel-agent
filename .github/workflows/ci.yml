@@ -32,6 +32,7 @@ jobs:
       - run: corepack pnpm audit --prod
       - run: corepack pnpm assets:verify
       - run: corepack pnpm audit:references
+      - run: corepack pnpm verify:openclaw2
       - run: corepack pnpm audit:market
       - run: corepack pnpm build
       - run: corepack pnpm test:e2e
