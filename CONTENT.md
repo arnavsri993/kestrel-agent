@@ -15,7 +15,7 @@
 - Kestrel is the one place to bring a project or question, from first inspection through verified delivery.
 - A user should not need to choose a provider or memorize a model ID before starting. Automatic routing is the default; manual routing is an advanced option.
 - Project access is explicit and revocable. Kestrel can work only inside folders the user grants.
-- Existing Codex, Claude Code, OpenClaw, and Hermes instructions, settings, memory, skills, and agents can be dry-run imported without changing the source.
+- Existing Codex, Claude Code, OpenClaw, and Hermes instructions, non-secret setting translations, memory, skills, and agents can be dry-run reviewed and imported without changing the source. Raw settings, credentials, executable plugin configuration, and consequential automation/channel bindings are not copied.
 - “Codex replacement” is a workflow objective, not a blanket superiority claim.
 
 ### Primary hierarchy

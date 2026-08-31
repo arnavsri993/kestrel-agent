@@ -17,7 +17,7 @@ import type {
 	LocalRuntimeProgress,
 	LocalRuntimeStatus,
 	MemoryRecord,
-	MigrationPlanContract,
+	MigrationPlanPreviewContract,
 	MigrationResultContract,
 	ModelProfile,
 	ModelProviderSummary,
@@ -7032,11 +7032,29 @@ function ProviderVerificationSettings() {
 	);
 }
 
+function migrationReviewLabel(
+	kind: MigrationPlanPreviewContract["reviewItems"][number]["kind"],
+) {
+	switch (kind) {
+		case "automation":
+			return "automation";
+		case "channel-binding":
+			return "channel binding";
+		case "acp-binding":
+			return "ACP binding";
+		case "plugin":
+			return "plugin decision";
+		case "plugin-load-path":
+			return "plugin load path";
+	}
+}
+
 function MigrationSettings() {
 	const [product, setProduct] = useState<
 		"openclaw" | "hermes" | "codex" | "claude-code"
 	>("codex");
-	const [plan, setPlan] = useState<MigrationPlanContract | null>(null);
+	const [plan, setPlan] = useState<MigrationPlanPreviewContract | null>(null);
+	const [planId, setPlanId] = useState<string | null>(null);
 	const [result, setResult] = useState<MigrationResultContract | null>(null);
 	const [confirmation, setConfirmation] = useState("");
 	const [overwrite, setOverwrite] = useState(false);
@@ -7046,6 +7064,9 @@ function MigrationSettings() {
 		setBusy(true);
 		setError("");
 		setResult(null);
+		setPlan(null);
+		setPlanId(null);
+		setConfirmation("");
 		try {
 			const response = await window.kestrel.request({
 				type: "migration-select-plan",
@@ -7055,8 +7076,10 @@ function MigrationSettings() {
 				throw new Error(
 					"error" in response ? response.error : "Migration inspection failed.",
 				);
-			if ("migrationPlan" in response && !response.cancelled)
+			if ("migrationPlan" in response && !response.cancelled) {
 				setPlan(response.migrationPlan);
+				setPlanId(response.migrationPlanId ?? null);
+			}
 		} catch (cause) {
 			setError(
 				cause instanceof Error ? cause.message : "Migration inspection failed.",
@@ -7066,13 +7089,13 @@ function MigrationSettings() {
 		}
 	}
 	async function apply() {
-		if (!plan || confirmation !== "IMPORT") return;
+		if (!plan || !planId || confirmation !== "IMPORT") return;
 		setBusy(true);
 		setError("");
 		try {
 			const response = await window.kestrel.request({
 				type: "migration-apply-plan",
-				plan,
+				planId,
 				confirmation: "IMPORT",
 				overwrite,
 			});
@@ -7081,6 +7104,8 @@ function MigrationSettings() {
 					"error" in response ? response.error : "Migration failed.",
 				);
 			if ("migrationResult" in response) setResult(response.migrationResult);
+			setPlan(null);
+			setPlanId(null);
 			setConfirmation("");
 		} catch (cause) {
 			setError(cause instanceof Error ? cause.message : "Migration failed.");
@@ -7094,7 +7119,8 @@ function MigrationSettings() {
 				<strong>Reference-product migration</strong>
 				<p>
 					Dry-run an import from OpenClaw, Hermes, Codex, or Claude Code.
-					Source files stay untouched.
+					Source files stay untouched; settings become checksum-checked,
+					non-secret translations.
 				</p>
 				<div className="button-row">
 					<select
@@ -7119,15 +7145,15 @@ function MigrationSettings() {
 				{plan && (
 					<details open>
 						<summary>
-							{plan.items.length} source files · {plan.translations.length}{" "}
-							translated settings ·{" "}
+							{plan.items.length} transferable source files ·{" "}
+							{plan.translatedSettings} sanitized settings ·{" "}
 							{plan.items.filter((item) => item.status === "conflict").length}{" "}
 							conflicts
 						</summary>
 						<small>Destination · {plan.targetRoot}</small>
 						<ul className="workspace-grants">
 							{plan.items.slice(0, 12).map((item) => (
-								<li key={`${item.product}:${item.sourcePath}`}>
+								<li key={`${item.category}:${item.sourcePath}`}>
 									<span>
 										{item.category} · {item.sourcePath}
 									</span>
@@ -7135,6 +7161,27 @@ function MigrationSettings() {
 								</li>
 							))}
 						</ul>
+						{plan.reviewItems.length > 0 && (
+							<>
+								<strong>Manual review required</strong>
+								<ul className="workspace-grants">
+									{plan.reviewItems.map((item) => (
+										<li key={`${item.sourcePath}:${item.kind}`}>
+											<span>
+												{item.count} {migrationReviewLabel(item.kind)}
+												{item.count === 1 ? "" : "s"} · {item.sourcePath}
+											</span>
+											<span>{item.status}</span>
+										</li>
+									))}
+								</ul>
+								<small>
+									Schedules, bindings, plugins, and plugin paths are never copied.
+									Recreate only the ones you want through Kestrel's own approvals
+									and protected credential fields.
+								</small>
+							</>
+						)}
 						{plan.warnings.map((warning) => (
 							<small key={warning}>{warning}</small>
 						))}
@@ -7156,7 +7203,10 @@ function MigrationSettings() {
 						<button
 							className="button primary"
 							disabled={
-								busy || confirmation !== "IMPORT" || plan.items.length === 0
+								busy ||
+								confirmation !== "IMPORT" ||
+								!planId ||
+								plan.items.length + plan.translatedSettings === 0
 							}
 							onClick={() => void apply()}
 						>
