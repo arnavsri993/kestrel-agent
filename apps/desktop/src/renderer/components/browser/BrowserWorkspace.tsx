@@ -35,6 +35,7 @@ export function BrowserWorkspace({
   browser,
   agentName,
 	greetingName,
+  navigationSidebar,
   agentOpen,
   onToggleAgent,
   onNewAgent,
@@ -59,6 +60,7 @@ export function BrowserWorkspace({
   browser: UserBrowserController;
   agentName: string;
 	greetingName?: string | undefined;
+  navigationSidebar?: ReactNode;
   agentOpen: boolean;
   onToggleAgent(): void;
   onNewAgent(prompt?: string): void;
@@ -603,6 +605,7 @@ export function BrowserWorkspace({
       }`}
       aria-label="Browser"
     >
+      {navigationSidebar}
       <TabStrip
         tabs={state.tabs}
         originFavicons={state.originFavicons}

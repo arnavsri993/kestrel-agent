@@ -9662,6 +9662,38 @@ export function App() {
 			)}
 		</motion.div>
 	) : undefined;
+	const kestrelNavigation = showKestrelSidebar ? (
+		<KestrelSidebar
+			activeDestination={
+				activeSidebarDestination === "browser" ||
+				activeSidebarDestination === "agent" ||
+				activeSidebarDestination === "projects" ||
+				activeSidebarDestination === "writing" ||
+				activeSidebarDestination === "approvals" ||
+				activeSidebarDestination === "settings"
+					? activeSidebarDestination
+					: "capabilities"
+			}
+			activeSessionId={activeRuntimeSessionId}
+			activeProjectPath={activeProjectPath}
+			agentName={activeAgentName}
+			pendingApprovals={pendingApprovalCount}
+			sessions={runtimeSessions}
+			projects={workspaceGrants}
+			onNewTask={() => startNewAgent()}
+			onOpenBrowser={openBrowser}
+			onOpenAgent={openAgent}
+			onOpenWriting={openWritingStudio}
+			onReviewApprovals={reviewApprovals}
+			onOpenCapabilities={openCommandCenter}
+			onOpenProjects={() => void openAppPage("projects")}
+			onOpenSettings={() => openSettings("browser")}
+			onOpenProject={openProject}
+			onOpenProjectChat={startProjectChat}
+			onOpenSession={openSidebarSession}
+			onOpenTaskHistory={() => void openAppPage("work")}
+		/>
+	) : undefined;
 	return (
 		<ProductShellTransition>
 			<motion.div
@@ -9672,38 +9704,6 @@ export function App() {
 				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 				transition={{ duration: reduced ? 0 : 0.14 }}
 			>
-				{showKestrelSidebar && (
-					<KestrelSidebar
-						activeDestination={
-							activeSidebarDestination === "browser" ||
-							activeSidebarDestination === "agent" ||
-							activeSidebarDestination === "projects" ||
-							activeSidebarDestination === "writing" ||
-							activeSidebarDestination === "approvals" ||
-							activeSidebarDestination === "settings"
-								? activeSidebarDestination
-								: "capabilities"
-						}
-						activeSessionId={activeRuntimeSessionId}
-						activeProjectPath={activeProjectPath}
-						agentName={activeAgentName}
-						pendingApprovals={pendingApprovalCount}
-						sessions={runtimeSessions}
-						projects={workspaceGrants}
-						onNewTask={() => startNewAgent()}
-						onOpenBrowser={openBrowser}
-						onOpenAgent={openAgent}
-						onOpenWriting={openWritingStudio}
-						onReviewApprovals={reviewApprovals}
-						onOpenCapabilities={openCommandCenter}
-						onOpenProjects={() => void openAppPage("projects")}
-						onOpenSettings={() => openSettings("browser")}
-						onOpenProject={openProject}
-						onOpenProjectChat={startProjectChat}
-						onOpenSession={openSidebarSession}
-						onOpenTaskHistory={() => void openAppPage("work")}
-					/>
-				)}
 					<section className="browser-main-plane">
 						<AnimatePresence initial={false}>
 							{deepLinkNotice && (
@@ -9728,6 +9728,7 @@ export function App() {
 						browser={browser}
 						agentName={activeAgentName}
 						greetingName={greetingName}
+						navigationSidebar={kestrelNavigation}
 						agentOpen={agentSidebarOpen}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}

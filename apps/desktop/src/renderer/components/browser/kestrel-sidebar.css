@@ -38,6 +38,51 @@
 	--browser-chrome-height: 80px;
 }
 
+/* Keep the lower browser plane as a real two-column layout. The navigation
+ * rail and New Tab shelf must be siblings, not an absolutely positioned rail
+ * that can end up underneath the recommendation content. Browser chrome still
+ * spans both columns above them. */
+.browser-workspace:not(.browser-workspace-vertical) {
+	grid-template-columns:
+		var(--kestrel-sidebar-space) minmax(0, 1fr) var(--agent-panel-width);
+	grid-template-areas:
+		"tabs tabs tabs"
+		"toolbar toolbar toolbar"
+		"viewport viewport .";
+}
+
+.browser-workspace.browser-workspace-bookmarks:not(.browser-workspace-vertical) {
+	grid-template-areas:
+		"tabs tabs tabs"
+		"toolbar toolbar toolbar"
+		"bookmarks bookmarks bookmarks"
+		"viewport viewport .";
+}
+
+.browser-workspace:not(.browser-workspace-vertical):has(> .kestrel-sidebar) {
+	grid-template-areas:
+		"tabs tabs tabs"
+		"toolbar toolbar toolbar"
+		"kestrel-sidebar viewport .";
+}
+
+.browser-workspace.browser-workspace-bookmarks:not(.browser-workspace-vertical):has(> .kestrel-sidebar) {
+	grid-template-areas:
+		"tabs tabs tabs"
+		"toolbar toolbar toolbar"
+		"bookmarks bookmarks bookmarks"
+		"kestrel-sidebar viewport .";
+}
+
+.browser-workspace:not(.browser-workspace-vertical) > .kestrel-sidebar {
+	position: relative;
+	inset: auto;
+	grid-area: kestrel-sidebar;
+	min-height: 0;
+	width: auto;
+	height: auto;
+}
+
 .browser-main-plane {
 	position: relative;
 	width: 100%;
@@ -92,18 +137,8 @@
 /* Browser chrome owns the full-width drag region. The viewport begins after
  * the navigation rail while tabs, toolbar, and bookmarks remain edge to edge. */
 .browser-workspace:not(.browser-workspace-vertical) .browser-viewport {
-	width: calc(
-		100% - var(--kestrel-sidebar-space) - var(--agent-panel-width)
-	);
-	margin-left: var(--kestrel-sidebar-space);
-}
-
-.ai-browser-app.agent-sidebar-collapsed
-	.browser-workspace:not(.browser-workspace-vertical)
-	.browser-viewport {
-	width: calc(
-		100% - var(--kestrel-sidebar-space) - var(--agent-panel-width)
-	);
+	width: 100%;
+	margin-left: 0;
 }
 
 /* Keep vertical tabs in the lower workspace as well. The toolbar and optional
