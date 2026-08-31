@@ -89,6 +89,7 @@ export function BrowserWorkspace({
   const findTabIdRef = useRef<string | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [openChromeMenus, setOpenChromeMenus] = useState({
     tab: false,
     toolbar: false,
@@ -315,7 +316,7 @@ export function BrowserWorkspace({
         else if (command === "new-agent") onNewAgent();
         else if (command === "open-commands") onOpenMenu();
         else if (command === "open-history") openHistoryPopover();
-        else if (command === "open-downloads") onOpenDownloads();
+        else if (command === "open-downloads") setDownloadsOpen(true);
         else if (command === "open-bookmarks") onOpenBookmarks();
         else if (command === "open-settings") onOpenSettings?.();
         else if (command === "show-shortcuts") onShowShortcuts?.();
@@ -330,7 +331,7 @@ export function BrowserWorkspace({
       onNewAgent,
       onOpenMenu,
       openHistoryPopover,
-      onOpenDownloads,
+      setDownloadsOpen,
       onOpenBookmarks,
       onOpenSettings,
       onShowShortcuts,
@@ -481,7 +482,7 @@ export function BrowserWorkspace({
         openHistoryPopover();
       } else if (key === "j") {
         event.preventDefault();
-        onOpenDownloads();
+        setDownloadsOpen(true);
       } else if (key === "f") {
         const target = event.target as HTMLElement | null;
         if (target?.closest("#runtime-prompt, textarea, input")) return;
@@ -540,7 +541,7 @@ export function BrowserWorkspace({
     onOpenBookmarks,
     openHistoryPopover,
     openFind,
-    onOpenDownloads,
+    setDownloadsOpen,
     onOpenMenu,
     onOpenSettings,
     onShowShortcuts,
@@ -646,6 +647,8 @@ export function BrowserWorkspace({
         addressRef={addressRef as RefObject<HTMLInputElement | null>}
         showBookmarksBar={state.settings.showBookmarksBar}
         sleepingTabsEnabled={state.settings.sleepingTabsEnabled}
+        downloads={[...state.downloads].reverse()}
+        downloadsOpen={downloadsOpen}
         onToggleBookmarksBar={() =>
           void browser.updateSettings({
             showBookmarksBar: !state.settings.showBookmarksBar,
@@ -672,7 +675,21 @@ export function BrowserWorkspace({
         onOpenHistoryFull={onOpenHistory}
         onClearHistory={() => void browser.clearHistory()}
         historyPopoverRequestId={historyPopoverRequestId}
-        onOpenDownloads={onOpenDownloads}
+        onDownloadsOpenChange={setDownloadsOpen}
+        onStartDownloadDrag={(downloadId) => {
+          void browser.startDownloadDrag(downloadId).catch(() => undefined);
+        }}
+        onOpenDownload={(downloadId) => {
+          setDownloadsOpen(false);
+          void browser.openDownload(downloadId).catch(() => undefined);
+        }}
+        onRevealDownload={(downloadId) => {
+          setDownloadsOpen(false);
+          void browser.revealDownload(downloadId).catch(() => undefined);
+        }}
+        onCancelDownload={(downloadId) => {
+          void browser.cancelDownload(downloadId).catch(() => undefined);
+        }}
         onOpenBookmarks={onOpenBookmarks}
         onOpenFind={() => {
           openFind();

@@ -2848,6 +2848,12 @@ function registerIpc(): void {
       await requestBrowserService.openDownload(request.downloadId);
       return { ok: true };
     }
+    if (request.type === "browser-start-download-drag") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      requestBrowserService.startDownloadDrag(request.downloadId);
+      return { ok: true };
+    }
     if (request.type === "browser-cancel-download") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");

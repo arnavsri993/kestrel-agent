@@ -121,6 +121,9 @@ const ALWAYS_DENY_PERMISSIONS = new Set([
 	"fileSystem",
 	"windowManagement",
 ]);
+const DOWNLOAD_DRAG_ICON = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+	'<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="#25282d"/><path d="M32 12v27m0 0L21 28m11 11 11-11M16 51h32" fill="none" stroke="#f0f1f2" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+)}`;
 
 function screenshotCancellationError(signal: AbortSignal): Error {
 	return signal.reason instanceof Error
@@ -1367,24 +1370,29 @@ export class UserBrowserService {
 	}
 
 	revealDownload(downloadId: string): void {
-		const download = this.state.downloads.find(
-			(item) => item.id === downloadId,
-		);
-		const path = this.downloadPaths.get(downloadId);
-		if (!download || !path || !download.canReveal || !existsSync(path))
+		const available = this.availableDownload(downloadId);
+		if (!available)
 			throw new Error("This download is no longer available to reveal.");
-		shell.showItemInFolder(path);
+		shell.showItemInFolder(available.path);
 	}
 
 	async openDownload(downloadId: string): Promise<void> {
-		const download = this.state.downloads.find(
-			(item) => item.id === downloadId,
-		);
-		const path = this.downloadPaths.get(downloadId);
-		if (!download || !path || !download.canReveal || !existsSync(path))
+		const available = this.availableDownload(downloadId);
+		if (!available)
 			throw new Error("This download is no longer available to open.");
-		const error = await shell.openPath(path);
+		const error = await shell.openPath(available.path);
 		if (error) throw new Error(error);
+	}
+
+	startDownloadDrag(downloadId: string): void {
+		this.assertAvailable();
+		const available = this.availableDownload(downloadId);
+		if (!available || available.download.status !== "completed")
+			throw new Error("This download is no longer available to drag.");
+		this.window.webContents.startDrag({
+			file: available.path,
+			icon: nativeImage.createFromDataURL(DOWNLOAD_DRAG_ICON),
+		});
 	}
 
 	cancelDownload(downloadId: string): UserBrowserState {
@@ -3537,6 +3545,24 @@ export class UserBrowserService {
 	private requireActiveTab(): UserBrowserTab {
 		if (!this.state.activeTabId) throw new Error("No browser tab is active.");
 		return this.requireTab(this.state.activeTabId);
+	}
+
+	private availableDownload(
+		downloadId: string,
+	): { download: UserBrowserDownload; path: string } | undefined {
+		const download = this.state.downloads.find(
+			(item) => item.id === downloadId,
+		);
+		if (!download || !download.canReveal) return undefined;
+		const storedPath = this.downloadPaths.get(downloadId);
+		const filename = basename(download.filename);
+		const path =
+			storedPath ??
+			(filename === download.filename
+				? join(this.downloadDirectory, filename)
+				: undefined);
+		if (!path || !existsSync(path)) return undefined;
+		return { download, path };
 	}
 
 	private requireView(tabId: string): ViewRecord {
