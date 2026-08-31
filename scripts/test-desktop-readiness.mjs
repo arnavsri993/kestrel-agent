@@ -97,9 +97,7 @@ try {
 	await page
 		.getByRole("button", { name: "Open readiness", exact: true })
 		.click();
-	await page
-		.getByRole("heading", { name: "Readiness", exact: true })
-		.waitFor();
+	await page.locator("h1").filter({ hasText: "Readiness" }).waitFor();
 	await page
 		.getByRole("heading", { name: "What can work right now" })
 		.waitFor();
