@@ -58,6 +58,10 @@ import { PaymentCardVault } from "./payment-card-vault";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
 import { MigrationManager, PluginInstaller, readBoundedResponseBytes } from "@kestrel/agent-core";
 import { PluginTrustStore } from "./plugin-trust-store";
+import {
+  migrationPlanPreview,
+  PendingMigrationPlanStore,
+} from "./migration-plan-store";
 import { ElectronBrowserService } from "./electron-browser-service";
 import {
   UserBrowserService,
@@ -560,6 +564,7 @@ const pendingCommunicationScans = new Map<
     expiresAt: number;
   }
 >();
+const pendingMigrationPlans = new PendingMigrationPlanStore();
 
 function safeGreetingName(value: string): string | undefined {
 	const normalized = value.normalize("NFKC").trim();
@@ -3864,9 +3869,11 @@ function registerIpc(): void {
         return {
           ok: true,
           cancelled: true,
-          migrationPlan: new MigrationManager().plan(
-            [],
-            join(app.getPath("userData"), "migrations"),
+          migrationPlan: migrationPlanPreview(
+            new MigrationManager().plan(
+              [],
+              join(app.getPath("userData"), "migrations"),
+            ),
           ),
         };
       const targetOptions = {
@@ -3884,26 +3891,33 @@ function registerIpc(): void {
         return {
           ok: true,
           cancelled: true,
-          migrationPlan: new MigrationManager().plan(
-            [],
-            join(app.getPath("userData"), "migrations"),
+          migrationPlan: migrationPlanPreview(
+            new MigrationManager().plan(
+              [],
+              join(app.getPath("userData"), "migrations"),
+            ),
           ),
         };
+      const plan = new MigrationManager().plan(
+        [{ product: request.product, root: source.filePaths[0] }],
+        target.filePaths[0],
+      );
       return {
         ok: true,
-        migrationPlan: new MigrationManager().plan(
-          [{ product: request.product, root: source.filePaths[0] }],
-          target.filePaths[0],
-        ),
+        migrationPlan: migrationPlanPreview(plan),
+        migrationPlanId: pendingMigrationPlans.create(event.sender.id, plan),
       };
     }
     if (request.type === "migration-apply-plan")
       return {
         ok: true,
-        migrationResult: new MigrationManager().apply(request.plan, {
-          approved: request.confirmation === "IMPORT",
-          overwrite: request.overwrite,
-        }),
+        migrationResult: new MigrationManager().apply(
+          pendingMigrationPlans.consume(event.sender.id, request.planId),
+          {
+            approved: request.confirmation === "IMPORT",
+            overwrite: request.overwrite,
+          },
+        ),
       };
     if (request.type === "skin-import-file") {
       const options = {

@@ -1553,19 +1553,51 @@ export const MigrationItemSchema = z.object({
 });
 export const MigrationTranslationSchema = z.object({
 	product: MigrationProductSchema,
+	sourceRoot: z.string().min(1),
 	sourcePath: z.string(),
+	sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
 	destinationPath: z.string().min(1),
 	values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
 	sha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
+export const MigrationReviewItemSchema = z.object({
+	product: MigrationProductSchema,
+	sourcePath: z.string(),
+	kind: z.enum([
+		"automation",
+		"channel-binding",
+		"acp-binding",
+		"plugin",
+		"plugin-load-path",
+	]),
+	count: z.number().int().positive(),
+	status: z.literal("review-required"),
+});
+export type MigrationReviewItem = z.infer<typeof MigrationReviewItemSchema>;
 export const MigrationPlanSchema = z.object({
 	createdAt: z.string().datetime(),
 	targetRoot: z.string().min(1),
 	items: z.array(MigrationItemSchema).max(2_000),
 	warnings: z.array(z.string()),
 	translations: z.array(MigrationTranslationSchema).max(2_000),
+	reviewItems: z.array(MigrationReviewItemSchema).max(2_000),
 });
 export type MigrationPlanContract = z.infer<typeof MigrationPlanSchema>;
+export const MigrationPlanPreviewItemSchema = z.object({
+	category: z.enum(["instructions", "settings", "memory", "skill", "agent"]),
+	sourcePath: z.string(),
+	status: z.enum(["ready", "conflict"]),
+});
+export const MigrationPlanPreviewSchema = z.object({
+	targetRoot: z.string().min(1),
+	items: z.array(MigrationPlanPreviewItemSchema).max(2_000),
+	translatedSettings: z.number().int().nonnegative().max(2_000),
+	warnings: z.array(z.string()),
+	reviewItems: z.array(MigrationReviewItemSchema).max(2_000),
+});
+export type MigrationPlanPreviewContract = z.infer<
+	typeof MigrationPlanPreviewSchema
+>;
 export const MigrationResultSchema = z.object({
 	imported: z.array(z.string()),
 	skipped: z.array(z.string()),
@@ -3594,7 +3626,7 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({
 		type: z.literal("migration-apply-plan"),
-		plan: MigrationPlanSchema,
+		planId: z.string().uuid(),
 		confirmation: z.literal("IMPORT"),
 		overwrite: z.boolean().default(false),
 	}),
@@ -3794,7 +3826,12 @@ export type RendererResponse =
 			cancelled?: boolean;
 	  }
 	| { ok: true; pluginMutation: PluginMutation; plugins: PluginSummary[] }
-	| { ok: true; migrationPlan: MigrationPlanContract; cancelled?: boolean }
+	| {
+			ok: true;
+			migrationPlan: MigrationPlanPreviewContract;
+			migrationPlanId?: string;
+			cancelled?: boolean;
+	  }
 	| { ok: true; migrationResult: MigrationResultContract }
 	| { ok: true };
 
