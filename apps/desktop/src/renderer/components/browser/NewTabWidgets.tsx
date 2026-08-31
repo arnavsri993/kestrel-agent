@@ -1144,14 +1144,10 @@ export function NewTabWidgets({
 			className={`kestrel-widget-canvas kestrel-widget-canvas-${layoutClass}${
 				editing ? " is-editing" : ""
 			}`}
-			aria-labelledby="new-tab-widgets-title"
+			aria-label="New Tab widgets"
 			data-layout-class={layoutClass}
 		>
-			<header className="kestrel-widget-canvas-header">
-				<div>
-					<span className="kestrel-widget-canvas-kicker">Continuity</span>
-					<h2 id="new-tab-widgets-title">Continue where you left off</h2>
-				</div>
+			<div className="kestrel-widget-canvas-toolbar">
 				<div className="kestrel-widget-canvas-actions">
 					{editing && (
 						<AddWidgetMenu enabled={workingSettings.enabled} onAdd={handleAdd} />
@@ -1166,7 +1162,7 @@ export function NewTabWidgets({
 						<span>{editing ? "Done" : "Customize"}</span>
 					</button>
 				</div>
-			</header>
+			</div>
 
 			{items.length > 0 ? (
 				<div className="kestrel-widget-grid kestrel-widget-shelves" aria-label="New Tab widgets">
