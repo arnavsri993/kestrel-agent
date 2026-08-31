@@ -474,6 +474,22 @@ describe("UserBrowserService", () => {
     expect(view.visible).toBe(false);
   });
 
+  it("captures the active page before releasing its native view for a menu", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const view = electron.state.views[0]!;
+
+    const preview = await service.setContentBounds(
+      { x: 0, y: 0, width: 300, height: 200 },
+      false,
+    );
+
+    expect(preview).toMatch(/^data:image\/png;base64,/);
+    expect(view.webContents.capturePage).toHaveBeenCalledOnce();
+    expect(view.visible).toBe(false);
+  });
+
   it("removes a detached page from the source browser service", async () => {
     const { service, window } = createService();
     const first = service.getState().tabs[0]!;

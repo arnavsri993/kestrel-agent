@@ -39,7 +39,7 @@ export interface UserBrowserController {
 	setContentBounds(
 		bounds: { x: number; y: number; width: number; height: number },
 		visible: boolean,
-	): Promise<void>;
+	): Promise<string | undefined>;
 	toggleCalculator(bounds?: BrowserContentBounds): Promise<void>;
 	pageContext(tabId?: string): Promise<UserBrowserPageContext | undefined>;
 	updateSettings(settings: Partial<UserBrowserSettings>): Promise<void>;
@@ -96,7 +96,9 @@ export function useUserBrowser(): UserBrowserController {
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
-	const contentBoundsRequestRef = useRef<Promise<void>>(Promise.resolve());
+	const contentBoundsRequestRef = useRef<Promise<string | undefined>>(
+		Promise.resolve(undefined),
+	);
 	stateRef.current = state;
 	const applyState = useCallback((nextState: UserBrowserState) => {
 		stateRef.current = nextState;
@@ -281,6 +283,9 @@ export function useUserBrowser(): UserBrowserController {
 						visible,
 					});
 					if (!response.ok) throw new Error(responseError(response));
+					return "browserPagePreview" in response
+						? response.browserPagePreview
+						: undefined;
 				});
 			contentBoundsRequestRef.current = pending;
 			return pending;

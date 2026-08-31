@@ -98,7 +98,12 @@ export function BrowserWorkspace({
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
   const [organizeTabsPresent, setOrganizeTabsPresent] = useState(false);
   const [historyPopoverRequestId, setHistoryPopoverRequestId] = useState(0);
+  const [nativePagePreview, setNativePagePreview] = useState<{
+    tabId: string;
+    dataUrl: string;
+  } | null>(null);
   const organizeTabsRequestRef = useRef(0);
+  const pagePreviewRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
   const syncBoundsRef = useRef<() => void>(() => undefined);
   const scheduleBoundsSyncRef = useRef<() => void>(() => undefined);
@@ -227,11 +232,27 @@ export function BrowserWorkspace({
       width: Math.max(0, Math.round(rect.width)),
       height: Math.max(0, Math.round(rect.height)),
     };
-    const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${nativePageVisible}`;
+    const targetTabId = activeTab?.id ?? null;
+    const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${nativePageVisible}:${targetTabId ?? ""}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
-    void setContentBounds(bounds, nativePageVisible).catch(() => undefined);
-  }, [nativePageVisible, setContentBounds]);
+    const requestId = ++pagePreviewRequestRef.current;
+    void setContentBounds(bounds, nativePageVisible)
+      .then((browserPagePreview) => {
+        if (requestId !== pagePreviewRequestRef.current) return;
+        if (nativePageVisible) {
+          setNativePagePreview(null);
+          return;
+        }
+        if (browserPagePreview && targetTabId) {
+          setNativePagePreview({
+            tabId: targetTabId,
+            dataUrl: browserPagePreview,
+          });
+        }
+      })
+      .catch(() => undefined);
+  }, [activeTab?.id, nativePageVisible, setContentBounds]);
 
   const scheduleBoundsSync = useCallback(() => {
     syncBoundsRef.current();
@@ -292,6 +313,7 @@ export function BrowserWorkspace({
 
   useEffect(
     () => () => {
+      pagePreviewRequestRef.current += 1;
       lastBoundsRef.current = "";
       void setContentBounds({ x: 0, y: 0, width: 0, height: 0 }, false).catch(
         () => undefined,
@@ -800,6 +822,17 @@ export function BrowserWorkspace({
         role="tabpanel"
         aria-label={activeTab.title}
       >
+		{!nativePageVisible &&
+			nativePageEligible &&
+			nativePagePreview?.tabId === activeTab.id && (
+			<img
+				className="browser-native-page-preview"
+				src={nativePagePreview.dataUrl}
+				alt=""
+				aria-hidden="true"
+				draggable={false}
+			/>
+		)}
 		<AnimatePresence initial={false} mode="sync">
 			{activeAppPage && appPage}
 		</AnimatePresence>

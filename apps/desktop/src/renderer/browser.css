@@ -2180,6 +2180,22 @@ body:has(.ai-browser-app),
 	background: var(--canvas);
 }
 
+/* Native web pages sit above the renderer, so browser menus temporarily use
+ * a captured frame to preserve the page beneath the interactive menu while
+ * the native view is released for pointer input. */
+.browser-native-page-preview {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	display: block;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	object-fit: fill;
+	pointer-events: none;
+	user-select: none;
+}
+
 .file-tab-view {
 	position: absolute;
 	inset: 0;
