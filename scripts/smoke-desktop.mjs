@@ -5,7 +5,10 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	selectSettingsSection,
+} from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-desktop-smoke-"));
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
@@ -52,7 +55,7 @@ try {
 	await taskSettings.locator(".runtime-project-picker select").waitFor();
 	await taskSettings.getByText(/Auto routes model, thinking level/).waitFor();
 	await page.getByRole("button", { name: /^Model:/ }).click();
-	const modelMenu = page.getByRole("menu", {
+	const modelMenu = page.getByRole("dialog", {
 		name: "Choose provider, model, and thinking level",
 	});
 	await modelMenu.waitFor();
@@ -71,10 +74,7 @@ try {
 		true,
 	);
 	await openKestrelDestination(page, "Settings");
-	await page
-		.locator(".settings-nav")
-		.getByRole("button", { name: /^General/ })
-		.click();
+	await selectSettingsSection(page, "general", "General");
 	await page.getByText("Communication style", { exact: true }).waitFor();
 	await page.getByText("Run at login", { exact: true }).waitFor();
 

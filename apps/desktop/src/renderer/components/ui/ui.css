@@ -1161,7 +1161,7 @@
 .unified-ui .extension-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
 .unified-ui .empty-state { border-color: var(--line); border-radius: var(--radius-surface); background: var(--surface); }
 
-.unified-ui .legacy-product-surface > .life-page {
+.unified-ui .life-product-surface > .life-page {
 	width: min(1040px, calc(100% - 96px));
 	margin-inline: auto;
 }
@@ -1238,7 +1238,7 @@
 	.new-tab-recommendation { min-height: 190px; }
 	.command-pinned > div { grid-template-columns: 1fr; }
 	.unified-ui .page-frame { width: calc(100% - 40px); padding-top: 28px; }
-	.unified-ui .legacy-product-surface > .life-page { width: calc(100% - 40px); }
+	.unified-ui .life-product-surface > .life-page { width: calc(100% - 40px); }
 	.unified-ui .settings-layout { grid-template-columns: 1fr; gap: 20px; }
 	.unified-ui .settings-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 	.unified-ui .routing-mode-grid { grid-template-columns: 1fr; }
@@ -1978,11 +1978,6 @@ body { font-family: var(--sans); }
 .new-tab-recommendation-copy small { color: var(--muted); font-size: 12.5px; }
 .new-tab-recommendation-action { color: var(--ink-secondary); font-size: 13.5px; }
 
-@keyframes ui-view-enter {
-	from { opacity: 0; transform: translateY(6px); }
-	to { opacity: 1; transform: translateY(0); }
-}
-
 .agent-dot.working {
 	animation: ui-running-dot 1.4s ease-in-out infinite;
 }
@@ -2259,4 +2254,83 @@ body { font-family: var(--sans); }
 	.agent-conversation-host .voice-button.transcribing svg {
 		animation: none;
 	}
+}
+
+/* Shared route scaffold. The route remains a workbench plane, never a card. */
+.ui-page-frame {
+	width: min(100%, 1080px);
+	margin-inline: auto;
+}
+.ui-page-frame-reading { max-width: 720px; }
+.ui-page-frame-standard { max-width: 960px; }
+.ui-page-frame-wide { max-width: 1240px; }
+.ui-page-frame-full { max-width: none; }
+.ui-page-frame-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 20px;
+	margin-bottom: 24px;
+}
+.ui-page-frame-copy { min-width: 0; }
+.ui-page-frame-eyebrow {
+	margin: 0 0 6px;
+	color: var(--muted);
+	font-size: 11.5px;
+	font-weight: 580;
+	letter-spacing: 0.08em;
+	line-height: 15px;
+	text-transform: uppercase;
+}
+.ui-page-frame h1 {
+	margin: 0;
+	color: var(--ink);
+	font: 680 26px / 32px var(--display);
+	letter-spacing: -0.025em;
+}
+.ui-page-frame-description {
+	max-width: 68ch;
+	margin: 8px 0 0;
+	color: var(--ink-secondary);
+	font-size: 14px;
+	line-height: 21px;
+}
+.ui-page-frame-actions {
+	display: flex;
+	flex: none;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+}
+.ui-page-frame-navigation {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 40px;
+	margin: -8px 0 20px;
+}
+
+.ui-button-compact { min-height: 32px; padding-inline: 10px; font-size: 12.5px; }
+.ui-button-decision { min-height: 44px; padding-inline: 16px; }
+.ui-button-solid { background: var(--solid); color: var(--on-solid); box-shadow: var(--shadow-sm); }
+.ui-button-solid:hover:not(:disabled) { background: var(--solid-hover); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.ui-button-bordered { border-color: var(--line-strong); background: var(--surface-strong); color: var(--ink); box-shadow: var(--shadow-sm); }
+.ui-button-bordered:hover:not(:disabled) { background: var(--overlay); transform: translateY(-1px); }
+.ui-button-quiet { background: transparent; color: var(--ink-secondary); }
+.ui-button-quiet:hover:not(:disabled) { background: var(--surface); color: var(--ink); }
+.ui-button-destructive { border-color: color-mix(in srgb, var(--danger) 52%, var(--line)); background: transparent; color: var(--danger); }
+.ui-button-destructive:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+.ui-row { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.ui-row:has(.ui-row-icon) { grid-template-columns: 18px minmax(0, 1fr) auto auto; }
+.ui-row-status { min-width: 0; }
+.ui-row:focus-within { z-index: 1; background: var(--selected-soft); }
+.ui-card { border-color: var(--line); box-shadow: none; }
+.ui-card-interactive:focus-within { border-color: var(--focus); box-shadow: var(--focus-ring); }
+.ui-status { border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: var(--radius-control); text-transform: none; letter-spacing: 0; }
+.ui-empty-state { border-top: 1px solid var(--line); }
+
+@media (max-width: 720px) {
+	.ui-page-frame-header { display: grid; gap: 14px; }
+	.ui-page-frame-actions { justify-content: flex-start; }
 }

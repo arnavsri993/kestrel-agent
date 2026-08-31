@@ -2,14 +2,23 @@
  * controls remain full-width above it, while the actual page viewport reserves
  * the rail width so native browser content never sits underneath the panel. */
 .ai-browser-app {
-	--agent-panel-width: 360px;
+	--agent-panel-default-width: 336px;
+	--agent-panel-open-width: clamp(
+		288px,
+		var(--agent-panel-user-width, var(--agent-panel-default-width)),
+		min(520px, 44vw)
+	);
+	--agent-panel-width: var(
+		--agent-panel-presented-width,
+		var(--agent-panel-open-width)
+	);
 	--agent-panel-top: 88px;
 	position: relative;
 	display: block;
 }
 
 .ai-browser-app.agent-sidebar-collapsed {
-	--agent-panel-width: 0px;
+	--agent-panel-width: var(--agent-panel-presented-width, 0px);
 }
 
 .browser-main-plane {
@@ -74,8 +83,53 @@
 	-webkit-backdrop-filter: var(--vibrancy-blur);
 }
 
+.agent-sidebar-resize-handle {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -5px;
+	z-index: 12;
+	width: 10px;
+	border: 0;
+	background: transparent;
+	cursor: col-resize;
+	touch-action: none;
+}
+
+.agent-sidebar-resize-handle::after {
+	position: absolute;
+	top: 10px;
+	bottom: 10px;
+	left: 4px;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--focus);
+	content: "";
+	opacity: 0;
+	transform: scaleY(0.84);
+	transition:
+		opacity var(--motion-feedback) var(--ease-kestrel),
+		transform var(--motion-state) var(--ease-kestrel);
+}
+
+.agent-sidebar-resize-handle:hover::after,
+.agent-sidebar-resize-handle:focus-visible::after,
+.agent-sidebar-resizing .agent-sidebar-resize-handle::after {
+	opacity: 0.72;
+	transform: scaleY(1);
+}
+
+.agent-sidebar-resize-handle:focus-visible {
+	outline: none;
+}
+
+.agent-sidebar-resizing,
+.agent-sidebar-resizing * {
+	cursor: col-resize !important;
+	user-select: none !important;
+}
+
 .agent-sidebar.is-collapsed {
-	width: 0;
 	opacity: 0;
 	pointer-events: none;
 	transform: none;
@@ -563,19 +617,19 @@
 
 @media (max-width: 1120px) {
 	.ai-browser-app {
-		--agent-panel-width: 330px;
+		--agent-panel-default-width: 312px;
 	}
 }
 
 @media (max-width: 980px) {
 	.ai-browser-app {
-		--agent-panel-width: 305px;
+		--agent-panel-default-width: 288px;
 	}
 }
 
 @media (max-width: 760px) {
 	.ai-browser-app {
-		--agent-panel-width: 300px;
+		--agent-panel-width: 0px;
 	}
 }
 
@@ -709,5 +763,171 @@
 	.agent-approval-action,
 	.agent-sidebar-expand {
 		transition: none;
+	}
+}
+
+/* Compact Instrument Workbench ------------------------------------------------
+ * Native WebContentsView content is a sibling above the renderer, so this is
+ * a reserved dock rather than a floating sheet. The browser viewport gives the
+ * dock real space at compact widths; the Agent remains one click away without
+ * pretending renderer z-index can cover a native page. */
+.agent-compact-dock {
+	display: none;
+}
+
+@media (max-width: 760px) {
+	.agent-sidebar {
+		display: none;
+	}
+
+	.agent-sidebar-resize-handle {
+		display: none;
+	}
+
+	.agent-compact-dock {
+		position: fixed;
+		right: 10px;
+		bottom: 10px;
+		left: calc(var(--kestrel-sidebar-space) + 10px);
+		z-index: 30;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 44px;
+		gap: 6px;
+		min-width: 0;
+		height: 58px;
+		padding: 6px;
+		border: 1px solid var(--line-strong);
+		border-radius: 14px;
+		background: var(--raised);
+		box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
+	}
+
+	.agent-compact-entry,
+	.agent-compact-new {
+		min-width: 0;
+		min-height: 44px;
+		border: 0;
+		border-radius: var(--radius-control);
+		background: transparent;
+		color: var(--ink-secondary);
+		cursor: pointer;
+		transition:
+			background-color var(--motion-feedback) var(--ease-kestrel),
+			color var(--motion-feedback) var(--ease-kestrel),
+			transform var(--motion-feedback) var(--ease-kestrel);
+	}
+
+	.agent-compact-entry {
+		display: grid;
+		grid-template-columns: 10px minmax(0, 1fr) 16px;
+		align-items: center;
+		gap: 10px;
+		padding: 0 10px;
+		text-align: left;
+	}
+
+	.agent-compact-entry:hover,
+	.agent-compact-new:hover {
+		background: var(--overlay);
+		color: var(--ink);
+	}
+
+	.agent-compact-entry:active,
+	.agent-compact-new:active {
+		transform: scale(0.98);
+	}
+
+	.agent-compact-entry > svg,
+	.agent-compact-new svg {
+		width: 16px;
+		height: 16px;
+	}
+
+	.agent-compact-new {
+		display: grid;
+		place-items: center;
+		background: var(--solid);
+		color: var(--on-solid);
+	}
+
+	.agent-compact-new:hover {
+		background: var(--solid-hover);
+		color: var(--on-solid);
+	}
+
+	.agent-compact-copy {
+		display: grid;
+		min-width: 0;
+		gap: 1px;
+	}
+
+	.agent-compact-copy strong,
+	.agent-compact-copy small {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.agent-compact-copy strong {
+		color: var(--ink);
+		font-size: 12.5px;
+		font-weight: 620;
+		line-height: 17px;
+	}
+
+	.agent-compact-copy small {
+		color: var(--muted);
+		font-size: 11px;
+		line-height: 14px;
+	}
+
+	.agent-compact-state {
+		display: block;
+		width: 8px;
+		height: 8px;
+		border: 1px solid var(--ink-secondary);
+		border-radius: 50%;
+	}
+
+	.agent-compact-state.active,
+	.agent-compact-state.completed {
+		background: var(--ink);
+	}
+
+	.agent-compact-state.waiting {
+		width: 10px;
+		height: 9px;
+		border: 0;
+		border-radius: 1px;
+		background: var(--ink);
+		clip-path: polygon(50% 0, 100% 100%, 0 100%);
+	}
+
+	.agent-compact-state.failed {
+		border-radius: 2px;
+		transform: rotate(45deg);
+	}
+
+	.browser-workspace:not(.browser-workspace-vertical) .browser-viewport {
+		margin-bottom: 78px;
+	}
+
+	.browser-workspace-vertical .browser-viewport,
+	.browser-workspace-vertical .browser-tab-row-vertical {
+		bottom: 78px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-compact-entry,
+	.agent-compact-new {
+		transition: none;
+	}
+}
+
+@media (forced-colors: active) {
+	.agent-compact-dock {
+		border: 1px solid CanvasText;
+		background: Canvas;
 	}
 }

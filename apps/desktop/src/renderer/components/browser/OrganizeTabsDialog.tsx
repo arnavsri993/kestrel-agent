@@ -8,6 +8,7 @@ import type {
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
 import { TabFavicon } from "./TabFavicon";
+import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 
 const FOLDER_COLORS: readonly UserBrowserTabFolderColor[] = [
 	"blue",
@@ -80,6 +81,7 @@ export function OrganizeTabsDialog({
 	const [editingColor, setEditingColor] =
 		useState<UserBrowserTabFolderColor>("blue");
 	const [busy, setBusy] = useState(false);
+	const busyRef = useRef(false);
 	const [error, setError] = useState("");
 	const [selectedCloseTabIds, setSelectedCloseTabIds] = useState<Set<string>>(
 		() => new Set(),
@@ -87,6 +89,7 @@ export function OrganizeTabsDialog({
 	const dialogRef = useRef<HTMLDivElement | null>(null);
 	const editInputRef = useRef<HTMLInputElement | null>(null);
 	const returnFocusRef = useRef<HTMLElement | null>(null);
+	busyRef.current = busy;
 
 	useEffect(() => {
 		setOrganization(preview);
@@ -110,6 +113,8 @@ export function OrganizeTabsDialog({
 		});
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key === "Escape") {
+				if (event.defaultPrevented) return;
+				if (busyRef.current) return;
 				event.preventDefault();
 				onCancel();
 				return;
@@ -263,9 +268,17 @@ export function OrganizeTabsDialog({
 	}
 
 	return (
-		<div
+		<motion.div
 			className="organize-tabs-overlay"
 			role="presentation"
+			initial={reducedMotion ? false : { opacity: 0 }}
+			animate={{ opacity: 1 }}
+			exit={
+				reducedMotion
+					? { opacity: 1, pointerEvents: "none" }
+					: { opacity: 0, pointerEvents: "none" }
+			}
+			transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 			onMouseDown={(event) => {
 				if (event.target === event.currentTarget && !busy) onCancel();
 			}}
@@ -278,7 +291,12 @@ export function OrganizeTabsDialog({
 				aria-labelledby="organize-tabs-title"
 				initial={reducedMotion ? false : { opacity: 0, scale: 0.98, y: 8 }}
 				animate={{ opacity: 1, scale: 1, y: 0 }}
-				transition={{ duration: reducedMotion ? 0 : 0.16 }}
+				exit={
+					reducedMotion
+						? { opacity: 1, scale: 1, y: 0 }
+						: { opacity: 0, scale: 0.98, y: 8 }
+				}
+				transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 				aria-busy={busy}
 			>
 				<header className="organize-tabs-dialog-header">
@@ -473,6 +491,6 @@ export function OrganizeTabsDialog({
 					</button>
 				</footer>
 			</motion.div>
-		</div>
+		</motion.div>
 	);
 }

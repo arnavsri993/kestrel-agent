@@ -12,10 +12,16 @@ import type {
 	UserBrowserHistoryEntry,
 	UserBrowserTab,
 } from "@kestrel/shared-types";
-import { motion, useReducedMotion, type MotionStyle } from "motion/react";
+import {
+	AnimatePresence,
+	motion,
+	useReducedMotion,
+	type MotionStyle,
+} from "motion/react";
 import {
 	useCallback,
 	useEffect,
+	useId,
 	useMemo,
 	useRef,
 	useState,
@@ -23,6 +29,10 @@ import {
 } from "react";
 import { agentSessionRecency } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
+import {
+	KESTREL_CRITICAL_SPRING,
+	KESTREL_STATE_TRANSITION,
+} from "../../motion-contract";
 import { Icon } from "../Icon";
 import type { FrequentBrowserSite, SuggestedAgentAction } from "./new-tab";
 import {
@@ -575,6 +585,95 @@ function WidgetBody({
 	}
 }
 
+type WidgetPopover = {
+	open: boolean;
+	menuId: string;
+	rootRef: React.RefObject<HTMLDivElement | null>;
+	triggerRef: React.RefObject<HTMLButtonElement | null>;
+	menuRef: React.RefObject<HTMLDivElement | null>;
+	toggle(): void;
+	close(options?: { restoreFocus?: boolean }): void;
+};
+
+function useWidgetPopover(): WidgetPopover {
+	const [open, setOpen] = useState(false);
+	const rootRef = useRef<HTMLDivElement | null>(null);
+	const triggerRef = useRef<HTMLButtonElement | null>(null);
+	const menuRef = useRef<HTMLDivElement | null>(null);
+	const menuId = useId();
+
+	const close = useCallback(({ restoreFocus = false } = {}) => {
+		setOpen(false);
+		if (restoreFocus)
+			window.requestAnimationFrame(() => triggerRef.current?.focus());
+	}, []);
+
+	const toggle = useCallback(() => {
+		setOpen((current) => !current);
+	}, []);
+
+	useEffect(() => {
+		if (!open) return;
+		const frame = window.requestAnimationFrame(() => {
+			const menu = menuRef.current;
+			const current = menu?.querySelector<HTMLElement>(
+				'[aria-checked="true"]:not(:disabled)',
+			);
+			const first = menu?.querySelector<HTMLElement>(
+				'button:not(:disabled), [tabindex]:not([tabindex="-1"])',
+			);
+			(current ?? first)?.focus();
+		});
+		const isInside = (target: EventTarget | null) =>
+			target instanceof Node && Boolean(rootRef.current?.contains(target));
+		const onPointerDown = (event: PointerEvent) => {
+			if (!isInside(event.target)) close();
+		};
+		const onFocusIn = (event: FocusEvent) => {
+			if (!isInside(event.target)) close();
+		};
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape") return;
+			event.preventDefault();
+			close({ restoreFocus: true });
+		};
+		const onWindowBlur = () => close();
+		window.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("focusin", onFocusIn);
+		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("blur", onWindowBlur);
+		return () => {
+			window.cancelAnimationFrame(frame);
+			window.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("focusin", onFocusIn);
+			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("blur", onWindowBlur);
+		};
+	}, [close, open]);
+
+	return { open, menuId, rootRef, triggerRef, menuRef, toggle, close };
+}
+
+function moveWidgetPopoverFocus(
+	event: React.KeyboardEvent<HTMLDivElement>,
+) {
+	if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+	const items = Array.from(
+		event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
+	);
+	if (items.length === 0) return;
+	const current = items.indexOf(document.activeElement as HTMLButtonElement);
+	const next =
+		event.key === "Home"
+			? 0
+			: event.key === "End"
+				? items.length - 1
+				: (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) %
+					items.length;
+	event.preventDefault();
+	items[next]?.focus();
+}
+
 function SizeMenu({
 	definition,
 	currentSize,
@@ -584,36 +683,67 @@ function SizeMenu({
 	currentSize: NewTabWidgetSize;
 	onChange(size: NewTabWidgetSize): void;
 }) {
+	const reducedMotion = useReducedMotion() ?? false;
+	const popover = useWidgetPopover();
 	return (
-		<details className="kestrel-widget-size-menu">
-			<summary
+		<div
+			ref={popover.rootRef}
+			className="kestrel-widget-size-menu"
+			data-open={popover.open ? "true" : "false"}
+		>
+			<button
+				ref={popover.triggerRef}
+				type="button"
 				aria-label={`Change ${definition.title} size`}
+				aria-haspopup="menu"
+				aria-controls={popover.menuId}
+				aria-expanded={popover.open}
 				title={`Change ${definition.title} size`}
+				onClick={popover.toggle}
 			>
 				<Icon name="sliders" />
-			</summary>
-			<div className="kestrel-widget-size-popover" role="menu">
-				<strong>Widget size</strong>
-				{definition.supportedSizes.map((size) => (
-					<button
-						key={size}
-						type="button"
-						role="menuitemradio"
-						aria-checked={size === currentSize}
-						onClick={(event) => {
-							onChange(size);
-							event.currentTarget.closest("details")?.removeAttribute("open");
-						}}
+			</button>
+			<AnimatePresence initial={false}>
+				{popover.open && (
+					<motion.div
+						id={popover.menuId}
+						ref={popover.menuRef}
+						className="kestrel-widget-size-popover"
+						role="menu"
+						aria-label={`Change ${definition.title} size`}
+						initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.98 }}
+						animate={{ opacity: 1, y: 0, scale: 1 }}
+						exit={
+							reducedMotion
+								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+								: { opacity: 0, y: -4, scale: 0.98, pointerEvents: "none" }
+						}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+						onKeyDown={moveWidgetPopoverFocus}
 					>
-						<span>
-							<strong>{WIDGET_SIZE_LABELS[size]}</strong>
-							<small>{WIDGET_SIZE_DESCRIPTIONS[size]}</small>
-						</span>
-						{size === currentSize && <Icon name="check" />}
-					</button>
-				))}
-			</div>
-		</details>
+						<strong>Widget size</strong>
+						{definition.supportedSizes.map((size) => (
+							<button
+								key={size}
+								type="button"
+								role="menuitemradio"
+								aria-checked={size === currentSize}
+								onClick={() => {
+									onChange(size);
+									popover.close({ restoreFocus: true });
+								}}
+							>
+								<span>
+									<strong>{WIDGET_SIZE_LABELS[size]}</strong>
+									<small>{WIDGET_SIZE_DESCRIPTIONS[size]}</small>
+								</span>
+								{size === currentSize && <Icon name="check" />}
+							</button>
+						))}
+					</motion.div>
+				)}
+			</AnimatePresence>
+		</div>
 	);
 }
 
@@ -629,6 +759,8 @@ function WidgetCard({
 	onResize,
 	onRemove,
 	onDragStart,
+	onDragMove,
+	onDragEnd,
 }: {
 	item: NewTabWidgetLayoutItem;
 	definition: NewTabWidgetDefinition;
@@ -641,6 +773,8 @@ function WidgetCard({
 	onResize(id: NewTabWidgetId, size: NewTabWidgetSize): void;
 	onRemove(id: NewTabWidgetId): void;
 	onDragStart(id: NewTabWidgetId, event: ReactPointerEvent<HTMLButtonElement>): void;
+	onDragMove(event: ReactPointerEvent<HTMLButtonElement>): void;
+	onDragEnd(event: ReactPointerEvent<HTMLButtonElement>): void;
 }) {
 	const definitionForItem = definition;
 	const reducedMotion = useReducedMotion() ?? false;
@@ -663,16 +797,12 @@ function WidgetCard({
 			transition={
 				dragging
 					? { duration: 0 }
-					: {
-							default: {
-								duration: reducedMotion ? 0 : 0.18,
-								ease: [0.22, 1, 0.36, 1],
-							},
-							layout: {
-								duration: reducedMotion ? 0 : 0.22,
-								ease: [0.22, 1, 0.36, 1],
-							},
-						}
+					: reducedMotion
+						? { duration: 0 }
+						: {
+								default: KESTREL_CRITICAL_SPRING,
+								layout: KESTREL_CRITICAL_SPRING,
+							}
 			}
 			data-kestrel-widget-id={item.id}
 			style={style}
@@ -692,6 +822,10 @@ function WidgetCard({
 							type="button"
 							className="kestrel-widget-drag-handle"
 							onPointerDown={(event) => onDragStart(item.id, event)}
+							onPointerMove={onDragMove}
+							onPointerUp={onDragEnd}
+							onPointerCancel={onDragEnd}
+							onLostPointerCapture={onDragEnd}
 							onKeyDown={(event) => {
 								if (event.key === "ArrowUp" || event.key === "ArrowDown") {
 									event.preventDefault();
@@ -737,43 +871,75 @@ function AddWidgetMenu({
 	const available = Object.values(NEW_TAB_WIDGET_DEFINITIONS).filter(
 		(definition) => !enabled.includes(definition.id),
 	);
+	const reducedMotion = useReducedMotion() ?? false;
+	const popover = useWidgetPopover();
 	return (
-		<details className="kestrel-widget-add-menu">
-			<summary>
+		<div
+			ref={popover.rootRef}
+			className="kestrel-widget-add-menu"
+			data-open={popover.open ? "true" : "false"}
+		>
+			<button
+				ref={popover.triggerRef}
+				type="button"
+				aria-haspopup="dialog"
+				aria-controls={popover.menuId}
+				aria-expanded={popover.open}
+				onClick={popover.toggle}
+			>
 				<Icon name="plus" />
 				<span>Add widget</span>
-			</summary>
-			<div className="kestrel-widget-add-popover" role="dialog" aria-label="Add widget">
-				<strong>Widgets</strong>
-				<p>Choose what should live beneath your Kestrel input.</p>
-				{available.length > 0 ? (
-					<ul>
-						{available.map((definition) => (
-							<li key={definition.id}>
-								<button
-									type="button"
-									onClick={(event) => {
-										onAdd(definition.id);
-										event.currentTarget.closest("details")?.removeAttribute("open");
-								}}
-								>
-									<span className="kestrel-widget-add-icon" aria-hidden="true">
-										<Icon name={definition.icon} />
-									</span>
-									<span>
-										<strong>{definition.title}</strong>
-										<small>{definition.description}</small>
-									</span>
-									<Icon name="plus" />
-								</button>
-							</li>
-						))}
-					</ul>
-				) : (
-					<span className="kestrel-widget-add-empty">All available widgets are already on your page.</span>
+			</button>
+			<AnimatePresence initial={false}>
+				{popover.open && (
+					<motion.div
+						id={popover.menuId}
+						ref={popover.menuRef}
+						className="kestrel-widget-add-popover"
+						role="dialog"
+						aria-label="Add widget"
+						initial={reducedMotion ? false : { opacity: 0, y: -4, scale: 0.985 }}
+						animate={{ opacity: 1, y: 0, scale: 1 }}
+						exit={
+							reducedMotion
+								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+								: { opacity: 0, y: -4, scale: 0.985, pointerEvents: "none" }
+						}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+						onKeyDown={moveWidgetPopoverFocus}
+					>
+						<strong>Widgets</strong>
+						<p>Choose what should live beneath your Kestrel input.</p>
+						{available.length > 0 ? (
+							<ul>
+								{available.map((definition) => (
+									<li key={definition.id}>
+										<button
+											type="button"
+											onClick={() => {
+												onAdd(definition.id);
+												popover.close({ restoreFocus: true });
+											}}
+										>
+											<span className="kestrel-widget-add-icon" aria-hidden="true">
+												<Icon name={definition.icon} />
+											</span>
+											<span>
+												<strong>{definition.title}</strong>
+												<small>{definition.description}</small>
+											</span>
+											<Icon name="plus" />
+										</button>
+									</li>
+								))}
+							</ul>
+						) : (
+							<span className="kestrel-widget-add-empty">All available widgets are already on your page.</span>
+						)}
+					</motion.div>
 				)}
-			</div>
-		</details>
+			</AnimatePresence>
+		</div>
 	);
 }
 
@@ -794,6 +960,8 @@ export function NewTabWidgets({
 		id: NewTabWidgetId;
 		startX: number;
 		startY: number;
+		pointerId: number;
+		handle: HTMLButtonElement;
 	} | null>(null);
 	const [dragDelta, setDragDelta] = useState(EMPTY_DRAG_DELTA);
 
@@ -850,19 +1018,24 @@ export function NewTabWidgets({
 		[layoutClass, updateWorkingSettings],
 	);
 
-	const endDrag = useCallback(() => {
-		if (!dragStateRef.current) return;
+	const endDrag = useCallback((pointerId?: number) => {
+		const drag = dragStateRef.current;
+		if (!drag) return;
+		if (pointerId !== undefined && drag.pointerId !== pointerId) return;
+		/* Clear ownership before releasing capture so lostpointercapture cannot
+		 * finish the same gesture twice. */
 		dragStateRef.current = null;
+		if (drag.handle.hasPointerCapture(drag.pointerId))
+			drag.handle.releasePointerCapture(drag.pointerId);
 		setDraggingId(null);
 		setDragDelta(EMPTY_DRAG_DELTA);
 		onSettingsChange(settingsRef.current);
 	}, [onSettingsChange]);
 
-	useEffect(() => {
-		if (!draggingId) return;
-		const onPointerMove = (event: PointerEvent) => {
+	const handleDragMove = useCallback(
+		(event: ReactPointerEvent<HTMLButtonElement>) => {
 			const dragState = dragStateRef.current;
-			if (!dragState) return;
+			if (!dragState || event.pointerId !== dragState.pointerId) return;
 			setDragDelta({
 				x: event.clientX - dragState.startX,
 				y: event.clientY - dragState.startY,
@@ -899,26 +1072,26 @@ export function NewTabWidgets({
 			if (adjustedDestination !== currentIndex) {
 				commitReorder(dragState.id, adjustedDestination, false);
 			}
-		};
-		const onPointerUp = () => endDrag();
-		window.addEventListener("pointermove", onPointerMove);
-		window.addEventListener("pointerup", onPointerUp, { once: true });
-		window.addEventListener("pointercancel", onPointerUp, { once: true });
-		return () => {
-			window.removeEventListener("pointermove", onPointerMove);
-			window.removeEventListener("pointerup", onPointerUp);
-			window.removeEventListener("pointercancel", onPointerUp);
-		};
-	}, [commitReorder, draggingId, endDrag, layoutClass]);
+		},
+		[commitReorder, layoutClass],
+	);
+
+	const handleDragEnd = useCallback(
+		(event: ReactPointerEvent<HTMLButtonElement>) => endDrag(event.pointerId),
+		[endDrag],
+	);
 
 	const handleDragStart = useCallback(
 		(id: NewTabWidgetId, event: ReactPointerEvent<HTMLButtonElement>) => {
-			if (!editing) return;
+			if (!editing || event.button !== 0 || dragStateRef.current) return;
 			event.preventDefault();
+			event.currentTarget.setPointerCapture(event.pointerId);
 			dragStateRef.current = {
 				id,
 				startX: event.clientX,
 				startY: event.clientY,
+				pointerId: event.pointerId,
+				handle: event.currentTarget,
 			};
 			setDraggingId(id);
 			setDragDelta(EMPTY_DRAG_DELTA);
@@ -976,8 +1149,8 @@ export function NewTabWidgets({
 		>
 			<header className="kestrel-widget-canvas-header">
 				<div>
-					<span className="kestrel-widget-canvas-kicker">Home</span>
-					<h2 id="new-tab-widgets-title">What to do next</h2>
+					<span className="kestrel-widget-canvas-kicker">Continuity</span>
+					<h2 id="new-tab-widgets-title">Continue where you left off</h2>
 				</div>
 				<div className="kestrel-widget-canvas-actions">
 					{editing && (
@@ -996,7 +1169,7 @@ export function NewTabWidgets({
 			</header>
 
 			{items.length > 0 ? (
-				<div className="kestrel-widget-grid" aria-label="New Tab widgets">
+				<div className="kestrel-widget-grid kestrel-widget-shelves" aria-label="New Tab widgets">
 					{items.map((item) => {
 						const definition = NEW_TAB_WIDGET_DEFINITIONS[item.id];
 						return (
@@ -1013,6 +1186,8 @@ export function NewTabWidgets({
 								onResize={handleResize}
 								onRemove={handleRemove}
 								onDragStart={handleDragStart}
+								onDragMove={handleDragMove}
+								onDragEnd={handleDragEnd}
 							/>
 						);
 					})}

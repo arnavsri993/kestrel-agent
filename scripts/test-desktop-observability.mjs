@@ -4,7 +4,10 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	selectSettingsSection,
+} from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-observability-ui-"));
 const screenshotPath = resolve(
@@ -50,7 +53,7 @@ try {
 	});
 	await page.reload();
 	await openKestrelDestination(page, "Settings");
-	await page.getByRole("button", { name: /^Advanced/ }).click();
+	await selectSettingsSection(page, "advanced", "Advanced");
 	const observability = page.locator(".observability-setting");
 	await observability
 		.getByText("External observability", { exact: true })

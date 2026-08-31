@@ -97,3 +97,31 @@ export async function openKestrelDestination(page, label) {
 	await destination.waitFor();
 	await destination.evaluate((button) => button.click());
 }
+
+export async function selectSettingsSection(page, value, label) {
+	const scopeLabel = value === "browser" ? "Browser" : "Agent";
+	const scopeTab = page
+		.locator(".settings-scope-switcher")
+		.getByRole("tab", { name: new RegExp(`^${scopeLabel}`) });
+	if ((await scopeTab.getAttribute("aria-selected")) !== "true") {
+		await scopeTab.click();
+		await page.waitForFunction(
+			(scope) =>
+				[...document.querySelectorAll(".settings-scope-switcher [role=tab]")].some(
+					(tab) =>
+						tab.textContent?.trim().startsWith(scope) &&
+						tab.getAttribute("aria-selected") === "true",
+				),
+			scopeLabel,
+		);
+	}
+	const compactPicker = page.locator(".settings-section-picker select");
+	if (await compactPicker.isVisible().catch(() => false)) {
+		await compactPicker.selectOption(value);
+		return;
+	}
+	await page
+		.getByRole("navigation", { name: "Settings sections" })
+		.getByRole("button", { name: label, exact: true })
+		.click();
+}

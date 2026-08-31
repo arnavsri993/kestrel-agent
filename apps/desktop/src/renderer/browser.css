@@ -1525,7 +1525,9 @@ body:has(.ai-browser-app),
 	align-items: flex-end;
 	min-width: 0;
 	max-width: 100%;
-	overflow: hidden;
+	overflow-x: auto;
+	overflow-y: hidden;
+	overscroll-behavior-inline: contain;
 	scrollbar-width: none;
 }
 .browser-tabs::-webkit-scrollbar {
@@ -1537,8 +1539,9 @@ body:has(.ai-browser-app),
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) 26px;
 	flex: 1 1 260px;
-	/* Let every tab share the available strip before the title gets clipped. */
-	min-width: 0;
+	/* Preserve a readable target when the strip is crowded. The rail scrolls
+	 * instead of collapsing tabs into indistinguishable favicon slivers. */
+	min-width: 112px;
 	max-width: 520px;
 	height: 34px;
 	border-radius: 10px 10px 0 0;
@@ -1546,9 +1549,7 @@ body:has(.ai-browser-app),
 	cursor: pointer;
 	transition:
 		background-color var(--motion-feedback) var(--ease-kestrel),
-		color var(--motion-feedback) var(--ease-kestrel),
-		flex-basis var(--motion-state) var(--ease-kestrel),
-		max-width var(--motion-state) var(--ease-kestrel);
+		color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .browser-tab.is-dragging {
@@ -1556,35 +1557,27 @@ body:has(.ai-browser-app),
 }
 
 .browser-tab-row-compact .browser-tab {
-	flex: 0 0 30px;
-	min-width: 30px;
-	max-width: 30px;
-	grid-template-columns: 1fr;
+	/* Compact means a readable narrow tab, not a favicon matrix. Keep each
+	 * target large enough to identify and close, then let the strip overflow. */
+	flex: 0 0 112px;
+	min-width: 112px;
+	max-width: 112px;
+	grid-template-columns: minmax(0, 1fr) 24px;
 }
 
 .browser-tab-row-compact .browser-tab-folder {
-	justify-content: center;
-	width: 18px;
-	max-width: 18px;
+	justify-content: flex-start;
+	width: 96px;
+	max-width: 96px;
 	height: 26px;
 	margin-inline: 2px;
-	padding: 0;
+	padding: 0 7px;
 	border-radius: 6px 6px 0 0;
-}
-.browser-tab-row-compact .browser-tab-folder-name,
-.browser-tab-row-compact .browser-tab-folder-count,
-.browser-tab-row-compact .browser-tab-folder-chevron {
-	display: none;
-}
-
-.browser-tab-row-compact .browser-tab-title,
-.browser-tab-row-compact .browser-tab-close {
-	display: none;
 }
 
 .browser-tab-row-compact .browser-tab > button[role="tab"] {
-	justify-content: center;
-	padding: 0;
+	justify-content: flex-start;
+	padding-left: 7px;
 }
 
 .browser-tab-row-compact .browser-new-tab span {
@@ -2694,55 +2687,29 @@ body:has(.ai-browser-app),
 .browser-library {
 	padding: 52px clamp(24px, 6vw, 84px) 60px;
 }
-.browser-library > header {
-	display: grid;
-	grid-template-columns: auto minmax(180px, 420px) auto;
-	align-items: center;
-	gap: 18px;
-	max-width: 1040px;
-	margin: 0 auto 30px;
-}
-.browser-library > header > div {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-}
-.library-icon {
-	display: grid;
-	place-items: center;
-	width: 28px;
-	height: 28px;
-	color: var(--muted);
-}
-.library-icon svg {
-	width: 21px;
-	height: 21px;
-}
-.browser-library h1 {
-	margin: 0;
-	font: 620 22px / 1 var(--display);
-	letter-spacing: -0.025em;
-}
-.browser-library > header > label {
+.browser-library .library-search {
 	display: grid;
 	grid-template-columns: 18px minmax(0, 1fr);
 	align-items: center;
 	gap: 7px;
+	width: min(320px, 36vw);
 	height: 34px;
 	padding: 0 10px;
 	border: 1px solid var(--line);
 	border-radius: 8px;
 	background: var(--panel);
 }
-.browser-library > header > label:focus-within {
+.browser-library .library-search:focus-within {
 	border-color: var(--solid);
+	box-shadow: var(--focus-ring);
 }
-.browser-library > header > label svg {
+.browser-library .library-search svg {
 	width: 14px;
 	height: 14px;
 	color: var(--faint);
 }
-.browser-library > header input {
+.browser-library .library-search input {
+	width: 100%;
 	min-width: 0;
 	border: 0;
 	outline: 0;
@@ -3022,7 +2989,7 @@ body:has(.ai-browser-app),
 	margin: 0 auto;
 	padding-top: 52px;
 }
-.legacy-product-surface {
+.life-product-surface {
 	padding-top: 42px;
 }
 .secondary-surface-bar {
@@ -3061,7 +3028,7 @@ body:has(.ai-browser-app),
 	font-size: 11px;
 	font-weight: 600;
 }
-.legacy-product-surface > .page-frame {
+.life-product-surface > .page-frame {
 	max-width: 1180px;
 	margin: 0 auto;
 }
@@ -3490,12 +3457,8 @@ body:has(.ai-browser-app),
 	.browser-setting-row {
 		gap: 18px;
 	}
-	.browser-library > header {
-		grid-template-columns: 1fr auto;
-	}
-	.browser-library > header > label {
-		grid-column: 1 / -1;
-		grid-row: 2;
+	.browser-library .library-search {
+		width: min(320px, 42vw);
 	}
 	.agent-workspace {
 		padding-inline: 24px;
@@ -4881,8 +4844,7 @@ body:has(.calculator-overlay),
   .browser-toolbar-actions .browser-agent-toggle { width: 32px; padding: 0; }
   .browser-library { padding-inline: 24px; }
   .browser-setting-row { gap: 18px; }
-  .browser-library > header { grid-template-columns: 1fr auto; }
-  .browser-library > header > label { grid-column: 1 / -1; grid-row: 2; }
+  .browser-library .library-search { width: min(320px, 42vw); }
   .agent-workspace { padding-inline: 24px; }
   .agent-workspace-status { grid-template-columns: 1fr 1fr; }
   .agent-workspace-status > :nth-child(2) { border-right: 0; }
@@ -6345,7 +6307,11 @@ body:has(.calculator-overlay),
 	cursor: pointer;
 	backdrop-filter: blur(12px);
 	-webkit-backdrop-filter: blur(12px);
-	transition: all 0.15s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel),
+		transform var(--motion-feedback) var(--ease-kestrel);
 }
 
 .edge-layout-slider-btn:hover {
@@ -6400,7 +6366,9 @@ body:has(.calculator-overlay),
 	box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 24px rgba(59, 130, 246, 0.12);
 	backdrop-filter: blur(20px);
 	-webkit-backdrop-filter: blur(20px);
-	transition: all 0.2s ease;
+	transition:
+		border-color var(--motion-state) var(--ease-kestrel),
+		box-shadow var(--motion-state) var(--ease-kestrel);
 }
 
 .edge-copilot-pill:focus-within {
@@ -6448,7 +6416,9 @@ body:has(.calculator-overlay),
 	border: none;
 	color: rgba(255, 255, 255, 0.65);
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .edge-pill-action-btn:hover {
@@ -6472,7 +6442,10 @@ body:has(.calculator-overlay),
 	font-size: 11px;
 	font-weight: 500;
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .edge-model-selector-btn:hover {
@@ -6538,7 +6511,9 @@ body:has(.calculator-overlay),
 	border: none;
 	color: rgba(255, 255, 255, 0.65);
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .edge-voice-waveform-btn:hover {
@@ -6586,7 +6561,9 @@ body:has(.calculator-overlay),
 	border: none;
 	color: #ffffff;
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		transform var(--motion-feedback) var(--ease-kestrel);
 }
 
 .edge-pill-submit-btn:hover {
@@ -6622,11 +6599,11 @@ body:has(.calculator-overlay),
 	border: none;
 	cursor: pointer;
 	padding: 0;
-	transition: transform 0.15s ease;
+	transition: none;
 }
 
 .edge-shortcut-chip:hover {
-	transform: translateY(-3px);
+	transform: none;
 }
 
 .edge-shortcut-glyph {
@@ -6641,7 +6618,10 @@ body:has(.calculator-overlay),
 	box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
 	backdrop-filter: blur(12px);
 	-webkit-backdrop-filter: blur(12px);
-	transition: all 0.15s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-state) var(--ease-kestrel);
 }
 
 .edge-shortcut-chip:hover .edge-shortcut-glyph {
@@ -6698,13 +6678,15 @@ body:has(.calculator-overlay),
 	box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
 	backdrop-filter: blur(16px);
 	-webkit-backdrop-filter: blur(16px);
-	transition: all 0.2s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-state) var(--ease-kestrel);
 }
 
 .edge-journey-card:hover {
 	background: rgba(30, 36, 52, 0.9);
 	border-color: rgba(255, 255, 255, 0.22);
-	transform: translateY(-2px);
 	box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
 }
 
@@ -6758,7 +6740,9 @@ body:has(.calculator-overlay),
 	font-size: 11.5px;
 	font-weight: 500;
 	cursor: pointer;
-	transition: all 0.15s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel);
 }
 
 .edge-card-action-btn:hover {
@@ -6922,6 +6906,31 @@ body:has(.calculator-overlay),
 	margin-top: 8px;
 }
 
+@media (prefers-reduced-motion: reduce) {
+	.edge-wave-bars span {
+		animation: none;
+	}
+
+	:is(
+		.edge-layout-slider-btn,
+		.edge-copilot-pill,
+		.edge-pill-action-btn,
+		.edge-model-selector-btn,
+		.edge-voice-waveform-btn,
+		.edge-pill-submit-btn,
+		.edge-shortcut-glyph,
+		.edge-journey-card,
+		.edge-card-action-btn
+	) {
+		transition: none;
+	}
+
+	.edge-layout-slider-btn:hover,
+	.edge-pill-submit-btn:hover {
+		transform: none;
+	}
+}
+
 .browser-bookmark {
 	display: inline-flex;
 	align-items: center;
@@ -6941,7 +6950,9 @@ body:has(.calculator-overlay),
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	min-height: 40px;
+	height: 40px;
+	min-height: 0;
+	overflow: hidden;
 	padding: 4px 12px;
 	background: var(--surface);
 	border-bottom: 1px solid var(--line);
@@ -6998,10 +7009,18 @@ body:has(.calculator-overlay),
 }
 
 .composer-mention-list {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: calc(100% + 8px);
+	z-index: 45;
 	list-style: none;
 	margin: 0;
 	padding: 6px;
-	border-top: 1px solid var(--line);
+	border: 1px solid var(--line-strong);
+	border-radius: 12px;
+	background: var(--overlay);
+	box-shadow: var(--shadow-lg);
 	max-height: 260px;
 	overflow-y: auto;
 }
@@ -7047,5 +7066,227 @@ body:has(.calculator-overlay),
 	}
 	.background-upload-card .background-option-preview {
 		height: auto;
+	}
+}
+
+/* Instrument Workbench: browser controls are grouped by frequency, while the
+ * active page stays a single uninterrupted work plane. */
+.browser-tab-row-horizontal {
+	padding-right: 10px;
+	background: color-mix(in srgb, var(--chrome, var(--sidebar)) 94%, var(--canvas));
+}
+
+.browser-tab-leading-actions {
+	margin-right: 6px;
+	padding-right: 6px;
+	border-right: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+
+.browser-tab.active {
+	z-index: 3;
+	background: var(--workbench, var(--surface));
+	box-shadow: inset 0 2px 0 var(--solid), 0 1px 0 var(--workbench, var(--surface));
+}
+
+.browser-tab:not(.active):hover {
+	background: color-mix(in srgb, var(--surface) 66%, transparent);
+	color: var(--ink-secondary);
+}
+
+.browser-tab-title {
+	font-size: 11.5px;
+	font-weight: 540;
+}
+
+.browser-tab.active .browser-tab-title {
+	font-weight: 650;
+}
+
+.browser-tab.tab-sleeping:not(.active) {
+	background: transparent;
+	color: var(--faint);
+}
+
+.browser-tab.tab-sleeping:not(.active):hover {
+	background: color-mix(in srgb, var(--surface) 48%, transparent);
+}
+
+.browser-tab-drag-fill {
+	min-width: 40px;
+}
+
+.browser-navigation {
+	gap: 3px;
+	padding-right: 7px;
+	border-right: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+}
+
+.browser-toolbar-actions {
+	gap: 4px;
+	padding-left: 5px;
+}
+
+.browser-toolbar-actions .browser-extension-cluster {
+	padding-right: 5px;
+}
+
+.browser-toolbar-actions .browser-agent-toggle-quick {
+	width: 32px;
+	min-width: 32px;
+	margin-left: 1px;
+	padding: 0;
+	border: 1px solid transparent;
+}
+
+.browser-toolbar-actions .browser-agent-toggle-quick.active {
+	border-color: color-mix(in srgb, var(--solid) 25%, transparent);
+	background: color-mix(in srgb, var(--solid) 9%, transparent);
+}
+
+.browser-toolbar-popover {
+	position: fixed;
+	right: auto;
+	transform-origin: top right;
+}
+
+.browser-toolbar-settings-list > .browser-agent-toggle-menu {
+	grid-template-columns: 18px minmax(0, 1fr) 16px;
+	width: 100%;
+	min-height: 36px;
+	margin: 0;
+	padding: 0 7px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--ink-secondary);
+	font-size: 11.5px;
+	font-weight: 550;
+	text-align: left;
+}
+
+.browser-toolbar-settings-list > .browser-agent-toggle-menu:hover,
+.browser-toolbar-settings-list > .browser-agent-toggle-menu:focus-visible,
+.browser-toolbar-settings-list > .browser-agent-toggle-menu.active {
+	background: var(--selected);
+	color: var(--ink);
+}
+
+.browser-toolbar-settings-list > .browser-agent-toggle-menu .pragmatic-logo {
+	width: 16px;
+	height: 16px;
+	color: var(--status-ink);
+}
+
+.browser-toolbar-settings-list > .browser-agent-toggle-menu .pragmatic-logo svg {
+	width: 16px;
+	height: 16px;
+}
+
+@media (max-width: 760px) {
+	.browser-tab-row-horizontal {
+		padding-left: 78px;
+	}
+
+	.browser-toolbar-actions .browser-extension-cluster,
+	.browser-toolbar-actions > .browser-toolbar-secondary {
+		display: none;
+	}
+
+	.browser-navigation {
+		padding-right: 3px;
+	}
+}
+
+/* Keep the horizontal strip's established width contract: crowded tabs share
+ * the rail and the explicit tab-tools disclosure is the stable overflow path.
+ * This avoids a hidden second scroll target beside New Tab. */
+.browser-tabs {
+	/* Keep a single, bounded scroll rail when tabs outgrow the available
+	 * chrome. Each tab stays readable; New Tab remains a stable sibling. */
+	flex: 0 1 auto;
+	max-width: 100%;
+	overflow-x: auto;
+	overflow-y: hidden;
+	overscroll-behavior-inline: contain;
+	scrollbar-width: none;
+}
+
+.browser-tabs::-webkit-scrollbar {
+	display: none;
+}
+
+.browser-tab {
+	flex: 1 1 176px;
+	min-width: 112px;
+	max-width: 264px;
+	height: 35px;
+	border-radius: 9px 9px 0 0;
+	color: var(--faint);
+}
+
+/* Compact tabs deliberately trade some simultaneous visibility for legible,
+ * stable targets. The scroll container owns overflow; New Tab stays fixed at
+ * its trailing edge, so tab lifecycle never compresses labels into glyphs. */
+.browser-tab-row-horizontal.browser-tab-row-compact .browser-tabs {
+	flex: 1 1 auto;
+	max-width: none;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in srgb, var(--line-strong) 72%, transparent) transparent;
+	overscroll-behavior-inline: contain;
+}
+
+.browser-tab-row-horizontal.browser-tab-row-compact .browser-tabs::-webkit-scrollbar {
+	display: block;
+	height: 3px;
+}
+
+.browser-tab-row-horizontal.browser-tab-row-compact .browser-tab {
+	flex: 0 0 112px;
+	min-width: 112px;
+	max-width: 112px;
+}
+
+/* On narrow windows the tab rail scrolls as one stable strip. Do not let the
+ * flex row squeeze ordinary tabs into favicon-sized targets; New Tab remains
+ * a fixed sibling at the trailing edge of the rail. */
+@media (max-width: 760px) {
+	.browser-tab-row-horizontal .browser-tabs {
+		flex: 1 1 auto;
+		min-width: 0;
+		max-width: none;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(in srgb, var(--line-strong) 72%, transparent) transparent;
+		overscroll-behavior-inline: contain;
+	}
+
+	.browser-tab-row-horizontal .browser-tabs::-webkit-scrollbar {
+		display: block;
+		height: 3px;
+	}
+
+	.browser-tab-row-horizontal .browser-tab {
+		flex: 0 0 112px;
+		min-width: 112px;
+		max-width: 112px;
+	}
+
+	.browser-tab-row-horizontal .browser-tab-close {
+		opacity: 0.72;
+		pointer-events: auto;
+	}
+
+	.browser-tab-row-horizontal .browser-new-tab {
+		flex: 0 0 32px;
+		width: 32px;
+	}
+}
+
+@container kestrel-browser-viewport (max-width: 560px) {
+	.browser-library .library-search {
+		width: 100%;
 	}
 }

@@ -1,30 +1,40 @@
 :root {
 	color-scheme: dark;
 
-	/* Default surfaces stay near-black graphite, with enough separation to
-	   keep navigation, content, controls, and overlays legible. */
-	--canvas: #0d0e11;
-	--sidebar: #131519;
-	--panel: #1a1c21;
-	--surface: #22252b;
-	--surface-strong: #2c3038;
-	--overlay: #363a44;
+	/* Instrument Workbench uses one semantic graphite ramp. Structural rails
+	   stay quiet while the active center plane carries the strongest value. */
+	--canvas: #0b0c0e;
+	--chrome: #0f1013;
+	--rail: #111317;
+	--workbench: #17191e;
+	--surface: #1f2228;
+	--raised: #292d34;
+	--overlay: #333841;
+
+	/* Compatibility aliases for older surfaces. New work should consume the
+	   semantic roles above rather than inventing another elevation ramp. */
+	--sidebar: var(--rail);
+	--panel: var(--workbench);
+	--surface-strong: var(--raised);
 
 	/* Aluminum ink stays readable across the graphite elevation ramp. */
-	--ink: #f3f4f6;
-	--ink-secondary: #c8cbd2;
-	--muted: #aeb2bb;
-	--faint: #8b909a;
+	--ink: #f5f5f7;
+	--ink-secondary: #d0d2d7;
+	--muted: #a4a8b0;
+	--faint: #7e838d;
 
 	/* Lines use white at low opacity so they remain neutral, not colorful. */
 	--line: rgba(255, 255, 255, 0.1);
 	--line-strong: rgba(255, 255, 255, 0.18);
+	--focus: #ffffff;
+	--selected: rgba(255, 255, 255, 0.09);
+	--danger: #f1f1f3;
 
 	/* Primary actions remain grayscale: a light control on a dark canvas. */
-	--solid: #f3f4f6;
+	--solid: #f5f5f7;
 	--solid-hover: #ffffff;
 	--on-solid: #0d0e11;
-	--selected-soft: rgba(255, 255, 255, 0.1);
+	--selected-soft: var(--selected);
 
 	/* Statuses retain shape and text labels in addition to color. */
 	--status-fill: #383a41;
@@ -54,16 +64,16 @@
 
 	/* Radius */
 	--radius-xs: 6px;
-	--radius-sm: 10px;
-	--radius-control: 12px;
-	--radius-row: 14px;
-	--radius-surface: 16px;
-	--radius-stage: 24px;
+	--radius-sm: 8px;
+	--radius-control: 9px;
+	--radius-row: 10px;
+	--radius-surface: 14px;
+	--radius-stage: 20px;
 	--radius-pill: 999px;
 
 	/* Motion — fast */
-	--motion-feedback: 90ms;
-	--motion-state: 140ms;
+	--motion-feedback: 80ms;
+	--motion-state: 160ms;
 	--ease-kestrel: cubic-bezier(0.25, 1, 0.35, 1);
 
 	/* Elevation — softer, closer to macOS material depth */
@@ -96,6 +106,11 @@ body {
 	min-width: 320px;
 	background: var(--canvas);
 	color: var(--ink);
+	font-family: var(--sans);
+	font-size: 14px;
+	font-synthesis: none;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
 }
 button,
 input,
@@ -8719,7 +8734,6 @@ select {
 	background: rgba(0, 0, 0, 0.62);
 	backdrop-filter: none;
 	padding: 16px;
-	animation: ui-fade-in var(--motion-state) var(--ease-kestrel) both;
 }
 
 .default-browser-modal {
@@ -8737,7 +8751,6 @@ select {
 	flex-direction: column;
 	align-items: center;
 	text-align: center;
-	animation: ui-view-enter var(--motion-state) var(--ease-kestrel) both;
 }
 
 .default-browser-close-button {
@@ -8926,7 +8939,12 @@ select {
 	color: var(--ink);
 	font-size: 11.5px;
 	cursor: pointer;
-	transition: all 0.12s ease;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel),
+		transform var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-state) var(--ease-kestrel);
 }
 
 .agent-config-chip:hover {

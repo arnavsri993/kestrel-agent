@@ -1,11 +1,17 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { _electron as electron, type Page } from "@playwright/test";
 import { seedLifeContextFixture } from "./ui-audit-helpers.mjs";
 
 const root = resolve(import.meta.dirname, "..");
-const outputRoot = join(root, "artifacts", "ui-audit", "baseline");
+const outputOverride = process.env.KESTREL_UI_AUDIT_OUTPUT_ROOT;
+const outputRoot = outputOverride
+	? resolve(outputOverride)
+	: join(root, "artifacts", "ui-audit", "baseline");
+const manifestPath = outputOverride
+	? join(outputRoot, "capture-manifest.json")
+	: join(root, "artifacts", "ui-audit", "capture-manifest.json");
 const testData = join(root, ".tmp", "ui-audit-capture-data");
 const captureHome = join(testData, "home");
 const captureCodexHome = join(testData, "codex-home");
@@ -96,7 +102,7 @@ async function capture(
 	manifest.push({
 		id: `${viewport}/${name}`,
 		viewport,
-		file: `baseline/${viewport}/${filename}`,
+		file: relative(dirname(manifestPath), filePath),
 		surface,
 		...(state ? { state } : {}),
 	});
@@ -137,7 +143,9 @@ async function openTool(page: Page, label: string) {
 		.filter({ has: page.getByText(label, { exact: true }) })
 		.first()
 		.click();
-	await page.locator(".browser-app-page").waitFor({ timeout: 8_000 });
+	// Route exits remain mounted briefly for an interruptible Motion transition.
+	// The last keyed page is the newly selected destination.
+	await page.locator(".browser-app-page").last().waitFor({ timeout: 8_000 });
 	await settle(page);
 }
 
@@ -222,13 +230,17 @@ async function captureSetupFlow(page: Page, viewport: ViewportKey) {
 
 async function captureWorkspaceSurfaces(page: Page, viewport: ViewportKey) {
 	await setViewport(page, viewport);
+	// The prior surface can be a kestrel:// page left by the preceding viewport.
+	// Always navigate through the product control so this capture is Browser Home,
+	// rather than an incidental tab retained from another audit state.
+	await openBrowserHome(page);
 	await capture(page, viewport, "workspace", "workspace-new-tab", {
 		state: "populated-default",
 		duration: 360,
 	});
 
 	await openTool(page, "Agent");
-	await page.locator(".agent-workspace-page, .browser-app-page").waitFor();
+	await page.locator(".agent-workspace-page, .browser-app-page").last().waitFor();
 	await capture(page, viewport, "agent", "surface-agent");
 
 	await openTool(page, "Projects");
@@ -267,7 +279,7 @@ async function captureWorkspaceSurfaces(page: Page, viewport: ViewportKey) {
 	});
 
 	await openTool(page, "Life Context");
-	const life = page.locator(".legacy-product-surface");
+	const life = page.locator(".life-product-surface");
 	await life.getByRole("heading", { name: "Life", exact: true }).waitFor();
 	await capture(page, viewport, "life", "surface-life-calendar");
 	await life.getByRole("button", { name: "People", exact: true }).click();
@@ -295,21 +307,24 @@ async function captureWorkspaceSurfaces(page: Page, viewport: ViewportKey) {
 
 	await openTool(page, "Settings");
 	await page
-		.getByRole("heading", { name: "Preferences", exact: true })
+		.getByRole("heading", { name: "Settings", exact: true })
 		.waitFor();
 	await capture(page, viewport, "settings", "settings-connections");
 
 	const settingsSections = [
-		["Browser", "settings-browser.png"],
-		["General", "settings-general.png"],
-		["Models", "settings-models.png"],
-		["Intelligence & Memory", "settings-memory.png"],
-		["Agent Plugins", "settings-extensions.png"],
-		["Privacy", "settings-privacy.png"],
-		["Advanced", "settings-advanced.png"],
+		["browser", "Browser", "settings-browser.png"],
+		["general", "General", "settings-general.png"],
+		["models", "Models", "settings-models.png"],
+		["intelligence", "Memory", "settings-memory.png"],
+		["extensions", "Plugins", "settings-extensions.png"],
+		["privacy", "Privacy", "settings-privacy.png"],
+		["advanced", "Advanced", "settings-advanced.png"],
 	] as const;
-	for (const [label, filename] of settingsSections) {
-		if (label === "Browser") {
+	for (const [id, label, filename] of settingsSections) {
+		const compactPicker = page.locator(".settings-section-picker select");
+		if (await compactPicker.isVisible()) {
+			await compactPicker.selectOption(id);
+		} else if (label === "Browser") {
 			await page
 				.locator(".settings-scope-switcher")
 				.getByRole("tab", { name: /^Browser/ })
@@ -473,7 +488,7 @@ try {
 }
 
 await writeFile(
-	join(root, "artifacts", "ui-audit", "capture-manifest.json"),
+	manifestPath,
 	JSON.stringify(
 		{
 			capturedAt: new Date().toISOString(),

@@ -1,7 +1,7 @@
 /* The New Tab rail mirrors the information architecture of the OpenAI
  * references while keeping Kestrel's quiet, local-first surface language. */
 .ai-browser-app {
-	--kestrel-sidebar-width: 248px;
+	--kestrel-sidebar-width: 216px;
 	--kestrel-sidebar-space: 0px;
 	--browser-tab-rail-width: 208px;
 	--browser-chrome-height: 88px;
@@ -20,7 +20,7 @@
 }
 
 .ai-browser-app:has(.kestrel-sidebar.is-collapsed) {
-	--kestrel-sidebar-width: 60px;
+	--kestrel-sidebar-width: 56px;
 }
 
 /* Bookmarks are part of the browser chrome too. Keep the lower workspace
@@ -78,9 +78,9 @@
 	padding: 8px 10px 12px;
 	border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
 	border-right: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
-	background: var(--vibrancy-sidebar);
-	backdrop-filter: var(--vibrancy-blur);
-	-webkit-backdrop-filter: var(--vibrancy-blur);
+	background: var(--rail);
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 	color: var(--ink);
 }
 
@@ -316,6 +316,17 @@
 	background: var(--selected-soft);
 	color: var(--ink);
 	font-weight: 600;
+}
+
+.kestrel-sidebar-nav-item.active::before {
+	position: absolute;
+	top: 9px;
+	bottom: 9px;
+	left: 0;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--focus);
+	content: "";
 }
 
 .kestrel-sidebar-nav-item svg,

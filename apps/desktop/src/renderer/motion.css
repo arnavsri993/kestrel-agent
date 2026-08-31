@@ -11,9 +11,8 @@
  * behind the user's reduced-motion preference.
  */
 :root {
-	--motion-smooth: 220ms;
-	--motion-panel: 320ms;
-	--ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+	--motion-smooth: 160ms;
+	--ease-smooth: cubic-bezier(0.2, 0.8, 0.2, 1);
 	--ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
 }
 
@@ -24,9 +23,7 @@
 		overflow: hidden;
 		transform-origin: right center;
 		transition:
-			width var(--motion-panel) var(--ease-smooth),
-			opacity 180ms var(--ease-soft),
-			transform var(--motion-panel) var(--ease-smooth),
+			opacity var(--motion-smooth) var(--ease-soft),
 			border-color var(--motion-smooth) var(--ease-soft);
 	}
 
@@ -34,22 +31,11 @@
 		/* The collapsed rail has zero layout width. Keep its exit transform
 		 * inside the window so high-zoom/reflow layouts do not acquire a
 		 * clipped horizontal overflow from an invisible child. */
-		transform: scaleX(0.98);
+		transform: none;
 	}
 
-	.ai-browser-app:not(.agent-full-page)
-		.browser-workspace:not(.browser-workspace-vertical)
-		.browser-viewport {
-		transition: width var(--motion-panel) var(--ease-smooth);
-	}
-
-	.ai-browser-app:not(.agent-full-page)
-		.browser-workspace.browser-workspace-vertical
-		.browser-viewport {
-		transition: right var(--motion-panel) var(--ease-smooth);
-	}
-
-	/* Feedback: controls lift a fraction of a pixel; the click still wins. */
+	/* Feedback starts on pointer-down. Hover changes value; it does not make
+	   dense controls bob independently of the pointer. */
 	.browser-navigation button:not(:disabled),
 	.browser-toolbar-actions button:not(:disabled),
 	.agent-sidebar-new,
@@ -63,20 +49,8 @@
 			background-color var(--motion-feedback) var(--ease-soft),
 			border-color var(--motion-feedback) var(--ease-soft),
 			color var(--motion-feedback) var(--ease-soft),
-			box-shadow var(--motion-state) var(--ease-soft),
+			box-shadow var(--motion-feedback) var(--ease-soft),
 			transform var(--motion-feedback) var(--ease-smooth);
-	}
-
-	.browser-navigation button:not(:disabled):hover,
-	.browser-toolbar-actions button:not(:disabled):hover,
-	.agent-sidebar-new:hover,
-	.agent-sidebar-expand:hover,
-	.agent-sidebar-collapse:hover,
-	.surface-back-button:hover,
-	.quiet-link:hover,
-	.button:hover:not(:disabled),
-	.ui-button:hover:not(:disabled) {
-		transform: translateY(-1px);
 	}
 
 	.browser-navigation button:not(:disabled):active,
@@ -86,19 +60,18 @@
 	.agent-sidebar-collapse:active,
 	.button:active:not(:disabled),
 	.ui-button:active:not(:disabled) {
-		transform: scale(0.97);
+		transform: scale(0.985);
 	}
 
 	.browser-address {
 		transition:
 			background-color var(--motion-state) var(--ease-soft),
 			border-color var(--motion-state) var(--ease-soft),
-			box-shadow var(--motion-state) var(--ease-soft),
-			transform var(--motion-feedback) var(--ease-smooth);
+			box-shadow var(--motion-state) var(--ease-soft);
 	}
 
 	.browser-address:focus-within {
-		transform: translateY(-1px);
+		box-shadow: var(--focus-ring);
 	}
 
 	.browser-context-toggle svg,
@@ -111,22 +84,8 @@
 		transition: transform var(--motion-feedback) var(--ease-smooth);
 	}
 
-	.agent-sidebar-new:hover svg {
-		transform: rotate(90deg);
-	}
-
-	.agent-sidebar-expand:hover svg {
-		transform: scale(1.08);
-	}
-
 	.agent-sidebar-collapse:hover svg {
 		transform: translateX(2px);
-	}
-
-	.browser-context-toggle:hover svg,
-	.browser-toolbar-actions button:not(:disabled):hover svg,
-	.browser-navigation button:not(:disabled):hover svg {
-		transform: scale(1.08);
 	}
 
 	/* Tab lifecycle: Motion animates the tab being created or closed. Remaining
@@ -144,15 +103,6 @@
 		box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--ink) 18%, transparent);
 	}
 
-	.browser-tab .browser-favicon {
-		transition: transform var(--motion-feedback) var(--ease-smooth);
-	}
-
-	.browser-tab:hover .browser-favicon,
-	.browser-tab:focus-within .browser-favicon {
-		transform: translateY(-1px) scale(1.04);
-	}
-
 	.browser-tab-close {
 		transition:
 			background-color var(--motion-feedback) var(--ease-soft),
@@ -162,16 +112,12 @@
 	}
 
 	.browser-tab-close:hover {
-		transform: scale(1.08) rotate(6deg);
+		transform: scale(1.05);
 	}
 
 	.browser-new-tab svg,
 	.browser-tab-actions-btn svg {
 		transition: transform var(--motion-feedback) var(--ease-smooth);
-	}
-
-	.browser-new-tab:hover svg {
-		transform: scale(1.08);
 	}
 
 	/* The new-tab home content eases in without shifting sibling layout. */
@@ -183,12 +129,10 @@
 	}
 
 	.kestrel-home-composer:focus-within {
-		transform: translateY(-1px);
-		box-shadow: var(--shadow-lg);
+		box-shadow: var(--focus-ring), var(--shadow-md);
 	}
 
 	.kestrel-home-send:not(:disabled):hover {
-		transform: translateY(-1px);
 		box-shadow: var(--shadow-md);
 	}
 
@@ -203,38 +147,12 @@
 
 	.kestrel-home-shortcut:hover .kestrel-home-shortcut-glyph,
 	.kestrel-home-shortcut:focus-visible .kestrel-home-shortcut-glyph {
-		transform: translateY(-2px) scale(1.04);
 		box-shadow: var(--shadow-sm);
 	}
 
 	.kestrel-home-action-chip:hover,
 	.kestrel-home-action-chip:focus-visible {
-		transform: translateY(-1px);
 		box-shadow: var(--shadow-sm);
-	}
-
-	/* State: newly mounted notices, menus, and secondary surfaces explain
-	   where they came from without hiding the content behind a reveal. */
-	.browser-tab-menu,
-	.browser-find-bar,
-	.agent-history-popover,
-	.composer-mention-list,
-	.model-selector-menu {
-		animation: kestrel-pop-in var(--motion-smooth) var(--ease-smooth) both;
-		transform-origin: top center;
-	}
-
-	.browser-notice,
-	.browser-inline-error {
-		animation: kestrel-toast-in var(--motion-smooth) var(--ease-smooth) both;
-	}
-
-	.browser-secondary-surface,
-	.browser-library,
-	.command-center,
-	.settings-panel,
-	.agent-workspace {
-		animation: kestrel-surface-in var(--motion-panel) var(--ease-smooth) both;
 	}
 
 	.agent-approval-action {
@@ -246,41 +164,7 @@
 	}
 
 	.agent-approval-action:hover {
-		transform: translateY(-1px);
 		box-shadow: var(--shadow-sm);
-	}
-}
-
-@keyframes kestrel-pop-in {
-	from {
-		opacity: 0;
-		transform: translateY(-5px) scale(0.98);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0) scale(1);
-	}
-}
-
-@keyframes kestrel-toast-in {
-	from {
-		opacity: 0;
-		transform: translateX(-50%) translateY(8px);
-	}
-	to {
-		opacity: 1;
-		transform: translateX(-50%) translateY(0);
-	}
-}
-
-@keyframes kestrel-surface-in {
-	from {
-		opacity: 0;
-		transform: translateY(4px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
 	}
 }
 

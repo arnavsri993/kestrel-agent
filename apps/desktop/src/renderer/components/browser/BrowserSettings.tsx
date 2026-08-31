@@ -237,12 +237,14 @@ export function BrowserSettings({
 
   const handleSleepInactiveNow = async () => {
     setSleepingBusy(true);
-    try {
-      await browser.sleepInactiveTabs();
-    } finally {
-      setTimeout(() => setSleepingBusy(false), 600);
-    }
-  };
+		try {
+			await browser.sleepInactiveTabs();
+		} finally {
+			/* Readiness follows the operation, not a cosmetic minimum duration.
+			 * Repeated input should never wait for a spinner to finish. */
+			setSleepingBusy(false);
+		}
+	};
 
   const handleInstallExtensionFromUrl = async () => {
     if (!extensionUrlInput.trim()) return;

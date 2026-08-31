@@ -2,8 +2,10 @@ import type {
 	LocalModelSummary,
 	ModelProviderSummary,
 } from "@kestrel/shared-types";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 import { Icon } from "../Icon";
 import {
 	configuredProviders,
@@ -30,8 +32,13 @@ export function ModelSelector({
 	choice: ModelSelectorChoice;
 	onChange(next: ModelSelectorChoice): void;
 }) {
+	const reducedMotion = useReducedMotion() ?? false;
 	const [open, setOpen] = useState(false);
-	const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+	const [menuPos, setMenuPos] = useState({
+		top: 0,
+		left: 0,
+		placement: "above" as "above" | "below",
+	});
 	const [hoveredProviderId, setHoveredProviderId] = useState(
 		choice.providerId || configuredProviders(providers)[0]?.id || "",
 	);
@@ -39,6 +46,7 @@ export function ModelSelector({
 	const [customModel, setCustomModel] = useState("");
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const menuRef = useRef<HTMLDivElement | null>(null);
+	const didFocusMenuRef = useRef(false);
 	const visibleProviders = configuredProviders(providers);
 	const activeProviderId =
 		hoveredProviderId ||
@@ -68,18 +76,53 @@ export function ModelSelector({
 		setHoveredModelId(choice.model);
 	}, [choice.executionMode, choice.model, choice.providerId, open, providers]);
 
-	useLayoutEffect(() => {
-		if (!open || !triggerRef.current || !menuRef.current) return;
+	const positionMenu = useCallback(() => {
+		if (!triggerRef.current || !menuRef.current) return;
 		const button = triggerRef.current.getBoundingClientRect();
 		const menu = menuRef.current.getBoundingClientRect();
 		let left = button.left;
 		let top = button.top - menu.height - 8;
+		let placement: "above" | "below" = "above";
 		if (left + menu.width > window.innerWidth - 12)
 			left = Math.max(12, window.innerWidth - menu.width - 12);
 		if (left < 12) left = 12;
-		if (top < 12) top = Math.min(window.innerHeight - menu.height - 12, button.bottom + 8);
-		setMenuPos({ top, left });
-	}, [open, activeProviderId, activeModelId, showThinking, models.length]);
+		if (top < 12) {
+			top = Math.min(window.innerHeight - menu.height - 12, button.bottom + 8);
+			placement = "below";
+		}
+		setMenuPos({ top, left, placement });
+	}, []);
+
+	useLayoutEffect(() => {
+		if (!open) return;
+		positionMenu();
+		if (!didFocusMenuRef.current) {
+			didFocusMenuRef.current = true;
+			window.requestAnimationFrame(() =>
+				menuRef.current
+					?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)")
+					?.focus(),
+			);
+		}
+	}, [open, activeProviderId, activeModelId, showThinking, models.length, positionMenu]);
+
+	useEffect(() => {
+		if (!open) return;
+		const reposition = () => positionMenu();
+		window.addEventListener("resize", reposition);
+		window.addEventListener("scroll", reposition, true);
+		return () => {
+			window.removeEventListener("resize", reposition);
+			window.removeEventListener("scroll", reposition, true);
+		};
+	}, [open, positionMenu]);
+
+	function closeMenu({ restoreFocus = false }: { restoreFocus?: boolean } = {}) {
+		setOpen(false);
+		didFocusMenuRef.current = false;
+		if (restoreFocus)
+			window.requestAnimationFrame(() => triggerRef.current?.focus());
+	}
 
 	useEffect(() => {
 		if (!open) return;
@@ -87,22 +130,34 @@ export function ModelSelector({
 			const target = event.target as Node;
 			if (triggerRef.current?.contains(target) || menuRef.current?.contains(target))
 				return;
-			setOpen(false);
+			closeMenu();
+		}
+		function onFocusIn(event: FocusEvent) {
+			const target = event.target as Node;
+			if (triggerRef.current?.contains(target) || menuRef.current?.contains(target))
+				return;
+			closeMenu();
 		}
 		function onKey(event: KeyboardEvent) {
-			if (event.key === "Escape") setOpen(false);
+			if (event.key === "Escape") {
+				if (event.defaultPrevented) return;
+				event.preventDefault();
+				closeMenu({ restoreFocus: true });
+			}
 		}
 		window.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("focusin", onFocusIn);
 		window.addEventListener("keydown", onKey);
 		return () => {
 			window.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("focusin", onFocusIn);
 			window.removeEventListener("keydown", onKey);
 		};
 	}, [open]);
 
 	function commit(next: ModelSelectorChoice, close = true) {
 		onChange(next);
-		if (close) setOpen(false);
+		if (close) closeMenu({ restoreFocus: true });
 	}
 
 	return (
@@ -111,24 +166,48 @@ export function ModelSelector({
 				ref={triggerRef}
 				type="button"
 				className="model-selector-trigger"
-				aria-haspopup="menu"
+				aria-haspopup="dialog"
 				aria-expanded={open}
 				aria-label={`Model: ${selectorTriggerLabel(choice)}`}
 				title={`Model: ${selectorTriggerLabel(choice)}`}
-				onClick={() => setOpen((current) => !current)}
+				onClick={() =>
+					setOpen((current) => {
+						if (current) window.requestAnimationFrame(() => triggerRef.current?.focus());
+						return !current;
+					})
+				}
 			>
 				<span className="model-selector-trigger-label">
 					{selectorTriggerLabel(choice)}
 				</span>
 				<Icon name="chevron" />
 			</button>
-			{open &&
-				createPortal(
-					<div
+			{createPortal(
+				<AnimatePresence initial={false}>
+					{open ? (
+					<motion.div
 						ref={menuRef}
 						className="model-selector-menu"
-						role="menu"
+						role="dialog"
 						aria-label="Choose provider, model, and thinking level"
+						data-placement={menuPos.placement}
+						initial={
+							reducedMotion
+								? false
+								: { opacity: 0, y: menuPos.placement === "above" ? 4 : -4, scale: 0.992 }
+						}
+						animate={{ opacity: 1, y: 0, scale: 1 }}
+						exit={
+							reducedMotion
+								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+								: {
+										opacity: 0,
+										y: menuPos.placement === "above" ? 4 : -4,
+										scale: 0.992,
+										pointerEvents: "none",
+									}
+						}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 						style={{ top: menuPos.top, left: menuPos.left }}
 					>
 						<div className="model-selector-column" aria-label="Provider">
@@ -146,7 +225,6 @@ export function ModelSelector({
 										return (
 											<button
 												type="button"
-												role="menuitem"
 												key={provider.id}
 												className={`model-selector-item${
 													selected ? " is-selected" : ""
@@ -215,7 +293,6 @@ export function ModelSelector({
 										return (
 											<button
 												type="button"
-												role="menuitem"
 												key={model.id}
 												className={`model-selector-item${
 													selected ? " is-selected" : ""
@@ -274,7 +351,6 @@ export function ModelSelector({
 										return (
 											<button
 												type="button"
-												role="menuitem"
 												key={level.id}
 												className={`model-selector-item${
 													selected ? " is-selected" : ""
@@ -302,9 +378,11 @@ export function ModelSelector({
 								</div>
 							</div>
 						) : null}
-					</div>,
-					document.body,
-				)}
+					</motion.div>
+					) : null}
+				</AnimatePresence>,
+				document.body,
+			)}
 		</div>
 	);
 }
