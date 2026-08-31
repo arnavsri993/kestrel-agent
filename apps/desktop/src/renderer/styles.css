@@ -70,6 +70,9 @@
 	--radius-surface: 14px;
 	--radius-stage: 20px;
 	--radius-pill: 999px;
+	/* Text entry is intentionally a capsule: the browser and agent use the
+	 * fully rounded ends to make editable fields immediately recognizable. */
+	--radius-text-entry: var(--radius-pill);
 
 	/* Motion — fast */
 	--motion-feedback: 80ms;
@@ -7298,7 +7301,23 @@ button:active:not(:disabled) {
 	transform: translateY(1px);
 }
 
-input:not([type="checkbox"]):not([type="radio"]),
+/* A text field gets true semicircular ends at every supported height. Keep
+ * multiline editors and option pickers conventionally rounded so their
+ * affordance remains distinct from one-line entry. */
+:is(
+	input:not([type]),
+	input[type="text"],
+	input[type="search"],
+	input[type="email"],
+	input[type="url"],
+	input[type="password"],
+	input[type="tel"],
+	input[type="number"],
+	input[type="datetime-local"]
+) {
+	border-radius: var(--radius-text-entry);
+}
+
 textarea,
 select {
 	border-radius: var(--radius-control);
@@ -8645,9 +8664,41 @@ select {
 	background: var(--surface-fill);
 }
 
-.unified-ui .page-frame input:not([type="checkbox"]):not([type="radio"]),
+.unified-ui
+	.page-frame
+	:is(
+		input:not([type]),
+		input[type="text"],
+		input[type="search"],
+		input[type="email"],
+		input[type="url"],
+		input[type="password"],
+		input[type="tel"],
+		input[type="number"],
+		input[type="datetime-local"]
+	),
+.unified-ui
+	.settings-content
+	:is(
+		input:not([type]),
+		input[type="text"],
+		input[type="search"],
+		input[type="email"],
+		input[type="url"],
+		input[type="password"],
+		input[type="tel"],
+		input[type="number"],
+		input[type="datetime-local"]
+	) {
+	min-height: var(--control-height);
+	padding-inline: 11px;
+	border: 1px solid var(--surface-rule-strong);
+	border-radius: var(--radius-text-entry);
+	background: var(--control-fill);
+	color: var(--ink);
+}
+
 .unified-ui .page-frame select,
-.unified-ui .settings-content input:not([type="checkbox"]):not([type="radio"]),
 .unified-ui .settings-content select {
 	min-height: var(--control-height);
 	padding-inline: 11px;
