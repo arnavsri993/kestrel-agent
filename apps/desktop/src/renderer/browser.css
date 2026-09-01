@@ -7353,8 +7353,10 @@ body:has(.calculator-overlay),
  * This avoids a hidden second scroll target beside New Tab. */
 .browser-tabs {
 	/* Keep a single, bounded scroll rail when tabs outgrow the available
-	 * chrome. Each tab stays readable; New Tab remains a stable sibling. */
-	flex: 0 1 auto;
+	 * chrome. Let the rail claim unused chrome first so a small tab set does
+	 * not collapse to its minimum width; once crowded, the same rail scrolls
+	 * without pushing New Tab or the drag target off-screen. */
+	flex: 1 1 auto;
 	max-width: 100%;
 	overflow-x: auto;
 	overflow-y: hidden;

@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
+import { revealNewTabControl } from "./desktop-browser-test-helpers.mjs";
 
 const mainBundle = readFileSync(resolve("apps/desktop/out/main/index.js"), "utf8");
 assert.match(
@@ -1022,7 +1023,7 @@ try {
 	await assertMotionContract(page);
 	await assertReducedMotionStyles(page);
 	await assertAgentRailInterruption(page);
-	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await (await revealNewTabControl(page)).click();
 	await page.waitForFunction(
 		() => document.querySelectorAll(".browser-tabs .browser-tab").length >= 2,
 	);
@@ -1065,7 +1066,7 @@ try {
 
 	// Opening Agent from the navigation rail should stay in the browser tab
 	// surface like New Tab, with browser chrome visible and the chat rail optional.
-	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await (await revealNewTabControl(page)).click();
 	await page.locator(".new-tab-page").waitFor();
 	await page.getByRole("button", { name: "Agent", exact: true }).click();
 	await page.waitForFunction(() => {

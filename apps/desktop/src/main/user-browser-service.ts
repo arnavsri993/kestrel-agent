@@ -51,6 +51,8 @@ import {
 	session as electronSession,
 	Menu,
 	nativeImage,
+	type LoadURLOptions,
+	type PostBody,
 	type Rectangle,
 	type Session,
 	shell,
@@ -198,6 +200,40 @@ export interface UserBrowserServiceOptions {
 interface ViewRecord {
 	view: WebContentsView;
 	navigatingTo?: string;
+}
+
+type BrowserNavigationLoadOptions = Pick<
+	LoadURLOptions,
+	"extraHeaders" | "httpReferrer" | "postData"
+>;
+
+const WINDOW_OPEN_POST_CONTENT_TYPES = new Set([
+	"application/x-www-form-urlencoded",
+	"multipart/form-data",
+]);
+
+function loadOptionsForWindowOpen(
+	postBody: PostBody | null | undefined,
+	referrer?: LoadURLOptions["httpReferrer"],
+): BrowserNavigationLoadOptions | undefined {
+	if (!postBody) return undefined;
+	const contentType = postBody.contentType.trim();
+	if (!WINDOW_OPEN_POST_CONTENT_TYPES.has(contentType.toLowerCase()))
+		return undefined;
+	const boundary = postBody.boundary?.trim();
+	if (
+		contentType.toLowerCase() === "multipart/form-data" &&
+		(!boundary || /[\r\n]/.test(boundary))
+	)
+		return undefined;
+	return {
+		postData: postBody.data,
+		extraHeaders: `Content-Type: ${contentType}${boundary ? `; boundary=${boundary}` : ""}`,
+		...(referrer &&
+		(typeof referrer === "string" ? referrer : referrer.url)
+			? { httpReferrer: referrer }
+			: {}),
+	};
 }
 
 function safePageUrl(value: string): URL | undefined {
@@ -1123,14 +1159,18 @@ export class UserBrowserService {
 		return this.webContentsToTab.has(webContents.id);
 	}
 
-	async createTab(input?: string, active = true): Promise<UserBrowserState> {
+	async createTab(
+		input?: string,
+		active = true,
+		loadOptions?: BrowserNavigationLoadOptions,
+	): Promise<UserBrowserState> {
 		this.assertAvailable();
 		const timestamp = this.now().toISOString();
 		const tab = createEmptyBrowserTab(() => new Date(timestamp));
 		this.state.tabs.push(tab);
 		if (active || !this.state.activeTabId) this.state.activeTabId = tab.id;
 		this.commit();
-		if (input) await this.navigate(tab.id, input);
+		if (input) await this.navigate(tab.id, input, loadOptions);
 		else await this.syncActiveView();
 		return this.getState();
 	}
@@ -1260,7 +1300,11 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
-	async navigate(tabId: string, input: string): Promise<UserBrowserState> {
+	async navigate(
+		tabId: string,
+		input: string,
+		loadOptions?: BrowserNavigationLoadOptions,
+	): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
 		const appPage = parseKestrelAppPage(input);
 		if (appPage) {
@@ -1312,7 +1356,9 @@ export class UserBrowserService {
 		if (tabId === this.state.activeTabId) this.revealActiveWebContent();
 		this.attachActiveWebView();
 		try {
-			await record.view.webContents.loadURL(normalized.url);
+			if (loadOptions)
+				await record.view.webContents.loadURL(normalized.url, loadOptions);
+			else await record.view.webContents.loadURL(normalized.url);
 		} catch (cause) {
 			if (record.navigatingTo !== normalized.url) return this.getState();
 			tab.loading = false;
@@ -3237,11 +3283,14 @@ export class UserBrowserService {
 
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
 		const { webContents } = record.view;
-		webContents.setWindowOpenHandler(({ url, disposition }) => {
+		webContents.setWindowOpenHandler(({ url, disposition, postBody, referrer }) => {
 			if (safePageUrl(url)) {
-				void this.createTab(url, disposition !== "background-tab").catch(
-					() => undefined,
-				);
+				const loadOptions = loadOptionsForWindowOpen(postBody, referrer);
+				void this.createTab(
+					url,
+					disposition !== "background-tab",
+					loadOptions,
+				).catch(() => undefined);
 			}
 			return { action: "deny" };
 		});

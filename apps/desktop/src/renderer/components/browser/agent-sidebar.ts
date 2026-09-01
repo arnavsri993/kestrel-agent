@@ -5,6 +5,7 @@ export const SIDEBAR_RECENT_LIMIT = 3;
 
 export type SidebarDestination =
 	| "browser"
+	| "scheduled"
 	| "agent"
 	| "writing"
 	| "projects"
@@ -59,6 +60,6 @@ export function sidebarActiveDestination(page: string): SidebarDestination {
 		if (appPage === "commands") return "capabilities";
 		return appPage;
 	}
-	if (appPage === "work") return "agent";
+	if (appPage === "work") return "scheduled";
 	return "browser";
 }

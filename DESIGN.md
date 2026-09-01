@@ -68,6 +68,28 @@ Engineer repositories. The full evidence and decision record is in
   browser-and-agent workbench, angular brand/control language, and visible
   approval/provenance loop—not a theme, accent color, or component catalog.
 
+## ChatGPT-inspired navigation rail — August 31, 2026
+
+- **Thesis:** make the left rail immediately legible like a familiar chat
+  workspace without flattening Kestrel's browser, agent, approval, and local
+  project semantics.
+- **Order:** `New chat`, `Scheduled`, and `Agent` are the primary destinations;
+  folder-backed `Projects` comes next, followed by standalone `Chats`.
+  Writing Studio, Approvals, and Capabilities remain reachable in a quieter
+  Workspace group, with Settings anchored at the bottom.
+- **Customization:** each project can opt into a curated icon and named color.
+  These are local presentation preferences keyed by the granted folder path;
+  they do not alter workspace permissions, project identity, or encrypted
+  runtime data. The palette is decorative and never encodes task state.
+- **Interaction:** project rows keep New chat, expand/collapse, and appearance
+  customization as separate, labelled controls. The appearance chooser is
+  keyboard reachable, closes on Escape or outside press, and persists only
+  validated options. Compact mode retains the primary icon rail and hides the
+  scrollable project/chat groups to protect the narrow browser viewport.
+- **Why this is not generic:** the familiar ordering is adapted around
+  Kestrel's actual scheduled work, agent sessions, and folder-backed projects,
+  while the graphite ramp and approval boundary remain intact.
+
 ## New Tab widget shelf — August 2026
 
 - Thesis: New Tab should offer a calm starting surface, not a dashboard. The

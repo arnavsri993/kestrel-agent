@@ -665,6 +665,10 @@ export const RuntimeSessionSchema = z.object({
 	title: z.string().min(1).max(200),
 	parentSessionId: z.string().min(1).optional(),
 	workspaceRoot: z.string().min(1).optional(),
+	/** Standard conversations are locally searchable. Private and incognito
+	 * conversations are deliberately excluded from the local transcript index. */
+	privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
+	forgottenAt: z.string().datetime().optional(),
 	allowedTools: z.array(z.string().min(1)),
 	status: RuntimeSessionStatusSchema,
 	checkpoints: z.array(RuntimeCheckpointSchema),
@@ -702,6 +706,70 @@ export const RuntimeMessageSchema = z.object({
 	createdAt: z.string().datetime(),
 });
 export type RuntimeMessage = z.infer<typeof RuntimeMessageSchema>;
+
+export const TranscriptSearchResultSchema = z.object({
+	messageId: z.string().min(1),
+	sessionId: z.string().min(1),
+	sessionTitle: z.string().min(1).max(200),
+	role: RuntimeMessageSchema.shape.role,
+	preview: z.string().min(1).max(400),
+	matchStart: z.number().int().nonnegative(),
+	matchLength: z.number().int().positive(),
+	createdAt: z.string().datetime(),
+});
+export type TranscriptSearchResult = z.infer<
+	typeof TranscriptSearchResultSchema
+>;
+
+export const HumanInputOptionSchema = z.object({
+	id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/),
+	label: z.string().min(1).max(200),
+	description: z.string().max(1_000).optional(),
+});
+export type HumanInputOption = z.infer<typeof HumanInputOptionSchema>;
+
+export const HumanInputAnswerSchema = z.discriminatedUnion("kind", [
+	z.object({ kind: z.literal("single_choice"), optionId: z.string().min(1) }),
+	z.object({
+		kind: z.literal("multi_choice"),
+		optionIds: z.array(z.string().min(1)).min(1).max(20),
+	}),
+	z.object({ kind: z.literal("free_text"), text: z.string().min(1).max(20_000) }),
+	z.object({ kind: z.literal("skip") }),
+]);
+export type HumanInputAnswer = z.infer<typeof HumanInputAnswerSchema>;
+
+export const HumanInputRequestStatusSchema = z.enum([
+	"waiting",
+	"answered",
+	"skipped",
+	"timed_out",
+	"cancelled",
+	"replaced",
+	"completed",
+]);
+export type HumanInputRequestStatus = z.infer<
+	typeof HumanInputRequestStatusSchema
+>;
+
+export const HumanInputRequestSchema = z.object({
+	id: z.string().min(1).max(200),
+	sessionId: z.string().min(1),
+	runId: z.string().min(1),
+	prompt: z.string().min(1).max(20_000),
+	context: z.string().max(20_000).optional(),
+	options: z.array(HumanInputOptionSchema).max(20),
+	selectionMode: z.enum(["single", "multiple"]).optional(),
+	allowFreeText: z.boolean(),
+	allowSkip: z.boolean(),
+	status: HumanInputRequestStatusSchema,
+	createdAt: z.string().datetime(),
+	expiresAt: z.string().datetime().optional(),
+	answeredAt: z.string().datetime().optional(),
+	answer: HumanInputAnswerSchema.optional(),
+	terminalReason: z.string().max(2_000).optional(),
+});
+export type HumanInputRequest = z.infer<typeof HumanInputRequestSchema>;
 
 export const WorkspaceMutationSchema = z.object({
 	id: z.string().min(1),
@@ -849,6 +917,8 @@ export const RuntimeEventSchema = z.object({
 		"session.created",
 		"session.updated",
 		"message.appended",
+		"question.created",
+		"question.updated",
 		"tool.started",
 		"tool.progress",
 		"tool.completed",
@@ -885,6 +955,7 @@ export const AgentRunSchema = z.object({
 	status: z.enum([
 		"running",
 		"waiting_approval",
+		"waiting_input",
 		"completed",
 		"cancelled",
 		"failed",
@@ -992,6 +1063,9 @@ export const ArtifactRecordSchema = z.object({
 	providerRequestId: z.string().optional(),
 	estimatedCostUsd: z.number().nonnegative().optional(),
 	artifactKind: z.enum(["media", "widget"]).optional(),
+	pinned: z.boolean().optional(),
+	integrity: z.enum(["verified", "missing", "tampered"]).optional(),
+	exportedFromArtifactId: z.string().min(1).optional(),
 	title: z.string().min(1).max(80).optional(),
 	sessionId: z.string().min(1).max(200).optional(),
 	createdAt: z.string().datetime(),
@@ -1882,6 +1956,15 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("runtime-create-session"),
 		title: z.string().min(1).max(200),
 		workspaceRoot: z.string().min(1).optional(),
+		privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-select-session"),
+		sessionId: z.string().min(1).nullable(),
+	}),
+	z.object({
+		type: z.literal("runtime-forget-session"),
+		sessionId: z.string().min(1),
 	}),
 	z.object({
 		type: z.literal("runtime-fork-session"),
@@ -1958,6 +2041,33 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		type: z.literal("runtime-search-messages"),
 		query: z.string().min(1).max(500),
 		limit: z.number().int().positive().max(100).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-list-human-input"),
+		sessionId: z.string().min(1).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-create-human-input"),
+		sessionId: z.string().min(1),
+		runId: z.string().min(1),
+		prompt: z.string().min(1).max(20_000),
+		context: z.string().max(20_000).optional(),
+		options: z.array(HumanInputOptionSchema).max(20).default([]),
+		selectionMode: z.enum(["single", "multiple"]).optional(),
+		allowFreeText: z.boolean().default(true),
+		allowSkip: z.boolean().default(true),
+		timeoutMs: z.number().int().positive().max(7 * 24 * 60 * 60 * 1_000).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-answer-human-input"),
+		requestId: z.string().min(1),
+		runId: z.string().min(1),
+		answer: HumanInputAnswerSchema,
+	}),
+	z.object({
+		type: z.literal("runtime-cancel-human-input"),
+		requestId: z.string().min(1),
+		runId: z.string().min(1),
 	}),
 	z.object({ type: z.literal("memory-list") }),
 	z.object({
@@ -2289,6 +2399,31 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	z.object({ type: z.literal("observability-test") }),
 	z.object({ type: z.literal("media-list-artifacts") }),
 	z.object({
+		type: z.literal("media-pin-artifact"),
+		artifactId: z.string().min(1).max(200),
+		pinned: z.boolean(),
+	}),
+	z.object({
+		type: z.literal("media-export-artifact"),
+		artifactId: z.string().min(1).max(200),
+		maximumBytes: z
+			.number()
+			.int()
+			.positive()
+			.max(10_000_000)
+			.default(5_000_000),
+	}),
+	z.object({
+		type: z.literal("media-download-artifact"),
+		artifactId: z.string().min(1).max(200),
+		maximumBytes: z
+			.number()
+			.int()
+			.positive()
+			.max(32_000_000)
+			.default(10_000_000),
+	}),
+	z.object({
 		type: z.literal("media-preview-artifact"),
 		artifactId: z.string().min(1).max(200),
 		maximumBytes: z
@@ -2455,12 +2590,16 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		routing: ModelRoutingDecisionSchema.optional(),
 		delegationRouting: DelegatedWorkerRouteSchema.optional(),
 		sessions: z.array(RuntimeSessionSchema).optional(),
+		selectedSessionId: z.string().min(1).nullable().optional(),
 		session: RuntimeSessionSchema.optional(),
 		tools: z.array(RuntimeToolDescriptorSchema).optional(),
 		execution: RuntimeToolExecutionSchema.optional(),
 		run: AgentRunSchema.optional(),
 		runs: z.array(AgentRunSchema).optional(),
 		messages: z.array(RuntimeMessageSchema).optional(),
+		transcriptResults: z.array(TranscriptSearchResultSchema).optional(),
+		humanInput: HumanInputRequestSchema.optional(),
+		humanInputRequests: z.array(HumanInputRequestSchema).optional(),
 		hasMoreMessages: z.boolean().optional(),
 		executions: z.array(RuntimeToolExecutionSchema).optional(),
 		receipts: z.array(ActionReceiptSchema).optional(),
@@ -2514,12 +2653,21 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		presence: z.array(PresenceEntrySchema).optional(),
 		eventApplications: z.array(EventApplicationSchema).optional(),
 		artifacts: z.array(ArtifactRecordSchema).optional(),
+		exportedArtifact: ArtifactRecordSchema.optional(),
 		artifactPreview: z
 			.object({
 				id: z.string(),
 				mediaType: z.string(),
 				dataBase64: z.string(),
 				truncated: z.boolean(),
+			})
+			.optional(),
+		artifactDownload: z
+			.object({
+				id: z.string(),
+				filename: z.string().min(1),
+				mediaType: z.string().min(1),
+				dataBase64: z.string(),
 			})
 			.optional(),
 		transcription: z

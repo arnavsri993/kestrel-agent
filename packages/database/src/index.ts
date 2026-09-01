@@ -760,7 +760,33 @@ export class KestrelDatabase {
 		})();
 	}
 
-	searchRuntimeMessages(query: string, limit = 20): RuntimeMessage[] {
+	searchRuntimeMessages(
+		query: string,
+		limit = 20,
+		sessionIds?: readonly string[],
+	): RuntimeMessage[] {
+		if (sessionIds) {
+			const normalizedQuery = this.normalizeSearchText(query);
+			if (!normalizedQuery) return [];
+			const terms = this.searchTerms(query);
+			const allowedSessionIds = new Set(sessionIds);
+			return sessionIds
+				.flatMap((sessionId) => this.listRuntimeMessages(sessionId))
+				.filter((message) => allowedSessionIds.has(message.sessionId))
+				.filter((message) => {
+					const normalizedContent = this.normalizeSearchText(message.content);
+					if (normalizedContent.includes(normalizedQuery)) return true;
+					if (terms.length === 0) return false;
+					const messageTerms = new Set(this.searchTerms(message.content));
+					return terms.every((term) => messageTerms.has(term));
+				})
+				.sort(
+					(left, right) =>
+						right.createdAt.localeCompare(left.createdAt) ||
+							 right.id.localeCompare(left.id),
+				)
+				.slice(0, Math.max(1, Math.min(100, Math.trunc(limit))));
+		}
 		const terms = this.searchTerms(query);
 		if (terms.length === 0) return [];
 		const hashes = terms.map((term) => this.hashSearchTerm(term));
@@ -1008,7 +1034,7 @@ export class KestrelDatabase {
 			this.db
 				.prepare(`UPDATE agent_runs
       SET payload = ?, status = ?, updated_at = ?
-      WHERE id = ? AND session_id = ? AND status IN ('running', 'waiting_approval')`)
+      WHERE id = ? AND session_id = ? AND status IN ('running', 'waiting_approval', 'waiting_input')`)
 				.run(
 					JSON.stringify(parsed),
 					parsed.status,
@@ -2024,6 +2050,10 @@ export class KestrelDatabase {
 		return row ? (JSON.parse(row.value) as T) : undefined;
 	}
 
+	deleteState(key: string): void {
+		this.db.prepare("DELETE FROM runtime_state WHERE key = ?").run(key);
+	}
+
 	setPrivateState(key: string, value: unknown): void {
 		const encrypted = encryptText(JSON.stringify(value), this.encryptionKey);
 		this.db
@@ -2322,6 +2352,10 @@ export class KestrelDatabase {
 		].slice(0, 512);
 	}
 
+	private normalizeSearchText(value: string): string {
+		return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, " ").trim();
+	}
+
 	private hashSearchTerm(term: string): string {
 		return createHmac("sha256", this.encryptionKey)
 			.update(`runtime-message:${term}`)
@@ -2392,7 +2426,7 @@ export class KestrelDatabase {
 		const activeRuns = (
 			this.db
 				.prepare(
-					"SELECT payload FROM agent_runs WHERE session_id = ? AND status IN ('running', 'waiting_approval') ORDER BY created_at ASC",
+					"SELECT payload FROM agent_runs WHERE session_id = ? AND status IN ('running', 'waiting_approval', 'waiting_input') ORDER BY created_at ASC",
 				)
 				.all(sessionId) as Array<{ payload: string }>
 		).map((row) => AgentRunSchema.parse(JSON.parse(row.payload)));
@@ -2451,7 +2485,7 @@ export class KestrelDatabase {
 		});
 
 		const saveRun = this.db.prepare(
-			"UPDATE agent_runs SET payload = ?, status = ?, updated_at = ? WHERE id = ? AND session_id = ? AND status IN ('running', 'waiting_approval')",
+			"UPDATE agent_runs SET payload = ?, status = ?, updated_at = ? WHERE id = ? AND session_id = ? AND status IN ('running', 'waiting_approval', 'waiting_input')",
 		);
 		const runs = activeRuns.map((run) => {
 			const {

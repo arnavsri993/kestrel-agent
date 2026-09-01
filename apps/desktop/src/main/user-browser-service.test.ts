@@ -53,7 +53,16 @@ const electron = vi.hoisted(() => {
       toPNG: () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     }));
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = handler; });
-    windowOpenHandler: ((details: { url: string; disposition: "foreground-tab" | "background-tab" | "new-window" }) => { action: string }) | undefined;
+    windowOpenHandler: ((details: {
+      url: string;
+      disposition: "default" | "foreground-tab" | "background-tab" | "new-window" | "other";
+      postBody?: {
+        contentType: string;
+        boundary?: string;
+        data: Array<{ type: string; bytes: Buffer }>;
+      };
+      referrer?: { url: string; policy: string };
+    }) => { action: string }) | undefined;
     isDestroyed = () => this.destroyed;
     getURL = () => this.url;
     getTitle = () => this.title;
@@ -668,6 +677,50 @@ describe("UserBrowserService", () => {
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState()).toMatchObject({ activeTabId: expect.any(String) });
     expect(service.getState().tabs.at(-1)).toMatchObject({ url: "https://open.example/path" });
+  });
+
+  it("preserves target=_blank form POST bodies when opening managed tabs", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://canvas.example/course");
+    const source = electron.state.views[0]!.webContents;
+    const postData = Buffer.from(
+      "iss=https%3A%2F%2Fcanvas.example&login_hint=student&target_link_uri=https%3A%2F%2Fcourseware.example%2Fmath",
+      "utf8",
+    );
+    const postBody = {
+      contentType: "application/x-www-form-urlencoded",
+      data: [{ type: "rawData", bytes: postData }],
+    };
+
+    expect(
+      source.windowOpenHandler?.({
+        url: "https://courseware.example/api/lti/oidc",
+        disposition: "foreground-tab",
+        postBody,
+        referrer: {
+          url: "https://canvas.example/course",
+          policy: "strict-origin-when-cross-origin",
+        },
+      }),
+    ).toEqual({ action: "deny" });
+
+    await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
+    expect(service.getState().tabs.at(-1)).toMatchObject({
+      url: "https://courseware.example/api/lti/oidc",
+    });
+    const popup = electron.state.views.at(-1)!.webContents;
+    expect(popup.loadURL).toHaveBeenCalledWith(
+      "https://courseware.example/api/lti/oidc",
+      {
+        postData: postBody.data,
+        extraHeaders: "Content-Type: application/x-www-form-urlencoded",
+        httpReferrer: {
+          url: "https://canvas.example/course",
+          policy: "strict-origin-when-cross-origin",
+        },
+      },
+    );
   });
 
   it("awaits CDP clicks and opens a managed tab for new window links", async () => {

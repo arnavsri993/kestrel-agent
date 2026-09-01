@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { KestrelDatabase } from "@kestrel/database";
@@ -219,7 +219,7 @@ describe("media artifact workflow", () => {
 		).toContain("local-markdown");
 	});
 
-	it("creates retained opaque-origin widgets through an approval-gated tool", async () => {
+	it("creates, pins, and exports retained opaque-origin widgets through an approval-gated tool", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-widgets-"));
 		directories.push(root);
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
@@ -270,7 +270,98 @@ describe("media artifact workflow", () => {
 				sessionId: session.id,
 			}),
 		).toThrow("security metadata");
+		const pinned = manager.setPinned(record.id, true);
+		expect(pinned).toMatchObject({
+			id: record.id,
+			pinned: true,
+			integrity: "verified",
+			providerId: "local-widget",
+			model: "sandbox-v1",
+			sessionId: session.id,
+		});
+		expect(manager.setPinned(record.id, false).pinned).toBe(false);
+		const exported = manager.exportWidget(record.id);
+		expect(exported).toMatchObject({
+			artifactKind: "widget",
+			exportedFromArtifactId: record.id,
+			title: "Test chooser export",
+			integrity: "verified",
+			sessionId: session.id,
+		});
+		expect(readFileSync(exported.path, "utf8")).toContain("Selected");
+		expect(manager.preview(exported.id).dataBase64).toBe(
+			Buffer.from(readFileSync(exported.path)).toString("base64"),
+		);
+		expect(() => manager.exportWidget(record.id, 1)).toThrow(
+			"larger than the bounded export limit",
+		);
 		database.close();
+	});
+
+	it("persists media provenance and detects tampering or missing files after restart", async () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-media-restart-"));
+		directories.push(root);
+		const databasePath = join(root, "runtime.sqlite");
+		const encryptionKey = createEncryptionKey();
+		const png = Uint8Array.from([
+			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0x49, 0x48,
+			0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1,
+		]);
+		const provider = {
+			id: "restart-media",
+			generate: async () => ({
+				data: png,
+				mediaType: "image/png",
+				model: "restart-fixture",
+				providerRequestId: "restart-request",
+			}),
+		};
+		const database = new KestrelDatabase(databasePath, encryptionKey);
+		const manager = new ArtifactManager(database, root, [provider]);
+		const record = await manager.generate(
+			{
+				providerId: provider.id,
+				prompt: "persist this image",
+				kind: "image",
+				filename: "restart-pixel",
+				sessionId: "session-media",
+			},
+			new AbortController().signal,
+		);
+		const originalBytes = readFileSync(record.path);
+		database.close();
+
+		const restartedDatabase = new KestrelDatabase(databasePath, encryptionKey);
+		const restarted = new ArtifactManager(restartedDatabase, root);
+		try {
+			expect(restarted.list()).toEqual([
+				expect.objectContaining({
+					id: record.id,
+					mediaType: "image/png",
+					providerId: provider.id,
+					model: "restart-fixture",
+					sessionId: "session-media",
+					integrity: "verified",
+				}),
+			]);
+			expect(restarted.preview(record.id).dataBase64).toBe(
+				originalBytes.toString("base64"),
+			);
+			expect(restarted.download(record.id).dataBase64).toBe(
+				originalBytes.toString("base64"),
+			);
+
+			writeFileSync(record.path, Buffer.from("tampered"));
+			expect(restarted.list()[0]).toMatchObject({ integrity: "tampered" });
+			expect(() => restarted.preview(record.id)).toThrow("integrity");
+
+			writeFileSync(record.path, originalBytes);
+			unlinkSync(record.path);
+			expect(restarted.list()[0]).toMatchObject({ integrity: "missing" });
+			expect(() => restarted.download(record.id)).toThrow("missing");
+		} finally {
+			restartedDatabase.close();
+		}
 	});
 
 	it("submits fal MiniMax Music 2.6, constrains the download host, and records paid provenance", async () => {
