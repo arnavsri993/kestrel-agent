@@ -2,128 +2,118 @@
 
 **Status: FROZEN — 2026-08-31**
 
-This is the bounded backlog for the OpenClaw 2.0 parity pass. The initial
-repository and reference audit is complete. This list is frozen after this
-file is written; implementation must not grow the scope. Newly noticed
-non-critical improvements belong in **Deferred / out of scope** below. Only a
-security or data-loss defect discovered during implementation may be added,
-and it must be recorded with the reason it blocks release.
+This is the finite implementation backlog for the revision of PR #691. The
+35 existing behavior IDs are the complete audit boundary. This file is frozen
+now: implementation may not add features or re-open the audit. Newly noticed
+non-critical improvements belong only in **Deferred / out of scope**. A new
+security or data-loss defect may be added only if it is discovered during
+implementation and its release-blocking reason is recorded here.
 
-## Audit baseline
+## Audit baseline and decisions
 
-- Kestrel repository: `/Users/arnavsrivastava/Documents/Agent`
 - Implementation worktree: `/private/tmp/kestrel-openclaw-2-parity-20260831`
-- Starting Kestrel commit: `f0680133f28408e1bf74f3b0a2989249aeaf7d76`
-- Starting implementation branch: `codex/openclaw-2-parity-20260831`
-- Primary checkout was left untouched; its pre-existing untracked `index.js`
-  remains preserved.
-- Host: macOS arm64 (`ProductVersion 27.0`), Node `v24.18.0`, pnpm `11.15.1`.
-- `/Applications/Kestrel.app` exists and the real profile contains user data;
-  it is outside this pass and must not be reset or replaced.
-- Existing baseline checks passed: reference audit, focused Vitest suite
-  (159 files / 1,084 tests), typecheck, and market audit.
-- The existing readiness and restart Electron scripts were attempted once and
-  hung before producing a result; they are retained as an operator/runtime
-  boundary, not treated as permission to loop.
+- Branch: `codex/openclaw-2-parity-20260831`
+- Original PR head before main integration:
+  `3822d183b4bf6e2a79d5610c746305bb968b1d6b`
+- Integrated `origin/main`:
+  `9a1aa4b63c23307c3b977c1712514cff0c4e7630`
+- Integration merge base: `9a1aa4b63c23307c3b977c1712514cff0c4e7630`
+- OpenClaw reference: `v2026.8.1` (OpenClaw 2.0), immutable commit
+  `ea806575e6450e4d1efdfc72c19f04be982a1b9b`.
+- The audit reviewed the claimed behavior, implementation paths, test
+  assertions, and reachability for all 35 entries. The family catalog and
+  workspace-file search were not accepted as exact conversation behavior.
+- Confirmed unresolved P0/P1 gaps at freeze time are limited to transcript
+  search/privacy, selected-session restoration, structured human input, widget
+  pin/provenance/export, and media restart/playback evidence. The existing
+  P2 platform/operator boundaries remain disclosed rather than promoted.
+- The primary checkout and its unrelated untracked `index.js`, the installed
+  Kestrel profile, credentials, source OpenClaw files, and generated artifacts
+  are outside this worktree and remain untouched.
 
-## Pinned reference identity
+## Frozen P0 backlog
 
-The stable competitive baseline is the official OpenClaw release tag
-`v2026.8.1`, documented by OpenClaw as **OpenClaw 2.0**. The tag resolves to
-immutable commit
-`ea806575e6450e4d1efdfc72c19f04be982a1b9b` (annotated tag object
-`4d37fc4b0f86ce372d7cb433d1d939ef04f49322`). The register and verifier must
-use this tag and commit, never an unpinned branch or prerelease.
+1. **Make exact-behavior evidence fail closed.** Add designated
+   `behavioralTestEvidence` (or an equivalent evidence level) to the register,
+   require it for every verified/implemented exact behavior, ensure each
+   designated test is in the focused command, and add negative verifier
+   coverage for primitive-only evidence. Keep duplicate-ID, stale-release,
+   family-vs-behavior, evidence-path, unresolved-P0/P1, deterministic
+   Markdown, and secret-scan gates intact.
 
-## Frozen implementation backlog
+2. **Implement local transcript search and retention boundaries.** For
+   `oc2.search.local-transcript` and `oc2.search.restart-privacy`, provide a
+   local encrypted conversation search flow with normalized Unicode matching,
+   bounded previews, conversation/message identity, exact-message navigation,
+   restart persistence, forgotten-record exclusion, documented private versus
+   incognito policy, and a test proving no provider request occurs.
 
-### P0 — release-blocking truth and verification
+3. **Diagnose the packaged desktop-layout failure without weakening it.** Run
+   `test:desktop-layout` against the integrated current-main baseline and this
+   branch. Fix only a deterministic regression caused by this branch and
+   validate the actual packaged application; otherwise record exact
+   main-versus-branch or environment evidence and do not change assertions.
 
-1. **Create the pinned behavior register.** Add a machine-readable register
-   under `docs/` with behavior-level entries for the important stable
-   OpenClaw 2.0 macOS single-user outcomes covered by the audit. Every entry
-   must carry a stable ID, user-visible behavior, family ID, P0/P1/P2 priority,
-   official source URL or tagged source path, pinned tag and commit,
-   classification, Kestrel implementation evidence, executable test evidence,
-   exact verification command, security/privacy implications, migration
-   implications, platform boundary, and notes.
+## Frozen P1 backlog
 
-2. **Separate family coverage from behavioral proof.** Keep the existing
-   broad capability catalog and page audit as family/reference coverage only.
-   The new register must model exact behaviors separately and must not let a
-   family-level `implemented` label satisfy a behavior entry without executable
-   evidence.
+4. **Add structured human-input requests.** Reclassify
+   `oc2.questions.structured-input` from P2 to P1 and implement a run-bound,
+   persisted request model with question ID, owning run, prompt/context,
+   single- and multi-choice options, free text, distinct Skip, timeout and
+   cancellation states. Add inline accessible task UI with keyboard/focus,
+   reduced-motion, and narrow-window behavior. Answers must be one-shot,
+   stale/cancelled/replaced/completed runs must reject them, restart must not
+   revive authority, and consequential actions must still use normal approval.
 
-3. **Add a fail-closed verifier and canonical command.** Implement
-   `corepack pnpm verify:openclaw2` to validate register shape, unique IDs,
-   allowed classifications, pinned release identity, evidence paths, exact
-   command references, and the absence of unresolved P0/P1 entries. It must
-   run the bounded focused parity/security/migration/recovery/UI Vitest
-   evidence set and return non-zero on stale or incomplete evidence.
+5. **Persist the selected conversation.** Complete
+   `oc2.session.organization` by persisting the selected session identity,
+   restoring only an existing eligible session after restart, clearing stale
+   identities safely, and retaining the existing browser return path.
 
-4. **Add verifier negative coverage.** Test duplicate IDs, unknown
-   classifications, stale or mismatched release commits, missing evidence,
-   nonexistent evidence/test/command paths, family-vs-behavior confusion, and
-   unresolved P0/P1 entries. These tests must use temporary copies or in-memory
-   mutations and must not touch user data or the real OpenClaw installation.
+6. **Complete widget task-surface behavior.** Complete
+   `oc2.widgets.dashboard-export` using the artifact/widget subsystem (not the
+   native macOS status snapshot): allow pin/unpin, expose artifact provenance,
+   and export the bounded rendered widget view without adding authority. Add
+   direct behavioral tests and correct the register evidence.
 
-5. **Correct the official release documentation.** Update
-   `docs/openclaw-readiness-review.md` to identify `v2026.8.1` as the official
-   release explicitly described as OpenClaw 2.0, and link the new register and
-   verifier. Preserve truthful safer differences, extension contracts,
-   platform boundaries, and operator-owned release gates.
-
-### P1 — integration and maintainability
-
-6. **Wire the verifier into repository checks.** Add the package script and a
-   CI invocation in the existing core job without replacing or weakening the
-   existing full verification gates. Keep expensive packaged and real-provider
-   checks separately named.
-
-7. **Make the evidence set reviewable.** Use existing Kestrel runtime,
-   security, migration, recovery, memory, model, plugin, widget/media,
-   orchestration, and desktop UI tests in the register rather than creating
-   parallel subsystems. Add only the small integration fixture/test needed to
-   prove the v2026.8.1-shaped OpenClaw switcher path.
-
-8. **Document the verification boundary.** Add concise register/verifier
-   usage and classification guidance so future refreshes cannot silently
-   promote a capability-family mapping, a mocked result, or an operator gate
-   into exact parity evidence.
+7. **Prove and harden media persistence/reload.** Complete
+   `oc2.media.persistence-reload` with tamper-aware artifact reads, session
+   provenance, restart-safe listing/preview, and renderer playback/download
+   handling for supported image, audio, video, and document artifacts. Add a
+   direct persistence/reload behavioral test.
 
 ## Frozen acceptance criteria
 
-- The register is committed, deterministic, valid JSON, pinned to the release
-  tag and immutable commit above, and contains no duplicate IDs.
-- Every registered behavior has the required provenance, classification,
-  implementation evidence, executable test evidence, exact command, and
-  boundary fields; all referenced repository paths and commands exist.
-- `verified-existing` and `implemented-and-verified` entries have passing
-  executable evidence. Safer differences include a written rationale and a
-  passing boundary test. Extension entries have a tested extension path.
-- The existing family catalog and the exact behavior register are explicitly
-  different evidence layers.
-- No P0 or P1 entry is `unresolved`.
-- `corepack pnpm verify:openclaw2` fails closed for every negative case in item
-  4 and passes on the committed register while running its focused tests.
-- The stale readiness wording is removed without making claims about bundled
-  integrations, native mobile apps, notarization, external OAuth, or other
-  operator-owned gates that were not verified.
-- No user profile, credentials, source OpenClaw files, generated screenshots,
-  package caches, or unrelated dirty work are changed.
-- The implementation receives one targeted repair pass and one full
-  verification/repair/final-verification sequence, then stops.
+- The register remains exactly 35 behavior IDs, valid deterministic JSON, and
+  pinned to the release identity above.
+- Every registered entry has complete provenance, classification, boundary,
+  implementation evidence, test evidence, designated behavioral evidence, and
+  an executable verification command. All paths and commands exist.
+- `verified-existing` and `implemented-and-verified` entries have a designated
+  behavioral test; safer-difference and extension entries retain direct
+  boundary/contract evidence. Primitive-only tests cannot satisfy the gate.
+- The conversation-search, structured-question, selected-session, widget, and
+  media entries are not called verified until their direct tests pass.
+- No P0 or P1 entry remains `unresolved` in the committed register.
+- `corepack pnpm verify:openclaw2` executes the focused evidence set and fails
+  for every frozen negative case without touching user data or an OpenClaw
+  installation.
+- The generated Markdown remains deterministic and shows priority and
+  classification changes.
+- No canonical installed app replacement, profile reset, credential change,
+  unrelated WIP change, screenshot commit, or package-cache change is made.
+- The finite sequence is: one targeted test/repair pass, one full verification
+  pass, at most one repair for failures caused by this work, and one final
+  verification. Then stop.
 
-## Deferred / out of scope (not backlog items)
+## Deferred / out of scope
 
-- A second broad audit of OpenClaw or tracking a newer/prerelease OpenClaw
-  build.
-- New product features, vendor-specific integrations, native iOS/Android
-  applications, or a copied OpenClaw Gateway/configuration format.
-- Reworking already-present session, memory, widget, media, provider,
-  orchestration, plugin, migration, backup, or desktop systems solely for
-  cosmetic or theoretical parity beyond the evidence register.
-- Apple Developer ID signing, notarization, update hosting, external OAuth
-  verification, and other operator-owned release gates.
-- Repairing the pre-existing hanging Electron readiness/restart harness unless
-  the new verifier itself causes a regression.
+- A second OpenClaw audit, newer/prerelease reference tracking, or additional
+  behavior IDs.
+- Cosmetic UI polish beyond the frozen question/search/widget/media criteria.
+- New vendor integrations, native mobile applications, copied OpenClaw
+  gateway/configuration formats, or unrelated session/memory/provider work.
+- Apple Developer ID signing, notarization, update hosting, external OAuth,
+  and other operator-owned release gates.
+- Repairing a pre-existing or environment-only packaged harness failure when
+  main-versus-branch evidence shows it is not caused by this pass.

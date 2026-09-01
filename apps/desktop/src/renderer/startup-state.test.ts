@@ -1,4 +1,8 @@
-import type { CoreResponse, WorkspaceSnapshot } from "@kestrel/shared-types";
+import type {
+	CoreResponse,
+	RuntimeSession,
+	WorkspaceSnapshot,
+} from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
 	loadInitialDesktopState,
@@ -24,6 +28,49 @@ describe("desktop startup state", () => {
 
 		expect(state.snapshot).toBe(workspace);
 		expect(state.sessions).toEqual([]);
+		expect(state.selectedSessionId).toBeNull();
+	});
+
+	it("restores only a returned, non-forgotten selected conversation", async () => {
+		const workspace = { productName: "Kestrel" } as WorkspaceSnapshot;
+		const sessions = [
+			{
+				id: "session-kept",
+				title: "Kept",
+				allowedTools: [],
+				status: "active",
+				checkpoints: [],
+				createdAt: "2026-08-31T10:00:00.000Z",
+				updatedAt: "2026-08-31T10:00:00.000Z",
+			},
+			{
+				id: "session-forgotten",
+				title: "Forgotten",
+				allowedTools: [],
+				status: "active",
+				checkpoints: [],
+				createdAt: "2026-08-31T09:00:00.000Z",
+				updatedAt: "2026-08-31T09:00:00.000Z",
+				forgottenAt: "2026-08-31T11:00:00.000Z",
+			},
+		] as RuntimeSession[];
+		const state = await loadInitialDesktopState(async (request) => {
+			if (request.type === "snapshot")
+				return { ok: true, snapshot: workspace } as CoreResponse;
+			return {
+				ok: true,
+				sessions,
+				selectedSessionId: "session-forgotten",
+			} as CoreResponse;
+		});
+		expect(state.selectedSessionId).toBeNull();
+
+		const restored = await loadInitialDesktopState(async (request) =>
+			request.type === "snapshot"
+				? ({ ok: true, snapshot: workspace } as CoreResponse)
+				: ({ ok: true, sessions, selectedSessionId: "session-kept" } as CoreResponse),
+		);
+		expect(restored.selectedSessionId).toBe("session-kept");
 	});
 
 	it("turns unknown startup failures into an actionable message", () => {

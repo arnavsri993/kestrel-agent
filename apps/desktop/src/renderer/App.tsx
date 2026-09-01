@@ -11,6 +11,7 @@ import type {
 	ExternalIntake,
 	EnterpriseAnalytics,
 	GoalRecordContract,
+	HumanInputRequest,
 	GoogleWorkspaceOAuthStatus,
 	LocalBackupResult,
 	LocalModelSummary,
@@ -32,6 +33,7 @@ import type {
 	RoutingTrace,
 	RuntimeEvent,
 	RuntimeMessage,
+	TranscriptSearchResult,
 	RuntimeSession,
 	RuntimeToolExecution,
 	ScheduledJobSummary,
@@ -79,6 +81,7 @@ import { chatTitleFromPrompt, sessionTitleForDisplay } from "./chat-title";
 import { BrandMark } from "./components/BrandMark";
 import { RuntimeActivityTrail } from "./components/RuntimeActivityTrail";
 import { RuntimeApprovalQueue } from "./components/RuntimeApprovalQueue";
+import { RuntimeQuestionCard } from "./components/RuntimeQuestionCard";
 import { AgentSidebar } from "./components/browser/AgentSidebar";
 import { ActionReceiptList } from "./components/ActionReceiptList";
 import {
@@ -2460,161 +2463,454 @@ function Loading() {
 	);
 }
 
+export type ArtifactPreviewState = {
+	mediaType: string;
+	dataUrl?: string;
+	text?: string;
+	truncated: boolean;
+};
+
+const MAX_ARTIFACT_PREVIEW_BYTES = 5_000_000;
+const MAX_WIDGET_EXPORT_BYTES = 10_000_000;
+
+function decodeArtifactBase64(value: string): Uint8Array {
+	const binary = atob(value);
+	return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+export function isTextArtifact(artifact: ArtifactRecordContract): boolean {
+	return (
+		(artifact.mediaType.startsWith("text/") && artifact.mediaType !== "text/html") ||
+		["application/json", "application/xml"].includes(artifact.mediaType)
+	);
+}
+
+export function supportsArtifactPreview(artifact: ArtifactRecordContract): boolean {
+	return (
+		artifact.mediaType.startsWith("image/") ||
+		artifact.mediaType.startsWith("audio/") ||
+		artifact.mediaType.startsWith("video/") ||
+		artifact.mediaType === "application/pdf" ||
+		isTextArtifact(artifact) ||
+		(artifact.mediaType === "text/html" && artifact.artifactKind === "widget")
+	);
+}
+
+export function artifactPreviewState(
+	artifact: ArtifactRecordContract,
+	preview: {
+		mediaType: string;
+		dataBase64: string;
+		truncated: boolean;
+	},
+): ArtifactPreviewState {
+	if (isTextArtifact(artifact))
+		return {
+			mediaType: preview.mediaType,
+			text: new TextDecoder().decode(decodeArtifactBase64(preview.dataBase64)),
+			truncated: preview.truncated,
+		};
+	return {
+		mediaType: preview.mediaType,
+		...(preview.truncated
+			? {}
+			: {
+					dataUrl: `data:${preview.mediaType};base64,${preview.dataBase64}`,
+				}),
+		truncated: preview.truncated,
+	};
+}
+
+function triggerArtifactDownload(download: {
+	filename: string;
+	mediaType: string;
+	dataBase64: string;
+}): void {
+	const bytes = decodeArtifactBase64(download.dataBase64);
+	const url = URL.createObjectURL(
+		new Blob([bytes.slice().buffer as ArrayBuffer], { type: download.mediaType }),
+	);
+	const anchor = document.createElement("a");
+	anchor.href = url;
+	anchor.download = download.filename;
+	document.body.appendChild(anchor);
+	anchor.click();
+	anchor.remove();
+	window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function Artifacts() {
 	const [artifacts, setArtifacts] = useState<ArtifactRecordContract[]>([]);
-	const [previews, setPreviews] = useState<Record<string, string>>({});
+	const [previews, setPreviews] = useState<Record<string, ArtifactPreviewState>>({});
+	const [artifactErrors, setArtifactErrors] = useState<Record<string, string>>({});
+	const [artifactNotices, setArtifactNotices] = useState<Record<string, string>>({});
 	const [error, setError] = useState("");
-	async function load() {
-		const response = (await window.kestrel.request({
-			type: "media-list-artifacts",
-		})) as CoreResponse;
-		if (!response.ok) throw new Error(response.error);
-		const next = response.artifacts ?? [];
-		setArtifacts(next);
-		const visible = next.filter(
-			(artifact) =>
-				artifact.bytes <= 5_000_000 &&
-				(artifact.mediaType.startsWith("image/") ||
-					artifact.mediaType.startsWith("audio/") ||
-					artifact.mediaType.startsWith("video/") ||
-					artifact.mediaType === "text/html"),
-		);
-		const loaded = await Promise.all(
-			visible.map(async (artifact) => {
-				const result = (await window.kestrel.request({
-					type: "media-preview-artifact",
-					artifactId: artifact.id,
-					maximumBytes: 5_000_000,
-				})) as CoreResponse;
-				return result.ok &&
-					result.artifactPreview &&
-					!result.artifactPreview.truncated
-					? ([
-							artifact.id,
-							`data:${result.artifactPreview.mediaType};base64,${result.artifactPreview.dataBase64}`,
-						] as const)
-					: undefined;
-			}),
-		);
-		setPreviews(
-			loaded.reduce<Record<string, string>>((map, entry) => {
-				if (entry) map[entry[0]] = entry[1];
-				return map;
-			}, {}),
-		);
-	}
-	useEffect(() => {
-		void load().catch((cause) =>
-			setError(
-				cause instanceof Error ? cause.message : "Could not load artifacts.",
-			),
-		);
+	const [loading, setLoading] = useState(false);
+	const [busyArtifactId, setBusyArtifactId] = useState<string | null>(null);
+	const loadSequenceRef = useRef(0);
+
+	const load = useCallback(async () => {
+		const sequence = ++loadSequenceRef.current;
+		setLoading(true);
+		setError("");
+		try {
+			const response = (await window.kestrel.request({
+				type: "media-list-artifacts",
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			const next = response.artifacts ?? [];
+			const previewOutcomes = await Promise.all(
+				next.map(async (artifact) => {
+					if (artifact.integrity !== "verified")
+						return {
+							artifact,
+							error:
+								artifact.integrity === "missing"
+									? "The stored file is missing."
+									: "The stored file failed integrity or containment verification.",
+						};
+					if (artifact.bytes > MAX_ARTIFACT_PREVIEW_BYTES)
+						return {
+							artifact,
+							notice: "Preview skipped at 5 MB; download the verified file instead.",
+						};
+					if (!supportsArtifactPreview(artifact))
+						return {
+							artifact,
+							notice: "Preview is unavailable for this media type; the file can still be downloaded.",
+						};
+					try {
+						const result = (await window.kestrel.request({
+							type: "media-preview-artifact",
+							artifactId: artifact.id,
+							maximumBytes: MAX_ARTIFACT_PREVIEW_BYTES,
+						})) as CoreResponse;
+						if (!result.ok) throw new Error(result.error);
+						if (!result.artifactPreview)
+							throw new Error("The artifact returned no preview data.");
+						return {
+							artifact,
+							preview: artifactPreviewState(artifact, result.artifactPreview),
+						};
+					} catch (cause) {
+						return {
+							artifact,
+							error:
+								cause instanceof Error
+									? cause.message
+									: "Could not prepare the artifact preview.",
+						};
+					}
+				}),
+			);
+			if (sequence !== loadSequenceRef.current) return;
+			setArtifacts(next);
+			setPreviews(
+				Object.fromEntries(
+					previewOutcomes.flatMap((outcome) =>
+						outcome.preview ? [[outcome.artifact.id, outcome.preview]] : [],
+					),
+				),
+			);
+			setArtifactErrors(
+				Object.fromEntries(
+					previewOutcomes.flatMap((outcome) =>
+						outcome.error ? [[outcome.artifact.id, outcome.error]] : [],
+					),
+				),
+			);
+			setArtifactNotices(
+				Object.fromEntries(
+					previewOutcomes.flatMap((outcome) =>
+						outcome.notice ? [[outcome.artifact.id, outcome.notice]] : [],
+					),
+				),
+			);
+		} catch (cause) {
+			if (sequence === loadSequenceRef.current)
+				setError(
+					cause instanceof Error ? cause.message : "Could not load artifacts.",
+				);
+		} finally {
+			if (sequence === loadSequenceRef.current) setLoading(false);
+		}
 	}, []);
+
+	useEffect(() => {
+		void load();
+	}, [load]);
+
+	async function setPinned(artifact: ArtifactRecordContract): Promise<void> {
+		if (artifact.integrity !== "verified") return;
+		setBusyArtifactId(artifact.id);
+		setArtifactErrors((current) => {
+			const next = { ...current };
+			delete next[artifact.id];
+			return next;
+		});
+		try {
+			const response = (await window.kestrel.request({
+				type: "media-pin-artifact",
+				artifactId: artifact.id,
+				pinned: artifact.pinned !== true,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			const updated = response.artifacts?.[0];
+			if (!updated) throw new Error("Pin state was not returned.");
+			setArtifacts((current) =>
+				current.map((item) => (item.id === updated.id ? updated : item)),
+			);
+		} catch (cause) {
+			setArtifactErrors((current) => ({
+				...current,
+				[artifact.id]:
+					cause instanceof Error ? cause.message : "Could not update pin state.",
+			}));
+		} finally {
+			setBusyArtifactId(null);
+		}
+	}
+
+	async function downloadArtifact(artifact: ArtifactRecordContract): Promise<void> {
+		if (artifact.integrity !== "verified") return;
+		setBusyArtifactId(artifact.id);
+		setArtifactErrors((current) => {
+			const next = { ...current };
+			delete next[artifact.id];
+			return next;
+		});
+		try {
+			const response = (await window.kestrel.request({
+				type: "media-download-artifact",
+				artifactId: artifact.id,
+				maximumBytes: 32_000_000,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.artifactDownload)
+				throw new Error("The artifact returned no download data.");
+			triggerArtifactDownload(response.artifactDownload);
+			setArtifactNotices((current) => ({
+				...current,
+				[artifact.id]: "Download started.",
+			}));
+		} catch (cause) {
+			setArtifactErrors((current) => ({
+				...current,
+				[artifact.id]:
+					cause instanceof Error ? cause.message : "Could not download this artifact.",
+			}));
+		} finally {
+			setBusyArtifactId(null);
+		}
+	}
+
+	async function exportWidget(artifact: ArtifactRecordContract): Promise<void> {
+		if (artifact.integrity !== "verified" || artifact.artifactKind !== "widget") return;
+		setBusyArtifactId(artifact.id);
+		setArtifactErrors((current) => {
+			const next = { ...current };
+			delete next[artifact.id];
+			return next;
+		});
+		try {
+			const response = (await window.kestrel.request({
+				type: "media-export-artifact",
+				artifactId: artifact.id,
+				maximumBytes: MAX_WIDGET_EXPORT_BYTES,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.exportedArtifact || !response.artifactPreview)
+				throw new Error("The widget export returned no bounded file.");
+			const exported = response.exportedArtifact;
+			setArtifacts((current) => [
+				...current.filter((item) => item.id !== exported.id),
+				exported,
+			]);
+			setPreviews((current) => ({
+				...current,
+				[exported.id]: artifactPreviewState(exported, response.artifactPreview!),
+			}));
+			if (response.artifactPreview.truncated)
+				throw new Error("The widget export exceeded the bounded download preview.");
+			triggerArtifactDownload({
+				filename: exported.filename,
+				mediaType: exported.mediaType,
+				dataBase64: response.artifactPreview.dataBase64,
+			});
+			setArtifactNotices((current) => ({
+				...current,
+				[artifact.id]: `Exported ${exported.filename} and started the download.`,
+				[exported.id]: "Exported from this widget.",
+			}));
+		} catch (cause) {
+			setArtifactErrors((current) => ({
+				...current,
+				[artifact.id]:
+					cause instanceof Error ? cause.message : "Could not export this widget.",
+			}));
+		} finally {
+			setBusyArtifactId(null);
+		}
+	}
+
+	const verifiedCount = artifacts.filter((artifact) => artifact.integrity === "verified").length;
 	return (
 		<PageFrame
 			eyebrow="Verified results"
 			title="Artifacts"
-			text="Inspect locally stored outputs together with their source, model, and verification hash."
+			text="Inspect locally stored outputs together with their source, model, session, and verification hash."
 			measure="wide"
 		>
 			<div className="artifact-toolbar">
 				<span>
-					{artifacts.length} verified file{artifacts.length === 1 ? "" : "s"}
+					{verifiedCount} verified · {artifacts.length} retained
 				</span>
 				<button
 					className="button secondary"
-					onClick={() =>
-						void load().catch((cause) =>
-							setError(
-								cause instanceof Error
-									? cause.message
-									: "Could not refresh artifacts.",
-							),
-						)
-					}
+					disabled={loading}
+					onClick={() => void load()}
 				>
-					Refresh
+					{loading ? "Refreshing…" : "Refresh"}
 				</button>
 			</div>
-			{error && <p role="alert">{error}</p>}
-			{artifacts.length === 0 ? (
+			{error && <p className="connection-error" role="alert">{error}</p>}
+			{artifacts.length === 0 && !loading ? (
 				<Empty
 					title="Nothing saved yet"
 					text="Verified files and interactive results will appear here."
 				/>
 			) : (
-				<section className="artifact-grid">
+				<section className="artifact-grid" aria-live="polite">
 					{artifacts
 						.slice()
 						.reverse()
-						.map((artifact) => (
-							<article className="artifact-card" key={artifact.id}>
-								{previews[artifact.id] &&
-								artifact.mediaType.startsWith("image/") ? (
-									<img
-										src={previews[artifact.id]}
-										alt={`Generated artifact ${artifact.filename}`}
-									/>
-								) : previews[artifact.id] &&
-									artifact.mediaType === "text/html" &&
-									artifact.artifactKind === "widget" ? (
-									<div className="artifact-widget">
-										<iframe
-											title={artifact.title ?? artifact.filename}
-											sandbox="allow-scripts"
-											referrerPolicy="no-referrer"
-											src={previews[artifact.id]}
+						.map((artifact) => {
+							const preview = previews[artifact.id];
+							const busy = busyArtifactId === artifact.id;
+							const intact = artifact.integrity === "verified";
+							return (
+								<article
+									className={`artifact-card artifact-card-${artifact.integrity ?? "unknown"}`}
+									key={artifact.id}
+									data-artifact-id={artifact.id}
+								>
+									{preview?.dataUrl && artifact.mediaType.startsWith("image/") ? (
+										<img
+											src={preview.dataUrl}
+											alt={`Generated artifact ${artifact.filename}`}
 										/>
-										<span>Interactive · isolated · network off</span>
+									) : preview?.dataUrl &&
+										artifact.mediaType === "text/html" &&
+										artifact.artifactKind === "widget" ? (
+										<div className="artifact-widget">
+											<iframe
+												title={artifact.title ?? artifact.filename}
+												sandbox="allow-scripts"
+												referrerPolicy="no-referrer"
+												src={preview.dataUrl}
+											/>
+											<span>Interactive · isolated · network off</span>
+										</div>
+									) : preview?.dataUrl && artifact.mediaType === "application/pdf" ? (
+										<div className="artifact-document-pdf">
+											<iframe
+												title={`Preview of ${artifact.filename}`}
+												src={preview.dataUrl}
+											/>
+										</div>
+									) : preview?.text !== undefined ? (
+										<div className="artifact-document-preview">
+											<pre>{preview.text || "(empty document)"}</pre>
+											{preview.truncated && <span>Preview truncated at 5 MB</span>}
+										</div>
+									) : preview?.dataUrl && artifact.mediaType.startsWith("audio/") ? (
+										<div className="artifact-audio">
+											<span>
+												{artifact.providerId === "fal-music"
+													? "AI-generated music"
+													: "AI-generated voice"}
+											</span>
+											<audio controls preload="metadata" src={preview.dataUrl} />
+										</div>
+									) : preview?.dataUrl && artifact.mediaType.startsWith("video/") ? (
+										<div className="artifact-video">
+											<span>Generated video</span>
+											<video controls preload="metadata" src={preview.dataUrl} />
+										</div>
+									) : (
+										<div className="artifact-file">
+											<Icon name="artifacts" />
+											<span>{artifact.mediaType}</span>
+										</div>
+									)}
+									<div className="artifact-card-details">
+										<div className="artifact-card-heading">
+											<strong>{artifact.title ?? artifact.filename}</strong>
+											<button
+												type="button"
+												className={`artifact-pin ${artifact.pinned ? "is-pinned" : ""}`}
+												disabled={!intact || busy}
+												aria-label={artifact.pinned ? "Unpin artifact" : "Pin artifact"}
+												aria-pressed={artifact.pinned === true}
+												onClick={() => void setPinned(artifact)}
+											>
+												<Icon name="pin" />
+												<span>{artifact.pinned ? "Pinned" : "Pin"}</span>
+											</button>
+										</div>
+										<p>
+											{(artifact.bytes / 1024).toFixed(1)} KB
+											{artifact.width && artifact.height
+												? ` · ${artifact.width}×${artifact.height}`
+												: ""}
+										</p>
+										<dl className="artifact-provenance">
+											<div><dt>Source</dt><dd>{artifact.providerId ?? "local"}</dd></div>
+											<div><dt>Model</dt><dd>{artifact.model ?? "verified import"}</dd></div>
+											<div><dt>Session</dt><dd>{artifact.sessionId ?? "unbound"}</dd></div>
+											<div><dt>Integrity</dt><dd>{artifact.integrity ?? "unknown"}</dd></div>
+										</dl>
+										{artifact.exportedFromArtifactId ? (
+											<small className="artifact-lineage" title={artifact.exportedFromArtifactId}>
+												Exported from {artifact.exportedFromArtifactId.slice(0, 20)}…
+											</small>
+										) : null}
+										<small>{new Date(artifact.createdAt).toLocaleString()}</small>
+										<code title={artifact.sha256}>SHA-256 {artifact.sha256.slice(0, 16)}…</code>
+										{artifactErrors[artifact.id] ? (
+											<p className="artifact-integrity-warning" role="alert">
+												{artifactErrors[artifact.id]}
+											</p>
+										) : null}
+										{artifactNotices[artifact.id] ? (
+											<p className="artifact-card-notice" role="status">
+												{artifactNotices[artifact.id]}
+											</p>
+										) : null}
+										<div className="artifact-card-actions">
+											{artifact.artifactKind === "widget" && (
+												<button
+													type="button"
+													className="button secondary"
+													disabled={!intact || busy}
+													onClick={() => void exportWidget(artifact)}
+												>
+													{busy ? "Working…" : "Export widget"}
+												</button>
+											)}
+											<button
+												type="button"
+												className="button secondary"
+												disabled={!intact || busy}
+												onClick={() => void downloadArtifact(artifact)}
+											>
+												{busy ? "Working…" : "Download"}
+											</button>
+										</div>
 									</div>
-								) : previews[artifact.id] &&
-									artifact.mediaType.startsWith("audio/") ? (
-									<div className="artifact-audio">
-										<span>
-											{artifact.providerId === "fal-music"
-												? "AI-generated music"
-												: "AI-generated voice"}
-										</span>
-										<audio
-											controls
-											preload="metadata"
-											src={previews[artifact.id]}
-										/>
-									</div>
-								) : previews[artifact.id] &&
-									artifact.mediaType.startsWith("video/") ? (
-									<div className="artifact-video">
-										<span>Generated video</span>
-										<video
-											controls
-											preload="metadata"
-											src={previews[artifact.id]}
-										/>
-									</div>
-								) : (
-									<div className="artifact-file">
-										<Icon name="artifacts" />
-										<span>{artifact.mediaType}</span>
-									</div>
-								)}
-								<div>
-									<strong>{artifact.title ?? artifact.filename}</strong>
-									<p>
-										{(artifact.bytes / 1024).toFixed(1)} KB
-										{artifact.width && artifact.height
-											? ` · ${artifact.width}×${artifact.height}`
-											: ""}
-									</p>
-									<small>
-										{artifact.providerId ?? "local"} ·{" "}
-										{artifact.model ?? "verified import"}
-									</small>
-									<code title={artifact.sha256}>
-										{artifact.sha256.slice(0, 16)}…
-									</code>
-								</div>
-							</article>
-						))}
+								</article>
+							);
+						})}
 				</section>
 			)}
 		</PageFrame>
@@ -2641,6 +2937,8 @@ function RuntimeConversation({
 	newAgentWorkspace,
 	newAgentFocusTarget,
 	refreshRevision,
+	transcriptTarget,
+	onTranscriptTargetHandled,
 	onOpenActivity,
 	onReviewLearnedSkill,
 }: {
@@ -2663,6 +2961,8 @@ function RuntimeConversation({
 	newAgentWorkspace: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
 	refreshRevision: number;
+	transcriptTarget?: { sessionId: string; messageId: string } | null;
+	onTranscriptTargetHandled?(): void;
 	onOpenActivity?(executionId: string): void;
 	onReviewLearnedSkill(proposalId: string): void;
 }) {
@@ -2724,6 +3024,7 @@ function RuntimeConversation({
 	const [usage, setUsage] = useState<SessionUsageSummary | null>(null);
 	const [latestRun, setLatestRun] = useState<AgentRun | null>(null);
 	const [actionReceipts, setActionReceipts] = useState<ActionReceipt[]>([]);
+	const [humanInputRequests, setHumanInputRequests] = useState<HumanInputRequest[]>([]);
 	const [executions, setExecutions] = useState<RuntimeToolExecution[]>([]);
 	const [skillBusy, setSkillBusy] = useState(false);
 	const [skillNotice, setSkillNotice] =
@@ -2741,8 +3042,10 @@ function RuntimeConversation({
 	const taskSettingsRef = useRef<HTMLDetailsElement>(null);
 	const externalIntakeRequestIdRef = useRef(0);
 	const sessionLoadSequenceRef = useRef(0);
+	const transcriptLoadKeyRef = useRef<string | null>(null);
 	const recorderRef = useRef<MediaRecorder | null>(null);
 	const microphoneStreamRef = useRef<MediaStream | null>(null);
+	const reduced = useReducedMotion();
 
 	useEffect(() => {
 		onRuntimeAgentState(pending ? "waiting_approval" : busy ? "working" : null);
@@ -2880,17 +3183,21 @@ function RuntimeConversation({
 		onSessions(response.sessions ?? []);
 	}
 
+	async function loadHumanInputRequests(sessionId: string): Promise<boolean> {
+		const response = (await window.kestrel.request({
+			type: "runtime-list-human-input",
+			sessionId,
+		})) as CoreResponse;
+		if (!response.ok) throw new Error(response.error);
+		if (activeSessionIdRef.current !== sessionId) return false;
+		setHumanInputRequests(response.humanInputRequests ?? []);
+		return true;
+	}
+
 	async function loadSession(sessionId: string): Promise<boolean> {
 		if (activeSessionIdRef.current !== sessionId) return false;
 		const loadSequence = ++sessionLoadSequenceRef.current;
-		const [
-			messageResponse,
-			runResponse,
-			executionResponse,
-			receiptResponse,
-			usageResponse,
-		] =
-			await Promise.all([
+		const responses = await Promise.all([
 				window.kestrel.request({
 					type: "runtime-list-messages",
 					sessionId,
@@ -2913,12 +3220,25 @@ function RuntimeConversation({
 					type: "runtime-session-usage",
 					sessionId,
 				}) as Promise<CoreResponse>,
+				window.kestrel.request({
+					type: "runtime-list-human-input",
+					sessionId,
+				}) as Promise<CoreResponse>,
 			]);
+		const [
+			messageResponse,
+			runResponse,
+			executionResponse,
+			receiptResponse,
+			usageResponse,
+			humanInputResponse,
+		] = responses;
 		if (!messageResponse.ok) throw new Error(messageResponse.error);
 		if (!runResponse.ok) throw new Error(runResponse.error);
 		if (!executionResponse.ok) throw new Error(executionResponse.error);
 		if (!receiptResponse.ok) throw new Error(receiptResponse.error);
 		if (!usageResponse.ok) throw new Error(usageResponse.error);
+		if (!humanInputResponse.ok) throw new Error(humanInputResponse.error);
 		if (
 			activeSessionIdRef.current !== sessionId ||
 			sessionLoadSequenceRef.current !== loadSequence
@@ -2928,6 +3248,7 @@ function RuntimeConversation({
 		setHasEarlierMessages(messageResponse.hasMoreMessages === true);
 		setUsage(usageResponse.usage ?? null);
 		setActionReceipts(receiptResponse.receipts ?? []);
+		setHumanInputRequests(humanInputResponse.humanInputRequests ?? []);
 		const runs = runResponse.runs ?? [];
 		const loadedExecutions = executionResponse.executions ?? [];
 		setLatestRun(runs[runs.length - 1] ?? null);
@@ -3054,6 +3375,82 @@ function RuntimeConversation({
 		};
 	}, [visible, onSessions]);
 
+	useEffect(() => {
+		if (!transcriptTarget || transcriptTarget.sessionId !== activeSessionId) return;
+		if (messages.some((message) => message.id === transcriptTarget.messageId)) return;
+		if (!messages[0]) return;
+		const loadKey = `${transcriptTarget.sessionId}:${transcriptTarget.messageId}`;
+		if (transcriptLoadKeyRef.current === loadKey) return;
+		transcriptLoadKeyRef.current = loadKey;
+		let cancelled = false;
+		const sessionId = transcriptTarget.sessionId;
+		const loadSequence = sessionLoadSequenceRef.current;
+		void (async () => {
+			setLoadingEarlierMessages(true);
+			try {
+				let cursor: string | undefined = messages[0]?.id;
+				for (let pageNumber = 0; pageNumber < 100 && cursor; pageNumber += 1) {
+					const response = (await window.kestrel.request({
+						type: "runtime-list-messages",
+						sessionId,
+						beforeMessageId: cursor,
+						limit: 100,
+					})) as CoreResponse;
+					if (!response.ok) throw new Error(response.error);
+					if (
+						cancelled ||
+						activeSessionIdRef.current !== sessionId ||
+						sessionLoadSequenceRef.current !== loadSequence
+					)
+						return;
+					const earlier = response.messages ?? [];
+					if (earlier.length > 0)
+						setMessages((current) => {
+							const existing = new Set(current.map((message) => message.id));
+							return [
+								...earlier.filter((message) => !existing.has(message.id)),
+								...current,
+							];
+						});
+					if (earlier.some((message) => message.id === transcriptTarget.messageId)) return;
+					if (!response.hasMoreMessages || !earlier[0]) return;
+					cursor = earlier[0].id;
+				}
+			} catch (cause) {
+				if (!cancelled && activeSessionIdRef.current === sessionId)
+					setError(
+						cause instanceof Error
+							? cause.message
+							: "Could not load the matching transcript message.",
+					);
+			} finally {
+				if (!cancelled) setLoadingEarlierMessages(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [activeSessionId, messages, transcriptTarget]);
+
+	useEffect(() => {
+		if (
+			!transcriptTarget ||
+			transcriptTarget.sessionId !== activeSessionId ||
+			!messages.some((message) => message.id === transcriptTarget.messageId)
+		)
+			return;
+		const frame = window.requestAnimationFrame(() => {
+			const target = document.querySelector<HTMLElement>(
+				`[data-runtime-message-id="${CSS.escape(transcriptTarget.messageId)}"]`,
+			);
+			if (!target) return;
+			target.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
+			target.focus({ preventScroll: true });
+			onTranscriptTargetHandled?.();
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [activeSessionId, messages, onTranscriptTargetHandled, reduced, transcriptTarget]);
+
 	const previousRefreshRevisionRef = useRef(refreshRevision);
 	useEffect(() => {
 		if (previousRefreshRevisionRef.current === refreshRevision) return;
@@ -3112,6 +3509,7 @@ function RuntimeConversation({
 		setLatestRun(null);
 		setActionReceipts([]);
 		setExecutions([]);
+		setHumanInputRequests([]);
 		setError("");
 		setSkillNotice(null);
 		if (!activeSessionId) {
@@ -3142,11 +3540,11 @@ function RuntimeConversation({
 	useEffect(
 		() =>
 			window.kestrel.onRuntimeEvent((event) => {
-				if (
-					event.sessionId === activeSessionId &&
-					event.type.startsWith("tool.")
-				)
+				if (event.sessionId !== activeSessionIdRef.current) return;
+				if (event.type.startsWith("tool."))
 					setToolActivity((current) => [...current, event].slice(-12));
+				if (event.type === "question.created" || event.type === "question.updated")
+					void loadHumanInputRequests(event.sessionId).catch(() => undefined);
 			}),
 		[activeSessionId],
 	);
@@ -3847,7 +4245,10 @@ function RuntimeConversation({
 					? `Kestrel needs your approval for ${pending.execution.toolName}.`
 					: latestRun?.status === "completed"
 						? "Kestrel finished the latest response."
-						: "";
+						: humanInputRequests.some((request) => request.status === "waiting")
+							? "Kestrel is waiting for your answer."
+							: "";
+	const hasQuestionSurface = humanInputRequests.length > 0;
 	return (
 		<section
 			className={`conversation-view ${activeSessionId ? "" : "new-task-view"} ${emptySession ? "session-empty-view" : ""}`}
@@ -3875,7 +4276,8 @@ function RuntimeConversation({
 					</button>
 				</div>
 			) : null}
-			{(!activeSessionId && visibleMessages.length === 0) || emptySession ? (
+			{((!activeSessionId && visibleMessages.length === 0) || emptySession) &&
+				!hasQuestionSurface ? (
 				<div className="chat-welcome" aria-hidden="true">
 					<h1>{emptySession ? "Pick up where you left off." : "How can I help?"}</h1>
 					<p>
@@ -3900,7 +4302,12 @@ function RuntimeConversation({
 					)}
 					{visibleMessages.map((message) =>
 						message.role === "user" ? (
-							<div className="user-message" key={message.id}>
+							<div
+								className="user-message"
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
 								<p>{message.content}</p>
 								{parseExplicitMemoryCapture(message.content) && (
 									<p className="memory-capture-confirmation" role="status">
@@ -3910,7 +4317,12 @@ function RuntimeConversation({
 								)}
 							</div>
 						) : message.role === "assistant" ? (
-							<div className="assistant-message" key={message.id}>
+							<div
+								className="assistant-message"
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
 								<span className="assistant-avatar">K</span>
 								<div>
 									<p>{message.content}</p>
@@ -3922,18 +4334,28 @@ function RuntimeConversation({
 								</div>
 							</div>
 						) : message.toolName?.startsWith("agent.config.") ? (
-							<ConfigurationMessage
+							<div
 								key={message.id}
-								message={message}
-								showDiffs={configurationUi.showConfigurationDiffs}
-								announceVerification={configurationUi.announceVerification}
-								onPrepareUndo={(prompt) => {
-									setInput(prompt);
-									window.setTimeout(() => promptRef.current?.focus(), 0);
-								}}
-							/>
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
+								<ConfigurationMessage
+									message={message}
+									showDiffs={configurationUi.showConfigurationDiffs}
+									announceVerification={configurationUi.announceVerification}
+									onPrepareUndo={(prompt) => {
+										setInput(prompt);
+										window.setTimeout(() => promptRef.current?.focus(), 0);
+									}}
+								/>
+							</div>
 						) : (
-							<div className="work-summary" key={message.id}>
+							<div
+								className="work-summary"
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
 								<Icon name="check" />
 								<span>
 									{message.toolName ?? "Tool result"}: {message.content}
@@ -3941,6 +4363,21 @@ function RuntimeConversation({
 							</div>
 						),
 					)}
+					{humanInputRequests.map((request) => (
+						<RuntimeQuestionCard
+							key={request.id}
+							request={request}
+							onResolved={(resolved) => {
+								setHumanInputRequests((current) =>
+									current.map((item) =>
+										item.id === resolved.id ? resolved : item,
+									),
+								);
+								if (resolved.status !== "waiting")
+									window.setTimeout(() => promptRef.current?.focus(), 0);
+							}}
+						/>
+					))}
 					{optimisticUser && (
 						<div className="user-message">
 							<p>{optimisticUser}</p>
@@ -8927,6 +9364,10 @@ export function App() {
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
+	const [transcriptTarget, setTranscriptTarget] = useState<{
+		sessionId: string;
+		messageId: string;
+	} | null>(null);
 	const [workspaceGrants, setWorkspaceGrants] = useState<WorkspaceGrant[]>([]);
 	const [runtimeAgentState, setRuntimeAgentState] = useState<AgentState | null>(
 		null,
@@ -9054,8 +9495,24 @@ export function App() {
 			active = false;
 		};
 	}, [onboarded]);
+	const selectionRequestRef = useRef(0);
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
 		setActiveRuntimeSessionId(sessionId);
+		const requestId = ++selectionRequestRef.current;
+		void window.kestrel
+			.request({ type: "runtime-select-session", sessionId })
+			.then((response) => {
+				if (requestId !== selectionRequestRef.current) return;
+				if (!response.ok) setError(response.error);
+			})
+			.catch((cause) => {
+				if (requestId !== selectionRequestRef.current) return;
+				setError(
+					cause instanceof Error
+						? cause.message
+						: "Could not persist the selected conversation.",
+				);
+			});
 	}, []);
 	const selectProject = useCallback((projectPath: string) => {
 		setActiveProjectPath(projectPath);
@@ -9156,6 +9613,17 @@ export function App() {
 			await browser.createTab(kestrelAppPageUrl(id));
 		},
 		[browser],
+	);
+	const openTranscriptResult = useCallback(
+		(result: TranscriptSearchResult) => {
+			setTranscriptTarget({
+				sessionId: result.sessionId,
+				messageId: result.messageId,
+			});
+			openSidebarSession(result.sessionId);
+			void openAppPage("agent");
+		},
+		[openAppPage, openSidebarSession],
 	);
 	const openProject = useCallback(
 		(project: WorkspaceGrant) => {
@@ -9303,6 +9771,7 @@ export function App() {
 				if (!active) return;
 				setSnapshot(initial.snapshot);
 				setRuntimeSessions(initial.sessions);
+				setActiveRuntimeSessionId(initial.selectedSessionId);
 			})
 			.catch((cause) => {
 				if (active) setError(startupFailureMessage(cause));
@@ -9679,7 +10148,11 @@ export function App() {
 				/>
 			)}
 			{appPageId === "memory" && (
-				<LifeContext snapshot={snapshot} update={setSnapshot} />
+				<LifeContext
+					snapshot={snapshot}
+					update={setSnapshot}
+					onOpenTranscriptResult={openTranscriptResult}
+				/>
 			)}
 			{appPageId === "research" && <Research />}
 			{appPageId === "artifacts" && <Artifacts />}
@@ -9825,7 +10298,7 @@ export function App() {
 						visible
 						activeSessionId={activeRuntimeSessionId}
 						sessions={runtimeSessions}
-						onActiveSession={setActiveRuntimeSessionId}
+						onActiveSession={openRuntimeSession}
 						onSessions={setRuntimeSessions}
 						onSnapshot={setSnapshot}
 						onRuntimeAgentState={setRuntimeAgentState}
@@ -9843,6 +10316,8 @@ export function App() {
 						{...(browserContextEnabled
 							? { browserContext: () => browser.pageContext() }
 							: {})}
+						transcriptTarget={transcriptTarget}
+						onTranscriptTargetHandled={() => setTranscriptTarget(null)}
 						onOpenActivity={(executionId) => {
 							setActivityFocusExecutionId(executionId);
 							navigate("activity");

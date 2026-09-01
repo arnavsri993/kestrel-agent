@@ -28,6 +28,41 @@ export const ALLOWED_CLASSIFICATIONS = Object.freeze([
 ]);
 
 const ALLOWED_PRIORITIES = new Set(["P0", "P1", "P2"]);
+const FROZEN_RELEASE_BLOCKING_BEHAVIOR_IDS = new Set([
+	"oc2.search.local-transcript",
+	"oc2.search.restart-privacy",
+	"oc2.session.organization",
+	"oc2.progress.durable-truth",
+	"oc2.progress.delegated-work",
+	"oc2.questions.structured-input",
+	"oc2.questions.authority",
+	"oc2.widgets.sandbox-grants",
+	"oc2.widgets.dashboard-export",
+	"oc2.credentials.masked-request",
+	"oc2.credentials.egress-lifetime",
+	"oc2.permissions.exact-recurring",
+	"oc2.permissions.denial-revocation",
+	"oc2.media.persistence-reload",
+	"oc2.media.truthful-failure",
+	"oc2.memory.private-recall",
+	"oc2.memory.review-gated-consolidation",
+	"oc2.models.policy-routing-scope",
+	"oc2.sessions.compaction-continuity",
+	"oc2.sessions.interruption-uncertainty",
+	"oc2.automation.bound-owner",
+	"oc2.orchestration.bounded-workers",
+	"oc2.remote.paired-supervision",
+	"oc2.plugins.artifact-trust",
+	"oc2.plugins.update-uninstall",
+	"oc2.migration.preview-sanitized",
+	"oc2.migration.apply-preserves-source",
+	"oc2.migration.unsupported-inventory",
+	"oc2.lifecycle.backup-restore-schema",
+	"oc2.lifecycle.diagnostics-update-identity",
+	"oc2.channels.extension-contract",
+	"oc2.browser.approval-recovery",
+	"oc2.onboarding.real-route-readiness",
+]);
 const ALLOWED_REACHABILITY = new Set([
 	"desktop-ui",
 	"desktop-ui-and-local-index",
@@ -196,6 +231,11 @@ function validateBehavior(behavior, index, root, catalogIds, focusedTestFiles) {
 	if (familyId === id) fail(`behavior ${id} confuses a family ID with an exact behavior ID.`);
 	if (!ALLOWED_PRIORITIES.has(behavior.priority))
 		fail(`behavior ${id} has an invalid priority ${String(behavior.priority)}.`);
+	if (
+		FROZEN_RELEASE_BLOCKING_BEHAVIOR_IDS.has(id) &&
+		behavior.priority === "P2"
+	)
+		fail(`behavior ${id} is frozen P0/P1 and cannot be lowered to P2.`);
 	if (!ALLOWED_CLASSIFICATIONS.includes(behavior.classification))
 		fail(`behavior ${id} has an unknown classification ${String(behavior.classification)}.`);
 	requireString(behavior.userVisibleBehavior, `behavior ${id}.userVisibleBehavior`);
@@ -226,6 +266,40 @@ function validateBehavior(behavior, index, root, catalogIds, focusedTestFiles) {
 			fail(`behavior ${id}.testEvidence must reference a test file: ${path}`);
 		if (!focusedTestFiles.has(path))
 			fail(`behavior ${id}.testEvidence is not run by the focused verifier: ${path}`);
+	}
+	const requiresBehavioralEvidence =
+		behavior.classification === "verified-existing" ||
+		behavior.classification === "implemented-and-verified";
+	if (requiresBehavioralEvidence) {
+		const behavioralEvidence = requireArray(
+			behavior.behavioralTestEvidence,
+			`behavior ${id}.behavioralTestEvidence`,
+		);
+		for (const [evidenceIndex, evidence] of behavioralEvidence.entries()) {
+			if (!evidence || typeof evidence !== "object" || Array.isArray(evidence))
+				fail(`behavior ${id}.behavioralTestEvidence entry ${evidenceIndex} is invalid.`);
+			const path = requireString(
+				evidence.path,
+				`behavior ${id}.behavioralTestEvidence entry ${evidenceIndex}.path`,
+			);
+			assertRepositoryFile(
+				root,
+				path,
+				`behavior ${id}.behavioralTestEvidence entry ${evidenceIndex}.path`,
+			);
+			if (!/\.test\.(?:ts|tsx|mjs|js)$/.test(path))
+				fail(`behavior ${id}.behavioralTestEvidence must reference a test file: ${path}`);
+			if (!focusedTestFiles.has(path))
+				fail(`behavior ${id}.behavioralTestEvidence is not run by the focused verifier: ${path}`);
+			if (!testEvidence.includes(path))
+				fail(`behavior ${id}.behavioralTestEvidence is not included in testEvidence: ${path}`);
+			requireString(
+				evidence.testName,
+				`behavior ${id}.behavioralTestEvidence entry ${evidenceIndex}.testName`,
+			);
+			if (evidence.evidenceLevel !== "behavioral")
+				fail(`behavior ${id}.behavioralTestEvidence must use behavioral evidence, not ${String(evidence.evidenceLevel)}.`);
+		}
 	}
 	validateCommand(behavior.verificationCommand, root, testEvidence);
 	if (

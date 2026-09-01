@@ -70,6 +70,20 @@ describe("OpenClaw 2.0 behavior register verifier", () => {
 			/testEvidence entry does not exist/,
 		],
 		[
+			"missing behavioral evidence",
+			(register) => {
+				delete register.behaviors[0].behavioralTestEvidence;
+			},
+			/behavioralTestEvidence must be a non-empty array/,
+		],
+		[
+			"primitive-only behavioral evidence",
+			(register) => {
+				register.behaviors[0].behavioralTestEvidence[0].evidenceLevel = "primitive";
+			},
+			/must use behavioral evidence/,
+		],
+		[
 			"missing verification script",
 			(register) => {
 				register.behaviors[0].verificationCommand =
@@ -90,6 +104,16 @@ describe("OpenClaw 2.0 behavior register verifier", () => {
 				register.behaviors[0].classification = "unresolved";
 			},
 			/unresolved P0 behavior is release-blocking/,
+		],
+		[
+			"lowered frozen priority",
+			(register) => {
+				const behavior = register.behaviors.find(
+					(entry) => entry.id === "oc2.questions.structured-input",
+				);
+				behavior.priority = "P2";
+			},
+			/cannot be lowered to P2/,
 		],
 	])("rejects %s", (_label, mutate, error) => {
 		const register = registerCopy();
