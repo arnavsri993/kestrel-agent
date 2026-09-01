@@ -12,6 +12,17 @@ export async function dismissDefaultBrowserPrompt(page) {
 	}
 }
 
+export async function revealNewTabControl(page) {
+	const tabRow = page.locator(".browser-tab-row-horizontal");
+	await tabRow.hover();
+	const control = page.getByRole("button", {
+		name: "New Tab",
+		exact: true,
+	});
+	await control.waitFor({ state: "visible" });
+	return control;
+}
+
 export async function openCommandCenter(page) {
 	await page.locator("#runtime-prompt").waitFor({ state: "attached" });
 	await dismissDefaultBrowserPrompt(page);
