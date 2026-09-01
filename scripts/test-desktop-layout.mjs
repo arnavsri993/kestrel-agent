@@ -865,11 +865,16 @@ function assertZoomReflow(layout, reflow) {
 	assertTheme(layout);
 }
 
-async function assertWindowControlMotion(page) {
+async function assertWindowControlMotion(page, application) {
 	const control = page.locator(".window-control-close");
 	await control.waitFor();
 	await page.bringToFront();
-	await page.waitForFunction(() => document.hasFocus());
+	await page.waitForFunction(
+		() =>
+			!document
+				.querySelector(".window-controls")
+				?.classList.contains("window-controls-inactive"),
+	);
 	await page.evaluate(
 		() =>
 			new Promise((resolveFrame) =>
@@ -878,6 +883,46 @@ async function assertWindowControlMotion(page) {
 	);
 	const box = await control.boundingBox();
 	assert.ok(box, "The close window control has no visible bounds.");
+	const appearance = await page.locator(".window-control").evaluateAll((elements) =>
+		elements.map((element) => {
+			const style = getComputedStyle(element);
+			return {
+				fill: style.getPropertyValue("--window-control-fill").trim(),
+				iconColor: style.getPropertyValue("--window-control-icon-color").trim(),
+			};
+		}),
+	);
+	assert.deepEqual(appearance, [
+		{ fill: "#f45146", iconColor: "#8c0000" },
+		{ fill: "#fcb600", iconColor: "#a63a00" },
+		{ fill: "#00bc00", iconColor: "#2e7300" },
+	]);
+
+	await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) => !candidate.isDestroyed() && candidate.isVisible(),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		window.blur();
+	});
+	await page.waitForFunction(() =>
+		document
+			.querySelector(".window-controls")
+			?.classList.contains("window-controls-inactive"),
+	);
+	await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) => !candidate.isDestroyed() && candidate.isVisible(),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		window.focus();
+	});
+	await page.waitForFunction(
+		() =>
+			!document
+				.querySelector(".window-controls")
+				?.classList.contains("window-controls-inactive"),
+	);
 
 	const readMotion = () =>
 		control.evaluate((element) => {
@@ -1018,7 +1063,7 @@ try {
 		.getByRole("button", { name: "Hide Pragmatic", exact: true })
 		.click();
 	await waitForCollapsedLayout(page);
-	await assertWindowControlMotion(page);
+	await assertWindowControlMotion(page, application);
 	await waitForCollapsedLayout(page);
 	await assertMotionContract(page);
 	await assertReducedMotionStyles(page);

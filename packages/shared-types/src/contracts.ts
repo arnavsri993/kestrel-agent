@@ -3485,6 +3485,9 @@ export const UserBrowserCommandSchema = z.enum([
 ]);
 export type UserBrowserCommand = z.infer<typeof UserBrowserCommandSchema>;
 
+export const WindowFocusStateSchema = z.boolean();
+export type WindowFocusState = z.infer<typeof WindowFocusStateSchema>;
+
 export const KestrelDeepLinkSchema = z
 	.string()
 	.min(1)
@@ -4096,6 +4099,7 @@ export type RendererResponse =
 export interface RendererBridge {
 	request(request: RendererRequest): Promise<RendererResponse>;
 	onBrowserEvent(callback: (event: UserBrowserEvent) => void): () => void;
+	onWindowFocus(callback: (focused: WindowFocusState) => void): () => void;
 	onPasswordPrompt(callback: (prompt: PasswordPrompt | null) => void): () => void;
 	onPaymentPrompt(callback: (prompt: PaymentPrompt | null) => void): () => void;
 	onBrowserCommand(callback: (command: UserBrowserCommand) => void): () => void;
