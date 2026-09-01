@@ -5,7 +5,10 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	revealNewTabControl,
+} from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
@@ -699,7 +702,7 @@ try {
 	const initialTabs = (await browserState()).tabs.length;
 	const tabList = page.getByRole("tablist", { name: "Browser tabs" });
 	assert.equal(await tabList.getAttribute("aria-orientation"), "horizontal");
-	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await (await revealNewTabControl(page)).click();
 	let state = await browserState();
 	assert.equal(state.tabs.length, initialTabs + 1);
 	const addedBlankTab = state.activeTabId;

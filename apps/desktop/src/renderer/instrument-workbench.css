@@ -19,6 +19,48 @@
 	background: var(--workbench);
 }
 
+/* Browser chrome: the selected tab is a surface, while creating a tab is an
+ * explicit control. Keep their shapes and contrast different at a glance. */
+.browser-tab-row-horizontal .browser-tab.active {
+	border: 1px solid var(--line-strong);
+	border-bottom-color: var(--workbench);
+}
+
+.browser-tab-row-horizontal .browser-new-tab {
+	margin-left: 8px;
+	border: 1px solid var(--line-strong);
+	border-radius: 50%;
+	background: var(--raised);
+	color: var(--ink-secondary);
+	box-shadow: var(--shadow-xs);
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		opacity var(--motion-feedback) var(--ease-kestrel),
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		box-shadow var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.browser-tab-row-horizontal:hover .browser-new-tab,
+.browser-tab-row-horizontal .browser-new-tab:focus-visible {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.browser-tab-row-horizontal .browser-new-tab:hover,
+.browser-tab-row-horizontal .browser-new-tab:focus-visible {
+	border-color: var(--solid);
+	background: var(--surface);
+	color: var(--ink);
+	box-shadow: var(--shadow-sm);
+}
+
+.browser-tab-row-horizontal .browser-new-tab:active {
+	background: var(--overlay);
+}
+
 /* Route continuity is owned by the keyed Motion boundary in BrowserWorkspace;
  * nested CSS entry animations would double the travel and expose a seam. */
 :where(.browser-secondary-surface, .browser-library, .command-center, .agent-workspace) {
