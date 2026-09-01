@@ -1405,7 +1405,9 @@ try {
 	await page.mouse.move(detachX, detachY);
 	await page.mouse.down();
 	await page.waitForTimeout(50);
-	await page.mouse.move(detachX, detachY + 64, { steps: 8 });
+	// Tear-off should work with the diagonal, slightly outward gesture people
+	// naturally make—not only with a perfectly vertical drag.
+	await page.mouse.move(detachX + 72, detachY + 28, { steps: 8 });
 	await page.mouse.up();
 	await waitForBrowserState(
 		(value) => !value.tabs.some((tab) => tab.id === detachableTabId),
