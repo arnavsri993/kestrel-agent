@@ -21,6 +21,10 @@ if (result.marked.length > 0) {
 	for (const directory of result.marked) console.log(`  ${directory}`);
 }
 
+for (const directory of result.removedStaging) {
+	console.log(`Removed stale Kestrel install staging directory: ${directory}`);
+}
+
 if (result.moved.length === 0) {
 	console.log(`No duplicate Kestrel apps found. Canonical app: ${result.canonicalApp}`);
 } else {
