@@ -18,8 +18,25 @@ const launchArgs = packagedExecutable
 	? ["--use-mock-keychain"]
 	: [resolve("apps/desktop")];
 
+const postLaunchRequests = [];
 const server = createServer((request, response) => {
 	const url = new URL(request.url ?? "/", "http://127.0.0.1");
+	if (url.pathname === "/lti-launch") {
+		const chunks = [];
+		request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+		request.on("end", () => {
+			postLaunchRequests.push({
+				method: request.method,
+				body: Buffer.concat(chunks).toString("utf8"),
+			});
+			response.writeHead(200, {
+				"content-type": "text/html; charset=utf-8",
+				"cache-control": "no-store",
+			});
+			response.end(`<!doctype html><html><head><title>Math work</title></head><body><h1>Math work</h1></body></html>`);
+		});
+		return;
+	}
 	if (url.pathname === "/download") {
 		const body = Buffer.from("Kestrel visible browser download\n", "utf8");
 		response.writeHead(200, {
@@ -57,6 +74,12 @@ const server = createServer((request, response) => {
           <a id="next" href="/two">Next page</a>
           <a id="download" href="/download">Download fixture</a>
           <button id="popup" type="button">Open popup</button>
+          <form id="lti-launch" action="/lti-launch" method="post" target="_blank">
+            <input type="hidden" name="iss" value="https://canvas.example/issuer">
+            <input type="hidden" name="login_hint" value="student">
+            <input type="hidden" name="target_link_uri" value="https://courseware.example/math">
+            <button id="lti-launch-submit" type="submit">Launch math work</button>
+          </form>
         </main>
         <script>
           document.querySelector("#submit").addEventListener("click", () => {
@@ -135,6 +158,16 @@ async function waitForBrowserState(predicate, label) {
 		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
 	}
 	throw new Error(`${label}: ${JSON.stringify(latest)}`);
+}
+
+async function waitForPostLaunchRequest(label) {
+	const deadline = Date.now() + 30_000;
+	while (Date.now() < deadline) {
+		const request = postLaunchRequests.at(-1);
+		if (request) return request;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	throw new Error(`${label}: no POST request was received`);
 }
 
 async function nativeViewState() {
@@ -920,6 +953,49 @@ try {
 	assert.equal(loaded.browserWindowCount, 1);
 	assert.equal(loaded.views[0].title, "Page one");
 	assert.equal(loaded.views[0].destroyed, false);
+	const formSourceTabId = (await browserState()).activeTabId;
+	assert(formSourceTabId);
+	const tabsBeforeFormLaunch = (await browserState()).tabs.length;
+	await readActiveViewScript(
+		"document.querySelector('#lti-launch').requestSubmit()",
+		"Native page was not attached for form POST verification",
+	);
+	state = await waitForBrowserState(
+		(value) =>
+			value.tabs.length === tabsBeforeFormLaunch + 1 &&
+			value.tabs.some((tab) => tab.url === `${origin}/lti-launch`),
+		"target=_blank form did not open a managed tab",
+	);
+	const formLaunchTab = state.tabs.find(
+		(tab) => tab.url === `${origin}/lti-launch`,
+	);
+	assert(formLaunchTab);
+	const formLaunchRequest = await waitForPostLaunchRequest(
+		"target=_blank form POST",
+	);
+	assert.equal(formLaunchRequest.method, "POST");
+	assert.deepEqual(Object.fromEntries(new URLSearchParams(formLaunchRequest.body)), {
+		iss: "https://canvas.example/issuer",
+		login_hint: "student",
+		target_link_uri: "https://courseware.example/math",
+	});
+	await page.evaluate(
+		async ({ formLaunchTabId, sourceTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: formLaunchTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: sourceTabId,
+			});
+		},
+		{ formLaunchTabId: formLaunchTab.id, sourceTabId: formSourceTabId },
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Original tab was not restored after form POST launch",
+	);
 	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
 	await assertBrowserChromeLayout({ sidebarVisible: false });
 	const resized = await waitForNativeViewportBounds(
