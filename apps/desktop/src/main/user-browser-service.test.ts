@@ -141,7 +141,10 @@ vi.mock("electron", () => ({
 import { nativeImage } from "electron";
 import { dialog } from "electron";
 import { BrowserTabStore } from "./browser-tab-store";
-import { UserBrowserService } from "./user-browser-service";
+import {
+  isAuthenticationFlowUrl,
+  UserBrowserService,
+} from "./user-browser-service";
 import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
 import type {
   BrowserTabFolderName,
@@ -1154,6 +1157,38 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 		});
 	});
 
+	it("keeps authentication tabs alive while sleeping ordinary inactive tabs", async () => {
+		let now = new Date("2026-08-31T12:00:00.000Z");
+		const { service } = createService({ now: () => now });
+		const ordinary = service.getState().tabs[0]!;
+		await service.navigate(ordinary.id, "https://ordinary.example");
+
+		now = new Date("2026-08-31T12:01:00.000Z");
+		const authentication = await navigateNewTab(
+			service,
+			"https://accounts.google.com/o/oauth2/v2/auth?client_id=test-client",
+		);
+		now = new Date("2026-08-31T12:02:00.000Z");
+		const active = await navigateNewTab(service, "https://active.example");
+		await service.selectTab(active.id);
+		now = new Date("2026-08-31T13:00:00.000Z");
+
+		service.updateSettings({
+			...service.getState().settings,
+			memorySaverMode: true,
+			sleepingTabTimeoutMinutes: 30,
+		});
+		(service as unknown as { checkSleepingTabs: () => void }).checkSleepingTabs();
+
+		expect(service.getState().tabs.find((tab) => tab.id === ordinary.id)).toMatchObject({
+			discarded: true,
+		});
+		expect(
+			service.getState().tabs.find((tab) => tab.id === authentication.id),
+		).toMatchObject({ discarded: false });
+		expect(isAuthenticationFlowUrl(authentication.url)).toBe(true);
+	});
+
   it("cleans up crashed views and recreates a destroyed view on the next navigation", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
@@ -1173,6 +1208,23 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     await service.navigate(tab.id, "https://third.example");
     expect(electron.state.views.at(-1)).not.toBe(replacement);
   });
+
+	it("recreates a view when its web contents disappear before navigation", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const first = electron.state.views[0]!;
+
+		Object.defineProperty(first, "webContents", {
+			configurable: true,
+			value: undefined,
+		});
+
+		await expect(service.navigate(tab.id, "https://again.example")).resolves.toEqual(
+			expect.anything(),
+		);
+		expect(electron.state.views.at(-1)).not.toBe(first);
+	});
 
   it("retains recent history, prunes expired visits, and clears history when retention is disabled", async () => {
     let now = new Date("2026-08-11T12:00:00.000Z");
