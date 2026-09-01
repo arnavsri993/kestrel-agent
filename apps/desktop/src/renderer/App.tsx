@@ -9708,6 +9708,7 @@ export function App() {
 		<KestrelSidebar
 			activeDestination={
 				activeSidebarDestination === "browser" ||
+				activeSidebarDestination === "scheduled" ||
 				activeSidebarDestination === "agent" ||
 				activeSidebarDestination === "projects" ||
 				activeSidebarDestination === "writing" ||
@@ -9727,13 +9728,14 @@ export function App() {
 			onOpenAgent={openAgent}
 			onOpenWriting={openWritingStudio}
 			onReviewApprovals={reviewApprovals}
-			onOpenCommandCenter={openCommandCenter}
+			onOpenCapabilities={openCommandCenter}
 			onOpenProjects={() => void openAppPage("projects")}
 			onOpenSettings={() => openSettings("browser")}
 			onOpenProject={openProject}
 			onOpenProjectChat={startProjectChat}
 			onOpenSession={openSidebarSession}
-			onOpenTaskHistory={() => void openAppPage("work")}
+			onOpenChats={() => void openAppPage("agent")}
+			onOpenScheduled={() => void openAppPage("work")}
 		/>
 	) : undefined;
 	return (

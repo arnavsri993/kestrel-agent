@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { RuntimeSession, WorkspaceGrant } from "@kestrel/shared-types";
 import { sessionTitleForDisplay } from "../../chat-title";
 import {
@@ -7,16 +7,24 @@ import {
 	projectChatsForSidebar,
 	sessionsWithoutProject,
 } from "../../projects";
+import {
+	DEFAULT_PROJECT_APPEARANCE,
+	PROJECT_COLOR_OPTIONS,
+	PROJECT_ICON_OPTIONS,
+	projectColorValue,
+	readProjectAppearances,
+	type ProjectAppearance,
+	type ProjectColor,
+	type ProjectIcon,
+	writeProjectAppearances,
+} from "../../project-appearance";
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import type { SidebarDestination } from "./agent-sidebar";
 
 const MAX_SIDEBAR_CHATS = 8;
 
-function recentChats(
-	sessions: RuntimeSession[],
-	projects: WorkspaceGrant[],
-): RuntimeSession[] {
+function recentChats(sessions: RuntimeSession[], projects: WorkspaceGrant[]): RuntimeSession[] {
 	return sessionsWithoutProject(sessions, projects).slice(0, MAX_SIDEBAR_CHATS);
 }
 
@@ -64,11 +72,99 @@ function SidebarNavItem({
 			<Icon name={icon} />
 			<span>{label}</span>
 			{badge ? (
-				<small aria-label={`${badge} pending`}>
-					{badge > 9 ? "9+" : badge}
-				</small>
+				<small aria-label={`${badge} pending`}>{badge > 9 ? "9+" : badge}</small>
 			) : null}
 		</button>
+	);
+}
+
+function ProjectBadge({ appearance }: { appearance: ProjectAppearance }) {
+	return (
+		<span
+			className="kestrel-sidebar-project-badge"
+			style={{ "--project-color": projectColorValue(appearance.color) } as CSSProperties}
+			aria-hidden="true"
+		>
+			<Icon name={appearance.icon} />
+		</span>
+	);
+}
+
+function ProjectAppearancePopover({
+	projectName,
+	appearance,
+	onChangeIcon,
+	onChangeColor,
+	onReset,
+	onClose,
+}: {
+	projectName: string;
+	appearance: ProjectAppearance;
+	onChangeIcon(icon: ProjectIcon): void;
+	onChangeColor(color: ProjectColor): void;
+	onReset(): void;
+	onClose(): void;
+}) {
+	return (
+		<div
+			className="kestrel-sidebar-project-popover"
+			role="dialog"
+			aria-label={`Customize ${projectName}`}
+		>
+			<header className="kestrel-sidebar-project-popover-header">
+				<strong>Customize project</strong>
+				<button
+					type="button"
+					className="kestrel-sidebar-project-popover-close"
+					aria-label="Close project customization"
+					title="Close project customization"
+					onClick={onClose}
+				>
+					<Icon name="close" />
+				</button>
+			</header>
+			<fieldset>
+				<legend>Icon</legend>
+				<div className="kestrel-sidebar-project-icon-options" role="group">
+					{PROJECT_ICON_OPTIONS.map((option) => (
+						<button
+							type="button"
+							key={option.id}
+							className={`kestrel-sidebar-project-icon-option${appearance.icon === option.id ? " selected" : ""}`}
+							autoFocus={appearance.icon === option.id}
+							aria-label={`${option.label} project icon`}
+							aria-pressed={appearance.icon === option.id}
+							title={option.label}
+							onClick={() => onChangeIcon(option.id)}
+						>
+							<Icon name={option.id} />
+						</button>
+					))}
+				</div>
+			</fieldset>
+			<fieldset>
+				<legend>Color</legend>
+				<div className="kestrel-sidebar-project-color-options" role="group">
+					{PROJECT_COLOR_OPTIONS.map((option) => (
+						<button
+							type="button"
+							key={option.id}
+							className={`kestrel-sidebar-project-color-option${appearance.color === option.id ? " selected" : ""}`}
+							style={{ "--project-color": option.value } as CSSProperties}
+							aria-label={`${option.label} project color`}
+							aria-pressed={appearance.color === option.id}
+							title={option.label}
+							onClick={() => onChangeColor(option.id)}
+						>
+							<span aria-hidden="true" />
+						</button>
+					))}
+				</div>
+			</fieldset>
+			<button type="button" className="kestrel-sidebar-project-reset" onClick={onReset}>
+				Reset appearance
+			</button>
+		</div>
 	);
 }
 
@@ -85,13 +181,14 @@ export function KestrelSidebar({
 	onOpenAgent,
 	onOpenWriting,
 	onReviewApprovals,
-	onOpenCommandCenter,
+	onOpenCapabilities,
 	onOpenProjects,
 	onOpenSettings,
 	onOpenProject,
 	onOpenProjectChat,
 	onOpenSession,
-	onOpenTaskHistory,
+	onOpenChats,
+	onOpenScheduled,
 }: {
 	activeDestination: SidebarDestination;
 	activeSessionId: string | null;
@@ -105,23 +202,57 @@ export function KestrelSidebar({
 	onOpenAgent(): void;
 	onOpenWriting(): void;
 	onReviewApprovals(): void;
-	onOpenCommandCenter(): void;
+	onOpenCapabilities(): void;
 	onOpenProjects(): void;
 	onOpenSettings(): void;
 	onOpenProject(project: WorkspaceGrant): void;
 	onOpenProjectChat(project: WorkspaceGrant): void;
 	onOpenSession(sessionId: string): void;
-	onOpenTaskHistory(): void;
+	onOpenChats(): void;
+	onOpenScheduled(): void;
 }) {
 	const [collapsed, setCollapsed] = useState(
 		() => localStorage.getItem("kestrel:navigation-sidebar") === "collapsed",
 	);
 	const [expandedProjects, setExpandedProjects] = useState(readExpandedProjects);
+	const [projectAppearances, setProjectAppearances] = useState(() =>
+		readProjectAppearances(window.localStorage),
+	);
+	const [customizingProjectPath, setCustomizingProjectPath] = useState<string | null>(null);
+	const appearancePopoverRef = useRef<HTMLDivElement>(null);
+	const appearanceTriggerRef = useRef<HTMLButtonElement | null>(null);
 	const chats = useMemo(() => recentChats(sessions, projects), [projects, sessions]);
+
+	function closeProjectAppearance(restoreFocus = false) {
+		const trigger = appearanceTriggerRef.current;
+		setCustomizingProjectPath(null);
+		if (restoreFocus) window.requestAnimationFrame(() => trigger?.focus());
+	}
+
+	useEffect(() => {
+		if (!customizingProjectPath) return;
+		function closeOnOutsidePointer(event: PointerEvent) {
+			if (
+				event.target instanceof Node &&
+				appearancePopoverRef.current?.contains(event.target)
+			)
+				return;
+			setCustomizingProjectPath(null);
+		}
+		function closeOnEscape(event: KeyboardEvent) {
+			if (event.key === "Escape") closeProjectAppearance(true);
+		}
+		document.addEventListener("pointerdown", closeOnOutsidePointer);
+		document.addEventListener("keydown", closeOnEscape);
+		return () => {
+			document.removeEventListener("pointerdown", closeOnOutsidePointer);
+			document.removeEventListener("keydown", closeOnEscape);
+		};
+	}, [customizingProjectPath]);
 
 	function toggleProject(projectPath: string) {
 		setExpandedProjects((current) => {
-			const next = { ...current, [projectPath]: !(current[projectPath] ?? true) };
+			const next = { ...current, [projectPath]: !(current[projectPath] ?? false) };
 			localStorage.setItem("kestrel:projects-expanded", JSON.stringify(next));
 			return next;
 		});
@@ -130,12 +261,37 @@ export function KestrelSidebar({
 	function toggleCollapsed() {
 		setCollapsed((current) => {
 			const next = !current;
-			localStorage.setItem(
-				"kestrel:navigation-sidebar",
-				next ? "collapsed" : "open",
-			);
+			localStorage.setItem("kestrel:navigation-sidebar", next ? "collapsed" : "open");
 			return next;
 		});
+	}
+
+	function appearanceForProject(projectPath: string): ProjectAppearance {
+		return projectAppearances[projectPath] ?? DEFAULT_PROJECT_APPEARANCE;
+	}
+
+	function updateProjectAppearance(projectPath: string, update: Partial<ProjectAppearance>) {
+		setProjectAppearances((current) => {
+			const next = {
+				...current,
+				[projectPath]: {
+					...(current[projectPath] ?? DEFAULT_PROJECT_APPEARANCE),
+					...update,
+				},
+			};
+			writeProjectAppearances(window.localStorage, next);
+			return next;
+		});
+	}
+
+	function resetProjectAppearance(projectPath: string) {
+		setProjectAppearances((current) => {
+			const next = { ...current };
+			delete next[projectPath];
+			writeProjectAppearances(window.localStorage, next);
+			return next;
+		});
+		closeProjectAppearance(true);
 	}
 
 	return (
@@ -162,7 +318,7 @@ export function KestrelSidebar({
 						className="kestrel-sidebar-icon-button"
 						aria-label="Open command center"
 						title="Open command center (⌘K)"
-						onClick={onOpenCommandCenter}
+						onClick={onOpenCapabilities}
 					>
 						<Icon name="search" />
 					</button>
@@ -183,15 +339,22 @@ export function KestrelSidebar({
 				<button
 					type="button"
 					className="kestrel-sidebar-new-task"
-					aria-label="New task"
-					title="New task"
+					aria-label="New chat"
+					title="New chat"
 					aria-keyshortcuts="Meta+N"
 					onClick={onNewTask}
 				>
 					<Icon name="plus" />
-					<span>New task</span>
+					<span>New chat</span>
 					<kbd>⌘N</kbd>
 				</button>
+				<SidebarNavItem
+					icon="today"
+					label="Scheduled"
+					destination="scheduled"
+					active={activeDestination === "scheduled"}
+					onClick={onOpenScheduled}
+				/>
 				<SidebarNavItem
 					icon="agent"
 					label="Agent"
@@ -199,25 +362,13 @@ export function KestrelSidebar({
 					active={activeDestination === "agent"}
 					onClick={onOpenAgent}
 				/>
-				<SidebarNavItem
-					icon="writing"
-					label="Writing Studio"
-					destination="writing"
-					active={activeDestination === "writing"}
-					onClick={onOpenWriting}
-				/>
-				<SidebarNavItem
-					icon="approvals"
-					label="Approvals"
-					destination="approvals"
-					badge={pendingApprovals}
-					active={activeDestination === "approvals"}
-					onClick={onReviewApprovals}
-				/>
 			</nav>
 
 			<div className="kestrel-sidebar-scroll">
-				<section className="kestrel-sidebar-section" aria-labelledby="kestrel-sidebar-projects">
+				<section
+					className="kestrel-sidebar-section"
+					aria-labelledby="kestrel-sidebar-projects"
+				>
 					<div className="kestrel-sidebar-section-heading">
 						<h2 id="kestrel-sidebar-projects">Projects</h2>
 						<button
@@ -235,25 +386,34 @@ export function KestrelSidebar({
 							{projects.map((project) => {
 								const previewChats = projectChatsForSidebar(sessions, project.path);
 								const allProjectChats = projectChats(sessions, project.path);
-								const expanded = expandedProjects[project.path] ?? true;
+								const expanded = expandedProjects[project.path] ?? false;
+								const appearance = appearanceForProject(project.path);
+								const appearancePopoverId = `kestrel-project-appearance-${projects.indexOf(project)}`;
 								return (
 									<li key={project.path} className="kestrel-sidebar-project">
 										<div className="kestrel-sidebar-project-row">
 											<button
 												type="button"
 												className={`kestrel-sidebar-project-open${activeProjectPath === project.path ? " active" : ""}`}
-												aria-current={activeProjectPath === project.path ? "page" : undefined}
+												aria-current={
+													activeProjectPath === project.path
+														? "page"
+														: undefined
+												}
 												aria-label={`Open ${project.name} project`}
 												title={`Open ${project.name} project`}
 												onClick={() => onOpenProject(project)}
 											>
-												<Icon name="folder" />
+												<ProjectBadge appearance={appearance} />
 												<span>
 													<strong>{project.name}</strong>
 													<small>
 														{project.available === false
 															? "Folder unavailable"
-															: projectChatSummary(sessions, project.path)}
+															: projectChatSummary(
+																	sessions,
+																	project.path,
+																)}
 													</small>
 												</span>
 											</button>
@@ -273,6 +433,35 @@ export function KestrelSidebar({
 											</button>
 											<button
 												type="button"
+												className="kestrel-sidebar-project-customize"
+												ref={
+													customizingProjectPath === project.path
+														? appearanceTriggerRef
+														: undefined
+												}
+												aria-expanded={
+													customizingProjectPath === project.path
+												}
+												aria-haspopup="dialog"
+												aria-controls={
+													customizingProjectPath === project.path
+														? appearancePopoverId
+														: undefined
+												}
+												aria-label={`Customize ${project.name}`}
+												title={`Customize ${project.name}`}
+												onClick={() =>
+													setCustomizingProjectPath((current) =>
+														current === project.path
+															? null
+															: project.path,
+													)
+												}
+											>
+												<Icon name="more" />
+											</button>
+											<button
+												type="button"
 												className={`kestrel-sidebar-project-toggle${expanded ? " expanded" : ""}`}
 												aria-expanded={expanded}
 												aria-label={`${expanded ? "Hide" : "Show"} chats in ${project.name}`}
@@ -282,6 +471,31 @@ export function KestrelSidebar({
 												<Icon name="chevron" />
 											</button>
 										</div>
+										{customizingProjectPath === project.path ? (
+											<div
+												ref={appearancePopoverRef}
+												id={appearancePopoverId}
+											>
+												<ProjectAppearancePopover
+													projectName={project.name}
+													appearance={appearance}
+													onChangeIcon={(icon) =>
+														updateProjectAppearance(project.path, {
+															icon,
+														})
+													}
+													onChangeColor={(color) =>
+														updateProjectAppearance(project.path, {
+															color,
+														})
+													}
+													onReset={() =>
+														resetProjectAppearance(project.path)
+													}
+													onClose={() => closeProjectAppearance(true)}
+												/>
+											</div>
+										) : null}
 										{expanded ? (
 											allProjectChats.length > 0 ? (
 												<ul className="kestrel-sidebar-project-chats">
@@ -290,29 +504,47 @@ export function KestrelSidebar({
 															<button
 																type="button"
 																className={`kestrel-sidebar-project-chat${session.id === activeSessionId ? " active" : ""}`}
-																aria-current={session.id === activeSessionId ? "page" : undefined}
-																title={sessionTitleForDisplay(session.title)}
-																onClick={() => onOpenSession(session.id)}
+																aria-current={
+																	session.id === activeSessionId
+																		? "page"
+																		: undefined
+																}
+																title={sessionTitleForDisplay(
+																	session.title,
+																)}
+																onClick={() =>
+																	onOpenSession(session.id)
+																}
 															>
 																<Icon name="chat" />
-																<span>{sessionTitleForDisplay(session.title)}</span>
+																<span>
+																	{sessionTitleForDisplay(
+																		session.title,
+																	)}
+																</span>
 															</button>
 														</li>
 													))}
-													{allProjectChats.length > previewChats.length ? (
+													{allProjectChats.length >
+													previewChats.length ? (
 														<li>
 															<button
 																type="button"
 																className="kestrel-sidebar-project-view-all"
-																onClick={() => onOpenProject(project)}
+																onClick={() =>
+																	onOpenProject(project)
+																}
 															>
-																View all {allProjectChats.length} chats
+																View all {allProjectChats.length}{" "}
+																chats
 															</button>
 														</li>
 													) : null}
 												</ul>
 											) : (
-												<p className="kestrel-sidebar-project-no-chats">No chats yet</p>
+												<p className="kestrel-sidebar-project-no-chats">
+													No chats yet
+												</p>
 											)
 										) : null}
 									</li>
@@ -329,15 +561,18 @@ export function KestrelSidebar({
 					)}
 				</section>
 
-				<section className="kestrel-sidebar-section kestrel-sidebar-chats" aria-labelledby="kestrel-sidebar-chats">
+				<section
+					className="kestrel-sidebar-section kestrel-sidebar-chats"
+					aria-labelledby="kestrel-sidebar-chats"
+				>
 					<div className="kestrel-sidebar-section-heading">
-						<h2 id="kestrel-sidebar-chats">Recent tasks</h2>
+						<h2 id="kestrel-sidebar-chats">Chats</h2>
 						<button
 							type="button"
 							className="kestrel-sidebar-section-action"
-							aria-label="Open all task history"
-							title="Open all task history"
-							onClick={onOpenTaskHistory}
+							aria-label="Open all chats"
+							title="Open all chats"
+							onClick={onOpenChats}
 						>
 							<Icon name="chevron" />
 						</button>
@@ -349,7 +584,9 @@ export function KestrelSidebar({
 									<button
 										type="button"
 										className={`kestrel-sidebar-list-item${session.id === activeSessionId ? " active" : ""}`}
-										aria-current={session.id === activeSessionId ? "page" : undefined}
+										aria-current={
+											session.id === activeSessionId ? "page" : undefined
+										}
 										title={sessionTitleForDisplay(session.title)}
 										onClick={() => onOpenSession(session.id)}
 									>
@@ -363,16 +600,50 @@ export function KestrelSidebar({
 						<div className="kestrel-sidebar-empty">
 							<p>No chats yet</p>
 							<button type="button" onClick={onNewTask}>
-								Start a task
+								Start a chat
 							</button>
 						</div>
 					)}
 				</section>
+
+				<section
+					className="kestrel-sidebar-section kestrel-sidebar-workspace"
+					aria-labelledby="kestrel-sidebar-workspace"
+				>
+					<div className="kestrel-sidebar-section-heading">
+						<h2 id="kestrel-sidebar-workspace">Workspace</h2>
+					</div>
+					<nav className="kestrel-sidebar-secondary" aria-label="Workspace">
+						<SidebarNavItem
+							icon="writing"
+							label="Writing Studio"
+							destination="writing"
+							active={activeDestination === "writing"}
+							onClick={onOpenWriting}
+						/>
+						<SidebarNavItem
+							icon="approvals"
+							label="Approvals"
+							badge={pendingApprovals}
+							destination="approvals"
+							active={activeDestination === "approvals"}
+							onClick={onReviewApprovals}
+						/>
+						<SidebarNavItem
+							icon="command"
+							label="Capabilities"
+							destination="capabilities"
+							active={activeDestination === "capabilities"}
+							onClick={onOpenCapabilities}
+						/>
+					</nav>
+				</section>
 			</div>
 
 			<footer className="kestrel-sidebar-footer">
-				<div className="kestrel-sidebar-local-status" aria-hidden="true">
+				<div className="kestrel-sidebar-local-status">
 					<span />
+					<span>Local workspace</span>
 				</div>
 				<SidebarNavItem
 					icon="settings"
