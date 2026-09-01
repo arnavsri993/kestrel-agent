@@ -287,13 +287,6 @@
 	border-color: transparent;
 	box-shadow: none;
 }
-/* The calculator is a separate overlay window rather than a child of
- * `.unified-ui`. Its visible expression shell and numeric fields therefore
- * need the capsule geometry explicitly. */
-.calculator-overlay :is(.calculator-graph-input, .calculator-graph-options input) {
-	border-radius: var(--radius-text-entry);
-}
-
 /* Settings ---------------------------------------------------------------- */
 .settings-section-picker {
 	display: none;
