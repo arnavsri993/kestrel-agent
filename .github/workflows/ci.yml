@@ -19,8 +19,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 35
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           package-manager-cache: false
@@ -49,8 +51,10 @@ jobs:
       npm_config_arch: arm64
       npm_config_target_arch: arm64
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           package-manager-cache: false
@@ -87,8 +91,40 @@ jobs:
       - run: corepack pnpm benchmark:browser-agent:packaged:arm64 --report .tmp/browser-agent-benchmark/ci-packaged.json
       - name: Upload browser-agent benchmark reports
         if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: browser-agent-benchmark-${{ github.run_attempt }}
           path: .tmp/browser-agent-benchmark/*.json
           if-no-files-found: warn
+          retention-days: 14
+      - name: Capture desktop failure diagnostics
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set +e
+          mkdir -p .tmp/ci-diagnostics
+          {
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "sha=${GITHUB_SHA}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "node=$(node --version 2>/dev/null || true)"
+            echo "pnpm=$(corepack pnpm --version 2>/dev/null || true)"
+            echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > .tmp/ci-diagnostics/run.txt
+          uname -a > .tmp/ci-diagnostics/uname.txt 2>&1
+          ps -axo pid=,ppid=,stat=,command= > .tmp/ci-diagnostics/processes.txt 2>&1
+          grep -E 'Electron|Kestrel|electron-vite|playwright|browser fixture' .tmp/ci-diagnostics/processes.txt > .tmp/ci-diagnostics/relevant-processes.txt || true
+      - name: Upload desktop failure evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: desktop-failure-evidence-${{ github.run_attempt }}
+          path: |
+            .tmp/desktop-layout/**
+            .tmp/browser-agent-benchmark/*.json
+            .tmp/ci-diagnostics/**
+            test-results/**
+            playwright-report/**
+          if-no-files-found: warn
+          retention-days: 14

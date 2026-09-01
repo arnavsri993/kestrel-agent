@@ -20,6 +20,39 @@ const launchArgs = packagedExecutable
   : [resolve("apps/desktop")];
 let application;
 
+async function waitForStableSearchResult(page) {
+  await page.waitForFunction(() => {
+    const result = [...document.querySelectorAll(".settings-search-result")].find(
+      (candidate) => candidate.textContent?.includes("Sleeping tab timeout"),
+    );
+    if (!result) return false;
+    let previous = result.getBoundingClientRect();
+    let stableFrames = 0;
+    return new Promise((resolve) => {
+      const sample = () => {
+        if (!result.isConnected) {
+          resolve(false);
+          return;
+        }
+        const current = result.getBoundingClientRect();
+        const stable =
+          Math.abs(current.left - previous.left) <= 0.1 &&
+          Math.abs(current.top - previous.top) <= 0.1 &&
+          Math.abs(current.width - previous.width) <= 0.1 &&
+          Math.abs(current.height - previous.height) <= 0.1;
+        stableFrames = stable ? stableFrames + 1 : 0;
+        previous = current;
+        if (stableFrames >= 3) {
+          resolve(true);
+          return;
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+  });
+}
+
 try {
   application = await electron.launch({
     executablePath,
@@ -51,6 +84,7 @@ try {
     .filter({ hasText: "Sleeping tab timeout" });
   await result.waitFor();
   assert.match(await result.textContent(), /Performance/);
+  await waitForStableSearchResult(page);
   await result.click();
 
   const timeout = page.getByLabel("Sleeping tab timeout", { exact: true });
