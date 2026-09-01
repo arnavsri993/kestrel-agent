@@ -1,4 +1,4 @@
-# OpenClaw readiness review
+# OpenClaw 2.0 readiness review
 
 The original documentation snapshot was reviewed on 2026-07-23; OpenClaw's
 current release naming and migration formats were rechecked against the official
@@ -7,11 +7,23 @@ that Kestrel implements OpenClaw or shares its configuration format.
 
 ## Current release check
 
-OpenClaw's official release stream uses calendar versions. As of the recheck,
-the latest stable release is [v2026.8.1](https://github.com/openclaw/openclaw/releases/tag/v2026.8.1),
-not an official release named "OpenClaw 2.0." Kestrel therefore treats OpenClaw
-as an active reference product and responds to verified behavior rather than an
-unverified version label.
+OpenClaw's official release stream uses calendar versions. The stable
+[v2026.8.1 release](https://github.com/openclaw/openclaw/releases/tag/v2026.8.1)
+is explicitly documented by OpenClaw as **AKA OpenClaw 2.0**. Kestrel pins that
+release to immutable commit
+`ea806575e6450e4d1efdfc72c19f04be982a1b9b` and records exact user-visible
+behavior evidence in the [OpenClaw 2.0 behavior register](openclaw-2-behavior-matrix.json).
+The existing [parity matrix](parity-matrix.md) remains a broad capability-family
+catalog; it is not a substitute for the register's executable behavioral proof.
+
+Run the canonical gate with:
+
+```bash
+corepack pnpm verify:openclaw2
+```
+
+That command validates the pinned provenance, evidence paths, classifications,
+and release-blocking priorities before running the focused evidence suite.
 
 ## Patterns adopted
 
@@ -33,3 +45,8 @@ unverified version label.
 - A provider reachability probe is not described as a full model completion. Normal first-task execution remains the end-to-end inference proof.
 - The backup is a verified local directory snapshot, not OpenClaw's tar or SQLite repository format. Automated restore is still a separate recovery feature.
 - Ad-hoc development packaging remains unsuitable for stable long-term macOS TCC permissions. Developer ID signing and notarization are still release blockers.
+
+The register also records the remaining structured-question gap as P2 rather
+than presenting the existing approval and waiting-state UI as rich question
+controls. This keeps the readiness claim honest while preserving Kestrel's
+separate approval boundary.

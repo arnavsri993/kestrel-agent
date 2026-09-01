@@ -36,6 +36,7 @@ import {
 	RuntimeMessageSchema,
 	type RuntimeSession,
 	RuntimeSessionSchema,
+	type TranscriptSearchResult,
 	type RuntimeToolDescriptor,
 	RuntimeToolDescriptorSchema,
 	type RuntimeToolExecution,
@@ -55,6 +56,12 @@ import {
 } from "./command-runner";
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 import { BrowserRecoveryError } from "./browser-recovery";
+import {
+	HumanInputManager,
+	type HumanInputAnswerInput,
+	type HumanInputCreateInput,
+} from "./human-input";
+import type { HumanInputRequest } from "@kestrel/shared-types";
 
 export type RuntimeHookEvent = "pre_tool" | "post_tool" | "tool_error";
 
@@ -107,6 +114,10 @@ export interface DeclarativeRuntimeHook {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function normalizeTranscriptText(value: string): string {
+	return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, " ").trim();
 }
 
 function globPattern(value: string): RegExp {
@@ -493,6 +504,7 @@ export class AgentRuntime extends EventEmitter {
 	>();
 	private readonly approvalRulesKey = "runtime.approval-rules";
 	private readonly processJournalKey = "runtime.background-processes";
+	readonly humanInput: HumanInputManager;
 	private static readonly MAX_APPROVAL_RULES = 500;
 	private toolPolicyResolver:
 		| ((context: RuntimeToolPolicyContext) => RuntimeToolPolicyDecision)
@@ -506,6 +518,20 @@ export class AgentRuntime extends EventEmitter {
 		configuredWorkspaceRoots: string[] = workspaceRoots,
 	) {
 		super();
+		this.humanInput = new HumanInputManager(database, {
+			now: () => new Date(this.now()),
+			getRunStatus: (runId) => {
+				const status = this.database.getAgentRun(runId)?.status;
+				return status === "running" ||
+					status === "waiting_approval" ||
+					status === "waiting_input" ||
+					status === "completed" ||
+					status === "cancelled" ||
+					status === "failed"
+					? status
+					: "missing";
+			},
+		});
 		const canonicalWorkspaceRoots: string[] = [];
 		for (const root of workspaceRoots) {
 			try {
@@ -572,6 +598,7 @@ export class AgentRuntime extends EventEmitter {
 		workspaceRoot?: string;
 		parentSessionId?: string;
 		allowedTools?: string[];
+		privacyMode?: RuntimeSession["privacyMode"];
 	}): RuntimeSession {
 		const workspaceRoot = input.workspaceRoot
 			? this.resolveGrantedRoot(input.workspaceRoot)
@@ -584,6 +611,7 @@ export class AgentRuntime extends EventEmitter {
 				? { parentSessionId: input.parentSessionId }
 				: {}),
 			...(workspaceRoot ? { workspaceRoot } : {}),
+			...(input.privacyMode ? { privacyMode: input.privacyMode } : {}),
 			allowedTools: input.allowedTools ?? [...this.tools.keys()],
 			status: "active",
 			checkpoints: [],
@@ -599,6 +627,128 @@ export class AgentRuntime extends EventEmitter {
 
 	listSessions(): RuntimeSession[] {
 		return this.database.listRuntimeSessions();
+	}
+
+	selectedSessionId(): string | null {
+		const stored = this.database.getState<unknown>("runtimeSelectedSessionId");
+		if (typeof stored !== "string" || !stored) return null;
+		const session = this.database.getRuntimeSession(stored);
+		if (!session || session.forgottenAt) {
+			this.database.deleteState("runtimeSelectedSessionId");
+			return null;
+		}
+		return session.id;
+	}
+
+	selectSession(sessionId: string | null): string | null {
+		if (sessionId === null) {
+			this.database.deleteState("runtimeSelectedSessionId");
+			return null;
+		}
+		const session = this.requireSession(sessionId);
+		if (session.forgottenAt)
+			throw new Error("A forgotten conversation cannot be selected.");
+		this.database.setState("runtimeSelectedSessionId", session.id);
+		return session.id;
+	}
+
+	forgetSession(sessionId: string): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		const forgottenAt = this.now();
+		const updated = this.saveSession({ ...session, forgottenAt, updatedAt: forgottenAt });
+		if (this.selectedSessionId() === sessionId)
+			this.database.deleteState("runtimeSelectedSessionId");
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "forget",
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
+	createHumanInputRequest(input: HumanInputCreateInput): HumanInputRequest {
+		this.requireSession(input.sessionId);
+		const run = this.database.getAgentRun(input.runId);
+		if (!run || run.sessionId !== input.sessionId)
+			throw new Error("Human input must be owned by an existing run in this session.");
+		if (run.status !== "running")
+			throw new Error("Human input can only pause a running agent.");
+		const request = this.humanInput.create(input);
+		const paused = {
+			...run,
+			status: "waiting_input" as const,
+			updatedAt: this.now(),
+		};
+		if (!this.database.saveAgentRunIfActive(paused))
+			throw new Error("The owning agent run is no longer active.");
+		this.emitRuntimeEvent("question.created", input.sessionId, {
+			requestId: request.id,
+			runId: request.runId,
+			status: request.status,
+		});
+		return request;
+	}
+
+	answerHumanInput(input: HumanInputAnswerInput): HumanInputRequest {
+		// Reconciliation can terminalize an expired request before answer() sees it.
+		// A timed-out question must not leave its owning run claiming to be waiting
+		// for input forever.
+		this.reconcileHumanInputRunStatuses(this.humanInput.list());
+		const request = this.humanInput.answer(input);
+		if (request.status === "answered" || request.status === "skipped") {
+			const run = this.database.getAgentRun(request.runId);
+			if (run?.status === "waiting_input")
+				this.database.saveAgentRunIfActive({
+					...run,
+					status: "running",
+					updatedAt: this.now(),
+				});
+		}
+		this.emitRuntimeEvent("question.updated", request.sessionId, {
+			requestId: request.id,
+			runId: request.runId,
+			status: request.status,
+		});
+		return request;
+	}
+
+	cancelHumanInput(requestId: string, runId: string): HumanInputRequest {
+		const request = this.humanInput.cancel(requestId, runId);
+		const run = this.database.getAgentRun(request.runId);
+		if (run?.status === "waiting_input")
+			this.database.saveAgentRunIfActive({
+				...run,
+				status: "cancelled",
+				error: "The run was cancelled while waiting for human input.",
+				updatedAt: this.now(),
+			});
+		this.emitRuntimeEvent("question.updated", request.sessionId, {
+			requestId: request.id,
+			runId: request.runId,
+			status: request.status,
+		});
+		return request;
+	}
+
+	listHumanInputRequests(sessionId?: string): HumanInputRequest[] {
+		const requests = this.humanInput.list(sessionId);
+		this.reconcileHumanInputRunStatuses(requests);
+		return requests;
+	}
+
+	private reconcileHumanInputRunStatuses(
+		requests: HumanInputRequest[],
+	): void {
+		for (const request of requests) {
+			if (request.status !== "timed_out") continue;
+			const run = this.database.getAgentRun(request.runId);
+			if (run?.status !== "waiting_input") continue;
+			this.database.saveAgentRunIfActive({
+				...run,
+				status: "failed",
+				error: "Human input timed out.",
+				updatedAt: this.now(),
+			});
+		}
 	}
 
 	getSession(sessionId: string): RuntimeSession {
@@ -889,7 +1039,23 @@ export class AgentRuntime extends EventEmitter {
 		const searchLimit = Number.isFinite(limit)
 			? Math.max(1, Math.min(100, Math.trunc(limit)))
 			: 20;
-		const exact = this.database.searchRuntimeMessages(query, searchLimit);
+		const normalizedQuery = normalizeTranscriptText(query);
+		if (!normalizedQuery) return [];
+		const sessions = this.searchableSessions();
+		const sessionIds = sessions.map((session) => session.id);
+		const exactCandidates = this.database.searchRuntimeMessages(
+			query,
+			Math.max(searchLimit, 100),
+			sessionIds,
+		);
+		const exactPhrase = exactCandidates.filter((message) =>
+			normalizeTranscriptText(message.content).includes(normalizedQuery),
+		);
+		const exactPhraseIds = new Set(exactPhrase.map((message) => message.id));
+		const exact = [
+			...exactPhrase,
+			...exactCandidates.filter((message) => !exactPhraseIds.has(message.id)),
+		];
 		if (exact.length >= searchLimit) return exact;
 		const queryTerms = [
 			...new Set(
@@ -902,8 +1068,7 @@ export class AgentRuntime extends EventEmitter {
 		if (!queryTerms.length) return exact;
 		const queryEmbedding = localSemanticEmbedding(query);
 		const seen = new Set(exact.map((message) => message.id));
-		const ranked = this.database
-			.listRuntimeSessions()
+		const ranked = sessions
 			.flatMap((session) => this.database.listRuntimeMessages(session.id))
 			.filter((message) => !seen.has(message.id))
 			.map((message) => {
@@ -942,6 +1107,41 @@ export class AgentRuntime extends EventEmitter {
 		return [...exact, ...ranked.map(({ message }) => message)].slice(
 			0,
 			searchLimit,
+		);
+	}
+
+	searchTranscript(query: string, limit = 20): TranscriptSearchResult[] {
+		const sessions = new Map(this.searchableSessions().map((session) => [session.id, session]));
+		const messages = this.searchMessages(query, limit);
+		const normalizedQuery = normalizeTranscriptText(query);
+		return messages.flatMap((message) => {
+			const session = sessions.get(message.sessionId);
+			if (!session) return [];
+			const normalizedContent = normalizeTranscriptText(message.content);
+			const matchStart = Math.max(0, normalizedContent.indexOf(normalizedQuery));
+			const center = matchStart < 0 ? 0 : matchStart;
+			const start = Math.max(0, center - 120);
+			const end = Math.min(normalizedContent.length, start + 400);
+			const preview = normalizedContent.slice(start, end).trim();
+			return [{
+				messageId: message.id,
+				sessionId: message.sessionId,
+				sessionTitle: session.title,
+				role: message.role,
+				preview: `${start > 0 ? "…" : ""}${preview}${end < normalizedContent.length ? "…" : ""}`.slice(0, 400),
+				matchStart: center,
+				matchLength: Math.max(1, normalizedQuery.length),
+				createdAt: message.createdAt,
+			} satisfies TranscriptSearchResult];
+		});
+	}
+
+	private searchableSessions(): RuntimeSession[] {
+		return this.database.listRuntimeSessions().filter(
+			(session) =>
+				!session.forgottenAt &&
+				session.privacyMode !== "private" &&
+				session.privacyMode !== "incognito",
 		);
 	}
 

@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	realpathSync,
 	readFileSync,
 	rmSync,
 	symlinkSync,
@@ -46,6 +47,53 @@ afterEach(() => {
 });
 
 describe("agent runtime", () => {
+	it("persists the selected conversation and clears stale or forgotten identities", () => {
+		const root = mkdtempSync(join(tmpdir(), "kestrel-selected-session-"));
+		temporaryDirectories.push(root);
+		const databasePath = join(root, "runtime.sqlite");
+		const encryptionKey = createEncryptionKey();
+		const now = () => "2026-08-31T10:00:00.000Z";
+		const database = new KestrelDatabase(databasePath, encryptionKey);
+		const runtime = new AgentRuntime(database, [root], now);
+		const selected = runtime.createSession({
+			title: "Selected project conversation",
+			workspaceRoot: root,
+		});
+		runtime.createSession({ title: "Unselected conversation" });
+
+		expect(runtime.selectSession(selected.id)).toBe(selected.id);
+		expect(runtime.selectedSessionId()).toBe(selected.id);
+		runtime.close();
+		database.close();
+
+		const restartedDatabase = new KestrelDatabase(databasePath, encryptionKey);
+		const restarted = new AgentRuntime(restartedDatabase, [root], now);
+		try {
+			expect(restarted.selectedSessionId()).toBe(selected.id);
+			expect(restarted.getSession(selected.id).workspaceRoot).toBe(
+				realpathSync(root),
+			);
+
+			restarted.forgetSession(selected.id);
+			expect(restarted.selectedSessionId()).toBeNull();
+			expect(
+				restartedDatabase.getState("runtimeSelectedSessionId"),
+			).toBeUndefined();
+
+			restartedDatabase.setState(
+				"runtimeSelectedSessionId",
+				"session-that-no-longer-exists",
+			);
+			expect(restarted.selectedSessionId()).toBeNull();
+			expect(
+				restartedDatabase.getState("runtimeSelectedSessionId"),
+			).toBeUndefined();
+		} finally {
+			restarted.close();
+			restartedDatabase.close();
+		}
+	});
+
 	it("recovers from a malformed persisted background-process journal", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		database.setPrivateState("runtime.background-processes", {

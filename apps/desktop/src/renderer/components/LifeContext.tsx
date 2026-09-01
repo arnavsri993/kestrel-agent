@@ -5,6 +5,7 @@ import type {
 	MemoryRecord,
 	PersonRecord,
 	RendererRequest,
+	TranscriptSearchResult,
 	UnifiedCalendarEvent,
 	UserModelFact,
 	WorkspaceSnapshot,
@@ -791,9 +792,11 @@ function PeopleView() {
 function MemoryView({
 	snapshot,
 	update,
+	onOpenTranscriptResult,
 }: {
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
+	onOpenTranscriptResult?(result: TranscriptSearchResult): void;
 }) {
 	const [query, setQuery] = useState("");
 	const [layer, setLayer] = useState<
@@ -810,6 +813,12 @@ function MemoryView({
 	const [facts, setFacts] = useState<UserModelFact[]>([]);
 	const [contextQuery, setContextQuery] = useState("");
 	const [context, setContext] = useState<AgentContextBundle | null>(null);
+	const [transcriptQuery, setTranscriptQuery] = useState("");
+	const [transcriptResults, setTranscriptResults] = useState<
+		TranscriptSearchResult[]
+	>([]);
+	const [transcriptBusy, setTranscriptBusy] = useState(false);
+	const [transcriptError, setTranscriptError] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const selected = snapshot.memories.find((memory) => memory.id === selectedId);
@@ -923,6 +932,35 @@ function MemoryView({
 		}
 	}
 
+	async function searchTranscripts(event: FormEvent) {
+		event.preventDefault();
+		const value = transcriptQuery.trim();
+		if (!value) {
+			setTranscriptResults([]);
+			setTranscriptError("");
+			return;
+		}
+		setTranscriptBusy(true);
+		setTranscriptError("");
+		try {
+			const response = await request({
+				type: "runtime-search-messages",
+				query: value,
+				limit: 30,
+			});
+			setTranscriptResults(response.transcriptResults ?? []);
+		} catch (cause) {
+			setTranscriptError(
+				cause instanceof Error
+					? cause.message
+					: "Transcript search failed.",
+			);
+			setTranscriptResults([]);
+		} finally {
+			setTranscriptBusy(false);
+		}
+	}
+
 	async function reviewFact(id: string, decision: "confirm" | "reject") {
 		setBusy(true);
 		setError("");
@@ -961,6 +999,55 @@ function MemoryView({
 					<option value="archived">Archived</option>
 				</select>
 				<strong>{visible.length} remembered</strong>
+			</section>
+
+			<section className="transcript-search-panel" aria-labelledby="transcript-search-title">
+				<header>
+					<div>
+						<span className="eyebrow">Local encrypted history</span>
+						<h2 id="transcript-search-title">Search conversations</h2>
+					</div>
+					<small>Standard conversations only · no provider request</small>
+				</header>
+				<p>
+					Search runs on this Mac over encrypted transcript records. Private,
+					incognito, and forgotten conversations are excluded and remain out of
+					this result list.
+				</p>
+				<form className="memory-search" onSubmit={(event) => void searchTranscripts(event)}>
+					<label className="sr-only" htmlFor="transcript-search-input">
+						Search conversations
+					</label>
+					<input
+						id="transcript-search-input"
+						value={transcriptQuery}
+						onChange={(event) => setTranscriptQuery(event.target.value)}
+						placeholder="Search encrypted task history"
+					/>
+					<button className="button secondary" disabled={transcriptBusy || !transcriptQuery.trim()}>
+						{transcriptBusy ? "Searching…" : "Search history"}
+					</button>
+				</form>
+				{transcriptError ? <p className="connection-error" role="alert">{transcriptError}</p> : null}
+				{transcriptResults.length > 0 ? (
+					<div className="transcript-search-results" aria-live="polite">
+						{transcriptResults.map((result) => (
+							<button
+								className="transcript-search-result"
+								key={`${result.sessionId}:${result.messageId}`}
+								onClick={() => onOpenTranscriptResult?.(result)}
+							>
+								<span className="eyebrow">
+									{result.sessionTitle} · {result.role} · {new Date(result.createdAt).toLocaleString()}
+								</span>
+								<strong>{result.preview}</strong>
+								<small>Open the exact message in this conversation</small>
+							</button>
+						))}
+					</div>
+				) : transcriptQuery.trim() && !transcriptBusy ? (
+					<p className="memory-no-results">No searchable conversation matches.</p>
+				) : null}
 			</section>
 
 			{activeMemoryCount === 0 && !busy && (
@@ -1248,9 +1335,11 @@ function MemoryView({
 export function LifeContext({
 	snapshot,
 	update,
+	onOpenTranscriptResult,
 }: {
 	snapshot: WorkspaceSnapshot;
 	update(next: WorkspaceSnapshot): void;
+	onOpenTranscriptResult?(result: TranscriptSearchResult): void;
 }) {
 	const [view, setView] = useState<LifeView>("calendar");
 	return (
@@ -1279,7 +1368,15 @@ export function LifeContext({
 			</nav>
 			{view === "calendar" && <CalendarView />}
 			{view === "people" && <PeopleView />}
-			{view === "memory" && <MemoryView snapshot={snapshot} update={update} />}
+			{view === "memory" && (
+				<MemoryView
+					snapshot={snapshot}
+					update={update}
+					{...(onOpenTranscriptResult
+						? { onOpenTranscriptResult }
+						: {})}
+				/>
+			)}
 		</div>
 	);
 }

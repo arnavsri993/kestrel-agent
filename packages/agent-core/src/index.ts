@@ -1679,17 +1679,35 @@ export class AgentCore {
 					return { ok: true, plugins: this.pluginSummaries() };
 				}
 				case "runtime-list-sessions":
-					return { ok: true, sessions: this.runtime.listSessions() };
+					return {
+						ok: true,
+						sessions: this.runtime.listSessions(),
+						selectedSessionId: this.runtime.selectedSessionId(),
+					};
 				case "runtime-create-session": {
 					const session = this.runtime.createSession({
 						title: request.title,
 						...(request.workspaceRoot
 							? { workspaceRoot: request.workspaceRoot }
 							: {}),
+						...(request.privacyMode
+							? { privacyMode: request.privacyMode }
+							: {}),
 					});
 					this.pluginMcpManager?.attachSession(session.id);
 					return { ok: true, session };
 				}
+				case "runtime-select-session":
+					return {
+						ok: true,
+						selectedSessionId: this.runtime.selectSession(request.sessionId),
+					};
+				case "runtime-forget-session":
+					return {
+						ok: true,
+						session: this.runtime.forgetSession(request.sessionId),
+						selectedSessionId: this.runtime.selectedSessionId(),
+					};
 				case "runtime-fork-session":
 					return {
 						ok: true,
@@ -2011,6 +2029,53 @@ export class AgentCore {
 					return {
 						ok: true,
 						messages: this.runtime.searchMessages(request.query, request.limit),
+						transcriptResults: this.runtime.searchTranscript(
+							request.query,
+							request.limit,
+						),
+					};
+				case "runtime-list-human-input":
+					return {
+						ok: true,
+						humanInputRequests: this.runtime.listHumanInputRequests(
+							request.sessionId,
+						),
+					};
+				case "runtime-create-human-input":
+					return {
+						ok: true,
+						humanInput: this.runtime.createHumanInputRequest({
+							sessionId: request.sessionId,
+							runId: request.runId,
+							prompt: request.prompt,
+							...(request.context ? { context: request.context } : {}),
+							options: request.options,
+							...(request.selectionMode
+								? { selectionMode: request.selectionMode }
+								: {}),
+							allowFreeText: request.allowFreeText,
+							allowSkip: request.allowSkip,
+							...(request.timeoutMs !== undefined
+								? { timeoutMs: request.timeoutMs }
+								: {}),
+						}),
+					};
+				case "runtime-answer-human-input":
+					return {
+						ok: true,
+						humanInput: this.runtime.answerHumanInput({
+							requestId: request.requestId,
+							runId: request.runId,
+							answer: request.answer,
+						}),
+					};
+				case "runtime-cancel-human-input":
+					return {
+						ok: true,
+						humanInput: this.runtime.cancelHumanInput(
+							request.requestId,
+							request.runId,
+						),
 					};
 				case "memory-list":
 					return { ok: true, memories: this.memory.list() };
@@ -2657,6 +2722,43 @@ export class AgentCore {
 				}
 				case "media-list-artifacts":
 					return { ok: true, artifacts: this.artifacts?.list() ?? [] };
+				case "media-pin-artifact": {
+					if (!this.artifacts)
+						throw new Error("Artifact storage is not configured.");
+					return {
+						ok: true,
+						artifacts: [
+							this.artifacts.setPinned(request.artifactId, request.pinned),
+						],
+					};
+				}
+				case "media-export-artifact": {
+					if (!this.artifacts)
+						throw new Error("Artifact storage is not configured.");
+					const exported = this.artifacts.exportWidget(
+						request.artifactId,
+						request.maximumBytes,
+					);
+					return {
+						ok: true,
+						exportedArtifact: exported,
+						artifactPreview: this.artifacts.preview(
+							exported.id,
+							request.maximumBytes,
+						),
+					};
+				}
+				case "media-download-artifact": {
+					if (!this.artifacts)
+						throw new Error("Artifact storage is not configured.");
+					return {
+						ok: true,
+						artifactDownload: this.artifacts.download(
+							request.artifactId,
+							request.maximumBytes,
+						),
+					};
+				}
 				case "media-preview-artifact": {
 					if (!this.artifacts)
 						throw new Error("Artifact storage is not configured.");
@@ -3186,6 +3288,8 @@ export class AgentCore {
 						ok: true,
 						approvalRules: [this.runtime.removeApprovalRule(request.id)],
 					};
+				default:
+					throw new Error("Unsupported Agent Core request.");
 			}
 		} catch (error) {
 			return {
