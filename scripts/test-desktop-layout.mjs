@@ -279,6 +279,49 @@ async function assertMotionContract(page) {
 	}
 }
 
+async function assertNewTabHoverAffordance(page) {
+	const control = page.getByRole("button", {
+		name: "New Tab",
+		exact: true,
+	});
+	await control.waitFor({ state: "visible" });
+	const readStyle = () =>
+		control.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return {
+				opacity: style.opacity,
+				pointerEvents: style.pointerEvents,
+				backgroundColor: style.backgroundColor,
+				borderRadius: style.borderRadius,
+			};
+		});
+	const idle = await readStyle();
+	assert.equal(idle.opacity, "1", "New Tab must remain visible at rest.");
+	assert.equal(
+		idle.pointerEvents,
+		"auto",
+		"New Tab must remain interactive at rest.",
+	);
+	assert.equal(
+		idle.backgroundColor,
+		"rgba(0, 0, 0, 0)",
+		"New Tab must keep a quiet background before hover.",
+	);
+	await control.hover();
+	await page.waitForTimeout(100);
+	const hovered = await readStyle();
+	assert.notEqual(
+		hovered.backgroundColor,
+		idle.backgroundColor,
+		"New Tab hover must paint its circular background.",
+	);
+	assert.equal(
+		hovered.borderRadius,
+		"50%",
+		"New Tab hover must retain the circular affordance shape.",
+	);
+}
+
 async function assertReducedMotionStyles(page) {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	const reduced = await page.evaluate(() => {
@@ -1023,7 +1066,9 @@ try {
 	await assertMotionContract(page);
 	await assertReducedMotionStyles(page);
 	await assertAgentRailInterruption(page);
-	await (await revealNewTabControl(page)).click();
+	const newTabControl = await revealNewTabControl(page);
+	await assertNewTabHoverAffordance(page);
+	await newTabControl.click();
 	await page.waitForFunction(
 		() => document.querySelectorAll(".browser-tabs .browser-tab").length >= 2,
 	);
