@@ -328,7 +328,7 @@ async function runReturningPersona() {
 		["Models", "Routing and providers"],
 		["Memory", "Memory and learning"],
 		["Plugins", "Plugins and publishers"],
-		["Privacy", "Approvals and recovery"],
+		["Privacy", "Permissions and sandbox"],
 		["Advanced", "Diagnostics and organization"],
 	]) {
 		const value = {

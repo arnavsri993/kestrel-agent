@@ -9,7 +9,10 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { openKestrelDestination } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	selectSettingsSection,
+} from "./desktop-browser-test-helpers.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "workstrand-external-secret-ui-"));
 const helperPath = join(root, "credential-helper");
@@ -45,7 +48,8 @@ try {
 	});
 	await page.reload();
 	await openKestrelDestination(page, "Settings");
-	await page.getByRole("heading", { name: "Accounts and access" }).waitFor();
+	await selectSettingsSection(page, "agent-privacy", "Privacy & credentials");
+	await page.getByRole("heading", { name: "Privacy and credentials" }).waitFor();
 
 	const external = page.locator(".external-secret-setting");
 	await external

@@ -93,7 +93,26 @@ export async function openKestrelDestination(page, label) {
 }
 
 export async function selectSettingsSection(page, value, label) {
-	const scopeLabel = value === "browser" ? "Browser" : "Agent";
+	const legacySectionAliases = {
+		general: "agent-general",
+		connections: "agent-connections",
+		models: "agent-models",
+		intelligence: "agent-memory",
+		extensions: "agent-tools",
+		privacy: "agent-permissions",
+		advanced: "agent-diagnostics",
+	};
+	const sectionValue = legacySectionAliases[value] ?? value;
+	const legacyLabels = {
+		Models: "Models & routing",
+		Memory: "Memory & context",
+		Plugins: "Tools, MCP & skills",
+		Advanced: "Diagnostics",
+	};
+	const sectionLabel = legacyLabels[label] ?? label;
+	const scopeLabel = sectionValue === "browser" || sectionValue.startsWith("browser-")
+		? "Browser"
+		: "Agent";
 	const scopeTab = page
 		.locator(".settings-scope-switcher")
 		.getByRole("tab", { name: new RegExp(`^${scopeLabel}`) });
@@ -111,11 +130,11 @@ export async function selectSettingsSection(page, value, label) {
 	}
 	const compactPicker = page.locator(".settings-section-picker select");
 	if (await compactPicker.isVisible().catch(() => false)) {
-		await compactPicker.selectOption(value);
+		await compactPicker.selectOption(sectionValue);
 		return;
 	}
 	await page
 		.getByRole("navigation", { name: "Settings sections" })
-		.getByRole("button", { name: label, exact: true })
+		.getByRole("button", { name: sectionLabel, exact: true })
 		.click();
 }

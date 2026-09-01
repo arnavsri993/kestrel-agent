@@ -134,8 +134,8 @@ try {
 	);
 	await notice.getByRole("button", { name: "Review skill", exact: true }).click();
 
-	await page.getByRole("heading", { name: "Memory and learning", exact: true }).waitFor();
-	await selectSettingsSection(page, "intelligence", "Memory");
+	await page.getByRole("heading", { name: "Plugins and publishers", exact: true }).waitFor();
+	await selectSettingsSection(page, "extensions", "Plugins");
 	const proposalDetails = page.locator(
 		`details[data-skill-proposal-id="${proposalId}"]`,
 	);

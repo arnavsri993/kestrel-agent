@@ -3168,6 +3168,47 @@ export const UserBrowserFindMatchSchema = z.object({
 export type UserBrowserFindMatch = z.infer<typeof UserBrowserFindMatchSchema>;
 
 export const UserBrowserSettingsSchema = z.object({
+	/**
+	 * Startup preferences are kept separate from restoreSession for backwards
+	 * compatibility with profiles written before the organized settings surface.
+	 * `restoreSession` remains the legacy source of truth when startupBehavior is
+	 * not present in an older profile.
+	 */
+	startupBehavior: z
+		.enum(["new_tab", "restore", "homepage", "specific_pages"])
+		.default("restore"),
+	homepageUrl: z
+		.string()
+		.max(8_192)
+		.refine(
+			(value) => {
+				if (!value.trim()) return true;
+				try {
+					const url = new URL(value);
+					return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+				} catch {
+					return false;
+				}
+			},
+			"Homepage must be an HTTP(S) URL without embedded credentials.",
+		)
+		.default(""),
+	startupPages: z
+		.array(
+			z
+				.string()
+				.max(8_192)
+				.refine((value) => {
+					try {
+						const url = new URL(value);
+						return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password;
+					} catch {
+						return false;
+					}
+				}, "Startup pages must be HTTP(S) URLs without embedded credentials."),
+		)
+		.max(8)
+		.default([]),
 	searchEngine: z
 		.enum([
 			"duckduckgo",
@@ -3185,7 +3226,27 @@ export const UserBrowserSettingsSchema = z.object({
 			"custom",
 		])
 		.default("google"),
-	customSearchUrl: z.string().max(8_192).optional(),
+	customSearchUrl: z
+		.string()
+		.max(8_192)
+		.refine(
+			(value) => {
+				if (!value.trim()) return true;
+				try {
+					const sample = value.trim().replace(/%s/g, "query");
+					const url = new URL(sample);
+					return (
+						["http:", "https:"].includes(url.protocol) &&
+						!url.username &&
+						!url.password
+					);
+				} catch {
+					return false;
+				}
+			},
+			"Custom search URL must be an HTTP(S) URL without embedded credentials.",
+		)
+		.optional(),
 	customSearchName: z.string().max(100).optional(),
 	tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),
 	newTabBackground: z
@@ -3229,8 +3290,41 @@ export const UserBrowserSettingsSchema = z.object({
 	addressBarSuggestionsEnabled: z.boolean().default(true),
 	passwordAutofillEnabled: z.boolean().default(true),
 	paymentAutofillEnabled: z.boolean().default(true),
+	defaultZoomPercent: z.number().int().min(25).max(500).default(100),
+	minimumFontSize: z.number().int().min(0).max(72).default(0),
+	defaultFontFamily: z
+		.string()
+		.min(1)
+		.max(120)
+		.regex(/^[^\r\n]+$/)
+		.default("system-ui"),
+	spellcheckEnabled: z.boolean().default(true),
+	spellcheckLanguage: z
+		.string()
+		.regex(/^[a-z]{2,3}(?:-[A-Z]{2})?$/)
+		.default("en-US"),
+	hardwareAccelerationEnabled: z.boolean().default(true),
+	downloadBehavior: z.enum(["automatic", "ask"]).default("automatic"),
+	downloadDirectory: z.string().max(4_096).default(""),
 });
 export type UserBrowserSettings = z.infer<typeof UserBrowserSettingsSchema>;
+
+/**
+ * Browser transfers intentionally exclude cookies, password vaults, payment
+ * cards, extension packages, and native session state. Those values are either
+ * device-bound or protected by a separate credential boundary and must not be
+ * portable JSON.
+ */
+export const BrowserDataTransferSchema = z.object({
+	format: z.literal("kestrel-browser-data"),
+	version: z.literal(1),
+	exportedAt: z.string().datetime(),
+	bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
+	history: z.array(UserBrowserHistoryEntrySchema).max(5_000).default([]),
+	sitePermissions: z.array(UserBrowserSitePermissionSchema).max(500).default([]),
+	settings: UserBrowserSettingsSchema,
+});
+export type BrowserDataTransfer = z.infer<typeof BrowserDataTransferSchema>;
 
 export const InstalledExtensionSchema = z.object({
 	id: z.string().min(1).max(100),
@@ -3504,6 +3598,11 @@ export const RendererRequestSchema = z.union([
 		type: z.literal("browser-update-settings"),
 		settings: UserBrowserSettingsSchema,
 	}),
+	z.object({ type: z.literal("browser-reset-settings") }),
+	z.object({ type: z.literal("browser-select-download-directory") }),
+	z.object({ type: z.literal("browser-reset-download-directory") }),
+	z.object({ type: z.literal("browser-export-data") }),
+	z.object({ type: z.literal("browser-import-data") }),
 	z.object({ type: z.literal("browser-clear-history") }),
 	z.object({
 		type: z.literal("browser-clear-data"),
@@ -3609,6 +3708,11 @@ export const RendererRequestSchema = z.union([
 		origin: z.string().min(1).max(8_192),
 		permission: z.string().min(1).max(80),
 		decision: z.enum(["allow", "deny"]),
+	}),
+	z.object({
+		type: z.literal("browser-clear-site-permission"),
+		origin: z.string().min(1).max(8_192),
+		permission: z.string().min(1).max(80),
 	}),
 	z.object({
 		type: z.literal("list-workspace-files"),
@@ -3904,7 +4008,8 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 
 export type RendererResponse =
 	| CoreResponse
-	| { ok: true; browserState: UserBrowserState }
+	| { ok: true; browserState: UserBrowserState; cancelled?: boolean }
+	| { ok: true; browserDataPath?: string; cancelled?: boolean }
 	| {
 			ok: true;
 			browserOrganization: UserBrowserTabOrganizationPreview;

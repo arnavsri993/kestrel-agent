@@ -22,6 +22,9 @@ import {
 } from "../utility/browser-app-pages";
 
 export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
+	startupBehavior: "restore",
+	homepageUrl: "",
+	startupPages: [],
 	searchEngine: "google",
 	tabLayout: "horizontal",
 	newTabBackground: "graphite",
@@ -41,6 +44,14 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	addressBarSuggestionsEnabled: true,
 	passwordAutofillEnabled: true,
 	paymentAutofillEnabled: true,
+	defaultZoomPercent: 100,
+	minimumFontSize: 0,
+	defaultFontFamily: "system-ui",
+	spellcheckEnabled: true,
+	spellcheckLanguage: "en-US",
+	hardwareAccelerationEnabled: true,
+	downloadBehavior: "automatic",
+	downloadDirectory: "",
 };
 const SEARCH_ENGINES: Record<
 	Exclude<UserBrowserSettings["searchEngine"], "custom">,
@@ -346,7 +357,23 @@ export class BrowserTabStore {
 
 		let state: UserBrowserState;
 		try {
-			state = UserBrowserStateSchema.parse(JSON.parse(serialized));
+			const parsed = JSON.parse(serialized) as unknown;
+			state = UserBrowserStateSchema.parse(parsed);
+			if (
+				parsed &&
+				typeof parsed === "object" &&
+				"settings" in parsed &&
+				parsed.settings &&
+				typeof parsed.settings === "object" &&
+				!Object.hasOwn(parsed.settings, "startupBehavior") &&
+				(parsed.settings as { restoreSession?: unknown }).restoreSession ===
+					false
+			) {
+				// Profiles written before organized startup settings used only
+				// `restoreSession`. Preserve the old opt-out instead of letting the
+				// new default (`restore`) unexpectedly reopen those tabs.
+				state.settings = { ...state.settings, startupBehavior: "new_tab" };
+			}
 		} catch {
 			// Preserve malformed data for diagnosis or manual recovery rather than
 			// silently overwriting it the next time a fresh session is saved.
@@ -362,7 +389,7 @@ export class BrowserTabStore {
 			return freshBrowserState(now);
 		}
 
-		const tabs = state.settings.restoreSession
+		const restoredTabs = state.settings.startupBehavior === "restore" && state.settings.restoreSession
 			? state.tabs
 					.filter(
 						(tab) =>
@@ -381,6 +408,18 @@ export class BrowserTabStore {
 						error: undefined,
 					}))
 			: [];
+		const startupTabs =
+			state.settings.startupBehavior === "homepage"
+				? [this.startupTab(state.settings.homepageUrl, now)]
+				: state.settings.startupBehavior === "specific_pages"
+					? state.settings.startupPages.map((url) => this.startupTab(url, now))
+					: restoredTabs;
+		const tabs = startupTabs.filter(
+			(tab) =>
+				!tab.url ||
+				/^https?:\/\//.test(tab.url) ||
+				isKestrelAppPageUrl(tab.url),
+		);
 		if (tabs.length === 0)
 			return {
 				...freshBrowserState(now),
@@ -425,6 +464,16 @@ export class BrowserTabStore {
 				canReveal: false,
 			})),
 		};
+	}
+
+	private startupTab(url: string, now: () => Date): UserBrowserState["tabs"][number] {
+		const tab = createEmptyBrowserTab(now);
+		if (url) {
+			tab.url = url;
+			tab.title = new URL(url).hostname || "Startup page";
+			tab.discarded = true;
+		}
+		return tab;
 	}
 
 	save(state: UserBrowserState): void {
