@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import {
   copyFile,
   lstat,
@@ -1365,17 +1365,36 @@ supervisor.on("recovery-failed", (error: Error) => {
 // Keep the runtime name stable so the existing user-data directory continues
 // to resolve without orphaning installed profiles.
 app.setName(PRODUCT_IDENTITY.runtimeApplicationName);
-if (process.env.KESTREL_DISABLE_GPU === "1") {
-  app.commandLine.appendSwitch("disable-gpu");
-  app.commandLine.appendSwitch("disable-gpu-compositing");
-  app.commandLine.appendSwitch("in-process-gpu");
-  app.disableHardwareAcceleration();
-}
 app.setPath(
   "userData",
   process.env.KESTREL_TEST_USER_DATA ??
     join(app.getPath("appData"), PRODUCT_IDENTITY.userDataDirectoryName),
 );
+
+function browserHardwareAccelerationDisabled(): boolean {
+	try {
+		const statePath = join(app.getPath("userData"), "browser", "state.json");
+		if (!existsSync(statePath)) return false;
+		const state = JSON.parse(readFileSync(statePath, "utf8")) as {
+			settings?: { hardwareAccelerationEnabled?: unknown };
+		};
+		return state.settings?.hardwareAccelerationEnabled === false;
+	} catch {
+		// A malformed or unreadable browser profile must not disable native
+		// rendering. BrowserTabStore will preserve and archive the bad profile.
+		return false;
+	}
+}
+
+if (
+	process.env.KESTREL_DISABLE_GPU === "1" ||
+	browserHardwareAccelerationDisabled()
+) {
+	app.commandLine.appendSwitch("disable-gpu");
+	app.commandLine.appendSwitch("disable-gpu-compositing");
+	app.commandLine.appendSwitch("in-process-gpu");
+	app.disableHardwareAcceleration();
+}
 
 const singleInstance = acquireSingleInstanceLock(app);
 const developmentHeartbeatPath = process.env.KESTREL_DEV_ELECTRON_HEARTBEAT;
@@ -2814,15 +2833,98 @@ function registerIpc(): void {
         ...(browserPagePreview ? { browserPagePreview } : {}),
       };
     }
-    if (request.type === "browser-update-settings") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
-      return {
-        ok: true,
-        browserState: requestBrowserService.updateSettings(request.settings),
-      };
-    }
-    if (request.type === "browser-clear-history") {
+		if (request.type === "browser-update-settings") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.updateSettings(request.settings),
+			};
+		}
+		if (request.type === "browser-reset-settings") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.resetSettings(),
+			};
+		}
+		if (request.type === "browser-select-download-directory") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			const result = await dialog.showOpenDialog(senderWindow, {
+				title: "Choose download folder",
+				properties: ["openDirectory", "createDirectory"],
+			});
+			if (result.canceled || !result.filePaths[0])
+				return {
+					ok: true,
+					browserState: requestBrowserService.getState(),
+					cancelled: true,
+				};
+			return {
+				ok: true,
+				browserState: requestBrowserService.setDownloadDirectory(
+					result.filePaths[0],
+				),
+			};
+		}
+		if (request.type === "browser-reset-download-directory") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.setDownloadDirectory(),
+			};
+		}
+		if (request.type === "browser-export-data") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			const result = await dialog.showSaveDialog(senderWindow, {
+				title: "Export Kestrel browser data",
+				defaultPath: join(
+					app.getPath("downloads"),
+					"kestrel-browser-data.json",
+				),
+				filters: [{ name: "Kestrel browser data", extensions: ["json"] }],
+			});
+			if (result.canceled || !result.filePath)
+				return { ok: true, cancelled: true };
+			const filePath = result.filePath.toLowerCase().endsWith(".json")
+				? result.filePath
+				: `${result.filePath}.json`;
+			await writeFile(
+				filePath,
+				`${JSON.stringify(requestBrowserService.exportBrowserData(), null, 2)}\n`,
+				{ mode: 0o600 },
+			);
+			return { ok: true, browserDataPath: filePath };
+		}
+		if (request.type === "browser-import-data") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			const result = await dialog.showOpenDialog(senderWindow, {
+				title: "Import Kestrel browser data",
+				properties: ["openFile"],
+				filters: [{ name: "Kestrel browser data", extensions: ["json"] }],
+			});
+			const filePath = result.filePaths[0];
+			if (result.canceled || !filePath)
+				return {
+					ok: true,
+					browserState: requestBrowserService.getState(),
+					cancelled: true,
+				};
+			const fileStats = statSync(filePath);
+			if (!fileStats.isFile() || fileStats.size > 10 * 1024 * 1024)
+				throw new Error("Choose a browser data JSON file smaller than 10 MB.");
+			const payload = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+			return {
+				ok: true,
+				browserState: requestBrowserService.importBrowserData(payload),
+			};
+		}
+	    if (request.type === "browser-clear-history") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       return {
@@ -3036,18 +3138,29 @@ function registerIpc(): void {
       await writeFile(filePath, frame.png);
       return { ok: true, screenshotPath: filePath };
     }
-    if (request.type === "browser-set-site-permission") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
-      return {
-        ok: true,
-        browserState: requestBrowserService.setSitePermission(
-          request.origin,
-          request.permission,
-          request.decision,
-        ),
-      };
-    }
+		if (request.type === "browser-set-site-permission") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.setSitePermission(
+					request.origin,
+					request.permission,
+					request.decision,
+				),
+			};
+		}
+		if (request.type === "browser-clear-site-permission") {
+			if (!requestBrowserService)
+				throw new Error("The visible user browser is unavailable.");
+			return {
+				ok: true,
+				browserState: requestBrowserService.clearSitePermission(
+					request.origin,
+					request.permission,
+				),
+			};
+		}
     if (request.type === "browser-list-extensions") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");

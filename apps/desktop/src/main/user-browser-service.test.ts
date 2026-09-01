@@ -38,8 +38,10 @@ const electron = vi.hoisted(() => {
     reload = vi.fn();
     reloadIgnoringCache = vi.fn();
     zoomLevel = 0;
+    zoomFactor = 1;
     getZoomLevel = vi.fn(() => this.zoomLevel);
     setZoomLevel = vi.fn((level: number) => { this.zoomLevel = level; });
+    setZoomFactor = vi.fn((factor: number) => { this.zoomFactor = factor; });
     stop = vi.fn();
     focus = vi.fn();
     insertText = vi.fn();
@@ -84,6 +86,8 @@ const electron = vi.hoisted(() => {
     permissionRequestHandler: unknown;
     setPermissionCheckHandler = vi.fn((handler) => { this.permissionCheckHandler = handler; });
     setPermissionRequestHandler = vi.fn((handler) => { this.permissionRequestHandler = handler; });
+    setSpellCheckerEnabled = vi.fn();
+    setSpellCheckerLanguages = vi.fn();
     clearCache = vi.fn(async () => undefined);
     clearStorageData = vi.fn(async () => undefined);
     fetch = vi.fn();
@@ -113,6 +117,7 @@ vi.mock("electron", () => ({
   clipboard: { writeText: vi.fn() },
   dialog: {
     showMessageBox: vi.fn(async () => ({ response: 1 })),
+    showSaveDialog: vi.fn(async () => ({ canceled: true })),
   },
   nativeImage: {
     createFromBuffer: vi.fn(() => ({ isEmpty: () => true })),
@@ -125,7 +130,10 @@ vi.mock("electron", () => ({
 }));
 
 import { nativeImage } from "electron";
+import { dialog } from "electron";
+import { BrowserTabStore } from "./browser-tab-store";
 import { UserBrowserService } from "./user-browser-service";
+import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
 import type {
   BrowserTabFolderName,
   BrowserTabFolderNamingGroup,
@@ -172,9 +180,10 @@ function createService(options: {
   };
   const events: unknown[] = [];
   const commands: string[] = [];
+	const statePath = join(directory, "state.json");
 	const service = new UserBrowserService({
 		window: window as never,
-		statePath: join(directory, "state.json"),
+		statePath,
 		downloadDirectory: join(directory, "downloads"),
 		onEvent: (event) => events.push(event),
 		onCommand: (command) => commands.push(command),
@@ -194,7 +203,7 @@ function createService(options: {
 			? { nameTabFolders: options.nameTabFolders }
 			: {}),
 	});
-  return { service, window, events, commands };
+	return { service, window, events, commands, statePath };
 }
 
 async function navigateNewTab(service: UserBrowserService, url: string) {
@@ -203,7 +212,99 @@ async function navigateNewTab(service: UserBrowserService, url: string) {
 }
 
 describe("UserBrowserService", () => {
-  it("continues creating tabs beyond the legacy 32-tab boundary", async () => {
+	it("applies browser settings to the native session and persists them", async () => {
+		const { service, statePath } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://settings.example");
+		const partition = electron.state.partitions[0]!.instance;
+		const next = UserBrowserSettingsSchema.parse({
+			...service.getState().settings,
+			defaultZoomPercent: 125,
+			minimumFontSize: 14,
+			defaultFontFamily: "Georgia, serif",
+			spellcheckEnabled: false,
+			spellcheckLanguage: "fr-FR",
+			historyRetentionDays: 30,
+		});
+
+		const updated = service.updateSettings(next);
+		expect(updated.settings).toMatchObject({
+			defaultZoomPercent: 125,
+			minimumFontSize: 14,
+			defaultFontFamily: "Georgia, serif",
+			spellcheckEnabled: false,
+			spellcheckLanguage: "fr-FR",
+		});
+		expect(partition.setSpellCheckerEnabled).toHaveBeenLastCalledWith(false);
+		expect(partition.setSpellCheckerLanguages).toHaveBeenLastCalledWith([
+			"fr-FR",
+		]);
+		expect(electron.state.views[0]!.webContents.setZoomFactor).toHaveBeenCalledWith(
+			1.25,
+		);
+		expect(new BrowserTabStore(statePath).load().settings).toMatchObject({
+			defaultZoomPercent: 125,
+			minimumFontSize: 14,
+			defaultFontFamily: "Georgia, serif",
+			spellcheckEnabled: false,
+			spellcheckLanguage: "fr-FR",
+		});
+	});
+
+	it("canonicalizes and revokes site permissions without leaking paths in exports", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com/path");
+		service.setSitePermission("https://example.com/path", "notifications", "allow");
+		expect(service.getState().sitePermissions).toMatchObject([
+			{ origin: "https://example.com", permission: "notifications" },
+		]);
+
+		const exported = service.exportBrowserData();
+		expect(exported.settings.downloadDirectory).toBe("");
+		service.clearSitePermission("https://example.com/other", "notifications");
+		expect(service.getState().sitePermissions).toEqual([]);
+	});
+
+	it("pauses an ask-before-save download until the native location is chosen", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		const partition = electron.state.partitions[0]!.instance;
+		service.updateSettings(
+			UserBrowserSettingsSchema.parse({
+				...service.getState().settings,
+				downloadBehavior: "ask",
+			}),
+		);
+		const chosenPath = join(tmpdir(), "kestrel-chosen-download.txt");
+		vi.mocked(dialog.showSaveDialog).mockResolvedValueOnce({
+			canceled: false,
+			filePath: chosenPath,
+		});
+		const item = {
+			getFilename: vi.fn(() => "report.txt"),
+			getURL: vi.fn(() => "https://example.com/report.txt"),
+			getReceivedBytes: vi.fn(() => 0),
+			getTotalBytes: vi.fn(() => 10),
+			setSavePath: vi.fn(),
+			pause: vi.fn(),
+			resume: vi.fn(),
+			on: vi.fn(),
+			once: vi.fn(),
+			cancel: vi.fn(),
+		};
+
+		partition.emit("will-download", {}, item, contents);
+		expect(item.pause).toHaveBeenCalledOnce();
+		await vi.waitFor(() =>
+			expect(item.setSavePath).toHaveBeenCalledWith(chosenPath),
+		);
+		expect(item.resume).toHaveBeenCalledOnce();
+	});
+
+	 it("continues creating tabs beyond the legacy 32-tab boundary", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://first.example");
@@ -971,6 +1072,34 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       service.getState().tabs.find((tab) => tab.id === first.id),
     ).toMatchObject({ discarded: false });
   });
+
+	it("gates automatic tab sleeping with Memory Saver while retaining manual sleep", async () => {
+		let now = new Date("2026-08-31T12:00:00.000Z");
+		const { service } = createService({ now: () => now });
+		const first = service.getState().tabs[0]!;
+		await service.navigate(first.id, "https://first.example");
+		const second = await navigateNewTab(service, "https://second.example");
+		await service.selectTab(second.id);
+		now = new Date("2026-08-31T13:00:00.000Z");
+
+		service.updateSettings({
+			...service.getState().settings,
+			memorySaverMode: false,
+		});
+		(service as unknown as { checkSleepingTabs: () => void }).checkSleepingTabs();
+		expect(service.getState().tabs.find((tab) => tab.id === first.id)).toMatchObject({
+			discarded: false,
+		});
+
+		service.updateSettings({
+			...service.getState().settings,
+			memorySaverMode: true,
+		});
+		(service as unknown as { checkSleepingTabs: () => void }).checkSleepingTabs();
+		expect(service.getState().tabs.find((tab) => tab.id === first.id)).toMatchObject({
+			discarded: true,
+		});
+	});
 
   it("cleans up crashed views and recreates a destroyed view on the next navigation", async () => {
     const { service } = createService();

@@ -20,6 +20,7 @@ function responseError(response: RendererResponse): string {
 export interface UserBrowserController {
 	state: UserBrowserState | null;
 	error: string;
+	refresh(): Promise<void>;
 	findMatch: UserBrowserFindMatch | null;
 	openFileTabs(paths: string[], active?: boolean): Promise<SelectedAttachment[]>;
 	filePreview(tabId: string): Promise<FilePreview | undefined>;
@@ -43,6 +44,11 @@ export interface UserBrowserController {
 	toggleCalculator(bounds?: BrowserContentBounds): Promise<void>;
 	pageContext(tabId?: string): Promise<UserBrowserPageContext | undefined>;
 	updateSettings(settings: Partial<UserBrowserSettings>): Promise<void>;
+	resetBrowserSettings(): Promise<void>;
+	selectDownloadDirectory(): Promise<boolean>;
+	resetDownloadDirectory(): Promise<void>;
+	exportBrowserData(): Promise<string | undefined>;
+	importBrowserData(): Promise<boolean>;
 	clearHistory(): Promise<void>;
 	clearBrowsingData(options: {
 		history?: boolean;
@@ -80,6 +86,7 @@ export interface UserBrowserController {
 		permission: string,
 		decision: "allow" | "deny",
 	): Promise<void>;
+	clearSitePermission(origin: string, permission: string): Promise<void>;
 	sleepTab(tabId: string): Promise<void>;
 	sleepInactiveTabs(): Promise<void>;
 }
@@ -105,6 +112,22 @@ export function useUserBrowser(): UserBrowserController {
 		stateRef.current = nextState;
 		setState(nextState);
 	}, []);
+	const refresh = useCallback(async () => {
+		try {
+			const response = await window.kestrel.request({ type: "browser-get-state" });
+			if (!response.ok || !("browserState" in response))
+				throw new Error(responseError(response));
+			applyState(response.browserState);
+			setError("");
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "The browser did not respond. Quit and reopen Kestrel, or try again.",
+			);
+			throw cause;
+		}
+	}, [applyState]);
 
 	const requestState = useCallback(
 		async (request: Parameters<typeof window.kestrel.request>[0]) => {
@@ -160,9 +183,7 @@ export function useUserBrowser(): UserBrowserController {
 	}, []);
 
 	useEffect(() => {
-		let active = true;
 		const unsubscribe = window.kestrel.onBrowserEvent((event) => {
-			if (!active) return;
 			if (event.type === "state") {
 				applyState(event.state);
 				setError("");
@@ -170,27 +191,11 @@ export function useUserBrowser(): UserBrowserController {
 				setFindMatch(event.match);
 			}
 		});
-		void window.kestrel
-			.request({ type: "browser-get-state" })
-			.then((response) => {
-				if (!active) return;
-				if (!response.ok || !("browserState" in response))
-					throw new Error(responseError(response));
-				applyState(response.browserState);
-			})
-			.catch((cause) => {
-				if (active)
-					setError(
-						cause instanceof Error
-							? cause.message
-							: "The browser did not respond. Quit and reopen Kestrel, or open a new tab to continue.",
-					);
-			});
+		void refresh().catch(() => undefined);
 		return () => {
-			active = false;
 			unsubscribe();
 		};
-	}, [applyState]);
+	}, [applyState, refresh]);
 
 	const createTab = useCallback(
 		(input?: string, active = true) =>
@@ -349,9 +354,48 @@ export function useUserBrowser(): UserBrowserController {
 		},
 		[requestState],
 	);
+	const resetBrowserSettings = useCallback(
+		() => requestState({ type: "browser-reset-settings" }),
+		[requestState],
+	);
 	const clearHistory = useCallback(
 		() => requestState({ type: "browser-clear-history" }),
 		[requestState],
+	);
+	const selectDownloadDirectory = useCallback(
+		async () => {
+			const response = await window.kestrel.request({
+				type: "browser-select-download-directory",
+			});
+			if (!response.ok || !("browserState" in response))
+				throw new Error(responseError(response));
+			applyState(response.browserState);
+			setError("");
+			return !("cancelled" in response && response.cancelled === true);
+		},
+		[applyState],
+	);
+	const resetDownloadDirectory = useCallback(
+		() => requestState({ type: "browser-reset-download-directory" }),
+		[requestState],
+	);
+	const exportBrowserData = useCallback(async () => {
+		const response = await window.kestrel.request({ type: "browser-export-data" });
+		if (!response.ok) throw new Error(responseError(response));
+		return "browserDataPath" in response ? response.browserDataPath : undefined;
+	}, []);
+	const importBrowserData = useCallback(
+		async () => {
+			const response = await window.kestrel.request({
+				type: "browser-import-data",
+			});
+			if (!response.ok || !("browserState" in response))
+				throw new Error(responseError(response));
+			applyState(response.browserState);
+			setError("");
+			return !("cancelled" in response && response.cancelled === true);
+		},
+		[applyState],
 	);
 	const clearBrowsingData = useCallback(
 		(options: { history?: boolean; cookies?: boolean; cache?: boolean }) =>
@@ -496,6 +540,15 @@ export function useUserBrowser(): UserBrowserController {
 			}),
 		[requestState],
 	);
+	const clearSitePermission = useCallback(
+		(origin: string, permission: string) =>
+			requestState({
+				type: "browser-clear-site-permission",
+				origin,
+				permission,
+			}),
+		[requestState],
+	);
 	const sleepTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-sleep-tab", tabId }),
 		[requestState],
@@ -509,6 +562,7 @@ export function useUserBrowser(): UserBrowserController {
 		() => ({
 			state,
 			error,
+			refresh,
 			findMatch,
 			openFileTabs,
 			filePreview,
@@ -529,6 +583,11 @@ export function useUserBrowser(): UserBrowserController {
 			toggleCalculator,
 			pageContext,
 			updateSettings,
+			resetBrowserSettings,
+			selectDownloadDirectory,
+			resetDownloadDirectory,
+			exportBrowserData,
+			importBrowserData,
 			clearHistory,
 			clearBrowsingData,
 			revealDownload,
@@ -552,12 +611,14 @@ export function useUserBrowser(): UserBrowserController {
 			openDevTools,
 			saveScreenshot,
 			setSitePermission,
+			clearSitePermission,
 			sleepTab,
 			sleepInactiveTabs,
 		}),
 		[
 			state,
 			error,
+			refresh,
 			findMatch,
 			openFileTabs,
 			filePreview,
@@ -578,6 +639,11 @@ export function useUserBrowser(): UserBrowserController {
 			toggleCalculator,
 			pageContext,
 			updateSettings,
+			resetBrowserSettings,
+			selectDownloadDirectory,
+			resetDownloadDirectory,
+			exportBrowserData,
+			importBrowserData,
 			clearHistory,
 			clearBrowsingData,
 			revealDownload,
@@ -601,6 +667,7 @@ export function useUserBrowser(): UserBrowserController {
 			openDevTools,
 			saveScreenshot,
 			setSitePermission,
+			clearSitePermission,
 			sleepTab,
 			sleepInactiveTabs,
 		],

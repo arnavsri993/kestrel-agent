@@ -162,6 +162,17 @@ import { personalizedConfigurationPrompts } from "./configuration-prompts";
 import { userFacingError } from "./error-copy";
 import { learnedSkillDisplayName } from "./learned-skill-presentation";
 import {
+	SETTINGS_CATALOG,
+	SETTINGS_SECTIONS,
+	normalizeSettingsSection,
+	sectionDefinition,
+	settingsScopeForSection,
+	settingsSectionMatchesQuery,
+	type BrowserSettingsSection,
+	type SettingsSection,
+	type SettingsScope,
+} from "./settings-catalog";
+import {
 	latestRunActionReceipts,
 	policyGateCopy,
 	runRouteLabel,
@@ -226,16 +237,6 @@ const pages = [
 	["settings", "Settings"],
 ] as const;
 type Page = (typeof pages)[number][0];
-type SettingsSection =
-	| "connections"
-	| "browser"
-	| "general"
-	| "models"
-	| "intelligence"
-	| "extensions"
-	| "privacy"
-	| "advanced";
-type SettingsScope = "browser" | "agent";
 type SkillReviewRequest = {
 	proposalId: string;
 	requestId: number;
@@ -6229,6 +6230,7 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 	return (
 		<section
 			className="settings-panel"
+			id="setting-agent-connections"
 			aria-labelledby="settings-connections-title"
 		>
 			<header className="settings-panel-header">
@@ -8068,6 +8070,378 @@ function ApprovalRulesSettings() {
 	);
 }
 
+function AgentWorkspaceSettings() {
+	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
+	const [sessions, setSessions] = useState<RuntimeSession[]>([]);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+
+	const load = useCallback(async () => {
+		const [grantResponse, sessionResponse] = await Promise.all([
+			window.kestrel.request({ type: "get-workspace-grants" }),
+			window.kestrel.request({ type: "runtime-list-sessions" }),
+		]);
+		if (!grantResponse.ok)
+			throw new Error(
+				"error" in grantResponse
+					? grantResponse.error
+					: "Workspace access could not be loaded.",
+			);
+		if (!sessionResponse.ok)
+			throw new Error(
+				"error" in sessionResponse
+					? sessionResponse.error
+					: "Agent sessions could not be loaded.",
+			);
+		if ("workspaceGrants" in grantResponse)
+			setGrants(grantResponse.workspaceGrants);
+		if ("sessions" in sessionResponse) setSessions(sessionResponse.sessions ?? []);
+	}, []);
+
+	useEffect(() => {
+		void load().catch((cause) =>
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "Workspace and session settings could not be loaded.",
+			),
+		);
+	}, [load]);
+
+	async function addFolder() {
+		setBusy(true);
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "select-workspace-folder",
+			});
+			if (!response.ok)
+				throw new Error(
+					"error" in response ? response.error : "Folder access could not be added.",
+				);
+			await load();
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Folder access could not be added.",
+			);
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	async function removeFolder(path: string) {
+		setBusy(true);
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "remove-workspace-folder",
+				path,
+			});
+			if (!response.ok)
+				throw new Error(
+					"error" in response ? response.error : "Folder access could not be removed.",
+				);
+			await load();
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Folder access could not be removed.",
+			);
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	return (
+		<section
+			className="settings-panel"
+			id="setting-agent-workspace"
+			aria-labelledby="settings-workspace-title"
+		>
+			<header className="settings-panel-header">
+				<h2 id="settings-workspace-title">Workspace and sessions</h2>
+				<p>
+					Keep local folder access explicit and review the durable sessions that
+					can use it. Removing a folder does not delete files or transcripts.
+				</p>
+			</header>
+			<section className="settings-stack" aria-label="Workspace and session settings">
+				<article className="setting-row" id="setting-agent-workspace-grants">
+					<div>
+						<strong>Project folder access</strong>
+						<p>
+							Only approved folders are available to workspace tools. Access is
+							revocable and unavailable folders remain visible for recovery.
+						</p>
+						{grants.length === 0 ? (
+							<small>No project folders are connected.</small>
+						) : (
+							<ul className="workspace-grants">
+								{grants.map((grant) => (
+									<li key={grant.path}>
+										<span title={grant.path}>
+											{grant.name}
+											{grant.available === false ? " · unavailable" : ""}
+										</span>
+										<button
+											type="button"
+											className="quiet-link"
+											disabled={busy}
+											onClick={() => void removeFolder(grant.path)}
+										>
+											Remove
+										</button>
+									</li>
+								))}
+							</ul>
+						)}
+						{error && <small role="alert">{error}</small>}
+					</div>
+					<button
+						type="button"
+						className="button secondary"
+						disabled={busy}
+						onClick={() => void addFolder()}
+					>
+						{busy ? "Updating…" : "Add folder"}
+					</button>
+				</article>
+				<article className="setting-row" id="setting-agent-sessions">
+					<div>
+						<strong>Durable sessions</strong>
+						<p>
+							Sessions, checkpoints, and approval boundaries persist locally so
+							work can be resumed without replaying side effects.
+						</p>
+						{sessions.length === 0 ? (
+							<small>No agent sessions yet.</small>
+						) : (
+							<ul className="workspace-grants">
+								{sessions.map((session) => (
+									<li key={session.id}>
+										<span>
+											{session.title} · {session.status} · {session.checkpoints.length} checkpoint
+											{session.checkpoints.length === 1 ? "" : "s"}
+											{session.workspaceRoot ? ` · ${session.workspaceRoot}` : ""}
+										</span>
+									</li>
+								))}
+							</ul>
+						)}
+					</div>
+					<span className="status">{sessions.length} session{sessions.length === 1 ? "" : "s"}</span>
+				</article>
+			</section>
+		</section>
+	);
+}
+
+function automationScheduleLabel(job: ScheduledJobSummary): string {
+	const schedule = job.schedule;
+	if (schedule.kind === "cron") return `Cron ${schedule.expression}`;
+	if (schedule.kind === "interval")
+		return `Every ${Math.round(schedule.intervalMs / 60_000)} minutes`;
+	return "One time";
+}
+
+function AgentAutomationsSettings() {
+	const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
+	const [busy, setBusy] = useState("");
+	const [error, setError] = useState("");
+
+	const load = useCallback(async () => {
+		const response = (await window.kestrel.request({
+			type: "orchestration-list",
+		})) as CoreResponse;
+		if (!response.ok) throw new Error(response.error);
+		setJobs(response.jobs ?? []);
+	}, []);
+
+	useEffect(() => {
+		void load().catch((cause) =>
+			setError(
+				cause instanceof Error ? cause.message : "Automations could not be loaded.",
+			),
+		);
+	}, [load]);
+
+	async function mutate(job: ScheduledJobSummary, action: "cancel" | "resume") {
+		setBusy(job.id);
+		setError("");
+		try {
+			const response = (await window.kestrel.request({
+				type:
+					action === "cancel"
+						? "orchestration-job-cancel"
+						: "orchestration-job-resume",
+				jobId: job.id,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			await load();
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Automation could not be updated.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
+
+	return (
+		<section
+			className="settings-panel"
+			id="setting-agent-automations-panel"
+			aria-labelledby="settings-automations-title"
+		>
+			<header className="settings-panel-header">
+				<h2 id="settings-automations-title">Automations</h2>
+				<p>
+					Review scheduled work and its next run. Automation execution still
+					passes through the same provider, workspace, and approval boundaries as
+					an interactive task.
+				</p>
+			</header>
+			<section className="settings-stack" aria-label="Automation settings">
+				<article className="setting-row" id="setting-agent-automations">
+					<div>
+						<strong>Scheduled work</strong>
+						{jobs.length === 0 ? (
+							<p>No scheduled jobs are configured. Create one from the Work surface.</p>
+						) : (
+							<ul className="workspace-grants automation-settings-list">
+								{jobs.map((job) => (
+									<li key={job.id}>
+										<span>
+											<strong>{job.title}</strong>
+											<small>
+												{job.status} · {automationScheduleLabel(job)} · next {new Date(job.schedule.nextRunAt).toLocaleString()}
+												{job.error ? ` · ${job.error}` : ""}
+											</small>
+										</span>
+										<span className="button-row">
+											{job.status === "waiting_approval" && (
+												<button
+													type="button"
+													className="quiet-link"
+													disabled={Boolean(busy)}
+													onClick={() => void mutate(job, "resume")}
+												>
+													Approve & resume
+												</button>
+											)}
+											{["pending", "running", "waiting_approval"].includes(job.status) && (
+												<button
+													type="button"
+													className="quiet-link"
+													disabled={Boolean(busy)}
+													onClick={() => void mutate(job, "cancel")}
+												>
+													Cancel
+												</button>
+											)}
+										</span>
+									</li>
+								))}
+							</ul>
+						)}
+						{error && <small role="alert">{error}</small>}
+					</div>
+					<span className="status">{jobs.length} job{jobs.length === 1 ? "" : "s"}</span>
+				</article>
+			</section>
+		</section>
+	);
+}
+
+function AgentDiagnosticsSettings() {
+	const [readiness, setReadiness] = useState<SystemReadiness | null>(null);
+	const [busy, setBusy] = useState("");
+	const [error, setError] = useState("");
+	const [notice, setNotice] = useState("");
+
+	async function checkReadiness() {
+		setBusy("readiness");
+		setError("");
+		setNotice("");
+		try {
+			const response = await window.kestrel.request({ type: "system-readiness" });
+			if (!response.ok || !("systemReadiness" in response))
+				throw new Error(
+					"error" in response ? response.error : "Readiness check failed.",
+				);
+			setReadiness(response.systemReadiness);
+		} catch (cause) {
+			setError(cause instanceof Error ? cause.message : "Readiness check failed.");
+		} finally {
+			setBusy("");
+		}
+	}
+
+	async function exportReport() {
+		setBusy("report");
+		setError("");
+		setNotice("");
+		try {
+			const response = await window.kestrel.request({ type: "export-diagnostic-report" });
+			if (!response.ok || !("diagnosticReportPath" in response))
+				throw new Error(
+					"error" in response ? response.error : "Diagnostic report export failed.",
+				);
+			setNotice(`Diagnostic report exported to ${response.diagnosticReportPath}.`);
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Diagnostic report export failed.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
+
+	return (
+		<article className="setting-row" id="setting-agent-diagnostics">
+			<div>
+				<strong>Health and diagnostic reports</strong>
+				<p>
+					Run a content-free readiness check or export a bounded report for local
+					recovery. Reports do not include prompts, credentials, or page contents.
+				</p>
+				<div className="button-row">
+					<button
+						type="button"
+						className="button secondary"
+						disabled={Boolean(busy)}
+						onClick={() => void checkReadiness()}
+					>
+						{busy === "readiness" ? "Checking…" : "Check readiness"}
+					</button>
+					<button
+						type="button"
+						className="button secondary"
+						disabled={Boolean(busy)}
+						onClick={() => void exportReport()}
+					>
+						{busy === "report" ? "Exporting…" : "Export report"}
+					</button>
+				</div>
+				{readiness && (
+					<div className="diagnostics-readiness" role="status">
+						<strong>{readiness.readyForLiveWork ? "Ready for live work" : "Needs attention"}</strong>
+						<ul className="workspace-grants">
+							{readiness.checks.map((check) => (
+								<li key={check.id}>
+									<span>{check.label} · {check.detail}</span>
+									<span className={`status ${check.status}`}>{check.status}</span>
+								</li>
+							))}
+						</ul>
+					</div>
+				)}
+				{notice && <small role="status">{notice}</small>}
+				{error && <small role="alert">{error}</small>}
+			</div>
+		</article>
+	);
+}
+
 function Settings({
 	snapshot,
 	update,
@@ -8097,16 +8471,59 @@ function Settings({
 	const [confirmation, setConfirmation] = useState("");
 	const [resetError, setResetError] = useState("");
 	const [section, setSection] = useState<SettingsSection>(
-		initialSection ?? "connections",
+		normalizeSettingsSection(initialSection),
 	);
 	const [scope, setScope] = useState<SettingsScope>(
-		initialSection === "browser" ? "browser" : "agent",
+		settingsScopeForSection(initialSection),
 	);
+	const [settingsQuery, setSettingsQuery] = useState("");
+	const [focusAnchor, setFocusAnchor] = useState("");
+	const settingsSearchRef = useRef<HTMLInputElement>(null);
 	useEffect(() => {
 		if (!initialSection) return;
-		setSection(initialSection);
-		setScope(initialSection === "browser" ? "browser" : "agent");
+		const normalized = normalizeSettingsSection(initialSection);
+		setSection(normalized);
+		setScope(settingsScopeForSection(normalized));
 	}, [initialSection, sectionRequestId]);
+	const chooseSection = useCallback(
+		(next: SettingsSection, anchor = "") => {
+			const normalized = normalizeSettingsSection(next);
+			setScope(settingsScopeForSection(normalized));
+			setSection(normalized);
+			if (anchor) setFocusAnchor(anchor);
+		},
+		[],
+	);
+	const visibleSections = useMemo(
+		() => SETTINGS_SECTIONS.filter((candidate) => candidate.scope === scope),
+		[scope],
+	);
+	const searchResults = useMemo(
+		() =>
+			SETTINGS_CATALOG.filter((entry) =>
+				settingsSectionMatchesQuery(entry, settingsQuery),
+			),
+		[settingsQuery],
+	);
+	useEffect(() => {
+		if (!focusAnchor) return;
+		const frame = window.requestAnimationFrame(() => {
+			const target = document.getElementById(focusAnchor);
+			const control =
+				target?.matches("input,select,textarea,button")
+					? target
+					: target?.querySelector<HTMLElement>(
+							"input,select,textarea,button,[tabindex]:not([tabindex='-1'])",
+						);
+			target?.scrollIntoView({
+				block: "center",
+				behavior: reduced ? "auto" : "smooth",
+			});
+			control?.focus({ preventScroll: true });
+			setFocusAnchor("");
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [focusAnchor, reduced]);
 	useEffect(() => {
 		void window.kestrel
 			.request({ type: "get-system-state" })
@@ -8295,18 +8712,13 @@ function Settings({
 		paused: snapshot.agentState === "paused",
 	});
 	const route = snapshot.modelRouting.currentDecision;
-	const browserSections = [
-		["browser", "Browser"],
-	] as const;
-	const agentSections = [
-		["general", "General"],
-		["connections", "Connections"],
-		["models", "Models"],
-		["intelligence", "Memory"],
-		["extensions", "Plugins"],
-		["privacy", "Privacy"],
-		["advanced", "Advanced"],
-	] as const;
+	const basicSections = visibleSections.filter(
+		(candidate) => candidate.tier === "basic",
+	);
+	const advancedSections = visibleSections.filter(
+		(candidate) => candidate.tier === "advanced",
+	);
+	const activeSection = sectionDefinition(section);
 	return (
 		<PageFrame
 			title="Settings"
@@ -8325,10 +8737,7 @@ function Settings({
 					role="tab"
 					aria-selected={scope === "browser"}
 					className={scope === "browser" ? "active" : ""}
-					onClick={() => {
-						setScope("browser");
-						setSection("browser");
-					}}
+					onClick={() => chooseSection("browser")}
 				>
 					<Icon name="browser" />
 					<span>
@@ -8341,10 +8750,7 @@ function Settings({
 					role="tab"
 					aria-selected={scope === "agent"}
 					className={scope === "agent" ? "active" : ""}
-					onClick={() => {
-						setScope("agent");
-						setSection("general");
-					}}
+					onClick={() => chooseSection("agent-general")}
 				>
 					<Icon name="agent" />
 					<span>
@@ -8359,57 +8765,118 @@ function Settings({
 					value={section}
 					onChange={(event) => {
 						const next = event.target.value as SettingsSection;
-						setScope(next === "browser" ? "browser" : "agent");
-						setSection(next);
+						chooseSection(next);
 					}}
 				>
 					<optgroup label="Browser">
-						{browserSections.map(([id, label]) => (
-							<option key={id} value={id}>{label}</option>
+						{SETTINGS_SECTIONS.filter(
+							(candidate) => candidate.scope === "browser",
+						).map((candidate) => (
+							<option key={candidate.id} value={candidate.id}>
+								{candidate.label}
+							</option>
 						))}
 					</optgroup>
 					<optgroup label="Agent">
-						{agentSections.map(([id, label]) => (
-							<option key={id} value={id}>{label}</option>
+						{SETTINGS_SECTIONS.filter(
+							(candidate) => candidate.scope === "agent",
+						).map((candidate) => (
+							<option key={candidate.id} value={candidate.id}>
+								{candidate.label}
+							</option>
 						))}
 					</optgroup>
 				</select>
 			</label>
-				<div className="settings-layout">
-				<nav className="settings-nav" aria-label="Settings sections">
-					{scope === "browser" ? (
-						<>
-							{browserSections.map(([id, label]) => (
-								<button
-									key={id}
-									className={section === id ? "active browser-section-btn" : "browser-section-btn"}
-									aria-current={section === id ? "page" : undefined}
-									onClick={() => {
-										setScope("browser");
-										setSection(id);
-									}}
-								>
-									<span>{label}</span>
-								</button>
-							))}
-						</>
-					) : (
-						<>
-							{agentSections.map(([id, label]) => (
-								<button
-									key={id}
-									className={section === id ? "active" : ""}
-									aria-current={section === id ? "page" : undefined}
-									onClick={() => {
-										setScope("agent");
-										setSection(id);
-									}}
-								>
-									<span>{label}</span>
-								</button>
-							))}
-						</>
+			<div className="settings-search" role="search">
+				<label className="settings-search-field">
+					<Icon name="search" />
+					<span className="sr-only">Search settings</span>
+					<input
+						ref={settingsSearchRef}
+						value={settingsQuery}
+						onChange={(event) => setSettingsQuery(event.target.value)}
+						placeholder="Search Browser and Agent settings"
+						aria-label="Search Browser and Agent settings"
+						aria-controls="settings-search-results"
+					/>
+					{settingsQuery && (
+						<button
+							type="button"
+							className="settings-search-clear"
+							aria-label="Clear settings search"
+							onClick={() => {
+								setSettingsQuery("");
+								settingsSearchRef.current?.focus();
+							}}
+						>
+							<Icon name="close" />
+						</button>
 					)}
+				</label>
+				{settingsQuery && (
+					<div
+						id="settings-search-results"
+						className="settings-search-results"
+						aria-live="polite"
+					>
+						{searchResults.length === 0 ? (
+							<p className="settings-search-empty">
+								No settings match “{settingsQuery}”.
+							</p>
+						) : (
+							<>
+								<p className="settings-search-count">
+									{searchResults.length} matching setting
+									{searchResults.length === 1 ? "" : "s"}
+								</p>
+								{searchResults.map((entry) => (
+									<button
+										key={entry.id}
+										type="button"
+										className="settings-search-result"
+										onClick={() => chooseSection(entry.section, entry.anchor)}
+									>
+										<span className="settings-search-result-copy">
+											<strong>{entry.label}</strong>
+											<small>{entry.description}</small>
+										</span>
+										<span className="settings-search-result-category">
+											{sectionDefinition(entry.section).label} · {entry.tier}
+										</span>
+									</button>
+								))}
+							</>
+						)}
+					</div>
+				)}
+			</div>
+			<div className="settings-layout">
+				<nav className="settings-nav" aria-label="Settings sections">
+					<div className="settings-nav-heading">
+						<strong>{scope === "browser" ? "Browser" : "Agent"}</strong>
+						<small>{activeSection.description}</small>
+					</div>
+					{(["basic", "advanced"] as const).map((tier) => {
+						const tierSections = tier === "basic" ? basicSections : advancedSections;
+						return (
+							<div className="settings-nav-group" key={tier}>
+								<h3>{tier === "basic" ? "Basic" : "Advanced"}</h3>
+								{tierSections.map((candidate) => (
+									<button
+										key={candidate.id}
+										type="button"
+										className={section === candidate.id ? "active" : ""}
+										aria-current={section === candidate.id ? "page" : undefined}
+										title={candidate.description}
+										onClick={() => chooseSection(candidate.id)}
+									>
+										<span>{candidate.label}</span>
+									</button>
+								))}
+							</div>
+						);
+					})}
 				</nav>
 					<div className="settings-content-stage">
 					<AnimatePresence initial={false} mode="popLayout">
@@ -8421,7 +8888,7 @@ function Settings({
 						exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
 						transition={reduced ? { duration: 0 } : KESTREL_STATE_TRANSITION}
 					>
-					{section === "general" && (
+					{section === "agent-general" && (
 						<div className="agent-config-banner" role="region" aria-label="Agent configuration">
 							<div className="agent-config-banner-header">
 								<span className="agent-config-badge">
@@ -8454,27 +8921,26 @@ function Settings({
 							</div>
 						</div>
 						)}
-					{section === "browser" && (
-						<BrowserSettings
-							browser={browser}
-							contextEnabled={browserContextEnabled}
-							onToggleContext={onToggleBrowserContext}
-						/>
-					)}
-					{section === "connections" && (
+						{(section === "browser" || section.startsWith("browser-")) && (
+							<BrowserSettings
+								browser={browser}
+								contextEnabled={browserContextEnabled}
+								onToggleContext={onToggleBrowserContext}
+								section={section as BrowserSettingsSection}
+							/>
+						)}
+					{section === "agent-connections" && (
 						<>
 							<Connections snapshot={snapshot} />
-							<section
-								className="settings-stack"
-								aria-label="Provider credentials"
-							>
-								<CredentialSettings hideCodexDuplicate />
+							<section className="settings-stack" aria-label="Subscription connections">
+								<SubscriptionCliSettings hideCodexDuplicate />
 							</section>
 						</>
 					)}
-				{section === "general" && (
+				{section === "agent-general" && (
 					<section
 						className="settings-panel"
+						id="setting-agent-general"
 						aria-labelledby="settings-general-title"
 					>
 						<header className="settings-panel-header">
@@ -8558,9 +9024,10 @@ function Settings({
 						</section>
 					</section>
 				)}
-				{section === "models" && (
+				{section === "agent-models" && (
 					<section
 						className="settings-panel"
+						id="setting-agent-models"
 						aria-labelledby="settings-models-title"
 					>
 						<header className="settings-panel-header">
@@ -8612,9 +9079,10 @@ function Settings({
 					</section>
 					</section>
 				)}
-				{section === "extensions" && (
+				{section === "agent-tools" && (
 					<section
 						className="settings-panel"
+						id="setting-agent-tools"
 						aria-labelledby="settings-extensions-title"
 					>
 						<header className="settings-panel-header">
@@ -8766,11 +9234,19 @@ function Settings({
 								</article>
 							))}
 						</section>
+						<section className="settings-stack" aria-label="Learned skill settings">
+							<LearnedSkillsSettings
+								{...(focusSkillReview
+									? { focusRequest: focusSkillReview }
+									: {})}
+							/>
+						</section>
 					</section>
 					)}
-					{section === "intelligence" && (
+					{section === "agent-memory" && (
 						<section
 							className="settings-panel"
+							id="setting-agent-memory"
 							aria-labelledby="settings-intelligence-title"
 						>
 							<header className="settings-panel-header">
@@ -8787,24 +9263,26 @@ function Settings({
 							<MemoryRecallStatus snapshot={snapshot} />
 							<HonchoMemorySettings />
 							<PresenceSettings />
-							<LearnedSkillsSettings
-								{...(focusSkillReview
-									? { focusRequest: focusSkillReview }
-									: {})}
-							/>
 						</section>
 						</section>
 					)}
-					{section === "privacy" && (
+					{section === "agent-workspace" && (
+						<AgentWorkspaceSettings />
+					)}
+					{section === "agent-automations" && (
+						<AgentAutomationsSettings />
+					)}
+					{section === "agent-permissions" && (
 						<section
 							className="settings-panel"
+							id="setting-agent-permissions"
 							aria-labelledby="settings-privacy-title"
 						>
 							<header className="settings-panel-header">
-								<h2 id="settings-privacy-title">Approvals and recovery</h2>
+								<h2 id="settings-privacy-title">Permissions and sandbox</h2>
 								<p>
-									Persistent approval rules, reference imports, and local data
-									reset.
+									Persistent approval rules and recovery boundaries stay explicit,
+									revocable, and separate from credentials.
 								</p>
 							</header>
 						<section
@@ -8812,48 +9290,84 @@ function Settings({
 							aria-label="Privacy and safety settings"
 						>
 							<ApprovalRulesSettings />
-							<MigrationSettings />
-							<article className="setting-row danger">
-								<div>
-									<strong>Reset Kestrel and prepare for uninstall</strong>
-									<p>
-										Deletes this preview database and secure key, then
-										relaunches.
-									</p>
-									<label>
-										Type Kestrel to confirm
-										<input
-											value={confirmation}
-											onChange={(event) => setConfirmation(event.target.value)}
-										/>
-									</label>
-									{resetError && <small role="alert">{resetError}</small>}
-								</div>
-								<button
-									className="button danger-button"
-									disabled={confirmation !== "Kestrel"}
-									onClick={() => void reset()}
-								>
-									Reset local data
-								</button>
-							</article>
 						</section>
 						</section>
 					)}
-					{section === "advanced" && (
+					{section === "agent-privacy" && (
 						<section
 							className="settings-panel"
+							id="setting-agent-privacy"
+							aria-labelledby="settings-agent-privacy-title"
+						>
+							<header className="settings-panel-header">
+								<h2 id="settings-agent-privacy-title">Privacy and credentials</h2>
+								<p>
+									Provider secrets stay in protected native storage. Kestrel only
+									shows status and offers explicit revocation.
+								</p>
+							</header>
+							<section className="settings-stack" aria-label="Protected credential settings">
+								<CredentialSettings hideCodexDuplicate />
+								<article className="setting-row danger">
+									<div>
+										<strong>Reset local agent data</strong>
+										<p>
+											Deletes the local database and secure key after explicit
+											confirmation, then relaunches Kestrel.
+										</p>
+										<label>
+											Type Kestrel to confirm
+											<input
+											value={confirmation}
+											onChange={(event) => setConfirmation(event.target.value)}
+										/>
+										</label>
+										{resetError && <small role="alert">{resetError}</small>}
+									</div>
+									<button
+										className="button danger-button"
+										disabled={confirmation !== "Kestrel"}
+										onClick={() => void reset()}
+									>
+										Reset local data
+									</button>
+								</article>
+							</section>
+						</section>
+					)}
+					{section === "agent-migration" && (
+						<section
+							className="settings-panel"
+							id="setting-agent-migration"
+							aria-labelledby="settings-agent-migration-title"
+						>
+							<header className="settings-panel-header">
+								<h2 id="settings-agent-migration-title">Migration</h2>
+								<p>
+									Review bounded, checksum-verified imports from supported agent tools
+									without copying source credentials or overwriting files by default.
+								</p>
+							</header>
+							<section className="settings-stack" aria-label="Migration settings">
+								<MigrationSettings />
+							</section>
+						</section>
+					)}
+					{section === "agent-diagnostics" && (
+						<section
+							className="settings-panel"
+							id="setting-agent-diagnostics-panel"
 							aria-labelledby="settings-advanced-title"
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-advanced-title">Diagnostics and organization</h2>
 								<p>
-									Content-free diagnostics, managed policy, and custom agents.
+									Content-free diagnostics and local agent organization.
 								</p>
 							</header>
 						<section className="settings-stack" aria-label="Advanced settings">
 							<ObservabilitySettings />
-							<EnterpriseSettings />
+							<AgentDiagnosticsSettings />
 								<CustomAgentsSettings snapshot={snapshot} update={update} />
 							</section>
 							</section>
@@ -9250,7 +9764,7 @@ export function App() {
 				proposalId,
 				requestId: (current?.requestId ?? 0) + 1,
 			}));
-			void openAppPage("settings", "intelligence");
+			void openAppPage("settings", "agent-tools");
 		},
 		[openAppPage],
 	);

@@ -1,0 +1,2137 @@
+{
+  "schemaVersion": 1,
+  "snapshotDate": "2026-08-31",
+  "scope": "relevant-end-user-settings",
+  "interpretation": "All means the relevant end-user settings for Kestrel's standalone local browser and local agent. Vendor-account, shopping, wallet, family, enterprise-policy, OS-only, and internal-flag surfaces are recorded as not_applicable rather than simulated.",
+  "statusDefinitions": {
+    "implemented": "A real Kestrel setting or native action exists and is covered by repository evidence.",
+    "not_applicable": "The reference item is explicitly excluded from Kestrel's standalone local product and has a reason category."
+  },
+  "sections": [
+    {
+      "id": "browser",
+      "scope": "browser",
+      "tier": "basic",
+      "label": "Browser"
+    },
+    {
+      "id": "browser-startup",
+      "scope": "browser",
+      "tier": "basic",
+      "label": "Startup"
+    },
+    {
+      "id": "browser-appearance",
+      "scope": "browser",
+      "tier": "basic",
+      "label": "Appearance & new tab"
+    },
+    {
+      "id": "browser-search",
+      "scope": "browser",
+      "tier": "basic",
+      "label": "Search & address bar"
+    },
+    {
+      "id": "browser-privacy",
+      "scope": "browser",
+      "tier": "basic",
+      "label": "Privacy & permissions"
+    },
+    {
+      "id": "browser-autofill",
+      "scope": "browser",
+      "tier": "basic",
+      "label": "Autofill"
+    },
+    {
+      "id": "browser-performance",
+      "scope": "browser",
+      "tier": "basic",
+      "label": "Performance"
+    },
+    {
+      "id": "browser-downloads",
+      "scope": "browser",
+      "tier": "advanced",
+      "label": "Downloads"
+    },
+    {
+      "id": "browser-languages",
+      "scope": "browser",
+      "tier": "advanced",
+      "label": "Languages & accessibility"
+    },
+    {
+      "id": "browser-extensions",
+      "scope": "browser",
+      "tier": "advanced",
+      "label": "Extensions"
+    },
+    {
+      "id": "browser-system",
+      "scope": "browser",
+      "tier": "advanced",
+      "label": "System"
+    },
+    {
+      "id": "browser-reset",
+      "scope": "browser",
+      "tier": "advanced",
+      "label": "Data & reset"
+    },
+    {
+      "id": "agent-general",
+      "scope": "agent",
+      "tier": "basic",
+      "label": "General"
+    },
+    {
+      "id": "agent-connections",
+      "scope": "agent",
+      "tier": "basic",
+      "label": "Connections"
+    },
+    {
+      "id": "agent-models",
+      "scope": "agent",
+      "tier": "basic",
+      "label": "Models & routing"
+    },
+    {
+      "id": "agent-memory",
+      "scope": "agent",
+      "tier": "basic",
+      "label": "Memory & context"
+    },
+    {
+      "id": "agent-workspace",
+      "scope": "agent",
+      "tier": "advanced",
+      "label": "Workspace & sessions"
+    },
+    {
+      "id": "agent-tools",
+      "scope": "agent",
+      "tier": "advanced",
+      "label": "Tools, MCP & skills"
+    },
+    {
+      "id": "agent-automations",
+      "scope": "agent",
+      "tier": "advanced",
+      "label": "Automations"
+    },
+    {
+      "id": "agent-permissions",
+      "scope": "agent",
+      "tier": "advanced",
+      "label": "Permissions & sandbox"
+    },
+    {
+      "id": "agent-privacy",
+      "scope": "agent",
+      "tier": "advanced",
+      "label": "Privacy & credentials"
+    },
+    {
+      "id": "agent-diagnostics",
+      "scope": "agent",
+      "tier": "advanced",
+      "label": "Diagnostics"
+    },
+    {
+      "id": "agent-migration",
+      "scope": "agent",
+      "tier": "advanced",
+      "label": "Migration"
+    }
+  ],
+  "sources": {
+    "chrome": {
+      "displayName": "Google Chrome",
+      "snapshot": {
+        "capturedAt": "2026-08-31",
+        "channel": "stable",
+        "version": "152.0.7977.65",
+        "revision": "3c6392a48abd3975e27841b83ee9216dd114ef6b",
+        "revisionType": "Chromium Gitiles main snapshot used for settings source structure"
+      },
+      "references": [
+        {
+          "id": "settings-ui",
+          "kind": "official-source",
+          "url": "https://chromium.googlesource.com/chromium/src/+/3c6392a48abd3975e27841b83ee9216dd114ef6b/chrome/browser/resources/settings/"
+        },
+        {
+          "id": "help",
+          "kind": "official-help",
+          "url": "https://support.google.com/chrome/topic/7438325?hl=en"
+        }
+      ]
+    },
+    "edge": {
+      "displayName": "Microsoft Edge",
+      "snapshot": {
+        "capturedAt": "2026-08-31",
+        "channel": "stable",
+        "snapshotId": "edge-settings-surface-2026-08-31",
+        "revision": "2026-08-31",
+        "revisionType": "Official Edge settings/help surface snapshot; Edge does not publish the settings UI source tree"
+      },
+      "references": [
+        {
+          "id": "settings-ui",
+          "kind": "official-product-surface",
+          "url": "edge://settings/"
+        },
+        {
+          "id": "help",
+          "kind": "official-help",
+          "url": "https://support.microsoft.com/en-us/microsoft-edge"
+        },
+        {
+          "id": "policies",
+          "kind": "official-reference-only",
+          "url": "https://learn.microsoft.com/en-us/deployedge/microsoft-edge-browser-policies"
+        }
+      ]
+    },
+    "hermes": {
+      "displayName": "Nous Hermes Agent",
+      "snapshot": {
+        "capturedAt": "2026-08-31",
+        "channel": "main",
+        "revision": "f98f5e74e00e54c36088fa2e78171e2a408ba7c9",
+        "revisionType": "GitHub commit"
+      },
+      "references": [
+        {
+          "id": "quickstart",
+          "kind": "official-repository-doc",
+          "url": "https://github.com/NousResearch/hermes-agent/blob/f98f5e74e00e54c36088fa2e78171e2a408ba7c9/website/docs/getting-started/quickstart.md"
+        },
+        {
+          "id": "cli",
+          "kind": "official-repository-doc",
+          "url": "https://github.com/NousResearch/hermes-agent/blob/f98f5e74e00e54c36088fa2e78171e2a408ba7c9/website/docs/reference/cli-commands.md"
+        },
+        {
+          "id": "providers",
+          "kind": "official-repository-doc",
+          "url": "https://github.com/NousResearch/hermes-agent/blob/f98f5e74e00e54c36088fa2e78171e2a408ba7c9/website/docs/integrations/providers.md"
+        }
+      ]
+    },
+    "openclaw": {
+      "displayName": "OpenClaw",
+      "snapshot": {
+        "capturedAt": "2026-08-31",
+        "channel": "main",
+        "revision": "d545f113627b265e82f9c9977245e49808b26579",
+        "revisionType": "GitHub commit"
+      },
+      "references": [
+        {
+          "id": "configure",
+          "kind": "official-repository-doc",
+          "url": "https://github.com/openclaw/openclaw/blob/d545f113627b265e82f9c9977245e49808b26579/docs/cli/configure.md"
+        },
+        {
+          "id": "wizard",
+          "kind": "official-repository-doc",
+          "url": "https://github.com/openclaw/openclaw/blob/d545f113627b265e82f9c9977245e49808b26579/docs/start/wizard.md"
+        },
+        {
+          "id": "features",
+          "kind": "official-docs",
+          "url": "https://docs.openclaw.ai/concepts/features"
+        }
+      ]
+    },
+    "codex": {
+      "displayName": "OpenAI Codex",
+      "snapshot": {
+        "capturedAt": "2026-08-31",
+        "channel": "main",
+        "revision": "55e5158e1841bb4b0b392a462c24b4d9fc38d597",
+        "revisionType": "GitHub commit"
+      },
+      "references": [
+        {
+          "id": "config-schema",
+          "kind": "official-source",
+          "url": "https://github.com/openai/codex/blob/55e5158e1841bb4b0b392a462c24b4d9fc38d597/codex-rs/core/config.schema.json"
+        },
+        {
+          "id": "overview",
+          "kind": "official-product-doc",
+          "url": "https://openai.com/codex/"
+        },
+        {
+          "id": "app",
+          "kind": "official-product-doc",
+          "url": "https://openai.com/index/introducing-the-codex-app/"
+        }
+      ]
+    }
+  },
+  "entries": [
+    {
+      "id": "chrome.startup.on-startup",
+      "product": "chrome",
+      "referenceId": "startup.on-startup",
+      "label": "On startup",
+      "category": "Startup",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-startup",
+      "catalogEntryId": "browser.startup.behavior",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel supports new tab, restore, homepage, and bounded specific-page startup modes."
+      }
+    },
+    {
+      "id": "chrome.startup.homepage",
+      "product": "chrome",
+      "referenceId": "startup.homepage",
+      "label": "Homepage and home button",
+      "category": "Startup / appearance",
+      "sourceRef": "chrome.help",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-startup",
+      "catalogEntryId": "browser.startup.homepage",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel provides an explicit homepage URL and startup rule; it does not add a redundant home-button control."
+      }
+    },
+    {
+      "id": "chrome.appearance.bookmarks-bar",
+      "product": "chrome",
+      "referenceId": "appearance.bookmarks-bar",
+      "label": "Show bookmarks bar",
+      "category": "Appearance",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-appearance",
+      "catalogEntryId": "browser.appearance.bookmarks-bar",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "The bookmarks bar is a real renderer/browser-shell preference."
+      }
+    },
+    {
+      "id": "chrome.appearance.page-zoom",
+      "product": "chrome",
+      "referenceId": "appearance.page-zoom",
+      "label": "Page zoom",
+      "category": "Appearance",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-appearance",
+      "catalogEntryId": "browser.appearance.zoom",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Default zoom is applied to native page views and can still be adjusted per tab."
+      }
+    },
+    {
+      "id": "chrome.appearance.fonts",
+      "product": "chrome",
+      "referenceId": "appearance.fonts",
+      "label": "Font size and customize fonts",
+      "category": "Appearance",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-languages",
+      "catalogEntryId": "browser.languages.fonts",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel applies default font family and minimum size when native page views are created."
+      }
+    },
+    {
+      "id": "chrome.search.engine",
+      "product": "chrome",
+      "referenceId": "search.engine",
+      "label": "Search engine",
+      "category": "Search engine",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-search",
+      "catalogEntryId": "browser.search.engine",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel supports the built-in engine catalog plus a credential-free HTTP(S) custom template."
+      }
+    },
+    {
+      "id": "chrome.search.suggestions",
+      "product": "chrome",
+      "referenceId": "search.suggestions",
+      "label": "Improve search suggestions",
+      "category": "Search engine",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-search",
+      "catalogEntryId": "browser.search.suggestions",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel keeps address-bar suggestions local to history, bookmarks, and open tabs."
+      }
+    },
+    {
+      "id": "chrome.privacy.clear-browsing-data",
+      "product": "chrome",
+      "referenceId": "privacy.clear-browsing-data",
+      "label": "Clear browsing data",
+      "category": "Privacy and security",
+      "sourceRef": "chrome.help",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-reset",
+      "catalogEntryId": "browser.data.clear-site-data",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel clears history or native cookies/cache through typed native actions."
+      }
+    },
+    {
+      "id": "chrome.privacy.site-settings",
+      "product": "chrome",
+      "referenceId": "privacy.site-settings",
+      "label": "Site settings",
+      "category": "Privacy and security",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-privacy",
+      "catalogEntryId": "browser.privacy.site-permissions",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Permission decisions are stored per HTTP(S) origin and can be revoked."
+      }
+    },
+    {
+      "id": "chrome.autofill.passwords",
+      "product": "chrome",
+      "referenceId": "autofill.passwords",
+      "label": "Google Password Manager",
+      "category": "Autofill and passwords",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-autofill",
+      "catalogEntryId": "browser.autofill.passwords",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel keeps password data in its protected native vault and only offers exact-origin HTTPS autofill."
+      }
+    },
+    {
+      "id": "chrome.autofill.payment-methods",
+      "product": "chrome",
+      "referenceId": "autofill.payment-methods",
+      "label": "Payment methods",
+      "category": "Autofill and payments",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-autofill",
+      "catalogEntryId": "browser.autofill.payments",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel offers protected payment-card autofill only after explicit confirmation."
+      }
+    },
+    {
+      "id": "chrome.performance.memory-saver",
+      "product": "chrome",
+      "referenceId": "performance.memory-saver",
+      "label": "Memory Saver",
+      "category": "Performance",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-performance",
+      "catalogEntryId": "browser.performance.memory-saver",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel releases inactive native page views while retaining tab records and user-visible recovery."
+      }
+    },
+    {
+      "id": "chrome.performance.sleeping-tabs",
+      "product": "chrome",
+      "referenceId": "performance.sleeping-tabs",
+      "label": "Sleeping tabs exclusions",
+      "category": "Performance",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-performance",
+      "catalogEntryId": "browser.performance.sleeping-tabs",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel supports a timeout, exclusions, and an explicit sleep-now action."
+      }
+    },
+    {
+      "id": "chrome.downloads.location-and-prompt",
+      "product": "chrome",
+      "referenceId": "downloads.location-and-prompt",
+      "label": "Downloads location and ask where to save",
+      "category": "Downloads",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-downloads",
+      "catalogEntryId": "browser.downloads.location",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel uses a native folder picker and pauses downloads while an explicit save location is chosen."
+      }
+    },
+    {
+      "id": "chrome.languages.spellcheck",
+      "product": "chrome",
+      "referenceId": "languages.spellcheck",
+      "label": "Spell check",
+      "category": "Languages",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-languages",
+      "catalogEntryId": "browser.languages.spellcheck",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel applies spellchecker enablement and language to the persistent native browser session."
+      }
+    },
+    {
+      "id": "chrome.extensions.manage",
+      "product": "chrome",
+      "referenceId": "extensions.manage",
+      "label": "Extensions",
+      "category": "Extensions",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-extensions",
+      "catalogEntryId": "browser.extensions.manage",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel only loads verified packages or explicitly enabled development packages."
+      }
+    },
+    {
+      "id": "chrome.system.default-browser",
+      "product": "chrome",
+      "referenceId": "system.default-browser",
+      "label": "Default browser",
+      "category": "System",
+      "sourceRef": "chrome.help",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-system",
+      "catalogEntryId": "browser.system.default",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel exposes the native default-browser registration/status action."
+      }
+    },
+    {
+      "id": "chrome.system.hardware-acceleration",
+      "product": "chrome",
+      "referenceId": "system.hardware-acceleration",
+      "label": "Use hardware acceleration when available",
+      "category": "System",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-system",
+      "catalogEntryId": "browser.system.hardware-acceleration",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "The preference is read before Electron startup and clearly marked restart-required."
+      }
+    },
+    {
+      "id": "chrome.reset.restore-defaults",
+      "product": "chrome",
+      "referenceId": "reset.restore-defaults",
+      "label": "Reset settings to defaults",
+      "category": "Reset settings",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-reset",
+      "catalogEntryId": "browser.data.reset-settings",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel resets browser preferences without deleting bookmarks, history, credentials, or extensions."
+      }
+    },
+    {
+      "id": "chrome.data.transfer",
+      "product": "chrome",
+      "referenceId": "data.transfer",
+      "label": "Import or export bookmarks and settings",
+      "category": "Data transfer",
+      "sourceRef": "chrome.help",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-reset",
+      "catalogEntryId": "browser.data.transfer",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel supports a bounded reviewed JSON transfer containing only safe browser state."
+      }
+    },
+    {
+      "id": "chrome.profile.sign-in",
+      "product": "chrome",
+      "referenceId": "profile.sign-in",
+      "label": "Sign in to Chrome",
+      "category": "You and Google",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Kestrel is a standalone local browser and does not own a Google account session."
+    },
+    {
+      "id": "chrome.profile.sync",
+      "product": "chrome",
+      "referenceId": "profile.sync",
+      "label": "Sync and Google services",
+      "category": "You and Google",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Google account sync and vendor cloud services are not part of Kestrel's local profile."
+    },
+    {
+      "id": "chrome.autofill.addresses",
+      "product": "chrome",
+      "referenceId": "autofill.addresses",
+      "label": "Addresses and more",
+      "category": "Autofill",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "unsupported-capability",
+      "reason": "Kestrel does not collect or store postal addresses, so it is not exposed as a dead autofill control."
+    },
+    {
+      "id": "chrome.privacy.safe-browsing",
+      "product": "chrome",
+      "referenceId": "privacy.safe-browsing",
+      "label": "Safe Browsing",
+      "category": "Privacy and security",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Kestrel does not silently enroll the profile in Google's Safe Browsing service."
+    },
+    {
+      "id": "chrome.privacy.third-party-cookies",
+      "product": "chrome",
+      "referenceId": "privacy.third-party-cookies",
+      "label": "Third-party cookies",
+      "category": "Privacy and security",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "unsupported-capability",
+      "reason": "Electron's profile partition does not expose a safe equivalent that Kestrel can present without simulating policy."
+    },
+    {
+      "id": "chrome.privacy.ad-privacy",
+      "product": "chrome",
+      "referenceId": "privacy.ad-privacy",
+      "label": "Ad privacy",
+      "category": "Privacy and security",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Chrome vendor ad-measurement controls do not apply to Kestrel's standalone profile."
+    },
+    {
+      "id": "chrome.performance.energy-saver",
+      "product": "chrome",
+      "referenceId": "performance.energy-saver",
+      "label": "Energy Saver",
+      "category": "Performance",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "os-only",
+      "reason": "Energy Saver is an OS and Chromium policy surface rather than a Kestrel profile preference."
+    },
+    {
+      "id": "chrome.languages.translate",
+      "product": "chrome",
+      "referenceId": "languages.translate",
+      "label": "Google Translate",
+      "category": "Languages",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Kestrel does not ship or silently invoke a vendor translation service."
+    },
+    {
+      "id": "chrome.accessibility.live-caption",
+      "product": "chrome",
+      "referenceId": "accessibility.live-caption",
+      "label": "Live Caption",
+      "category": "Accessibility",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "os-only",
+      "reason": "Captions depend on platform media/accessibility services not owned by Kestrel."
+    },
+    {
+      "id": "chrome.system.background-apps",
+      "product": "chrome",
+      "referenceId": "system.background-apps",
+      "label": "Continue running background apps",
+      "category": "System",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "unsupported-capability",
+      "reason": "Kestrel does not run arbitrary extension background apps after its window is closed."
+    },
+    {
+      "id": "chrome.about.update",
+      "product": "chrome",
+      "referenceId": "about.update",
+      "label": "About Chrome and update channel",
+      "category": "About",
+      "sourceRef": "chrome.help",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "os-only",
+      "reason": "Kestrel's packaged lifecycle and update channel are controlled by its native distribution surface."
+    },
+    {
+      "id": "edge.startup.open-on-startup",
+      "product": "edge",
+      "referenceId": "startup.open-on-startup",
+      "label": "On startup",
+      "category": "Start, home, and new tabs",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-startup",
+      "catalogEntryId": "browser.startup.behavior",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel provides equivalent local startup rules without Edge account synchronization."
+      }
+    },
+    {
+      "id": "edge.startup.homepage",
+      "product": "edge",
+      "referenceId": "startup.homepage",
+      "label": "Home button and homepage",
+      "category": "Start, home, and new tabs",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-startup",
+      "catalogEntryId": "browser.startup.homepage",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "The homepage is a real HTTP(S)-validated setting and can drive startup."
+      }
+    },
+    {
+      "id": "edge.appearance.favorites-bar",
+      "product": "edge",
+      "referenceId": "appearance.favorites-bar",
+      "label": "Show favorites bar",
+      "category": "Appearance",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-appearance",
+      "catalogEntryId": "browser.appearance.bookmarks-bar",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel keeps its existing bookmarks-bar behavior in the Browser scope."
+      }
+    },
+    {
+      "id": "edge.appearance.page-zoom",
+      "product": "edge",
+      "referenceId": "appearance.page-zoom",
+      "label": "Page zoom",
+      "category": "Appearance",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-appearance",
+      "catalogEntryId": "browser.appearance.zoom",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Default page zoom is persisted and applied to native views."
+      }
+    },
+    {
+      "id": "edge.appearance.fonts",
+      "product": "edge",
+      "referenceId": "appearance.fonts",
+      "label": "Fonts",
+      "category": "Appearance",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-languages",
+      "catalogEntryId": "browser.languages.fonts",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Default font family and minimum text size are native creation preferences."
+      }
+    },
+    {
+      "id": "edge.search.engine",
+      "product": "edge",
+      "referenceId": "search.engine",
+      "label": "Search engine and search suggestions",
+      "category": "Privacy, search, and services",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-search",
+      "catalogEntryId": "browser.search.engine",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel's search engine and local suggestions are explicit and independently configurable."
+      }
+    },
+    {
+      "id": "edge.search.suggestions",
+      "product": "edge",
+      "referenceId": "search.suggestions",
+      "label": "Show search and site suggestions",
+      "category": "Privacy, search, and services",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-search",
+      "catalogEntryId": "browser.search.suggestions",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Suggestions never leave the local profile."
+      }
+    },
+    {
+      "id": "edge.privacy.clear-data",
+      "product": "edge",
+      "referenceId": "privacy.clear-data",
+      "label": "Clear browsing data",
+      "category": "Privacy, search, and services",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-reset",
+      "catalogEntryId": "browser.data.clear-site-data",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Typed native clear-cache/cookie/history actions back this control."
+      }
+    },
+    {
+      "id": "edge.privacy.site-permissions",
+      "product": "edge",
+      "referenceId": "privacy.site-permissions",
+      "label": "Cookies and site permissions",
+      "category": "Cookies and site permissions",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-privacy",
+      "catalogEntryId": "browser.privacy.site-permissions",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel remembers and revokes per-origin decisions with an explicit native permission boundary."
+      }
+    },
+    {
+      "id": "edge.autofill.passwords",
+      "product": "edge",
+      "referenceId": "autofill.passwords",
+      "label": "Passwords",
+      "category": "Profiles",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-autofill",
+      "catalogEntryId": "browser.autofill.passwords",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Passwords remain in Kestrel's protected vault."
+      }
+    },
+    {
+      "id": "edge.autofill.payment",
+      "product": "edge",
+      "referenceId": "autofill.payment",
+      "label": "Payment info",
+      "category": "Profiles",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-autofill",
+      "catalogEntryId": "browser.autofill.payments",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Payment cards remain protected and require confirmation."
+      }
+    },
+    {
+      "id": "edge.performance.sleeping-tabs",
+      "product": "edge",
+      "referenceId": "performance.sleeping-tabs",
+      "label": "Sleeping tabs and efficiency",
+      "category": "System and performance",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-performance",
+      "catalogEntryId": "browser.performance.sleeping-tabs",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel exposes real sleeping-tab controls and an allowlist for excluded domains."
+      }
+    },
+    {
+      "id": "edge.downloads.location",
+      "product": "edge",
+      "referenceId": "downloads.location",
+      "label": "Downloads location and prompts",
+      "category": "Downloads",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-downloads",
+      "catalogEntryId": "browser.downloads.location",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "The native download service owns folder selection and save dialogs."
+      }
+    },
+    {
+      "id": "edge.languages.spellcheck",
+      "product": "edge",
+      "referenceId": "languages.spellcheck",
+      "label": "Languages and spell check",
+      "category": "Languages",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-languages",
+      "catalogEntryId": "browser.languages.spellcheck",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "The native session receives the selected spellcheck language."
+      }
+    },
+    {
+      "id": "edge.extensions.manage",
+      "product": "edge",
+      "referenceId": "extensions.manage",
+      "label": "Extensions",
+      "category": "Extensions",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-extensions",
+      "catalogEntryId": "browser.extensions.manage",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Verified extension management is kept separate from agent plugins."
+      }
+    },
+    {
+      "id": "edge.system.default-browser",
+      "product": "edge",
+      "referenceId": "system.default-browser",
+      "label": "Default browser",
+      "category": "Default browser",
+      "sourceRef": "edge.help",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-system",
+      "catalogEntryId": "browser.system.default",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Registration/status uses typed native IPC."
+      }
+    },
+    {
+      "id": "edge.system.hardware-acceleration",
+      "product": "edge",
+      "referenceId": "system.hardware-acceleration",
+      "label": "Hardware acceleration",
+      "category": "System and performance",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-system",
+      "catalogEntryId": "browser.system.hardware-acceleration",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "The setting is persisted and requires a restart, rather than pretending to apply live."
+      }
+    },
+    {
+      "id": "edge.reset.restore-defaults",
+      "product": "edge",
+      "referenceId": "reset.restore-defaults",
+      "label": "Reset settings",
+      "category": "Reset settings",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-reset",
+      "catalogEntryId": "browser.data.reset-settings",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Only browser preferences reset; user content and credentials stay put."
+      }
+    },
+    {
+      "id": "edge.data.transfer",
+      "product": "edge",
+      "referenceId": "data.transfer",
+      "label": "Import browser data",
+      "category": "Profiles and reset",
+      "sourceRef": "edge.help",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-reset",
+      "catalogEntryId": "browser.data.transfer",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel's import/export is intentionally limited to safe, reviewable JSON."
+      }
+    },
+    {
+      "id": "edge.profile.sign-in",
+      "product": "edge",
+      "referenceId": "profile.sign-in",
+      "label": "Sign in and sync",
+      "category": "Profiles",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Microsoft account sync and vendor identity are provider-owned and are not copied into Kestrel."
+    },
+    {
+      "id": "edge.profile.wallet",
+      "product": "edge",
+      "referenceId": "profile.wallet",
+      "label": "Wallet and payment provider",
+      "category": "Profiles",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "wallet",
+      "reason": "Kestrel keeps protected card storage but does not embed Edge Wallet or a Microsoft account wallet."
+    },
+    {
+      "id": "edge.services.shopping",
+      "product": "edge",
+      "referenceId": "services.shopping",
+      "label": "Shopping and price comparison",
+      "category": "Privacy, search, and services",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "shopping",
+      "reason": "Edge shopping services are vendor-specific and not relevant to Kestrel's standalone browser."
+    },
+    {
+      "id": "edge.services.copilot",
+      "product": "edge",
+      "referenceId": "services.copilot",
+      "label": "Copilot and connected services",
+      "category": "Privacy, search, and services",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Kestrel's Agent connection is explicit and separate; it does not embed Edge Copilot account controls."
+    },
+    {
+      "id": "edge.family.safety",
+      "product": "edge",
+      "referenceId": "family.safety",
+      "label": "Family safety",
+      "category": "Family",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "family",
+      "reason": "Microsoft Family Safety is an account and family-management product outside Kestrel's local profile."
+    },
+    {
+      "id": "edge.enterprise.policy",
+      "product": "edge",
+      "referenceId": "enterprise.policy",
+      "label": "Managed browser policies",
+      "category": "Enterprise",
+      "sourceRef": "edge.policies",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "enterprise-policy",
+      "reason": "Device-admin policy belongs to deployment management, not a user-editable Kestrel setting."
+    },
+    {
+      "id": "edge.accessibility.read-aloud",
+      "product": "edge",
+      "referenceId": "accessibility.read-aloud",
+      "label": "Read aloud and accessibility services",
+      "category": "Accessibility",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "os-only",
+      "reason": "Platform speech/accessibility services are not silently installed or configured by Kestrel."
+    },
+    {
+      "id": "edge.system.startup-boost",
+      "product": "edge",
+      "referenceId": "system.startup-boost",
+      "label": "Startup boost and background extensions",
+      "category": "System and performance",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "unsupported-capability",
+      "reason": "Kestrel does not retain arbitrary web extension processes after exit."
+    },
+    {
+      "id": "edge.internal.flags",
+      "product": "edge",
+      "referenceId": "internal.flags",
+      "label": "Experiments and edge flags",
+      "category": "Developer/internal",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "internal-flag",
+      "reason": "Internal flags are not stable end-user settings and are intentionally excluded from the main menu."
+    },
+    {
+      "id": "edge.about.update",
+      "product": "edge",
+      "referenceId": "about.update",
+      "label": "About and update",
+      "category": "About",
+      "sourceRef": "edge.help",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "os-only",
+      "reason": "Kestrel uses its own packaged lifecycle and does not mirror Edge's update controls."
+    },
+    {
+      "id": "hermes.setup.provider",
+      "product": "hermes",
+      "referenceId": "setup.provider",
+      "label": "Provider and model setup",
+      "category": "Setup and providers",
+      "sourceRef": "hermes.quickstart",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-connections",
+      "catalogEntryId": "agent.connections.providers",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel keeps provider-owned sign-in and protected credentials behind its own connection status boundary."
+      }
+    },
+    {
+      "id": "hermes.model.defaults",
+      "product": "hermes",
+      "referenceId": "model.defaults",
+      "label": "Model, temperature, and token defaults",
+      "category": "Model configuration",
+      "sourceRef": "hermes.providers",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-models",
+      "catalogEntryId": "agent.models.routing",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel routes through measured provider health and explicit usage policy rather than exposing unsafe raw provider mutations."
+      }
+    },
+    {
+      "id": "hermes.model.provider-verification",
+      "product": "hermes",
+      "referenceId": "model.provider-verification",
+      "label": "Provider verification",
+      "category": "Model configuration",
+      "sourceRef": "hermes.providers",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-models",
+      "catalogEntryId": "agent.models.providers",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel verifies reachability separately from a real completion."
+      }
+    },
+    {
+      "id": "hermes.general.personality",
+      "product": "hermes",
+      "referenceId": "general.personality",
+      "label": "Personality and communication style",
+      "category": "Agent behavior",
+      "sourceRef": "hermes.quickstart",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-general",
+      "catalogEntryId": "agent.general.behavior",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel exposes communication style while keeping safety and capability rules fixed."
+      }
+    },
+    {
+      "id": "hermes.general.setup-guide",
+      "product": "hermes",
+      "referenceId": "general.setup-guide",
+      "label": "Setup and onboarding",
+      "category": "Lifecycle",
+      "sourceRef": "hermes.quickstart",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-general",
+      "catalogEntryId": "agent.general.setup",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "The setup guide can be reopened without copying provider credentials."
+      }
+    },
+    {
+      "id": "hermes.memory.recall",
+      "product": "hermes",
+      "referenceId": "memory.recall",
+      "label": "Memory and context",
+      "category": "Memory",
+      "sourceRef": "hermes.cli",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-memory",
+      "catalogEntryId": "agent.memory.recall",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel surfaces local memory status and review boundaries."
+      }
+    },
+    {
+      "id": "hermes.workspace.sessions",
+      "product": "hermes",
+      "referenceId": "workspace.sessions",
+      "label": "Workspace and durable sessions",
+      "category": "Workspace",
+      "sourceRef": "hermes.cli",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-workspace",
+      "catalogEntryId": "agent.workspace.sessions",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Folder grants and durable sessions remain local, visible, and revocable."
+      }
+    },
+    {
+      "id": "hermes.tools.mcp",
+      "product": "hermes",
+      "referenceId": "tools.mcp",
+      "label": "MCP and tools",
+      "category": "Tools and integrations",
+      "sourceRef": "hermes.cli",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-tools",
+      "catalogEntryId": "agent.tools.plugins",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel's signed plugin/MCP boundary is separate from browser extensions."
+      }
+    },
+    {
+      "id": "hermes.skills.learned",
+      "product": "hermes",
+      "referenceId": "skills.learned",
+      "label": "Skills",
+      "category": "Skills",
+      "sourceRef": "hermes.cli",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-tools",
+      "catalogEntryId": "agent.tools.skills",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Learned skills are staged for review and approval before installation."
+      }
+    },
+    {
+      "id": "hermes.automation.schedule",
+      "product": "hermes",
+      "referenceId": "automation.schedule",
+      "label": "Scheduled and recurring work",
+      "category": "Automation",
+      "sourceRef": "hermes.cli",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-automations",
+      "catalogEntryId": "agent.automations.schedule",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Automations use the same provider, workspace, and approval boundaries as interactive work."
+      }
+    },
+    {
+      "id": "hermes.permissions.approval",
+      "product": "hermes",
+      "referenceId": "permissions.approval",
+      "label": "Tool approvals",
+      "category": "Permissions",
+      "sourceRef": "hermes.cli",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-permissions",
+      "catalogEntryId": "agent.permissions.approvals",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Persistent approvals remain explicit and revocable."
+      }
+    },
+    {
+      "id": "hermes.privacy.credentials",
+      "product": "hermes",
+      "referenceId": "privacy.credentials",
+      "label": "Credentials and secrets",
+      "category": "Security",
+      "sourceRef": "hermes.providers",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-privacy",
+      "catalogEntryId": "agent.privacy.credentials",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel never asks for secrets in chat and reports protected status only."
+      }
+    },
+    {
+      "id": "hermes.privacy.external-secrets",
+      "product": "hermes",
+      "referenceId": "privacy.external-secrets",
+      "label": "External secret providers",
+      "category": "Security",
+      "sourceRef": "hermes.providers",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-privacy",
+      "catalogEntryId": "agent.privacy.external-secrets",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Protected external secret-provider status remains visible without revealing values."
+      }
+    },
+    {
+      "id": "hermes.diagnostics.health",
+      "product": "hermes",
+      "referenceId": "diagnostics.health",
+      "label": "Health and diagnostics",
+      "category": "Lifecycle",
+      "sourceRef": "hermes.cli",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-diagnostics",
+      "catalogEntryId": "agent.diagnostics.health",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel offers content-free readiness and diagnostic reports."
+      }
+    },
+    {
+      "id": "hermes.migration.import",
+      "product": "hermes",
+      "referenceId": "migration.import",
+      "label": "Import supported agent data",
+      "category": "Migration",
+      "sourceRef": "hermes.cli",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-migration",
+      "catalogEntryId": "agent.migration.review",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Migration is plan-first, bounded, checksum-verified, and no-overwrite by default."
+      }
+    },
+    {
+      "id": "hermes.account.vendor-subscription",
+      "product": "hermes",
+      "referenceId": "account.vendor-subscription",
+      "label": "Vendor account and hosted subscription",
+      "category": "Account",
+      "sourceRef": "hermes.quickstart",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Kestrel does not own or mirror a Hermes-hosted account."
+    },
+    {
+      "id": "hermes.enterprise.admin",
+      "product": "hermes",
+      "referenceId": "enterprise.admin",
+      "label": "Enterprise administration",
+      "category": "Administration",
+      "sourceRef": "hermes.cli",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "enterprise-policy",
+      "reason": "Deployment policy is not a user-editable Kestrel Agent setting."
+    },
+    {
+      "id": "hermes.internal.debug-flags",
+      "product": "hermes",
+      "referenceId": "internal.debug-flags",
+      "label": "Internal debug flags",
+      "category": "Developer/internal",
+      "sourceRef": "hermes.cli",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "internal-flag",
+      "reason": "Internal flags are not stable end-user settings and stay out of the main menu."
+    },
+    {
+      "id": "openclaw.onboarding.configure",
+      "product": "openclaw",
+      "referenceId": "onboarding.configure",
+      "label": "Configure and onboarding",
+      "category": "Setup",
+      "sourceRef": "openclaw.wizard",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-general",
+      "catalogEntryId": "agent.general.setup",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel's setup flow is explicit about provider, credential, and approval boundaries."
+      }
+    },
+    {
+      "id": "openclaw.model.primary-and-policy",
+      "product": "openclaw",
+      "referenceId": "model.primary-and-policy",
+      "label": "Primary model and model policy",
+      "category": "Model",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-models",
+      "catalogEntryId": "agent.models.routing",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel exposes routing outcomes and keeps provider fallback/cost policy local."
+      }
+    },
+    {
+      "id": "openclaw.model.provider-auth",
+      "product": "openclaw",
+      "referenceId": "model.provider-auth",
+      "label": "Provider authentication and model catalog",
+      "category": "Model",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-models",
+      "catalogEntryId": "agent.models.providers",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Provider authentication remains provider-owned; Kestrel records configured/reachable/verified states."
+      }
+    },
+    {
+      "id": "openclaw.web.search-provider",
+      "product": "openclaw",
+      "referenceId": "web.search-provider",
+      "label": "Web/search provider",
+      "category": "Web",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-connections",
+      "catalogEntryId": "agent.connections.providers",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel treats web providers as explicit connections with bounded secrets and no renderer-side credentials."
+      }
+    },
+    {
+      "id": "openclaw.gateway.channels",
+      "product": "openclaw",
+      "referenceId": "gateway.channels",
+      "label": "Gateway and channels",
+      "category": "Connections",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-connections",
+      "catalogEntryId": "agent.connections.providers",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Channel accounts and gateway state are explicit, revocable, and separate from browser settings."
+      }
+    },
+    {
+      "id": "openclaw.workspace.agent-defaults",
+      "product": "openclaw",
+      "referenceId": "workspace.agent-defaults",
+      "label": "Workspace and agent defaults",
+      "category": "Agent defaults",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-workspace",
+      "catalogEntryId": "agent.workspace.sessions",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Workspace folder grants remain visible and no files are copied implicitly."
+      }
+    },
+    {
+      "id": "openclaw.memory.backend",
+      "product": "openclaw",
+      "referenceId": "memory.backend",
+      "label": "Memory backend and recall",
+      "category": "Memory",
+      "sourceRef": "openclaw.features",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-memory",
+      "catalogEntryId": "agent.memory.context",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Local encrypted memory stays authoritative and remote memory integrations are disclosure-gated."
+      }
+    },
+    {
+      "id": "openclaw.tools.mcp",
+      "product": "openclaw",
+      "referenceId": "tools.mcp",
+      "label": "Tools and MCP",
+      "category": "Tools",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-tools",
+      "catalogEntryId": "agent.tools.plugins",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Signed plugins and MCP connections are independently reviewable."
+      }
+    },
+    {
+      "id": "openclaw.skills.catalog",
+      "product": "openclaw",
+      "referenceId": "skills.catalog",
+      "label": "Skills catalog",
+      "category": "Skills",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-tools",
+      "catalogEntryId": "agent.tools.skills",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Skill proposals and installs require provenance and approval."
+      }
+    },
+    {
+      "id": "openclaw.automation.cron-heartbeat",
+      "product": "openclaw",
+      "referenceId": "automation.cron-heartbeat",
+      "label": "Cron and heartbeat automation",
+      "category": "Automation",
+      "sourceRef": "openclaw.features",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-automations",
+      "catalogEntryId": "agent.automations.schedule",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Scheduled work stays within Kestrel's local execution and approval queue."
+      }
+    },
+    {
+      "id": "openclaw.permissions.sandbox",
+      "product": "openclaw",
+      "referenceId": "permissions.sandbox",
+      "label": "Sandbox and tool permissions",
+      "category": "Security",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-permissions",
+      "catalogEntryId": "agent.permissions.approvals",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel's sandbox and approval policy remains authoritative over provider instructions."
+      }
+    },
+    {
+      "id": "openclaw.privacy.credentials",
+      "product": "openclaw",
+      "referenceId": "privacy.credentials",
+      "label": "Credential profiles",
+      "category": "Security",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-privacy",
+      "catalogEntryId": "agent.privacy.credentials",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Credentials are protected native records, not renderer-visible settings."
+      }
+    },
+    {
+      "id": "openclaw.privacy.external-secrets",
+      "product": "openclaw",
+      "referenceId": "privacy.external-secrets",
+      "label": "Secret providers",
+      "category": "Security",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-privacy",
+      "catalogEntryId": "agent.privacy.external-secrets",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Only non-secret configured status is displayed."
+      }
+    },
+    {
+      "id": "openclaw.diagnostics.health",
+      "product": "openclaw",
+      "referenceId": "diagnostics.health",
+      "label": "Health and doctor checks",
+      "category": "Diagnostics",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-diagnostics",
+      "catalogEntryId": "agent.diagnostics.health",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Diagnostics are bounded and content-free."
+      }
+    },
+    {
+      "id": "openclaw.migration.import",
+      "product": "openclaw",
+      "referenceId": "migration.import",
+      "label": "Import compatible settings and skills",
+      "category": "Migration",
+      "sourceRef": "openclaw.configure",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-migration",
+      "catalogEntryId": "agent.migration.review",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Supported imports are reviewable and reject links, binaries, oversized files, and changed checksums."
+      }
+    },
+    {
+      "id": "openclaw.account.vendor-cloud",
+      "product": "openclaw",
+      "referenceId": "account.vendor-cloud",
+      "label": "Vendor cloud account",
+      "category": "Account",
+      "sourceRef": "openclaw.features",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Kestrel is local-first and does not embed a vendor cloud account surface."
+    },
+    {
+      "id": "openclaw.enterprise.admin-policy",
+      "product": "openclaw",
+      "referenceId": "enterprise.admin-policy",
+      "label": "Enterprise admin policy",
+      "category": "Administration",
+      "sourceRef": "openclaw.configure",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "enterprise-policy",
+      "reason": "Organization policy is deployment-owned and not editable from the local user settings menu."
+    },
+    {
+      "id": "openclaw.internal.flags",
+      "product": "openclaw",
+      "referenceId": "internal.flags",
+      "label": "Internal feature flags",
+      "category": "Developer/internal",
+      "sourceRef": "openclaw.configure",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "internal-flag",
+      "reason": "Internal flags are intentionally not represented as stable end-user settings."
+    },
+    {
+      "id": "codex.model.model-provider",
+      "product": "codex",
+      "referenceId": "model.model-provider",
+      "label": "Model and model provider",
+      "category": "Configuration",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-models",
+      "catalogEntryId": "agent.models.routing",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel exposes model/provider routing through its own verified route and does not copy Codex config files."
+      }
+    },
+    {
+      "id": "codex.model.catalog",
+      "product": "codex",
+      "referenceId": "model.catalog",
+      "label": "Model catalog and aliases",
+      "category": "Configuration",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-models",
+      "catalogEntryId": "agent.models.providers",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel maintains its own live catalog and provider verification boundary."
+      }
+    },
+    {
+      "id": "codex.approval.policy",
+      "product": "codex",
+      "referenceId": "approval.policy",
+      "label": "Approval policy",
+      "category": "Permissions",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-permissions",
+      "catalogEntryId": "agent.permissions.approvals",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Approval authority remains in Kestrel and never transfers to imported provider config."
+      }
+    },
+    {
+      "id": "codex.sandbox.mode",
+      "product": "codex",
+      "referenceId": "sandbox.mode",
+      "label": "Sandbox mode",
+      "category": "Permissions",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-permissions",
+      "catalogEntryId": "agent.permissions.approvals",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel's sandbox is local, explicit, and visible in the Agent settings scope."
+      }
+    },
+    {
+      "id": "codex.mcp.servers",
+      "product": "codex",
+      "referenceId": "mcp.servers",
+      "label": "MCP servers",
+      "category": "Tools",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-tools",
+      "catalogEntryId": "agent.tools.plugins",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "MCP connections use Kestrel's signed/plugin contract and typed lifecycle."
+      }
+    },
+    {
+      "id": "codex.projects.trust",
+      "product": "codex",
+      "referenceId": "projects.trust",
+      "label": "Project trust and workspace",
+      "category": "Projects",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-workspace",
+      "catalogEntryId": "agent.workspace.sessions",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Workspace grants are folder-scoped and revocable."
+      }
+    },
+    {
+      "id": "codex.sessions.history",
+      "product": "codex",
+      "referenceId": "sessions.history",
+      "label": "Session history and resume",
+      "category": "Sessions",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-workspace",
+      "catalogEntryId": "agent.workspace.sessions",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Durable sessions and checkpoints persist locally without replaying uncertain side effects."
+      }
+    },
+    {
+      "id": "codex.context.instructions",
+      "product": "codex",
+      "referenceId": "context.instructions",
+      "label": "Instruction files and context",
+      "category": "Context",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-memory",
+      "catalogEntryId": "agent.memory.context",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Hierarchical instructions and bounded context remain explicit and reviewable."
+      }
+    },
+    {
+      "id": "codex.general.personality",
+      "product": "codex",
+      "referenceId": "general.personality",
+      "label": "Personality",
+      "category": "Configuration",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-general",
+      "catalogEntryId": "agent.general.behavior",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Communication style is a Kestrel setting; safety behavior is not user-editable."
+      }
+    },
+    {
+      "id": "codex.general.setup",
+      "product": "codex",
+      "referenceId": "general.setup",
+      "label": "CLI/app setup",
+      "category": "Lifecycle",
+      "sourceRef": "codex.app",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-general",
+      "catalogEntryId": "agent.general.setup",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel's setup guide remains the single local setup surface."
+      }
+    },
+    {
+      "id": "codex.usage.budget",
+      "product": "codex",
+      "referenceId": "usage.budget",
+      "label": "Usage and cost controls",
+      "category": "Configuration",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-models",
+      "catalogEntryId": "agent.models.usage-policy",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel enforces usage and cost policy locally."
+      }
+    },
+    {
+      "id": "codex.privacy.credentials",
+      "product": "codex",
+      "referenceId": "privacy.credentials",
+      "label": "Provider credentials",
+      "category": "Configuration",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-privacy",
+      "catalogEntryId": "agent.privacy.credentials",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Codex credentials remain provider-owned and Kestrel receives only non-secret status."
+      }
+    },
+    {
+      "id": "codex.diagnostics.logs",
+      "product": "codex",
+      "referenceId": "diagnostics.logs",
+      "label": "Diagnostics and logs",
+      "category": "Lifecycle",
+      "sourceRef": "codex.config-schema",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-diagnostics",
+      "catalogEntryId": "agent.diagnostics.health",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel exports bounded diagnostic reports without prompts or credentials."
+      }
+    },
+    {
+      "id": "codex.account.chatgpt-subscription",
+      "product": "codex",
+      "referenceId": "account.chatgpt-subscription",
+      "label": "ChatGPT account and subscription",
+      "category": "Account",
+      "sourceRef": "codex.app",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Kestrel can use an official provider route but does not mirror account-management or subscription UI."
+    },
+    {
+      "id": "codex.web.search-vendor-service",
+      "product": "codex",
+      "referenceId": "web.search-vendor-service",
+      "label": "Vendor web-search service",
+      "category": "Web",
+      "sourceRef": "codex.config-schema",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "vendor-account",
+      "reason": "Provider web-search account/service controls are not Kestrel browser or Agent preferences."
+    },
+    {
+      "id": "codex.enterprise.managed-config",
+      "product": "codex",
+      "referenceId": "enterprise.managed-config",
+      "label": "Managed enterprise configuration",
+      "category": "Administration",
+      "sourceRef": "codex.config-schema",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "enterprise-policy",
+      "reason": "Organization-managed configuration is deployment-owned and not a user-editable local setting."
+    },
+    {
+      "id": "codex.os.keychain",
+      "product": "codex",
+      "referenceId": "os.keychain",
+      "label": "OS keychain and system integration",
+      "category": "System",
+      "sourceRef": "codex.config-schema",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "os-only",
+      "reason": "Kestrel uses its own protected native credential boundary and does not expose OS-only knobs as ordinary settings."
+    },
+    {
+      "id": "codex.internal.experimental-flags",
+      "product": "codex",
+      "referenceId": "internal.experimental-flags",
+      "label": "Experimental/internal flags",
+      "category": "Developer/internal",
+      "sourceRef": "codex.config-schema",
+      "relevance": "excluded",
+      "status": "not_applicable",
+      "section": null,
+      "reasonCategory": "internal-flag",
+      "reason": "Internal flags are not stable end-user settings and are excluded from the organized menu."
+    },
+    {
+      "id": "chrome.startup.specific-pages",
+      "product": "chrome",
+      "referenceId": "startup.specific-pages",
+      "label": "Open specific pages",
+      "category": "On startup",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-startup",
+      "catalogEntryId": "browser.startup.specific-pages",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel opens a bounded, ordered list of validated HTTP(S) pages at startup."
+      }
+    },
+    {
+      "id": "chrome.appearance.new-tab",
+      "product": "chrome",
+      "referenceId": "appearance.new-tab",
+      "label": "Customize the new tab page",
+      "category": "Appearance",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-appearance",
+      "catalogEntryId": "browser.appearance.new-tab",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel provides bundled backgrounds and a bounded local image upload for its new tab page."
+      }
+    },
+    {
+      "id": "chrome.search.custom",
+      "product": "chrome",
+      "referenceId": "search.custom",
+      "label": "Manage search engines",
+      "category": "Search engine",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-search",
+      "catalogEntryId": "browser.search.custom",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel accepts a credential-free HTTP(S) search template and keeps it in the local profile."
+      }
+    },
+    {
+      "id": "chrome.privacy.page-context",
+      "product": "chrome",
+      "referenceId": "privacy.page-context",
+      "label": "Page content and site context",
+      "category": "Privacy and security",
+      "sourceRef": "chrome.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-privacy",
+      "catalogEntryId": "browser.privacy.page-context",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel adds an explicit opt-in boundary before an Agent can use bounded, untrusted page context."
+      }
+    },
+    {
+      "id": "chrome.privacy.history-retention",
+      "product": "chrome",
+      "referenceId": "privacy.history-retention",
+      "label": "Browsing history controls",
+      "category": "Privacy and security",
+      "sourceRef": "chrome.help",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-privacy",
+      "catalogEntryId": "browser.privacy.history-retention",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel supports bounded local history retention periods, including a no-history mode."
+      }
+    },
+    {
+      "id": "chrome.data.clear-history",
+      "product": "chrome",
+      "referenceId": "data.clear-history",
+      "label": "Clear browsing history",
+      "category": "Privacy and security",
+      "sourceRef": "chrome.help",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-reset",
+      "catalogEntryId": "browser.data.clear-history",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel clears local history, favicons, recently closed tabs, and new-tab activity without closing open tabs."
+      }
+    },
+    {
+      "id": "edge.appearance.tab-layout",
+      "product": "edge",
+      "referenceId": "appearance.tab-layout",
+      "label": "Vertical tabs",
+      "category": "Appearance",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-appearance",
+      "catalogEntryId": "browser.appearance.tab-layout",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel keeps its existing horizontal and vertical tab layouts in Browser settings."
+      }
+    },
+    {
+      "id": "edge.performance.sleeping-tab-timeout",
+      "product": "edge",
+      "referenceId": "performance.sleeping-tab-timeout",
+      "label": "Sleeping tab timeout",
+      "category": "System and performance",
+      "sourceRef": "edge.settings-ui",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "browser-performance",
+      "catalogEntryId": "browser.performance.sleeping-tab-timeout",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Kestrel exposes bounded sleeping-tab timeout choices and applies them to inactive native page views."
+      }
+    }
+  ]
+}

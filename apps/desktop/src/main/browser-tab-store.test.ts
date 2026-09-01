@@ -54,6 +54,39 @@ it("defaults new browser settings to Google", () => {
 	expect(UserBrowserSettingsSchema.parse({}).paymentAutofillEnabled).toBe(true);
 });
 
+it("preserves the legacy restore-session opt-out during settings migration", () => {
+	const path = storePath();
+	const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+	state.tabs[0]!.url = "https://previous-session.example/";
+	const legacy = JSON.parse(JSON.stringify(state)) as {
+		settings: Record<string, unknown>;
+		tabs: Array<Record<string, unknown>>;
+	};
+	for (const key of [
+		"startupBehavior",
+		"homepageUrl",
+		"startupPages",
+		"defaultZoomPercent",
+		"minimumFontSize",
+		"defaultFontFamily",
+		"spellcheckEnabled",
+		"spellcheckLanguage",
+		"hardwareAccelerationEnabled",
+		"downloadBehavior",
+		"downloadDirectory",
+	])
+		delete legacy.settings[key];
+	legacy.settings.restoreSession = false;
+	writeFileSync(path, `${JSON.stringify(legacy)}\n`);
+
+	const loaded = new BrowserTabStore(path).load(
+		() => new Date("2026-08-11T12:00:00.000Z"),
+	);
+	expect(loaded.settings.startupBehavior).toBe("new_tab");
+	expect(loaded.tabs).toHaveLength(1);
+	expect(loaded.tabs[0]!.url).toBe("");
+});
+
 it("accepts bundled backgrounds and bounded local image data", () => {
 	const custom = UserBrowserSettingsSchema.safeParse({
 		newTabBackground: "custom",
@@ -70,6 +103,42 @@ it("accepts bundled backgrounds and bounded local image data", () => {
 		UserBrowserSettingsSchema.safeParse({
 			newTabBackground: "custom",
 			newTabBackgroundCustomDataUrl: "file:///tmp/private.png",
+		}).success,
+	).toBe(false);
+	expect(
+		UserBrowserSettingsSchema.safeParse({
+			customSearchUrl: "javascript:alert(1)",
+		}).success,
+	).toBe(false);
+	expect(
+		UserBrowserSettingsSchema.safeParse({
+			customSearchUrl: "https://search.example/?q=%s",
+		}).success,
+	).toBe(true);
+});
+
+it("keeps native browser settings actions behind typed IPC requests", () => {
+	const settings = UserBrowserSettingsSchema.parse({});
+	for (const request of [
+		{ type: "browser-update-settings", settings },
+		{ type: "browser-reset-settings" },
+		{ type: "browser-select-download-directory" },
+		{ type: "browser-reset-download-directory" },
+		{ type: "browser-export-data" },
+		{ type: "browser-import-data" },
+		{ type: "browser-clear-history" },
+		{
+			type: "browser-clear-site-permission",
+			origin: "https://example.com",
+			permission: "notifications",
+		},
+	])
+		expect(RendererRequestSchema.safeParse(request).success).toBe(true);
+
+	expect(
+		RendererRequestSchema.safeParse({
+			type: "browser-electron-internals",
+			module: "session",
 		}).success,
 	).toBe(false);
 });

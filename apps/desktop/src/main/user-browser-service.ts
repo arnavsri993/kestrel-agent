@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, isAbsolute, join } from "node:path";
 import {
 	annotateAccessibilityTree,
 	type BrowserAction,
@@ -16,6 +16,7 @@ import {
 	type UserBrowserPageContext,
 	PaymentFormFieldSchema,
 	PaymentPromptSchema,
+	BrowserDataTransferSchema,
 	type PaymentCardEntryId,
 	type PaymentCardEntrySummary,
 	type PaymentFormField,
@@ -28,6 +29,7 @@ import {
 	type PasswordPrompt,
 	UserBrowserPageContextSchema,
 	type UserBrowserSettings,
+	UserBrowserSettingsSchema,
 	type UserBrowserState,
 	UserBrowserStateSchema,
 	type UserBrowserTab,
@@ -850,7 +852,8 @@ export class UserBrowserService {
 		UserBrowserServiceOptions["confirmSitePermission"]
 	>;
 	private readonly now: () => Date;
-	private readonly downloadDirectory: string;
+	private readonly defaultDownloadDirectory: string;
+	private downloadDirectory: string;
 	private readonly partitionName: string;
 	private readonly partitionCoordinator: BrowserPartitionCoordinator;
 	private readonly partitionParticipant: BrowserPartitionParticipant;
@@ -891,7 +894,10 @@ export class UserBrowserService {
 				? cloneState(options.initialState)
 				: this.store.load(options.now);
 		this.now = options.now ?? (() => new Date());
-		this.downloadDirectory = options.downloadDirectory;
+		this.defaultDownloadDirectory = options.downloadDirectory;
+		this.downloadDirectory = this.configuredDownloadDirectory(
+			this.state.settings.downloadDirectory,
+		);
 		this.onEvent = options.onEvent;
 		this.onPasswordPrompt = options.onPasswordPrompt;
 		this.passwordVault = options.passwordVault;
@@ -927,6 +933,7 @@ export class UserBrowserService {
 		this.partition = electronSession.fromPartition(this.partitionName, {
 			cache: true,
 		});
+		this.applySessionBrowserPreferences();
 		void this.extensionManager.loadAll(this.partition);
 		this.startSleepingTabsMonitor();
 		if (this.passwordVault || this.paymentCardVault) {
@@ -954,6 +961,61 @@ export class UserBrowserService {
 		this.partitionCoordinator.register(this.partitionParticipant);
 		void this.backfillOriginFaviconsFromHistory();
 		void this.refreshFileStatuses();
+	}
+
+	private configuredDownloadDirectory(value: string): string {
+		const candidate = value.trim();
+		return candidate && isAbsolute(candidate)
+			? candidate
+			: this.defaultDownloadDirectory;
+	}
+
+	private applySessionBrowserPreferences(): void {
+		if (typeof this.partition.setSpellCheckerEnabled === "function")
+			this.partition.setSpellCheckerEnabled(
+				this.state.settings.spellcheckEnabled,
+			);
+		if (typeof this.partition.setSpellCheckerLanguages === "function")
+			this.partition.setSpellCheckerLanguages([
+				this.state.settings.spellcheckLanguage,
+			]);
+	}
+
+	private applyViewBrowserPreferences(webContents: WebContents): void {
+		if (typeof webContents.setZoomFactor === "function")
+			webContents.setZoomFactor(this.state.settings.defaultZoomPercent / 100);
+	}
+
+	private applyBrowserSettings(
+		previous: UserBrowserSettings,
+		next: UserBrowserSettings,
+	): void {
+		this.state.settings = next;
+		if (next.downloadDirectory !== previous.downloadDirectory) {
+			this.downloadDirectory = this.configuredDownloadDirectory(
+				next.downloadDirectory,
+			);
+			mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
+		}
+		if (
+			next.spellcheckEnabled !== previous.spellcheckEnabled ||
+			next.spellcheckLanguage !== previous.spellcheckLanguage
+		)
+			this.applySessionBrowserPreferences();
+		if (next.defaultZoomPercent !== previous.defaultZoomPercent) {
+			for (const { view } of this.views.values())
+				this.applyViewBrowserPreferences(view.webContents);
+		}
+		if (
+			next.minimumFontSize !== previous.minimumFontSize ||
+			next.defaultFontFamily !== previous.defaultFontFamily ||
+			next.spellcheckEnabled !== previous.spellcheckEnabled
+		) {
+			// Font and editor preferences are WebContents creation preferences in
+			// Electron. Recreate views lazily; the tab URLs and profile data remain.
+			for (const tabId of [...this.views.keys()]) this.closeView(tabId);
+			this.attachActiveWebView();
+		}
 	}
 
 	private async refreshFileStatuses(): Promise<void> {
@@ -1396,13 +1458,24 @@ export class UserBrowserService {
 	}
 
 	updateSettings(settings: UserBrowserSettings): UserBrowserState {
-		this.state.settings = { ...settings };
+		const previous = this.state.settings;
+		this.applyBrowserSettings(previous, { ...settings });
 		this.pruneHistory();
 		this.commit();
 		if (settings.passwordAutofillEnabled === false) this.clearPasswordPrompt();
 		else void this.refreshPasswordPrompt();
 		if (settings.paymentAutofillEnabled === false) this.clearPaymentPrompt();
 		else void this.refreshPaymentPrompt();
+		return this.getState();
+	}
+
+	resetSettings(): UserBrowserState {
+		const previous = this.state.settings;
+		const next = UserBrowserSettingsSchema.parse({});
+		this.applyBrowserSettings(previous, next);
+		this.commit();
+		void this.refreshPasswordPrompt();
+		void this.refreshPaymentPrompt();
 		return this.getState();
 	}
 
@@ -1477,6 +1550,104 @@ export class UserBrowserService {
 			await this.partition.clearStorageData();
 			this.state.sitePermissions = [];
 		}
+		this.commit();
+		return this.getState();
+	}
+
+	setDownloadDirectory(directory?: string): UserBrowserState {
+		this.assertAvailable();
+		const normalized = directory?.trim() ?? "";
+		if (normalized && !isAbsolute(normalized))
+			throw new Error("Download location must be an absolute folder path.");
+		this.downloadDirectory = normalized
+			? normalized
+			: this.defaultDownloadDirectory;
+		mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
+		this.state.settings = {
+			...this.state.settings,
+			downloadDirectory: normalized,
+		};
+		this.commit();
+		return this.getState();
+	}
+
+	exportBrowserData() {
+		return BrowserDataTransferSchema.parse({
+			format: "kestrel-browser-data",
+			version: 1,
+			exportedAt: this.now().toISOString(),
+			bookmarks: this.state.bookmarks,
+			history: this.state.history,
+			sitePermissions: this.state.sitePermissions,
+			// The destination profile owns its filesystem. Never put a local path in
+			// a portable export, even when the user chose a custom download folder.
+			settings: {
+				...this.state.settings,
+				downloadDirectory: "",
+			},
+		});
+	}
+
+	importBrowserData(payload: unknown): UserBrowserState {
+		this.assertAvailable();
+		const imported = BrowserDataTransferSchema.parse(payload);
+		const activeTabId =
+			this.state.activeTabId ?? this.state.tabs[0]?.id ?? createEmptyBrowserTab(this.now).id;
+		const existingBookmarkUrls = new Set(
+			this.state.bookmarks.map((bookmark) => bookmark.url),
+		);
+		for (const bookmark of imported.bookmarks) {
+			const url = sanitizeBrowserUrl(bookmark.url);
+			if (!safePageUrl(url) || existingBookmarkUrls.has(url))
+				continue;
+			this.state.bookmarks.push({ ...bookmark, url });
+			existingBookmarkUrls.add(url);
+		}
+		this.state.bookmarks = this.state.bookmarks.slice(-2_000);
+
+		const existingHistory = new Set(
+			this.state.history.map((entry) => `${entry.url}\u0000${entry.visitedAt}`),
+		);
+		for (const entry of imported.history) {
+			const url = sanitizeBrowserUrl(entry.url);
+			if (!safePageUrl(url)) continue;
+			const key = `${url}\u0000${entry.visitedAt}`;
+			if (existingHistory.has(key)) continue;
+			this.state.history.push({ ...entry, tabId: activeTabId, url });
+			existingHistory.add(key);
+		}
+		this.state.history = this.state.history.slice(-MAX_HISTORY_ENTRIES);
+
+		const permissionKeys = new Set(
+			this.state.sitePermissions.map(
+				(permission) => `${permission.origin}\u0000${permission.permission}`,
+			),
+		);
+		for (const permission of imported.sitePermissions) {
+			const origin = this.permissionOrigin(permission.origin);
+			if (!origin) continue;
+			const key = `${origin}\u0000${permission.permission}`;
+			if (permissionKeys.has(key)) continue;
+			this.state.sitePermissions.push({ ...permission, origin });
+			permissionKeys.add(key);
+		}
+		this.state.sitePermissions = this.state.sitePermissions.slice(-500);
+
+		// A transfer never changes the destination's filesystem path. This keeps
+		// an imported profile from redirecting downloads to an unreviewed folder.
+		const previousSettings = this.state.settings;
+		const nextSettings = UserBrowserSettingsSchema.parse({
+			...imported.settings,
+			downloadDirectory: this.state.settings.downloadDirectory,
+		});
+		this.applyBrowserSettings(previousSettings, nextSettings);
+		this.pruneHistory();
+		if (nextSettings.passwordAutofillEnabled === false)
+			this.clearPasswordPrompt();
+		else void this.refreshPasswordPrompt();
+		if (nextSettings.paymentAutofillEnabled === false)
+			this.clearPaymentPrompt();
+		else void this.refreshPaymentPrompt();
 		this.commit();
 		return this.getState();
 	}
@@ -1775,16 +1946,32 @@ export class UserBrowserService {
 		permission: string,
 		decision: "allow" | "deny",
 	): UserBrowserState {
+		const normalizedOrigin = this.permissionOrigin(origin);
+		if (!normalizedOrigin)
+			throw new Error("Site permissions require an HTTP(S) origin.");
 		const next = this.state.sitePermissions.filter(
-			(item) => !(item.origin === origin && item.permission === permission),
+			(item) =>
+				!(item.origin === normalizedOrigin && item.permission === permission),
 		);
 		next.push({
-			origin,
+			origin: normalizedOrigin,
 			permission,
 			decision,
 			updatedAt: this.now().toISOString(),
 		});
 		this.state.sitePermissions = next.slice(-500);
+		this.commit();
+		return this.getState();
+	}
+
+	clearSitePermission(origin: string, permission: string): UserBrowserState {
+		const normalizedOrigin = this.permissionOrigin(origin);
+		if (!normalizedOrigin)
+			throw new Error("Site permissions require an HTTP(S) origin.");
+		this.state.sitePermissions = this.state.sitePermissions.filter(
+			(item) =>
+				!(item.origin === normalizedOrigin && item.permission === permission),
+		);
 		this.commit();
 		return this.getState();
 	}
@@ -2800,7 +2987,12 @@ export class UserBrowserService {
 	}
 
 	private checkSleepingTabs(): void {
-		if (this.disposed || !this.state.settings.sleepingTabsEnabled) return;
+		if (
+			this.disposed ||
+			!this.state.settings.sleepingTabsEnabled ||
+			!this.state.settings.memorySaverMode
+		)
+			return;
 		const timeoutMinutes = this.state.settings.sleepingTabTimeoutMinutes || 30;
 		const timeoutMs = timeoutMinutes * 60 * 1000;
 		const nowTime = this.now().getTime();
@@ -2915,9 +3107,11 @@ export class UserBrowserService {
 		}
 		const id = `download-${randomUUID()}`;
 		const filename = this.availableDownloadName(item.getFilename(), id);
-		const path = join(this.downloadDirectory, filename);
+		let path = join(this.downloadDirectory, filename);
 		const startedAt = this.now().toISOString();
-		item.setSavePath(path);
+		const askForLocation = this.state.settings.downloadBehavior === "ask";
+		if (!askForLocation) item.setSavePath(path);
+		else if (typeof item.pause === "function") item.pause();
 		this.downloadPaths.set(id, path);
 		this.activeDownloads.set(id, item);
 		this.state.downloads.push({
@@ -2936,6 +3130,24 @@ export class UserBrowserService {
 			Math.max(0, this.state.downloads.length - MAX_DOWNLOAD_ENTRIES),
 		);
 		this.commit();
+		if (askForLocation) {
+			void dialog
+				.showSaveDialog(this.window, {
+					title: "Save download",
+					defaultPath: path,
+				})
+				.then((result) => {
+					if (result.canceled || !result.filePath) {
+						item.cancel();
+						return;
+					}
+					path = result.filePath;
+					this.downloadPaths.set(id, path);
+					item.setSavePath(path);
+					if (typeof item.resume === "function") item.resume();
+				})
+				.catch(() => item.cancel());
+		}
 		item.on("updated", () => {
 			const record = this.state.downloads.find(
 				(download) => download.id === id,
@@ -2984,11 +3196,19 @@ export class UserBrowserService {
 				webSecurity: true,
 				javascript: true,
 				devTools: false,
-				backgroundThrottling: true,
-				spellcheck: true,
-			},
-		});
+					backgroundThrottling: true,
+					spellcheck: this.state.settings.spellcheckEnabled,
+					defaultFontFamily: {
+						standard: this.state.settings.defaultFontFamily,
+						serif: this.state.settings.defaultFontFamily,
+						sansSerif: this.state.settings.defaultFontFamily,
+						monospace: "SFMono-Regular",
+					},
+					minimumFontSize: this.state.settings.minimumFontSize,
+				},
+			});
 		view.setBackgroundColor("#ffffff");
+		this.applyViewBrowserPreferences(view.webContents);
 		const record: ViewRecord = { view };
 		this.views.set(tab.id, record);
 		this.webContentsToTab.set(view.webContents.id, tab.id);
@@ -3663,7 +3883,12 @@ export class UserBrowserService {
 	private permissionOrigin(value: string): string | undefined {
 		try {
 			const url = new URL(value);
-			if (!["http:", "https:"].includes(url.protocol)) return undefined;
+			if (
+				!["http:", "https:"].includes(url.protocol) ||
+				url.username ||
+				url.password
+			)
+				return undefined;
 			return url.origin;
 		} catch {
 			return undefined;
