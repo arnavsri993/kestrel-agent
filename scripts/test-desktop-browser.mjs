@@ -341,6 +341,7 @@ async function assertBrowserChromeLayout({
 			horizontalTabs: bounds(".browser-tab-row-horizontal"),
 			verticalTabs: bounds(".browser-tab-row-vertical"),
 			toolbar: bounds(".browser-toolbar"),
+			address: bounds(".browser-address"),
 			bookmarks: bounds(".browser-bookmarks-bar"),
 			kestrel: bounds(".kestrel-sidebar"),
 			recommendations: bounds(".kestrel-widget-canvas"),
@@ -359,6 +360,7 @@ async function assertBrowserChromeLayout({
 	assert(layout.app);
 	assert(tabs);
 	assert(layout.toolbar);
+	assert(layout.address);
 	assert(layout.viewport);
 	assert.equal(
 		layout.toolbar.height,
@@ -400,6 +402,15 @@ async function assertBrowserChromeLayout({
 	} else {
 		assert.equal(tabs.x, layout.app.x);
 		assert.equal(tabs.width, layout.app.width);
+		const toolbarCenter = layout.toolbar.x + layout.toolbar.width / 2;
+		const addressCenter = layout.address.x + layout.address.width / 2;
+		assert(
+			Math.abs(addressCenter - toolbarCenter) <= 2,
+			`Address field should be centered in the horizontal toolbar: ${JSON.stringify({
+				address: layout.address,
+				toolbar: layout.toolbar,
+			})}`,
+		);
 	}
 	assert.equal(layout.toolbar.x, layout.app.x);
 	assert.equal(layout.toolbar.width, layout.app.width);

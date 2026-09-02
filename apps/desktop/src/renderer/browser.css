@@ -1810,7 +1810,11 @@ body:has(.ai-browser-app),
 	position: relative;
 	z-index: 2;
 	display: grid;
-	grid-template-columns: auto minmax(180px, 1fr) auto;
+	/* Keep the omnibox centered in the full toolbar, not just in the space
+	 * left after the wider action cluster. The component measures both outer
+	 * clusters so pinned extensions and other dynamic actions stay clear. */
+	--browser-toolbar-side-rail: clamp(262px, 14vw, 270px);
+	grid-template-columns: var(--browser-toolbar-side-rail) minmax(180px, 1fr) var(--browser-toolbar-side-rail);
 	align-items: center;
 	gap: 8px;
 	min-width: 0;
@@ -1829,9 +1833,13 @@ body:has(.ai-browser-app),
 	align-items: center;
 	gap: 2px;
 }
+.browser-navigation {
+	justify-self: start;
+}
 .browser-toolbar-actions {
 	position: relative;
 	min-width: 0;
+	justify-self: end;
 }
 
 /* Vertical tabs move the tab strip out of the titlebar. Keep the remaining
@@ -1861,6 +1869,19 @@ body:has(.ai-browser-app),
 	min-width: 0;
 	-webkit-app-region: drag;
 }
+
+@media (max-width: 840px) {
+	/* Preserve the existing fit-first layout once equal side rails would
+	 * leave less than the address field's usable minimum. */
+	.browser-toolbar {
+		grid-template-columns: auto minmax(180px, 1fr) auto;
+	}
+	.browser-navigation,
+	.browser-toolbar-actions {
+		justify-self: stretch;
+	}
+}
+
 .browser-navigation button,
 .browser-toolbar-actions button {
 	width: 28px;
