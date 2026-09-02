@@ -30,16 +30,36 @@ export interface AgentUniverseLayout {
 	systems: AgentSystemLayout[];
 }
 
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-const SYSTEM_GAP = 96;
-const LABEL_CLEARANCE = 48;
+// The overview is a navigable field, not a poster. Keep the packing compact
+// enough that real profiles with many independent root sessions still have
+// bodies with presence at the initial camera position. Labels are progressive
+// and therefore do not need a large permanent exclusion zone.
+const SYSTEM_GAP = 52;
+const LABEL_CLEARANCE = 20;
 
 function safeDimension(value: number): number {
 	return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
-function nodeRadiusForDepth(depth: number): number {
-	return Math.max(15, 24 - Math.min(7, Math.max(0, depth - 1)) * 1.5);
+function nodeRadiusForDepth(
+	node: AgentNodeProjection,
+	childCount: number,
+): number {
+	const depthBase = 39 - Math.min(7, Math.max(0, node.depth - 1)) * 2.5;
+	const statusBoost =
+		node.status === "active"
+			? 10
+			: node.status === "waiting"
+				? 2
+				: node.status === "failed"
+					? 0
+					: node.status === "completed"
+						? -7
+						: -11;
+	// A session that owns delegated work has real structural importance. Keep
+	// the boost deliberately small so hierarchy never overwhelms status.
+	const hierarchyBoost = childCount > 0 ? Math.min(5, childCount * 0.8) : 0;
+	return Math.max(20, depthBase + statusBoost + hierarchyBoost);
 }
 
 function stableNodeOrder(left: AgentNodeProjection, right: AgentNodeProjection): number {
@@ -62,8 +82,27 @@ export function layoutAgentSystem(
 	centerX = 0,
 	centerY = 0,
 ): AgentSystemLayout {
-	const rootRadius = 58;
+	const childCounts = new Map<string, number>();
+	for (const node of system.nodes) {
+		if (!node.parentId) continue;
+		childCounts.set(node.parentId, (childCounts.get(node.parentId) ?? 0) + 1);
+	}
+	const rootNode = system.nodes.find((node) => node.id === system.rootNodeId);
 	const root = system.nodes.find((node) => node.id === system.rootNodeId);
+	const rootStatusBoost =
+		rootNode?.status === "active"
+			? 7
+			: rootNode?.status === "waiting"
+				? 2
+				: rootNode?.status === "failed"
+					? -1
+					: rootNode?.status === "completed"
+						? -7
+						: -9;
+	const rootImportanceBoost = root
+		? Math.min(4, (childCounts.get(root.id) ?? 0) * 0.8)
+		: 0;
+	const rootRadius = Math.max(72, 96 + rootStatusBoost + rootImportanceBoost);
 	const nodeLayouts: AgentNodeLayout[] = [];
 	if (root) {
 		nodeLayouts.push({
@@ -88,8 +127,17 @@ export function layoutAgentSystem(
 	const orbitRadii: number[] = [];
 	for (const depth of [...byDepth.keys()].sort((left, right) => left - right)) {
 		const nodes = [...byDepth.get(depth)!].sort(stableNodeOrder);
-		const radius = rootRadius + 84 + Math.max(0, depth - 1) * 72;
-		const minimumSeparation = 66;
+		const radius = rootRadius + 96 + Math.max(0, depth - 1) * 84;
+		// Larger active blobs need more room before the angular packing step. A
+		// fixed spacing would let a working node overlap its neighbour as the
+		// visual hierarchy grows.
+		const largestNodeRadius = Math.max(
+			...nodes.map((node) =>
+				nodeRadiusForDepth(node, childCounts.get(node.id) ?? 0),
+			),
+		);
+		const minimumSeparation = Math.max(92, largestNodeRadius * 2 + 16);
+		const bandStep = Math.max(116, largestNodeRadius * 2 + 22);
 		const capacity = Math.max(
 			1,
 			Math.floor((Math.PI * 2 * radius) / minimumSeparation),
@@ -102,14 +150,14 @@ export function layoutAgentSystem(
 			);
 			if (bandNodes.length === 0) continue;
 			const bandRadius = Math.max(
-				radius + band * 72,
+				radius + band * bandStep,
 				(bandNodes.length * minimumSeparation) / (Math.PI * 2),
 			);
 			orbitRadii.push(bandRadius);
 			const phase = stableAgentAngle(`${system.id}:${depth}`, band);
 			for (const [index, node] of bandNodes.entries()) {
 				const angle = phase + (index / bandNodes.length) * Math.PI * 2;
-				const nodeRadius = nodeRadiusForDepth(node.depth);
+				const nodeRadius = nodeRadiusForDepth(node, childCounts.get(node.id) ?? 0);
 				nodeLayouts.push({
 					nodeId: node.id,
 					x: centerX + Math.cos(angle) * bandRadius,
@@ -147,54 +195,49 @@ interface PlacedSystem {
 }
 
 function packSystems(systems: AgentSystemProjection[]): PlacedSystem[] {
-	const ordered = [...systems].sort((left, right) => left.id.localeCompare(right.id));
-	const placed: PlacedSystem[] = [];
-	for (const [index, system] of ordered.entries()) {
-		const local = layoutAgentSystem(system);
-		if (index === 0) {
-			placed.push({ system, layout: local, x: 0, y: 0 });
-			continue;
-		}
-		let x = 0;
-		let y = 0;
-		let accepted = false;
-		for (let attempt = 1; attempt <= 512; attempt += 1) {
-			const angle = stableAgentAngle(system.id) + attempt * GOLDEN_ANGLE;
-			const distance =
-				Math.max(
-					240,
-					...placed.map((item) => item.layout.radius + local.radius + SYSTEM_GAP),
-				) +
-				Math.sqrt(attempt) * 92;
-			const candidateX = Math.cos(angle) * distance;
-			const candidateY = Math.sin(angle) * distance;
-			const collides = placed.some((item) => {
-				const dx = candidateX - item.x;
-				const dy = candidateY - item.y;
-				return (
-					Math.sqrt(dx * dx + dy * dy) <
-					item.layout.radius + local.radius + SYSTEM_GAP
-				);
+	// The first system is the most recently active one because the projection is
+	// already sorted by last activity. Give it the quiet centre position, then
+	// place the rest on deterministic rings. The old golden-angle retry loop
+	// could push a later cluster much farther away than necessary, which made
+	// every root shrink when the overview fitted the whole field.
+	const ordered = [...systems];
+	const locals = ordered.map((system) => layoutAgentSystem(system));
+	if (ordered.length === 0) return [];
+	const placed: PlacedSystem[] = [
+		{ system: ordered[0]!, layout: locals[0]!, x: 0, y: 0 },
+	];
+	if (ordered.length === 1) return placed;
+
+	const largestRadius = Math.max(...locals.map((layout) => layout.radius));
+	const first = placed[0]!;
+	const phase = stableAgentAngle("agent-universe-systems");
+	let cursor = 1;
+	let ring = 0;
+	let previousRingRadius = 0;
+	while (cursor < ordered.length) {
+		const count = Math.min(8 + ring * 4, ordered.length - cursor);
+		const ringRadius = Math.max(
+			ring === 0
+				? first.layout.radius + largestRadius + SYSTEM_GAP
+				: previousRingRadius + largestRadius * 2 + SYSTEM_GAP,
+			count > 1
+				? (largestRadius + SYSTEM_GAP / 2) / Math.sin(Math.PI / count)
+				: 0,
+		);
+		for (let index = 0; index < count; index += 1) {
+			const system = ordered[cursor]!;
+			const local = locals[cursor]!;
+			const angle = phase + ring * 0.37 + (index / count) * Math.PI * 2;
+			placed.push({
+				system,
+				layout: local,
+				x: Math.cos(angle) * ringRadius,
+				y: Math.sin(angle) * ringRadius,
 			});
-			if (!collides) {
-				x = candidateX;
-				y = candidateY;
-				accepted = true;
-				break;
-			}
+			cursor += 1;
 		}
-		if (!accepted) {
-			const fallbackAngle = stableAgentAngle(`${system.id}:fallback`);
-			const distance =
-				Math.max(
-					240,
-					...placed.map((item) => item.layout.radius + local.radius + SYSTEM_GAP),
-				) +
-				(placed.length + 1) * 120;
-			x = Math.cos(fallbackAngle) * distance;
-			y = Math.sin(fallbackAngle) * distance;
-		}
-		placed.push({ system, layout: local, x, y });
+		previousRingRadius = ringRadius;
+		ring += 1;
 	}
 	return placed;
 }
@@ -237,7 +280,7 @@ export function layoutAgentUniverse(
 	);
 	const boundsWidth = Math.max(1, bounds.maxX - bounds.minX);
 	const boundsHeight = Math.max(1, bounds.maxY - bounds.minY);
-	const margin = Math.min(96, Math.max(42, Math.min(safeWidth, safeHeight) * 0.08));
+	const margin = Math.min(72, Math.max(24, Math.min(safeWidth, safeHeight) * 0.05));
 	const availableWidth = Math.max(1, safeWidth - margin * 2);
 	const availableHeight = Math.max(1, safeHeight - margin * 2);
 	const scale = Math.min(

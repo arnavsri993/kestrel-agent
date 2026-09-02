@@ -72,6 +72,26 @@ describe("agent universe layout", () => {
 		}
 	});
 
+	it("gives working and structurally important sessions more visual weight", () => {
+		const sessions = makeSessions(2).map((session) => ({
+			...session,
+			status: session.id.endsWith("child-00")
+				? ("completed" as const)
+				: ("active" as const),
+		}));
+		const snapshot = projectAgentUniverse(sessions);
+		const layout = layoutAgentUniverse(snapshot, 1200, 700).systems[0]!;
+		const completed = layout.nodeLayouts.find(
+			(node) => node.nodeId === `${root.id}-child-00`,
+		)!;
+		const active = layout.nodeLayouts.find(
+			(node) => node.nodeId === `${root.id}-child-01`,
+		)!;
+		const rootLayout = layout.nodeLayouts.find((node) => node.nodeId === root.id)!;
+		expect(active.radius).toBeGreaterThan(completed.radius);
+		expect(rootLayout.radius).toBeGreaterThan(58);
+	});
+
 	it("packs multiple systems without overlapping their bounding radii", () => {
 		const sessions = [
 			...makeSessions(3, "system-a"),

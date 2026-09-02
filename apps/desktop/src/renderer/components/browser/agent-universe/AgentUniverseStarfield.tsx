@@ -42,31 +42,20 @@ function buildLayer(
 	if (!context) return { ...layer, tile };
 
 	const area = (pixelWidth * pixelHeight) / (dpr * dpr);
-	const baseCount = Math.round(clamp(area / 10_500, 58, 168));
+	// A map texture should sit behind the work, not compete with it like a
+	// screensaver. Keep the field sparse and let the runtime bodies carry the
+	// visual signal.
+	const baseCount = Math.round(clamp(area / 18_000, 24, 80));
 	const count = Math.round(baseCount * layer.density);
 	const random = seededRandom(layer.seed ^ pixelWidth ^ (pixelHeight << 1));
 	for (let index = 0; index < count; index += 1) {
 		const sizeRoll = random();
 		const brightnessRoll = random();
-		const radius = (0.35 + Math.pow(sizeRoll, 2.8) * 1.45) * dpr;
-		const alpha = 0.1 + Math.pow(brightnessRoll, 2.7) * 0.72;
+		const radius = (0.24 + Math.pow(sizeRoll, 2.8) * 0.7) * dpr;
+		const alpha = 0.03 + Math.pow(brightnessRoll, 2.7) * 0.19;
 		const x = random() * pixelWidth;
 		const y = random() * pixelHeight;
-		const warm = random() > 0.84;
-		const red = warm ? 245 : 231;
-		const green = warm ? 241 : 235;
-		const blue = warm ? 230 : 243;
-		const focal = brightnessRoll > 0.9 && radius > 1.15 * dpr;
-		if (focal) {
-			const halo = context.createRadialGradient(x, y, 0, x, y, radius * 5.5);
-			halo.addColorStop(0, `rgba(${red}, ${green}, ${blue}, ${alpha * 0.42})`);
-			halo.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0)`);
-			context.fillStyle = halo;
-			context.beginPath();
-			context.arc(x, y, radius * 5.5, 0, Math.PI * 2);
-			context.fill();
-		}
-		context.fillStyle = `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+		context.fillStyle = `rgba(224, 230, 238, ${alpha})`;
 		context.beginPath();
 		context.arc(x, y, radius, 0, Math.PI * 2);
 		context.fill();
@@ -86,47 +75,19 @@ export function AgentUniverseStarfield({
 		if (!canvas) return;
 		const context = canvas.getContext("2d");
 		if (!context) return;
-		let animationFrame: number | null = null;
 		let renderedLayers: RenderedStarLayer[] = [];
 		let pixelWidth = 0;
 		let pixelHeight = 0;
 		let dpr = 1;
-		let running = false;
-		let animationStartedAt: number | null = null;
 
-		const stop = () => {
-			running = false;
-			animationStartedAt = null;
-			if (animationFrame !== null) {
-				window.cancelAnimationFrame(animationFrame);
-				animationFrame = null;
-			}
-		};
-
-		const draw = (elapsedMs: number) => {
+		const draw = () => {
 			if (!pixelWidth || !pixelHeight) return;
 			context.clearRect(0, 0, pixelWidth, pixelHeight);
 			for (const layer of renderedLayers) {
-				const offset = reducedMotion
-					? 0
-					: ((elapsedMs / 1_000) * layer.speed * dpr) % pixelWidth;
-				context.drawImage(layer.tile, offset, 0);
-				if (!reducedMotion && offset > 0)
-					context.drawImage(layer.tile, offset - pixelWidth, 0);
+				// The field is intentionally static. Motion belongs to real agent
+				// state, not to an ambient screensaver running behind the work.
+				context.drawImage(layer.tile, 0, 0);
 			}
-		};
-
-		const animate = (time: number) => {
-			if (!running || document.hidden) return;
-			animationStartedAt ??= time;
-			draw(time - animationStartedAt);
-			animationFrame = window.requestAnimationFrame(animate);
-		};
-
-		const start = () => {
-			if (reducedMotion || document.hidden || running || !pixelWidth) return;
-			running = true;
-			animationFrame = window.requestAnimationFrame(animate);
 		};
 
 		const resize = () => {
@@ -142,27 +103,15 @@ export function AgentUniverseStarfield({
 			renderedLayers = STAR_LAYERS.map((layer) =>
 				buildLayer(layer, pixelWidth, pixelHeight, dpr),
 			);
-			stop();
-			draw(0);
-			start();
+			draw();
 		};
 
 		const observer = new ResizeObserver(resize);
 		observer.observe(canvas);
-		const onVisibilityChange = () => {
-			if (document.hidden) stop();
-			else {
-				draw(0);
-				start();
-			}
-		};
-		document.addEventListener("visibilitychange", onVisibilityChange);
 		resize();
 
 		return () => {
-			stop();
 			observer.disconnect();
-			document.removeEventListener("visibilitychange", onVisibilityChange);
 		};
 	}, [reducedMotion]);
 

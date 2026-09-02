@@ -9867,6 +9867,9 @@ export function App() {
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
 	);
+	const [agentUniverseRailOpen, setAgentUniverseRailOpen] = useState(
+		() => localStorage.getItem("kestrel:agent-universe-rail") === "open",
+	);
 	const [settingsSectionRequest, setSettingsSectionRequest] = useState<{
 		section: SettingsSection | null;
 		requestId: number;
@@ -10060,7 +10063,14 @@ export function App() {
 	const revealAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
-	}, []);
+		const activeTab = browser.state?.tabs.find(
+			(tab) => tab.id === browser.state?.activeTabId,
+		);
+		if (parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent") {
+			setAgentUniverseRailOpen(true);
+			localStorage.setItem("kestrel:agent-universe-rail", "open");
+		}
+	}, [browser]);
 	const acceptExternalIntake = useCallback(
 		(intake: ExternalIntake) => {
 			setExternalIntake(intake);
@@ -10210,6 +10220,26 @@ export function App() {
 		void openAppPage("approvals");
 	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
+		const activeTab = browser.state?.tabs.find(
+			(tab) => tab.id === browser.state?.activeTabId,
+		);
+		const onAgentUniverse = parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent";
+		if (onAgentUniverse) {
+			setAgentUniverseRailOpen((current) => {
+				const next = !current;
+				localStorage.setItem(
+					"kestrel:agent-universe-rail",
+					next ? "open" : "collapsed",
+				);
+				window.requestAnimationFrame(() => {
+					document
+						.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
+						?.focus();
+				});
+				return next;
+			});
+			return;
+		}
 		setAgentSidebarOpen((current) => {
 			const next = !current;
 			localStorage.setItem(
@@ -10223,7 +10253,7 @@ export function App() {
 			});
 			return next;
 		});
-	}, []);
+	}, [browser]);
 	const openBrowser = useCallback(() => {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
@@ -10544,8 +10574,8 @@ export function App() {
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
 	const showKestrelSidebar =
-		!activeBrowserTab?.url ||
-		isKestrelAppPageUrl(activeBrowserTab.url);
+		currentAppPage?.id !== "agent" &&
+		(!activeBrowserTab?.url || isKestrelAppPageUrl(activeBrowserTab.url));
 	const activeFileAttachment = activeBrowserTab?.file
 		? attachmentForExternalFile(activeBrowserTab.file)
 		: undefined;
@@ -10588,6 +10618,8 @@ export function App() {
 		localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
 	}
 	const appPageId = currentAppPage?.id;
+	const presentedAgentSidebarOpen =
+		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
 	const appPage = appPageId ? (
 		<motion.div
 			key={appPageId}
@@ -10644,14 +10676,15 @@ export function App() {
 					sessions={runtimeSessions}
 					sessionLoadState={runtimeSessionsLoadState}
 					activities={agentUniverseActivities}
-					activeSessionId={activeRuntimeSessionId}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
 					onNewTask={() => startNewAgent()}
 					onOpenSession={openSidebarSession}
 					onOpenApprovals={() => navigate("approvals")}
 					onOpenWork={() => navigate("work")}
+					onToggleAgentSidebar={toggleAgentSidebar}
 					onRetrySessions={() => void refreshRuntimeSessions().catch(() => undefined)}
+					onBack={() => void openBrowserWorkspace()}
 				/>
 			)}
 			{appPageId === "projects" && (
@@ -10757,7 +10790,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${presentedAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
@@ -10788,7 +10821,7 @@ export function App() {
 						agentName={activeAgentName}
 						greetingName={greetingName}
 						navigationSidebar={kestrelNavigation}
-						agentOpen={agentSidebarOpen}
+						agentOpen={presentedAgentSidebarOpen}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
@@ -10831,7 +10864,7 @@ export function App() {
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
-					collapsed={!agentSidebarOpen}
+					collapsed={!presentedAgentSidebarOpen}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}

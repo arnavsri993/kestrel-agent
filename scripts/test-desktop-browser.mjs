@@ -129,6 +129,9 @@ async function launch() {
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
+	// Agent Universe deliberately animates active workers. Keep this browser
+	// integration test deterministic while still exercising the live surface.
+	await page.emulateMedia({ reducedMotion: "reduce" });
 	return page;
 }
 
@@ -1208,15 +1211,22 @@ try {
 	await page
 		.getByRole("heading", { name: "Visible browser worker", exact: true })
 		.waitFor();
-	await page.getByRole("button", { name: "Close inspector" }).click();
-	await page.getByRole("button", { name: "List", exact: true }).click();
-	await page.getByRole("heading", { name: "Task library", exact: true }).waitFor();
-	const taskRow = page.getByRole("button", {
-		name: /Visible browser test, Open/,
-	});
-	await taskRow.waitFor();
-	await taskRow.click();
-	assert.equal(await taskRow.getAttribute("aria-current"), "page");
+	await page
+		.getByRole("button", { name: "Close Visible browser worker context" })
+		.click();
+	assert.equal(
+		await page.getByRole("button", { name: "List", exact: true }).count(),
+		0,
+		"Agent should have one spatial surface, not a list mode",
+	);
+	const workerNode = page.locator(`[data-node-id="${workerSessionId}"]`);
+	await workerNode.focus();
+	await workerNode.press("Enter");
+	await page.getByRole("heading", { name: "Visible browser worker", exact: true }).waitFor();
+	await page.getByRole("button", { name: "Open task", exact: true }).click();
+	await page.waitForFunction(
+		() => document.activeElement?.id === "runtime-prompt",
+	);
 	await page.getByRole("tab", { name: /Page one/ }).first().click();
 	await waitForBrowserState(
 		(value) => {

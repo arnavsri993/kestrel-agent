@@ -6,15 +6,10 @@ import type {
 } from "@kestrel/shared-types";
 import { useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-	agentStateLabel,
-	type AgentSessionFilter,
-} from "../../agent-workspace";
+import { agentStateLabel } from "../../agent-workspace";
 import { Icon } from "../Icon";
-import { Button, PageFrame } from "../ui";
+import { Button } from "../ui";
 import { SurfaceBackButton } from "./SurfaceBackButton";
-import { AgentTaskListView } from "./agent-universe/AgentTaskListView";
-import { AgentUniverseInspector } from "./agent-universe/AgentUniverseInspector";
 import { AgentUniverseScene } from "./agent-universe/AgentUniverseScene";
 import { AgentUniverseStarfield } from "./agent-universe/AgentUniverseStarfield";
 import {
@@ -22,10 +17,14 @@ import {
 	type AgentUniverseActivity,
 	type AgentUniverseSnapshot,
 } from "./agent-universe/agent-universe-model";
+import {
+	readAgentUniverseSystemColors,
+	type AgentUniverseColorId,
+	writeAgentUniverseSystemColors,
+} from "./agent-universe/agent-universe-theme";
 import "./surface-pages.css";
 import "./agent-universe/agent-universe.css";
 
-type AgentUniverseView = "universe" | "list";
 type SessionLoadState = "loading" | "ready" | "error";
 
 function AgentUniverseEmptyState({ onNewTask }: { onNewTask(): void }) {
@@ -125,7 +124,6 @@ function AgentUniverseRuntimeStatus({
 
 export function AgentWorkspace({
 	sessions,
-	activeSessionId,
 	agentState,
 	pendingApprovals,
 	activities = [],
@@ -135,10 +133,10 @@ export function AgentWorkspace({
 	onOpenApprovals,
 	onOpenWork,
 	onRetrySessions,
+	onToggleAgentSidebar,
 	onBack,
 }: {
 	sessions: RuntimeSession[];
-	activeSessionId: string | null;
 	agentState: AgentState;
 	pendingApprovals: number;
 	activities?: AgentUniverseActivity[];
@@ -148,16 +146,16 @@ export function AgentWorkspace({
 	onOpenApprovals(): void;
 	onOpenWork(): void;
 	onRetrySessions?(): void;
+	onToggleAgentSidebar?(): void;
 	onBack?(): void;
 }) {
-	const [view, setView] = useState<AgentUniverseView>("universe");
 	const [query, setQuery] = useState("");
-	const [filter, setFilter] = useState<AgentSessionFilter>("all");
 	const [focusedSystemId, setFocusedSystemId] = useState<string | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [runsBySession, setRunsBySession] = useState<Record<string, AgentRun[]>>({});
 	const [runsLoading, setRunsLoading] = useState(false);
 	const [runsError, setRunsError] = useState("");
+	const [systemColors, setSystemColors] = useState(readAgentUniverseSystemColors);
 	const reducedMotion = Boolean(useReducedMotion());
 
 	const runsMap = useMemo(
@@ -175,7 +173,6 @@ export function AgentWorkspace({
 		? universe.nodes.find((node) => node.id === selectedNodeId)
 		: undefined;
 	const hasSystems = universe.systems.length > 0;
-	const hasInspector = Boolean(focusedSystem);
 
 	useEffect(() => {
 		if (focusedSystemId && !focusedSystem) setFocusedSystemId(null);
@@ -188,7 +185,14 @@ export function AgentWorkspace({
 			setRunsError("");
 			return;
 		}
-		if (runsBySession[selectedNode.id]) return;
+		if (runsBySession[selectedNode.id]) {
+			// A cached selection can follow a still-loading uncached selection.
+			// Reconcile the shared loading flags before returning so the new
+			// context surface never inherits the previous request's state.
+			setRunsLoading(false);
+			setRunsError("");
+			return;
+		}
 		let active = true;
 		setRunsLoading(true);
 		setRunsError("");
@@ -226,7 +230,7 @@ export function AgentWorkspace({
 			if (!node || !system) return;
 			if (focusedSystemId !== systemId) {
 				setFocusedSystemId(systemId);
-				setSelectedNodeId(node.id === system.rootNodeId ? null : nodeId);
+				setSelectedNodeId(nodeId);
 				return;
 			}
 			setSelectedNodeId(nodeId);
@@ -234,78 +238,52 @@ export function AgentWorkspace({
 		[focusedSystemId, universe.nodes, universe.systems],
 	);
 
+	const updateSystemColor = useCallback(
+		(systemId: string, colorId: AgentUniverseColorId) => {
+			setSystemColors((current) => {
+				const next = { ...current, [systemId]: colorId };
+				writeAgentUniverseSystemColors(next);
+				return next;
+			});
+		},
+		[],
+	);
+
+	const focusSearchResult = useCallback(() => {
+		const needle = query.trim().toLocaleLowerCase();
+		if (!needle) return;
+		for (const system of universe.systems) {
+			const systemMatches = [system.name, system.workspaceName ?? ""]
+				.join(" ")
+				.toLocaleLowerCase()
+				.includes(needle);
+			const node = system.nodes.find(
+				(item) =>
+					[item.name, item.workspaceName ?? ""]
+						.join(" ")
+						.toLocaleLowerCase()
+						.includes(needle),
+			);
+			if (systemMatches || node) {
+				setFocusedSystemId(system.id);
+				setSelectedNodeId(node?.id ?? system.rootNodeId);
+				return;
+			}
+		}
+	}, [query, universe.systems]);
+
 	const handleBackgroundClick = useCallback(() => {
 		if (selectedNodeId) setSelectedNodeId(null);
 	}, [selectedNodeId]);
 
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLElement>) => {
-			if (event.key !== "Escape" || view !== "universe") return;
+			if (event.key !== "Escape") return;
 			event.preventDefault();
 			if (selectedNodeId) setSelectedNodeId(null);
 			else if (focusedSystemId) setFocusedSystemId(null);
 		},
-		[focusedSystemId, selectedNodeId, view],
-	);
-
-	const pageActions = (
-		<>
-			{onBack ? <SurfaceBackButton onBack={onBack} /> : null}
-			{hasSystems ? (
-				<>
-					{view === "universe" && focusedSystem ? (
-						<Button
-							variant="quiet"
-							size="compact"
-							onClick={() => {
-								setSelectedNodeId(null);
-								setFocusedSystemId(null);
-							}}
-						>
-							<Icon name="back" />
-							All systems
-						</Button>
-					) : null}
-					<div
-						className="agent-universe-view-switch"
-						role="group"
-						aria-label="Agent view"
-					>
-						<button
-							type="button"
-							aria-pressed={view === "universe"}
-							onClick={() => setView("universe")}
-						>
-							Universe
-						</button>
-						<button
-							type="button"
-							aria-pressed={view === "list"}
-							onClick={() => setView("list")}
-						>
-							List
-						</button>
-					</div>
-					<label className="agent-universe-search">
-						<Icon name="search" />
-						<span className="sr-only">Find a system or task</span>
-						<input
-							type="search"
-							value={query}
-							placeholder="Find systems or tasks"
-							onChange={(event) => setQuery(event.target.value)}
-						/>
-					</label>
-					<Button variant="quiet" size="compact" onClick={onOpenWork}>
-						<Icon name="work" />
-						Work
-					</Button>
-				</>
-			) : null}
-			<Button variant="solid" size="compact" onClick={onNewTask}>
-				Start a task
-			</Button>
-		</>
+		[focusedSystemId, selectedNodeId],
 	);
 
 	return (
@@ -314,90 +292,138 @@ export function AgentWorkspace({
 			aria-labelledby="agent-workspace-title"
 			onKeyDown={handleKeyDown}
 		>
-			<PageFrame
-				as="div"
-				eyebrow="Operational map"
-				title="Agent Universe"
-				titleId="agent-workspace-title"
-				description="Real sessions and delegated work, mapped from Kestrel’s local runtime."
-				measure="full"
-				actions={pageActions}
-			>
-				{hasSystems ? (
-					<AgentUniverseRuntimeStatus
-						state={agentState}
-						pendingApprovals={pendingApprovals}
-						onOpenApprovals={onOpenApprovals}
-					/>
-				) : null}
+			<h1 id="agent-workspace-title" className="sr-only">
+				Agent Universe
+			</h1>
+			<div className="agent-universe-stage">
+				<div className="agent-universe-visual-plane">
+					<AgentUniverseStarfield reducedMotion={reducedMotion} />
+					{sessionLoadState === "loading" && !hasSystems ? (
+						<AgentUniverseLoadingState />
+					) : sessionLoadState === "error" && !hasSystems ? (
+						<AgentUniverseErrorState
+							{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
+						/>
+					) : !hasSystems ? (
+						<AgentUniverseEmptyState onNewTask={onNewTask} />
+					) : (
+						<AgentUniverseScene
+							snapshot={universe}
+							focusedSystemId={focusedSystemId}
+							selectedNodeId={selectedNodeId}
+							query={query}
+							activities={activities}
+							reducedMotion={reducedMotion}
+							systemColors={systemColors}
+							pendingApprovals={pendingApprovals}
+							{...(selectedNode && runsBySession[selectedNode.id]
+								? { contextRuns: runsBySession[selectedNode.id] }
+								: {})}
+							contextRunsLoading={Boolean(selectedNode && runsLoading)}
+							{...(selectedNode && runsError
+								? { contextRunsError: runsError }
+								: {})}
+							onSystemColorChange={updateSystemColor}
+							onNodeActivate={activateNode}
+							onBackgroundClick={handleBackgroundClick}
+							onCloseContext={() => setSelectedNodeId(null)}
+							onOpenSession={onOpenSession}
+							onOpenApprovals={onOpenApprovals}
+						/>
+					)}
+				</div>
+
+				<header className="agent-universe-mapbar">
+					<div className="agent-universe-map-identity">
+						{onBack ? <SurfaceBackButton onBack={onBack} /> : null}
+						<div>
+							<p className="agent-universe-map-eyebrow">Agent Universe</p>
+							<p className="agent-universe-map-summary">
+								{hasSystems
+									? `${universe.systems.length} system${universe.systems.length === 1 ? "" : "s"} · ${universe.sessionCount} session${universe.sessionCount === 1 ? "" : "s"}`
+									: "A blank field for the work you start here"}
+							</p>
+						</div>
+					</div>
+					<div className="agent-universe-map-actions">
+						{focusedSystem ? (
+							<Button
+								variant="quiet"
+								size="compact"
+								onClick={() => {
+									setSelectedNodeId(null);
+									setFocusedSystemId(null);
+								}}
+							>
+								<Icon name="back" />
+								All systems
+							</Button>
+						) : null}
+						{hasSystems ? (
+							<>
+								<label className="agent-universe-search">
+									<Icon name="search" />
+									<span className="sr-only">Find a system or task</span>
+									<input
+										type="search"
+										value={query}
+										placeholder="Find agents or systems"
+										onChange={(event) => setQuery(event.target.value)}
+										onKeyDown={(event) => {
+											if (event.key !== "Enter") return;
+											event.preventDefault();
+											focusSearchResult();
+										}}
+									/>
+								</label>
+								<Button variant="quiet" size="compact" onClick={onOpenWork}>
+									<Icon name="work" />
+									Work
+								</Button>
+							</>
+						) : null}
+						{onToggleAgentSidebar ? (
+							<button
+								type="button"
+								className="agent-universe-rail-toggle"
+								aria-label="Open agent conversation rail"
+								title="Open agent conversation rail"
+								onClick={onToggleAgentSidebar}
+							>
+								<Icon name="chat" />
+							</button>
+						) : null}
+						<button
+							type="button"
+							className="agent-universe-new-task"
+							aria-label="Start a new task"
+							title="Start a new task"
+							onClick={onNewTask}
+						>
+							<Icon name="plus" />
+						</button>
+					</div>
+				</header>
+
 				{hasSystems && sessionLoadState !== "ready" ? (
 					<AgentUniverseSessionNotice
 						state={sessionLoadState}
 						{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
 					/>
 				) : null}
-				{sessionLoadState === "loading" && !hasSystems ? (
-					<div className="agent-universe-stage agent-universe-stage-state">
-						<AgentUniverseStarfield reducedMotion={reducedMotion} />
-						<AgentUniverseLoadingState />
-					</div>
-				) : sessionLoadState === "error" && !hasSystems ? (
-					<div className="agent-universe-stage agent-universe-stage-state">
-						<AgentUniverseStarfield reducedMotion={reducedMotion} />
-						<AgentUniverseErrorState
-							{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
+				{hasSystems ? (
+					<div className="agent-universe-map-footer">
+						<AgentUniverseRuntimeStatus
+							state={agentState}
+							pendingApprovals={pendingApprovals}
+							onOpenApprovals={onOpenApprovals}
 						/>
+						<span className="agent-universe-map-hint">
+							Drag the field to explore
+						</span>
 					</div>
-				) : !hasSystems ? (
-					<div className="agent-universe-stage">
-						<AgentUniverseStarfield reducedMotion={reducedMotion} />
-						<AgentUniverseEmptyState onNewTask={onNewTask} />
-					</div>
-				) : view === "list" ? (
-					<AgentTaskListView
-						sessions={sessions}
-						query={query}
-						filter={filter}
-						activeSessionId={activeSessionId}
-						onFilterChange={setFilter}
-						onNewTask={onNewTask}
-						onOpenSession={onOpenSession}
-					/>
-				) : (
-					<div
-						className={`agent-universe-stage${hasInspector ? " has-inspector" : ""}`}
-					>
-						<div className="agent-universe-visual-plane">
-							<AgentUniverseStarfield reducedMotion={reducedMotion} />
-							<AgentUniverseScene
-								snapshot={universe}
-								focusedSystemId={focusedSystemId}
-								selectedNodeId={selectedNodeId}
-								query={query}
-								activities={activities}
-								reducedMotion={reducedMotion}
-								onNodeActivate={activateNode}
-								onBackgroundClick={handleBackgroundClick}
-							/>
-						</div>
-						{focusedSystem ? (
-							<AgentUniverseInspector
-								system={focusedSystem}
-								{...(selectedNode ? { node: selectedNode } : {})}
-								{...(selectedNode && runsBySession[selectedNode.id]
-									? { runs: runsBySession[selectedNode.id] }
-									: {})}
-								runsLoading={runsLoading}
-								{...(runsError ? { runsError } : {})}
-								pendingApprovals={pendingApprovals}
-								onClose={() => setSelectedNodeId(null)}
-								onOpenSession={onOpenSession}
-								onOpenApprovals={onOpenApprovals}
-							/>
-						) : null}
-					</div>
-				)}
-			</PageFrame>
+				) : null}
+			</div>
 		</main>
 	);
 }

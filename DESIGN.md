@@ -90,6 +90,48 @@ Engineer repositories. The full evidence and decision record is in
   Kestrel's actual scheduled work, agent sessions, and folder-backed projects,
   while the graphite ramp and approval boundary remain intact.
 
+## Agent Universe spatial surface — September 2026
+
+- **Thesis:** `kestrel://agent` is a field of real runtime systems first, with
+  the browser shell and navigation acting as a quiet frame rather than a page
+  scaffold. A person should be able to understand the topology at a glance,
+  then move closer to a system or delegated session without losing spatial
+  continuity.
+- **Composition:** the default Universe is an edge-to-edge map plane below the
+  browser chrome. Title, search, map controls, and task creation are compact
+  floating instrument controls. The persistent conversation rail stays
+  mounted and can be revealed without reclaiming the map's identity; opening a
+  task still returns to the established transcript surface rather than adding
+  a second history view.
+- **Camera:** pointer drag pans the field, wheel/pinch-style input zooms around
+  the pointer, and focused systems/nodes move to a stable inspection anchor.
+  Zoom in/out and fit/reset controls plus arrow-key and `+`/`-`/`0` equivalents
+  make the direct-manipulation surface keyboard reachable. Camera state is
+  ephemeral; runtime identity and hierarchy remain in the deterministic
+  renderer projection.
+- **Depth and restraint:** a sparse static field, thin ownership edges, scale,
+  and progressive labels establish depth. Systems
+  use a deliberately limited red/yellow/green palette inspired by the window's
+  traffic lights; each system receives a stable identity color until the user
+  chooses another, while status is communicated separately through size,
+  opacity, and rim treatment. Bodies are matte single-color objects with a
+  quiet graphite core, not neon or glass.
+  There are no fake planets, provider-color badges, fabricated metrics, or
+  perpetual spectacle. Selection and focus add emphasis; they do not mutate or
+  invent runtime state.
+- **Motion roles:** spatial continuity for focus and camera changes, direct
+  manipulation for pan/zoom, and calm state feedback for real active work or
+  recent runtime events. Active workers use a slow, eased out-and-back
+  micro-drift capped at roughly two pixels plus a restrained rim/aura breath;
+  inactive workers do not move. There are no speed jumps, random walks, or
+  traveling particles. Waiting, failed,
+  completed, or cancelled sessions are still, darker, and smaller. Reduced
+  motion removes travel, scale, and pulse while keeping the state legible.
+- **Why this is not generic:** the scene is derived from Kestrel's actual
+  `RuntimeSession` ownership and status model, while exact task history,
+  inspector routing details, approvals, and persistent agent conversation all
+  remain reachable through the same product shell.
+
 ## New Tab widget shelf — August 2026
 
 - Thesis: New Tab should offer a calm starting surface, not a dashboard. The

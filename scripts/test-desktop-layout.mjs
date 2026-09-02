@@ -1389,6 +1389,7 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 		localStorage.setItem("kestrel:navigation-sidebar", "open");
 		localStorage.setItem("kestrel:agent-sidebar", "collapsed");
+		localStorage.setItem("kestrel:agent-universe-rail", "collapsed");
 	});
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();

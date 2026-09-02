@@ -18,6 +18,28 @@ export const KESTREL_STATE_TRANSITION = {
 	ease: [0.2, 0.8, 0.2, 1] as const,
 };
 
+/**
+ * An interrupted rail transition may have accumulated a large velocity when
+ * the window is running at a lower refresh rate. Carrying that value into the
+ * opposite direction lets one delayed frame collapse the rail to an endpoint.
+ * Preserve the gesture's direction, but hand the new spring a bounded amount
+ * of momentum so reversal remains visibly continuous.
+ */
+export const MAX_INTERRUPTED_PANEL_VELOCITY = 720;
+
+export function handoffSpringVelocity(
+	position: number,
+	velocity: number,
+	target: number,
+): number {
+	if (!Number.isFinite(velocity) || !Number.isFinite(position) || !Number.isFinite(target))
+		return 0;
+	return Math.min(
+		MAX_INTERRUPTED_PANEL_VELOCITY,
+		Math.max(-MAX_INTERRUPTED_PANEL_VELOCITY, velocity),
+	);
+}
+
 export function springDampingRatio({
 	stiffness,
 	damping,
@@ -53,12 +75,25 @@ export function springStep(
 	config = KESTREL_CRITICAL_SPRING,
 ): { position: number; velocity: number } {
 	const delta = Math.min(1 / 30, Math.max(0, deltaSeconds));
-	const acceleration =
-		(-config.stiffness * (position - target) - config.damping * velocity) /
-		config.mass;
-	const nextVelocity = velocity + acceleration * delta;
+	// Semi-implicit Euler is intentionally integrated in small slices. A
+	// throttled/background window can deliver a 30 Hz frame; applying the full
+	// delta in one step makes this otherwise-critical spring overshoot and
+	// oscillate. The slices keep the physical contract stable without changing
+	// the public frame cadence.
+	const sliceCount = Math.max(1, Math.ceil(delta / (1 / 120)));
+	const slice = delta / sliceCount;
+	let nextPosition = position;
+	let nextVelocity = velocity;
+	for (let index = 0; index < sliceCount; index += 1) {
+		const acceleration =
+			(-config.stiffness * (nextPosition - target) -
+				config.damping * nextVelocity) /
+			config.mass;
+		nextVelocity += acceleration * slice;
+		nextPosition += nextVelocity * slice;
+	}
 	return {
-		position: position + nextVelocity * delta,
+		position: nextPosition,
 		velocity: nextVelocity,
 	};
 }
