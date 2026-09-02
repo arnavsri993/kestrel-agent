@@ -599,6 +599,7 @@ describe("model provider adapters", () => {
 												name: "workspace.read",
 												args: { path: "notes.md" },
 											},
+											thoughtSignature: "signature-1",
 										},
 									],
 								},
@@ -654,13 +655,94 @@ describe("model provider adapters", () => {
 			responseId: "gemini-response",
 			text: "At 00:02, ",
 			finishReason: "tool_calls",
-			toolCalls: [{ name: "workspace.read", arguments: { path: "notes.md" } }],
+			toolCalls: [
+				{
+					name: "workspace.read",
+					arguments: { path: "notes.md" },
+					thoughtSignature: "signature-1",
+				},
+			],
 			usage: {
 				inputTokens: 44,
 				outputTokens: 7,
 				cachedInputTokens: 3,
 				reasoningTokens: 2,
 			},
+		});
+	});
+
+	it("preserves Gemini thought signatures across tool continuations", async () => {
+		const requestBodies: Record<string, unknown>[] = [];
+		const baseUrl = await serve((request, response) => {
+			const chunks: Buffer[] = [];
+			request.on("data", (chunk: Buffer) => chunks.push(chunk));
+			request.on("end", () => {
+				requestBodies.push(
+					JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
+						string,
+						unknown
+					>,
+				);
+				response.writeHead(200, { "content-type": "application/json" });
+				response.end(
+					JSON.stringify({
+						candidates: [
+							{
+								finishReason: "STOP",
+								content: {
+									role: "model",
+									parts: [
+										{
+											functionCall: {
+												name: "workspace.read",
+												args: { path: "notes.md" },
+											},
+											thoughtSignature: "signature-2",
+										},
+									],
+								},
+							},
+						],
+					}),
+				);
+			});
+		});
+		const provider = new GeminiGenerateContentProvider({
+			apiKey: "gemini-secret",
+			baseUrl,
+		});
+		const tools = [
+			{
+				name: "workspace.read",
+				description: "Read notes",
+				inputSchema: { type: "object" },
+			},
+		];
+		const first = await provider.complete({
+			model: "gemini-test",
+			messages: [{ role: "user", content: textContent("Read notes") }],
+			tools,
+		});
+		const call = first.toolCalls[0]!;
+		await provider.complete({
+			model: "gemini-test",
+			messages: [
+				{ role: "user", content: textContent("Read notes") },
+				{ role: "assistant", content: [], toolCalls: [call] },
+				{
+					role: "tool",
+					content: textContent('{"ok":true}'),
+					toolCallId: call.id,
+					toolName: call.name,
+				},
+			],
+			tools,
+		});
+		const contents = requestBodies[1]?.contents as Array<Record<string, unknown>>;
+		const modelParts = (contents[1]?.parts ?? []) as Array<Record<string, unknown>>;
+		expect(modelParts[0]).toMatchObject({
+			functionCall: { name: "workspace.read", args: { path: "notes.md" } },
+			thoughtSignature: "signature-2",
 		});
 	});
 

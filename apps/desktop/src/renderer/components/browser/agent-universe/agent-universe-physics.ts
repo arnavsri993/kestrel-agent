@@ -1,10 +1,3 @@
-import {
-	agentUniverseBlobPath,
-	agentUniverseBlobTension,
-	createAgentUniverseBlobGeometry,
-	type AgentUniverseBlobGeometry,
-} from "./agent-universe-blob";
-
 export interface AgentUniversePhysicsNodeInput {
 	id: string;
 	parentId?: string;
@@ -28,7 +21,6 @@ export interface AgentUniversePhysicsNodeState extends AgentUniversePhysicsNodeI
 	y: number;
 	vx: number;
 	vy: number;
-	geometry: AgentUniverseBlobGeometry;
 }
 
 export interface AgentUniversePhysicsDragState {
@@ -45,7 +37,12 @@ export interface AgentUniversePhysicsState {
 
 export interface AgentUniversePhysicsRenderTarget {
 	body: SVGElement;
-	blob: SVGPathElement;
+}
+
+export interface AgentUniversePhysicsEdgeRenderTarget {
+	element: SVGLineElement;
+	sourceId: string;
+	targetId: string;
 }
 
 export interface AgentUniversePhysicsController {
@@ -53,6 +50,7 @@ export interface AgentUniversePhysicsController {
 		nodes: readonly AgentUniversePhysicsNodeInput[],
 		targets: ReadonlyMap<string, AgentUniversePhysicsRenderTarget>,
 		reducedMotion: boolean,
+		edges?: readonly AgentUniversePhysicsEdgeRenderTarget[],
 	): void;
 	startDrag(nodeId: string, point: AgentUniversePhysicsPoint): boolean;
 	moveDrag(point: AgentUniversePhysicsPoint): void;
@@ -187,11 +185,6 @@ function initialPhysicsState(
 			y: node.y,
 			vx: 0,
 			vy: 0,
-			geometry: createAgentUniverseBlobGeometry(
-				node.id,
-				node.radius,
-				Boolean(node.isRoot),
-			),
 		};
 	});
 	return { nodes: states, drag: null };
@@ -217,10 +210,7 @@ export function stepAgentUniversePhysics(
 	const reducedMotion = options.reducedMotion === true;
 	const byId = new Map(state.nodes.map((node) => [node.id, node]));
 	const drag = state.drag;
-	const nextNodes = state.nodes.map((node) => ({
-		...node,
-		geometry: node.geometry,
-	}));
+	const nextNodes = state.nodes.map((node) => ({ ...node }));
 	const nextById = new Map(nextNodes.map((node) => [node.id, node]));
 	const accelerations = new Map<string, AgentUniversePhysicsPoint>();
 	for (const node of nextNodes) accelerations.set(node.id, { x: 0, y: 0 });
@@ -255,7 +245,11 @@ export function stepAgentUniversePhysics(
 	// about. The early distance check makes distant pairs cheap.
 	for (let leftIndex = 0; leftIndex < nextNodes.length; leftIndex += 1) {
 		const left = nextNodes[leftIndex]!;
-		for (let rightIndex = leftIndex + 1; rightIndex < nextNodes.length; rightIndex += 1) {
+		for (
+			let rightIndex = leftIndex + 1;
+			rightIndex < nextNodes.length;
+			rightIndex += 1
+		) {
 			const right = nextNodes[rightIndex]!;
 			let dx = right.x - left.x;
 			let dy = right.y - left.y;
@@ -267,7 +261,9 @@ export function stepAgentUniversePhysics(
 				distance = 1;
 			}
 			const minimumDistance =
-				safeRadius(left.radius) + safeRadius(right.radius) + collisionGap(left, right);
+				safeRadius(left.radius) +
+				safeRadius(right.radius) +
+				collisionGap(left, right);
 			const repulsionRange = minimumDistance + NEIGHBOR_REPULSION_RANGE;
 			if (distance >= repulsionRange) continue;
 			const directionX = dx / distance;
@@ -282,8 +278,10 @@ export function stepAgentUniversePhysics(
 				Boolean(drag) ||
 				velocityMagnitude(left) > NEIGHBOR_REPULSION_SPEED ||
 				velocityMagnitude(right) > NEIGHBOR_REPULSION_SPEED ||
-				distanceBetween(left, { x: left.homeX, y: left.homeY }) > SETTLE_DISTANCE ||
-				distanceBetween(right, { x: right.homeX, y: right.homeY }) > SETTLE_DISTANCE;
+				distanceBetween(left, { x: left.homeX, y: left.homeY }) >
+					SETTLE_DISTANCE ||
+				distanceBetween(right, { x: right.homeX, y: right.homeY }) >
+					SETTLE_DISTANCE;
 			const force = overlap * 26 + (pairIsMoving ? softRepulsion * 4 : 0);
 			const leftAcceleration = accelerations.get(left.id)!;
 			const rightAcceleration = accelerations.get(right.id)!;
@@ -336,17 +334,10 @@ function hasSettled(state: AgentUniversePhysicsState): boolean {
 	});
 }
 
-function nodeParentAngle(
-	node: AgentUniversePhysicsNodeState,
-	byId: ReadonlyMap<string, AgentUniversePhysicsNodeState>,
-): number {
-	const vector = vectorToParent(node, byId);
-	return Math.atan2(vector.y, vector.x);
-}
-
 class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsController {
 	private state: AgentUniversePhysicsState = { nodes: [], drag: null };
 	private targets: ReadonlyMap<string, AgentUniversePhysicsRenderTarget> = new Map();
+	private edgeTargets: readonly AgentUniversePhysicsEdgeRenderTarget[] = [];
 	private reducedMotion = false;
 	private signature = "";
 	private frameId: number | null = null;
@@ -357,14 +348,19 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 		nodes: readonly AgentUniversePhysicsNodeInput[],
 		targets: ReadonlyMap<string, AgentUniversePhysicsRenderTarget>,
 		reducedMotion: boolean,
+		edges: readonly AgentUniversePhysicsEdgeRenderTarget[] = [],
 	): void {
 		// React StrictMode replays effect setup/cleanup once in development. A
 		// later update is a safe signal that this controller is mounted again.
 		this.destroyed = false;
 		this.reducedMotion = reducedMotion;
 		this.targets = targets;
+		this.edgeTargets = edges;
 		const signature = nodes
-			.map((node) => `${node.id}:${node.parentId ?? ""}:${node.x}:${node.y}:${node.radius}:${node.isRoot ? 1 : 0}`)
+			.map(
+				(node) =>
+					`${node.id}:${node.parentId ?? ""}:${node.x}:${node.y}:${node.radius}:${node.isRoot ? 1 : 0}`,
+			)
 			.join("|");
 		if (signature !== this.signature) {
 			this.signature = signature;
@@ -406,7 +402,9 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 
 	cancelDrag(): void {
 		if (!this.state.drag) return;
-		const node = this.state.nodes.find((candidate) => candidate.id === this.state.drag?.nodeId);
+		const node = this.state.nodes.find(
+			(candidate) => candidate.id === this.state.drag?.nodeId,
+		);
 		if (node) {
 			node.x = node.homeX;
 			node.y = node.homeY;
@@ -427,6 +425,7 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 		if (this.frameId !== null) cancelAnimationFrame(this.frameId);
 		this.frameId = null;
 		this.targets = new Map();
+		this.edgeTargets = [];
 	}
 
 	private ensureFrame(): void {
@@ -470,31 +469,29 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 			if (!target) continue;
 			const deltaX = node.x - node.homeX;
 			const deltaY = node.y - node.homeY;
-			const displacement = Math.hypot(deltaX, deltaY);
-			const parentVector = vectorToParent(node, byId);
-			const returnSpeed = Math.max(
-				0,
-				(node.vx * parentVector.x + node.vy * parentVector.y) /
-					Math.max(1, Math.hypot(parentVector.x, parentVector.y)),
-			);
-			const tension = this.reducedMotion
-				? agentUniverseBlobTension(displacement, node.radius, returnSpeed) * 0.42
-				: agentUniverseBlobTension(displacement, node.radius, returnSpeed);
 			target.body.setAttribute(
 				"transform",
 				`translate(${deltaX.toFixed(2)} ${deltaY.toFixed(2)})`,
 			);
 			target.body.setAttribute("data-physics-x", node.x.toFixed(2));
 			target.body.setAttribute("data-physics-y", node.y.toFixed(2));
-			target.body.setAttribute("data-physics-tension", tension.toFixed(3));
+			target.body.setAttribute(
+				"data-physics-displacement",
+				Math.hypot(deltaX, deltaY).toFixed(2),
+			);
 			target.body.setAttribute(
 				"data-physics-dragging",
 				this.state.drag?.nodeId === node.id ? "true" : "false",
 			);
-			target.blob.setAttribute(
-				"d",
-				agentUniverseBlobPath(node.geometry, tension, nodeParentAngle(node, byId)),
-			);
+		}
+		for (const edge of this.edgeTargets) {
+			const source = byId.get(edge.sourceId);
+			const target = byId.get(edge.targetId);
+			if (!source || !target) continue;
+			edge.element.setAttribute("x1", source.x.toFixed(2));
+			edge.element.setAttribute("y1", source.y.toFixed(2));
+			edge.element.setAttribute("x2", target.x.toFixed(2));
+			edge.element.setAttribute("y2", target.y.toFixed(2));
 		}
 	}
 }

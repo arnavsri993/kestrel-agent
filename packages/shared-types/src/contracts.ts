@@ -677,6 +677,36 @@ export const RuntimeSessionSchema = z.object({
 });
 export type RuntimeSession = z.infer<typeof RuntimeSessionSchema>;
 
+/**
+ * Durable context shared by one root session and its delegated descendants.
+ * This is intentionally a separate contract from Life -> Memory: group
+ * memory belongs to the agent system that created it and must not become
+ * user-wide context by accident.
+ */
+export const AgentGroupMemoryRecordSchema = z.object({
+	id: z.string().min(1),
+	groupId: z.string().min(1),
+	content: z.string().min(1).max(100_000),
+	sourceSessionId: z.string().min(1),
+	sourceType: z.string().min(1).max(200),
+	importance: z.number().min(0).max(1),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+});
+export type AgentGroupMemoryRecord = z.infer<
+	typeof AgentGroupMemoryRecordSchema
+>;
+
+export const AgentGroupMemoryStatusSchema = z.object({
+	groupId: z.string().min(1),
+	groupName: z.string().min(1).max(200),
+	memoryCount: z.number().int().nonnegative(),
+	memories: z.array(AgentGroupMemoryRecordSchema).max(200),
+});
+export type AgentGroupMemoryStatus = z.infer<
+	typeof AgentGroupMemoryStatusSchema
+>;
+
 export const MemoryRecallReceiptSchema = z.object({
 	memoryCount: z.number().int().nonnegative(),
 	preferenceCount: z.number().int().nonnegative(),
@@ -696,6 +726,7 @@ export const RuntimeMessageSchema = z.object({
 				id: z.string().min(1),
 				name: z.string().min(1),
 				arguments: z.record(z.string(), z.unknown()),
+				thoughtSignature: z.string().min(1).optional(),
 			}),
 		)
 		.optional(),
@@ -922,6 +953,7 @@ export const RuntimeEventSchema = z.object({
 		"tool.started",
 		"tool.progress",
 		"tool.completed",
+		"group-memory.updated",
 	]),
 	sessionId: z.string().min(1),
 	executionId: z.string().min(1).optional(),
@@ -1953,6 +1985,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({ type: z.literal("runtime-list-sessions") }),
 	z.object({
+		type: z.literal("agent-group-memory-list"),
+		sessionId: z.string().min(1),
+	}),
+	z.object({
 		type: z.literal("runtime-create-session"),
 		title: z.string().min(1).max(200),
 		workspaceRoot: z.string().min(1).optional(),
@@ -2591,6 +2627,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		delegationRouting: DelegatedWorkerRouteSchema.optional(),
 		sessions: z.array(RuntimeSessionSchema).optional(),
 		selectedSessionId: z.string().min(1).nullable().optional(),
+		groupMemory: AgentGroupMemoryStatusSchema.optional(),
 		session: RuntimeSessionSchema.optional(),
 		tools: z.array(RuntimeToolDescriptorSchema).optional(),
 		execution: RuntimeToolExecutionSchema.optional(),

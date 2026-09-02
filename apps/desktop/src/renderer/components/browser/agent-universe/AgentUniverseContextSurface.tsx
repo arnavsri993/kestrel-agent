@@ -1,5 +1,6 @@
 import type {
 	AgentRun,
+	AgentGroupMemoryStatus,
 	CoreResponse,
 	RuntimeMessage,
 } from "@kestrel/shared-types";
@@ -18,9 +19,11 @@ import {
 } from "../../../agent-workspace";
 import { Icon } from "../../Icon";
 import { Button, Status, type StatusTone } from "../../ui";
-import type {
-	AgentNodeProjection,
-	AgentSystemProjection,
+import {
+	agentUniverseRunIsPending,
+	agentUniverseRunStatusLabel,
+	type AgentNodeProjection,
+	type AgentSystemProjection,
 } from "./agent-universe-model";
 import {
 	AGENT_UNIVERSE_SYSTEM_COLORS,
@@ -58,6 +61,11 @@ function formatTimestamp(value: string): string {
 		: "Unknown";
 }
 
+function memoryPreview(value: string): string {
+	const normalized = value.replace(/\s+/g, " ").trim();
+	return normalized.length > 180 ? `${normalized.slice(0, 179)}…` : normalized;
+}
+
 function latestRun(runs: readonly AgentRun[] | undefined): AgentRun | undefined {
 	return runs?.length
 		? [...runs].sort(
@@ -93,7 +101,10 @@ interface ContextAnchor {
 	radius?: number;
 }
 
-function useContextSurfacePosition(anchor: ContextAnchor | undefined) {
+function useContextSurfacePosition(
+	anchor: ContextAnchor | undefined,
+	dockToRightRail = false,
+) {
 	const surfaceRef = useRef<HTMLElement | null>(null);
 	const [position, setPosition] = useState({
 		left: 18,
@@ -116,11 +127,19 @@ function useContextSurfacePosition(anchor: ContextAnchor | undefined) {
 		// Anchor from the body's edge, not its centre. This keeps a selected
 		// system readable beside a wide conversation surface.
 		const gap = Math.max(26, (anchor?.radius ?? 0) + 24);
+		const useRightRail = dockToRightRail && containerWidth > 920;
 		const canPlaceRight = target.x + gap + width <= containerWidth - 16;
 		const canPlaceLeft = target.x - gap - width >= 16;
-		const placement = canPlaceRight || !canPlaceLeft ? "right" : "left";
-		const left =
-			placement === "right" ? target.x + gap : target.x - width - gap;
+		const placement = useRightRail
+			? "right"
+			: canPlaceRight || !canPlaceLeft
+				? "right"
+				: "left";
+		const left = useRightRail
+			? containerWidth - width - 16
+			: placement === "right"
+				? target.x + gap
+				: target.x - width - gap;
 		const minimumTop = containerWidth <= 640 ? 126 : 82;
 		const maximumTop = Math.max(
 			minimumTop,
@@ -131,7 +150,7 @@ function useContextSurfacePosition(anchor: ContextAnchor | undefined) {
 			top: clamp(target.y - Math.min(148, height * 0.36), minimumTop, maximumTop),
 			placement,
 		});
-	}, [anchor]);
+	}, [anchor, dockToRightRail]);
 
 	useLayoutEffect(() => {
 		place();
@@ -178,6 +197,9 @@ export function AgentUniverseContextSurface({
 	runsLoading,
 	runsError,
 	anchor,
+	groupMemory,
+	groupMemoryLoading,
+	groupMemoryError,
 	colorId,
 	onColorChange,
 	onClose,
@@ -189,12 +211,14 @@ export function AgentUniverseContextSurface({
 	runsLoading: boolean;
 	runsError?: string;
 	anchor?: ContextAnchor;
+	groupMemory?: AgentGroupMemoryStatus;
+	groupMemoryLoading: boolean;
+	groupMemoryError?: string;
 	colorId: AgentUniverseColorId;
 	onColorChange(systemId: string, colorId: AgentUniverseColorId): void;
 	onClose(): void;
 	onOpenSession(sessionId: string): void;
 }) {
-	const surfacePosition = useContextSurfacePosition(anchor);
 	const [input, setInput] = useState("");
 	const [messageState, setMessageState] = useState<
 		"idle" | "sending" | "complete" | "error"
@@ -219,11 +243,30 @@ export function AgentUniverseContextSurface({
 	const title = isRoot ? system.name : inspected.name;
 	const status = isRoot ? system.status : inspected.status;
 	const openSessionId = isRoot ? system.rootNodeId : inspected.id;
-	const activeWorkers = system.nodes.filter((item) => item.status === "active").length;
-	const waitingWorkers = system.nodes.filter((item) => item.status === "waiting").length;
+	const surfacePosition = useContextSurfacePosition(anchor, isRoot);
+	const activeWorkers = system.nodes.filter(
+		(item) => item.latestRun?.status === "running",
+	).length;
+	const waitingWorkers = system.nodes.filter((item) =>
+		item.latestRun
+			? agentUniverseRunIsPending(item.latestRun.status) &&
+				item.latestRun.status !== "running"
+			: item.status === "waiting",
+	).length;
 	const systemColor =
 		AGENT_UNIVERSE_SYSTEM_COLORS.find((color) => color.id === colorId) ??
 		AGENT_UNIVERSE_SYSTEM_COLORS[0]!;
+	const runStatusTone = run?.status
+		? run.status === "running"
+			? "running"
+			: run.status === "waiting_approval" || run.status === "waiting_input"
+				? "warning"
+				: run.status === "failed"
+					? "error"
+					: run.status === "completed"
+						? "verified"
+						: "neutral"
+		: undefined;
 
 	const loadHistory = useCallback(async () => {
 		const requestId = ++historyRequestRef.current;
@@ -373,19 +416,19 @@ export function AgentUniverseContextSurface({
 			} as CSSProperties}
 			data-system-color={systemColor.id}
 			data-placement={surfacePosition.placement}
-			aria-label={isRoot ? `Talk to ${title}` : `Inspect ${title}`}
+			aria-label={isRoot ? `Talk to the main circle, ${title}` : `Inspect ${title}`}
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
 		>
 			<header className="agent-universe-context-header">
 				<div className="agent-universe-context-title">
 					<span className="agent-universe-context-kicker">
-						{isRoot ? "Main system" : "Inspecting worker"}
+						{isRoot ? "Main circle · coordinator" : "Inspecting worker"}
 					</span>
 					<h2>{title}</h2>
 					<p className="agent-universe-context-subtitle">
 						{isRoot
-							? "The intelligence you talk to. Kestrel Core coordinates the work around it."
+							? "Send the mission here. It can split independent work across real child agents, then reconcile the results for you."
 							: "A delegated session within this system. Inspect its state and provenance here."}
 					</p>
 				</div>
@@ -402,6 +445,11 @@ export function AgentUniverseContextSurface({
 
 			<div className="agent-universe-context-status">
 				<Status tone={statusTone(status)}>{agentSessionStatusLabel(status)}</Status>
+				{run && runStatusTone ? (
+					<span className={`agent-universe-context-run-status is-${runStatusTone}`}>
+						Last run · {agentUniverseRunStatusLabel(run.status)}
+					</span>
+				) : null}
 				<span>Updated {agentSessionRecency(isRoot ? system.lastActivityAt : inspected.updatedAt)}</span>
 			</div>
 
@@ -429,6 +477,58 @@ export function AgentUniverseContextSurface({
 					<DefinitionRow label="Created">{formatTimestamp(inspected.createdAt)}</DefinitionRow>
 				</dl>
 			)}
+
+			{groupMemoryLoading || groupMemoryError || groupMemory ? (
+				<details
+					className="agent-universe-context-secondary agent-universe-context-memory-details"
+					open={Boolean(groupMemoryError)}
+				>
+					<summary>
+						<span>Group memory</span>
+						<small>
+							{groupMemoryLoading
+								? "Reading"
+								: groupMemory
+									? `${groupMemory.memoryCount} saved`
+									: "Unavailable"}
+						</small>
+					</summary>
+					<div className="agent-universe-context-memory-content">
+						<p className="agent-universe-context-memory-note">
+							Private to this system and its delegated agents. It is not shared
+							with other agent systems.
+						</p>
+						{groupMemoryLoading ? <p>Reading durable group context…</p> : null}
+						{groupMemoryError ? (
+							<p className="agent-universe-context-error" role="alert">
+								{groupMemoryError}
+							</p>
+						) : null}
+						{groupMemory && groupMemory.memories.length > 0 ? (
+							<ul className="agent-universe-memory-list">
+								{groupMemory.memories.slice(0, 6).map((memory) => (
+									<li key={memory.id} title={memory.content}>
+										<span>{memoryPreview(memory.content)}</span>
+										<small>
+											{memory.sourceSessionId === system.rootNodeId
+												? "Main circle"
+												: "Delegated agent"}
+										</small>
+									</li>
+								))}
+							</ul>
+							) : null}
+						{groupMemory && groupMemory.memoryCount === 0 && !groupMemoryLoading ? (
+							<p>No durable context has been saved for this system yet.</p>
+						) : null}
+						{groupMemory && groupMemory.memoryCount > 6 ? (
+							<small className="agent-universe-memory-more">
+								Showing the six most important entries · {groupMemory.memoryCount} total
+							</small>
+						) : null}
+					</div>
+				</details>
+			) : null}
 
 			{!isRoot && inspected.allowedTools.length > 0 ? (
 				<details className="agent-universe-context-secondary">
@@ -524,8 +624,14 @@ export function AgentUniverseContextSurface({
 								<p>{lastResponse}</p>
 							</div>
 						) : null}
-						{!historyLoading && !historyError && renderedHistory.length === 0 && !lastMessage ? (
-							<p className="agent-universe-context-empty">Ask Kestrel Core to coordinate something for you.</p>
+						{!historyLoading &&
+							!historyError &&
+							renderedHistory.length === 0 &&
+							!lastMessage ? (
+							<p className="agent-universe-context-empty">
+								Message the main circle. It will decide what to keep,
+								delegate, and bring back.
+							</p>
 						) : null}
 					</div>
 					{messageError ? <p className="agent-universe-context-error" role="alert">{messageError}</p> : null}

@@ -116,19 +116,21 @@ Engineer repositories. The full evidence and decision record is in
   chooses another, while status is communicated separately through size,
   opacity, and rim treatment. Bodies are matte single-color objects with a
   quiet graphite core, not neon or glass.
-  There are no persistent spokes or orbit rings, fake planets, provider-color
-  badges, fabricated metrics, or
-  perpetual spectacle. Selection and focus add emphasis; they do not mutate or
-  invent runtime state.
+  Thin straight ownership links are the one persistent relationship cue: a line
+  from the main circle to a child means that child is real delegated work in
+  this system. There are no orbit rings, fake planets, provider-color badges,
+  fabricated metrics, or perpetual spectacle. Selection and focus add emphasis;
+  they do not mutate or invent runtime state.
 - **Motion roles:** spatial continuity for focus and camera changes, direct
   manipulation for pan/zoom, and calm state feedback for real active work or
   recent runtime events. The map is still at rest: workers do not idle-bob or
   randomly drift. Dragging activates only the selected local system's damped
-  parent-relative physics, including mass, directional blob tension, vacancy
-  redistribution, and a restrained return. Active state adds only a quiet rim
-  clarification; waiting, failed, completed, or cancelled sessions are still,
-  darker, and smaller. Reduced motion shortens travel and suppresses
-  deformation while keeping the hierarchy and drag relationship legible.
+  parent-relative physics, vacancy redistribution, and a restrained return.
+  Active state adds a slow dashed ring; a real runtime event adds one outward
+  pulse and briefly animates the affected ownership link. Waiting, failed,
+  completed, or cancelled sessions are still, darker, and smaller. Reduced
+  motion freezes the ring and link animations while keeping the hierarchy and
+  drag relationship legible.
 - **Why this is not generic:** the scene is derived from Kestrel's actual
   `RuntimeSession` ownership and status model, while exact task history,
   inspector routing details, approvals, and persistent agent conversation all

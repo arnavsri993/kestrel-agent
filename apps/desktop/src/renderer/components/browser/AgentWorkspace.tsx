@@ -1,12 +1,16 @@
 import type {
 	AgentRun,
 	AgentState,
+	AgentGroupMemoryStatus,
 	CoreResponse,
 	RuntimeSession,
 } from "@kestrel/shared-types";
 import { useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { agentStateLabel } from "../../agent-workspace";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	agentSessionIsRenderable,
+	agentStateLabel,
+} from "../../agent-workspace";
 import { Icon } from "../Icon";
 import { Button } from "../ui";
 import { SurfaceBackButton } from "./SurfaceBackButton";
@@ -155,8 +159,30 @@ export function AgentWorkspace({
 	const [runsBySession, setRunsBySession] = useState<Record<string, AgentRun[]>>({});
 	const [runsLoading, setRunsLoading] = useState(false);
 	const [runsError, setRunsError] = useState("");
+	const [groupMemoryBySystem, setGroupMemoryBySystem] = useState<
+		Record<string, AgentGroupMemoryStatus>
+	>({});
+	const [groupMemoryLoading, setGroupMemoryLoading] = useState(false);
+	const [groupMemoryError, setGroupMemoryError] = useState("");
+	const groupMemoryRequestRef = useRef(0);
+	const runsBySessionRef = useRef(runsBySession);
 	const [systemColors, setSystemColors] = useState(readAgentUniverseSystemColors);
 	const reducedMotion = Boolean(useReducedMotion());
+	const renderableSessionIds = useMemo(
+		() =>
+			sessions
+				.filter(agentSessionIsRenderable)
+				.map((session) => session.id),
+		[sessions],
+	);
+	const renderableSessionKey = useMemo(
+		() =>
+			sessions
+				.filter(agentSessionIsRenderable)
+				.map((session) => `${session.id}:${session.updatedAt}`)
+				.join("|"),
+		[sessions],
+	);
 
 	const runsMap = useMemo(
 		() => new Map(Object.entries(runsBySession)),
@@ -173,6 +199,132 @@ export function AgentWorkspace({
 		? universe.nodes.find((node) => node.id === selectedNodeId)
 		: undefined;
 	const hasSystems = universe.systems.length > 0;
+	const focusedGroupId = focusedSystem?.rootNodeId ?? null;
+
+	useEffect(() => {
+		runsBySessionRef.current = runsBySession;
+	}, [runsBySession]);
+
+	useEffect(() => {
+		if (renderableSessionIds.length === 0) return;
+		let active = true;
+		const refresh = async (sessionIds: readonly string[]) => {
+			const entries = await Promise.all(
+				sessionIds.map(async (sessionId): Promise<[string, AgentRun[]] | null> => {
+					try {
+						const raw = await window.kestrel.request({
+							type: "runtime-list-runs",
+							sessionId,
+						});
+						const response = raw as CoreResponse;
+						if (!response.ok) return null;
+						return [sessionId, response.runs ?? []];
+					} catch {
+						return null;
+					}
+				}),
+			);
+			if (!active) return;
+			const successful = entries.filter(
+				(entry): entry is [string, AgentRun[]] => entry !== null,
+			);
+			if (successful.length === 0) return;
+			setRunsBySession((current) => {
+				let changed = false;
+				const next = { ...current };
+				for (const [sessionId, runs] of successful) {
+					const previous = current[sessionId];
+					const same =
+						previous?.length === runs.length &&
+						previous.every(
+							(run, index) =>
+								run.id === runs[index]?.id &&
+								run.status === runs[index]?.status &&
+								run.updatedAt === runs[index]?.updatedAt,
+						);
+					if (same) continue;
+					next[sessionId] = runs;
+					changed = true;
+				}
+				return changed ? next : current;
+			});
+		};
+
+		void refresh(renderableSessionIds);
+		const timer = window.setInterval(() => {
+			const activeSessionIds = renderableSessionIds.filter((sessionId) =>
+				(runsBySessionRef.current[sessionId] ?? []).some(
+					(run) =>
+						run.status === "running" ||
+						run.status === "waiting_approval" ||
+						run.status === "waiting_input",
+				),
+			);
+			if (activeSessionIds.length > 0) void refresh(activeSessionIds);
+		}, 1_200);
+		return () => {
+			active = false;
+			window.clearInterval(timer);
+		};
+	}, [renderableSessionIds, renderableSessionKey]);
+
+	const loadGroupMemory = useCallback(async (groupId: string) => {
+		const requestId = ++groupMemoryRequestRef.current;
+		setGroupMemoryLoading(true);
+		setGroupMemoryError("");
+		try {
+			const raw = await window.kestrel.request({
+				type: "agent-group-memory-list",
+				sessionId: groupId,
+			});
+			const response = raw as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.groupMemory)
+				throw new Error("Group memory did not return a status.");
+			if (requestId !== groupMemoryRequestRef.current) return;
+			setGroupMemoryBySystem((current) => ({
+				...current,
+				[groupId]: response.groupMemory!,
+			}));
+		} catch (cause) {
+			if (requestId !== groupMemoryRequestRef.current) return;
+			setGroupMemoryError(
+				cause instanceof Error
+					? cause.message
+					: "Group memory is unavailable.",
+			);
+		} finally {
+			if (requestId === groupMemoryRequestRef.current)
+				setGroupMemoryLoading(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		if (!focusedGroupId) {
+			setGroupMemoryLoading(false);
+			setGroupMemoryError("");
+			return;
+		}
+		void loadGroupMemory(focusedGroupId);
+	}, [focusedGroupId, loadGroupMemory]);
+
+	useEffect(() => {
+		return window.kestrel.onRuntimeEvent((event) => {
+			if (event.type !== "group-memory.updated") return;
+			const groupId =
+				typeof event.payload.groupId === "string"
+					? event.payload.groupId
+					: undefined;
+			if (!groupId) return;
+			setGroupMemoryBySystem((current) => {
+				if (!current[groupId]) return current;
+				const next = { ...current };
+				delete next[groupId];
+				return next;
+			});
+			if (focusedGroupId === groupId) void loadGroupMemory(groupId);
+		});
+	}, [focusedGroupId, loadGroupMemory]);
 
 	useEffect(() => {
 		if (focusedSystemId && !focusedSystem) setFocusedSystemId(null);
@@ -315,6 +467,15 @@ export function AgentWorkspace({
 							activities={activities}
 							reducedMotion={reducedMotion}
 							systemColors={systemColors}
+							{...(focusedGroupId && groupMemoryBySystem[focusedGroupId]
+								? { contextGroupMemory: groupMemoryBySystem[focusedGroupId] }
+								: {})}
+							contextGroupMemoryLoading={Boolean(
+								focusedGroupId && groupMemoryLoading,
+							)}
+							{...(focusedGroupId && groupMemoryError
+								? { contextGroupMemoryError: groupMemoryError }
+								: {})}
 							{...(selectedNode && runsBySession[selectedNode.id]
 								? { contextRuns: runsBySession[selectedNode.id] }
 								: {})}

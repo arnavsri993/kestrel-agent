@@ -1,4 +1,4 @@
-import type { AgentRun } from "@kestrel/shared-types";
+import type { AgentGroupMemoryStatus, AgentRun } from "@kestrel/shared-types";
 import {
 	useCallback,
 	useEffect,
@@ -20,6 +20,8 @@ import { AgentUniverseContextSurface } from "./AgentUniverseContextSurface";
 import { layoutAgentUniverse, type AgentNodeLayout } from "./agent-universe-layout";
 import {
 	agentUniverseSearchMatches,
+	agentUniverseRunIsPending,
+	agentUniverseRunStatusLabel,
 	type AgentNodeProjection,
 	type AgentSystemProjection,
 	type AgentUniverseActivity,
@@ -42,9 +44,9 @@ import {
 	type AgentUniverseCamera,
 	type AgentUniversePoint,
 } from "./agent-universe-camera";
-import { agentUniverseBlobPath, createAgentUniverseBlobGeometry } from "./agent-universe-blob";
 import {
 	createAgentUniversePhysicsController,
+	type AgentUniversePhysicsEdgeRenderTarget,
 	type AgentUniversePhysicsController,
 	type AgentUniversePhysicsRenderTarget,
 } from "./agent-universe-physics";
@@ -57,6 +59,9 @@ interface AgentUniverseSceneProps {
 	activities: AgentUniverseActivity[];
 	reducedMotion: boolean;
 	systemColors: Readonly<Record<string, AgentUniverseColorId>>;
+	contextGroupMemory?: AgentGroupMemoryStatus;
+	contextGroupMemoryLoading: boolean;
+	contextGroupMemoryError?: string;
 	contextRuns?: readonly AgentRun[];
 	contextRunsLoading: boolean;
 	contextRunsError?: string;
@@ -85,15 +90,19 @@ const PULSE_LIFETIME_MS = 2_200;
 const SYSTEM_FOCUS_ZOOM = 1.16;
 const NODE_FOCUS_ZOOM = 1.3;
 // Leave room for the context surface on the right while keeping the whole
-// local cluster in view. A left-edge anchor lets a focused worker or a large
-// parent-owned cluster disappear behind the panel or outside the viewport.
-const FOCUSED_CAMERA_ANCHOR = { x: 0.3, y: 0.5 };
+// local cluster in view. The inspector is a right rail, so the cluster can
+// sit a little farther into the map without pushing worker labels through the
+// left edge of the viewport.
+const FOCUSED_CAMERA_ANCHOR = { x: 0.28, y: 0.5 };
 
 function focusZoomFor(layoutScale: number, baseZoom: number): number {
 	// The overview may be compressed by a real profile with many independent
 	// sessions. Give a focused system the same readable physical scale instead
 	// of zooming into a still-tiny overview dot.
-	const visibleScale = Math.min(1, Math.max(0.62, layoutScale));
+	// Keep enough breathing room for the context surface and the long, truthful
+	// worker labels. A very compressed overview should not turn focus into a
+	// 187% close-up that hides the delegated cluster under the inspector.
+	const visibleScale = Math.min(1, Math.max(0.95, layoutScale));
 	return Math.min(
 		1.9,
 		clampAgentUniverseZoom(Math.max(baseZoom, baseZoom / visibleScale)),
@@ -145,6 +154,9 @@ export function AgentUniverseScene({
 	activities,
 	reducedMotion,
 	systemColors,
+	contextGroupMemory,
+	contextGroupMemoryLoading,
+	contextGroupMemoryError,
 	contextRuns,
 	contextRunsLoading,
 	contextRunsError,
@@ -314,6 +326,9 @@ export function AgentUniverseScene({
 				selectedNodeId,
 			)
 		: undefined;
+	const selectedNodeIsRoot =
+		Boolean(selectedNodeLayout && activeSystemLayout) &&
+		selectedNodeLayout?.nodeId === activeSystemLayout?.systemId;
 	const contextAnchor = selectedNodeLayout
 		? {
 				...projectAgentUniversePoint(
@@ -322,7 +337,10 @@ export function AgentUniverseScene({
 					size.width,
 					size.height,
 				),
-				radius: selectedNodeLayout.radius * camera.zoom,
+				radius:
+					(selectedNodeIsRoot && activeSystemLayout
+						? activeSystemLayout.radius
+						: selectedNodeLayout.radius) * camera.zoom,
 			}
 		: activeSystemLayout
 			? {
@@ -549,7 +567,7 @@ export function AgentUniverseScene({
 	return (
 		<section
 			ref={sceneRef}
-			className={`agent-universe-scene${focusedSystemId ? " is-focused" : ""}${isPanning ? " is-panning" : ""}`}
+			className={`agent-universe-scene${focusedSystemId ? " is-focused" : ""}${isPanning ? " is-panning" : ""}${reducedMotion ? " is-reduced-motion" : ""}`}
 			aria-label={focusedSystemId ? "Focused agent system map" : "Agent systems map"}
 			tabIndex={0}
 			aria-describedby="agent-universe-map-help"
@@ -703,6 +721,11 @@ export function AgentUniverseScene({
 					runsLoading={contextRunsLoading}
 					{...(contextRunsError ? { runsError: contextRunsError } : {})}
 					{...(contextAnchor ? { anchor: contextAnchor } : {})}
+					{...(contextGroupMemory ? { groupMemory: contextGroupMemory } : {})}
+					groupMemoryLoading={contextGroupMemoryLoading}
+					{...(contextGroupMemoryError
+						? { groupMemoryError: contextGroupMemoryError }
+						: {})}
 					colorId={agentUniverseColorFor(
 						activeSystem.id,
 						systemColors,
@@ -772,7 +795,7 @@ function AgentSystemScene({
 	}
 	const physics = physicsRef.current;
 	const bodyRefs = useRef(new Map<string, SVGElement>());
-	const blobRefs = useRef(new Map<string, SVGPathElement>());
+	const linkRefs = useRef(new Map<string, SVGLineElement>());
 	const nodePointerRef = useRef<{
 		pointerId: number;
 		startX: number;
@@ -785,10 +808,19 @@ function AgentSystemScene({
 		const targets = new Map<string, AgentUniversePhysicsRenderTarget>();
 		for (const node of system.nodes) {
 			const body = bodyRefs.current.get(node.id);
-			const blob = blobRefs.current.get(node.id);
 			const nodeLayout = layoutsById.get(node.id);
-			if (!body || !blob || !nodeLayout) continue;
-			targets.set(node.id, { body, blob });
+			if (!body || !nodeLayout) continue;
+			targets.set(node.id, { body });
+		}
+		const edgeTargets: AgentUniversePhysicsEdgeRenderTarget[] = [];
+		for (const edge of system.edges) {
+			const element = linkRefs.current.get(edge.id);
+			if (!element) continue;
+			edgeTargets.push({
+				element,
+				sourceId: edge.sourceId,
+				targetId: edge.targetId,
+			});
 		}
 		physics.update(
 			system.nodes.flatMap((node) => {
@@ -807,8 +839,17 @@ function AgentSystemScene({
 			}),
 			targets,
 			reducedMotion,
+			edgeTargets,
 		);
-	}, [layout.nodeLayouts, layoutsById, physics, reducedMotion, system.nodes, system.rootNodeId]);
+	}, [
+		layout.nodeLayouts,
+		layoutsById,
+		physics,
+		reducedMotion,
+		system.edges,
+		system.nodes,
+		system.rootNodeId,
+	]);
 
 	useEffect(() => () => physics.destroy(), [physics]);
 
@@ -827,6 +868,31 @@ function AgentSystemScene({
 				} as CSSProperties
 			}
 		>
+			<g className="agent-universe-delegation-links" aria-hidden="true">
+				{system.edges.map((edge) => {
+					const source = layoutsById.get(edge.sourceId);
+					const target = layoutsById.get(edge.targetId);
+					if (!source || !target) return null;
+					const active =
+						activeActivities.has(edge.sourceId) ||
+						activeActivities.has(edge.targetId);
+					return (
+						<line
+							key={edge.id}
+							className={`agent-universe-delegation-link${active ? " is-active" : ""}`}
+							x1={source.x}
+							y1={source.y}
+							x2={target.x}
+							y2={target.y}
+							ref={(element) => {
+								if (element) linkRefs.current.set(edge.id, element);
+								else linkRefs.current.delete(edge.id);
+							}}
+							data-edge-id={edge.id}
+						/>
+					);
+				})}
+			</g>
 			<g className="agent-universe-nodes">
 				{system.nodes.map((node) => {
 					const nodeLayout = layoutsById.get(node.id);
@@ -834,8 +900,13 @@ function AgentSystemScene({
 					const isRoot = node.id === system.rootNodeId;
 					const isSelected = selectedNodeId === node.id;
 					const isHovered = hoveredNodeId === node.id;
-					const activity = activeActivities.has(node.id);
-					const working = node.status === "active";
+					const activity = activeActivities.get(node.id);
+					const runStatus = node.latestRun?.status;
+					const working = runStatus === "running";
+					const waiting = runStatus
+						? agentUniverseRunIsPending(runStatus) && !working
+						: node.status === "waiting";
+					const runFailed = runStatus === "failed";
 					const queryMatch = matchedNodeIds.has(node.id);
 					const showLabel = isRoot
 						? nodeLayout.radius >= (focused ? 52 : 38) ||
@@ -852,17 +923,16 @@ function AgentSystemScene({
 						!selectedNodeId ||
 						isSelected ||
 						node.parentId === selectedNodeId;
-					const initialBlobPath = agentUniverseBlobPath(
-						createAgentUniverseBlobGeometry(node.id, nodeLayout.radius, isRoot),
-					);
 					return (
 						<g
 							key={node.id}
 							className={`agent-universe-node ${isRoot ? "is-core" : "is-worker"}${
 								isSelected ? " is-selected" : ""
-							}${isHovered ? " is-hovered" : ""}${working ? " is-working" : ""}${
-								activity ? " is-activity-active" : ""
-							}${
+								}${isHovered ? " is-hovered" : ""}${working ? " is-working" : ""}${
+									activity ? " is-activity-active" : ""
+								}${waiting ? " is-runtime-waiting" : ""}${
+									runFailed ? " is-runtime-failed" : ""
+								}${
 								selectedNodeId && !selectedRelation ? " is-selection-dimmed" : ""
 							}${queryActive && !queryMatch && !matchedSystem ? " is-query-dimmed" : ""}${
 								` ${statusClass(node.status)}`
@@ -874,7 +944,7 @@ function AgentSystemScene({
 							aria-pressed={isSelected}
 							aria-label={`${node.name}, ${agentSessionStatusLabel(node.status)}${
 								isRoot ? ", system root" : `, delegated session at depth ${node.depth}`
-							}`}
+							}${runStatus ? `, last run ${agentUniverseRunStatusLabel(runStatus)}` : ""}`}
 							onPointerDown={
 								isRoot
 								? undefined
@@ -962,9 +1032,9 @@ function AgentSystemScene({
 								onNodeActivate(node.id, system.id);
 							}}
 						>
-							<title>
-								{node.name} · {agentSessionStatusLabel(node.status)}
-							</title>
+							<title>{`${node.name} · ${agentSessionStatusLabel(node.status)}${
+								runStatus ? ` · ${agentUniverseRunStatusLabel(runStatus)}` : ""
+							}`}</title>
 							<g
 								className="agent-universe-node-body"
 								ref={(element) => {
@@ -978,14 +1048,23 @@ function AgentSystemScene({
 											className="agent-universe-node-hit"
 											r={Math.max(42, nodeLayout.radius + 13)}
 										/>
-										<path
+										{working ? (
+											<circle
+												className={`agent-universe-state-ring${isRoot ? " is-core" : ""}`}
+												r={nodeLayout.radius + (isRoot ? 12 : 8)}
+											/>
+										) : null}
+										{activity ? (
+											<circle
+												key={activity.id}
+												className="agent-universe-activity-pulse"
+												r={nodeLayout.radius + (isRoot ? 7 : 5)}
+												data-activity-id={activity.id}
+											/>
+										) : null}
+										<circle
 											className={`agent-universe-core-rim ${statusClass(node.status)}`}
-											data-physics-blob={node.id}
-											d={initialBlobPath}
-											ref={(element) => {
-												if (element) blobRefs.current.set(node.id, element);
-												else blobRefs.current.delete(node.id);
-											}}
+											r={nodeLayout.radius}
 										/>
 										{textLabel(
 											node,
@@ -1004,19 +1083,28 @@ function AgentSystemScene({
 											className="agent-universe-node-hit"
 											r={Math.max(30, nodeLayout.radius + 10)}
 										/>
-										<path
+										{working ? (
+											<circle
+												className="agent-universe-state-ring"
+												r={nodeLayout.radius + 8}
+											/>
+										) : null}
+										{activity ? (
+											<circle
+												key={activity.id}
+												className="agent-universe-activity-pulse"
+												r={nodeLayout.radius + 5}
+												data-activity-id={activity.id}
+											/>
+										) : null}
+										<circle
 											className={`agent-universe-worker-rim ${statusClass(node.status)}`}
-											data-physics-blob={node.id}
-											d={initialBlobPath}
-											ref={(element) => {
-												if (element) blobRefs.current.set(node.id, element);
-												else blobRefs.current.delete(node.id);
-											}}
+											r={nodeLayout.radius}
 										/>
 										{textLabel(node, nodeLayout, showLabel, false, labelInside)}
 									</>
 								)}
-								{node.status === "waiting" || node.status === "failed" ? (
+								{waiting || runFailed || node.status === "failed" ? (
 									<circle
 										className="agent-universe-node-status-mark"
 										cx={

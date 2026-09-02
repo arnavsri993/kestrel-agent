@@ -63,12 +63,32 @@ export interface AgentUniverseProjectionOptions {
 	runsBySession?: ReadonlyMap<string, readonly AgentRun[]>;
 }
 
+export function agentUniverseRunStatusLabel(status: AgentRun["status"]): string {
+	return {
+		running: "Working",
+		waiting_approval: "Needs approval",
+		waiting_input: "Waiting for input",
+		completed: "Completed",
+		cancelled: "Cancelled",
+		failed: "Failed",
+	}[status];
+}
+
+export function agentUniverseRunIsPending(status: AgentRun["status"]): boolean {
+	return (
+		status === "running" ||
+		status === "waiting_approval" ||
+		status === "waiting_input"
+	);
+}
+
 const ACTIVITY_EVENT_TYPES = new Set<RuntimeEvent["type"]>([
 	"session.created",
 	"session.updated",
 	"message.appended",
 	"tool.started",
 	"tool.completed",
+	"group-memory.updated",
 ]);
 
 function timestampValue(value: string): number {
@@ -270,7 +290,7 @@ export function projectAgentUniverse(
 			nodes,
 			edges,
 			activeTaskCount: nodes.filter((node) =>
-				["active", "waiting"].includes(node.status),
+				node.latestRun ? agentUniverseRunIsPending(node.latestRun.status) : false,
 			).length,
 			lastActivityAt,
 			...(agentWorkspaceName(root.workspaceRoot)

@@ -141,6 +141,35 @@ describe("agent universe projection", () => {
 		expect(result.nodes.find((node) => node.id === "session-child")?.latestRun).toEqual(run);
 	});
 
+	it("counts actual pending runs instead of open session records", () => {
+		const running: AgentRun = {
+			id: "run-root",
+			sessionId: "session-root",
+			model: "local-model",
+			providerIds: ["ollama"],
+			status: "running",
+			turn: 1,
+			createdAt: "2026-09-01T10:00:00.000Z",
+			updatedAt: "2026-09-01T10:01:00.000Z",
+		};
+		const waiting: AgentRun = {
+			...running,
+			id: "run-child",
+			sessionId: "session-child",
+			status: "waiting_approval",
+		};
+		const result = projectAgentUniverse(
+			[baseSession, session("session-child", "Child", "session-root")],
+			{
+				runsBySession: new Map([
+					["session-root", [running]],
+					["session-child", [waiting]],
+				]),
+			},
+		);
+		expect(result.systems[0]?.activeTaskCount).toBe(2);
+	});
+
 	it("searches actual names and workspaces without changing the projection", () => {
 		const result = projectAgentUniverse([
 			baseSession,
@@ -162,5 +191,12 @@ describe("agent universe projection", () => {
 		const next = appendAgentUniverseActivity([], event);
 		expect(appendAgentUniverseActivity(next, { ...event, id: "event-2" })).toEqual(next);
 		expect(appendAgentUniverseActivity(next, { ...event, id: "event-3", type: "tool.completed" })).toHaveLength(2);
+		expect(
+			appendAgentUniverseActivity([], {
+				...event,
+				id: "event-memory",
+				type: "group-memory.updated",
+			}),
+		).toMatchObject([{ type: "group-memory.updated", sessionId: event.sessionId }]);
 	});
 });

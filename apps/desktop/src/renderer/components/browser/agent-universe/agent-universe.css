@@ -140,6 +140,60 @@
   pointer-events: all;
 }
 
+.agent-universe-delegation-links {
+  fill: none;
+  pointer-events: none;
+}
+
+.agent-universe-delegation-link {
+  stroke: color-mix(in srgb, var(--agent-system-highlight, var(--agent-system-color)) 42%, transparent);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-dasharray: 2 9;
+  opacity: 0.3;
+  vector-effect: non-scaling-stroke;
+  transition: opacity 180ms ease-out, stroke 180ms ease-out, stroke-width 180ms ease-out;
+}
+
+.agent-universe-delegation-link.is-active {
+  stroke: var(--agent-system-highlight, var(--agent-system-color));
+  stroke-width: 1.65;
+  stroke-dasharray: 3 8;
+  opacity: 0.76;
+  animation: agent-universe-link-flow 1.25s linear infinite;
+}
+
+.agent-universe-state-ring,
+.agent-universe-activity-pulse {
+  fill: none;
+  stroke: var(--agent-system-highlight, var(--agent-system-color));
+  stroke-linecap: round;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.agent-universe-state-ring {
+  stroke-width: 1.1;
+  stroke-dasharray: 3 10;
+  opacity: 0.34;
+  animation: agent-universe-state-breathe 2.8s ease-in-out infinite;
+}
+
+.agent-universe-state-ring.is-core {
+  stroke-width: 1.35;
+  stroke-dasharray: 4 12;
+  opacity: 0.42;
+}
+
+.agent-universe-activity-pulse {
+  stroke-width: 1.25;
+  stroke-dasharray: 4 7;
+  opacity: 0;
+  animation: agent-universe-activity-pulse 1.9s cubic-bezier(0.22, 0.8, 0.22, 1) both;
+}
+
 .agent-universe-node-body {
   transform-box: fill-box;
   transform-origin: center center;
@@ -186,6 +240,18 @@
 
 .agent-universe-node.is-working .agent-universe-core-rim {
   stroke-opacity: 0.56;
+}
+
+.agent-universe-node.is-runtime-waiting .agent-universe-core-rim,
+.agent-universe-node.is-runtime-waiting .agent-universe-worker-rim {
+  stroke: color-mix(in srgb, var(--agent-system-highlight, var(--agent-system-color)) 76%, #f1bd72);
+  stroke-opacity: 0.68;
+}
+
+.agent-universe-node.is-runtime-failed .agent-universe-core-rim,
+.agent-universe-node.is-runtime-failed .agent-universe-worker-rim {
+  stroke: color-mix(in srgb, var(--agent-system-highlight, var(--agent-system-color)) 52%, #ff827f);
+  stroke-opacity: 0.72;
 }
 
 .agent-universe-node.is-hovered .agent-universe-worker-rim,
@@ -829,6 +895,27 @@
   font-size: 10px;
 }
 
+.agent-universe-context-run-status {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.agent-universe-context-run-status.is-running {
+  color: var(--agent-system-highlight, var(--ink-secondary));
+}
+
+.agent-universe-context-run-status.is-warning {
+  color: #f1bd72;
+}
+
+.agent-universe-context-run-status.is-error {
+  color: #ff827f;
+}
+
+.agent-universe-context-run-status.is-verified {
+  color: #8dd6aa;
+}
+
 .agent-universe-context-brief {
   display: flex;
   align-items: center;
@@ -938,6 +1025,57 @@
   color: var(--muted);
   font-size: 10px;
   line-height: 1.45;
+}
+
+.agent-universe-context-memory-content {
+  padding: 0 0 11px;
+}
+
+.agent-universe-context-memory-content > p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.agent-universe-context-memory-note {
+  color: var(--ink-secondary) !important;
+}
+
+.agent-universe-memory-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-universe-memory-list li {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 9px;
+  border-left: 2px solid color-mix(in srgb, var(--agent-system-color, var(--ink)) 55%, transparent);
+  background: rgb(0 0 0 / 16%);
+}
+
+.agent-universe-memory-list li > span {
+  color: var(--ink-secondary);
+  font-size: 10px;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+
+.agent-universe-memory-list li > small,
+.agent-universe-memory-more {
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.agent-universe-memory-more {
+  display: block;
+  margin-top: 8px !important;
 }
 
 .agent-universe-context-color-content {
@@ -1184,6 +1322,35 @@
   to { transform: rotate(360deg); }
 }
 
+@keyframes agent-universe-link-flow {
+  to { stroke-dashoffset: -22px; }
+}
+
+@keyframes agent-universe-state-breathe {
+  0%, 100% {
+    opacity: 0.22;
+    transform: scale(0.985);
+  }
+  50% {
+    opacity: 0.62;
+    transform: scale(1.018);
+  }
+}
+
+@keyframes agent-universe-activity-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.96);
+  }
+  58% {
+    opacity: 0.35;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-universe-camera,
   .agent-universe-system,
@@ -1195,9 +1362,46 @@
 
   .agent-universe-node.is-worker .agent-universe-node-body,
   .agent-universe-node.is-worker.is-working .agent-universe-worker-rim,
-  .agent-universe-loading-mark {
+  .agent-universe-loading-mark,
+  .agent-universe-delegation-link.is-active,
+  .agent-universe-state-ring,
+  .agent-universe-activity-pulse {
     animation: none;
   }
+
+  .agent-universe-delegation-link.is-active {
+    opacity: 0.62;
+  }
+
+  .agent-universe-state-ring {
+    opacity: 0.5;
+  }
+
+  .agent-universe-activity-pulse {
+    opacity: 0.58;
+  }
+}
+
+/* The hook mirrors the OS preference so automated hosts and in-app settings
+ * that expose the resolved preference get the same deterministic outcome. */
+.agent-universe-scene.is-reduced-motion .agent-universe-camera,
+.agent-universe-scene.is-reduced-motion .agent-universe-system,
+.agent-universe-scene.is-reduced-motion .agent-universe-node,
+.agent-universe-scene.is-reduced-motion .agent-universe-context-surface,
+.agent-universe-scene.is-reduced-motion .agent-universe-delegation-link.is-active,
+.agent-universe-scene.is-reduced-motion .agent-universe-state-ring,
+.agent-universe-scene.is-reduced-motion .agent-universe-activity-pulse {
+  transition: none;
+  animation: none;
+}
+
+.agent-universe-scene.is-reduced-motion .agent-universe-delegation-link.is-active {
+  opacity: 0.62;
+}
+
+.agent-universe-scene.is-reduced-motion .agent-universe-state-ring,
+.agent-universe-scene.is-reduced-motion .agent-universe-activity-pulse {
+  opacity: 0.58;
 }
 
 @media (max-width: 920px) {
