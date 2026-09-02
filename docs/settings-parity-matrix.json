@@ -274,6 +274,27 @@
           "url": "https://openai.com/index/introducing-the-codex-app/"
         }
       ]
+    },
+    "claude-code": {
+      "displayName": "Anthropic Claude Code",
+      "snapshot": {
+        "capturedAt": "2026-09-02",
+        "channel": "official-docs",
+        "revision": "2026-09-02",
+        "revisionType": "Official Claude Code desktop documentation and commerce-agent design article snapshot"
+      },
+      "references": [
+        {
+          "id": "desktop",
+          "kind": "official-product-doc",
+          "url": "https://code.claude.com/docs/en/desktop#let-claude-use-your-computer"
+        },
+        {
+          "id": "commerce-agents",
+          "kind": "official-design-article",
+          "url": "https://claude.com/blog/the-anatomy-of-effective-commerce-agents"
+        }
+      ]
     }
   },
   "entries": [
@@ -2131,6 +2152,22 @@
       "kestrel": {
         "coverage": "implemented",
         "note": "Kestrel exposes bounded sleeping-tab timeout choices and applies them to inactive native page views."
+      }
+    },
+    {
+      "id": "claude-code.desktop.computer-use",
+      "product": "claude-code",
+      "referenceId": "desktop.computer-use",
+      "label": "Whole-desktop computer use",
+      "category": "Permissions",
+      "sourceRef": "claude-code.desktop",
+      "relevance": "relevant",
+      "status": "implemented",
+      "section": "agent-permissions",
+      "catalogEntryId": "agent.permissions.computer-use",
+      "kestrel": {
+        "coverage": "implemented",
+        "note": "Whole-desktop capture and control are disabled by default, require explicit opt-in plus native permissions, and remain approval-gated."
       }
     }
   ]

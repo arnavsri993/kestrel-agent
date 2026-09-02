@@ -3432,6 +3432,10 @@ export {
 	VisualValidator,
 } from "./browser-automation";
 export {
+	createUIPresentation,
+	installUIPresentationTools,
+} from "./ui-presentation";
+export {
 	annotateAccessibilityTree,
 	ELEMENT_REF_PATTERN,
 	isBrowserElementRef,

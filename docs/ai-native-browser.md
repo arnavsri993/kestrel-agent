@@ -4,7 +4,7 @@
 
 **Implemented in this increment:** Kestrel has a dual-primary Browser and Agent desktop workspace with a persistent user browser, an always-mounted agent conversation, a searchable durable-task workspace, independent conversations, History, Bookmarks, Downloads, a searchable capability launcher, browser settings, and command-routed access to existing specialist surfaces. The visible browser supports an unlimited number of tabs, HTTP(S) address/search navigation, back/forward/reload/stop, tab restoration, pin/mute/duplicate, find in page, print, inspect, local history retention, bookmarks with a toggleable bookmarks bar (`⌘⇧B`), downloads (open/reveal/cancel), current-page context handoff, and `@` mentions of open tabs, bookmarks, and granted workspace files.
 
-**Not a claim of a general-purpose browser or unrestricted autonomy:** Chrome-complete extensions, profile import/sync, private browsing, and a complete per-site agent-permission manager remain follow-up work. Site permission prompts now remember allow/deny per origin for this profile. Existing Kestrel policy and approval gates remain the authority for consequential agent actions, and mutating browser tools now contribute privacy-bounded receipts to the owning task outcome.
+**Not a claim of a general-purpose browser or unrestricted autonomy:** Chrome-complete extensions, profile import/sync, private browsing, and a complete per-site agent-permission manager remain follow-up work. Site permission prompts now remember allow/deny per origin for this profile. Existing Kestrel policy and approval gates remain the authority for consequential agent actions, and mutating browser tools now contribute privacy-bounded receipts to the owning task outcome. Whole-desktop computer use is a separate opt-in capability, not an expansion of the browser boundary.
 
 ## Two browser boundaries
 
@@ -19,6 +19,24 @@ The user browser denies Electron permission checks and permission requests. Addr
 Agent-created browser sessions are separate, ephemeral Electron partitions. Each session is sandboxed with context isolation, no Node integration, web security enabled, DevTools disabled, and an explicit origin allowlist (one to twenty normalized origins). Navigation outside that allowlist is refused. Agent browser output is untrusted; an authentication handoff can make the isolated window visible, but it does not merge its cookies or storage into the user browser.
 
 The agent may also inspect or operate the visible user browser through narrowly typed tools. That is an intentional capability boundary, not a session merge: user tabs keep their own persistent profile while autonomous sessions retain their own isolated profile. Visible-browser tools can list tabs, read bounded current-page/AX/screenshot context, search local history, list download metadata, and perform approved tab/navigation/page actions. They are installed for new conversations and migrated onto existing conversations without changing conversation recency. Read-only visible-browser inspection (tabs, snapshots, screenshots, history, downloads) is `read_only` and does not require a click-approval. Mutating operations remain `sensitive` and stay on the existing policy/approval path. When the Codex subscription route is enabled, desktop bootstrap attaches a loopback MCP server so Codex can inspect the visible Kestrel browser (tabs, snapshots, screenshots, history, downloads) without receiving Kestrel's shell or workspace catalog. Mutating browser tools remain on Kestrel's native approval path and are not exposed through that MCP server. Page text, links, forms, history titles, download names, accessibility snapshots, and screenshots are reference material only—never instructions, authorization, or a source of credentials. AX snapshots have URL values redacted and are size-checked in the main process before crossing into the agent utility process.
+
+### Whole-desktop computer use
+
+The `computer.screenshot` and `computer.act` tools can cover the native Mac
+desktop for workflows that cannot be expressed in a browser tab. They are
+disabled by default and are enforced at the main-process backend boundary, not
+just hidden from the renderer. Enabling them in Settings persists only a
+versioned boolean; Screen Recording and Accessibility remain native macOS
+permissions and are checked without prompting. `computer.screenshot` is
+read-only but still reports `untrusted_desktop`; `computer.act` remains a
+sensitive, approval-gated action with bounded click, typing, and navigation-key
+inputs. Missing opt-in or native permission returns a failed-closed execution.
+
+The conversation also supports a bounded `ui.present` read-only tool for
+commerce-shaped presentation: source-backed lists, comparisons, plans, and
+result/fact cards. It does not create a catalog, cart, checkout, payment, or
+purchase backend. Credential-free HTTP(S) links open only after a person clicks
+them in the card, and all external content is labeled untrusted.
 
 Native `<select>` controls use a typed `select` action with a bounded option
 value rather than simulated arrow-key counts. Both autonomous and visible

@@ -28,7 +28,7 @@ describe("settings parity audit", () => {
 		const result = auditSettingsParity();
 		expect(result.errors).toEqual([]);
 		expect(result.entries).toBeGreaterThanOrEqual(120);
-		expect(result.catalogSettings).toBe(45);
+		expect(result.catalogSettings).toBe(46);
 	});
 
 	it("rejects duplicate and unmapped ledger entries", () => {

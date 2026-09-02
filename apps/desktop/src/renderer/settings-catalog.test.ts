@@ -40,6 +40,14 @@ describe("organized settings catalog", () => {
 			(entry) => entry.id === "agent.memory.recall",
 		)!;
 		expect(settingsScopeForSection(memory.section)).toBe("agent");
+
+		const computerUse = SETTINGS_CATALOG.find(
+			(entry) => entry.id === "agent.permissions.computer-use",
+		)!;
+		expect(settingsSectionMatchesQuery(computerUse, "screen recording")).toBe(
+			true,
+		);
+		expect(computerUse.anchor).toBe("setting-agent-computer-use");
 	});
 
 	it("preserves legacy deep links while exposing canonical Agent sections", () => {

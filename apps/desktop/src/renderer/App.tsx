@@ -114,6 +114,11 @@ import {
 	type CommandDestination,
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
+import { ComputerUseSettings } from "./components/ComputerUseSettings";
+import {
+	parseUIPresentationMessage,
+	PresentationCard,
+} from "./components/PresentationCard";
 import { DashboardExtensions } from "./components/DashboardExtensions";
 import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
@@ -4301,8 +4306,12 @@ function RuntimeConversation({
 								: "Load earlier messages"}
 						</button>
 					)}
-					{visibleMessages.map((message) =>
-						message.role === "user" ? (
+					{visibleMessages.map((message) => {
+						const presentation =
+							message.role === "tool"
+								? parseUIPresentationMessage(message)
+								: undefined;
+						return message.role === "user" ? (
 							<div
 								className="user-message"
 								key={message.id}
@@ -4350,6 +4359,14 @@ function RuntimeConversation({
 									}}
 								/>
 							</div>
+						) : presentation ? (
+							<div
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
+								<PresentationCard presentation={presentation} />
+							</div>
 						) : (
 							<div
 								className="work-summary"
@@ -4362,8 +4379,8 @@ function RuntimeConversation({
 									{message.toolName ?? "Tool result"}: {message.content}
 								</span>
 							</div>
-						),
-					)}
+						);
+					})}
 					{humanInputRequests.map((request) => (
 						<RuntimeQuestionCard
 							key={request.id}
@@ -9726,6 +9743,7 @@ function Settings({
 							className="settings-stack"
 							aria-label="Privacy and safety settings"
 						>
+							<ComputerUseSettings />
 							<ApprovalRulesSettings />
 						</section>
 						</section>
