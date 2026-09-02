@@ -1224,10 +1224,13 @@ try {
 				?.getAttribute("data-physics-dragging") === "true",
 		workerSessionId,
 	);
-	const draggedTension = await page.locator(
+	const draggedDisplacement = await page.locator(
 		`[data-node-id="${workerSessionId}"] .agent-universe-node-body`,
-	).getAttribute("data-physics-tension");
-	assert(Number(draggedTension) > 0, "Dragging a worker did not produce tether tension.");
+	).getAttribute("data-physics-displacement");
+	assert(
+		Number(draggedDisplacement) > 0,
+		"Dragging a worker did not produce spatial displacement.",
+	);
 	await page.mouse.up();
 	await page.waitForFunction(
 		(id) => {
