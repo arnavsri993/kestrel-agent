@@ -12,6 +12,7 @@ import {
 	RuntimeEventSchema,
 	UserBrowserCommandSchema,
 	UserBrowserEventSchema,
+	WindowFocusStateSchema,
 	WorkspaceSnapshotSchema,
 } from "@kestrel/shared-types";
 import { contextBridge, ipcRenderer } from "electron";
@@ -25,6 +26,13 @@ const bridge: RendererBridge = {
 			callback(UserBrowserEventSchema.parse(value));
 		ipcRenderer.on("kestrel:browser-event", listener);
 		return () => ipcRenderer.off("kestrel:browser-event", listener);
+	},
+	onWindowFocus(callback) {
+		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>
+			callback(WindowFocusStateSchema.parse(value));
+		ipcRenderer.on("kestrel:window-focus", listener);
+		ipcRenderer.send("kestrel:window-focus-ready");
+		return () => ipcRenderer.off("kestrel:window-focus", listener);
 	},
 	onPasswordPrompt(callback) {
 		const listener = (_event: Electron.IpcRendererEvent, value: unknown) =>

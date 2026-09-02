@@ -66,9 +66,10 @@ function isMacOS(): boolean {
 
 export function WindowControls() {
 	const controlsRef = useRef<HTMLDivElement | null>(null);
-	const [windowActive, setWindowActive] = useState(() =>
-		typeof document === "undefined" ? true : document.hasFocus(),
-	);
+	// Browser pages are hosted in native WebContentsViews, so renderer focus can
+	// move away from this document while the Kestrel window is still active.
+	// The main process supplies the authoritative NSWindow focus state instead.
+	const [windowActive, setWindowActive] = useState(true);
 	const activate = useCallback((type: (typeof controls)[number]["type"]) => {
 		void window.kestrel.request({ type }).catch(() => undefined);
 	}, []);
@@ -164,7 +165,6 @@ export function WindowControls() {
 
 	useEffect(() => {
 		if (!isMacOS()) return;
-		const handleFocus = () => setWindowActive(true);
 		let animationFrame = 0;
 		let geometryDirty = true;
 		let proximityActive = false;
@@ -278,9 +278,9 @@ export function WindowControls() {
 			resetProximity();
 		}
 
-		const handleBlur = () => {
-			setWindowActive(false);
-			clearProximity();
+		const handleWindowFocus = (focused: boolean) => {
+			setWindowActive(focused);
+			if (!focused) clearProximity();
 		};
 
 		function resetWhenPointerLeavesWindow(event: PointerEvent) {
@@ -300,8 +300,7 @@ export function WindowControls() {
 		window.addEventListener("pointerout", resetWhenPointerLeavesWindow);
 		window.addEventListener("pointercancel", clearProximity);
 		window.addEventListener("resize", invalidateGeometry, { passive: true });
-		window.addEventListener("focus", handleFocus);
-		window.addEventListener("blur", handleBlur);
+		const unsubscribeWindowFocus = window.kestrel.onWindowFocus(handleWindowFocus);
 		return () => {
 			if (animationFrame) window.cancelAnimationFrame(animationFrame);
 			resizeObserver.disconnect();
@@ -309,8 +308,7 @@ export function WindowControls() {
 			window.removeEventListener("pointerout", resetWhenPointerLeavesWindow);
 			window.removeEventListener("pointercancel", clearProximity);
 			window.removeEventListener("resize", invalidateGeometry);
-			window.removeEventListener("focus", handleFocus);
-			window.removeEventListener("blur", handleBlur);
+			unsubscribeWindowFocus();
 		};
 	}, [resetProximity]);
 

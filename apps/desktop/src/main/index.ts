@@ -631,6 +631,16 @@ function browserServiceForWindow(
   return window ? browserWindowServices.get(window) ?? null : null;
 }
 
+function sendWindowFocusState(window: BrowserWindow, focused: boolean): void {
+	if (!window.isDestroyed())
+		window.webContents.send("kestrel:window-focus", focused);
+}
+
+function installWindowFocusBridge(window: BrowserWindow): void {
+	window.on("focus", () => sendWindowFocusState(window, true));
+	window.on("blur", () => sendWindowFocusState(window, false));
+}
+
 function calculatorOverlayBounds(
   owner: BrowserWindow,
   anchor?: CalculatorAnchorBounds,
@@ -1718,6 +1728,7 @@ function createMainWindow(): BrowserWindow {
     },
   });
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);
+	installWindowFocusBridge(window);
   if (userBrowserService) {
     if (mainWindow) closeCalculatorOverlay(mainWindow);
     if (mainWindow) closePasswordOverlay(mainWindow);
@@ -1866,6 +1877,7 @@ function createDetachedBrowserWindow(
     },
   });
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);
+	installWindowFocusBridge(window);
   const statePath = join(
     app.getPath("userData"),
     "browser",
@@ -2421,6 +2433,21 @@ function registerIpc(): void {
 		void deliverPendingExternalIntakes();
 	};
 	ipcMain.on("kestrel:external-intake-ready", setExternalIntakeReadiness);
+	const sendCurrentWindowFocusState = (event: Electron.IpcMainEvent) => {
+		const senderWindow = BrowserWindow.fromWebContents(event.sender);
+		if (
+			!senderWindow ||
+			!browserWindowServices.has(senderWindow) ||
+			!isTrustedRendererFrame(
+				event.senderFrame,
+				event.sender.mainFrame,
+				trustedRendererUrl,
+			)
+		)
+			return;
+		sendWindowFocusState(senderWindow, senderWindow.isFocused());
+	};
+	ipcMain.on("kestrel:window-focus-ready", sendCurrentWindowFocusState);
 
 	ipcMain.handle("kestrel:request", async (event, raw) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
