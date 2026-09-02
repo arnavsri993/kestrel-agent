@@ -52,6 +52,9 @@ const electron = vi.hoisted(() => {
       toBitmap: () => Buffer.from([0, 0, 0, 255]),
       toPNG: () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     }));
+    copyImageAt = vi.fn();
+    copyVideoFrameAt = vi.fn();
+    downloadURL = vi.fn();
     setWindowOpenHandler = vi.fn((handler) => { this.windowOpenHandler = handler; });
     windowOpenHandler: ((details: {
       url: string;
@@ -104,17 +107,24 @@ const electron = vi.hoisted(() => {
   const state: {
     views: MockView[];
     partitions: Array<{ name: string; options: unknown; instance: MockSession }>;
-  } = { views: [], partitions: [] };
+    menus: unknown[][];
+  } = { views: [], partitions: [], menus: [] };
+  const buildFromTemplate = vi.fn((template: unknown[]) => {
+    state.menus.push(template);
+    return { popup: vi.fn() };
+  });
   const fromPartition = vi.fn((name: string, options: unknown) => {
     const instance = new MockSession();
     state.partitions.push({ name, options, instance });
     return instance;
   });
-  return { state, MockView, fromPartition, reset: () => {
+  return { state, MockView, fromPartition, buildFromTemplate, reset: () => {
     state.views.length = 0;
     state.partitions.length = 0;
+    state.menus.length = 0;
     nextWebContentsId = 1;
     fromPartition.mockClear();
+    buildFromTemplate.mockClear();
   } };
 });
 
@@ -122,7 +132,7 @@ vi.mock("electron", () => ({
   BrowserWindow: class {},
   WebContentsView: electron.MockView,
   session: { fromPartition: electron.fromPartition },
-  Menu: { buildFromTemplate: vi.fn(() => ({ popup: vi.fn() })) },
+  Menu: { buildFromTemplate: electron.buildFromTemplate },
   clipboard: { writeText: vi.fn() },
   dialog: {
     showMessageBox: vi.fn(async () => ({ response: 1 })),
@@ -159,6 +169,7 @@ const directories: string[] = [];
 
 afterEach(() => {
   electron.reset();
+  vi.clearAllMocks();
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
 });
@@ -640,6 +651,111 @@ describe("UserBrowserService", () => {
     expect(preview).toMatch(/^data:image\/png;base64,/);
     expect(view.webContents.capturePage).toHaveBeenCalledOnce();
     expect(view.visible).toBe(false);
+  });
+
+  it("builds an Edge-like image context menu with safe native actions", async () => {
+    const { service, commands } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/article");
+    const contents = electron.state.views[0]!.webContents;
+    const imageURL = "https://cdn.example.test/hero.png";
+    const savePath = join(tmpdir(), "kestrel-context-hero.png");
+
+    contents.emit("context-menu", {}, {
+      x: 42,
+      y: 64,
+      linkURL: "https://example.com/gallery",
+      linkText: "Gallery",
+      pageURL: "https://example.com/article",
+      frameURL: "https://example.com/article",
+      srcURL: imageURL,
+      mediaType: "image",
+      hasImageContents: true,
+      isEditable: false,
+      selectionText: "",
+      titleText: "",
+      altText: "Hero",
+      suggestedFilename: "hero.png",
+      selectionRect: { x: 0, y: 0, width: 0, height: 0 },
+      selectionStartOffset: 0,
+      referrerPolicy: "strict-origin-when-cross-origin",
+      misspelledWord: "",
+      dictionarySuggestions: [],
+      frameCharset: "UTF-8",
+      formControlType: "none",
+      spellcheckEnabled: true,
+      inputFieldType: "none",
+      menuSourceType: "mouse",
+    });
+
+    const template = electron.state.menus.at(-1) as Array<{
+      label?: string;
+      role?: string;
+      type?: string;
+      submenu?: Array<{ label?: string; click?: () => void }>;
+      click?: () => void;
+    }>;
+    const labels = template.map((item) => item.label ?? item.role ?? item.type);
+    expect(labels).toEqual([
+      "Open Image in New Tab",
+      "Save Image As…",
+      "Copy Image",
+      "Copy Image Address",
+      "separator",
+      "Open Link in New Tab",
+      "Save Link As…",
+      "Copy Link",
+      "separator",
+      "Back",
+      "Forward",
+      "reload",
+      "separator",
+      "Bookmark This Page",
+      "Print…",
+      "Screenshot",
+      "More tools",
+      "separator",
+      "Inspect",
+    ]);
+    expect(template.find((item) => item.label === "More tools")?.submenu?.map((item) => item.label)).toEqual([
+      "Find in page",
+      undefined,
+      "Downloads",
+      "Bookmarks",
+      "Settings",
+      "Command Center",
+      "Keyboard shortcuts",
+    ]);
+
+    template.find((item) => item.label === "Copy Image")?.click?.();
+    expect(contents.copyImageAt).toHaveBeenCalledWith(42, 64);
+
+    vi.mocked(dialog.showSaveDialog).mockResolvedValueOnce({
+      canceled: false,
+      filePath: savePath,
+    });
+    template.find((item) => item.label === "Save Image As…")?.click?.();
+    await vi.waitFor(() =>
+      expect(contents.downloadURL).toHaveBeenCalledWith(imageURL),
+    );
+    const item = {
+      getFilename: vi.fn(() => "hero.png"),
+      getURL: vi.fn(() => imageURL),
+      getReceivedBytes: vi.fn(() => 0),
+      getTotalBytes: vi.fn(() => 10),
+      setSavePath: vi.fn(),
+      on: vi.fn(),
+      once: vi.fn(),
+    };
+    electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+    expect(item.setSavePath).toHaveBeenCalledWith(savePath);
+
+    template.find((item) => item.label === "Screenshot")?.click?.();
+    template
+      .find((item) => item.label === "More tools")
+      ?.submenu?.find((item) => item.label === "Find in page")
+      ?.click?.();
+    expect(commands).toEqual(["save-screenshot", "find-in-page"]);
   });
 
   it("removes a detached page from the source browser service", async () => {

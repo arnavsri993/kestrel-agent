@@ -134,6 +134,7 @@ export function BrowserWorkspace({
     stopFindInPage,
     printTab,
     openDevTools,
+    saveScreenshot,
     moveTab,
     applyTabOrganization,
     detachTab,
@@ -347,6 +348,8 @@ export function BrowserWorkspace({
         else if (command === "find-in-page") openFind();
         else if (command === "print-page" && activeTab?.url)
           void printTab(activeTab.id);
+        else if (command === "save-screenshot" && activeTab?.url)
+          void saveScreenshot(activeTab.id).catch(() => undefined);
       }),
     [
       activeTab,
@@ -360,6 +363,7 @@ export function BrowserWorkspace({
       onToggleSidebar,
       openFind,
       printTab,
+      saveScreenshot,
       reopenClosedTab,
     ],
   );
