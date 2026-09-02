@@ -28,33 +28,22 @@
 
 .browser-tab-row-horizontal .browser-new-tab {
 	margin-left: 8px;
-	border: 1px solid var(--line-strong);
+	border: 1px solid transparent;
 	border-radius: 50%;
-	background: var(--raised);
+	background: transparent;
 	color: var(--ink-secondary);
-	box-shadow: var(--shadow-xs);
-	opacity: 0;
-	pointer-events: none;
+	box-shadow: none;
 	transition:
-		opacity var(--motion-feedback) var(--ease-kestrel),
 		background-color var(--motion-feedback) var(--ease-kestrel),
-		border-color var(--motion-feedback) var(--ease-kestrel),
-		box-shadow var(--motion-feedback) var(--ease-kestrel),
 		color var(--motion-feedback) var(--ease-kestrel);
-}
-
-.browser-tab-row-horizontal:hover .browser-new-tab,
-.browser-tab-row-horizontal .browser-new-tab:focus-visible {
-	opacity: 1;
-	pointer-events: auto;
 }
 
 .browser-tab-row-horizontal .browser-new-tab:hover,
 .browser-tab-row-horizontal .browser-new-tab:focus-visible {
-	border-color: var(--solid);
+	border-color: transparent;
 	background: var(--surface);
 	color: var(--ink);
-	box-shadow: var(--shadow-sm);
+	box-shadow: none;
 }
 
 .browser-tab-row-horizontal .browser-new-tab:active {
