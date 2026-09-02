@@ -837,7 +837,7 @@ function AgentSystemScene({
 							>
 								{isRoot ? (
 									<>
-										{working || activity ? (
+										{working ? (
 											<circle
 												className="agent-universe-core-aura"
 												r={nodeLayout.radius + 18}
