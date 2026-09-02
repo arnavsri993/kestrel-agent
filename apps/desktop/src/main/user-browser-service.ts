@@ -115,6 +115,17 @@ const MAX_TAB_FOLDER_NAMING_TABS = 8;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
 const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
+const AUTHENTICATION_HOSTS = new Set([
+	"accounts.google.com",
+	"auth.anthropic.com",
+	"accounts.anthropic.com",
+	"login.microsoftonline.com",
+	"login.live.com",
+	"accounts.microsoft.com",
+	"appleid.apple.com",
+]);
+const AUTHENTICATION_PATH_PATTERN =
+	/(?:^|\/)(?:auth|authenticate|authentication|authorize|authorization|challenge|consent|log[-_]?in|oauth\d*|sign[-_]?in|sign[-_]?up|signin|signup|sso|verify|verification)(?:\/|$)/i;
 const ALWAYS_ALLOW_PERMISSIONS = new Set([
 	"fullscreen",
 	"clipboard-sanitized-write",
@@ -202,6 +213,18 @@ interface ViewRecord {
 	navigatingTo?: string;
 }
 
+function liveWebContents(
+	value: WebContents | null | undefined,
+): WebContents | undefined {
+	try {
+		return value && typeof value.isDestroyed === "function" && !value.isDestroyed()
+			? value
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 type BrowserNavigationLoadOptions = Pick<
 	LoadURLOptions,
 	"extraHeaders" | "httpReferrer" | "postData"
@@ -250,6 +273,22 @@ function safePageUrl(value: string): URL | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Authentication pages are stateful even when their tab is not foregrounded.
+ * Keep their native views alive so an OAuth opener/popup pair cannot lose its
+ * session halfway through a provider redirect.
+ */
+export function isAuthenticationFlowUrl(value: string): boolean {
+	const url = safePageUrl(value);
+	if (!url) return false;
+	const hostname = url.hostname.toLowerCase();
+	return (
+		AUTHENTICATION_HOSTS.has(hostname) ||
+		/^(?:accounts?|auth|login|oauth\d*|sso)\./i.test(hostname) ||
+		AUTHENTICATION_PATH_PATTERN.test(url.pathname)
+	);
 }
 
 function pageDomain(value: string): string | undefined {
@@ -1039,8 +1078,10 @@ export class UserBrowserService {
 		)
 			this.applySessionBrowserPreferences();
 		if (next.defaultZoomPercent !== previous.defaultZoomPercent) {
-			for (const { view } of this.views.values())
-				this.applyViewBrowserPreferences(view.webContents);
+			for (const { view } of this.views.values()) {
+				const webContents = liveWebContents(view?.webContents);
+				if (webContents) this.applyViewBrowserPreferences(webContents);
+			}
 		}
 		if (
 			next.minimumFontSize !== previous.minimumFontSize ||
@@ -1260,13 +1301,14 @@ export class UserBrowserService {
 		const targetId = tabId ?? this.state.activeTabId;
 		if (!targetId) return this.getState();
 		const record = this.views.get(targetId);
-		if (record && !record.view.webContents.isDestroyed()) {
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (webContents) {
 			const current =
-				typeof record.view.webContents.getZoomLevel === "function"
-					? record.view.webContents.getZoomLevel()
+				typeof webContents.getZoomLevel === "function"
+					? webContents.getZoomLevel()
 					: 0;
-			if (typeof record.view.webContents.setZoomLevel === "function") {
-				record.view.webContents.setZoomLevel(Math.min(current + 0.5, 3.0));
+			if (typeof webContents.setZoomLevel === "function") {
+				webContents.setZoomLevel(Math.min(current + 0.5, 3.0));
 			}
 		}
 		return this.getState();
@@ -1276,13 +1318,14 @@ export class UserBrowserService {
 		const targetId = tabId ?? this.state.activeTabId;
 		if (!targetId) return this.getState();
 		const record = this.views.get(targetId);
-		if (record && !record.view.webContents.isDestroyed()) {
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (webContents) {
 			const current =
-				typeof record.view.webContents.getZoomLevel === "function"
-					? record.view.webContents.getZoomLevel()
+				typeof webContents.getZoomLevel === "function"
+					? webContents.getZoomLevel()
 					: 0;
-			if (typeof record.view.webContents.setZoomLevel === "function") {
-				record.view.webContents.setZoomLevel(Math.max(current - 0.5, -3.0));
+			if (typeof webContents.setZoomLevel === "function") {
+				webContents.setZoomLevel(Math.max(current - 0.5, -3.0));
 			}
 		}
 		return this.getState();
@@ -1292,9 +1335,10 @@ export class UserBrowserService {
 		const targetId = tabId ?? this.state.activeTabId;
 		if (!targetId) return this.getState();
 		const record = this.views.get(targetId);
-		if (record && !record.view.webContents.isDestroyed()) {
-			if (typeof record.view.webContents.setZoomLevel === "function") {
-				record.view.webContents.setZoomLevel(0);
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (webContents) {
+			if (typeof webContents.setZoomLevel === "function") {
+				webContents.setZoomLevel(0);
 			}
 		}
 		return this.getState();
@@ -1341,6 +1385,9 @@ export class UserBrowserService {
 		// file tabs, discarded views, and crashed renderers still cross an
 		// explicit lifecycle boundary and receive a fresh view when needed.
 		const record = this.ensureView(tab, false);
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The browser page is still waking up. Try again.");
 		this.elementRefs.delete(tabId);
 		tab.error = undefined;
 		tab.crashed = false;
@@ -1357,8 +1404,8 @@ export class UserBrowserService {
 		this.attachActiveWebView();
 		try {
 			if (loadOptions)
-				await record.view.webContents.loadURL(normalized.url, loadOptions);
-			else await record.view.webContents.loadURL(normalized.url);
+				await webContents.loadURL(normalized.url, loadOptions);
+			else await webContents.loadURL(normalized.url);
 		} catch (cause) {
 			if (record.navigatingTo !== normalized.url) return this.getState();
 			tab.loading = false;
@@ -1378,8 +1425,9 @@ export class UserBrowserService {
 		const tab = this.requireTab(tabId);
 		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.requireView(tabId);
-		if (record.view.webContents.navigationHistory.canGoBack())
-			record.view.webContents.navigationHistory.goBack();
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (webContents?.navigationHistory.canGoBack())
+			webContents.navigationHistory.goBack();
 		return this.getState();
 	}
 
@@ -1387,8 +1435,9 @@ export class UserBrowserService {
 		const tab = this.requireTab(tabId);
 		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.requireView(tabId);
-		if (record.view.webContents.navigationHistory.canGoForward())
-			record.view.webContents.navigationHistory.goForward();
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (webContents?.navigationHistory.canGoForward())
+			webContents.navigationHistory.goForward();
 		return this.getState();
 	}
 
@@ -1401,10 +1450,12 @@ export class UserBrowserService {
 		const record = this.ensureView(tab);
 		if (tabId === this.state.activeTabId) this.revealActiveWebContent();
 		this.attachActiveWebView();
-		const loadedUrl = record.view.webContents.getURL?.() ?? "";
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents) return this.getState();
+		const loadedUrl = webContents.getURL?.() ?? "";
 		if (!loadedUrl) {
-			void record.view.webContents.loadURL(tab.url).catch((cause) => {
-				if (record.view.webContents.isDestroyed()) return;
+			void webContents.loadURL(tab.url).catch((cause) => {
+				if (!liveWebContents(webContents)) return;
 				tab.loading = false;
 				tab.error = describeBrowserLoadFailure(
 					0,
@@ -1416,11 +1467,11 @@ export class UserBrowserService {
 		}
 		if (
 			ignoreCache &&
-			typeof record.view.webContents.reloadIgnoringCache === "function"
+			typeof webContents.reloadIgnoringCache === "function"
 		) {
-			record.view.webContents.reloadIgnoringCache();
+			webContents.reloadIgnoringCache();
 		} else {
-			record.view.webContents.reload();
+			webContents.reload();
 		}
 		return this.getState();
 	}
@@ -1428,7 +1479,7 @@ export class UserBrowserService {
 	stop(tabId: string): UserBrowserState {
 		const tab = this.requireTab(tabId);
 		if (isKestrelAppPageUrl(tab.url)) return this.getState();
-		this.requireView(tabId).view.webContents.stop();
+		liveWebContents(this.requireView(tabId)?.view?.webContents)?.stop();
 		return this.getState();
 	}
 
@@ -1480,15 +1531,16 @@ export class UserBrowserService {
 		)
 			return undefined;
 		const record = this.views.get(tab.id);
+		const webContents = liveWebContents(record?.view?.webContents);
 		if (
 			!record ||
-			record.view.webContents.isDestroyed() ||
+			!webContents ||
 			!this.window.contentView.children.includes(record.view)
 		)
 			return undefined;
 		try {
 			const image = await capturePageWithDeadline(
-				record.view.webContents,
+				webContents,
 				undefined,
 				PAGE_PREVIEW_CAPTURE_TIMEOUT_MS,
 			);
@@ -1534,7 +1586,7 @@ export class UserBrowserService {
 			newTabGreetingActivity: emptyNewTabGreetingActivity(),
 		};
 		for (const record of this.views.values())
-			record.view.webContents.navigationHistory.clear();
+			liveWebContents(record?.view?.webContents)?.navigationHistory.clear();
 		this.commit();
 		return this.getState();
 	}
@@ -1751,12 +1803,12 @@ export class UserBrowserService {
 		const tab = this.requireTab(tabId);
 		tab.muted = muted;
 		const record = this.views.get(tabId);
+		const webContents = liveWebContents(record?.view?.webContents);
 		if (
-			record &&
-			!record.view.webContents.isDestroyed() &&
-			typeof record.view.webContents.setAudioMuted === "function"
+			webContents &&
+			typeof webContents.setAudioMuted === "function"
 		) {
-			record.view.webContents.setAudioMuted(muted);
+			webContents.setAudioMuted(muted);
 		}
 		this.commit();
 		return this.getState();
@@ -1960,7 +2012,7 @@ export class UserBrowserService {
 			this.stopFindInPage(tabId);
 			return this.getState();
 		}
-		record.view.webContents.findInPage(text, {
+		liveWebContents(record?.view?.webContents)?.findInPage(text, {
 			forward: options.forward ?? true,
 			findNext: Boolean(options.findNext),
 		});
@@ -1969,21 +2021,21 @@ export class UserBrowserService {
 
 	stopFindInPage(tabId: string): UserBrowserState {
 		const record = this.views.get(tabId);
-		if (record && !record.view.webContents.isDestroyed())
-			record.view.webContents.stopFindInPage("clearSelection");
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (webContents) webContents.stopFindInPage("clearSelection");
 		return this.getState();
 	}
 
 	printTab(tabId: string): UserBrowserState {
 		const record = this.requireView(tabId);
-		record.view.webContents.print({});
+		liveWebContents(record?.view?.webContents)?.print({});
 		return this.getState();
 	}
 
 	openDevTools(tabId: string): UserBrowserState {
 		if (!this.allowDevTools) return this.getState();
 		const record = this.requireView(tabId);
-		record.view.webContents.openDevTools({ mode: "detach" });
+		liveWebContents(record?.view?.webContents)?.openDevTools({ mode: "detach" });
 		return this.getState();
 	}
 
@@ -2035,7 +2087,10 @@ export class UserBrowserService {
 			if (!tab.url || tab.error || isKestrelAppPageUrl(tab.url))
 				throw new Error("The selected tab does not have a readable web page.");
 		const record = this.ensureView(tab);
-		const raw = (await record.view.webContents.executeJavaScript(`(() => {
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The selected page is still waking up. Try again.");
+		const raw = (await webContents.executeJavaScript(`(() => {
       const limit = (value, maximum) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, maximum);
       const visible = (node) => {
         const rect = node.getBoundingClientRect();
@@ -2092,7 +2147,7 @@ export class UserBrowserService {
 				})
 			: [];
 		const url =
-			sanitizeBrowserUrl(record.view.webContents.getURL()) ||
+			sanitizeBrowserUrl(webContents.getURL()) ||
 			sanitizeBrowserUrl(tab.url);
 		if (!url)
 			throw new Error("The selected tab does not have a safe readable URL.");
@@ -2100,7 +2155,7 @@ export class UserBrowserService {
 			tabId: tab.id,
 			url,
 			title: redactUntrustedBrowserText(
-				record.view.webContents.getTitle() || tab.title,
+				webContents.getTitle() || tab.title,
 				500,
 			),
 			description: redactUntrustedBrowserText(raw.description, 2000),
@@ -2152,7 +2207,9 @@ export class UserBrowserService {
 			throw new Error("The protected payment card store is unavailable.");
 		const tab = this.requireActiveTab();
 		const record = this.requireView(tab.id);
-		const webContents = record.view.webContents;
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The payment page is still waking up. Try again.");
 		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
 		if (!url || url.protocol !== "https:")
 			throw new Error("Payment cards can only be saved on HTTPS websites.");
@@ -2272,7 +2329,9 @@ export class UserBrowserService {
 			throw new Error("The protected password store is unavailable.");
 		const tab = this.requireActiveTab();
 		const record = this.requireView(tab.id);
-		const webContents = record.view.webContents;
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The login page is still waking up. Try again.");
 		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
 		if (!url || url.protocol !== "https:")
 			throw new Error("Passwords can only be filled on HTTPS websites.");
@@ -2300,7 +2359,9 @@ export class UserBrowserService {
 			throw new Error("The protected payment card store is unavailable.");
 		const tab = this.requireActiveTab();
 		const record = this.requireView(tab.id);
-		const webContents = record.view.webContents;
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The payment page is still waking up. Try again.");
 		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
 		if (!url || url.protocol !== "https:")
 			throw new Error("Payment cards can only be filled on HTTPS websites.");
@@ -2337,14 +2398,13 @@ export class UserBrowserService {
 			(candidate) => candidate.id === (tabId ?? this.state.activeTabId),
 		);
 		const record = tab ? this.views.get(tab.id) : undefined;
-		const webContents = record?.view.webContents;
+		const webContents = liveWebContents(record?.view?.webContents);
 		const url = tab?.url
 			? safePageUrl(webContents?.getURL() || tab.url)
 			: undefined;
 		if (
 			!tab ||
 			!webContents ||
-			webContents.isDestroyed() ||
 			!url ||
 			url.protocol !== "https:" ||
 			isKestrelAppPageUrl(tab.url)
@@ -2462,14 +2522,13 @@ export class UserBrowserService {
 			(candidate) => candidate.id === (tabId ?? this.state.activeTabId),
 		);
 		const record = tab ? this.views.get(tab.id) : undefined;
-		const webContents = record?.view.webContents;
+		const webContents = liveWebContents(record?.view?.webContents);
 		const url = tab?.url
 			? safePageUrl(webContents?.getURL() || tab.url)
 			: undefined;
 		if (
 			!tab ||
 			!webContents ||
-			webContents.isDestroyed() ||
 			!url ||
 			url.protocol !== "https:" ||
 			isKestrelAppPageUrl(tab.url)
@@ -2612,7 +2671,9 @@ export class UserBrowserService {
 			throw new Error("The verification page domain is invalid.");
 		const tab = this.requireTab(tabId);
 		const record = this.requireView(tab.id);
-		const webContents = record.view.webContents;
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The verification page is still waking up. Try again.");
 		if (
 			pageDomain(webContents.getURL()) !== domain ||
 			safePageUrl(webContents.getURL())?.origin !== expectedOrigin
@@ -2667,7 +2728,10 @@ export class UserBrowserService {
 		const resolvedTabId = tabId ?? this.requireActiveTab().id;
 		return this.withAgentTabPin(resolvedTabId, async () => {
 			const tab = this.requireTab(resolvedTabId);
-			const webContents = this.ensureView(tab).view.webContents;
+			const record = this.ensureView(tab);
+			const webContents = liveWebContents(record?.view?.webContents);
+			if (!webContents)
+				throw new Error("The selected page is still waking up. Try again.");
 		if (signal?.aborted) throw signal.reason;
 		const url =
 			sanitizeBrowserUrl(webContents.getURL()) ||
@@ -2790,8 +2854,9 @@ export class UserBrowserService {
 				await this.syncActiveView();
 				const record = this.ensureView(tab);
 				const view = record.view;
-				const webContents = view.webContents;
+				const webContents = liveWebContents(view?.webContents);
 				if (
+					!webContents ||
 					!this.contentVisible ||
 					!this.window.contentView.children.includes(view)
 				) {
@@ -2823,7 +2888,7 @@ export class UserBrowserService {
 						cause instanceof Error
 							? cause
 							: new Error("Visible browser screenshot capture failed.");
-					if (!webContents.isDestroyed()) webContents.invalidate();
+					if (liveWebContents(webContents)) webContents.invalidate();
 					await new Promise<void>((resolve) => setTimeout(resolve, 50));
 				}
 			}
@@ -2851,7 +2916,9 @@ export class UserBrowserService {
 	): Promise<void> {
 		return this.withAgentTabPin(tabId, async () => {
 			const record = this.ensureView(this.requireTab(tabId));
-		const webContents = record.view.webContents;
+			const webContents = liveWebContents(record?.view?.webContents);
+			if (!webContents)
+				throw new Error("The selected page is still waking up. Try again.");
 		if (signal.aborted) throw signal.reason;
 		if (action.type === "click") {
 			const point = await this.targetPoint(
@@ -2993,7 +3060,12 @@ export class UserBrowserService {
 		if (tabId === this.state.activeTabId || this.isAgentTabPinned(tabId))
 			return this.getState();
 		const tab = this.requireTab(tabId);
-		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
+		if (
+			!tab.url ||
+			isKestrelAppPageUrl(tab.url) ||
+			isAuthenticationFlowUrl(tab.url)
+		)
+			return this.getState();
 		this.closeView(tabId);
 		tab.discarded = true;
 		this.commit();
@@ -3007,14 +3079,15 @@ export class UserBrowserService {
 				this.isAgentTabPinned(tab.id) ||
 				!tab.url ||
 				tab.discarded ||
-				isKestrelAppPageUrl(tab.url)
+				isKestrelAppPageUrl(tab.url) ||
+				isAuthenticationFlowUrl(tab.url)
 			)
 				continue;
 			const record = this.views.get(tab.id);
+			const webContents = liveWebContents(record?.view?.webContents);
 			if (
-				record &&
-				!record.view.webContents.isDestroyed() &&
-				record.view.webContents.isCurrentlyAudible()
+				webContents &&
+				webContents.isCurrentlyAudible()
 			) {
 				continue;
 			}
@@ -3050,7 +3123,8 @@ export class UserBrowserService {
 				this.isAgentTabPinned(tab.id) ||
 				!tab.url ||
 				tab.discarded ||
-				isKestrelAppPageUrl(tab.url)
+				isKestrelAppPageUrl(tab.url) ||
+				isAuthenticationFlowUrl(tab.url)
 			)
 				continue;
 			const lastActive = Date.parse(tab.lastActiveAt);
@@ -3058,10 +3132,10 @@ export class UserBrowserService {
 
 			// Do not sleep tabs that are playing audio
 			const record = this.views.get(tab.id);
+			const webContents = liveWebContents(record?.view?.webContents);
 			if (
-				record &&
-				!record.view.webContents.isDestroyed() &&
-				record.view.webContents.isCurrentlyAudible()
+				webContents &&
+				webContents.isCurrentlyAudible()
 			) {
 				continue;
 			}
@@ -3230,7 +3304,7 @@ export class UserBrowserService {
 		if (tab.file || isKestrelAppPageUrl(tab.url))
 			throw new Error("App pages do not use a web view.");
 		const existing = this.views.get(tab.id);
-		if (existing && !existing.view.webContents.isDestroyed()) return existing;
+		if (existing && liveWebContents(existing?.view?.webContents)) return existing;
 		if (existing) this.closeView(tab.id, false);
 		const view = new WebContentsView({
 			webPreferences: {
@@ -3253,23 +3327,26 @@ export class UserBrowserService {
 					minimumFontSize: this.state.settings.minimumFontSize,
 				},
 			});
+		const webContents = liveWebContents(view?.webContents);
+		if (!webContents)
+			throw new Error("Kestrel could not create a browser page. Try again.");
 		view.setBackgroundColor("#ffffff");
-		this.applyViewBrowserPreferences(view.webContents);
+		this.applyViewBrowserPreferences(webContents);
 		const record: ViewRecord = { view };
 		this.views.set(tab.id, record);
-		this.webContentsToTab.set(view.webContents.id, tab.id);
+		this.webContentsToTab.set(webContents.id, tab.id);
 		this.configureView(tab, record);
 		if (
 			tab.muted &&
-			typeof view.webContents.setAudioMuted === "function"
+			typeof webContents.setAudioMuted === "function"
 		) {
-			view.webContents.setAudioMuted(true);
+			webContents.setAudioMuted(true);
 		}
 		if (loadStoredUrl && tab.url) {
 			tab.discarded = false;
 			tab.loading = true;
-			void view.webContents.loadURL(tab.url).catch((cause) => {
-				if (view.webContents.isDestroyed()) return;
+			void webContents.loadURL(tab.url).catch((cause) => {
+				if (!liveWebContents(webContents)) return;
 				tab.loading = false;
 				tab.error = describeBrowserLoadFailure(
 					0,
@@ -3282,7 +3359,8 @@ export class UserBrowserService {
 	}
 
 	private configureView(tab: UserBrowserTab, record: ViewRecord): void {
-		const { webContents } = record.view;
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents) return;
 		webContents.setWindowOpenHandler(({ url, disposition, postBody, referrer }) => {
 			if (safePageUrl(url)) {
 				const loadOptions = loadOptionsForWindowOpen(postBody, referrer);
@@ -3647,7 +3725,7 @@ export class UserBrowserService {
 		value: string,
 	): void {
 		const url = safePageUrl(value);
-		if (!url) return;
+		if (!url || !liveWebContents(webContents)) return;
 		// Snapshot element refs are tied to a specific DOM generation. Any main-frame
 		// navigation, including SPA route changes, must invalidate them before reuse.
 		this.elementRefs.delete(tab.id);
@@ -3696,7 +3774,7 @@ export class UserBrowserService {
 		webContents: WebContents,
 		commit = true,
 	): void {
-		if (webContents.isDestroyed()) return;
+		if (!liveWebContents(webContents)) return;
 		tab.canGoBack = webContents.navigationHistory.canGoBack();
 		tab.canGoForward = webContents.navigationHistory.canGoForward();
 		if (commit) this.commit();
@@ -3732,10 +3810,12 @@ export class UserBrowserService {
 		if (!this.contentVisible || !tab || !tab.url || tab.error) return;
 		if (isKestrelAppPageUrl(tab.url)) return;
 		const { view } = this.ensureView(tab);
+		const webContents = liveWebContents(view?.webContents);
+		if (!webContents) return;
 		this.window.contentView.addChildView(view);
 		view.setBounds(this.contentBounds);
 		view.setVisible(true);
-		view.webContents.focus();
+		webContents.focus();
 	}
 
 	private discardLeastRecentViews(): void {
@@ -3745,6 +3825,7 @@ export class UserBrowserService {
 				(tab) =>
 					tab.id !== this.state.activeTabId &&
 					!this.isAgentTabPinned(tab.id) &&
+					!isAuthenticationFlowUrl(tab.url) &&
 					this.views.has(tab.id),
 			)
 			.sort((left, right) =>
@@ -3763,16 +3844,17 @@ export class UserBrowserService {
 		if (!record) return;
 		this.views.delete(tabId);
 		this.elementRefs.delete(tabId);
-		this.webContentsToTab.delete(record.view.webContents.id);
+		const webContents = record?.view?.webContents;
+		if (webContents && typeof webContents.id === "number")
+			this.webContentsToTab.delete(webContents.id);
 		if (
 			!this.window.isDestroyed() &&
 			this.window.contentView.children.includes(record.view)
 		)
 			this.window.contentView.removeChildView(record.view);
-		if (closeWebContents && !record.view.webContents.isDestroyed()) {
-			if (record.view.webContents.debugger.isAttached())
-				record.view.webContents.debugger.detach();
-			record.view.webContents.close({ waitForBeforeUnload: false });
+		if (closeWebContents && liveWebContents(webContents)) {
+			if (webContents.debugger.isAttached()) webContents.debugger.detach();
+			webContents.close({ waitForBeforeUnload: false });
 		}
 	}
 
@@ -3911,12 +3993,10 @@ export class UserBrowserService {
 	): Promise<boolean> {
 		if (ALWAYS_ALLOW_PERMISSIONS.has(permission)) return true;
 		if (ALWAYS_DENY_PERMISSIONS.has(permission)) return false;
+		const currentWebContents = liveWebContents(webContents);
 		const origin = this.permissionOrigin(
 			requestingUrl ||
-				(typeof webContents?.isDestroyed === "function" &&
-				!webContents.isDestroyed()
-					? webContents.getURL()
-					: "") ||
+				currentWebContents?.getURL() ||
 				"",
 		);
 		if (!origin) return false;

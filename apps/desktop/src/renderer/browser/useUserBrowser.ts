@@ -10,6 +10,7 @@ import type {
 	UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { userFacingError } from "../error-copy";
 
 function responseError(response: RendererResponse): string {
 	return !response.ok && "error" in response
@@ -121,9 +122,10 @@ export function useUserBrowser(): UserBrowserController {
 			setError("");
 		} catch (cause) {
 			setError(
-				cause instanceof Error
-					? cause.message
-					: "The browser did not respond. Quit and reopen Kestrel, or try again.",
+				userFacingError(
+					cause,
+					"The browser did not respond. Quit and reopen Kestrel, or try again.",
+				),
 			);
 			throw cause;
 		}
@@ -138,11 +140,7 @@ export function useUserBrowser(): UserBrowserController {
 				applyState(response.browserState);
 				setError("");
 			} catch (cause) {
-				const message =
-					cause instanceof Error
-						? cause.message
-						: "The browser request failed.";
-				setError(message);
+				setError(userFacingError(cause, "The browser request failed. Try again."));
 				throw cause;
 			}
 		},
