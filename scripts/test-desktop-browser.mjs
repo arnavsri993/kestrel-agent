@@ -1185,12 +1185,32 @@ try {
 	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
-		.getByRole("heading", { name: "Tasks", exact: true })
+		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
 	);
+	const workerSessionId = await page.evaluate(async (parentSessionId) => {
+		const response = await window.kestrel.request({
+			type: "runtime-fork-session",
+			sessionId: parentSessionId,
+			title: "Visible browser worker",
+		});
+		if (!response.ok || !response.session)
+			throw new Error("A delegated runtime session could not be created.");
+		return response.session.id;
+	}, runtimeSessionId);
+	await page.locator(".agent-universe-scene").waitFor();
+	await page.locator(".agent-universe-node.is-core").first().waitFor();
+	await page.locator(`[data-node-id="${workerSessionId}"]`).waitFor();
+	await page.locator(`[data-node-id="${workerSessionId}"]`).click();
+	await page
+		.getByRole("heading", { name: "Visible browser worker", exact: true })
+		.waitFor();
+	await page.getByRole("button", { name: "Close inspector" }).click();
+	await page.getByRole("button", { name: "List", exact: true }).click();
+	await page.getByRole("heading", { name: "Task library", exact: true }).waitFor();
 	const taskRow = page.getByRole("button", {
 		name: /Visible browser test, Open/,
 	});

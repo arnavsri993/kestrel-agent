@@ -94,6 +94,10 @@ import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
 import {
+	appendAgentUniverseActivity,
+	type AgentUniverseActivity,
+} from "./components/browser/agent-universe/agent-universe-model";
+import {
 	BrowserBookmarks,
 	BrowserDownloads,
 	BrowserHistory,
@@ -9878,6 +9882,12 @@ export function App() {
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
+	const [runtimeSessionsLoadState, setRuntimeSessionsLoadState] = useState<
+		"loading" | "ready" | "error"
+	>("loading");
+	const [agentUniverseActivities, setAgentUniverseActivities] = useState<
+		AgentUniverseActivity[]
+	>([]);
 	const [transcriptTarget, setTranscriptTarget] = useState<{
 		sessionId: string;
 		messageId: string;
@@ -9917,6 +9927,21 @@ export function App() {
 	const [organizeTabsRequestId, setOrganizeTabsRequestId] = useState(0);
 	const [greetingName, setGreetingName] = useState<string | undefined>();
 	const reduced = useReducedMotion();
+	const refreshRuntimeSessions = useCallback(async () => {
+		setRuntimeSessionsLoadState("loading");
+		try {
+			const raw = await window.kestrel.request({
+				type: "runtime-list-sessions",
+			});
+			const response = raw as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			setRuntimeSessions(response.sessions ?? []);
+			setRuntimeSessionsLoadState("ready");
+		} catch (cause) {
+			setRuntimeSessionsLoadState("error");
+			throw cause;
+		}
+	}, []);
 
 	useEffect(() => {
 		// Setup links keep their provider-owned/system-browser handoff. A managed
@@ -10285,6 +10310,9 @@ export function App() {
 				if (!active) return;
 				setSnapshot(initial.snapshot);
 				setRuntimeSessions(initial.sessions);
+				setRuntimeSessionsLoadState(
+					initial.sessionsLoadError ? "error" : "ready",
+				);
 				setActiveRuntimeSessionId(initial.selectedSessionId);
 			})
 			.catch((cause) => {
@@ -10298,14 +10326,11 @@ export function App() {
 	useEffect(
 		() =>
 			window.kestrel.onRuntimeEvent((event) => {
-				if (event.type === "session.created")
-					void window.kestrel
-						.request({ type: "runtime-list-sessions" })
-						.then((raw) => {
-							const response = raw as CoreResponse;
-							if (response.ok) setRuntimeSessions(response.sessions ?? []);
-						})
-						.catch(() => undefined);
+				setAgentUniverseActivities((current) =>
+					appendAgentUniverseActivity(current, event),
+				);
+				if (event.type === "session.created" || event.type === "session.updated")
+					void refreshRuntimeSessions().catch(() => undefined);
 				else if (event.type === "message.appended")
 					setRuntimeSessions((current) =>
 						runtimeSessionsAfterEvent(current, event),
@@ -10323,7 +10348,7 @@ export function App() {
 							.catch(() => undefined);
 				}
 			}),
-		[],
+		[refreshRuntimeSessions],
 	);
 	useEffect(() => {
 		if (!snapshot?.configuration) return;
@@ -10617,6 +10642,8 @@ export function App() {
 			{appPageId === "agent" && (
 				<AgentWorkspace
 					sessions={runtimeSessions}
+					sessionLoadState={runtimeSessionsLoadState}
+					activities={agentUniverseActivities}
 					activeSessionId={activeRuntimeSessionId}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
@@ -10624,6 +10651,7 @@ export function App() {
 					onOpenSession={openSidebarSession}
 					onOpenApprovals={() => navigate("approvals")}
 					onOpenWork={() => navigate("work")}
+					onRetrySessions={() => void refreshRuntimeSessions().catch(() => undefined)}
 				/>
 			)}
 			{appPageId === "projects" && (
