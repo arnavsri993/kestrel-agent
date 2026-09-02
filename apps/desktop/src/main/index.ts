@@ -108,7 +108,7 @@ import {
 import { MacMessagesSource } from "./mac-messages-source";
 import {
   MacWidgetsStore,
-  macWidgetsGroupContainerPath,
+  macWidgetsSnapshotDirectory,
   widgetSnapshotFromWorkspace,
 } from "./mac-widgets";
 import {
@@ -1652,15 +1652,18 @@ function publishMacWidgetSnapshot(snapshot: WorkspaceSnapshot): void {
   latestWorkspaceSnapshot = snapshot;
   if (process.platform !== "darwin") return;
   macWidgetsStore ??= new MacWidgetsStore(
-    macWidgetsGroupContainerPath(app.getPath("home")),
+    macWidgetsSnapshotDirectory(
+      app.getPath("home"),
+      process.env.KESTREL_TEST_USER_DATA,
+    ),
   );
   void macWidgetsStore
     .write(widgetSnapshotFromWorkspace(snapshot))
     .catch((error: unknown) => {
-			console.warn(
-				"Kestrel could not update its local macOS widget snapshot.",
-				error instanceof Error ? error.message : String(error),
-			);
+      console.warn(
+        "Kestrel could not update its local macOS widget snapshot.",
+        error instanceof Error ? error.message : String(error),
+      );
     });
 }
 
