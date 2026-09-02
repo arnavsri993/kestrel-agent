@@ -42,27 +42,42 @@ function buildLayer(
 	if (!context) return { ...layer, tile };
 
 	const area = (pixelWidth * pixelHeight) / (dpr * dpr);
-	// A map texture should sit behind the work, not compete with it like a
-	// screensaver. Keep the field sparse and let the runtime bodies carry the
-	// visual signal.
-	const baseCount = Math.round(clamp(area / 11_500, 56, 150));
+	// The field is an orientation cue, not a screensaver. It still needs to
+	// read as a field of stars at a normal desktop distance, though: the former
+	// 0.035 alpha floor disappeared into the black plane on Retina displays.
+	const baseCount = Math.round(clamp(area / 6_000, 120, 300));
 	const count = Math.round(baseCount * layer.density);
 	const random = seededRandom(layer.seed ^ pixelWidth ^ (pixelHeight << 1));
 	for (let index = 0; index < count; index += 1) {
 		const sizeRoll = random();
 		const brightnessRoll = random();
-		const radius = (0.22 + Math.pow(sizeRoll, 3.1) * 0.92) * dpr;
-		const alpha = 0.035 + Math.pow(brightnessRoll, 3.2) * 0.3;
+		const radius = (0.28 + Math.pow(sizeRoll, 2.3) * 1.22) * dpr;
+		const alpha = 0.14 + Math.pow(brightnessRoll, 2.2) * 0.48;
 		const x = random() * pixelWidth;
 		const y = random() * pixelHeight;
-		context.fillStyle = `rgba(224, 230, 238, ${alpha})`;
+		context.fillStyle = `rgba(222, 231, 248, ${alpha})`;
 		context.beginPath();
 		context.arc(x, y, radius, 0, Math.PI * 2);
 		context.fill();
-		// A handful of points get a quiet optical halo. It is intentionally drawn
-		// as a second soft point rather than a filter applied to the whole field.
+		// A few nearer points get a four-point glint so these read as stars, not
+		// as random canvas noise. It is drawn directly into the tile so the
+		// animation remains one cheap texture translation per layer.
+		if (brightnessRoll > 0.92 && sizeRoll > 0.63) {
+			const ray = radius * (2.6 + sizeRoll * 3.2);
+			context.strokeStyle = `rgba(232, 239, 255, ${Math.min(0.78, alpha + 0.12)})`;
+			context.lineWidth = Math.max(0.5, dpr * 0.34);
+			context.beginPath();
+			context.moveTo(x - ray, y);
+			context.lineTo(x + ray, y);
+			context.moveTo(x, y - ray);
+			context.lineTo(x, y + ray);
+			context.stroke();
+		}
+		// A handful of the brightest points get a quiet optical halo. It is
+		// intentionally drawn as a second soft point rather than a filter applied
+		// to the whole field.
 		if (brightnessRoll > 0.985) {
-			context.fillStyle = `rgba(224, 230, 238, ${alpha * 0.18})`;
+			context.fillStyle = `rgba(232, 239, 255, ${alpha * 0.2})`;
 			context.beginPath();
 			context.arc(x, y, radius * 2.8, 0, Math.PI * 2);
 			context.fill();

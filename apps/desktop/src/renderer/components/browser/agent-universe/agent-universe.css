@@ -6,8 +6,8 @@
  * this file only supplies material, hierarchy, and motion.
  */
 .agent-universe-workspace {
-  --agent-universe-canvas: #000000;
-  --agent-universe-plane: #000000;
+  --agent-universe-canvas: #040507;
+  --agent-universe-plane: #040507;
   position: relative;
   width: 100%;
   height: 100%;
@@ -44,7 +44,7 @@
 .agent-universe-starfield {
   z-index: 0;
   pointer-events: none;
-  opacity: 0.72;
+  opacity: 0.88;
   mix-blend-mode: normal;
 }
 
@@ -119,19 +119,23 @@
 }
 
 .agent-universe-node.is-status-completed {
-  opacity: 0.34;
+  opacity: 0.56;
 }
 
 .agent-universe-node.is-status-cancelled {
-  opacity: 0.24;
+  opacity: 0.42;
 }
 
 .agent-universe-node.is-status-failed {
-  opacity: 0.62;
+  opacity: 0.76;
 }
 
 .agent-universe-node.is-status-waiting {
-  opacity: 0.72;
+  opacity: 0.8;
+}
+
+.agent-universe-node.is-core.is-status-completed {
+  opacity: 0.76;
 }
 
 .agent-universe-node-hit {
@@ -146,21 +150,31 @@
 }
 
 .agent-universe-delegation-link {
-  stroke: color-mix(in srgb, var(--agent-system-highlight, var(--agent-system-color)) 42%, transparent);
-  stroke-width: 1.1;
+  stroke: color-mix(in srgb, var(--agent-system-highlight, var(--agent-system-color)) 66%, transparent);
+  stroke-width: 1.55;
   stroke-linecap: round;
-  stroke-dasharray: 2 9;
-  opacity: 0.3;
+  stroke-dasharray: 4 8;
+  opacity: 0.52;
   vector-effect: non-scaling-stroke;
   transition: opacity 180ms ease-out, stroke 180ms ease-out, stroke-width 180ms ease-out;
 }
 
 .agent-universe-delegation-link.is-active {
   stroke: var(--agent-system-highlight, var(--agent-system-color));
-  stroke-width: 1.65;
-  stroke-dasharray: 3 8;
-  opacity: 0.76;
+  stroke-width: 2.15;
+  stroke-dasharray: 5 7;
+  opacity: 0.92;
   animation: agent-universe-link-flow 1.25s linear infinite;
+}
+
+.agent-universe-system.is-focused .agent-universe-delegation-link {
+  stroke-width: 1.85;
+  opacity: 0.78;
+}
+
+.agent-universe-system.is-focused .agent-universe-delegation-link.is-active {
+  stroke-width: 2.25;
+  opacity: 0.96;
 }
 
 .agent-universe-state-ring,
@@ -185,6 +199,17 @@
   stroke-width: 1.35;
   stroke-dasharray: 4 12;
   opacity: 0.42;
+}
+
+.agent-universe-coordinator-ring {
+  fill: none;
+  stroke: var(--agent-system-highlight, var(--agent-system-color));
+  stroke-width: 1;
+  stroke-dasharray: 1 8;
+  stroke-linecap: round;
+  opacity: 0.48;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
 }
 
 .agent-universe-activity-pulse {
@@ -284,6 +309,15 @@
   stroke: none;
   pointer-events: all;
   user-select: none;
+}
+
+.agent-universe-system:not(.is-focused) .agent-universe-core-label {
+  font-size: 10px;
+  font-weight: 620;
+  paint-order: stroke;
+  stroke: #040507;
+  stroke-width: 4px;
+  stroke-linejoin: round;
 }
 
 .agent-universe-core-label {
@@ -493,6 +527,58 @@
   background: color-mix(in srgb, #15191f 90%, transparent);
   box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
   backdrop-filter: blur(18px) saturate(1.04);
+}
+
+.agent-universe-map-identity-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  pointer-events: auto;
+}
+
+.agent-universe-map-key {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 20px;
+  padding: 0 4px;
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 12px;
+  white-space: nowrap;
+}
+
+.agent-universe-map-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.agent-universe-map-key i {
+  display: block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--ink) 55%, transparent);
+  border-radius: 50%;
+}
+
+.agent-universe-map-key i.is-core {
+  width: 9px;
+  height: 9px;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+.agent-universe-map-key i.is-worker {
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+.agent-universe-map-key i.is-link {
+  width: 14px;
+  height: 0;
+  border-width: 1px 0 0;
+  border-style: dashed;
+  border-radius: 0;
 }
 
 .agent-universe-map-identity .surface-back-button {

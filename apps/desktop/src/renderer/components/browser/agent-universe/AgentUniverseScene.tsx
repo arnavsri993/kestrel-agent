@@ -110,7 +110,15 @@ function focusZoomFor(layoutScale: number, baseZoom: number): number {
 }
 
 function compactLabel(value: string, maximum: number): string {
-	return value.length > maximum ? `${value.slice(0, maximum - 1)}…` : value;
+	if (value.length <= maximum) return value;
+	const separator = Math.max(value.lastIndexOf(" - "), value.lastIndexOf(": "));
+	const suffix = separator >= 0 ? value.slice(separator + 3).trim() : "";
+	const prefixLength = maximum - suffix.length - 4;
+	if (suffix && prefixLength >= 6) {
+		return `${value.slice(0, prefixLength)}… · ${suffix}`;
+	}
+	const tailLength = Math.max(5, Math.floor((maximum - 1) * 0.34));
+	return `${value.slice(0, maximum - tailLength - 1)}…${value.slice(-tailLength)}`;
 }
 
 function statusClass(status: AgentNodeProjection["status"]): string {
@@ -625,6 +633,7 @@ export function AgentUniverseScene({
 								queryActive={Boolean(query.trim())}
 								matchedSystem={matches.systemIds.has(system.id)}
 								hasSearchMatch={matches.systemIds.has(system.id) || matchedNodeInSystem}
+								prominent={!focusedSystemId && layout.systems[0]?.systemId === system.id}
 								matchedNodeIds={matches.nodeIds}
 								selectedNodeId={selectedNodeId}
 								hoveredNodeId={hoveredNodeId}
@@ -754,6 +763,7 @@ function AgentSystemScene({
 	queryActive,
 	matchedSystem,
 	hasSearchMatch,
+	prominent,
 	matchedNodeIds,
 	selectedNodeId,
 	hoveredNodeId,
@@ -771,6 +781,7 @@ function AgentSystemScene({
 	queryActive: boolean;
 	matchedSystem: boolean;
 	hasSearchMatch: boolean;
+	prominent: boolean;
 	matchedNodeIds: ReadonlySet<string>;
 	selectedNodeId: string | null;
 	hoveredNodeId: string | null;
@@ -909,7 +920,8 @@ function AgentSystemScene({
 					const runFailed = runStatus === "failed";
 					const queryMatch = matchedNodeIds.has(node.id);
 					const showLabel = isRoot
-						? nodeLayout.radius >= (focused ? 52 : 38) ||
+						? focused ||
+							prominent ||
 							isHovered ||
 							isSelected ||
 							queryMatch
@@ -918,7 +930,9 @@ function AgentSystemScene({
 							queryMatch ||
 							(!queryActive && detailZoom >= (focused ? 1.12 : 1.72));
 					const screenRadius = nodeLayout.radius * detailZoom;
-					const labelInside = isRoot || screenRadius >= (focused ? 27 : 34);
+					const labelInside = isRoot
+						? focused || (prominent && screenRadius >= 28)
+						: screenRadius >= (focused ? 27 : 34);
 					const selectedRelation =
 						!selectedNodeId ||
 						isSelected ||
@@ -932,6 +946,10 @@ function AgentSystemScene({
 									activity ? " is-activity-active" : ""
 								}${waiting ? " is-runtime-waiting" : ""}${
 									runFailed ? " is-runtime-failed" : ""
+								}${
+									isRoot && system.nodes.length > 1
+										? " is-coordinator"
+										: ""
 								}${
 								selectedNodeId && !selectedRelation ? " is-selection-dimmed" : ""
 							}${queryActive && !queryMatch && !matchedSystem ? " is-query-dimmed" : ""}${
@@ -1048,6 +1066,12 @@ function AgentSystemScene({
 											className="agent-universe-node-hit"
 											r={Math.max(42, nodeLayout.radius + 13)}
 										/>
+										{system.nodes.length > 1 ? (
+											<circle
+												className="agent-universe-coordinator-ring"
+												r={nodeLayout.radius + 8}
+											/>
+										) : null}
 										{working ? (
 											<circle
 												className={`agent-universe-state-ring${isRoot ? " is-core" : ""}`}
@@ -1071,7 +1095,7 @@ function AgentSystemScene({
 											nodeLayout,
 											showLabel,
 											true,
-											true,
+											labelInside,
 											system.nodes.length > 1
 												? `${system.nodes.length} agent${system.nodes.length === 1 ? "" : "s"}`
 												: undefined,

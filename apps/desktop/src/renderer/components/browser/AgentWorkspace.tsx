@@ -493,16 +493,25 @@ export function AgentWorkspace({
 				</div>
 
 				<header className="agent-universe-mapbar">
-					<div className="agent-universe-map-identity">
-						{onBack ? <SurfaceBackButton onBack={onBack} /> : null}
-						<div>
-							<p className="agent-universe-map-eyebrow">Agent Universe</p>
-							<p className="agent-universe-map-summary">
-								{hasSystems
-									? `${universe.systems.length} system${universe.systems.length === 1 ? "" : "s"} · ${universe.sessionCount} session${universe.sessionCount === 1 ? "" : "s"}`
-									: "A blank field for the work you start here"}
-							</p>
+					<div className="agent-universe-map-identity-stack">
+						<div className="agent-universe-map-identity">
+							{onBack ? <SurfaceBackButton onBack={onBack} /> : null}
+							<div>
+								<p className="agent-universe-map-eyebrow">Agent Universe</p>
+								<p className="agent-universe-map-summary">
+									{hasSystems
+										? `${universe.systems.length} system${universe.systems.length === 1 ? "" : "s"} · ${universe.sessionCount} session${universe.sessionCount === 1 ? "" : "s"}`
+										: "A blank field for the work you start here"}
+								</p>
+							</div>
 						</div>
+						{hasSystems ? (
+							<div className="agent-universe-map-key" aria-label="Map key">
+								<span><i className="is-core" aria-hidden="true" /> Main circle</span>
+								<span><i className="is-worker" aria-hidden="true" /> Delegated</span>
+								<span><i className="is-link" aria-hidden="true" /> Ownership</span>
+							</div>
+						) : null}
 					</div>
 					<div className="agent-universe-map-actions">
 						{focusedSystem ? (
@@ -578,7 +587,7 @@ export function AgentWorkspace({
 							onOpenApprovals={onOpenApprovals}
 						/>
 						<span className="agent-universe-map-hint">
-							Drag the field to explore
+							Click a circle to inspect · drag to explore
 						</span>
 					</div>
 				) : null}

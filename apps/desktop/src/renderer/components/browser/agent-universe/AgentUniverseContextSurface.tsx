@@ -243,7 +243,10 @@ export function AgentUniverseContextSurface({
 	const title = isRoot ? system.name : inspected.name;
 	const status = isRoot ? system.status : inspected.status;
 	const openSessionId = isRoot ? system.rootNodeId : inspected.id;
-	const surfacePosition = useContextSurfacePosition(anchor, isRoot);
+	// Keep the inspector in the same predictable right rail as the coordinator
+	// surface on wide maps. An inspector that floats beside a worker can cover
+	// the very parent/child relationship the person selected it to understand.
+	const surfacePosition = useContextSurfacePosition(anchor, true);
 	const activeWorkers = system.nodes.filter(
 		(item) => item.latestRun?.status === "running",
 	).length;
