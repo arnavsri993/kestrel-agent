@@ -87,7 +87,13 @@ function clamp(value: number, minimum: number, maximum: number): number {
 	return Math.min(maximum, Math.max(minimum, value));
 }
 
-function useContextSurfacePosition(anchor: { x: number; y: number } | undefined) {
+interface ContextAnchor {
+	x: number;
+	y: number;
+	radius?: number;
+}
+
+function useContextSurfacePosition(anchor: ContextAnchor | undefined) {
 	const surfaceRef = useRef<HTMLElement | null>(null);
 	const [position, setPosition] = useState({
 		left: 18,
@@ -107,7 +113,9 @@ function useContextSurfacePosition(anchor: { x: number; y: number } | undefined)
 			x: containerWidth / 2,
 			y: containerHeight / 2,
 		};
-		const gap = 26;
+		// Anchor from the body's edge, not its centre. This keeps a selected
+		// system readable beside a wide conversation surface.
+		const gap = Math.max(26, (anchor?.radius ?? 0) + 24);
 		const canPlaceRight = target.x + gap + width <= containerWidth - 16;
 		const canPlaceLeft = target.x - gap - width >= 16;
 		const placement = canPlaceRight || !canPlaceLeft ? "right" : "left";
@@ -157,32 +165,34 @@ function messagePreview(messages: readonly RuntimeMessage[] | undefined): string
 	return assistant?.content.trim() ?? "";
 }
 
+function conversationMessages(messages: readonly RuntimeMessage[]): RuntimeMessage[] {
+	return messages.filter(
+		(message) => message.role === "user" || message.role === "assistant",
+	);
+}
+
 export function AgentUniverseContextSurface({
 	system,
 	node,
 	runs,
 	runsLoading,
 	runsError,
-	pendingApprovals,
 	anchor,
 	colorId,
 	onColorChange,
 	onClose,
 	onOpenSession,
-	onOpenApprovals,
 }: {
 	system: AgentSystemProjection;
 	node?: AgentNodeProjection;
 	runs?: readonly AgentRun[];
 	runsLoading: boolean;
 	runsError?: string;
-	pendingApprovals: number;
-	anchor?: { x: number; y: number };
+	anchor?: ContextAnchor;
 	colorId: AgentUniverseColorId;
 	onColorChange(systemId: string, colorId: AgentUniverseColorId): void;
 	onClose(): void;
 	onOpenSession(sessionId: string): void;
-	onOpenApprovals(): void;
 }) {
 	const surfacePosition = useContextSurfacePosition(anchor);
 	const [input, setInput] = useState("");
@@ -193,21 +203,61 @@ export function AgentUniverseContextSurface({
 	const [streamText, setStreamText] = useState("");
 	const [lastMessage, setLastMessage] = useState("");
 	const [lastResponse, setLastResponse] = useState("");
+	const [history, setHistory] = useState<RuntimeMessage[]>([]);
+	const [historyLoading, setHistoryLoading] = useState(true);
+	const [historyError, setHistoryError] = useState("");
 	const messageLifecycleRef = useRef(createAgentUniverseMessageLifecycle());
+	const inputRef = useRef<HTMLTextAreaElement | null>(null);
+	const messageLogRef = useRef<HTMLDivElement | null>(null);
+	const historyRequestRef = useRef(0);
 	const inspected = node;
 	const parent = inspected?.parentId
 		? system.nodes.find((item) => item.id === inspected.parentId)
 		: undefined;
 	const run = latestRun(runs) ?? inspected?.latestRun;
-	const title = inspected?.name ?? system.name;
-	const status = inspected?.status ?? system.status;
-	const openSessionId = inspected?.id ?? system.rootNodeId;
 	const isRoot = inspected?.id === system.rootNodeId || !inspected;
+	const title = isRoot ? system.name : inspected.name;
+	const status = isRoot ? system.status : inspected.status;
+	const openSessionId = isRoot ? system.rootNodeId : inspected.id;
 	const activeWorkers = system.nodes.filter((item) => item.status === "active").length;
 	const waitingWorkers = system.nodes.filter((item) => item.status === "waiting").length;
 	const systemColor =
 		AGENT_UNIVERSE_SYSTEM_COLORS.find((color) => color.id === colorId) ??
 		AGENT_UNIVERSE_SYSTEM_COLORS[0]!;
+
+	const loadHistory = useCallback(async () => {
+		const requestId = ++historyRequestRef.current;
+		setHistoryLoading(true);
+		setHistoryError("");
+		try {
+			const raw = await window.kestrel.request({
+				type: "runtime-list-messages",
+				sessionId: openSessionId,
+				limit: 100,
+			});
+			const response = raw as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (requestId !== historyRequestRef.current) return;
+			setHistory(response.messages ?? []);
+		} catch (cause) {
+			if (requestId !== historyRequestRef.current) return;
+			setHistoryError(
+				cause instanceof Error
+					? cause.message
+					: "Conversation history is unavailable.",
+			);
+		} finally {
+			if (requestId === historyRequestRef.current) setHistoryLoading(false);
+		}
+	}, [openSessionId]);
+
+	useEffect(() => {
+		setHistory([]);
+		void loadHistory();
+		return () => {
+			historyRequestRef.current += 1;
+		};
+	}, [loadHistory]);
 
 	useEffect(() => {
 		const lifecycle = messageLifecycleRef.current;
@@ -234,7 +284,26 @@ export function AgentUniverseContextSurface({
 		setLastResponse("");
 	}, [openSessionId]);
 
+	useLayoutEffect(() => {
+		const textarea = inputRef.current;
+		if (!textarea) return;
+		textarea.style.height = "auto";
+		const maxHeight = 132;
+		textarea.style.height = `${Math.min(maxHeight, Math.max(42, textarea.scrollHeight))}px`;
+		textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+	}, [input]);
+
+	useLayoutEffect(() => {
+		const log = messageLogRef.current;
+		if (!log) return;
+		// Runtime history is ordered oldest-first. Keep the newest conversation
+		// visible when the panel opens or a streamed response grows, while the
+		// log remains independently scrollable for deliberate history review.
+		log.scrollTop = log.scrollHeight;
+	}, [history.length, historyError, lastMessage, lastResponse, messageState, streamText]);
+
 	const sendMessage = useCallback(async () => {
+		if (!isRoot) return;
 		const message = input.trim();
 		if (!message || messageState === "sending") return;
 		const streamId = crypto.randomUUID();
@@ -264,38 +333,61 @@ export function AgentUniverseContextSurface({
 			if (!isCurrentAgentUniverseMessage(messageLifecycleRef.current, attempt)) return;
 			setLastResponse(messagePreview(response.messages));
 			setMessageState("complete");
+			void loadHistory();
 		} catch (cause) {
 			if (!isCurrentAgentUniverseMessage(messageLifecycleRef.current, attempt)) return;
 			setInput(message);
 			setMessageError(
 				cause instanceof Error
 					? cause.message
-					: "The selected agent could not be reached.",
+					: "Kestrel Core could not be reached.",
 			);
 			setMessageState("error");
 		} finally {
 			finishAgentUniverseMessage(messageLifecycleRef.current, attempt);
 		}
-	}, [input, messageState, openSessionId]);
+	}, [input, isRoot, loadHistory, messageState, openSessionId]);
+
+	const renderedHistory = conversationMessages(history);
+	const hasOptimisticMessage = Boolean(
+		lastMessage &&
+		!renderedHistory.some(
+			(message) => message.role === "user" && message.content === lastMessage,
+		),
+	);
+	const hasOptimisticResponse = Boolean(
+		lastResponse &&
+		!renderedHistory.some(
+			(message) => message.role === "assistant" && message.content === lastResponse,
+		),
+	);
 
 	return (
 		<aside
 			ref={surfacePosition.surfaceRef}
-			className="agent-universe-context-surface"
+			className={`agent-universe-context-surface${isRoot ? " is-system" : " is-inspector"}`}
 			style={{
 				...surfacePosition.style,
 				"--agent-system-color": systemColor.css,
+				"--agent-system-surface": systemColor.surface,
 			} as CSSProperties}
 			data-system-color={systemColor.id}
 			data-placement={surfacePosition.placement}
-			aria-label={isRoot ? `System controls for ${title}` : `Inspect ${title}`}
+			aria-label={isRoot ? `Talk to ${title}` : `Inspect ${title}`}
+			onPointerDown={(event) => event.stopPropagation()}
+			onWheel={(event) => event.stopPropagation()}
 		>
 			<header className="agent-universe-context-header">
 				<div className="agent-universe-context-title">
 					<span className="agent-universe-context-kicker">
-						{isRoot ? "System orchestrator" : "Agent worker"}
+						{isRoot ? "Main system" : "Inspecting worker"}
 					</span>
 					<h2>{title}</h2>
+					<p className="agent-universe-context-subtitle">
+						{isRoot
+							? "The intelligence you talk to. Kestrel Core coordinates the work around it."
+							: "A delegated session within this system. Inspect its state and provenance here."}
+					</p>
 				</div>
 				<button
 					type="button"
@@ -310,75 +402,52 @@ export function AgentUniverseContextSurface({
 
 			<div className="agent-universe-context-status">
 				<Status tone={statusTone(status)}>{agentSessionStatusLabel(status)}</Status>
-				<span>Updated {agentSessionRecency(inspected?.updatedAt ?? system.lastActivityAt)}</span>
+				<span>Updated {agentSessionRecency(isRoot ? system.lastActivityAt : inspected.updatedAt)}</span>
 			</div>
 
-			<dl className="agent-universe-context-details">
-				{isRoot ? (
-					<>
-						<DefinitionRow label="Sessions">{system.nodes.length}</DefinitionRow>
-						<DefinitionRow label="Working">{activeWorkers}</DefinitionRow>
-						{waitingWorkers > 0 ? (
-							<DefinitionRow label="Waiting">{waitingWorkers}</DefinitionRow>
-						) : null}
-						{system.workspaceName ? (
-							<DefinitionRow label="Workspace">{system.workspaceName}</DefinitionRow>
-						) : null}
-					</>
-				) : (
-					<>
-						{parent ? <DefinitionRow label="Derived from">{parent.name}</DefinitionRow> : null}
-						<DefinitionRow label="Depth">
-							{inspected?.depth === 0 ? "Root" : `Delegated · ${inspected?.depth}`}
+			{isRoot ? (
+				<div className="agent-universe-context-brief">
+					<span className="agent-universe-context-brief-mark" aria-hidden="true" />
+					<span>
+						{system.nodes.length} agent{system.nodes.length === 1 ? "" : "s"} in this system
+						{activeWorkers > 0 ? ` · ${activeWorkers} working` : ""}
+						{waitingWorkers > 0 ? ` · ${waitingWorkers} waiting` : ""}
+					</span>
+					{system.workspaceName ? <small>{system.workspaceName}</small> : null}
+				</div>
+			) : (
+				<dl className="agent-universe-context-details">
+					{parent ? <DefinitionRow label="Parent">{parent.name}</DefinitionRow> : null}
+					<DefinitionRow label="Depth">
+						{inspected.depth === 0 ? "Root" : `Delegated · ${inspected.depth}`}
+					</DefinitionRow>
+					{inspected.workspaceName ? (
+						<DefinitionRow label="Workspace">
+							<span title={inspected.workspaceRoot}>{inspected.workspaceName}</span>
 						</DefinitionRow>
-						{inspected?.workspaceName ? (
-							<DefinitionRow label="Workspace">
-								<span title={inspected.workspaceRoot}>{inspected.workspaceName}</span>
-							</DefinitionRow>
-						) : null}
-						<DefinitionRow label="Created">{formatTimestamp(inspected!.createdAt)}</DefinitionRow>
-					</>
-				)}
-			</dl>
-
-			<section className="agent-universe-context-section agent-universe-context-color-section">
-				<div className="agent-universe-context-section-heading">
-					<h3>System color</h3>
-					<span>Saved on this device</span>
-				</div>
-				<div className="agent-universe-color-picker" role="group" aria-label="Choose system color">
-					{AGENT_UNIVERSE_SYSTEM_COLORS.map((color) => (
-						<button
-							type="button"
-							key={color.id}
-							className="agent-universe-color-option"
-							aria-label={`${color.label} system color`}
-							aria-pressed={colorId === color.id}
-							title={color.label}
-							onClick={() => onColorChange(system.id, color.id)}
-							style={{ "--color-option": color.css } as CSSProperties}
-						/>
-					))}
-				</div>
-			</section>
-
-			{inspected?.allowedTools.length ? (
-				<section className="agent-universe-context-section">
-					<h3>Capabilities</h3>
-					<ul className="agent-universe-tool-list">
-						{inspected.allowedTools.slice(0, 6).map((tool) => (
-							<li key={tool}>{tool}</li>
-							))}
-					</ul>
-					{inspected.allowedTools.length > 6 ? (
-						<small>{inspected.allowedTools.length - 6} more tool grants recorded</small>
 					) : null}
-				</section>
+					<DefinitionRow label="Created">{formatTimestamp(inspected.createdAt)}</DefinitionRow>
+				</dl>
+			)}
+
+			{!isRoot && inspected.allowedTools.length > 0 ? (
+				<details className="agent-universe-context-secondary">
+					<summary>
+						<span>Capabilities</span>
+						<small>{inspected.allowedTools.length}</small>
+					</summary>
+					<ul className="agent-universe-tool-list">
+						{inspected.allowedTools.map((tool) => <li key={tool}>{tool}</li>)}
+					</ul>
+				</details>
 			) : null}
 
-			{inspected && (runsLoading || runsError || run) ? (
-				<section className="agent-universe-context-section">
-					<h3>Latest route</h3>
+			{!isRoot && (runsLoading || runsError || run) ? (
+				<details className="agent-universe-context-secondary" open={Boolean(runsError)}>
+					<summary>
+						<span>Latest route</span>
+						<small>{run?.model ?? (runsLoading ? "Reading" : "Unavailable")}</small>
+					</summary>
 					{runsLoading ? <p>Reading the latest verified run…</p> : null}
 					{runsError ? <p role="alert">{runsError}</p> : null}
 					{run ? (
@@ -387,88 +456,121 @@ export function AgentUniverseContextSurface({
 							<DefinitionRow label="Provider">
 								{run.providerIds.filter((provider) => provider !== "auto").join(", ") || "Automatic routing"}
 							</DefinitionRow>
-							{run.reasoningEffort ? (
-								<DefinitionRow label="Reasoning">{run.reasoningEffort}</DefinitionRow>
-							) : null}
+							{run.reasoningEffort ? <DefinitionRow label="Reasoning">{run.reasoningEffort}</DefinitionRow> : null}
 						</dl>
 					) : null}
-				</section>
+				</details>
 			) : null}
 
-			<section className="agent-universe-context-section agent-universe-context-message-section">
-				<div className="agent-universe-context-section-heading">
-					<h3>Direct message</h3>
-					<span>{isRoot ? "Routes across this system" : "Targets this worker"}</span>
+			<details className="agent-universe-context-secondary agent-universe-context-color-details">
+				<summary>
+					<span>System appearance</span>
+					<small>{systemColor.label}</small>
+				</summary>
+				<div className="agent-universe-context-color-content">
+					<span>Saved on this device</span>
+					<div className="agent-universe-color-picker" role="group" aria-label="Choose system color">
+						{AGENT_UNIVERSE_SYSTEM_COLORS.map((color) => (
+							<button
+								type="button"
+								key={color.id}
+								className="agent-universe-color-option"
+								aria-label={`${color.label} system color`}
+								aria-pressed={colorId === color.id}
+								title={color.label}
+								onClick={() => onColorChange(system.id, color.id)}
+								style={{ "--color-option": color.css } as CSSProperties}
+							/>
+						))}
+					</div>
 				</div>
-				{lastMessage ? (
-					<div className="agent-universe-context-message-log" aria-live="polite">
-						<div className="agent-universe-context-message user">
-							<span>You</span>
-							<p>{lastMessage}</p>
-						</div>
-						{messageState === "sending" ? (
-							<div className="agent-universe-context-message agent">
-								<span>{title}</span>
-								<p>{streamText || "Working with automatic routing…"}</p>
+			</details>
+
+			{isRoot ? (
+				<section className="agent-universe-context-conversation">
+					<div className="agent-universe-context-section-heading">
+						<h3>Conversation</h3>
+						<span>With {title}</span>
+					</div>
+					<div
+						ref={messageLogRef}
+						className="agent-universe-context-message-log"
+						aria-live="polite"
+					>
+						{historyLoading && renderedHistory.length === 0 ? (
+							<p className="agent-universe-context-empty">Loading the conversation…</p>
+						) : null}
+						{historyError ? <p className="agent-universe-context-error" role="alert">{historyError}</p> : null}
+						{renderedHistory.map((message) => (
+							<div className={`agent-universe-context-message ${message.role}`} key={message.id}>
+								<span>{message.role === "user" ? "You" : title}</span>
+								<p>{message.content}</p>
 							</div>
-						) : lastResponse ? (
-							<div className="agent-universe-context-message agent">
+						))}
+						{hasOptimisticMessage ? (
+							<div className="agent-universe-context-message user is-optimistic">
+								<span>You</span>
+								<p>{lastMessage}</p>
+							</div>
+						) : null}
+						{messageState === "sending" ? (
+							<div className="agent-universe-context-message assistant is-optimistic">
+								<span>{title}</span>
+								<p>{streamText || "Coordinating the next step…"}</p>
+							</div>
+						) : hasOptimisticResponse ? (
+							<div className="agent-universe-context-message assistant is-optimistic">
 								<span>{title}</span>
 								<p>{lastResponse}</p>
 							</div>
-						) : messageState === "complete" ? (
-							<p className="agent-universe-context-message-confirmation" role="status">
-								Run completed. Open the task for the full transcript.
-							</p>
+						) : null}
+						{!historyLoading && !historyError && renderedHistory.length === 0 && !lastMessage ? (
+							<p className="agent-universe-context-empty">Ask Kestrel Core to coordinate something for you.</p>
 						) : null}
 					</div>
-				) : null}
-				{messageError ? <p className="agent-universe-context-error" role="alert">{messageError}</p> : null}
-				<form
-					className="agent-universe-context-composer"
-					onSubmit={(event) => {
-						event.preventDefault();
-						void sendMessage();
-					}}
-				>
-					<label className="sr-only" htmlFor={`agent-context-message-${openSessionId}`}>
-						Message {title}
-					</label>
-					<textarea
-						id={`agent-context-message-${openSessionId}`}
-						rows={2}
-						value={input}
-						onChange={(event) => setInput(event.target.value)}
-						onKeyDown={(event) => {
-							if (event.key !== "Enter" || event.shiftKey) return;
+					{messageError ? <p className="agent-universe-context-error" role="alert">{messageError}</p> : null}
+					<form
+						className="agent-universe-context-composer"
+						onSubmit={(event) => {
 							event.preventDefault();
 							void sendMessage();
 						}}
-						placeholder={`Message ${title}…`}
-						disabled={messageState === "sending"}
-					/>
-					<button
-						type="submit"
-						className="agent-universe-context-send"
-						aria-label={`Send message to ${title}`}
-						title="Send message"
-						disabled={!input.trim() || messageState === "sending"}
 					>
-						<Icon name={messageState === "sending" ? "loader" : "arrow"} />
-					</button>
-				</form>
-			</section>
+						<label className="sr-only" htmlFor={`agent-context-message-${openSessionId}`}>
+							Message {title}
+						</label>
+						<textarea
+							ref={inputRef}
+							id={`agent-context-message-${openSessionId}`}
+							rows={1}
+							value={input}
+							onChange={(event) => setInput(event.target.value)}
+							onKeyDown={(event) => {
+								if (event.key !== "Enter" || event.shiftKey) return;
+								event.preventDefault();
+								void sendMessage();
+							}}
+							placeholder={`Message ${title}…`}
+							disabled={messageState === "sending"}
+						/>
+						<button
+							type="submit"
+							className="agent-universe-context-send"
+							aria-label={`Send message to ${title}`}
+							title="Send message"
+							disabled={!input.trim() || messageState === "sending"}
+						>
+							<Icon name={messageState === "sending" ? "loader" : "arrow"} />
+						</button>
+					</form>
+				</section>
+			) : null}
 
 			<footer className="agent-universe-context-actions">
-				<Button variant="solid" size="compact" onClick={() => onOpenSession(openSessionId)}>
+				<Button variant="quiet" size="compact" onClick={() => onOpenSession(openSessionId)}>
 					Open task
 					<Icon name="arrow" />
 				</Button>
-				{status === "waiting" || pendingApprovals > 0 ? (
-					<Button variant="quiet" size="compact" onClick={onOpenApprovals}>
-						Review approvals
-					</Button>
-				) : null}
 			</footer>
 		</aside>
 	);

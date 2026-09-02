@@ -92,6 +92,43 @@ describe("agent universe layout", () => {
 		expect(rootLayout.radius).toBeGreaterThan(58);
 	});
 
+	it("keeps spatial memory when a worker changes status", () => {
+		const sessions = makeSessions(3).map((session) => ({
+			...session,
+			status: session.id.endsWith("child-00")
+				? ("active" as const)
+				: ("completed" as const),
+		}));
+		const activeLayout = layoutAgentUniverse(
+			projectAgentUniverse(sessions),
+			1200,
+			700,
+		).systems[0]!;
+		const settledLayout = layoutAgentUniverse(
+			projectAgentUniverse(
+				sessions.map((session) =>
+					session.id.endsWith("child-00")
+						? { ...session, status: "completed" as const }
+						: session,
+				),
+			),
+			1200,
+			700,
+		).systems[0]!;
+
+		expect(settledLayout.centerX).toBe(activeLayout.centerX);
+		expect(settledLayout.centerY).toBe(activeLayout.centerY);
+		expect(settledLayout.radius).toBe(activeLayout.radius);
+		expect(settledLayout.nodeLayouts.map(({ nodeId, x, y, orbitRadius }) => ({ nodeId, x, y, orbitRadius }))).toEqual(
+			activeLayout.nodeLayouts.map(({ nodeId, x, y, orbitRadius }) => ({ nodeId, x, y, orbitRadius })),
+		);
+		expect(
+			activeLayout.nodeLayouts.find((node) => node.nodeId.endsWith("child-00"))!.radius,
+		).toBeGreaterThan(
+			settledLayout.nodeLayouts.find((node) => node.nodeId.endsWith("child-00"))!.radius,
+		);
+	});
+
 	it("packs multiple systems without overlapping their bounding radii", () => {
 		const sessions = [
 			...makeSessions(3, "system-a"),

@@ -121,3 +121,19 @@ export function projectAgentUniversePoint(
 		y: centerY + camera.panY + camera.zoom * (point.y - centerY),
 	};
 }
+
+export function unprojectAgentUniversePoint(
+	camera: AgentUniverseCamera,
+	point: AgentUniversePoint,
+	width: number,
+	height: number,
+): AgentUniversePoint {
+	const safeWidth = safeDimension(width);
+	const safeHeight = safeDimension(height);
+	const centerX = safeWidth / 2;
+	const centerY = safeHeight / 2;
+	return {
+		x: centerX + (point.x - centerX - camera.panX) / camera.zoom,
+		y: centerY + (point.y - centerY - camera.panY) / camera.zoom,
+	};
+}

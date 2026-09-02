@@ -5,6 +5,7 @@ import {
 	DEFAULT_AGENT_UNIVERSE_CAMERA,
 	panAgentUniverseCamera,
 	zoomAgentUniverseCameraAtPoint,
+	unprojectAgentUniversePoint,
 } from "./agent-universe-camera";
 
 describe("agent universe camera", () => {
@@ -35,6 +36,28 @@ describe("agent universe camera", () => {
 		const screenY = 250 + next.panY + next.zoom * (point.y - 250);
 		expect(screenX).toBeCloseTo(point.x);
 		expect(screenY).toBeCloseTo(point.y);
+	});
+
+	it("round-trips a screen point for direct manipulation", () => {
+		const camera = {
+			zoom: 1.7,
+			panX: 42,
+			panY: -18,
+		};
+		const worldPoint = { x: 316, y: 204 };
+		const screenPoint = {
+			x: 400 + camera.panX + camera.zoom * (worldPoint.x - 400),
+			y: 250 + camera.panY + camera.zoom * (worldPoint.y - 250),
+		};
+
+		const projectedWorldPoint = unprojectAgentUniversePoint(
+			camera,
+			screenPoint,
+			800,
+			500,
+		);
+		expect(projectedWorldPoint.x).toBeCloseTo(worldPoint.x);
+		expect(projectedWorldPoint.y).toBeCloseTo(worldPoint.y);
 	});
 
 	it("bounds direct manipulation without making the camera non-finite", () => {

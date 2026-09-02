@@ -20,7 +20,6 @@ import { AgentUniverseContextSurface } from "./AgentUniverseContextSurface";
 import { layoutAgentUniverse, type AgentNodeLayout } from "./agent-universe-layout";
 import {
 	agentUniverseSearchMatches,
-	stableAgentHash,
 	type AgentNodeProjection,
 	type AgentSystemProjection,
 	type AgentUniverseActivity,
@@ -38,10 +37,17 @@ import {
 	DEFAULT_AGENT_UNIVERSE_CAMERA,
 	panAgentUniverseCamera,
 	projectAgentUniversePoint,
+	unprojectAgentUniversePoint,
 	zoomAgentUniverseCameraAtPoint,
 	type AgentUniverseCamera,
 	type AgentUniversePoint,
 } from "./agent-universe-camera";
+import { agentUniverseBlobPath, createAgentUniverseBlobGeometry } from "./agent-universe-blob";
+import {
+	createAgentUniversePhysicsController,
+	type AgentUniversePhysicsController,
+	type AgentUniversePhysicsRenderTarget,
+} from "./agent-universe-physics";
 
 interface AgentUniverseSceneProps {
 	snapshot: AgentUniverseSnapshot;
@@ -51,7 +57,6 @@ interface AgentUniverseSceneProps {
 	activities: AgentUniverseActivity[];
 	reducedMotion: boolean;
 	systemColors: Readonly<Record<string, AgentUniverseColorId>>;
-	pendingApprovals: number;
 	contextRuns?: readonly AgentRun[];
 	contextRunsLoading: boolean;
 	contextRunsError?: string;
@@ -60,7 +65,6 @@ interface AgentUniverseSceneProps {
 	onBackgroundClick(): void;
 	onCloseContext(): void;
 	onOpenSession(sessionId: string): void;
-	onOpenApprovals(): void;
 }
 
 interface Size {
@@ -78,16 +82,22 @@ interface PointerSession {
 }
 
 const PULSE_LIFETIME_MS = 2_200;
-const SYSTEM_FOCUS_ZOOM = 1.28;
-const NODE_FOCUS_ZOOM = 1.46;
-const FOCUSED_CAMERA_ANCHOR = { x: 0.46, y: 0.5 };
+const SYSTEM_FOCUS_ZOOM = 1.16;
+const NODE_FOCUS_ZOOM = 1.3;
+// Leave room for the context surface on the right while keeping the whole
+// local cluster in view. A left-edge anchor lets a focused worker or a large
+// parent-owned cluster disappear behind the panel or outside the viewport.
+const FOCUSED_CAMERA_ANCHOR = { x: 0.3, y: 0.5 };
 
 function focusZoomFor(layoutScale: number, baseZoom: number): number {
 	// The overview may be compressed by a real profile with many independent
 	// sessions. Give a focused system the same readable physical scale instead
 	// of zooming into a still-tiny overview dot.
-	const visibleScale = Math.min(1, Math.max(0.42, layoutScale));
-	return clampAgentUniverseZoom(Math.max(baseZoom, baseZoom / visibleScale));
+	const visibleScale = Math.min(1, Math.max(0.62, layoutScale));
+	return Math.min(
+		1.9,
+		clampAgentUniverseZoom(Math.max(baseZoom, baseZoom / visibleScale)),
+	);
 }
 
 function compactLabel(value: string, maximum: number): string {
@@ -108,26 +118,6 @@ function layoutForNode(
 function activityTime(value: string): number {
 	const parsed = Date.parse(value);
 	return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function nodeMotionStyle(
-	node: AgentNodeProjection,
-	isRoot: boolean,
-): CSSProperties {
-	const hash = stableAgentHash(node.id);
-	// Only working workers drift, and only by a couple of pixels. A single
-	// eased out-and-back path has no corner or direction jump; the old
-	// four-point path visibly snapped each time it changed direction.
-	const movement = isRoot || node.status !== "active" ? 0 : 1.2 + (hash % 5) * 0.16;
-	const x = movement * (hash & 1 ? 1 : -1);
-	const y = movement * (hash & 2 ? 0.62 : -0.62);
-	const duration = node.status === "active" ? 24 + (hash % 9) * 1.2 : 0;
-	return {
-		"--node-drift-x": `${x.toFixed(1)}px`,
-		"--node-drift-y": `${y.toFixed(1)}px`,
-		"--node-drift-duration": `${duration.toFixed(2)}s`,
-		"--node-drift-delay": `${-((hash >>> 8) % 240) / 10}s`,
-	} as CSSProperties;
 }
 
 function viewportWorldRect(
@@ -155,7 +145,6 @@ export function AgentUniverseScene({
 	activities,
 	reducedMotion,
 	systemColors,
-	pendingApprovals,
 	contextRuns,
 	contextRunsLoading,
 	contextRunsError,
@@ -164,7 +153,6 @@ export function AgentUniverseScene({
 	onBackgroundClick,
 	onCloseContext,
 	onOpenSession,
-	onOpenApprovals,
 }: AgentUniverseSceneProps) {
 	const sceneRef = useRef<HTMLElement>(null);
 	const [size, setSize] = useState<Size>({ width: 0, height: 0 });
@@ -327,19 +315,25 @@ export function AgentUniverseScene({
 			)
 		: undefined;
 	const contextAnchor = selectedNodeLayout
-		? projectAgentUniversePoint(
-				camera,
-				{ x: selectedNodeLayout.x, y: selectedNodeLayout.y },
-				size.width,
-				size.height,
-			)
+		? {
+				...projectAgentUniversePoint(
+					camera,
+					{ x: selectedNodeLayout.x, y: selectedNodeLayout.y },
+					size.width,
+					size.height,
+				),
+				radius: selectedNodeLayout.radius * camera.zoom,
+			}
 		: activeSystemLayout
-			? projectAgentUniversePoint(
-				camera,
-				{ x: activeSystemLayout.centerX, y: activeSystemLayout.centerY },
-				size.width,
-				size.height,
-			)
+			? {
+					...projectAgentUniversePoint(
+						camera,
+						{ x: activeSystemLayout.centerX, y: activeSystemLayout.centerY },
+						size.width,
+						size.height,
+					),
+					radius: activeSystemLayout.radius * camera.zoom,
+				}
 			: undefined;
 
 	const resetCamera = useCallback(() => {
@@ -375,6 +369,26 @@ export function AgentUniverseScene({
 			);
 		},
 		[setCameraFrom, size.height, size.width],
+	);
+
+	const screenPointToWorld = useCallback(
+		(clientX: number, clientY: number): AgentUniversePoint => {
+			const rect = sceneRef.current?.getBoundingClientRect();
+			if (!rect || rect.width <= 0 || rect.height <= 0) {
+				return { x: size.width / 2, y: size.height / 2 };
+			}
+			const screenPoint = {
+				x: ((clientX - rect.left) / rect.width) * layout.width,
+				y: ((clientY - rect.top) / rect.height) * layout.height,
+			};
+			return unprojectAgentUniversePoint(
+				camera,
+				screenPoint,
+				layout.width,
+				layout.height,
+			);
+		},
+		[camera, layout.height, layout.width, size.height, size.width],
 	);
 
 	const handleNodeActivate = useCallback(
@@ -593,11 +607,12 @@ export function AgentUniverseScene({
 								queryActive={Boolean(query.trim())}
 								matchedSystem={matches.systemIds.has(system.id)}
 								hasSearchMatch={matches.systemIds.has(system.id) || matchedNodeInSystem}
-					matchedNodeIds={matches.nodeIds}
-					selectedNodeId={selectedNodeId}
-					hoveredNodeId={hoveredNodeId}
-					activeActivities={activeActivities}
-						detailZoom={camera.zoom}
+								matchedNodeIds={matches.nodeIds}
+								selectedNodeId={selectedNodeId}
+								hoveredNodeId={hoveredNodeId}
+								activeActivities={activeActivities}
+								detailZoom={camera.zoom}
+								screenPointToWorld={screenPointToWorld}
 								systemColor={agentUniverseColorFor(
 									system.id,
 									systemColors,
@@ -605,6 +620,7 @@ export function AgentUniverseScene({
 								)}
 								onHover={setHoveredNodeId}
 								onNodeActivate={handleNodeActivate}
+								reducedMotion={reducedMotion}
 							/>
 						);
 					})}
@@ -686,7 +702,6 @@ export function AgentUniverseScene({
 					{...(selectedNode && contextRuns ? { runs: contextRuns } : {})}
 					runsLoading={contextRunsLoading}
 					{...(contextRunsError ? { runsError: contextRunsError } : {})}
-					pendingApprovals={pendingApprovals}
 					{...(contextAnchor ? { anchor: contextAnchor } : {})}
 					colorId={agentUniverseColorFor(
 						activeSystem.id,
@@ -696,7 +711,6 @@ export function AgentUniverseScene({
 					onColorChange={onSystemColorChange}
 					onClose={onCloseContext}
 					onOpenSession={onOpenSession}
-					onOpenApprovals={onOpenApprovals}
 				/>
 			) : null}
 			<p className="sr-only" aria-live="polite">
@@ -723,6 +737,8 @@ function AgentSystemScene({
 	activeActivities,
 	detailZoom,
 	systemColor,
+	reducedMotion,
+	screenPointToWorld,
 	onHover,
 	onNodeActivate,
 }: {
@@ -738,37 +754,79 @@ function AgentSystemScene({
 	activeActivities: ReadonlyMap<string, AgentUniverseActivity>;
 	detailZoom: number;
 	systemColor: AgentUniverseSystemColor;
+	reducedMotion: boolean;
+	screenPointToWorld(clientX: number, clientY: number): AgentUniversePoint;
 	onHover(nodeId: string | null): void;
 	onNodeActivate(nodeId: string, systemId: string): void;
 }) {
-	const layoutsById = new Map(
-		layout.nodeLayouts.map((nodeLayout) => [nodeLayout.nodeId, nodeLayout]),
+	const layoutsById = useMemo(
+		() =>
+			new Map(
+				layout.nodeLayouts.map((nodeLayout) => [nodeLayout.nodeId, nodeLayout]),
+			),
+		[layout.nodeLayouts],
 	);
+	const physicsRef = useRef<AgentUniversePhysicsController | null>(null);
+	if (!physicsRef.current) {
+		physicsRef.current = createAgentUniversePhysicsController();
+	}
+	const physics = physicsRef.current;
+	const bodyRefs = useRef(new Map<string, SVGElement>());
+	const blobRefs = useRef(new Map<string, SVGPathElement>());
+	const nodePointerRef = useRef<{
+		pointerId: number;
+		startX: number;
+		startY: number;
+		moved: boolean;
+	} | null>(null);
+	const suppressNodeClickRef = useRef(false);
+
+	useLayoutEffect(() => {
+		const targets = new Map<string, AgentUniversePhysicsRenderTarget>();
+		for (const node of system.nodes) {
+			const body = bodyRefs.current.get(node.id);
+			const blob = blobRefs.current.get(node.id);
+			const nodeLayout = layoutsById.get(node.id);
+			if (!body || !blob || !nodeLayout) continue;
+			targets.set(node.id, { body, blob });
+		}
+		physics.update(
+			system.nodes.flatMap((node) => {
+				const nodeLayout = layoutsById.get(node.id);
+				if (!nodeLayout) return [];
+				return [
+					{
+						id: node.id,
+						...(node.parentId ? { parentId: node.parentId } : {}),
+						x: nodeLayout.x,
+						y: nodeLayout.y,
+						radius: nodeLayout.radius,
+						isRoot: node.id === system.rootNodeId,
+					},
+				];
+			}),
+			targets,
+			reducedMotion,
+		);
+	}, [layout.nodeLayouts, layoutsById, physics, reducedMotion, system.nodes, system.rootNodeId]);
+
+	useEffect(() => () => physics.destroy(), [physics]);
+
 	return (
 		<g
 			className={`agent-universe-system${focused ? " is-focused" : ""}${
 				queryActive && !hasSearchMatch ? " is-query-dimmed" : ""
 			}`}
 			data-system-id={system.id}
-			style={{ "--agent-system-color": systemColor.css } as CSSProperties}
+			style={
+				{
+					"--agent-system-color": systemColor.css,
+					"--agent-system-surface": systemColor.surface,
+					"--agent-system-core": systemColor.core,
+					"--agent-system-highlight": systemColor.highlight,
+				} as CSSProperties
+			}
 		>
-			<g className="agent-universe-edges" aria-hidden="true">
-				{system.edges.map((edge) => {
-					const source = layoutsById.get(edge.sourceId);
-					const target = layoutsById.get(edge.targetId);
-					if (!source || !target) return null;
-					return (
-						<line
-							key={edge.id}
-							className="agent-universe-edge"
-							x1={source.x}
-							y1={source.y}
-							x2={target.x}
-							y2={target.y}
-						/>
-					);
-				})}
-			</g>
 			<g className="agent-universe-nodes">
 				{system.nodes.map((node) => {
 					const nodeLayout = layoutsById.get(node.id);
@@ -794,6 +852,9 @@ function AgentSystemScene({
 						!selectedNodeId ||
 						isSelected ||
 						node.parentId === selectedNodeId;
+					const initialBlobPath = agentUniverseBlobPath(
+						createAgentUniverseBlobGeometry(node.id, nodeLayout.radius, isRoot),
+					);
 					return (
 						<g
 							key={node.id}
@@ -814,11 +875,84 @@ function AgentSystemScene({
 							aria-label={`${node.name}, ${agentSessionStatusLabel(node.status)}${
 								isRoot ? ", system root" : `, delegated session at depth ${node.depth}`
 							}`}
+							onPointerDown={
+								isRoot
+								? undefined
+								: (event) => {
+									if (event.button !== 0) return;
+									event.stopPropagation();
+									if (
+										!physics.startDrag(
+											node.id,
+											screenPointToWorld(event.clientX, event.clientY),
+										)
+									)
+										return;
+									nodePointerRef.current = {
+										pointerId: event.pointerId,
+										startX: event.clientX,
+										startY: event.clientY,
+										moved: false,
+									};
+									event.currentTarget.setPointerCapture(event.pointerId);
+								}
+							}
+							onPointerMove={
+								isRoot
+								? undefined
+								: (event) => {
+									const pointer = nodePointerRef.current;
+									if (!pointer || pointer.pointerId !== event.pointerId) return;
+									if (!pointer.moved) {
+										pointer.moved =
+											Math.hypot(
+												event.clientX - pointer.startX,
+												event.clientY - pointer.startY,
+											) >= 5;
+									}
+									physics.moveDrag(
+										screenPointToWorld(event.clientX, event.clientY),
+									);
+								}
+							}
+							onPointerUp={
+								isRoot
+								? undefined
+								: (event) => {
+									const pointer = nodePointerRef.current;
+									if (!pointer || pointer.pointerId !== event.pointerId) return;
+									event.stopPropagation();
+									if (pointer.moved) suppressNodeClickRef.current = true;
+									nodePointerRef.current = null;
+									physics.endDrag();
+									if (event.currentTarget.hasPointerCapture(event.pointerId))
+										event.currentTarget.releasePointerCapture(event.pointerId);
+								}
+							}
+							onPointerCancel={
+								isRoot
+								? undefined
+								: (event) => {
+									const pointer = nodePointerRef.current;
+									if (!pointer || pointer.pointerId !== event.pointerId) return;
+									event.stopPropagation();
+									if (pointer.moved) suppressNodeClickRef.current = true;
+									nodePointerRef.current = null;
+									physics.cancelDrag();
+									if (event.currentTarget.hasPointerCapture(event.pointerId))
+										event.currentTarget.releasePointerCapture(event.pointerId);
+								}
+							}
+
 							onMouseEnter={() => onHover(node.id)}
 							onFocus={() => onHover(node.id)}
 							onBlur={() => onHover(null)}
 							onClick={(event) => {
 								event.stopPropagation();
+								if (suppressNodeClickRef.current) {
+									suppressNodeClickRef.current = false;
+									return;
+								}
 								onNodeActivate(node.id, system.id);
 							}}
 							onKeyDown={(event) => {
@@ -833,23 +967,25 @@ function AgentSystemScene({
 							</title>
 							<g
 								className="agent-universe-node-body"
-								style={nodeMotionStyle(node, isRoot)}
+								ref={(element) => {
+									if (element) bodyRefs.current.set(node.id, element);
+									else bodyRefs.current.delete(node.id);
+								}}
 							>
 								{isRoot ? (
 									<>
-										{working ? (
-											<circle
-												className="agent-universe-core-aura"
-												r={nodeLayout.radius + 18}
-											/>
-										) : null}
 										<circle
 											className="agent-universe-node-hit"
 											r={Math.max(42, nodeLayout.radius + 13)}
 										/>
-										<circle
+										<path
 											className={`agent-universe-core-rim ${statusClass(node.status)}`}
-											r={nodeLayout.radius}
+											data-physics-blob={node.id}
+											d={initialBlobPath}
+											ref={(element) => {
+												if (element) blobRefs.current.set(node.id, element);
+												else blobRefs.current.delete(node.id);
+											}}
 										/>
 										{textLabel(
 											node,
@@ -868,15 +1004,14 @@ function AgentSystemScene({
 											className="agent-universe-node-hit"
 											r={Math.max(30, nodeLayout.radius + 10)}
 										/>
-										{working ? (
-											<circle
-												className="agent-universe-worker-aura"
-												r={nodeLayout.radius + (activity ? 8 : 6)}
-											/>
-										) : null}
-										<circle
+										<path
 											className={`agent-universe-worker-rim ${statusClass(node.status)}`}
-											r={nodeLayout.radius}
+											data-physics-blob={node.id}
+											d={initialBlobPath}
+											ref={(element) => {
+												if (element) blobRefs.current.set(node.id, element);
+												else blobRefs.current.delete(node.id);
+											}}
 										/>
 										{textLabel(node, nodeLayout, showLabel, false, labelInside)}
 									</>
@@ -884,8 +1019,16 @@ function AgentSystemScene({
 								{node.status === "waiting" || node.status === "failed" ? (
 									<circle
 										className="agent-universe-node-status-mark"
-										cx={isRoot ? nodeLayout.radius * 0.64 : Math.cos(nodeLayout.angle) * nodeLayout.radius * 0.78}
-										cy={isRoot ? -nodeLayout.radius * 0.64 : Math.sin(nodeLayout.angle) * nodeLayout.radius * 0.78}
+										cx={
+											isRoot
+												? nodeLayout.radius * 0.64
+												: Math.cos(nodeLayout.angle) * nodeLayout.radius * 0.78
+										}
+										cy={
+											isRoot
+												? -nodeLayout.radius * 0.64
+												: Math.sin(nodeLayout.angle) * nodeLayout.radius * 0.78
+										}
 										r={3.2}
 									/>
 								) : null}
@@ -911,7 +1054,10 @@ function textLabel(
 	const maximum = inside
 		? Math.max(10, Math.floor((layout.radius * 1.62) / 7))
 		: 26;
-	const label = compactLabel(node.name, isRoot ? maximum : Math.min(maximum, 26));
+	const label = compactLabel(
+		node.name,
+		isRoot ? Math.min(18, Math.max(12, maximum)) : Math.min(maximum, 26),
+	);
 	return (
 		<text
 			className={isRoot ? "agent-universe-core-label" : "agent-universe-worker-label"}

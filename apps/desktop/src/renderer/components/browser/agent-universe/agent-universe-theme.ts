@@ -7,15 +7,39 @@ export interface AgentUniverseSystemColor {
 	id: AgentUniverseColorId;
 	label: string;
 	css: string;
+	surface: string;
+	core: string;
+	highlight: string;
 }
 
 export const AGENT_UNIVERSE_SYSTEM_COLORS: readonly AgentUniverseSystemColor[] = [
-	// Use the familiar macOS traffic-light hues as small, solid identity
-	// accents. The scene controls opacity and contrast; the palette itself does
-	// not invent gradients, provider colors, or decorative neon variants.
-	{ id: "red", label: "Red", css: "#ff5f57" },
-	{ id: "yellow", label: "Yellow", css: "#febc2e" },
-	{ id: "green", label: "Green", css: "#28c840" },
+	// These are the same identifying hues as Kestrel's triangular macOS window
+	// controls. The scene renders them through a graphite mix so a large body
+	// keeps the hue without turning into a neon disc.
+	{
+		id: "red",
+		label: "Red",
+		css: "#f45146",
+		surface: "#a94b44",
+		core: "#63302d",
+		highlight: "#ed9189",
+	},
+	{
+		id: "yellow",
+		label: "Yellow",
+		css: "#fcb600",
+		surface: "#b4861e",
+		core: "#705311",
+		highlight: "#f1cc6d",
+	},
+	{
+		id: "green",
+		label: "Green",
+		css: "#00bc00",
+		surface: "#3b8f4d",
+		core: "#225f30",
+		highlight: "#8bd399",
+	},
 ];
 
 const SYSTEM_COLOR_STORAGE_KEY = "kestrel:agent-universe-system-colors";

@@ -3,7 +3,7 @@ import type {
 	AgentSystemProjection,
 	AgentUniverseSnapshot,
 } from "./agent-universe-model";
-import { stableAgentAngle } from "./agent-universe-model";
+import { stableAgentAngle, stableAgentHash } from "./agent-universe-model";
 
 export interface AgentNodeLayout {
 	nodeId: string;
@@ -34,8 +34,9 @@ export interface AgentUniverseLayout {
 // enough that real profiles with many independent root sessions still have
 // bodies with presence at the initial camera position. Labels are progressive
 // and therefore do not need a large permanent exclusion zone.
-const SYSTEM_GAP = 52;
+const SYSTEM_GAP = 44;
 const LABEL_CLEARANCE = 20;
+const WORKER_GAP = 16;
 
 function safeDimension(value: number): number {
 	return Number.isFinite(value) && value > 0 ? value : 1;
@@ -45,21 +46,36 @@ function nodeRadiusForDepth(
 	node: AgentNodeProjection,
 	childCount: number,
 ): number {
-	const depthBase = 39 - Math.min(7, Math.max(0, node.depth - 1)) * 2.5;
+	const depthBase = 48 - Math.min(7, Math.max(0, node.depth - 1)) * 2.6;
 	const statusBoost =
 		node.status === "active"
 			? 10
 			: node.status === "waiting"
-				? 2
+				? 3
 				: node.status === "failed"
 					? 0
 					: node.status === "completed"
-						? -7
-						: -11;
+						? -9
+						: -15;
 	// A session that owns delegated work has real structural importance. Keep
 	// the boost deliberately small so hierarchy never overwhelms status.
 	const hierarchyBoost = childCount > 0 ? Math.min(5, childCount * 0.8) : 0;
-	return Math.max(20, depthBase + statusBoost + hierarchyBoost);
+	return Math.max(22, depthBase + statusBoost + hierarchyBoost);
+}
+
+/**
+ * Reserve the largest truthful worker footprint for the band scaffold. The
+ * rendered radius can respond to status, but the positions must not reshuffle
+ * when a session starts or completes. That separation is what keeps the map
+ * feeling like a place instead of a live chart.
+ */
+function nodePackingRadiusForDepth(
+	node: AgentNodeProjection,
+	childCount: number,
+): number {
+	const depthBase = 48 - Math.min(7, Math.max(0, node.depth - 1)) * 2.6;
+	const hierarchyBoost = childCount > 0 ? Math.min(5, childCount * 0.8) : 0;
+	return depthBase + 10 + hierarchyBoost;
 }
 
 function stableNodeOrder(left: AgentNodeProjection, right: AgentNodeProjection): number {
@@ -72,10 +88,19 @@ function uniqueNumbers(values: number[]): number[] {
 	);
 }
 
+interface LocalPlacement {
+	node: AgentNodeProjection;
+	x: number;
+	y: number;
+	radius: number;
+	packingRadius: number;
+}
+
 /**
- * Deterministically lay out one hierarchy as concentric delegated-work bands.
- * The function has no clock, physics loop, or random source: the same graph
- * always receives the same orbital phase and stable positions.
+ * Resolve the deterministic scaffold for one local hierarchy. This is not a
+ * force simulation and it does not expose rings: the seeded spiral gives each
+ * worker a spatial memory, while the bounded collision pass keeps the initial
+ * cluster legible before the interaction physics takes over.
  */
 export function layoutAgentSystem(
 	system: AgentSystemProjection,
@@ -87,22 +112,24 @@ export function layoutAgentSystem(
 		if (!node.parentId) continue;
 		childCounts.set(node.parentId, (childCounts.get(node.parentId) ?? 0) + 1);
 	}
-	const rootNode = system.nodes.find((node) => node.id === system.rootNodeId);
 	const root = system.nodes.find((node) => node.id === system.rootNodeId);
 	const rootStatusBoost =
-		rootNode?.status === "active"
+		root?.status === "active"
 			? 7
-			: rootNode?.status === "waiting"
+			: root?.status === "waiting"
 				? 2
-				: rootNode?.status === "failed"
+				: root?.status === "failed"
 					? -1
-					: rootNode?.status === "completed"
+					: root?.status === "completed"
 						? -7
 						: -9;
 	const rootImportanceBoost = root
 		? Math.min(4, (childCounts.get(root.id) ?? 0) * 0.8)
 		: 0;
-	const rootRadius = Math.max(72, 96 + rootStatusBoost + rootImportanceBoost);
+	const rootRadius = Math.max(84, 118 + rootStatusBoost + rootImportanceBoost);
+	// Keep this scaffold independent of status. A working session can become
+	// idle without every neighbouring body changing its place in the universe.
+	const rootPackingRadius = 128 + rootImportanceBoost;
 	const nodeLayouts: AgentNodeLayout[] = [];
 	if (root) {
 		nodeLayouts.push({
@@ -116,65 +143,120 @@ export function layoutAgentSystem(
 		});
 	}
 
-	const byDepth = new Map<number, AgentNodeProjection[]>();
-	for (const node of system.nodes) {
-		if (node.id === system.rootNodeId) continue;
-		const nodes = byDepth.get(node.depth) ?? [];
-		nodes.push(node);
-		byDepth.set(node.depth, nodes);
+	const workers = system.nodes
+		.filter((node) => node.id !== system.rootNodeId)
+		.sort(stableNodeOrder);
+	const placements: LocalPlacement[] = [];
+	const rootPlacement: LocalPlacement = {
+		node: root ?? system.nodes[0]!,
+		x: centerX,
+		y: centerY,
+		radius: rootRadius,
+		packingRadius: rootPackingRadius,
+	};
+	for (const [index, node] of workers.entries()) {
+		const nodeRadius = nodeRadiusForDepth(node, childCounts.get(node.id) ?? 0);
+		const packingRadius = nodePackingRadiusForDepth(
+			node,
+			childCounts.get(node.id) ?? 0,
+		);
+		const hash = stableAgentHash(`${system.id}:${node.id}:placement`);
+		const angle = stableAgentAngle(
+			`${system.id}:${node.parentId ?? system.rootNodeId}:${node.id}`,
+		);
+		// A gentle square-root spread creates a cluster with a soft outer edge,
+		// rather than a row or a collection of perfect rings. The stable hash
+		// gives each agent an identity-preserving radial offset.
+		const radialOffset = ((hash >>> 8) / 4_294_967_296 - 0.5) * 26;
+		const distance =
+			rootPackingRadius +
+			58 +
+			Math.sqrt(index + 1) * (36 + Math.min(14, packingRadius * 0.13)) +
+			radialOffset +
+			Math.min(4, node.depth) * 9;
+		placements.push({
+			node,
+			x: centerX + Math.cos(angle) * distance,
+			y: centerY + Math.sin(angle) * distance,
+			radius: nodeRadius,
+			packingRadius,
+		});
+	}
+
+	// The initial scaffold is intentionally a finite, deterministic collision
+	// solve. It handles large profiles without waking a runtime animation loop.
+	for (let iteration = 0; iteration < 72; iteration += 1) {
+		let moved = false;
+		for (const placement of placements) {
+			const dx = placement.x - rootPlacement.x;
+			const dy = placement.y - rootPlacement.y;
+			const distance = Math.hypot(dx, dy);
+			const minimum = rootPlacement.packingRadius + placement.packingRadius + WORKER_GAP;
+			if (distance < minimum) {
+				const direction =
+					distance > 0.001
+						? { x: dx / distance, y: dy / distance }
+						: { x: Math.cos(stableAgentAngle(placement.node.id)), y: Math.sin(stableAgentAngle(placement.node.id)) };
+				const push = minimum - distance;
+				placement.x += direction.x * push;
+				placement.y += direction.y * push;
+				moved = true;
+			}
+		}
+		for (let left = 0; left < placements.length; left += 1) {
+			for (let right = left + 1; right < placements.length; right += 1) {
+				const first = placements[left]!;
+				const second = placements[right]!;
+				const dx = second.x - first.x;
+				const dy = second.y - first.y;
+				const distance = Math.hypot(dx, dy);
+				const minimum = first.packingRadius + second.packingRadius + WORKER_GAP;
+				if (distance >= minimum) continue;
+				const direction =
+					distance > 0.001
+						? { x: dx / distance, y: dy / distance }
+						: { x: Math.cos(stableAgentAngle(`${first.node.id}:${second.node.id}`)), y: Math.sin(stableAgentAngle(`${first.node.id}:${second.node.id}`)) };
+				const push = (minimum - distance) / 2;
+				first.x -= direction.x * push;
+				first.y -= direction.y * push;
+				second.x += direction.x * push;
+				second.y += direction.y * push;
+				moved = true;
+			}
+		}
+		if (!moved) break;
 	}
 
 	const orbitRadii: number[] = [];
-	for (const depth of [...byDepth.keys()].sort((left, right) => left - right)) {
-		const nodes = [...byDepth.get(depth)!].sort(stableNodeOrder);
-		const radius = rootRadius + 72 + Math.max(0, depth - 1) * 72;
-		// Larger active blobs need more room before the angular packing step. A
-		// fixed spacing would let a working node overlap its neighbour as the
-		// visual hierarchy grows.
-		const largestNodeRadius = Math.max(
-			...nodes.map((node) =>
-				nodeRadiusForDepth(node, childCounts.get(node.id) ?? 0),
-			),
-		);
-		const minimumSeparation = Math.max(82, largestNodeRadius * 2 + 12);
-		const bandStep = Math.max(104, largestNodeRadius * 2 + 18);
-		const capacity = Math.max(
-			1,
-			Math.floor((Math.PI * 2 * radius) / minimumSeparation),
-		);
-		const bandCount = Math.max(1, Math.ceil(nodes.length / capacity));
-		for (let band = 0; band < bandCount; band += 1) {
-			const bandNodes = nodes.slice(
-				band * capacity,
-				Math.min(nodes.length, (band + 1) * capacity),
-			);
-			if (bandNodes.length === 0) continue;
-			const bandRadius = Math.max(
-				radius + band * bandStep,
-				(bandNodes.length * minimumSeparation) / (Math.PI * 2),
-			);
-			orbitRadii.push(bandRadius);
-			const phase = stableAgentAngle(`${system.id}:${depth}`, band);
-			for (const [index, node] of bandNodes.entries()) {
-				const angle = phase + (index / bandNodes.length) * Math.PI * 2;
-				const nodeRadius = nodeRadiusForDepth(node, childCounts.get(node.id) ?? 0);
-				nodeLayouts.push({
-					nodeId: node.id,
-					x: centerX + Math.cos(angle) * bandRadius,
-					y: centerY + Math.sin(angle) * bandRadius,
-					radius: nodeRadius,
-					orbitRadius: bandRadius,
-					orbitBand: band,
-					angle,
-				});
-			}
-		}
+	for (const placement of placements) {
+		const relativeX = placement.x - centerX;
+		const relativeY = placement.y - centerY;
+		const orbitRadius = Math.hypot(relativeX, relativeY);
+		nodeLayouts.push({
+			nodeId: placement.node.id,
+			x: placement.x,
+			y: placement.y,
+			radius: placement.radius,
+			// These legacy fields now describe the deterministic scaffold only.
+			// There are no rendered orbit rings or orbital animations.
+			orbitRadius,
+			orbitBand: 0,
+			angle: Math.atan2(relativeY, relativeX),
+		});
+		orbitRadii.push(orbitRadius);
 	}
 
 	const radius = Math.max(
-		rootRadius + LABEL_CLEARANCE,
+		rootPackingRadius + LABEL_CLEARANCE,
 		...nodeLayouts.map(
-			(node) => node.orbitRadius + node.radius + LABEL_CLEARANCE,
+			(node) => {
+				return node.orbitRadius +
+					nodePackingRadiusForDepth(
+						system.nodes.find((candidate) => candidate.id === node.nodeId) ?? rootPlacement.node,
+						childCounts.get(node.nodeId) ?? 0,
+					) +
+					LABEL_CLEARANCE;
+			},
 		),
 	);
 	return {
@@ -281,8 +363,12 @@ export function layoutAgentUniverse(
 	const boundsWidth = Math.max(1, bounds.maxX - bounds.minX);
 	const boundsHeight = Math.max(1, bounds.maxY - bounds.minY);
 	const margin = Math.min(72, Math.max(24, Math.min(safeWidth, safeHeight) * 0.05));
+	// Keep the map's lower edge clear of the floating camera controls and the
+	// status line. This is part of the composition, not a post-render overlay
+	// fix: important bodies should never sit behind chrome at the fit view.
+	const bottomReserve = Math.min(112, Math.max(64, safeHeight * 0.14));
 	const availableWidth = Math.max(1, safeWidth - margin * 2);
-	const availableHeight = Math.max(1, safeHeight - margin * 2);
+	const availableHeight = Math.max(1, safeHeight - margin * 2 - bottomReserve);
 	const scale = Math.min(
 		focused ? 1.7 : 1.25,
 		availableWidth / boundsWidth,
@@ -291,7 +377,8 @@ export function layoutAgentUniverse(
 	const worldCenterX = (bounds.minX + bounds.maxX) / 2;
 	const worldCenterY = (bounds.minY + bounds.maxY) / 2;
 	const translateX = safeWidth / 2 - worldCenterX * scale;
-	const translateY = safeHeight / 2 - worldCenterY * scale;
+	const mapCenterY = margin + availableHeight / 2;
+	const translateY = mapCenterY - worldCenterY * scale;
 
 	return {
 		width: safeWidth,

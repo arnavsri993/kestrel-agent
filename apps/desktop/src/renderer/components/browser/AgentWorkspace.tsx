@@ -315,7 +315,6 @@ export function AgentWorkspace({
 							activities={activities}
 							reducedMotion={reducedMotion}
 							systemColors={systemColors}
-							pendingApprovals={pendingApprovals}
 							{...(selectedNode && runsBySession[selectedNode.id]
 								? { contextRuns: runsBySession[selectedNode.id] }
 								: {})}
@@ -328,7 +327,6 @@ export function AgentWorkspace({
 							onBackgroundClick={handleBackgroundClick}
 							onCloseContext={() => setSelectedNodeId(null)}
 							onOpenSession={onOpenSession}
-							onOpenApprovals={onOpenApprovals}
 						/>
 					)}
 				</div>

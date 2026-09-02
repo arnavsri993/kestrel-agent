@@ -129,8 +129,8 @@ async function launch() {
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
-	// Agent Universe deliberately animates active workers. Keep this browser
-	// integration test deterministic while still exercising the live surface.
+	// Keep ambient star drift and transition timing deterministic while still
+	// exercising the live Agent Universe surface and its pointer interactions.
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	return page;
 }
@@ -1190,6 +1190,7 @@ try {
 	await page
 		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
+	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
@@ -1207,6 +1208,39 @@ try {
 	await page.locator(".agent-universe-scene").waitFor();
 	await page.locator(".agent-universe-node.is-core").first().waitFor();
 	await page.locator(`[data-node-id="${workerSessionId}"]`).waitFor();
+	const workerNode = page.locator(`[data-node-id="${workerSessionId}"]`);
+	const workerBox = await workerNode.boundingBox();
+	assert(workerBox, "The delegated worker had no visible hit area.");
+	const workerCenter = {
+		x: workerBox.x + workerBox.width / 2,
+		y: workerBox.y + workerBox.height / 2,
+	};
+	await page.mouse.move(workerCenter.x, workerCenter.y);
+	await page.mouse.down();
+	await page.mouse.move(workerCenter.x + 140, workerCenter.y - 28, { steps: 12 });
+	await page.waitForFunction(
+		(id) =>
+			document.querySelector(`[data-node-id="${id}"] .agent-universe-node-body`)
+				?.getAttribute("data-physics-dragging") === "true",
+		workerSessionId,
+	);
+	const draggedTension = await page.locator(
+		`[data-node-id="${workerSessionId}"] .agent-universe-node-body`,
+	).getAttribute("data-physics-tension");
+	assert(Number(draggedTension) > 0, "Dragging a worker did not produce tether tension.");
+	await page.mouse.up();
+	await page.waitForFunction(
+		(id) => {
+			const body = document.querySelector(
+				`[data-node-id="${id}"] .agent-universe-node-body`,
+			);
+			return (
+				body?.getAttribute("data-physics-dragging") === "false" &&
+				body.getAttribute("transform") === "translate(0.00 0.00)"
+			);
+		},
+		workerSessionId,
+	);
 	await page.locator(`[data-node-id="${workerSessionId}"]`).click();
 	await page
 		.getByRole("heading", { name: "Visible browser worker", exact: true })
@@ -1219,7 +1253,23 @@ try {
 		0,
 		"Agent should have one spatial surface, not a list mode",
 	);
-	const workerNode = page.locator(`[data-node-id="${workerSessionId}"]`);
+	await page.locator(".agent-universe-node.is-core").first().click();
+	await page.getByRole("heading", { name: "Visible browser test", exact: true }).waitFor();
+	await page.getByRole("heading", { name: "Conversation", exact: true }).waitFor();
+	assert.equal(
+		await page.locator(".agent-universe-context-surface .agent-universe-context-composer textarea").count(),
+		1,
+		"The main system should expose the primary conversation composer.",
+	);
+	assert.equal(
+		await page.getByRole("button", { name: "Review approvals", exact: true }).count(),
+		0,
+		"The Agent Universe conversation surface should not own approval actions.",
+	);
+	await page.locator(".agent-universe-context-surface textarea").fill(
+		"A short system message that should remain comfortably compact.",
+	);
+	await page.locator(".agent-universe-context-close").click();
 	await workerNode.focus();
 	await workerNode.press("Enter");
 	await page.getByRole("heading", { name: "Visible browser worker", exact: true }).waitFor();

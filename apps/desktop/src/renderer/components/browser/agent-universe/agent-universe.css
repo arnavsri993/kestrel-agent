@@ -6,13 +6,14 @@
  * this file only supplies material, hierarchy, and motion.
  */
 .agent-universe-workspace {
-  --agent-universe-canvas: #090b0e;
+  --agent-universe-canvas: #000000;
+  --agent-universe-plane: #000000;
   position: relative;
   width: 100%;
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 42%, #11151a 0%, #090b0e 62%, #07090b 100%);
+  background: var(--agent-universe-canvas);
 }
 
 .agent-universe-stage {
@@ -20,7 +21,7 @@
   inset: 0;
   min-height: 0;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 42%, #11151a 0%, #090b0e 62%, #07090b 100%);
+  background: var(--agent-universe-plane);
 }
 
 .agent-universe-visual-plane {
@@ -43,7 +44,7 @@
 .agent-universe-starfield {
   z-index: 0;
   pointer-events: none;
-  opacity: 0.32;
+  opacity: 0.72;
   mix-blend-mode: normal;
 }
 
@@ -80,7 +81,10 @@
 
 .agent-universe-camera {
   transform-box: view-box;
-  transform-origin: center;
+  /* cameraTransform already contains the viewport-centering translations;
+   * keeping the CSS origin at the viewBox origin prevents Chromium from
+   * applying a second center offset during focus. */
+  transform-origin: 0 0;
   transition: transform 520ms cubic-bezier(0.22, 0.8, 0.22, 1);
   will-change: transform;
 }
@@ -103,7 +107,7 @@
   cursor: pointer;
   outline: none;
   pointer-events: all;
-  transition: opacity 240ms ease-out;
+  transition: opacity 180ms ease-out, filter 180ms ease-out;
 }
 
 .agent-universe-node.is-selection-dimmed {
@@ -115,11 +119,11 @@
 }
 
 .agent-universe-node.is-status-completed {
-  opacity: 0.36;
+  opacity: 0.34;
 }
 
 .agent-universe-node.is-status-cancelled {
-  opacity: 0.26;
+  opacity: 0.24;
 }
 
 .agent-universe-node.is-status-failed {
@@ -127,7 +131,7 @@
 }
 
 .agent-universe-node.is-status-waiting {
-  opacity: 0.7;
+  opacity: 0.72;
 }
 
 .agent-universe-node-hit {
@@ -141,91 +145,62 @@
   transform-origin: center center;
 }
 
-.agent-universe-node.is-worker.is-working .agent-universe-node-body {
-  will-change: transform;
-  animation: agent-universe-node-drift var(--node-drift-duration, 22s)
-    ease-in-out var(--node-drift-delay, 0s) infinite;
+.agent-universe-node.is-worker {
+  cursor: grab;
 }
 
-.agent-universe-core-aura {
-  fill: none;
-  stroke: var(--agent-system-color);
-  stroke-width: 1;
-  opacity: 0.18;
-  vector-effect: non-scaling-stroke;
+.agent-universe-node.is-worker:active,
+.agent-universe-node-body[data-physics-dragging="true"] {
+  cursor: grabbing;
 }
 
 .agent-universe-core-rim {
-  fill: var(--agent-system-color);
-  fill-opacity: 0.84;
-  stroke: #090b0e;
-  stroke-opacity: 0.92;
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-.agent-universe-worker-aura {
-  fill: none;
-  stroke: var(--agent-system-color);
-  stroke-width: 1;
-  opacity: 0.2;
+  /* A solid, darkened system hue gives the body weight without a glossy
+   * gradient. The edge is the only luminous material cue. */
+  fill: var(--agent-system-core, var(--agent-system-color));
+  fill-opacity: 1;
+  stroke: var(--agent-system-highlight, var(--agent-system-color));
+  stroke-opacity: 0.5;
+  stroke-width: 1.25;
+  filter: drop-shadow(0 8px 13px rgb(0 0 0 / 38%));
   vector-effect: non-scaling-stroke;
 }
 
 .agent-universe-worker-rim {
-  fill: var(--agent-system-color);
-  fill-opacity: 0.68;
-  stroke: #090b0e;
-  stroke-opacity: 0.9;
-  stroke-width: 1.25;
+  fill: var(--agent-system-surface, var(--agent-system-color));
+  fill-opacity: 1;
+  stroke: var(--agent-system-highlight, var(--agent-system-color));
+  stroke-opacity: 0.38;
+  stroke-width: 1.1;
+  filter: drop-shadow(0 6px 10px rgb(0 0 0 / 34%));
   vector-effect: non-scaling-stroke;
 }
 
-.agent-universe-node.is-working .agent-universe-worker-aura {
-  --agent-aura-rest: 0.18;
-  --agent-aura-peak: 0.34;
-  opacity: var(--agent-aura-rest);
-  animation: agent-universe-worker-breathe 8s ease-in-out infinite;
+.agent-universe-node.is-worker.is-working .agent-universe-worker-rim {
+  stroke-opacity: 0.44;
 }
 
-.agent-universe-node.is-activity-active .agent-universe-worker-aura {
-  --agent-aura-rest: 0.24;
-  --agent-aura-peak: 0.42;
-  animation-duration: 4.8s;
-}
-
-.agent-universe-node.is-working .agent-universe-worker-rim {
-  fill-opacity: 0.76;
-  stroke-opacity: 0.94;
-}
-
-.agent-universe-node.is-working .agent-universe-core-aura {
-  opacity: 0.22;
-}
-
-.agent-universe-node.is-activity-active .agent-universe-core-aura,
-.agent-universe-node.is-activity-active .agent-universe-worker-rim {
-  stroke-opacity: 1;
+.agent-universe-node.is-worker.is-activity-active .agent-universe-worker-rim {
+  stroke-opacity: 0.56;
 }
 
 .agent-universe-node.is-working .agent-universe-core-rim {
-  fill-opacity: 0.9;
-  stroke-opacity: 0.96;
+  stroke-opacity: 0.56;
 }
 
 .agent-universe-node.is-hovered .agent-universe-worker-rim,
 .agent-universe-node.is-selected .agent-universe-worker-rim,
 .agent-universe-node:focus-visible .agent-universe-worker-rim {
-  stroke: var(--ink);
-  stroke-opacity: 0.98;
-  stroke-width: 1.65;
+  stroke: var(--agent-system-highlight, var(--agent-system-color));
+  stroke-opacity: 0.92;
+  stroke-width: 1.55;
 }
 
 .agent-universe-node.is-selected .agent-universe-core-rim,
 .agent-universe-node:focus-visible .agent-universe-core-rim {
-  stroke: var(--ink);
-  stroke-opacity: 0.98;
-  stroke-width: 1.9;
+  stroke: var(--agent-system-highlight, var(--agent-system-color));
+  stroke-opacity: 0.9;
+  stroke-width: 1.75;
 }
 
 .agent-universe-core-rim.agent-status-completed,
@@ -246,7 +221,7 @@
 }
 
 .agent-universe-core-label {
-  fill: #ffffff;
+  fill: #f4f5f7;
   font: 650 13px / 1 var(--sans);
   letter-spacing: -0.01em;
 }
@@ -259,7 +234,7 @@
 }
 
 .agent-universe-worker-label {
-  fill: #ffffff;
+  fill: #f2f3f5;
   font: 560 11px / 1 var(--sans);
 }
 
@@ -268,22 +243,6 @@
   stroke: #0b0d10;
   stroke-width: 1.3;
   vector-effect: non-scaling-stroke;
-}
-
-.agent-universe-edges {
-  pointer-events: none;
-}
-
-.agent-universe-edge {
-  fill: none;
-  stroke: var(--agent-system-color);
-  stroke-opacity: 0.16;
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-
-.agent-universe-system.is-focused .agent-universe-edge {
-  stroke-opacity: 0.24;
 }
 
 .agent-universe-stage-state {
@@ -463,10 +422,11 @@
   gap: 10px;
   min-width: 0;
   padding: 6px 10px 7px 8px;
-  border: 1px solid var(--line);
+  border: 1px solid rgb(255 255 255 / 8%);
   border-radius: 10px;
-  background: #111419;
-  box-shadow: 0 8px 22px rgb(0 0 0 / 20%);
+  background: color-mix(in srgb, #15191f 90%, transparent);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+  backdrop-filter: blur(18px) saturate(1.04);
 }
 
 .agent-universe-map-identity .surface-back-button {
@@ -498,10 +458,11 @@
   gap: 2px;
   max-width: 100%;
   padding: 4px;
-  border: 1px solid var(--line);
+  border: 1px solid rgb(255 255 255 / 8%);
   border-radius: 11px;
-  background: #111419;
-  box-shadow: 0 8px 22px rgb(0 0 0 / 20%);
+  background: color-mix(in srgb, #15191f 90%, transparent);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+  backdrop-filter: blur(18px) saturate(1.04);
 }
 
 .agent-universe-map-actions .ui-button {
@@ -519,9 +480,9 @@
   gap: 7px;
   min-height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--line);
+  border: 1px solid rgb(255 255 255 / 7%);
   border-radius: 8px;
-  background: #15181d;
+  background: rgb(7 9 12 / 36%);
 }
 
 .agent-universe-search:focus-within {
@@ -571,7 +532,7 @@
 .agent-universe-camera-controls button:hover,
 .agent-universe-minimap button:hover {
   border-color: var(--line);
-  background: #1a1e27;
+  background: rgb(255 255 255 / 8%);
   color: var(--ink);
 }
 
@@ -593,8 +554,8 @@
 }
 
 .agent-universe-new-task {
-  border-color: color-mix(in srgb, var(--line) 58%, transparent);
-  background: #171b20;
+  border-color: rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 6%);
   color: var(--ink-secondary);
 }
 
@@ -653,10 +614,11 @@
   gap: 2px;
   min-height: 40px;
   padding: 3px;
-  border: 1px solid var(--line);
+  border: 1px solid rgb(255 255 255 / 8%);
   border-radius: 10px;
-  background: #111419;
-  box-shadow: 0 10px 24px rgb(0 0 0 / 18%);
+  background: color-mix(in srgb, #15191f 90%, transparent);
+  box-shadow: 0 10px 26px rgb(0 0 0 / 24%);
+  backdrop-filter: blur(18px) saturate(1.04);
   transform: translateX(-50%);
 }
 
@@ -682,10 +644,11 @@
   width: 152px;
   height: 102px;
   padding: 8px;
-  border: 1px solid var(--line);
+  border: 1px solid rgb(255 255 255 / 8%);
   border-radius: 11px;
-  background: #101419;
-  box-shadow: 0 10px 24px rgb(0 0 0 / 20%);
+  background: color-mix(in srgb, #12161c 90%, transparent);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 25%);
+  backdrop-filter: blur(18px) saturate(1.04);
 }
 
 .agent-universe-minimap > svg {
@@ -728,25 +691,40 @@
   clip-path: inset(50%);
 }
 
-/* One contextual surface at a time. It follows the selected body rather than
- * reserving a permanent inspector column. */
+/* One contextual surface at a time. The main system gets a wider,
+ * conversation-first surface; workers get a compact inspection surface. */
 .agent-universe-context-surface {
   position: absolute;
   top: var(--context-surface-top, 88px);
   left: var(--context-surface-left, 18px);
   z-index: 7;
   display: flex;
-  width: min(320px, calc(100% - 32px));
-  max-height: min(640px, calc(100% - 164px));
+  width: min(380px, calc(100% - 32px));
+  max-height: min(690px, calc(100% - 164px));
   flex-direction: column;
   overflow: auto;
-  border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
-  border-radius: 14px;
-  background: #15191f;
-  box-shadow: 0 16px 40px rgb(0 0 0 / 34%), 0 0 0 1px rgb(255 255 255 / 2%);
-  animation: agent-universe-context-in 220ms cubic-bezier(0.2, 0.78, 0.2, 1) both;
-  transition: top 220ms cubic-bezier(0.2, 0.78, 0.2, 1), left 220ms cubic-bezier(0.2, 0.78, 0.2, 1), opacity 180ms ease-out;
+  border: 1px solid color-mix(in srgb, var(--agent-system-color, #ffffff) 14%, rgb(255 255 255 / 12%));
+  border-radius: 20px;
+  background: color-mix(in srgb, #121419 78%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%), inset 0 -1px 0 rgb(0 0 0 / 26%), 0 24px 70px rgb(0 0 0 / 45%);
+  backdrop-filter: blur(26px) saturate(1.12) brightness(0.92);
+  -webkit-backdrop-filter: blur(26px) saturate(1.12) brightness(0.92);
+  animation: agent-universe-context-in 240ms cubic-bezier(0.22, 0.8, 0.22, 1) both;
+  transition: top 240ms cubic-bezier(0.22, 0.8, 0.22, 1), left 240ms cubic-bezier(0.22, 0.8, 0.22, 1), opacity 180ms ease-out;
   scrollbar-width: thin;
+}
+
+.agent-universe-context-surface.is-system {
+  width: min(460px, calc(100% - 32px));
+}
+
+.agent-universe-context-surface::after {
+  position: absolute;
+  inset: 1px;
+  border: 1px solid rgb(255 255 255 / 3%);
+  border-radius: 19px;
+  content: "";
+  pointer-events: none;
 }
 
 .agent-universe-context-surface::before {
@@ -754,7 +732,7 @@
   top: 50%;
   width: 26px;
   height: 1px;
-  background: color-mix(in srgb, var(--line-strong) 80%, transparent);
+  background: color-mix(in srgb, var(--agent-system-color, #ffffff) 28%, transparent);
   content: "";
   pointer-events: none;
 }
@@ -771,8 +749,8 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
-  padding: 17px 17px 12px;
+  gap: 18px;
+  padding: 22px 22px 14px;
 }
 
 .agent-universe-context-title {
@@ -781,45 +759,55 @@
 
 .agent-universe-context-kicker {
   display: block;
-  color: var(--faint);
+  color: color-mix(in srgb, var(--agent-system-color, var(--ink)) 62%, var(--faint));
   font-size: 9px;
-  font-weight: 680;
-  letter-spacing: 0.09em;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   line-height: 12px;
   text-transform: uppercase;
 }
 
 .agent-universe-context-header h2 {
-  max-width: 240px;
-  margin: 5px 0 0;
+  max-width: 360px;
+  margin: 6px 0 0;
   color: var(--ink);
-  font: 640 18px / 1.15 var(--display);
-  letter-spacing: -0.025em;
+  font: 650 21px / 1.12 var(--display);
+  letter-spacing: -0.03em;
   overflow-wrap: anywhere;
+}
+
+.agent-universe-context-subtitle {
+  max-width: 42ch;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
 .agent-universe-context-close {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
   border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
   color: var(--muted);
   cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
 }
 
 .agent-universe-context-close:hover {
-  border-color: var(--line);
-  background: #1b2029;
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 9%);
   color: var(--ink);
 }
 
 .agent-universe-context-close:focus-visible,
 .agent-universe-context-send:focus-visible,
-.agent-universe-color-option:focus-visible {
+.agent-universe-color-option:focus-visible,
+.agent-universe-context-secondary summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -833,25 +821,55 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 0 17px;
+  gap: 9px;
+  margin: 0 22px;
   padding: 10px 0;
-  border-block: 1px solid var(--line);
+  border-block: 1px solid rgb(255 255 255 / 8%);
   color: var(--faint);
   font-size: 10px;
 }
 
+.agent-universe-context-brief {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 22px;
+  padding: 14px 0 4px;
+  color: var(--ink-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.agent-universe-context-brief-mark {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--agent-system-color, var(--ink));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--agent-system-color, var(--ink)) 12%, transparent);
+}
+
+.agent-universe-context-brief small {
+  margin-left: auto;
+  max-width: 18ch;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-universe-context-details {
   margin: 0;
-  padding: 0 17px;
+  padding: 8px 22px 0;
 }
 
 .agent-universe-context-row {
   display: grid;
-  grid-template-columns: minmax(70px, 0.64fr) minmax(0, 1.36fr);
-  gap: 10px;
-  padding: 8px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  grid-template-columns: minmax(62px, 0.55fr) minmax(0, 1.45fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgb(255 255 255 / 6%);
 }
 
 .agent-universe-context-row dt {
@@ -868,53 +886,73 @@
   overflow-wrap: anywhere;
 }
 
-.agent-universe-context-section {
-  padding: 13px 17px 0;
+.agent-universe-context-secondary {
+  margin: 12px 22px 0;
+  border-top: 1px solid rgb(255 255 255 / 7%);
 }
 
-.agent-universe-context-section h3 {
-  margin: 0 0 8px;
+.agent-universe-context-secondary summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
   color: var(--muted);
   font-size: 10px;
-  font-weight: 680;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-weight: 650;
+  list-style: none;
+  cursor: pointer;
 }
 
-.agent-universe-context-section p,
-.agent-universe-context-section > small,
-.agent-universe-context-section-heading > span {
-  margin: 0;
+.agent-universe-context-secondary summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-universe-context-secondary summary::after {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-right: 1px solid var(--faint);
+  border-bottom: 1px solid var(--faint);
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 160ms ease;
+}
+
+.agent-universe-context-secondary[open] summary::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.agent-universe-context-secondary summary small {
+  max-width: 24ch;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-universe-context-secondary > p {
+  margin: 0 0 11px;
   color: var(--muted);
   font-size: 10px;
   line-height: 1.45;
 }
 
-.agent-universe-context-section > small {
-  display: block;
-  margin-top: 6px;
-}
-
-.agent-universe-context-section-heading {
+.agent-universe-context-color-content {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 10px;
-}
-
-.agent-universe-context-section-heading h3 {
-  margin-bottom: 8px;
-}
-
-.agent-universe-context-section-heading > span {
+  gap: 12px;
+  padding: 0 0 10px;
   color: var(--faint);
   font-size: 9px;
-  text-align: right;
 }
 
 .agent-universe-color-picker {
   display: flex;
-  gap: 8px;
+  gap: 9px;
 }
 
 .agent-universe-color-option {
@@ -937,7 +975,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin: 0;
+  margin: 0 0 11px;
   padding: 0;
   list-style: none;
 }
@@ -945,8 +983,8 @@
 .agent-universe-tool-list li {
   max-width: 100%;
   padding: 4px 6px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
+  border: 1px solid rgb(255 255 255 / 9%);
+  border-radius: 6px;
   color: var(--ink-secondary);
   font: 9px / 1.25 var(--mono);
   overflow-wrap: anywhere;
@@ -954,55 +992,97 @@
 
 .agent-universe-routing-details {
   padding: 0;
-  border-top: 1px solid var(--line);
+  border-top: 0;
 }
 
-.agent-universe-context-message-section {
-  padding-top: 15px;
+.agent-universe-context-conversation {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 17px 22px 0;
+}
+
+.agent-universe-context-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.agent-universe-context-section-heading h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 680;
+  letter-spacing: -0.005em;
+}
+
+.agent-universe-context-section-heading > span {
+  color: var(--faint);
+  font-size: 9px;
+  text-align: right;
 }
 
 .agent-universe-context-message-log {
   display: grid;
-  gap: 7px;
-  max-height: 150px;
-  margin-bottom: 9px;
+  gap: 10px;
+  max-height: min(330px, 34vh);
+  min-height: 70px;
+  margin-bottom: 11px;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .agent-universe-context-message {
-  padding: 7px 8px;
+  padding: 10px 11px;
+  border: 1px solid rgb(255 255 255 / 6%);
   border-left: 2px solid color-mix(in srgb, var(--agent-system-color, var(--ink)) 70%, transparent);
-  border-radius: 5px;
-  background: #1a1f29;
+  border-radius: 10px;
+  background: rgb(0 0 0 / 18%);
 }
 
 .agent-universe-context-message.user {
-  border-left-color: var(--line-strong);
+  border-left-color: rgb(255 255 255 / 28%);
+  background: rgb(255 255 255 / 5%);
+}
+
+.agent-universe-context-message.is-optimistic {
+  opacity: 0.82;
 }
 
 .agent-universe-context-message span {
   display: block;
-  margin-bottom: 3px;
+  margin-bottom: 5px;
   color: var(--faint);
   font-size: 9px;
-  font-weight: 650;
+  font-weight: 680;
 }
 
 .agent-universe-context-message p {
+  margin: 0;
   color: var(--ink-secondary);
-  line-height: 1.42;
+  font-size: 11px;
+  line-height: 1.48;
   white-space: pre-wrap;
 }
 
-.agent-universe-context-message-confirmation {
-  padding: 7px 8px;
-  border: 1px solid color-mix(in srgb, var(--agent-system-color, var(--ink)) 27%, var(--line));
-  border-radius: 5px;
+.agent-universe-context-empty {
+  align-self: center;
+  margin: auto 0;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .agent-universe-context-error {
-  margin: 0 0 8px !important;
-  color: var(--ink-secondary) !important;
+  margin: 0 0 9px;
+  color: var(--ink-secondary);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .agent-universe-context-composer {
@@ -1013,50 +1093,59 @@
 .agent-universe-context-composer textarea {
   display: block;
   width: 100%;
-  min-height: 52px;
-  max-height: 120px;
-  padding: 9px 36px 9px 10px;
-  resize: vertical;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  min-height: 42px;
+  max-height: 132px;
+  padding: 11px 43px 10px 13px;
+  resize: none;
+  border: 1px solid color-mix(in srgb, var(--agent-system-color, #ffffff) 25%, rgb(255 255 255 / 14%));
+  border-radius: 13px;
   outline: none;
-  background: #0e1117;
+  background: color-mix(in srgb, #1a1d23 72%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%), inset 0 -1px 0 rgb(0 0 0 / 20%);
   color: var(--ink);
-  font: 11px / 1.4 var(--sans);
+  font: 11px / 1.45 var(--sans);
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
 .agent-universe-context-composer textarea::placeholder {
   color: var(--faint);
 }
 
+.agent-universe-context-composer textarea:hover {
+  border-color: color-mix(in srgb, var(--agent-system-color, #ffffff) 35%, rgb(255 255 255 / 18%));
+}
+
 .agent-universe-context-composer textarea:focus {
-  border-color: var(--focus);
-  box-shadow: var(--focus-ring);
+  border-color: color-mix(in srgb, var(--agent-system-color, #ffffff) 62%, rgb(255 255 255 / 30%));
+  background: color-mix(in srgb, #252932 78%, transparent);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 11%), var(--focus-ring);
 }
 
 .agent-universe-context-send {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
+  right: 7px;
+  bottom: 7px;
   display: grid;
   place-items: center;
-  width: 25px;
-  height: 25px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--agent-system-color, var(--ink)) 26%, #1a202b);
+  border: 1px solid color-mix(in srgb, var(--agent-system-color, var(--ink)) 42%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--agent-system-color, var(--ink)) 28%, #1b2028);
   color: var(--ink);
   cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
 
 .agent-universe-context-send:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--agent-system-color, var(--ink)) 58%, transparent);
-  background: color-mix(in srgb, var(--agent-system-color, var(--ink)) 38%, #1a202b);
+  border-color: color-mix(in srgb, var(--agent-system-color, var(--ink)) 70%, transparent);
+  background: color-mix(in srgb, var(--agent-system-color, var(--ink)) 42%, #1e242e);
+  transform: translateY(-1px);
 }
 
 .agent-universe-context-send:disabled {
-  opacity: 0.38;
+  opacity: 0.36;
   cursor: not-allowed;
 }
 
@@ -1067,9 +1156,12 @@
 
 .agent-universe-context-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-  padding: 15px 17px 17px;
+  justify-content: flex-end;
+  padding: 14px 22px 18px;
+}
+
+.agent-universe-context-actions .ui-button {
+  color: var(--muted);
 }
 
 .agent-universe-context-actions .ui-button svg {
@@ -1078,43 +1170,14 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .agent-universe-node.is-working .agent-universe-node-body {
-    animation-duration: var(--node-drift-duration, 22s);
-  }
-
-  .agent-universe-node.is-core.is-working .agent-universe-core-aura {
-    animation: agent-universe-core-breathe 5.6s ease-in-out infinite;
-  }
-
   .agent-universe-loading-mark {
     animation: agent-universe-loading-spin 1.8s linear infinite;
   }
 }
 
-@keyframes agent-universe-node-drift {
-  0%, 100% { transform: translate(0, 0); }
-  50% {
-    transform: translate(var(--node-drift-x), var(--node-drift-y));
-  }
-}
-
-@keyframes agent-universe-core-breathe {
-  0%, 100% { opacity: 0.18; }
-  50% { opacity: 0.3; }
-}
-
-@keyframes agent-universe-worker-breathe {
-  0%, 100% {
-    opacity: var(--agent-aura-rest, 0.28);
-  }
-  50% {
-    opacity: var(--agent-aura-peak, 0.68);
-  }
-}
-
 @keyframes agent-universe-context-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(7px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @keyframes agent-universe-loading-spin {
@@ -1131,8 +1194,7 @@
   }
 
   .agent-universe-node.is-worker .agent-universe-node-body,
-  .agent-universe-node.is-core.is-working .agent-universe-core-aura,
-  .agent-universe-node.is-working .agent-universe-worker-aura,
+  .agent-universe-node.is-worker.is-working .agent-universe-worker-rim,
   .agent-universe-loading-mark {
     animation: none;
   }

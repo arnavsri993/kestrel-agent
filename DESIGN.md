@@ -109,24 +109,26 @@ Engineer repositories. The full evidence and decision record is in
   make the direct-manipulation surface keyboard reachable. Camera state is
   ephemeral; runtime identity and hierarchy remain in the deterministic
   renderer projection.
-- **Depth and restraint:** a sparse static field, thin ownership edges, scale,
-  and progressive labels establish depth. Systems
+- **Depth and restraint:** a sparse static field, proximity, scale, and
+  progressive labels establish depth. Systems
   use a deliberately limited red/yellow/green palette inspired by the window's
   traffic lights; each system receives a stable identity color until the user
   chooses another, while status is communicated separately through size,
   opacity, and rim treatment. Bodies are matte single-color objects with a
   quiet graphite core, not neon or glass.
-  There are no fake planets, provider-color badges, fabricated metrics, or
+  There are no persistent spokes or orbit rings, fake planets, provider-color
+  badges, fabricated metrics, or
   perpetual spectacle. Selection and focus add emphasis; they do not mutate or
   invent runtime state.
 - **Motion roles:** spatial continuity for focus and camera changes, direct
   manipulation for pan/zoom, and calm state feedback for real active work or
-  recent runtime events. Active workers use a slow, eased out-and-back
-  micro-drift capped at roughly two pixels plus a restrained rim/aura breath;
-  inactive workers do not move. There are no speed jumps, random walks, or
-  traveling particles. Waiting, failed,
-  completed, or cancelled sessions are still, darker, and smaller. Reduced
-  motion removes travel, scale, and pulse while keeping the state legible.
+  recent runtime events. The map is still at rest: workers do not idle-bob or
+  randomly drift. Dragging activates only the selected local system's damped
+  parent-relative physics, including mass, directional blob tension, vacancy
+  redistribution, and a restrained return. Active state adds only a quiet rim
+  clarification; waiting, failed, completed, or cancelled sessions are still,
+  darker, and smaller. Reduced motion shortens travel and suppresses
+  deformation while keeping the hierarchy and drag relationship legible.
 - **Why this is not generic:** the scene is derived from Kestrel's actual
   `RuntimeSession` ownership and status model, while exact task history,
   inspector routing details, approvals, and persistent agent conversation all
