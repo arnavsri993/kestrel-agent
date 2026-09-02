@@ -127,7 +127,7 @@ export function layoutAgentSystem(
 	const orbitRadii: number[] = [];
 	for (const depth of [...byDepth.keys()].sort((left, right) => left - right)) {
 		const nodes = [...byDepth.get(depth)!].sort(stableNodeOrder);
-		const radius = rootRadius + 96 + Math.max(0, depth - 1) * 84;
+		const radius = rootRadius + 72 + Math.max(0, depth - 1) * 72;
 		// Larger active blobs need more room before the angular packing step. A
 		// fixed spacing would let a working node overlap its neighbour as the
 		// visual hierarchy grows.
@@ -136,8 +136,8 @@ export function layoutAgentSystem(
 				nodeRadiusForDepth(node, childCounts.get(node.id) ?? 0),
 			),
 		);
-		const minimumSeparation = Math.max(92, largestNodeRadius * 2 + 16);
-		const bandStep = Math.max(116, largestNodeRadius * 2 + 22);
+		const minimumSeparation = Math.max(82, largestNodeRadius * 2 + 12);
+		const bandStep = Math.max(104, largestNodeRadius * 2 + 18);
 		const capacity = Math.max(
 			1,
 			Math.floor((Math.PI * 2 * radius) / minimumSeparation),
