@@ -361,6 +361,11 @@ async function assertBrowserChromeLayout({
 	assert(layout.toolbar);
 	assert(layout.viewport);
 	assert.equal(
+		layout.toolbar.height,
+		40,
+		"Browser toolbar should use the compact 40px row.",
+	);
+	assert.equal(
 		Boolean(layout.kestrel),
 		sidebarVisible,
 		`Kestrel navigation visibility did not match the active tab: expected ${sidebarVisible}`,
