@@ -1820,6 +1820,91 @@ export class UserBrowserService {
 		return this.createTab(tab.url || undefined, true);
 	}
 
+	getTabForTransfer(tabId: string): UserBrowserTab {
+		if (this.isAgentTabPinned(tabId)) {
+			throw new Error(
+				"Browser tab is in use by an agent operation and cannot be moved.",
+			);
+		}
+		const tab = this.requireTab(tabId);
+		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
+			throw new Error("Only loaded web pages can move between windows.");
+		}
+		return structuredClone(tab);
+	}
+
+	async importTabForTransfer(tab: UserBrowserTab): Promise<UserBrowserState> {
+		return this.runExclusiveTabMutation(async () => {
+			this.assertAvailable();
+			if (this.state.tabs.some((candidate) => candidate.id === tab.id))
+				throw new Error("That browser tab is already open in this window.");
+			const previousActiveTabId = this.state.activeTabId;
+			const imported: UserBrowserTab = {
+				...structuredClone(tab),
+				loading: false,
+				discarded: false,
+				crashed: false,
+				error: undefined,
+				tabFolderId: undefined,
+				lastActiveAt: this.now().toISOString(),
+			};
+			this.state.tabs.push(imported);
+			this.state.activeTabId = imported.id;
+			this.commit();
+			try {
+				await this.navigate(imported.id, imported.url);
+			} catch (cause) {
+				this.closeView(imported.id);
+				this.state.tabs = this.state.tabs.filter(
+					(candidate) => candidate.id !== imported.id,
+				);
+				this.state.activeTabId = previousActiveTabId;
+				this.commit();
+				throw cause;
+			}
+			return this.getState();
+		});
+	}
+
+	async removeTabForTransfer(tabId: string): Promise<UserBrowserState> {
+		return this.runExclusiveTabMutation(() =>
+			this.removeTabForTransferInternal(tabId),
+		);
+	}
+
+	private async removeTabForTransferInternal(
+		tabId: string,
+	): Promise<UserBrowserState> {
+		if (this.isAgentTabPinned(tabId)) {
+			throw new Error(
+				"Browser tab is in use by an agent operation and cannot be moved.",
+			);
+		}
+		const index = this.state.tabs.findIndex((tab) => tab.id === tabId);
+		if (index < 0) throw new Error("Browser tab is unavailable.");
+		if (tabId === this.state.activeTabId) {
+			this.clearPasswordPrompt();
+			this.clearPaymentPrompt();
+		}
+		this.closeView(tabId);
+		this.state.tabs.splice(index, 1);
+		this.agentTabPinCounts.delete(tabId);
+		if (this.state.tabs.length === 0) {
+			this.state.activeTabId = null;
+		} else if (this.state.activeTabId === tabId) {
+			this.state.activeTabId =
+				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
+		}
+		this.pruneEmptyTabFolders();
+		this.commit();
+		if (this.state.tabs.length === 0) {
+			this.onLastTabClosed?.();
+			return this.getState();
+		}
+		await this.syncActiveView();
+		return this.getState();
+	}
+
 	async closeOtherTabs(tabId: string): Promise<UserBrowserState> {
 		this.requireTab(tabId);
 		const closing = this.state.tabs

@@ -796,6 +796,9 @@ body:has(.ai-browser-app),
 	width: 16px;
 	height: 16px;
 }
+.browser-tab-reattach-btn svg {
+	transform: rotate(180deg);
+}
 
 .browser-tab-tools-menu {
 	position: absolute;
@@ -7273,7 +7276,11 @@ body:has(.calculator-overlay),
 }
 
 .browser-tab-drag-fill {
-	min-width: 40px;
+	/* Keep only a small native drag target after New Tab. The tab rail owns the
+	 * rest of the chrome so a short tab list does not leave a dead zone. */
+	flex: 0 1 32px;
+	min-width: 24px;
+	max-width: 32px;
 }
 
 .browser-navigation {
@@ -7358,19 +7365,17 @@ body:has(.calculator-overlay),
 	}
 }
 
-/* Keep the horizontal strip's established width contract: crowded tabs share
- * the rail and the explicit tab-tools disclosure is the stable overflow path.
- * This avoids a hidden second scroll target beside New Tab. */
+/* Keep the horizontal strip close to a browser tab bar: every tab shares the
+ * available rail, and crowded tabs shrink instead of creating a second scroll
+ * target that users have to operate with a mouse. Tab tools and vertical tabs
+ * remain the intentional escape hatches for very large tab sets. */
 .browser-tabs {
-	/* Keep a single, bounded scroll rail when tabs outgrow the available
-	 * chrome. Let the rail claim unused chrome first so a small tab set does
-	 * not collapse to its minimum width; once crowded, the same rail scrolls
-	 * without pushing New Tab or the drag target off-screen. */
-	flex: 1 1 auto;
+	/* Fill the available strip when there are only a few tabs, then let the
+	 * individual flex items shrink as more tabs are added. */
+	flex: 1 1 0;
+	min-width: 0;
 	max-width: 100%;
-	overflow-x: auto;
-	overflow-y: hidden;
-	overscroll-behavior-inline: contain;
+	overflow: hidden;
 	scrollbar-width: none;
 }
 
@@ -7379,62 +7384,45 @@ body:has(.calculator-overlay),
 }
 
 .browser-tab {
-	flex: 1 1 176px;
-	min-width: 112px;
-	max-width: 264px;
+	/* A zero basis makes a small tab set use the whole rail. With more tabs,
+	 * Flexbox shares that same rail instead of handing overflow to a scrollbar. */
+	flex: 1 1 0;
+	min-width: 0;
+	max-width: none;
 	height: 35px;
 	border-radius: 9px 9px 0 0;
 	color: var(--faint);
 }
 
-/* Compact tabs deliberately trade some simultaneous visibility for legible,
- * stable targets. The scroll container owns overflow; New Tab stays fixed at
- * its trailing edge, so tab lifecycle never compresses labels into glyphs. */
+/* Compact tabs still hide secondary text, but remain part of the same
+ * shrink-to-fit strip rather than introducing a second mouse-scrolling rail. */
 .browser-tab-row-horizontal.browser-tab-row-compact .browser-tabs {
-	flex: 1 1 auto;
+	flex: 1 1 0;
 	max-width: none;
-	overflow-x: auto;
-	overflow-y: hidden;
-	scrollbar-width: thin;
-	scrollbar-color: color-mix(in srgb, var(--line-strong) 72%, transparent) transparent;
-	overscroll-behavior-inline: contain;
-}
-
-.browser-tab-row-horizontal.browser-tab-row-compact .browser-tabs::-webkit-scrollbar {
-	display: block;
-	height: 3px;
+	overflow: hidden;
+	scrollbar-width: none;
 }
 
 .browser-tab-row-horizontal.browser-tab-row-compact .browser-tab {
-	flex: 0 0 112px;
-	min-width: 112px;
-	max-width: 112px;
+	flex: 1 1 0;
+	min-width: 0;
+	max-width: none;
 }
 
-/* On narrow windows the tab rail scrolls as one stable strip. Do not let the
- * flex row squeeze ordinary tabs into favicon-sized targets; New Tab remains
- * a fixed sibling at the trailing edge of the rail. */
+/* Narrow windows use the same browser-like shrink behavior. */
 @media (max-width: 760px) {
 	.browser-tab-row-horizontal .browser-tabs {
-		flex: 1 1 auto;
+		flex: 1 1 0;
 		min-width: 0;
 		max-width: none;
-		overflow-x: auto;
-		overflow-y: hidden;
-		scrollbar-width: thin;
-		scrollbar-color: color-mix(in srgb, var(--line-strong) 72%, transparent) transparent;
-		overscroll-behavior-inline: contain;
-	}
-
-	.browser-tab-row-horizontal .browser-tabs::-webkit-scrollbar {
-		display: block;
-		height: 3px;
+		overflow: hidden;
+		scrollbar-width: none;
 	}
 
 	.browser-tab-row-horizontal .browser-tab {
-		flex: 0 0 112px;
-		min-width: 112px;
-		max-width: 112px;
+		flex: 1 1 0;
+		min-width: 0;
+		max-width: none;
 	}
 
 	.browser-tab-row-horizontal .browser-tab-close {

@@ -659,6 +659,30 @@ describe("UserBrowserService", () => {
     });
   });
 
+  it("moves a web tab back between windows without treating it as closed", async () => {
+    const source = createService();
+    const target = createService();
+    const sourceTab = await navigateNewTab(source.service, "https://second.example");
+    const transferred = source.service.getTabForTransfer(sourceTab.id);
+
+    await target.service.importTabForTransfer(transferred);
+    const sourceState = await source.service.removeTabForTransfer(sourceTab.id);
+
+    expect(sourceState.tabs.some((tab) => tab.id === sourceTab.id)).toBe(false);
+    expect(sourceState.recentlyClosedTabs).toEqual([]);
+    expect(target.service.getState().tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: sourceTab.id,
+          url: "https://second.example/",
+        }),
+      ]),
+    );
+
+    source.service.dispose();
+    target.service.dispose();
+  });
+
   it("opens user-initiated safe links as a managed tab and denies unsafe urls", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;

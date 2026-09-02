@@ -1857,13 +1857,34 @@ function detachedBrowserState(
   return state;
 }
 
+function detachedBrowserWindowBounds(): {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+} {
+	const width = 1320;
+	const height = 860;
+	const cursor = screen.getCursorScreenPoint();
+	const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+	const clamp = (value: number, minimum: number, maximum: number) =>
+		Math.round(Math.max(minimum, Math.min(value, maximum)));
+	return {
+		// Put the new tab strip under the pointer instead of letting the OS pick
+		// an unrelated default window location.
+		x: clamp(cursor.x - 180, workArea.x, workArea.x + workArea.width - width),
+		y: clamp(cursor.y - 20, workArea.y, workArea.y + workArea.height - height),
+		width,
+		height,
+	};
+}
+
 function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
 ): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1320,
-    height: 860,
+    ...detachedBrowserWindowBounds(),
     minWidth: 920,
     minHeight: 680,
     show: false,
@@ -2712,7 +2733,11 @@ function registerIpc(): void {
 	if (request.type === "browser-get-state") {
 		if (!requestBrowserService)
 			throw new Error("The visible user browser is unavailable.");
-		return { ok: true, browserState: requestBrowserService.getState() };
+		return {
+			ok: true,
+			browserState: requestBrowserService.getState(),
+			browserWindowRole: senderWindow === mainWindow ? "main" : "detached",
+		};
 	}
 	if (request.type === "browser-open-file-tabs") {
 		if (!requestBrowserService)
@@ -3083,14 +3108,12 @@ function registerIpc(): void {
         browserState: await requestBrowserService.applyTabOrganization(request),
       };
     }
-    if (request.type === "browser-detach-tab") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
-      const sourceState = requestBrowserService.getState();
-      const tab = sourceState.tabs.find((candidate) => candidate.id === request.tabId);
-      if (!tab || !tab.url || tab.error || tab.url.startsWith("kestrel://"))
-        throw new Error("Only loaded web pages can open in a separate window.");
-      const detachedWindow = createDetachedBrowserWindow(sourceState, tab);
+	if (request.type === "browser-detach-tab") {
+		if (!requestBrowserService)
+			throw new Error("The visible user browser is unavailable.");
+		const sourceState = requestBrowserService.getState();
+		const tab = requestBrowserService.getTabForTransfer(request.tabId);
+		const detachedWindow = createDetachedBrowserWindow(sourceState, tab);
       try {
         const browserState = await requestBrowserService.detachTab(request.tabId);
         return { ok: true, browserState };
@@ -3098,6 +3121,35 @@ function registerIpc(): void {
         if (!detachedWindow.isDestroyed()) detachedWindow.close();
         throw cause;
       }
+    }
+    if (request.type === "browser-reattach-tab") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      if (senderWindow === mainWindow)
+        throw new Error("This tab is already in the main Kestrel window.");
+      if (!mainWindow || mainWindow.isDestroyed())
+        throw new Error("The main Kestrel window is unavailable.");
+      const targetService = browserServiceForWindow(mainWindow);
+      if (!targetService)
+        throw new Error("The main Kestrel window is unavailable.");
+      const tab = requestBrowserService.getTabForTransfer(request.tabId);
+      let imported = false;
+      try {
+        await targetService.importTabForTransfer(tab);
+        imported = true;
+        await requestBrowserService.removeTabForTransfer(request.tabId);
+      } catch (cause) {
+        if (imported)
+          await targetService.removeTabForTransfer(tab.id).catch(() => undefined);
+        throw cause;
+      }
+      mainWindow.show();
+      mainWindow.focus();
+      return {
+        ok: true,
+        browserState: requestBrowserService.getState(),
+        browserWindowRole: "detached",
+      };
     }
     if (request.type === "browser-find-in-page") {
       if (!requestBrowserService)

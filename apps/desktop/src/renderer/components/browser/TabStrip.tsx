@@ -109,6 +109,7 @@ export function TabStrip({
 	onCloseOthers,
 	onMoveTab,
 	onDetachTab,
+	onReattachTab,
 	onReopenClosedTab,
 	onOrganizeTabs,
 	onOpenWorkspaces,
@@ -133,6 +134,7 @@ export function TabStrip({
 	onCloseOthers?(tabId: string): void;
 	onMoveTab?(tabId: string, toIndex: number): void | Promise<void>;
 	onDetachTab?(tabId: string): void | Promise<void>;
+	onReattachTab?(tabId: string): void | Promise<void>;
 	onReopenClosedTab?(index?: number): void;
 	onOrganizeTabs?(): void | Promise<void>;
 	onOpenWorkspaces?: (() => void) | undefined;
@@ -380,6 +382,11 @@ export function TabStrip({
 	function handleCreate() {
 		releaseLockedTabWidth();
 		onCreate();
+	}
+
+	function handleReattach(tabId = activeTabId ?? tabs[0]?.id) {
+		if (!tabId || !onReattachTab) return;
+		void Promise.resolve(onReattachTab(tabId)).catch(() => undefined);
 	}
 
 	function openMenu(event: ReactMouseEvent, tabId: string) {
@@ -836,6 +843,17 @@ export function TabStrip({
 				>
 					<Icon name="tabActions" />
 				</button>
+				{onReattachTab && (
+					<button
+						type="button"
+						className="browser-tab-actions-btn browser-tab-reattach-btn"
+						aria-label="Move tab back to main window"
+						title="Move tab back to main window"
+						onClick={() => handleReattach()}
+					>
+						<Icon name="arrow" />
+					</button>
+				)}
 				<AnimatePresence initial={false} onExitComplete={handleMenuExitComplete}>
 				{tabToolsOpen && (
 					<motion.div
@@ -900,6 +918,39 @@ export function TabStrip({
 							>
 								<Icon name="work" />
 								<span>Manage Workspaces</span>
+							</button>
+						)}
+						{onDetachTab &&
+							tabCanDetach(tabs.find((tab) => tab.id === activeTabId)) && (
+								<button
+									type="button"
+									className="browser-tab-tools-action"
+									role="menuitem"
+									onClick={() => {
+										const tabId = activeTabId ?? tabs[0]?.id;
+										if (tabId)
+											void Promise.resolve(onDetachTab(tabId)).catch(
+												() => undefined,
+											);
+										closeTabTools();
+									}}
+								>
+									<Icon name="arrow" />
+									<span>Move active tab to new window</span>
+								</button>
+							)}
+						{onReattachTab && (
+							<button
+								type="button"
+								className="browser-tab-tools-action"
+								role="menuitem"
+								onClick={() => {
+									handleReattach();
+									closeTabTools();
+								}}
+							>
+								<Icon name="arrow" />
+								<span>Move tab back to main window</span>
 							</button>
 						)}
 						<div className="browser-tab-tools-divider" />
@@ -1308,6 +1359,20 @@ export function TabStrip({
 							}}
 						>
 							Move tab to new window
+						</button>
+					)}
+					{onReattachTab && (
+						<button
+							type="button"
+							role="menuitem"
+							onClick={() => {
+								void Promise.resolve()
+									.then(() => onReattachTab(menuTab.id))
+									.catch(() => undefined);
+								closeContextMenu();
+							}}
+						>
+							Move tab back to main window
 						</button>
 					)}
 					<button
