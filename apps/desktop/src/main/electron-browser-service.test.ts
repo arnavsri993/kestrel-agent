@@ -98,6 +98,28 @@ describe("Electron browser download history", () => {
 });
 
 describe("Electron browser action cancellation", () => {
+	it("fails closed for whole-desktop capture and input until explicitly enabled", async () => {
+		const service = new ElectronBrowserService();
+		const signal = new AbortController().signal;
+
+		await expect(
+			service.handle({ operation: "desktop-screenshot" }, signal),
+		).rejects.toThrow("Whole-desktop computer use is disabled");
+		await expect(
+			service.handle(
+				{
+					operation: "desktop-act",
+					action: { type: "click", x: 10, y: 20 },
+				},
+				signal,
+			),
+		).rejects.toThrow("Whole-desktop computer use is disabled");
+		expect(service.isComputerUseEnabled()).toBe(false);
+
+		service.setComputerUseEnabled(true);
+		expect(service.isComputerUseEnabled()).toBe(true);
+	});
+
 	it("bounds the post-click frame wait when navigation strands the old context", async () => {
 		await expect(
 			waitForBrowserPostClickFrame(

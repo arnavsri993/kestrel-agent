@@ -21,6 +21,7 @@ import {
 	installBrowserTools,
 	installCodeIntelligenceTools,
 	installGoogleWorkspaceTools,
+	installUIPresentationTools,
 	LocalBrowserMcpServer,
 	type LanguageServerClient,
 	loadSignedManagedPolicy,
@@ -373,12 +374,17 @@ port.on("message", async ({ data }) => {
 				mainSession.id,
 				new VisualValidator(database, artifactRoot),
 			);
+			const uiToolNames = installUIPresentationTools(
+				agentCore.runtime,
+				mainSession.id,
+			);
+			const installedToolNames = [...browserToolNames, ...uiToolNames];
 			// Sessions created after registration inherit these tools automatically.
 			// Preserve conversation timestamps while making the new browser layer
 			// available to conversations that already existed before this release.
 			for (const session of agentCore.runtime.listSessions())
 				if (session.id !== mainSession.id)
-					agentCore.runtime.allowTools(session.id, browserToolNames, {
+					agentCore.runtime.allowTools(session.id, installedToolNames, {
 						preserveUpdatedAt: true,
 					});
 			browserMcp = new LocalBrowserMcpServer({

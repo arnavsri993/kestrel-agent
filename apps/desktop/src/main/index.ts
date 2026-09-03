@@ -40,6 +40,7 @@ import {
 	type BrowserTabFolderName,
 	type BrowserTabFolderNamingGroup,
 	type AgentState,
+	type ComputerUseStatus,
   type BackgroundJobsEvent,
   type CommunicationCodeCandidate,
   type CommunicationCodeScan,
@@ -137,6 +138,10 @@ import {
 } from "./macos-integration";
 import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
 import { shouldUseRealKeychain } from "./secure-storage-policy";
+import {
+	COMPUTER_USE_SETTINGS_FILE,
+	ComputerUseManager,
+} from "./computer-use";
 
 // Stable releases use the real Keychain. Development and automated profiles
 // use an isolated mock because ad-hoc signatures cannot retain durable access.
@@ -179,6 +184,7 @@ const pendingExternalIntakes: Array<{
 	targetWindow?: BrowserWindow;
 }> = [];
 const browserService = new ElectronBrowserService();
+let computerUseManagerInstance: ComputerUseManager | null = null;
 let userBrowserService: UserBrowserService | null = null;
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
 interface CalculatorAnchorBounds {
@@ -541,10 +547,17 @@ const DEVELOPMENT_RENDERER_URL = trustedDevelopmentRendererUrl(
   RAW_DEVELOPMENT_RENDERER_URL,
 );
 const isPackagedKestrelApp = isPackagedKestrelRuntime(
-  app.isPackaged,
-  process.env.NODE_ENV_ELECTRON_VITE,
+	app.isPackaged,
+	process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
+
+function computerUseManager(): ComputerUseManager {
+	return (computerUseManagerInstance ??= new ComputerUseManager(
+		join(app.getPath("userData"), COMPUTER_USE_SETTINGS_FILE),
+	));
+}
+
 let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
@@ -2274,11 +2287,13 @@ async function initializeCore(
     (await new ExternalSecretManager(userData, broker)
       .resolveEnabled()
       .catch(() => ({ values: {}, overrideStoredIds: [] })));
-  const secureEnvironment = await broker.providerEnvironment(
-    process.env,
-    external,
-  );
-  const preferences = await readRuntimePreferences();
+	const secureEnvironment = await broker.providerEnvironment(
+		process.env,
+		external,
+	);
+	const computerUseSettings = await computerUseManager().load();
+	browserService.setComputerUseEnabled(computerUseSettings.enabled);
+	const preferences = await readRuntimePreferences();
   const codexPath = detectedSubscriptionCli("codex");
   if (
     codexPath &&
@@ -3290,6 +3305,24 @@ function registerIpc(): void {
         browserState: requestBrowserService.sleepInactiveTabs(),
       };
     }
+    if (request.type === "computer-use-status") {
+      const computerUseStatus = await computerUseManager().status();
+      return { ok: true, computerUseStatus };
+    }
+    if (request.type === "computer-use-update") {
+      const settings = await computerUseManager().setEnabled(request.enabled);
+      browserService.setComputerUseEnabled(settings.enabled);
+      const computerUseStatus = await computerUseManager().status();
+      return { ok: true, computerUseStatus };
+    }
+    if (request.type === "computer-use-open-settings") {
+      if (process.platform !== "darwin")
+        throw new Error("macOS Privacy & Security settings are unavailable on this platform.");
+      const settingsUrl = ComputerUseManager.settingsUrl(request.surface);
+      if (!settingsUrl) throw new Error("The requested macOS permission surface is unavailable.");
+      await shell.openExternal(settingsUrl);
+      return { ok: true };
+    }
     if (request.type === "get-system-state") {
       const state = app.getLoginItemSettings();
       return {
@@ -3445,6 +3478,21 @@ function registerIpc(): void {
             ? "pass"
             : "warning",
         detail: `Microphone ${microphone}; screen recording ${screen}; Accessibility ${accessibility ? "granted" : "not granted"}. Kestrel asks only when a task needs them.`,
+      });
+      const computerUseStatus: ComputerUseStatus = await computerUseManager().status();
+      const computerUseReady =
+        computerUseStatus.enabled &&
+        computerUseStatus.captureReady &&
+        computerUseStatus.controlReady;
+      checks.push({
+        id: "computer-use",
+        label: "Whole-desktop computer use",
+        status: computerUseReady ? "pass" : "warning",
+        detail: !computerUseStatus.enabled
+          ? "Disabled by default. Enable it in Settings → Agent → Permissions & sandbox before Kestrel can capture or control other apps."
+          : computerUseReady
+            ? "Enabled with Screen Recording and Accessibility permission."
+            : `Enabled, but native permissions are incomplete: Screen Recording ${computerUseStatus.screenRecording}; Accessibility ${computerUseStatus.accessibility}.`,
       });
       const backupMetadataPath = join(
         app.getPath("userData"),

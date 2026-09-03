@@ -653,6 +653,24 @@ export const SETTINGS_CATALOG: readonly SettingSearchEntry[] = [
 		anchor: "setting-agent-permissions",
 	},
 	{
+		id: "agent.permissions.computer-use",
+		section: "agent-permissions",
+		scope: "agent",
+		tier: "advanced",
+		label: "Whole-desktop computer use",
+		description:
+			"Opt in to native Screen Recording and Accessibility-backed desktop control.",
+		keywords: [
+			"computer",
+			"computer use",
+			"desktop",
+			"screen recording",
+			"accessibility",
+			"control",
+		],
+		anchor: "setting-agent-computer-use",
+	},
+	{
 		id: "agent.privacy.credentials",
 		section: "agent-privacy",
 		scope: "agent",

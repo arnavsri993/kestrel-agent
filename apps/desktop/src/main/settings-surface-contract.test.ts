@@ -7,6 +7,10 @@ const browserSettingsSource = readFileSync(
 	new URL("../renderer/components/browser/BrowserSettings.tsx", import.meta.url),
 	"utf8",
 );
+const computerUseSettingsSource = readFileSync(
+	new URL("../renderer/components/ComputerUseSettings.tsx", import.meta.url),
+	"utf8",
+);
 const settingsStyles = readFileSync(
 	new URL("../renderer/instrument-workbench.css", import.meta.url),
 	"utf8",
@@ -14,7 +18,7 @@ const settingsStyles = readFileSync(
 
 describe("settings surface accessibility contract", () => {
 	it("renders a focusable anchor for every searchable setting", () => {
-		const source = `${appSource}\n${browserSettingsSource}`;
+		const source = `${appSource}\n${browserSettingsSource}\n${computerUseSettingsSource}`;
 		for (const entry of SETTINGS_CATALOG)
 			expect(source).toContain(`id="${entry.anchor}"`);
 	});
