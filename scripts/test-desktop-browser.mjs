@@ -903,14 +903,29 @@ try {
 		widthsBeforeClose.every((width) => width > 0),
 		`Crowded tabs collapsed to zero-width targets: ${JSON.stringify(widthsBeforeClose)}`,
 	);
-	await tabRail.locator(".browser-tab.active .browser-tab-close").click();
+	// Dispatch every close click before the first IPC round-trip settles. The tab
+	// rail must keep the same measured width while these requests are queued so
+	// a rapid close burst never turns the next close target into a moving target.
+	const closeBurstTabIds = crowdedTabIds;
+	await page.evaluate((tabIds) => {
+		for (const tabId of tabIds) {
+			const close = document.querySelector(
+				`.browser-tab[data-tab-id="${tabId}"] .browser-tab-close`,
+			);
+			if (!(close instanceof HTMLButtonElement))
+				throw new Error(`Missing close target for ${tabId}.`);
+			close.click();
+		}
+	}, closeBurstTabIds);
 	state = await waitForBrowserState(
-		(value) => value.tabs.length === initialTabs + crowdedTabIds.length,
-		"closing one crowded tab from the tab strip",
+		(value) =>
+			value.tabs.length ===
+				initialTabs + 1 + crowdedTabIds.length - closeBurstTabIds.length,
+		"closing a crowded tab burst from the tab strip",
 	);
 	await page.waitForFunction(
 		(count) => document.querySelectorAll(".browser-tabs .browser-tab").length === count,
-		widthsBeforeClose.length - 1,
+		widthsBeforeClose.length - closeBurstTabIds.length,
 	);
 	const widthsDuringClose = await tabRail
 		.locator(".browser-tab")
@@ -926,12 +941,13 @@ try {
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
 	assert(
-		widthsAfterClose.length === widthsBeforeClose.length - 1 &&
+		widthsAfterClose.length ===
+			widthsBeforeClose.length - closeBurstTabIds.length &&
 			widthsAfterClose.every((width) => width > widthsBeforeClose[0] + 1),
 		`The tab strip did not refit after the close settled: ${JSON.stringify({ widthsBeforeClose, widthsAfterClose })}`,
 	);
 	const remainingCrowdedTabIds = crowdedTabIds.filter(
-		(tabId) => tabId !== lastCrowdedTabId,
+		(tabId) => !closeBurstTabIds.includes(tabId),
 	);
 	await page.evaluate(async (tabIds) => {
 		for (const tabId of tabIds)

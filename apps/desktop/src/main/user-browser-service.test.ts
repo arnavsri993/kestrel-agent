@@ -366,6 +366,42 @@ describe("UserBrowserService", () => {
     expect(onLastTabClosed).toHaveBeenCalledOnce();
   });
 
+	it("closes other tabs as one state and native-view mutation", async () => {
+		const { service, events, window } = createService();
+		const keeper = service.getState().tabs[0]!;
+		await service.navigate(keeper.id, "https://keeper.example/");
+		const closing = [];
+		for (let index = 0; index < 4; index += 1)
+			closing.push(
+				await navigateNewTab(service, `https://closing-${index}.example/`),
+			);
+
+		const eventCountBeforeClose = events.length;
+		const closed = await service.closeOtherTabs(keeper.id);
+
+		expect(closed.tabs.map((tab) => tab.id)).toEqual([keeper.id]);
+		expect(service.getState().tabs.map((tab) => tab.id)).toEqual([keeper.id]);
+		expect(events).toHaveLength(eventCountBeforeClose + 1);
+		for (const tab of closing) {
+			const view = electron.state.views.find(
+				(candidate) => candidate.webContents.url === tab.url,
+			);
+			expect(view?.webContents.close).toHaveBeenCalledOnce();
+		}
+		expect(window.contentView.addChildView).toHaveBeenCalled();
+	});
+
+	it("ignores a duplicate close while the first close is still in flight", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		const firstClose = service.closeTab(tab.id);
+		const duplicateClose = service.closeTab(tab.id);
+
+		await expect(duplicateClose).resolves.toMatchObject({ tabs: [] });
+		await expect(firstClose).resolves.toMatchObject({ tabs: [] });
+		expect(service.getState().tabs).toHaveLength(0);
+	});
+
 	it("opens kestrel app pages as tabs without creating a web view", async () => {
     const { service } = createService();
     const before = electron.state.views.length;

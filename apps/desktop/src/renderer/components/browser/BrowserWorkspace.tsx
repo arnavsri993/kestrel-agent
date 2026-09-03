@@ -599,7 +599,7 @@ export function BrowserWorkspace({
         }
       } else if (key === "w" && activeTab) {
         event.preventDefault();
-        void closeTab(activeTab.id);
+        void closeTab(activeTab.id).catch(() => undefined);
       } else if (key === "r" && activeTab) {
         event.preventDefault();
         void reload(activeTab.id, event.shiftKey);
@@ -735,12 +735,12 @@ export function BrowserWorkspace({
         activeTabId={state.activeTabId}
         orientation={state.settings.tabLayout}
         onSelect={(tabId) => void selectTab(tabId)}
-        onClose={(tabId) => void closeTab(tabId)}
+        onClose={(tabId) => closeTab(tabId)}
         onCreate={() => void createTab()}
         onPin={(tabId, pinned) => void pinTab(tabId, pinned)}
         onMute={(tabId, muted) => void muteTab(tabId, muted)}
         onDuplicate={(tabId) => void duplicateTab(tabId)}
-        onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
+        onCloseOthers={(tabId) => closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
         {...(!isDetachedWindow
           ? { onDetachTab: (tabId: string) => detachTab(tabId) }

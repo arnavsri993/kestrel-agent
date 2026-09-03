@@ -126,12 +126,12 @@ export function TabStrip({
 	tabFolders: UserBrowserTabFolder[];
 	activeTabId: string | null;
 	onSelect(tabId: string): void;
-	onClose(tabId: string): void;
+	onClose(tabId: string): void | Promise<void>;
 	onCreate(): void;
 	onPin?(tabId: string, pinned: boolean): void;
 	onMute?(tabId: string, muted: boolean): void;
 	onDuplicate?(tabId: string): void;
-	onCloseOthers?(tabId: string): void;
+	onCloseOthers?(tabId: string): void | Promise<void>;
 	onMoveTab?(tabId: string, toIndex: number): void | Promise<void>;
 	onDetachTab?(tabId: string): void | Promise<void>;
 	onReattachTab?(tabId: string): void | Promise<void>;
@@ -145,7 +145,10 @@ export function TabStrip({
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
 	const [lockedWidth, setLockedWidth] = useState<number | null>(null);
+	const lockedWidthRef = useRef<number | null>(null);
 	const tabRefitTimerRef = useRef<number | null>(null);
+	const pendingCloseCountRef = useRef(0);
+	const pendingCloseKeysRef = useRef(new Set<string>());
 	const [compact, setCompact] = useState(false);
 	const [menu, setMenu] = useState<{
 		tabId: string;
@@ -204,13 +207,17 @@ export function TabStrip({
 
 	const releaseLockedTabWidth = useCallback(() => {
 		clearTabRefitTimer();
+		lockedWidthRef.current = null;
 		setLockedWidth(null);
 	}, [clearTabRefitTimer]);
 
 	const scheduleTabRefit = useCallback(() => {
 		clearTabRefitTimer();
+		if (pendingCloseCountRef.current > 0) return;
 		tabRefitTimerRef.current = window.setTimeout(() => {
 			tabRefitTimerRef.current = null;
+			if (pendingCloseCountRef.current > 0) return;
+			lockedWidthRef.current = null;
 			setLockedWidth(null);
 		}, TAB_CLOSE_REFIT_DELAY_MS);
 	}, [clearTabRefitTimer]);
@@ -325,22 +332,58 @@ export function TabStrip({
 			releaseLockedTabWidth();
 			return;
 		}
-		let width = 0;
-		if (tabsContainerRef.current) {
+		let width = lockedWidthRef.current ?? 0;
+		if (width <= 0 && tabsContainerRef.current) {
 			const firstTab =
 				tabsContainerRef.current.querySelector<HTMLElement>(".browser-tab");
-			if (firstTab) {
-				const rect = firstTab.getBoundingClientRect();
-				width = rect.width;
-			}
+			if (firstTab) width = firstTab.getBoundingClientRect().width;
 		}
-		if (width > 0) setLockedWidth(width);
-		scheduleTabRefit();
-	}, [orientation, releaseLockedTabWidth, scheduleTabRefit, tabs.length]);
+		if (width > 0) {
+			lockedWidthRef.current = width;
+			setLockedWidth(width);
+		}
+	}, [orientation, releaseLockedTabWidth, tabs.length]);
+
+	const finishCloseRequest = useCallback(
+		(key?: string) => {
+			if (key) pendingCloseKeysRef.current.delete(key);
+			pendingCloseCountRef.current = Math.max(
+				0,
+				pendingCloseCountRef.current - 1,
+			);
+			if (pendingCloseCountRef.current === 0) scheduleTabRefit();
+		},
+		[scheduleTabRefit],
+	);
+
+	const runCloseRequest = useCallback(
+		(key: string | undefined, request: () => void | Promise<void>) => {
+			if (key && pendingCloseKeysRef.current.has(key)) return;
+			if (key) pendingCloseKeysRef.current.add(key);
+			pendingCloseCountRef.current += 1;
+			clearTabRefitTimer();
+			lockTabWidthBeforeClose();
+			let result: void | Promise<void>;
+			try {
+				result = request();
+			} catch {
+				finishCloseRequest(key);
+				return;
+			}
+			if (result && typeof result.then === "function") {
+				void result.then(
+					() => finishCloseRequest(key),
+					() => finishCloseRequest(key),
+				);
+			} else {
+				finishCloseRequest(key);
+			}
+		},
+		[clearTabRefitTimer, finishCloseRequest, lockTabWidthBeforeClose],
+	);
 
 	function handleTabClose(tabId: string) {
-		lockTabWidthBeforeClose();
-		onClose(tabId);
+		runCloseRequest(tabId, () => onClose(tabId));
 	}
 
 	function moveFocus(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -1379,8 +1422,9 @@ export function TabStrip({
 						type="button"
 						role="menuitem"
 						onClick={() => {
-							lockTabWidthBeforeClose();
-							onCloseOthers?.(menuTab.id);
+							runCloseRequest("close-others", () =>
+								onCloseOthers?.(menuTab.id),
+							);
 							closeContextMenu();
 						}}
 					>
