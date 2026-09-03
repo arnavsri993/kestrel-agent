@@ -4,5 +4,7 @@ mac:
   identity: "-"
   entitlementsInherit: build/entitlements.mac.dev.inherit.plist
   extendInfo:
+    NSCameraUsageDescription: "Kestrel lets you approve camera access for trusted websites."
+    NSMicrophoneUsageDescription: "Kestrel lets you approve microphone access for trusted websites."
     LSEnvironment:
       KESTREL_RELEASE_CHANNEL: development
