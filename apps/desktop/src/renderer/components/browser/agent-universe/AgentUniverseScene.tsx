@@ -50,6 +50,11 @@ import {
 	type AgentUniversePhysicsController,
 	type AgentUniversePhysicsRenderTarget,
 } from "./agent-universe-physics";
+import {
+	agentUniverseCameraMotionSettled,
+	createAgentUniverseCameraMotionState,
+	stepAgentUniverseCameraMotion,
+} from "./agent-universe-camera-motion";
 
 interface AgentUniverseSceneProps {
 	snapshot: AgentUniverseSnapshot;
@@ -181,6 +186,13 @@ export function AgentUniverseScene({
 	const [camera, setCamera] = useState<AgentUniverseCamera>(
 		DEFAULT_AGENT_UNIVERSE_CAMERA,
 	);
+	const cameraRef = useRef(camera);
+	const cameraMotionRef = useRef(createAgentUniverseCameraMotionState(camera));
+	const cameraTargetRef = useRef(camera);
+	const cameraFrameRef = useRef<number | null>(null);
+	const cameraLastFrameTimeRef = useRef(0);
+	const reducedMotionRef = useRef(reducedMotion);
+	reducedMotionRef.current = reducedMotion;
 	const [isPanning, setIsPanning] = useState(false);
 	const pointerSessionRef = useRef<PointerSession | null>(null);
 	const suppressClickRef = useRef(false);
@@ -246,16 +258,106 @@ export function AgentUniverseScene({
 		return () => window.clearTimeout(timer);
 	}, [activities]);
 
-	const setCameraFrom = useCallback(
-		(update: (current: AgentUniverseCamera) => AgentUniverseCamera) => {
-			setCamera((current) => update(current));
+	const renderCamera = useCallback((next: AgentUniverseCamera) => {
+		cameraRef.current = next;
+		setCamera(next);
+	}, []);
+
+	const cancelCameraFrame = useCallback(() => {
+		if (cameraFrameRef.current !== null)
+			window.cancelAnimationFrame(cameraFrameRef.current);
+		cameraFrameRef.current = null;
+		cameraLastFrameTimeRef.current = 0;
+	}, []);
+
+	const cancelCameraMotion = useCallback(() => {
+		cancelCameraFrame();
+		const current = cameraRef.current;
+		cameraMotionRef.current = createAgentUniverseCameraMotionState(current);
+		cameraTargetRef.current = current;
+	}, [cancelCameraFrame]);
+
+	const runCameraMotionFrame = useCallback(
+		(time: number) => {
+			cameraFrameRef.current = null;
+			const lastTime = cameraLastFrameTimeRef.current;
+			const deltaSeconds = lastTime
+				? Math.min(1 / 28, Math.max(0, (time - lastTime) / 1_000))
+				: 1 / 60;
+			cameraLastFrameTimeRef.current = time;
+			const target = cameraTargetRef.current;
+			const next = stepAgentUniverseCameraMotion(
+				cameraMotionRef.current,
+				target,
+				deltaSeconds,
+				reducedMotionRef.current,
+			);
+			cameraMotionRef.current = next;
+			renderCamera(next.camera);
+
+			if (
+				reducedMotionRef.current ||
+				agentUniverseCameraMotionSettled(next, target)
+			) {
+				cameraLastFrameTimeRef.current = 0;
+				cameraMotionRef.current =
+					createAgentUniverseCameraMotionState(target);
+				return;
+			}
+			cameraFrameRef.current = window.requestAnimationFrame(
+				runCameraMotionFrame,
+			);
 		},
-		[],
+		[renderCamera],
+	);
+
+	const animateCameraTo = useCallback(
+		(target: AgentUniverseCamera) => {
+			cameraTargetRef.current = target;
+			if (reducedMotionRef.current) {
+				cancelCameraFrame();
+				cameraMotionRef.current = createAgentUniverseCameraMotionState(target);
+				renderCamera(target);
+				return;
+			}
+			if (cameraFrameRef.current !== null) return;
+			cameraLastFrameTimeRef.current = 0;
+			cameraFrameRef.current = window.requestAnimationFrame(
+				runCameraMotionFrame,
+			);
+		},
+		[cancelCameraFrame, renderCamera, runCameraMotionFrame],
+	);
+
+	const setCameraImmediately = useCallback(
+		(update: (current: AgentUniverseCamera) => AgentUniverseCamera) => {
+			cancelCameraMotion();
+			const next = update(cameraRef.current);
+			cameraMotionRef.current = createAgentUniverseCameraMotionState(next);
+			cameraTargetRef.current = next;
+			renderCamera(next);
+		},
+		[cancelCameraMotion, renderCamera],
+	);
+
+	useLayoutEffect(() => {
+		if (!reducedMotion) return;
+		const target = cameraTargetRef.current;
+		cancelCameraFrame();
+		cameraMotionRef.current = createAgentUniverseCameraMotionState(target);
+		renderCamera(target);
+	}, [cancelCameraFrame, reducedMotion, renderCamera]);
+
+	useEffect(
+		() => () => {
+			cancelCameraFrame();
+		},
+		[cancelCameraFrame],
 	);
 
 	const focusWorldPoint = useCallback(
 		(target: AgentUniversePoint, zoom: number) => {
-			setCamera(
+			animateCameraTo(
 				cameraForWorldTarget(
 					target,
 					size.width,
@@ -265,7 +367,7 @@ export function AgentUniverseScene({
 				),
 			);
 		},
-		[focusedSystemId, size.height, size.width],
+		[animateCameraTo, size.height, size.width],
 	);
 
 	useEffect(() => {
@@ -274,7 +376,7 @@ export function AgentUniverseScene({
 				previousFocusKeyRef.current = null;
 				focusCameraSizeRef.current = { width: 0, height: 0 };
 				focusCameraReadyRef.current = false;
-				setCamera(DEFAULT_AGENT_UNIVERSE_CAMERA);
+				animateCameraTo(DEFAULT_AGENT_UNIVERSE_CAMERA);
 			}
 			return;
 		}
@@ -302,7 +404,7 @@ export function AgentUniverseScene({
 			const target = selectedLayout
 				? { x: selectedLayout.x, y: selectedLayout.y }
 				: { x: system.centerX, y: system.centerY };
-			setCamera(
+			animateCameraTo(
 				cameraForWorldTarget(
 					target,
 					size.width,
@@ -317,7 +419,7 @@ export function AgentUniverseScene({
 				),
 			);
 		}
-	}, [focusedSystemId, layout.scale, layout.systems, selectedNodeId, size.height, size.width]);
+	}, [animateCameraTo, focusedSystemId, layout.scale, layout.systems, selectedNodeId, size.height, size.width]);
 
 	const selectedNode = selectedNodeId
 		? snapshot.nodes.find((node) => node.id === selectedNodeId)
@@ -364,7 +466,7 @@ export function AgentUniverseScene({
 
 	const resetCamera = useCallback(() => {
 		if (focusedSystemId && activeSystemLayout) {
-			setCamera(
+			animateCameraTo(
 				cameraForWorldTarget(
 					{ x: activeSystemLayout.centerX, y: activeSystemLayout.centerY },
 					size.width,
@@ -375,8 +477,8 @@ export function AgentUniverseScene({
 			);
 			return;
 		}
-		setCamera(DEFAULT_AGENT_UNIVERSE_CAMERA);
-	}, [activeSystemLayout, focusedSystemId, layout.scale, size.height, size.width]);
+		animateCameraTo(DEFAULT_AGENT_UNIVERSE_CAMERA);
+	}, [activeSystemLayout, animateCameraTo, focusedSystemId, layout.scale, size.height, size.width]);
 
 	const zoomAtPoint = useCallback(
 		(factor: number, point?: AgentUniversePoint) => {
@@ -384,17 +486,16 @@ export function AgentUniverseScene({
 				x: size.width / 2,
 				y: size.height / 2,
 			};
-			setCameraFrom((current) =>
-				zoomAgentUniverseCameraAtPoint(
-					current,
-					factor,
-					point ?? fallback,
-					size.width,
-					size.height,
-				),
+			const next = zoomAgentUniverseCameraAtPoint(
+				cameraRef.current,
+				factor,
+				point ?? fallback,
+				size.width,
+				size.height,
 			);
+			animateCameraTo(next);
 		},
-		[setCameraFrom, size.height, size.width],
+		[animateCameraTo, size.height, size.width],
 	);
 
 	const screenPointToWorld = useCallback(
@@ -408,13 +509,13 @@ export function AgentUniverseScene({
 				y: ((clientY - rect.top) / rect.height) * layout.height,
 			};
 			return unprojectAgentUniversePoint(
-				camera,
+				cameraRef.current,
 				screenPoint,
 				layout.width,
 				layout.height,
 			);
 		},
-		[camera, layout.height, layout.width, size.height, size.width],
+		[layout.height, layout.width, size.height, size.width],
 	);
 
 	const handleNodeActivate = useCallback(
@@ -463,6 +564,7 @@ export function AgentUniverseScene({
 					event.target.closest("button, input, textarea, a, [role=button]"))
 			)
 				return;
+			cancelCameraMotion();
 			pointerSessionRef.current = {
 				pointerId: event.pointerId,
 				startX: event.clientX,
@@ -473,7 +575,7 @@ export function AgentUniverseScene({
 			};
 			event.currentTarget.setPointerCapture(event.pointerId);
 		},
-		[],
+		[cancelCameraMotion],
 	);
 
 	const handlePointerMove = useCallback(
@@ -493,11 +595,11 @@ export function AgentUniverseScene({
 			};
 			pointer.lastX = event.clientX;
 			pointer.lastY = event.clientY;
-			setCameraFrom((current) =>
+			setCameraImmediately((current) =>
 				panAgentUniverseCamera(current, delta, size.width, size.height),
 			);
 		},
-		[setCameraFrom, size.height, size.width],
+		[setCameraImmediately, size.height, size.width],
 	);
 
 	const finishPointer = useCallback((event: PointerEvent<HTMLElement>) => {
@@ -526,7 +628,7 @@ export function AgentUniverseScene({
 				event.key === "ArrowDown"
 			) {
 				event.preventDefault();
-				setCameraFrom((current) =>
+				setCameraImmediately((current) =>
 					panAgentUniverseCamera(
 						current,
 						{
@@ -564,7 +666,7 @@ export function AgentUniverseScene({
 				resetCamera();
 			}
 		},
-		[resetCamera, setCameraFrom, size.height, size.width, zoomAtPoint],
+		[resetCamera, setCameraImmediately, size.height, size.width, zoomAtPoint],
 	);
 
 	const visibleSystems = focusedSystemId
