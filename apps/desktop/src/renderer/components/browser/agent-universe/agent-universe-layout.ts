@@ -3,7 +3,7 @@ import type {
 	AgentSystemProjection,
 	AgentUniverseSnapshot,
 } from "./agent-universe-model";
-import { stableAgentAngle, stableAgentHash } from "./agent-universe-model";
+import { stableAgentAngle } from "./agent-universe-model";
 
 export interface AgentNodeLayout {
 	nodeId: string;
@@ -30,13 +30,14 @@ export interface AgentUniverseLayout {
 	systems: AgentSystemLayout[];
 }
 
-// The overview is a navigable field, not a poster. Keep the packing compact
-// enough that real profiles with many independent root sessions still have
-// bodies with presence at the initial camera position. Labels are progressive
-// and therefore do not need a large permanent exclusion zone.
-const SYSTEM_GAP = 44;
-const LABEL_CLEARANCE = 20;
+// The overview is a navigable field, not a poster. Eight planet slots keep the
+// top-level systems legible, while the larger system gap makes each local
+// agent-and-moons cluster read as its own small neighborhood.
+export const AGENT_UNIVERSE_SYSTEM_GAP = 120;
+const LABEL_CLEARANCE = 22;
 const WORKER_GAP = 16;
+const MOON_ORBIT_GAP = 24;
+const MAX_MOONS_PER_ORBIT = 12;
 
 function safeDimension(value: number): number {
 	return Number.isFinite(value) && value > 0 ? value : 1;
@@ -94,13 +95,15 @@ interface LocalPlacement {
 	y: number;
 	radius: number;
 	packingRadius: number;
+	orbitBand: number;
+	angle: number;
 }
 
 /**
- * Resolve the deterministic scaffold for one local hierarchy. This is not a
- * force simulation and it does not expose rings: the seeded spiral gives each
- * worker a spatial memory, while the bounded collision pass keeps the initial
- * cluster legible before the interaction physics takes over.
+ * Resolve the deterministic scaffold for one local hierarchy. The root is a
+ * planet and each group of delegated sessions gets a compact moon orbit around
+ * its parent. The bounded collision pass keeps the initial cluster legible
+ * before the interaction physics takes over.
  */
 export function layoutAgentSystem(
 	system: AgentSystemProjection,
@@ -113,6 +116,18 @@ export function layoutAgentSystem(
 		childCounts.set(node.parentId, (childCounts.get(node.parentId) ?? 0) + 1);
 	}
 	const root = system.nodes.find((node) => node.id === system.rootNodeId);
+	const centerNode = root ?? system.nodes[0];
+	if (!centerNode) {
+		return {
+			systemId: system.id,
+			centerX,
+			centerY,
+			radius: 1,
+			nodeLayouts: [],
+			orbitRadii: [],
+		};
+	}
+	const centerNodeId = centerNode.id;
 	const rootStatusBoost =
 		root?.status === "active"
 			? 7
@@ -145,49 +160,129 @@ export function layoutAgentSystem(
 
 	const workers = system.nodes
 		.filter((node) => node.id !== system.rootNodeId)
-		.sort(stableNodeOrder);
-	const placements: LocalPlacement[] = [];
+		.sort((left, right) => left.depth - right.depth || stableNodeOrder(left, right));
 	const rootPlacement: LocalPlacement = {
-		node: root ?? system.nodes[0]!,
+		node: centerNode,
 		x: centerX,
 		y: centerY,
 		radius: rootRadius,
 		packingRadius: rootPackingRadius,
+		orbitBand: 0,
+		angle: 0,
 	};
-	for (const [index, node] of workers.entries()) {
-		const nodeRadius = nodeRadiusForDepth(node, childCounts.get(node.id) ?? 0);
+	const nodeIds = new Set(system.nodes.map((node) => node.id));
+	const placements = new Map<string, LocalPlacement>();
+	const childrenByParent = new Map<string, AgentNodeProjection[]>();
+	for (const node of workers) {
+		// Missing parents remain inspectable, but visually behave as moons of the
+		// system planet rather than becoming an unrelated second cluster.
+		const parentId =
+			node.parentId && node.parentId !== node.id && nodeIds.has(node.parentId)
+				? node.parentId
+				: centerNodeId;
+		const children = childrenByParent.get(parentId) ?? [];
+		children.push(node);
+		childrenByParent.set(parentId, children);
+	}
+	for (const children of childrenByParent.values())
+		children.sort(stableNodeOrder);
+
+	const plannedOrbitRadii: number[] = [];
+	const parentDepth = new Map<string, number>([
+		[centerNodeId, 0],
+		...system.nodes.map((node) => [node.id, node.depth] as const),
+	]);
+	const groups = [...childrenByParent.entries()].sort(
+		([leftId], [rightId]) =>
+			(parentDepth.get(leftId) ?? 0) - (parentDepth.get(rightId) ?? 0) ||
+			leftId.localeCompare(rightId),
+	);
+
+	for (const [parentId, children] of groups) {
+		const parent = placements.get(parentId) ??
+			(parentId === centerNodeId ? rootPlacement : undefined);
+		if (!parent) continue;
+		for (let band = 0; band * MAX_MOONS_PER_ORBIT < children.length; band += 1) {
+			const bandStart = band * MAX_MOONS_PER_ORBIT;
+			const bandChildren = children.slice(
+				bandStart,
+				bandStart + MAX_MOONS_PER_ORBIT,
+			);
+			const maximumPackingRadius = Math.max(
+				...bandChildren.map((node) =>
+					nodePackingRadiusForDepth(node, childCounts.get(node.id) ?? 0),
+				),
+			);
+			const circumferenceMinimum =
+				(bandChildren.length * (maximumPackingRadius * 2 + WORKER_GAP)) /
+				(2 * Math.PI);
+			const distance = Math.max(
+				parent.packingRadius +
+					MOON_ORBIT_GAP +
+					maximumPackingRadius +
+					band * (maximumPackingRadius * 2 + MOON_ORBIT_GAP),
+				circumferenceMinimum,
+			);
+			if (parentId === centerNodeId) plannedOrbitRadii.push(distance);
+			const phase = stableAgentAngle(
+				`${system.id}:${parentId}:moon-orbit:${band}`,
+			);
+			for (const [index, node] of bandChildren.entries()) {
+				const angle =
+					phase + (index / Math.max(1, bandChildren.length)) * Math.PI * 2;
+				const packingRadius = nodePackingRadiusForDepth(
+					node,
+					childCounts.get(node.id) ?? 0,
+				);
+					placements.set(node.id, {
+						node,
+						x: parent.x + Math.cos(angle) * distance,
+						y: parent.y + Math.sin(angle) * distance,
+						radius: nodeRadiusForDepth(
+							node,
+							childCounts.get(node.id) ?? 0,
+						),
+					packingRadius,
+					orbitBand: Math.max(1, parent.orbitBand + band + 1),
+					angle,
+				});
+			}
+		}
+	}
+
+	// A malformed depth/parent graph should never make a session disappear
+	// from the map. If a parent could not be placed in the ordered pass, put the
+	// remaining node on a deterministic root orbit as a final safe fallback.
+	for (const node of workers) {
+		if (placements.has(node.id)) continue;
 		const packingRadius = nodePackingRadiusForDepth(
 			node,
 			childCounts.get(node.id) ?? 0,
 		);
-		const hash = stableAgentHash(`${system.id}:${node.id}:placement`);
-		const angle = stableAgentAngle(
-			`${system.id}:${node.parentId ?? system.rootNodeId}:${node.id}`,
-		);
-		// A gentle square-root spread creates a cluster with a soft outer edge,
-		// rather than a row or a collection of perfect rings. The stable hash
-		// gives each agent an identity-preserving radial offset.
-		const radialOffset = ((hash >>> 8) / 4_294_967_296 - 0.5) * 26;
-		const distance =
-			rootPackingRadius +
-			58 +
-			Math.sqrt(index + 1) * (36 + Math.min(14, packingRadius * 0.13)) +
-			radialOffset +
-			Math.min(4, node.depth) * 9;
-		placements.push({
+		const angle = stableAgentAngle(`${system.id}:${node.id}:fallback-moon`);
+		const distance = rootPackingRadius + MOON_ORBIT_GAP + packingRadius;
+		placements.set(node.id, {
 			node,
 			x: centerX + Math.cos(angle) * distance,
 			y: centerY + Math.sin(angle) * distance,
-			radius: nodeRadius,
+			radius: nodeRadiusForDepth(node, childCounts.get(node.id) ?? 0),
 			packingRadius,
+			orbitBand: 1,
+			angle,
 		});
+		if (!plannedOrbitRadii.length) plannedOrbitRadii.push(distance);
 	}
+
+	const placementList = workers.flatMap((node) => {
+		const placement = placements.get(node.id);
+		return placement ? [placement] : [];
+	});
 
 	// The initial scaffold is intentionally a finite, deterministic collision
 	// solve. It handles large profiles without waking a runtime animation loop.
 	for (let iteration = 0; iteration < 72; iteration += 1) {
 		let moved = false;
-		for (const placement of placements) {
+		for (const placement of placementList) {
 			const dx = placement.x - rootPlacement.x;
 			const dy = placement.y - rootPlacement.y;
 			const distance = Math.hypot(dx, dy);
@@ -203,10 +298,10 @@ export function layoutAgentSystem(
 				moved = true;
 			}
 		}
-		for (let left = 0; left < placements.length; left += 1) {
-			for (let right = left + 1; right < placements.length; right += 1) {
-				const first = placements[left]!;
-				const second = placements[right]!;
+		for (let left = 0; left < placementList.length; left += 1) {
+			for (let right = left + 1; right < placementList.length; right += 1) {
+				const first = placementList[left]!;
+				const second = placementList[right]!;
 				const dx = second.x - first.x;
 				const dy = second.y - first.y;
 				const distance = Math.hypot(dx, dy);
@@ -227,8 +322,7 @@ export function layoutAgentSystem(
 		if (!moved) break;
 	}
 
-	const orbitRadii: number[] = [];
-	for (const placement of placements) {
+	for (const placement of placementList) {
 		const relativeX = placement.x - centerX;
 		const relativeY = placement.y - centerY;
 		const orbitRadius = Math.hypot(relativeX, relativeY);
@@ -237,13 +331,10 @@ export function layoutAgentSystem(
 			x: placement.x,
 			y: placement.y,
 			radius: placement.radius,
-			// These legacy fields now describe the deterministic scaffold only.
-			// There are no rendered orbit rings or orbital animations.
 			orbitRadius,
-			orbitBand: 0,
+			orbitBand: placement.orbitBand,
 			angle: Math.atan2(relativeY, relativeX),
 		});
-		orbitRadii.push(orbitRadius);
 	}
 
 	const radius = Math.max(
@@ -265,7 +356,9 @@ export function layoutAgentSystem(
 		centerY,
 		radius,
 		nodeLayouts,
-		orbitRadii: uniqueNumbers(orbitRadii),
+		// Only root-centered rings are rendered. Nested descendants still use
+		// parent-relative moon placement, but do not add a forest of guides.
+		orbitRadii: uniqueNumbers(plannedOrbitRadii),
 	};
 }
 
@@ -300,10 +393,11 @@ function packSystems(systems: AgentSystemProjection[]): PlacedSystem[] {
 		const count = Math.min(8 + ring * 4, ordered.length - cursor);
 		const ringRadius = Math.max(
 			ring === 0
-				? first.layout.radius + largestRadius + SYSTEM_GAP
-				: previousRingRadius + largestRadius * 2 + SYSTEM_GAP,
+				? first.layout.radius + largestRadius + AGENT_UNIVERSE_SYSTEM_GAP
+				: previousRingRadius + largestRadius * 2 + AGENT_UNIVERSE_SYSTEM_GAP,
 			count > 1
-				? (largestRadius + SYSTEM_GAP / 2) / Math.sin(Math.PI / count)
+				? (largestRadius + AGENT_UNIVERSE_SYSTEM_GAP / 2) /
+					Math.sin(Math.PI / count)
 				: 0,
 		);
 		for (let index = 0; index < count; index += 1) {
@@ -339,7 +433,13 @@ export function layoutAgentUniverse(
 	const focused = focusedSystemId
 		? snapshot.systems.find((system) => system.id === focusedSystemId)
 		: undefined;
-	const systems = focused ? [focused] : snapshot.systems;
+	const overviewIds =
+		snapshot.overviewSystemIds.length > 0 || snapshot.systems.length === 0
+			? new Set(snapshot.overviewSystemIds)
+			: new Set(snapshot.systems.map((system) => system.id));
+	const systems = focused
+		? [focused]
+		: snapshot.systems.filter((system) => overviewIds.has(system.id));
 	if (systems.length === 0)
 		return { width: safeWidth, height: safeHeight, scale: 1, systems: [] };
 

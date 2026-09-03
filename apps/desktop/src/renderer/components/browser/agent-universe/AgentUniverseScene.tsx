@@ -19,6 +19,7 @@ import { Icon } from "../../Icon";
 import { AgentUniverseContextSurface } from "./AgentUniverseContextSurface";
 import { layoutAgentUniverse, type AgentNodeLayout } from "./agent-universe-layout";
 import {
+	AGENT_UNIVERSE_PLANET_LIMIT,
 	agentUniverseSearchMatches,
 	agentUniverseRunIsPending,
 	agentUniverseRunStatusLabel,
@@ -75,6 +76,7 @@ interface AgentUniverseSceneProps {
 	onBackgroundClick(): void;
 	onCloseContext(): void;
 	onOpenSession(sessionId: string): void;
+	onOverflowSystemActivate(systemId: string): void;
 }
 
 interface Size {
@@ -178,6 +180,7 @@ export function AgentUniverseScene({
 	onBackgroundClick,
 	onCloseContext,
 	onOpenSession,
+	onOverflowSystemActivate,
 }: AgentUniverseSceneProps) {
 	const sceneRef = useRef<HTMLElement>(null);
 	const [size, setSize] = useState<Size>({ width: 0, height: 0 });
@@ -541,7 +544,7 @@ export function AgentUniverseScene({
 		(event: WheelEvent<HTMLElement>) => {
 			if (
 				event.target instanceof Element &&
-				event.target.closest("button, input, textarea, a, [role=button]")
+				event.target.closest("button, input, textarea, a, summary, [role=button]")
 			)
 				return;
 			const rect = sceneRef.current?.getBoundingClientRect();
@@ -561,7 +564,7 @@ export function AgentUniverseScene({
 			if (
 				event.button !== 0 ||
 				(event.target instanceof Element &&
-					event.target.closest("button, input, textarea, a, [role=button]"))
+					event.target.closest("button, input, textarea, a, summary, [role=button]"))
 			)
 				return;
 			cancelCameraMotion();
@@ -673,12 +676,19 @@ export function AgentUniverseScene({
 		? layout.systems.filter((system) => system.systemId === focusedSystemId)
 		: layout.systems;
 	const minimapViewport = viewportWorldRect(camera, size.width, size.height);
+	const overflowSystems = snapshot.overflowSystemIds.flatMap((systemId) => {
+		const system = snapshot.systems.find((candidate) => candidate.id === systemId);
+		return system ? [system] : [];
+	});
+	const mapLabel = focusedSystemId
+		? `Focused system with ${activeSystem?.nodes.length ?? 0} sessions`
+		: `${snapshot.overviewSystemIds.length} planet system${snapshot.overviewSystemIds.length === 1 ? "" : "s"}${overflowSystems.length > 0 ? `, ${overflowSystems.length} more available` : ""}`;
 
 	return (
 		<section
 			ref={sceneRef}
 			className={`agent-universe-scene${focusedSystemId ? " is-focused" : ""}${isPanning ? " is-panning" : ""}${reducedMotion ? " is-reduced-motion" : ""}`}
-			aria-label={focusedSystemId ? "Focused agent system map" : "Agent systems map"}
+			aria-label={mapLabel}
 			tabIndex={0}
 			aria-describedby="agent-universe-map-help"
 			onWheel={handleWheel}
@@ -692,11 +702,7 @@ export function AgentUniverseScene({
 				className="agent-universe-svg"
 				viewBox={`0 0 ${layout.width} ${layout.height}`}
 				role="group"
-				aria-label={
-					focusedSystemId
-						? `Focused system with ${activeSystem?.nodes.length ?? 0} sessions`
-						: `${snapshot.systems.length} agent system${snapshot.systems.length === 1 ? "" : "s"}`
-				}
+				aria-label={mapLabel}
 				onClick={() => {
 					if (suppressClickRef.current) {
 						suppressClickRef.current = false;
@@ -706,6 +712,27 @@ export function AgentUniverseScene({
 				}}
 				onMouseLeave={() => setHoveredNodeId(null)}
 			>
+				<defs>
+					<radialGradient
+						id="agent-universe-planet-sheen"
+						cx="32%"
+						cy="24%"
+						r="78%"
+					>
+						<stop offset="0%" stopColor="#ffffff" stopOpacity="0.26" />
+						<stop offset="46%" stopColor="#ffffff" stopOpacity="0.05" />
+						<stop offset="100%" stopColor="#000000" stopOpacity="0.34" />
+					</radialGradient>
+					<radialGradient
+						id="agent-universe-moon-sheen"
+						cx="30%"
+						cy="22%"
+						r="82%"
+					>
+						<stop offset="0%" stopColor="#ffffff" stopOpacity="0.16" />
+						<stop offset="100%" stopColor="#000000" stopOpacity="0.22" />
+					</radialGradient>
+				</defs>
 				<rect
 					className="agent-universe-scene-hit-area"
 					x="0"
@@ -755,6 +782,33 @@ export function AgentUniverseScene({
 					})}
 				</g>
 			</svg>
+
+			{!focusedSystemId && overflowSystems.length > 0 ? (
+				<details className="agent-universe-overflow">
+					<summary>
+						<span className="agent-universe-overflow-mark" aria-hidden="true" />
+						<span>
+							<strong>{overflowSystems.length} more system{overflowSystems.length === 1 ? "" : "s"}</strong>
+							<small>Open beyond the {AGENT_UNIVERSE_PLANET_LIMIT} planet slots</small>
+						</span>
+					</summary>
+					<div className="agent-universe-overflow-list" role="list">
+						{overflowSystems.map((system) => (
+							<button
+								key={system.id}
+								type="button"
+								onClick={() => onOverflowSystemActivate(system.id)}
+							>
+								<span>
+									<i aria-hidden="true" />
+									{system.name}
+								</span>
+								<small>{system.nodes.length} agent{system.nodes.length === 1 ? "" : "s"}</small>
+							</button>
+						))}
+					</div>
+				</details>
+			) : null}
 
 			<div className="agent-universe-minimap" role="group" aria-label="Map overview">
 				<svg
@@ -981,6 +1035,20 @@ function AgentSystemScene({
 				} as CSSProperties
 			}
 		>
+			{layout.orbitRadii.length > 0 ? (
+				<g className="agent-universe-moon-orbits" aria-hidden="true">
+					{layout.orbitRadii.map((orbitRadius, index) => (
+						<circle
+							key={`${system.id}-moon-orbit-${index}`}
+							className="agent-universe-moon-orbit"
+							cx={layout.centerX}
+							cy={layout.centerY}
+							r={orbitRadius}
+							data-orbit-band={index + 1}
+						/>
+					))}
+				</g>
+			) : null}
 			<g className="agent-universe-delegation-links" aria-hidden="true">
 				{system.edges.map((edge) => {
 					const source = layoutsById.get(edge.sourceId);
@@ -1168,6 +1236,10 @@ function AgentSystemScene({
 											className="agent-universe-node-hit"
 											r={Math.max(42, nodeLayout.radius + 13)}
 										/>
+										<circle
+											className="agent-universe-planet-atmosphere"
+											r={nodeLayout.radius + 4}
+										/>
 										{system.nodes.length > 1 ? (
 											<circle
 												className="agent-universe-coordinator-ring"
@@ -1191,6 +1263,27 @@ function AgentSystemScene({
 										<circle
 											className={`agent-universe-core-rim ${statusClass(node.status)}`}
 											r={nodeLayout.radius}
+										/>
+										<circle
+											className="agent-universe-planet-sheen"
+											r={Math.max(0.5, nodeLayout.radius - 1)}
+											fill="url(#agent-universe-planet-sheen)"
+										/>
+										<ellipse
+											className="agent-universe-planet-surface-detail"
+											cx={-nodeLayout.radius * 0.24}
+											cy={nodeLayout.radius * 0.28}
+											rx={nodeLayout.radius * 0.36}
+											ry={nodeLayout.radius * 0.12}
+											transform={`rotate(-18 ${-nodeLayout.radius * 0.24} ${nodeLayout.radius * 0.28})`}
+										/>
+										<ellipse
+											className="agent-universe-planet-surface-detail is-secondary"
+											cx={nodeLayout.radius * 0.2}
+											cy={-nodeLayout.radius * 0.22}
+											rx={nodeLayout.radius * 0.22}
+											ry={nodeLayout.radius * 0.08}
+											transform={`rotate(24 ${nodeLayout.radius * 0.2} ${-nodeLayout.radius * 0.22})`}
 										/>
 										{textLabel(
 											node,
@@ -1224,8 +1317,19 @@ function AgentSystemScene({
 											/>
 										) : null}
 										<circle
-											className={`agent-universe-worker-rim ${statusClass(node.status)}`}
+											className={`agent-universe-worker-rim agent-universe-moon-rim ${statusClass(node.status)}`}
 											r={nodeLayout.radius}
+										/>
+										<circle
+											className="agent-universe-moon-sheen"
+											r={Math.max(0.5, nodeLayout.radius - 1)}
+											fill="url(#agent-universe-moon-sheen)"
+										/>
+										<circle
+											className="agent-universe-moon-crater"
+											cx={Math.cos(nodeLayout.angle + 1.1) * nodeLayout.radius * 0.34}
+											cy={Math.sin(nodeLayout.angle + 1.1) * nodeLayout.radius * 0.34}
+											r={Math.max(2.5, nodeLayout.radius * 0.13)}
 										/>
 										{textLabel(node, nodeLayout, showLabel, false, labelInside)}
 									</>

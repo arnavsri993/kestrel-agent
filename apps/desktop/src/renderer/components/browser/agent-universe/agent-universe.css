@@ -144,6 +144,60 @@
   pointer-events: none;
 }
 
+/* A quiet ring is enough to make the relationship legible: the main agent is
+ * the planet, direct delegates are its moons, and deeper delegates stay near
+ * the moon that owns them. These are guides, not animated decoration. */
+.agent-universe-moon-orbits {
+  fill: none;
+  pointer-events: none;
+}
+
+.agent-universe-moon-orbit {
+  fill: none;
+  stroke: color-mix(in srgb, var(--agent-system-highlight, var(--agent-system-color)) 42%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 1 11;
+  stroke-linecap: round;
+  opacity: 0.3;
+  vector-effect: non-scaling-stroke;
+}
+
+.agent-universe-planet-atmosphere {
+  fill: none;
+  stroke: color-mix(in srgb, var(--agent-system-highlight, var(--agent-system-color)) 45%, transparent);
+  stroke-width: 5;
+  stroke-opacity: 0.18;
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--agent-system-color) 20%, transparent));
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.agent-universe-planet-sheen,
+.agent-universe-planet-surface-detail,
+.agent-universe-moon-sheen,
+.agent-universe-moon-crater {
+  pointer-events: none;
+}
+
+.agent-universe-planet-sheen,
+.agent-universe-moon-sheen {
+  opacity: 0.96;
+}
+
+.agent-universe-planet-surface-detail {
+  fill: var(--agent-system-highlight, var(--agent-system-color));
+  opacity: 0.13;
+}
+
+.agent-universe-planet-surface-detail.is-secondary {
+  opacity: 0.08;
+}
+
+.agent-universe-moon-crater {
+  fill: color-mix(in srgb, var(--agent-system-core, #000000) 62%, #000000);
+  opacity: 0.24;
+}
+
 .agent-universe-delegation-link {
   stroke: color-mix(in srgb, var(--agent-system-highlight, var(--agent-system-color)) 66%, transparent);
   stroke-width: 1.55;
@@ -825,6 +879,155 @@
 .agent-universe-minimap button svg {
   width: 13px;
   height: 13px;
+}
+
+.agent-universe-overflow {
+  position: absolute;
+  bottom: 58px;
+  left: 18px;
+  z-index: 4;
+  width: min(286px, calc(100% - 36px));
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.agent-universe-overflow summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 10px;
+  outline: none;
+  background: color-mix(in srgb, #15191f 90%, transparent);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 24%);
+  backdrop-filter: blur(18px) saturate(1.04);
+  cursor: pointer;
+  list-style: none;
+}
+
+.agent-universe-overflow summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-universe-overflow summary::after {
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-right: 1px solid var(--muted);
+  border-bottom: 1px solid var(--muted);
+  content: "";
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 160ms ease;
+}
+
+.agent-universe-overflow[open] summary {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.agent-universe-overflow[open] summary::after {
+  transform: rotate(225deg) translate(-1px, -1px);
+}
+
+.agent-universe-overflow summary:hover {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, #1b2028 92%, transparent);
+}
+
+.agent-universe-overflow summary:focus-visible {
+  box-shadow: var(--focus-ring), 0 10px 24px rgb(0 0 0 / 24%);
+}
+
+.agent-universe-overflow-mark {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 1px dashed color-mix(in srgb, var(--ink-secondary) 72%, transparent);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+.agent-universe-overflow summary span:not(.agent-universe-overflow-mark) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-universe-overflow summary strong {
+  font-weight: 620;
+}
+
+.agent-universe-overflow summary small,
+.agent-universe-overflow-list small {
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 12px;
+}
+
+.agent-universe-overflow-list {
+  display: grid;
+  max-height: 198px;
+  overflow: auto;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-top: 0;
+  border-bottom-right-radius: 10px;
+  border-bottom-left-radius: 10px;
+  background: color-mix(in srgb, #11151b 94%, transparent);
+  box-shadow: 0 14px 28px rgb(0 0 0 / 26%);
+}
+
+.agent-universe-overflow-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 0;
+  border-bottom: 1px solid rgb(255 255 255 / 6%);
+  background: transparent;
+  color: var(--ink-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-universe-overflow-list button:last-child {
+  border-bottom: 0;
+}
+
+.agent-universe-overflow-list button:hover {
+  background: rgb(255 255 255 / 6%);
+  color: var(--ink);
+}
+
+.agent-universe-overflow-list button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.agent-universe-overflow-list button > span {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-universe-overflow-list button i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin-right: 7px;
+  border: 1px solid color-mix(in srgb, var(--ink) 55%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 17%, transparent);
 }
 
 .agent-universe-map-help {
@@ -1512,6 +1715,11 @@
     bottom: 60px;
   }
 
+  .agent-universe-overflow {
+    bottom: 60px;
+    left: 14px;
+  }
+
   .agent-universe-map-footer {
     right: 14px;
     bottom: 14px;
@@ -1542,6 +1750,11 @@
 
   .agent-universe-camera-controls {
     bottom: 54px;
+  }
+
+  .agent-universe-overflow {
+    bottom: 98px;
+    width: min(240px, calc(100% - 28px));
   }
 
   .agent-universe-minimap {
