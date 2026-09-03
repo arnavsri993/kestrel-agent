@@ -124,6 +124,7 @@ export function useUserBrowser(): UserBrowserController {
 	const [isDetachedWindow, setIsDetachedWindow] = useState(false);
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
+	const tabCloseRequestRef = useRef<Promise<void>>(Promise.resolve());
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
 	const contentBoundsRequestRef = useRef<Promise<string | undefined>>(
 		Promise.resolve(undefined),
@@ -169,6 +170,20 @@ export function useUserBrowser(): UserBrowserController {
 			}
 		},
 		[applyState],
+	);
+	const enqueueTabCloseRequest = useCallback(
+		(request: Parameters<typeof window.kestrel.request>[0]) => {
+			// A close burst can generate several pointer/keyboard events before the
+			// first IPC response reaches the renderer. Keep those mutations ordered so
+			// each response describes the state immediately after the previous close,
+			// rather than allowing a slow response to overwrite a newer tab list.
+			const pending = tabCloseRequestRef.current
+				.catch(() => undefined)
+				.then(() => requestState(request));
+			tabCloseRequestRef.current = pending;
+			return pending;
+		},
+		[requestState],
 	);
 	const openFileTabs = useCallback(
 		async (paths: string[], active = true) => {
@@ -233,8 +248,9 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const closeTab = useCallback(
-		(tabId: string) => requestState({ type: "browser-close-tab", tabId }),
-		[requestState],
+		(tabId: string) =>
+			enqueueTabCloseRequest({ type: "browser-close-tab", tabId }),
+		[enqueueTabCloseRequest],
 	);
 	const selectTab = useCallback(
 		(tabId: string) => requestState({ type: "browser-select-tab", tabId }),
@@ -558,8 +574,9 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const closeOtherTabs = useCallback(
-		(tabId: string) => requestState({ type: "browser-close-other-tabs", tabId }),
-		[requestState],
+		(tabId: string) =>
+			enqueueTabCloseRequest({ type: "browser-close-other-tabs", tabId }),
+		[enqueueTabCloseRequest],
 	);
 	const moveTab = useCallback(
 		(tabId: string, toIndex: number) =>

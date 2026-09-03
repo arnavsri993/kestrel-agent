@@ -1003,6 +1003,7 @@ export class UserBrowserService {
 	private paymentPrompt: PaymentPrompt | undefined;
 	private readonly paymentPromptSuppressedUntil = new Map<string, number>();
 	private readonly agentTabPinCounts = new Map<string, number>();
+	private readonly closingTabIds = new Set<string>();
 	private tabMutationQueue: Promise<void> = Promise.resolve();
 	private readonly allowDevTools: boolean;
 
@@ -1277,10 +1278,31 @@ export class UserBrowserService {
 	}
 
 	async closeTab(tabId: string): Promise<UserBrowserState> {
-		return this.runExclusiveTabMutation(() => this.closeTabInternal(tabId));
+		// Native page shortcuts can repeat before the first close has finished
+		// switching the active WebContentsView. Treat that same in-flight request as
+		// already handled instead of queueing a second close for a tab that no longer
+		// exists.
+		if (this.closingTabIds.has(tabId)) {
+			// Wait for the mutation that owns this tab before returning. Returning the
+			// current state immediately would let a duplicate IPC response overwrite
+			// the renderer with the pre-close tab list.
+			await this.tabMutationQueue;
+			return this.getState();
+		}
+		this.closingTabIds.add(tabId);
+		try {
+			return await this.runExclusiveTabMutation(() => this.closeTabInternal(tabId));
+		} finally {
+			this.closingTabIds.delete(tabId);
+		}
 	}
 
-	private async closeTabInternal(tabId: string): Promise<UserBrowserState> {
+	private async closeTabInternal(
+		tabId: string,
+		options: { commit?: boolean; sync?: boolean } = {},
+	): Promise<UserBrowserState> {
+		const shouldCommit = options.commit ?? true;
+		const shouldSync = options.sync ?? true;
 		if (this.isAgentTabPinned(tabId)) {
 			throw new Error(
 				"Browser tab is in use by an agent operation and cannot be closed.",
@@ -1311,12 +1333,12 @@ export class UserBrowserService {
 				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
 		}
 		this.pruneEmptyTabFolders();
-		this.commit();
+		if (shouldCommit) this.commit();
 		if (this.state.tabs.length === 0) {
 			this.onLastTabClosed?.();
 			return this.getState();
 		}
-		await this.syncActiveView();
+		if (shouldSync) await this.syncActiveView();
 		return this.getState();
 	}
 
@@ -2109,12 +2131,28 @@ export class UserBrowserService {
 	}
 
 	async closeOtherTabs(tabId: string): Promise<UserBrowserState> {
-		this.requireTab(tabId);
-		const closing = this.state.tabs
-			.filter((tab) => tab.id !== tabId && !tab.pinned)
-			.map((tab) => tab.id);
-		for (const id of closing) await this.closeTab(id);
-		return this.getState();
+		return this.runExclusiveTabMutation(async () => {
+			this.requireTab(tabId);
+			const closing = this.state.tabs
+				.filter((tab) => tab.id !== tabId && !tab.pinned)
+				.map((tab) => tab.id);
+			if (closing.some((id) => this.isAgentTabPinned(id))) {
+				throw new Error(
+					"Browser tab is in use by an agent operation and cannot be closed.",
+				);
+			}
+			for (const id of closing) this.closingTabIds.add(id);
+			try {
+				for (const id of closing)
+					await this.closeTabInternal(id, { commit: false, sync: false });
+			} finally {
+				for (const id of closing) this.closingTabIds.delete(id);
+			}
+			if (closing.length === 0) return this.getState();
+			this.commit();
+			await this.syncActiveView();
+			return this.getState();
+		});
 	}
 
 	moveTab(tabId: string, toIndex: number): UserBrowserState {
@@ -4148,7 +4186,7 @@ export class UserBrowserService {
 				}
 			} else if (key === "w" || (input.control && input.key === "F4")) {
 				event.preventDefault();
-				void this.closeTab(tab.id);
+				void this.closeTab(tab.id).catch(() => undefined);
 			} else if (key === "r") {
 				event.preventDefault();
 				this.reload(tab.id, input.shift);
