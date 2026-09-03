@@ -117,6 +117,20 @@ try {
 	});
 	assert.ok(fixture.explicitEventId);
 	assert.ok(fixture.personId);
+	const timelineFixture = await page.evaluate(async () => {
+		const sessions = await window.kestrel.request({ type: "runtime-list-sessions" });
+		const sessionId = sessions.sessions?.[0]?.id;
+		if (!sessions.ok || !sessionId) throw new Error(sessions.error ?? "Main session missing");
+		const message = await window.kestrel.request({
+			type: "runtime-append-message",
+			sessionId,
+			role: "user",
+			content: "Timeline fixture: reviewed the Kestrel memory architecture.",
+		});
+		if (!message.ok) throw new Error(message.error);
+		return { sessionId };
+	});
+	assert.ok(timelineFixture.sessionId);
 	await page.reload();
 
 	await page.setViewportSize({ width: 1320, height: 900 });
@@ -197,6 +211,27 @@ try {
 			document.activeElement instanceof HTMLButtonElement &&
 			Boolean(document.activeElement.closest(".memory-ledger-list")),
 	);
+
+	await life.getByRole("button", { name: "Timeline", exact: true }).click();
+	await life
+		.getByText("Timeline fixture: reviewed the Kestrel memory architecture.", { exact: true })
+		.first()
+		.waitFor();
+	await life
+		.getByRole("button", { name: /Timeline fixture: reviewed the Kestrel memory architecture/ })
+		.click();
+	await life.getByText("Provenance", { exact: true }).waitFor();
+	await life.getByText("runtime.message", { exact: true }).first().waitFor();
+	await life
+		.getByPlaceholder("Search this day’s activity")
+		.fill("memory architecture");
+	await life.getByRole("button", { name: "Search timeline" }).click();
+	await life
+		.getByText("Timeline fixture: reviewed the Kestrel memory architecture.", { exact: true })
+		.first()
+		.waitFor();
+	await life.getByRole("button", { name: "Previous day" }).click();
+	await life.getByRole("button", { name: "Today" }).click();
 
 	await life.getByRole("button", { name: "Calendar", exact: true }).click();
 	await page.setViewportSize({ width: 640, height: 760 });

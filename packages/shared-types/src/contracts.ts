@@ -21,6 +21,21 @@ import {
 	BrowserTabFolderNamingGroupSchema,
 	UserBrowserTabDeletionSuggestionSchema,
 } from "./browser-tab-organization";
+import {
+	AgentIdentitySchema,
+	AgentMemoryRecordSchema,
+	CaptureConfigurationSchema,
+	CapturePolicySchema,
+	CaptureStatusSchema,
+	MemoryContextBundleSchema,
+	MemoryDiagnosticsSchema,
+	MemoryDeleteResultSchema,
+	MemoryMaintenanceResultSchema,
+	MemoryQuerySchema,
+	MemoryTimelineQueryResultSchema,
+	ProvenanceRecordSchema,
+	WorkingTaskSchema,
+} from "./memory-architecture";
 
 export const SensitivitySchema = z.enum([
 	"public",
@@ -664,6 +679,8 @@ export const RuntimeSessionSchema = z.object({
 	id: z.string().min(1),
 	title: z.string().min(1).max(200),
 	parentSessionId: z.string().min(1).optional(),
+	/** Optional project identity retained for timeline and task provenance. */
+	projectId: z.string().min(1).optional(),
 	workspaceRoot: z.string().min(1).optional(),
 	/** Standard conversations are locally searchable. Private and incognito
 	 * conversations are deliberately excluded from the local transcript index. */
@@ -2352,6 +2369,58 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		id: z.string().min(1),
 		decision: z.enum(["confirm", "reject"]),
 	}),
+	MemoryQuerySchema.extend({
+		type: z.literal("memory-timeline-query"),
+	}),
+	z.object({ type: z.literal("memory-capture-status") }),
+	z.object({
+		type: z.literal("memory-capture-configure"),
+		configuration: CaptureConfigurationSchema,
+	}),
+	z.object({
+		type: z.literal("memory-capture-policy-upsert"),
+		policy: CapturePolicySchema,
+	}),
+	z.object({
+		type: z.literal("memory-capture-policy-delete"),
+		id: z.string().min(1).max(200),
+	}),
+	z.object({ type: z.literal("memory-diagnostics") }),
+	z.object({
+		type: z.literal("memory-agent-inspect"),
+		sessionId: z.string().min(1),
+		includeInactive: z.boolean().default(false),
+		limit: z.number().int().positive().max(200).default(40),
+	}),
+	z.object({
+		type: z.literal("memory-agent-correct"),
+		sessionId: z.string().min(1),
+		id: z.string().min(1).max(200),
+		content: z.string().min(1).max(100_000),
+	}),
+	z.object({
+		type: z.literal("memory-agent-forget"),
+		sessionId: z.string().min(1),
+		id: z.string().min(1).max(200),
+	}),
+	z.object({
+		type: z.literal("memory-agent-provenance-list"),
+		sessionId: z.string().min(1),
+		id: z.string().min(1).max(200),
+		limit: z.number().int().positive().max(200).default(40),
+	}),
+	z.object({
+		type: z.literal("memory-provenance-list"),
+		ownerType: ProvenanceRecordSchema.shape.ownerType.optional(),
+		ownerId: z.string().min(1).max(200).optional(),
+		sourceId: z.string().min(1).max(2_000).optional(),
+		timelineEventId: z.string().min(1).max(200).optional(),
+		limit: z.number().int().positive().max(200).default(40),
+	}),
+	z.object({
+		type: z.literal("memory-source-delete"),
+		sourceId: z.string().min(1).max(2_000),
+	}),
 	z.object({ type: z.literal("people-list") }),
 	z.object({
 		type: z.literal("people-upsert"),
@@ -2860,6 +2929,16 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		routingTraces: z.array(RoutingTraceSchema).optional(),
 		providerVerifications: z.array(ProviderVerificationSchema).optional(),
 		memories: z.array(MemoryRecordSchema).optional(),
+		memoryTimeline: MemoryTimelineQueryResultSchema.optional(),
+		memoryCaptureStatus: CaptureStatusSchema.optional(),
+		memoryDiagnostics: MemoryDiagnosticsSchema.optional(),
+		memoryAgentIdentity: AgentIdentitySchema.optional(),
+		memoryAgentMemories: z.array(AgentMemoryRecordSchema).max(200).optional(),
+		memoryAgentTasks: z.array(WorkingTaskSchema).max(100).optional(),
+		memoryProvenance: z.array(ProvenanceRecordSchema).max(200).optional(),
+		memoryContext: MemoryContextBundleSchema.optional(),
+		memoryMaintenance: MemoryMaintenanceResultSchema.optional(),
+		memoryDeletion: MemoryDeleteResultSchema.optional(),
 		memoryVersions: z.array(MemoryVersionSchema).optional(),
 		userModelFacts: z.array(UserModelFactSchema).optional(),
 		people: z.array(PersonRecordSchema).optional(),

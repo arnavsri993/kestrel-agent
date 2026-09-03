@@ -16,6 +16,8 @@ import type {
 	RoutingPolicy,
 	SelectedAttachment,
 	TaskOpportunity,
+	RuntimeSession,
+	WorkingTask,
 	WorkspaceSnapshot,
 } from "@kestrel/shared-types";
 import {
@@ -84,6 +86,7 @@ import {
 } from "./media-artifacts";
 import type { VoiceTranscriptionProvider } from "./media-providers";
 import { installMemoryTools, MemoryManager } from "./memory";
+import { MemorySubstrate } from "./memory-substrate";
 import {
 	AGENT_GROUP_MEMORY_TOOL_NAMES,
 	AgentGroupMemoryManager,
@@ -222,6 +225,7 @@ export class AgentCore {
 	readonly userModel: UserModelStore;
 	readonly context: PreResponseContextResolver;
 	readonly memory: MemoryManager;
+	readonly memorySubstrate: MemorySubstrate;
 	readonly groupMemory: AgentGroupMemoryManager;
 	readonly lifeContext: LifeContextService;
 	readonly writingProfile: WritingProfileStore;
@@ -337,6 +341,15 @@ export class AgentCore {
 			this.configuration.toolPolicy(tool.name),
 		);
 		this.memory = new MemoryManager(deps.database, () => new Date(this.now()));
+		this.memorySubstrate = new MemorySubstrate({
+			database: deps.database,
+			legacyMemory: this.memory,
+			now: () => new Date(this.now()),
+			explicitCaptureEnabled: () =>
+				this.configuration.current().memory.captureExplicit,
+		});
+		this.memorySubstrate.attachRuntime(this.runtime);
+		this.memorySubstrate.start();
 		this.userModel = this.memory.userModel;
 		this.groupMemory = new AgentGroupMemoryManager(
 			deps.database,
@@ -349,11 +362,7 @@ export class AgentCore {
 			mainSession.id,
 		);
 		for (const session of this.runtime.listSessions()) {
-			if (
-				session.privacyMode === "private" ||
-				session.privacyMode === "incognito"
-			)
-				continue;
+			if (!this.isStandardSession(session)) continue;
 			this.runtime.allowTools(
 				session.id,
 				[...AGENT_GROUP_MEMORY_TOOL_NAMES],
@@ -411,7 +420,7 @@ export class AgentCore {
 			mode: "node",
 			reason: "isolated agent core",
 		});
-		installMemoryTools(this.runtime, this.memory, mainSession.id);
+		installMemoryTools(this.runtime, this.memorySubstrate, mainSession.id);
 		if (deps.artifactRoot) {
 			this.artifacts = new ArtifactManager(
 				deps.database,
@@ -529,16 +538,17 @@ export class AgentCore {
 			this.providerPool,
 			undefined,
 			(message) => {
-				if (message.role === "user" && this.sharedMemoryCaptureEnabled()) {
-					const captureExplicit =
-						this.configuration.current().memory.captureExplicit;
-					if (captureExplicit)
-						this.memory.captureExplicit(message.content, message.id);
-					if (captureExplicit)
-						this.lifeContext.captureConversation(message.content, message.id);
-				}
-				if (!this.sharedMemoryCaptureEnabled()) return;
+				// Runtime's message.appended observer owns local capture. This callback
+				// is only the optional remote Honcho sink; keeping the two paths
+				// separate prevents duplicate timeline events and legacy memories.
+				if (message.role !== "user" && message.role !== "assistant") return;
 				const session = this.runtime.getSession(message.sessionId);
+				if (
+					!this.isStandardSession(session) ||
+					!this.sharedMemoryCaptureEnabled() ||
+					!this.memorySubstrate.getCaptureConfiguration().enabled
+				)
+					return;
 				this.honchoMemory.captureMessage(message, session.workspaceRoot);
 			},
 			this.usageGovernor,
@@ -555,10 +565,7 @@ export class AgentCore {
 		this.runtime.on("event", (event) => {
 			if (event.type === "session.created") {
 				const session = this.runtime.getSession(event.sessionId);
-				if (
-					session.privacyMode !== "private" &&
-					session.privacyMode !== "incognito"
-				)
+				if (this.isStandardSession(session))
 					this.runtime.allowTools(
 						session.id,
 						[
@@ -570,6 +577,7 @@ export class AgentCore {
 			}
 			if (
 				event.type === "session.created" &&
+				this.isStandardSession(this.runtime.getSession(event.sessionId)) &&
 				this.honchoMemory.configuration().enabled &&
 				this.honchoMemory.configuration().recallMode !== "context"
 			)
@@ -589,14 +597,11 @@ export class AgentCore {
 			undefined,
 			() => this.configuration.current().workflows.maximumTurns,
 			this.groupMemory,
+			this.memorySubstrate,
 		);
 		installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
 		for (const session of this.runtime.listSessions()) {
-			if (
-				session.privacyMode === "private" ||
-				session.privacyMode === "incognito"
-			)
-				continue;
+			if (!this.isStandardSession(session)) continue;
 			this.runtime.allowTools(
 				session.id,
 				[...AGENT_COORDINATION_TOOL_NAMES],
@@ -1469,6 +1474,10 @@ export class AgentCore {
 		);
 	}
 
+	private isStandardSession(session: RuntimeSession): boolean {
+		return (session.privacyMode ?? "standard") === "standard";
+	}
+
 	private sharedMemoryInjectionEnabled(personalityId?: string): boolean {
 		const personality = this.personalities.get(
 			personalityId ?? this.selectedPersonalityId,
@@ -1479,12 +1488,63 @@ export class AgentCore {
 		);
 	}
 
+	private memoryEnabledForSession(
+		session: RuntimeSession,
+		personalityId?: string,
+	): boolean {
+		return this.isStandardSession(session) &&
+			!this.memorySubstrate.isPrivateAgentSession(session.id) &&
+			this.sharedMemoryInjectionEnabled(personalityId);
+	}
+
+	private substrateContextForSession(
+		sessionId: string,
+		query: string,
+		includeSharedMemory: boolean,
+	): ReturnType<MemorySubstrate["getRelevantContext"]> | undefined {
+		const session = this.runtime.getSession(sessionId);
+		if (!this.isStandardSession(session))
+			return undefined;
+		const privateAgent = this.memorySubstrate.isPrivateAgentSession(sessionId);
+		if (!includeSharedMemory && !privateAgent)
+			return undefined;
+		try {
+			return this.memorySubstrate.getRelevantContext({
+				query,
+				agentId: this.memorySubstrate.agentIdForSession(sessionId),
+				sessionId,
+				includeSharedMemory: includeSharedMemory && !privateAgent,
+				includeSensitive: false,
+				includeRestricted: false,
+				...(privateAgent ? { maximumCharacters: 12_000 } : {}),
+			});
+		} catch (error) {
+			this.recordMemoryObserverFailure(error);
+			return undefined;
+		}
+	}
+
+	private recordMemoryObserverFailure(error: unknown): void {
+		try {
+			this.deps.database.setPrivateState("memory.capture.last-error", {
+				message:
+					error instanceof Error && error.message.trim()
+						? error.message.slice(0, 2_000)
+						: "Memory observer failed.",
+				updatedAt: this.now(),
+			});
+		} catch {
+			// Memory is deliberately non-critical to the agent runtime.
+		}
+	}
+
 	private memoryRecallStatus(personalityId?: string): MemoryRecallStatus {
 		const configuration = this.configuration.current();
 		const personality = this.personalities.get(
 			personalityId ?? this.selectedPersonalityId,
 		);
-		const injectionEnabled = this.sharedMemoryInjectionEnabled(personality.id);
+		const injectionEnabled =
+			this.sharedMemoryInjectionEnabled(personality.id);
 		let offReason: string | undefined;
 		if (!injectionEnabled) {
 			if (personality.memoryScope === "isolated")
@@ -1507,6 +1567,40 @@ export class AgentCore {
 				? { honchoLastError: honcho.detail }
 				: {}),
 		};
+	}
+
+	private memoryRecallCount(
+		localContext: ReturnType<LifeContextService["assembleContext"]> | undefined,
+		substrateContext: ReturnType<MemorySubstrate["getRelevantContext"]> | undefined,
+	): number {
+		const legacyIds = new Set<string>(
+			localContext?.memories.map((memory) => memory.id) ?? [],
+		);
+		const substrateResults = [
+			...(substrateContext?.durable ?? []),
+			...(substrateContext?.current ?? []),
+			...(substrateContext?.retrieved ?? []),
+		];
+		for (const result of substrateResults)
+			if (result.kind === "memory") legacyIds.add(result.id);
+
+		const recalled = new Set<string>();
+		for (const memory of localContext?.memories ?? [])
+			recalled.add(`legacy:${memory.id}`);
+		for (const result of substrateResults) {
+			if (result.kind !== "memory" && result.kind !== "agent_memory") continue;
+			const bridgedLegacyId = result.sourceIds.find((sourceId) =>
+				legacyIds.has(sourceId),
+			);
+			recalled.add(
+				bridgedLegacyId
+					? `legacy:${bridgedLegacyId}`
+					: result.kind === "memory"
+						? `legacy:${result.id}`
+						: `agent:${result.id}`,
+			);
+		}
+		return recalled.size;
 	}
 
 	createPersonality(
@@ -1840,8 +1934,10 @@ export class AgentCore {
 							request.sessionId,
 							priorMessage,
 						);
-						const sharedMemoryEnabled =
-							this.sharedMemoryInjectionEnabled(personality.id);
+						const sharedMemoryEnabled = this.memoryEnabledForSession(
+							runtimeSession,
+							personality.id,
+						);
 						const honchoContext = sharedMemoryEnabled
 							? await this.honchoMemory.contextFor({
 									sessionId: request.sessionId,
@@ -1856,11 +1952,19 @@ export class AgentCore {
 									query: priorMessage,
 								})
 							: undefined;
-						const userModelContext = this.userModel.promptContext();
+						const substrateContext = this.substrateContextForSession(
+							request.sessionId,
+							priorMessage,
+							sharedMemoryEnabled,
+						);
+						const userModelContext = sharedMemoryEnabled
+							? this.userModel.promptContext()
+							: "";
 						const memoryRecallReceipt = buildMemoryRecallReceipt({
-							...(localContext
-								? { localMemoryCount: localContext.memories.length }
-								: {}),
+							localMemoryCount: this.memoryRecallCount(
+								localContext,
+								substrateContext,
+							),
 							userModelContext,
 							honchoContext,
 						});
@@ -1907,6 +2011,7 @@ export class AgentCore {
 									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
 								groupMemoryContext,
+								substrateContext?.prompt ?? "",
 								...(sharedMemoryEnabled
 									? [
 											this.userModel.promptContext(),
@@ -1967,10 +2072,18 @@ export class AgentCore {
 						session: this.runtime.resumeSession(request.sessionId),
 					};
 				case "runtime-cancel-session":
-					return {
-						ok: true,
-						session: this.runtime.cancelSession(request.sessionId),
-					};
+					{
+						const sessionIds = this.runtime.sessionTree(request.sessionId);
+						this.abortActiveStreamsForSessions(
+							sessionIds,
+							"Cancelled because the owning agent session was cancelled.",
+						);
+						this.orchestrator.cancelForSessions(sessionIds);
+						return {
+							ok: true,
+							session: this.runtime.cancelSession(request.sessionId),
+						};
+					}
 				case "runtime-append-message":
 					return {
 						ok: true,
@@ -2156,13 +2269,13 @@ export class AgentCore {
 							request.runId,
 						),
 					};
-				case "memory-list":
-					return { ok: true, memories: this.memory.list() };
+					case "memory-list":
+						return { ok: true, memories: this.memorySubstrate.list() };
 				case "memory-remember":
 					return {
 						ok: true,
 						memories: [
-							this.memory.remember({
+							this.memorySubstrate.remember({
 								type: request.memoryType,
 								content: request.content,
 								structuredData: { capture: "direct-user-control" },
@@ -2184,7 +2297,7 @@ export class AgentCore {
 					return {
 						ok: true,
 						memories: [
-							this.memory.correct(request.id, {
+							this.memorySubstrate.correct(request.id, {
 								content: request.content,
 								...(request.memoryType ? { type: request.memoryType } : {}),
 								...(request.sensitivity
@@ -2195,14 +2308,18 @@ export class AgentCore {
 						],
 					};
 				case "memory-forget":
-					return { ok: true, memories: [this.memory.forget(request.id)] };
-				case "memory-versions":
-					return {
-						ok: true,
-						memoryVersions: this.memory.versions(request.id),
+					return { ok: true, memories: [this.memorySubstrate.forget(request.id)] };
+					case "memory-versions":
+						return {
+							ok: true,
+							memoryVersions: this.memorySubstrate.versions(request.id),
 					};
 				case "memory-run-maintenance":
-					return { ok: true, memories: this.lifeContext.maintain().memories };
+					return {
+						ok: true,
+						memories: this.lifeContext.maintain().memories,
+						memoryMaintenance: await this.memorySubstrate.runMaintenance(),
+					};
 				case "memory-user-model-list":
 					return { ok: true, userModelFacts: this.userModel.list() };
 				case "memory-user-model-review":
@@ -2211,6 +2328,117 @@ export class AgentCore {
 						userModelFacts: [
 							this.userModel.review(request.id, request.decision),
 						],
+					};
+				case "memory-timeline-query": {
+					const { type: _type, ...query } = request;
+					return {
+						ok: true,
+						memoryTimeline: this.memorySubstrate.queryTimeline(query),
+					};
+				}
+				case "memory-capture-status":
+					return {
+						ok: true,
+						memoryCaptureStatus: this.memorySubstrate.captureStatus(),
+					};
+				case "memory-capture-configure":
+					this.memorySubstrate.setCaptureConfiguration({
+						enabled: request.configuration.enabled,
+						defaultRetentionDays: request.configuration.defaultRetentionDays,
+						policies: request.configuration.policies,
+					});
+					return {
+						ok: true,
+						memoryCaptureStatus: this.memorySubstrate.captureStatus(),
+					};
+				case "memory-capture-policy-upsert":
+					this.memorySubstrate.upsertCapturePolicy(request.policy);
+					return {
+						ok: true,
+						memoryCaptureStatus: this.memorySubstrate.captureStatus(),
+					};
+				case "memory-capture-policy-delete":
+					if (!this.memorySubstrate.deleteCapturePolicy(request.id))
+						throw new Error("Capture policy not found.");
+					return {
+						ok: true,
+						memoryCaptureStatus: this.memorySubstrate.captureStatus(),
+					};
+				case "memory-diagnostics":
+					return {
+						ok: true,
+						memoryDiagnostics: this.memorySubstrate.diagnostics(),
+					};
+				case "memory-agent-inspect": {
+					const session = this.memorySubstrate.assertMemorySession(
+						request.sessionId,
+					);
+					const identity = this.memorySubstrate.ensureAgentIdentity(session);
+					return {
+						ok: true,
+						memoryAgentIdentity: identity,
+						memoryAgentMemories: this.deps.database.listAgentMemories(
+							identity.id,
+							{ includeInactive: request.includeInactive, limit: request.limit },
+						),
+						memoryAgentTasks: this.deps.database.listWorkingTasks({
+							agentId: identity.id,
+							includeCompleted: true,
+							limit: 100,
+						}),
+					};
+				}
+				case "memory-agent-correct":
+					this.memorySubstrate.assertMemorySession(request.sessionId);
+					return {
+						ok: true,
+						memoryAgentMemories: [
+							this.memorySubstrate.correctAgentMemory(
+								request.sessionId,
+								request.id,
+								request.content,
+							),
+						],
+					};
+				case "memory-agent-forget":
+					this.memorySubstrate.assertMemorySession(request.sessionId);
+					return {
+						ok: true,
+						memoryAgentMemories: [
+							this.memorySubstrate.forgetAgentMemory(
+								request.sessionId,
+								request.id,
+							),
+						],
+					};
+				case "memory-agent-provenance-list":
+					this.memorySubstrate.assertMemorySession(request.sessionId);
+					return {
+						ok: true,
+						memoryProvenance:
+							this.memorySubstrate.listAgentMemoryProvenance(
+								request.sessionId,
+								request.id,
+								request.limit,
+							),
+					};
+				case "memory-provenance-list":
+					return {
+						ok: true,
+						memoryProvenance: this.deps.database.listMemoryProvenance({
+							...(request.ownerType ? { ownerType: request.ownerType } : {}),
+							...(request.ownerId ? { ownerId: request.ownerId } : {}),
+							...(request.sourceId ? { sourceId: request.sourceId } : {}),
+							...(request.timelineEventId
+								? { timelineEventId: request.timelineEventId }
+								: {}),
+							limit: request.limit,
+						}),
+					};
+				case "memory-source-delete":
+					return {
+						ok: true,
+						memoryDeletion: this.memorySubstrate.forgetSource(request.sourceId),
 					};
 				case "people-list":
 					return { ok: true, people: this.lifeContext.listPeople() };
@@ -2239,12 +2467,15 @@ export class AgentCore {
 							}),
 						],
 					};
-				case "people-delete":
-					return {
-						ok: true,
-						people: [this.lifeContext.deletePerson(request.id)],
-						memories: this.memory.list(),
-					};
+					case "people-delete": {
+						const person = this.lifeContext.deletePerson(request.id);
+						this.memorySubstrate.reconcilePeople();
+						return {
+							ok: true,
+							people: [person],
+							memories: this.memory.list(),
+						};
+					}
 				case "calendar-list":
 					return {
 						ok: true,
@@ -2294,6 +2525,12 @@ export class AgentCore {
 							includeSensitive: request.includeSensitive,
 							includeRestricted: request.includeRestricted,
 							persistUsage: false,
+						}),
+						memoryContext: this.memorySubstrate.getRelevantContext({
+							query: request.query,
+							includeSharedMemory: true,
+							includeSensitive: request.includeSensitive,
+							includeRestricted: request.includeRestricted,
 						}),
 					};
 				case "writing-profile-get":
@@ -3048,6 +3285,31 @@ export class AgentCore {
 						),
 					]);
 					let route: ReturnType<AgentCore["automaticRoute"]> | undefined;
+					let workingTask: WorkingTask | undefined;
+					try {
+						const taskSession = this.runtime.getSession(request.sessionId);
+						const identity = this.memorySubstrate.ensureAgentIdentity(taskSession);
+						workingTask = this.memorySubstrate.createWorkingTask({
+							sessionId: taskSession.id,
+							agentId: identity.id,
+							sourceIds: [`session:${taskSession.id}`],
+							projectIds: [],
+							personIds: [],
+							entityIds: [],
+							goal: request.message,
+							plan: [],
+								status: "running",
+								startedAt: new Date().toISOString(),
+								evidence: [],
+							artifacts: [],
+							failures: [],
+								unresolvedQuestions: [],
+								subtaskIds: [],
+								dependencyTaskIds: [],
+							});
+					} catch (error) {
+						this.recordMemoryObserverFailure(error);
+					}
 					try {
 						const personality = this.personalities.get(
 							request.personalityId ?? this.selectedPersonalityId,
@@ -3071,7 +3333,8 @@ export class AgentCore {
 							request.sessionId,
 							request.message,
 						);
-						const sharedMemoryEnabled = this.sharedMemoryInjectionEnabled(
+						const sharedMemoryEnabled = this.memoryEnabledForSession(
+							runtimeSession,
 							personality.id,
 						);
 						const honchoContext = sharedMemoryEnabled
@@ -3088,11 +3351,19 @@ export class AgentCore {
 									query: request.message,
 								})
 							: undefined;
-						const userModelContext = this.userModel.promptContext();
+						const substrateContext = this.substrateContextForSession(
+							request.sessionId,
+							request.message,
+							sharedMemoryEnabled,
+						);
+						const userModelContext = sharedMemoryEnabled
+							? this.userModel.promptContext()
+							: "";
 						const memoryRecallReceipt = buildMemoryRecallReceipt({
-							...(localContext
-								? { localMemoryCount: localContext.memories.length }
-								: {}),
+							localMemoryCount: this.memoryRecallCount(
+								localContext,
+								substrateContext,
+							),
 							userModelContext,
 							honchoContext,
 						});
@@ -3165,6 +3436,7 @@ export class AgentCore {
 									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
 								groupMemoryContext,
+								substrateContext?.prompt ?? "",
 								...(sharedMemoryEnabled
 									? [
 											this.userModel.promptContext(),
@@ -3206,6 +3478,34 @@ export class AgentCore {
 							);
 							this.recordAutomaticOutcome(route, result);
 						}
+						if (workingTask) {
+							try {
+								const taskStatus =
+									result.run.status === "completed"
+										? "completed"
+										: result.run.status === "cancelled"
+											? "cancelled"
+											: result.run.status === "failed"
+												? "failed"
+												: "waiting";
+								this.memorySubstrate.recordTaskOutcome({
+									...workingTask,
+									status: taskStatus,
+									...(taskStatus === "completed" || taskStatus === "failed" || taskStatus === "cancelled"
+										? { completedAt: this.now() }
+										: {}),
+									...(result.assistantMessage
+										? { outcomeSummary: result.assistantMessage.content }
+										: {}),
+									...(taskStatus === "failed" && result.run.error
+										? { failures: [...workingTask.failures, result.run.error].slice(-100) }
+										: {}),
+									updatedAt: this.now(),
+								});
+							} catch (error) {
+								this.recordMemoryObserverFailure(error);
+							}
+						}
 						return {
 							ok: true,
 							run: result.run,
@@ -3218,6 +3518,19 @@ export class AgentCore {
 								: {}),
 						};
 					} catch (error) {
+						if (workingTask) {
+							try {
+								this.memorySubstrate.recordTaskOutcome({
+									...workingTask,
+									status: executionSignal.aborted ? "cancelled" : "failed",
+									failures: [error instanceof Error ? error.message : "Agent execution failed."],
+									completedAt: this.now(),
+									updatedAt: this.now(),
+								});
+							} catch (taskError) {
+								this.recordMemoryObserverFailure(taskError);
+							}
+						}
 						if (route)
 							this.recordAutomaticFailure(route, executionSignal.aborted);
 						throw error;
@@ -3405,7 +3718,10 @@ export class AgentCore {
 			installHonchoMemoryTools(
 				this.runtime,
 				this.honchoMemory,
-				this.runtime.listSessions().map((session) => session.id),
+				this.runtime
+					.listSessions()
+					.filter((session) => this.isStandardSession(session))
+					.map((session) => session.id),
 			);
 			return;
 		}
@@ -3426,13 +3742,20 @@ export class AgentCore {
 	}
 
 	private abortActiveStreamsForHistoryRollback(sessionId: string): void {
+		this.abortActiveStreamsForSessions(
+			[sessionId],
+			"Active agent stream cancelled because the session history was rolled back.",
+		);
+	}
+
+	private abortActiveStreamsForSessions(
+		sessionIds: readonly string[],
+		reason: string,
+	): void {
+		const ids = new Set(sessionIds);
 		for (const active of this.activeStreams.values()) {
-			if (active.sessionId === sessionId && !active.controller.signal.aborted)
-				active.controller.abort(
-					new Error(
-						"Active agent stream cancelled because the session history was rolled back.",
-					),
-				);
+			if (ids.has(active.sessionId) && !active.controller.signal.aborted)
+				active.controller.abort(new Error(reason));
 		}
 	}
 
@@ -3469,6 +3792,7 @@ export class AgentCore {
 		await this.honchoMemory.flush();
 		await this.observability.shutdown();
 		await this.providerPool.close();
+		await this.memorySubstrate.close();
 		this.runtime.close();
 		this.deps.database.close();
 	}
@@ -3710,6 +4034,15 @@ export {
 	type VoiceTranscriptionProvider,
 } from "./media-providers";
 export { installMemoryTools, type MemoryInput, MemoryManager } from "./memory";
+export {
+	localMemoryEmbeddingProvider,
+	MEMORY_SCORING_DEFAULTS,
+	MemorySubstrate,
+	type CaptureActivityInput,
+	type MemoryEmbeddingProvider,
+	type MemoryRememberInput,
+	type MemorySubstrateOptions,
+} from "./memory-substrate";
 export {
 	AGENT_GROUP_MEMORY_TOOL_NAMES,
 	AgentGroupMemoryManager,

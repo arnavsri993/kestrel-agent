@@ -58,6 +58,11 @@ export const MIGRATION_SQL_FILES: Record<number, string> = {
 	9: "009_agent_configuration.sql",
 	10: "010_browser_activity.sql",
 	11: "011_action_receipts.sql",
+	12: "012_memory_substrate.sql",
+	13: "013_memory_timeline_links.sql",
+	14: "014_memory_entity_ambiguity.sql",
+	15: "015_memory_provenance_updated_at.sql",
+	16: "016_memory_timeline_source_metadata.sql",
 };
 
 export const LATEST_SCHEMA_VERSION = Math.max(

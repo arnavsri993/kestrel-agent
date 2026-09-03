@@ -672,7 +672,7 @@ describe("core agent request path", () => {
 		await core.close();
 	});
 
-	it("reports memory recall status and injects life context into chat when shared memory is enabled", async () => {
+	it("reports memory recall status and injects life context even when timeline capture is disabled", async () => {
 		const root = mkdtempSync(join(tmpdir(), "kestrel-core-memory-inject-"));
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		let receivedSystem = "";
@@ -738,6 +738,9 @@ describe("core agent request path", () => {
 			sensitivity: "normal",
 		});
 		core.userModel.review(fact.id, "confirm");
+		// Disabling automatic timeline capture is not a request to stop using
+		// explicit memories that the user already chose to retain.
+		core.memorySubstrate.setCaptureEnabled(false);
 		expect(core.snapshot().memoryRecall).toMatchObject({
 			chatInjection: "active",
 			activeMemories: 1,
