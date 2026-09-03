@@ -4,7 +4,8 @@
 	--kestrel-sidebar-width: 216px;
 	--kestrel-sidebar-space: 0px;
 	--browser-tab-rail-width: 208px;
-	--browser-chrome-height: 88px;
+	--browser-toolbar-height: 40px;
+	--browser-chrome-height: calc(40px + var(--browser-toolbar-height));
 	--agent-panel-top: var(--browser-chrome-height);
 	position: relative;
 	display: block;
@@ -26,16 +27,16 @@
 /* Bookmarks are part of the browser chrome too. Keep the lower workspace
  * rails below them instead of letting either rail cover the bookmark row. */
 .ai-browser-app:has(.browser-workspace-bookmarks) {
-	--browser-chrome-height: 120px;
+	--browser-chrome-height: calc(40px + var(--browser-toolbar-height) + 32px);
 }
 
-/* Vertical tabs use a single 48px toolbar row before their lower tab rail. */
+/* Vertical tabs use a single compact toolbar row before their lower tab rail. */
 .ai-browser-app:has(.browser-workspace-vertical) {
-	--browser-chrome-height: 48px;
+	--browser-chrome-height: var(--browser-toolbar-height);
 }
 
 .ai-browser-app:has(.browser-workspace-vertical.browser-workspace-bookmarks) {
-	--browser-chrome-height: 80px;
+	--browser-chrome-height: calc(var(--browser-toolbar-height) + 32px);
 }
 
 /* Keep the lower browser plane as a real two-column layout. The navigation
@@ -155,7 +156,7 @@
 	right: 0;
 	z-index: 10;
 	width: auto;
-	height: 48px;
+	height: var(--browser-toolbar-height);
 }
 
 .browser-workspace-vertical .browser-toolbar:has(.browser-address-suggestions) {
@@ -165,7 +166,7 @@
 
 .browser-workspace-vertical .browser-bookmarks-bar {
 	position: absolute;
-	top: 48px;
+	top: var(--browser-toolbar-height);
 	left: 0;
 	right: 0;
 	width: auto;

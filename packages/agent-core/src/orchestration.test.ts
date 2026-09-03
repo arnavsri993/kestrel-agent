@@ -10,6 +10,7 @@ import { teacherOpportunity } from "./fixtures";
 import { AdaptiveModelRouter, ModelRegistry } from "./model-orchestration";
 import {
 	AutomationDaemon,
+	installOrchestrationTools,
 	nextCronOccurrence,
 	parseScheduleExpression,
 	TaskOrchestrator,
@@ -151,6 +152,73 @@ describe("task orchestration", () => {
 			allowedTools: ["workspace.read"],
 		});
 		expect(delegated.sessionId).not.toBe(item.parent.id);
+		item.database.close();
+	});
+
+	it("inherits the parent privacy boundary for delegated sessions", async () => {
+		const item = fixture(finalProvider());
+		const privateParent = item.runtime.createSession({
+			title: "Private parent",
+			privacyMode: "private",
+		});
+		const delegated = await item.orchestrator.delegate({
+			parentSessionId: privateParent.id,
+			title: "Private child",
+			prompt: "Inspect only.",
+			model: "fake",
+			providerIds: ["fake"],
+		});
+
+		expect(item.runtime.getSession(delegated.sessionId).privacyMode).toBe("private");
+		item.database.close();
+	});
+
+	it("fans out a main-circle team and waits for every child result", async () => {
+		let activeCalls = 0;
+		let maximumActiveCalls = 0;
+		const item = fixture(
+			finalProvider(async () => {
+				activeCalls += 1;
+				maximumActiveCalls = Math.max(maximumActiveCalls, activeCalls);
+				await new Promise((resolve) => setTimeout(resolve, 5));
+				activeCalls -= 1;
+			}),
+		);
+		installOrchestrationTools(item.runtime, item.orchestrator, item.parent.id);
+
+		const execution = await item.runtime.callTool(
+			item.parent.id,
+			"orchestration.delegate-team",
+			{
+				tasks: [
+					{
+						title: "Research",
+						prompt: "Return the research result.",
+						model: "fake",
+						providerIds: ["fake"],
+					},
+					{
+						title: "Review",
+						prompt: "Return the review result.",
+						model: "fake",
+						providerIds: ["fake"],
+					},
+				],
+			},
+			{ idempotencyKey: "delegate-team" },
+		);
+
+		expect(execution.status).toBe("verified");
+		expect(execution.output?.delegated).toMatchObject([
+			{ status: "completed", result: "Done." },
+			{ status: "completed", result: "Done." },
+		]);
+		expect(maximumActiveCalls).toBe(2);
+		expect(
+			item.runtime
+				.listSessions()
+				.filter((session) => session.parentSessionId === item.parent.id),
+		).toHaveLength(2);
 		item.database.close();
 	});
 

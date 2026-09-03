@@ -217,9 +217,12 @@ async function readLayout(page) {
 	return page.evaluate(() => {
 		const shell = document.querySelector(".ai-browser-app");
 		if (!shell) throw new Error("The Kestrel browser shell is unavailable.");
-		const bounds = (selector) => {
+		const bounds = (selector, optional = false) => {
 			const rect = document.querySelector(selector)?.getBoundingClientRect();
-			if (!rect) throw new Error(`Missing ${selector}.`);
+			if (!rect) {
+				if (optional) return { left: 0, right: 0, width: 0 };
+				throw new Error(`Missing ${selector}.`);
+			}
 			return {
 				left: rect.left,
 				right: rect.right,
@@ -231,7 +234,7 @@ async function readLayout(page) {
 			innerWidth,
 			classes: shell.className,
 			columns: getComputedStyle(shell).gridTemplateColumns,
-			navigation: bounds(".kestrel-sidebar"),
+			navigation: bounds(".kestrel-sidebar", true),
 			main: bounds(".browser-main-plane"),
 			viewport: bounds("#browser-viewport"),
 			agent: bounds(".agent-sidebar"),
@@ -605,14 +608,16 @@ async function assertAgentRailInterruption(page) {
 			before - 4,
 		openingWidth,
 	);
-	const closingState = await readAgentRailMotionState(page);
-	const closingWidth = closingState.width;
-
 	// Re-open before the close finishes. This proves the next input is accepted
 	// during motion and that the new spring starts from the rendered width. Read
 	// the first resumed frame before sampling two more frames; displacement over
 	// two frames is expected spring motion, not evidence of an endpoint jump.
-	await clickAfterHitTest(page, toggle, "#browser-agent-toggle");
+	// The close spring keeps moving while Playwright resolves the hit target.
+	// Sample immediately before dispatching the reopen click so the continuity
+	// assertion compares against the width the person could actually see.
+	await waitForHitTestTarget(page, "#browser-agent-toggle");
+	const closingStateBeforeReopen = await readAgentRailMotionState(page);
+	await toggle.click();
 	await page.waitForFunction(
 		(label) =>
 			document.querySelector("#browser-agent-toggle")?.getAttribute("aria-label") ===
@@ -626,8 +631,8 @@ async function assertAgentRailInterruption(page) {
 		"Interrupted re-open did not start a settling transition.",
 	);
 	assert.ok(
-		Math.abs(reopenedStart.width - closingWidth) <= continuityTolerance,
-		`Interrupted re-open did not start from the rendered width (${closingWidth}px to ${reopenedStart.width}px; tolerance ${continuityTolerance}px).`,
+		Math.abs(reopenedStart.width - closingStateBeforeReopen.width) <= continuityTolerance,
+		`Interrupted re-open did not start from the rendered width (${closingStateBeforeReopen.width}px to ${reopenedStart.width}px; tolerance ${continuityTolerance}px).`,
 	);
 	if (reopenedStart.presentedWidth !== null) {
 		assert.ok(
@@ -1079,6 +1084,7 @@ async function readZoomReflow(page) {
 		const agentToggleLabel = document.querySelector(
 			".browser-agent-toggle > span:not(.pragmatic-logo)",
 		);
+		const navigationControl = document.querySelector(".kestrel-sidebar-new-task");
 
 		return {
 			innerWidth,
@@ -1110,14 +1116,16 @@ async function readZoomReflow(page) {
 						element.scrollWidth > element.clientWidth + 1,
 				)
 				.slice(0, 12),
-			sidebarLabelDisplay: getComputedStyle(
-				document.querySelector(".kestrel-sidebar-nav-item span"),
-			).display,
+			sidebarLabelDisplay: document.querySelector(".kestrel-sidebar-nav-item span")
+				? getComputedStyle(
+					document.querySelector(".kestrel-sidebar-nav-item span"),
+				).display
+				: "none",
 			agentToggleLabelDisplay: agentToggleLabel
 				? getComputedStyle(agentToggleLabel).display
 				: "none",
 			controls: [
-				readControl(".kestrel-sidebar-new-task"),
+				navigationControl ? readControl(".kestrel-sidebar-new-task") : null,
 				readControl(".browser-new-tab"),
 				readControl("#browser-address-input"),
 				readControl('.browser-toolbar-actions button[aria-label="Tools"]'),
@@ -1126,17 +1134,17 @@ async function readZoomReflow(page) {
 					'.browser-toolbar-actions button[aria-label="Browser menu"]',
 				),
 				readControl(".browser-agent-toggle"),
-			],
+			].filter(Boolean),
 		};
 	});
 }
 
-function assertZoomReflow(layout, reflow) {
+function assertZoomReflow(layout, reflow, navigationWidth = 56) {
 	assert.ok(
 		reflow.innerWidth <= 700,
 		`Expected a compact CSS viewport at 200% zoom, got ${reflow.innerWidth}px.`,
 	);
-	assertNear(layout.navigation.width, 56, "zoomed navigation width");
+	assertNear(layout.navigation.width, navigationWidth, "zoomed navigation width");
 	assertNear(
 		layout.main.left,
 		0,
@@ -1195,6 +1203,30 @@ function assertZoomReflow(layout, reflow) {
 			`${control.selector} escaped the vertical viewport (${control.top}, ${control.bottom}).`,
 		);
 	}
+	assertTheme(layout);
+}
+
+function assertInTabAgentLayout(layout) {
+	assert.doesNotMatch(layout.classes, /agent-full-page/);
+	assert.match(layout.classes, /agent-sidebar-collapsed/);
+	assertNear(layout.navigation.width, 0, "in-tab Agent navigation width");
+	assertNear(
+		layout.main.left,
+		0,
+		"in-tab Agent browser plane starts at the window edge",
+	);
+	assertNear(
+		layout.main.right,
+		layout.innerWidth,
+		"in-tab Agent browser plane reaches the window edge",
+	);
+	assertNear(layout.viewport.left, 0, "in-tab Agent page viewport starts at the window edge");
+	assertNear(
+		layout.viewport.right,
+		layout.innerWidth,
+		"in-tab Agent page viewport reaches the window edge",
+	);
+	assertNear(layout.agent.width, 0, "in-tab Agent collapsed Pragmatic width");
 	assertTheme(layout);
 }
 
@@ -1389,6 +1421,7 @@ try {
 		localStorage.setItem("kestrel:default-browser-prompted", "yes");
 		localStorage.setItem("kestrel:navigation-sidebar", "open");
 		localStorage.setItem("kestrel:agent-sidebar", "collapsed");
+		localStorage.setItem("kestrel:agent-universe-rail", "collapsed");
 	});
 	await page.reload();
 	await page.locator(".new-tab-page").waitFor();
@@ -1495,7 +1528,7 @@ try {
 
 	await setDesktopWindowWidth(application, page, 920);
 	await waitForCollapsedLayout(page);
-	assertCollapsedLayout(await readLayout(page));
+	assertInTabAgentLayout(await readLayout(page));
 	const baselineViewportWidth = await page.evaluate(() => innerWidth);
 	await setDesktopZoom(application, page, 2, baselineViewportWidth / 2);
 	await waitForCollapsedLayout(page);
@@ -1503,14 +1536,14 @@ try {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
 	});
-	assertZoomReflow(await readLayout(page), await readZoomReflow(page));
+	assertZoomReflow(await readLayout(page), await readZoomReflow(page), 0);
 	await setDesktopZoom(application, page, 1, baselineViewportWidth);
 	await waitForCollapsedLayout(page);
 	await page.waitForFunction(() => {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
 	});
-	assertCollapsedLayout(await readLayout(page));
+	assertInTabAgentLayout(await readLayout(page));
 
 	assert.deepEqual(pageErrors, []);
 	assert.deepEqual(await readUnhandledRejections(page), []);

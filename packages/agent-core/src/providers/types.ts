@@ -8,9 +8,11 @@ export type ModelContentPart =
   | { type: "document"; data: string; mediaType: string; source: "base64" | "url"; name?: string };
 
 export interface ModelToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
+	id: string;
+	name: string;
+	arguments: Record<string, unknown>;
+	/** Provider-specific continuation data, currently used by Gemini 3. */
+	thoughtSignature?: string | undefined;
 }
 
 export interface ModelMessage {

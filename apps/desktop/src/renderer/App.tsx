@@ -94,6 +94,10 @@ import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
 import {
+	appendAgentUniverseActivity,
+	type AgentUniverseActivity,
+} from "./components/browser/agent-universe/agent-universe-model";
+import {
 	BrowserBookmarks,
 	BrowserDownloads,
 	BrowserHistory,
@@ -114,6 +118,11 @@ import {
 	type CommandDestination,
 } from "./components/browser/CommandCenter";
 import { ConfigurationMessage } from "./components/ConfigurationMessage";
+import { ComputerUseSettings } from "./components/ComputerUseSettings";
+import {
+	parseUIPresentationMessage,
+	PresentationCard,
+} from "./components/PresentationCard";
 import { DashboardExtensions } from "./components/DashboardExtensions";
 import { EventApplications } from "./components/EventApplications";
 import { ExternalSecretSettings } from "./components/ExternalSecretSettings";
@@ -4301,8 +4310,12 @@ function RuntimeConversation({
 								: "Load earlier messages"}
 						</button>
 					)}
-					{visibleMessages.map((message) =>
-						message.role === "user" ? (
+					{visibleMessages.map((message) => {
+						const presentation =
+							message.role === "tool"
+								? parseUIPresentationMessage(message)
+								: undefined;
+						return message.role === "user" ? (
 							<div
 								className="user-message"
 								key={message.id}
@@ -4350,6 +4363,14 @@ function RuntimeConversation({
 									}}
 								/>
 							</div>
+						) : presentation ? (
+							<div
+								key={message.id}
+								data-runtime-message-id={message.id}
+								tabIndex={-1}
+							>
+								<PresentationCard presentation={presentation} />
+							</div>
 						) : (
 							<div
 								className="work-summary"
@@ -4362,8 +4383,8 @@ function RuntimeConversation({
 									{message.toolName ?? "Tool result"}: {message.content}
 								</span>
 							</div>
-						),
-					)}
+						);
+					})}
 					{humanInputRequests.map((request) => (
 						<RuntimeQuestionCard
 							key={request.id}
@@ -9726,6 +9747,7 @@ function Settings({
 							className="settings-stack"
 							aria-label="Privacy and safety settings"
 						>
+							<ComputerUseSettings />
 							<ApprovalRulesSettings />
 						</section>
 						</section>
@@ -9863,6 +9885,9 @@ export function App() {
 	const [agentSidebarOpen, setAgentSidebarOpen] = useState(
 		() => localStorage.getItem("kestrel:agent-sidebar") !== "collapsed",
 	);
+	const [agentUniverseRailOpen, setAgentUniverseRailOpen] = useState(
+		() => localStorage.getItem("kestrel:agent-universe-rail") === "open",
+	);
 	const [settingsSectionRequest, setSettingsSectionRequest] = useState<{
 		section: SettingsSection | null;
 		requestId: number;
@@ -9878,6 +9903,12 @@ export function App() {
 	const pendingToolRouteFocusRef = useRef<KestrelAppPageId | null>(null);
 	const routeFocusFrameRef = useRef<number | null>(null);
 	const [runtimeSessions, setRuntimeSessions] = useState<RuntimeSession[]>([]);
+	const [runtimeSessionsLoadState, setRuntimeSessionsLoadState] = useState<
+		"loading" | "ready" | "error"
+	>("loading");
+	const [agentUniverseActivities, setAgentUniverseActivities] = useState<
+		AgentUniverseActivity[]
+	>([]);
 	const [transcriptTarget, setTranscriptTarget] = useState<{
 		sessionId: string;
 		messageId: string;
@@ -9917,6 +9948,21 @@ export function App() {
 	const [organizeTabsRequestId, setOrganizeTabsRequestId] = useState(0);
 	const [greetingName, setGreetingName] = useState<string | undefined>();
 	const reduced = useReducedMotion();
+	const refreshRuntimeSessions = useCallback(async () => {
+		setRuntimeSessionsLoadState("loading");
+		try {
+			const raw = await window.kestrel.request({
+				type: "runtime-list-sessions",
+			});
+			const response = raw as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			setRuntimeSessions(response.sessions ?? []);
+			setRuntimeSessionsLoadState("ready");
+		} catch (cause) {
+			setRuntimeSessionsLoadState("error");
+			throw cause;
+		}
+	}, []);
 
 	useEffect(() => {
 		// Setup links keep their provider-owned/system-browser handoff. A managed
@@ -10035,7 +10081,14 @@ export function App() {
 	const revealAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen(true);
 		localStorage.setItem("kestrel:agent-sidebar", "open");
-	}, []);
+		const activeTab = browser.state?.tabs.find(
+			(tab) => tab.id === browser.state?.activeTabId,
+		);
+		if (parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent") {
+			setAgentUniverseRailOpen(true);
+			localStorage.setItem("kestrel:agent-universe-rail", "open");
+		}
+	}, [browser]);
 	const acceptExternalIntake = useCallback(
 		(intake: ExternalIntake) => {
 			setExternalIntake(intake);
@@ -10185,6 +10238,26 @@ export function App() {
 		void openAppPage("approvals");
 	}, [focusRuntimeApproval, openAppPage, runtimeWaiting, snapshotPendingCount]);
 	const toggleAgentSidebar = useCallback(() => {
+		const activeTab = browser.state?.tabs.find(
+			(tab) => tab.id === browser.state?.activeTabId,
+		);
+		const onAgentUniverse = parseKestrelAppPage(activeTab?.url ?? "")?.id === "agent";
+		if (onAgentUniverse) {
+			setAgentUniverseRailOpen((current) => {
+				const next = !current;
+				localStorage.setItem(
+					"kestrel:agent-universe-rail",
+					next ? "open" : "collapsed",
+				);
+				window.requestAnimationFrame(() => {
+					document
+						.getElementById(next ? "runtime-prompt" : "browser-agent-toggle")
+						?.focus();
+				});
+				return next;
+			});
+			return;
+		}
 		setAgentSidebarOpen((current) => {
 			const next = !current;
 			localStorage.setItem(
@@ -10198,7 +10271,7 @@ export function App() {
 			});
 			return next;
 		});
-	}, []);
+	}, [browser]);
 	const openBrowser = useCallback(() => {
 		void openBrowserWorkspace();
 	}, [openBrowserWorkspace]);
@@ -10285,6 +10358,9 @@ export function App() {
 				if (!active) return;
 				setSnapshot(initial.snapshot);
 				setRuntimeSessions(initial.sessions);
+				setRuntimeSessionsLoadState(
+					initial.sessionsLoadError ? "error" : "ready",
+				);
 				setActiveRuntimeSessionId(initial.selectedSessionId);
 			})
 			.catch((cause) => {
@@ -10298,14 +10374,11 @@ export function App() {
 	useEffect(
 		() =>
 			window.kestrel.onRuntimeEvent((event) => {
-				if (event.type === "session.created")
-					void window.kestrel
-						.request({ type: "runtime-list-sessions" })
-						.then((raw) => {
-							const response = raw as CoreResponse;
-							if (response.ok) setRuntimeSessions(response.sessions ?? []);
-						})
-						.catch(() => undefined);
+				setAgentUniverseActivities((current) =>
+					appendAgentUniverseActivity(current, event),
+				);
+				if (event.type === "session.created" || event.type === "session.updated")
+					void refreshRuntimeSessions().catch(() => undefined);
 				else if (event.type === "message.appended")
 					setRuntimeSessions((current) =>
 						runtimeSessionsAfterEvent(current, event),
@@ -10323,7 +10396,7 @@ export function App() {
 							.catch(() => undefined);
 				}
 			}),
-		[],
+		[refreshRuntimeSessions],
 	);
 	useEffect(() => {
 		if (!snapshot?.configuration) return;
@@ -10519,8 +10592,8 @@ export function App() {
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
 	const showKestrelSidebar =
-		!activeBrowserTab?.url ||
-		isKestrelAppPageUrl(activeBrowserTab.url);
+		currentAppPage?.id !== "agent" &&
+		(!activeBrowserTab?.url || isKestrelAppPageUrl(activeBrowserTab.url));
 	const activeFileAttachment = activeBrowserTab?.file
 		? attachmentForExternalFile(activeBrowserTab.file)
 		: undefined;
@@ -10563,6 +10636,8 @@ export function App() {
 		localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
 	}
 	const appPageId = currentAppPage?.id;
+	const presentedAgentSidebarOpen =
+		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
 	const appPage = appPageId ? (
 		<motion.div
 			key={appPageId}
@@ -10617,13 +10692,17 @@ export function App() {
 			{appPageId === "agent" && (
 				<AgentWorkspace
 					sessions={runtimeSessions}
-					activeSessionId={activeRuntimeSessionId}
+					sessionLoadState={runtimeSessionsLoadState}
+					activities={agentUniverseActivities}
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
 					onNewTask={() => startNewAgent()}
 					onOpenSession={openSidebarSession}
 					onOpenApprovals={() => navigate("approvals")}
 					onOpenWork={() => navigate("work")}
+					onToggleAgentSidebar={toggleAgentSidebar}
+					onRetrySessions={() => void refreshRuntimeSessions().catch(() => undefined)}
+					onBack={() => void openBrowserWorkspace()}
 				/>
 			)}
 			{appPageId === "projects" && (
@@ -10729,7 +10808,7 @@ export function App() {
 		<ProductShellTransition>
 			<motion.div
 				key="workspace"
-				className={`ai-browser-app ${agentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
+				className={`ai-browser-app ${presentedAgentSidebarOpen ? "" : "agent-sidebar-collapsed"}${showKestrelSidebar ? " kestrel-sidebar-visible" : ""} unified-ui configuration-density-${snapshot.configuration.ui.density}`}
 				initial={reduced ? false : { opacity: 0 }}
 				animate={{ opacity: 1 }}
 				exit={{ opacity: reduced ? 1 : 0, pointerEvents: "none" }}
@@ -10760,7 +10839,7 @@ export function App() {
 						agentName={activeAgentName}
 						greetingName={greetingName}
 						navigationSidebar={kestrelNavigation}
-						agentOpen={agentSidebarOpen}
+						agentOpen={presentedAgentSidebarOpen}
 						onToggleAgent={toggleAgentSidebar}
 						onNewAgent={startNewAgent}
 						onOpenTaskSettings={openTaskSettings}
@@ -10803,7 +10882,7 @@ export function App() {
 					sessions={runtimeSessions}
 					activeSessionId={activeRuntimeSessionId}
 					agentName={activeAgentName}
-					collapsed={!agentSidebarOpen}
+					collapsed={!presentedAgentSidebarOpen}
 					onNewAgent={startNewAgent}
 					onToggleAgent={toggleAgentSidebar}
 					onExpandChat={openAgent}

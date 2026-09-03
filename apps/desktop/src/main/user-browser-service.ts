@@ -116,6 +116,7 @@ const MAX_BOOKMARK_FOLDERS = 100;
 const POPUP_GESTURE_WINDOW_MS = 1_500;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
 const MAX_TAB_FOLDER_NAMING_TABS = 8;
+const CONTEXT_DOWNLOAD_REQUEST_TTL_MS = 30_000;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
 const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
@@ -217,6 +218,12 @@ interface ViewRecord {
 	navigatingTo?: string;
 }
 
+interface PendingContextDownload {
+	url: string;
+	path: string;
+	requestedAt: number;
+}
+
 function liveWebContents(
 	value: WebContents | null | undefined,
 ): WebContents | undefined {
@@ -277,6 +284,37 @@ function safePageUrl(value: string): URL | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function safeDownloadFilename(value: string, fallback: string): string {
+	const trimmed = value.trim();
+	if (!trimmed || trimmed === "." || trimmed === "/") return fallback;
+	const cleaned = basename(trimmed)
+		.replace(/[^A-Za-z0-9 ._()-]/g, "-")
+		.replace(/^\.+/, "")
+		.slice(0, 180);
+	return cleaned || fallback;
+}
+
+function contextResourceFilename(
+	url: string,
+	suggestedFilename: string,
+	fallback: string,
+): string {
+	const suggested = safeDownloadFilename(suggestedFilename, "");
+	if (suggested) return suggested;
+	try {
+		const pathname = new URL(url).pathname;
+		const filename = safeDownloadFilename(
+			pathname.split("/").filter(Boolean).at(-1) ?? "",
+			"",
+		);
+		if (filename) return filename;
+	} catch {
+		// The caller has already validated the URL. Keep a deterministic fallback
+		// if a future Electron version supplies an unexpected URL shape here.
+	}
+	return fallback;
 }
 
 /**
@@ -925,6 +963,10 @@ export class UserBrowserService {
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly elementRefs = new Map<string, Map<string, number>>();
 	private readonly downloadPaths = new Map<string, string>();
+	private readonly pendingContextDownloads = new Map<
+		number,
+		PendingContextDownload[]
+	>();
 	private readonly activeDownloads = new Map<string, Electron.DownloadItem>();
 	private readonly webContentsToTab = new Map<number, string>();
 	private readonly confirmSitePermission: NonNullable<
@@ -1979,6 +2021,91 @@ export class UserBrowserService {
 		const tab = this.requireTab(tabId);
 		if (tab.file) return (await this.openFileTabs([tab.file.path], true)).browserState;
 		return this.createTab(tab.url || undefined, true);
+	}
+
+	getTabForTransfer(tabId: string): UserBrowserTab {
+		if (this.isAgentTabPinned(tabId)) {
+			throw new Error(
+				"Browser tab is in use by an agent operation and cannot be moved.",
+			);
+		}
+		const tab = this.requireTab(tabId);
+		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
+			throw new Error("Only loaded web pages can move between windows.");
+		}
+		return structuredClone(tab);
+	}
+
+	async importTabForTransfer(tab: UserBrowserTab): Promise<UserBrowserState> {
+		return this.runExclusiveTabMutation(async () => {
+			this.assertAvailable();
+			if (this.state.tabs.some((candidate) => candidate.id === tab.id))
+				throw new Error("That browser tab is already open in this window.");
+			const previousActiveTabId = this.state.activeTabId;
+			const imported: UserBrowserTab = {
+				...structuredClone(tab),
+				loading: false,
+				discarded: false,
+				crashed: false,
+				error: undefined,
+				tabFolderId: undefined,
+				lastActiveAt: this.now().toISOString(),
+			};
+			this.state.tabs.push(imported);
+			this.state.activeTabId = imported.id;
+			this.commit();
+			try {
+				await this.navigate(imported.id, imported.url);
+			} catch (cause) {
+				this.closeView(imported.id);
+				this.state.tabs = this.state.tabs.filter(
+					(candidate) => candidate.id !== imported.id,
+				);
+				this.state.activeTabId = previousActiveTabId;
+				this.commit();
+				throw cause;
+			}
+			return this.getState();
+		});
+	}
+
+	async removeTabForTransfer(tabId: string): Promise<UserBrowserState> {
+		return this.runExclusiveTabMutation(() =>
+			this.removeTabForTransferInternal(tabId),
+		);
+	}
+
+	private async removeTabForTransferInternal(
+		tabId: string,
+	): Promise<UserBrowserState> {
+		if (this.isAgentTabPinned(tabId)) {
+			throw new Error(
+				"Browser tab is in use by an agent operation and cannot be moved.",
+			);
+		}
+		const index = this.state.tabs.findIndex((tab) => tab.id === tabId);
+		if (index < 0) throw new Error("Browser tab is unavailable.");
+		if (tabId === this.state.activeTabId) {
+			this.clearPasswordPrompt();
+			this.clearPaymentPrompt();
+		}
+		this.closeView(tabId);
+		this.state.tabs.splice(index, 1);
+		this.agentTabPinCounts.delete(tabId);
+		if (this.state.tabs.length === 0) {
+			this.state.activeTabId = null;
+		} else if (this.state.activeTabId === tabId) {
+			this.state.activeTabId =
+				this.state.tabs[Math.min(index, this.state.tabs.length - 1)]!.id;
+		}
+		this.pruneEmptyTabFolders();
+		this.commit();
+		if (this.state.tabs.length === 0) {
+			this.onLastTabClosed?.();
+			return this.getState();
+		}
+		await this.syncActiveView();
+		return this.getState();
 	}
 
 	async closeOtherTabs(tabId: string): Promise<UserBrowserState> {
@@ -3374,6 +3501,7 @@ export class UserBrowserService {
 		this.partitionCoordinator.unregister(this.partitionParticipant);
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
 		this.elementRefs.clear();
+		this.pendingContextDownloads.clear();
 	}
 
 	private handleWillDownload(
@@ -3386,11 +3514,22 @@ export class UserBrowserService {
 			item.cancel();
 			return;
 		}
+		const pendingContextDownload = this.takePendingContextDownload(
+			webContents.id,
+			item.getURL(),
+		);
 		const id = `download-${randomUUID()}`;
-		const filename = this.availableDownloadName(item.getFilename(), id);
-		let path = join(this.downloadDirectory, filename);
+		const filename = pendingContextDownload
+			? safeDownloadFilename(
+					basename(pendingContextDownload.path),
+					`${id}.download`,
+				)
+			: this.availableDownloadName(item.getFilename(), id);
+		let path =
+			pendingContextDownload?.path ?? join(this.downloadDirectory, filename);
 		const startedAt = this.now().toISOString();
-		const askForLocation = this.state.settings.downloadBehavior === "ask";
+		const askForLocation =
+			!pendingContextDownload && this.state.settings.downloadBehavior === "ask";
 		if (!askForLocation) item.setSavePath(path);
 		else if (typeof item.pause === "function") item.pause();
 		this.downloadPaths.set(id, path);
@@ -3456,6 +3595,80 @@ export class UserBrowserService {
 			record.canReveal = status === "completed" && existsSync(path);
 			this.commit();
 		});
+	}
+
+	private async saveContextResource(
+		tabId: string,
+		resourceUrl: string,
+		suggestedFilename: string,
+		resourceLabel: "image" | "audio" | "video" | "link",
+	): Promise<void> {
+		const url = safePageUrl(resourceUrl)?.toString();
+		if (!url) return;
+		const record = this.requireView(tabId);
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents) return;
+		const fallback = `${resourceLabel}.download`;
+		const defaultPath = join(
+			this.downloadDirectory,
+			contextResourceFilename(url, suggestedFilename, fallback),
+		);
+		const result = await dialog.showSaveDialog(this.window, {
+			title: `Save ${resourceLabel[0]!.toUpperCase()}${resourceLabel.slice(1)} As…`,
+			defaultPath,
+		});
+		if (result.canceled || !result.filePath) return;
+
+		const pending = {
+			url,
+			path: result.filePath,
+			requestedAt: Date.now(),
+		};
+		const queue = this.pendingContextDownloads.get(webContents.id) ?? [];
+		queue.push(pending);
+		this.pendingContextDownloads.set(webContents.id, queue);
+		try {
+			webContents.downloadURL(url);
+		} catch (cause) {
+			this.removePendingContextDownload(webContents.id, pending);
+			throw cause;
+		}
+	}
+
+	private takePendingContextDownload(
+		webContentsId: number,
+		resourceUrl: string,
+	): PendingContextDownload | undefined {
+		const queue = this.pendingContextDownloads.get(webContentsId);
+		if (!queue) return undefined;
+		const now = Date.now();
+		const fresh = queue.filter(
+			(item) => now - item.requestedAt <= CONTEXT_DOWNLOAD_REQUEST_TTL_MS,
+		);
+		const normalizedUrl = safePageUrl(resourceUrl)?.toString();
+		const index = normalizedUrl
+			? fresh.findIndex((item) => item.url === normalizedUrl)
+			: -1;
+		if (index < 0) {
+			if (fresh.length) this.pendingContextDownloads.set(webContentsId, fresh);
+			else this.pendingContextDownloads.delete(webContentsId);
+			return undefined;
+		}
+		const [pending] = fresh.splice(index, 1);
+		if (fresh.length) this.pendingContextDownloads.set(webContentsId, fresh);
+		else this.pendingContextDownloads.delete(webContentsId);
+		return pending;
+	}
+
+	private removePendingContextDownload(
+		webContentsId: number,
+		pending: PendingContextDownload,
+	): void {
+		const queue = this.pendingContextDownloads.get(webContentsId);
+		if (!queue) return;
+		const next = queue.filter((item) => item !== pending);
+		if (next.length) this.pendingContextDownloads.set(webContentsId, next);
+		else this.pendingContextDownloads.delete(webContentsId);
 	}
 
 	private ensureView(
@@ -3625,40 +3838,112 @@ export class UserBrowserService {
 		});
 		webContents.on("context-menu", (_event, params) => {
 			const template: Electron.MenuItemConstructorOptions[] = [];
-			if (params.linkURL && safePageUrl(params.linkURL)) {
+			const imageURL = params.hasImageContents
+				? safePageUrl(params.srcURL)?.toString()
+				: undefined;
+			const linkURL = safePageUrl(params.linkURL)?.toString();
+			const addSeparator = () => {
+				if (template.length && template.at(-1)?.type !== "separator")
+					template.push({ type: "separator" });
+			};
+
+			if (params.hasImageContents) {
+				if (imageURL) {
+					template.push(
+						{
+							label: "Open Image in New Tab",
+							click: () => void this.createTab(imageURL, true),
+						},
+						{
+							label: "Save Image As…",
+							click: () =>
+								void this.saveContextResource(
+									tab.id,
+									imageURL,
+									params.suggestedFilename,
+									"image",
+								).catch(() => undefined),
+						},
+					);
+				}
+				template.push({
+					label: "Copy Image",
+					click: () => {
+						const current = liveWebContents(webContents);
+						if (current) current.copyImageAt(params.x, params.y);
+					},
+				});
+				if (imageURL) {
+					template.push({
+						label: "Copy Image Address",
+						click: () => clipboard.writeText(imageURL),
+					});
+				}
+				addSeparator();
+			}
+
+			if (linkURL && linkURL !== imageURL) {
 				template.push(
 					{
 						label: "Open Link in New Tab",
-						click: () => void this.createTab(params.linkURL, true),
+						click: () => void this.createTab(linkURL, true),
+					},
+					{
+						label: "Save Link As…",
+						click: () =>
+							void this.saveContextResource(
+								tab.id,
+								linkURL,
+								params.suggestedFilename,
+								"link",
+							).catch(() => undefined),
 					},
 					{
 						label: "Copy Link",
-						click: () => clipboard.writeText(params.linkURL),
+						click: () => clipboard.writeText(linkURL),
 					},
-					{ type: "separator" },
 				);
+				addSeparator();
 			}
-			if (params.hasImageContents && params.srcURL && safePageUrl(params.srcURL)) {
-				template.push(
-					{
-						label: "Open Image in New Tab",
-						click: () => void this.createTab(params.srcURL, true),
-					},
-					{
-						label: "Copy Image Address",
-						click: () => clipboard.writeText(params.srcURL),
-					},
-					{ type: "separator" },
-				);
+
+			const mediaURL = safePageUrl(params.srcURL)?.toString();
+			if (
+				mediaURL &&
+				!params.hasImageContents &&
+				(params.mediaType === "audio" || params.mediaType === "video")
+			) {
+				const mediaType = params.mediaType === "audio" ? "audio" : "video";
+				template.push({
+					label: `Save ${mediaType === "audio" ? "Audio" : "Video"} As…`,
+					click: () =>
+						void this.saveContextResource(
+							tab.id,
+							mediaURL,
+							params.suggestedFilename,
+							mediaType,
+						).catch(() => undefined),
+				});
+				if (mediaType === "video") {
+					template.push({
+						label: "Copy Video Frame",
+						click: () => {
+							const current = liveWebContents(webContents);
+							if (current) current.copyVideoFrameAt(params.x, params.y);
+						},
+					});
+				}
+				addSeparator();
 			}
-			if (params.isEditable)
+
+			if (params.isEditable) {
 				template.push(
 					{ role: "cut" },
 					{ role: "copy" },
 					{ role: "paste" },
 					{ role: "selectAll" },
 				);
-			else if (params.selectionText) {
+				addSeparator();
+			} else if (params.selectionText) {
 				template.push({ role: "copy" });
 				const query = params.selectionText.trim().slice(0, 200);
 				if (query) {
@@ -3667,9 +3952,10 @@ export class UserBrowserService {
 						click: () => void this.createTab(query, true),
 					});
 				}
+				addSeparator();
 			}
+
 			template.push(
-				...(template.length ? [{ type: "separator" } as const] : []),
 				{
 					label: "Back",
 					enabled: tab.canGoBack,
@@ -3699,8 +3985,49 @@ export class UserBrowserService {
 					label: "Print…",
 					click: () => this.printTab(tab.id),
 				},
+				{
+					label: "Screenshot",
+					click: () => this.onCommand?.("save-screenshot"),
+				},
+				{
+					label: "More tools",
+					submenu: [
+						{
+							label: "Find in page",
+							accelerator: "CommandOrControl+F",
+							click: () => this.onCommand?.("find-in-page"),
+						},
+						{ type: "separator" },
+						{
+							label: "Downloads",
+							accelerator: "CommandOrControl+J",
+							click: () => this.onCommand?.("open-downloads"),
+						},
+						{
+							label: "Bookmarks",
+							accelerator: "CommandOrControl+Shift+D",
+							click: () => this.onCommand?.("open-bookmarks"),
+						},
+						{
+							label: "Settings",
+							accelerator: "CommandOrControl+,",
+							click: () => this.onCommand?.("open-settings"),
+						},
+						{
+							label: "Command Center",
+							accelerator: "CommandOrControl+K",
+							click: () => this.onCommand?.("open-commands"),
+						},
+						{
+							label: "Keyboard shortcuts",
+							accelerator: "CommandOrControl+/",
+							click: () => this.onCommand?.("show-shortcuts"),
+						},
+					],
+				},
 				...(this.allowDevTools
 					? [
+							{ type: "separator" } as const,
 							{
 								label: "Inspect",
 								click: () => this.openDevTools(tab.id),
@@ -4232,11 +4559,7 @@ export class UserBrowserService {
 	}
 
 	private availableDownloadName(original: string, id: string): string {
-		const cleaned =
-			basename(original)
-				.replace(/[^A-Za-z0-9 ._()-]/g, "-")
-				.replace(/^\.+/, "")
-				.slice(0, 180) || `${id}.download`;
+		const cleaned = safeDownloadFilename(original, `${id}.download`);
 		const extension = extname(cleaned);
 		const stem = cleaned.slice(0, cleaned.length - extension.length);
 		let candidate = cleaned;

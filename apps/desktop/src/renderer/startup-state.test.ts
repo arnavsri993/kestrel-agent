@@ -31,6 +31,19 @@ describe("desktop startup state", () => {
 		expect(state.selectedSessionId).toBeNull();
 	});
 
+	it("records a rejected session list separately from a rejected workspace snapshot", async () => {
+		const workspace = { productName: "Kestrel" } as WorkspaceSnapshot;
+		const state = await loadInitialDesktopState(async (request) => {
+			if (request.type === "snapshot")
+				return { ok: true, snapshot: workspace } as CoreResponse;
+			return { ok: false, error: "runtime unavailable" } as CoreResponse;
+		});
+
+		expect(state.snapshot).toBe(workspace);
+		expect(state.sessions).toEqual([]);
+		expect(state.sessionsLoadError).toBe("runtime unavailable");
+	});
+
 	it("restores only a returned, non-forgotten selected conversation", async () => {
 		const workspace = { productName: "Kestrel" } as WorkspaceSnapshot;
 		const sessions = [

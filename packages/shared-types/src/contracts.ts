@@ -677,6 +677,36 @@ export const RuntimeSessionSchema = z.object({
 });
 export type RuntimeSession = z.infer<typeof RuntimeSessionSchema>;
 
+/**
+ * Durable context shared by one root session and its delegated descendants.
+ * This is intentionally a separate contract from Life -> Memory: group
+ * memory belongs to the agent system that created it and must not become
+ * user-wide context by accident.
+ */
+export const AgentGroupMemoryRecordSchema = z.object({
+	id: z.string().min(1),
+	groupId: z.string().min(1),
+	content: z.string().min(1).max(100_000),
+	sourceSessionId: z.string().min(1),
+	sourceType: z.string().min(1).max(200),
+	importance: z.number().min(0).max(1),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+});
+export type AgentGroupMemoryRecord = z.infer<
+	typeof AgentGroupMemoryRecordSchema
+>;
+
+export const AgentGroupMemoryStatusSchema = z.object({
+	groupId: z.string().min(1),
+	groupName: z.string().min(1).max(200),
+	memoryCount: z.number().int().nonnegative(),
+	memories: z.array(AgentGroupMemoryRecordSchema).max(200),
+});
+export type AgentGroupMemoryStatus = z.infer<
+	typeof AgentGroupMemoryStatusSchema
+>;
+
 export const MemoryRecallReceiptSchema = z.object({
 	memoryCount: z.number().int().nonnegative(),
 	preferenceCount: z.number().int().nonnegative(),
@@ -696,6 +726,7 @@ export const RuntimeMessageSchema = z.object({
 				id: z.string().min(1),
 				name: z.string().min(1),
 				arguments: z.record(z.string(), z.unknown()),
+				thoughtSignature: z.string().min(1).optional(),
 			}),
 		)
 		.optional(),
@@ -791,6 +822,7 @@ export const RuntimeToolCategorySchema = z.enum([
 	"execution",
 	"web",
 	"browser",
+	"ui",
 	"connector",
 	"memory",
 	"session",
@@ -837,6 +869,218 @@ export const RuntimeToolExecutionSchema = z.object({
 	completedAt: z.string().datetime().optional(),
 });
 export type RuntimeToolExecution = z.infer<typeof RuntimeToolExecutionSchema>;
+
+/**
+ * Whole-desktop computer use is a separate, opt-in capability. Keeping the
+ * preference and the native permission probe in a shared contract lets the
+ * renderer show the exact state enforced by the main process.
+ */
+export const ComputerUseSettingsSchema = z.strictObject({
+	version: z.literal(1).default(1),
+	enabled: z.boolean().default(false),
+});
+export type ComputerUseSettings = z.infer<typeof ComputerUseSettingsSchema>;
+
+export const ComputerUsePermissionStateSchema = z.enum([
+	"granted",
+	"not-determined",
+	"denied",
+	"restricted",
+	"not-granted",
+	"unavailable",
+	"unknown",
+]);
+export type ComputerUsePermissionState = z.infer<
+	typeof ComputerUsePermissionStateSchema
+>;
+
+export const ComputerUseStatusSchema = z.strictObject({
+	enabled: z.boolean(),
+	platform: z.string().min(1).max(100),
+	screenRecording: ComputerUsePermissionStateSchema,
+	accessibility: ComputerUsePermissionStateSchema,
+	captureReady: z.boolean(),
+	controlReady: z.boolean(),
+	checkedAt: z.string().datetime(),
+});
+export type ComputerUseStatus = z.infer<typeof ComputerUseStatusSchema>;
+
+const PresentationTextSchema = z
+	.string()
+	.max(2_000)
+	.refine((value) => !/[\u0000-\u001f\u007f]/.test(value), {
+		message: "Presentation text cannot contain control characters.",
+	});
+
+const SENSITIVE_PRESENTATION_URL_PARAMETER =
+	/(?:access_?token|api_?key|auth(?:entication|orization)?(?:_?token|_?code)?|client_?secret|code|credential|jwt|password|refresh_?token|secret|session(?:_?id|_?token)?|sig(?:nature)?|ticket|token)/i;
+
+function isSensitivePresentationUrlParameter(value: string): boolean {
+	const normalized = value
+		.normalize("NFKC")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "_");
+	return SENSITIVE_PRESENTATION_URL_PARAMETER.test(`_${normalized}_`);
+}
+
+function hasSensitivePresentationUrlData(value: string): boolean {
+	try {
+		const url = new URL(value);
+		if (url.username || url.password) return true;
+		for (const key of url.searchParams.keys()) {
+			if (isSensitivePresentationUrlParameter(key)) return true;
+		}
+		const fragment = url.hash.slice(1);
+		return Boolean(
+			fragment && isSensitivePresentationUrlParameter(fragment),
+		);
+	} catch {
+		return true;
+	}
+}
+
+export const PresentationLinkSchema = z
+	.strictObject({
+		label: z.string().min(1).max(160),
+		url: z
+			.string()
+			.url()
+			.max(8_192)
+			.refine(
+				(value) => {
+					try {
+						const url = new URL(value);
+						return (
+							(url.protocol === "http:" || url.protocol === "https:") &&
+							!hasSensitivePresentationUrlData(value)
+						);
+					} catch {
+						return false;
+					}
+				},
+				"Presentation links must be credential-free HTTP(S) URLs.",
+			),
+	})
+	.refine((value) => !/[\u0000-\u001f\u007f]/.test(value.label), {
+		message: "Presentation link labels cannot contain control characters.",
+	});
+export type PresentationLink = z.infer<typeof PresentationLinkSchema>;
+
+const PresentationSourcesSchema = z.array(PresentationLinkSchema).max(12).default([]);
+
+const UIPresentationListItemSchema = z.strictObject({
+	title: z.string().min(1).max(300),
+	summary: PresentationTextSchema.optional(),
+	details: z.array(PresentationTextSchema.max(500)).max(8).default([]),
+	badge: z.string().min(1).max(80).optional(),
+	price: z.string().min(1).max(120).optional(),
+	availability: z.string().min(1).max(160).optional(),
+	links: z.array(PresentationLinkSchema).max(4).default([]),
+});
+export type UIPresentationListItem = z.infer<typeof UIPresentationListItemSchema>;
+
+export const UIPresentationListRequestSchema = z.strictObject({
+	kind: z.literal("list"),
+	title: z.string().min(1).max(300),
+	description: PresentationTextSchema.optional(),
+	items: z.array(UIPresentationListItemSchema).min(1).max(24),
+	sources: PresentationSourcesSchema,
+});
+
+const UIPresentationComparisonColumnSchema = z.strictObject({
+	key: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+	label: z.string().min(1).max(160),
+});
+const UIPresentationComparisonRowSchema = z.strictObject({
+	label: z.string().min(1).max(200),
+	values: z.array(PresentationTextSchema.max(500)).min(1).max(6),
+});
+
+export const UIPresentationComparisonRequestSchema = z
+	.strictObject({
+		kind: z.literal("comparison"),
+		title: z.string().min(1).max(300),
+		description: PresentationTextSchema.optional(),
+		columns: z.array(UIPresentationComparisonColumnSchema).min(2).max(6),
+		rows: z.array(UIPresentationComparisonRowSchema).min(1).max(24),
+		sources: PresentationSourcesSchema,
+	})
+	.refine(
+		(value) => value.rows.every((row) => row.values.length === value.columns.length),
+		{
+			path: ["rows"],
+			message: "Each comparison row must provide one value per column.",
+		},
+	);
+
+const UIPresentationPlanStepSchema = z.strictObject({
+	title: z.string().min(1).max(300),
+	description: PresentationTextSchema.optional(),
+	status: z.enum(["pending", "in_progress", "complete", "blocked"]),
+	links: z.array(PresentationLinkSchema).max(4).default([]),
+});
+
+export const UIPresentationPlanRequestSchema = z.strictObject({
+	kind: z.literal("plan"),
+	title: z.string().min(1).max(300),
+	description: PresentationTextSchema.optional(),
+	steps: z.array(UIPresentationPlanStepSchema).min(1).max(12),
+	sources: PresentationSourcesSchema,
+});
+
+const UIPresentationFactSchema = z.strictObject({
+	label: z.string().min(1).max(160),
+	value: PresentationTextSchema.max(500),
+});
+
+export const UIPresentationResultRequestSchema = z.strictObject({
+	kind: z.literal("result"),
+	title: z.string().min(1).max(300),
+	description: PresentationTextSchema.optional(),
+	status: z.enum(["info", "success", "warning"]).default("info"),
+	summary: PresentationTextSchema.min(1),
+	facts: z.array(UIPresentationFactSchema).max(12).default([]),
+	links: z.array(PresentationLinkSchema).max(8).default([]),
+	sources: PresentationSourcesSchema,
+});
+
+export const UIPresentationRequestSchema = z.discriminatedUnion("kind", [
+	UIPresentationListRequestSchema,
+	UIPresentationComparisonRequestSchema,
+	UIPresentationPlanRequestSchema,
+	UIPresentationResultRequestSchema,
+]);
+export type UIPresentationRequest = z.infer<typeof UIPresentationRequestSchema>;
+
+const UIPresentationEnvelopeFields = {
+	id: z.string().regex(/^presentation-[a-f0-9-]{36}$/),
+	createdAt: z.string().datetime(),
+	trust: z.literal("local_bounded"),
+};
+
+export const UIPresentationListSchema = UIPresentationListRequestSchema.extend(
+	UIPresentationEnvelopeFields,
+);
+export const UIPresentationComparisonSchema =
+	UIPresentationComparisonRequestSchema.extend(UIPresentationEnvelopeFields);
+export const UIPresentationPlanSchema = UIPresentationPlanRequestSchema.extend(
+	UIPresentationEnvelopeFields,
+);
+export const UIPresentationResultSchema = UIPresentationResultRequestSchema.extend(
+	UIPresentationEnvelopeFields,
+);
+export const UIPresentationSchema = z.discriminatedUnion("kind", [
+	UIPresentationListSchema,
+	UIPresentationComparisonSchema,
+	UIPresentationPlanSchema,
+	UIPresentationResultSchema,
+]);
+export type UIPresentation = z.infer<typeof UIPresentationSchema>;
+
+export const UIPresentationOutputSchema = z.strictObject({
+	presentation: UIPresentationSchema,
+});
+export type UIPresentationOutput = z.infer<typeof UIPresentationOutputSchema>;
 
 export const ActionReceiptSchema = z.strictObject({
 	id: z.string().min(1).max(300),
@@ -922,6 +1166,7 @@ export const RuntimeEventSchema = z.object({
 		"tool.started",
 		"tool.progress",
 		"tool.completed",
+		"group-memory.updated",
 	]),
 	sessionId: z.string().min(1),
 	executionId: z.string().min(1).optional(),
@@ -1953,6 +2198,10 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({ type: z.literal("runtime-list-sessions") }),
 	z.object({
+		type: z.literal("agent-group-memory-list"),
+		sessionId: z.string().min(1),
+	}),
+	z.object({
 		type: z.literal("runtime-create-session"),
 		title: z.string().min(1).max(200),
 		workspaceRoot: z.string().min(1).optional(),
@@ -2591,6 +2840,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		delegationRouting: DelegatedWorkerRouteSchema.optional(),
 		sessions: z.array(RuntimeSessionSchema).optional(),
 		selectedSessionId: z.string().min(1).nullable().optional(),
+		groupMemory: AgentGroupMemoryStatusSchema.optional(),
 		session: RuntimeSessionSchema.optional(),
 		tools: z.array(RuntimeToolDescriptorSchema).optional(),
 		execution: RuntimeToolExecutionSchema.optional(),
@@ -3519,11 +3769,15 @@ export const UserBrowserCommandSchema = z.enum([
 	"reopen-closed-tab",
 	"find-in-page",
 	"print-page",
+	"save-screenshot",
 ]);
 export type UserBrowserCommand = z.infer<typeof UserBrowserCommandSchema>;
 
 export const WindowFocusStateSchema = z.boolean();
 export type WindowFocusState = z.infer<typeof WindowFocusStateSchema>;
+
+export const BrowserWindowRoleSchema = z.enum(["main", "detached"]);
+export type BrowserWindowRole = z.infer<typeof BrowserWindowRoleSchema>;
 
 export const KestrelDeepLinkSchema = z
 	.string()
@@ -3747,6 +4001,10 @@ export const RendererRequestSchema = z.union([
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({
+		type: z.literal("browser-reattach-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.literal("browser-find-in-page"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 		query: z.string().max(2_000),
@@ -3805,6 +4063,15 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("browser-sleep-inactive-tabs") }),
 	z.object({ type: z.literal("get-system-state") }),
+	z.object({ type: z.literal("computer-use-status") }),
+	z.object({
+		type: z.literal("computer-use-update"),
+		enabled: z.boolean(),
+	}),
+	z.object({
+		type: z.literal("computer-use-open-settings"),
+		surface: z.enum(["screen-recording", "accessibility"]),
+	}),
 	z.object({ type: z.literal("get-default-browser-status") }),
 	z.object({ type: z.literal("set-default-browser") }),
 	z.object({ type: z.literal("set-launch-at-login"), enabled: z.boolean() }),
@@ -4077,6 +4344,7 @@ export type RendererResponse =
 	| {
 			ok: true;
 			browserState: UserBrowserState;
+			browserWindowRole?: BrowserWindowRole;
 			cancelled?: boolean;
 			bookmarkFolderId?: UserBrowserBookmarkFolderId;
 	  }
@@ -4137,6 +4405,7 @@ export type RendererResponse =
 	  }
 	| { ok: true; localRuntime: LocalRuntimeStatus }
 	| { ok: true; systemReadiness: SystemReadiness }
+	| { ok: true; computerUseStatus: ComputerUseStatus }
 	| { ok: true; diagnosticReportPath: string; cancelled?: boolean }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }

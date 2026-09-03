@@ -44,8 +44,14 @@ function content(message: ModelMessage): Record<string, unknown> {
 		};
 	}
 	const parts = message.content.map(part);
-	for (const call of message.toolCalls ?? [])
-		parts.push({ functionCall: { name: call.name, args: call.arguments } });
+	for (const call of message.toolCalls ?? []) {
+		parts.push({
+			functionCall: { name: call.name, args: call.arguments },
+			...(call.thoughtSignature
+				? { thoughtSignature: call.thoughtSignature }
+				: {}),
+		});
+	}
 	return { role: message.role === "assistant" ? "model" : "user", parts };
 }
 
@@ -192,6 +198,9 @@ export class GeminiGenerateContentProvider implements ModelProvider {
 						!Array.isArray(call.args)
 							? (call.args as Record<string, unknown>)
 							: {},
+					...(typeof item.thoughtSignature === "string" && item.thoughtSignature
+						? { thoughtSignature: item.thoughtSignature }
+						: {}),
 				},
 			];
 		});

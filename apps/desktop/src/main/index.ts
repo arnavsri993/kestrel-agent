@@ -40,6 +40,7 @@ import {
 	type BrowserTabFolderName,
 	type BrowserTabFolderNamingGroup,
 	type AgentState,
+	type ComputerUseStatus,
   type BackgroundJobsEvent,
   type CommunicationCodeCandidate,
   type CommunicationCodeScan,
@@ -137,6 +138,10 @@ import {
 } from "./macos-integration";
 import { installMacFileIconCrashGuard } from "./mac-file-icon-guard";
 import { shouldUseRealKeychain } from "./secure-storage-policy";
+import {
+	COMPUTER_USE_SETTINGS_FILE,
+	ComputerUseManager,
+} from "./computer-use";
 
 // Stable releases use the real Keychain. Development and automated profiles
 // use an isolated mock because ad-hoc signatures cannot retain durable access.
@@ -179,6 +184,7 @@ const pendingExternalIntakes: Array<{
 	targetWindow?: BrowserWindow;
 }> = [];
 const browserService = new ElectronBrowserService();
+let computerUseManagerInstance: ComputerUseManager | null = null;
 let userBrowserService: UserBrowserService | null = null;
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
 interface CalculatorAnchorBounds {
@@ -541,10 +547,17 @@ const DEVELOPMENT_RENDERER_URL = trustedDevelopmentRendererUrl(
   RAW_DEVELOPMENT_RENDERER_URL,
 );
 const isPackagedKestrelApp = isPackagedKestrelRuntime(
-  app.isPackaged,
-  process.env.NODE_ENV_ELECTRON_VITE,
+	app.isPackaged,
+	process.env.NODE_ENV_ELECTRON_VITE,
 );
 const execFileAsync = promisify(execFile);
+
+function computerUseManager(): ComputerUseManager {
+	return (computerUseManagerInstance ??= new ComputerUseManager(
+		join(app.getPath("userData"), COMPUTER_USE_SETTINGS_FILE),
+	));
+}
+
 let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
@@ -1857,13 +1870,34 @@ function detachedBrowserState(
   return state;
 }
 
+function detachedBrowserWindowBounds(): {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+} {
+	const width = 1320;
+	const height = 860;
+	const cursor = screen.getCursorScreenPoint();
+	const workArea = screen.getDisplayNearestPoint(cursor).workArea;
+	const clamp = (value: number, minimum: number, maximum: number) =>
+		Math.round(Math.max(minimum, Math.min(value, maximum)));
+	return {
+		// Put the new tab strip under the pointer instead of letting the OS pick
+		// an unrelated default window location.
+		x: clamp(cursor.x - 180, workArea.x, workArea.x + workArea.width - width),
+		y: clamp(cursor.y - 20, workArea.y, workArea.y + workArea.height - height),
+		width,
+		height,
+	};
+}
+
 function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
 ): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1320,
-    height: 860,
+    ...detachedBrowserWindowBounds(),
     minWidth: 920,
     minHeight: 680,
     show: false,
@@ -2253,11 +2287,13 @@ async function initializeCore(
     (await new ExternalSecretManager(userData, broker)
       .resolveEnabled()
       .catch(() => ({ values: {}, overrideStoredIds: [] })));
-  const secureEnvironment = await broker.providerEnvironment(
-    process.env,
-    external,
-  );
-  const preferences = await readRuntimePreferences();
+	const secureEnvironment = await broker.providerEnvironment(
+		process.env,
+		external,
+	);
+	const computerUseSettings = await computerUseManager().load();
+	browserService.setComputerUseEnabled(computerUseSettings.enabled);
+	const preferences = await readRuntimePreferences();
   const codexPath = detectedSubscriptionCli("codex");
   if (
     codexPath &&
@@ -2712,7 +2748,11 @@ function registerIpc(): void {
 	if (request.type === "browser-get-state") {
 		if (!requestBrowserService)
 			throw new Error("The visible user browser is unavailable.");
-		return { ok: true, browserState: requestBrowserService.getState() };
+		return {
+			ok: true,
+			browserState: requestBrowserService.getState(),
+			browserWindowRole: senderWindow === mainWindow ? "main" : "detached",
+		};
 	}
 	if (request.type === "browser-open-file-tabs") {
 		if (!requestBrowserService)
@@ -3143,14 +3183,12 @@ function registerIpc(): void {
         browserState: await requestBrowserService.applyTabOrganization(request),
       };
     }
-    if (request.type === "browser-detach-tab") {
-      if (!requestBrowserService)
-        throw new Error("The visible user browser is unavailable.");
-      const sourceState = requestBrowserService.getState();
-      const tab = sourceState.tabs.find((candidate) => candidate.id === request.tabId);
-      if (!tab || !tab.url || tab.error || tab.url.startsWith("kestrel://"))
-        throw new Error("Only loaded web pages can open in a separate window.");
-      const detachedWindow = createDetachedBrowserWindow(sourceState, tab);
+	if (request.type === "browser-detach-tab") {
+		if (!requestBrowserService)
+			throw new Error("The visible user browser is unavailable.");
+		const sourceState = requestBrowserService.getState();
+		const tab = requestBrowserService.getTabForTransfer(request.tabId);
+		const detachedWindow = createDetachedBrowserWindow(sourceState, tab);
       try {
         const browserState = await requestBrowserService.detachTab(request.tabId);
         return { ok: true, browserState };
@@ -3158,6 +3196,35 @@ function registerIpc(): void {
         if (!detachedWindow.isDestroyed()) detachedWindow.close();
         throw cause;
       }
+    }
+    if (request.type === "browser-reattach-tab") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      if (senderWindow === mainWindow)
+        throw new Error("This tab is already in the main Kestrel window.");
+      if (!mainWindow || mainWindow.isDestroyed())
+        throw new Error("The main Kestrel window is unavailable.");
+      const targetService = browserServiceForWindow(mainWindow);
+      if (!targetService)
+        throw new Error("The main Kestrel window is unavailable.");
+      const tab = requestBrowserService.getTabForTransfer(request.tabId);
+      let imported = false;
+      try {
+        await targetService.importTabForTransfer(tab);
+        imported = true;
+        await requestBrowserService.removeTabForTransfer(request.tabId);
+      } catch (cause) {
+        if (imported)
+          await targetService.removeTabForTransfer(tab.id).catch(() => undefined);
+        throw cause;
+      }
+      mainWindow.show();
+      mainWindow.focus();
+      return {
+        ok: true,
+        browserState: requestBrowserService.getState(),
+        browserWindowRole: "detached",
+      };
     }
     if (request.type === "browser-find-in-page") {
       if (!requestBrowserService)
@@ -3200,9 +3267,9 @@ function registerIpc(): void {
       };
     }
     if (request.type === "browser-save-screenshot") {
-      if (!userBrowserService)
+      if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      const tab = userBrowserService
+      const tab = requestBrowserService
         .getState()
         .tabs.find((candidate) => candidate.id === request.tabId);
       const title = (tab?.title ?? "Kestrel page")
@@ -3223,7 +3290,7 @@ function registerIpc(): void {
       const filePath = result.filePath.toLowerCase().endsWith(".png")
         ? result.filePath
         : `${result.filePath}.png`;
-      const frame = await userBrowserService.screenshot(request.tabId);
+      const frame = await requestBrowserService.screenshot(request.tabId);
       if (!frame.png) throw new Error("The page screenshot was empty.");
       await writeFile(filePath, frame.png);
       return { ok: true, screenshotPath: filePath };
@@ -3297,6 +3364,24 @@ function registerIpc(): void {
         ok: true,
         browserState: requestBrowserService.sleepInactiveTabs(),
       };
+    }
+    if (request.type === "computer-use-status") {
+      const computerUseStatus = await computerUseManager().status();
+      return { ok: true, computerUseStatus };
+    }
+    if (request.type === "computer-use-update") {
+      const settings = await computerUseManager().setEnabled(request.enabled);
+      browserService.setComputerUseEnabled(settings.enabled);
+      const computerUseStatus = await computerUseManager().status();
+      return { ok: true, computerUseStatus };
+    }
+    if (request.type === "computer-use-open-settings") {
+      if (process.platform !== "darwin")
+        throw new Error("macOS Privacy & Security settings are unavailable on this platform.");
+      const settingsUrl = ComputerUseManager.settingsUrl(request.surface);
+      if (!settingsUrl) throw new Error("The requested macOS permission surface is unavailable.");
+      await shell.openExternal(settingsUrl);
+      return { ok: true };
     }
     if (request.type === "get-system-state") {
       const state = app.getLoginItemSettings();
@@ -3453,6 +3538,21 @@ function registerIpc(): void {
             ? "pass"
             : "warning",
         detail: `Microphone ${microphone}; screen recording ${screen}; Accessibility ${accessibility ? "granted" : "not granted"}. Kestrel asks only when a task needs them.`,
+      });
+      const computerUseStatus: ComputerUseStatus = await computerUseManager().status();
+      const computerUseReady =
+        computerUseStatus.enabled &&
+        computerUseStatus.captureReady &&
+        computerUseStatus.controlReady;
+      checks.push({
+        id: "computer-use",
+        label: "Whole-desktop computer use",
+        status: computerUseReady ? "pass" : "warning",
+        detail: !computerUseStatus.enabled
+          ? "Disabled by default. Enable it in Settings → Agent → Permissions & sandbox before Kestrel can capture or control other apps."
+          : computerUseReady
+            ? "Enabled with Screen Recording and Accessibility permission."
+            : `Enabled, but native permissions are incomplete: Screen Recording ${computerUseStatus.screenRecording}; Accessibility ${computerUseStatus.accessibility}.`,
       });
       const backupMetadataPath = join(
         app.getPath("userData"),

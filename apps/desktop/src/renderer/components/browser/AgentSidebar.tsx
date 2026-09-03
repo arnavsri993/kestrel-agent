@@ -11,6 +11,7 @@ import { agentWorkspaceName } from "../../agent-workspace";
 import { sessionTitleForDisplay } from "../../chat-title";
 import {
 	clampAgentPanelWidth,
+	handoffSpringVelocity,
 	projectedPanelWidth,
 	springStep,
 } from "../../motion-contract";
@@ -256,7 +257,9 @@ export function AgentSidebar({
 			? 0
 			: clampAgentPanelWidth(panelWidth, window.innerWidth);
 		const start = interrupted?.position ?? (wasCollapsed ? 0 : panelWidth);
-		let velocity = interrupted?.velocity ?? 0;
+		let velocity = interrupted
+			? handoffSpringVelocity(start, interrupted.velocity, target)
+			: 0;
 
 		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
 			root.style.removeProperty("--agent-panel-presented-width");

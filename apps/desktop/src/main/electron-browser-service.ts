@@ -158,6 +158,15 @@ export async function waitForBrowserPostClickFrame(
 export class ElectronBrowserService {
 	private readonly sessions = new Map<string, BrowserRecord>();
 	private readonly elementRefs = new Map<string, Map<string, number>>();
+	private computerUseEnabled = false;
+
+	setComputerUseEnabled(enabled: boolean): void {
+		this.computerUseEnabled = enabled;
+	}
+
+	isComputerUseEnabled(): boolean {
+		return this.computerUseEnabled;
+	}
 
 	async handle(
 		request: AutomationBrowserBackendWireRequest,
@@ -662,8 +671,13 @@ export class ElectronBrowserService {
 	private async desktopScreenshot(
 		signal: AbortSignal,
 	): Promise<ScreenshotFrame> {
+		this.assertComputerUseEnabled();
 		if (signal.aborted) throw signal.reason;
-		if (systemPreferences.getMediaAccessStatus("screen") === "denied")
+		if (process.platform !== "darwin")
+			throw new Error(
+				"Whole-desktop computer use is available only on macOS.",
+			);
+		if (systemPreferences.getMediaAccessStatus("screen") !== "granted")
 			throw new Error(
 				"macOS Screen Recording permission is required for whole-desktop capture.",
 			);
@@ -692,8 +706,13 @@ export class ElectronBrowserService {
 		action: DesktopAction,
 		signal: AbortSignal,
 	): Promise<void> {
+		this.assertComputerUseEnabled();
 		if (signal.aborted) throw signal.reason;
-		if (!systemPreferences.isTrustedAccessibilityClient(true))
+		if (process.platform !== "darwin")
+			throw new Error(
+				"Whole-desktop computer use is available only on macOS.",
+			);
+		if (!systemPreferences.isTrustedAccessibilityClient(false))
 			throw new Error(
 				"macOS Accessibility permission is required for whole-desktop control.",
 			);
@@ -735,6 +754,13 @@ export class ElectronBrowserService {
 			signal.addEventListener("abort", abort, { once: true });
 			child.once("exit", () => signal.removeEventListener("abort", abort));
 		});
+	}
+
+	private assertComputerUseEnabled(): void {
+		if (!this.computerUseEnabled)
+			throw new Error(
+				"Whole-desktop computer use is disabled. Enable it in Settings → Agent → Permissions & sandbox.",
+			);
 	}
 
 	private async close(id: string): Promise<void> {

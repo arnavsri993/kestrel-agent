@@ -142,6 +142,9 @@ async function launch() {
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
+	// Keep ambient star drift and transition timing deterministic while still
+	// exercising the live Agent Universe surface and its pointer interactions.
+	await page.emulateMedia({ reducedMotion: "reduce" });
 	return page;
 }
 
@@ -354,6 +357,7 @@ async function assertBrowserChromeLayout({
 			horizontalTabs: bounds(".browser-tab-row-horizontal"),
 			verticalTabs: bounds(".browser-tab-row-vertical"),
 			toolbar: bounds(".browser-toolbar"),
+			address: bounds(".browser-address"),
 			bookmarks: bounds(".browser-bookmarks-bar"),
 			kestrel: bounds(".kestrel-sidebar"),
 			recommendations: bounds(".kestrel-widget-canvas"),
@@ -372,7 +376,13 @@ async function assertBrowserChromeLayout({
 	assert(layout.app);
 	assert(tabs);
 	assert(layout.toolbar);
+	assert(layout.address);
 	assert(layout.viewport);
+	assert.equal(
+		layout.toolbar.height,
+		40,
+		"Browser toolbar should use the compact 40px row.",
+	);
 	assert.equal(
 		Boolean(layout.kestrel),
 		sidebarVisible,
@@ -408,6 +418,15 @@ async function assertBrowserChromeLayout({
 	} else {
 		assert.equal(tabs.x, layout.app.x);
 		assert.equal(tabs.width, layout.app.width);
+		const toolbarCenter = layout.toolbar.x + layout.toolbar.width / 2;
+		const addressCenter = layout.address.x + layout.address.width / 2;
+		assert(
+			Math.abs(addressCenter - toolbarCenter) <= 2,
+			`Address field should be centered in the horizontal toolbar: ${JSON.stringify({
+				address: layout.address,
+				toolbar: layout.toolbar,
+			})}`,
+		);
 	}
 	assert.equal(layout.toolbar.x, layout.app.x);
 	assert.equal(layout.toolbar.width, layout.app.width);
@@ -721,13 +740,44 @@ try {
 	const addedBlankTab = state.activeTabId;
 	assert(addedBlankTab);
 	const horizontalTabs = page.getByRole("tab");
+	const tabRail = page.locator(".browser-tabs");
 	await horizontalTabs.nth(1).waitFor();
-	const roomierTabWidths = await tabList
+	const lowCountTabWidths = await tabList
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	const lowCountRailMetrics = await tabRail.evaluate((node) => {
+		const tabs = [...node.querySelectorAll(".browser-tab")];
+		const first = tabs[0]?.getBoundingClientRect();
+		const last = tabs.at(-1)?.getBoundingClientRect();
+		const rail = node.getBoundingClientRect();
+		const newTab = document.querySelector(".browser-new-tab")?.getBoundingClientRect();
+		const dragFill = document
+			.querySelector(".browser-tab-drag-fill")
+			?.getBoundingClientRect();
+		return {
+			clientWidth: node.clientWidth,
+			scrollWidth: node.scrollWidth,
+			firstLeft: first?.left ?? null,
+			lastRight: last?.right ?? null,
+			railLeft: rail.left,
+			railRight: rail.right,
+			newTabLeft: newTab?.left ?? null,
+			dragFillWidth: dragFill?.width ?? null,
+		};
+	});
 	assert(
-		roomierTabWidths.length >= 2 && roomierTabWidths.every((width) => width >= 160),
-		`Ordinary tabs collapsed to their minimum instead of using available chrome: ${JSON.stringify(roomierTabWidths)}`,
+		lowCountTabWidths.length >= 2 &&
+			lowCountTabWidths.every((width) => width > 0) &&
+			lowCountRailMetrics.scrollWidth <= lowCountRailMetrics.clientWidth + 1 &&
+			lowCountRailMetrics.firstLeft !== null &&
+			lowCountRailMetrics.lastRight !== null &&
+			Math.abs(lowCountRailMetrics.firstLeft - lowCountRailMetrics.railLeft) <= 2 &&
+			Math.abs(lowCountRailMetrics.lastRight - lowCountRailMetrics.railRight) <= 2 &&
+			lowCountRailMetrics.newTabLeft !== null &&
+			lowCountRailMetrics.newTabLeft - lowCountRailMetrics.lastRight <= 10 &&
+			lowCountRailMetrics.dragFillWidth !== null &&
+			lowCountRailMetrics.dragFillWidth <= 32,
+		`Low-count tabs left unused space in the rail: ${JSON.stringify({ lowCountTabWidths, lowCountRailMetrics })}`,
 	);
 	const crowdedTabIds = await page.evaluate(async (count) => {
 		const ids = [];
@@ -748,7 +798,6 @@ try {
 		(value) => value.tabs.length === initialTabs + 1 + crowdedTabIds.length,
 		"crowded tab fixture",
 	);
-	const tabRail = page.locator(".browser-tabs");
 	const newTabControl = page.getByRole("button", {
 		name: "New Tab",
 		exact: true,
@@ -758,8 +807,16 @@ try {
 		scrollWidth: node.scrollWidth,
 	}));
 	assert(
-		railMetrics.scrollWidth > railMetrics.clientWidth + 1,
-		`Crowded tabs collapsed instead of using the bounded tab rail: ${railMetrics.scrollWidth}px <= ${railMetrics.clientWidth}px`,
+		railMetrics.scrollWidth <= railMetrics.clientWidth + 1,
+		`Crowded tabs created a horizontal scroll target: ${railMetrics.scrollWidth}px > ${railMetrics.clientWidth}px`,
+	);
+	const crowdedTabWidths = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(
+		crowdedTabWidths.length > lowCountTabWidths.length &&
+			Math.max(...crowdedTabWidths) < Math.min(...lowCountTabWidths),
+		`Crowded tabs did not shrink relative to the low-count layout: ${JSON.stringify({ lowCountTabWidths, crowdedTabWidths })}`,
 	);
 	const railBounds = await tabRail.boundingBox();
 	const newTabBounds = await newTabControl.boundingBox();
@@ -805,8 +862,8 @@ try {
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
 	assert(widthsBeforeClose.length >= 5);
 	assert(
-		widthsBeforeClose.every((width) => width >= 110),
-		`Crowded tabs fell below the readable minimum: ${JSON.stringify(widthsBeforeClose)}`,
+		widthsBeforeClose.every((width) => width > 0),
+		`Crowded tabs collapsed to zero-width targets: ${JSON.stringify(widthsBeforeClose)}`,
 	);
 	await tabRail.locator(".browser-tab.active .browser-tab-close").click();
 	state = await waitForBrowserState(
@@ -830,12 +887,11 @@ try {
 	const widthsAfterClose = await tabRail
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
-	for (const width of widthsAfterClose) {
-		assert(
-			Math.abs(width - widthsBeforeClose[0]) <= 1.5,
-			`The still-crowded strip snapped after its close settle: ${width}px vs ${widthsBeforeClose[0]}px`,
-		);
-	}
+	assert(
+		widthsAfterClose.length === widthsBeforeClose.length - 1 &&
+			widthsAfterClose.every((width) => width > widthsBeforeClose[0] + 1),
+		`The tab strip did not refit after the close settled: ${JSON.stringify({ widthsBeforeClose, widthsAfterClose })}`,
+	);
 	const remainingCrowdedTabIds = crowdedTabIds.filter(
 		(tabId) => tabId !== lastCrowdedTabId,
 	);
@@ -1296,18 +1352,98 @@ try {
 	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
-		.getByRole("heading", { name: "Tasks", exact: true })
+		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
+	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
 	);
-	const taskRow = page.getByRole("button", {
-		name: /Visible browser test, Open/,
-	});
-	await taskRow.waitFor();
-	await taskRow.click();
-	assert.equal(await taskRow.getAttribute("aria-current"), "page");
+	const workerSessionId = await page.evaluate(async (parentSessionId) => {
+		const response = await window.kestrel.request({
+			type: "runtime-fork-session",
+			sessionId: parentSessionId,
+			title: "Visible browser worker",
+		});
+		if (!response.ok || !response.session)
+			throw new Error("A delegated runtime session could not be created.");
+		return response.session.id;
+	}, runtimeSessionId);
+	await page.locator(".agent-universe-scene").waitFor();
+	await page.locator(".agent-universe-node.is-core").first().waitFor();
+	await page.locator(`[data-node-id="${workerSessionId}"]`).waitFor();
+	const workerNode = page.locator(`[data-node-id="${workerSessionId}"]`);
+	const workerBox = await workerNode.boundingBox();
+	assert(workerBox, "The delegated worker had no visible hit area.");
+	const workerCenter = {
+		x: workerBox.x + workerBox.width / 2,
+		y: workerBox.y + workerBox.height / 2,
+	};
+	await page.mouse.move(workerCenter.x, workerCenter.y);
+	await page.mouse.down();
+	await page.mouse.move(workerCenter.x + 140, workerCenter.y - 28, { steps: 12 });
+	await page.waitForFunction(
+		(id) =>
+			document.querySelector(`[data-node-id="${id}"] .agent-universe-node-body`)
+				?.getAttribute("data-physics-dragging") === "true",
+		workerSessionId,
+	);
+	const draggedDisplacement = await page.locator(
+		`[data-node-id="${workerSessionId}"] .agent-universe-node-body`,
+	).getAttribute("data-physics-displacement");
+	assert(
+		Number(draggedDisplacement) > 0,
+		"Dragging a worker did not produce spatial displacement.",
+	);
+	await page.mouse.up();
+	await page.waitForFunction(
+		(id) => {
+			const body = document.querySelector(
+				`[data-node-id="${id}"] .agent-universe-node-body`,
+			);
+			return (
+				body?.getAttribute("data-physics-dragging") === "false" &&
+				body.getAttribute("transform") === "translate(0.00 0.00)"
+			);
+		},
+		workerSessionId,
+	);
+	await page.locator(`[data-node-id="${workerSessionId}"]`).click();
+	await page
+		.getByRole("heading", { name: "Visible browser worker", exact: true })
+		.waitFor();
+	await page
+		.getByRole("button", { name: "Close Visible browser worker context" })
+		.click();
+	assert.equal(
+		await page.getByRole("button", { name: "List", exact: true }).count(),
+		0,
+		"Agent should have one spatial surface, not a list mode",
+	);
+	await page.locator(".agent-universe-node.is-core").first().click();
+	await page.getByRole("heading", { name: "Visible browser test", exact: true }).waitFor();
+	await page.getByRole("heading", { name: "Conversation", exact: true }).waitFor();
+	assert.equal(
+		await page.locator(".agent-universe-context-surface .agent-universe-context-composer textarea").count(),
+		1,
+		"The main system should expose the primary conversation composer.",
+	);
+	assert.equal(
+		await page.getByRole("button", { name: "Review approvals", exact: true }).count(),
+		0,
+		"The Agent Universe conversation surface should not own approval actions.",
+	);
+	await page.locator(".agent-universe-context-surface textarea").fill(
+		"A short system message that should remain comfortably compact.",
+	);
+	await page.locator(".agent-universe-context-close").click();
+	await workerNode.focus();
+	await workerNode.press("Enter");
+	await page.getByRole("heading", { name: "Visible browser worker", exact: true }).waitFor();
+	await page.getByRole("button", { name: "Open task", exact: true }).click();
+	await page.waitForFunction(
+		() => document.activeElement?.id === "runtime-prompt",
+	);
 	await page.getByRole("tab", { name: /Page one/ }).first().click();
 	await waitForBrowserState(
 		(value) => {
@@ -1544,16 +1680,67 @@ try {
 	await detachedPage.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	await detachedPage.locator("#browser-address-input").waitFor();
 	assert.equal(await detachedPage.getByRole("tab", { name: "Page two", exact: true }).count(), 1);
-	await detachedPage.close();
+	const detachedPlacement = await application.evaluate(
+		({ BrowserWindow, screen }, expectedUrl) => {
+			const detached = BrowserWindow.getAllWindows().find((candidate) =>
+				candidate.contentView.children.some(
+					(child) =>
+						"webContents" in child && child.webContents.getURL() === expectedUrl,
+				),
+			);
+			return {
+				cursor: screen.getCursorScreenPoint(),
+				bounds: detached?.getBounds() ?? null,
+			};
+		},
+		`${origin}/two`,
+	);
+	assert(
+		detachedPlacement.bounds &&
+			detachedPlacement.cursor.x >= detachedPlacement.bounds.x &&
+			detachedPlacement.cursor.x <=
+				detachedPlacement.bounds.x + detachedPlacement.bounds.width &&
+			detachedPlacement.cursor.y >= detachedPlacement.bounds.y &&
+			detachedPlacement.cursor.y <=
+				detachedPlacement.bounds.y + detachedPlacement.bounds.height,
+		`Detached window did not open under the pointer: ${JSON.stringify(detachedPlacement)}`,
+	);
+	await detachedPage
+		.getByRole("button", {
+			name: "Move tab back to main window",
+			exact: true,
+		})
+		.click();
 	await waitForBrowserState(
 		(value) =>
-			value.tabs.length === sourceTabIdsBeforeDetach.length &&
+			value.tabs.length === sourceTabIdsBeforeDetach.length + 1 &&
 			sourceTabIdsBeforeDetach.every((id) =>
 				value.tabs.some((tab) => tab.id === id),
 			) &&
-			!value.tabs.some((tab) => tab.id === detachableTabId) &&
-			value.tabs.some((tab) => tab.id === tabId && tab.url === `${origin}/one`),
-		"Source browser did not retain its remaining tab after detachment",
+				value.tabs.some((tab) => tab.id === detachableTabId) &&
+				value.tabs.some((tab) => tab.id === tabId && tab.url === `${origin}/one`),
+		"Reattached tab did not return to the main browser window",
+	);
+	const detachedWindowDeadline = Date.now() + 30_000;
+	let remainingDetachedWindows = 0;
+	while (Date.now() < detachedWindowDeadline) {
+		remainingDetachedWindows = await application.evaluate(
+			({ BrowserWindow }, expectedUrl) =>
+				BrowserWindow.getAllWindows().filter((candidate) =>
+					candidate.contentView.children.some(
+						(child) =>
+							"webContents" in child && child.webContents.getURL() === expectedUrl,
+					),
+				).length,
+			`${origin}/two`,
+		);
+		if (remainingDetachedWindows === 1) break;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	assert.equal(
+		remainingDetachedWindows,
+		1,
+		"Reattaching the tab did not close its detached window",
 	);
 
 	const tabsBeforeToolPopup = (await browserState()).tabs.length;
@@ -1807,7 +1994,10 @@ try {
 			window.kestrel.request({ type: "browser-close-tab", tabId }),
 		inactiveVerticalTabId,
 	);
-	const organizationFixtureUrls = [`${origin}/two`, `${origin}/one`];
+	const organizationFixtureUrls = [
+		`${origin}/organization-two`,
+		`${origin}/organization-one`,
+	];
 	const organizationFixtureTabIds = await page.evaluate(async (urls) => {
 		const ids = [];
 		for (const input of urls) {

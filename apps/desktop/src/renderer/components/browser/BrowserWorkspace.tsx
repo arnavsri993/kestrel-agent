@@ -143,9 +143,12 @@ export function BrowserWorkspace({
     stopFindInPage,
     printTab,
     openDevTools,
+    saveScreenshot,
     moveTab,
     applyTabOrganization,
     detachTab,
+    reattachTab,
+    isDetachedWindow,
     previewOrganizeTabs,
   } = browser;
 
@@ -443,6 +446,8 @@ export function BrowserWorkspace({
         else if (command === "find-in-page") openFind();
         else if (command === "print-page" && activeTab?.url)
           void printTab(activeTab.id);
+        else if (command === "save-screenshot" && activeTab?.url)
+          void saveScreenshot(activeTab.id).catch(() => undefined);
       }),
     [
       activeTab,
@@ -457,6 +462,7 @@ export function BrowserWorkspace({
       onToggleSidebar,
       openFind,
       printTab,
+      saveScreenshot,
       reopenClosedTab,
     ],
   );
@@ -736,7 +742,12 @@ export function BrowserWorkspace({
         onDuplicate={(tabId) => void duplicateTab(tabId)}
         onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
-        onDetachTab={(tabId) => detachTab(tabId)}
+        {...(!isDetachedWindow
+          ? { onDetachTab: (tabId: string) => detachTab(tabId) }
+          : {})}
+        {...(isDetachedWindow
+          ? { onReattachTab: (tabId: string) => reattachTab(tabId) }
+          : {})}
         onReopenClosedTab={(index) => void reopenClosedTab(index)}
         recentlyClosedTabs={state.recentlyClosedTabs}
         onOrganizeTabs={openOrganizeTabs}

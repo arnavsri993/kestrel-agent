@@ -24,6 +24,7 @@ function responseError(response: RendererResponse): string {
 export interface UserBrowserController {
 	state: UserBrowserState | null;
 	error: string;
+	isDetachedWindow: boolean;
 	refresh(): Promise<void>;
 	findMatch: UserBrowserFindMatch | null;
 	openFileTabs(paths: string[], active?: boolean): Promise<SelectedAttachment[]>;
@@ -90,6 +91,7 @@ export interface UserBrowserController {
 		organization: UserBrowserTabOrganizationApply,
 	): Promise<void>;
 	detachTab(tabId: string): Promise<void>;
+	reattachTab(tabId: string): Promise<void>;
 	findInPage(
 		tabId: string,
 		query: string,
@@ -119,6 +121,7 @@ export interface BrowserContentBounds {
 export function useUserBrowser(): UserBrowserController {
 	const [state, setState] = useState<UserBrowserState | null>(null);
 	const [error, setError] = useState("");
+	const [isDetachedWindow, setIsDetachedWindow] = useState(false);
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
@@ -135,6 +138,8 @@ export function useUserBrowser(): UserBrowserController {
 			const response = await window.kestrel.request({ type: "browser-get-state" });
 			if (!response.ok || !("browserState" in response))
 				throw new Error(responseError(response));
+			if ("browserWindowRole" in response)
+				setIsDetachedWindow(response.browserWindowRole === "detached");
 			applyState(response.browserState);
 			setError("");
 		} catch (cause) {
@@ -154,6 +159,8 @@ export function useUserBrowser(): UserBrowserController {
 				const response = await window.kestrel.request(request);
 				if (!response.ok || !("browserState" in response))
 					throw new Error(responseError(response));
+				if ("browserWindowRole" in response)
+					setIsDetachedWindow(response.browserWindowRole === "detached");
 				applyState(response.browserState);
 				setError("");
 			} catch (cause) {
@@ -583,6 +590,10 @@ export function useUserBrowser(): UserBrowserController {
 		(tabId: string) => requestState({ type: "browser-detach-tab", tabId }),
 		[requestState],
 	);
+	const reattachTab = useCallback(
+		(tabId: string) => requestState({ type: "browser-reattach-tab", tabId }),
+		[requestState],
+	);
 	const findInPage = useCallback(
 		(
 			tabId: string,
@@ -651,6 +662,7 @@ export function useUserBrowser(): UserBrowserController {
 		() => ({
 			state,
 			error,
+			isDetachedWindow,
 			refresh,
 			findMatch,
 			openFileTabs,
@@ -699,6 +711,7 @@ export function useUserBrowser(): UserBrowserController {
 			previewOrganizeTabs,
 			applyTabOrganization,
 			detachTab,
+			reattachTab,
 			findInPage,
 			stopFindInPage,
 			printTab,
@@ -712,6 +725,7 @@ export function useUserBrowser(): UserBrowserController {
 		[
 			state,
 			error,
+			isDetachedWindow,
 			refresh,
 			findMatch,
 			openFileTabs,
@@ -760,6 +774,7 @@ export function useUserBrowser(): UserBrowserController {
 			previewOrganizeTabs,
 			applyTabOrganization,
 			detachTab,
+			reattachTab,
 			findInPage,
 			stopFindInPage,
 			printTab,
