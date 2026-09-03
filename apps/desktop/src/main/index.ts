@@ -217,9 +217,11 @@ function passwordOverlaySize(prompt: PasswordPrompt): {
 	width: number;
 	height: number;
 } {
-	return prompt.mode === "field"
-		? { width: 326, height: 158 }
-		: { width: 382, height: 236 };
+	return prompt.mode === "save"
+		? { width: 382, height: 244 }
+		: prompt.mode === "field"
+			? { width: 326, height: 158 }
+			: { width: 382, height: 236 };
 }
 
 function passwordOverlayBounds(
@@ -2524,12 +2526,13 @@ function registerIpc(): void {
     if (
       isPasswordOverlayWindow &&
       ![
+        "password-save-suggestion",
         "password-fill-page",
         "password-fill-field",
         "password-dismiss",
       ].includes(request.type)
     )
-      throw new Error("Password overlays can only fill or dismiss themselves.");
+      throw new Error("Password overlays can only save, fill, or dismiss themselves.");
     if (
       isPaymentOverlayWindow &&
       ![
@@ -2573,7 +2576,9 @@ function registerIpc(): void {
       return { ok: true };
     }
     if (isPasswordOverlayWindow && passwordService) {
-      if (request.type === "password-fill-page")
+      if (request.type === "password-save-suggestion")
+        await passwordService.savePasswordSuggestion();
+      else if (request.type === "password-fill-page")
         await passwordService.fillPasswordPage(request.passwordId);
       else if (request.type === "password-fill-field")
         await passwordService.fillPasswordField(

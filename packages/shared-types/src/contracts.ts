@@ -3173,14 +3173,21 @@ export const PasswordFormFieldSchema = z.object({
 });
 export type PasswordFormField = z.infer<typeof PasswordFormFieldSchema>;
 
+export const PasswordSaveCandidateSchema = z.object({
+	/** The login name is safe to show in the save-password confirmation. */
+	username: z.string().max(500),
+});
+export type PasswordSaveCandidate = z.infer<typeof PasswordSaveCandidateSchema>;
+
 export const PasswordPromptSchema = z.object({
 	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	origin: z.string().url().max(8_192),
 	title: z.string().min(1).max(500),
-	mode: z.enum(["page", "field"]),
+	mode: z.enum(["save", "page", "field"]),
 	fields: z.array(PasswordFormFieldSchema).max(32),
 	focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
 	entries: z.array(PasswordEntrySummarySchema).max(24),
+	candidate: PasswordSaveCandidateSchema.optional(),
 	anchor: z.object({
 		x: z.number().int().min(0).max(20_000),
 		y: z.number().int().min(0).max(20_000),
@@ -4143,6 +4150,7 @@ export const RendererRequestSchema = z.union([
 		passwordId: PasswordEntryIdSchema,
 		fieldId: z.string().regex(/^field-[0-9]+$/),
 	}),
+	z.object({ type: z.literal("password-save-suggestion") }),
 	z.object({ type: z.literal("password-dismiss") }),
 	z.object({ type: z.literal("payment-list") }),
 	z.object({

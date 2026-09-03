@@ -100,14 +100,14 @@ export function PasswordSettings({
 
 			<div className="setting-row browser-setting-row password-autofill-toggle">
 				<div className="browser-setting-copy">
-					<strong>Offer autofill on sign-in forms</strong>
-					<p>Kestrel only offers exact-match HTTPS logins and never fills until you choose.</p>
+					<strong>Offer autofill and save prompts</strong>
+					<p>Kestrel only offers exact-match HTTPS logins and never fills or saves until you choose.</p>
 				</div>
 				<button
 					type="button"
 					className={`switch ${settings.passwordAutofillEnabled ? "on" : ""}`}
 					role="switch"
-					aria-label="Offer autofill on sign-in forms"
+					aria-label="Offer password autofill and save prompts"
 					aria-checked={settings.passwordAutofillEnabled}
 					onClick={() =>
 						void browser.updateSettings({
@@ -173,7 +173,7 @@ export function PasswordSettings({
 				{entries.length === 0 ? (
 					<div className="password-empty-state">
 						<strong>No saved logins yet</strong>
-						<span>Add one above, then Kestrel will offer it when that exact site opens a sign-in form.</span>
+						<span>Add one above, or save a login when Kestrel asks after you sign in.</span>
 					</div>
 				) : (
 					entries.map((entry) => (
@@ -197,7 +197,7 @@ export function PasswordSettings({
 			</div>
 
 			<p className="password-settings-footnote">
-				Saved passwords are encrypted by Kestrel’s protected credential broker. The renderer receives usernames and site labels only; the secret crosses into a page only after an explicit Fill action.
+				Saved passwords are encrypted by Kestrel’s protected credential broker. The renderer receives usernames and site labels only; a submitted password stays in Kestrel’s main process until you explicitly save it, and saved secrets enter a page only after Fill.
 			</p>
 		</section>
 	);
