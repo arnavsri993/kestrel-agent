@@ -3526,6 +3526,9 @@ export type UserBrowserCommand = z.infer<typeof UserBrowserCommandSchema>;
 export const WindowFocusStateSchema = z.boolean();
 export type WindowFocusState = z.infer<typeof WindowFocusStateSchema>;
 
+export const BrowserWindowRoleSchema = z.enum(["main", "detached"]);
+export type BrowserWindowRole = z.infer<typeof BrowserWindowRoleSchema>;
+
 export const KestrelDeepLinkSchema = z
 	.string()
 	.min(1)
@@ -3719,6 +3722,10 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({
 		type: z.literal("browser-detach-tab"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-reattach-tab"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({
@@ -4049,7 +4056,12 @@ export type GoogleWorkspaceOAuthStatus = z.infer<
 
 export type RendererResponse =
 	| CoreResponse
-	| { ok: true; browserState: UserBrowserState; cancelled?: boolean }
+	| {
+			ok: true;
+			browserState: UserBrowserState;
+			browserWindowRole?: BrowserWindowRole;
+			cancelled?: boolean;
+	  }
 	| { ok: true; browserDataPath?: string; cancelled?: boolean }
 	| {
 			ok: true;

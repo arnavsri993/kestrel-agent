@@ -711,13 +711,44 @@ try {
 	const addedBlankTab = state.activeTabId;
 	assert(addedBlankTab);
 	const horizontalTabs = page.getByRole("tab");
+	const tabRail = page.locator(".browser-tabs");
 	await horizontalTabs.nth(1).waitFor();
-	const roomierTabWidths = await tabList
+	const lowCountTabWidths = await tabList
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	const lowCountRailMetrics = await tabRail.evaluate((node) => {
+		const tabs = [...node.querySelectorAll(".browser-tab")];
+		const first = tabs[0]?.getBoundingClientRect();
+		const last = tabs.at(-1)?.getBoundingClientRect();
+		const rail = node.getBoundingClientRect();
+		const newTab = document.querySelector(".browser-new-tab")?.getBoundingClientRect();
+		const dragFill = document
+			.querySelector(".browser-tab-drag-fill")
+			?.getBoundingClientRect();
+		return {
+			clientWidth: node.clientWidth,
+			scrollWidth: node.scrollWidth,
+			firstLeft: first?.left ?? null,
+			lastRight: last?.right ?? null,
+			railLeft: rail.left,
+			railRight: rail.right,
+			newTabLeft: newTab?.left ?? null,
+			dragFillWidth: dragFill?.width ?? null,
+		};
+	});
 	assert(
-		roomierTabWidths.length >= 2 && roomierTabWidths.every((width) => width >= 160),
-		`Ordinary tabs collapsed to their minimum instead of using available chrome: ${JSON.stringify(roomierTabWidths)}`,
+		lowCountTabWidths.length >= 2 &&
+			lowCountTabWidths.every((width) => width > 0) &&
+			lowCountRailMetrics.scrollWidth <= lowCountRailMetrics.clientWidth + 1 &&
+			lowCountRailMetrics.firstLeft !== null &&
+			lowCountRailMetrics.lastRight !== null &&
+			Math.abs(lowCountRailMetrics.firstLeft - lowCountRailMetrics.railLeft) <= 2 &&
+			Math.abs(lowCountRailMetrics.lastRight - lowCountRailMetrics.railRight) <= 2 &&
+			lowCountRailMetrics.newTabLeft !== null &&
+			lowCountRailMetrics.newTabLeft - lowCountRailMetrics.lastRight <= 10 &&
+			lowCountRailMetrics.dragFillWidth !== null &&
+			lowCountRailMetrics.dragFillWidth <= 32,
+		`Low-count tabs left unused space in the rail: ${JSON.stringify({ lowCountTabWidths, lowCountRailMetrics })}`,
 	);
 	const crowdedTabIds = await page.evaluate(async (count) => {
 		const ids = [];
@@ -738,7 +769,6 @@ try {
 		(value) => value.tabs.length === initialTabs + 1 + crowdedTabIds.length,
 		"crowded tab fixture",
 	);
-	const tabRail = page.locator(".browser-tabs");
 	const newTabControl = page.getByRole("button", {
 		name: "New Tab",
 		exact: true,
@@ -748,8 +778,16 @@ try {
 		scrollWidth: node.scrollWidth,
 	}));
 	assert(
-		railMetrics.scrollWidth > railMetrics.clientWidth + 1,
-		`Crowded tabs collapsed instead of using the bounded tab rail: ${railMetrics.scrollWidth}px <= ${railMetrics.clientWidth}px`,
+		railMetrics.scrollWidth <= railMetrics.clientWidth + 1,
+		`Crowded tabs created a horizontal scroll target: ${railMetrics.scrollWidth}px > ${railMetrics.clientWidth}px`,
+	);
+	const crowdedTabWidths = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(
+		crowdedTabWidths.length > lowCountTabWidths.length &&
+			Math.max(...crowdedTabWidths) < Math.min(...lowCountTabWidths),
+		`Crowded tabs did not shrink relative to the low-count layout: ${JSON.stringify({ lowCountTabWidths, crowdedTabWidths })}`,
 	);
 	const railBounds = await tabRail.boundingBox();
 	const newTabBounds = await newTabControl.boundingBox();
@@ -795,8 +833,8 @@ try {
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
 	assert(widthsBeforeClose.length >= 5);
 	assert(
-		widthsBeforeClose.every((width) => width >= 110),
-		`Crowded tabs fell below the readable minimum: ${JSON.stringify(widthsBeforeClose)}`,
+		widthsBeforeClose.every((width) => width > 0),
+		`Crowded tabs collapsed to zero-width targets: ${JSON.stringify(widthsBeforeClose)}`,
 	);
 	await tabRail.locator(".browser-tab.active .browser-tab-close").click();
 	state = await waitForBrowserState(
@@ -820,12 +858,11 @@ try {
 	const widthsAfterClose = await tabRail
 		.locator(".browser-tab")
 		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
-	for (const width of widthsAfterClose) {
-		assert(
-			Math.abs(width - widthsBeforeClose[0]) <= 1.5,
-			`The still-crowded strip snapped after its close settle: ${width}px vs ${widthsBeforeClose[0]}px`,
-		);
-	}
+	assert(
+		widthsAfterClose.length === widthsBeforeClose.length - 1 &&
+			widthsAfterClose.every((width) => width > widthsBeforeClose[0] + 1),
+		`The tab strip did not refit after the close settled: ${JSON.stringify({ widthsBeforeClose, widthsAfterClose })}`,
+	);
 	const remainingCrowdedTabIds = crowdedTabIds.filter(
 		(tabId) => tabId !== lastCrowdedTabId,
 	);
@@ -1516,16 +1553,67 @@ try {
 	await detachedPage.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	await detachedPage.locator("#browser-address-input").waitFor();
 	assert.equal(await detachedPage.getByRole("tab", { name: "Page two", exact: true }).count(), 1);
-	await detachedPage.close();
+	const detachedPlacement = await application.evaluate(
+		({ BrowserWindow, screen }, expectedUrl) => {
+			const detached = BrowserWindow.getAllWindows().find((candidate) =>
+				candidate.contentView.children.some(
+					(child) =>
+						"webContents" in child && child.webContents.getURL() === expectedUrl,
+				),
+			);
+			return {
+				cursor: screen.getCursorScreenPoint(),
+				bounds: detached?.getBounds() ?? null,
+			};
+		},
+		`${origin}/two`,
+	);
+	assert(
+		detachedPlacement.bounds &&
+			detachedPlacement.cursor.x >= detachedPlacement.bounds.x &&
+			detachedPlacement.cursor.x <=
+				detachedPlacement.bounds.x + detachedPlacement.bounds.width &&
+			detachedPlacement.cursor.y >= detachedPlacement.bounds.y &&
+			detachedPlacement.cursor.y <=
+				detachedPlacement.bounds.y + detachedPlacement.bounds.height,
+		`Detached window did not open under the pointer: ${JSON.stringify(detachedPlacement)}`,
+	);
+	await detachedPage
+		.getByRole("button", {
+			name: "Move tab back to main window",
+			exact: true,
+		})
+		.click();
 	await waitForBrowserState(
 		(value) =>
-			value.tabs.length === sourceTabIdsBeforeDetach.length &&
+			value.tabs.length === sourceTabIdsBeforeDetach.length + 1 &&
 			sourceTabIdsBeforeDetach.every((id) =>
 				value.tabs.some((tab) => tab.id === id),
 			) &&
-			!value.tabs.some((tab) => tab.id === detachableTabId) &&
-			value.tabs.some((tab) => tab.id === tabId && tab.url === `${origin}/one`),
-		"Source browser did not retain its remaining tab after detachment",
+				value.tabs.some((tab) => tab.id === detachableTabId) &&
+				value.tabs.some((tab) => tab.id === tabId && tab.url === `${origin}/one`),
+		"Reattached tab did not return to the main browser window",
+	);
+	const detachedWindowDeadline = Date.now() + 30_000;
+	let remainingDetachedWindows = 0;
+	while (Date.now() < detachedWindowDeadline) {
+		remainingDetachedWindows = await application.evaluate(
+			({ BrowserWindow }, expectedUrl) =>
+				BrowserWindow.getAllWindows().filter((candidate) =>
+					candidate.contentView.children.some(
+						(child) =>
+							"webContents" in child && child.webContents.getURL() === expectedUrl,
+					),
+				).length,
+			`${origin}/two`,
+		);
+		if (remainingDetachedWindows === 1) break;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	assert.equal(
+		remainingDetachedWindows,
+		1,
+		"Reattaching the tab did not close its detached window",
 	);
 
 	const tabsBeforeToolPopup = (await browserState()).tabs.length;
@@ -1779,7 +1867,10 @@ try {
 			window.kestrel.request({ type: "browser-close-tab", tabId }),
 		inactiveVerticalTabId,
 	);
-	const organizationFixtureUrls = [`${origin}/two`, `${origin}/one`];
+	const organizationFixtureUrls = [
+		`${origin}/organization-two`,
+		`${origin}/organization-one`,
+	];
 	const organizationFixtureTabIds = await page.evaluate(async (urls) => {
 		const ids = [];
 		for (const input of urls) {

@@ -138,6 +138,8 @@ export function BrowserWorkspace({
     moveTab,
     applyTabOrganization,
     detachTab,
+    reattachTab,
+    isDetachedWindow,
     previewOrganizeTabs,
   } = browser;
 
@@ -641,7 +643,12 @@ export function BrowserWorkspace({
         onDuplicate={(tabId) => void duplicateTab(tabId)}
         onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
-        onDetachTab={(tabId) => detachTab(tabId)}
+        {...(!isDetachedWindow
+          ? { onDetachTab: (tabId: string) => detachTab(tabId) }
+          : {})}
+        {...(isDetachedWindow
+          ? { onReattachTab: (tabId: string) => reattachTab(tabId) }
+          : {})}
         onReopenClosedTab={(index) => void reopenClosedTab(index)}
         recentlyClosedTabs={state.recentlyClosedTabs}
         onOrganizeTabs={openOrganizeTabs}
