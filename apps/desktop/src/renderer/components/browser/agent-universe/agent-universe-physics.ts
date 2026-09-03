@@ -190,6 +190,52 @@ function initialPhysicsState(
 	return { nodes: states, drag: null };
 }
 
+/**
+ * Reconcile a new layout without replacing the rendered frame with its final
+ * coordinates. Layout can change when the window resizes, a session appears,
+ * or the snapshot is refreshed. Keeping each surviving body's world position
+ * and changing only its home lets the existing physics loop carry the body to
+ * the new layout over real frames. New bodies still enter at their home so a
+ * refresh cannot invent a travel path for data that was not previously shown.
+ */
+export function reconcileAgentUniversePhysicsState(
+	previous: AgentUniversePhysicsState,
+	nodes: readonly AgentUniversePhysicsNodeInput[],
+): AgentUniversePhysicsState {
+	if (previous.nodes.length === 0) return initialPhysicsState(nodes);
+
+	const root = nodes.find((node) => node.isRoot);
+	const rootX = root?.x ?? nodes[0]?.x ?? 0;
+	const rootY = root?.y ?? nodes[0]?.y ?? 0;
+	const inputById = new Map(nodes.map((node) => [node.id, node]));
+	const previousById = new Map(previous.nodes.map((node) => [node.id, node]));
+	const nextNodes = nodes.map((node) => {
+		const parent = node.parentId ? inputById.get(node.parentId) : undefined;
+		const prior = previousById.get(node.id);
+		return {
+			...node,
+			radius: safeRadius(node.radius),
+			homeX: node.x,
+			homeY: node.y,
+			parentHomeX: parent?.x ?? rootX,
+			parentHomeY: parent?.y ?? rootY,
+			x: prior?.x ?? node.x,
+			y: prior?.y ?? node.y,
+			vx: prior?.vx ?? 0,
+			vy: prior?.vy ?? 0,
+		};
+	});
+	const drag = previous.drag && nextNodes.some((node) => node.id === previous.drag?.nodeId)
+		? {
+			...previous.drag,
+			target: { ...previous.drag.target },
+			origin: { ...previous.drag.origin },
+			offset: { ...previous.drag.offset },
+		}
+		: null;
+	return { nodes: nextNodes, drag };
+}
+
 export interface AgentUniversePhysicsStepOptions {
 	dt: number;
 	reducedMotion?: boolean;
@@ -208,7 +254,6 @@ export function stepAgentUniversePhysics(
 	const dt = clamp(options.dt, 0, MAX_PHYSICS_STEP_SECONDS);
 	if (dt <= 0 || state.nodes.length === 0) return state;
 	const reducedMotion = options.reducedMotion === true;
-	const byId = new Map(state.nodes.map((node) => [node.id, node]));
 	const drag = state.drag;
 	const nextNodes = state.nodes.map((node) => ({ ...node }));
 	const nextById = new Map(nextNodes.map((node) => [node.id, node]));
@@ -217,10 +262,10 @@ export function stepAgentUniversePhysics(
 
 	for (const node of nextNodes) {
 		if (node.isRoot) {
-			node.x = node.homeX;
-			node.y = node.homeY;
-			node.vx = 0;
-			node.vy = 0;
+			const acceleration = accelerations.get(node.id)!;
+			const rootSpring = reducedMotion ? 30 : 18;
+			acceleration.x += (node.homeX - node.x) * rootSpring;
+			acceleration.y += (node.homeY - node.y) * rootSpring;
 			continue;
 		}
 		const isDragged = drag?.nodeId === node.id;
@@ -299,12 +344,13 @@ export function stepAgentUniversePhysics(
 	const damping = reducedMotion ? 14 : 8.8;
 	const dragDamping = reducedMotion ? 18 : 11;
 	for (const node of nextNodes) {
-		if (node.isRoot) continue;
 		const acceleration = accelerations.get(node.id)!;
 		const activeDrag = drag?.nodeId === node.id;
 		node.vx += acceleration.x * dt;
 		node.vy += acceleration.y * dt;
-		const dampingFactor = Math.exp(-(activeDrag ? dragDamping : damping) * dt);
+		const dampingFactor = Math.exp(
+			-(activeDrag ? dragDamping : damping) * dt,
+		);
 		node.vx *= dampingFactor;
 		node.vy *= dampingFactor;
 		const speed = velocityMagnitude(node);
@@ -326,7 +372,6 @@ export function stepAgentUniversePhysics(
 function hasSettled(state: AgentUniversePhysicsState): boolean {
 	if (state.drag) return false;
 	return state.nodes.every((node) => {
-		if (node.isRoot) return true;
 		return (
 			velocityMagnitude(node) <= SETTLE_SPEED &&
 			distanceBetween(node, { x: node.homeX, y: node.homeY }) <= SETTLE_DISTANCE
@@ -364,9 +409,11 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 			.join("|");
 		if (signature !== this.signature) {
 			this.signature = signature;
-			this.state = initialPhysicsState(nodes);
+			this.state = reconcileAgentUniversePhysicsState(this.state, nodes);
 		}
+		if (reducedMotion && !this.state.drag) this.snapToHomes();
 		this.render();
+		this.ensureFrame();
 	}
 
 	startDrag(nodeId: string, point: AgentUniversePhysicsPoint): boolean {
@@ -397,6 +444,8 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 	endDrag(): void {
 		if (!this.state.drag) return;
 		this.state.drag = null;
+		if (this.reducedMotion) this.snapToHomes();
+		this.render();
 		this.ensureFrame();
 	}
 
@@ -441,17 +490,20 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 			? clamp((time - this.lastFrameTime) / 1_000, 0, MAX_PHYSICS_STEP_SECONDS)
 			: 1 / 60;
 		this.lastFrameTime = time;
-		this.state = stepAgentUniversePhysics(this.state, {
-			dt,
-			reducedMotion: this.reducedMotion,
-		});
+		if (this.reducedMotion && !this.state.drag) {
+			this.snapToHomes();
+		} else {
+			this.state = stepAgentUniversePhysics(this.state, {
+				dt,
+				reducedMotion: this.reducedMotion,
+			});
+		}
 		const settled = hasSettled(this.state);
 		if (settled) {
 			// Remove sub-pixel integration residue once the damped return is
 			// visually complete. This preserves a clean spatial identity for the
 			// next interaction and lets the controller sleep deterministically.
 			for (const node of this.state.nodes) {
-				if (node.isRoot) continue;
 				node.x = node.homeX;
 				node.y = node.homeY;
 				node.vx = 0;
@@ -492,6 +544,16 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 			edge.element.setAttribute("y1", source.y.toFixed(2));
 			edge.element.setAttribute("x2", target.x.toFixed(2));
 			edge.element.setAttribute("y2", target.y.toFixed(2));
+		}
+	}
+
+	private snapToHomes(): void {
+		for (const node of this.state.nodes) {
+			if (this.state.drag?.nodeId === node.id) continue;
+			node.x = node.homeX;
+			node.y = node.homeY;
+			node.vx = 0;
+			node.vy = 0;
 		}
 	}
 }

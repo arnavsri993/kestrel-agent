@@ -111,6 +111,8 @@ function useContextSurfacePosition(
 		top: 88,
 		placement: "right" as "left" | "right",
 	});
+	const anchorRef = useRef(anchor);
+	anchorRef.current = anchor;
 
 	const place = useCallback(() => {
 		const surface = surfaceRef.current;
@@ -120,17 +122,18 @@ function useContextSurfacePosition(
 		const height = surface.offsetHeight;
 		const containerWidth = container.clientWidth;
 		const containerHeight = container.clientHeight;
-		const target = anchor ?? {
+		const currentAnchor = anchorRef.current;
+		const target = currentAnchor ?? {
 			x: containerWidth / 2,
 			y: containerHeight / 2,
 		};
 		// Anchor from the body's edge, not its centre. This keeps a selected
 		// system readable beside a wide conversation surface.
-		const gap = Math.max(26, (anchor?.radius ?? 0) + 24);
+		const gap = Math.max(26, (currentAnchor?.radius ?? 0) + 24);
 		const useRightRail = dockToRightRail && containerWidth > 920;
 		const canPlaceRight = target.x + gap + width <= containerWidth - 16;
 		const canPlaceLeft = target.x - gap - width >= 16;
-		const placement = useRightRail
+		const placement: "left" | "right" = useRightRail
 			? "right"
 			: canPlaceRight || !canPlaceLeft
 				? "right"
@@ -145,12 +148,23 @@ function useContextSurfacePosition(
 			minimumTop,
 			containerHeight - height - (containerWidth <= 640 ? 68 : 84),
 		);
-		setPosition({
+		const nextPosition = {
 			left: clamp(left, 16, Math.max(16, containerWidth - width - 16)),
 			top: clamp(target.y - Math.min(148, height * 0.36), minimumTop, maximumTop),
 			placement,
-		});
-	}, [anchor, dockToRightRail]);
+		};
+		setPosition((current) =>
+			current.left === nextPosition.left &&
+			current.top === nextPosition.top &&
+			current.placement === nextPosition.placement
+				? current
+				: nextPosition,
+		);
+	}, [dockToRightRail]);
+
+	useLayoutEffect(() => {
+		place();
+	}, [anchor, place]);
 
 	useLayoutEffect(() => {
 		place();

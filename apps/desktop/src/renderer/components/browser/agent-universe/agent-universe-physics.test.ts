@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	createAgentUniversePhysicsState,
+	reconcileAgentUniversePhysicsState,
 	stepAgentUniversePhysics,
 	type AgentUniversePhysicsState,
 } from "./agent-universe-physics";
@@ -64,5 +65,35 @@ describe("agent universe local physics", () => {
 
 		expect(Math.hypot(worker.x - worker.homeX, worker.y - worker.homeY)).toBeLessThan(1);
 		expect(Math.hypot(worker.vx, worker.vy)).toBeLessThan(1);
+	});
+
+	it("keeps existing bodies on their rendered frame while homes change", () => {
+		const state = createAgentUniversePhysicsState(initialNodes);
+		const worker = state.nodes.find((node) => node.id === "worker-a")!;
+		worker.x = 236;
+		worker.y = 14;
+		worker.vx = 18;
+		worker.vy = -6;
+
+		const reconciled = reconcileAgentUniversePhysicsState(state, [
+			{ id: "root", x: 60, y: 24, radius: 110, isRoot: true },
+			{ id: "worker-a", parentId: "root", x: 250, y: 88, radius: 38 },
+			{ id: "worker-b", parentId: "root", x: 72, y: 214, radius: 36 },
+		]);
+		const reconciledWorker = reconciled.nodes.find(
+			(node) => node.id === "worker-a",
+		)!;
+
+		expect(reconciledWorker.x).toBe(236);
+		expect(reconciledWorker.y).toBe(14);
+		expect(reconciledWorker.vx).toBe(18);
+		expect(reconciledWorker.homeX).toBe(250);
+		expect(reconciledWorker.homeY).toBe(88);
+
+		const firstFrame = stepAgentUniversePhysics(reconciled, { dt: 1 / 60 });
+		const root = firstFrame.nodes.find((node) => node.id === "root")!;
+		expect(root.x).toBeGreaterThan(0);
+		expect(root.x).toBeLessThan(60);
+		expect(firstFrame.nodes.find((node) => node.id === "worker-a")!.x).not.toBe(250);
 	});
 });
