@@ -3,6 +3,9 @@ import type {
 	RendererResponse,
 	SelectedAttachment,
 	UserBrowserFindMatch,
+	UserBrowserBookmarkDisplayMode,
+	UserBrowserBookmarkFolder,
+	UserBrowserBookmarkFolderId,
 	UserBrowserPageContext,
 	UserBrowserSettings,
 	UserBrowserState,
@@ -61,7 +64,21 @@ export interface UserBrowserController {
 	startDownloadDrag(downloadId: string): Promise<void>;
 	cancelDownload(downloadId: string): Promise<void>;
 	toggleBookmark(url?: string, title?: string): Promise<void>;
+	saveBookmark(input: {
+		title: string;
+		displayMode: UserBrowserBookmarkDisplayMode;
+		folderId?: UserBrowserBookmarkFolderId | null;
+	}): Promise<void>;
+	updateBookmark(input: {
+		bookmarkId: string;
+		title: string;
+		displayMode: UserBrowserBookmarkDisplayMode;
+		folderId?: UserBrowserBookmarkFolderId | null;
+	}): Promise<void>;
 	removeBookmark(bookmarkId: string): Promise<void>;
+	createBookmarkFolder(name: string): Promise<UserBrowserBookmarkFolder | undefined>;
+	renameBookmarkFolder(folderId: UserBrowserBookmarkFolderId, name: string): Promise<void>;
+	removeBookmarkFolder(folderId: UserBrowserBookmarkFolderId): Promise<void>;
 	pinTab(tabId: string, pinned: boolean): Promise<void>;
 	muteTab(tabId: string, muted: boolean): Promise<void>;
 	duplicateTab(tabId: string): Promise<void>;
@@ -440,9 +457,83 @@ export function useUserBrowser(): UserBrowserController {
 			}),
 		[requestState],
 	);
+	const saveBookmark = useCallback(
+		(input: {
+			title: string;
+			displayMode: UserBrowserBookmarkDisplayMode;
+			folderId?: UserBrowserBookmarkFolderId | null;
+		}) =>
+			requestState({
+				type: "browser-save-bookmark",
+				title: input.title,
+				displayMode: input.displayMode,
+				...(input.folderId !== undefined
+					? { folderId: input.folderId }
+					: {}),
+			}),
+		[requestState],
+	);
+	const updateBookmark = useCallback(
+		(input: {
+			bookmarkId: string;
+			title: string;
+			displayMode: UserBrowserBookmarkDisplayMode;
+			folderId?: UserBrowserBookmarkFolderId | null;
+		}) =>
+			requestState({
+				type: "browser-update-bookmark",
+				bookmarkId: input.bookmarkId,
+				title: input.title,
+				displayMode: input.displayMode,
+				...(input.folderId !== undefined
+					? { folderId: input.folderId }
+					: {}),
+			}),
+		[requestState],
+	);
 	const removeBookmark = useCallback(
 		(bookmarkId: string) =>
 			requestState({ type: "browser-remove-bookmark", bookmarkId }),
+		[requestState],
+	);
+	const createBookmarkFolder = useCallback(
+		async (name: string) => {
+			try {
+				const response = await window.kestrel.request({
+					type: "browser-create-bookmark-folder",
+					name,
+				});
+				if (!response.ok || !("browserState" in response))
+					throw new Error(responseError(response));
+				applyState(response.browserState);
+				setError("");
+				if (!("bookmarkFolderId" in response) || !response.bookmarkFolderId)
+					return undefined;
+				return response.browserState.bookmarkFolders.find(
+					(folder) => folder.id === response.bookmarkFolderId,
+				);
+			} catch (cause) {
+				setError(userFacingError(cause, "The bookmark folder could not be created."));
+				throw cause;
+			}
+		},
+		[applyState],
+	);
+	const renameBookmarkFolder = useCallback(
+		(folderId: UserBrowserBookmarkFolderId, name: string) =>
+			requestState({
+				type: "browser-rename-bookmark-folder",
+				folderId,
+				name,
+			}),
+		[requestState],
+	);
+	const removeBookmarkFolder = useCallback(
+		(folderId: UserBrowserBookmarkFolderId) =>
+			requestState({
+				type: "browser-remove-bookmark-folder",
+				folderId,
+			}),
 		[requestState],
 	);
 	const pinTab = useCallback(
@@ -593,7 +684,12 @@ export function useUserBrowser(): UserBrowserController {
 			startDownloadDrag,
 			cancelDownload,
 			toggleBookmark,
+			saveBookmark,
+			updateBookmark,
 			removeBookmark,
+			createBookmarkFolder,
+			renameBookmarkFolder,
+			removeBookmarkFolder,
 			pinTab,
 			muteTab,
 			duplicateTab,
@@ -649,7 +745,12 @@ export function useUserBrowser(): UserBrowserController {
 			startDownloadDrag,
 			cancelDownload,
 			toggleBookmark,
+			saveBookmark,
+			updateBookmark,
 			removeBookmark,
+			createBookmarkFolder,
+			renameBookmarkFolder,
+			removeBookmarkFolder,
 			pinTab,
 			muteTab,
 			duplicateTab,

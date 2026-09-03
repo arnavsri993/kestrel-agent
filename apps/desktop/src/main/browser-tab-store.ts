@@ -334,6 +334,7 @@ export function freshBrowserState(
 		originFavicons: [],
 		downloads: [],
 		bookmarks: [],
+		bookmarkFolders: [],
 		recentlyClosedTabs: [],
 		sitePermissions: [],
 		settings: { ...DEFAULT_BROWSER_SETTINGS },
@@ -427,6 +428,7 @@ export class BrowserTabStore {
 				history: state.history,
 				originFavicons: state.originFavicons,
 				bookmarks: state.bookmarks,
+				bookmarkFolders: state.bookmarkFolders,
 				recentlyClosedTabs: state.recentlyClosedTabs,
 				sitePermissions: state.sitePermissions,
 				downloads: state.downloads.map((download) => ({
@@ -477,6 +479,11 @@ export class BrowserTabStore {
 	}
 
 	save(state: UserBrowserState): void {
+		const bookmarkFolders = state.bookmarkFolders.map((folder) => ({
+			...folder,
+			name: redactUntrustedBrowserText(folder.name, 80).trim(),
+		}));
+		const bookmarkFolderIds = new Set(bookmarkFolders.map((folder) => folder.id));
 		const safe = UserBrowserStateSchema.parse({
 			...state,
 			tabs: state.tabs.map(({ faviconDataUrl: _faviconDataUrl, ...tab }) => ({
@@ -500,6 +507,25 @@ export class BrowserTabStore {
 					},
 				];
 			}),
+			bookmarks: state.bookmarks.flatMap((bookmark) => {
+				const url = sanitizeBrowserUrl(bookmark.url);
+				if (!url) return [];
+				const title = redactUntrustedBrowserText(bookmark.title, 500).trim();
+				return [
+					{
+						...bookmark,
+						url,
+						title: title || hostnameForUrl(url),
+						...(bookmark.folderId && bookmarkFolderIds.has(bookmark.folderId)
+							? { folderId: bookmark.folderId }
+							: { folderId: undefined }),
+						...(bookmark.faviconDataUrl?.startsWith("data:image/")
+							? { faviconDataUrl: bookmark.faviconDataUrl }
+							: { faviconDataUrl: undefined }),
+					},
+				];
+			}),
+			bookmarkFolders,
 			originFavicons: state.originFavicons.flatMap((item) => {
 				try {
 					const origin = new URL(item.origin).origin;

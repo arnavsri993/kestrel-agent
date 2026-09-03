@@ -24,6 +24,19 @@ const launchArgs = packagedExecutable
 const postLaunchRequests = [];
 const server = createServer((request, response) => {
 	const url = new URL(request.url ?? "/", "http://127.0.0.1");
+	if (url.pathname === "/favicon.png") {
+		const body = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+			"base64",
+		);
+		response.writeHead(200, {
+			"content-type": "image/png",
+			"content-length": String(body.byteLength),
+			"cache-control": "no-store",
+		});
+		response.end(body);
+		return;
+	}
 	if (url.pathname === "/lti-launch") {
 		const chunks = [];
 		request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
@@ -63,7 +76,7 @@ const server = createServer((request, response) => {
 	});
 	response.end(`<!doctype html>
     <html>
-      <head>
+      <head><link rel="icon" type="image/png" href="/favicon.png">
         <title>${pageName}</title>
         <meta name="description" content="Visible browser integration fixture">
       </head>
@@ -1177,6 +1190,104 @@ try {
 	await waitForNativeView(
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing address suggestions",
+	);
+
+	state = await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === value.activeTabId);
+			return active?.url === `${origin}/one` && active.faviconDataUrl?.startsWith("data:image/");
+		},
+		"Fixture favicon did not reach the active browser tab",
+	);
+	const bookmarkTrigger = page.getByRole("button", {
+		name: "Bookmark this page",
+		exact: true,
+	});
+	await bookmarkTrigger.click();
+	const bookmarkDialog = page.getByRole("dialog", { name: "Save bookmark" });
+	await bookmarkDialog.waitFor();
+	assert.deepEqual(
+		await bookmarkDialog.locator(".bookmark-dialog-option-copy strong").allTextContents(),
+		["Full link", "Suggested title", "Icon only"],
+	);
+	assert.equal(await bookmarkDialog.locator(".bookmark-dialog-option-preview").count(), 3);
+	assert.equal(
+		await bookmarkDialog.locator('input[type="radio"][value="full"]').isChecked(),
+		true,
+	);
+	assert(
+		(await bookmarkDialog.locator(".bookmark-dialog-preview-label").first().textContent())?.includes(
+			`${origin}/one`,
+		),
+	);
+	await bookmarkDialog.locator('input[type="radio"][value="title"]').check();
+	assert.equal(
+		(await bookmarkDialog.locator(".bookmark-dialog-preview-label").first().textContent())?.trim(),
+		"Page one",
+	);
+	await bookmarkDialog.locator('input[type="radio"][value="icon"]').check();
+	assert.equal(await bookmarkDialog.locator(".bookmark-dialog-preview-entry.icon-only").count(), 1);
+	await bookmarkDialog.getByRole("button", { name: "New folder", exact: true }).click();
+	await bookmarkDialog.getByPlaceholder("Folder name").fill("Reading");
+	await bookmarkDialog.getByRole("button", { name: "Create", exact: true }).click();
+	const bookmarkFolderSelect = bookmarkDialog.locator("#bookmark-folder-select");
+	await page.waitForFunction(
+		() => document.querySelector("#bookmark-folder-select")?.value !== "",
+	);
+	const createdFolderId = await bookmarkFolderSelect.inputValue();
+	assert(createdFolderId);
+	await bookmarkDialog.getByRole("button", { name: "Save bookmark", exact: true }).click();
+	await bookmarkDialog.waitFor({ state: "detached" });
+	state = await waitForBrowserState(
+		(value) =>
+			value.bookmarks.some(
+				(bookmark) =>
+					bookmark.url === `${origin}/one` &&
+					bookmark.displayMode === "icon" &&
+					bookmark.folderId === createdFolderId &&
+					bookmark.faviconDataUrl?.startsWith("data:image/"),
+			),
+		"Bookmark presentation choice was not persisted",
+	);
+	await page.getByRole("button", { name: "New Tab", exact: true }).click();
+	await page.locator(".browser-bookmarks-bar").waitFor();
+	const folderTrigger = page.getByRole("button", { name: "Reading", exact: true });
+	await folderTrigger.click();
+	const folderMenu = page.getByRole("menu", { name: "Reading bookmarks" });
+	await folderMenu.waitFor();
+	assert.equal(await folderMenu.getByRole("menuitem", { name: "Open Page one" }).count(), 1);
+	assert.equal(await folderMenu.locator("img").count(), 1);
+	await page.keyboard.press("Escape");
+	await page.getByRole("button", { name: "Manage bookmarks", exact: true }).click();
+	await page.getByRole("heading", { name: "Saved pages", exact: true }).waitFor();
+	const savedBookmarkRow = page.locator(`.bookmark-library-list > li`).first();
+	await savedBookmarkRow.getByRole("button", { name: "Edit", exact: true }).click();
+	await savedBookmarkRow.locator(".bookmark-library-edit").waitFor();
+	assert.equal(
+		await savedBookmarkRow.locator('.bookmark-library-edit select').nth(0).inputValue(),
+		"icon",
+	);
+	await savedBookmarkRow.getByRole("button", { name: "Remove", exact: true }).click();
+	await page.waitForFunction(
+		() => document.querySelectorAll(".bookmark-library-list > li").length === 0,
+	);
+	const folderRow = page.locator(".bookmark-library-folders > ul > li").first();
+	await folderRow.getByRole("button", { name: "Delete", exact: true }).click();
+	await folderRow.getByText("Move pages to bar?", { exact: true }).waitFor();
+	await folderRow.getByRole("button", { name: "Delete", exact: true }).click();
+	await page.waitForFunction(
+		() => document.querySelectorAll(".bookmark-library-folders > ul > li").length === 0,
+	);
+	state = await browserState();
+	const pageOneTabId = state.tabs.find((tab) => tab.url === `${origin}/one`)?.id;
+	assert(pageOneTabId);
+	await page.evaluate(
+		async (tabId) => window.kestrel.request({ type: "browser-select-tab", tabId }),
+		pageOneTabId,
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Browser did not return to Page one after bookmark management",
 	);
 
 	state = await browserState();
