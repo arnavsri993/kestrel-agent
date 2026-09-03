@@ -25,6 +25,7 @@ import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
+import { BookmarkDialog, type BookmarkDialogSaveInput } from "./BookmarkDialog";
 import { NewTabPage } from "./NewTabPage";
 import { OrganizeTabsDialog } from "./OrganizeTabsDialog";
 import { TabStrip } from "./TabStrip";
@@ -103,6 +104,11 @@ export function BrowserWorkspace({
     tabId: string;
     dataUrl: string;
   } | null>(null);
+  const [bookmarkDialog, setBookmarkDialog] = useState<{
+    tabId: string;
+    bookmarkId?: string;
+  } | null>(null);
+  const [bookmarkDialogPresent, setBookmarkDialogPresent] = useState(false);
   const organizeTabsRequestRef = useRef(0);
   const pagePreviewRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
@@ -125,7 +131,10 @@ export function BrowserWorkspace({
     zoomIn,
     zoomOut,
     zoomReset,
-    toggleBookmark,
+    saveBookmark,
+    updateBookmark,
+    removeBookmark,
+    createBookmarkFolder,
     pinTab,
     muteTab,
     duplicateTab,
@@ -175,6 +184,91 @@ export function BrowserWorkspace({
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
   const activeFilePage = activeTab ? parseKestrelFilePage(activeTab.url) : undefined;
+  const openBookmarkDialog = useCallback(() => {
+    if (!activeTab?.url || activeAppPage || activeFilePage) {
+      return;
+    }
+    setBookmarkDialogPresent(true);
+    setBookmarkDialog({ tabId: activeTab.id });
+  }, [
+    activeAppPage,
+    activeFilePage,
+    activeTab?.error,
+    activeTab?.id,
+    activeTab?.url,
+  ]);
+  const closeBookmarkDialog = useCallback(() => {
+    setBookmarkDialog(null);
+  }, []);
+  const toggleBookmarkFromChrome = useCallback(() => {
+    const existing = activeTab?.url
+      ? state?.bookmarks.find((bookmark) => bookmark.url === activeTab.url)
+      : undefined;
+    if (existing) {
+      void removeBookmark(existing.id);
+      return;
+    }
+    openBookmarkDialog();
+  }, [activeTab?.url, openBookmarkDialog, removeBookmark, state?.bookmarks]);
+  const editBookmark = useCallback(
+    (bookmarkId: string) => {
+      if (
+        !activeTab ||
+        !state?.bookmarks.some((bookmark) => bookmark.id === bookmarkId)
+      )
+        return;
+      setBookmarkDialogPresent(true);
+      setBookmarkDialog({ tabId: activeTab.id, bookmarkId });
+    },
+    [activeTab, state?.bookmarks],
+  );
+  const saveBookmarkDialog = useCallback(
+    async (input: BookmarkDialogSaveInput) => {
+      if (!bookmarkDialog) return;
+      if (state?.activeTabId !== bookmarkDialog.tabId) {
+        throw new Error("The active page changed. Close this dialog and try again.");
+      }
+      if (bookmarkDialog.bookmarkId) {
+        await updateBookmark({
+          bookmarkId: bookmarkDialog.bookmarkId,
+          title: input.title,
+          displayMode: input.displayMode,
+          folderId: input.folderId,
+        });
+      } else {
+        await saveBookmark({
+          title: input.title,
+          displayMode: input.displayMode,
+          folderId: input.folderId,
+        });
+      }
+      setBookmarkDialog(null);
+    }, [bookmarkDialog, saveBookmark, state?.activeTabId, updateBookmark],
+  );
+  const bookmarkDialogBookmark = bookmarkDialog?.bookmarkId
+    ? state?.bookmarks.find((bookmark) => bookmark.id === bookmarkDialog.bookmarkId)
+    : undefined;
+  const bookmarkDialogSourceTab = bookmarkDialog
+    ? state?.tabs.find((tab) => tab.id === bookmarkDialog.tabId)
+    : undefined;
+  const bookmarkDialogTab =
+    bookmarkDialogBookmark && bookmarkDialogSourceTab
+      ? {
+          ...bookmarkDialogSourceTab,
+          url: bookmarkDialogBookmark.url,
+          title: bookmarkDialogBookmark.title,
+          faviconDataUrl: bookmarkDialogBookmark.faviconDataUrl,
+        }
+      : bookmarkDialogSourceTab;
+  useEffect(() => {
+    if (!bookmarkDialog) return;
+    const tabStillExists = state?.tabs.some((tab) => tab.id === bookmarkDialog.tabId);
+    const bookmarkStillExists = bookmarkDialog.bookmarkId
+      ? state?.bookmarks.some((bookmark) => bookmark.id === bookmarkDialog.bookmarkId)
+      : true;
+    if (tabStillExists === false || bookmarkStillExists === false)
+      setBookmarkDialog(null);
+  }, [bookmarkDialog, state?.bookmarks, state?.tabs]);
   const nativePageEligible = Boolean(
     activeTab?.url && !activeTab.error && !activeAppPage && !activeFilePage,
   );
@@ -184,7 +278,8 @@ export function BrowserWorkspace({
     !openChromeMenus.toolbar &&
     !organizeTabsOpening &&
     !organizeTabsPreview &&
-    !organizeTabsPresent;
+    !organizeTabsPresent &&
+    !bookmarkDialogPresent;
 
   const openFind = useCallback(() => {
     findTabIdRef.current = activeTab?.id ?? null;
@@ -343,6 +438,7 @@ export function BrowserWorkspace({
         else if (command === "open-history") openHistoryPopover();
         else if (command === "open-downloads") setDownloadsOpen(true);
         else if (command === "open-bookmarks") onOpenBookmarks();
+        else if (command === "bookmark-page") openBookmarkDialog();
         else if (command === "open-settings") onOpenSettings?.();
         else if (command === "show-shortcuts") onShowShortcuts?.();
         else if (command === "toggle-sidebar") onToggleSidebar?.();
@@ -360,6 +456,7 @@ export function BrowserWorkspace({
       openHistoryPopover,
       setDownloadsOpen,
       onOpenBookmarks,
+      openBookmarkDialog,
       onOpenSettings,
       onShowShortcuts,
       onToggleSidebar,
@@ -373,6 +470,7 @@ export function BrowserWorkspace({
   useEffect(() => {
     function shortcuts(event: KeyboardEvent) {
       if (event.defaultPrevented) return;
+      if (bookmarkDialogPresent) return;
 
       if (event.key === "Escape") {
 		const foregroundOverlay = document.querySelector(
@@ -519,7 +617,7 @@ export function BrowserWorkspace({
       } else if (key === "d") {
         event.preventDefault();
         if (event.shiftKey) onOpenBookmarks();
-        else void toggleBookmark();
+        else toggleBookmarkFromChrome();
       } else if (key === "p" && !event.shiftKey && activeTab?.url) {
         event.preventDefault();
         void printTab(activeTab.id);
@@ -583,7 +681,8 @@ export function BrowserWorkspace({
     stop,
     stopFindInPage,
     findOpen,
-    toggleBookmark,
+    bookmarkDialogPresent,
+    toggleBookmarkFromChrome,
     zoomIn,
     zoomOut,
     zoomReset,
@@ -731,7 +830,7 @@ export function BrowserWorkspace({
         onOpenDevTools={() => void openDevTools(activeTab.id)}
         onSaveScreenshot={() => browser.saveScreenshot(activeTab.id)}
         onMenuOpenChange={handleToolbarMenuOpenChange}
-        onToggleBookmark={() => void toggleBookmark()}
+        onToggleBookmark={toggleBookmarkFromChrome}
         onOpenSettings={onOpenSettings}
         onToggleCalculator={() => {
           const node = viewportRef.current;
@@ -749,10 +848,12 @@ export function BrowserWorkspace({
       {showBookmarksBar && (
         <BookmarksBar
           bookmarks={state.bookmarks}
+          bookmarkFolders={state.bookmarkFolders}
           originFavicons={state.originFavicons}
           onOpen={(url) => void navigate(activeTab.id, url)}
           onOpenInNewTab={(url) => void createTab(url)}
-          onRemove={(bookmarkId) => void browser.removeBookmark(bookmarkId)}
+          onRemove={(bookmarkId) => void removeBookmark(bookmarkId)}
+          onEdit={editBookmark}
           onManage={onOpenBookmarks}
         />
       )}
@@ -941,19 +1042,38 @@ export function BrowserWorkspace({
       {activeTab.loading && (
         <span className="browser-loading-line" aria-label="Page loading" />
       )}
-			<AnimatePresence
-				initial={false}
-				onExitComplete={() => setOrganizeTabsPresent(false)}
-			>
-			{organizeTabsPreview && (
-        <OrganizeTabsDialog
-          key="organize-tabs-dialog"
-          preview={organizeTabsPreview}
-          originFavicons={state.originFavicons}
-          onCancel={closeOrganizeTabs}
-          onApply={applyOrganizeTabs}
-        />
-      )}
+      <AnimatePresence
+        initial={false}
+        onExitComplete={() => setBookmarkDialogPresent(false)}
+      >
+        {bookmarkDialog && bookmarkDialogTab && (
+          <BookmarkDialog
+            key={`bookmark-dialog-${bookmarkDialog.tabId}-${bookmarkDialog.bookmarkId ?? "new"}`}
+            tab={bookmarkDialogTab}
+            {...(bookmarkDialogBookmark
+              ? { bookmark: bookmarkDialogBookmark }
+              : {})}
+            bookmarkFolders={state.bookmarkFolders}
+            originFavicons={state.originFavicons}
+            onCancel={closeBookmarkDialog}
+            onSave={saveBookmarkDialog}
+            onCreateFolder={createBookmarkFolder}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence
+        initial={false}
+        onExitComplete={() => setOrganizeTabsPresent(false)}
+      >
+        {organizeTabsPreview && (
+          <OrganizeTabsDialog
+            key="organize-tabs-dialog"
+            preview={organizeTabsPreview}
+            originFavicons={state.originFavicons}
+            onCancel={closeOrganizeTabs}
+            onApply={applyOrganizeTabs}
+          />
+        )}
       </AnimatePresence>
     </main>
   );

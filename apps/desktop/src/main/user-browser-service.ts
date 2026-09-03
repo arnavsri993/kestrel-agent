@@ -10,6 +10,9 @@ import {
 } from "@kestrel/agent-core";
 import {
 	type UserBrowserCommand,
+	type UserBrowserBookmarkDisplayMode,
+	type UserBrowserBookmarkFolder,
+	type UserBrowserBookmarkFolderId,
 	type UserBrowserDownload,
 	type UserBrowserEvent,
 	type UserBrowserHistoryEntry,
@@ -108,9 +111,10 @@ import type { PaymentCardVault } from "./payment-card-vault";
 const MAX_LIVE_TABS = 8;
 const MAX_HISTORY_ENTRIES = 5_000;
 const MAX_DOWNLOAD_ENTRIES = 500;
+const MAX_BOOKMARKS = 2_000;
+const MAX_BOOKMARK_FOLDERS = 100;
 const POPUP_GESTURE_WINDOW_MS = 1_500;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
-const MAX_BOOKMARKS = 2_000;
 const MAX_TAB_FOLDER_NAMING_TABS = 8;
 const CONTEXT_DOWNLOAD_REQUEST_TTL_MS = 30_000;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
@@ -1717,6 +1721,7 @@ export class UserBrowserService {
 			version: 1,
 			exportedAt: this.now().toISOString(),
 			bookmarks: this.state.bookmarks,
+			bookmarkFolders: this.state.bookmarkFolders,
 			history: this.state.history,
 			sitePermissions: this.state.sitePermissions,
 			// The destination profile owns its filesystem. Never put a local path in
@@ -1733,6 +1738,21 @@ export class UserBrowserService {
 		const imported = BrowserDataTransferSchema.parse(payload);
 		const activeTabId =
 			this.state.activeTabId ?? this.state.tabs[0]?.id ?? createEmptyBrowserTab(this.now).id;
+		const importedFolderIds = new Map<string, UserBrowserBookmarkFolderId>();
+		const existingFolderIds = new Set(
+			this.state.bookmarkFolders.map((folder) => folder.id),
+		);
+		for (const folder of imported.bookmarkFolders) {
+			if (this.state.bookmarkFolders.length >= MAX_BOOKMARK_FOLDERS) break;
+			const name = redactUntrustedBrowserText(folder.name, 80).trim();
+			if (!name) continue;
+			const nextId = existingFolderIds.has(folder.id)
+				? (`bookmark-folder-${randomUUID()}` as UserBrowserBookmarkFolderId)
+				: folder.id;
+			this.state.bookmarkFolders.push({ ...folder, id: nextId, name });
+			existingFolderIds.add(nextId);
+			importedFolderIds.set(folder.id, nextId);
+		}
 		const existingBookmarkUrls = new Set(
 			this.state.bookmarks.map((bookmark) => bookmark.url),
 		);
@@ -1740,7 +1760,14 @@ export class UserBrowserService {
 			const url = sanitizeBrowserUrl(bookmark.url);
 			if (!safePageUrl(url) || existingBookmarkUrls.has(url))
 				continue;
-			this.state.bookmarks.push({ ...bookmark, url });
+			const folderId = bookmark.folderId
+				? importedFolderIds.get(bookmark.folderId)
+				: undefined;
+			this.state.bookmarks.push({
+				...bookmark,
+				url,
+				...(folderId ? { folderId } : { folderId: undefined }),
+			});
 			existingBookmarkUrls.add(url);
 		}
 		this.state.bookmarks = this.state.bookmarks.slice(-2_000);
@@ -1792,11 +1819,52 @@ export class UserBrowserService {
 		return this.getState();
 	}
 
+	saveBookmark(input: {
+		title: string;
+		displayMode: UserBrowserBookmarkDisplayMode;
+		folderId?: UserBrowserBookmarkFolderId | null;
+	}): UserBrowserState {
+		const tab = this.state.tabs.find((item) => item.id === this.state.activeTabId);
+		const targetUrl = sanitizeBrowserUrl(tab?.url ?? "");
+		if (!safePageUrl(targetUrl))
+			throw new Error("Only HTTP and HTTPS pages can be bookmarked.");
+		const folderId = this.validBookmarkFolderId(input.folderId);
+		const title = this.normalizedBookmarkTitle(
+			input.title,
+			targetUrl,
+			tab?.title,
+		);
+		const existing = this.state.bookmarks.find((item) => item.url === targetUrl);
+		if (existing) {
+			existing.title = title;
+			existing.displayMode = input.displayMode;
+			if (folderId) existing.folderId = folderId;
+			else delete existing.folderId;
+			if (tab?.faviconDataUrl && isFaviconDataUrl(tab.faviconDataUrl))
+				existing.faviconDataUrl = tab.faviconDataUrl;
+			this.commit();
+			return this.getState();
+		}
+		if (this.state.bookmarks.length >= MAX_BOOKMARKS)
+			throw new Error("Kestrel supports up to 2,000 bookmarks.");
+		this.state.bookmarks.unshift({
+			id: `bookmark-${randomUUID()}`,
+			url: targetUrl,
+			title,
+			displayMode: input.displayMode,
+			...(folderId ? { folderId } : {}),
+			...(tab?.faviconDataUrl && isFaviconDataUrl(tab.faviconDataUrl)
+				? { faviconDataUrl: tab.faviconDataUrl }
+				: {}),
+			createdAt: this.now().toISOString(),
+		});
+		this.commit();
+		return this.getState();
+	}
+
 	toggleBookmark(url?: string, title?: string): UserBrowserState {
-		const tab = url
-			? undefined
-			: this.state.tabs.find((item) => item.id === this.state.activeTabId);
-		const targetUrl = sanitizeBrowserUrl(url ?? tab?.url ?? "");
+		const activeTab = this.state.tabs.find((item) => item.id === this.state.activeTabId);
+		const targetUrl = sanitizeBrowserUrl(url ?? activeTab?.url ?? "");
 		if (!safePageUrl(targetUrl))
 			throw new Error("Only HTTP and HTTPS pages can be bookmarked.");
 		const existing = this.state.bookmarks.find((item) => item.url === targetUrl);
@@ -1809,14 +1877,84 @@ export class UserBrowserService {
 		}
 		if (this.state.bookmarks.length >= MAX_BOOKMARKS)
 			throw new Error("Kestrel supports up to 2,000 bookmarks.");
+		const sourceTab = this.state.tabs.find(
+			(item) => sanitizeBrowserUrl(item.url) === targetUrl,
+		);
 		this.state.bookmarks.unshift({
 			id: `bookmark-${randomUUID()}`,
 			url: targetUrl,
-			title: (title ?? tab?.title ?? hostnameTitle(targetUrl))
-				.trim()
-				.slice(0, 500) || hostnameTitle(targetUrl),
+			title: this.normalizedBookmarkTitle(
+				title,
+				targetUrl,
+				sourceTab?.title,
+			),
+			displayMode: "full",
+			...(sourceTab?.faviconDataUrl && isFaviconDataUrl(sourceTab.faviconDataUrl)
+				? { faviconDataUrl: sourceTab.faviconDataUrl }
+				: {}),
 			createdAt: this.now().toISOString(),
 		});
+		this.commit();
+		return this.getState();
+	}
+
+	updateBookmark(input: {
+		bookmarkId: string;
+		title: string;
+		displayMode: UserBrowserBookmarkDisplayMode;
+		folderId?: UserBrowserBookmarkFolderId | null;
+	}): UserBrowserState {
+		const bookmark = this.state.bookmarks.find(
+			(item) => item.id === input.bookmarkId,
+		);
+		if (!bookmark) throw new Error("This bookmark no longer exists.");
+		bookmark.title = this.normalizedBookmarkTitle(input.title, bookmark.url);
+		bookmark.displayMode = input.displayMode;
+		if (input.folderId !== undefined) {
+			const folderId = this.validBookmarkFolderId(input.folderId);
+			if (folderId) bookmark.folderId = folderId;
+			else delete bookmark.folderId;
+		}
+		this.commit();
+		return this.getState();
+	}
+
+	createBookmarkFolder(name: string): {
+		state: UserBrowserState;
+		folder: UserBrowserBookmarkFolder;
+	} {
+		if (this.state.bookmarkFolders.length >= MAX_BOOKMARK_FOLDERS)
+			throw new Error("Kestrel supports up to 100 bookmark folders.");
+		const normalized = redactUntrustedBrowserText(name, 80).trim();
+		if (!normalized) throw new Error("Give the bookmark folder a name.");
+		const folder: UserBrowserBookmarkFolder = {
+			id: `bookmark-folder-${randomUUID()}`,
+			name: normalized,
+			createdAt: this.now().toISOString(),
+		};
+		this.state.bookmarkFolders.push(folder);
+		this.commit();
+		return { state: this.getState(), folder };
+	}
+
+	renameBookmarkFolder(folderId: UserBrowserBookmarkFolderId, name: string): UserBrowserState {
+		const folder = this.state.bookmarkFolders.find((item) => item.id === folderId);
+		if (!folder) throw new Error("This bookmark folder no longer exists.");
+		const normalized = redactUntrustedBrowserText(name, 80).trim();
+		if (!normalized) throw new Error("Give the bookmark folder a name.");
+		folder.name = normalized;
+		this.commit();
+		return this.getState();
+	}
+
+	removeBookmarkFolder(folderId: UserBrowserBookmarkFolderId): UserBrowserState {
+		if (!this.state.bookmarkFolders.some((item) => item.id === folderId))
+			throw new Error("This bookmark folder no longer exists.");
+		this.state.bookmarkFolders = this.state.bookmarkFolders.filter(
+			(item) => item.id !== folderId,
+		);
+		for (const bookmark of this.state.bookmarks)
+			if (bookmark.folderId === folderId) delete bookmark.folderId;
 		this.commit();
 		return this.getState();
 	}
@@ -1827,6 +1965,29 @@ export class UserBrowserService {
 		);
 		this.commit();
 		return this.getState();
+	}
+
+	private validBookmarkFolderId(
+		folderId: UserBrowserBookmarkFolderId | null | undefined,
+	): UserBrowserBookmarkFolderId | undefined {
+		if (!folderId) return undefined;
+		if (!this.state.bookmarkFolders.some((item) => item.id === folderId))
+			throw new Error("This bookmark folder no longer exists.");
+		return folderId;
+	}
+
+	private normalizedBookmarkTitle(
+		title: string | undefined,
+		url: string,
+		fallbackTitle?: string,
+	): string {
+		const candidate = redactUntrustedBrowserText(
+			title ?? fallbackTitle ?? hostnameTitle(url),
+			500,
+		)
+			.trim()
+			.slice(0, 500);
+		return candidate || hostnameTitle(url);
 	}
 
 	pinTab(tabId: string, pinned: boolean): UserBrowserState {
@@ -3808,9 +3969,17 @@ export class UserBrowserService {
 				{ role: "reload" },
 				{ type: "separator" },
 				{
-					label: "Bookmark This Page",
+					label: this.state.bookmarks.some((item) => item.url === tab.url)
+						? "Remove Bookmark"
+						: "Bookmark This Page",
 					enabled: Boolean(safePageUrl(tab.url)),
-					click: () => this.toggleBookmark(tab.url, tab.title),
+					click: () => {
+						const existing = this.state.bookmarks.find(
+							(item) => item.url === tab.url,
+						);
+						if (existing) this.removeBookmark(existing.id);
+						else this.onCommand?.("bookmark-page");
+					},
 				},
 				{
 					label: "Print…",
@@ -4002,11 +4171,11 @@ export class UserBrowserService {
 				event.preventDefault();
 				if (input.shift) this.onCommand?.("open-bookmarks");
 				else {
-					try {
-						this.toggleBookmark();
-					} catch {
-						this.onCommand?.("open-bookmarks");
-					}
+					const existing = this.state.bookmarks.find(
+						(item) => item.url === tab.url,
+					);
+					if (existing) this.removeBookmark(existing.id);
+					else this.onCommand?.("bookmark-page");
 				}
 			} else if (key === "i" && input.shift && this.allowDevTools) {
 				event.preventDefault();

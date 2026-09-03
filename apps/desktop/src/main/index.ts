@@ -3051,12 +3051,72 @@ function registerIpc(): void {
         ),
       };
     }
+    if (request.type === "browser-save-bookmark") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.saveBookmark({
+          title: request.title,
+          displayMode: request.displayMode,
+          ...(request.folderId !== undefined
+            ? { folderId: request.folderId }
+            : {}),
+        }),
+      };
+    }
+    if (request.type === "browser-update-bookmark") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.updateBookmark({
+          bookmarkId: request.bookmarkId,
+          title: request.title,
+          displayMode: request.displayMode,
+          ...(request.folderId !== undefined
+            ? { folderId: request.folderId }
+            : {}),
+        }),
+      };
+    }
     if (request.type === "browser-remove-bookmark") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
       return {
         ok: true,
         browserState: requestBrowserService.removeBookmark(request.bookmarkId),
+      };
+    }
+    if (request.type === "browser-create-bookmark-folder") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const result = requestBrowserService.createBookmarkFolder(request.name);
+      return {
+        ok: true,
+        browserState: result.state,
+        bookmarkFolderId: result.folder.id,
+      };
+    }
+    if (request.type === "browser-rename-bookmark-folder") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.renameBookmarkFolder(
+          request.folderId,
+          request.name,
+        ),
+      };
+    }
+    if (request.type === "browser-remove-bookmark-folder") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.removeBookmarkFolder(
+          request.folderId,
+        ),
       };
     }
     if (request.type === "browser-pin-tab") {

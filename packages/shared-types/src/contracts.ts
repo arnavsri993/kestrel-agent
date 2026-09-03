@@ -3318,9 +3318,37 @@ export const UserBrowserBookmarkSchema = z.object({
 	id: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
 	url: z.string().url().max(8_192),
 	title: z.string().min(1).max(500),
+	displayMode: z.enum(["full", "title", "icon"]).optional(),
+	folderId: z.string().regex(/^bookmark-folder-[a-f0-9-]{36}$/).optional(),
+	faviconDataUrl: UserBrowserFaviconDataUrlSchema.optional(),
 	createdAt: z.string().datetime(),
 });
 export type UserBrowserBookmark = z.infer<typeof UserBrowserBookmarkSchema>;
+
+export const UserBrowserBookmarkDisplayModeSchema = z.enum([
+	"full",
+	"title",
+	"icon",
+]);
+export type UserBrowserBookmarkDisplayMode = z.infer<
+	typeof UserBrowserBookmarkDisplayModeSchema
+>;
+
+export const UserBrowserBookmarkFolderIdSchema = z.string().regex(
+	/^bookmark-folder-[a-f0-9-]{36}$/,
+);
+export type UserBrowserBookmarkFolderId = z.infer<
+	typeof UserBrowserBookmarkFolderIdSchema
+>;
+
+export const UserBrowserBookmarkFolderSchema = z.object({
+	id: UserBrowserBookmarkFolderIdSchema,
+	name: z.string().min(1).max(80),
+	createdAt: z.string().datetime(),
+});
+export type UserBrowserBookmarkFolder = z.infer<
+	typeof UserBrowserBookmarkFolderSchema
+>;
 
 export const UserBrowserSitePermissionSchema = z.object({
 	origin: z.string().min(1).max(8_192),
@@ -3570,6 +3598,10 @@ export const BrowserDataTransferSchema = z.object({
 	version: z.literal(1),
 	exportedAt: z.string().datetime(),
 	bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
+	bookmarkFolders: z
+		.array(UserBrowserBookmarkFolderSchema)
+		.max(100)
+		.default([]),
 	history: z.array(UserBrowserHistoryEntrySchema).max(5_000).default([]),
 	sitePermissions: z.array(UserBrowserSitePermissionSchema).max(500).default([]),
 	settings: UserBrowserSettingsSchema,
@@ -3604,6 +3636,10 @@ export const UserBrowserStateSchema = z.object({
 		.default([]),
 	downloads: z.array(UserBrowserDownloadSchema).max(500),
 	bookmarks: z.array(UserBrowserBookmarkSchema).max(2_000).default([]),
+	bookmarkFolders: z
+		.array(UserBrowserBookmarkFolderSchema)
+		.max(100)
+		.default([]),
 	recentlyClosedTabs: z
 		.array(UserBrowserRecentlyClosedTabSchema)
 		.max(32)
@@ -3726,6 +3762,7 @@ export const UserBrowserCommandSchema = z.enum([
 	"open-history",
 	"open-downloads",
 	"open-bookmarks",
+	"bookmark-page",
 	"open-settings",
 	"show-shortcuts",
 	"toggle-sidebar",
@@ -3889,8 +3926,34 @@ export const RendererRequestSchema = z.union([
 		title: z.string().max(500).optional(),
 	}),
 	z.object({
+		type: z.literal("browser-save-bookmark"),
+		title: z.string().max(500),
+		displayMode: UserBrowserBookmarkDisplayModeSchema,
+		folderId: UserBrowserBookmarkFolderIdSchema.nullable().optional(),
+	}),
+	z.object({
+		type: z.literal("browser-update-bookmark"),
+		bookmarkId: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
+		title: z.string().max(500),
+		displayMode: UserBrowserBookmarkDisplayModeSchema,
+		folderId: UserBrowserBookmarkFolderIdSchema.nullable().optional(),
+	}),
+	z.object({
 		type: z.literal("browser-remove-bookmark"),
 		bookmarkId: z.string().regex(/^bookmark-[a-f0-9-]{36}$/),
+	}),
+	z.object({
+		type: z.literal("browser-create-bookmark-folder"),
+		name: z.string().max(80),
+	}),
+	z.object({
+		type: z.literal("browser-rename-bookmark-folder"),
+		folderId: UserBrowserBookmarkFolderIdSchema,
+		name: z.string().max(80),
+	}),
+	z.object({
+		type: z.literal("browser-remove-bookmark-folder"),
+		folderId: UserBrowserBookmarkFolderIdSchema,
 	}),
 	z.object({
 		type: z.literal("browser-pin-tab"),
@@ -4283,6 +4346,7 @@ export type RendererResponse =
 			browserState: UserBrowserState;
 			browserWindowRole?: BrowserWindowRole;
 			cancelled?: boolean;
+			bookmarkFolderId?: UserBrowserBookmarkFolderId;
 	  }
 	| { ok: true; browserDataPath?: string; cancelled?: boolean }
 	| {

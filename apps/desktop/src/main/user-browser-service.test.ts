@@ -1875,7 +1875,7 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     expect(contents.zoomLevel).toBe(0);
   });
 
-  it("bookmarks, pins, and finds in the active page", async () => {
+	it("bookmarks, pins, and finds in the active page", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://docs.example/path");
@@ -1896,8 +1896,66 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     service.openDevTools(first.id);
     expect(contents.openDevTools).toHaveBeenCalled();
     service.printTab(first.id);
-    expect(contents.print).toHaveBeenCalled();
-  });
+		expect(contents.print).toHaveBeenCalled();
+	});
+
+	it("saves bookmark presentation choices and keeps folder operations reversible", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/guide");
+
+		const created = service.createBookmarkFolder("Read later");
+		const saved = service.saveBookmark({
+			title: "A useful guide",
+			displayMode: "title",
+			folderId: created.folder.id,
+		});
+		const bookmark = saved.bookmarks[0]!;
+		expect(bookmark).toMatchObject({
+			title: "A useful guide",
+			displayMode: "title",
+			folderId: created.folder.id,
+		});
+
+		const renamed = service.renameBookmarkFolder(created.folder.id, "Reference");
+		expect(renamed.bookmarkFolders[0]?.name).toBe("Reference");
+		const updated = service.updateBookmark({
+			bookmarkId: bookmark.id,
+			title: "Guide icon",
+			displayMode: "icon",
+			folderId: null,
+		});
+		expect(updated.bookmarks[0]).toMatchObject({
+			title: "Guide icon",
+			displayMode: "icon",
+		});
+		expect(updated.bookmarks[0]?.folderId).toBeUndefined();
+
+		const removedFolder = service.removeBookmarkFolder(created.folder.id);
+		expect(removedFolder.bookmarkFolders).toEqual([]);
+		expect(removedFolder.bookmarks[0]?.folderId).toBeUndefined();
+	});
+
+	it("routes Cmd+D through the presentation command for an unsaved page", async () => {
+		const { service, commands } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://docs.example/guide");
+		const contents = electron.state.views[0]!.webContents;
+		const event = { preventDefault: vi.fn() };
+
+		contents.emit("before-input-event", event, {
+			type: "keyDown",
+			key: "d",
+			meta: true,
+			control: false,
+			shift: false,
+			alt: false,
+		});
+
+		expect(event.preventDefault).toHaveBeenCalled();
+		expect(commands).toContain("bookmark-page");
+		expect(service.getState().bookmarks).toEqual([]);
+	});
 
   it("does not open devtools when packaged production hardening disables them", async () => {
     const { service } = createService({ allowDevTools: false });

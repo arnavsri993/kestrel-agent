@@ -832,6 +832,7 @@ export function BrowserToolbar({
       host = tab.url;
     }
   }
+  const bookmarkable = /^https?:\/\//i.test(tab.url);
 
   const pinnedExtensions = pinnedExtensionIds
     .map((id) => extensions.find((extension) => extension.id === id))
@@ -959,7 +960,7 @@ export function BrowserToolbar({
             onKeyDown={handleAddressKeyDown}
             onChange={handleAddressChange}
           />
-          {tab.url && (
+          {bookmarkable && (
             <button
               type="button"
               className={`browser-bookmark ${bookmarked ? "active" : ""}`}

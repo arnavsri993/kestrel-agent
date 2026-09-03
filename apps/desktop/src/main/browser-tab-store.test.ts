@@ -343,6 +343,38 @@ describe("browser address normalization", () => {
 });
 
 describe("browser tab persistence", () => {
+	it("persists bookmark presentation choices, folders, and favicon snapshots", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
+		const folderId =
+			"bookmark-folder-00000000-0000-4000-8000-000000000001" as const;
+		state.bookmarkFolders = [
+			{
+				id: folderId,
+				name: "Read later",
+				createdAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
+		state.bookmarks = [
+			{
+				id: "bookmark-00000000-0000-4000-8000-000000000001",
+				url: "https://docs.example/guide",
+				title: "A useful guide",
+				displayMode: "icon",
+				folderId,
+				faviconDataUrl: "data:image/png;base64,AAAA",
+				createdAt: "2026-08-11T12:00:00.000Z",
+			},
+		];
+
+		store.save(state);
+
+		const restored = store.load();
+		expect(restored.bookmarkFolders).toEqual(state.bookmarkFolders);
+		expect(restored.bookmarks).toEqual(state.bookmarks);
+	});
+
 	it("persists and restores more than 32 open tabs", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);

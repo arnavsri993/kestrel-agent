@@ -10,6 +10,7 @@ import type {
 	UserBrowserBookmark,
 	UserBrowserDownload,
 	UserBrowserHistoryEntry,
+	UserBrowserOriginFavicon,
 	UserBrowserTab,
 } from "@kestrel/shared-types";
 import {
@@ -52,12 +53,17 @@ import {
 	WIDGET_SIZE_LABELS,
 	type NewTabWidgetDefinition,
 } from "./new-tab-widgets";
+import { bookmarkBarFaviconDataUrl } from "./bookmarks-bar";
 import "./new-tab-widgets.css";
 
 type WidgetContext = {
 	frequent: FrequentBrowserSite[];
 	history: UserBrowserHistoryEntry[];
 	bookmarks: UserBrowserBookmark[];
+	originFavicons: readonly Pick<
+		UserBrowserOriginFavicon,
+		"origin" | "faviconDataUrl"
+	>[];
 	downloads: UserBrowserDownload[];
 	tabs: Pick<
 		UserBrowserTab,
@@ -136,6 +142,25 @@ function SiteGlyph({ site }: { site: FrequentBrowserSite }) {
 	);
 }
 
+function BookmarkGlyph({
+	bookmark,
+	originFavicons,
+}: {
+	bookmark: UserBrowserBookmark;
+	originFavicons: WidgetContext["originFavicons"];
+}) {
+	return (
+		<FaviconGlyph
+			faviconDataUrl={bookmarkBarFaviconDataUrl(
+				bookmark.url,
+				originFavicons,
+				bookmark.faviconDataUrl,
+			)}
+			hostname={hostnameForUrl(bookmark.url)}
+		/>
+	);
+}
+
 function EmptyWidgetState({
 	icon,
 	children,
@@ -205,10 +230,17 @@ function FrequentTabsWidget({
 
 function BookmarksWidget({
 	bookmarks,
+	originFavicons,
 	size,
 	onNavigate,
 	onOpenBookmarks,
-}: Pick<WidgetContext, "bookmarks" | "onNavigate" | "onOpenBookmarks"> & {
+}: Pick<
+	WidgetContext,
+	| "bookmarks"
+	| "originFavicons"
+	| "onNavigate"
+	| "onOpenBookmarks"
+> & {
 	size: NewTabWidgetSize;
 }) {
 	const items = bookmarks.slice(0, visibleItemCount(size));
@@ -231,12 +263,10 @@ function BookmarksWidget({
 						onClick={() => onNavigate(bookmark.url)}
 						title={bookmark.url}
 					>
-						<span className="kestrel-widget-list-icon" aria-hidden="true">
-							<Icon name="star" />
-						</span>
+						<BookmarkGlyph bookmark={bookmark} originFavicons={originFavicons} />
 						<span>
 							<strong>{widgetText(bookmark.title, 38)}</strong>
-							<small>{new URL(bookmark.url).hostname}</small>
+							<small>{hostnameForUrl(bookmark.url)}</small>
 						</span>
 						<Icon name="forward" />
 					</button>

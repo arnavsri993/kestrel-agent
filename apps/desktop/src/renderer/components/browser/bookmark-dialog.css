@@ -1,0 +1,637 @@
+.bookmark-dialog-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	display: grid;
+	place-items: center;
+	padding: 20px;
+	background: rgb(0 0 0 / 0.62);
+	backdrop-filter: blur(2px);
+}
+
+.bookmark-dialog {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: min(640px, calc(100vw - 32px));
+	max-height: min(720px, calc(100vh - 32px));
+	overflow: hidden;
+	border: 1px solid rgb(255 255 255 / 0.12);
+	border-radius: 15px;
+	background: color-mix(in srgb, var(--panel) 96%, #000 4%);
+	box-shadow: 0 24px 64px rgb(0 0 0 / 0.48), inset 0 1px rgb(255 255 255 / 0.04);
+}
+
+.bookmark-dialog-header,
+.bookmark-dialog-footer,
+.bookmark-dialog-heading,
+.bookmark-dialog-section-heading,
+.bookmark-dialog-folder-row {
+	display: flex;
+	align-items: center;
+}
+
+.bookmark-dialog-header {
+	justify-content: space-between;
+	gap: 12px;
+	padding: 14px 18px;
+	border-bottom: 1px solid var(--line);
+}
+
+.bookmark-dialog-heading {
+	min-width: 0;
+	gap: 10px;
+}
+
+.bookmark-dialog-heading > span:last-child {
+	display: grid;
+	min-width: 0;
+	gap: 3px;
+}
+
+.bookmark-dialog-heading strong,
+.bookmark-dialog-heading small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.bookmark-dialog-heading strong {
+	font-size: 14px;
+	font-weight: 650;
+}
+
+.bookmark-dialog-heading small {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.bookmark-dialog-mark,
+.bookmark-dialog-mark img {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+}
+
+.bookmark-dialog-mark {
+	flex: 0 0 28px;
+	overflow: hidden;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--solid) 14%, transparent);
+	color: var(--solid);
+	font-size: 12px;
+	font-weight: 700;
+}
+
+.bookmark-dialog-favicon {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+}
+
+.bookmark-dialog-mark img {
+	object-fit: contain;
+}
+
+.bookmark-dialog-close {
+	display: grid;
+	place-items: center;
+	flex: 0 0 auto;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+}
+
+.bookmark-dialog-close:hover,
+.bookmark-dialog-close:focus-visible {
+	background: var(--selected);
+	color: var(--ink);
+	outline: none;
+}
+
+.bookmark-dialog-close svg {
+	width: 16px;
+	height: 16px;
+}
+
+.bookmark-dialog-body {
+	min-height: 0;
+	padding: 16px 18px 18px;
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+
+.bookmark-dialog-intro {
+	margin: 0 0 14px;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.45;
+}
+
+.bookmark-dialog-options {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.bookmark-dialog-options legend {
+	margin-bottom: 7px;
+	color: var(--ink-secondary);
+	font-size: 10px;
+	font-weight: 650;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.bookmark-dialog-option-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 7px;
+}
+
+.bookmark-dialog-option {
+	position: relative;
+	display: grid;
+	grid-template-columns: 18px minmax(0, 1fr) 14px;
+	align-items: start;
+	gap: 8px;
+	min-width: 0;
+	min-height: 142px;
+	padding: 10px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--surface) 62%, transparent);
+	color: var(--ink);
+	cursor: pointer;
+	transition:
+		border-color var(--motion-feedback) var(--ease-kestrel),
+		background-color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.bookmark-dialog-option:hover {
+	border-color: var(--line-strong);
+	background: var(--surface);
+}
+
+.bookmark-dialog-option.selected {
+	border-color: color-mix(in srgb, var(--solid) 72%, var(--line));
+	background: color-mix(in srgb, var(--solid) 11%, var(--surface));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--solid) 18%, transparent);
+}
+
+.bookmark-dialog-option input {
+	width: 15px;
+	height: 15px;
+	margin: 1px 0 0;
+	accent-color: var(--solid);
+}
+
+.bookmark-dialog-option:has(input:focus-visible) {
+	outline: 2px solid var(--solid);
+	outline-offset: 2px;
+}
+
+.bookmark-dialog-option-main {
+	display: grid;
+	min-width: 0;
+	gap: 8px;
+}
+
+.bookmark-dialog-option-icon {
+	display: grid;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	border-radius: 7px;
+	background: color-mix(in srgb, var(--ink) 8%, transparent);
+	color: var(--solid);
+}
+
+.bookmark-dialog-option-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.bookmark-dialog-option-copy {
+	display: grid;
+	min-width: 0;
+	gap: 4px;
+}
+
+.bookmark-dialog-option-copy strong,
+.bookmark-dialog-option-copy small {
+	display: block;
+}
+
+.bookmark-dialog-option-preview {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	min-height: 27px;
+	padding: 4px 5px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--canvas) 70%, var(--surface));
+}
+
+.bookmark-dialog-option-preview-chrome {
+	flex: 0 0 auto;
+	color: var(--faint);
+	font-size: 8px;
+	font-weight: 650;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.bookmark-dialog-option-preview-entry {
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+	gap: 4px;
+	max-width: 100%;
+	padding: 2px 4px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--ink) 8%, transparent);
+	color: var(--ink-secondary);
+	font-size: 8.5px;
+	font-weight: 560;
+}
+
+.bookmark-dialog-option-preview-entry.icon-only {
+	justify-content: center;
+	width: 22px;
+	padding-inline: 0;
+}
+
+.bookmark-dialog-option-preview-entry > span:last-child {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.bookmark-dialog-option-preview .browser-bookmarks-bar-glyph {
+	width: 11px;
+	height: 11px;
+	border-radius: 3px;
+	font-size: 7px;
+}
+
+.bookmark-dialog-option-preview .browser-bookmarks-bar-glyph img {
+	border-radius: 2px;
+}
+
+.bookmark-dialog-option-copy strong {
+	font-size: 11.5px;
+	font-weight: 650;
+}
+
+.bookmark-dialog-option-copy small {
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 1.35;
+}
+
+.bookmark-dialog-option-check {
+	display: grid;
+	place-items: center;
+	width: 14px;
+	height: 14px;
+	margin-top: 1px;
+	border-radius: 50%;
+	color: transparent;
+}
+
+.bookmark-dialog-option.selected .bookmark-dialog-option-check {
+	color: var(--solid);
+}
+
+.bookmark-dialog-option-check svg {
+	width: 13px;
+	height: 13px;
+}
+
+.bookmark-dialog-preview-section {
+	margin-top: 17px;
+}
+
+.bookmark-dialog-section-heading {
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 7px;
+}
+
+.bookmark-dialog-section-heading > span:first-child {
+	display: grid;
+	gap: 3px;
+}
+
+.bookmark-dialog-section-heading strong {
+	font-size: 11px;
+	font-weight: 650;
+}
+
+.bookmark-dialog-section-heading small,
+.bookmark-dialog-live-label {
+	color: var(--muted);
+	font-size: 10px;
+}
+
+.bookmark-dialog-live-label {
+	color: var(--status-ink);
+	font-weight: 650;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+
+.bookmark-dialog-preview-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	min-height: 42px;
+	padding: 7px 9px;
+	border: 1px solid var(--line-strong);
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--canvas) 82%, var(--surface));
+	box-shadow: inset 0 1px rgb(255 255 255 / 0.03);
+}
+
+.bookmark-dialog-preview-chrome {
+	display: inline-flex;
+	align-items: center;
+	flex: 0 0 auto;
+	gap: 5px;
+	color: var(--faint);
+	font-size: 10px;
+	font-weight: 620;
+	white-space: nowrap;
+}
+
+.bookmark-dialog-preview-chrome svg {
+	width: 12px;
+	height: 12px;
+}
+
+.bookmark-dialog-preview-divider {
+	width: 1px;
+	height: 20px;
+	background: var(--line);
+}
+
+.bookmark-dialog-preview-entry {
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+	gap: 6px;
+	max-width: 100%;
+	min-height: 25px;
+	padding: 0 8px;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--ink) 8%, transparent);
+	color: var(--ink);
+	font-size: 11px;
+	font-weight: 560;
+}
+
+.bookmark-dialog-preview-entry.icon-only {
+	justify-content: center;
+	width: 31px;
+	padding-inline: 0;
+}
+
+.bookmark-dialog-preview-entry .browser-bookmarks-bar-glyph {
+	width: 14px;
+	height: 14px;
+}
+
+.bookmark-dialog-preview-entry .browser-bookmarks-bar-glyph img {
+	width: 100%;
+	height: 100%;
+}
+
+.bookmark-dialog-preview-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.bookmark-dialog-field {
+	display: grid;
+	gap: 6px;
+	margin-top: 15px;
+	color: var(--ink-secondary);
+	font-size: 10px;
+	font-weight: 650;
+}
+
+.bookmark-dialog-field > input,
+.bookmark-dialog-folder-row select,
+.bookmark-dialog-create-folder input {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 34px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: 7px;
+	background: var(--surface);
+	color: var(--ink);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 450;
+}
+
+.bookmark-dialog-field > input:focus,
+.bookmark-dialog-folder-row select:focus,
+.bookmark-dialog-create-folder input:focus {
+	border-color: var(--solid);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--solid) 16%, transparent);
+	outline: none;
+}
+
+.bookmark-dialog-field > small {
+	color: var(--faint);
+	font-size: 10px;
+	font-weight: 450;
+	line-height: 1.35;
+}
+
+.bookmark-dialog-folder-row {
+	gap: 7px;
+}
+
+.bookmark-dialog-folder-row select {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.bookmark-dialog-new-folder,
+.bookmark-dialog-create-folder button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	min-height: 34px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: 7px;
+	background: transparent;
+	color: var(--ink-secondary);
+	font: inherit;
+	font-size: 10.5px;
+	font-weight: 620;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.bookmark-dialog-new-folder:hover,
+.bookmark-dialog-new-folder:focus-visible,
+.bookmark-dialog-create-folder button:hover,
+.bookmark-dialog-create-folder button:focus-visible {
+	background: var(--selected);
+	color: var(--ink);
+	outline: none;
+}
+
+.bookmark-dialog-new-folder svg {
+	width: 13px;
+	height: 13px;
+}
+
+.bookmark-dialog-create-folder {
+	display: flex;
+	gap: 7px;
+	margin-top: 7px;
+}
+
+.bookmark-dialog-create-folder input {
+	min-height: 30px;
+}
+
+.bookmark-dialog-create-folder button {
+	min-height: 30px;
+	background: var(--surface);
+}
+
+.bookmark-dialog-error {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 12px 0 0;
+	color: var(--warning);
+	font-size: 10.5px;
+	line-height: 1.35;
+}
+
+.bookmark-dialog-error svg {
+	flex: 0 0 auto;
+	width: 14px;
+	height: 14px;
+}
+
+.bookmark-dialog-footer {
+	justify-content: flex-end;
+	gap: 8px;
+	margin-top: auto;
+	padding: 13px 18px 16px;
+	border-top: 1px solid var(--line);
+}
+
+.bookmark-dialog-footer button {
+	min-height: 32px;
+	padding: 0 13px;
+	border: 1px solid var(--line-strong);
+	border-radius: 7px;
+	font: inherit;
+	font-size: 11px;
+	font-weight: 620;
+	cursor: pointer;
+}
+
+.bookmark-dialog-secondary {
+	background: var(--surface);
+	color: var(--ink-secondary);
+}
+
+.bookmark-dialog-primary {
+	border-color: var(--solid) !important;
+	background: var(--solid);
+	color: var(--on-solid);
+}
+
+.bookmark-dialog-secondary:hover,
+.bookmark-dialog-secondary:focus-visible {
+	background: var(--selected);
+	color: var(--ink);
+	outline: none;
+}
+
+.bookmark-dialog-primary:hover,
+.bookmark-dialog-primary:focus-visible {
+	background: var(--solid-hover);
+	outline: none;
+}
+
+.bookmark-dialog-footer button:disabled,
+.bookmark-dialog-close:disabled,
+.bookmark-dialog-new-folder:disabled,
+.bookmark-dialog-create-folder button:disabled {
+	opacity: 0.55;
+	cursor: wait;
+}
+
+@media (max-width: 620px) {
+	.bookmark-dialog-overlay {
+		padding: 12px;
+	}
+
+	.bookmark-dialog {
+		width: min(100%, 640px);
+		max-height: calc(100vh - 24px);
+	}
+
+	.bookmark-dialog-header,
+	.bookmark-dialog-footer {
+		padding-inline: 14px;
+	}
+
+	.bookmark-dialog-body {
+		padding-inline: 14px;
+	}
+
+	.bookmark-dialog-option-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.bookmark-dialog-option {
+		min-height: 0;
+	}
+
+	.bookmark-dialog-preview-chrome {
+		max-width: 38%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.bookmark-dialog-folder-row {
+		align-items: stretch;
+		flex-direction: column;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.bookmark-dialog-overlay,
+	.bookmark-dialog-option {
+		backdrop-filter: none;
+		transition: none;
+	}
+}
