@@ -449,7 +449,9 @@ export function AgentWorkspace({
 			</h1>
 			<div className="agent-universe-stage">
 				<div className="agent-universe-visual-plane">
-					<AgentUniverseStarfield reducedMotion={reducedMotion} />
+					{!hasSystems ? (
+						<AgentUniverseStarfield reducedMotion={reducedMotion} />
+					) : null}
 					{sessionLoadState === "loading" && !hasSystems ? (
 						<AgentUniverseLoadingState />
 					) : sessionLoadState === "error" && !hasSystems ? (

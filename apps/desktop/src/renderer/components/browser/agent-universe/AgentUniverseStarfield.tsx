@@ -1,8 +1,13 @@
 import { useEffect, useRef } from "react";
+import {
+	DEFAULT_AGENT_UNIVERSE_CAMERA,
+	type AgentUniverseCamera,
+} from "./agent-universe-camera";
 
 interface StarLayer {
 	density: number;
 	speed: number;
+	parallax: number;
 	seed: number;
 }
 
@@ -11,10 +16,36 @@ interface RenderedStarLayer extends StarLayer {
 }
 
 const STAR_LAYERS: StarLayer[] = [
-	{ density: 1, speed: 0.55, seed: 0x12ab34cd },
-	{ density: 0.62, speed: 0.3, seed: 0x6e2f11a7 },
-	{ density: 0.28, speed: 0.14, seed: 0xb91d70e3 },
+	{ density: 1, speed: 0.55, parallax: 0.86, seed: 0x12ab34cd },
+	{ density: 0.62, speed: 0.3, parallax: 0.52, seed: 0x6e2f11a7 },
+	{ density: 0.28, speed: 0.14, parallax: 0.28, seed: 0xb91d70e3 },
 ];
+
+export interface AgentUniverseStarfieldTransform {
+	scale: number;
+	panX: number;
+	panY: number;
+}
+
+/**
+ * Keep the field attached to the map without making every depth layer move as
+ * if it were painted on the planets. The nearer layer follows the camera
+ * most, while the distant layer gives the scene a restrained spatial depth.
+ * Clamping the scale at 1 prevents zooming out from exposing an unpainted
+ * canvas edge because the starfield is an ambient plane, not map content.
+ */
+export function starfieldTransformForCamera(
+	camera: AgentUniverseCamera,
+	parallax: number,
+): AgentUniverseStarfieldTransform {
+	const influence = clamp(parallax, 0, 1);
+	const zoom = Number.isFinite(camera.zoom) ? camera.zoom : 1;
+	return {
+		scale: Math.max(1, 1 + (zoom - 1) * influence),
+		panX: (Number.isFinite(camera.panX) ? camera.panX : 0) * influence,
+		panY: (Number.isFinite(camera.panY) ? camera.panY : 0) * influence,
+	};
+}
 
 function seededRandom(seed: number): () => number {
 	let state = seed >>> 0;
@@ -87,11 +118,16 @@ function buildLayer(
 }
 
 export function AgentUniverseStarfield({
+	camera = DEFAULT_AGENT_UNIVERSE_CAMERA,
 	reducedMotion = false,
 }: {
+	camera?: AgentUniverseCamera;
 	reducedMotion?: boolean;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
+	const cameraRef = useRef<AgentUniverseCamera>(camera);
+	const drawRef = useRef<((time: number) => void) | null>(null);
+	cameraRef.current = camera;
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -115,18 +151,30 @@ export function AgentUniverseStarfield({
 			context.clearRect(0, 0, pixelWidth, pixelHeight);
 			const elapsed = reducedMotion ? 0 : Math.max(0, time - startedAt) / 1_000;
 			for (const layer of renderedLayers) {
+				const { scale, panX, panY } = starfieldTransformForCamera(
+					cameraRef.current,
+					layer.parallax,
+				);
 				// The layers drift in one stable direction at sub-pixel-per-frame
 				// speeds. Wrapping the pre-rendered tile avoids seams and keeps this
 				// ambient depth cue cheap instead of turning it into a particle loop.
 				const x = wrappedOffset(elapsed * layer.speed * dpr, pixelWidth);
 				const y = wrappedOffset(elapsed * layer.speed * 0.16 * dpr, pixelHeight);
+				const centerX = pixelWidth / 2;
+				const centerY = pixelHeight / 2;
+				context.save();
+				context.translate(centerX + panX * dpr, centerY + panY * dpr);
+				context.scale(scale, scale);
+				context.translate(-centerX, -centerY);
 				context.drawImage(layer.tile, x, y);
 				context.drawImage(layer.tile, x - pixelWidth, y);
 				context.drawImage(layer.tile, x, y - pixelHeight);
 				context.drawImage(layer.tile, x - pixelWidth, y - pixelHeight);
+				context.restore();
 			}
 			if (!reducedMotion) frameId = requestAnimationFrame(draw);
 		};
+		drawRef.current = draw;
 
 		const resize = () => {
 			if (frameId !== null) cancelAnimationFrame(frameId);
@@ -153,8 +201,15 @@ export function AgentUniverseStarfield({
 		return () => {
 			observer.disconnect();
 			if (frameId !== null) cancelAnimationFrame(frameId);
+			drawRef.current = null;
 		};
 	}, [reducedMotion]);
+
+	useEffect(() => {
+		// Reduced motion intentionally has no RAF loop, but camera panning is
+		// direct user input and still needs to repaint the attached field.
+		if (reducedMotion) drawRef.current?.(performance.now());
+	}, [camera, reducedMotion]);
 
 	return (
 		<canvas

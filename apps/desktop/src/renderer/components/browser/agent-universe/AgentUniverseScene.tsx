@@ -17,6 +17,7 @@ import {
 } from "../../../agent-workspace";
 import { Icon } from "../../Icon";
 import { AgentUniverseContextSurface } from "./AgentUniverseContextSurface";
+import { AgentUniverseStarfield } from "./AgentUniverseStarfield";
 import { layoutAgentUniverse, type AgentNodeLayout } from "./agent-universe-layout";
 import {
 	AGENT_UNIVERSE_PLANET_LIMIT,
@@ -698,6 +699,10 @@ export function AgentUniverseScene({
 			onPointerCancel={finishPointer}
 			onKeyDown={handleKeyDown}
 		>
+			<AgentUniverseStarfield
+				camera={camera}
+				reducedMotion={reducedMotion}
+			/>
 			<svg
 				className="agent-universe-svg"
 				viewBox={`0 0 ${layout.width} ${layout.height}`}
