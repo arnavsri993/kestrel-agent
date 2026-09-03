@@ -346,6 +346,7 @@ export function BrowserToolbar({
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
   const downloadsTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
   const historyPopoverRequestRef = useRef(0);
   const overlayOpenRef = useRef(false);
   const suggestionsCloseTimerRef = useRef<number | null>(null);
@@ -521,6 +522,49 @@ export function BrowserToolbar({
       x: Math.max(12, Math.min(menuRect.width - 12, triggerRect.left + triggerRect.width / 2 - left)),
       y: top < triggerRect.top ? menuRect.height : 0,
     });
+  }, []);
+
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar) return;
+    const navigation = toolbar.querySelector<HTMLElement>(
+      ".browser-navigation",
+    );
+    const actions = toolbar.querySelector<HTMLElement>(
+      ".browser-toolbar-actions",
+    );
+    if (!navigation || !actions) return;
+
+    const desktopLayout = window.matchMedia("(min-width: 841px)");
+    const updateSideRail = () => {
+      if (!desktopLayout.matches) {
+        toolbar.style.removeProperty("--browser-toolbar-side-rail");
+        return;
+      }
+      const sideRail = Math.ceil(
+        Math.max(
+          navigation.getBoundingClientRect().width,
+          actions.getBoundingClientRect().width,
+        ),
+      );
+      toolbar.style.setProperty(
+        "--browser-toolbar-side-rail",
+        `${sideRail}px`,
+      );
+    };
+
+    updateSideRail();
+    const resizeObserver = new ResizeObserver(updateSideRail);
+    resizeObserver.observe(toolbar);
+    resizeObserver.observe(navigation);
+    resizeObserver.observe(actions);
+    window.addEventListener("resize", updateSideRail);
+    desktopLayout.addEventListener("change", updateSideRail);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateSideRail);
+      desktopLayout.removeEventListener("change", updateSideRail);
+    };
   }, []);
 
   useLayoutEffect(() => {
@@ -794,7 +838,11 @@ export function BrowserToolbar({
     .filter((extension): extension is InstalledExtension => Boolean(extension));
 
   return (
-    <div className="browser-toolbar" aria-label="Browser toolbar">
+    <div
+      ref={toolbarRef}
+      className="browser-toolbar"
+      aria-label="Browser toolbar"
+    >
       <div
         className="window-controls-clearance no-drag"
         aria-hidden="true"

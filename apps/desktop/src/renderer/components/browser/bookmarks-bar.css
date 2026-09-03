@@ -4,7 +4,7 @@
 		"toolbar"
 		"bookmarks"
 		"viewport";
-	grid-template-rows: 40px 48px 32px minmax(0, 1fr);
+	grid-template-rows: 40px var(--browser-toolbar-height, 40px) 32px minmax(0, 1fr);
 }
 
 .browser-workspace-vertical.browser-workspace-bookmarks {
@@ -12,23 +12,23 @@
 		"tabs toolbar"
 		"tabs bookmarks"
 		"tabs viewport";
-	grid-template-rows: 48px 32px minmax(0, 1fr);
+	grid-template-rows: var(--browser-toolbar-height, 40px) 32px minmax(0, 1fr);
 }
 
 .browser-workspace-bookmarks .browser-loading-line {
-	top: 121px;
+	top: calc(40px + var(--browser-toolbar-height, 40px) + 33px);
 }
 
 .browser-workspace-bookmarks .browser-inline-error {
-	top: 128px;
+	top: calc(40px + var(--browser-toolbar-height, 40px) + 40px);
 }
 
 .browser-workspace-vertical.browser-workspace-bookmarks .browser-loading-line {
-	top: 79px;
+	top: calc(var(--browser-toolbar-height, 40px) + 31px);
 }
 
 .browser-workspace-vertical.browser-workspace-bookmarks .browser-inline-error {
-	top: 86px;
+	top: calc(var(--browser-toolbar-height, 40px) + 38px);
 }
 
 .browser-bookmarks-bar {
