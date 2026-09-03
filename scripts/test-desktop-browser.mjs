@@ -1202,6 +1202,55 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing browser menu",
 	);
+	const extensionsSourceTabId = (await browserState()).activeTabId;
+	assert(extensionsSourceTabId);
+	await page.getByRole("button", { name: "Extensions", exact: true }).click();
+	const extensionsMenu = page.getByRole("menu", { name: "Extensions" });
+	await extensionsMenu.waitFor();
+	await assertNativePagePreviewVisible();
+	await waitForNativeView(
+		(value) => value.views.length === 0,
+		"Native page remained above the extensions menu",
+	);
+	const storeLink = extensionsMenu.getByRole("menuitem", {
+		name: "Go to store",
+		exact: true,
+	});
+	assert.equal(await storeLink.count(), 1);
+	assert.equal(
+		await storeLink.getAttribute("href"),
+		"https://chromewebstore.google.com",
+	);
+	await storeLink.click();
+	state = await waitForBrowserState(
+		(value) =>
+			value.activeTabId !== extensionsSourceTabId &&
+			value.tabs.some(
+				(tab) =>
+					tab.id === value.activeTabId &&
+					tab.url.startsWith("https://chromewebstore.google.com"),
+			),
+		"Go to store did not open the Chrome Web Store in a new tab",
+	);
+	const storeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+	assert(storeTab);
+	await page.evaluate(
+		async ({ storeTabId, sourceTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: storeTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: sourceTabId,
+			});
+		},
+		{ storeTabId: storeTab.id, sourceTabId: extensionsSourceTabId },
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Original tab was not restored after opening the Chrome Web Store",
+	);
 	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
 	await page
 		.getByRole("menu", { name: "Browser menu" })
@@ -2205,7 +2254,7 @@ try {
 
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, hidden-view routing, and restart restore.\n",
+		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation, hidden-view routing, and restart restore.\n",
 	);
 } finally {
 	await application?.close();

@@ -4516,6 +4516,7 @@ body:has(.ai-browser-app),
 	color: var(--ink-secondary);
 	font-size: 11.5px;
 	text-align: left;
+	text-decoration: none;
 	cursor: pointer;
 }
 .browser-toolbar-menu-link:hover,
