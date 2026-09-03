@@ -357,7 +357,9 @@ async function assertBrowserChromeLayout({
 			horizontalTabs: bounds(".browser-tab-row-horizontal"),
 			verticalTabs: bounds(".browser-tab-row-vertical"),
 			toolbar: bounds(".browser-toolbar"),
+			navigation: bounds(".browser-navigation"),
 			address: bounds(".browser-address"),
+			actions: bounds(".browser-toolbar-actions"),
 			bookmarks: bounds(".browser-bookmarks-bar"),
 			kestrel: bounds(".kestrel-sidebar"),
 			recommendations: bounds(".kestrel-widget-canvas"),
@@ -376,7 +378,9 @@ async function assertBrowserChromeLayout({
 	assert(layout.app);
 	assert(tabs);
 	assert(layout.toolbar);
+	assert(layout.navigation);
 	assert(layout.address);
+	assert(layout.actions);
 	assert(layout.viewport);
 	assert.equal(
 		layout.toolbar.height,
@@ -418,11 +422,25 @@ async function assertBrowserChromeLayout({
 	} else {
 		assert.equal(tabs.x, layout.app.x);
 		assert.equal(tabs.width, layout.app.width);
-		const toolbarCenter = layout.toolbar.x + layout.toolbar.width / 2;
-		const addressCenter = layout.address.x + layout.address.width / 2;
 		assert(
-			Math.abs(addressCenter - toolbarCenter) <= 2,
-			`Address field should be centered in the horizontal toolbar: ${JSON.stringify({
+			layout.address.x >= layout.navigation.right - 1 &&
+			layout.address.x - layout.navigation.right <= 16,
+			`Address field left a dead zone after navigation: ${JSON.stringify({
+				navigation: layout.navigation,
+				address: layout.address,
+			})}`,
+		);
+		assert(
+			layout.actions.x >= layout.address.right - 1 &&
+				layout.actions.x - layout.address.right <= 16,
+			`Address field should end before the trailing browser actions: ${JSON.stringify({
+				address: layout.address,
+				actions: layout.actions,
+			})}`,
+		);
+		assert(
+			layout.address.width >= 240,
+			`Address field did not receive the available toolbar space: ${JSON.stringify({
 				address: layout.address,
 				toolbar: layout.toolbar,
 			})}`,
@@ -430,6 +448,26 @@ async function assertBrowserChromeLayout({
 	}
 	assert.equal(layout.toolbar.x, layout.app.x);
 	assert.equal(layout.toolbar.width, layout.app.width);
+	assert.equal(
+		await page.locator('.browser-toolbar-actions button[aria-label="Tools"]').count(),
+		0,
+		"Low-frequency tools should live behind Browser menu",
+	);
+	assert.equal(
+		await page.locator('.browser-toolbar-actions button[aria-label="Page options"]').count(),
+		0,
+		"Page options should live behind Browser menu",
+	);
+	assert.equal(
+		await page.locator('.browser-toolbar-actions button[aria-label="History"]').count(),
+		0,
+		"History should live behind Browser menu",
+	);
+	assert.equal(
+		await page.getByRole("button", { name: "Browser menu", exact: true }).count(),
+		1,
+		"Browser menu should remain the single overflow entry point",
+	);
 	if (sidebarVisible) {
 		assert(
 			layout.kestrel.y >= chromeBottom,
@@ -1133,6 +1171,7 @@ try {
 		"Screenshot",
 		"Find in page…",
 		"More tools",
+		"Page options",
 		"Settings",
 		"Command Center",
 	])
@@ -1147,7 +1186,11 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing browser menu",
 	);
-	await page.getByRole("button", { name: "Tools", exact: true }).click();
+	await page.getByRole("button", { name: "Browser menu", exact: true }).click();
+	await page
+		.getByRole("menu", { name: "Browser menu" })
+		.getByRole("menuitem", { name: "More tools", exact: true })
+		.click();
 	const toolbarToolsMenu = page.getByRole("menu", { name: "Tools" });
 	await toolbarToolsMenu.waitFor();
 	await assertNativePagePreviewVisible();

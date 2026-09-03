@@ -1813,13 +1813,12 @@ body:has(.ai-browser-app),
 	position: relative;
 	z-index: 2;
 	display: grid;
-	/* Keep the omnibox centered in the full toolbar, not just in the space
-	 * left after the wider action cluster. The component measures both outer
-	 * clusters so pinned extensions and other dynamic actions stay clear. */
-	--browser-toolbar-side-rail: clamp(262px, 14vw, 270px);
-	grid-template-columns: var(--browser-toolbar-side-rail) minmax(180px, 1fr) var(--browser-toolbar-side-rail);
+	/* Let the address field own the space between the two real control groups.
+	 * Equal side rails made wide windows look like the toolbar had a missing
+	 * control in the middle, especially when the trailing group changed size. */
+	grid-template-columns: auto minmax(0, 1fr) auto;
 	align-items: center;
-	gap: 8px;
+	gap: 10px;
 	min-width: 0;
 	padding: 4px 10px;
 	background: var(--canvas);
@@ -1843,6 +1842,7 @@ body:has(.ai-browser-app),
 	position: relative;
 	min-width: 0;
 	justify-self: end;
+	gap: 3px;
 }
 
 /* Vertical tabs move the tab strip out of the titlebar. Keep the remaining
@@ -7311,7 +7311,7 @@ body:has(.calculator-overlay),
 }
 
 .browser-toolbar-actions {
-	gap: 4px;
+	gap: 3px;
 	padding-left: 5px;
 }
 
@@ -7330,6 +7330,21 @@ body:has(.calculator-overlay),
 .browser-toolbar-actions .browser-agent-toggle-quick.active {
 	border-color: color-mix(in srgb, var(--solid) 25%, transparent);
 	background: color-mix(in srgb, var(--solid) 9%, transparent);
+}
+
+.browser-toolbar-overflow-trigger {
+	margin-left: 2px;
+}
+
+.browser-toolbar-overflow-trigger::before {
+	position: absolute;
+	top: 6px;
+	bottom: 6px;
+	left: -4px;
+	width: 1px;
+	background: color-mix(in srgb, var(--line) 78%, transparent);
+	content: "";
+	pointer-events: none;
 }
 
 .browser-toolbar-popover {

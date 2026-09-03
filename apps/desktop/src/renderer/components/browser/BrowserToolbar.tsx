@@ -344,9 +344,8 @@ export function BrowserToolbar({
   const [menuOrigin, setMenuOrigin] = useState({ x: 0, y: 0 });
   const menuRef = useRef<HTMLDivElement | null>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const browserMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const downloadsTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const toolbarRef = useRef<HTMLDivElement | null>(null);
   const historyPopoverRequestRef = useRef(0);
   const overlayOpenRef = useRef(false);
   const suggestionsCloseTimerRef = useRef<number | null>(null);
@@ -479,7 +478,10 @@ export function BrowserToolbar({
     )
       return;
     historyPopoverRequestRef.current = historyPopoverRequestId;
-    lastTriggerRef.current = historyTriggerRef.current;
+    // History can be opened by a keyboard shortcut without a dedicated
+    // toolbar button. Anchor it to the overflow menu so it still gets a
+    // reliable position and focus restoration target.
+    lastTriggerRef.current = browserMenuTriggerRef.current;
     setOpenMenu("history");
   }, [historyPopoverRequestId]);
 
@@ -522,49 +524,6 @@ export function BrowserToolbar({
       x: Math.max(12, Math.min(menuRect.width - 12, triggerRect.left + triggerRect.width / 2 - left)),
       y: top < triggerRect.top ? menuRect.height : 0,
     });
-  }, []);
-
-  useLayoutEffect(() => {
-    const toolbar = toolbarRef.current;
-    if (!toolbar) return;
-    const navigation = toolbar.querySelector<HTMLElement>(
-      ".browser-navigation",
-    );
-    const actions = toolbar.querySelector<HTMLElement>(
-      ".browser-toolbar-actions",
-    );
-    if (!navigation || !actions) return;
-
-    const desktopLayout = window.matchMedia("(min-width: 841px)");
-    const updateSideRail = () => {
-      if (!desktopLayout.matches) {
-        toolbar.style.removeProperty("--browser-toolbar-side-rail");
-        return;
-      }
-      const sideRail = Math.ceil(
-        Math.max(
-          navigation.getBoundingClientRect().width,
-          actions.getBoundingClientRect().width,
-        ),
-      );
-      toolbar.style.setProperty(
-        "--browser-toolbar-side-rail",
-        `${sideRail}px`,
-      );
-    };
-
-    updateSideRail();
-    const resizeObserver = new ResizeObserver(updateSideRail);
-    resizeObserver.observe(toolbar);
-    resizeObserver.observe(navigation);
-    resizeObserver.observe(actions);
-    window.addEventListener("resize", updateSideRail);
-    desktopLayout.addEventListener("change", updateSideRail);
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", updateSideRail);
-      desktopLayout.removeEventListener("change", updateSideRail);
-    };
   }, []);
 
   useLayoutEffect(() => {
@@ -840,7 +799,6 @@ export function BrowserToolbar({
 
   return (
     <div
-      ref={toolbarRef}
       className="browser-toolbar"
       aria-label="Browser toolbar"
     >
@@ -1136,41 +1094,6 @@ export function BrowserToolbar({
         </div>
         <button
           type="button"
-          className={`browser-toolbar-menu-trigger ${openMenu === "tools" ? "active" : ""}`}
-          aria-label="Tools"
-          aria-haspopup="menu"
-          aria-expanded={openMenu === "tools"}
-          title="Tools"
-          onClick={(event) => toggleMenu("tools", event)}
-        >
-          <Icon name="tools" />
-        </button>
-        <button
-          type="button"
-          className={`browser-toolbar-menu-trigger ${openMenu === "screen" ? "active" : ""}`}
-          aria-label="Page options"
-          aria-haspopup="menu"
-          aria-expanded={openMenu === "screen"}
-          title="Page options"
-          onClick={(event) => toggleMenu("screen", event)}
-        >
-          <Icon name="sliders" />
-        </button>
-        <button
-          ref={historyTriggerRef}
-          type="button"
-          className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${openMenu === "history" ? "active" : ""}`}
-          aria-label="History"
-          aria-haspopup="menu"
-          aria-expanded={openMenu === "history"}
-          aria-keyshortcuts="Meta+H"
-          title="History (⌘H)"
-          onClick={(event) => toggleMenu("history", event)}
-        >
-          <Icon name="history" />
-        </button>
-        <button
-          type="button"
           className="browser-toolbar-secondary"
           aria-label="Bookmarks"
           aria-keyshortcuts="Meta+Shift+D"
@@ -1193,8 +1116,9 @@ export function BrowserToolbar({
           <Icon name="downloads" />
         </button>
         <button
+          ref={browserMenuTriggerRef}
           type="button"
-          className={`browser-toolbar-menu-trigger ${openMenu === "browser" ? "active" : ""}`}
+          className={`browser-toolbar-menu-trigger browser-toolbar-overflow-trigger ${openMenu === "browser" ? "active" : ""}`}
           aria-label="Browser menu"
           aria-haspopup="menu"
           aria-expanded={openMenu === "browser"}
@@ -1420,6 +1344,15 @@ export function BrowserToolbar({
                     <span>More tools</span>
                     <Icon name="chevron" />
                   </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => setOpenMenu("screen")}
+                  >
+                    <Icon name="sliders" />
+                    <span>Page options</span>
+                    <Icon name="chevron" />
+                  </button>
                 </div>
                 <div className="browser-toolbar-menu-list browser-toolbar-menu-list-separated">
                   <button
@@ -1534,7 +1467,7 @@ export function BrowserToolbar({
                     type="button"
                     role="menuitem"
                     onClick={() => {
-                      lastTriggerRef.current = historyTriggerRef.current;
+                      lastTriggerRef.current = browserMenuTriggerRef.current;
                       setOpenMenu("history");
                     }}
                   >

@@ -1128,8 +1128,6 @@ async function readZoomReflow(page) {
 				navigationControl ? readControl(".kestrel-sidebar-new-task") : null,
 				readControl(".browser-new-tab"),
 				readControl("#browser-address-input"),
-				readControl('.browser-toolbar-actions button[aria-label="Tools"]'),
-				readControl('.browser-toolbar-actions button[aria-label="Page options"]'),
 				readControl(
 					'.browser-toolbar-actions button[aria-label="Browser menu"]',
 				),
@@ -1168,8 +1166,8 @@ function assertZoomReflow(layout, reflow, navigationWidth = 56) {
 	assert.equal(reflow.sidebarLabelDisplay, "none");
 	assert.equal(reflow.agentToggleLabelDisplay, "none");
 	assert.ok(
-		reflow.secondaryToolbarDisplays.length >= 4 &&
-			reflow.secondaryToolbarDisplays.every((display) => display === "none"),
+		reflow.secondaryToolbarDisplays.length >= 3 &&
+		reflow.secondaryToolbarDisplays.every((display) => display === "none"),
 		"High zoom must hide direct toolbar shortcuts before primary controls overflow.",
 	);
 	for (const [surface, overflow] of Object.entries({

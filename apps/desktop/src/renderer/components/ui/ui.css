@@ -971,7 +971,7 @@
 .browser-tab:hover:not(.active) { background: color-mix(in srgb, var(--surface) 55%, transparent); }
 .browser-tab-title { font-size: 13px; }
 .browser-toolbar { background: var(--canvas); border-bottom-color: var(--line); }
-.browser-address { height: 36px; border-color: var(--line); border-radius: var(--radius-control); background: var(--surface); }
+.browser-address { height: 32px; border-color: var(--line); border-radius: var(--radius-control); background: var(--surface); }
 .browser-address:focus-within { border-color: var(--solid); box-shadow: none; }
 .browser-address input { font-size: 12px; }
 
@@ -1843,7 +1843,7 @@ body { font-family: var(--sans); }
 }
 .browser-tab:hover:not(.active) { background: color-mix(in srgb, var(--surface) 55%, transparent); }
 .browser-address {
-	height: 36px;
+	height: 32px;
 	border: 1px solid var(--line);
 	border-radius: var(--radius-control);
 	background: var(--surface);
