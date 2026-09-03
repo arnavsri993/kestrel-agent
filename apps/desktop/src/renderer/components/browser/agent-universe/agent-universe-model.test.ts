@@ -52,6 +52,26 @@ describe("agent universe projection", () => {
 		expect(result.systems.every((system) => system.rootNodeId === system.nodes[0]?.id || system.nodes.some((node) => node.id === system.rootNodeId))).toBe(true);
 	});
 
+	it("keeps every real system while reserving eight planet slots for the overview", () => {
+		const result = projectAgentUniverse(
+			Array.from({ length: 10 }, (_, index) => ({
+				...baseSession,
+				id: `planet-system-${index}`,
+				title: `Planet system ${index}`,
+				updatedAt: `2026-09-01T10:${String(index).padStart(2, "0")}:00.000Z`,
+			})),
+		);
+
+		expect(result.systems).toHaveLength(10);
+		expect(result.overviewSystemIds).toHaveLength(8);
+		expect(result.overflowSystemIds).toHaveLength(2);
+		expect([
+			...result.overviewSystemIds,
+			...result.overflowSystemIds,
+		]).toEqual(result.systems.map((system) => system.id));
+		expect(result.sessionCount).toBe(10);
+	});
+
 	it("keeps delegated depth and real parent edges", () => {
 		const result = projectAgentUniverse([
 			baseSession,

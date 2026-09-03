@@ -54,10 +54,20 @@ export interface AgentSystemProjection {
 
 export interface AgentUniverseSnapshot {
 	systems: AgentSystemProjection[];
+	/**
+	 * The overview has eight planet slots so the spatial metaphor stays
+	 * readable. These ids are a view concern only: `systems`, `nodes`, and
+	 * `sessionCount` still contain every privacy-eligible runtime session.
+	 */
+	overviewSystemIds: string[];
+	overflowSystemIds: string[];
 	nodes: AgentNodeProjection[];
 	edges: AgentEdgeProjection[];
 	sessionCount: number;
 }
+
+/** The overview's planet count; overflow remains available through focus. */
+export const AGENT_UNIVERSE_PLANET_LIMIT = 8;
 
 export interface AgentUniverseProjectionOptions {
 	runsBySession?: ReadonlyMap<string, readonly AgentRun[]>;
@@ -304,8 +314,17 @@ export function projectAgentUniverse(
 			timestampValue(right.lastActivityAt) - timestampValue(left.lastActivityAt) ||
 			left.id.localeCompare(right.id),
 	);
+	const overviewSystemIds = systems
+		.slice(0, AGENT_UNIVERSE_PLANET_LIMIT)
+		.map((system) => system.id);
+	const overviewSystemIdSet = new Set(overviewSystemIds);
+	const overflowSystemIds = systems
+		.filter((system) => !overviewSystemIdSet.has(system.id))
+		.map((system) => system.id);
 	return {
 		systems,
+		overviewSystemIds,
+		overflowSystemIds,
 		nodes: systems.flatMap((system) => system.nodes),
 		edges: systems.flatMap((system) => system.edges),
 		sessionCount: visible.length,

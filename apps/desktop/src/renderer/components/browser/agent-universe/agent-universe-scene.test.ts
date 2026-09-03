@@ -39,6 +39,26 @@ const snapshot = projectAgentUniverse([
 	},
 ]);
 
+const overflowRoots = Array.from({ length: 10 }, (_, index) => ({
+		id: `overflow-system-${index}`,
+		title: `Overflow system ${index}`,
+		allowedTools: [],
+		status: "active" as const,
+		checkpoints: [],
+		createdAt: "2026-09-01T10:00:00.000Z",
+		updatedAt: `2026-09-01T10:${String(index).padStart(2, "0")}:00.000Z`,
+	}));
+const overflowSnapshot = projectAgentUniverse([
+	...overflowRoots,
+	{
+		...overflowRoots[0]!,
+		id: "overflow-system-0-child",
+		title: "Delegated moon",
+		parentSessionId: "overflow-system-0",
+		updatedAt: "2026-09-01T11:00:00.000Z",
+	},
+]);
+
 function markup(reducedMotion = false): string {
 	return renderToStaticMarkup(
 		createElement(AgentUniverseScene, {
@@ -56,6 +76,29 @@ function markup(reducedMotion = false): string {
 			onBackgroundClick: () => undefined,
 			onCloseContext: () => undefined,
 			onOpenSession: () => undefined,
+			onOverflowSystemActivate: () => undefined,
+		}),
+	);
+}
+
+function overflowMarkup(): string {
+	return renderToStaticMarkup(
+		createElement(AgentUniverseScene, {
+			snapshot: overflowSnapshot,
+			focusedSystemId: null,
+			selectedNodeId: null,
+			query: "",
+			activities: [],
+			reducedMotion: false,
+			systemColors: {},
+			contextRunsLoading: false,
+			contextGroupMemoryLoading: false,
+			onSystemColorChange: () => undefined,
+			onNodeActivate: () => undefined,
+			onBackgroundClick: () => undefined,
+			onCloseContext: () => undefined,
+			onOpenSession: () => undefined,
+			onOverflowSystemActivate: () => undefined,
 		}),
 	);
 }
@@ -76,5 +119,13 @@ describe("agent universe circle surface", () => {
 		expect(rendered).toContain("agent-universe-delegation-link");
 		expect(rendered).toContain("data-edge-id");
 		expect(rendered).toContain("agent-universe-scene is-reduced-motion");
+	});
+
+	it("renders planetary surface cues and an honest overflow affordance", () => {
+		const rendered = overflowMarkup();
+		expect(rendered).toContain("agent-universe-planet-sheen");
+		expect(rendered).toContain("agent-universe-moon-orbit");
+		expect(rendered).toContain("Open beyond the 8 planet slots");
+		expect(rendered.match(/data-system-id=/g)?.length ?? 0).toBe(8);
 	});
 });

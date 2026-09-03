@@ -37,9 +37,9 @@ function AgentUniverseEmptyState({ onNewTask }: { onNewTask(): void }) {
 			<span className="agent-universe-empty-mark" aria-hidden="true">
 				<Icon name="agent" />
 			</span>
-			<h2>No agent systems yet</h2>
+			<h2>No agent planets yet</h2>
 			<p>
-				Start a task and delegated work will appear here as Kestrel coordinates it.
+				Start a task and delegated work will orbit it here as Kestrel coordinates it.
 			</p>
 			<Button variant="solid" onClick={onNewTask}>
 				Start a task
@@ -488,6 +488,10 @@ export function AgentWorkspace({
 							onBackgroundClick={handleBackgroundClick}
 							onCloseContext={() => setSelectedNodeId(null)}
 							onOpenSession={onOpenSession}
+							onOverflowSystemActivate={(systemId) => {
+								setSelectedNodeId(null);
+								setFocusedSystemId(systemId);
+							}}
 						/>
 					)}
 				</div>
@@ -500,15 +504,15 @@ export function AgentWorkspace({
 								<p className="agent-universe-map-eyebrow">Agent Universe</p>
 								<p className="agent-universe-map-summary">
 									{hasSystems
-										? `${universe.systems.length} system${universe.systems.length === 1 ? "" : "s"} · ${universe.sessionCount} session${universe.sessionCount === 1 ? "" : "s"}`
+										? `${universe.overviewSystemIds.length} planet${universe.overviewSystemIds.length === 1 ? "" : "s"}${universe.overflowSystemIds.length > 0 ? ` · ${universe.overflowSystemIds.length} more system${universe.overflowSystemIds.length === 1 ? "" : "s"}` : ""} · ${universe.sessionCount} session${universe.sessionCount === 1 ? "" : "s"}`
 										: "A blank field for the work you start here"}
 								</p>
 							</div>
 						</div>
 						{hasSystems ? (
 							<div className="agent-universe-map-key" aria-label="Map key">
-								<span><i className="is-core" aria-hidden="true" /> Main circle</span>
-								<span><i className="is-worker" aria-hidden="true" /> Delegated</span>
+								<span><i className="is-core" aria-hidden="true" /> Main planet</span>
+								<span><i className="is-worker" aria-hidden="true" /> Moon agent</span>
 								<span><i className="is-link" aria-hidden="true" /> Ownership</span>
 							</div>
 						) : null}
@@ -587,7 +591,7 @@ export function AgentWorkspace({
 							onOpenApprovals={onOpenApprovals}
 						/>
 						<span className="agent-universe-map-hint">
-							Click a circle to inspect · drag to explore
+							Select a planet or moon to inspect · drag to explore
 						</span>
 					</div>
 				) : null}

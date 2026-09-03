@@ -110,21 +110,24 @@ Engineer repositories. The full evidence and decision record is in
   ephemeral; runtime identity and hierarchy remain in the deterministic
   renderer projection.
 - **Depth and restraint:** a sparse static field, proximity, scale, and
-  progressive labels establish depth. Systems
-  use a deliberately limited red/yellow/green palette inspired by the window's
+  progressive labels establish depth. The overview reserves eight planet slots
+  for top-level systems; an explicit overflow list keeps additional real
+  systems reachable without making the field unreadable. Each system uses a
+  deliberately limited red/yellow/green palette inspired by the window's
   traffic lights; each system receives a stable identity color until the user
   chooses another, while status is communicated separately through size,
-  opacity, and rim treatment. Bodies are matte single-color objects with a
-  quiet graphite core, not neon or glass.
-  Thin straight ownership links are the one persistent relationship cue: a line
-  from the main circle to a child means that child is real delegated work in
-  this system. There are no orbit rings, fake planets, provider-color badges,
-  fabricated metrics, or perpetual spectacle. Selection and focus add emphasis;
+  opacity, and rim treatment. The main agent is a matte planet-like body with
+  a restrained surface sheen; direct delegated sessions are smaller moon-like
+  bodies on compact root-centered guides, and deeper descendants stay close to
+  their owning moon. No trusted agent photo metadata exists in the runtime
+  contract yet, so the surface treatment is deterministic rather than a fake
+  profile image. Thin straight ownership links remain the persistent cue that
+  every relationship is real delegated work. Selection and focus add emphasis;
   they do not mutate or invent runtime state.
 - **Motion roles:** spatial continuity for focus and camera changes, direct
   manipulation for pan/zoom, and calm state feedback for real active work or
-  recent runtime events. The map is still at rest: workers do not idle-bob or
-  randomly drift. Dragging activates only the selected local system's damped
+  recent runtime events. The map is still at rest: moons do not orbit, idle-bob,
+  or randomly drift. Dragging activates only the selected local system's damped
   parent-relative physics, vacancy redistribution, and a restrained return.
   Active state adds a slow dashed ring; a real runtime event adds one outward
   pulse and briefly animates the affected ownership link. Waiting, failed,

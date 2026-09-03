@@ -1,6 +1,9 @@
 import type { RuntimeSession } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
-import { layoutAgentUniverse } from "./agent-universe-layout";
+import {
+	AGENT_UNIVERSE_SYSTEM_GAP,
+	layoutAgentUniverse,
+} from "./agent-universe-layout";
 import { projectAgentUniverse } from "./agent-universe-model";
 
 const root: RuntimeSession = {
@@ -69,6 +72,22 @@ describe("agent universe layout", () => {
 					expect(distance).toBeGreaterThanOrEqual(a.radius + b.radius - 0.5);
 				}
 			}
+		}
+	});
+
+	it("places direct delegates on a compact root-centered moon orbit", () => {
+		const snapshot = projectAgentUniverse(makeSessions(4));
+		const system = layoutAgentUniverse(snapshot, 1200, 700).systems[0]!;
+		const rootLayout = system.nodeLayouts.find((node) => node.nodeId === root.id)!;
+		const workerLayouts = system.nodeLayouts.filter((node) => node.nodeId !== root.id);
+
+		expect(system.orbitRadii).toHaveLength(1);
+		for (const worker of workerLayouts) {
+			expect(Math.hypot(worker.x - rootLayout.x, worker.y - rootLayout.y)).toBeCloseTo(
+				system.orbitRadii[0]!,
+				5,
+			);
+			expect(worker.orbitBand).toBe(1);
 		}
 	});
 
@@ -142,10 +161,33 @@ describe("agent universe layout", () => {
 				const a = layout.systems[left]!;
 				const b = layout.systems[right]!;
 				expect(Math.hypot(a.centerX - b.centerX, a.centerY - b.centerY)).toBeGreaterThan(
-					a.radius + b.radius,
+					a.radius + b.radius + AGENT_UNIVERSE_SYSTEM_GAP * layout.scale - 1,
 				);
 			}
 		}
+	});
+
+	it("keeps overflow systems out of the overview without hiding focused access", () => {
+		const snapshot = projectAgentUniverse(
+			Array.from({ length: 10 }, (_, index) => ({
+				...root,
+				id: `system-${index}`,
+				title: `System ${index}`,
+				updatedAt: `2026-09-01T10:${String(index).padStart(2, "0")}:00.000Z`,
+			})),
+		);
+		const overview = layoutAgentUniverse(snapshot, 1400, 800);
+		const focusedOverflow = layoutAgentUniverse(
+			snapshot,
+			1400,
+			800,
+			snapshot.overflowSystemIds[0],
+		);
+
+		expect(overview.systems).toHaveLength(8);
+		expect(focusedOverflow.systems.map((system) => system.systemId)).toEqual([
+			snapshot.overflowSystemIds[0],
+		]);
 	});
 
 	it("is stable when the same sessions are laid out again", () => {
