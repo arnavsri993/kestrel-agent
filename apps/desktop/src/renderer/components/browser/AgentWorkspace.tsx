@@ -2,8 +2,11 @@ import type {
 	AgentRun,
 	AgentState,
 	AgentGroupMemoryStatus,
+	AgentIdentity,
+	AgentMemoryRecord,
 	CoreResponse,
 	RuntimeSession,
+	WorkingTask,
 } from "@kestrel/shared-types";
 import { useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -164,7 +167,20 @@ export function AgentWorkspace({
 	>({});
 	const [groupMemoryLoading, setGroupMemoryLoading] = useState(false);
 	const [groupMemoryError, setGroupMemoryError] = useState("");
+	const [agentMemoryBySession, setAgentMemoryBySession] = useState<
+		Record<
+			string,
+			{
+				identity: AgentIdentity;
+				memories: AgentMemoryRecord[];
+				tasks: WorkingTask[];
+			}
+		>
+	>({});
+	const [agentMemoryLoading, setAgentMemoryLoading] = useState(false);
+	const [agentMemoryError, setAgentMemoryError] = useState("");
 	const groupMemoryRequestRef = useRef(0);
+	const agentMemoryRequestRef = useRef(0);
 	const runsBySessionRef = useRef(runsBySession);
 	const [systemColors, setSystemColors] = useState(readAgentUniverseSystemColors);
 	const reducedMotion = Boolean(useReducedMotion());
@@ -375,6 +391,54 @@ export function AgentWorkspace({
 		};
 	}, [runsBySession, selectedNode]);
 
+	const loadAgentMemory = useCallback(async (sessionId: string) => {
+		const requestId = ++agentMemoryRequestRef.current;
+		setAgentMemoryLoading(true);
+		setAgentMemoryError("");
+		try {
+			const raw = await window.kestrel.request({
+				type: "memory-agent-inspect",
+				sessionId,
+				includeInactive: false,
+				limit: 40,
+			});
+			const response = raw as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.memoryAgentIdentity)
+				throw new Error("Agent continuity did not return an identity.");
+			if (requestId !== agentMemoryRequestRef.current) return;
+			setAgentMemoryBySession((current) => ({
+				...current,
+				[sessionId]: {
+					identity: response.memoryAgentIdentity!,
+					memories: response.memoryAgentMemories ?? [],
+					tasks: response.memoryAgentTasks ?? [],
+				},
+			}));
+		} catch (cause) {
+			if (requestId !== agentMemoryRequestRef.current) return;
+			setAgentMemoryError(
+				cause instanceof Error ? cause.message : "Agent continuity is unavailable.",
+			);
+		} finally {
+			if (requestId === agentMemoryRequestRef.current) setAgentMemoryLoading(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		if (!selectedNode) {
+			setAgentMemoryLoading(false);
+			setAgentMemoryError("");
+			return;
+		}
+		if (agentMemoryBySession[selectedNode.id]) {
+			setAgentMemoryLoading(false);
+			setAgentMemoryError("");
+			return;
+		}
+		void loadAgentMemory(selectedNode.id);
+	}, [agentMemoryBySession, loadAgentMemory, selectedNode]);
+
 	const activateNode = useCallback(
 		(nodeId: string, systemId: string) => {
 			const node = universe.nodes.find((item) => item.id === nodeId);
@@ -449,7 +513,9 @@ export function AgentWorkspace({
 			</h1>
 			<div className="agent-universe-stage">
 				<div className="agent-universe-visual-plane">
-					<AgentUniverseStarfield reducedMotion={reducedMotion} />
+					{!hasSystems ? (
+						<AgentUniverseStarfield reducedMotion={reducedMotion} />
+					) : null}
 					{sessionLoadState === "loading" && !hasSystems ? (
 						<AgentUniverseLoadingState />
 					) : sessionLoadState === "error" && !hasSystems ? (
@@ -482,6 +548,13 @@ export function AgentWorkspace({
 							contextRunsLoading={Boolean(selectedNode && runsLoading)}
 							{...(selectedNode && runsError
 								? { contextRunsError: runsError }
+								: {})}
+							{...(selectedNode && agentMemoryBySession[selectedNode.id]
+								? { contextAgentMemory: agentMemoryBySession[selectedNode.id] }
+								: {})}
+							contextAgentMemoryLoading={Boolean(selectedNode && agentMemoryLoading)}
+							{...(selectedNode && agentMemoryError
+								? { contextAgentMemoryError: agentMemoryError }
 								: {})}
 							onSystemColorChange={updateSystemColor}
 							onNodeActivate={activateNode}

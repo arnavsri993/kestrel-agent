@@ -13,6 +13,7 @@ import type {
 	MemoryRecallStatus,
 	ModelProfile,
 	ModelRoutingDecision,
+	Project,
 	RoutingPolicy,
 	SelectedAttachment,
 	TaskOpportunity,
@@ -177,6 +178,7 @@ export interface AgentCoreDependencies {
 	now?: () => string;
 	workspaceRoots?: string[];
 	configuredWorkspaceRoots?: string[];
+	projects?: Project[];
 	modelProviders?: ModelProvider[];
 	modelProfiles?: ModelProfile[];
 	routingPolicy?: RoutingPolicy;
@@ -312,6 +314,7 @@ export class AgentCore {
 			() => this.now(),
 			this.deps.githubToken,
 			this.deps.configuredWorkspaceRoots ?? this.deps.workspaceRoots ?? [],
+			this.deps.projects ?? [],
 		);
 		this.observability = new ObservabilityManager(
 			this.deps.database,
@@ -1750,6 +1753,9 @@ export class AgentCore {
 						sessions: this.runtime.listSessions(),
 						selectedSessionId: this.runtime.selectedSessionId(),
 					};
+				case "runtime-sync-projects":
+					this.runtime.setProjects(request.projects);
+					return { ok: true, sessions: this.runtime.listSessions() };
 				case "agent-group-memory-list":
 					return {
 						ok: true,
@@ -1758,6 +1764,7 @@ export class AgentCore {
 				case "runtime-create-session": {
 					const session = this.runtime.createSession({
 						title: request.title,
+						...(request.projectId ? { projectId: request.projectId } : {}),
 						...(request.workspaceRoot
 							? { workspaceRoot: request.workspaceRoot }
 							: {}),
@@ -1768,6 +1775,14 @@ export class AgentCore {
 					this.pluginMcpManager?.attachSession(session.id);
 					return { ok: true, session };
 				}
+				case "runtime-update-session-project":
+					return {
+						ok: true,
+						session: this.runtime.updateSessionProject(
+							request.sessionId,
+							request.projectId,
+						),
+					};
 				case "runtime-select-session":
 					return {
 						ok: true,
@@ -1906,6 +1921,7 @@ export class AgentCore {
 									? []
 									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
+								this.runtime.projectContextForSession(request.sessionId),
 								groupMemoryContext,
 								...(sharedMemoryEnabled
 									? [
@@ -3164,6 +3180,7 @@ export class AgentCore {
 									? []
 									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
+								this.runtime.projectContextForSession(request.sessionId),
 								groupMemoryContext,
 								...(sharedMemoryEnabled
 									? [

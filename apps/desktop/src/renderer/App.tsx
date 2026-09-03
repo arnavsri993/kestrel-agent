@@ -27,8 +27,10 @@ import type {
 	PluginMutation,
 	PluginSummary,
 	ProviderVerification,
+	Project,
 	ReasoningEffort,
 	RendererRequest,
+	RendererResponse,
 	RoutingPolicy,
 	RoutingTrace,
 	RuntimeEvent,
@@ -90,6 +92,7 @@ import {
 } from "./components/browser/agent-sidebar";
 import { KestrelSidebar } from "./components/browser/KestrelSidebar";
 import { ProjectsWorkspace } from "./components/browser/ProjectsWorkspace";
+import { ProjectSettingsDialog } from "./components/browser/ProjectSettingsDialog";
 import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
@@ -193,8 +196,25 @@ import {
 	verifiedApprovalEvidenceForRun,
 } from "./runtime-evidence";
 import { KESTREL_STATE_TRANSITION } from "./motion-contract";
+import {
+	DEFAULT_PROJECT_APPEARANCE,
+	readProjectAppearances,
+	type ProjectAppearance,
+	type ProjectAppearanceMap,
+	writeProjectAppearances,
+} from "./project-appearance";
 
 const MAX_RENDERER_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+function projectsFromRendererResponse(
+	response: RendererResponse,
+): Project[] | undefined {
+	if (!response.ok || !("workspaceGrants" in response)) return undefined;
+	if ("projects" in response && response.projects) return response.projects;
+	// The main process returns enriched Project records under the legacy
+	// workspaceGrants field so older settings surfaces can keep working.
+	return response.workspaceGrants as Project[];
+}
 
 function attachmentForExternalFile(
 	file: UserBrowserFile,
@@ -2945,7 +2965,10 @@ function RuntimeConversation({
 	newAgentRequestId,
 	newAgentPrompt,
 	newAgentWorkspace,
+	newAgentProjectId,
 	newAgentFocusTarget,
+	projects,
+	onProjectsChange,
 	refreshRevision,
 	transcriptTarget,
 	onTranscriptTargetHandled,
@@ -2969,7 +2992,10 @@ function RuntimeConversation({
 	newAgentRequestId: number;
 	newAgentPrompt: string;
 	newAgentWorkspace: string | null;
+	newAgentProjectId: string | null;
 	newAgentFocusTarget: "prompt" | "task-settings";
+	projects: Project[];
+	onProjectsChange(projects: Project[]): void;
 	refreshRevision: number;
 	transcriptTarget?: { sessionId: string; messageId: string } | null;
 	onTranscriptTargetHandled?(): void;
@@ -3005,7 +3031,7 @@ function RuntimeConversation({
 			? "manual"
 			: "automatic",
 	);
-	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
+	const grants = projects;
 	const [workspace, setWorkspace] = useState("");
 	const [attachments, setAttachments] = useState<SelectedAttachment[]>([]);
 	const [mentionFiles, setMentionFiles] = useState<SelectedAttachment[]>([]);
@@ -3144,7 +3170,7 @@ function RuntimeConversation({
 		activeSessionIdRef.current = null;
 		onActiveSession(null);
 		setInput(newAgentPrompt);
-		if (newAgentWorkspace) setWorkspace(newAgentWorkspace);
+		setWorkspace(newAgentWorkspace ?? "");
 		setAttachments([]);
 		setCheckpointSummary("");
 		setError("");
@@ -3164,6 +3190,7 @@ function RuntimeConversation({
 		busy,
 		newAgentFocusTarget,
 		newAgentPrompt,
+		newAgentProjectId,
 		newAgentRequestId,
 		newAgentWorkspace,
 		onActiveSession,
@@ -3330,14 +3357,12 @@ function RuntimeConversation({
 		let cancelled = false;
 		void Promise.all([
 			window.kestrel.request({ type: "runtime-list-providers" }),
-			window.kestrel.request({ type: "get-workspace-grants" }),
 			window.kestrel.request({ type: "local-model-status" }),
 			window.kestrel.request({ type: "runtime-list-sessions" }),
 		])
 			.then(
 				async ([
 					providerResponse,
-					grantResponse,
 					localModelResponse,
 					sessionResponse,
 				]) => {
@@ -3351,19 +3376,14 @@ function RuntimeConversation({
 								: available[0]?.id || "",
 						);
 					}
-					if (grantResponse.ok && "workspaceGrants" in grantResponse) {
-						setGrants(grantResponse.workspaceGrants);
-						const availableGrants = availableWorkspaceGrants(
-							grantResponse.workspaceGrants,
-						);
-						setWorkspace(
-							(current) =>
-								(current &&
-								availableGrants.some((grant) => grant.path === current)
-									? current
-									: availableGrants[0]?.path) ?? "",
-						);
-					}
+					const availableGrants = availableWorkspaceGrants(projects);
+					setWorkspace(
+						(current) =>
+							(current &&
+							availableGrants.some((grant) => grant.path === current)
+								? current
+								: availableGrants[0]?.path) ?? "",
+					);
 					if (localModelResponse.ok && "localModels" in localModelResponse)
 						setLocalModels(localModelResponse.localModels);
 					if (sessionResponse.ok && "sessions" in sessionResponse)
@@ -3383,7 +3403,16 @@ function RuntimeConversation({
 		return () => {
 			cancelled = true;
 		};
-	}, [visible, onSessions]);
+	}, [onSessions, projects, visible]);
+
+	useEffect(() => {
+		const availableGrants = availableWorkspaceGrants(projects);
+		setWorkspace((current) =>
+			current && availableGrants.some((grant) => grant.path === current)
+				? current
+				: availableGrants[0]?.path ?? "",
+		);
+	}, [projects]);
 
 	useEffect(() => {
 		if (!transcriptTarget || transcriptTarget.sessionId !== activeSessionId) return;
@@ -3714,7 +3743,7 @@ function RuntimeConversation({
 	async function addProject() {
 		if (activeSessionId || busy) return;
 		setError("");
-		const previousPaths = new Set(grants.map((grant) => grant.path));
+		const previousPaths = new Set(projects.map((project) => project.path));
 		try {
 			const response = await window.kestrel.request({
 				type: "select-workspace-folder",
@@ -3723,20 +3752,25 @@ function RuntimeConversation({
 				throw new Error(
 					"error" in response ? response.error : "Could not add the project.",
 				);
-			if (!("workspaceGrants" in response)) return;
-			setGrants(response.workspaceGrants);
-			if (response.cancelled) return;
-			const availableGrants = availableWorkspaceGrants(
-				response.workspaceGrants,
-			);
-			const selectedWorkspacePath =
-				response.selectedWorkspacePath &&
-				availableGrants.some(
-					(grant) => grant.path === response.selectedWorkspacePath,
-				)
+			const responseProjects = projectsFromRendererResponse(response);
+			if (!responseProjects) return;
+			onProjectsChange(responseProjects);
+			if ("cancelled" in response && response.cancelled) return;
+			const selectedPath =
+				"selectedWorkspacePath" in response
 					? response.selectedWorkspacePath
 					: undefined;
-			const added = response.workspaceGrants.find(
+			const availableGrants = availableWorkspaceGrants(
+				responseProjects,
+			);
+			const selectedWorkspacePath =
+				selectedPath &&
+				availableGrants.some(
+					(grant) => grant.path === selectedPath,
+				)
+					? selectedPath
+					: undefined;
+			const added = responseProjects.find(
 				(grant) => grant.available !== false && !previousPaths.has(grant.path),
 			);
 			setWorkspace(
@@ -3813,7 +3847,11 @@ function RuntimeConversation({
 				const created = (await window.kestrel.request({
 					type: "runtime-create-session",
 					title: chatTitleFromPrompt(prompt),
-					...(workspace ? { workspaceRoot: workspace } : {}),
+					...(newAgentProjectId
+						? { projectId: newAgentProjectId }
+						: workspace
+							? { workspaceRoot: workspace }
+							: {}),
 				})) as CoreResponse;
 				if (!created.ok || !created.session)
 					throw new Error(
@@ -9913,15 +9951,22 @@ export function App() {
 		sessionId: string;
 		messageId: string;
 	} | null>(null);
-	const [workspaceGrants, setWorkspaceGrants] = useState<WorkspaceGrant[]>([]);
+	const [projects, setProjects] = useState<Project[]>([]);
+	const [projectsLoaded, setProjectsLoaded] = useState(false);
+	const [projectAppearances, setProjectAppearances] = useState<ProjectAppearanceMap>(
+		() => readProjectAppearances(window.localStorage),
+	);
+	const [projectSettingsProjectId, setProjectSettingsProjectId] = useState<
+		string | null
+	>(null);
 	const [runtimeAgentState, setRuntimeAgentState] = useState<AgentState | null>(
 		null,
 	);
 	const [activeRuntimeSessionId, setActiveRuntimeSessionId] = useState<
 		string | null
 	>(null);
-	const [activeProjectPath, setActiveProjectPath] = useState<string | null>(
-		() => localStorage.getItem("kestrel:active-project"),
+	const [activeProjectId, setActiveProjectId] = useState<string | null>(
+		() => localStorage.getItem("kestrel:active-project-id"),
 	);
 	const [newAgentRequestId, setNewAgentRequestId] = useState(0);
 	const [newAgentPrompt, setNewAgentPrompt] = useState("");
@@ -9933,6 +9978,9 @@ export function App() {
 	);
 	const [externalIntakeRequestId, setExternalIntakeRequestId] = useState(0);
 	const [newAgentWorkspace, setNewAgentWorkspace] = useState<string | null>(
+		null,
+	);
+	const [newAgentProjectId, setNewAgentProjectId] = useState<string | null>(
 		null,
 	);
 	const lastPromptedNewAgentAtRef = useRef(0);
@@ -9962,6 +10010,17 @@ export function App() {
 			setRuntimeSessionsLoadState("error");
 			throw cause;
 		}
+	}, []);
+	const refreshProjects = useCallback(async (): Promise<Project[]> => {
+		const response = await window.kestrel.request({
+			type: "get-workspace-grants",
+		});
+		if (!response.ok) throw new Error(response.error);
+		const next = projectsFromRendererResponse(response);
+		if (!next) throw new Error("Project metadata could not be loaded.");
+		setProjects(next);
+		setProjectsLoaded(true);
+		return next;
 	}, []);
 
 	useEffect(() => {
@@ -10039,22 +10098,37 @@ export function App() {
 	useEffect(() => {
 		if (!onboarded) return;
 		let active = true;
-		void window.kestrel
-			.request({ type: "get-workspace-grants" })
-			.then((response) => {
-				if (
-					active &&
-					response.ok &&
-					"workspaceGrants" in response
-				) {
-					setWorkspaceGrants(response.workspaceGrants);
-				}
-			})
-			.catch(() => undefined);
+		void refreshProjects()
+			.catch((cause) => {
+				if (active)
+					setDeepLinkNotice(
+						cause instanceof Error
+							? cause.message
+							: "Projects could not be loaded.",
+					);
+			});
 		return () => {
 			active = false;
 		};
-	}, [onboarded]);
+	}, [onboarded, refreshProjects]);
+
+	useEffect(() => {
+		if (!projectsLoaded) return;
+		const storedId = localStorage.getItem("kestrel:active-project-id");
+		const legacyPath = localStorage.getItem("kestrel:active-project");
+		const resolved =
+			projects.find((project) => project.id === storedId) ??
+			projects.find((project) => project.path === legacyPath);
+		if (resolved) {
+			setActiveProjectId(resolved.id);
+			localStorage.setItem("kestrel:active-project-id", resolved.id);
+			localStorage.removeItem("kestrel:active-project");
+			return;
+		}
+		setActiveProjectId(null);
+		localStorage.removeItem("kestrel:active-project-id");
+		localStorage.removeItem("kestrel:active-project");
+	}, [projects, projectsLoaded]);
 	const selectionRequestRef = useRef(0);
 	const openRuntimeSession = useCallback((sessionId: string | null) => {
 		setActiveRuntimeSessionId(sessionId);
@@ -10074,9 +10148,11 @@ export function App() {
 				);
 			});
 	}, []);
-	const selectProject = useCallback((projectPath: string) => {
-		setActiveProjectPath(projectPath);
-		localStorage.setItem("kestrel:active-project", projectPath);
+	const selectProject = useCallback((projectId: string | null) => {
+		setActiveProjectId(projectId);
+		if (projectId) localStorage.setItem("kestrel:active-project-id", projectId);
+		else localStorage.removeItem("kestrel:active-project-id");
+		localStorage.removeItem("kestrel:active-project");
 	}, []);
 	const revealAgentSidebar = useCallback(() => {
 		setAgentSidebarOpen(true);
@@ -10113,7 +10189,18 @@ export function App() {
 		prompt = "",
 		workspaceRoot?: string,
 		focusTarget: "prompt" | "task-settings" = "prompt",
+		projectId?: string | null,
 	) => {
+		const inheritedProject =
+			projectId === undefined && activeProjectId
+				? projects.find((project) => project.id === activeProjectId)
+				: undefined;
+		const selectedProject =
+			projectId === undefined
+				? inheritedProject
+				: projectId
+					? projects.find((project) => project.id === projectId)
+					: undefined;
 		const trimmed = prompt.trim();
 		if (
 			focusTarget === "prompt" &&
@@ -10124,11 +10211,12 @@ export function App() {
 		}
 		if (trimmed) lastPromptedNewAgentAtRef.current = Date.now();
 		setNewAgentPrompt(prompt);
-		setNewAgentWorkspace(workspaceRoot ?? null);
+		setNewAgentWorkspace(workspaceRoot ?? selectedProject?.path ?? null);
+		setNewAgentProjectId(selectedProject?.id ?? null);
 		setNewAgentFocusTarget(focusTarget);
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
-	}, [revealAgentSidebar]);
+	}, [activeProjectId, projects, revealAgentSidebar]);
 	const openTaskSettings = useCallback(() => {
 		startNewAgent("", undefined, "task-settings");
 	}, [startNewAgent]);
@@ -10148,13 +10236,18 @@ export function App() {
 		(sessionId: string) => {
 			revealAgentSidebar();
 			const session = runtimeSessions.find((item) => item.id === sessionId);
-			if (session?.workspaceRoot) selectProject(session.workspaceRoot);
+			if (session) {
+				const project =
+					projects.find((item) => item.id === session.projectId) ??
+					projects.find((item) => item.path === session.workspaceRoot);
+				selectProject(project?.id ?? null);
+			}
 			openRuntimeSession(sessionId);
 			window.requestAnimationFrame(() => {
 				document.getElementById("runtime-prompt")?.focus();
 			});
 		},
-		[openRuntimeSession, runtimeSessions, revealAgentSidebar, selectProject],
+		[openRuntimeSession, projects, runtimeSessions, revealAgentSidebar, selectProject],
 	);
 	const snapshotPendingCount =
 		snapshot?.approvals.filter((approval) => approval.status === "pending")
@@ -10162,6 +10255,14 @@ export function App() {
 	const runtimeWaiting = runtimeAgentState === "waiting_approval";
 	const openAppPage = useCallback(
 		async (id: KestrelAppPageId, section?: SettingsSection) => {
+			if (id === "projects")
+				await refreshProjects().catch((cause) => {
+					setDeepLinkNotice(
+						cause instanceof Error
+							? cause.message
+							: "Projects could not be loaded.",
+					);
+				});
 			if (id === "settings")
 				setSettingsSectionRequest((current) => ({
 					section: section ?? null,
@@ -10179,7 +10280,7 @@ export function App() {
 			}
 			await browser.createTab(kestrelAppPageUrl(id));
 		},
-		[browser],
+		[browser, refreshProjects],
 	);
 	const openTranscriptResult = useCallback(
 		(result: TranscriptSearchResult) => {
@@ -10193,17 +10294,17 @@ export function App() {
 		[openAppPage, openSidebarSession],
 	);
 	const openProject = useCallback(
-		(project: WorkspaceGrant) => {
-			selectProject(project.path);
+		(project: Project) => {
+			selectProject(project.id);
 			void openAppPage("projects");
 		},
 		[openAppPage, selectProject],
 	);
 	const startProjectChat = useCallback(
-		(project: WorkspaceGrant) => {
+		(project: Project) => {
 			if (project.available === false) return;
-			selectProject(project.path);
-			startNewAgent("", project.path);
+			selectProject(project.id);
+			startNewAgent("", project.path, "prompt", project.id);
 			void openAppPage("agent");
 		},
 		[openAppPage, selectProject, startNewAgent],
@@ -10214,6 +10315,122 @@ export function App() {
 			void openAppPage("agent");
 		},
 		[openAppPage, openSidebarSession],
+	);
+	const createProject = useCallback(async () => {
+		try {
+			const response = await window.kestrel.request({
+				type: "select-workspace-folder",
+			});
+			if (!response.ok) throw new Error(response.error);
+			const next = projectsFromRendererResponse(response);
+			if (!next) throw new Error("Project metadata could not be loaded.");
+			setProjects(next);
+			if ("cancelled" in response && response.cancelled) return;
+			const selectedWorkspacePath =
+				"selectedWorkspacePath" in response
+					? response.selectedWorkspacePath
+					: undefined;
+			const selected = next.find(
+				(project) => project.path === selectedWorkspacePath,
+			);
+			if (selected) {
+				selectProject(selected.id);
+				void openAppPage("projects");
+			}
+		} catch (cause) {
+			setDeepLinkNotice(
+				cause instanceof Error ? cause.message : "Could not add the project.",
+			);
+		}
+	}, [openAppPage, selectProject]);
+	const openProjectSettings = useCallback((project: Project) => {
+		selectProject(project.id);
+		setProjectSettingsProjectId(project.id);
+	}, [selectProject]);
+	const saveProjectSettings = useCallback(
+		async (
+			projectId: string,
+			input: {
+				name: string;
+				instructions: string;
+				appearance: ProjectAppearance;
+			},
+		) => {
+			const response = await window.kestrel.request({
+				type: "project-update",
+				projectId,
+				name: input.name,
+				instructions: input.instructions,
+			});
+			if (!response.ok) throw new Error(response.error);
+			const next = projectsFromRendererResponse(response);
+			if (next) setProjects(next);
+			const project = projects.find((item) => item.id === projectId);
+			if (project) {
+				setProjectAppearances((current) => {
+					const updated = { ...current, [project.path]: input.appearance };
+					writeProjectAppearances(window.localStorage, updated);
+					return updated;
+				});
+			}
+		},
+		[projects],
+	);
+	const deleteProject = useCallback(
+		async (projectId: string) => {
+			const project = projects.find((item) => item.id === projectId);
+			const response = await window.kestrel.request({
+				type: "project-delete",
+				projectId,
+			});
+			if (!response.ok) throw new Error(response.error);
+			const next = projectsFromRendererResponse(response);
+			if (next) setProjects(next);
+			if (project) {
+				setProjectAppearances((current) => {
+					const updated = { ...current };
+					delete updated[project.path];
+					writeProjectAppearances(window.localStorage, updated);
+					return updated;
+				});
+			}
+			if (activeProjectId === projectId) selectProject(null);
+			await refreshRuntimeSessions();
+		},
+		[activeProjectId, projects, refreshRuntimeSessions, selectProject],
+	);
+	const moveSessionToProject = useCallback(
+		async (sessionId: string, projectId: string | null) => {
+			try {
+				const response = await window.kestrel.request({
+					type: "runtime-update-session-project",
+					sessionId,
+					projectId,
+				});
+				if (!response.ok) throw new Error(response.error);
+				const updatedSession =
+					"session" in response ? response.session : undefined;
+				if (updatedSession) {
+					setRuntimeSessions((current) =>
+						current.map((session) =>
+							session.id === updatedSession.id
+								? updatedSession
+								: session,
+						),
+					);
+				} else {
+					await refreshRuntimeSessions();
+				}
+				selectProject(projectId);
+			} catch (cause) {
+				setDeepLinkNotice(
+					cause instanceof Error
+						? cause.message
+						: "Could not move the conversation.",
+				);
+			}
+		},
+		[refreshRuntimeSessions, selectProject],
 	);
 	const openBrowserWorkspace = useCallback(async () => {
 		const tabs = browser.state?.tabs ?? [];
@@ -10592,7 +10809,6 @@ export function App() {
 	);
 	const currentAppPage = parseKestrelAppPage(activeBrowserTab?.url ?? "");
 	const showKestrelSidebar =
-		currentAppPage?.id !== "agent" &&
 		(!activeBrowserTab?.url || isKestrelAppPageUrl(activeBrowserTab.url));
 	const activeFileAttachment = activeBrowserTab?.file
 		? attachmentForExternalFile(activeBrowserTab.file)
@@ -10636,6 +10852,9 @@ export function App() {
 		localStorage.setItem("kestrel:browser-context", enabled ? "on" : "off");
 	}
 	const appPageId = currentAppPage?.id;
+	const projectSettingsProject = projects.find(
+		(project) => project.id === projectSettingsProjectId,
+	);
 	const presentedAgentSidebarOpen =
 		appPageId === "agent" ? agentUniverseRailOpen : agentSidebarOpen;
 	const appPage = appPageId ? (
@@ -10707,13 +10926,15 @@ export function App() {
 			)}
 			{appPageId === "projects" && (
 				<ProjectsWorkspace
-					projects={workspaceGrants}
+					projects={projects}
+					projectAppearances={projectAppearances}
 					sessions={runtimeSessions}
-					activeProjectPath={activeProjectPath}
-					onSelectProject={selectProject}
+					activeProjectId={activeProjectId}
 					onNewChat={startProjectChat}
 					onOpenSession={openProjectSession}
-					onOpenSettings={() => openSettings("connections")}
+					onOpenProjectSettings={openProjectSettings}
+					onOpenConnections={() => openSettings("connections")}
+					onCreateProject={() => void createProject()}
 				/>
 			)}
 			{appPageId === "settings" && (
@@ -10784,24 +11005,21 @@ export function App() {
 					: "capabilities"
 			}
 			activeSessionId={activeRuntimeSessionId}
-			activeProjectPath={activeProjectPath}
+			activeProjectId={activeProjectId}
 			agentName={activeAgentName}
-			pendingApprovals={pendingApprovalCount}
 			sessions={runtimeSessions}
-			projects={workspaceGrants}
+			projects={projects}
+			projectAppearances={projectAppearances}
 			onNewTask={() => startNewAgent()}
 			onOpenBrowser={openBrowser}
-			onOpenAgent={openAgent}
-			onOpenWriting={openWritingStudio}
-			onReviewApprovals={reviewApprovals}
 			onOpenCapabilities={openCommandCenter}
-			onOpenProjects={() => void openAppPage("projects")}
 			onOpenSettings={() => openSettings("browser")}
+			onCreateProject={() => void createProject()}
 			onOpenProject={openProject}
 			onOpenProjectChat={startProjectChat}
+			onOpenProjectSettings={openProjectSettings}
 			onOpenSession={openSidebarSession}
-			onOpenChats={() => void openAppPage("agent")}
-			onOpenScheduled={() => void openAppPage("work")}
+			onMoveSession={moveSessionToProject}
 		/>
 	) : undefined;
 	return (
@@ -10904,7 +11122,10 @@ export function App() {
 						newAgentRequestId={newAgentRequestId}
 						newAgentPrompt={newAgentPrompt}
 						newAgentWorkspace={newAgentWorkspace}
+						newAgentProjectId={newAgentProjectId}
 						newAgentFocusTarget={newAgentFocusTarget}
+						projects={projects}
+						onProjectsChange={setProjects}
 						refreshRevision={runtimeRefreshRevision}
 						mentionTabs={browser.state?.tabs ?? []}
 						mentionBookmarks={browser.state?.bookmarks ?? []}
@@ -10930,8 +11151,22 @@ export function App() {
 						localStorage.setItem("kestrel:default-browser-prompted", "yes");
 						setShowDefaultBrowserPrompt(false);
 					}}
-				/>
-				<AnimatePresence initial={false}>
+					/>
+					{projectSettingsProject ? (
+						<ProjectSettingsDialog
+							project={projectSettingsProject}
+							appearance={
+								projectAppearances[projectSettingsProject.path] ??
+								DEFAULT_PROJECT_APPEARANCE
+							}
+							onClose={() => setProjectSettingsProjectId(null)}
+							onSave={(input) =>
+								saveProjectSettings(projectSettingsProject.id, input)
+							}
+							onDelete={() => deleteProject(projectSettingsProject.id)}
+						/>
+					) : null}
+					<AnimatePresence initial={false}>
 				{showShortcuts && (
 					<KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />
 				)}

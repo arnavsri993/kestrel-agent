@@ -664,6 +664,8 @@ export const RuntimeSessionSchema = z.object({
 	id: z.string().min(1),
 	title: z.string().min(1).max(200),
 	parentSessionId: z.string().min(1).optional(),
+	/** Stable reference to the project that owns this conversation. */
+	projectId: z.string().min(1).optional(),
 	workspaceRoot: z.string().min(1).optional(),
 	/** Standard conversations are locally searchable. Private and incognito
 	 * conversations are deliberately excluded from the local transcript index. */
@@ -2198,14 +2200,33 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({ type: z.literal("runtime-list-sessions") }),
 	z.object({
+		type: z.literal("runtime-sync-projects"),
+		projects: z.array(z.object({
+			id: z.string().min(1).max(200),
+			path: z.string().min(1).max(4_096),
+			name: z.string().min(1).max(200),
+			instructions: z.string().max(20_000).optional(),
+			createdAt: z.string().datetime(),
+			updatedAt: z.string().datetime(),
+			order: z.number().int().nonnegative(),
+			available: z.boolean().optional(),
+		})).max(500),
+	}),
+	z.object({
 		type: z.literal("agent-group-memory-list"),
 		sessionId: z.string().min(1),
 	}),
 	z.object({
 		type: z.literal("runtime-create-session"),
 		title: z.string().min(1).max(200),
+		projectId: z.string().min(1).optional(),
 		workspaceRoot: z.string().min(1).optional(),
 		privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-update-session-project"),
+		sessionId: z.string().min(1),
+		projectId: z.string().min(1).nullable(),
 	}),
 	z.object({
 		type: z.literal("runtime-select-session"),
@@ -4076,6 +4097,16 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("set-default-browser") }),
 	z.object({ type: z.literal("set-launch-at-login"), enabled: z.boolean() }),
 	z.object({ type: z.literal("get-workspace-grants") }),
+	z.object({
+		type: z.literal("project-update"),
+		projectId: z.string().min(1).max(200),
+		name: z.string().max(200).optional(),
+		instructions: z.string().max(20_000).optional(),
+	}),
+	z.object({
+		type: z.literal("project-delete"),
+		projectId: z.string().min(1).max(200),
+	}),
 	z.object({ type: z.literal("select-workspace-folder") }),
 	z.object({
 		type: z.literal("remove-workspace-folder"),
@@ -4227,8 +4258,28 @@ export const WorkspaceGrantSchema = z.object({
 	path: z.string().min(1),
 	name: z.string().min(1),
 	available: z.boolean().optional(),
+	/** Optional project metadata retained here for older workspace consumers. */
+	id: z.string().min(1).max(200).optional(),
+	instructions: z.string().max(20_000).optional(),
+	createdAt: z.string().datetime().optional(),
+	updatedAt: z.string().datetime().optional(),
+	order: z.number().int().nonnegative().optional(),
 });
 export type WorkspaceGrant = z.infer<typeof WorkspaceGrantSchema>;
+
+/**
+ * A folder-backed Kestrel project. The workspace grant remains the source of
+ * truth for filesystem access; this contract adds the durable identity and
+ * conversation context that the navigation/project surfaces need.
+ */
+export const ProjectSchema = WorkspaceGrantSchema.extend({
+	id: z.string().min(1).max(200),
+	instructions: z.string().max(20_000).optional(),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+	order: z.number().int().nonnegative(),
+});
+export type Project = z.infer<typeof ProjectSchema>;
 
 export const BrokeredCredentialSummarySchema = z.object({
 	id: BrokeredCredentialIdSchema,
@@ -4380,6 +4431,8 @@ export type RendererResponse =
 	| {
 			ok: true;
 			workspaceGrants: WorkspaceGrant[];
+			/** Enriched project records for project-aware renderer consumers. */
+			projects?: Project[];
 			cancelled?: boolean;
 			selectedWorkspacePath?: string;
 			snapshot?: WorkspaceSnapshot;

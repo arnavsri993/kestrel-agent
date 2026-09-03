@@ -11,6 +11,7 @@ import {
 	type CoreRequest,
 	type CoreResponse,
 	CoreResponseSchema,
+	type Project,
 	RuntimeEventSchema,
 } from "@kestrel/shared-types";
 import {
@@ -38,6 +39,7 @@ export interface CoreBootstrapConfig {
 	encryptionKeyBase64: string;
 	workspaceRoots: string[];
 	configuredWorkspaceRoots: string[];
+	projects?: Project[];
 	pluginRoots: string[];
 	managedPluginRoots: string[];
 	learnedSkillRoot: string;
@@ -169,6 +171,7 @@ function cloneBootstrapConfig(
 		...config,
 		workspaceRoots: [...config.workspaceRoots],
 		configuredWorkspaceRoots: [...config.configuredWorkspaceRoots],
+		projects: config.projects?.map((project) => ({ ...project })) ?? [],
 		pluginRoots: [...config.pluginRoots],
 		managedPluginRoots: [...config.managedPluginRoots],
 		secureEnvironment: { ...config.secureEnvironment },

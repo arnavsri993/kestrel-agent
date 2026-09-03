@@ -255,6 +255,7 @@ port.on("message", async ({ data }) => {
 			encryptionKeyBase64: string;
 			workspaceRoots: string[];
 			configuredWorkspaceRoots: string[];
+			projects?: import("@kestrel/shared-types").Project[];
 			pluginRoots: string[];
 			managedPluginRoots: string[];
 			learnedSkillRoot: string;
@@ -346,6 +347,7 @@ port.on("message", async ({ data }) => {
 				...(remoteExecution ? { remoteExecution } : {}),
 				workspaceRoots: message.config.workspaceRoots,
 				configuredWorkspaceRoots: message.config.configuredWorkspaceRoots,
+				projects: message.config.projects ?? [],
 				learnedSkillRoot: message.config.learnedSkillRoot,
 				pluginRoots: message.config.pluginRoots,
 				managedPluginRoots: message.config.managedPluginRoots,
