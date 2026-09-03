@@ -129,6 +129,9 @@ async function launch() {
 	});
 	page.on("pageerror", (error) => runtimeErrors.push(error.message));
 	await page.waitForLoadState("domcontentloaded");
+	// Keep ambient star drift and transition timing deterministic while still
+	// exercising the live Agent Universe surface and its pointer interactions.
+	await page.emulateMedia({ reducedMotion: "reduce" });
 	return page;
 }
 
@@ -1185,18 +1188,98 @@ try {
 	const runtimeSessionId = await createRuntimeSessionWithVisibleBrowser();
 	await page.getByRole("button", { name: "Open Agent tab" }).click();
 	await page
-		.getByRole("heading", { name: "Tasks", exact: true })
+		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
+	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
 	);
-	const taskRow = page.getByRole("button", {
-		name: /Visible browser test, Open/,
-	});
-	await taskRow.waitFor();
-	await taskRow.click();
-	assert.equal(await taskRow.getAttribute("aria-current"), "page");
+	const workerSessionId = await page.evaluate(async (parentSessionId) => {
+		const response = await window.kestrel.request({
+			type: "runtime-fork-session",
+			sessionId: parentSessionId,
+			title: "Visible browser worker",
+		});
+		if (!response.ok || !response.session)
+			throw new Error("A delegated runtime session could not be created.");
+		return response.session.id;
+	}, runtimeSessionId);
+	await page.locator(".agent-universe-scene").waitFor();
+	await page.locator(".agent-universe-node.is-core").first().waitFor();
+	await page.locator(`[data-node-id="${workerSessionId}"]`).waitFor();
+	const workerNode = page.locator(`[data-node-id="${workerSessionId}"]`);
+	const workerBox = await workerNode.boundingBox();
+	assert(workerBox, "The delegated worker had no visible hit area.");
+	const workerCenter = {
+		x: workerBox.x + workerBox.width / 2,
+		y: workerBox.y + workerBox.height / 2,
+	};
+	await page.mouse.move(workerCenter.x, workerCenter.y);
+	await page.mouse.down();
+	await page.mouse.move(workerCenter.x + 140, workerCenter.y - 28, { steps: 12 });
+	await page.waitForFunction(
+		(id) =>
+			document.querySelector(`[data-node-id="${id}"] .agent-universe-node-body`)
+				?.getAttribute("data-physics-dragging") === "true",
+		workerSessionId,
+	);
+	const draggedDisplacement = await page.locator(
+		`[data-node-id="${workerSessionId}"] .agent-universe-node-body`,
+	).getAttribute("data-physics-displacement");
+	assert(
+		Number(draggedDisplacement) > 0,
+		"Dragging a worker did not produce spatial displacement.",
+	);
+	await page.mouse.up();
+	await page.waitForFunction(
+		(id) => {
+			const body = document.querySelector(
+				`[data-node-id="${id}"] .agent-universe-node-body`,
+			);
+			return (
+				body?.getAttribute("data-physics-dragging") === "false" &&
+				body.getAttribute("transform") === "translate(0.00 0.00)"
+			);
+		},
+		workerSessionId,
+	);
+	await page.locator(`[data-node-id="${workerSessionId}"]`).click();
+	await page
+		.getByRole("heading", { name: "Visible browser worker", exact: true })
+		.waitFor();
+	await page
+		.getByRole("button", { name: "Close Visible browser worker context" })
+		.click();
+	assert.equal(
+		await page.getByRole("button", { name: "List", exact: true }).count(),
+		0,
+		"Agent should have one spatial surface, not a list mode",
+	);
+	await page.locator(".agent-universe-node.is-core").first().click();
+	await page.getByRole("heading", { name: "Visible browser test", exact: true }).waitFor();
+	await page.getByRole("heading", { name: "Conversation", exact: true }).waitFor();
+	assert.equal(
+		await page.locator(".agent-universe-context-surface .agent-universe-context-composer textarea").count(),
+		1,
+		"The main system should expose the primary conversation composer.",
+	);
+	assert.equal(
+		await page.getByRole("button", { name: "Review approvals", exact: true }).count(),
+		0,
+		"The Agent Universe conversation surface should not own approval actions.",
+	);
+	await page.locator(".agent-universe-context-surface textarea").fill(
+		"A short system message that should remain comfortably compact.",
+	);
+	await page.locator(".agent-universe-context-close").click();
+	await workerNode.focus();
+	await workerNode.press("Enter");
+	await page.getByRole("heading", { name: "Visible browser worker", exact: true }).waitFor();
+	await page.getByRole("button", { name: "Open task", exact: true }).click();
+	await page.waitForFunction(
+		() => document.activeElement?.id === "runtime-prompt",
+	);
 	await page.getByRole("tab", { name: /Page one/ }).first().click();
 	await waitForBrowserState(
 		(value) => {

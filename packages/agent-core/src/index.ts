@@ -85,6 +85,11 @@ import {
 import type { VoiceTranscriptionProvider } from "./media-providers";
 import { installMemoryTools, MemoryManager } from "./memory";
 import {
+	AGENT_GROUP_MEMORY_TOOL_NAMES,
+	AgentGroupMemoryManager,
+	installAgentGroupMemoryTools,
+} from "./group-memory";
+import {
 	AdaptiveModelRouter,
 	detectModelRefusal,
 	ModelRegistry,
@@ -96,6 +101,7 @@ import { NativeNodeManager } from "./native-nodes";
 import { ObservabilityManager } from "./observability";
 import { OpportunityEngine } from "./opportunity-engine";
 import {
+	AGENT_COORDINATION_TOOL_NAMES,
 	installOrchestrationTools,
 	parseScheduleExpression,
 	TaskOrchestrator,
@@ -132,6 +138,15 @@ import {
 	NetworkPolicyWebClient,
 	type WebAccessOptions,
 } from "./web-tools";
+
+const MAIN_AGENT_COORDINATION_INSTRUCTIONS = [
+	"You are the main circle for this agent system, and the user is speaking to you.",
+	"Own the outcome: understand the mission, decide what needs specialist work, and give the user one reconciled answer rather than a pile of disconnected worker replies.",
+	"When there are two or more genuinely independent workstreams, use orchestration.delegate-team to fan them out to real child sessions in parallel; use orchestration.delegate for one focused child task or a reviewer.",
+	"Give each child a bounded prompt with its relevant files, constraints, and output contract. Wait for every delegated result, reconcile contradictions, and validate the integrated result before claiming completion.",
+	"Do not claim work was delegated, completed, or verified unless the orchestration tool returned the corresponding session or result. Do not delegate trivial serial work just to create activity.",
+	"Use group.memory.remember for durable decisions or facts that belong to this agent system. Use shared memory only when the user explicitly asks for a user-wide memory.",
+].join(" ");
 import type { BrowserMcpCallSession } from "./browser-mcp-session";
 import {
 	NEW_TAB_GREETING_SYSTEM_PROMPT,
@@ -207,6 +222,7 @@ export class AgentCore {
 	readonly userModel: UserModelStore;
 	readonly context: PreResponseContextResolver;
 	readonly memory: MemoryManager;
+	readonly groupMemory: AgentGroupMemoryManager;
 	readonly lifeContext: LifeContextService;
 	readonly writingProfile: WritingProfileStore;
 	readonly writingAssistant: WritingAssistant;
@@ -322,6 +338,28 @@ export class AgentCore {
 		);
 		this.memory = new MemoryManager(deps.database, () => new Date(this.now()));
 		this.userModel = this.memory.userModel;
+		this.groupMemory = new AgentGroupMemoryManager(
+			deps.database,
+			this.runtime,
+			() => new Date(this.now()),
+		);
+		installAgentGroupMemoryTools(
+			this.runtime,
+			this.groupMemory,
+			mainSession.id,
+		);
+		for (const session of this.runtime.listSessions()) {
+			if (
+				session.privacyMode === "private" ||
+				session.privacyMode === "incognito"
+			)
+				continue;
+			this.runtime.allowTools(
+				session.id,
+				[...AGENT_GROUP_MEMORY_TOOL_NAMES],
+				{ preserveUpdatedAt: true },
+			);
+		}
 		this.lifeContext = new LifeContextService(
 			deps.database,
 			deps.googleWorkspace,
@@ -515,6 +553,21 @@ export class AgentCore {
 		);
 		this.refreshHonchoTools();
 		this.runtime.on("event", (event) => {
+			if (event.type === "session.created") {
+				const session = this.runtime.getSession(event.sessionId);
+				if (
+					session.privacyMode !== "private" &&
+					session.privacyMode !== "incognito"
+				)
+					this.runtime.allowTools(
+						session.id,
+						[
+							...AGENT_GROUP_MEMORY_TOOL_NAMES,
+							...AGENT_COORDINATION_TOOL_NAMES,
+						],
+						{ preserveUpdatedAt: true },
+					);
+			}
 			if (
 				event.type === "session.created" &&
 				this.honchoMemory.configuration().enabled &&
@@ -535,8 +588,21 @@ export class AgentCore {
 			this.modelRegistry,
 			undefined,
 			() => this.configuration.current().workflows.maximumTurns,
+			this.groupMemory,
 		);
 		installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
+		for (const session of this.runtime.listSessions()) {
+			if (
+				session.privacyMode === "private" ||
+				session.privacyMode === "incognito"
+			)
+				continue;
+			this.runtime.allowTools(
+				session.id,
+				[...AGENT_COORDINATION_TOOL_NAMES],
+				{ preserveUpdatedAt: true },
+			);
+		}
 		this.remote = new RemoteControl(
 			this.deps.database,
 			this.runtime,
@@ -1684,6 +1750,11 @@ export class AgentCore {
 						sessions: this.runtime.listSessions(),
 						selectedSessionId: this.runtime.selectedSessionId(),
 					};
+				case "agent-group-memory-list":
+					return {
+						ok: true,
+						groupMemory: this.groupMemory.statusForSession(request.sessionId),
+					};
 				case "runtime-create-session": {
 					const session = this.runtime.createSession({
 						title: request.title,
@@ -1765,6 +1836,10 @@ export class AgentCore {
 						);
 						const configuration = this.configuration.current();
 						const runtimeSession = this.runtime.getSession(request.sessionId);
+						const groupMemoryContext = this.groupMemory.promptContext(
+							request.sessionId,
+							priorMessage,
+						);
 						const sharedMemoryEnabled =
 							this.sharedMemoryInjectionEnabled(personality.id);
 						const honchoContext = sharedMemoryEnabled
@@ -1827,7 +1902,11 @@ export class AgentCore {
 							),
 							instructions: [
 								personality.instructions,
+								...(runtimeSession.parentSessionId
+									? []
+									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
+								groupMemoryContext,
 								...(sharedMemoryEnabled
 									? [
 											this.userModel.promptContext(),
@@ -2988,6 +3067,10 @@ export class AgentCore {
 									)
 								: undefined;
 						const runtimeSession = this.runtime.getSession(request.sessionId);
+						const groupMemoryContext = this.groupMemory.promptContext(
+							request.sessionId,
+							request.message,
+						);
 						const sharedMemoryEnabled = this.sharedMemoryInjectionEnabled(
 							personality.id,
 						);
@@ -3077,7 +3160,11 @@ export class AgentCore {
 							instructions: [
 								personality.instructions,
 								route?.orchestrationInstructions,
+								...(runtimeSession.parentSessionId
+									? []
+									: [MAIN_AGENT_COORDINATION_INSTRUCTIONS]),
 								this.configuration.instructions(),
+								groupMemoryContext,
 								...(sharedMemoryEnabled
 									? [
 											this.userModel.promptContext(),
@@ -3619,6 +3706,12 @@ export {
 	type VoiceTranscriptionProvider,
 } from "./media-providers";
 export { installMemoryTools, type MemoryInput, MemoryManager } from "./memory";
+export {
+	AGENT_GROUP_MEMORY_TOOL_NAMES,
+	AgentGroupMemoryManager,
+	installAgentGroupMemoryTools,
+} from "./group-memory";
+export { AGENT_COORDINATION_TOOL_NAMES } from "./orchestration";
 export {
 	AdaptiveModelRouter,
 	DEFAULT_ROUTING_POLICY,

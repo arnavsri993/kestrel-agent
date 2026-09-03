@@ -19,6 +19,10 @@ import {
 	type ModelRegistry,
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
+import {
+	AGENT_GROUP_MEMORY_TOOL_NAMES,
+	type AgentGroupMemoryManager,
+} from "./group-memory";
 import { type ProviderPool, textContent } from "./providers";
 import type { AgentRuntime } from "./runtime";
 
@@ -65,6 +69,13 @@ export interface DelegatedTaskResult {
 	result: AgentLoopResult;
 	route?: DelegatedWorkerRoute;
 }
+
+/** Tools that let a durable root session coordinate real child work. */
+export const AGENT_COORDINATION_TOOL_NAMES = [
+	"orchestration.delegate",
+	"orchestration.delegate-team",
+	"orchestration.handoff",
+] as const;
 
 export interface ScheduledAgentJob {
 	id: string;
@@ -478,6 +489,7 @@ export class TaskOrchestrator {
 		private readonly modelRegistry?: ModelRegistry,
 		private readonly requirementAnalyzer = new TaskRequirementAnalyzer(),
 		private readonly configuredMaximumTurns: () => number = () => 12,
+		private readonly groupMemory?: AgentGroupMemoryManager,
 	) {
 		this.reconcileInterruptedJobs();
 	}
@@ -510,11 +522,25 @@ export class TaskOrchestrator {
 				);
 			workspaceRoot = resolve(parent.workspaceRoot, worktree.output.path);
 		}
+		const inheritedTools = input.allowedTools ?? parent.allowedTools;
+		const groupMemoryAllowed =
+			Boolean(this.groupMemory) &&
+			parent.privacyMode !== "private" &&
+			parent.privacyMode !== "incognito";
+		const allowedTools = groupMemoryAllowed
+			? [...new Set([...inheritedTools, ...AGENT_GROUP_MEMORY_TOOL_NAMES])]
+			: inheritedTools.filter(
+					(toolName) =>
+						!AGENT_GROUP_MEMORY_TOOL_NAMES.some(
+							(memoryToolName) => memoryToolName === toolName,
+						),
+				);
 		const session = this.runtime.createSession({
 			title: input.title,
 			parentSessionId: parent.id,
 			...(workspaceRoot ? { workspaceRoot } : {}),
-			allowedTools: input.allowedTools ?? parent.allowedTools,
+			...(parent.privacyMode ? { privacyMode: parent.privacyMode } : {}),
+			allowedTools,
 		});
 		this.database.setPrivateState(`orchestrator.task.${taskId}`, {
 			taskId,
@@ -559,9 +585,13 @@ export class TaskOrchestrator {
 						}
 					: {}),
 				userContent: textContent(input.prompt),
-				...(input.instructions || selected?.instructions
+				...(input.instructions || selected?.instructions || this.groupMemory
 					? {
-							instructions: [input.instructions, selected?.instructions]
+							instructions: [
+								input.instructions,
+								selected?.instructions,
+								this.groupMemory?.promptContext(session.id, input.prompt),
+							]
 								.filter(Boolean)
 								.join("\n\n"),
 						}
@@ -1628,6 +1658,7 @@ export function installOrchestrationTools(
 		readOnly: boolean,
 		schema: Record<string, unknown>,
 		execute: Parameters<AgentRuntime["registerExternalTool"]>[0]["execute"],
+		riskLevel: "low" | "sensitive" = "sensitive",
 	) => {
 		runtime.registerExternalTool({
 			descriptor: {
@@ -1635,7 +1666,7 @@ export function installOrchestrationTools(
 				title,
 				description: title,
 				category: "automation",
-				riskLevel: "sensitive",
+				riskLevel,
 				readOnly,
 				requiresWorkspace: false,
 				source: "builtin",
@@ -1771,6 +1802,100 @@ export function installOrchestrationTools(
 				signal: context.signal,
 			}),
 		}),
+		"low",
+	);
+	add(
+		"orchestration.delegate-team",
+		"Delegate independent work to parallel child agents and wait for their results",
+		false,
+		{
+			type: "object",
+			properties: {
+				tasks: {
+					type: "array",
+					minItems: 2,
+					maxItems: 4,
+					items: {
+						type: "object",
+						properties: {
+							title: { type: "string", minLength: 1, maxLength: 200 },
+							prompt: { type: "string", minLength: 1, maxLength: 100_000 },
+							model: { type: "string", default: "auto" },
+							providerIds: {
+								type: "array",
+								items: { type: "string" },
+								minItems: 1,
+								default: ["auto"],
+							},
+							role: {
+								enum: ["worker", "reviewer", "fallback"],
+								default: "worker",
+							},
+							requiredCapabilities: {
+								type: "object",
+								additionalProperties: { type: "number", minimum: 0, maximum: 1 },
+							},
+							allowedTools: { type: "array", items: { type: "string" } },
+							isolateWorktree: { type: "boolean" },
+						},
+						required: ["title", "prompt"],
+						additionalProperties: false,
+					},
+				},
+			},
+			required: ["tasks"],
+			additionalProperties: false,
+		},
+		async (context, input) => {
+			if (!Array.isArray(input.tasks) || input.tasks.length < 2)
+				throw new Error("Parallel delegation needs at least two tasks.");
+			const tasks = input.tasks.map((candidate, index) => {
+				if (!candidate || typeof candidate !== "object" || Array.isArray(candidate))
+					throw new Error(`Parallel delegation task ${index + 1} is invalid.`);
+				const task = candidate as Record<string, unknown>;
+				return {
+					parentSessionId: context.session.id,
+					title: String(task.title ?? ""),
+					prompt: String(task.prompt ?? ""),
+					model: task.model ? String(task.model) : "auto",
+					providerIds: Array.isArray(task.providerIds)
+						? task.providerIds.map(String)
+						: ["auto"],
+					...(task.role
+						? { role: task.role as NonNullable<DelegatedTaskInput["role"]> }
+						: {}),
+					...(task.requiredCapabilities &&
+						typeof task.requiredCapabilities === "object"
+						? {
+								requiredCapabilities: task.requiredCapabilities as Partial<
+									Record<ModelCapability, number>
+								>,
+						  }
+						: {}),
+					...(Array.isArray(task.allowedTools)
+						? { allowedTools: task.allowedTools.map(String) }
+						: {}),
+					isolateWorktree: Boolean(task.isolateWorktree),
+					signal: context.signal,
+				};
+			});
+			const results = await orchestrator.runTeam(tasks);
+			return {
+				delegated: results.map((result) =>
+					result instanceof Error
+						? { status: "failed", error: result.message }
+						: {
+								status: result.result.run.status,
+								taskId: result.taskId,
+								sessionId: result.sessionId,
+								result:
+									result.result.assistantMessage?.content.slice(0, 50_000) ??
+									"[No assistant text was returned.]",
+							},
+				),
+			};
+		},
+		"low",
 	);
 	add(
 		"orchestration.handoff",

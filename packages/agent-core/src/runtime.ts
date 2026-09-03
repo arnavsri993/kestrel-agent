@@ -4335,6 +4335,16 @@ export class AgentRuntime extends EventEmitter {
 		this.emit("event", event);
 	}
 
+	/** Publish a validated runtime event from a durable runtime extension. */
+	publishRuntimeEvent(
+		type: RuntimeEvent["type"],
+		sessionId: string,
+		payload: Record<string, unknown>,
+		references: { executionId?: string; messageId?: string } = {},
+	): void {
+		this.emitRuntimeEvent(type, sessionId, payload, references);
+	}
+
 	private resolveGrantedRoot(requestedRoot: string): string {
 		const candidate = realpathSync(requestedRoot);
 		const granted = this.workspaceRoots.find((root) =>
