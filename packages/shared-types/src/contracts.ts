@@ -3519,6 +3519,7 @@ export const UserBrowserCommandSchema = z.enum([
 	"reopen-closed-tab",
 	"find-in-page",
 	"print-page",
+	"save-screenshot",
 ]);
 export type UserBrowserCommand = z.infer<typeof UserBrowserCommandSchema>;
 

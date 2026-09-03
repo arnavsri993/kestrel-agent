@@ -3140,9 +3140,9 @@ function registerIpc(): void {
       };
     }
     if (request.type === "browser-save-screenshot") {
-      if (!userBrowserService)
+      if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      const tab = userBrowserService
+      const tab = requestBrowserService
         .getState()
         .tabs.find((candidate) => candidate.id === request.tabId);
       const title = (tab?.title ?? "Kestrel page")
@@ -3163,7 +3163,7 @@ function registerIpc(): void {
       const filePath = result.filePath.toLowerCase().endsWith(".png")
         ? result.filePath
         : `${result.filePath}.png`;
-      const frame = await userBrowserService.screenshot(request.tabId);
+      const frame = await requestBrowserService.screenshot(request.tabId);
       if (!frame.png) throw new Error("The page screenshot was empty.");
       await writeFile(filePath, frame.png);
       return { ok: true, screenshotPath: filePath };
