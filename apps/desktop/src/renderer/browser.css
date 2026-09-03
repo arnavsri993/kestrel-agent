@@ -7401,17 +7401,18 @@ body:has(.calculator-overlay),
 	}
 }
 
-/* Keep the horizontal strip close to a browser tab bar: every tab shares the
- * available rail, and crowded tabs shrink instead of creating a second scroll
- * target that users have to operate with a mouse. Tab tools and vertical tabs
- * remain the intentional escape hatches for very large tab sets. */
+/* Keep the horizontal strip close to a browser tab bar: ordinary tabs stay a
+ * readable, bounded width while the rail itself handles crowded tab sets.
+ * Unused chrome remains a native drag target instead of becoming giant tabs. */
 .browser-tabs {
-	/* Fill the available strip when there are only a few tabs, then let the
-	 * individual flex items shrink as more tabs are added. */
-	flex: 1 1 0;
+	/* Size the rail to its tabs when possible, then let it shrink into a
+	 * scrollable viewport before pushing New Tab or the drag target away. */
+	flex: 0 1 auto;
 	min-width: 0;
 	max-width: 100%;
-	overflow: hidden;
+	overflow-x: auto;
+	overflow-y: hidden;
+	overscroll-behavior-inline: contain;
 	scrollbar-width: none;
 }
 
@@ -7420,45 +7421,46 @@ body:has(.calculator-overlay),
 }
 
 .browser-tab {
-	/* A zero basis makes a small tab set use the whole rail. With more tabs,
-	 * Flexbox shares that same rail instead of handing overflow to a scrollbar. */
-	flex: 1 1 0;
-	min-width: 0;
-	max-width: none;
+	/* Keep a few tabs compact on wide windows. Flex-shrink still lets the
+	 * readable target tighten before the rail starts scrolling. */
+	flex: 0 1 220px;
+	min-width: 112px;
+	max-width: 240px;
 	height: 35px;
 	border-radius: 9px 9px 0 0;
 	color: var(--faint);
 }
 
-/* Compact tabs still hide secondary text, but remain part of the same
- * shrink-to-fit strip rather than introducing a second mouse-scrolling rail. */
+/* Narrow tabs keep their explicit readable width and use the same rail. */
 .browser-tab-row-horizontal.browser-tab-row-compact .browser-tabs {
-	flex: 1 1 0;
+	flex: 0 1 auto;
 	max-width: none;
-	overflow: hidden;
+	overflow-x: auto;
+	overflow-y: hidden;
 	scrollbar-width: none;
 }
 
 .browser-tab-row-horizontal.browser-tab-row-compact .browser-tab {
-	flex: 1 1 0;
-	min-width: 0;
-	max-width: none;
+	flex: 0 0 112px;
+	min-width: 112px;
+	max-width: 112px;
 }
 
 /* Narrow windows use the same browser-like shrink behavior. */
 @media (max-width: 760px) {
 	.browser-tab-row-horizontal .browser-tabs {
-		flex: 1 1 0;
+		flex: 0 1 auto;
 		min-width: 0;
 		max-width: none;
-		overflow: hidden;
+		overflow-x: auto;
+		overflow-y: hidden;
 		scrollbar-width: none;
 	}
 
 	.browser-tab-row-horizontal .browser-tab {
-		flex: 1 1 0;
-		min-width: 0;
-		max-width: none;
+		flex: 0 0 112px;
+		min-width: 112px;
+		max-width: 112px;
 	}
 
 	.browser-tab-row-horizontal .browser-tab-close {
