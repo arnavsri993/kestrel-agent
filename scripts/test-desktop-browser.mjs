@@ -1822,28 +1822,45 @@ try {
 	assert.equal(await detachedPage.getByRole("tab", { name: "Page two", exact: true }).count(), 1);
 	const detachedPlacement = await application.evaluate(
 		({ BrowserWindow, screen }, expectedUrl) => {
+			const cursor = screen.getCursorScreenPoint();
+			const workArea = screen.getDisplayNearestPoint(cursor).workArea;
 			const detached = BrowserWindow.getAllWindows().find((candidate) =>
 				candidate.contentView.children.some(
 					(child) =>
 						"webContents" in child && child.webContents.getURL() === expectedUrl,
 				),
 			);
+			const bounds = detached?.getBounds() ?? null;
+			const clamp = (value, minimum, maximum) =>
+				Math.round(Math.max(minimum, Math.min(value, maximum)));
 			return {
-				cursor: screen.getCursorScreenPoint(),
-				bounds: detached?.getBounds() ?? null,
+				cursor,
+				bounds,
+				workArea,
+				expectedBounds: bounds
+					? {
+						x: clamp(
+							cursor.x - 180,
+							workArea.x,
+							workArea.x + workArea.width - bounds.width,
+						),
+						y: clamp(
+							cursor.y - 20,
+							workArea.y,
+							workArea.y + workArea.height - bounds.height,
+						),
+					}
+					: null,
 			};
 		},
 		`${origin}/two`,
 	);
 	assert(
 		detachedPlacement.bounds &&
-			detachedPlacement.cursor.x >= detachedPlacement.bounds.x &&
-			detachedPlacement.cursor.x <=
-				detachedPlacement.bounds.x + detachedPlacement.bounds.width &&
-			detachedPlacement.cursor.y >= detachedPlacement.bounds.y &&
-			detachedPlacement.cursor.y <=
-				detachedPlacement.bounds.y + detachedPlacement.bounds.height,
-		`Detached window did not open under the pointer: ${JSON.stringify(detachedPlacement)}`,
+			detachedPlacement.expectedBounds &&
+			Math.abs(detachedPlacement.bounds.x - detachedPlacement.expectedBounds.x) <= 1 &&
+			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <= 1,
+		`Detached window did not open at the pointer-relative, work-area-clamped position: ${JSON.stringify(detachedPlacement)}`,
 	);
 	await detachedPage
 		.getByRole("button", {
