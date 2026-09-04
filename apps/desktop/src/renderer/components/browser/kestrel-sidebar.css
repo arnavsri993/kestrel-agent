@@ -304,6 +304,7 @@
 
 .kestrel-sidebar-icon-button:focus-visible,
 .kestrel-sidebar-new-task:focus-visible,
+.kestrel-sidebar-nav-item:focus-visible,
 .kestrel-sidebar-section-action:focus-visible,
 .kestrel-sidebar-project-open:focus-visible,
 .kestrel-sidebar-project-chat:focus-visible,
@@ -370,6 +371,70 @@
 .kestrel-sidebar-new-task kbd {
 	color: var(--faint);
 	font: 10px var(--sans);
+}
+
+.kestrel-sidebar-primary {
+	display: grid;
+	gap: 3px;
+}
+
+.kestrel-sidebar-nav-item {
+	position: relative;
+	display: grid;
+	grid-template-columns: 19px minmax(0, 1fr);
+	align-items: center;
+	gap: 9px;
+	width: 100%;
+	min-height: 34px;
+	padding: 0 9px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--ink-secondary);
+	font-size: 12.5px;
+	font-weight: 570;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		background-color var(--motion-feedback) var(--ease-kestrel),
+		color var(--motion-feedback) var(--ease-kestrel);
+}
+
+.kestrel-sidebar-nav-item:hover,
+.kestrel-sidebar-nav-item.active {
+	background: color-mix(in srgb, var(--ink) 7%, transparent);
+	color: var(--ink);
+}
+
+.kestrel-sidebar-nav-item.active {
+	font-weight: 620;
+}
+
+.kestrel-sidebar-nav-item.active::before {
+	position: absolute;
+	top: 8px;
+	bottom: 8px;
+	left: 0;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--focus);
+	content: "";
+}
+
+.kestrel-sidebar-nav-item svg {
+	width: 16px;
+	height: 16px;
+	color: var(--muted);
+}
+
+.kestrel-sidebar-nav-item.active svg {
+	color: var(--solid);
+}
+
+.kestrel-sidebar-nav-item span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .kestrel-sidebar-scroll {
@@ -1012,6 +1077,7 @@
 .kestrel-sidebar.is-collapsed .kestrel-sidebar-brand span,
 .kestrel-sidebar.is-collapsed .kestrel-sidebar-new-task span,
 .kestrel-sidebar.is-collapsed .kestrel-sidebar-new-task kbd,
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-nav-item span,
 .kestrel-sidebar.is-collapsed .kestrel-sidebar-section {
 	display: none;
 }
@@ -1028,6 +1094,12 @@
 }
 
 .kestrel-sidebar.is-collapsed .kestrel-sidebar-new-task {
+	grid-template-columns: 1fr;
+	place-items: center;
+	padding: 0;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-nav-item {
 	grid-template-columns: 1fr;
 	place-items: center;
 	padding: 0;
@@ -1053,6 +1125,7 @@
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-brand span,
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task span,
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task kbd,
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-nav-item span,
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-section {
 		display: none;
 	}
@@ -1070,6 +1143,11 @@
 		justify-content: center;
 	}
 	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-new-task {
+		grid-template-columns: 1fr;
+		place-items: center;
+		padding: 0;
+	}
+	.kestrel-sidebar:not(.is-collapsed) .kestrel-sidebar-nav-item {
 		grid-template-columns: 1fr;
 		place-items: center;
 		padding: 0;

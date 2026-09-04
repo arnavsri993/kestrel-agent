@@ -11049,6 +11049,7 @@ export function App() {
 			projectAppearances={projectAppearances}
 			onNewTask={() => startNewAgent()}
 			onOpenBrowser={openBrowser}
+			onOpenAgent={openAgent}
 			onOpenCapabilities={openCommandCenter}
 			onOpenSettings={() => openSettings("browser")}
 			onCreateProject={() => void createProject()}
