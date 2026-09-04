@@ -41,6 +41,8 @@ import {
 	RuntimeToolDescriptorSchema,
 	type RuntimeToolExecution,
 	RuntimeToolExecutionSchema,
+	type Project,
+	ProjectSchema,
 	type WorkspaceMutation,
 	WorkspaceMutationSchema,
 } from "@kestrel/shared-types";
@@ -484,6 +486,7 @@ export class AgentRuntime extends EventEmitter {
 	private readonly hooks: RuntimeHook[] = [];
 	private readonly workspaceRoots: string[];
 	private readonly configuredWorkspaceRoots: string[];
+	private readonly projects = new Map<string, Project>();
 	private readonly activeExecutions = new Map<
 		string,
 		{ controller: AbortController; sessionId: string }
@@ -520,6 +523,7 @@ export class AgentRuntime extends EventEmitter {
 		private readonly now: () => string = () => new Date().toISOString(),
 		private readonly githubToken?: string,
 		configuredWorkspaceRoots: string[] = workspaceRoots,
+		projects: Project[] = [],
 	) {
 		super();
 		this.humanInput = new HumanInputManager(database, {
@@ -557,6 +561,7 @@ export class AgentRuntime extends EventEmitter {
 				}),
 			]),
 		];
+		this.setProjects(projects);
 		this.reconcilePersistedWorkspaceRoots();
 		this.reconcileIdempotencyClaims();
 		const previousProcesses = this.processJournalRecords();
@@ -599,6 +604,7 @@ export class AgentRuntime extends EventEmitter {
 
 	createSession(input: {
 		title: string;
+		projectId?: string;
 		workspaceRoot?: string;
 		parentSessionId?: string;
 		allowedTools?: string[];
@@ -611,9 +617,18 @@ export class AgentRuntime extends EventEmitter {
 			(parent?.privacyMode === "private" || parent?.privacyMode === "incognito"
 				? parent.privacyMode
 				: input.privacyMode);
-		const workspaceRoot = input.workspaceRoot
-			? this.resolveGrantedRoot(input.workspaceRoot)
-			: undefined;
+		const project = input.projectId
+			? this.requireProject(input.projectId)
+			: input.workspaceRoot
+				? this.projectForPath(input.workspaceRoot)
+				: undefined;
+		const workspaceRoot = project
+			? project.available === false
+				? undefined
+				: this.resolveGrantedRoot(project.path)
+			: input.workspaceRoot
+				? this.resolveGrantedRoot(input.workspaceRoot)
+				: undefined;
 		const timestamp = this.now();
 		const requestedTools = input.allowedTools ?? [...this.tools.keys()];
 		const allowedTools = requestedTools.filter(
@@ -627,6 +642,7 @@ export class AgentRuntime extends EventEmitter {
 			...(input.parentSessionId
 				? { parentSessionId: input.parentSessionId }
 				: {}),
+			...(project ? { projectId: project.id } : {}),
 			...(workspaceRoot ? { workspaceRoot } : {}),
 			...(inheritedPrivacyMode ? { privacyMode: inheritedPrivacyMode } : {}),
 			allowedTools,
@@ -640,6 +656,114 @@ export class AgentRuntime extends EventEmitter {
 			title: session.title,
 		});
 		return session;
+	}
+
+	/**
+	 * Refresh project metadata without restarting the agent core. The desktop
+	 * keeps folder grants and project metadata in one store, then sends the
+	 * enriched records here after every project mutation.
+	 */
+	setProjects(projects: Project[]): void {
+		const parsedProjects = projects.map((project) => ProjectSchema.parse(project));
+		const nextById = new Map<string, Project>();
+		for (const project of parsedProjects) {
+			if (nextById.has(project.id))
+				throw new Error("Project IDs must be unique.");
+			nextById.set(project.id, project);
+		}
+		const previousProjects = new Map(this.projects);
+		this.projects.clear();
+		for (const project of parsedProjects) this.projects.set(project.id, project);
+
+		for (const session of this.database.listRuntimeSessions()) {
+			let next = session;
+			if (session.projectId) {
+				const project = nextById.get(session.projectId);
+				const previous = previousProjects.get(session.projectId);
+				if (project) {
+					const sessionRoot = session.workspaceRoot
+						? this.normalizedProjectPath(session.workspaceRoot)
+						: undefined;
+					if (project.available === false) {
+						if (session.workspaceRoot) {
+							const detached = { ...next };
+							delete detached.workspaceRoot;
+							next = detached;
+						}
+					} else if (project.path !== sessionRoot) {
+						next = {
+							...next,
+							projectId: project.id,
+							workspaceRoot: project.path,
+						};
+					}
+				} else {
+					const detached = { ...next };
+					delete detached.projectId;
+					if (previous) delete detached.workspaceRoot;
+					next = detached;
+				}
+			}
+			if (!next.projectId && next.workspaceRoot) {
+				const project = this.projectForPath(next.workspaceRoot);
+				if (project)
+					next = { ...next, projectId: project.id, workspaceRoot: project.path };
+			}
+			if (next !== session) {
+				this.database.saveRuntimeSession(next);
+				this.emitRuntimeEvent("session.updated", session.id, {
+					action: "project-reconciled",
+					...(next.projectId ? { projectId: next.projectId } : {}),
+					sessionUpdatedAt: next.updatedAt,
+				});
+			}
+		}
+	}
+
+	updateSessionProject(sessionId: string, projectId: string | null): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		if (projectId === null) {
+			const detached = { ...session };
+			delete detached.projectId;
+			delete detached.workspaceRoot;
+			const updated = this.saveSession({
+				...detached,
+				updatedAt: this.now(),
+			});
+			this.emitRuntimeEvent("session.updated", sessionId, {
+				action: "project-removed",
+				sessionUpdatedAt: updated.updatedAt,
+			});
+			return updated;
+		}
+		const project = this.requireProject(projectId);
+		if (project.available === false)
+			throw new Error("The project folder is unavailable.");
+		const workspaceRoot = this.resolveGrantedRoot(project.path);
+		const updated = this.saveSession({
+			...session,
+			projectId: project.id,
+			workspaceRoot,
+			updatedAt: this.now(),
+		});
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "project-assigned",
+			projectId: project.id,
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
+	projectContextForSession(sessionId: string): string {
+		const session = this.requireSession(sessionId);
+		const project = session.projectId
+			? this.projects.get(session.projectId)
+			: session.workspaceRoot
+				? this.projectForPath(session.workspaceRoot)
+				: undefined;
+		const instructions = project?.instructions?.trim();
+		if (!project || !instructions) return "";
+		return `Project context for ${project.name}:\n${instructions}`;
 	}
 
 	listSessions(): RuntimeSession[] {
@@ -978,6 +1102,7 @@ export class AgentRuntime extends EventEmitter {
 		let child = this.createSession({
 			title: title ?? `${parent.title} (fork)`,
 			parentSessionId: parent.id,
+			...(parent.projectId ? { projectId: parent.projectId } : {}),
 			...(activeWorkspaceRoot ? { workspaceRoot: activeWorkspaceRoot } : {}),
 			allowedTools: parent.allowedTools,
 		});
@@ -4462,6 +4587,28 @@ export class AgentRuntime extends EventEmitter {
 			const detached = { ...session };
 			delete detached.workspaceRoot;
 			this.database.saveRuntimeSession(detached);
+		}
+	}
+
+	private requireProject(projectId: string): Project {
+		const project = this.projects.get(projectId);
+		if (!project) throw new Error("Project was not found.");
+		return project;
+	}
+
+	private projectForPath(path: string): Project | undefined {
+		const normalized = this.normalizedProjectPath(path);
+		return [...this.projects.values()].find(
+			(project) => this.normalizedProjectPath(project.path) === normalized,
+		);
+	}
+
+	private normalizedProjectPath(path: string): string {
+		const resolved = resolve(path);
+		try {
+			return realpathSync(resolved);
+		} catch {
+			return resolved;
 		}
 	}
 

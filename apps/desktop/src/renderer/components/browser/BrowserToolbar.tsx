@@ -273,6 +273,7 @@ export function BrowserToolbar({
   onSaveScreenshot,
   onToggleBookmark,
   onOpenSettings,
+  onOpenExtensionStore,
   onToggleCalculator,
   onOpenMenu,
   onMenuOpenChange,
@@ -323,6 +324,7 @@ export function BrowserToolbar({
   onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
   onOpenSettings(): void;
+  onOpenExtensionStore(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
   onMenuOpenChange?(open: boolean): void;
@@ -344,6 +346,7 @@ export function BrowserToolbar({
   const [menuOrigin, setMenuOrigin] = useState({ x: 0, y: 0 });
   const menuRef = useRef<HTMLDivElement | null>(null);
   const lastTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
   const browserMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const downloadsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyPopoverRequestRef = useRef(0);
@@ -478,10 +481,7 @@ export function BrowserToolbar({
     )
       return;
     historyPopoverRequestRef.current = historyPopoverRequestId;
-    // History can be opened by a keyboard shortcut without a dedicated
-    // toolbar button. Anchor it to the overflow menu so it still gets a
-    // reliable position and focus restoration target.
-    lastTriggerRef.current = browserMenuTriggerRef.current;
+    lastTriggerRef.current = historyTriggerRef.current;
     setOpenMenu("history");
   }, [historyPopoverRequestId]);
 
@@ -1094,6 +1094,41 @@ export function BrowserToolbar({
         </div>
         <button
           type="button"
+          className={`browser-toolbar-menu-trigger ${openMenu === "tools" ? "active" : ""}`}
+          aria-label="Tools"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "tools"}
+          title="Tools"
+          onClick={(event) => toggleMenu("tools", event)}
+        >
+          <Icon name="tools" />
+        </button>
+        <button
+          type="button"
+          className={`browser-toolbar-menu-trigger ${openMenu === "screen" ? "active" : ""}`}
+          aria-label="Page options"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "screen"}
+          title="Page options"
+          onClick={(event) => toggleMenu("screen", event)}
+        >
+          <Icon name="sliders" />
+        </button>
+        <button
+          ref={historyTriggerRef}
+          type="button"
+          className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${openMenu === "history" ? "active" : ""}`}
+          aria-label="History"
+          aria-haspopup="menu"
+          aria-expanded={openMenu === "history"}
+          aria-keyshortcuts="Meta+H"
+          title="History (⌘H)"
+          onClick={(event) => toggleMenu("history", event)}
+        >
+          <Icon name="history" />
+        </button>
+        <button
+          type="button"
           className="browser-toolbar-secondary"
           aria-label="Bookmarks"
           aria-keyshortcuts="Meta+Shift+D"
@@ -1425,6 +1460,21 @@ export function BrowserToolbar({
                     })}
                   </div>
                 )}
+                <a
+                  href="https://chromewebstore.google.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  role="menuitem"
+                  className="browser-toolbar-menu-link"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    runAndClose(onOpenExtensionStore);
+                  }}
+                >
+                  <Icon name="globe" />
+                  <span>Go to store</span>
+                  <Icon name="expand" />
+                </a>
                 <button
                   type="button"
                   role="menuitem"
@@ -1467,7 +1517,7 @@ export function BrowserToolbar({
                     type="button"
                     role="menuitem"
                     onClick={() => {
-                      lastTriggerRef.current = browserMenuTriggerRef.current;
+                      lastTriggerRef.current = historyTriggerRef.current;
                       setOpenMenu("history");
                     }}
                   >

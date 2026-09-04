@@ -52,6 +52,7 @@ import {
 	clipboard,
 	dialog,
 	session as electronSession,
+	systemPreferences,
 	Menu,
 	nativeImage,
 	type LoadURLOptions,
@@ -64,6 +65,7 @@ import {
 } from "electron";
 import decodeIco from "decode-ico";
 import sharp from "sharp";
+import { z } from "zod";
 import {
 	dispatchBrowserMouseClick,
 	publicInteractiveRefs,
@@ -120,6 +122,19 @@ const CONTEXT_DOWNLOAD_REQUEST_TTL_MS = 30_000;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
 const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
+const PASSWORD_SUBMISSION_CHANNEL = "kestrel:user-browser-password-submission";
+const PasswordSubmissionMessageSchema = z.object({
+	username: z.string().max(500),
+	password: z.string().min(1).max(100_000),
+	passwordFieldRect: z
+		.object({
+			x: z.number().int().min(0).max(20_000),
+			y: z.number().int().min(0).max(20_000),
+			width: z.number().int().min(0).max(20_000),
+			height: z.number().int().min(0).max(20_000),
+		})
+		.optional(),
+});
 const AUTHENTICATION_HOSTS = new Set([
 	"accounts.google.com",
 	"auth.anthropic.com",
@@ -211,6 +226,37 @@ export interface UserBrowserServiceOptions {
 	onLastTabClosed?(): void;
 	nameTabFolders?(groups: BrowserTabFolderNamingGroup[]): Promise<BrowserTabFolderName[]>;
 	confirmSitePermission?(origin: string, permission: string): Promise<boolean>;
+	requestNativeMediaAccess?(mediaType: "camera" | "microphone"): Promise<boolean>;
+}
+
+type BrowserMediaRequestType = "video" | "audio";
+type NativeMediaType = "camera" | "microphone";
+
+function isBrowserMediaRequestType(value: unknown): value is BrowserMediaRequestType {
+	return value === "video" || value === "audio";
+}
+
+function mediaRequestTypes(value: unknown): BrowserMediaRequestType[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter(isBrowserMediaRequestType);
+}
+
+function nativeMediaTypesForRequest(
+	mediaTypes: readonly BrowserMediaRequestType[],
+): NativeMediaType[] {
+	return [
+		...(mediaTypes.includes("video") ? (["camera"] as const) : []),
+		...(mediaTypes.includes("audio") ? (["microphone"] as const) : []),
+	];
+}
+
+function mediaPermissionLabel(
+	mediaTypes: readonly BrowserMediaRequestType[],
+): string {
+	const requested = nativeMediaTypesForRequest(mediaTypes);
+	if (requested.length === 2) return "camera and microphone";
+	if (requested[0]) return requested[0];
+	return "camera and microphone";
 }
 
 interface ViewRecord {
@@ -399,7 +445,7 @@ const PASSWORD_FORM_SCAN_SCRIPT = String.raw`(() => {
     ].filter(Boolean).join(" ").toLowerCase();
     if (autocomplete === "new-password") return null;
     const isPassword = type === "password" || autocomplete === "current-password";
-    const isUsername = autocomplete === "username" ||
+    const isUsername = type === "email" || autocomplete === "username" ||
       autocomplete === "email" || /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(hint);
     if (!isPassword && !isUsername) return null;
     const rect = node.getBoundingClientRect();
@@ -826,7 +872,7 @@ function passwordFillScript(
       .filter(Boolean).join(" ").toLowerCase();
     if (autocomplete === "new-password") return null;
     const isPassword = type === "password" || autocomplete === "current-password";
-    const isUsername = autocomplete === "username" || autocomplete === "email" ||
+    const isUsername = type === "email" || autocomplete === "username" || autocomplete === "email" ||
       /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(hint);
     if (!isPassword && !isUsername) return null;
     return { node, kind: isPassword ? "password" : "username" };
@@ -860,11 +906,17 @@ function passwordFillScript(
 
 interface BrowserPartitionParticipant {
 	ownsWebContents(webContents: WebContents): boolean;
-	isPermissionAllowed(origin: string, permission: string): boolean;
+	isPermissionAllowed(
+		origin: string,
+		permission: string,
+		mediaType?: string,
+	): boolean;
 	resolvePermissionRequest(
 		webContents: WebContents,
 		permission: string,
 		requestingUrl?: string,
+		mediaTypes?: BrowserMediaRequestType[],
+		securityOrigin?: string,
 	): Promise<boolean>;
 	handleWillDownload(
 		event: Electron.Event,
@@ -884,12 +936,20 @@ class BrowserPartitionCoordinator {
 
 	constructor(private readonly partition: Session) {
 		partition.setPermissionCheckHandler(
-			(webContents, permission, requestingOrigin) => {
+			(webContents, permission, requestingOrigin, details) => {
 				const participant = this.find(webContents);
+				const mediaType =
+					permission === "media" &&
+					details &&
+					"mediaType" in details &&
+					typeof details.mediaType === "string"
+						? details.mediaType
+						: undefined;
 				return (
 					participant?.isPermissionAllowed(
 						requestingOrigin,
 						String(permission),
+						mediaType,
 					) ?? false
 				);
 			},
@@ -906,6 +966,17 @@ class BrowserPartitionCoordinator {
 						webContents,
 						String(permission),
 						details?.requestingUrl,
+						permission === "media" &&
+							details &&
+							"mediaTypes" in details
+							? mediaRequestTypes(details.mediaTypes)
+							: undefined,
+						permission === "media" &&
+							details &&
+							"securityOrigin" in details &&
+							typeof details.securityOrigin === "string"
+							? details.securityOrigin
+							: undefined,
 					)
 					.then(callback)
 					.catch(() => callback(false));
@@ -972,6 +1043,9 @@ export class UserBrowserService {
 	private readonly confirmSitePermission: NonNullable<
 		UserBrowserServiceOptions["confirmSitePermission"]
 	>;
+	private readonly requestNativeMediaAccess: NonNullable<
+		UserBrowserServiceOptions["requestNativeMediaAccess"]
+	>;
 	private readonly now: () => Date;
 	private readonly defaultDownloadDirectory: string;
 	private downloadDirectory: string;
@@ -995,8 +1069,18 @@ export class UserBrowserService {
 	private disposed = false;
 	private passwordPollInterval: ReturnType<typeof setInterval> | undefined;
 	private passwordScanInFlight = false;
+	private passwordPromptGeneration = 0;
 	private passwordPromptKey = "";
 	private passwordPrompt: PasswordPrompt | undefined;
+	private pendingPasswordSave:
+		| {
+			tabId: string;
+			origin: string;
+			title: string;
+			username: string;
+			password: string;
+		}
+		| undefined;
 	private readonly passwordPromptSuppressedUntil = new Map<string, number>();
 	private paymentScanInFlight = false;
 	private paymentPromptKey = "";
@@ -1043,6 +1127,12 @@ export class UserBrowserService {
 				});
 				return response.response === 0;
 			});
+		this.requestNativeMediaAccess =
+			options.requestNativeMediaAccess ??
+			(async (mediaType) =>
+				process.platform === "darwin"
+					? systemPreferences.askForMediaAccess(mediaType)
+					: true);
 		mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
 		this.extensionManager = new BrowserExtensionManager(dirname(options.statePath), {
 			allowLocalExtensions: options.allowLocalExtensions === true,
@@ -1069,13 +1159,21 @@ export class UserBrowserService {
 		this.partitionParticipant = {
 			ownsWebContents: (webContents) =>
 				this.webContentsToTab.has(webContents.id),
-			isPermissionAllowed: (origin, permission) =>
-				this.isPermissionAllowed(origin, permission),
-			resolvePermissionRequest: (webContents, permission, requestingUrl) =>
+			isPermissionAllowed: (origin, permission, mediaType) =>
+				this.isPermissionAllowed(origin, permission, mediaType),
+			resolvePermissionRequest: (
+				webContents,
+				permission,
+				requestingUrl,
+				mediaTypes,
+				securityOrigin,
+			) =>
 				this.resolvePermissionRequest(
 					webContents,
 					permission,
 					requestingUrl,
+					mediaTypes,
+					securityOrigin,
 				),
 			handleWillDownload: (event, item, webContents) =>
 				this.handleWillDownload(event, item, webContents),
@@ -2373,17 +2471,7 @@ export class UserBrowserService {
 		const normalizedOrigin = this.permissionOrigin(origin);
 		if (!normalizedOrigin)
 			throw new Error("Site permissions require an HTTP(S) origin.");
-		const next = this.state.sitePermissions.filter(
-			(item) =>
-				!(item.origin === normalizedOrigin && item.permission === permission),
-		);
-		next.push({
-			origin: normalizedOrigin,
-			permission,
-			decision,
-			updatedAt: this.now().toISOString(),
-		});
-		this.state.sitePermissions = next.slice(-500);
+		this.rememberSitePermission(normalizedOrigin, permission, decision);
 		this.commit();
 		return this.getState();
 	}
@@ -2514,6 +2602,39 @@ export class UserBrowserService {
 		if (!this.passwordVault)
 			throw new Error("The protected password store is unavailable.");
 		return this.passwordVault.save(input);
+	}
+
+	async savePasswordSuggestion(): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault)
+			throw new Error("The protected password store is unavailable.");
+		const pending = this.pendingPasswordSave;
+		const prompt = this.passwordPrompt;
+		if (!pending || !prompt || prompt.mode !== "save")
+			throw new Error("That password suggestion is no longer available.");
+		const tab = this.requireActiveTab();
+		if (tab.id !== pending.tabId || prompt.tabId !== tab.id)
+			throw new Error("The login page changed before the password was saved.");
+		const record = this.requireView(tab.id);
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The login page is still waking up. Try again.");
+		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		if (
+			!url ||
+			url.protocol !== "https:" ||
+			url.origin !== pending.origin ||
+			prompt.origin !== url.origin
+		)
+			throw new Error("The login page changed before the password was saved.");
+		const summaries = await this.passwordVault.save({
+			origin: pending.origin,
+			title: pending.title,
+			username: pending.username,
+			password: pending.password,
+		});
+		this.suppressPasswordPrompt(tab.id, pending.origin, 4_000);
+		this.clearPasswordPrompt();
+		return summaries;
 	}
 
 	async removePassword(id: PasswordEntryId): Promise<PasswordEntrySummary[]> {
@@ -2711,6 +2832,104 @@ export class UserBrowserService {
 		);
 	}
 
+	private async handlePasswordSubmission(
+		tab: UserBrowserTab,
+		webContents: WebContents,
+		event: Electron.IpcMainEvent,
+		raw: unknown,
+	): Promise<void> {
+		if (
+			this.disposed ||
+			!this.passwordVault ||
+			this.state.settings.passwordAutofillEnabled === false ||
+			tab.id !== this.state.activeTabId ||
+			isKestrelAppPageUrl(tab.url)
+		)
+			return;
+		const parsed = PasswordSubmissionMessageSchema.safeParse(raw);
+		if (!parsed.success || parsed.data.password.includes("\0")) return;
+		const pageUrl =
+			safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		const frameUrl = safePageUrl(
+			event.senderFrame?.url || webContents.getURL(),
+		);
+		if (
+			!pageUrl ||
+			pageUrl.protocol !== "https:" ||
+			!frameUrl ||
+			frameUrl.origin !== pageUrl.origin
+		)
+			return;
+		const suppressionKey = `${tab.id}:${pageUrl.origin}`;
+		if (
+			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
+			this.now().getTime()
+		)
+			return;
+		// Keep the first submitted secret behind the confirmation that is already
+		// visible. A later submit from the same page must not silently replace the
+		// pending credential while the user is deciding whether to save it.
+		if (
+			this.passwordPrompt?.mode === "save" &&
+			this.passwordPrompt.tabId === tab.id &&
+			this.passwordPrompt.origin === pageUrl.origin
+		)
+			return;
+		const promptGeneration = ++this.passwordPromptGeneration;
+
+		// Use the origin hostname as the durable label. Page titles are controlled
+		// by the untrusted site and do not need to cross into the protected vault.
+		const title = hostnameTitle(pageUrl.toString());
+		const entries = (await this.passwordVault.listForOrigin(pageUrl.origin)).slice(
+			0,
+			24,
+		);
+		if (
+			this.disposed ||
+			tab.id !== this.state.activeTabId ||
+			promptGeneration !== this.passwordPromptGeneration ||
+			safePageUrl(webContents.getURL())?.origin !== pageUrl.origin
+		)
+			return;
+
+		const pageWidth =
+			this.contentBounds.width || this.window.getContentSize()[0] || 800;
+		const pageHeight =
+			this.contentBounds.height || this.window.getContentSize()[1] || 600;
+		const field = parsed.data.passwordFieldRect;
+		const anchor = field
+			? {
+				x: Math.max(0, this.contentBounds.x + field.x),
+				y: Math.max(0, this.contentBounds.y + field.y),
+				width: field.width,
+				height: field.height,
+			}
+			: {
+				x: Math.max(0, this.contentBounds.x + pageWidth - 368),
+				y: Math.max(0, this.contentBounds.y + 16),
+				width: 348,
+				height: Math.min(96, Math.max(1, pageHeight - 32)),
+			};
+		const prompt = PasswordPromptSchema.parse({
+			tabId: tab.id,
+			origin: pageUrl.origin,
+			title,
+			mode: "save",
+			fields: [],
+			entries,
+			candidate: { username: parsed.data.username.trim().slice(0, 500) },
+			anchor,
+		});
+		this.pendingPasswordSave = {
+			tabId: tab.id,
+			origin: pageUrl.origin,
+			title,
+			username: parsed.data.username.trim().slice(0, 500),
+			password: parsed.data.password,
+		};
+		this.setPasswordPrompt(prompt);
+	}
+
 	private async refreshPasswordPrompt(tabId?: string): Promise<void> {
 		if (
 			this.disposed ||
@@ -2746,15 +2965,37 @@ export class UserBrowserService {
 			this.clearPasswordPrompt();
 			return;
 		}
+		// A submitted credential is held only in the main process until the user
+		// explicitly confirms the save. Do not let the regular fill scan replace
+		// that confirmation while the page is still settling.
+		if (this.passwordPrompt?.mode === "save") {
+			if (
+				this.passwordPrompt.tabId === tab.id &&
+				this.passwordPrompt.origin === url.origin
+			)
+				return;
+			this.clearPasswordPrompt();
+		}
 
 		this.passwordScanInFlight = true;
+		const scanGeneration = this.passwordPromptGeneration;
 		try {
 			const snapshot = await this.readPasswordFormSnapshot(webContents);
+			if (
+				scanGeneration !== this.passwordPromptGeneration ||
+				this.passwordPrompt?.mode === "save"
+			)
+				return;
 			if (!snapshot.fields.length) {
 				this.clearPasswordPrompt();
 				return;
 			}
-			const entries = await this.passwordVault.listForOrigin(url.origin);
+			const entries = (await this.passwordVault.listForOrigin(url.origin)).slice(
+				0,
+				24,
+			);
+			if (scanGeneration !== this.passwordPromptGeneration)
+				return;
 			if (!entries.length) {
 				this.clearPasswordPrompt();
 				return;
@@ -2807,6 +3048,7 @@ export class UserBrowserService {
 			tabId: prompt.tabId,
 			origin: prompt.origin,
 			mode: prompt.mode,
+			candidate: prompt.candidate,
 			focusedFieldId: prompt.focusedFieldId,
 			entries: prompt.entries.map((entry) => entry.id),
 			fields: prompt.fields.map((field) => [field.id, field.rect]),
@@ -2818,6 +3060,10 @@ export class UserBrowserService {
 	}
 
 	private clearPasswordPrompt(): void {
+		this.passwordPromptGeneration += 1;
+		// Never keep a submitted password alive after the associated prompt or page
+		// is gone. The secret is intentionally not part of any renderer contract.
+		this.pendingPasswordSave = undefined;
 		if (!this.passwordPrompt && !this.passwordPromptKey) return;
 		this.passwordPrompt = undefined;
 		this.passwordPromptKey = "";
@@ -3784,6 +4030,12 @@ export class UserBrowserService {
 			}
 			return { action: "deny" };
 		});
+		webContents.on("ipc-message", (event, channel, ...args) => {
+			if (channel !== PASSWORD_SUBMISSION_CHANNEL) return;
+			void this.handlePasswordSubmission(tab, webContents, event, args[0]).catch(
+				() => undefined,
+			);
+		});
 		webContents.on("will-navigate", (event, url) => {
 			if (!safePageUrl(url)) event.preventDefault();
 		});
@@ -4374,6 +4626,7 @@ export class UserBrowserService {
 	}
 
 	private closeView(tabId: string, closeWebContents = true): void {
+		if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
 		const record = this.views.get(tabId);
 		if (!record) return;
 		this.views.delete(tabId);
@@ -4508,32 +4761,83 @@ export class UserBrowserService {
 		return this.ensureView(tab);
 	}
 
-	private isPermissionAllowed(originValue: string, permission: string): boolean {
+	private storedSitePermission(
+		origin: string,
+		permission: string,
+	): boolean | undefined {
+		const stored = this.state.sitePermissions.find(
+			(item) => item.origin === origin && item.permission === permission,
+		);
+		return stored ? stored.decision === "allow" : undefined;
+	}
+
+	private isPermissionAllowed(
+		originValue: string,
+		permission: string,
+		mediaType?: string,
+	): boolean {
 		if (ALWAYS_ALLOW_PERMISSIONS.has(permission)) return true;
 		if (ALWAYS_DENY_PERMISSIONS.has(permission)) return false;
 		const origin = this.permissionOrigin(originValue);
 		if (!origin) return false;
-		return (
-			this.state.sitePermissions.find(
-				(item) => item.origin === origin && item.permission === permission,
-			)?.decision === "allow"
-		);
+		if (permission === "media" && mediaType === "video")
+			return (
+				this.storedSitePermission(origin, "camera") ??
+				this.storedSitePermission(origin, "media") ??
+				false
+			);
+		if (permission === "media" && mediaType === "audio")
+			return (
+				this.storedSitePermission(origin, "microphone") ??
+				this.storedSitePermission(origin, "media") ??
+				false
+			);
+		return this.storedSitePermission(origin, permission) ?? false;
 	}
 
 	private async resolvePermissionRequest(
 		webContents: WebContents,
 		permission: string,
 		requestingUrl?: string,
+		mediaTypes: BrowserMediaRequestType[] = [],
+		securityOrigin?: string,
 	): Promise<boolean> {
 		if (ALWAYS_ALLOW_PERMISSIONS.has(permission)) return true;
 		if (ALWAYS_DENY_PERMISSIONS.has(permission)) return false;
 		const currentWebContents = liveWebContents(webContents);
 		const origin = this.permissionOrigin(
+			securityOrigin ||
 			requestingUrl ||
 				currentWebContents?.getURL() ||
 				"",
 		);
 		if (!origin) return false;
+		if (permission === "media") {
+			const requestedMediaTypes = mediaTypes.length
+				? mediaTypes
+				: (["video", "audio"] as BrowserMediaRequestType[]);
+			const nativeTypes = nativeMediaTypesForRequest(requestedMediaTypes);
+			const storedDecisions = nativeTypes.map((mediaType) =>
+				this.storedSitePermission(origin, mediaType) ??
+				this.storedSitePermission(origin, "media"),
+			);
+			if (storedDecisions.some((decision) => decision === false)) return false;
+			let allowed = storedDecisions.every((decision) => decision === true);
+			if (!allowed) {
+				allowed = await this.confirmSitePermission(
+					origin,
+					mediaPermissionLabel(requestedMediaTypes),
+				);
+				for (const mediaType of nativeTypes)
+					this.rememberSitePermission(origin, mediaType, allowed ? "allow" : "deny");
+				this.commit();
+			}
+			if (!allowed) return false;
+			for (const mediaType of nativeTypes) {
+				if (!(await this.requestNativeMediaAccess(mediaType))) return false;
+			}
+			return true;
+		}
 		const stored = this.state.sitePermissions.find(
 			(item) => item.origin === origin && item.permission === permission,
 		);
@@ -4541,6 +4845,23 @@ export class UserBrowserService {
 		const allowed = await this.confirmSitePermission(origin, permission);
 		this.setSitePermission(origin, permission, allowed ? "allow" : "deny");
 		return allowed;
+	}
+
+	private rememberSitePermission(
+		origin: string,
+		permission: string,
+		decision: "allow" | "deny",
+	): void {
+		const next = this.state.sitePermissions.filter(
+			(item) => !(item.origin === origin && item.permission === permission),
+		);
+		next.push({
+			origin,
+			permission,
+			decision,
+			updatedAt: this.now().toISOString(),
+		});
+		this.state.sitePermissions = next.slice(-500);
 	}
 
 	private permissionOrigin(value: string): string | undefined {

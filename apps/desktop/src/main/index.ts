@@ -47,6 +47,7 @@ import {
   type CommunicationSourceStatus,
 	type PaymentPrompt,
 	type PasswordPrompt,
+	type Project,
 	type UserBrowserState,
   type UserBrowserTab,
   type WorkspaceGrant,
@@ -217,9 +218,11 @@ function passwordOverlaySize(prompt: PasswordPrompt): {
 	width: number;
 	height: number;
 } {
-	return prompt.mode === "field"
-		? { width: 326, height: 158 }
-		: { width: 382, height: 236 };
+	return prompt.mode === "save"
+		? { width: 382, height: 244 }
+		: prompt.mode === "field"
+			? { width: 326, height: 158 }
+			: { width: 382, height: 236 };
 }
 
 function passwordOverlayBounds(
@@ -2338,6 +2341,7 @@ async function initializeCore(
   );
   const configuredWorkspaceRoots =
     await workspaceGrantStore.configuredPaths();
+  const projects = await workspaceGrantStore.statusList();
   const workspaceRoots = (await workspaceGrantStore.list()).map(
     (grant) => grant.path,
   );
@@ -2352,6 +2356,7 @@ async function initializeCore(
       encryptionKeyBase64: key.toString("base64"),
       workspaceRoots,
       configuredWorkspaceRoots,
+      projects,
       pluginRoots,
       managedPluginRoots: [managedPluginRoot],
       learnedSkillRoot: join(userData, "learned-skills"),
@@ -2362,7 +2367,7 @@ async function initializeCore(
       throw new Error(response.error || "Agent Core rejected its startup snapshot.");
     if (!response.snapshot)
       throw new Error("Agent Core returned no workspace state during startup.");
-		setAgentState(response.snapshot.agentState);
+    setAgentState(response.snapshot.agentState);
     publishMacWidgetSnapshot(response.snapshot);
   } catch (error) {
     // A bootstrap can fail after the utility process has been created. Tear it
@@ -2416,18 +2421,27 @@ async function selectPluginDirectory(
   return selection.canceled ? undefined : selection.filePaths[0];
 }
 
-async function restartCoreAfterGrantChange(): Promise<WorkspaceGrant[]> {
+async function restartCoreAfterGrantChange(): Promise<Project[]> {
   await supervisor.stop();
   await initializeCore();
   const response = await supervisor.request({ type: "snapshot" });
-	if (response.ok && response.snapshot) {
-		setAgentState(response.snapshot.agentState);
+  if (response.ok && response.snapshot) {
+    setAgentState(response.snapshot.agentState);
     publishMacWidgetSnapshot(response.snapshot);
     mainWindow?.webContents.send("kestrel:snapshot", response.snapshot);
   }
   return new WorkspaceGrantStore(
     join(app.getPath("userData"), "workspace-grants.json"),
   ).statusList();
+}
+
+async function synchronizeProjectMetadata(projects: Project[]): Promise<void> {
+  const response = await supervisor.request({
+    type: "runtime-sync-projects",
+    projects,
+  });
+  if (!response.ok)
+    throw new Error(response.error || "Project metadata could not be synchronized.");
 }
 
 function registerIpc(): void {
@@ -2524,12 +2538,13 @@ function registerIpc(): void {
     if (
       isPasswordOverlayWindow &&
       ![
+        "password-save-suggestion",
         "password-fill-page",
         "password-fill-field",
         "password-dismiss",
       ].includes(request.type)
     )
-      throw new Error("Password overlays can only fill or dismiss themselves.");
+      throw new Error("Password overlays can only save, fill, or dismiss themselves.");
     if (
       isPaymentOverlayWindow &&
       ![
@@ -2573,7 +2588,9 @@ function registerIpc(): void {
       return { ok: true };
     }
     if (isPasswordOverlayWindow && passwordService) {
-      if (request.type === "password-fill-page")
+      if (request.type === "password-save-suggestion")
+        await passwordService.savePasswordSuggestion();
+      else if (request.type === "password-fill-page")
         await passwordService.fillPasswordPage(request.passwordId);
       else if (request.type === "password-fill-field")
         await passwordService.fillPasswordField(
@@ -3776,8 +3793,25 @@ function registerIpc(): void {
     const grantStore = new WorkspaceGrantStore(
       join(app.getPath("userData"), "workspace-grants.json"),
     );
-    if (request.type === "get-workspace-grants")
-      return { ok: true, workspaceGrants: await grantStore.statusList() };
+    if (request.type === "get-workspace-grants") {
+      const projects = await grantStore.statusList();
+      return { ok: true, workspaceGrants: projects, projects };
+    }
+    if (request.type === "project-update") {
+      const projects = await grantStore.update(request.projectId, {
+        ...(request.name !== undefined ? { name: request.name } : {}),
+        ...(request.instructions !== undefined
+          ? { instructions: request.instructions }
+          : {}),
+      });
+      await synchronizeProjectMetadata(projects);
+      return { ok: true, workspaceGrants: projects, projects };
+    }
+    if (request.type === "project-delete") {
+      await grantStore.remove(request.projectId);
+      const projects = await restartCoreAfterGrantChange();
+      return { ok: true, workspaceGrants: projects, projects };
+    }
     if (request.type === "select-workspace-folder") {
       const options = {
         title: `Grant ${PRODUCT_IDENTITY.productName} a project folder`,
@@ -3789,23 +3823,24 @@ function registerIpc(): void {
       const selection = mainWindow
         ? await dialog.showOpenDialog(mainWindow, options)
         : await dialog.showOpenDialog(options);
-      if (selection.canceled || !selection.filePaths[0])
-        return {
-          ok: true,
-          cancelled: true,
-          workspaceGrants: await grantStore.statusList(),
-        };
+      if (selection.canceled || !selection.filePaths[0]) {
+        const projects = await grantStore.statusList();
+        return { ok: true, cancelled: true, workspaceGrants: projects, projects };
+      }
       const selectedWorkspacePath = realpathSync(selection.filePaths[0]);
       await grantStore.add(selectedWorkspacePath);
+      const projects = await restartCoreAfterGrantChange();
       return {
         ok: true,
         selectedWorkspacePath,
-        workspaceGrants: await restartCoreAfterGrantChange(),
+        workspaceGrants: projects,
+        projects,
       };
     }
     if (request.type === "remove-workspace-folder") {
       await grantStore.remove(request.path);
-      return { ok: true, workspaceGrants: await restartCoreAfterGrantChange() };
+      const projects = await restartCoreAfterGrantChange();
+      return { ok: true, workspaceGrants: projects, projects };
     }
     if (request.type === "select-context-files") {
       const workspaceRoot = realpathSync(request.workspaceRoot);

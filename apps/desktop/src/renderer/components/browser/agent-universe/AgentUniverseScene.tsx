@@ -1,4 +1,10 @@
-import type { AgentGroupMemoryStatus, AgentRun } from "@kestrel/shared-types";
+import type {
+	AgentGroupMemoryStatus,
+	AgentIdentity,
+	AgentMemoryRecord,
+	AgentRun,
+	WorkingTask,
+} from "@kestrel/shared-types";
 import {
 	useCallback,
 	useEffect,
@@ -17,6 +23,11 @@ import {
 } from "../../../agent-workspace";
 import { Icon } from "../../Icon";
 import { AgentUniverseContextSurface } from "./AgentUniverseContextSurface";
+import { AgentUniverseStarfield } from "./AgentUniverseStarfield";
+import {
+	agentUniverseAssetClipId,
+	agentUniverseBodyAssetFor,
+} from "./agent-universe-assets";
 import { layoutAgentUniverse, type AgentNodeLayout } from "./agent-universe-layout";
 import {
 	AGENT_UNIVERSE_PLANET_LIMIT,
@@ -71,6 +82,14 @@ interface AgentUniverseSceneProps {
 	contextRuns?: readonly AgentRun[];
 	contextRunsLoading: boolean;
 	contextRunsError?: string;
+	contextAgentMemory?: {
+		identity: AgentIdentity;
+		memories: AgentMemoryRecord[];
+		tasks: WorkingTask[];
+	};
+	contextAgentMemoryLoading?: boolean;
+	contextAgentMemoryError?: string;
+	onRefreshAgentMemory(sessionId: string): void;
 	onSystemColorChange(systemId: string, colorId: AgentUniverseColorId): void;
 	onNodeActivate(nodeId: string, systemId: string): void;
 	onBackgroundClick(): void;
@@ -175,6 +194,10 @@ export function AgentUniverseScene({
 	contextRuns,
 	contextRunsLoading,
 	contextRunsError,
+	contextAgentMemory,
+	contextAgentMemoryLoading = false,
+	contextAgentMemoryError,
+	onRefreshAgentMemory,
 	onSystemColorChange,
 	onNodeActivate,
 	onBackgroundClick,
@@ -203,8 +226,14 @@ export function AgentUniverseScene({
 	const focusCameraSizeRef = useRef<Size>({ width: 0, height: 0 });
 	const focusCameraReadyRef = useRef(false);
 	const layout = useMemo(
-		() => layoutAgentUniverse(snapshot, size.width, size.height),
-		[snapshot, size.height, size.width],
+		() =>
+			layoutAgentUniverse(
+				snapshot,
+				size.width,
+				size.height,
+				focusedSystemId,
+			),
+		[snapshot, focusedSystemId, size.height, size.width],
 	);
 	const matches = useMemo(
 		() => agentUniverseSearchMatches(snapshot, query),
@@ -698,6 +727,10 @@ export function AgentUniverseScene({
 			onPointerCancel={finishPointer}
 			onKeyDown={handleKeyDown}
 		>
+			<AgentUniverseStarfield
+				camera={camera}
+				reducedMotion={reducedMotion}
+			/>
 			<svg
 				className="agent-universe-svg"
 				viewBox={`0 0 ${layout.width} ${layout.height}`}
@@ -713,6 +746,15 @@ export function AgentUniverseScene({
 				onMouseLeave={() => setHoveredNodeId(null)}
 			>
 				<defs>
+					{snapshot.nodes.map((node) => (
+						<clipPath
+							key={agentUniverseAssetClipId(node.id)}
+							id={agentUniverseAssetClipId(node.id)}
+							clipPathUnits="objectBoundingBox"
+						>
+							<circle cx="0.5" cy="0.5" r="0.5" />
+						</clipPath>
+					))}
 					<radialGradient
 						id="agent-universe-planet-sheen"
 						cx="32%"
@@ -885,6 +927,12 @@ export function AgentUniverseScene({
 					{...(selectedNode && contextRuns ? { runs: contextRuns } : {})}
 					runsLoading={contextRunsLoading}
 					{...(contextRunsError ? { runsError: contextRunsError } : {})}
+					{...(contextAgentMemory ? { agentMemory: contextAgentMemory } : {})}
+					agentMemoryLoading={contextAgentMemoryLoading}
+					{...(contextAgentMemoryError
+						? { agentMemoryError: contextAgentMemoryError }
+						: {})}
+					onRefreshAgentMemory={onRefreshAgentMemory}
 					{...(contextAnchor ? { anchor: contextAnchor } : {})}
 					{...(contextGroupMemory ? { groupMemory: contextGroupMemory } : {})}
 					groupMemoryLoading={contextGroupMemoryLoading}
@@ -1089,12 +1137,10 @@ function AgentSystemScene({
 						: node.status === "waiting";
 					const runFailed = runStatus === "failed";
 					const queryMatch = matchedNodeIds.has(node.id);
+					const bodyAsset = agentUniverseBodyAssetFor(node.id, isRoot);
+					const bodyClipId = agentUniverseAssetClipId(node.id);
 					const showLabel = isRoot
-						? focused ||
-							prominent ||
-							isHovered ||
-							isSelected ||
-							queryMatch
+						? focused || prominent || isHovered || isSelected || queryMatch
 						: isHovered ||
 							isSelected ||
 							queryMatch ||
@@ -1104,104 +1150,83 @@ function AgentSystemScene({
 						? focused || (prominent && screenRadius >= 28)
 						: screenRadius >= (focused ? 27 : 34);
 					const selectedRelation =
-						!selectedNodeId ||
-						isSelected ||
-						node.parentId === selectedNodeId;
+						!selectedNodeId || isSelected || node.parentId === selectedNodeId;
 					return (
 						<g
 							key={node.id}
 							className={`agent-universe-node ${isRoot ? "is-core" : "is-worker"}${
 								isSelected ? " is-selected" : ""
-								}${isHovered ? " is-hovered" : ""}${working ? " is-working" : ""}${
-									activity ? " is-activity-active" : ""
-								}${waiting ? " is-runtime-waiting" : ""}${
-									runFailed ? " is-runtime-failed" : ""
-								}${
-									isRoot && system.nodes.length > 1
-										? " is-coordinator"
-										: ""
-								}${
-								selectedNodeId && !selectedRelation ? " is-selection-dimmed" : ""
-							}${queryActive && !queryMatch && !matchedSystem ? " is-query-dimmed" : ""}${
-								` ${statusClass(node.status)}`
-							}`}
+							}${isHovered ? " is-hovered" : ""}${working ? " is-working" : ""}${
+								activity ? " is-activity-active" : ""
+							}${waiting ? " is-runtime-waiting" : ""}${
+								runFailed ? " is-runtime-failed" : ""
+							}${isRoot && system.nodes.length > 1 ? " is-coordinator" : ""}${
+								selectedNodeId && !selectedRelation
+									? " is-selection-dimmed"
+									: ""
+							}${queryActive && !queryMatch && !matchedSystem ? " is-query-dimmed" : ""}${` ${statusClass(node.status)}`}`}
 							transform={`translate(${nodeLayout.x} ${nodeLayout.y})`}
 							data-node-id={node.id}
 							role="button"
 							tabIndex={0}
 							aria-pressed={isSelected}
 							aria-label={`${node.name}, ${agentSessionStatusLabel(node.status)}${
-								isRoot ? ", system root" : `, delegated session at depth ${node.depth}`
+								isRoot
+									? ", system root"
+									: `, delegated session at depth ${node.depth}`
 							}${runStatus ? `, last run ${agentUniverseRunStatusLabel(runStatus)}` : ""}`}
-							onPointerDown={
-								isRoot
-								? undefined
-								: (event) => {
-									if (event.button !== 0) return;
-									event.stopPropagation();
-									if (
-										!physics.startDrag(
-											node.id,
-											screenPointToWorld(event.clientX, event.clientY),
-										)
-									)
-										return;
-									nodePointerRef.current = {
-										pointerId: event.pointerId,
-										startX: event.clientX,
-										startY: event.clientY,
-										moved: false,
-									};
-									event.currentTarget.setPointerCapture(event.pointerId);
-								}
-							}
-							onPointerMove={
-								isRoot
-								? undefined
-								: (event) => {
-									const pointer = nodePointerRef.current;
-									if (!pointer || pointer.pointerId !== event.pointerId) return;
-									if (!pointer.moved) {
-										pointer.moved =
-											Math.hypot(
-												event.clientX - pointer.startX,
-												event.clientY - pointer.startY,
-											) >= 5;
-									}
-									physics.moveDrag(
+							onPointerDown={(event) => {
+								if (event.button !== 0) return;
+								event.stopPropagation();
+								if (
+									!physics.startDrag(
+										node.id,
 										screenPointToWorld(event.clientX, event.clientY),
-									);
+									)
+								)
+									return;
+								nodePointerRef.current = {
+									pointerId: event.pointerId,
+									startX: event.clientX,
+									startY: event.clientY,
+									moved: false,
+								};
+								event.currentTarget.setPointerCapture(event.pointerId);
+							}}
+							onPointerMove={(event) => {
+								const pointer = nodePointerRef.current;
+								if (!pointer || pointer.pointerId !== event.pointerId) return;
+								if (!pointer.moved) {
+									pointer.moved =
+										Math.hypot(
+											event.clientX - pointer.startX,
+											event.clientY - pointer.startY,
+										) >= 5;
 								}
-							}
-							onPointerUp={
-								isRoot
-								? undefined
-								: (event) => {
-									const pointer = nodePointerRef.current;
-									if (!pointer || pointer.pointerId !== event.pointerId) return;
-									event.stopPropagation();
-									if (pointer.moved) suppressNodeClickRef.current = true;
-									nodePointerRef.current = null;
-									physics.endDrag();
-									if (event.currentTarget.hasPointerCapture(event.pointerId))
-										event.currentTarget.releasePointerCapture(event.pointerId);
-								}
-							}
-							onPointerCancel={
-								isRoot
-								? undefined
-								: (event) => {
-									const pointer = nodePointerRef.current;
-									if (!pointer || pointer.pointerId !== event.pointerId) return;
-									event.stopPropagation();
-									if (pointer.moved) suppressNodeClickRef.current = true;
-									nodePointerRef.current = null;
-									physics.cancelDrag();
-									if (event.currentTarget.hasPointerCapture(event.pointerId))
-										event.currentTarget.releasePointerCapture(event.pointerId);
-								}
-							}
-
+								physics.moveDrag(
+									screenPointToWorld(event.clientX, event.clientY),
+								);
+							}}
+							onPointerUp={(event) => {
+								const pointer = nodePointerRef.current;
+								if (!pointer || pointer.pointerId !== event.pointerId) return;
+								event.stopPropagation();
+								if (pointer.moved) suppressNodeClickRef.current = true;
+								nodePointerRef.current = null;
+								physics.endDrag();
+								if (event.currentTarget.hasPointerCapture(event.pointerId))
+									event.currentTarget.releasePointerCapture(event.pointerId);
+							}}
+							onPointerCancel={(event) => {
+								const pointer = nodePointerRef.current;
+								if (!pointer || pointer.pointerId !== event.pointerId) return;
+								event.stopPropagation();
+								if (pointer.moved) suppressNodeClickRef.current = true;
+								nodePointerRef.current = null;
+								physics.cancelDrag();
+								if (event.currentTarget.hasPointerCapture(event.pointerId))
+									event.currentTarget.releasePointerCapture(event.pointerId);
+							}}
 							onMouseEnter={() => onHover(node.id)}
 							onFocus={() => onHover(node.id)}
 							onBlur={() => onHover(null)}
@@ -1260,30 +1285,29 @@ function AgentSystemScene({
 												data-activity-id={activity.id}
 											/>
 										) : null}
+										<image
+											className="agent-universe-body-asset"
+											href={bodyAsset.url}
+											x={-nodeLayout.radius}
+											y={-nodeLayout.radius}
+											width={nodeLayout.radius * 2}
+											height={nodeLayout.radius * 2}
+											preserveAspectRatio="xMidYMid slice"
+											clipPath={`url(#${bodyClipId})`}
+											data-asset-id={bodyAsset.id}
+											data-asset-source={bodyAsset.source}
+											aria-hidden="true"
+											focusable="false"
+										/>
 										<circle
 											className={`agent-universe-core-rim ${statusClass(node.status)}`}
 											r={nodeLayout.radius}
+											fill="none"
 										/>
 										<circle
 											className="agent-universe-planet-sheen"
 											r={Math.max(0.5, nodeLayout.radius - 1)}
 											fill="url(#agent-universe-planet-sheen)"
-										/>
-										<ellipse
-											className="agent-universe-planet-surface-detail"
-											cx={-nodeLayout.radius * 0.24}
-											cy={nodeLayout.radius * 0.28}
-											rx={nodeLayout.radius * 0.36}
-											ry={nodeLayout.radius * 0.12}
-											transform={`rotate(-18 ${-nodeLayout.radius * 0.24} ${nodeLayout.radius * 0.28})`}
-										/>
-										<ellipse
-											className="agent-universe-planet-surface-detail is-secondary"
-											cx={nodeLayout.radius * 0.2}
-											cy={-nodeLayout.radius * 0.22}
-											rx={nodeLayout.radius * 0.22}
-											ry={nodeLayout.radius * 0.08}
-											transform={`rotate(24 ${nodeLayout.radius * 0.2} ${-nodeLayout.radius * 0.22})`}
 										/>
 										{textLabel(
 											node,
@@ -1316,20 +1340,29 @@ function AgentSystemScene({
 												data-activity-id={activity.id}
 											/>
 										) : null}
+										<image
+											className="agent-universe-body-asset"
+											href={bodyAsset.url}
+											x={-nodeLayout.radius}
+											y={-nodeLayout.radius}
+											width={nodeLayout.radius * 2}
+											height={nodeLayout.radius * 2}
+											preserveAspectRatio="xMidYMid slice"
+											clipPath={`url(#${bodyClipId})`}
+											data-asset-id={bodyAsset.id}
+											data-asset-source={bodyAsset.source}
+											aria-hidden="true"
+											focusable="false"
+										/>
 										<circle
 											className={`agent-universe-worker-rim agent-universe-moon-rim ${statusClass(node.status)}`}
 											r={nodeLayout.radius}
+											fill="none"
 										/>
 										<circle
 											className="agent-universe-moon-sheen"
 											r={Math.max(0.5, nodeLayout.radius - 1)}
 											fill="url(#agent-universe-moon-sheen)"
-										/>
-										<circle
-											className="agent-universe-moon-crater"
-											cx={Math.cos(nodeLayout.angle + 1.1) * nodeLayout.radius * 0.34}
-											cy={Math.sin(nodeLayout.angle + 1.1) * nodeLayout.radius * 0.34}
-											r={Math.max(2.5, nodeLayout.radius * 0.13)}
 										/>
 										{textLabel(node, nodeLayout, showLabel, false, labelInside)}
 									</>

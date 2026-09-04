@@ -263,9 +263,21 @@ export function stepAgentUniversePhysics(
 	for (const node of nextNodes) {
 		if (node.isRoot) {
 			const acceleration = accelerations.get(node.id)!;
-			const rootSpring = reducedMotion ? 30 : 18;
-			acceleration.x += (node.homeX - node.x) * rootSpring;
-			acceleration.y += (node.homeY - node.y) * rootSpring;
+			const isDragged = drag?.nodeId === node.id;
+			const target = isDragged ? drag.target : { x: node.homeX, y: node.homeY };
+			// A dragged planet has more mass than a moon: it follows the pointer
+			// promptly, while its children still receive the parent's moving
+			// position through targetForNode below. Once released, the same spring
+			// returns the complete system to its stable spatial identity.
+			const rootSpring = isDragged
+				? reducedMotion
+					? 96
+					: 70
+				: reducedMotion
+					? 30
+					: 18;
+			acceleration.x += (target.x - node.x) * rootSpring;
+			acceleration.y += (target.y - node.y) * rootSpring;
 			continue;
 		}
 		const isDragged = drag?.nodeId === node.id;
@@ -419,7 +431,7 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 	startDrag(nodeId: string, point: AgentUniversePhysicsPoint): boolean {
 		if (this.destroyed) return false;
 		const node = this.state.nodes.find((candidate) => candidate.id === nodeId);
-		if (!node || node.isRoot) return false;
+		if (!node) return false;
 		const offset = { x: point.x - node.x, y: point.y - node.y };
 		this.state.drag = {
 			nodeId,
@@ -521,9 +533,18 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 			if (!target) continue;
 			const deltaX = node.x - node.homeX;
 			const deltaY = node.y - node.homeY;
+			const parent = node.parentId ? byId.get(node.parentId) : undefined;
+			const parentX = parent?.x ?? node.parentHomeX;
+			const parentY = parent?.y ?? node.parentHomeY;
+			const displacement = Math.hypot(deltaX, deltaY);
+			const stretch = node.isRoot
+				? 0
+				: clamp(displacement / Math.max(1, safeRadius(node.radius) * 4.5), 0, 0.085);
+			const towardParentAngle = Math.atan2(parentY - node.y, parentX - node.x);
+			const angleDegrees = (towardParentAngle * 180) / Math.PI;
 			target.body.setAttribute(
 				"transform",
-				`translate(${deltaX.toFixed(2)} ${deltaY.toFixed(2)})`,
+				`translate(${deltaX.toFixed(2)} ${deltaY.toFixed(2)}) rotate(${angleDegrees.toFixed(2)}) scale(${(1 + stretch).toFixed(4)} ${(1 - stretch * 0.36).toFixed(4)}) rotate(${(-angleDegrees).toFixed(2)})`,
 			);
 			target.body.setAttribute("data-physics-x", node.x.toFixed(2));
 			target.body.setAttribute("data-physics-y", node.y.toFixed(2));
@@ -531,6 +552,8 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 				"data-physics-displacement",
 				Math.hypot(deltaX, deltaY).toFixed(2),
 			);
+			target.body.setAttribute("data-physics-stretch", stretch.toFixed(4));
+			target.body.setAttribute("data-physics-parent-angle", angleDegrees.toFixed(2));
 			target.body.setAttribute(
 				"data-physics-dragging",
 				this.state.drag?.nodeId === node.id ? "true" : "false",

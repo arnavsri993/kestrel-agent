@@ -76,6 +76,7 @@ function markup(reducedMotion = false): string {
 			onBackgroundClick: () => undefined,
 			onCloseContext: () => undefined,
 			onOpenSession: () => undefined,
+			onRefreshAgentMemory: () => undefined,
 			onOverflowSystemActivate: () => undefined,
 		}),
 	);
@@ -98,6 +99,7 @@ function overflowMarkup(): string {
 			onBackgroundClick: () => undefined,
 			onCloseContext: () => undefined,
 			onOpenSession: () => undefined,
+			onRefreshAgentMemory: () => undefined,
 			onOverflowSystemActivate: () => undefined,
 		}),
 	);

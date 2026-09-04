@@ -108,7 +108,8 @@ const electron = vi.hoisted(() => {
     views: MockView[];
     partitions: Array<{ name: string; options: unknown; instance: MockSession }>;
     menus: unknown[][];
-  } = { views: [], partitions: [], menus: [] };
+    mediaAccess: ReturnType<typeof vi.fn>;
+  } = { views: [], partitions: [], menus: [], mediaAccess: vi.fn(async () => true) };
   const buildFromTemplate = vi.fn((template: unknown[]) => {
     state.menus.push(template);
     return { popup: vi.fn() };
@@ -122,6 +123,8 @@ const electron = vi.hoisted(() => {
     state.views.length = 0;
     state.partitions.length = 0;
     state.menus.length = 0;
+    state.mediaAccess.mockReset();
+    state.mediaAccess.mockResolvedValue(true);
     nextWebContentsId = 1;
     fromPartition.mockClear();
     buildFromTemplate.mockClear();
@@ -137,6 +140,9 @@ vi.mock("electron", () => ({
   dialog: {
     showMessageBox: vi.fn(async () => ({ response: 1 })),
     showSaveDialog: vi.fn(async () => ({ canceled: true })),
+  },
+  systemPreferences: {
+    askForMediaAccess: electron.state.mediaAccess,
   },
   nativeImage: {
     createFromBuffer: vi.fn(() => ({ isEmpty: () => true })),
@@ -164,6 +170,7 @@ import type {
 	PaymentCardVault,
 	SavePaymentCardInput,
 } from "./payment-card-vault";
+import type { PasswordVault, SavePasswordInput } from "./password-vault";
 
 const directories: string[] = [];
 
@@ -178,9 +185,15 @@ function createService(options: {
   partitionName?: string;
   now?: () => Date;
   allowDevTools?: boolean;
-  onLastTabClosed?: () => void;
-  paymentCardVault?: PaymentCardVault;
+	onLastTabClosed?: () => void;
+	passwordVault?: PasswordVault;
+	onPasswordPrompt?: (prompt: unknown) => void;
+	paymentCardVault?: PaymentCardVault;
   onPaymentPrompt?: (prompt: unknown) => void;
+  confirmSitePermission?: (origin: string, permission: string) => Promise<boolean>;
+  requestNativeMediaAccess?: (
+    mediaType: "camera" | "microphone",
+  ) => Promise<boolean>;
   nameTabFolders?: (
     groups: BrowserTabFolderNamingGroup[],
   ) => Promise<BrowserTabFolderName[]>;
@@ -216,8 +229,20 @@ function createService(options: {
 		...(options.onLastTabClosed
 			? { onLastTabClosed: options.onLastTabClosed }
 			: {}),
+		...(options.onPasswordPrompt
+			? { onPasswordPrompt: options.onPasswordPrompt }
+			: {}),
+		...(options.passwordVault
+			? { passwordVault: options.passwordVault }
+			: {}),
 		...(options.onPaymentPrompt
 			? { onPaymentPrompt: options.onPaymentPrompt }
+			: {}),
+		...(options.confirmSitePermission
+			? { confirmSitePermission: options.confirmSitePermission }
+			: {}),
+		...(options.requestNativeMediaAccess
+			? { requestNativeMediaAccess: options.requestNativeMediaAccess }
 			: {}),
 		...(options.paymentCardVault
 			? { paymentCardVault: options.paymentCardVault }
@@ -502,6 +527,154 @@ describe("UserBrowserService", () => {
     });
   });
 
+	it("offers to save submitted passwords without exposing the secret to the prompt", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: { url: "https://login.example/sign-in" } },
+			"kestrel:user-browser-password-submission",
+			{
+				username: "person@example.test",
+				password: "correct horse battery staple",
+				passwordFieldRect: { x: 20, y: 80, width: 260, height: 42 },
+			},
+		);
+
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
+		expect(prompts[0]).toMatchObject({
+			mode: "save",
+			origin: "https://login.example",
+			candidate: { username: "person@example.test" },
+		});
+		expect(JSON.stringify(prompts[0])).not.toContain(
+			"correct horse battery staple",
+		);
+
+		await service.savePasswordSuggestion();
+		expect(save).toHaveBeenCalledWith({
+			origin: "https://login.example",
+			title: "login.example",
+			username: "person@example.test",
+			password: "correct horse battery staple",
+		});
+		expect(prompts.at(-1)).toBeNull();
+	});
+
+	it("does not save a submitted password after its page navigates away", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: { url: "https://login.example/sign-in" } },
+			"kestrel:user-browser-password-submission",
+			{ username: "person", password: "not-saved" },
+		);
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
+
+		await service.navigate(tab.id, "https://login.example/next");
+
+		await expect(service.savePasswordSuggestion()).rejects.toThrow(
+			"no longer available",
+		);
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	it("does not replace a visible save prompt with a later submission", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		const submission = (password: string) =>
+			contents.emit(
+				"ipc-message",
+				{ senderFrame: { url: "https://login.example/sign-in" } },
+				"kestrel:user-browser-password-submission",
+				{ username: "person", password },
+			);
+
+		submission("first-secret");
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
+		submission("second-secret");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		await service.savePasswordSuggestion();
+		expect(save).toHaveBeenCalledWith(
+			expect.objectContaining({ password: "first-secret" }),
+		);
+		expect(prompts).toHaveLength(2);
+	});
+
+	it("does not accept a password submission from another origin", async () => {
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save: vi.fn(),
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: { url: "https://attacker.example/login" } },
+			"kestrel:user-browser-password-submission",
+			{ username: "person", password: "not-saved" },
+		);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(prompts).toEqual([]);
+		expect(passwordVault.listForOrigin).not.toHaveBeenCalled();
+	});
+
   it("offers to save a complete card without exposing its number to the prompt", async () => {
 		const save = vi.fn(async (_input: SavePaymentCardInput) => []);
     const paymentCardVault = {
@@ -655,6 +828,125 @@ describe("UserBrowserService", () => {
     const callback = vi.fn();
     partition.permissionRequestHandler({}, "media", callback);
     await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
+    service.dispose();
+  });
+
+  it("requests native camera and microphone access for a website media request", async () => {
+    const confirmSitePermission = vi.fn(async () => true);
+    const requestNativeMediaAccess = vi.fn(async () => true);
+    const { service } = createService({
+      confirmSitePermission,
+      requestNativeMediaAccess,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/call");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionRequestHandler: (
+        webContents: unknown,
+        permission: string,
+        callback: (isAllowed: boolean) => void,
+        details?: {
+          requestingUrl?: string;
+          securityOrigin?: string;
+          mediaTypes?: string[];
+        },
+      ) => void;
+    };
+    const callback = vi.fn();
+
+    partition.permissionRequestHandler(contents, "media", callback, {
+      requestingUrl: "https://example.com/call",
+      securityOrigin: "https://example.com",
+      mediaTypes: ["audio", "video"],
+    });
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
+    expect(confirmSitePermission).toHaveBeenCalledWith(
+      "https://example.com",
+      "camera and microphone",
+    );
+    expect(requestNativeMediaAccess.mock.calls).toEqual([
+      ["camera"],
+      ["microphone"],
+    ]);
+    expect(service.getState().sitePermissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          origin: "https://example.com",
+          permission: "camera",
+          decision: "allow",
+        }),
+        expect.objectContaining({
+          origin: "https://example.com",
+          permission: "microphone",
+          decision: "allow",
+        }),
+      ]),
+    );
+    service.dispose();
+  });
+
+  it("keeps camera and microphone site decisions separate", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionCheckHandler: (
+        webContents: unknown,
+        permission: string,
+        requestingOrigin: string,
+        details?: { mediaType?: string },
+      ) => boolean;
+    };
+
+    service.setSitePermission("https://example.com", "camera", "allow");
+    service.setSitePermission("https://example.com", "microphone", "deny");
+
+    expect(
+      partition.permissionCheckHandler(contents, "media", "https://example.com", {
+        mediaType: "video",
+      }),
+    ).toBe(true);
+    expect(
+      partition.permissionCheckHandler(contents, "media", "https://example.com", {
+        mediaType: "audio",
+      }),
+    ).toBe(false);
+    service.dispose();
+  });
+
+  it("does not grant website media when native access is denied", async () => {
+    const confirmSitePermission = vi.fn(async () => true);
+    const requestNativeMediaAccess = vi.fn(async (mediaType: "camera" | "microphone") =>
+      mediaType === "camera",
+    );
+    const { service } = createService({
+      confirmSitePermission,
+      requestNativeMediaAccess,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/camera");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionRequestHandler: (
+        webContents: unknown,
+        permission: string,
+        callback: (isAllowed: boolean) => void,
+        details?: { requestingUrl?: string; mediaTypes?: string[] },
+      ) => void;
+    };
+    const callback = vi.fn();
+
+    partition.permissionRequestHandler(contents, "media", callback, {
+      requestingUrl: "https://example.com/camera",
+      mediaTypes: ["video", "audio"],
+    });
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
+    expect(requestNativeMediaAccess).toHaveBeenCalledWith("camera");
+    expect(requestNativeMediaAccess).toHaveBeenCalledWith("microphone");
     service.dispose();
   });
 

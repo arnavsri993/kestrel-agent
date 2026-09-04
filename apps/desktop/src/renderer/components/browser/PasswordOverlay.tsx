@@ -34,6 +34,31 @@ export function PasswordOverlay() {
 	);
 
 	if (!prompt) return null;
+	const saveCandidate = prompt.candidate;
+	const updatesExistingLogin = Boolean(
+		saveCandidate &&
+		prompt.entries.some((entry) => entry.username === saveCandidate.username),
+	);
+
+	async function savePassword() {
+		setBusy("save");
+		setError("");
+		try {
+			const response = await window.kestrel.request({
+				type: "password-save-suggestion",
+			});
+			if (!response.ok)
+				throw new Error("The password could not be saved. Try again.");
+		} catch (cause) {
+			setError(
+				cause instanceof Error
+					? cause.message
+					: "The password could not be saved. Try again.",
+			);
+		} finally {
+			setBusy("");
+		}
+	}
 
 	async function fillPage(passwordId: string) {
 		setBusy(passwordId);
@@ -77,14 +102,22 @@ export function PasswordOverlay() {
 			<section
 				className="password-overlay-card"
 				role="dialog"
-				aria-label="Saved password suggestions"
+				aria-label={prompt.mode === "save" ? "Save password" : "Saved password suggestions"}
 				aria-live="polite"
 			>
 				<header className="password-overlay-header">
 					<div className="password-overlay-heading">
 						<span className="password-overlay-mark" aria-hidden="true">●</span>
 						<span>
-							<strong>{prompt.mode === "field" ? "Saved info" : "Use a saved login?"}</strong>
+							<strong>
+								{prompt.mode === "save"
+									? updatesExistingLogin
+										? "Update saved password?"
+										: "Save password?"
+									: prompt.mode === "field"
+										? "Saved info"
+										: "Use a saved login?"}
+							</strong>
 							<small>{hostname(prompt.origin)}</small>
 						</span>
 					</div>
@@ -92,13 +125,47 @@ export function PasswordOverlay() {
 						type="button"
 						className="password-overlay-dismiss"
 						onClick={() => void dismiss()}
-						aria-label="Dismiss saved login suggestions"
+						aria-label={
+							prompt.mode === "save"
+								? "Dismiss save password prompt"
+								: "Dismiss saved login suggestions"
+						}
 					>
 						×
 					</button>
 				</header>
 
-				{prompt.mode === "page" && !chooseFields ? (
+				{prompt.mode === "save" && saveCandidate ? (
+					<>
+						<p className="password-overlay-copy">
+							Save this login securely on this device so Kestrel can offer it next time.
+						</p>
+						<div className="password-save-preview">
+							<span>Login name</span>
+							<strong>{saveCandidate.username || "No login name detected"}</strong>
+						</div>
+						<p className="password-overlay-security-note">
+							Your password stays inside Kestrel and is never shown in this prompt.
+						</p>
+						<div className="password-overlay-actions password-save-actions">
+							<button
+								type="button"
+								className="password-overlay-secondary"
+								onClick={() => void dismiss()}
+							>
+								Not now
+							</button>
+							<button
+								type="button"
+								className="password-overlay-primary"
+								onClick={() => void savePassword()}
+								disabled={Boolean(busy)}
+							>
+								{busy === "save" ? "Saving…" : updatesExistingLogin ? "Update password" : "Save password"}
+							</button>
+						</div>
+					</>
+				) : prompt.mode === "page" && !chooseFields ? (
 					<>
 						<p className="password-overlay-copy">Fill this sign-in form with a saved login.</p>
 						<div className="password-overlay-entries" role="list">
