@@ -23,6 +23,16 @@ export interface AgentSystemLayout {
 	orbitRadii: number[];
 }
 
+/**
+ * A user-placed system position expressed as a fraction of the map plane.
+ * Values may be just outside the plane so a person can pan to a planet they
+ * dropped at an edge, but callers should keep them finite.
+ */
+export interface AgentUniverseSystemPosition {
+	x: number;
+	y: number;
+}
+
 export interface AgentUniverseLayout {
 	width: number;
 	height: number;
@@ -520,6 +530,7 @@ export function layoutAgentUniverse(
 	width: number,
 	height: number,
 	focusedSystemId?: string | null,
+	systemPositions?: Readonly<Record<string, AgentUniverseSystemPosition>>,
 ): AgentUniverseLayout {
 	const safeWidth = safeDimension(width);
 	const safeHeight = safeDimension(height);
@@ -577,19 +588,38 @@ export function layoutAgentUniverse(
 		width: safeWidth,
 		height: safeHeight,
 		scale,
-		systems: placed.map((item) => ({
-			...item.layout,
-			centerX: translateX + item.x * scale,
-			centerY: translateY + item.y * scale,
-			radius: item.layout.radius * scale,
-			nodeLayouts: item.layout.nodeLayouts.map((node) => ({
-				...node,
-				x: translateX + (item.x + node.x) * scale,
-				y: translateY + (item.y + node.y) * scale,
-				radius: node.radius * scale,
-				orbitRadius: node.orbitRadius * scale,
-			})),
-			orbitRadii: item.layout.orbitRadii.map((radius) => radius * scale),
-		})),
+		systems: placed.map((item) => {
+			const automaticCenterX = translateX + item.x * scale;
+			const automaticCenterY = translateY + item.y * scale;
+			const storedPosition = systemPositions?.[item.system.id];
+			const validStoredPosition =
+				storedPosition &&
+				Number.isFinite(storedPosition.x) &&
+				Number.isFinite(storedPosition.y)
+					? storedPosition
+					: undefined;
+			const centerX = validStoredPosition
+				? validStoredPosition.x * safeWidth
+				: automaticCenterX;
+			const centerY = validStoredPosition
+				? validStoredPosition.y * safeHeight
+				: automaticCenterY;
+			const offsetX = centerX - automaticCenterX;
+			const offsetY = centerY - automaticCenterY;
+			return {
+				...item.layout,
+				centerX,
+				centerY,
+				radius: item.layout.radius * scale,
+				nodeLayouts: item.layout.nodeLayouts.map((node) => ({
+					...node,
+					x: translateX + (item.x + node.x) * scale + offsetX,
+					y: translateY + (item.y + node.y) * scale + offsetY,
+					radius: node.radius * scale,
+					orbitRadius: node.orbitRadius * scale,
+				})),
+				orbitRadii: item.layout.orbitRadii.map((radius) => radius * scale),
+			};
+		}),
 	};
 }

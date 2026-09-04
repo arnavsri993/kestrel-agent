@@ -63,6 +63,11 @@ import {
 	type AgentUniversePhysicsRenderTarget,
 } from "./agent-universe-physics";
 import {
+	normalizedAgentUniversePositionForPoint,
+	readAgentUniverseSystemPositions,
+	writeAgentUniverseSystemPositions,
+} from "./agent-universe-positions";
+import {
 	agentUniverseCameraMotionSettled,
 	createAgentUniverseCameraMotionState,
 	stepAgentUniverseCameraMotion,
@@ -212,6 +217,9 @@ export function AgentUniverseScene({
 	const [camera, setCamera] = useState<AgentUniverseCamera>(
 		DEFAULT_AGENT_UNIVERSE_CAMERA,
 	);
+	const [systemPositions, setSystemPositions] = useState(
+		readAgentUniverseSystemPositions,
+	);
 	const cameraRef = useRef(camera);
 	const cameraMotionRef = useRef(createAgentUniverseCameraMotionState(camera));
 	const cameraTargetRef = useRef(camera);
@@ -232,8 +240,9 @@ export function AgentUniverseScene({
 				size.width,
 				size.height,
 				focusedSystemId,
+				systemPositions,
 			),
-		[snapshot, focusedSystemId, size.height, size.width],
+			[snapshot, focusedSystemId, size.height, size.width, systemPositions],
 	);
 	const matches = useMemo(
 		() => agentUniverseSearchMatches(snapshot, query),
@@ -550,6 +559,44 @@ export function AgentUniverseScene({
 		[layout.height, layout.width, size.height, size.width],
 	);
 
+	const liveSystemKey = snapshot.systems.map((system) => system.id).join("|");
+	useEffect(() => {
+		const liveSystemIds = new Set(snapshot.systems.map((system) => system.id));
+		setSystemPositions((current) => {
+			let changed = false;
+			const next = Object.fromEntries(
+				Object.entries(current).filter(([systemId]) => {
+					const keep = liveSystemIds.has(systemId);
+					if (!keep) changed = true;
+					return keep;
+				}),
+			);
+			if (!changed) return current;
+			writeAgentUniverseSystemPositions(next);
+			return next;
+		});
+	}, [liveSystemKey, snapshot.systems]);
+
+	const handleSystemPositionChange = useCallback(
+		(systemId: string, point: AgentUniversePoint) => {
+			const position = normalizedAgentUniversePositionForPoint(
+				point,
+				layout.width,
+				layout.height,
+			);
+			if (!position) return;
+			setSystemPositions((current) => {
+				const previous = current[systemId];
+				if (previous?.x === position.x && previous?.y === position.y)
+					return current;
+				const next = { ...current, [systemId]: position };
+				writeAgentUniverseSystemPositions(next);
+				return next;
+			});
+		},
+		[layout.height, layout.width],
+	);
+
 	const handleNodeActivate = useCallback(
 		(nodeId: string, systemId: string) => {
 			onNodeActivate(nodeId, systemId);
@@ -811,6 +858,7 @@ export function AgentUniverseScene({
 								activeActivities={activeActivities}
 								detailZoom={camera.zoom}
 								screenPointToWorld={screenPointToWorld}
+								positioned={Boolean(systemPositions[system.id])}
 								systemColor={agentUniverseColorFor(
 									system.id,
 									systemColors,
@@ -818,6 +866,7 @@ export function AgentUniverseScene({
 								)}
 								onHover={setHoveredNodeId}
 								onNodeActivate={handleNodeActivate}
+								onSystemPositionChange={handleSystemPositionChange}
 								reducedMotion={reducedMotion}
 							/>
 						);
@@ -917,7 +966,7 @@ export function AgentUniverseScene({
 				</button>
 			</div>
 			<p id="agent-universe-map-help" className="agent-universe-map-help">
-				Drag to pan · scroll or pinch to zoom · focus the map and use arrow keys, +/−, or 0 to navigate
+				Drag empty space to pan · drag planets to place them anywhere · scroll or pinch to zoom · focus the map and use arrow keys, +/−, or 0 to navigate
 			</p>
 			{activeSystem && selectedNodeId ? (
 				<AgentUniverseContextSurface
@@ -976,8 +1025,10 @@ function AgentSystemScene({
 	systemColor,
 	reducedMotion,
 	screenPointToWorld,
+	positioned,
 	onHover,
 	onNodeActivate,
+	onSystemPositionChange,
 }: {
 	system: AgentSystemProjection;
 	layout: ReturnType<typeof layoutAgentUniverse>["systems"][number];
@@ -994,8 +1045,10 @@ function AgentSystemScene({
 	systemColor: AgentUniverseSystemColor;
 	reducedMotion: boolean;
 	screenPointToWorld(clientX: number, clientY: number): AgentUniversePoint;
+	positioned: boolean;
 	onHover(nodeId: string | null): void;
 	onNodeActivate(nodeId: string, systemId: string): void;
+	onSystemPositionChange(systemId: string, point: AgentUniversePoint): void;
 }) {
 	const layoutsById = useMemo(
 		() =>
@@ -1071,9 +1124,10 @@ function AgentSystemScene({
 	return (
 		<g
 			className={`agent-universe-system${focused ? " is-focused" : ""}${
-				queryActive && !hasSearchMatch ? " is-query-dimmed" : ""
-			}`}
+				positioned ? " is-positioned" : ""
+			}${queryActive && !hasSearchMatch ? " is-query-dimmed" : ""}`}
 			data-system-id={system.id}
+			data-system-positioned={positioned ? "true" : "false"}
 			style={
 				{
 					"--agent-system-color": systemColor.css,
@@ -1174,14 +1228,25 @@ function AgentSystemScene({
 							role="button"
 							tabIndex={0}
 							aria-pressed={isSelected}
+							{...(isRoot
+								? {
+										"aria-keyshortcuts":
+											"Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown",
+									}
+								: {})}
 							aria-label={`${node.name}, ${agentSessionStatusLabel(node.status)}${
 								isRoot
-									? ", system root"
+									? ", system root, draggable planet"
 									: `, delegated session at depth ${node.depth}`
 							}${runStatus ? `, last run ${agentUniverseRunStatusLabel(runStatus)}` : ""}`}
 							onPointerDown={(event) => {
 								if (event.button !== 0) return;
 								event.stopPropagation();
+								// A layout commit can replace the dragged element before the
+								// browser dispatches its synthetic click. Clear stale drag
+								// suppression at the next real pointer start so a later node
+								// click can never be swallowed by an earlier drag.
+								suppressNodeClickRef.current = false;
 								if (
 									!physics.startDrag(
 										node.id,
@@ -1215,9 +1280,20 @@ function AgentSystemScene({
 								const pointer = nodePointerRef.current;
 								if (!pointer || pointer.pointerId !== event.pointerId) return;
 								event.stopPropagation();
-								if (pointer.moved) suppressNodeClickRef.current = true;
+								const moved = pointer.moved;
+								if (moved) {
+									suppressNodeClickRef.current = true;
+									physics.moveDrag(
+										screenPointToWorld(event.clientX, event.clientY),
+									);
+								}
 								nodePointerRef.current = null;
-								physics.endDrag();
+								const placedPosition = physics.endDrag({
+									keepPosition: isRoot && moved,
+								});
+								if (isRoot && placedPosition) {
+									onSystemPositionChange(system.id, placedPosition);
+								}
 								if (event.currentTarget.hasPointerCapture(event.pointerId))
 									event.currentTarget.releasePointerCapture(event.pointerId);
 							}}
@@ -1243,6 +1319,35 @@ function AgentSystemScene({
 								onNodeActivate(node.id, system.id);
 							}}
 							onKeyDown={(event) => {
+								if (
+									isRoot &&
+									event.altKey &&
+									(event.key === "ArrowLeft" ||
+										event.key === "ArrowRight" ||
+										event.key === "ArrowUp" ||
+										event.key === "ArrowDown")
+								) {
+									event.preventDefault();
+									event.stopPropagation();
+									const step = event.shiftKey ? 96 : 32;
+									onSystemPositionChange(system.id, {
+										x:
+											nodeLayout.x +
+												(event.key === "ArrowLeft"
+													? -step
+													: event.key === "ArrowRight"
+														? step
+														: 0),
+										y:
+											nodeLayout.y +
+												(event.key === "ArrowUp"
+													? -step
+													: event.key === "ArrowDown"
+														? step
+														: 0),
+									});
+									return;
+								}
 								if (event.key !== "Enter" && event.key !== " ") return;
 								event.preventDefault();
 								event.stopPropagation();

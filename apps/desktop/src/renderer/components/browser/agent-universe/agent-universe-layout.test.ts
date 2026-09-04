@@ -150,6 +150,35 @@ describe("agent universe layout", () => {
 		);
 	});
 
+	it("keeps a placed planet and its moons together at the chosen map position", () => {
+		const snapshot = projectAgentUniverse(makeSessions(3));
+		const automatic = layoutAgentUniverse(snapshot, 1200, 700).systems[0]!;
+		const placed = layoutAgentUniverse(snapshot, 1200, 700, null, {
+			[root.id]: { x: 0.8, y: 0.25 },
+		}).systems[0]!;
+		const automaticRoot = automatic.nodeLayouts.find((node) => node.nodeId === root.id)!;
+		const placedRoot = placed.nodeLayouts.find((node) => node.nodeId === root.id)!;
+		const automaticMoon = automatic.nodeLayouts.find(
+			(node) => node.nodeId === `${root.id}-child-00`,
+		)!;
+		const placedMoon = placed.nodeLayouts.find(
+			(node) => node.nodeId === `${root.id}-child-00`,
+		)!;
+
+		expect(placed.centerX).toBe(960);
+		expect(placed.centerY).toBe(175);
+		expect(placedRoot.x).toBe(placed.centerX);
+		expect(placedRoot.y).toBe(placed.centerY);
+		expect(placedMoon.x - placedRoot.x).toBeCloseTo(
+			automaticMoon.x - automaticRoot.x,
+			8,
+		);
+		expect(placedMoon.y - placedRoot.y).toBeCloseTo(
+			automaticMoon.y - automaticRoot.y,
+			8,
+		);
+	});
+
 	it("packs multiple systems without overlapping their bounding radii", () => {
 		const sessions = [
 			...makeSessions(3, "system-a"),

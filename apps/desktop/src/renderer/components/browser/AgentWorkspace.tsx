@@ -865,7 +865,7 @@ export function AgentWorkspace({
 							onOpenApprovals={onOpenApprovals}
 						/>
 						<span className="agent-universe-map-hint">
-							Select a planet or moon to chat or inspect · drag to explore
+							Select a planet or moon to chat or inspect · drag planets to place them anywhere
 						</span>
 					</div>
 				) : null}

@@ -107,6 +107,15 @@
   transition: opacity 180ms ease-out, filter 180ms ease-out;
 }
 
+.agent-universe-node.is-core {
+  cursor: grab;
+}
+
+.agent-universe-node.is-core:active,
+.agent-universe-node.is-core .agent-universe-node-body[data-physics-dragging="true"] {
+  cursor: grabbing;
+}
+
 .agent-universe-node.is-selection-dimmed {
   opacity: 0.28;
 }

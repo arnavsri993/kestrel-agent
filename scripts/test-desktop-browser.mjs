@@ -1580,9 +1580,20 @@ try {
 		);
 		return (
 			body?.getAttribute("data-physics-dragging") === "false" &&
-			Number(body.getAttribute("data-physics-displacement")) < 0.5
+			body?.closest("[data-system-positioned]")?.getAttribute("data-system-positioned") ===
+				"true"
 		);
 	}, runtimeSessionId);
+	const placedRootX = Number(await rootBody.getAttribute("data-physics-x"));
+	const placedRootY = Number(await rootBody.getAttribute("data-physics-y"));
+	await page.waitForTimeout(250);
+	assert(
+		Math.hypot(
+			Number(await rootBody.getAttribute("data-physics-x")) - placedRootX,
+			Number(await rootBody.getAttribute("data-physics-y")) - placedRootY,
+		) < 1,
+		"The root planet returned to its generated position instead of staying placed.",
+	);
 	await page.waitForFunction((id) => {
 		const body = document.querySelector(
 			`[data-node-id="${id}"] .agent-universe-node-body`,
@@ -1644,6 +1655,16 @@ try {
 		"Agent should have one spatial surface, not a list mode",
 	);
 	await page.getByRole("button", { name: "Back to solar system", exact: true }).click();
+	await page.waitForFunction((id) => {
+		const system = document.querySelector(
+			`[data-node-id="${id}"]`,
+		)?.closest("[data-system-positioned]");
+		return system?.getAttribute("data-system-positioned") === "true";
+	}, runtimeSessionId);
+	assert(
+		Math.abs(Number(await rootBody.getAttribute("data-physics-x")) - placedRootX) < 1,
+		"The planet placement was not preserved when returning to the overview.",
+	);
 	assert.equal(
 		await page.getByRole("button", { name: "Back to solar system", exact: true }).count(),
 		0,

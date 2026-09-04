@@ -167,6 +167,8 @@ describe("agent universe circle surface", () => {
 		expect(rendered).toContain('data-body-role="moon"');
 		expect(rendered.match(/data-body-role="planet"/g)?.length ?? 0).toBe(1);
 		expect(rendered.match(/data-body-role="moon"/g)?.length ?? 0).toBe(2);
+		expect(rendered).toContain("draggable planet");
+		expect(rendered).toContain("aria-keyshortcuts=\"Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown\"");
 	});
 
 	it("opens a real conversation surface for a delegated moon", () => {
