@@ -273,6 +273,7 @@ export function BrowserToolbar({
   onSaveScreenshot,
   onToggleBookmark,
   onOpenSettings,
+  onOpenExtensionStore,
   onToggleCalculator,
   onOpenMenu,
   onMenuOpenChange,
@@ -323,6 +324,7 @@ export function BrowserToolbar({
   onSaveScreenshot(): Promise<string | undefined>;
   onToggleBookmark(): void;
   onOpenSettings(): void;
+  onOpenExtensionStore(): void;
   onToggleCalculator(): void;
   onOpenMenu(): void;
   onMenuOpenChange?(open: boolean): void;
@@ -1425,6 +1427,21 @@ export function BrowserToolbar({
                     })}
                   </div>
                 )}
+                <a
+                  href="https://chromewebstore.google.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  role="menuitem"
+                  className="browser-toolbar-menu-link"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    runAndClose(onOpenExtensionStore);
+                  }}
+                >
+                  <Icon name="globe" />
+                  <span>Go to store</span>
+                  <Icon name="expand" />
+                </a>
                 <button
                   type="button"
                   role="menuitem"
