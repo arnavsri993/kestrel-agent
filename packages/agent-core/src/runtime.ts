@@ -118,6 +118,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function sessionAllowsMemory(session: Pick<RuntimeSession, "privacyMode">): boolean {
+	return (session.privacyMode ?? "standard") === "standard";
+}
+
 export function normalizeTranscriptText(value: string): string {
 	return value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, " ").trim();
 }
@@ -606,6 +610,13 @@ export class AgentRuntime extends EventEmitter {
 		allowedTools?: string[];
 		privacyMode?: RuntimeSession["privacyMode"];
 	}): RuntimeSession {
+		const parent = input.parentSessionId
+			? this.database.getRuntimeSession(input.parentSessionId)
+			: undefined;
+		const inheritedPrivacyMode =
+			(parent?.privacyMode === "private" || parent?.privacyMode === "incognito"
+				? parent.privacyMode
+				: input.privacyMode);
 		const project = input.projectId
 			? this.requireProject(input.projectId)
 			: input.workspaceRoot
@@ -619,6 +630,12 @@ export class AgentRuntime extends EventEmitter {
 				? this.resolveGrantedRoot(input.workspaceRoot)
 				: undefined;
 		const timestamp = this.now();
+		const requestedTools = input.allowedTools ?? [...this.tools.keys()];
+		const allowedTools = requestedTools.filter(
+			(toolName) =>
+				sessionAllowsMemory({ privacyMode: inheritedPrivacyMode }) ||
+				this.tools.get(toolName)?.descriptor.category !== "memory",
+		);
 		const session = RuntimeSessionSchema.parse({
 			id: `session-${randomUUID()}`,
 			title: input.title,
@@ -627,8 +644,8 @@ export class AgentRuntime extends EventEmitter {
 				: {}),
 			...(project ? { projectId: project.id } : {}),
 			...(workspaceRoot ? { workspaceRoot } : {}),
-			...(input.privacyMode ? { privacyMode: input.privacyMode } : {}),
-			allowedTools: input.allowedTools ?? [...this.tools.keys()],
+			...(inheritedPrivacyMode ? { privacyMode: inheritedPrivacyMode } : {}),
+			allowedTools,
 			status: "active",
 			checkpoints: [],
 			createdAt: timestamp,
@@ -751,6 +768,29 @@ export class AgentRuntime extends EventEmitter {
 
 	listSessions(): RuntimeSession[] {
 		return this.database.listRuntimeSessions();
+	}
+
+	/** Return a stable, breadth-first view of a session and its descendants. */
+	sessionTree(sessionId: string): string[] {
+		this.requireSession(sessionId);
+		const childrenByParent = new Map<string, string[]>();
+		for (const session of this.listSessions()) {
+			if (!session.parentSessionId) continue;
+			const children = childrenByParent.get(session.parentSessionId) ?? [];
+			children.push(session.id);
+			childrenByParent.set(session.parentSessionId, children);
+		}
+		const result: string[] = [];
+		const pending = [sessionId];
+		const visited = new Set<string>();
+		while (pending.length > 0) {
+			const current = pending.shift();
+			if (!current || visited.has(current)) continue;
+			visited.add(current);
+			result.push(current);
+			for (const child of childrenByParent.get(current) ?? []) pending.push(child);
+		}
+		return result;
 	}
 
 	selectedSessionId(): string | null {
@@ -1116,12 +1156,40 @@ export class AgentRuntime extends EventEmitter {
 
 	cancelSession(sessionId: string): RuntimeSession {
 		const session = this.requireSession(sessionId);
-		const updated = this.saveSession({
-			...session,
-			status: "cancelled",
-			updatedAt: this.now(),
-		});
-		this.emitRuntimeEvent("session.updated", sessionId, { action: "cancel" });
+		const sessionIds = this.sessionTree(sessionId);
+		const cancelledAt = this.now();
+		for (const id of sessionIds) this.abortActiveExecutionsForHistoryRollback(
+			id,
+			"Cancelled because the owning agent session was cancelled.",
+		);
+		for (const process of this.backgroundProcesses.values()) {
+			if (
+				!sessionIds.includes(process.sessionId) ||
+				process.status !== "running"
+			)
+				continue;
+			process.stopRequested = true;
+			process.handle.stop();
+		}
+		let updated: RuntimeSession = session;
+		for (const id of sessionIds) {
+			const current = this.requireSession(id);
+			// A completed child has already delivered its result; cancellation is
+			// for active descendant work and must not rewrite that history.
+			if (id !== sessionId && ["completed", "failed", "cancelled"].includes(current.status))
+				continue;
+			const next = this.saveSession({
+				...current,
+				status: "cancelled",
+				updatedAt: cancelledAt,
+			});
+			if (id === sessionId) updated = next;
+			this.emitRuntimeEvent(id === sessionId ? "session.updated" : "session.updated", id, {
+				action: "cancel",
+				...(id === sessionId ? {} : { ancestorSessionId: sessionId }),
+				sessionUpdatedAt: next.updatedAt,
+			});
+		}
 		return updated;
 	}
 
@@ -1611,6 +1679,15 @@ export class AgentRuntime extends EventEmitter {
 		options: { preserveUpdatedAt?: boolean } = {},
 	): RuntimeSession {
 		const session = this.requireSession(sessionId);
+		if (!sessionAllowsMemory(session)) {
+			const memoryTool = toolNames.find(
+				(toolName) => this.tools.get(toolName)?.descriptor.category === "memory",
+			);
+			if (memoryTool)
+				throw new Error(
+					"Memory tools are disabled for private and incognito sessions.",
+				);
+		}
 		const additions = [...new Set(toolNames)].filter(
 			(toolName) => !session.allowedTools.includes(toolName),
 		);
@@ -1632,8 +1709,9 @@ export class AgentRuntime extends EventEmitter {
 		);
 		const terms = query?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
 		return [...this.tools.values()]
-			.map((definition) => definition.descriptor)
-			.filter((tool) => session.allowedTools.includes(tool.name))
+				.map((definition) => definition.descriptor)
+				.filter((tool) => session.allowedTools.includes(tool.name))
+				.filter((tool) => sessionAllowsMemory(session) || tool.category !== "memory")
 			.filter((tool) => !tool.requiresWorkspace || hasActiveWorkspace)
 			.filter(
 				(tool) =>
@@ -1717,6 +1795,10 @@ export class AgentRuntime extends EventEmitter {
 		const definition = this.tools.get(toolName);
 		if (!definition || !session.allowedTools.includes(toolName))
 			throw new Error(`Tool ${toolName} is unavailable in this session.`);
+		if (!sessionAllowsMemory(session) && definition.descriptor.category === "memory")
+			throw new Error(
+				"Memory tools are disabled for private and incognito sessions.",
+			);
 		if (session.status !== "active")
 			throw new Error(`Session ${sessionId} is ${session.status}.`);
 		if (definition.descriptor.requiresWorkspace && !workspaceRoot)

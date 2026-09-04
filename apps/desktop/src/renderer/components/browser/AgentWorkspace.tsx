@@ -34,19 +34,120 @@ import "./agent-universe/agent-universe.css";
 
 type SessionLoadState = "loading" | "ready" | "error";
 
-function AgentUniverseEmptyState({ onNewTask }: { onNewTask(): void }) {
+function AgentUniverseEmptyState({
+	onNewTask,
+	onCreateAgent,
+}: {
+	onNewTask(): void;
+	onCreateAgent(title: string): Promise<void> | void;
+}) {
+	const [creatingAgent, setCreatingAgent] = useState(false);
+	const [agentName, setAgentName] = useState("");
+	const [createError, setCreateError] = useState("");
+	const [submitting, setSubmitting] = useState(false);
+
+	async function submitAgent(event: React.FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		const title = agentName.trim();
+		if (!title || submitting) return;
+		setSubmitting(true);
+		setCreateError("");
+		try {
+			await onCreateAgent(title);
+			setAgentName("");
+			setCreatingAgent(false);
+		} catch (cause) {
+			setCreateError(
+				cause instanceof Error ? cause.message : "The agent could not be created.",
+			);
+		} finally {
+			setSubmitting(false);
+		}
+	}
+
 	return (
 		<div className="agent-universe-empty-state">
 			<span className="agent-universe-empty-mark" aria-hidden="true">
 				<Icon name="agent" />
 			</span>
-			<h2>No agent planets yet</h2>
-			<p>
-				Start a task and delegated work will orbit it here as Kestrel coordinates it.
-			</p>
-			<Button variant="solid" onClick={onNewTask}>
-				Start a task
-			</Button>
+			{creatingAgent ? (
+				<>
+					<h2>Create a persistent agent</h2>
+					<p>
+						This agent becomes a planet in the universe. It will stay available for
+						work until you choose to forget it.
+					</p>
+					<form
+						className="agent-universe-create-agent-form"
+						onSubmit={(event) => void submitAgent(event)}
+					>
+						<label>
+							<span>Agent name</span>
+							<input
+								autoFocus
+								value={agentName}
+								maxLength={200}
+								placeholder="e.g. Research lead"
+								disabled={submitting}
+								onChange={(event) => {
+									setAgentName(event.target.value);
+									setCreateError("");
+								}}
+							/>
+						</label>
+						{createError ? (
+							<p className="agent-universe-create-agent-error" role="alert">
+								{createError}
+							</p>
+						) : null}
+						<div className="agent-universe-empty-actions">
+							<Button
+								type="button"
+								variant="quiet"
+								size="compact"
+								disabled={submitting}
+								onClick={() => {
+									setCreatingAgent(false);
+									setCreateError("");
+								}}
+							>
+								Cancel
+							</Button>
+							<Button
+								type="submit"
+								variant="solid"
+								size="compact"
+								busy={submitting}
+								disabled={!agentName.trim()}
+							>
+								Create agent
+							</Button>
+						</div>
+					</form>
+				</>
+			) : (
+				<>
+					<h2>No agent planets yet</h2>
+					<p>
+						Create a persistent agent or start a task. Real delegated work will
+						orbit here as Kestrel coordinates it.
+					</p>
+					<div className="agent-universe-empty-actions">
+						<Button
+							variant="solid"
+							onClick={() => {
+								setCreateError("");
+								setCreatingAgent(true);
+							}}
+						>
+							Create an agent
+						</Button>
+						<Button variant="bordered" onClick={onNewTask}>
+							Start a task
+						</Button>
+					</div>
+				</>
+			)}
 		</div>
 	);
 }
@@ -64,7 +165,9 @@ function AgentUniverseLoadingState() {
 function AgentUniverseErrorState({ onRetry }: { onRetry?(): void }) {
 	return (
 		<div className="agent-universe-state-message is-error" role="alert">
-			<span className="agent-universe-error-mark" aria-hidden="true">!</span>
+			<span className="agent-universe-error-mark" aria-hidden="true">
+				!
+			</span>
 			<strong>Agent systems could not be loaded</strong>
 			<span>The local runtime did not return a session list.</span>
 			{onRetry ? (
@@ -136,6 +239,7 @@ export function AgentWorkspace({
 	activities = [],
 	sessionLoadState = "ready",
 	onNewTask,
+	onCreateAgent,
 	onOpenSession,
 	onOpenApprovals,
 	onOpenWork,
@@ -149,6 +253,7 @@ export function AgentWorkspace({
 	activities?: AgentUniverseActivity[];
 	sessionLoadState?: SessionLoadState;
 	onNewTask(): void;
+	onCreateAgent(title: string): Promise<void> | void;
 	onOpenSession(sessionId: string): void;
 	onOpenApprovals(): void;
 	onOpenWork(): void;
@@ -425,6 +530,16 @@ export function AgentWorkspace({
 		}
 	}, []);
 
+	const refreshAgentMemory = useCallback((sessionId: string) => {
+		setAgentMemoryBySession((current) => {
+			if (!current[sessionId]) return current;
+			const next = { ...current };
+			delete next[sessionId];
+			return next;
+		});
+		void loadAgentMemory(sessionId);
+	}, [loadAgentMemory]);
+
 	useEffect(() => {
 		if (!selectedNode) {
 			setAgentMemoryLoading(false);
@@ -489,8 +604,16 @@ export function AgentWorkspace({
 	}, [query, universe.systems]);
 
 	const handleBackgroundClick = useCallback(() => {
-		if (selectedNodeId) setSelectedNodeId(null);
-	}, [selectedNodeId]);
+		if (selectedNodeId) {
+			setSelectedNodeId(null);
+			return;
+		}
+		// A click on the open space is the mouse equivalent of Escape: once the
+		// inspector is closed, a second click backs out of the focused system.
+		// This keeps the spatial view from requiring one particular hidden control
+		// to return to the complete universe.
+		if (focusedSystemId) setFocusedSystemId(null);
+	}, [focusedSystemId, selectedNodeId]);
 
 	const handleKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLElement>) => {
@@ -523,7 +646,10 @@ export function AgentWorkspace({
 							{...(onRetrySessions ? { onRetry: onRetrySessions } : {})}
 						/>
 					) : !hasSystems ? (
-						<AgentUniverseEmptyState onNewTask={onNewTask} />
+						<AgentUniverseEmptyState
+							onNewTask={onNewTask}
+							onCreateAgent={onCreateAgent}
+						/>
 					) : (
 						<AgentUniverseScene
 							snapshot={universe}
@@ -556,6 +682,7 @@ export function AgentWorkspace({
 							{...(selectedNode && agentMemoryError
 								? { contextAgentMemoryError: agentMemoryError }
 								: {})}
+							onRefreshAgentMemory={refreshAgentMemory}
 							onSystemColorChange={updateSystemColor}
 							onNodeActivate={activateNode}
 							onBackgroundClick={handleBackgroundClick}
@@ -584,9 +711,18 @@ export function AgentWorkspace({
 						</div>
 						{hasSystems ? (
 							<div className="agent-universe-map-key" aria-label="Map key">
-								<span><i className="is-core" aria-hidden="true" /> Main planet</span>
-								<span><i className="is-worker" aria-hidden="true" /> Moon agent</span>
-								<span><i className="is-link" aria-hidden="true" /> Ownership</span>
+								<span>
+									<i className="is-core" aria-hidden="true" />
+									Main planet
+								</span>
+								<span>
+									<i className="is-worker" aria-hidden="true" />
+									Moon agent
+								</span>
+								<span>
+									<i className="is-link" aria-hidden="true" />
+									Ownership
+								</span>
 							</div>
 						) : null}
 					</div>

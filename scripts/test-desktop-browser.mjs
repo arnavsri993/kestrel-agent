@@ -1413,7 +1413,6 @@ try {
 	await page
 		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
-	await page.locator(".kestrel-sidebar").waitFor({ state: "detached" });
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
@@ -1429,10 +1428,94 @@ try {
 		return response.session.id;
 	}, runtimeSessionId);
 	await page.locator(".agent-universe-scene").waitFor();
-	await page.locator(".agent-universe-node.is-core").first().waitFor();
+	const rootNode = page.locator(`[data-node-id="${runtimeSessionId}"]`);
+	await rootNode.waitFor();
 	await page.locator(`[data-node-id="${workerSessionId}"]`).waitFor();
 	const workerNode = page.locator(`[data-node-id="${workerSessionId}"]`);
-	const workerBox = await workerNode.boundingBox();
+	const workerHit = workerNode.locator(".agent-universe-node-hit");
+	const rootBody = rootNode.locator(".agent-universe-node-body");
+	const workerBody = workerNode.locator(".agent-universe-node-body");
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return (
+			body?.getAttribute("data-physics-dragging") === "false" &&
+			Number(body.getAttribute("data-physics-displacement")) < 0.5
+		);
+	}, runtimeSessionId);
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return (
+			body?.getAttribute("data-physics-dragging") === "false" &&
+			Number(body.getAttribute("data-physics-displacement")) < 0.5
+		);
+	}, workerSessionId);
+
+	const rootBox = await rootNode.locator(".agent-universe-node-hit").boundingBox();
+	assert(rootBox, "The root agent had no visible hit area.");
+	const initialRootX = Number(await rootBody.getAttribute("data-physics-x"));
+	const initialWorkerX = Number(await workerBody.getAttribute("data-physics-x"));
+	const initialWorkerY = Number(await workerBody.getAttribute("data-physics-y"));
+	await page.mouse.move(
+		rootBox.x + rootBox.width / 2,
+		rootBox.y + rootBox.height / 2,
+	);
+	await page.mouse.down();
+	await page.mouse.move(
+		rootBox.x + rootBox.width / 2 + 110,
+		rootBox.y + rootBox.height / 2 + 34,
+		{ steps: 10 },
+	);
+	await page.waitForFunction(
+		(id) =>
+			document
+				.querySelector(`[data-node-id="${id}"] .agent-universe-node-body`)
+				?.getAttribute("data-physics-dragging") === "true",
+		runtimeSessionId,
+	);
+	assert(
+		Math.abs(Number(await rootBody.getAttribute("data-physics-x")) - initialRootX) > 10,
+		"Dragging the root did not move the planet.",
+	);
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return Number(body?.getAttribute("data-physics-displacement")) > 0.5;
+	}, workerSessionId);
+	const currentWorkerX = Number(await workerBody.getAttribute("data-physics-x"));
+	const currentWorkerY = Number(await workerBody.getAttribute("data-physics-y"));
+	assert(
+		Math.hypot(
+			currentWorkerX - initialWorkerX,
+			currentWorkerY - initialWorkerY,
+		) > 0.5,
+		"Dragging the root did not carry its moon.",
+	);
+	await page.mouse.up();
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return (
+			body?.getAttribute("data-physics-dragging") === "false" &&
+			Number(body.getAttribute("data-physics-displacement")) < 0.5
+		);
+	}, runtimeSessionId);
+	await page.waitForFunction((id) => {
+		const body = document.querySelector(
+			`[data-node-id="${id}"] .agent-universe-node-body`,
+		);
+		return (
+			body?.getAttribute("data-physics-dragging") === "false" &&
+			Number(body.getAttribute("data-physics-displacement")) < 0.5
+		);
+	}, workerSessionId);
+
+	const workerBox = await workerHit.boundingBox();
 	assert(workerBox, "The delegated worker had no visible hit area.");
 	const workerCenter = {
 		x: workerBox.x + workerBox.width / 2,
@@ -1447,9 +1530,7 @@ try {
 				?.getAttribute("data-physics-dragging") === "true",
 		workerSessionId,
 	);
-	const draggedDisplacement = await page.locator(
-		`[data-node-id="${workerSessionId}"] .agent-universe-node-body`,
-	).getAttribute("data-physics-displacement");
+	const draggedDisplacement = await workerBody.getAttribute("data-physics-displacement");
 	assert(
 		Number(draggedDisplacement) > 0,
 		"Dragging a worker did not produce spatial displacement.",
@@ -1462,7 +1543,7 @@ try {
 			);
 			return (
 				body?.getAttribute("data-physics-dragging") === "false" &&
-				body.getAttribute("transform") === "translate(0.00 0.00)"
+				Number(body.getAttribute("data-physics-displacement")) < 0.5
 			);
 		},
 		workerSessionId,

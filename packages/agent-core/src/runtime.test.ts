@@ -1588,6 +1588,34 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it("does not let a child override a private or incognito parent privacy boundary", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const privateParent = runtime.createSession({
+			title: "Private parent",
+			privacyMode: "private",
+		});
+		const incognitoParent = runtime.createSession({
+			title: "Incognito parent",
+			privacyMode: "incognito",
+		});
+
+		const privateChild = runtime.createSession({
+			title: "Private child",
+			parentSessionId: privateParent.id,
+			privacyMode: "standard",
+		});
+		const incognitoChild = runtime.createSession({
+			title: "Incognito child",
+			parentSessionId: incognitoParent.id,
+			privacyMode: "standard",
+		});
+
+		expect(privateChild.privacyMode).toBe("private");
+		expect(incognitoChild.privacyMode).toBe("incognito");
+		database.close();
+	});
+
 	it("restores checkpoint transcript and post-checkpoint filesystem mutations", async () => {
 		const { root, database, runtime, session } = fixture();
 		runtime.appendMessage({

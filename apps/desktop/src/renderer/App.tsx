@@ -10217,6 +10217,42 @@ export function App() {
 		setNewAgentRequestId((current) => current + 1);
 		revealAgentSidebar();
 	}, [activeProjectId, projects, revealAgentSidebar]);
+	const createPersistentAgent = useCallback(
+		async (title: string) => {
+			const normalizedTitle = title.trim();
+			if (!normalizedTitle) throw new Error("Enter a name for the agent.");
+			const selectedProject = activeProjectId
+				? projects.find((project) => project.id === activeProjectId)
+				: undefined;
+			const response = (await window.kestrel.request({
+				type: "runtime-create-session",
+				title: normalizedTitle,
+				...(selectedProject ? { projectId: selectedProject.id } : {}),
+			})) as CoreResponse;
+			if (!response.ok || !response.session)
+				throw new Error(
+					response.ok ? "Agent creation failed." : response.error,
+				);
+
+			const session = response.session;
+			setRuntimeSessions((current) => [
+				session,
+				...current.filter((candidate) => candidate.id !== session.id),
+			]);
+			if (selectedProject) selectProject(selectedProject.id);
+			openRuntimeSession(session.id);
+			revealAgentSidebar();
+			void refreshRuntimeSessions().catch(() => undefined);
+		},
+		[
+			activeProjectId,
+			openRuntimeSession,
+			projects,
+			refreshRuntimeSessions,
+			revealAgentSidebar,
+			selectProject,
+		],
+	);
 	const openTaskSettings = useCallback(() => {
 		startNewAgent("", undefined, "task-settings");
 	}, [startNewAgent]);
@@ -10916,6 +10952,7 @@ export function App() {
 					agentState={effectiveAgentState}
 					pendingApprovals={pendingApprovalCount}
 					onNewTask={() => startNewAgent()}
+					onCreateAgent={createPersistentAgent}
 					onOpenSession={openSidebarSession}
 					onOpenApprovals={() => navigate("approvals")}
 					onOpenWork={() => navigate("work")}
