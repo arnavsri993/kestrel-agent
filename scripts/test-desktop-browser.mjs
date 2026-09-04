@@ -1647,7 +1647,7 @@ try {
 		"A delegated moon should expose its own conversation composer.",
 	);
 	await page
-		.getByRole("button", { name: "Close Visible browser worker context" })
+		.getByRole("button", { name: "Back to the map from Visible browser worker" })
 		.click();
 	assert.equal(
 		await page.getByRole("button", { name: "List", exact: true }).count(),
@@ -1674,9 +1674,19 @@ try {
 	await page.getByRole("heading", { name: "Visible browser test", exact: true }).waitFor();
 	await page.getByRole("heading", { name: "Conversation", exact: true }).waitFor();
 	assert.equal(
+		await page.getByRole("button", { name: "Visible browser test settings", exact: true }).count(),
+		1,
+		"The selected agent should expose its settings from the chat header.",
+	);
+	assert.equal(
 		await page.locator(".agent-universe-context-surface .agent-universe-context-composer textarea").count(),
 		1,
 		"The main system should expose the primary conversation composer.",
+	);
+	assert.equal(
+		await page.getByText("Kestrel model system", { exact: true }).count(),
+		1,
+		"The Agent Universe composer should use Kestrel's model system label.",
 	);
 	assert.equal(
 		await page.getByRole("button", { name: "Review approvals", exact: true }).count(),

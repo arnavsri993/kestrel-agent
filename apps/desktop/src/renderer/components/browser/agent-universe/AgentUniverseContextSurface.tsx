@@ -22,7 +22,7 @@ import {
 	agentSessionStatusLabel,
 } from "../../../agent-workspace";
 import { Icon } from "../../Icon";
-import { Button, Status, type StatusTone } from "../../ui";
+import { Status, type StatusTone } from "../../ui";
 import {
 	agentUniverseRunIsPending,
 	agentUniverseRunStatusLabel,
@@ -260,10 +260,15 @@ export function AgentUniverseContextSurface({
 	const [history, setHistory] = useState<RuntimeMessage[]>([]);
 	const [historyLoading, setHistoryLoading] = useState(true);
 	const [historyError, setHistoryError] = useState("");
+	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
+	const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
 	const messageLifecycleRef = useRef(createAgentUniverseMessageLifecycle());
 	const inputRef = useRef<HTMLTextAreaElement | null>(null);
 	const messageLogRef = useRef<HTMLDivElement | null>(null);
 	const historyRequestRef = useRef(0);
+	const historyScrollRestoreRef = useRef<{ height: number; top: number } | null>(null);
+	const stickToBottomRef = useRef(true);
 	const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
 	const [memoryDraft, setMemoryDraft] = useState("");
 	const [memoryMutationId, setMemoryMutationId] = useState<string | null>(null);
@@ -324,6 +329,8 @@ export function AgentUniverseContextSurface({
 			if (!response.ok) throw new Error(response.error);
 			if (requestId !== historyRequestRef.current) return;
 			setHistory(response.messages ?? []);
+			setHasEarlierMessages(response.hasMoreMessages === true);
+			stickToBottomRef.current = true;
 		} catch (cause) {
 			if (requestId !== historyRequestRef.current) return;
 			setHistoryError(
@@ -335,6 +342,67 @@ export function AgentUniverseContextSurface({
 			if (requestId === historyRequestRef.current) setHistoryLoading(false);
 		}
 	}, [openSessionId]);
+
+	const loadEarlierMessages = useCallback(async () => {
+		if (
+			!hasEarlierMessages ||
+			loadingEarlierMessages ||
+			historyLoading ||
+			!history[0]
+		)
+			return;
+		const sessionId = openSessionId;
+		const requestId = historyRequestRef.current;
+		const log = messageLogRef.current;
+		const previousScroll = log
+			? { height: log.scrollHeight, top: log.scrollTop }
+			: null;
+		setLoadingEarlierMessages(true);
+		setHistoryError("");
+		try {
+			const raw = await window.kestrel.request({
+				type: "runtime-list-messages",
+				sessionId,
+				beforeMessageId: history[0].id,
+				limit: 100,
+			});
+			const response = raw as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (
+				requestId !== historyRequestRef.current ||
+				openSessionId !== sessionId
+			)
+				return;
+			const earlier = response.messages ?? [];
+			if (earlier.length > 0 && previousScroll) {
+				historyScrollRestoreRef.current = previousScroll;
+				stickToBottomRef.current = false;
+			}
+			setHistory((current) => {
+				const existing = new Set(current.map((message) => message.id));
+				return [
+					...earlier.filter((message) => !existing.has(message.id)),
+					...current,
+				];
+			});
+			setHasEarlierMessages(response.hasMoreMessages === true);
+		} catch (cause) {
+			if (requestId !== historyRequestRef.current) return;
+			setHistoryError(
+				cause instanceof Error
+					? cause.message
+					: "Could not load earlier messages.",
+			);
+		} finally {
+			setLoadingEarlierMessages(false);
+		}
+	}, [
+		hasEarlierMessages,
+		history,
+		historyLoading,
+		loadingEarlierMessages,
+		openSessionId,
+	]);
 
 	const loadAgentMemoryProvenance = useCallback(
 		async (memoryId: string) => {
@@ -475,6 +543,11 @@ export function AgentUniverseContextSurface({
 		setStreamText("");
 		setLastMessage("");
 		setLastResponse("");
+		setHasEarlierMessages(false);
+		setLoadingEarlierMessages(false);
+		setSettingsOpen(false);
+		historyScrollRestoreRef.current = null;
+		stickToBottomRef.current = true;
 		setEditingMemoryId(null);
 		setMemoryDraft("");
 		setMemoryMutationId(null);
@@ -497,11 +570,29 @@ export function AgentUniverseContextSurface({
 	useLayoutEffect(() => {
 		const log = messageLogRef.current;
 		if (!log) return;
+		const previousScroll = historyScrollRestoreRef.current;
+		if (previousScroll) {
+			// Prepending a page must not throw the person back to the newest task.
+			// Keep the first message they were looking at anchored in place.
+			log.scrollTop =
+				previousScroll.top + (log.scrollHeight - previousScroll.height);
+			historyScrollRestoreRef.current = null;
+			return;
+		}
 		// Runtime history is ordered oldest-first. Keep the newest conversation
-		// visible when the panel opens or a streamed response grows, while the
-		// log remains independently scrollable for deliberate history review.
-		log.scrollTop = log.scrollHeight;
-	}, [history.length, historyError, lastMessage, lastResponse, messageState, streamText]);
+		// visible when the panel opens or a new response grows, while deliberate
+		// upward scrolling remains stable.
+		if (stickToBottomRef.current) log.scrollTop = log.scrollHeight;
+	}, [history.length, lastMessage, lastResponse, messageState, streamText]);
+
+	const handleMessageLogScroll = useCallback(() => {
+		const log = messageLogRef.current;
+		if (!log) return;
+		const distanceFromBottom = log.scrollHeight - log.scrollTop - log.clientHeight;
+		stickToBottomRef.current = distanceFromBottom <= 56;
+		if (log.scrollTop <= 40 && hasEarlierMessages)
+			void loadEarlierMessages();
+	}, [hasEarlierMessages, loadEarlierMessages]);
 
 	const sendMessage = useCallback(async () => {
 		const message = input.trim();
@@ -514,6 +605,7 @@ export function AgentUniverseContextSurface({
 		);
 		if (!attempt) return;
 		setInput("");
+		stickToBottomRef.current = true;
 		setLastMessage(message);
 		setLastResponse("");
 		setStreamText("");
@@ -578,29 +670,45 @@ export function AgentUniverseContextSurface({
 			onWheel={(event) => event.stopPropagation()}
 		>
 			<header className="agent-universe-context-header">
-				<div className="agent-universe-context-title">
-					<span className="agent-universe-context-kicker">
-						{isRoot ? "Main circle · coordinator" : "Delegated agent · direct chat"}
-					</span>
-					<h2>{title}</h2>
-					<p className="agent-universe-context-subtitle">
-						{isRoot
-							? "Send the mission here. It can split independent work across real child agents, then reconcile the results for you."
-							: [
-									"Send a follow-up directly to this delegated agent.",
-									"Its parent system remains responsible for the overall mission.",
-								].join(" ")}
-					</p>
-				</div>
 				<button
 					type="button"
 					className="agent-universe-context-close"
-					aria-label={`Close ${title} context`}
-					title="Close"
+					aria-label={`Back to the map from ${title}`}
+					title="Back to map"
 					onClick={onClose}
 				>
-					<Icon name="close" />
+					<Icon name="back" />
 				</button>
+				<div className="agent-universe-context-title">
+					<span className="agent-universe-context-kicker">
+						{isRoot ? "Coordinator" : "Delegated agent"}
+					</span>
+					<h2>{title}</h2>
+					<p className="agent-universe-context-subtitle">
+						{agentSessionStatusLabel(status)} · {conversationLabel} {title}
+					</p>
+				</div>
+				<div className="agent-universe-context-header-actions">
+					<button
+						type="button"
+						className="agent-universe-context-open-task"
+						onClick={() => onOpenSession(openSessionId)}
+					>
+						Open task
+						<Icon name="expand" />
+					</button>
+					<button
+						type="button"
+						className="agent-universe-context-settings"
+						aria-expanded={settingsOpen}
+						aria-controls={`agent-context-settings-${openSessionId}`}
+						aria-label={`${title} settings`}
+						title="Agent settings"
+						onClick={() => setSettingsOpen((current) => !current)}
+					>
+						<Icon name="settings" />
+					</button>
+				</div>
 			</header>
 
 			<div className="agent-universe-context-status">
@@ -623,20 +731,32 @@ export function AgentUniverseContextSurface({
 					</span>
 					{system.workspaceName ? <small>{system.workspaceName}</small> : null}
 				</div>
-			) : (
-				<dl className="agent-universe-context-details">
-					{parent ? <DefinitionRow label="Parent">{parent.name}</DefinitionRow> : null}
-					<DefinitionRow label="Depth">
-						{inspected.depth === 0 ? "Root" : `Delegated · ${inspected.depth}`}
-					</DefinitionRow>
-					{inspected.workspaceName ? (
-						<DefinitionRow label="Workspace">
-							<span title={inspected.workspaceRoot}>{inspected.workspaceName}</span>
-						</DefinitionRow>
+			) : null}
+
+			{settingsOpen ? (
+				<div
+					id={`agent-context-settings-${openSessionId}`}
+					className="agent-universe-agent-settings-panel"
+					aria-label={`${title} settings`}
+				>
+					<div className="agent-universe-agent-settings-header">
+						<strong>Agent settings</strong>
+						<small>{isRoot ? "Coordinator" : "Delegated agent"}</small>
+					</div>
+					{!isRoot ? (
+						<dl className="agent-universe-context-details">
+							{parent ? <DefinitionRow label="Parent">{parent.name}</DefinitionRow> : null}
+							<DefinitionRow label="Depth">
+								{inspected.depth === 0 ? "Root" : `Delegated · ${inspected.depth}`}
+							</DefinitionRow>
+							{inspected.workspaceName ? (
+								<DefinitionRow label="Workspace">
+									<span title={inspected.workspaceRoot}>{inspected.workspaceName}</span>
+								</DefinitionRow>
+							) : null}
+							<DefinitionRow label="Created">{formatTimestamp(inspected.createdAt)}</DefinitionRow>
+						</dl>
 					) : null}
-					<DefinitionRow label="Created">{formatTimestamp(inspected.createdAt)}</DefinitionRow>
-				</dl>
-			)}
 
 			{groupMemoryLoading || groupMemoryError || groupMemory ? (
 				<details
@@ -899,6 +1019,8 @@ export function AgentUniverseContextSurface({
 					</div>
 				</div>
 			</details>
+				</div>
+			) : null}
 
 			<section className="agent-universe-context-conversation">
 				<div className="agent-universe-context-section-heading">
@@ -910,8 +1032,23 @@ export function AgentUniverseContextSurface({
 				<div
 					ref={messageLogRef}
 					className="agent-universe-context-message-log"
+					role="log"
+					aria-label={`${title} conversation history`}
 					aria-live="polite"
+					onScroll={handleMessageLogScroll}
 				>
+					{hasEarlierMessages ? (
+						<button
+							type="button"
+							className="agent-universe-context-load-earlier"
+							disabled={loadingEarlierMessages}
+							onClick={() => void loadEarlierMessages()}
+						>
+							{loadingEarlierMessages
+								? "Loading earlier messages…"
+								: "Load earlier messages"}
+						</button>
+					) : null}
 					{historyLoading && renderedHistory.length === 0 ? (
 						<p className="agent-universe-context-empty">Loading the conversation…</p>
 					) : null}
@@ -989,24 +1126,27 @@ export function AgentUniverseContextSurface({
 						placeholder={`Message ${title}…`}
 						disabled={messageState === "sending"}
 					/>
-					<button
-						type="submit"
-						className="agent-universe-context-send"
-						aria-label={`Send message to ${title}`}
-						title="Send message"
-						disabled={!input.trim() || messageState === "sending"}
-					>
-						<Icon name={messageState === "sending" ? "loader" : "arrow"} />
-					</button>
+					<div className="agent-universe-context-composer-footer">
+						<span
+							className="agent-universe-context-model-system"
+							aria-label="Kestrel model system, automatic routing"
+						>
+							<Icon name="models" />
+							<span>Kestrel model system</span>
+							<small>Automatic routing</small>
+						</span>
+						<button
+							type="submit"
+							className="agent-universe-context-send"
+							aria-label={`Send message to ${title}`}
+							title="Send message"
+							disabled={!input.trim() || messageState === "sending"}
+						>
+							<Icon name={messageState === "sending" ? "loader" : "arrow"} />
+						</button>
+					</div>
 				</form>
 			</section>
-
-			<footer className="agent-universe-context-actions">
-				<Button variant="quiet" size="compact" onClick={() => onOpenSession(openSessionId)}>
-					Open task
-					<Icon name="arrow" />
-				</Button>
-			</footer>
 		</aside>
 	);
 }

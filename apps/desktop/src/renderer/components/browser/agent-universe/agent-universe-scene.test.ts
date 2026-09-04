@@ -175,7 +175,8 @@ describe("agent universe circle surface", () => {
 		const rendered = workerMarkup();
 		expect(rendered).toContain('aria-label="Chat with Research"');
 		expect(rendered).toContain("agent-universe-context-conversation");
-		expect(rendered).toContain("Send a follow-up directly to this delegated agent");
+		expect(rendered).toContain('aria-label="Research settings"');
+		expect(rendered).toContain("Kestrel model system");
 		expect(rendered).toContain('aria-label="Send message to Research"');
 	});
 });
