@@ -154,6 +154,7 @@ import {
 } from "../utility/browser-app-pages";
 import {
 	memoryInGb,
+	recommendedLocalModel,
 	recommendedLocalModelTiers,
 	supportedLocalModels,
 } from "./local-model-catalog";
@@ -1313,6 +1314,17 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const verifiedModelReady =
 		Boolean(localRuntime?.verifiedModel) ||
 		providerChecks.some((check) => check.ok);
+	const recommendedModel = recommendedLocalModel(systemProfile);
+	const recommendedModelInstalled = Boolean(
+		recommendedModel &&
+		localModels.some(
+			(item) =>
+				item.name === recommendedModel.name ||
+				item.name === `${recommendedModel.name}:latest`,
+		),
+	);
+	const localSetupAvailable =
+		ollamaAvailable || localRuntime?.automaticSupported === true;
 	const recommendedTiers = recommendedLocalModelTiers(systemProfile);
 	const compatibleLocalModels = supportedLocalModels(systemProfile);
 	const matchingPaidProviders = paidProviderCatalog.filter((provider) => {
@@ -1537,10 +1549,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									<p>
 										{step === 2
 											? "Pick one to start — you can change it later."
-											: modelView === "accounts"
-												? "Sign in with the provider, or add a protected API key."
-												: modelView === "local"
-													? "Balanced is recommended for this Mac."
+												: modelView === "accounts"
+													? "Sign in with the provider, or add a protected API key."
+													: modelView === "local"
+														? recommendedModel
+															? `Kestrel picked ${recommendedModel.title} for this Mac.`
+															: "Checking this Mac's hardware…"
 													: "Terms and free limits vary by provider."}
 									</p>
 								</header>
@@ -1879,9 +1893,52 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															? `${memoryInGb(systemProfile)} GB ${systemProfile.architecture === "arm64" ? "Apple Silicon Mac" : `${systemProfile.architecture} Mac`}`
 															: "Checking this Mac…"}
 													</strong>
+													<small>
+														{systemProfile
+															? `${systemProfile.logicalCpus} logical CPU${systemProfile.logicalCpus === 1 ? "" : "s"} detected`
+															: "Reading hardware before choosing a model…"}
+													</small>
 												</span>
 											</div>
 										</div>
+										{recommendedModel && (
+											<section
+												className="local-auto-setup"
+												aria-label="Automatic local setup"
+											>
+												<div className="local-auto-setup-copy">
+													<span className="local-auto-setup-label">
+														Best fit for this Mac
+													</span>
+													<strong>{recommendedModel.title}</strong>
+													<code>{recommendedModel.name}</code>
+													<p>
+														One click downloads the pinned Ollama runtime if
+														needed, pulls this {recommendedModel.size} model,
+														verifies a real response, and configures local
+														routing. Inference stays on this Mac.
+													</p>
+												</div>
+												<button
+													className="button primary"
+													disabled={
+														automaticBusy ||
+														Boolean(downloading) ||
+														!localSetupAvailable
+													}
+													onClick={() =>
+														void bootstrapLocal(recommendedModel.name)
+													}
+												>
+													{automaticBusy &&
+													automaticModel === recommendedModel.name
+														? "Setting up…"
+														: recommendedModelInstalled
+															? "Verify local setup again"
+															: "Set up automatically"}
+												</button>
+											</section>
+										)}
 										{recommendedTiers.length > 0 && (
 											<section
 												className="recommended-model-tiers"
@@ -1894,47 +1951,45 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																item.name === model.name ||
 																item.name === `${model.name}:latest`,
 														);
+														const isRecommended =
+															model.name === recommendedModel?.name;
 														const tier =
 															index === 0
 																? { name: "Light" }
 																: index === recommendedTiers.length - 1
 																	? { name: "Power" }
-																	: { name: "Balanced" };
-														return (
-															<article
-																key={model.name}
-																className={
-																	tier.name === "Balanced" ? "preferred" : ""
-																}
-															>
-																<div className="model-tier-name">
-																	<strong>{tier.name}</strong>
-																	{tier.name === "Balanced" && (
-																		<span>Recommended</span>
-																	)}
-																</div>
-																<small>{model.bestFor}</small>
-																<details className="model-tier-details">
-																	<summary>Details</summary>
-																	<dl>
-																		<div>
-																			<dt>Model</dt>
-																			<dd>{model.title}</dd>
-																		</div>
-																		<div>
-																			<dt>Requirements</dt>
-																			<dd>
-																				{model.speed} · {model.minimumMemory}{" "}
-																				GB+ usable memory
-																			</dd>
-																		</div>
-																		<div>
-																			<dt>Download</dt>
-																			<dd>
-																				{model.size} · {model.contextLength}{" "}
-																				context
-																			</dd>
-																		</div>
+																		: { name: "Balanced" };
+													return (
+														<article
+															key={model.name}
+															className={isRecommended ? "preferred" : ""}
+														>
+															<div className="model-tier-name">
+																<strong>{tier.name}</strong>
+																{isRecommended && <span>Best fit</span>}
+															</div>
+															<small>{model.bestFor}</small>
+															<details className="model-tier-details">
+																<summary>Details</summary>
+																<dl>
+																	<div>
+																		<dt>Model</dt>
+																		<dd>{model.title}</dd>
+																	</div>
+																	<div>
+																		<dt>Requirements</dt>
+																		<dd>
+																			{model.speed} · {model.minimumMemory}{" "}
+																			GB+ usable memory
+																		</dd>
+																	</div>
+																	<div>
+																		<dt>Download</dt>
+																		<dd>
+																			{model.size} · {model.contextLength}{" "}
+																			context
+																		</dd>
+																	</div>
 																	</dl>
 																</details>
 																{installed ? (
@@ -1944,33 +1999,25 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																	</span>
 																) : (
 																	<button
-																		className={`button ${tier.name === "Balanced" ? "primary" : "secondary"}`}
+																		className={`button ${isRecommended ? "primary" : "secondary"}`}
 																		disabled={
 																			automaticBusy ||
 																			Boolean(downloading) ||
-																			(!ollamaAvailable &&
-																				localRuntime?.automaticSupported ===
-																					false)
+																			!localSetupAvailable
 																		}
-																		onClick={() =>
-																			ollamaAvailable
-																				? void downloadModel(model.name)
-																				: void bootstrapLocal(model.name)
-																		}
+																		onClick={() => void bootstrapLocal(model.name)}
 																	>
 																		{automaticBusy &&
-																		automaticModel === model.name
+																			automaticModel === model.name
 																			? "Setting up…"
-																			: downloading === model.name
-																				? "Downloading…"
-																				: tier.name === "Balanced"
-																					? `Install recommended · ${model.size}`
-																					: `Install ${tier.name.toLowerCase()} · ${model.size}`}
+																			: isRecommended
+																			? `Set up best fit · ${model.size}`
+																			: `Set up ${tier.name.toLowerCase()} · ${model.size}`}
 																	</button>
 																)}
-															</article>
-														);
-													})}
+														</article>
+													);
+												})}
 												</div>
 											</section>
 										)}
