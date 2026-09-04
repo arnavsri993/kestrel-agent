@@ -1168,14 +1168,14 @@ export function BrowserSettings({
             id="setting-browser-password-autofill"
           >
             <div className="browser-setting-copy">
-              <strong>Password autofill</strong>
-              <p>Offer protected saved passwords on matching HTTPS origins.</p>
+              <strong>Password autofill and save prompts</strong>
+              <p>Offer protected saved passwords and ask before saving new logins on matching HTTPS origins.</p>
             </div>
             <button
               type="button"
               className={`switch ${settings.passwordAutofillEnabled ? "on" : ""}`}
               role="switch"
-              aria-label="Password autofill"
+              aria-label="Password autofill and save prompts"
               aria-checked={settings.passwordAutofillEnabled}
               onClick={() =>
                 void persist({

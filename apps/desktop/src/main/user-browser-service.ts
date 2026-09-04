@@ -65,6 +65,7 @@ import {
 } from "electron";
 import decodeIco from "decode-ico";
 import sharp from "sharp";
+import { z } from "zod";
 import {
 	dispatchBrowserMouseClick,
 	publicInteractiveRefs,
@@ -121,6 +122,19 @@ const CONTEXT_DOWNLOAD_REQUEST_TTL_MS = 30_000;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
 const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
+const PASSWORD_SUBMISSION_CHANNEL = "kestrel:user-browser-password-submission";
+const PasswordSubmissionMessageSchema = z.object({
+	username: z.string().max(500),
+	password: z.string().min(1).max(100_000),
+	passwordFieldRect: z
+		.object({
+			x: z.number().int().min(0).max(20_000),
+			y: z.number().int().min(0).max(20_000),
+			width: z.number().int().min(0).max(20_000),
+			height: z.number().int().min(0).max(20_000),
+		})
+		.optional(),
+});
 const AUTHENTICATION_HOSTS = new Set([
 	"accounts.google.com",
 	"auth.anthropic.com",
@@ -431,7 +445,7 @@ const PASSWORD_FORM_SCAN_SCRIPT = String.raw`(() => {
     ].filter(Boolean).join(" ").toLowerCase();
     if (autocomplete === "new-password") return null;
     const isPassword = type === "password" || autocomplete === "current-password";
-    const isUsername = autocomplete === "username" ||
+    const isUsername = type === "email" || autocomplete === "username" ||
       autocomplete === "email" || /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(hint);
     if (!isPassword && !isUsername) return null;
     const rect = node.getBoundingClientRect();
@@ -858,7 +872,7 @@ function passwordFillScript(
       .filter(Boolean).join(" ").toLowerCase();
     if (autocomplete === "new-password") return null;
     const isPassword = type === "password" || autocomplete === "current-password";
-    const isUsername = autocomplete === "username" || autocomplete === "email" ||
+    const isUsername = type === "email" || autocomplete === "username" || autocomplete === "email" ||
       /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(hint);
     if (!isPassword && !isUsername) return null;
     return { node, kind: isPassword ? "password" : "username" };
@@ -1055,8 +1069,18 @@ export class UserBrowserService {
 	private disposed = false;
 	private passwordPollInterval: ReturnType<typeof setInterval> | undefined;
 	private passwordScanInFlight = false;
+	private passwordPromptGeneration = 0;
 	private passwordPromptKey = "";
 	private passwordPrompt: PasswordPrompt | undefined;
+	private pendingPasswordSave:
+		| {
+			tabId: string;
+			origin: string;
+			title: string;
+			username: string;
+			password: string;
+		}
+		| undefined;
 	private readonly passwordPromptSuppressedUntil = new Map<string, number>();
 	private paymentScanInFlight = false;
 	private paymentPromptKey = "";
@@ -2580,6 +2604,39 @@ export class UserBrowserService {
 		return this.passwordVault.save(input);
 	}
 
+	async savePasswordSuggestion(): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault)
+			throw new Error("The protected password store is unavailable.");
+		const pending = this.pendingPasswordSave;
+		const prompt = this.passwordPrompt;
+		if (!pending || !prompt || prompt.mode !== "save")
+			throw new Error("That password suggestion is no longer available.");
+		const tab = this.requireActiveTab();
+		if (tab.id !== pending.tabId || prompt.tabId !== tab.id)
+			throw new Error("The login page changed before the password was saved.");
+		const record = this.requireView(tab.id);
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The login page is still waking up. Try again.");
+		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		if (
+			!url ||
+			url.protocol !== "https:" ||
+			url.origin !== pending.origin ||
+			prompt.origin !== url.origin
+		)
+			throw new Error("The login page changed before the password was saved.");
+		const summaries = await this.passwordVault.save({
+			origin: pending.origin,
+			title: pending.title,
+			username: pending.username,
+			password: pending.password,
+		});
+		this.suppressPasswordPrompt(tab.id, pending.origin, 4_000);
+		this.clearPasswordPrompt();
+		return summaries;
+	}
+
 	async removePassword(id: PasswordEntryId): Promise<PasswordEntrySummary[]> {
 		if (!this.passwordVault)
 			throw new Error("The protected password store is unavailable.");
@@ -2775,6 +2832,104 @@ export class UserBrowserService {
 		);
 	}
 
+	private async handlePasswordSubmission(
+		tab: UserBrowserTab,
+		webContents: WebContents,
+		event: Electron.IpcMainEvent,
+		raw: unknown,
+	): Promise<void> {
+		if (
+			this.disposed ||
+			!this.passwordVault ||
+			this.state.settings.passwordAutofillEnabled === false ||
+			tab.id !== this.state.activeTabId ||
+			isKestrelAppPageUrl(tab.url)
+		)
+			return;
+		const parsed = PasswordSubmissionMessageSchema.safeParse(raw);
+		if (!parsed.success || parsed.data.password.includes("\0")) return;
+		const pageUrl =
+			safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		const frameUrl = safePageUrl(
+			event.senderFrame?.url || webContents.getURL(),
+		);
+		if (
+			!pageUrl ||
+			pageUrl.protocol !== "https:" ||
+			!frameUrl ||
+			frameUrl.origin !== pageUrl.origin
+		)
+			return;
+		const suppressionKey = `${tab.id}:${pageUrl.origin}`;
+		if (
+			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
+			this.now().getTime()
+		)
+			return;
+		// Keep the first submitted secret behind the confirmation that is already
+		// visible. A later submit from the same page must not silently replace the
+		// pending credential while the user is deciding whether to save it.
+		if (
+			this.passwordPrompt?.mode === "save" &&
+			this.passwordPrompt.tabId === tab.id &&
+			this.passwordPrompt.origin === pageUrl.origin
+		)
+			return;
+		const promptGeneration = ++this.passwordPromptGeneration;
+
+		// Use the origin hostname as the durable label. Page titles are controlled
+		// by the untrusted site and do not need to cross into the protected vault.
+		const title = hostnameTitle(pageUrl.toString());
+		const entries = (await this.passwordVault.listForOrigin(pageUrl.origin)).slice(
+			0,
+			24,
+		);
+		if (
+			this.disposed ||
+			tab.id !== this.state.activeTabId ||
+			promptGeneration !== this.passwordPromptGeneration ||
+			safePageUrl(webContents.getURL())?.origin !== pageUrl.origin
+		)
+			return;
+
+		const pageWidth =
+			this.contentBounds.width || this.window.getContentSize()[0] || 800;
+		const pageHeight =
+			this.contentBounds.height || this.window.getContentSize()[1] || 600;
+		const field = parsed.data.passwordFieldRect;
+		const anchor = field
+			? {
+				x: Math.max(0, this.contentBounds.x + field.x),
+				y: Math.max(0, this.contentBounds.y + field.y),
+				width: field.width,
+				height: field.height,
+			}
+			: {
+				x: Math.max(0, this.contentBounds.x + pageWidth - 368),
+				y: Math.max(0, this.contentBounds.y + 16),
+				width: 348,
+				height: Math.min(96, Math.max(1, pageHeight - 32)),
+			};
+		const prompt = PasswordPromptSchema.parse({
+			tabId: tab.id,
+			origin: pageUrl.origin,
+			title,
+			mode: "save",
+			fields: [],
+			entries,
+			candidate: { username: parsed.data.username.trim().slice(0, 500) },
+			anchor,
+		});
+		this.pendingPasswordSave = {
+			tabId: tab.id,
+			origin: pageUrl.origin,
+			title,
+			username: parsed.data.username.trim().slice(0, 500),
+			password: parsed.data.password,
+		};
+		this.setPasswordPrompt(prompt);
+	}
+
 	private async refreshPasswordPrompt(tabId?: string): Promise<void> {
 		if (
 			this.disposed ||
@@ -2810,15 +2965,37 @@ export class UserBrowserService {
 			this.clearPasswordPrompt();
 			return;
 		}
+		// A submitted credential is held only in the main process until the user
+		// explicitly confirms the save. Do not let the regular fill scan replace
+		// that confirmation while the page is still settling.
+		if (this.passwordPrompt?.mode === "save") {
+			if (
+				this.passwordPrompt.tabId === tab.id &&
+				this.passwordPrompt.origin === url.origin
+			)
+				return;
+			this.clearPasswordPrompt();
+		}
 
 		this.passwordScanInFlight = true;
+		const scanGeneration = this.passwordPromptGeneration;
 		try {
 			const snapshot = await this.readPasswordFormSnapshot(webContents);
+			if (
+				scanGeneration !== this.passwordPromptGeneration ||
+				this.passwordPrompt?.mode === "save"
+			)
+				return;
 			if (!snapshot.fields.length) {
 				this.clearPasswordPrompt();
 				return;
 			}
-			const entries = await this.passwordVault.listForOrigin(url.origin);
+			const entries = (await this.passwordVault.listForOrigin(url.origin)).slice(
+				0,
+				24,
+			);
+			if (scanGeneration !== this.passwordPromptGeneration)
+				return;
 			if (!entries.length) {
 				this.clearPasswordPrompt();
 				return;
@@ -2871,6 +3048,7 @@ export class UserBrowserService {
 			tabId: prompt.tabId,
 			origin: prompt.origin,
 			mode: prompt.mode,
+			candidate: prompt.candidate,
 			focusedFieldId: prompt.focusedFieldId,
 			entries: prompt.entries.map((entry) => entry.id),
 			fields: prompt.fields.map((field) => [field.id, field.rect]),
@@ -2882,6 +3060,10 @@ export class UserBrowserService {
 	}
 
 	private clearPasswordPrompt(): void {
+		this.passwordPromptGeneration += 1;
+		// Never keep a submitted password alive after the associated prompt or page
+		// is gone. The secret is intentionally not part of any renderer contract.
+		this.pendingPasswordSave = undefined;
 		if (!this.passwordPrompt && !this.passwordPromptKey) return;
 		this.passwordPrompt = undefined;
 		this.passwordPromptKey = "";
@@ -3848,6 +4030,12 @@ export class UserBrowserService {
 			}
 			return { action: "deny" };
 		});
+		webContents.on("ipc-message", (event, channel, ...args) => {
+			if (channel !== PASSWORD_SUBMISSION_CHANNEL) return;
+			void this.handlePasswordSubmission(tab, webContents, event, args[0]).catch(
+				() => undefined,
+			);
+		});
 		webContents.on("will-navigate", (event, url) => {
 			if (!safePageUrl(url)) event.preventDefault();
 		});
@@ -4438,6 +4626,7 @@ export class UserBrowserService {
 	}
 
 	private closeView(tabId: string, closeWebContents = true): void {
+		if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
 		const record = this.views.get(tabId);
 		if (!record) return;
 		this.views.delete(tabId);
