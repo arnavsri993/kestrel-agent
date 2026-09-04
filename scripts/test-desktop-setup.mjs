@@ -172,6 +172,14 @@ try {
 	await page
 		.getByRole("heading", { name: "Where should answers come from?" })
 		.waitFor();
+	const modelSourcePicker = page.locator(".model-source-picker");
+	const modelSourceGap = await modelSourcePicker.evaluate((picker) =>
+		Number.parseFloat(getComputedStyle(picker).rowGap),
+	);
+	assert.ok(
+		modelSourceGap >= 12,
+		`Model access choices should have visible separation; found a ${modelSourceGap}px row gap.`,
+	);
 	await page.getByRole("button", { name: /Use an account/ }).click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await page.getByText("Choose a paid provider", { exact: true }).waitFor();
