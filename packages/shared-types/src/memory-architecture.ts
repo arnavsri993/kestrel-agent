@@ -1,6 +1,22 @@
 import { z } from "zod";
 
 /**
+ * Project metadata used by memory/entity adapters.  Filesystem permissions
+ * and project navigation remain owned by the desktop runtime; this contract
+ * only gives memory a stable, non-secret identity to attach to evidence.
+ */
+export const MemoryProjectSchema = z.object({
+	id: z.string().min(1).max(200),
+	path: z.string().min(1).max(4_096),
+	name: z.string().min(1).max(500),
+	instructions: z.string().max(20_000).optional(),
+	createdAt: z.string().datetime(),
+	updatedAt: z.string().datetime(),
+	available: z.boolean().optional(),
+});
+export type MemoryProject = z.infer<typeof MemoryProjectSchema>;
+
+/**
  * Contracts for the local memory substrate.  These types intentionally keep
  * captured payloads opaque to SQLite callers: the database stores the
  * normalized fields needed for bounded queries and encrypts the rest.

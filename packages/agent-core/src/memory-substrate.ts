@@ -20,8 +20,8 @@ import {
 	MemoryQuerySchema,
 	MemorySearchResultSchema,
 	MemoryTimelineQueryResultSchema,
+	MemoryProjectSchema,
 	parseExplicitMemoryCapture,
-	ProjectSchema,
 	ProvenanceRecordSchema,
 	TimelineEventSchema,
 	TimelineSessionSchema,
@@ -39,11 +39,11 @@ import {
 	type MemoryHorizon,
 	type MemoryJob,
 	type MemoryMaintenanceResult,
+	type MemoryProject,
 	type MemoryQuery,
 	type MemoryRecord,
 	type MemorySearchResult,
 	type MemoryTimelineQueryResult,
-	type Project,
 	type ProvenanceRecord,
 	type TimelineActor,
 	type TimelineEvent,
@@ -128,7 +128,7 @@ export interface MemorySubstrateOptions {
 	legacyMemory: MemoryManager;
 	now?: () => Date;
 	embeddingProvider?: MemoryEmbeddingProvider;
-	projects?: readonly Project[];
+	projects?: readonly MemoryProject[];
 	/** Existing configuration controls explicit user-memory extraction. */
 	explicitCaptureEnabled?: () => boolean;
 }
@@ -329,7 +329,7 @@ export class MemorySubstrate {
 	private backgroundRunning = false;
 	private closed = false;
 	private readonly activeTaskIds = new Map<string, string>();
-	private readonly projects = new Map<string, Project>();
+	private readonly projects = new Map<string, MemoryProject>();
 
 	constructor(options: MemorySubstrateOptions) {
 		this.database = options.database;
@@ -459,8 +459,8 @@ export class MemorySubstrate {
 	 * Keep folder-backed projects visible to the memory graph without making
 	 * memory the source of truth for project permissions or metadata.
 	 */
-	syncProjects(projects: readonly Project[]): Project[] {
-		const parsedProjects = projects.map((project) => ProjectSchema.parse(project));
+	syncProjects(projects: readonly MemoryProject[]): MemoryProject[] {
+		const parsedProjects = projects.map((project) => MemoryProjectSchema.parse(project));
 		const nextIds = new Set(parsedProjects.map((project) => project.id));
 		for (const project of parsedProjects) {
 			this.projects.set(project.id, project);
