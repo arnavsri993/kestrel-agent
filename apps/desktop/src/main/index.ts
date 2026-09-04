@@ -1699,7 +1699,16 @@ function createMainWindow(): BrowserWindow {
     minHeight: 680,
     show: false,
     titleBarStyle: "hiddenInset",
-    backgroundColor: "#0a0a0a",
+    // macOS: let AppKit render the real sidebar material behind the rails and
+    // browser chrome (the renderer marks matching regions transparent via
+    // [data-kestrel-material]). Other platforms stay fully opaque.
+    ...(process.platform === "darwin"
+      ? {
+          vibrancy: "sidebar" as const,
+          visualEffectState: "active" as const,
+          backgroundColor: "#00000000",
+        }
+      : { backgroundColor: "#0a0a0a" }),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       nodeIntegration: false,
@@ -1707,6 +1716,9 @@ function createMainWindow(): BrowserWindow {
       sandbox: !DEVELOPMENT_RENDERER_URL,
       webSecurity: true,
       devTools: !isPackagedKestrelApp,
+      ...(process.platform === "darwin"
+        ? { additionalArguments: ["--kestrel-native-material=sidebar"] }
+        : {}),
     },
   });
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);
@@ -1846,7 +1858,15 @@ function createDetachedBrowserWindow(
     minHeight: 680,
     show: false,
     titleBarStyle: "hiddenInset",
-    backgroundColor: "#0a0a0a",
+    // Keep the detached browser window on the same native-material footing as
+    // the main window (see createMainWindow).
+    ...(process.platform === "darwin"
+      ? {
+          vibrancy: "sidebar" as const,
+          visualEffectState: "active" as const,
+          backgroundColor: "#00000000",
+        }
+      : { backgroundColor: "#0a0a0a" }),
     title: tab.title || PRODUCT_IDENTITY.productName,
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
@@ -1855,6 +1875,9 @@ function createDetachedBrowserWindow(
       sandbox: !DEVELOPMENT_RENDERER_URL,
       webSecurity: true,
       devTools: !isPackagedKestrelApp,
+      ...(process.platform === "darwin"
+        ? { additionalArguments: ["--kestrel-native-material=sidebar"] }
+        : {}),
     },
   });
   if (process.platform === "darwin") window.setWindowButtonVisibility(false);

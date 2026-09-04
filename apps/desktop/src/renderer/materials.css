@@ -1,0 +1,70 @@
+/* ==========================================================================
+   Materials — native macOS material integration.
+
+   When the main process enables NSVisualEffectView vibrancy on a shell
+   window, the preload marks <html data-kestrel-material="native"> before
+   first paint. The rules below let the real OS material through exactly where
+   chrome belongs — the navigation rail, the agent rail, and the browser
+   chrome — while every content surface keeps painting the opaque graphite
+   canvas. Windows/Linux and the overlay windows never get the attribute, so
+   their rendering is untouched.
+   ========================================================================== */
+
+/* The web content must stop painting the window background so AppKit's
+   material shows through. Full-window surfaces (onboarding, app pages,
+   modal backdrops) paint their own opaque canvas and are unaffected. */
+:root[data-kestrel-material="native"] body {
+	background: transparent;
+}
+
+/* Shell containers sit between the window and the surfaces; they must let
+   the material through so the rails and chrome below can show it. */
+:root[data-kestrel-material="native"] :where(.ai-browser-app, .browser-main-plane, .browser-workspace) {
+	background: transparent;
+}
+
+/* Rails: graphite tint over the OS sidebar material. The tint keeps Kestrel's
+   ramp identity while wallpaper light still modulates the surface. */
+:root[data-kestrel-material="native"] .kestrel-sidebar,
+:root[data-kestrel-material="native"] .agent-sidebar {
+	background: var(--material-rail);
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+
+/* Browser chrome: tab strip, toolbar, and bookmarks bar sit on the same
+   material, the way Safari unifies its chrome. */
+:root[data-kestrel-material="native"] .browser-tab-row-horizontal,
+:root[data-kestrel-material="native"] .browser-toolbar,
+:root[data-kestrel-material="native"] .browser-bookmarks-bar {
+	background: var(--material-chrome);
+}
+
+/* Vertical tab layouts put the tab rail beside the content; give it the rail
+   material so it reads as one continuous source list with the navigation
+   rail. */
+:root[data-kestrel-material="native"] .browser-tab-row-vertical {
+	background: var(--material-rail);
+}
+
+/* The content viewport keeps the opaque canvas, so page legibility never
+   depends on the wallpaper behind the window. */
+:root[data-kestrel-material="native"] .browser-viewport {
+	background: var(--canvas);
+}
+
+/* macOS "Reduce transparency" renders the material opaque at the OS level;
+   match it exactly so contrast stays deterministic. */
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+	:root[data-kestrel-material="native"] .kestrel-sidebar,
+	:root[data-kestrel-material="native"] .agent-sidebar,
+	:root[data-kestrel-material="native"] .browser-tab-row-vertical,
+	:root[data-kestrel-material="native"] .browser-tab-row-horizontal {
+		background: var(--sidebar);
+	}
+
+	:root[data-kestrel-material="native"] .browser-toolbar,
+	:root[data-kestrel-material="native"] .browser-bookmarks-bar {
+		background: var(--canvas);
+	}
+}

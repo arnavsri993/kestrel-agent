@@ -69,9 +69,12 @@
 	border-left: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
 	border-top: 0;
 	border-top-left-radius: 0;
-	background: var(--vibrancy-sidebar);
-	backdrop-filter: var(--vibrancy-blur);
-	-webkit-backdrop-filter: var(--vibrancy-blur);
+	/* Opaque graphite by default. materials.css swaps this to the native macOS
+	   window material when vibrancy is active; CSS backdrop-blur over the
+	   opaque canvas was pure GPU cost with no visual effect. */
+	background: var(--sidebar);
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
 }
 
 .agent-sidebar.is-collapsed {

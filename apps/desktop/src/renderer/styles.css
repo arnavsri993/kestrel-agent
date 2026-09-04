@@ -72,11 +72,17 @@
 	--shadow-md: 0 4px 16px rgba(0, 0, 0, 0.26);
 	--shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.34);
 
-	/* Vibrancy — sidebar and chrome use translucency over canvas */
-	--vibrancy-sidebar: color-mix(in srgb, var(--sidebar) 86%, transparent);
-	--vibrancy-chrome: color-mix(in srgb, var(--canvas) 90%, transparent);
-	--vibrancy-panel: color-mix(in srgb, var(--panel) 88%, transparent);
-	--vibrancy-blur: blur(24px) saturate(160%);
+	/* Native material — on macOS the shell windows use NSVisualEffectView
+	   vibrancy; the rails and browser chrome paint a restrained graphite tint
+	   over the real OS material (see materials.css). All other platforms and
+	   surfaces stay on the opaque graphite ramp. */
+	--material-rail: color-mix(in srgb, var(--sidebar) 34%, transparent);
+	--material-chrome: color-mix(in srgb, var(--canvas) 28%, transparent);
+
+	/* Optical edge — a whisper of top sheen on elevated surfaces. Borrowed
+	   from liquid-glass edge treatment, reduced to a monochrome hairline.
+	   Applied to surfaces that already rest elevated; never decorative. */
+	--edge-light: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 
 	/* Focus ring — high-contrast grayscale, 2px, offset. */
 	--focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--solid);
@@ -6606,14 +6612,15 @@ body {
 	border-color: var(--line-strong);
 	border-radius: var(--radius-surface);
 	background: var(--overlay);
-	box-shadow: var(--shadow-md);
+	box-shadow: var(--shadow-md), var(--edge-light);
 }
 
 .composer:focus-within {
 	border-color: color-mix(in srgb, var(--solid) 72%, var(--line-strong));
 	box-shadow:
 		0 0 0 3px color-mix(in srgb, var(--solid) 14%, transparent),
-		var(--shadow-md);
+		var(--shadow-md),
+		var(--edge-light);
 }
 
 .composer textarea {
@@ -7311,7 +7318,7 @@ select {
 	border-radius: var(--radius-surface);
 	background: color-mix(in srgb, var(--panel) 92%, transparent);
 	box-shadow:
-		0 1px 0 rgba(255, 255, 255, 0.04),
+		var(--edge-light),
 		0 20px 52px rgba(0, 0, 0, 0.34);
 	backdrop-filter: none;
 }
