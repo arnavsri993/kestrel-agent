@@ -1,7 +1,11 @@
 /* The New Tab rail mirrors the information architecture of the OpenAI
  * references while keeping Kestrel's quiet, local-first surface language. */
 .ai-browser-app {
-	--kestrel-sidebar-width: 216px;
+	--kestrel-sidebar-default-width: 216px;
+	--kestrel-sidebar-width: var(
+		--kestrel-sidebar-user-width,
+		var(--kestrel-sidebar-default-width)
+	);
 	--kestrel-sidebar-space: 0px;
 	--browser-tab-rail-width: 208px;
 	--browser-toolbar-height: 40px;
@@ -128,6 +132,53 @@
 	backdrop-filter: none;
 	-webkit-backdrop-filter: none;
 	color: var(--ink);
+}
+
+.kestrel-sidebar-resize-handle {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 2;
+	width: 12px;
+	border: 0;
+	background: transparent;
+	cursor: col-resize;
+	touch-action: none;
+	-webkit-app-region: no-drag;
+}
+
+.kestrel-sidebar-resize-handle::after {
+	position: absolute;
+	top: 0;
+	right: 1px;
+	bottom: 0;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--focus);
+	content: "";
+	opacity: 0;
+	transition: opacity var(--motion-feedback) var(--ease-kestrel);
+}
+
+.kestrel-sidebar-resize-handle:hover::after,
+.kestrel-sidebar-resize-handle:focus-visible::after,
+.kestrel-sidebar-resizing .kestrel-sidebar-resize-handle::after {
+	opacity: 0.72;
+}
+
+.kestrel-sidebar-resize-handle:focus-visible {
+	outline: none;
+}
+
+.kestrel-sidebar-resizing,
+.kestrel-sidebar-resizing * {
+	cursor: col-resize !important;
+	user-select: none !important;
+}
+
+.kestrel-sidebar.is-collapsed .kestrel-sidebar-resize-handle {
+	display: none;
 }
 
 .kestrel-sidebar-drag {
@@ -442,6 +493,7 @@
 	flex: 1 1 auto;
 	margin: 0 -3px 0 -2px;
 	padding: 0 3px 6px 2px;
+	overflow-x: hidden;
 	overflow-y: auto;
 	scrollbar-width: thin;
 }
@@ -456,7 +508,13 @@
 }
 
 .kestrel-sidebar-section {
+	min-width: 0;
 	margin-top: 24px;
+}
+
+.kestrel-sidebar-project,
+.kestrel-sidebar-project-list {
+	min-width: 0;
 }
 
 .kestrel-sidebar-section:first-child {
@@ -1118,6 +1176,9 @@
 	}
 	.kestrel-sidebar {
 		padding-inline: 8px;
+	}
+	.kestrel-sidebar-resize-handle {
+		display: none;
 	}
 	.kestrel-sidebar-drag {
 		margin-inline: -8px;
