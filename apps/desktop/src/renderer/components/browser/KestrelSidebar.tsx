@@ -1,11 +1,13 @@
 import {
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
 	type CSSProperties,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type MouseEvent as ReactMouseEvent,
+	type PointerEvent as ReactPointerEvent,
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { Project, RuntimeSession } from "@kestrel/shared-types";
@@ -24,6 +26,13 @@ import {
 import { BrandMark } from "../BrandMark";
 import { Icon } from "../Icon";
 import type { SidebarDestination } from "./agent-sidebar";
+import {
+	clampKestrelSidebarWidth,
+	KESTREL_SIDEBAR_DEFAULT_WIDTH,
+	KESTREL_SIDEBAR_MIN_WIDTH,
+	maxKestrelSidebarWidth,
+	KESTREL_SIDEBAR_WIDTH_STORAGE_KEY,
+} from "./kestrel-sidebar-layout";
 
 const MAX_SIDEBAR_CHATS = 8;
 const PROJECT_EXPANSION_DURATION_MS = 160;
@@ -257,6 +266,22 @@ export function KestrelSidebar({
 	const [collapsed, setCollapsed] = useState(
 		() => localStorage.getItem("kestrel:navigation-sidebar") === "collapsed",
 	);
+	const [sidebarWidth, setSidebarWidth] = useState(() => {
+		const stored = Number.parseFloat(
+			localStorage.getItem(KESTREL_SIDEBAR_WIDTH_STORAGE_KEY) ?? "",
+		);
+		return clampKestrelSidebarWidth(
+			Number.isFinite(stored) ? stored : KESTREL_SIDEBAR_DEFAULT_WIDTH,
+		);
+	});
+	const sidebarWidthRef = useRef(sidebarWidth);
+	const resizeRef = useRef<{
+		pointerId: number;
+		startX: number;
+		startWidth: number;
+		width: number;
+	} | null>(null);
+	const resizeHandleRef = useRef<HTMLDivElement | null>(null);
 	const [expandedProjectId, setExpandedProjectId] = useState<string | null>(() =>
 		readExpandedProjectId(projects),
 	);
@@ -274,6 +299,106 @@ export function KestrelSidebar({
 		[globalChatLimit, projects, sessions],
 	);
 	const allChats = useMemo(() => sessionsWithoutProject(sessions, projects), [projects, sessions]);
+
+	function shell() {
+		return document.querySelector<HTMLElement>(".ai-browser-app");
+	}
+
+	function writeSidebarWidth(width: number) {
+		const root = shell();
+		if (!root) return;
+		root.style.setProperty(
+			"--kestrel-sidebar-user-width",
+			String(width.toFixed(2)) + "px",
+		);
+		resizeHandleRef.current?.setAttribute(
+			"aria-valuenow",
+			String(Math.round(width)),
+		);
+	}
+
+	function persistSidebarWidth(width: number) {
+		try {
+			localStorage.setItem(
+				KESTREL_SIDEBAR_WIDTH_STORAGE_KEY,
+				String(Math.round(width)),
+			);
+		} catch {
+			// A saved navigation preference is helpful but never blocks resizing.
+		}
+	}
+
+	function commitSidebarWidth(width: number) {
+		const next = clampKestrelSidebarWidth(width);
+		sidebarWidthRef.current = next;
+		writeSidebarWidth(next);
+		setSidebarWidth(next);
+		persistSidebarWidth(next);
+	}
+
+	function startResize(event: ReactPointerEvent<HTMLDivElement>) {
+		if (event.button !== 0 || collapsed) return;
+		const root = shell();
+		if (!root) return;
+		const width = clampKestrelSidebarWidth(sidebarWidthRef.current);
+		resizeRef.current = {
+			pointerId: event.pointerId,
+			startX: event.clientX,
+			startWidth: width,
+			width,
+		};
+		root.classList.add("kestrel-sidebar-resizing");
+		event.currentTarget.setPointerCapture(event.pointerId);
+		event.preventDefault();
+	}
+
+	function resizeSidebar(event: ReactPointerEvent<HTMLDivElement>) {
+		const drag = resizeRef.current;
+		if (!drag || drag.pointerId !== event.pointerId) return;
+		const width = clampKestrelSidebarWidth(
+			drag.startWidth + event.clientX - drag.startX,
+		);
+		drag.width = width;
+		sidebarWidthRef.current = width;
+		writeSidebarWidth(width);
+	}
+
+	function finishResize(event: ReactPointerEvent<HTMLDivElement>) {
+		const drag = resizeRef.current;
+		if (!drag || drag.pointerId !== event.pointerId) return;
+		resizeRef.current = null;
+		if (event.currentTarget.hasPointerCapture(event.pointerId))
+			event.currentTarget.releasePointerCapture(event.pointerId);
+		shell()?.classList.remove("kestrel-sidebar-resizing");
+		commitSidebarWidth(drag.width);
+	}
+
+	function resizeWithKeyboard(event: ReactKeyboardEvent<HTMLDivElement>) {
+		if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+			return;
+		const current = clampKestrelSidebarWidth(sidebarWidthRef.current);
+		const maximum = maxKestrelSidebarWidth();
+		const next = clampKestrelSidebarWidth(
+			event.key === "Home"
+				? KESTREL_SIDEBAR_MIN_WIDTH
+				: event.key === "End"
+					? maximum
+					: current + (event.key === "ArrowRight" ? 16 : -16),
+		);
+		event.preventDefault();
+		commitSidebarWidth(next);
+	}
+
+	useLayoutEffect(() => {
+		const width = clampKestrelSidebarWidth(sidebarWidthRef.current);
+		sidebarWidthRef.current = width;
+		writeSidebarWidth(width);
+		persistSidebarWidth(width);
+		return () => {
+			resizeRef.current = null;
+			shell()?.classList.remove("kestrel-sidebar-resizing");
+		};
+	}, []);
 
 	function cancelPendingProjectExpansion() {
 		if (expansionTimerRef.current !== null) {
@@ -432,6 +557,23 @@ export function KestrelSidebar({
 			data-collapsed={collapsed}
 			data-active-destination={activeDestination}
 		>
+			<div
+				ref={resizeHandleRef}
+				className="kestrel-sidebar-resize-handle"
+				role="separator"
+				aria-label="Resize navigation sidebar"
+				aria-orientation="vertical"
+				aria-valuemin={KESTREL_SIDEBAR_MIN_WIDTH}
+				aria-valuemax={maxKestrelSidebarWidth()}
+				aria-valuenow={Math.round(sidebarWidth)}
+				tabIndex={0}
+				onPointerDown={startResize}
+				onPointerMove={resizeSidebar}
+				onPointerUp={finishResize}
+				onPointerCancel={finishResize}
+				onLostPointerCapture={finishResize}
+				onKeyDown={resizeWithKeyboard}
+			/>
 			<div className="kestrel-sidebar-drag" />
 			<header className="kestrel-sidebar-header">
 				<button
