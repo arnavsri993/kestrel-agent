@@ -1380,8 +1380,16 @@
 }
 
 .setup-onboarding .model-source-picker {
-	gap: 12px;
+	gap: 24px;
 	background: transparent;
+}
+
+.setup-onboarding .model-source-picker > button {
+	border: 1px solid var(--line);
+}
+
+.setup-onboarding .model-source-picker > button.model-source-option-recommended {
+	border-color: var(--ink);
 }
 
 /* Compact composition ------------------------------------------------------ */
