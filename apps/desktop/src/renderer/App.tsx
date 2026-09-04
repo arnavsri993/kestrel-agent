@@ -988,6 +988,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const [modelView, setModelView] = useState<"accounts" | "local" | "open">(
 		"accounts",
 	);
+	const [selectedModelAccess, setSelectedModelAccess] = useState<
+		"accounts" | "local" | "open" | null
+	>(null);
 	const [providerQuery, setProviderQuery] = useState("");
 	const [selectedPaidProviderId, setSelectedPaidProviderId] =
 		useState<(typeof paidProviderCatalog)[number]["id"]>("openai");
@@ -1111,8 +1114,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	}
 
 	function chooseModelAccess(view: "accounts" | "local" | "open") {
-		setModelView(view);
-		go(3);
+		setSelectedModelAccess(view);
 	}
 
 	async function saveCredential(credentialId: BrokeredCredentialSummary["id"]) {
@@ -1551,25 +1553,27 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													? "Set up a local model."
 													: "Set up free provider accounts."}
 									</h1>
-									<p>
-										{step === 2
-											? "Pick one to start — you can change it later."
-												: modelView === "accounts"
-													? "Sign in with the provider, or add a protected API key."
-													: modelView === "local"
-														? recommendedModel
-															? `Kestrel picked ${recommendedModel.title} for this Mac.`
-															: "Checking this Mac's hardware…"
+									{step !== 2 && (
+										<p>
+											{modelView === "accounts"
+												? "Sign in with the provider, or add a protected API key."
+												: modelView === "local"
+													? recommendedModel
+														? `Kestrel picked ${recommendedModel.title} for this Mac.`
+														: "Checking this Mac's hardware…"
 													: "Terms and free limits vary by provider."}
-									</p>
+										</p>
+									)}
 								</header>
 								{step === 2 && (
 									<div
 										className="model-source-picker"
+										role="group"
 										aria-label="Model access choices"
 									>
 										<button
 											type="button"
+											aria-pressed={selectedModelAccess === "accounts"}
 											onClick={() => chooseModelAccess("accounts")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -1589,6 +1593,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										<button
 											type="button"
 											className="model-source-option model-source-option-recommended"
+											aria-pressed={selectedModelAccess === "local"}
 											onClick={() => chooseModelAccess("local")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -1608,6 +1613,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</button>
 										<button
 											type="button"
+											aria-pressed={selectedModelAccess === "open"}
 											onClick={() => chooseModelAccess("open")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -2413,11 +2419,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				</AnimatePresence>
 			</div>
 			<footer className="onboarding-actions">
-				{step === 2 && (
-					<small className="setup-continue-hint">
-						Choose an option above to continue.
-					</small>
-				)}
 				{step === finalSetupStep && modelReady && !verifiedModelReady && (
 					<small className="setup-continue-hint">
 						Verify one model route before opening Kestrel.
@@ -2464,11 +2465,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						className="button primary"
 						disabled={
 							(step === 1 && !warningAccepted) ||
-							step === 2 ||
+							(step === 2 && !selectedModelAccess) ||
 							(step === finalSetupStep && !onboardingCompleteAllowed)
 						}
 						onClick={() => {
-							if (step === finalSetupStep) {
+							if (step === 2) {
+								if (!selectedModelAccess) return;
+								setModelView(selectedModelAccess);
+								go(3);
+							} else if (step === finalSetupStep) {
 								if (verifiedModelReady) {
 									localStorage.setItem("kestrel:first-task", "yes");
 								}

@@ -188,6 +188,7 @@ async function captureSetupFlow(page: Page, viewport: ViewportKey) {
 	await capture(page, viewport, "setup", "setup-03-choose-model");
 
 	await page.getByRole("button", { name: /Use an account/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await capture(page, viewport, "setup", "setup-04-account", {
 		state: "model-accounts",
@@ -195,6 +196,7 @@ async function captureSetupFlow(page: Page, viewport: ViewportKey) {
 
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page
 		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();
@@ -204,6 +206,7 @@ async function captureSetupFlow(page: Page, viewport: ViewportKey) {
 
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
 	await capture(page, viewport, "setup", "setup-04-local-model", {
 		state: "model-local",
