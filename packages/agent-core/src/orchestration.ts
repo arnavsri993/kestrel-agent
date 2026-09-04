@@ -793,6 +793,7 @@ export class TaskOrchestrator {
 						);
 			session = this.runtime.createSession({
 				title: input.title,
+				kind: "subagent",
 				parentSessionId: parent.id,
 				...(workspaceRoot ? { workspaceRoot } : {}),
 				...(parent.privacyMode ? { privacyMode: parent.privacyMode } : {}),

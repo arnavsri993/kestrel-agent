@@ -281,6 +281,7 @@ export function AgentUniverseContextSurface({
 	const title = isRoot ? system.name : inspected.name;
 	const status = isRoot ? system.status : inspected.status;
 	const openSessionId = isRoot ? system.rootNodeId : inspected.id;
+	const conversationLabel = isRoot ? "Talk to" : "Chat with";
 	// Keep the inspector in the same predictable right rail as the coordinator
 	// surface on wide maps. An inspector that floats beside a worker can cover
 	// the very parent/child relationship the person selected it to understand.
@@ -503,7 +504,6 @@ export function AgentUniverseContextSurface({
 	}, [history.length, historyError, lastMessage, lastResponse, messageState, streamText]);
 
 	const sendMessage = useCallback(async () => {
-		if (!isRoot) return;
 		const message = input.trim();
 		if (!message || messageState === "sending") return;
 		const streamId = crypto.randomUUID();
@@ -546,7 +546,7 @@ export function AgentUniverseContextSurface({
 		} finally {
 			finishAgentUniverseMessage(messageLifecycleRef.current, attempt);
 		}
-	}, [input, isRoot, loadHistory, messageState, openSessionId]);
+	}, [input, loadHistory, messageState, openSessionId]);
 
 	const renderedHistory = conversationMessages(history);
 	const hasOptimisticMessage = Boolean(
@@ -573,20 +573,23 @@ export function AgentUniverseContextSurface({
 			} as CSSProperties}
 			data-system-color={systemColor.id}
 			data-placement={surfacePosition.placement}
-			aria-label={isRoot ? `Talk to the main circle, ${title}` : `Inspect ${title}`}
+			aria-label={`${conversationLabel} ${title}`}
 			onPointerDown={(event) => event.stopPropagation()}
 			onWheel={(event) => event.stopPropagation()}
 		>
 			<header className="agent-universe-context-header">
 				<div className="agent-universe-context-title">
 					<span className="agent-universe-context-kicker">
-						{isRoot ? "Main circle · coordinator" : "Inspecting worker"}
+						{isRoot ? "Main circle · coordinator" : "Delegated agent · direct chat"}
 					</span>
 					<h2>{title}</h2>
 					<p className="agent-universe-context-subtitle">
 						{isRoot
 							? "Send the mission here. It can split independent work across real child agents, then reconcile the results for you."
-							: "A delegated session within this system. Inspect its state and provenance here."}
+							: [
+									"Send a follow-up directly to this delegated agent.",
+									"Its parent system remains responsible for the overall mission.",
+								].join(" ")}
 					</p>
 				</div>
 				<button
@@ -897,91 +900,106 @@ export function AgentUniverseContextSurface({
 				</div>
 			</details>
 
-			{isRoot ? (
-				<section className="agent-universe-context-conversation">
-					<div className="agent-universe-context-section-heading">
-						<h3>Conversation</h3>
-						<span>With {title}</span>
-					</div>
-					<div
-						ref={messageLogRef}
-						className="agent-universe-context-message-log"
-						aria-live="polite"
+			<section className="agent-universe-context-conversation">
+				<div className="agent-universe-context-section-heading">
+					<h3>Conversation</h3>
+					<span>
+						{conversationLabel} {title}
+					</span>
+				</div>
+				<div
+					ref={messageLogRef}
+					className="agent-universe-context-message-log"
+					aria-live="polite"
+				>
+					{historyLoading && renderedHistory.length === 0 ? (
+						<p className="agent-universe-context-empty">Loading the conversation…</p>
+					) : null}
+					{historyError ? (
+						<p className="agent-universe-context-error" role="alert">
+							{historyError}
+						</p>
+					) : null}
+					{renderedHistory.map((message) => (
+						<div
+							className={`agent-universe-context-message ${message.role}`}
+							key={message.id}
+						>
+							<span>{message.role === "user" ? "You" : title}</span>
+							<p>{message.content}</p>
+						</div>
+					))}
+					{hasOptimisticMessage ? (
+						<div className="agent-universe-context-message user is-optimistic">
+							<span>You</span>
+							<p>{lastMessage}</p>
+						</div>
+					) : null}
+					{messageState === "sending" ? (
+						<div className="agent-universe-context-message assistant is-optimistic">
+							<span>{title}</span>
+							<p>{streamText || "Coordinating the next step…"}</p>
+						</div>
+					) : hasOptimisticResponse ? (
+						<div className="agent-universe-context-message assistant is-optimistic">
+							<span>{title}</span>
+							<p>{lastResponse}</p>
+						</div>
+					) : null}
+					{!historyLoading &&
+						!historyError &&
+						renderedHistory.length === 0 &&
+						!lastMessage ? (
+						<p className="agent-universe-context-empty">
+							{isRoot
+								? "Message the main circle. It will decide what to keep, delegate, and bring back."
+								: "Send a follow-up directly to this delegated agent. The message stays on its runtime session."}
+						</p>
+					) : null}
+				</div>
+				{messageError ? (
+					<p className="agent-universe-context-error" role="alert">
+						{messageError}
+					</p>
+				) : null}
+				<form
+					className="agent-universe-context-composer"
+					onSubmit={(event) => {
+						event.preventDefault();
+						void sendMessage();
+					}}
+				>
+					<label
+						className="sr-only"
+						htmlFor={`agent-context-message-${openSessionId}`}
 					>
-						{historyLoading && renderedHistory.length === 0 ? (
-							<p className="agent-universe-context-empty">Loading the conversation…</p>
-						) : null}
-						{historyError ? <p className="agent-universe-context-error" role="alert">{historyError}</p> : null}
-						{renderedHistory.map((message) => (
-							<div className={`agent-universe-context-message ${message.role}`} key={message.id}>
-								<span>{message.role === "user" ? "You" : title}</span>
-								<p>{message.content}</p>
-							</div>
-						))}
-						{hasOptimisticMessage ? (
-							<div className="agent-universe-context-message user is-optimistic">
-								<span>You</span>
-								<p>{lastMessage}</p>
-							</div>
-						) : null}
-						{messageState === "sending" ? (
-							<div className="agent-universe-context-message assistant is-optimistic">
-								<span>{title}</span>
-								<p>{streamText || "Coordinating the next step…"}</p>
-							</div>
-						) : hasOptimisticResponse ? (
-							<div className="agent-universe-context-message assistant is-optimistic">
-								<span>{title}</span>
-								<p>{lastResponse}</p>
-							</div>
-						) : null}
-						{!historyLoading &&
-							!historyError &&
-							renderedHistory.length === 0 &&
-							!lastMessage ? (
-							<p className="agent-universe-context-empty">
-								Message the main circle. It will decide what to keep,
-								delegate, and bring back.
-							</p>
-						) : null}
-					</div>
-					{messageError ? <p className="agent-universe-context-error" role="alert">{messageError}</p> : null}
-					<form
-						className="agent-universe-context-composer"
-						onSubmit={(event) => {
+						Message {title}
+					</label>
+					<textarea
+						ref={inputRef}
+						id={`agent-context-message-${openSessionId}`}
+						rows={1}
+						value={input}
+						onChange={(event) => setInput(event.target.value)}
+						onKeyDown={(event) => {
+							if (event.key !== "Enter" || event.shiftKey) return;
 							event.preventDefault();
 							void sendMessage();
 						}}
+						placeholder={`Message ${title}…`}
+						disabled={messageState === "sending"}
+					/>
+					<button
+						type="submit"
+						className="agent-universe-context-send"
+						aria-label={`Send message to ${title}`}
+						title="Send message"
+						disabled={!input.trim() || messageState === "sending"}
 					>
-						<label className="sr-only" htmlFor={`agent-context-message-${openSessionId}`}>
-							Message {title}
-						</label>
-						<textarea
-							ref={inputRef}
-							id={`agent-context-message-${openSessionId}`}
-							rows={1}
-							value={input}
-							onChange={(event) => setInput(event.target.value)}
-							onKeyDown={(event) => {
-								if (event.key !== "Enter" || event.shiftKey) return;
-								event.preventDefault();
-								void sendMessage();
-							}}
-							placeholder={`Message ${title}…`}
-							disabled={messageState === "sending"}
-						/>
-						<button
-							type="submit"
-							className="agent-universe-context-send"
-							aria-label={`Send message to ${title}`}
-							title="Send message"
-							disabled={!input.trim() || messageState === "sending"}
-						>
-							<Icon name={messageState === "sending" ? "loader" : "arrow"} />
-						</button>
-					</form>
-				</section>
-			) : null}
+						<Icon name={messageState === "sending" ? "loader" : "arrow"} />
+					</button>
+				</form>
+			</section>
 
 			<footer className="agent-universe-context-actions">
 				<Button variant="quiet" size="compact" onClick={() => onOpenSession(openSessionId)}>

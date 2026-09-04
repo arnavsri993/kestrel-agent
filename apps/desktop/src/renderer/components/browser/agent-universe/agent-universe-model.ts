@@ -1,5 +1,6 @@
 import type {
 	AgentRun,
+	AgentPlanetAssetId,
 	RuntimeEvent,
 	RuntimeSession,
 	RuntimeSessionStatus,
@@ -21,10 +22,12 @@ export interface AgentUniverseActivity {
 export interface AgentNodeProjection {
 	id: string;
 	systemId: string;
+	kind: "agent" | "subagent";
 	parentId?: string;
 	name: string;
 	status: RuntimeSessionStatus;
 	depth: number;
+	planetAssetId?: AgentPlanetAssetId;
 	workspaceRoot?: string;
 	workspaceName?: string;
 	allowedTools: string[];
@@ -57,7 +60,8 @@ export interface AgentUniverseSnapshot {
 	/**
 	 * The overview has eight planet slots so the spatial metaphor stays
 	 * readable. These ids are a view concern only: `systems`, `nodes`, and
-	 * `sessionCount` still contain every privacy-eligible runtime session.
+	 * `sessionCount` contain every explicit agent and its real subagent
+	 * descendants, while ordinary conversations remain outside this map.
 	 */
 	overviewSystemIds: string[];
 	overflowSystemIds: string[];
@@ -128,40 +132,6 @@ function uniqueRenderableSessions(sessions: RuntimeSession[]): RuntimeSession[] 
 	return [...byId.values()];
 }
 
-function parentSessionIdFor(
-	session: RuntimeSession,
-	byId: ReadonlyMap<string, RuntimeSession>,
-): string | undefined {
-	if (!session.parentSessionId || session.parentSessionId === session.id)
-		return undefined;
-	return byId.has(session.parentSessionId) ? session.parentSessionId : undefined;
-}
-
-/**
- * Follow a session's recorded ownership chain without trusting it to be
- * complete or acyclic. A deterministic member of a corrupt cycle becomes the
- * system root; the visual projection later breaks only that corrupt back-edge.
- */
-function rootIdFor(
-	session: RuntimeSession,
-	byId: ReadonlyMap<string, RuntimeSession>,
-): string {
-	const path: string[] = [];
-	const seen = new Map<string, number>();
-	let current: RuntimeSession | undefined = session;
-	while (current) {
-		const seenAt = seen.get(current.id);
-		if (seenAt !== undefined) {
-			return [...path.slice(seenAt)].sort((left, right) => left.localeCompare(right))[0]!;
-		}
-		seen.set(current.id, path.length);
-		path.push(current.id);
-		const parentId = parentSessionIdFor(current, byId);
-		current = parentId ? byId.get(parentId) : undefined;
-	}
-	return path.at(-1) ?? session.id;
-}
-
 function latestRunFor(
 	sessionId: string,
 	runsBySession?: ReadonlyMap<string, readonly AgentRun[]>,
@@ -175,6 +145,43 @@ function latestRunFor(
 	)[0];
 }
 
+function parentSessionIdFor(
+	session: RuntimeSession,
+	byId: ReadonlyMap<string, RuntimeSession>,
+): string | undefined {
+	if (!session.parentSessionId || session.parentSessionId === session.id)
+		return undefined;
+	return byId.has(session.parentSessionId) ? session.parentSessionId : undefined;
+}
+
+/**
+ * Build only the descendants that the runtime explicitly marked as
+ * subagents. A title, a parent pointer, or a top-level chat is never enough to
+ * turn a conversation into a planet or moon. The visited set keeps malformed
+ * child cycles bounded without inventing a second system root.
+ */
+function agentSystemSessions(
+	root: RuntimeSession,
+	byId: ReadonlyMap<string, RuntimeSession>,
+	childrenByParent: ReadonlyMap<string, readonly string[]>,
+): RuntimeSession[] {
+	const result: RuntimeSession[] = [root];
+	const visited = new Set<string>([root.id]);
+	const queue = [root.id];
+	while (queue.length > 0) {
+		const parentId = queue.shift()!;
+		for (const childId of childrenByParent.get(parentId) ?? []) {
+			if (visited.has(childId)) continue;
+			const child = byId.get(childId);
+			if (!child || child.kind !== "subagent") continue;
+			visited.add(child.id);
+			result.push(child);
+			queue.push(child.id);
+		}
+	}
+	return result;
+}
+
 function depthMapForSystem(
 	rootId: string,
 	sessions: RuntimeSession[],
@@ -182,18 +189,18 @@ function depthMapForSystem(
 ): Map<string, number> {
 	const children = new Map<string, string[]>();
 	for (const session of sessions) {
+		if (session.id === rootId || session.kind !== "subagent") continue;
 		const parentId = parentSessionIdFor(session, byId);
-		// The selected cycle root is the only corrupt edge we intentionally break.
-		if (!parentId || session.id === rootId) continue;
-		const siblings = children.get(parentId) ?? [];
-		siblings.push(session.id);
-		children.set(parentId, siblings);
+		if (!parentId) continue;
+		const siblingIds = children.get(parentId) ?? [];
+		siblingIds.push(session.id);
+		children.set(parentId, siblingIds);
 	}
 	for (const siblingIds of children.values()) siblingIds.sort();
 
 	const depths = new Map<string, number>([[rootId, 0]]);
 	const queue = [rootId];
-	while (queue.length) {
+	while (queue.length > 0) {
 		const parentId = queue.shift()!;
 		const parentDepth = depths.get(parentId) ?? 0;
 		for (const childId of children.get(parentId) ?? []) {
@@ -201,29 +208,6 @@ function depthMapForSystem(
 			depths.set(childId, Math.min(8, parentDepth + 1));
 			queue.push(childId);
 		}
-	}
-
-	// A malformed graph can still contain a disconnected component after the
-	// corrupt edge is broken. Keep it inspectable instead of dropping it.
-	for (const session of [...sessions].sort(stableSessionCompare)) {
-		if (depths.has(session.id)) continue;
-		let depth = 1;
-		let current = session;
-		const visited = new Set<string>();
-		while (current.id !== rootId && !visited.has(current.id)) {
-			visited.add(current.id);
-			const parentId = parentSessionIdFor(current, byId);
-			if (!parentId) break;
-			if (depths.has(parentId)) {
-				depth += depths.get(parentId)!;
-				break;
-			}
-			const parent = byId.get(parentId);
-			if (!parent) break;
-			current = parent;
-			depth += 1;
-		}
-		depths.set(session.id, Math.min(8, depth));
 	}
 	return depths;
 }
@@ -239,31 +223,39 @@ export function projectAgentUniverse(
 ): AgentUniverseSnapshot {
 	const visible = uniqueRenderableSessions(sessions);
 	const byId = new Map(visible.map((session) => [session.id, session]));
-	const rootIds = new Set(visible.map((session) => rootIdFor(session, byId)));
+	const childrenByParent = new Map<string, string[]>();
+	for (const session of visible) {
+		if (session.kind !== "subagent" || !session.parentSessionId) continue;
+		const childIds = childrenByParent.get(session.parentSessionId) ?? [];
+		childIds.push(session.id);
+		childrenByParent.set(session.parentSessionId, childIds);
+	}
+	for (const childIds of childrenByParent.values()) childIds.sort();
+	const roots = visible.filter((session) => session.kind === "agent");
 	const systems: AgentSystemProjection[] = [];
 
-	for (const rootId of [...rootIds].sort((left, right) => left.localeCompare(right))) {
-		const root = byId.get(rootId);
-		if (!root) continue;
-		const systemSessions = visible.filter(
-			(session) => rootIdFor(session, byId) === rootId,
-		);
-		const depths = depthMapForSystem(rootId, systemSessions, byId);
+	for (const root of [...roots].sort((left, right) => left.id.localeCompare(right.id))) {
+		const systemSessions = agentSystemSessions(root, byId, childrenByParent);
+		const depths = depthMapForSystem(root.id, systemSessions, byId);
 		const nodes = systemSessions
 			.map((session): AgentNodeProjection => {
 				const parentId =
-					session.id === rootId
+					session.id === root.id
 						? undefined
 						: parentSessionIdFor(session, byId);
 				const workspaceName = agentWorkspaceName(session.workspaceRoot);
 				const latestRun = latestRunFor(session.id, options.runsBySession);
 				return {
 					id: session.id,
-					systemId: rootId,
+					systemId: root.id,
+					kind: session.kind === "agent" ? "agent" : "subagent",
 					...(parentId ? { parentId } : {}),
 					name: sessionTitleForDisplay(session.title),
 					status: session.status,
 					depth: depths.get(session.id) ?? 1,
+					...(session.kind === "agent" && session.planetAssetId
+						? { planetAssetId: session.planetAssetId }
+						: {}),
 					...(session.workspaceRoot ? { workspaceRoot: session.workspaceRoot } : {}),
 					...(workspaceName ? { workspaceName } : {}),
 					allowedTools: [...session.allowedTools],
@@ -327,7 +319,7 @@ export function projectAgentUniverse(
 		overflowSystemIds,
 		nodes: systems.flatMap((system) => system.nodes),
 		edges: systems.flatMap((system) => system.edges),
-		sessionCount: visible.length,
+		sessionCount: systems.reduce((count, system) => count + system.nodes.length, 0),
 	};
 }
 

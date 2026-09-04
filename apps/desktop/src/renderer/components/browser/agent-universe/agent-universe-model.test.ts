@@ -9,7 +9,8 @@ import {
 
 const baseSession: RuntimeSession = {
 	id: "session-root",
-	title: "Main session",
+	title: "Main circle",
+	kind: "agent",
 	workspaceRoot: "/Users/person/Workbench",
 	allowedTools: ["workspace.read"],
 	status: "active",
@@ -28,6 +29,7 @@ function session(
 		...baseSession,
 		id,
 		title,
+		kind: parentSessionId ? "subagent" : "conversation",
 		status,
 		...(parentSessionId ? { parentSessionId } : {}),
 		updatedAt: `2026-09-01T10:${String(id.length).padStart(2, "0")}:00.000Z`,
@@ -40,16 +42,33 @@ describe("agent universe projection", () => {
 		expect(result).toMatchObject({ systems: [], nodes: [], edges: [], sessionCount: 0 });
 	});
 
-	it("uses each top-level runtime session as a truthful system root", () => {
+	it("requires an explicit persistent agent and excludes ordinary conversations", () => {
 		const result = projectAgentUniverse([
-			{ ...baseSession, title: "Main session" },
+			{ ...baseSession, title: "Main session", kind: "conversation" },
 			session("session-second", "Second system"),
+			{ ...baseSession, id: "explicit-agent", title: "Research lead", kind: "agent" },
+			{
+				...baseSession,
+				id: "explicit-agent-child",
+				title: "Delegated work",
+				kind: "subagent",
+				parentSessionId: "explicit-agent",
+			},
+			{
+				...baseSession,
+				id: "ordinary-child",
+				title: "Looks delegated but is ordinary",
+				kind: "conversation",
+				parentSessionId: "explicit-agent",
+			},
 		]);
-		expect(result.systems.map((system) => system.name).sort()).toEqual([
-			"General",
-			"Second system",
+		expect(result.systems.map((system) => system.name)).toEqual(["Research lead"]);
+		expect(result.nodes.map((node) => node.id)).toEqual([
+			"explicit-agent",
+			"explicit-agent-child",
 		]);
-		expect(result.systems.every((system) => system.rootNodeId === system.nodes[0]?.id || system.nodes.some((node) => node.id === system.rootNodeId))).toBe(true);
+		expect(result.nodes.find((node) => node.id === "explicit-agent")?.kind).toBe("agent");
+		expect(result.nodes.find((node) => node.id === "explicit-agent-child")?.kind).toBe("subagent");
 	});
 
 	it("keeps every real system while reserving eight planet slots for the overview", () => {
@@ -57,6 +76,7 @@ describe("agent universe projection", () => {
 			Array.from({ length: 10 }, (_, index) => ({
 				...baseSession,
 				id: `planet-system-${index}`,
+				kind: "agent" as const,
 				title: `Planet system ${index}`,
 				updatedAt: `2026-09-01T10:${String(index).padStart(2, "0")}:00.000Z`,
 			})),
@@ -94,18 +114,20 @@ describe("agent universe projection", () => {
 		const result = projectAgentUniverse([
 			baseSession,
 			session("session-orphan", "Orphan", "missing-parent"),
+			{ ...baseSession, id: "second-agent", title: "Second agent", kind: "agent" },
 		]);
 		expect(result.systems.map((system) => system.rootNodeId).sort()).toEqual([
-			"session-orphan",
+			"second-agent",
 			"session-root",
 		]);
+		expect(result.nodes.map((node) => node.id)).not.toContain("session-orphan");
 	});
 
-	it("breaks a corrupt cycle deterministically while retaining every session", () => {
+	it("keeps an explicit root stable when child lineage is malformed", () => {
 		const result = projectAgentUniverse([
-			session("cycle-a", "Cycle A", "cycle-b"),
-			session("cycle-b", "Cycle B", "cycle-a"),
-			session("cycle-child", "Child", "cycle-b"),
+			{ ...baseSession, id: "cycle-a", title: "Cycle A", parentSessionId: "cycle-b" },
+			{ ...baseSession, id: "cycle-b", title: "Cycle B", kind: "subagent", parentSessionId: "cycle-a" },
+			{ ...baseSession, id: "cycle-child", title: "Child", kind: "subagent", parentSessionId: "cycle-b" },
 		]);
 		expect(result.systems).toHaveLength(1);
 		expect(result.sessionCount).toBe(3);
@@ -119,9 +141,15 @@ describe("agent universe projection", () => {
 	it("filters private, incognito, and forgotten sessions from the renderer", () => {
 		const result = projectAgentUniverse([
 			baseSession,
-			{ ...session("private", "Private"), privacyMode: "private" },
-			{ ...session("incognito", "Incognito"), privacyMode: "incognito" },
-			{ ...session("forgotten", "Forgotten"), forgottenAt: "2026-09-01T11:00:00.000Z" },
+			{ ...baseSession, id: "private", title: "Private", kind: "agent", privacyMode: "private" },
+			{ ...baseSession, id: "incognito", title: "Incognito", kind: "agent", privacyMode: "incognito" },
+			{
+				...baseSession,
+				id: "forgotten",
+				title: "Forgotten",
+				kind: "agent",
+				forgottenAt: "2026-09-01T11:00:00.000Z",
+			},
 		]);
 		expect(result.sessionCount).toBe(1);
 		expect(result.nodes.map((node) => node.id)).toEqual(["session-root"]);
@@ -141,6 +169,15 @@ describe("agent universe projection", () => {
 		]);
 		expect(statusUpdate.nodes.map((node) => node.id)).toEqual(first.nodes.map((node) => node.id));
 		expect(stableAgentAngle("session-child")).toBe(stableAgentAngle("session-child"));
+	});
+
+	it("uses a configured real planet only for an explicit agent", () => {
+		const result = projectAgentUniverse([
+			{ ...baseSession, planetAssetId: "saturn" },
+			session("session-child", "Child", "session-root"),
+		]);
+		expect(result.nodes.find((node) => node.id === baseSession.id)?.planetAssetId).toBe("saturn");
+		expect(result.nodes.find((node) => node.id === "session-child")).not.toHaveProperty("planetAssetId");
 	});
 
 	it("uses only supplied run routing details", () => {

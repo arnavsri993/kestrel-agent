@@ -667,6 +667,32 @@ export const RuntimeSessionStatusSchema = z.enum([
 ]);
 export type RuntimeSessionStatus = z.infer<typeof RuntimeSessionStatusSchema>;
 
+/**
+ * Runtime sessions are deliberately typed instead of inferred from their
+ * titles. Only an explicitly created agent owns a planet in Agent Universe;
+ * delegated descendants are the only sessions that can become moons.
+ */
+export const RuntimeSessionKindSchema = z.enum([
+	"conversation",
+	"agent",
+	"subagent",
+]);
+export type RuntimeSessionKind = z.infer<typeof RuntimeSessionKindSchema>;
+
+/** Real, bundled NASA/JPL planet assets available to persistent agents. */
+export const AgentPlanetAssetIdSchema = z.enum([
+	"earth",
+	"mars",
+	"jupiter",
+	"saturn",
+	"venus",
+	"mercury",
+	"uranus",
+	"neptune",
+	"pluto",
+]);
+export type AgentPlanetAssetId = z.infer<typeof AgentPlanetAssetIdSchema>;
+
 export const RuntimeCheckpointSchema = z.object({
 	id: z.string().min(1),
 	sequence: z.number().int().positive(),
@@ -678,7 +704,11 @@ export type RuntimeCheckpoint = z.infer<typeof RuntimeCheckpointSchema>;
 export const RuntimeSessionSchema = z.object({
 	id: z.string().min(1),
 	title: z.string().min(1).max(200),
+	/** Missing on legacy records; new records always persist this explicitly. */
+	kind: RuntimeSessionKindSchema.optional(),
 	parentSessionId: z.string().min(1).optional(),
+	/** Optional persisted choice for an explicit agent's real planet asset. */
+	planetAssetId: AgentPlanetAssetIdSchema.optional(),
 	/** Stable reference to the project that owns this conversation. */
 	projectId: z.string().min(1).optional(),
 	workspaceRoot: z.string().min(1).optional(),
@@ -2234,9 +2264,16 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("runtime-create-session"),
 		title: z.string().min(1).max(200),
+		kind: z.enum(["conversation", "agent"]).optional(),
+		planetAssetId: AgentPlanetAssetIdSchema.optional(),
 		projectId: z.string().min(1).optional(),
 		workspaceRoot: z.string().min(1).optional(),
 		privacyMode: z.enum(["standard", "private", "incognito"]).optional(),
+	}),
+	z.object({
+		type: z.literal("runtime-update-agent-planet"),
+		sessionId: z.string().min(1),
+		planetAssetId: AgentPlanetAssetIdSchema.nullable(),
 	}),
 	z.object({
 		type: z.literal("runtime-update-session-project"),

@@ -8,6 +8,8 @@ const snapshot = projectAgentUniverse([
 	{
 		id: "scene-root",
 		title: "Main circle",
+		kind: "agent",
+		planetAssetId: "saturn",
 		workspaceRoot: "/Users/person/Workbench",
 		allowedTools: [],
 		status: "active",
@@ -18,6 +20,7 @@ const snapshot = projectAgentUniverse([
 	{
 		id: "scene-worker",
 		title: "Research",
+		kind: "subagent",
 		parentSessionId: "scene-root",
 		workspaceRoot: "/Users/person/Workbench",
 		allowedTools: [],
@@ -29,6 +32,7 @@ const snapshot = projectAgentUniverse([
 	{
 		id: "scene-worker-2",
 		title: "Review",
+		kind: "subagent",
 		parentSessionId: "scene-root",
 		workspaceRoot: "/Users/person/Workbench",
 		allowedTools: [],
@@ -42,6 +46,7 @@ const snapshot = projectAgentUniverse([
 const overflowRoots = Array.from({ length: 10 }, (_, index) => ({
 		id: `overflow-system-${index}`,
 		title: `Overflow system ${index}`,
+		kind: "agent" as const,
 		allowedTools: [],
 		status: "active" as const,
 		checkpoints: [],
@@ -54,6 +59,7 @@ const overflowSnapshot = projectAgentUniverse([
 		...overflowRoots[0]!,
 		id: "overflow-system-0-child",
 		title: "Delegated moon",
+		kind: "subagent" as const,
 		parentSessionId: "overflow-system-0",
 		updatedAt: "2026-09-01T11:00:00.000Z",
 	},
@@ -105,6 +111,29 @@ function overflowMarkup(): string {
 	);
 }
 
+function workerMarkup(): string {
+	return renderToStaticMarkup(
+		createElement(AgentUniverseScene, {
+			snapshot,
+			focusedSystemId: "scene-root",
+			selectedNodeId: "scene-worker",
+			query: "",
+			activities: [],
+			reducedMotion: true,
+			systemColors: {},
+			contextRunsLoading: false,
+			contextGroupMemoryLoading: false,
+			onSystemColorChange: () => undefined,
+			onNodeActivate: () => undefined,
+			onBackgroundClick: () => undefined,
+			onCloseContext: () => undefined,
+			onOpenSession: () => undefined,
+			onRefreshAgentMemory: () => undefined,
+			onOverflowSystemActivate: () => undefined,
+		}),
+	);
+}
+
 describe("agent universe circle surface", () => {
 	it("renders node bodies as true SVG circles", () => {
 		const rendered = markup();
@@ -129,5 +158,22 @@ describe("agent universe circle surface", () => {
 		expect(rendered).toContain("agent-universe-moon-orbit");
 		expect(rendered).toContain("Open beyond the 8 planet slots");
 		expect(rendered.match(/data-system-id=/g)?.length ?? 0).toBe(8);
+	});
+
+	it("uses a configured planet for roots and real moon assets for delegates", () => {
+		const rendered = markup();
+		expect(rendered).toContain('data-asset-id="saturn"');
+		expect(rendered).toContain('data-body-role="planet"');
+		expect(rendered).toContain('data-body-role="moon"');
+		expect(rendered.match(/data-body-role="planet"/g)?.length ?? 0).toBe(1);
+		expect(rendered.match(/data-body-role="moon"/g)?.length ?? 0).toBe(2);
+	});
+
+	it("opens a real conversation surface for a delegated moon", () => {
+		const rendered = workerMarkup();
+		expect(rendered).toContain('aria-label="Chat with Research"');
+		expect(rendered).toContain("agent-universe-context-conversation");
+		expect(rendered).toContain("Send a follow-up directly to this delegated agent");
+		expect(rendered).toContain('aria-label="Send message to Research"');
 	});
 });

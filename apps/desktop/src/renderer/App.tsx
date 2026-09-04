@@ -1,6 +1,7 @@
 import type {
 	ActionReceipt,
 	AgentRun,
+	AgentPlanetAssetId,
 	AgentState,
 	ApprovalRule,
 	ArtifactRecordContract,
@@ -96,6 +97,10 @@ import { ProjectSettingsDialog } from "./components/browser/ProjectSettingsDialo
 import { ModelSelector } from "./components/browser/ModelSelector";
 import type { ModelSelectorChoice } from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
+import {
+	AGENT_UNIVERSE_PLANET_ASSETS,
+	agentUniverseBodyAssetFor,
+} from "./components/browser/agent-universe/agent-universe-assets";
 import {
 	appendAgentUniverseActivity,
 	type AgentUniverseActivity,
@@ -8570,6 +8575,10 @@ function AgentWorkspaceSettings() {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
 	const [sessions, setSessions] = useState<RuntimeSession[]>([]);
 	const [busy, setBusy] = useState(false);
+	const [planetBusySessionId, setPlanetBusySessionId] = useState<string | null>(
+		null,
+	);
+	const [planetError, setPlanetError] = useState("");
 	const [error, setError] = useState("");
 
 	const load = useCallback(async () => {
@@ -8647,6 +8656,45 @@ function AgentWorkspaceSettings() {
 		}
 	}
 
+	async function updateAgentPlanet(sessionId: string, value: string) {
+		const asset = value
+			? AGENT_UNIVERSE_PLANET_ASSETS.find((candidate) => candidate.id === value)
+			: undefined;
+		if (value && !asset) {
+			setPlanetError("That planet is not available in the local NASA asset set.");
+			return;
+		}
+		setPlanetBusySessionId(sessionId);
+		setPlanetError("");
+		try {
+			const response = (await window.kestrel.request({
+				type: "runtime-update-agent-planet",
+				sessionId,
+				planetAssetId: asset ? (asset.id as AgentPlanetAssetId) : null,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.session)
+				throw new Error("The updated agent session was not returned.");
+			setSessions((current) =>
+				current.map((session) =>
+					session.id === response.session!.id ? response.session! : session,
+				),
+			);
+		} catch (cause) {
+			setPlanetError(
+				cause instanceof Error
+					? cause.message
+					: "The agent planet could not be updated.",
+			);
+		} finally {
+			setPlanetBusySessionId(null);
+		}
+	}
+
+	const persistentAgents = sessions.filter(
+		(session) => session.kind === "agent" && !session.forgottenAt,
+	);
+
 	return (
 		<section
 			className="settings-panel"
@@ -8700,6 +8748,69 @@ function AgentWorkspaceSettings() {
 					>
 						{busy ? "Updating…" : "Add folder"}
 					</button>
+				</article>
+				<article className="setting-row agent-planet-settings" id="setting-agent-planets">
+					<div>
+						<strong>Persistent agent planets</strong>
+						<p>
+							Choose the real NASA/JPL planet used for each persistent agent. The
+							automatic option is still a bundled planet, selected deterministically;
+							moons are reserved for delegated subagents.
+						</p>
+						{persistentAgents.length === 0 ? (
+							<small>
+								No persistent agents yet. Create one from Agent Universe to choose
+								its planet.
+							</small>
+						) : (
+							<ul className="workspace-grants agent-planet-settings-list">
+								{persistentAgents.map((session) => {
+									const asset = agentUniverseBodyAssetFor(
+										session.id,
+										true,
+										session.planetAssetId,
+									);
+									const updating = planetBusySessionId === session.id;
+									return (
+										<li key={session.id}>
+											<span className="agent-planet-setting-identity">
+												<img src={asset.url} alt="" aria-hidden="true" />
+												<span>
+													<strong>{session.title}</strong>
+													<small>
+														{asset.label} · NASA/JPL-Caltech
+														{session.planetAssetId ? "" : " · automatic"}
+													</small>
+												</span>
+											</span>
+											<label>
+												<span className="sr-only">Planet for {session.title}</span>
+												<select
+													value={session.planetAssetId ?? ""}
+													disabled={Boolean(planetBusySessionId)}
+													onChange={(event) =>
+														void updateAgentPlanet(session.id, event.target.value)
+													}
+												>
+													<option value="">Automatic planet</option>
+													{AGENT_UNIVERSE_PLANET_ASSETS.map((candidate) => (
+														<option key={candidate.id} value={candidate.id}>
+															{candidate.label}
+														</option>
+													))}
+												</select>
+												{updating ? <small>Saving…</small> : null}
+											</label>
+										</li>
+									);
+								})}
+							</ul>
+						)}
+						{planetError ? <small role="alert">{planetError}</small> : null}
+					</div>
+					<span className="status">
+						{persistentAgents.length} agent{persistentAgents.length === 1 ? "" : "s"}
+					</span>
 				</article>
 				<article className="setting-row" id="setting-agent-sessions">
 					<div>
@@ -10227,6 +10338,7 @@ export function App() {
 			const response = (await window.kestrel.request({
 				type: "runtime-create-session",
 				title: normalizedTitle,
+				kind: "agent",
 				...(selectedProject ? { projectId: selectedProject.id } : {}),
 			})) as CoreResponse;
 			if (!response.ok || !response.session)
@@ -10956,6 +11068,7 @@ export function App() {
 					onOpenSession={openSidebarSession}
 					onOpenApprovals={() => navigate("approvals")}
 					onOpenWork={() => navigate("work")}
+					onOpenSettings={() => openSettings("agent-workspace")}
 					onToggleAgentSidebar={toggleAgentSidebar}
 					onRetrySessions={() => void refreshRuntimeSessions().catch(() => undefined)}
 					onBack={() => void openBrowserWorkspace()}

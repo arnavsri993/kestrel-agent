@@ -38,6 +38,7 @@ const LABEL_CLEARANCE = 22;
 const WORKER_GAP = 16;
 const MOON_ORBIT_GAP = 24;
 const MAX_MOONS_PER_ORBIT = 12;
+const ORGANIC_GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
 function safeDimension(value: number): number {
 	return Number.isFinite(value) && value > 0 ? value : 1;
@@ -228,20 +229,37 @@ export function layoutAgentSystem(
 				`${system.id}:${parentId}:moon-orbit:${band}`,
 			);
 			for (const [index, node] of bandChildren.entries()) {
-				const angle =
-					phase + (index / Math.max(1, bandChildren.length)) * Math.PI * 2;
 				const packingRadius = nodePackingRadiusForDepth(
 					node,
 					childCounts.get(node.id) ?? 0,
 				);
-					placements.set(node.id, {
+				// A golden-angle scaffold with a small per-node jitter keeps the
+				// hierarchy legible without making every moon look stamped onto an
+				// even ring. The finite collision pass below resolves the few
+				// intentional near misses in true two-dimensional space.
+				const angleJitter =
+					((stableAgentAngle(`${system.id}:${node.id}:angle`) + Math.PI / 2) /
+						(Math.PI * 2) -
+						0.5) *
+					0.28;
+				const radialJitter =
+					((stableAgentAngle(`${system.id}:${node.id}:radius`, band + 1) + Math.PI / 2) /
+						(Math.PI * 2) -
+						0.5) *
+					Math.min(46, distance * 0.16);
+				const angle = phase + index * ORGANIC_GOLDEN_ANGLE + angleJitter;
+				const organicDistance = Math.max(
+					parent.packingRadius + MOON_ORBIT_GAP + packingRadius,
+					distance + radialJitter,
+				);
+				placements.set(node.id, {
+					node,
+					x: parent.x + Math.cos(angle) * organicDistance,
+					y: parent.y + Math.sin(angle) * organicDistance,
+					radius: nodeRadiusForDepth(
 						node,
-						x: parent.x + Math.cos(angle) * distance,
-						y: parent.y + Math.sin(angle) * distance,
-						radius: nodeRadiusForDepth(
-							node,
-							childCounts.get(node.id) ?? 0,
-						),
+						childCounts.get(node.id) ?? 0,
+					),
 					packingRadius,
 					orbitBand: Math.max(1, parent.orbitBand + band + 1),
 					angle,
@@ -372,9 +390,9 @@ interface PlacedSystem {
 function packSystems(systems: AgentSystemProjection[]): PlacedSystem[] {
 	// The first system is the most recently active one because the projection is
 	// already sorted by last activity. Give it the quiet centre position, then
-	// place the rest on deterministic rings. The old golden-angle retry loop
-	// could push a later cluster much farther away than necessary, which made
-	// every root shrink when the overview fitted the whole field.
+	// grow a deterministic, jittered spiral around it. A spiral is deliberately
+	// used instead of equal rings: the map should feel like a navigable field,
+	// not a chart with every planet pinned to a clock face.
 	const ordered = [...systems];
 	const locals = ordered.map((system) => layoutAgentSystem(system));
 	if (ordered.length === 0) return [];
@@ -385,35 +403,110 @@ function packSystems(systems: AgentSystemProjection[]): PlacedSystem[] {
 
 	const largestRadius = Math.max(...locals.map((layout) => layout.radius));
 	const first = placed[0]!;
-	const phase = stableAgentAngle("agent-universe-systems");
-	let cursor = 1;
-	let ring = 0;
-	let previousRingRadius = 0;
-	while (cursor < ordered.length) {
-		const count = Math.min(8 + ring * 4, ordered.length - cursor);
-		const ringRadius = Math.max(
-			ring === 0
-				? first.layout.radius + largestRadius + AGENT_UNIVERSE_SYSTEM_GAP
-				: previousRingRadius + largestRadius * 2 + AGENT_UNIVERSE_SYSTEM_GAP,
-			count > 1
-				? (largestRadius + AGENT_UNIVERSE_SYSTEM_GAP / 2) /
-					Math.sin(Math.PI / count)
-				: 0,
-		);
-		for (let index = 0; index < count; index += 1) {
-			const system = ordered[cursor]!;
-			const local = locals[cursor]!;
-			const angle = phase + ring * 0.37 + (index / count) * Math.PI * 2;
-			placed.push({
+	for (let index = 1; index < ordered.length; index += 1) {
+		const system = ordered[index]!;
+		const local = locals[index]!;
+		const minimumFromCenter =
+			first.layout.radius + local.radius + AGENT_UNIVERSE_SYSTEM_GAP;
+		let candidate: PlacedSystem | undefined;
+		// Try bounded points along a golden-angle spiral. Each retry moves
+		// farther out only when the current point would collide with an earlier
+		// system, which keeps the common case compact while remaining total for
+		// pathological profiles.
+		for (let attempt = 0; attempt < 240 && !candidate; attempt += 1) {
+			const angle =
+				stableAgentAngle(`agent-universe:${system.id}:position:${attempt}`) +
+				(index - 1) * ORGANIC_GOLDEN_ANGLE * 0.62;
+			const jitter =
+				((stableAgentAngle(`agent-universe:${system.id}:radius:${attempt}`) +
+					Math.PI / 2) /
+					(Math.PI * 2) -
+					0.5) *
+				18;
+			const distance =
+				minimumFromCenter +
+				Math.sqrt(index) * Math.min(110, largestRadius * 0.42) +
+				attempt * Math.max(18, largestRadius * 0.11) +
+				jitter;
+			const x = Math.cos(angle) * distance;
+			const y = Math.sin(angle) * distance;
+			const overlaps = placed.some(
+				(existing) =>
+					Math.hypot(existing.x - x, existing.y - y) <
+						existing.layout.radius + local.radius + AGENT_UNIVERSE_SYSTEM_GAP,
+			);
+			if (!overlaps) candidate = { system, layout: local, x, y };
+		}
+		if (!candidate) {
+			// The retry budget is intentionally finite. This fallback still keeps
+			// the geometry honest by placing the body beyond every existing
+			// bounding radius instead of silently overlapping it.
+			const distance = placed.reduce(
+				(maximum, existing) =>
+					Math.max(
+						maximum,
+						Math.hypot(existing.x, existing.y) +
+							existing.layout.radius +
+							local.radius +
+							AGENT_UNIVERSE_SYSTEM_GAP,
+					),
+				minimumFromCenter,
+			);
+			const angle = stableAgentAngle(`agent-universe:${system.id}:fallback`);
+			candidate = {
 				system,
 				layout: local,
-				x: Math.cos(angle) * ringRadius,
-				y: Math.sin(angle) * ringRadius,
-			});
-			cursor += 1;
+				x: Math.cos(angle) * distance,
+				y: Math.sin(angle) * distance,
+			};
 		}
-		previousRingRadius = ringRadius;
-		ring += 1;
+		placed.push(candidate);
+	}
+
+	// Defensively resolve any near misses as a true 2D separation pass. Keep
+	// the focal system at the origin so fitting and focus framing remain stable.
+	for (let iteration = 0; iteration < 96; iteration += 1) {
+		let moved = false;
+		for (let index = 1; index < placed.length; index += 1) {
+			const item = placed[index]!;
+			const distance = Math.hypot(item.x, item.y);
+			const minimum = first.layout.radius + item.layout.radius + AGENT_UNIVERSE_SYSTEM_GAP;
+			if (distance >= minimum) continue;
+			const angle =
+				distance > 0.001
+					? Math.atan2(item.y, item.x)
+					: stableAgentAngle(`${item.system.id}:origin-separation`);
+			item.x = Math.cos(angle) * minimum;
+			item.y = Math.sin(angle) * minimum;
+			moved = true;
+		}
+		for (let left = 1; left < placed.length; left += 1) {
+			for (let right = left + 1; right < placed.length; right += 1) {
+				const firstItem = placed[left]!;
+				const secondItem = placed[right]!;
+				const dx = secondItem.x - firstItem.x;
+				const dy = secondItem.y - firstItem.y;
+				const distance = Math.hypot(dx, dy);
+				const minimum =
+					firstItem.layout.radius +
+					secondItem.layout.radius +
+					AGENT_UNIVERSE_SYSTEM_GAP;
+				if (distance >= minimum) continue;
+				const angle =
+					distance > 0.001
+						? Math.atan2(dy, dx)
+						: stableAgentAngle(
+								`${firstItem.system.id}:${secondItem.system.id}:separation`,
+							);
+				const push = (minimum - distance) / 2;
+				firstItem.x -= Math.cos(angle) * push;
+				firstItem.y -= Math.sin(angle) * push;
+				secondItem.x += Math.cos(angle) * push;
+				secondItem.y += Math.sin(angle) * push;
+				moved = true;
+			}
+		}
+		if (!moved) break;
 	}
 	return placed;
 }

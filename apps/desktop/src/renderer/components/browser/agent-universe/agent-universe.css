@@ -758,6 +758,7 @@
   color: var(--faint);
 }
 
+.agent-universe-settings,
 .agent-universe-rail-toggle,
 .agent-universe-new-task,
 .agent-universe-camera-controls button,
@@ -774,6 +775,7 @@
   cursor: pointer;
 }
 
+.agent-universe-settings:hover,
 .agent-universe-rail-toggle:hover,
 .agent-universe-new-task:hover,
 .agent-universe-camera-controls button:hover,
@@ -783,6 +785,7 @@
   color: var(--ink);
 }
 
+.agent-universe-settings:focus-visible,
 .agent-universe-rail-toggle:focus-visible,
 .agent-universe-new-task:focus-visible,
 .agent-universe-camera-controls button:focus-visible,
@@ -792,6 +795,7 @@
   outline-offset: 2px;
 }
 
+.agent-universe-settings svg,
 .agent-universe-rail-toggle svg,
 .agent-universe-new-task svg,
 .agent-universe-camera-controls svg,
@@ -804,6 +808,192 @@
   border-color: rgb(255 255 255 / 10%);
   background: rgb(255 255 255 / 6%);
   color: var(--ink-secondary);
+}
+
+.agent-universe-create-agent-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.agent-universe-create-agent-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 6%);
+  color: var(--ink-secondary);
+  font: 560 10px / 1 var(--sans);
+  cursor: pointer;
+}
+
+.agent-universe-create-agent-trigger:hover,
+.agent-universe-create-agent-trigger[aria-expanded="true"] {
+  border-color: var(--line);
+  background: rgb(255 255 255 / 9%);
+  color: var(--ink);
+}
+
+.agent-universe-create-agent-trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.agent-universe-create-agent-trigger svg {
+  width: 14px;
+  height: 14px;
+}
+
+.agent-universe-create-agent-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 3;
+  width: min(300px, calc(100vw - 32px));
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, #15191f 96%, transparent);
+  box-shadow: 0 18px 42px rgb(0 0 0 / 35%);
+  backdrop-filter: blur(18px) saturate(1.04);
+}
+
+.agent-universe-create-agent-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.agent-universe-create-agent-popover-close {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.agent-universe-create-agent-popover-close:hover,
+.agent-universe-create-agent-popover-close:focus-visible {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.agent-universe-create-agent-popover-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.agent-universe-create-agent-popover-close svg {
+  width: 13px;
+  height: 13px;
+}
+
+.agent-universe-create-agent-popover > p {
+  margin: 7px 0 12px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.agent-universe-settings {
+  color: var(--ink-secondary);
+}
+
+.agent-planet-settings-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-planet-settings-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.agent-planet-setting-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.agent-planet-setting-identity > img {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 3px 10px rgb(0 0 0 / 28%);
+}
+
+.agent-planet-setting-identity > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.agent-planet-setting-identity strong {
+  overflow: hidden;
+  color: var(--ink-secondary);
+  font-size: 11px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-planet-setting-identity small,
+.agent-planet-settings-list label > small {
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 12px;
+}
+
+.agent-planet-settings-list label {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 3px;
+}
+
+.agent-planet-settings-list select {
+  min-height: 30px;
+  max-width: 145px;
+  padding: 0 25px 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  outline: none;
+  background: var(--surface-raised);
+  color: var(--ink-secondary);
+  font: inherit;
+  font-size: 10px;
+}
+
+.agent-planet-settings-list select:focus-visible {
+  border-color: var(--line-strong);
+  box-shadow: var(--focus-ring);
+}
+
+.agent-planet-settings-list select:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .agent-universe-map-footer {

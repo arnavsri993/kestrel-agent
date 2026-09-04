@@ -1137,7 +1137,11 @@ function AgentSystemScene({
 						: node.status === "waiting";
 					const runFailed = runStatus === "failed";
 					const queryMatch = matchedNodeIds.has(node.id);
-					const bodyAsset = agentUniverseBodyAssetFor(node.id, isRoot);
+					const bodyAsset = agentUniverseBodyAssetFor(
+						node.id,
+						isRoot,
+						node.planetAssetId,
+					);
 					const bodyClipId = agentUniverseAssetClipId(node.id);
 					const showLabel = isRoot
 						? focused || prominent || isHovered || isSelected || queryMatch
@@ -1295,6 +1299,7 @@ function AgentSystemScene({
 											preserveAspectRatio="xMidYMid slice"
 											clipPath={`url(#${bodyClipId})`}
 											data-asset-id={bodyAsset.id}
+											data-body-role="planet"
 											data-asset-source={bodyAsset.source}
 											aria-hidden="true"
 											focusable="false"
@@ -1350,6 +1355,7 @@ function AgentSystemScene({
 											preserveAspectRatio="xMidYMid slice"
 											clipPath={`url(#${bodyClipId})`}
 											data-asset-id={bodyAsset.id}
+											data-body-role="moon"
 											data-asset-source={bodyAsset.source}
 											aria-hidden="true"
 											focusable="false"
