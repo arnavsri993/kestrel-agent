@@ -450,19 +450,29 @@ async function assertBrowserChromeLayout({
 	assert.equal(layout.toolbar.width, layout.app.width);
 	assert.equal(
 		await page.locator('.browser-toolbar-actions button[aria-label="Tools"]').count(),
-		0,
-		"Low-frequency tools should live behind Browser menu",
+		1,
+		"Tools should remain available beside the address field",
 	);
 	assert.equal(
 		await page.locator('.browser-toolbar-actions button[aria-label="Page options"]').count(),
-		0,
-		"Page options should live behind Browser menu",
+		1,
+		"Page options should remain available beside the address field",
 	);
 	assert.equal(
 		await page.locator('.browser-toolbar-actions button[aria-label="History"]').count(),
-		0,
-		"History should live behind Browser menu",
+		1,
+		"History should remain available beside the address field",
 	);
+	if (sidebarVisible) {
+		assert.equal(
+			await page
+				.locator('.kestrel-sidebar')
+				.getByRole("button", { name: "Agent", exact: true })
+				.count(),
+			1,
+			"Kestrel navigation should expose Agent",
+		);
+	}
 	assert.equal(
 		await page.getByRole("button", { name: "Browser menu", exact: true }).count(),
 		1,
@@ -1462,6 +1472,7 @@ try {
 	await page
 		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
+	await page.locator(".kestrel-sidebar").waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",

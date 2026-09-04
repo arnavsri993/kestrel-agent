@@ -78,6 +78,35 @@ function ProjectBadge({ appearance }: { appearance: ProjectAppearance }) {
 	);
 }
 
+function SidebarNavItem({
+	icon,
+	label,
+	active,
+	destination,
+	onClick,
+}: {
+	icon: string;
+	label: string;
+	active?: boolean;
+	destination: SidebarDestination;
+	onClick(): void;
+}) {
+	return (
+		<button
+			type="button"
+			className={`kestrel-sidebar-nav-item${active ? " active" : ""}`}
+			aria-current={active ? "page" : undefined}
+			aria-label={label}
+			title={label}
+			data-destination={destination}
+			onClick={onClick}
+		>
+			<Icon name={icon} />
+			<span>{label}</span>
+		</button>
+	);
+}
+
 function SidebarContextMenu({
 	menu,
 	project,
@@ -192,6 +221,7 @@ export function KestrelSidebar({
 	projectAppearances,
 	onNewTask,
 	onOpenBrowser,
+	onOpenAgent,
 	onOpenCapabilities,
 	onOpenSettings,
 	onCreateProject,
@@ -210,6 +240,7 @@ export function KestrelSidebar({
 	projectAppearances: ProjectAppearanceMap;
 	onNewTask(): void;
 	onOpenBrowser(): void;
+	onOpenAgent(): void;
 	onOpenCapabilities(): void;
 	onOpenSettings(): void;
 	onCreateProject(): void;
@@ -408,6 +439,15 @@ export function KestrelSidebar({
 				<span>New chat</span>
 				<kbd>⌘N</kbd>
 			</button>
+			<nav className="kestrel-sidebar-primary" aria-label="Primary">
+				<SidebarNavItem
+					icon="agent"
+					label="Agent"
+					destination="agent"
+					active={activeDestination === "agent"}
+					onClick={onOpenAgent}
+				/>
+			</nav>
 
 			<div className="kestrel-sidebar-scroll">
 				<section className="kestrel-sidebar-section" aria-labelledby="kestrel-sidebar-projects">
