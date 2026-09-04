@@ -108,7 +108,8 @@ const electron = vi.hoisted(() => {
     views: MockView[];
     partitions: Array<{ name: string; options: unknown; instance: MockSession }>;
     menus: unknown[][];
-  } = { views: [], partitions: [], menus: [] };
+    mediaAccess: ReturnType<typeof vi.fn>;
+  } = { views: [], partitions: [], menus: [], mediaAccess: vi.fn(async () => true) };
   const buildFromTemplate = vi.fn((template: unknown[]) => {
     state.menus.push(template);
     return { popup: vi.fn() };
@@ -122,6 +123,8 @@ const electron = vi.hoisted(() => {
     state.views.length = 0;
     state.partitions.length = 0;
     state.menus.length = 0;
+    state.mediaAccess.mockReset();
+    state.mediaAccess.mockResolvedValue(true);
     nextWebContentsId = 1;
     fromPartition.mockClear();
     buildFromTemplate.mockClear();
@@ -137,6 +140,9 @@ vi.mock("electron", () => ({
   dialog: {
     showMessageBox: vi.fn(async () => ({ response: 1 })),
     showSaveDialog: vi.fn(async () => ({ canceled: true })),
+  },
+  systemPreferences: {
+    askForMediaAccess: electron.state.mediaAccess,
   },
   nativeImage: {
     createFromBuffer: vi.fn(() => ({ isEmpty: () => true })),
@@ -181,6 +187,10 @@ function createService(options: {
   onLastTabClosed?: () => void;
   paymentCardVault?: PaymentCardVault;
   onPaymentPrompt?: (prompt: unknown) => void;
+  confirmSitePermission?: (origin: string, permission: string) => Promise<boolean>;
+  requestNativeMediaAccess?: (
+    mediaType: "camera" | "microphone",
+  ) => Promise<boolean>;
   nameTabFolders?: (
     groups: BrowserTabFolderNamingGroup[],
   ) => Promise<BrowserTabFolderName[]>;
@@ -218,6 +228,12 @@ function createService(options: {
 			: {}),
 		...(options.onPaymentPrompt
 			? { onPaymentPrompt: options.onPaymentPrompt }
+			: {}),
+		...(options.confirmSitePermission
+			? { confirmSitePermission: options.confirmSitePermission }
+			: {}),
+		...(options.requestNativeMediaAccess
+			? { requestNativeMediaAccess: options.requestNativeMediaAccess }
 			: {}),
 		...(options.paymentCardVault
 			? { paymentCardVault: options.paymentCardVault }
@@ -655,6 +671,125 @@ describe("UserBrowserService", () => {
     const callback = vi.fn();
     partition.permissionRequestHandler({}, "media", callback);
     await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
+    service.dispose();
+  });
+
+  it("requests native camera and microphone access for a website media request", async () => {
+    const confirmSitePermission = vi.fn(async () => true);
+    const requestNativeMediaAccess = vi.fn(async () => true);
+    const { service } = createService({
+      confirmSitePermission,
+      requestNativeMediaAccess,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/call");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionRequestHandler: (
+        webContents: unknown,
+        permission: string,
+        callback: (isAllowed: boolean) => void,
+        details?: {
+          requestingUrl?: string;
+          securityOrigin?: string;
+          mediaTypes?: string[];
+        },
+      ) => void;
+    };
+    const callback = vi.fn();
+
+    partition.permissionRequestHandler(contents, "media", callback, {
+      requestingUrl: "https://example.com/call",
+      securityOrigin: "https://example.com",
+      mediaTypes: ["audio", "video"],
+    });
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
+    expect(confirmSitePermission).toHaveBeenCalledWith(
+      "https://example.com",
+      "camera and microphone",
+    );
+    expect(requestNativeMediaAccess.mock.calls).toEqual([
+      ["camera"],
+      ["microphone"],
+    ]);
+    expect(service.getState().sitePermissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          origin: "https://example.com",
+          permission: "camera",
+          decision: "allow",
+        }),
+        expect.objectContaining({
+          origin: "https://example.com",
+          permission: "microphone",
+          decision: "allow",
+        }),
+      ]),
+    );
+    service.dispose();
+  });
+
+  it("keeps camera and microphone site decisions separate", async () => {
+    const { service } = createService();
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionCheckHandler: (
+        webContents: unknown,
+        permission: string,
+        requestingOrigin: string,
+        details?: { mediaType?: string },
+      ) => boolean;
+    };
+
+    service.setSitePermission("https://example.com", "camera", "allow");
+    service.setSitePermission("https://example.com", "microphone", "deny");
+
+    expect(
+      partition.permissionCheckHandler(contents, "media", "https://example.com", {
+        mediaType: "video",
+      }),
+    ).toBe(true);
+    expect(
+      partition.permissionCheckHandler(contents, "media", "https://example.com", {
+        mediaType: "audio",
+      }),
+    ).toBe(false);
+    service.dispose();
+  });
+
+  it("does not grant website media when native access is denied", async () => {
+    const confirmSitePermission = vi.fn(async () => true);
+    const requestNativeMediaAccess = vi.fn(async (mediaType: "camera" | "microphone") =>
+      mediaType === "camera",
+    );
+    const { service } = createService({
+      confirmSitePermission,
+      requestNativeMediaAccess,
+    });
+    const tab = service.getState().tabs[0]!;
+    await service.navigate(tab.id, "https://example.com/camera");
+    const contents = electron.state.views[0]!.webContents;
+    const partition = electron.state.partitions[0]!.instance as unknown as {
+      permissionRequestHandler: (
+        webContents: unknown,
+        permission: string,
+        callback: (isAllowed: boolean) => void,
+        details?: { requestingUrl?: string; mediaTypes?: string[] },
+      ) => void;
+    };
+    const callback = vi.fn();
+
+    partition.permissionRequestHandler(contents, "media", callback, {
+      requestingUrl: "https://example.com/camera",
+      mediaTypes: ["video", "audio"],
+    });
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
+    expect(requestNativeMediaAccess).toHaveBeenCalledWith("camera");
+    expect(requestNativeMediaAccess).toHaveBeenCalledWith("microphone");
     service.dispose();
   });
 
