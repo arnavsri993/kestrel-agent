@@ -1,8 +1,12 @@
 import type {
 	AgentRun,
 	AgentGroupMemoryStatus,
+	AgentIdentity,
+	AgentMemoryRecord,
 	CoreResponse,
+	ProvenanceRecord,
 	RuntimeMessage,
+	WorkingTask,
 } from "@kestrel/shared-types";
 import {
 	useCallback,
@@ -214,10 +218,14 @@ export function AgentUniverseContextSurface({
 	groupMemory,
 	groupMemoryLoading,
 	groupMemoryError,
+	agentMemory,
+	agentMemoryLoading = false,
+	agentMemoryError,
 	colorId,
 	onColorChange,
 	onClose,
 	onOpenSession,
+	onRefreshAgentMemory,
 }: {
 	system: AgentSystemProjection;
 	node?: AgentNodeProjection;
@@ -228,10 +236,18 @@ export function AgentUniverseContextSurface({
 	groupMemory?: AgentGroupMemoryStatus;
 	groupMemoryLoading: boolean;
 	groupMemoryError?: string;
+	agentMemory?: {
+		identity: AgentIdentity;
+		memories: AgentMemoryRecord[];
+		tasks: WorkingTask[];
+	};
+	agentMemoryLoading?: boolean;
+	agentMemoryError?: string;
 	colorId: AgentUniverseColorId;
 	onColorChange(systemId: string, colorId: AgentUniverseColorId): void;
 	onClose(): void;
 	onOpenSession(sessionId: string): void;
+	onRefreshAgentMemory(sessionId: string): void;
 }) {
 	const [input, setInput] = useState("");
 	const [messageState, setMessageState] = useState<
@@ -248,6 +264,14 @@ export function AgentUniverseContextSurface({
 	const inputRef = useRef<HTMLTextAreaElement | null>(null);
 	const messageLogRef = useRef<HTMLDivElement | null>(null);
 	const historyRequestRef = useRef(0);
+	const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+	const [memoryDraft, setMemoryDraft] = useState("");
+	const [memoryMutationId, setMemoryMutationId] = useState<string | null>(null);
+	const [memoryMutationError, setMemoryMutationError] = useState("");
+	const [expandedProvenanceId, setExpandedProvenanceId] = useState<string | null>(null);
+	const [provenanceByMemoryId, setProvenanceByMemoryId] = useState<Record<string, ProvenanceRecord[]>>({});
+	const [provenanceLoadingId, setProvenanceLoadingId] = useState<string | null>(null);
+	const [provenanceError, setProvenanceError] = useState("");
 	const inspected = node;
 	const parent = inspected?.parentId
 		? system.nodes.find((item) => item.id === inspected.parentId)
@@ -311,6 +335,114 @@ export function AgentUniverseContextSurface({
 		}
 	}, [openSessionId]);
 
+	const loadAgentMemoryProvenance = useCallback(
+		async (memoryId: string) => {
+			setExpandedProvenanceId((current) => (current === memoryId ? null : memoryId));
+			if (provenanceByMemoryId[memoryId]) return;
+			setProvenanceLoadingId(memoryId);
+			setProvenanceError("");
+			try {
+				const raw = await window.kestrel.request({
+					type: "memory-agent-provenance-list",
+					sessionId: openSessionId,
+					id: memoryId,
+					limit: 40,
+				});
+				const response = raw as CoreResponse;
+				if (!response.ok) throw new Error(response.error);
+				setProvenanceByMemoryId((current) => ({
+					...current,
+					[memoryId]: response.memoryProvenance ?? [],
+				}));
+			} catch (cause) {
+				setProvenanceError(
+					cause instanceof Error
+						? cause.message
+						: "Memory provenance is unavailable.",
+				);
+			} finally {
+				setProvenanceLoadingId((current) =>
+					current === memoryId ? null : current,
+				);
+			}
+		},
+		[openSessionId, provenanceByMemoryId],
+	);
+
+	const correctAgentMemory = useCallback(
+		async (memory: AgentMemoryRecord) => {
+			const content = memoryDraft.trim();
+			if (!content || content === memory.content || memoryMutationId) return;
+			setMemoryMutationId(memory.id);
+			setMemoryMutationError("");
+			try {
+				const raw = await window.kestrel.request({
+					type: "memory-agent-correct",
+					sessionId: openSessionId,
+					id: memory.id,
+					content,
+				});
+				const response = raw as CoreResponse;
+				if (!response.ok) throw new Error(response.error);
+				setEditingMemoryId(null);
+				setProvenanceByMemoryId((current) => {
+					const next = { ...current };
+					delete next[memory.id];
+					return next;
+				});
+				onRefreshAgentMemory(openSessionId);
+			} catch (cause) {
+				setMemoryMutationError(
+					cause instanceof Error
+						? cause.message
+						: "Agent memory could not be corrected.",
+				);
+			} finally {
+				setMemoryMutationId(null);
+			}
+		},
+		[memoryDraft, memoryMutationId, onRefreshAgentMemory, openSessionId],
+	);
+
+	const forgetAgentMemory = useCallback(
+		async (memory: AgentMemoryRecord) => {
+			if (
+				memoryMutationId ||
+				(typeof window.confirm === "function" &&
+					!window.confirm("Forget this memory for this agent?"))
+			)
+				return;
+			setMemoryMutationId(memory.id);
+			setMemoryMutationError("");
+			try {
+				const raw = await window.kestrel.request({
+					type: "memory-agent-forget",
+					sessionId: openSessionId,
+					id: memory.id,
+				});
+				const response = raw as CoreResponse;
+				if (!response.ok) throw new Error(response.error);
+				setEditingMemoryId(null);
+				setExpandedProvenanceId(null);
+				setProvenanceByMemoryId((current) => {
+					const next = { ...current };
+					delete next[memory.id];
+					return next;
+				});
+				onRefreshAgentMemory(openSessionId);
+			} catch (cause) {
+				setMemoryMutationError(
+					cause instanceof Error
+						? cause.message
+						: "Agent memory could not be forgotten.",
+				);
+			} finally {
+				setMemoryMutationId(null);
+			}
+		},
+		[memoryMutationId, onRefreshAgentMemory, openSessionId],
+	);
+
 	useEffect(() => {
 		setHistory([]);
 		void loadHistory();
@@ -342,6 +474,14 @@ export function AgentUniverseContextSurface({
 		setStreamText("");
 		setLastMessage("");
 		setLastResponse("");
+		setEditingMemoryId(null);
+		setMemoryDraft("");
+		setMemoryMutationId(null);
+		setMemoryMutationError("");
+		setExpandedProvenanceId(null);
+		setProvenanceByMemoryId({});
+		setProvenanceLoadingId(null);
+		setProvenanceError("");
 	}, [openSessionId]);
 
 	useLayoutEffect(() => {
@@ -542,6 +682,160 @@ export function AgentUniverseContextSurface({
 							<small className="agent-universe-memory-more">
 								Showing the six most important entries · {groupMemory.memoryCount} total
 							</small>
+						) : null}
+					</div>
+				</details>
+			) : null}
+
+			{agentMemoryLoading || agentMemoryError || agentMemory ? (
+				<details
+					className="agent-universe-context-secondary agent-universe-context-memory-details"
+					open={Boolean(agentMemoryError)}
+				>
+					<summary>
+						<span>Agent continuity</span>
+						<small>
+							{agentMemoryLoading
+								? "Reading"
+								: agentMemory
+									? `${agentMemory.memories.length} saved`
+									: "Unavailable"}
+						</small>
+					</summary>
+					<div className="agent-universe-context-memory-content">
+						{agentMemoryLoading ? <p>Reading this agent's private continuity…</p> : null}
+						{agentMemoryError ? (
+							<p className="agent-universe-context-error" role="alert">
+								{agentMemoryError}
+							</p>
+						) : null}
+						{agentMemory ? (
+							<>
+								<p className="agent-universe-context-memory-note">
+									Private to {agentMemory.identity.name}. It survives this task and is
+									separate from shared group memory.
+								</p>
+								<dl className="agent-universe-context-details">
+									<DefinitionRow label="Purpose">{agentMemory.identity.purpose}</DefinitionRow>
+									<DefinitionRow label="Specialization">{agentMemory.identity.specialization}</DefinitionRow>
+									<DefinitionRow label="Scope">{agentMemory.identity.memoryScope.replace("_", " ")}</DefinitionRow>
+								</dl>
+								{agentMemory.memories.length > 0 ? (
+									<ul className="agent-universe-memory-list">
+										{agentMemory.memories.slice(0, 6).map((memory) => {
+											const editing = editingMemoryId === memory.id;
+											const provenanceOpen = expandedProvenanceId === memory.id;
+											const provenance = provenanceByMemoryId[memory.id];
+											return (
+												<li key={memory.id} title={memory.content}>
+													<div className="agent-universe-memory-entry">
+														<div>
+															<span>{memoryPreview(memory.content)}</span>
+															<small>
+																{memory.kind} · {Math.round(memory.confidence * 100)}%
+															</small>
+														</div>
+														<div className="agent-universe-memory-entry-actions">
+															<button
+																type="button"
+																className="agent-universe-memory-action"
+																onClick={() => {
+																	setEditingMemoryId(editing ? null : memory.id);
+																	setMemoryDraft(memory.content);
+																	setMemoryMutationError("");
+																}}
+															>
+																{editing ? "Close" : "Edit"}
+															</button>
+															<button
+																type="button"
+																className="agent-universe-memory-action"
+																aria-expanded={provenanceOpen}
+																onClick={() => void loadAgentMemoryProvenance(memory.id)}
+															>
+																{provenanceOpen ? "Hide source" : "Source"}
+															</button>
+														</div>
+													</div>
+													{editing ? (
+														<form
+															className="agent-universe-memory-edit"
+															onSubmit={(event) => {
+																event.preventDefault();
+																void correctAgentMemory(memory);
+															}}
+														>
+															<label>
+																<span className="sr-only">Correct memory</span>
+																<textarea
+																	rows={3}
+																	value={memoryDraft}
+																	onChange={(event) => setMemoryDraft(event.target.value)}
+																	disabled={memoryMutationId === memory.id}
+																/>
+															</label>
+															<div className="agent-universe-memory-edit-actions">
+																<button
+																	type="submit"
+																	className="agent-universe-memory-action is-primary"
+																	disabled={
+																		memoryMutationId === memory.id ||
+																		!memoryDraft.trim() ||
+																		memoryDraft.trim() === memory.content
+																	}
+																>
+																	{memoryMutationId === memory.id ? "Saving…" : "Save correction"}
+																</button>
+																<button
+																	type="button"
+																	className="agent-universe-memory-action is-danger"
+																	disabled={memoryMutationId === memory.id}
+																	onClick={() => void forgetAgentMemory(memory)}
+																>
+																	Forget
+																</button>
+															</div>
+														</form>
+													) : null}
+													{provenanceOpen ? (
+														<div className="agent-universe-memory-provenance">
+															{provenanceLoadingId === memory.id ? <small>Reading source…</small> : null}
+															{provenanceError ? (
+																	<small className="agent-universe-context-error" role="alert">
+																		{provenanceError}
+																	</small>
+															) : null}
+															{provenance ? (
+																provenance.length > 0 ? (
+																	<ul>
+																		{provenance.map((item) => (
+																			<li key={item.id}>
+																				<strong>{item.sourceType}</strong>
+																				<span>{item.excerpt ?? item.sourceId}</span>
+																				<small>
+																					{item.actor} · {item.extractionMethod} · {Math.round(item.confidence * 100)}%
+																				</small>
+																			</li>
+																		))}
+																	</ul>
+																) : <small>No provenance record is attached.</small>
+															) : null}
+														</div>
+													) : null}
+												</li>
+											);
+										})}
+									</ul>
+								) : <p>No private lessons or outcomes yet.</p>}
+								{memoryMutationError ? (
+									<p className="agent-universe-context-error" role="alert">{memoryMutationError}</p>
+								) : null}
+								{agentMemory.tasks.length > 0 ? (
+									<small className="agent-universe-memory-more">
+										{agentMemory.tasks.length} working task{agentMemory.tasks.length === 1 ? "" : "s"} recorded
+									</small>
+								) : null}
+							</>
 						) : null}
 					</div>
 				</details>

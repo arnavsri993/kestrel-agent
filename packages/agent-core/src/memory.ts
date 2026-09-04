@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
 import {
 	parseExplicitMemoryCapture,
+	type AgentMemoryRecord,
 	type MemoryRecord,
 	type MemoryVersion,
 } from "@kestrel/shared-types";
@@ -160,6 +161,11 @@ export class MemoryManager {
 			version: (memory.version ?? 1) + 1,
 		};
 		this.database.upsertMemory(deleted);
+		// Explicit forget is a data-governance operation, not merely a retrieval
+		// flag.  Remove the legacy ciphertext and its metadata/version history
+		// after recording the deletion transition so derived stores cannot retain
+		// an inaccessible copy of the user's memory.
+		this.database.purgeMemory(id);
 		return deleted;
 	}
 
@@ -362,9 +368,38 @@ export class MemoryManager {
 	}
 }
 
+/**
+ * The tool surface is intentionally structural so the runtime can use the
+ * substrate during the migration without importing the substrate back into
+ * this compatibility module.
+ */
+export interface MemoryToolManager {
+	readonly userModel: UserModelStore;
+	activeMemories(): MemoryRecord[];
+	search(query: string, limit?: number): MemoryRecord[];
+	remember(input: MemoryInput): MemoryRecord;
+	forget(id: string): MemoryRecord;
+	/** Optional owner-aware surfaces used by the substrate for child agents. */
+	listForSession?(sessionId: string): Array<MemoryRecord | AgentMemoryRecord>;
+	searchForSession?(
+		sessionId: string,
+		query: string,
+		limit?: number,
+	): Array<MemoryRecord | AgentMemoryRecord>;
+	rememberForSession?(
+		sessionId: string,
+		input: MemoryInput,
+	): MemoryRecord | AgentMemoryRecord;
+	forgetForSession?(
+		sessionId: string,
+		id: string,
+	): MemoryRecord | AgentMemoryRecord;
+	isPrivateMemorySession?(sessionId: string): boolean;
+}
+
 export function installMemoryTools(
 	runtime: AgentRuntime,
-	manager: MemoryManager,
+	manager: MemoryToolManager,
 	sessionId: string,
 ): void {
 	const register = (
@@ -396,7 +431,11 @@ export function installMemoryTools(
 		"List durable memories",
 		true,
 		{ type: "object", properties: {}, additionalProperties: false },
-		async () => ({ memories: manager.activeMemories() }),
+		async (context) => ({
+			memories: manager.listForSession
+				? manager.listForSession(context.session.id)
+				: manager.activeMemories(),
+		}),
 	);
 	register(
 		"memory.search",
@@ -411,8 +450,14 @@ export function installMemoryTools(
 			required: ["query"],
 			additionalProperties: false,
 		},
-		async (_context, input) => ({
-			memories: manager.search(String(input.query), Number(input.limit ?? 20)),
+		async (context, input) => ({
+			memories: manager.searchForSession
+				? manager.searchForSession(
+						context.session.id,
+						String(input.query),
+						Number(input.limit ?? 20),
+				  )
+				: manager.search(String(input.query), Number(input.limit ?? 20)),
 		}),
 	);
 	register(
@@ -442,8 +487,23 @@ export function installMemoryTools(
 			required: ["type", "content", "sourceIds"],
 			additionalProperties: false,
 		},
-		async (_context, input) => ({
-			memory: manager.remember({
+		async (context, input) => ({
+			memory: manager.rememberForSession
+				? manager.rememberForSession(context.session.id, {
+						 type: input.type as MemoryRecord["type"],
+						 content: String(input.content),
+						 structuredData: {},
+						 sourceIds: (input.sourceIds as unknown[]).map(String),
+						 sourceType: "agent-proposal",
+						 confidence: Number(input.confidence ?? 0.7),
+						 importance: Number(input.importance ?? 0.5),
+						 sensitivity: (input.sensitivity ??
+							"personal") as MemoryRecord["sensitivity"],
+						 entityIds: [],
+						 userConfirmed: false,
+						 inferred: true,
+					})
+				: manager.remember({
 				type: input.type as MemoryRecord["type"],
 				content: String(input.content),
 				structuredData: {},
@@ -456,7 +516,7 @@ export function installMemoryTools(
 				entityIds: [],
 				userConfirmed: false,
 				inferred: true,
-			}),
+				}),
 		}),
 	);
 	register(
@@ -469,14 +529,22 @@ export function installMemoryTools(
 			required: ["id"],
 			additionalProperties: false,
 		},
-		async (_context, input) => ({ memory: manager.forget(String(input.id)) }),
+		async (context, input) => ({
+			memory: manager.forgetForSession
+				? manager.forgetForSession(context.session.id, String(input.id))
+				: manager.forget(String(input.id)),
+		}),
 	);
 	register(
 		"memory.user-model-list",
 		"List reviewed and proposed user-model facts",
 		true,
 		{ type: "object", properties: {}, additionalProperties: false },
-		async () => ({ facts: manager.userModel.list() }),
+		async (context) => {
+			if (manager.isPrivateMemorySession?.(context.session.id))
+				throw new Error("The global user model is unavailable to private agents.");
+			return { facts: manager.userModel.list() };
+		},
 	);
 	register(
 		"memory.user-model-propose",
@@ -499,8 +567,11 @@ export function installMemoryTools(
 			required: ["kind", "key", "value", "sourceIds"],
 			additionalProperties: false,
 		},
-		async (_context, input) => ({
-			fact: manager.userModel.propose({
+		async (context, input) => {
+			if (manager.isPrivateMemorySession?.(context.session.id))
+				throw new Error("The global user model is unavailable to private agents.");
+			return {
+				fact: manager.userModel.propose({
 				kind: input.kind as
 					| "preference"
 					| "profile"
@@ -511,8 +582,9 @@ export function installMemoryTools(
 				sourceIds: (input.sourceIds as unknown[]).map(String),
 				confidence: Number(input.confidence ?? 0.7),
 				sensitivity: (input.sensitivity ?? "normal") as "normal" | "sensitive",
-			}),
-		}),
+				}),
+			};
+		},
 	);
 	register(
 		"memory.user-model-review",
@@ -527,11 +599,15 @@ export function installMemoryTools(
 			required: ["id", "decision"],
 			additionalProperties: false,
 		},
-		async (_context, input) => ({
-			fact: manager.userModel.review(
+		async (context, input) => {
+			if (manager.isPrivateMemorySession?.(context.session.id))
+				throw new Error("The global user model is unavailable to private agents.");
+			return {
+				fact: manager.userModel.review(
 				String(input.id),
 				input.decision as "confirm" | "reject",
-			),
-		}),
+				),
+			};
+		},
 	);
 }

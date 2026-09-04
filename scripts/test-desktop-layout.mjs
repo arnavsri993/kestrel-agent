@@ -10,7 +10,10 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { _electron as electron } from "@playwright/test";
-import { revealNewTabControl } from "./desktop-browser-test-helpers.mjs";
+import {
+	openKestrelDestination,
+	revealNewTabControl,
+} from "./desktop-browser-test-helpers.mjs";
 
 const mainBundle = readFileSync(resolve("apps/desktop/out/main/index.js"), "utf8");
 assert.match(
@@ -1207,7 +1210,8 @@ function assertZoomReflow(layout, reflow, navigationWidth = 56) {
 function assertInTabAgentLayout(layout) {
 	assert.doesNotMatch(layout.classes, /agent-full-page/);
 	assert.match(layout.classes, /agent-sidebar-collapsed/);
-	assertNear(layout.navigation.width, 0, "in-tab Agent navigation width");
+	const navigationWidth = expectedNavigationWidth(layout.innerWidth);
+	assertNear(layout.navigation.width, navigationWidth, "in-tab Agent navigation width");
 	assertNear(
 		layout.main.left,
 		0,
@@ -1218,7 +1222,11 @@ function assertInTabAgentLayout(layout) {
 		layout.innerWidth,
 		"in-tab Agent browser plane reaches the window edge",
 	);
-	assertNear(layout.viewport.left, 0, "in-tab Agent page viewport starts at the window edge");
+	assertNear(
+		layout.viewport.left,
+		navigationWidth,
+		"in-tab Agent page viewport starts after the navigation rail",
+	);
 	assertNear(
 		layout.viewport.right,
 		layout.innerWidth,
@@ -1506,7 +1514,7 @@ try {
 	);
 	await waitForCollapsedLayout(page);
 
-	await page.getByRole("button", { name: "Agent", exact: true }).click();
+	await openKestrelDestination(page, "Agent");
 	await page.waitForFunction(() => {
 		const shell = document.querySelector(".ai-browser-app");
 		const workspace = document.querySelector("#browser-viewport .agent-workspace");
@@ -1534,7 +1542,7 @@ try {
 		const viewport = document.querySelector("#browser-viewport");
 		return viewport && Math.abs(viewport.getBoundingClientRect().right - innerWidth) <= 1;
 	});
-	assertZoomReflow(await readLayout(page), await readZoomReflow(page), 0);
+	assertZoomReflow(await readLayout(page), await readZoomReflow(page), 56);
 	await setDesktopZoom(application, page, 1, baselineViewportWidth);
 	await waitForCollapsedLayout(page);
 	await page.waitForFunction(() => {

@@ -3,9 +3,13 @@ import { resolve } from "node:path";
 import type { KestrelDatabase } from "@kestrel/database";
 import {
 	GoalRecordSchema,
+	AgentIdentitySchema,
+	WorkingTaskSchema,
 	type ModelCapability,
 	type ModelTier,
 	type RuntimeToolExecution,
+	type AgentIdentity,
+	type WorkingTask,
 	ScheduledJobSummarySchema,
 	type TaskOpportunity,
 } from "@kestrel/shared-types";
@@ -25,6 +29,7 @@ import {
 } from "./group-memory";
 import { type ProviderPool, textContent } from "./providers";
 import type { AgentRuntime } from "./runtime";
+import type { MemorySubstrate } from "./memory-substrate";
 
 export interface DelegatedWorkerRoute {
 	providerId: string;
@@ -47,6 +52,12 @@ export interface DelegatedWorkerRoute {
 
 export interface DelegatedTaskInput {
 	parentSessionId: string;
+	/** Supply this when a caller already has a durable root task. */
+	parentTaskId?: string;
+	/** Existing durable tasks that must complete before this child can run. */
+	dependencyTaskIds?: string[];
+	/** Used by durable graph callers that allocate task ids before execution. */
+	taskId?: string;
 	title: string;
 	prompt: string;
 	model: string;
@@ -355,6 +366,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function extractArtifactIds(value: unknown): string[] {
+	if (Array.isArray(value)) return value.flatMap((item) => extractArtifactIds(item));
+	if (!isRecord(value)) return [];
+	const ids: string[] = [];
+	for (const [key, nested] of Object.entries(value)) {
+		if (
+			(key === "artifactId" || key === "artifact_id") &&
+			typeof nested === "string" &&
+			nested.trim()
+		)
+			ids.push(nested.trim());
+		else ids.push(...extractArtifactIds(nested));
+	}
+	return ids;
+}
+
 function isScheduledAgentJob(value: unknown): value is ScheduledAgentJob {
 	if (!isRecord(value)) return false;
 	const parsed = ScheduledJobSummarySchema.safeParse(value);
@@ -477,6 +504,10 @@ export class TaskOrchestrator {
 	private readonly goalsKey = "orchestrator.goals";
 	private readonly teamsKey = "orchestrator.teams";
 	private readonly maximumStoredGoals = 200;
+	private readonly activeDelegations = new Map<
+		string,
+		{ controller: AbortController; parentSessionId: string; sessionId?: string }
+	>();
 
 	constructor(
 		private readonly database: KestrelDatabase,
@@ -490,74 +521,336 @@ export class TaskOrchestrator {
 		private readonly requirementAnalyzer = new TaskRequirementAnalyzer(),
 		private readonly configuredMaximumTurns: () => number = () => 12,
 		private readonly groupMemory?: AgentGroupMemoryManager,
+		private readonly memorySubstrate?: MemorySubstrate,
 	) {
 		this.reconcileInterruptedJobs();
 	}
 
+	private agentIdForSession(session: ReturnType<AgentRuntime["getSession"]>): string {
+		if (this.memorySubstrate)
+			return this.memorySubstrate.ensureAgentIdentity(session).id;
+		const id = session.parentSessionId ? `agent-${session.id}` : "agent-main";
+		if (this.database.getAgentIdentity(id)) return id;
+		const parent = session.parentSessionId
+			? this.runtime.getSession(session.parentSessionId)
+			: undefined;
+		const parentAgentId = parent ? this.agentIdForSession(parent) : undefined;
+		const timestamp = this.now().toISOString();
+		this.database.upsertAgentIdentity(
+			AgentIdentitySchema.parse({
+				id,
+				kind: session.parentSessionId ? "subagent" : "main",
+				...(parentAgentId ? { parentAgentId } : {}),
+				sessionId: session.id,
+				name: session.title,
+				purpose: session.parentSessionId
+					? "Persistent delegated Kestrel agent."
+					: "Coordinate the user's Kestrel work.",
+				specialization: session.parentSessionId
+					? "Bounded delegated task"
+					: "General Kestrel agent",
+				memoryScope: "private",
+				status: "active",
+				createdAt: timestamp,
+				updatedAt: timestamp,
+			}),
+		);
+		return id;
+	}
+
+	private activeWorkingTaskForSession(sessionId: string): WorkingTask | undefined {
+		return this.database
+			.listWorkingTasks({ sessionId, includeCompleted: false, limit: 100 })
+			.find((task) => task.status === "running" || task.status === "waiting");
+	}
+
+	private durableTask(
+		input: Omit<WorkingTask, "createdAt" | "updatedAt"> &
+			Partial<Pick<WorkingTask, "createdAt" | "updatedAt">>,
+	): WorkingTask {
+		if (this.memorySubstrate) return this.memorySubstrate.createWorkingTask(input);
+		const timestamp = this.now().toISOString();
+		const task = WorkingTaskSchema.parse({
+			...input,
+			dependencyTaskIds: input.dependencyTaskIds ?? [],
+			sourceIds: input.sourceIds ?? [],
+			projectIds: input.projectIds ?? [],
+			personIds: input.personIds ?? [],
+			entityIds: input.entityIds ?? [],
+			plan: input.plan ?? [],
+			evidence: input.evidence ?? [],
+			artifacts: input.artifacts ?? [],
+			failures: input.failures ?? [],
+			unresolvedQuestions: input.unresolvedQuestions ?? [],
+			subtaskIds: input.subtaskIds ?? [],
+			startedAt: input.startedAt ?? timestamp,
+			createdAt: input.createdAt ?? timestamp,
+			updatedAt: input.updatedAt ?? timestamp,
+		});
+		this.database.upsertWorkingTask(task);
+		return task;
+	}
+
+	private saveDurableTask(task: WorkingTask, agentId = task.agentId): WorkingTask {
+		if (this.memorySubstrate)
+			return this.memorySubstrate.recordTaskOutcome(task, agentId);
+		const parsed = WorkingTaskSchema.parse({
+			...task,
+			updatedAt: task.updatedAt || this.now().toISOString(),
+		});
+		this.database.upsertWorkingTask(parsed);
+		return parsed;
+	}
+
+	private attachSubtask(parent: WorkingTask | undefined, childId: string): void {
+		if (!parent || parent.subtaskIds.includes(childId)) return;
+		this.saveDurableTask({
+			...parent,
+			subtaskIds: [...parent.subtaskIds, childId].slice(0, 100),
+			updatedAt: this.now().toISOString(),
+		}, parent.agentId);
+	}
+
+	private validateTaskDependencies(
+		taskId: string,
+		parentTask: WorkingTask | undefined,
+		dependencyTaskIds: readonly string[],
+	): string[] {
+		const dependencies = [...new Set(dependencyTaskIds.map((id) => id.trim()).filter(Boolean))];
+		if (dependencies.length > 100)
+			throw new Error("A delegated task can have at most 100 dependencies.");
+		if (dependencies.includes(taskId))
+			throw new Error("A task cannot depend on itself.");
+		if (parentTask && dependencies.includes(parentTask.id))
+			throw new Error("A child task cannot depend on its parent task.");
+		for (const dependencyId of dependencies) {
+			const dependency = this.database.getWorkingTask(dependencyId);
+			if (!dependency) throw new Error(`Dependency task ${dependencyId} was not found.`);
+			const visited = new Set<string>();
+			let current: WorkingTask | undefined = dependency;
+			while (current) {
+				if (current.id === taskId)
+					throw new Error("Task dependency graph contains a cycle.");
+				if (visited.has(current.id)) break;
+				visited.add(current.id);
+				current = current.dependencyTaskIds
+					.map((id) => this.database.getWorkingTask(id))
+					.find((candidate): candidate is WorkingTask => Boolean(candidate));
+			}
+		}
+		return dependencies;
+	}
+
+	private async waitForTaskDependencies(
+		task: WorkingTask,
+		signal: AbortSignal,
+	): Promise<void> {
+		if (task.dependencyTaskIds.length === 0) return;
+		this.saveDurableTask({
+			...task,
+			status: "waiting",
+			updatedAt: this.now().toISOString(),
+		});
+		while (true) {
+			if (signal.aborted) throw signal.reason ?? new Error("Delegated task cancelled.");
+			const dependencies = task.dependencyTaskIds.map((id) => this.database.getWorkingTask(id));
+			if (dependencies.some((dependency) => !dependency))
+				throw new Error("A delegated task dependency was removed before execution.");
+			const failed = dependencies.find(
+				(dependency) => dependency && ["failed", "cancelled"].includes(dependency.status),
+			);
+			if (failed)
+				throw new Error(`Dependency task ${failed.id} did not complete.`);
+			if (dependencies.every((dependency) => dependency?.status === "completed")) return;
+			await new Promise<void>((resolvePromise, rejectPromise) => {
+				const timer = setTimeout(resolvePromise, 100);
+				const abort = () => {
+					clearTimeout(timer);
+					signal.removeEventListener("abort", abort);
+					rejectPromise(signal.reason ?? new Error("Delegated task cancelled."));
+				};
+				signal.addEventListener("abort", abort, { once: true });
+				timer.unref?.();
+			});
+		}
+	}
+
+	private taskEvidence(sessionId: string, task: WorkingTask): {
+		evidence: WorkingTask["evidence"];
+		artifacts: string[];
+	} {
+		const evidence: WorkingTask["evidence"] = [
+			{ type: "session", id: sessionId, label: "Delegated session" },
+		];
+		const messages = this.runtime.listMessages(sessionId).slice(-40);
+		for (const message of messages)
+			evidence.push({
+				type: "runtime_message",
+				id: message.id,
+				label: message.role,
+			});
+		const executions = this.database
+			.listToolExecutions(sessionId)
+			.filter((execution) => execution.startedAt >= task.createdAt)
+			.slice(-80);
+		for (const execution of executions)
+			evidence.push({
+				type: "tool_execution",
+				id: execution.id,
+				label: execution.toolName,
+			});
+		const artifacts = executions.flatMap((execution) =>
+				extractArtifactIds(execution.output),
+			);
+		return {
+			evidence: evidence.slice(0, 500),
+			artifacts: [...new Set(artifacts)].slice(0, 500),
+		};
+	}
+
+	private privateAgentContext(sessionId: string, query: string): string {
+		if (!this.memorySubstrate) return "";
+		try {
+			return this.memorySubstrate.getRelevantContext({
+				query,
+				sessionId,
+				agentId: this.agentIdForSession(this.runtime.getSession(sessionId)),
+				includeSharedMemory: false,
+				includeSensitive: false,
+				includeRestricted: false,
+				maximumCharacters: 12_000,
+			}).prompt;
+		} catch {
+			// Memory is an observer and must not make a delegated run fail.
+			return "";
+		}
+	}
+
 	async delegate(input: DelegatedTaskInput): Promise<DelegatedTaskResult> {
 		const parent = this.runtime.getSession(input.parentSessionId);
-		const taskId = `task-${randomUUID()}`;
-		let workspaceRoot = parent.workspaceRoot;
-		if (input.isolateWorktree) {
-			if (!parent.workspaceRoot)
-				throw new Error(
-					"Worktree isolation requires a workspace-backed parent session.",
-				);
-			const branch = `kestrel/${taskId.slice(-12)}`;
-			const worktree = await this.runtime.callTool(
-				parent.id,
-				"git.worktree-create",
-				{ branch, startPoint: "HEAD", createBranch: true },
-				{
-					approvalStatus: "approved",
-					idempotencyKey: `delegate:${taskId}:worktree`,
-				},
-			);
-			if (
-				worktree.status !== "verified" ||
-				typeof worktree.output?.path !== "string"
-			)
-				throw new Error(
-					worktree.error ?? "Delegated worktree creation failed.",
-				);
-			workspaceRoot = resolve(parent.workspaceRoot, worktree.output.path);
-		}
-		const inheritedTools = input.allowedTools ?? parent.allowedTools;
-		const groupMemoryAllowed =
-			Boolean(this.groupMemory) &&
-			parent.privacyMode !== "private" &&
-			parent.privacyMode !== "incognito";
-		const allowedTools = groupMemoryAllowed
-			? [...new Set([...inheritedTools, ...AGENT_GROUP_MEMORY_TOOL_NAMES])]
-			: inheritedTools.filter(
-					(toolName) =>
-						!AGENT_GROUP_MEMORY_TOOL_NAMES.some(
-							(memoryToolName) => memoryToolName === toolName,
-						),
-				);
-		const session = this.runtime.createSession({
-			title: input.title,
-			parentSessionId: parent.id,
-			...(workspaceRoot ? { workspaceRoot } : {}),
-			...(parent.privacyMode ? { privacyMode: parent.privacyMode } : {}),
-			allowedTools,
-		});
-		this.database.setPrivateState(`orchestrator.task.${taskId}`, {
+		const taskId = input.taskId ?? `task-${randomUUID()}`;
+		const parentTask = input.parentTaskId
+			? this.database.getWorkingTask(input.parentTaskId)
+			: this.activeWorkingTaskForSession(parent.id);
+		if (input.parentTaskId && !parentTask)
+			throw new Error("The delegated task parent record was not found.");
+		if (parentTask && parentTask.sessionId && parentTask.sessionId !== parent.id)
+			throw new Error("The delegated task parent belongs to another session.");
+		const dependencyTaskIds = this.validateTaskDependencies(
 			taskId,
-			sessionId: session.id,
+			parentTask,
+			input.dependencyTaskIds ?? [],
+		);
+		const taskController = new AbortController();
+		this.activeDelegations.set(taskId, {
+			controller: taskController,
 			parentSessionId: parent.id,
-			title: input.title,
-			status: "running",
-			createdAt: this.now().toISOString(),
 		});
+		let workspaceRoot = parent.workspaceRoot;
+		let session: ReturnType<AgentRuntime["createSession"]> | undefined;
+		let workingTask: WorkingTask | undefined;
 		let selected:
 			| Awaited<ReturnType<TaskOrchestrator["selectWorker"]>>
 			| undefined;
 		try {
+			if (input.isolateWorktree) {
+				if (!parent.workspaceRoot)
+					throw new Error(
+						"Worktree isolation requires a workspace-backed parent session.",
+					);
+				const branch = `kestrel/${taskId.slice(-12)}`;
+				const worktree = await this.runtime.callTool(
+					parent.id,
+					"git.worktree-create",
+					{ branch, startPoint: "HEAD", createBranch: true },
+					{
+						approvalStatus: "approved",
+						idempotencyKey: `delegate:${taskId}:worktree`,
+						signal: taskController.signal,
+					},
+				);
+				if (
+					worktree.status !== "verified" ||
+					typeof worktree.output?.path !== "string"
+				)
+					throw new Error(
+						worktree.error ?? "Delegated worktree creation failed.",
+					);
+				workspaceRoot = resolve(parent.workspaceRoot, worktree.output.path);
+			}
+			const inheritedTools = input.allowedTools ?? parent.allowedTools;
+			const groupMemoryAllowed =
+				Boolean(this.groupMemory) &&
+				parent.privacyMode !== "private" &&
+				parent.privacyMode !== "incognito";
+			const allowedTools = groupMemoryAllowed
+				? [...new Set([...inheritedTools, ...AGENT_GROUP_MEMORY_TOOL_NAMES])]
+				: inheritedTools.filter(
+						(toolName) =>
+							!AGENT_GROUP_MEMORY_TOOL_NAMES.some(
+									(memoryToolName) => memoryToolName === toolName,
+							),
+						);
+			session = this.runtime.createSession({
+				title: input.title,
+				parentSessionId: parent.id,
+				...(workspaceRoot ? { workspaceRoot } : {}),
+				...(parent.privacyMode ? { privacyMode: parent.privacyMode } : {}),
+				allowedTools,
+			});
+			this.activeDelegations.set(taskId, {
+				controller: taskController,
+				parentSessionId: parent.id,
+				sessionId: session.id,
+			});
+			const agentId = this.agentIdForSession(session);
+			workingTask = this.durableTask({
+				id: taskId,
+				sessionId: session.id,
+				...(parentTask ? { parentTaskId: parentTask.id } : {}),
+				dependencyTaskIds,
+				agentId,
+				sourceIds: [`session:${session.id}`],
+				projectIds: session.projectId ? [session.projectId] : [],
+				personIds: [],
+				entityIds: [],
+				goal: input.prompt,
+				plan: [
+					`Delegated by ${parent.title}`,
+					...(input.instructions ? [input.instructions] : []),
+				],
+				status: dependencyTaskIds.length > 0 ? "waiting" : "planned",
+				evidence: [
+					{ type: "session", id: session.id, label: "Delegated session" },
+				],
+				artifacts: [],
+				failures: [],
+				unresolvedQuestions: [],
+				subtaskIds: [],
+				startedAt: this.now().toISOString(),
+			});
+			this.attachSubtask(parentTask, workingTask.id);
+			const executionSignal = AbortSignal.any([
+				taskController.signal,
+				...(input.signal ? [input.signal] : []),
+				AbortSignal.timeout(
+					this.modelRouter?.policy().maximumTaskDurationMs ?? 600_000,
+				),
+			]);
+			await this.waitForTaskDependencies(workingTask, executionSignal);
+			workingTask = this.saveDurableTask({
+				...workingTask,
+				status: "running",
+				updatedAt: this.now().toISOString(),
+			});
 			selected =
 				input.model === "auto" || input.providerIds.includes("auto")
 					? await this.selectWorker(input, taskId, session.allowedTools)
 					: undefined;
+			const privateMemoryContext = this.privateAgentContext(
+				session.id,
+				input.prompt,
+			);
 			const result = await this.loop.run({
 				sessionId: session.id,
 				model: selected?.execution.model ?? input.model,
@@ -585,37 +878,60 @@ export class TaskOrchestrator {
 						}
 					: {}),
 				userContent: textContent(input.prompt),
-				...(input.instructions || selected?.instructions || this.groupMemory
+				...(input.instructions || selected?.instructions || this.groupMemory || privateMemoryContext
 					? {
 							instructions: [
 								input.instructions,
 								selected?.instructions,
+								privateMemoryContext,
 								this.groupMemory?.promptContext(session.id, input.prompt),
 							]
 								.filter(Boolean)
-								.join("\n\n"),
+									.join("\n\n"),
 						}
 					: {}),
 				maximumTurns: this.maximumTurnsForRun(input.maximumTurns),
-				signal: AbortSignal.any([
-					...(input.signal ? [input.signal] : []),
-					AbortSignal.timeout(
-						this.modelRouter?.policy().maximumTaskDurationMs ?? 600_000,
-					),
-				]),
+				signal: executionSignal,
 			});
 			this.recordSelectedOutcome(selected, result);
 			const route = selected?.route;
-			this.database.setPrivateState(`orchestrator.task.${taskId}`, {
-				taskId,
-				sessionId: session.id,
-				parentSessionId: parent.id,
-				title: input.title,
-				status: result.run.status,
-				runId: result.run.id,
-				...(route ? { route } : {}),
-				updatedAt: this.now().toISOString(),
-			});
+			if (workingTask) {
+				const terminalStatus =
+					result.run.status === "completed"
+						? "completed"
+						: result.run.status === "cancelled"
+							? "cancelled"
+							: result.run.status === "failed"
+								? "failed"
+								: "waiting";
+				const evidence = this.taskEvidence(session.id, workingTask);
+				workingTask = this.saveDurableTask(
+					{
+						...workingTask,
+						status: terminalStatus,
+						evidence: [
+							...workingTask.evidence,
+							{ type: "agent_run", id: result.run.id, label: result.run.status },
+							...evidence.evidence,
+						].slice(0, 500),
+						artifacts: evidence.artifacts,
+						...(result.assistantMessage
+							? { outcomeSummary: result.assistantMessage.content.slice(0, 20_000) }
+							: {}),
+					...(terminalStatus === "completed" ||
+						terminalStatus === "failed" ||
+						terminalStatus === "cancelled"
+						? { completedAt: this.now().toISOString() }
+						: {}),
+					failures:
+						terminalStatus === "failed" && result.run.error
+							? [...workingTask.failures, result.run.error].slice(-100)
+							: workingTask.failures,
+					updatedAt: this.now().toISOString(),
+					},
+					workingTask.agentId,
+				);
+			}
 			return {
 				taskId,
 				sessionId: session.id,
@@ -623,7 +939,12 @@ export class TaskOrchestrator {
 				...(route ? { route } : {}),
 			};
 		} catch (error) {
-			const terminalStatus = input.signal?.aborted ? "cancelled" : "failed";
+			const terminalStatus =
+				taskController.signal.aborted ||
+				input.signal?.aborted ||
+				session?.status === "cancelled"
+					? "cancelled"
+					: "failed";
 			if (selected) {
 				this.modelRegistry?.recordOutcome({
 					modelId: selected.decision.selectedModelId,
@@ -639,17 +960,66 @@ export class TaskOrchestrator {
 						escalated: false,
 					});
 			}
-			this.database.setPrivateState(`orchestrator.task.${taskId}`, {
-				taskId,
-				sessionId: session.id,
-				parentSessionId: parent.id,
-				title: input.title,
-				status: terminalStatus,
-				error: "Delegated task failed.",
-				updatedAt: this.now().toISOString(),
-			});
+			if (workingTask) {
+				const sessionId = session?.id;
+				const evidence = sessionId ? this.taskEvidence(sessionId, workingTask) : undefined;
+				workingTask = this.saveDurableTask(
+					{
+						...workingTask,
+						status: terminalStatus,
+						...(evidence ? { evidence: [...workingTask.evidence, ...evidence.evidence].slice(0, 500) } : {}),
+						failures: [
+							...workingTask.failures,
+							error instanceof Error ? error.message : "Delegated task failed.",
+						].slice(-100),
+						...(terminalStatus === "failed" || terminalStatus === "cancelled"
+							? { completedAt: this.now().toISOString() }
+							: {}),
+						updatedAt: this.now().toISOString(),
+					},
+					workingTask.agentId,
+				);
+			}
 			throw error;
+		} finally {
+			this.activeDelegations.delete(taskId);
 		}
+	}
+
+	/** Cancel all durable work owned by a runtime session tree. */
+	cancelForSessions(
+		sessionIds: readonly string[],
+		reason = "Cancelled because the owning agent session was cancelled.",
+	): WorkingTask[] {
+		const ids = new Set(sessionIds);
+		for (const active of this.activeDelegations.values()) {
+			if (
+				ids.has(active.parentSessionId) ||
+				(active.sessionId !== undefined && ids.has(active.sessionId))
+			)
+				active.controller.abort(new Error(reason));
+		}
+		const cancelled: WorkingTask[] = [];
+		for (const task of this.database.listWorkingTasks({
+			includeCompleted: true,
+			limit: 500,
+		})) {
+			if (!task.sessionId || !ids.has(task.sessionId)) continue;
+			if (["completed", "failed", "cancelled"].includes(task.status)) continue;
+			cancelled.push(
+				this.saveDurableTask(
+					{
+						...task,
+						status: "cancelled",
+						failures: [...task.failures, reason].slice(-100),
+						completedAt: this.now().toISOString(),
+						updatedAt: this.now().toISOString(),
+					},
+					task.agentId,
+				),
+			);
+		}
+		return cancelled;
 	}
 
 	private async selectWorker(
@@ -1752,6 +2122,9 @@ export function installOrchestrationTools(
 			type: "object",
 			properties: {
 				parentSessionId: { type: "string" },
+				parentTaskId: { type: "string" },
+				dependencyTaskIds: { type: "array", items: { type: "string" }, maxItems: 100 },
+				taskId: { type: "string" },
 				title: { type: "string" },
 				prompt: { type: "string" },
 				model: { type: "string", default: "auto" },
@@ -1778,6 +2151,11 @@ export function installOrchestrationTools(
 		async (context, input) => ({
 			delegated: await orchestrator.delegate({
 				parentSessionId: String(input.parentSessionId),
+				...(input.parentTaskId ? { parentTaskId: String(input.parentTaskId) } : {}),
+				...(Array.isArray(input.dependencyTaskIds)
+					? { dependencyTaskIds: input.dependencyTaskIds.map(String) }
+					: {}),
+				...(input.taskId ? { taskId: String(input.taskId) } : {}),
 				title: String(input.title),
 				prompt: String(input.prompt),
 				model: input.model ? String(input.model) : "auto",
@@ -1818,6 +2196,9 @@ export function installOrchestrationTools(
 					items: {
 						type: "object",
 						properties: {
+							taskId: { type: "string" },
+							parentTaskId: { type: "string" },
+							dependencyTaskIds: { type: "array", items: { type: "string" }, maxItems: 100 },
 							title: { type: "string", minLength: 1, maxLength: 200 },
 							prompt: { type: "string", minLength: 1, maxLength: 100_000 },
 							model: { type: "string", default: "auto" },
@@ -1855,6 +2236,11 @@ export function installOrchestrationTools(
 				const task = candidate as Record<string, unknown>;
 				return {
 					parentSessionId: context.session.id,
+					...(task.taskId ? { taskId: String(task.taskId) } : {}),
+					...(task.parentTaskId ? { parentTaskId: String(task.parentTaskId) } : {}),
+					...(Array.isArray(task.dependencyTaskIds)
+						? { dependencyTaskIds: task.dependencyTaskIds.map(String) }
+						: {}),
 					title: String(task.title ?? ""),
 					prompt: String(task.prompt ?? ""),
 					model: task.model ? String(task.model) : "auto",
