@@ -108,6 +108,13 @@ try {
 	const warningPanel = page.locator(".warning-panel");
 	const warningPanelBefore = await warningPanel.boundingBox();
 	assert.ok(warningPanelBefore, "The warning panel should be measurable.");
+	const warningCheck = page.locator(".warning-check");
+	const warningCheckBox = await warningCheck.boundingBox();
+	assert.ok(warningCheckBox, "The warning acknowledgement should be measurable.");
+	assert.ok(
+		warningCheckBox.height <= 48,
+		`The warning acknowledgement should stay compact, but is ${warningCheckBox.height}px tall.`,
+	);
 	const firstBoundary = page.locator(".warning-panel details").first();
 	await firstBoundary.locator("summary").click();
 	await page.getByText(/retention and training terms/).waitFor();

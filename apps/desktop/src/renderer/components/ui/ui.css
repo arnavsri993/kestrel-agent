@@ -1491,12 +1491,13 @@ body { font-family: var(--sans); }
 .warning-panel details > p { color: var(--ink-secondary); font-size: 12.5px; line-height: 17px; }
 
 .warning-check {
-	min-height: 56px;
+	min-height: 44px;
 	margin-top: 16px;
-	padding: 10px 14px;
+	padding: 8px 14px;
 	border: 1px solid var(--line-strong);
 	border-radius: var(--radius-control);
 	background: var(--surface-strong);
+	align-items: center;
 }
 .warning-check strong { color: var(--ink); font-size: 13.5px; }
 .warning-check small { color: var(--ink-secondary); font-size: 12.5px; }
