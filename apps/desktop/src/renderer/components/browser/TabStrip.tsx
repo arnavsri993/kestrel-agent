@@ -1,6 +1,7 @@
 import type {
 	UserBrowserOriginFavicon,
 	UserBrowserRecentlyClosedTab,
+	UserBrowserSettings,
 	UserBrowserTab,
 	UserBrowserTabFolder,
 } from "@kestrel/shared-types";
@@ -116,6 +117,8 @@ export function TabStrip({
 	recentlyClosedTabs = [],
 	orientation,
 	onToggleOrientation,
+	tabSizing,
+	onTabSizingChange,
 	onMenuOpenChange,
 }: {
 	tabs: UserBrowserTab[];
@@ -141,6 +144,8 @@ export function TabStrip({
 	recentlyClosedTabs?: UserBrowserRecentlyClosedTab[];
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
+	tabSizing: UserBrowserSettings["tabSizing"];
+	onTabSizingChange?(tabSizing: UserBrowserSettings["tabSizing"]): void;
 	onMenuOpenChange?(open: boolean): void;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
@@ -149,7 +154,6 @@ export function TabStrip({
 	const tabRefitTimerRef = useRef<number | null>(null);
 	const pendingCloseCountRef = useRef(0);
 	const pendingCloseKeysRef = useRef(new Set<string>());
-	const [compact, setCompact] = useState(false);
 	const [menu, setMenu] = useState<{
 		tabId: string;
 		x: number;
@@ -256,7 +260,7 @@ export function TabStrip({
 			else
 				tabToolsRef.current
 					?.querySelector<HTMLButtonElement>(
-						"button[role='menuitem'], button[role='menuitemcheckbox']",
+						"button[role='menuitem'], button[role='menuitemcheckbox'], button[role='menuitemradio']",
 					)
 					?.focus();
 		});
@@ -289,7 +293,7 @@ export function TabStrip({
 				return;
 			const items = Array.from(
 				tabToolsRef.current.querySelectorAll<HTMLElement>(
-					"button[role='menuitem'], button[role='menuitemcheckbox'], input",
+					"button[role='menuitem'], button[role='menuitemcheckbox'], button[role='menuitemradio'], input",
 				),
 			);
 			if (items.length === 0) return;
@@ -859,9 +863,9 @@ export function TabStrip({
 
 	return (
 		<div
-			className={`browser-tab-row browser-tab-row-${orientation} drag-region-browser${
-				compact ? " browser-tab-row-compact" : ""
-			}${dragIntent === "detach" ? " browser-tab-row-detaching" : ""}`}
+			className={`browser-tab-row browser-tab-row-${orientation} browser-tab-row-${tabSizing} drag-region-browser${
+					dragIntent === "detach" ? " browser-tab-row-detaching" : ""
+				}`}
 		>
 			<div
 				className="window-controls-clearance no-drag"
@@ -997,17 +1001,36 @@ export function TabStrip({
 							</button>
 						)}
 						<div className="browser-tab-tools-divider" />
-						<button
-							type="button"
-							className="browser-tab-tools-action browser-tab-tools-secondary-action"
-							role="menuitemcheckbox"
-							aria-checked={compact}
-							onClick={() => setCompact((value) => !value)}
-						>
-							<Icon name="tabActions" />
-							<span>Use narrow tabs</span>
-							<Icon name={compact ? "check" : "close"} />
-						</button>
+						{onTabSizingChange && (
+							<div
+								className="browser-tab-tools-mode-group"
+								role="group"
+								aria-label="Tab sizing"
+							>
+								<button
+									type="button"
+									className="browser-tab-tools-action browser-tab-tools-secondary-action"
+									role="menuitemradio"
+									aria-checked={tabSizing === "scrolling"}
+									onClick={() => onTabSizingChange("scrolling")}
+								>
+									<Icon name="tabActions" />
+									<span>Scrolling tabs</span>
+									<Icon name={tabSizing === "scrolling" ? "check" : "close"} />
+								</button>
+								<button
+									type="button"
+									className="browser-tab-tools-action browser-tab-tools-secondary-action"
+									role="menuitemradio"
+									aria-checked={tabSizing === "shrinking"}
+									onClick={() => onTabSizingChange("shrinking")}
+								>
+									<Icon name="sliders" />
+									<span>Shrinking tabs</span>
+									<Icon name={tabSizing === "shrinking" ? "check" : "close"} />
+								</button>
+							</div>
+						)}
 						{onReopenClosedTab && (
 							<button
 								type="button"

@@ -838,6 +838,10 @@ body:has(.ai-browser-app),
 .browser-tab-tools-secondary-action {
 	grid-template-columns: 18px minmax(0, 1fr) 18px;
 }
+.browser-tab-tools-mode-group {
+	display: grid;
+	gap: 3px;
+}
 .browser-tab-tools-action:hover,
 .browser-tab-tools-action:focus-visible,
 .browser-tab-tools-section > button:hover,
@@ -1559,16 +1563,18 @@ body:has(.ai-browser-app),
 	z-index: 4;
 }
 
-.browser-tab-row-compact .browser-tab {
-	/* Compact means a readable narrow tab, not a favicon matrix. Keep each
-	 * target large enough to identify and close, then let the strip overflow. */
-	flex: 0 0 112px;
-	min-width: 112px;
-	max-width: 112px;
+.browser-tab-row-horizontal.browser-tab-row-shrinking .browser-tab {
+	/* Shrinking tabs trade simultaneous title visibility for a stable browser
+	 * rail. The tab remains a real target; the overflow menu is the recovery
+	 * path when a tab becomes too narrow to read. */
+	flex: 1 1 0;
+	min-width: 0;
+	max-width: none;
 	grid-template-columns: minmax(0, 1fr) 24px;
+	overflow: hidden;
 }
 
-.browser-tab-row-compact .browser-tab-folder {
+.browser-tab-row-horizontal.browser-tab-row-shrinking .browser-tab-folder {
 	justify-content: flex-start;
 	width: 96px;
 	max-width: 96px;
@@ -1578,16 +1584,16 @@ body:has(.ai-browser-app),
 	border-radius: 6px 6px 0 0;
 }
 
-.browser-tab-row-compact .browser-tab > button[role="tab"] {
+.browser-tab-row-horizontal.browser-tab-row-shrinking .browser-tab > button[role="tab"] {
 	justify-content: flex-start;
 	padding-left: 7px;
 }
 
-.browser-tab-row-compact .browser-new-tab span {
+.browser-tab-row-horizontal.browser-tab-row-shrinking .browser-new-tab span {
 	display: none;
 }
 
-.browser-tab-row-compact .browser-new-tab {
+.browser-tab-row-horizontal.browser-tab-row-shrinking .browser-new-tab {
 	flex: 0 0 30px;
 	width: 30px;
 	height: 30px;
@@ -7402,9 +7408,9 @@ body:has(.calculator-overlay),
 	}
 }
 
-/* Keep the horizontal strip close to a browser tab bar: ordinary tabs stay a
- * readable, bounded width while the rail itself handles crowded tab sets.
- * Unused chrome remains a native drag target instead of becoming giant tabs. */
+/* Scrolling tabs preserve the existing horizontal rail: tabs keep a readable
+ * minimum and the rail becomes scrollable when the tab set is crowded. Unused
+ * chrome remains a native drag target instead of becoming giant tabs. */
 .browser-tabs {
 	/* Size the rail to its tabs when possible, then let it shrink into a
 	 * scrollable viewport before pushing New Tab or the drag target away. */
@@ -7432,22 +7438,26 @@ body:has(.calculator-overlay),
 	color: var(--faint);
 }
 
-/* Narrow tabs keep their explicit readable width and use the same rail. */
-.browser-tab-row-horizontal.browser-tab-row-compact .browser-tabs {
-	flex: 0 1 auto;
+/* Shrinking tabs claim the available rail and share its width instead of
+ * creating a horizontal scroll target. This is the familiar normal-browser
+ * behavior for a crowded tab set. */
+.browser-tab-row-horizontal.browser-tab-row-shrinking .browser-tabs {
+	flex: 1 1 0;
+	min-width: 0;
 	max-width: none;
-	overflow-x: auto;
-	overflow-y: hidden;
+	overflow: hidden;
 	scrollbar-width: none;
 }
 
-.browser-tab-row-horizontal.browser-tab-row-compact .browser-tab {
-	flex: 0 0 112px;
-	min-width: 112px;
-	max-width: 112px;
+.browser-tab-row-horizontal.browser-tab-row-shrinking .browser-tab {
+	flex: 1 1 0;
+	min-width: 0;
+	max-width: none;
+	overflow: hidden;
 }
 
-/* Narrow windows use the same browser-like shrink behavior. */
+/* Narrow windows keep the scrolling mode's stable target width. The shrinking
+ * mode override below intentionally wins when the person selected it. */
 @media (max-width: 760px) {
 	.browser-tab-row-horizontal .browser-tabs {
 		flex: 0 1 auto;

@@ -785,6 +785,7 @@ try {
 	await (await revealNewTabControl(page)).click();
 	let state = await browserState();
 	assert.equal(state.tabs.length, initialTabs + 1);
+	assert.equal(state.settings.tabSizing, "scrolling");
 	const addedBlankTab = state.activeTabId;
 	assert(addedBlankTab);
 	const horizontalTabs = page.getByRole("tab");
@@ -866,6 +867,62 @@ try {
 			Math.max(...crowdedTabWidths) < Math.min(...lowCountTabWidths),
 		`Crowded tabs did not shrink relative to the low-count layout: ${JSON.stringify({ lowCountTabWidths, crowdedTabWidths })}`,
 	);
+	const horizontalTabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
+	await horizontalTabToolsTrigger.click();
+	const horizontalTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await horizontalTabToolsMenu.waitFor();
+	const scrollingTabsOption = horizontalTabToolsMenu.getByRole("menuitemradio", {
+		name: "Scrolling tabs",
+		exact: true,
+	});
+	const shrinkingTabsOption = horizontalTabToolsMenu.getByRole("menuitemradio", {
+		name: "Shrinking tabs",
+		exact: true,
+	});
+	assert.equal(await scrollingTabsOption.getAttribute("aria-checked"), "true");
+	await shrinkingTabsOption.click();
+	state = await waitForBrowserState(
+		(value) => value.settings.tabSizing === "shrinking",
+		"switching to shrinking tabs",
+	);
+	await page.waitForFunction(() =>
+		document
+			.querySelector(".browser-tab-row-horizontal")
+			?.classList.contains("browser-tab-row-shrinking"),
+	);
+	const shrinkingRailMetrics = await tabRail.evaluate((node) => ({
+		clientWidth: node.clientWidth,
+		scrollWidth: node.scrollWidth,
+	}));
+	const shrinkingTabWidths = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(
+		shrinkingRailMetrics.scrollWidth <= shrinkingRailMetrics.clientWidth + 1 &&
+			shrinkingTabWidths.every((width) => width > 0) &&
+			Math.max(...shrinkingTabWidths) < Math.max(...lowCountTabWidths),
+		`Shrinking tabs did not fit the available rail: ${JSON.stringify({ shrinkingRailMetrics, shrinkingTabWidths })}`,
+	);
+	await scrollingTabsOption.click();
+	state = await waitForBrowserState(
+		(value) => value.settings.tabSizing === "scrolling",
+		"switching back to scrolling tabs",
+	);
+	await page.waitForFunction(() =>
+		!document
+			.querySelector(".browser-tab-row-horizontal")
+			?.classList.contains("browser-tab-row-shrinking"),
+	);
+	const restoredScrollingRailMetrics = await tabRail.evaluate((node) => ({
+		clientWidth: node.clientWidth,
+		scrollWidth: node.scrollWidth,
+	}));
+	assert(
+		restoredScrollingRailMetrics.scrollWidth > restoredScrollingRailMetrics.clientWidth + 1,
+		`Scrolling tabs did not restore the horizontal rail: ${JSON.stringify(restoredScrollingRailMetrics)}`,
+	);
+	await page.keyboard.press("Escape");
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
 	const railBounds = await tabRail.boundingBox();
 	const newTabBounds = await newTabControl.boundingBox();
 	const windowWidth = await page.evaluate(() => window.innerWidth);
@@ -2103,6 +2160,7 @@ try {
 		.filter({ hasText: "Mountain valley" })
 		.click();
 	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
+	await page.getByLabel("Tab sizing", { exact: true }).selectOption("shrinking");
 	const useCurrentPage = page.getByRole("switch", {
 		name: "Use current page context with agent",
 	});
@@ -2119,11 +2177,13 @@ try {
 		(candidate) =>
 			candidate.settings.searchEngine === "ecosia" &&
 			candidate.settings.tabLayout === "vertical" &&
+			candidate.settings.tabSizing === "shrinking" &&
 			candidate.settings.newTabBackground === "mountains",
 		"browser settings update",
 	);
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.tabSizing, "shrinking");
 	assert.equal(state.settings.newTabBackground, "mountains");
 
 	await page.getByRole("tab", { name: /Page one/ }).first().click();
@@ -2347,6 +2407,7 @@ try {
 	assert(state.history.some((entry) => entry.title === "Page two"));
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.tabSizing, "shrinking");
 	assert.equal(state.settings.newTabBackground, "mountains");
 	assert.equal(
 		await page

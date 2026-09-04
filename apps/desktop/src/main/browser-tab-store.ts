@@ -27,6 +27,7 @@ export const DEFAULT_BROWSER_SETTINGS: UserBrowserSettings = {
 	startupPages: [],
 	searchEngine: "google",
 	tabLayout: "horizontal",
+	tabSizing: "scrolling",
 	newTabBackground: "graphite",
 	newTabGreetingActivity: emptyNewTabGreetingActivity(),
 	newTabWidgets: {
