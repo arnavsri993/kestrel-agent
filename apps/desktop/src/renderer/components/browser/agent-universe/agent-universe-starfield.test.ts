@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	agentUniverseStarfieldSeedForLayer,
 	generateAgentUniverseStarPoints,
 	starfieldTransformForCamera,
 } from "./AgentUniverseStarfield";
@@ -42,5 +43,28 @@ describe("agent universe starfield camera attachment", () => {
 		expect(first.every((point) => point.alpha >= 0.14 && point.alpha <= 0.62)).toBe(true);
 		const uniqueLocations = new Set(first.map((point) => `${point.x.toFixed(3)}:${point.y.toFixed(3)}`));
 		expect(uniqueLocations.size).toBe(first.length);
+	});
+
+	it("uses a new opening seed to produce a different constellation", () => {
+		const first = generateAgentUniverseStarPoints(
+			{
+				density: 1,
+				seed: agentUniverseStarfieldSeedForLayer(0x12ab34cd, 0x10203040),
+			},
+			1_200,
+			700,
+			1,
+		);
+		const second = generateAgentUniverseStarPoints(
+			{
+				density: 1,
+				seed: agentUniverseStarfieldSeedForLayer(0x12ab34cd, 0x50607080),
+			},
+			1_200,
+			700,
+			1,
+		);
+
+		expect(second).not.toEqual(first);
 	});
 });
