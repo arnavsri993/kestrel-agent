@@ -3,8 +3,11 @@ import type {
 	CalendarProviderStatus,
 	CoreResponse,
 	MemoryRecord,
+	MemoryTimelineQueryResult,
 	PersonRecord,
+	ProvenanceRecord,
 	RendererRequest,
+	TimelineEvent,
 	TranscriptSearchResult,
 	UnifiedCalendarEvent,
 	UserModelFact,
@@ -15,7 +18,7 @@ import { DreamingPanel } from "./DreamingPanel";
 import { Icon } from "./Icon";
 import { MemoryRecallStatus } from "./MemoryRecallStatus";
 
-type LifeView = "calendar" | "people" | "memory";
+type LifeView = "calendar" | "timeline" | "people" | "memory";
 
 const dayFormatter = new Intl.DateTimeFormat(undefined, {
 	weekday: "short",
@@ -477,6 +480,545 @@ function CalendarView() {
 					{error}
 				</p>
 			)}
+		</div>
+	);
+}
+
+type TimelineSelection =
+	| { kind: "activity_block"; id: string }
+	| { kind: "timeline_event"; id: string };
+
+function localDateInputValue(value: Date): string {
+	const year = value.getFullYear();
+	const month = String(value.getMonth() + 1).padStart(2, "0");
+	const day = String(value.getDate()).padStart(2, "0");
+	return `${year}-${month}-${day}`;
+}
+
+function dateFromLocalInput(value: string): Date | undefined {
+	if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return undefined;
+	const date = new Date(`${value}T12:00:00`);
+	return Number.isFinite(date.getTime()) ? date : undefined;
+}
+
+function dayRange(value: Date): { startAt: string; endAt: string } {
+	const start = new Date(value);
+	start.setHours(0, 0, 0, 0);
+	const end = addDays(start, 1);
+	return { startAt: start.toISOString(), endAt: end.toISOString() };
+}
+
+function timelineTimeLabel(startedAt: string, endedAt?: string): string {
+	const start = new Date(startedAt);
+	if (!endedAt) return timeFormatter.format(start);
+	return `${timeFormatter.format(start)} – ${timeFormatter.format(new Date(endedAt))}`;
+}
+
+function uniqueIds(values: readonly string[]): string[] {
+	return [...new Set(values)].filter(Boolean);
+}
+
+function emptyTimelineResult(): MemoryTimelineQueryResult {
+	return {
+		results: [],
+		events: [],
+		sessions: [],
+		activityBlocks: [],
+		dailySummaries: [],
+		hasMore: false,
+	};
+}
+
+function TimelineView() {
+	const [day, setDay] = useState(() => {
+		const today = new Date();
+		today.setHours(12, 0, 0, 0);
+		return today;
+	});
+	const [query, setQuery] = useState("");
+	const [appliedQuery, setAppliedQuery] = useState("");
+	const [timeline, setTimeline] = useState<MemoryTimelineQueryResult>(() =>
+		emptyTimelineResult(),
+	);
+	const [selection, setSelection] = useState<TimelineSelection | null>(null);
+	const [provenance, setProvenance] = useState<ProvenanceRecord[]>([]);
+	const [busy, setBusy] = useState(false);
+	const [provenanceBusy, setProvenanceBusy] = useState(false);
+	const [error, setError] = useState("");
+	const range = useMemo(() => dayRange(day), [day]);
+	const eventsById = useMemo(
+		() => new Map(timeline.events.map((event) => [event.id, event] as const)),
+		[timeline.events],
+	);
+	const blocks = useMemo(
+		() =>
+			[...timeline.activityBlocks].sort(
+				(left, right) =>
+					new Date(left.startedAt).getTime() -
+						new Date(right.startedAt).getTime(),
+			),
+		[timeline.activityBlocks],
+	);
+	const groupedEventIds = useMemo(
+		() => new Set(blocks.flatMap((block) => block.eventIds)),
+		[blocks],
+	);
+	const standaloneEvents = useMemo(
+		() =>
+			timeline.events
+				.filter((event) => !groupedEventIds.has(event.id))
+				.sort(
+					(left, right) =>
+						new Date(left.startedAt).getTime() -
+							new Date(right.startedAt).getTime(),
+				),
+		[timeline.events, groupedEventIds],
+	);
+	const selectedBlock =
+		selection?.kind === "activity_block"
+			? timeline.activityBlocks.find((block) => block.id === selection.id)
+			: undefined;
+	const selectedEvent =
+		selection?.kind === "timeline_event"
+			? eventsById.get(selection.id)
+			: undefined;
+	const detailEvents = useMemo(() => {
+		if (selectedEvent) return [selectedEvent];
+		if (!selectedBlock) return [];
+		return selectedBlock.eventIds
+			.flatMap((id) => {
+				const event = eventsById.get(id);
+				return event ? [event] : [];
+			})
+			.sort(
+				(left, right) =>
+					new Date(left.startedAt).getTime() -
+						new Date(right.startedAt).getTime(),
+			);
+	}, [eventsById, selectedBlock, selectedEvent]);
+const detailRelatedIds = useMemo(
+		() =>
+			uniqueIds(
+				(selectedBlock
+					? [
+							...selectedBlock.projectIds,
+							...selectedBlock.personIds,
+							...selectedBlock.entityIds,
+						]
+					: detailEvents.flatMap((event) => [
+							...event.projectIds,
+							...event.personIds,
+							...event.entityIds,
+						])) ?? [],
+			),
+		[selectedBlock, detailEvents],
+	);
+	const summary = timeline.dailySummaries.find(
+		(item) => item.day === localDateInputValue(day),
+	);
+
+	async function loadTimeline(search = appliedQuery) {
+		setBusy(true);
+		setError("");
+		try {
+			const response = await request({
+				type: "memory-timeline-query",
+				query: search,
+				startAt: range.startAt,
+				endAt: range.endAt,
+				personIds: [],
+				projectIds: [],
+				entityIds: [],
+				horizons: [],
+				eventTypes: [],
+				includeTimeline: true,
+				includeMemories: false,
+				includeEntities: false,
+				includeAgents: false,
+				includeTasks: false,
+				includeSensitive: false,
+				includeRestricted: false,
+				limit: 100,
+				sort: "chronological",
+			});
+			const next = response.memoryTimeline ?? emptyTimelineResult();
+			setTimeline(next);
+			setSelection((current) => {
+				if (
+					current?.kind === "activity_block" &&
+					next.activityBlocks.some((block) => block.id === current.id)
+				)
+					return current;
+				if (
+					current?.kind === "timeline_event" &&
+					next.events.some((event) => event.id === current.id)
+				)
+					return current;
+				const firstBlock = next.activityBlocks[0];
+				if (firstBlock) return { kind: "activity_block", id: firstBlock.id };
+				const firstEvent = next.events[0];
+				return firstEvent
+					? { kind: "timeline_event", id: firstEvent.id }
+					: null;
+			});
+		} catch (cause) {
+			setError(
+				cause instanceof Error ? cause.message : "Could not load the timeline.",
+			);
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	useEffect(() => {
+		void loadTimeline();
+	}, [day.getTime(), appliedQuery]);
+
+	useEffect(() => {
+		const owner = selectedBlock
+			? { ownerType: "activity_block" as const, ownerId: selectedBlock.id }
+			: selectedEvent
+				? { ownerType: "timeline_event" as const, ownerId: selectedEvent.id }
+				: undefined;
+		if (!owner) {
+			setProvenance([]);
+			return;
+		}
+		let current = true;
+		setProvenanceBusy(true);
+		void request({
+			type: "memory-provenance-list",
+			ownerType: owner.ownerType,
+			ownerId: owner.ownerId,
+			limit: 50,
+		})
+			.then((response) => {
+				if (current) setProvenance(response.memoryProvenance ?? []);
+			})
+			.catch((cause) => {
+				if (current)
+					setError(
+						cause instanceof Error
+							? cause.message
+							: "Could not load activity provenance.",
+					);
+			})
+			.finally(() => {
+				if (current) setProvenanceBusy(false);
+			});
+		return () => {
+			current = false;
+		};
+	}, [selectedBlock, selectedEvent]);
+
+	function selectEvent(event: TimelineEvent) {
+		setSelection({ kind: "timeline_event", id: event.id });
+	}
+
+	function renderEvent(event: TimelineEvent) {
+		return (
+			<button
+				key={event.id}
+				className={`timeline-event${selectedEvent?.id === event.id ? " active" : ""}`}
+				aria-pressed={selectedEvent?.id === event.id}
+				onClick={() => selectEvent(event)}
+			>
+				<time dateTime={event.startedAt}>
+					{timelineTimeLabel(event.startedAt, event.endedAt)}
+				</time>
+				<span className="timeline-event-type">
+					{formatDisplayLabel(event.eventType)}
+				</span>
+				<strong>{event.textSummary}</strong>
+				<small>
+					{event.source} · {event.actor}
+				</small>
+			</button>
+		);
+	}
+
+	return (
+		<div className="life-timeline">
+			<section className="timeline-toolbar" aria-label="Timeline controls">
+				<div className="timeline-day-controls">
+					<button
+						className="icon-button"
+						aria-label="Previous day"
+						onClick={() => setDay((current) => addDays(current, -1))}
+					>
+						<Icon name="chevron" className="chevron-back" />
+					</button>
+					<button
+						className="button secondary"
+						onClick={() => {
+							const today = new Date();
+							today.setHours(12, 0, 0, 0);
+							setDay(today);
+						}}
+					>
+						Today
+					</button>
+					<button
+						className="icon-button"
+						aria-label="Next day"
+						onClick={() => setDay((current) => addDays(current, 1))}
+					>
+						<Icon name="chevron" />
+					</button>
+					<strong>{dayFormatter.format(day)}</strong>
+				</div>
+				<label className="timeline-date-picker">
+					<span className="sr-only">Jump to a day</span>
+					<input
+						type="date"
+						value={localDateInputValue(day)}
+						onChange={(event) => {
+							const next = dateFromLocalInput(event.target.value);
+							if (next) setDay(next);
+						}}
+					/>
+				</label>
+			</section>
+
+			<form
+				className="timeline-searchbar"
+				onSubmit={(event) => {
+					event.preventDefault();
+					const next = query.trim();
+					setAppliedQuery(next);
+					if (next === appliedQuery) void loadTimeline(next);
+				}}
+			>
+				<label>
+					<span className="sr-only">Search timeline</span>
+					<Icon name="search" />
+					<input
+						value={query}
+						onChange={(event) => setQuery(event.target.value)}
+						placeholder="Search this day’s activity"
+					/>
+				</label>
+				<button
+					className="button secondary"
+					disabled={busy && !timeline.events.length}
+				>
+					{busy ? "Loading…" : "Search timeline"}
+				</button>
+				{appliedQuery && (
+					<button
+						type="button"
+						className="quiet-link"
+						onClick={() => {
+							setQuery("");
+							setAppliedQuery("");
+						}}
+					>
+						Clear search
+					</button>
+				)}
+			</form>
+
+			<section className="timeline-overview" aria-live="polite">
+				<div>
+					<span className="eyebrow">Personal timeline</span>
+					<h2>{summary?.title ?? "A day in motion"}</h2>
+					<p>
+						{summary?.summary ??
+							"Kestrel keeps meaningful activity in chronological blocks, with the original evidence available when you inspect a moment."}
+					</p>
+				</div>
+				<dl>
+					<div>
+						<dt>Sessions</dt>
+						<dd>{timeline.sessions.length}</dd>
+					</div>
+					<div>
+						<dt>Blocks</dt>
+						<dd>{blocks.length}</dd>
+					</div>
+					<div>
+						<dt>Events</dt>
+						<dd>{timeline.events.length}</dd>
+					</div>
+				</dl>
+			</section>
+
+			{error && (
+				<p className="connection-error" role="alert">
+					{error}
+				</p>
+			)}
+
+			<div className="timeline-layout">
+				<section className="timeline-stream" aria-busy={busy}>
+					{blocks.map((block) => {
+						const blockEvents = block.eventIds.flatMap((id) => {
+							const event = eventsById.get(id);
+							return event ? [event] : [];
+						});
+						return (
+							<article
+								className={`timeline-block${selectedBlock?.id === block.id ? " active" : ""}`}
+								key={block.id}
+							>
+								<header>
+									<button
+										className="timeline-block-select"
+										aria-pressed={selectedBlock?.id === block.id}
+										onClick={() =>
+											setSelection({ kind: "activity_block", id: block.id })
+										}
+									>
+										<time dateTime={block.startedAt}>
+											{timelineTimeLabel(block.startedAt, block.endedAt)}
+										</time>
+										<strong>{block.title}</strong>
+									</button>
+									<span>{Math.round(block.confidence * 100)}% context</span>
+								</header>
+								<p>{block.summary}</p>
+								<div className="timeline-event-list">
+									{blockEvents.map(renderEvent)}
+									{blockEvents.length === 0 && (
+										<small className="timeline-missing-evidence">
+											The block is retained, but its event evidence is not in this page.
+										</small>
+									)}
+								</div>
+							</article>
+						);
+					})}
+					{standaloneEvents.map((event) => (
+						<article className="timeline-block timeline-standalone" key={event.id}>
+							<header>
+								<div>
+									<time dateTime={event.startedAt}>
+										{timelineTimeLabel(event.startedAt, event.endedAt)}
+									</time>
+									<strong>{formatDisplayLabel(event.eventType)}</strong>
+								</div>
+								<span>{event.source}</span>
+							</header>
+							<div className="timeline-event-list">{renderEvent(event)}</div>
+						</article>
+					))}
+					{!blocks.length && !standaloneEvents.length && !busy && (
+						<section className="life-empty timeline-empty">
+							<Icon name="activity" />
+							<div>
+								<h2>
+									{appliedQuery ? "No activity matches" : "Nothing captured this day"}
+								</h2>
+								<p>
+									{appliedQuery
+										? "Try a broader phrase or clear the search to see the full day."
+										: "Meaningful Kestrel activity will appear here when capture is enabled. Private and incognito sessions stay out of the timeline."}
+								</p>
+							</div>
+						</section>
+					)}
+					{timeline.hasMore && (
+						<small className="timeline-more-note">
+							This day has more activity than the first 100 results. Narrow the search
+							to inspect a specific thread.
+						</small>
+					)}
+				</section>
+
+				<aside className="timeline-detail" aria-live="polite">
+					{selectedBlock || selectedEvent ? (
+						<>
+							<span className="eyebrow">
+								{selectedBlock ? "Activity block" : "Timeline event"}
+							</span>
+							<h2>
+								{selectedBlock?.title ??
+									(selectedEvent ? formatDisplayLabel(selectedEvent.eventType) : "Activity")}
+							</h2>
+							<p>
+								{selectedBlock
+									? `${dateTimeFormatter.format(new Date(selectedBlock.startedAt))} · ${selectedBlock.confidence * 100 >= 0 ? `${Math.round(selectedBlock.confidence * 100)}% confidence` : ""}`
+									: selectedEvent
+										? dateTimeFormatter.format(new Date(selectedEvent.startedAt))
+										: ""}
+							</p>
+							{selectedBlock && <p>{selectedBlock.summary}</p>}
+							{selectedEvent && <p>{selectedEvent.textSummary}</p>}
+							{detailEvents.length > 1 && (
+								<section className="timeline-detail-events">
+									<h3>Evidence in this block</h3>
+									{detailEvents.map((event) => (
+										<button
+											key={event.id}
+											className="timeline-detail-event"
+											onClick={() => selectEvent(event)}
+										>
+											<time dateTime={event.startedAt}>
+												{timelineTimeLabel(event.startedAt, event.endedAt)}
+											</time>
+											<span>{event.textSummary}</span>
+										</button>
+									))}
+								</section>
+							)}
+							{detailRelatedIds.length > 0 && (
+								<section className="timeline-detail-section">
+									<h3>Related IDs</h3>
+									<div className="timeline-chip-list">
+										{detailRelatedIds.map((id) => (
+											<code key={id}>{id}</code>
+										))}
+									</div>
+								</section>
+							)}
+							{detailEvents.some((event) => event.url || event.filePath) && (
+								<section className="timeline-detail-section">
+									<h3>Pages and files</h3>
+									{detailEvents.map((event) => (
+										<div className="timeline-reference-list" key={event.id}>
+											{event.url && /^https?:\/\//iu.test(event.url) && (
+												<a href={event.url} target="_blank" rel="noreferrer">
+													{event.url}
+												</a>
+											)}
+											{event.filePath && <code>{event.filePath}</code>}
+										</div>
+									))}
+								</section>
+							)}
+							<section className="timeline-detail-section">
+								<h3>Provenance</h3>
+								{provenanceBusy ? (
+									<small className="timeline-muted">Loading source details…</small>
+								) : provenance.length ? (
+									<div className="timeline-provenance-list">
+										{provenance.map((item) => (
+											<article key={item.id}>
+												<strong>{item.sourceType}</strong>
+												<span>{item.sourceId}</span>
+												<small>
+													{item.actor} · {item.extractionMethod} · {Math.round(item.confidence * 100)}%
+												</small>
+												{item.excerpt && <p>{item.excerpt}</p>}
+											</article>
+										))}
+									</div>
+								) : (
+									<small className="timeline-muted">
+										No additional provenance was recorded for this activity.
+									</small>
+								)}
+							</section>
+						</>
+					) : (
+						<div className="timeline-detail-empty">
+							<Icon name="activity" />
+							<h2>Inspect a moment</h2>
+							<p>Select a block or event to see the source, related work, pages, and files behind it.</p>
+						</div>
+					)}
+				</aside>
+			</div>
 		</div>
 	);
 }
@@ -1351,6 +1893,7 @@ export function LifeContext({
 				{(
 					[
 						["calendar", "Calendar", "today"],
+						["timeline", "Timeline", "activity"],
 						["people", "People", "chat"],
 						["memory", "Memory", "memory"],
 					] as const
@@ -1367,6 +1910,7 @@ export function LifeContext({
 				))}
 			</nav>
 			{view === "calendar" && <CalendarView />}
+			{view === "timeline" && <TimelineView />}
 			{view === "people" && <PeopleView />}
 			{view === "memory" && (
 				<MemoryView

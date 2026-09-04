@@ -11,6 +11,13 @@ interface StarLayer {
 	seed: number;
 }
 
+export interface AgentUniverseStarPoint {
+	x: number;
+	y: number;
+	radius: number;
+	alpha: number;
+}
+
 interface RenderedStarLayer extends StarLayer {
 	tile: HTMLCanvasElement;
 }
@@ -60,6 +67,61 @@ function clamp(value: number, minimum: number, maximum: number): number {
 	return Math.min(maximum, Math.max(minimum, value));
 }
 
+/**
+ * Generate a stable, slightly clustered point field. The renderer only
+ * paints these points into a tile; keeping generation separate makes the
+ * density/shape contract testable without mounting a canvas.
+ */
+export function generateAgentUniverseStarPoints(
+	layer: Pick<StarLayer, "density" | "seed">,
+	pixelWidth: number,
+	pixelHeight: number,
+	dpr: number,
+): AgentUniverseStarPoint[] {
+	const safeWidth = Math.max(1, Math.round(pixelWidth));
+	const safeHeight = Math.max(1, Math.round(pixelHeight));
+	const safeDpr = Math.max(1, Number.isFinite(dpr) ? dpr : 1);
+	const area = (safeWidth * safeHeight) / (safeDpr * safeDpr);
+	const baseCount = Math.round(clamp(area / 2_800, 260, 900));
+	const count = Math.max(1, Math.round(baseCount * layer.density));
+	const random = seededRandom(layer.seed ^ safeWidth ^ (safeHeight << 1));
+	const clusterCount = Math.round(clamp(area / 110_000, 8, 22));
+	const clusterRadius = Math.min(safeWidth, safeHeight) * 0.13;
+	const clusters = Array.from({ length: clusterCount }, () => ({
+		x: random() * safeWidth,
+		y: random() * safeHeight,
+		radius: clusterRadius * (0.45 + random() * 0.7),
+	}));
+	const points: AgentUniverseStarPoint[] = [];
+	for (let index = 0; index < count; index += 1) {
+		const clustered = random() < 0.7;
+		const cluster = clustered
+			? clusters[Math.floor(random() * clusters.length)]
+			: undefined;
+		const angle = random() * Math.PI * 2;
+		const distance = cluster
+			? Math.pow(random(), 1.65) * cluster.radius
+			: 0;
+		const x = cluster
+			? ((cluster.x + Math.cos(angle) * distance) % safeWidth + safeWidth) % safeWidth
+			: random() * safeWidth;
+		const y = cluster
+			? ((cluster.y + Math.sin(angle) * distance) % safeHeight + safeHeight) % safeHeight
+			: random() * safeHeight;
+		const sizeRoll = random();
+		const brightnessRoll = random();
+		points.push({
+			x,
+			y,
+			// Most points stay below one CSS pixel. A very small tail of nearer
+			// points supplies depth without turning into decorative sparkles.
+			radius: (0.28 + Math.pow(sizeRoll, 2.3) * 1.22) * safeDpr,
+			alpha: 0.14 + Math.pow(brightnessRoll, 2.2) * 0.48,
+		});
+	}
+	return points;
+}
+
 function buildLayer(
 	layer: StarLayer,
 	pixelWidth: number,
@@ -72,47 +134,17 @@ function buildLayer(
 	const context = tile.getContext("2d");
 	if (!context) return { ...layer, tile };
 
-	const area = (pixelWidth * pixelHeight) / (dpr * dpr);
-	// The field is an orientation cue, not a screensaver. It still needs to
-	// read as a field of stars at a normal desktop distance, though: the former
-	// 0.035 alpha floor disappeared into the black plane on Retina displays.
-	const baseCount = Math.round(clamp(area / 6_000, 120, 300));
-	const count = Math.round(baseCount * layer.density);
-	const random = seededRandom(layer.seed ^ pixelWidth ^ (pixelHeight << 1));
-	for (let index = 0; index < count; index += 1) {
-		const sizeRoll = random();
-		const brightnessRoll = random();
-		const radius = (0.28 + Math.pow(sizeRoll, 2.3) * 1.22) * dpr;
-		const alpha = 0.14 + Math.pow(brightnessRoll, 2.2) * 0.48;
-		const x = random() * pixelWidth;
-		const y = random() * pixelHeight;
-		context.fillStyle = `rgba(222, 231, 248, ${alpha})`;
+	const points = generateAgentUniverseStarPoints(
+		layer,
+		pixelWidth,
+		pixelHeight,
+		dpr,
+	);
+	for (const point of points) {
+		context.fillStyle = `rgba(222, 231, 248, ${point.alpha})`;
 		context.beginPath();
-		context.arc(x, y, radius, 0, Math.PI * 2);
+		context.arc(point.x, point.y, point.radius, 0, Math.PI * 2);
 		context.fill();
-		// A few nearer points get a four-point glint so these read as stars, not
-		// as random canvas noise. It is drawn directly into the tile so the
-		// animation remains one cheap texture translation per layer.
-		if (brightnessRoll > 0.92 && sizeRoll > 0.63) {
-			const ray = radius * (2.6 + sizeRoll * 3.2);
-			context.strokeStyle = `rgba(232, 239, 255, ${Math.min(0.78, alpha + 0.12)})`;
-			context.lineWidth = Math.max(0.5, dpr * 0.34);
-			context.beginPath();
-			context.moveTo(x - ray, y);
-			context.lineTo(x + ray, y);
-			context.moveTo(x, y - ray);
-			context.lineTo(x, y + ray);
-			context.stroke();
-		}
-		// A handful of the brightest points get a quiet optical halo. It is
-		// intentionally drawn as a second soft point rather than a filter applied
-		// to the whole field.
-		if (brightnessRoll > 0.985) {
-			context.fillStyle = `rgba(232, 239, 255, ${alpha * 0.2})`;
-			context.beginPath();
-			context.arc(x, y, radius * 2.8, 0, Math.PI * 2);
-			context.fill();
-		}
 	}
 	return { ...layer, tile };
 }

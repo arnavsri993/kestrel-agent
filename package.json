@@ -32,6 +32,7 @@
     "test:desktop-single-instance": "node scripts/test-desktop-single-instance.mjs",
     "test:desktop-browser": "node scripts/test-desktop-browser.mjs",
     "test:desktop-layout": "node scripts/test-desktop-layout.mjs",
+    "test:desktop-project-system": "node scripts/test-desktop-project-system.mjs",
     "test:desktop-settings": "node scripts/test-desktop-settings.mjs",
     "test:desktop-writing-studio": "node scripts/test-desktop-writing-studio.mjs",
     "test:desktop-file-icon-guard": "node scripts/test-desktop-file-icon-guard.mjs",

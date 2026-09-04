@@ -52,6 +52,7 @@ import {
 	clipboard,
 	dialog,
 	session as electronSession,
+	systemPreferences,
 	Menu,
 	nativeImage,
 	type LoadURLOptions,
@@ -211,6 +212,37 @@ export interface UserBrowserServiceOptions {
 	onLastTabClosed?(): void;
 	nameTabFolders?(groups: BrowserTabFolderNamingGroup[]): Promise<BrowserTabFolderName[]>;
 	confirmSitePermission?(origin: string, permission: string): Promise<boolean>;
+	requestNativeMediaAccess?(mediaType: "camera" | "microphone"): Promise<boolean>;
+}
+
+type BrowserMediaRequestType = "video" | "audio";
+type NativeMediaType = "camera" | "microphone";
+
+function isBrowserMediaRequestType(value: unknown): value is BrowserMediaRequestType {
+	return value === "video" || value === "audio";
+}
+
+function mediaRequestTypes(value: unknown): BrowserMediaRequestType[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter(isBrowserMediaRequestType);
+}
+
+function nativeMediaTypesForRequest(
+	mediaTypes: readonly BrowserMediaRequestType[],
+): NativeMediaType[] {
+	return [
+		...(mediaTypes.includes("video") ? (["camera"] as const) : []),
+		...(mediaTypes.includes("audio") ? (["microphone"] as const) : []),
+	];
+}
+
+function mediaPermissionLabel(
+	mediaTypes: readonly BrowserMediaRequestType[],
+): string {
+	const requested = nativeMediaTypesForRequest(mediaTypes);
+	if (requested.length === 2) return "camera and microphone";
+	if (requested[0]) return requested[0];
+	return "camera and microphone";
 }
 
 interface ViewRecord {
@@ -860,11 +892,17 @@ function passwordFillScript(
 
 interface BrowserPartitionParticipant {
 	ownsWebContents(webContents: WebContents): boolean;
-	isPermissionAllowed(origin: string, permission: string): boolean;
+	isPermissionAllowed(
+		origin: string,
+		permission: string,
+		mediaType?: string,
+	): boolean;
 	resolvePermissionRequest(
 		webContents: WebContents,
 		permission: string,
 		requestingUrl?: string,
+		mediaTypes?: BrowserMediaRequestType[],
+		securityOrigin?: string,
 	): Promise<boolean>;
 	handleWillDownload(
 		event: Electron.Event,
@@ -884,12 +922,20 @@ class BrowserPartitionCoordinator {
 
 	constructor(private readonly partition: Session) {
 		partition.setPermissionCheckHandler(
-			(webContents, permission, requestingOrigin) => {
+			(webContents, permission, requestingOrigin, details) => {
 				const participant = this.find(webContents);
+				const mediaType =
+					permission === "media" &&
+					details &&
+					"mediaType" in details &&
+					typeof details.mediaType === "string"
+						? details.mediaType
+						: undefined;
 				return (
 					participant?.isPermissionAllowed(
 						requestingOrigin,
 						String(permission),
+						mediaType,
 					) ?? false
 				);
 			},
@@ -906,6 +952,17 @@ class BrowserPartitionCoordinator {
 						webContents,
 						String(permission),
 						details?.requestingUrl,
+						permission === "media" &&
+							details &&
+							"mediaTypes" in details
+							? mediaRequestTypes(details.mediaTypes)
+							: undefined,
+						permission === "media" &&
+							details &&
+							"securityOrigin" in details &&
+							typeof details.securityOrigin === "string"
+							? details.securityOrigin
+							: undefined,
 					)
 					.then(callback)
 					.catch(() => callback(false));
@@ -971,6 +1028,9 @@ export class UserBrowserService {
 	private readonly webContentsToTab = new Map<number, string>();
 	private readonly confirmSitePermission: NonNullable<
 		UserBrowserServiceOptions["confirmSitePermission"]
+	>;
+	private readonly requestNativeMediaAccess: NonNullable<
+		UserBrowserServiceOptions["requestNativeMediaAccess"]
 	>;
 	private readonly now: () => Date;
 	private readonly defaultDownloadDirectory: string;
@@ -1043,6 +1103,12 @@ export class UserBrowserService {
 				});
 				return response.response === 0;
 			});
+		this.requestNativeMediaAccess =
+			options.requestNativeMediaAccess ??
+			(async (mediaType) =>
+				process.platform === "darwin"
+					? systemPreferences.askForMediaAccess(mediaType)
+					: true);
 		mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
 		this.extensionManager = new BrowserExtensionManager(dirname(options.statePath), {
 			allowLocalExtensions: options.allowLocalExtensions === true,
@@ -1069,13 +1135,21 @@ export class UserBrowserService {
 		this.partitionParticipant = {
 			ownsWebContents: (webContents) =>
 				this.webContentsToTab.has(webContents.id),
-			isPermissionAllowed: (origin, permission) =>
-				this.isPermissionAllowed(origin, permission),
-			resolvePermissionRequest: (webContents, permission, requestingUrl) =>
+			isPermissionAllowed: (origin, permission, mediaType) =>
+				this.isPermissionAllowed(origin, permission, mediaType),
+			resolvePermissionRequest: (
+				webContents,
+				permission,
+				requestingUrl,
+				mediaTypes,
+				securityOrigin,
+			) =>
 				this.resolvePermissionRequest(
 					webContents,
 					permission,
 					requestingUrl,
+					mediaTypes,
+					securityOrigin,
 				),
 			handleWillDownload: (event, item, webContents) =>
 				this.handleWillDownload(event, item, webContents),
@@ -2373,17 +2447,7 @@ export class UserBrowserService {
 		const normalizedOrigin = this.permissionOrigin(origin);
 		if (!normalizedOrigin)
 			throw new Error("Site permissions require an HTTP(S) origin.");
-		const next = this.state.sitePermissions.filter(
-			(item) =>
-				!(item.origin === normalizedOrigin && item.permission === permission),
-		);
-		next.push({
-			origin: normalizedOrigin,
-			permission,
-			decision,
-			updatedAt: this.now().toISOString(),
-		});
-		this.state.sitePermissions = next.slice(-500);
+		this.rememberSitePermission(normalizedOrigin, permission, decision);
 		this.commit();
 		return this.getState();
 	}
@@ -4508,32 +4572,83 @@ export class UserBrowserService {
 		return this.ensureView(tab);
 	}
 
-	private isPermissionAllowed(originValue: string, permission: string): boolean {
+	private storedSitePermission(
+		origin: string,
+		permission: string,
+	): boolean | undefined {
+		const stored = this.state.sitePermissions.find(
+			(item) => item.origin === origin && item.permission === permission,
+		);
+		return stored ? stored.decision === "allow" : undefined;
+	}
+
+	private isPermissionAllowed(
+		originValue: string,
+		permission: string,
+		mediaType?: string,
+	): boolean {
 		if (ALWAYS_ALLOW_PERMISSIONS.has(permission)) return true;
 		if (ALWAYS_DENY_PERMISSIONS.has(permission)) return false;
 		const origin = this.permissionOrigin(originValue);
 		if (!origin) return false;
-		return (
-			this.state.sitePermissions.find(
-				(item) => item.origin === origin && item.permission === permission,
-			)?.decision === "allow"
-		);
+		if (permission === "media" && mediaType === "video")
+			return (
+				this.storedSitePermission(origin, "camera") ??
+				this.storedSitePermission(origin, "media") ??
+				false
+			);
+		if (permission === "media" && mediaType === "audio")
+			return (
+				this.storedSitePermission(origin, "microphone") ??
+				this.storedSitePermission(origin, "media") ??
+				false
+			);
+		return this.storedSitePermission(origin, permission) ?? false;
 	}
 
 	private async resolvePermissionRequest(
 		webContents: WebContents,
 		permission: string,
 		requestingUrl?: string,
+		mediaTypes: BrowserMediaRequestType[] = [],
+		securityOrigin?: string,
 	): Promise<boolean> {
 		if (ALWAYS_ALLOW_PERMISSIONS.has(permission)) return true;
 		if (ALWAYS_DENY_PERMISSIONS.has(permission)) return false;
 		const currentWebContents = liveWebContents(webContents);
 		const origin = this.permissionOrigin(
+			securityOrigin ||
 			requestingUrl ||
 				currentWebContents?.getURL() ||
 				"",
 		);
 		if (!origin) return false;
+		if (permission === "media") {
+			const requestedMediaTypes = mediaTypes.length
+				? mediaTypes
+				: (["video", "audio"] as BrowserMediaRequestType[]);
+			const nativeTypes = nativeMediaTypesForRequest(requestedMediaTypes);
+			const storedDecisions = nativeTypes.map((mediaType) =>
+				this.storedSitePermission(origin, mediaType) ??
+				this.storedSitePermission(origin, "media"),
+			);
+			if (storedDecisions.some((decision) => decision === false)) return false;
+			let allowed = storedDecisions.every((decision) => decision === true);
+			if (!allowed) {
+				allowed = await this.confirmSitePermission(
+					origin,
+					mediaPermissionLabel(requestedMediaTypes),
+				);
+				for (const mediaType of nativeTypes)
+					this.rememberSitePermission(origin, mediaType, allowed ? "allow" : "deny");
+				this.commit();
+			}
+			if (!allowed) return false;
+			for (const mediaType of nativeTypes) {
+				if (!(await this.requestNativeMediaAccess(mediaType))) return false;
+			}
+			return true;
+		}
 		const stored = this.state.sitePermissions.find(
 			(item) => item.origin === origin && item.permission === permission,
 		);
@@ -4541,6 +4656,23 @@ export class UserBrowserService {
 		const allowed = await this.confirmSitePermission(origin, permission);
 		this.setSitePermission(origin, permission, allowed ? "allow" : "deny");
 		return allowed;
+	}
+
+	private rememberSitePermission(
+		origin: string,
+		permission: string,
+		decision: "allow" | "deny",
+	): void {
+		const next = this.state.sitePermissions.filter(
+			(item) => !(item.origin === origin && item.permission === permission),
+		);
+		next.push({
+			origin,
+			permission,
+			decision,
+			updatedAt: this.now().toISOString(),
+		});
+		this.state.sitePermissions = next.slice(-500);
 	}
 
 	private permissionOrigin(value: string): string | undefined {

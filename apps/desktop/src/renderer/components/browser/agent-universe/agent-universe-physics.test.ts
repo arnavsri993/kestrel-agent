@@ -67,6 +67,30 @@ describe("agent universe local physics", () => {
 		expect(Math.hypot(worker.vx, worker.vy)).toBeLessThan(1);
 	});
 
+	it("lets a dragged planet lead its moons, then recenters the whole system", () => {
+		const state = createAgentUniversePhysicsState(initialNodes);
+		state.drag = {
+			nodeId: "root",
+			target: { x: 240, y: 90 },
+			origin: { x: 0, y: 0 },
+			offset: { x: 0, y: 0 },
+		};
+		const displaced = step(state, 45);
+		const root = displaced.nodes.find((node) => node.id === "root")!;
+		const worker = displaced.nodes.find((node) => node.id === "worker-a")!;
+
+		expect(root.x).toBeGreaterThan(100);
+		expect(worker.x).toBeGreaterThan(190);
+		expect(worker.y).toBeGreaterThan(-1);
+
+		displaced.drag = null;
+		const settled = step(displaced, 240);
+		const settledRoot = settled.nodes.find((node) => node.id === "root")!;
+		const settledWorker = settled.nodes.find((node) => node.id === "worker-a")!;
+		expect(Math.hypot(settledRoot.x - settledRoot.homeX, settledRoot.y - settledRoot.homeY)).toBeLessThan(1);
+		expect(Math.hypot(settledWorker.x - settledWorker.homeX, settledWorker.y - settledWorker.homeY)).toBeLessThan(1);
+	});
+
 	it("keeps existing bodies on their rendered frame while homes change", () => {
 		const state = createAgentUniversePhysicsState(initialNodes);
 		const worker = state.nodes.find((node) => node.id === "worker-a")!;

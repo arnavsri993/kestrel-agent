@@ -174,30 +174,22 @@
   vector-effect: non-scaling-stroke;
 }
 
+.agent-universe-body-asset,
 .agent-universe-planet-sheen,
-.agent-universe-planet-surface-detail,
-.agent-universe-moon-sheen,
-.agent-universe-moon-crater {
+.agent-universe-moon-sheen {
   pointer-events: none;
+}
+
+.agent-universe-body-asset {
+  display: block;
+  /* The checked-in NASA/JPL image is the body. The rim and sheen below are
+   * only material/interaction cues and never a placeholder fill. */
+  shape-rendering: geometricPrecision;
 }
 
 .agent-universe-planet-sheen,
 .agent-universe-moon-sheen {
   opacity: 0.96;
-}
-
-.agent-universe-planet-surface-detail {
-  fill: var(--agent-system-highlight, var(--agent-system-color));
-  opacity: 0.13;
-}
-
-.agent-universe-planet-surface-detail.is-secondary {
-  opacity: 0.08;
-}
-
-.agent-universe-moon-crater {
-  fill: color-mix(in srgb, var(--agent-system-core, #000000) 62%, #000000);
-  opacity: 0.24;
 }
 
 .agent-universe-delegation-link {
@@ -285,10 +277,10 @@
 }
 
 .agent-universe-core-rim {
-  /* A solid, darkened system hue gives the body weight without a glossy
-   * gradient. The edge is the only luminous material cue. */
-  fill: var(--agent-system-core, var(--agent-system-color));
-  fill-opacity: 1;
+  /* The local NASA/JPL image supplies the body. Keep this element as a
+   * non-obscuring interaction/status rim. */
+  fill: transparent;
+  fill-opacity: 0;
   stroke: var(--agent-system-highlight, var(--agent-system-color));
   stroke-opacity: 0.5;
   stroke-width: 1.25;
@@ -297,8 +289,8 @@
 }
 
 .agent-universe-worker-rim {
-  fill: var(--agent-system-surface, var(--agent-system-color));
-  fill-opacity: 1;
+  fill: transparent;
+  fill-opacity: 0;
   stroke: var(--agent-system-highlight, var(--agent-system-color));
   stroke-opacity: 0.38;
   stroke-width: 1.1;
@@ -447,6 +439,58 @@
   color: var(--muted);
   font-size: 12px;
   line-height: 1.55;
+}
+
+.agent-universe-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-universe-create-agent-form {
+  display: grid;
+  gap: 10px;
+  width: min(300px, 100%);
+  text-align: left;
+}
+
+.agent-universe-create-agent-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.agent-universe-create-agent-form input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 8px;
+  outline: none;
+  background: rgb(4 6 9 / 58%);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.agent-universe-create-agent-form input:focus-visible {
+  border-color: var(--line-strong);
+  box-shadow: var(--focus-ring);
+}
+
+.agent-universe-create-agent-form input::placeholder {
+  color: var(--faint);
+}
+
+.agent-universe-create-agent-error {
+  margin: 0;
+  color: var(--warning);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .agent-universe-loading-mark {
@@ -1345,6 +1389,112 @@
   padding: 8px 9px;
   border-left: 2px solid color-mix(in srgb, var(--agent-system-color, var(--ink)) 55%, transparent);
   background: rgb(0 0 0 / 16%);
+}
+
+.agent-universe-memory-entry {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-universe-memory-entry > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.agent-universe-memory-entry-actions,
+.agent-universe-memory-edit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.agent-universe-memory-action {
+  padding: 3px 6px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 5px;
+  background: rgb(255 255 255 / 5%);
+  color: var(--ink-secondary);
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.agent-universe-memory-action:hover,
+.agent-universe-memory-action:focus-visible {
+  border-color: color-mix(in srgb, var(--agent-system-color, var(--focus)) 55%, white 10%);
+  color: var(--ink);
+}
+
+.agent-universe-memory-action.is-primary {
+  background: color-mix(in srgb, var(--agent-system-color, var(--focus)) 20%, transparent);
+}
+
+.agent-universe-memory-action.is-danger {
+  color: #ffb4b4;
+}
+
+.agent-universe-memory-edit {
+  display: grid;
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.agent-universe-memory-edit textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  padding: 7px 8px;
+  resize: vertical;
+  border: 1px solid rgb(255 255 255 / 13%);
+  border-radius: 6px;
+  background: rgb(0 0 0 / 24%);
+  color: var(--ink);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.agent-universe-memory-provenance {
+  margin-top: 3px;
+  padding: 7px 8px;
+  border-top: 1px solid rgb(255 255 255 / 9%);
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.agent-universe-memory-provenance ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-universe-memory-provenance li {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.agent-universe-memory-provenance strong {
+  color: var(--ink-secondary);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.agent-universe-memory-provenance span {
+  overflow-wrap: anywhere;
+}
+
+.agent-universe-memory-provenance small {
+  color: var(--faint);
 }
 
 .agent-universe-memory-list li > span {

@@ -8,292 +8,129 @@
 }
 
 .projects-workspace .page-frame {
-	max-width: 1120px;
+	max-width: 960px;
 	margin: 0 auto;
-	padding: 52px clamp(24px, 6vw, 84px) 64px;
+	padding: 42px clamp(24px, 6vw, 76px) 64px;
+}
+
+.projects-workspace-home {
+	max-width: 780px;
+	margin: 0 auto;
 }
 
 .projects-workspace-header {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	justify-content: space-between;
 	gap: 28px;
-	margin-bottom: 28px;
+	padding-bottom: 26px;
+	border-bottom: 1px solid var(--line);
 }
 
 .projects-workspace-heading {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	gap: 14px;
 	min-width: 0;
 }
 
-.projects-workspace-mark {
+.projects-workspace-project-mark {
 	display: grid;
 	place-items: center;
-	width: 38px;
-	height: 38px;
+	width: 42px;
+	height: 42px;
 	flex: 0 0 auto;
-	color: var(--ink);
+	margin-top: 3px;
+	border-radius: 11px;
+	background: color-mix(in srgb, var(--project-color, var(--solid)) 13%, transparent);
+	color: var(--project-color, var(--solid));
 }
 
-.projects-workspace-mark .brand-mark {
-	width: 34px;
-	height: 34px;
+.projects-workspace-project-mark svg {
+	width: 21px;
+	height: 21px;
 }
 
-.projects-workspace-heading h1,
-.projects-workspace-detail-header h2,
-.projects-workspace-section-heading h2,
-.projects-workspace-chats-heading h3 {
-	margin: 0;
-	letter-spacing: -0.03em;
+.projects-workspace-heading > div {
+	min-width: 0;
 }
 
 .projects-workspace-heading h1 {
-	font: 620 24px / 1 var(--display);
+	margin: 5px 0 0;
+	font: 650 26px / 31px var(--display);
+	letter-spacing: -0.035em;
 }
 
 .projects-workspace-heading p {
-	margin: 7px 0 0;
-	color: var(--muted);
-	font-size: 12px;
-	line-height: 17px;
-}
-
-.projects-workspace-layout {
-	display: grid;
-	grid-template-columns: minmax(210px, 258px) minmax(0, 1fr);
-	align-items: start;
-	gap: 32px;
-}
-
-.projects-workspace-directory {
-	min-width: 0;
-	padding: 0 8px 12px;
-	border: 1px solid var(--line);
-	border-radius: var(--radius-surface);
-	background: var(--surface);
-	box-shadow: var(--shadow-sm);
-}
-
-.projects-workspace-section-heading {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 10px;
-	padding: 16px 10px 12px;
-}
-
-.projects-workspace-section-heading h2 {
-	margin-top: 4px;
-	font-size: 15px;
-	line-height: 20px;
-}
-
-.projects-workspace-count {
-	display: grid;
-	place-items: center;
-	min-width: 24px;
-	height: 24px;
-	padding: 0 6px;
-	border-radius: var(--radius-pill);
-	background: var(--selected-soft);
-	color: var(--ink-secondary);
-	font-size: 11px;
-	font-weight: 650;
-}
-
-.projects-workspace-directory ul,
-.projects-workspace-chat-list {
-	display: grid;
-	gap: 3px;
-	margin: 0;
-	padding: 0;
-	list-style: none;
-}
-
-.projects-workspace-project-option {
-	display: grid;
-	grid-template-columns: 17px minmax(0, 1fr) 14px;
-	align-items: center;
-	gap: 9px;
-	width: 100%;
-	min-height: 54px;
-	padding: 8px 10px;
-	border: 0;
-	border-radius: var(--radius-control);
-	background: transparent;
-	color: var(--ink-secondary);
-	text-align: left;
-	cursor: pointer;
-	transition: background-color var(--motion-feedback) var(--ease-kestrel),
-		color var(--motion-feedback) var(--ease-kestrel);
-}
-
-.projects-workspace-project-option:hover {
-	background: var(--surface-strong);
-	color: var(--ink);
-}
-
-.projects-workspace-project-option.selected {
-	background: var(--selected-soft);
-	color: var(--ink);
-}
-
-.projects-workspace-project-option > svg:first-child {
-	width: 16px;
-	height: 16px;
-	color: var(--solid);
-}
-
-.projects-workspace-project-option > svg:last-child {
-	width: 12px;
-	height: 12px;
-	color: var(--faint);
-}
-
-.projects-workspace-project-option span {
-	display: grid;
-	gap: 3px;
-	min-width: 0;
-}
-
-.projects-workspace-project-option strong,
-.projects-workspace-project-option small {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.projects-workspace-project-option strong {
-	font-size: 12.5px;
-	font-weight: 620;
-}
-
-.projects-workspace-project-option small {
-	color: var(--muted);
-	font-size: 11px;
-}
-
-.projects-workspace-standalone-note {
-	margin: 14px 10px 2px;
-	padding-top: 12px;
-	border-top: 1px solid var(--line);
-	color: var(--faint);
-	font-size: 11px;
-	line-height: 16px;
-}
-
-.projects-workspace-detail {
-	min-width: 0;
-	padding: 24px;
-	border: 1px solid var(--line);
-	border-radius: var(--radius-surface);
-	background: var(--panel);
-	box-shadow: var(--shadow-sm);
-}
-
-.projects-workspace-detail-header {
-	display: flex;
-	align-items: flex-start;
-	justify-content: space-between;
-	gap: 24px;
-	padding-bottom: 22px;
-	border-bottom: 1px solid var(--line);
-}
-
-.projects-workspace-detail-header h2 {
-	margin-top: 5px;
-	font-size: 22px;
-	line-height: 28px;
-}
-
-.projects-workspace-detail-header p {
-	max-width: 54ch;
+	max-width: 52ch;
 	margin: 8px 0 0;
-	color: var(--ink-secondary);
-	font-size: 13px;
-	line-height: 19px;
+	color: var(--muted);
+	font-size: 12.5px;
+	line-height: 18px;
 }
 
-.projects-workspace-new-chat {
-	display: inline-flex;
+.projects-workspace-actions {
+	display: flex;
 	align-items: center;
-	gap: 7px;
+	gap: 8px;
 	flex: 0 0 auto;
 }
 
-.projects-workspace-new-chat svg,
+.projects-workspace-actions .button {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	white-space: nowrap;
+}
+
+.projects-workspace-actions .button svg,
 .projects-workspace-empty .button svg {
 	width: 15px;
 	height: 15px;
 }
 
-.projects-workspace-context {
-	display: grid;
-	grid-template-columns: 18px minmax(0, 1fr) auto;
-	align-items: center;
-	gap: 10px;
-	margin: 20px 0 28px;
+.projects-workspace-instructions {
+	margin: 24px 0 30px;
 	padding: 12px 14px;
-	border: 1px solid color-mix(in srgb, var(--solid) 20%, var(--line));
-	border-radius: var(--radius-control);
-	background: var(--selected-soft);
+	border-block: 1px solid color-mix(in srgb, var(--solid) 20%, var(--line));
+	background: color-mix(in srgb, var(--solid) 5%, transparent);
 }
 
-.projects-workspace-context > svg {
-	width: 16px;
-	height: 16px;
-	color: var(--solid);
+.projects-workspace-instructions h2 {
+	margin: 0 0 6px;
+	color: var(--ink-secondary);
+	font-size: 10.5px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	line-height: 14px;
+	text-transform: uppercase;
 }
 
-.projects-workspace-context > span {
-	display: grid;
-	gap: 3px;
-	min-width: 0;
-}
-
-.projects-workspace-context strong {
+.projects-workspace-instructions p {
+	max-width: 72ch;
+	margin: 0;
+	color: var(--ink-secondary);
 	font-size: 12px;
-	font-weight: 650;
+	line-height: 18px;
+	white-space: pre-wrap;
 }
 
-.projects-workspace-context small {
-	color: var(--ink-secondary);
-	font-size: 11.5px;
-	line-height: 16px;
-}
-
-.projects-workspace-context button {
-	min-height: 28px;
-	padding: 0 9px;
-	border: 1px solid var(--line-strong);
-	border-radius: var(--radius-sm);
-	background: var(--surface);
-	color: var(--ink-secondary);
-	font-size: 11px;
-	font-weight: 600;
-	cursor: pointer;
-}
-
-.projects-workspace-context button:hover {
-	background: var(--surface-strong);
-	color: var(--ink);
+.projects-workspace-conversations {
+	margin-top: 26px;
 }
 
 .projects-workspace-chats-heading {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
-	align-items: end;
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
 	gap: 18px;
 	margin-bottom: 12px;
 }
 
-.projects-workspace-chats-heading h3 {
-	margin-top: 4px;
-	font-size: 17px;
-	line-height: 22px;
+.projects-workspace-chats-heading h2 {
+	margin: 0;
+	font: 650 17px / 22px var(--display);
+	letter-spacing: -0.02em;
 }
 
 .projects-workspace-chats-heading p {
@@ -307,8 +144,9 @@
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	width: min(240px, 100%);
 	min-width: 0;
-	min-height: 36px;
+	min-height: 34px;
 	padding: 0 10px;
 	border: 1px solid var(--line-strong);
 	border-radius: var(--radius-control);
@@ -330,6 +168,7 @@
 .projects-workspace-search input {
 	width: 100%;
 	min-width: 0;
+	padding: 0;
 	border: 0;
 	outline: 0;
 	background: transparent;
@@ -338,35 +177,31 @@
 	font-size: 12px;
 }
 
-/* The unified surface reset gives every page-frame input a control border.
- * This input is already contained by the search control, so keep the field
- * itself transparent and avoid a doubled outline. */
-.unified-ui .browser-secondary-surface .page-frame .projects-workspace-search input {
-	min-height: 0;
-	padding: 0;
-	border: 0;
-	border-radius: 0;
-	background: transparent;
-}
-
 .projects-workspace-search input::placeholder {
 	color: var(--faint);
 }
 
 .projects-workspace-chat-list {
+	margin: 0;
+	padding: 0;
 	border-top: 1px solid var(--line);
+	list-style: none;
+}
+
+.projects-workspace-chat-list > li {
+	border-bottom: 1px solid var(--line);
 }
 
 .projects-workspace-chat {
 	display: grid;
-	grid-template-columns: 8px minmax(0, 1fr) auto 14px;
+	grid-template-columns: minmax(0, 1fr) auto 14px;
 	align-items: center;
-	gap: 12px;
+	gap: 14px;
 	width: 100%;
-	min-height: 62px;
-	padding: 10px 8px;
+	min-height: 52px;
+	padding: 8px 8px;
 	border: 0;
-	border-bottom: 1px solid var(--line);
+	border-radius: 0;
 	background: transparent;
 	color: var(--ink);
 	text-align: left;
@@ -375,49 +210,28 @@
 }
 
 .projects-workspace-chat:hover {
-	background: var(--surface);
+	background: color-mix(in srgb, var(--surface) 70%, transparent);
 }
 
-.projects-workspace-chat-state {
-	width: 8px;
-	height: 8px;
-	border-radius: 50%;
-	background: var(--faint);
+.projects-workspace-chat:focus-visible {
+	position: relative;
+	z-index: 1;
+	outline: 2px solid var(--focus);
+	outline-offset: -2px;
 }
 
-.projects-workspace-chat-state.active {
-	background: var(--solid);
-}
-
-.projects-workspace-chat-state.waiting {
-	background: var(--warning);
-}
-
-.projects-workspace-chat-state.failed {
-	background: var(--danger, #d45d5d);
-}
-
-.projects-workspace-chat-copy {
-	display: grid;
-	gap: 3px;
+.projects-workspace-chat strong {
 	min-width: 0;
-}
-
-.projects-workspace-chat-copy strong {
 	overflow: hidden;
-	font-size: 13px;
-	font-weight: 620;
+	font-size: 12.5px;
+	font-weight: 600;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
-.projects-workspace-chat-copy small,
 .projects-workspace-chat time {
 	color: var(--muted);
 	font-size: 11px;
-}
-
-.projects-workspace-chat time {
 	white-space: nowrap;
 }
 
@@ -431,28 +245,22 @@
 	display: grid;
 	justify-items: center;
 	gap: 10px;
-	padding: 42px 24px;
+	padding: 38px 24px;
 	border: 1px dashed var(--line-strong);
-	border-radius: var(--radius-control);
-	background: color-mix(in srgb, var(--surface) 54%, transparent);
+	background: color-mix(in srgb, var(--surface) 38%, transparent);
 	text-align: center;
 }
 
-.projects-workspace-empty > svg {
-	width: 24px;
-	height: 24px;
-	color: var(--muted);
-}
-
-.projects-workspace-empty h4,
-.projects-workspace-empty h2 {
+.projects-workspace-empty h1,
+.projects-workspace-empty h2,
+.projects-workspace-empty h3 {
 	margin: 0;
-	font-size: 15px;
-	font-weight: 650;
+	font: 650 17px / 22px var(--display);
+	letter-spacing: -0.02em;
 }
 
 .projects-workspace-empty p {
-	max-width: 42ch;
+	max-width: 44ch;
 	margin: 0;
 	color: var(--muted);
 	font-size: 12px;
@@ -463,120 +271,62 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 7px;
-	margin-top: 5px;
+	margin-top: 4px;
 }
 
 .projects-workspace-no-projects {
-	min-height: 280px;
-}
-
-@media (max-width: 820px) {
-	.projects-workspace-layout {
-		grid-template-columns: 1fr;
-		gap: 20px;
-	}
-
-	.projects-workspace-directory {
-		padding-bottom: 8px;
-	}
-
-	.projects-workspace-directory ul {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-
-	.projects-workspace-standalone-note {
-		grid-column: 1 / -1;
-	}
+	min-height: 240px;
+	align-content: center;
 }
 
 @media (max-width: 620px) {
 	.projects-workspace .page-frame {
-		padding: 36px 18px 48px;
+		padding: 30px 18px 48px;
 	}
 
 	.projects-workspace-header,
-	.projects-workspace-detail-header {
+	.projects-workspace-chats-heading {
 		align-items: flex-start;
 		flex-direction: column;
 		gap: 16px;
 	}
 
-	.projects-workspace-directory ul,
-	.projects-workspace-chats-heading {
-		grid-template-columns: 1fr;
+	.projects-workspace-actions {
+		width: 100%;
 	}
 
-	.projects-workspace-detail {
-		padding: 18px;
+	.projects-workspace-actions .button {
+		flex: 1 1 auto;
+		justify-content: center;
 	}
 
-	.projects-workspace-context {
-		grid-template-columns: 18px minmax(0, 1fr);
+	.projects-workspace-search {
+		width: 100%;
 	}
-
-	.projects-workspace-context button {
-		grid-column: 2;
-		justify-self: start;
-	}
-
 	.projects-workspace-chat {
-		grid-template-columns: 8px minmax(0, 1fr) 14px;
+		grid-template-columns: minmax(0, 1fr) 14px;
 	}
-
 	.projects-workspace-chat time {
 		display: none;
 	}
 }
 
-/* The Agent rail can reduce the actual project viewport well below the
- * Electron window width. Use the viewport container rather than a window
- * media query so the directory and chat detail never collapse into a narrow
- * one-word column beside the rail. */
-@container kestrel-browser-viewport (max-width: 900px) {
-	.projects-workspace-layout {
-		grid-template-columns: 1fr;
-		gap: 20px;
-	}
-
-	.projects-workspace-directory {
-		padding-bottom: 8px;
-	}
-
-	.projects-workspace-directory ul {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-}
-
 @container kestrel-browser-viewport (max-width: 560px) {
 	.projects-workspace-header,
-	.projects-workspace-detail-header {
+	.projects-workspace-chats-heading {
 		align-items: flex-start;
 		flex-direction: column;
 		gap: 16px;
 	}
-
-	.projects-workspace-directory ul,
-	.projects-workspace-chats-heading {
-		grid-template-columns: 1fr;
+	.projects-workspace-actions {
+		width: 100%;
 	}
-
-	.projects-workspace-detail {
-		padding: 18px;
+	.projects-workspace-search {
+		width: 100%;
 	}
-
-	.projects-workspace-context {
-		grid-template-columns: 18px minmax(0, 1fr);
-	}
-
-	.projects-workspace-context button {
-		grid-column: 2;
-		justify-self: start;
-	}
-
 	.projects-workspace-chat {
-		grid-template-columns: 8px minmax(0, 1fr) 14px;
+		grid-template-columns: minmax(0, 1fr) 14px;
 	}
-
 	.projects-workspace-chat time {
 		display: none;
 	}
@@ -586,8 +336,6 @@
 	.projects-workspace {
 		animation: none;
 	}
-
-	.projects-workspace-project-option,
 	.projects-workspace-chat {
 		transition: none;
 	}
