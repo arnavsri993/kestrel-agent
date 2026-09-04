@@ -805,7 +805,7 @@ try {
 	});
 	assert(
 		lowCountTabWidths.length >= 2 &&
-			lowCountTabWidths.every((width) => width > 0) &&
+			lowCountTabWidths.every((width) => width >= 112 && width <= 241) &&
 			lowCountRailMetrics.scrollWidth <= lowCountRailMetrics.clientWidth + 1 &&
 			lowCountRailMetrics.firstLeft !== null &&
 			lowCountRailMetrics.lastRight !== null &&
@@ -815,7 +815,7 @@ try {
 			lowCountRailMetrics.newTabLeft - lowCountRailMetrics.lastRight <= 10 &&
 			lowCountRailMetrics.dragFillWidth !== null &&
 			lowCountRailMetrics.dragFillWidth <= 32,
-		`Low-count tabs left unused space in the rail: ${JSON.stringify({ lowCountTabWidths, lowCountRailMetrics })}`,
+		`Low-count tabs did not keep a compact bounded width: ${JSON.stringify({ lowCountTabWidths, lowCountRailMetrics })}`,
 	);
 	const crowdedTabIds = await page.evaluate(async (count) => {
 		const ids = [];
@@ -845,8 +845,8 @@ try {
 		scrollWidth: node.scrollWidth,
 	}));
 	assert(
-		railMetrics.scrollWidth <= railMetrics.clientWidth + 1,
-		`Crowded tabs created a horizontal scroll target: ${railMetrics.scrollWidth}px > ${railMetrics.clientWidth}px`,
+		railMetrics.scrollWidth > railMetrics.clientWidth + 1,
+		`Crowded tabs did not preserve their bounded scroll rail: ${railMetrics.scrollWidth}px <= ${railMetrics.clientWidth}px`,
 	);
 	const crowdedTabWidths = await tabRail
 		.locator(".browser-tab")
