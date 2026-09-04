@@ -204,6 +204,15 @@ try {
 	await page.locator(".kestrel-sidebar-project-chat").filter({ hasText: "Beta chat" }).waitFor();
 	assert.equal(await page.locator(".kestrel-sidebar-project-chat").filter({ hasText: "Alpha chat" }).count(), 0);
 	assert.match((await betaRow.getAttribute("class")) ?? "", /active/);
+	await betaRow.click();
+	await page.waitForFunction(() =>
+		document
+			.querySelector('.kestrel-sidebar-project-open[aria-current="page"]')
+			?.getAttribute("aria-expanded") === "false",
+	);
+	await page.waitForFunction(() =>
+		document.querySelectorAll(".kestrel-sidebar-project-chat").length === 0,
+	);
 
 	const gammaRow = await waitForProject("Gamma");
 	await gammaRow.click();
