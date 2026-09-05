@@ -753,6 +753,10 @@ export function BrowserWorkspace({
         onOrganizeTabs={openOrganizeTabs}
         onOpenWorkspaces={onOpenWorkspaces}
         onMenuOpenChange={handleTabMenuOpenChange}
+        tabSizing={state.settings.tabSizing}
+        onTabSizingChange={(tabSizing) => {
+          void browser.updateSettings({ tabSizing });
+        }}
         onToggleOrientation={() => {
           void browser.updateSettings({
             tabLayout:

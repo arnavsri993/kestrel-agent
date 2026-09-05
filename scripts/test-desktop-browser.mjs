@@ -786,6 +786,7 @@ try {
 	await (await revealNewTabControl(page)).click();
 	let state = await browserState();
 	assert.equal(state.tabs.length, initialTabs + 1);
+	assert.equal(state.settings.tabSizing, "scrolling");
 	const addedBlankTab = state.activeTabId;
 	assert(addedBlankTab);
 	const horizontalTabs = page.getByRole("tab");
@@ -867,6 +868,78 @@ try {
 			Math.max(...crowdedTabWidths) < Math.min(...lowCountTabWidths),
 		`Crowded tabs did not shrink relative to the low-count layout: ${JSON.stringify({ lowCountTabWidths, crowdedTabWidths })}`,
 	);
+	const horizontalTabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
+	await horizontalTabToolsTrigger.click();
+	const horizontalTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await horizontalTabToolsMenu.waitFor();
+	const shrinkingTabsOption = horizontalTabToolsMenu.getByRole("menuitem", {
+		name: "Turn On Shrinking Tabs",
+		exact: true,
+	});
+	const horizontalScrollingTabsOption = horizontalTabToolsMenu.getByRole("menuitem", {
+		name: "Turn On Horizontal Scrolling Tabs",
+		exact: true,
+	});
+	assert.equal(await shrinkingTabsOption.count(), 1);
+	assert.equal(await horizontalScrollingTabsOption.count(), 0);
+	await shrinkingTabsOption.click();
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
+	state = await waitForBrowserState(
+		(value) => value.settings.tabSizing === "shrinking",
+		"switching to shrinking tabs",
+	);
+	await page.waitForFunction(() =>
+		document
+			.querySelector(".browser-tab-row-horizontal")
+			?.classList.contains("browser-tab-row-shrinking"),
+	);
+	const shrinkingRailMetrics = await tabRail.evaluate((node) => ({
+		clientWidth: node.clientWidth,
+		scrollWidth: node.scrollWidth,
+	}));
+	const shrinkingTabWidths = await tabRail
+		.locator(".browser-tab")
+		.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width));
+	assert(
+		shrinkingRailMetrics.scrollWidth <= shrinkingRailMetrics.clientWidth + 1 &&
+			shrinkingTabWidths.every((width) => width > 0) &&
+			Math.max(...shrinkingTabWidths) < Math.max(...lowCountTabWidths),
+		`Shrinking tabs did not fit the available rail: ${JSON.stringify({ shrinkingRailMetrics, shrinkingTabWidths })}`,
+	);
+	await horizontalTabToolsTrigger.click();
+	await horizontalTabToolsMenu.waitFor();
+	const restoredHorizontalScrollingTabsOption = horizontalTabToolsMenu.getByRole(
+		"menuitem",
+		{ name: "Turn On Horizontal Scrolling Tabs", exact: true },
+	);
+	assert.equal(await restoredHorizontalScrollingTabsOption.count(), 1);
+	assert.equal(
+		await horizontalTabToolsMenu
+			.getByRole("menuitem", { name: "Turn On Shrinking Tabs", exact: true })
+			.count(),
+		0,
+	);
+	await restoredHorizontalScrollingTabsOption.click();
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
+	state = await waitForBrowserState(
+		(value) => value.settings.tabSizing === "scrolling",
+		"switching back to scrolling tabs",
+	);
+	await page.waitForFunction(() =>
+		!document
+			.querySelector(".browser-tab-row-horizontal")
+			?.classList.contains("browser-tab-row-shrinking"),
+	);
+	const restoredScrollingRailMetrics = await tabRail.evaluate((node) => ({
+		clientWidth: node.clientWidth,
+		scrollWidth: node.scrollWidth,
+	}));
+	assert(
+		restoredScrollingRailMetrics.scrollWidth > restoredScrollingRailMetrics.clientWidth + 1,
+		`Scrolling tabs did not restore the horizontal rail: ${JSON.stringify(restoredScrollingRailMetrics)}`,
+	);
+	await page.keyboard.press("Escape");
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
 	const railBounds = await tabRail.boundingBox();
 	const newTabBounds = await newTabControl.boundingBox();
 	const windowWidth = await page.evaluate(() => window.innerWidth);
@@ -2163,6 +2236,7 @@ try {
 		.filter({ hasText: "Mountain valley" })
 		.click();
 	await page.getByLabel("Search engine", { exact: true }).selectOption("ecosia");
+	await page.getByLabel("Tab sizing", { exact: true }).selectOption("shrinking");
 	const useCurrentPage = page.getByRole("switch", {
 		name: "Use current page context with agent",
 	});
@@ -2175,15 +2249,18 @@ try {
 	await useCurrentPage.click();
 	assert.equal(await useCurrentPage.getAttribute("aria-checked"), "true");
 	await page.getByLabel("Tab layout").selectOption("vertical");
+	await page.getByLabel("Tab sizing", { exact: true }).waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(candidate) =>
 			candidate.settings.searchEngine === "ecosia" &&
 			candidate.settings.tabLayout === "vertical" &&
+			candidate.settings.tabSizing === "shrinking" &&
 			candidate.settings.newTabBackground === "mountains",
 		"browser settings update",
 	);
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.tabSizing, "shrinking");
 	assert.equal(state.settings.newTabBackground, "mountains");
 
 	await page.getByRole("tab", { name: /Page one/ }).first().click();
@@ -2194,6 +2271,27 @@ try {
 		},
 		"Browser did not return to Page one after leaving Settings",
 	);
+	const verticalTabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
+	await verticalTabToolsTrigger.click();
+	const verticalTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await verticalTabToolsMenu.waitFor();
+	assert.equal(
+		await verticalTabToolsMenu
+			.getByRole("menuitem", { name: "Turn On Shrinking Tabs", exact: true })
+			.count(),
+		0,
+	);
+	assert.equal(
+		await verticalTabToolsMenu
+			.getByRole("menuitem", {
+				name: "Turn On Horizontal Scrolling Tabs",
+				exact: true,
+			})
+			.count(),
+		0,
+	);
+	await page.keyboard.press("Escape");
+	await verticalTabToolsMenu.waitFor({ state: "detached" });
 	await page.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	assert.equal(
 		await page
@@ -2407,6 +2505,7 @@ try {
 	assert(state.history.some((entry) => entry.title === "Page two"));
 	assert.equal(state.settings.searchEngine, "ecosia");
 	assert.equal(state.settings.tabLayout, "vertical");
+	assert.equal(state.settings.tabSizing, "shrinking");
 	assert.equal(state.settings.newTabBackground, "mountains");
 	assert.equal(
 		await page

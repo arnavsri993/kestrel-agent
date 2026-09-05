@@ -44,6 +44,7 @@ function storePath(): string {
 it("defaults new browser settings to Google", () => {
 	const state = freshBrowserState();
 	expect(state.settings.searchEngine).toBe("google");
+	expect(state.settings.tabSizing).toBe("scrolling");
 	expect(state.settings.showBookmarksBar).toBe(true);
 	expect(state.settings.paymentAutofillEnabled).toBe(true);
 	expect(state.settings.newTabGreetingActivity.days).toEqual([]);
@@ -252,22 +253,30 @@ describe("browser address normalization", () => {
 			).toBe(url);
 	});
 
-	it("accepts only supported search engines and tab layouts", () => {
+	it("accepts only supported search engines, tab layouts, and tab sizing modes", () => {
 		const base = {
 			searchEngine: "duckduckgo",
 			tabLayout: "horizontal",
+			tabSizing: "shrinking",
 			restoreSession: true,
 			historyRetentionDays: 90,
 		};
 		const parsed = UserBrowserSettingsSchema.safeParse(base);
 		expect(parsed.success).toBe(true);
-		if (parsed.success) expect(parsed.data.newTabBackground).toBe("graphite");
+		if (parsed.success) {
+			expect(parsed.data.newTabBackground).toBe("graphite");
+			expect(parsed.data.tabSizing).toBe("shrinking");
+		}
 		expect(
 			UserBrowserSettingsSchema.safeParse({ ...base, tabLayout: "stacked" })
 				.success,
 		).toBe(false);
 		expect(
 			UserBrowserSettingsSchema.safeParse({ ...base, searchEngine: "unknown" })
+				.success,
+		).toBe(false);
+		expect(
+			UserBrowserSettingsSchema.safeParse({ ...base, tabSizing: "overflow" })
 				.success,
 		).toBe(false);
 	});
@@ -558,25 +567,29 @@ describe("browser tab persistence", () => {
 		});
 	});
 
-	it("persists the selected tab layout and migrates legacy settings", () => {
+	it("persists tab layout and sizing and migrates legacy settings", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);
 		const state = freshBrowserState(() => new Date("2026-08-11T12:00:00.000Z"));
 		state.settings.tabLayout = "vertical";
+		state.settings.tabSizing = "shrinking";
 		state.settings.searchEngine = "ecosia";
 		store.save(state);
 
 		expect(store.load().settings).toMatchObject({
 			tabLayout: "vertical",
+			tabSizing: "shrinking",
 			searchEngine: "ecosia",
 			showBookmarksBar: true,
 		});
 
 		const legacy = JSON.parse(readFileSync(path, "utf8"));
 		delete legacy.settings.tabLayout;
+		delete legacy.settings.tabSizing;
 		writeFileSync(path, `${JSON.stringify(legacy, null, 2)}\n`, "utf8");
 		expect(store.load().settings).toMatchObject({
 			tabLayout: "horizontal",
+			tabSizing: "scrolling",
 			searchEngine: "ecosia",
 			newTabBackground: "graphite",
 		});

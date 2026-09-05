@@ -3669,6 +3669,7 @@ export const UserBrowserSettingsSchema = z.object({
 		.optional(),
 	customSearchName: z.string().max(100).optional(),
 	tabLayout: z.enum(["horizontal", "vertical"]).default("horizontal"),
+	tabSizing: z.enum(["scrolling", "shrinking"]).default("scrolling"),
 	newTabBackground: z
 		.enum(["graphite", "meadow", "dawn", "mountains", "paper", "custom"])
 		.default("graphite"),

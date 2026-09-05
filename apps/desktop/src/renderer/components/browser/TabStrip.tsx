@@ -1,6 +1,7 @@
 import type {
 	UserBrowserOriginFavicon,
 	UserBrowserRecentlyClosedTab,
+	UserBrowserSettings,
 	UserBrowserTab,
 	UserBrowserTabFolder,
 } from "@kestrel/shared-types";
@@ -116,6 +117,8 @@ export function TabStrip({
 	recentlyClosedTabs = [],
 	orientation,
 	onToggleOrientation,
+	tabSizing,
+	onTabSizingChange,
 	onMenuOpenChange,
 }: {
 	tabs: UserBrowserTab[];
@@ -141,6 +144,8 @@ export function TabStrip({
 	recentlyClosedTabs?: UserBrowserRecentlyClosedTab[];
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
+	tabSizing: UserBrowserSettings["tabSizing"];
+	onTabSizingChange?(tabSizing: UserBrowserSettings["tabSizing"]): void;
 	onMenuOpenChange?(open: boolean): void;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
@@ -149,7 +154,6 @@ export function TabStrip({
 	const tabRefitTimerRef = useRef<number | null>(null);
 	const pendingCloseCountRef = useRef(0);
 	const pendingCloseKeysRef = useRef(new Set<string>());
-	const [compact, setCompact] = useState(false);
 	const [menu, setMenu] = useState<{
 		tabId: string;
 		x: number;
@@ -859,9 +863,9 @@ export function TabStrip({
 
 	return (
 		<div
-			className={`browser-tab-row browser-tab-row-${orientation} drag-region-browser${
-				compact ? " browser-tab-row-compact" : ""
-			}${dragIntent === "detach" ? " browser-tab-row-detaching" : ""}`}
+			className={`browser-tab-row browser-tab-row-${orientation} browser-tab-row-${tabSizing} drag-region-browser${
+					dragIntent === "detach" ? " browser-tab-row-detaching" : ""
+				}`}
 		>
 			<div
 				className="window-controls-clearance no-drag"
@@ -996,18 +1000,31 @@ export function TabStrip({
 								<span>Move tab back to main window</span>
 							</button>
 						)}
-						<div className="browser-tab-tools-divider" />
-						<button
-							type="button"
-							className="browser-tab-tools-action browser-tab-tools-secondary-action"
-							role="menuitemcheckbox"
-							aria-checked={compact}
-							onClick={() => setCompact((value) => !value)}
-						>
-							<Icon name="tabActions" />
-							<span>Use narrow tabs</span>
-							<Icon name={compact ? "check" : "close"} />
-						</button>
+						{orientation === "horizontal" && onTabSizingChange && (
+							<>
+								<div className="browser-tab-tools-divider" />
+								<button
+									type="button"
+									className="browser-tab-tools-action browser-tab-tools-secondary-action"
+									role="menuitem"
+									onClick={() => {
+										onTabSizingChange(
+											tabSizing === "scrolling" ? "shrinking" : "scrolling",
+										);
+										closeTabTools();
+									}}
+								>
+									<Icon
+										name={tabSizing === "scrolling" ? "sliders" : "tabActions"}
+									/>
+									<span>
+										{tabSizing === "scrolling"
+											? "Turn On Shrinking Tabs"
+											: "Turn On Horizontal Scrolling Tabs"}
+									</span>
+								</button>
+							</>
+						)}
 						{onReopenClosedTab && (
 							<button
 								type="button"

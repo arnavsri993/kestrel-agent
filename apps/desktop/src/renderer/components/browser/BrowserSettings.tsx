@@ -883,6 +883,29 @@ export function BrowserSettings({
                 <option value="vertical">Vertical tabs</option>
               </select>
             </div>
+            {settings.tabLayout !== "vertical" && (
+              <div
+                className="setting-row browser-setting-row"
+                id="setting-browser-tab-sizing"
+              >
+                <div className="browser-setting-copy">
+                  <strong>Tab sizing</strong>
+                  <p>Scroll across a readable rail or fit tabs like a browser.</p>
+                </div>
+                <select
+                  aria-label="Tab sizing"
+                  value={settings.tabSizing}
+                  onChange={(event) =>
+                    void persist({
+                      tabSizing: event.target.value as typeof settings.tabSizing,
+                    })
+                  }
+                >
+                  <option value="scrolling">Horizontal scrolling tabs</option>
+                  <option value="shrinking">Shrinking tabs</option>
+                </select>
+              </div>
+            )}
             <div
               className="setting-row browser-setting-row"
               id="setting-browser-bookmarks-bar"
