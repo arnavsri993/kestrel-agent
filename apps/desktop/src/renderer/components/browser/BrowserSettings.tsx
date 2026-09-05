@@ -17,6 +17,7 @@ import { Icon } from "../Icon";
 import { Status } from "../ui";
 import { PasswordSettings } from "./PasswordSettings";
 import { PaymentSettings } from "./PaymentSettings";
+import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -369,16 +370,19 @@ export function BrowserSettings({
       } else {
         setExtensionMessage({
           type: "error",
-          text:
-            "error" in response
-              ? String(response.error)
-              : "Failed to install extension.",
+          text: chromeWebStoreInstallErrorMessage(
+            new Error(
+              "error" in response
+                ? String(response.error)
+                : "The extension installer returned no extension.",
+            ),
+          ),
         });
       }
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: errorText(cause, "Failed to download extension."),
+        text: chromeWebStoreInstallErrorMessage(cause),
       });
     } finally {
       setExtensionLoading(false);

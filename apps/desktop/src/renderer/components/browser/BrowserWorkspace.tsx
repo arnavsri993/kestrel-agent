@@ -8,13 +8,14 @@ import {
   type RefObject,
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import type {
-	FilePreview,
-	MemoryRecord,
-	MemoryRecallStatus,
-	RuntimeSession,
-	UserBrowserFile,
-	UserBrowserTabOrganizationPreview,
+import {
+	parseChromeWebStoreListingUrl,
+	type FilePreview,
+	type MemoryRecord,
+	type MemoryRecallStatus,
+	type RuntimeSession,
+	type UserBrowserFile,
+	type UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import {
@@ -26,6 +27,7 @@ import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { BookmarkDialog, type BookmarkDialogSaveInput } from "./BookmarkDialog";
+import { ChromeWebStoreInstallBar } from "./ChromeWebStoreInstallBar";
 import { NewTabPage } from "./NewTabPage";
 import { OrganizeTabsDialog } from "./OrganizeTabsDialog";
 import { TabStrip } from "./TabStrip";
@@ -285,6 +287,11 @@ export function BrowserWorkspace({
     !organizeTabsPreview &&
     !organizeTabsPresent &&
     !bookmarkDialogPresent;
+  const showChromeWebStoreInstall = Boolean(
+    nativePageEligible &&
+      activeTab?.url &&
+      parseChromeWebStoreListingUrl(activeTab.url),
+  );
 
   const openFind = useCallback(() => {
     findTabIdRef.current = activeTab?.id ?? null;
@@ -729,7 +736,7 @@ export function BrowserWorkspace({
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
-      }`}
+      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}`}
       aria-label="Browser"
     >
       {navigationSidebar}
@@ -872,7 +879,10 @@ export function BrowserWorkspace({
           onManage={onOpenBookmarks}
         />
       )}
-			<AnimatePresence initial={false}>
+      {showChromeWebStoreInstall && (
+        <ChromeWebStoreInstallBar url={activeTab.url} />
+      )}
+      <AnimatePresence initial={false}>
       {findOpen && (
         <motion.form
           key="browser-find-bar"
