@@ -871,16 +871,18 @@ try {
 	await horizontalTabToolsTrigger.click();
 	const horizontalTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
 	await horizontalTabToolsMenu.waitFor();
-	const scrollingTabsOption = horizontalTabToolsMenu.getByRole("menuitemradio", {
-		name: "Scrolling tabs",
+	const shrinkingTabsOption = horizontalTabToolsMenu.getByRole("menuitem", {
+		name: "Turn On Shrinking Tabs",
 		exact: true,
 	});
-	const shrinkingTabsOption = horizontalTabToolsMenu.getByRole("menuitemradio", {
-		name: "Shrinking tabs",
+	const horizontalScrollingTabsOption = horizontalTabToolsMenu.getByRole("menuitem", {
+		name: "Turn On Horizontal Scrolling Tabs",
 		exact: true,
 	});
-	assert.equal(await scrollingTabsOption.getAttribute("aria-checked"), "true");
+	assert.equal(await shrinkingTabsOption.count(), 1);
+	assert.equal(await horizontalScrollingTabsOption.count(), 0);
 	await shrinkingTabsOption.click();
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(value) => value.settings.tabSizing === "shrinking",
 		"switching to shrinking tabs",
@@ -903,7 +905,21 @@ try {
 			Math.max(...shrinkingTabWidths) < Math.max(...lowCountTabWidths),
 		`Shrinking tabs did not fit the available rail: ${JSON.stringify({ shrinkingRailMetrics, shrinkingTabWidths })}`,
 	);
-	await scrollingTabsOption.click();
+	await horizontalTabToolsTrigger.click();
+	await horizontalTabToolsMenu.waitFor();
+	const restoredHorizontalScrollingTabsOption = horizontalTabToolsMenu.getByRole(
+		"menuitem",
+		{ name: "Turn On Horizontal Scrolling Tabs", exact: true },
+	);
+	assert.equal(await restoredHorizontalScrollingTabsOption.count(), 1);
+	assert.equal(
+		await horizontalTabToolsMenu
+			.getByRole("menuitem", { name: "Turn On Shrinking Tabs", exact: true })
+			.count(),
+		0,
+	);
+	await restoredHorizontalScrollingTabsOption.click();
+	await horizontalTabToolsMenu.waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(value) => value.settings.tabSizing === "scrolling",
 		"switching back to scrolling tabs",
@@ -2173,6 +2189,7 @@ try {
 	await useCurrentPage.click();
 	assert.equal(await useCurrentPage.getAttribute("aria-checked"), "true");
 	await page.getByLabel("Tab layout").selectOption("vertical");
+	await page.getByLabel("Tab sizing", { exact: true }).waitFor({ state: "detached" });
 	state = await waitForBrowserState(
 		(candidate) =>
 			candidate.settings.searchEngine === "ecosia" &&
@@ -2194,6 +2211,27 @@ try {
 		},
 		"Browser did not return to Page one after leaving Settings",
 	);
+	const verticalTabToolsTrigger = page.getByRole("button", { name: "Tab tools" });
+	await verticalTabToolsTrigger.click();
+	const verticalTabToolsMenu = page.getByRole("menu", { name: "Tab tools" });
+	await verticalTabToolsMenu.waitFor();
+	assert.equal(
+		await verticalTabToolsMenu
+			.getByRole("menuitem", { name: "Turn On Shrinking Tabs", exact: true })
+			.count(),
+		0,
+	);
+	assert.equal(
+		await verticalTabToolsMenu
+			.getByRole("menuitem", {
+				name: "Turn On Horizontal Scrolling Tabs",
+				exact: true,
+			})
+			.count(),
+		0,
+	);
+	await page.keyboard.press("Escape");
+	await verticalTabToolsMenu.waitFor({ state: "detached" });
 	await page.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	assert.equal(
 		await page

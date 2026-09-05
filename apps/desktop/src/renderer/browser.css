@@ -838,10 +838,6 @@ body:has(.ai-browser-app),
 .browser-tab-tools-secondary-action {
 	grid-template-columns: 18px minmax(0, 1fr) 18px;
 }
-.browser-tab-tools-mode-group {
-	display: grid;
-	gap: 3px;
-}
 .browser-tab-tools-action:hover,
 .browser-tab-tools-action:focus-visible,
 .browser-tab-tools-section > button:hover,

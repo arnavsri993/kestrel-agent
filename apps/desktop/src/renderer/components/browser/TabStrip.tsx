@@ -260,7 +260,7 @@ export function TabStrip({
 			else
 				tabToolsRef.current
 					?.querySelector<HTMLButtonElement>(
-						"button[role='menuitem'], button[role='menuitemcheckbox'], button[role='menuitemradio']",
+						"button[role='menuitem'], button[role='menuitemcheckbox']",
 					)
 					?.focus();
 		});
@@ -293,7 +293,7 @@ export function TabStrip({
 				return;
 			const items = Array.from(
 				tabToolsRef.current.querySelectorAll<HTMLElement>(
-					"button[role='menuitem'], button[role='menuitemcheckbox'], button[role='menuitemradio'], input",
+					"button[role='menuitem'], button[role='menuitemcheckbox'], input",
 				),
 			);
 			if (items.length === 0) return;
@@ -1000,36 +1000,30 @@ export function TabStrip({
 								<span>Move tab back to main window</span>
 							</button>
 						)}
-						<div className="browser-tab-tools-divider" />
-						{onTabSizingChange && (
-							<div
-								className="browser-tab-tools-mode-group"
-								role="group"
-								aria-label="Tab sizing"
-							>
+						{orientation === "horizontal" && onTabSizingChange && (
+							<>
+								<div className="browser-tab-tools-divider" />
 								<button
 									type="button"
 									className="browser-tab-tools-action browser-tab-tools-secondary-action"
-									role="menuitemradio"
-									aria-checked={tabSizing === "scrolling"}
-									onClick={() => onTabSizingChange("scrolling")}
+									role="menuitem"
+									onClick={() => {
+										onTabSizingChange(
+											tabSizing === "scrolling" ? "shrinking" : "scrolling",
+										);
+										closeTabTools();
+									}}
 								>
-									<Icon name="tabActions" />
-									<span>Scrolling tabs</span>
-									<Icon name={tabSizing === "scrolling" ? "check" : "close"} />
+									<Icon
+										name={tabSizing === "scrolling" ? "sliders" : "tabActions"}
+									/>
+									<span>
+										{tabSizing === "scrolling"
+											? "Turn On Shrinking Tabs"
+											: "Turn On Horizontal Scrolling Tabs"}
+									</span>
 								</button>
-								<button
-									type="button"
-									className="browser-tab-tools-action browser-tab-tools-secondary-action"
-									role="menuitemradio"
-									aria-checked={tabSizing === "shrinking"}
-									onClick={() => onTabSizingChange("shrinking")}
-								>
-									<Icon name="sliders" />
-									<span>Shrinking tabs</span>
-									<Icon name={tabSizing === "shrinking" ? "check" : "close"} />
-								</button>
-							</div>
+							</>
 						)}
 						{onReopenClosedTab && (
 							<button
