@@ -721,6 +721,17 @@ body:has(.ai-browser-app),
 	background: var(--canvas);
 }
 
+.browser-workspace.browser-workspace-store-install {
+	grid-template-areas:
+		"tabs"
+		"toolbar"
+		"store-install"
+		"viewport";
+	grid-template-rows:
+		40px var(--browser-toolbar-height, 40px)
+		var(--browser-store-install-height, 48px) minmax(0, 1fr);
+}
+
 .browser-starting {
 	place-content: center;
 	place-items: center;
@@ -2412,6 +2423,16 @@ body:has(.ai-browser-app),
 		"tabs viewport";
 	grid-template-columns: 208px minmax(0, 1fr);
 	grid-template-rows: var(--browser-toolbar-height, 40px) minmax(0, 1fr);
+}
+
+.browser-workspace-vertical.browser-workspace-store-install {
+	grid-template-areas:
+		"tabs toolbar"
+		"tabs store-install"
+		"tabs viewport";
+	grid-template-rows:
+		var(--browser-toolbar-height, 40px)
+		var(--browser-store-install-height, 48px) minmax(0, 1fr);
 }
 
 .browser-tab-row-vertical {

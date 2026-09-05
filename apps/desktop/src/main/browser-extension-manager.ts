@@ -12,10 +12,10 @@ import { inflateRawSync } from "node:zlib";
 import {
 	type InstalledExtension,
 	InstalledExtensionSchema,
+	parseChromeWebStoreExtensionId,
 } from "@kestrel/shared-types";
 import type { Session } from "electron";
 
-const CHROME_WEB_STORE_ID_REGEX = /([a-p]{32})/i;
 const MAX_EXTENSION_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const MAX_EXTENSION_FILES = 10_000;
 const MAX_EXTENSION_FILE_BYTES = 64 * 1024 * 1024;
@@ -238,12 +238,7 @@ function unzipBuffer(zip: Buffer, targetDir: string): void {
 }
 
 export function parseExtensionIdFromUrlOrId(input: string): string | null {
-	const trimmed = input.trim();
-	const match = trimmed.match(CHROME_WEB_STORE_ID_REGEX);
-	if (match && match[1]) {
-		return match[1].toLowerCase();
-	}
-	return null;
+	return parseChromeWebStoreExtensionId(input);
 }
 
 const MANIFEST_MESSAGE_TOKEN = /__MSG_([A-Za-z0-9_@]+)__/g;
