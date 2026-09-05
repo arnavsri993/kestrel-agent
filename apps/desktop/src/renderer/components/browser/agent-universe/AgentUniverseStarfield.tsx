@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
 	DEFAULT_AGENT_UNIVERSE_CAMERA,
 	type AgentUniverseCamera,
@@ -61,6 +61,39 @@ function seededRandom(seed: number): () => number {
 		state ^= state + Math.imul(state ^ (state >>> 7), 61 | state);
 		return ((state ^ (state >>> 14)) >>> 0) / 4_294_967_296;
 	};
+}
+
+const STARFIELD_SEED_RANGE = 4_294_967_296;
+
+/**
+ * Give each mounted universe its own constellation while keeping every
+ * resize/repaint deterministic for the lifetime of that opening. Prefer the
+ * browser's cryptographic source so two quick openings do not accidentally
+ * receive the same time-based seed; the Math.random fallback keeps the visual
+ * surface usable in older or restricted renderer environments.
+ */
+export function createAgentUniverseStarfieldSeed(): number {
+	try {
+		const randomValues = new Uint32Array(1);
+		if (globalThis.crypto?.getRandomValues) {
+			globalThis.crypto.getRandomValues(randomValues);
+			return randomValues[0] ?? 0;
+		}
+	} catch {
+		// Fall through to the non-cryptographic renderer-safe fallback.
+	}
+	return Math.floor(Math.random() * STARFIELD_SEED_RANGE) >>> 0;
+}
+
+/** Mix the per-opening seed into each layer without losing layer separation. */
+export function agentUniverseStarfieldSeedForLayer(
+	layerSeed: number,
+	openingSeed: number,
+): number {
+	let state = (layerSeed ^ openingSeed) >>> 0;
+	state = Math.imul(state ^ (state >>> 16), 0x21f0aaad);
+	state = Math.imul(state ^ (state >>> 15), 0x735a2d97);
+	return (state ^ (state >>> 15)) >>> 0;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -127,6 +160,7 @@ function buildLayer(
 	pixelWidth: number,
 	pixelHeight: number,
 	dpr: number,
+	openingSeed: number,
 ): RenderedStarLayer {
 	const tile = document.createElement("canvas");
 	tile.width = pixelWidth;
@@ -135,7 +169,10 @@ function buildLayer(
 	if (!context) return { ...layer, tile };
 
 	const points = generateAgentUniverseStarPoints(
-		layer,
+		{
+			...layer,
+			seed: agentUniverseStarfieldSeedForLayer(layer.seed, openingSeed),
+		},
 		pixelWidth,
 		pixelHeight,
 		dpr,
@@ -157,6 +194,7 @@ export function AgentUniverseStarfield({
 	reducedMotion?: boolean;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
+	const [openingSeed] = useState(() => createAgentUniverseStarfieldSeed());
 	const cameraRef = useRef<AgentUniverseCamera>(camera);
 	const drawRef = useRef<((time: number) => void) | null>(null);
 	cameraRef.current = camera;
@@ -221,7 +259,7 @@ export function AgentUniverseStarfield({
 			canvas.width = pixelWidth;
 			canvas.height = pixelHeight;
 			renderedLayers = STAR_LAYERS.map((layer) =>
-				buildLayer(layer, pixelWidth, pixelHeight, dpr),
+				buildLayer(layer, pixelWidth, pixelHeight, dpr, openingSeed),
 			);
 			draw(performance.now());
 		};
@@ -235,7 +273,7 @@ export function AgentUniverseStarfield({
 			if (frameId !== null) cancelAnimationFrame(frameId);
 			drawRef.current = null;
 		};
-	}, [reducedMotion]);
+	}, [openingSeed, reducedMotion]);
 
 	useEffect(() => {
 		// Reduced motion intentionally has no RAF loop, but camera panning is
