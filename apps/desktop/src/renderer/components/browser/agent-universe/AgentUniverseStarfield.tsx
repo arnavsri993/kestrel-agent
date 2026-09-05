@@ -45,6 +45,7 @@ export const AGENT_UNIVERSE_STARFIELD_DPR_CAP = 1.25;
 const STAR_TILE_MIN_CSS_SIZE = 360;
 const STAR_TILE_MAX_CSS_SIZE = 560;
 const STAR_TILE_SIZE_RATIO = 0.64;
+const STARFIELD_REPAINT_INTERVAL_MS = 1_000 / 30;
 
 const STAR_LAYERS: StarLayer[] = [
 	{
@@ -659,7 +660,7 @@ export function AgentUniverseStarfield({
 }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const cameraRef = useRef<AgentUniverseCamera>(camera);
-	const drawRef = useRef<((time: number) => void) | null>(null);
+	const drawRef = useRef<(() => void) | null>(null);
 	const sessionSeedRef = useRef<number | null>(null);
 	if (sessionSeedRef.current === null) {
 		const values = new Uint32Array(1);
@@ -681,8 +682,10 @@ export function AgentUniverseStarfield({
 		let pixelWidth = 0;
 		let pixelHeight = 0;
 		let dpr = 1;
+		let repaintTimer: number | null = null;
+		let lastPaintAt = 0;
 
-		const draw = (_time: number) => {
+		const draw = (time: number) => {
 			if (!pixelWidth || !pixelHeight) return;
 			context.clearRect(0, 0, pixelWidth, pixelHeight);
 			for (const layer of renderedLayers) {
@@ -718,8 +721,27 @@ export function AgentUniverseStarfield({
 				}
 				context.restore();
 			}
+			lastPaintAt = time;
 		};
-		drawRef.current = draw;
+
+		const requestDraw = () => {
+			const now = performance.now();
+			const wait = Math.max(
+				0,
+				STARFIELD_REPAINT_INTERVAL_MS - (now - lastPaintAt),
+			);
+			if (!wait) {
+				draw(now);
+				return;
+			}
+			if (repaintTimer === null) {
+				repaintTimer = window.setTimeout(() => {
+					repaintTimer = null;
+					draw(performance.now());
+				}, wait);
+			}
+		};
+		drawRef.current = requestDraw;
 
 		const resize = () => {
 			const rect = canvas.getBoundingClientRect();
@@ -763,15 +785,17 @@ export function AgentUniverseStarfield({
 
 		return () => {
 			observer.disconnect();
+			if (repaintTimer !== null) window.clearTimeout(repaintTimer);
 			drawRef.current = null;
 		};
 	}, [reducedMotion]);
 
 	useEffect(() => {
-		// The field is intentionally idle between camera/size changes. A
-		// camera-aware repaint is enough to keep parallax responsive without a
-		// permanent RAF loop consuming a core on low-power machines.
-		drawRef.current?.(performance.now());
+		// The field is intentionally idle between camera/size changes. Camera
+		// updates are coalesced to at most 30 paints per second, which keeps
+		// parallax responsive without a permanent RAF loop consuming a core on
+		// low-power machines.
+		drawRef.current?.();
 	}, [camera]);
 
 	return (
