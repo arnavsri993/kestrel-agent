@@ -75,7 +75,7 @@
 .chrome-web-store-install-actions button.primary {
 	border-color: var(--solid);
 	background: var(--solid);
-	color: var(--solid-ink);
+	color: var(--on-solid);
 }
 
 .chrome-web-store-install-actions button:hover:not(:disabled) {
