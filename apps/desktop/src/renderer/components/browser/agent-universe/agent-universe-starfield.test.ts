@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-	agentUniverseStarfieldSeedForLayer,
+	AGENT_UNIVERSE_STAR_LAYER_COUNT,
 	generateAgentUniverseStarPoints,
 	starfieldTransformForCamera,
 } from "./AgentUniverseStarfield";
@@ -24,7 +24,11 @@ describe("agent universe starfield camera attachment", () => {
 		).toEqual({ scale: 1, panX: 40, panY: 20 });
 	});
 
-	it("generates a dense, colorful, deterministic field with a bright tail", () => {
+	it("uses several depth layers for a richer field", () => {
+		expect(AGENT_UNIVERSE_STAR_LAYER_COUNT).toBe(7);
+	});
+
+	it("generates a dense, varied, deterministic field with a bright tail", () => {
 		const first = generateAgentUniverseStarPoints(
 			{ density: 1, seed: 0x12ab34cd },
 			1_200,
@@ -38,35 +42,12 @@ describe("agent universe starfield camera attachment", () => {
 			1,
 		);
 		expect(first).toEqual(second);
-		expect(first.length).toBeGreaterThan(400);
-		expect(first.every((point) => point.radius > 0 && point.radius <= 2.3)).toBe(true);
-		expect(first.every((point) => point.alpha >= 0.1 && point.alpha <= 0.92)).toBe(true);
-		expect(new Set(first.map((point) => point.color)).size).toBeGreaterThan(2);
+		expect(first.length).toBeGreaterThan(1_000);
+		expect(first.every((point) => point.radius > 0 && point.radius <= 2.7)).toBe(true);
+		expect(first.every((point) => point.alpha >= 0.05 && point.alpha <= 0.96)).toBe(true);
+		expect(new Set(first.map((point) => point.color)).size).toBeGreaterThan(4);
 		expect(first.some((point) => point.radius > 1.5 && point.glow > 0)).toBe(true);
 		const uniqueLocations = new Set(first.map((point) => `${point.x.toFixed(3)}:${point.y.toFixed(3)}`));
 		expect(uniqueLocations.size).toBe(first.length);
-	});
-
-	it("uses a new opening seed to produce a different constellation", () => {
-		const first = generateAgentUniverseStarPoints(
-			{
-				density: 1,
-				seed: agentUniverseStarfieldSeedForLayer(0x12ab34cd, 0x10203040),
-			},
-			1_200,
-			700,
-			1,
-		);
-		const second = generateAgentUniverseStarPoints(
-			{
-				density: 1,
-				seed: agentUniverseStarfieldSeedForLayer(0x12ab34cd, 0x50607080),
-			},
-			1_200,
-			700,
-			1,
-		);
-
-		expect(second).not.toEqual(first);
 	});
 });

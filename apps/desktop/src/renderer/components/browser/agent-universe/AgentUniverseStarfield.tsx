@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
 	DEFAULT_AGENT_UNIVERSE_CAMERA,
 	type AgentUniverseCamera,
@@ -9,7 +9,13 @@ interface StarLayer {
 	speed: number;
 	parallax: number;
 	seed: number;
+	starScale: number;
+	alphaScale: number;
+	clusterChance: number;
+	clusterSpread: number;
 	hazeOpacity: number;
+	hazeColor: string;
+	flareChance: number;
 }
 
 export interface AgentUniverseStarPoint {
@@ -19,6 +25,7 @@ export interface AgentUniverseStarPoint {
 	alpha: number;
 	color: string;
 	glow: number;
+	flare: boolean;
 }
 
 interface RenderedStarLayer extends StarLayer {
@@ -27,27 +34,105 @@ interface RenderedStarLayer extends StarLayer {
 
 const STAR_LAYERS: StarLayer[] = [
 	{
-		density: 1,
-		speed: 0.55,
-		parallax: 0.86,
+		// The farthest layer is almost all pinpricks. It is what keeps empty areas
+		// from reading as a flat black fill while staying quiet behind the map.
+		density: 1.5,
+		speed: 0.04,
+		parallax: 0.05,
 		seed: 0x12ab34cd,
-		hazeOpacity: 0.9,
+		starScale: 0.5,
+		alphaScale: 0.76,
+		clusterChance: 0.12,
+		clusterSpread: 0.55,
+		hazeOpacity: 0.32,
+		hazeColor: "#2d456d",
+		flareChance: 0,
 	},
 	{
-		density: 0.58,
-		speed: 0.3,
-		parallax: 0.52,
-		seed: 0x6e2f11a7,
-		hazeOpacity: 0.62,
+		// Deep dust is plentiful but nearly still: it gives the black plane a
+		// granular photographic base without competing with the map.
+		density: 1.24,
+		speed: 0.08,
+		parallax: 0.1,
+		seed: 0x8b63c4e2,
+		starScale: 0.62,
+		alphaScale: 0.84,
+		clusterChance: 0.18,
+		clusterSpread: 0.68,
+		hazeOpacity: 0.42,
+		hazeColor: "#334d78",
+		flareChance: 0,
 	},
 	{
-		density: 0.24,
+		density: 1,
 		speed: 0.14,
-		parallax: 0.28,
+		parallax: 0.22,
+		seed: 0x6e2f11a7,
+		starScale: 0.76,
+		alphaScale: 0.82,
+		clusterChance: 0.34,
+		clusterSpread: 0.82,
+		hazeOpacity: 0.55,
+		hazeColor: "#3d6795",
+		flareChance: 0.002,
+	},
+	{
+		density: 0.78,
+		speed: 0.23,
+		parallax: 0.36,
 		seed: 0xb91d70e3,
-		hazeOpacity: 0.38,
+		starScale: 0.9,
+		alphaScale: 0.9,
+		clusterChance: 0.42,
+		clusterSpread: 0.95,
+		hazeOpacity: 0.72,
+		hazeColor: "#536b9b",
+		flareChance: 0.006,
+	},
+	{
+		density: 0.55,
+		speed: 0.35,
+		parallax: 0.5,
+		seed: 0x49d28b6f,
+		starScale: 1.04,
+		alphaScale: 0.94,
+		clusterChance: 0.48,
+		clusterSpread: 1.08,
+		hazeOpacity: 0.86,
+		hazeColor: "#68769c",
+		flareChance: 0.012,
+	},
+	{
+		density: 0.32,
+		speed: 0.54,
+		parallax: 0.68,
+		seed: 0xd4a71f28,
+		starScale: 1.18,
+		alphaScale: 0.99,
+		clusterChance: 0.38,
+		clusterSpread: 1.18,
+		hazeOpacity: 0.74,
+		hazeColor: "#926b67",
+		flareChance: 0.035,
+	},
+	{
+		// A sparse near layer carries the larger colored stars and the occasional
+		// diffraction flare that makes the field feel deep instead of noisy.
+		density: 0.16,
+		speed: 0.78,
+		parallax: 0.86,
+		seed: 0x7c4e3aa1,
+		starScale: 1.4,
+		alphaScale: 1.08,
+		clusterChance: 0.28,
+		clusterSpread: 1.3,
+		hazeOpacity: 0.52,
+		hazeColor: "#a77c6d",
+		flareChance: 0.08,
 	},
 ];
+
+export const AGENT_UNIVERSE_STAR_LAYER_COUNT = STAR_LAYERS.length;
 
 const STAR_COLORS = [
 	"#f4f7ff",
@@ -55,6 +140,8 @@ const STAR_COLORS = [
 	"#c4dcff",
 	"#fff0d4",
 	"#ffd4ae",
+	"#f4c3b2",
+	"#d9ccff",
 ] as const;
 
 export interface AgentUniverseStarfieldTransform {
@@ -92,39 +179,6 @@ function seededRandom(seed: number): () => number {
 	};
 }
 
-const STARFIELD_SEED_RANGE = 4_294_967_296;
-
-/**
- * Give each mounted universe its own constellation while keeping every
- * resize/repaint deterministic for the lifetime of that opening. Prefer the
- * browser's cryptographic source so two quick openings do not accidentally
- * receive the same time-based seed; the Math.random fallback keeps the visual
- * surface usable in older or restricted renderer environments.
- */
-export function createAgentUniverseStarfieldSeed(): number {
-	try {
-		const randomValues = new Uint32Array(1);
-		if (globalThis.crypto?.getRandomValues) {
-			globalThis.crypto.getRandomValues(randomValues);
-			return randomValues[0] ?? 0;
-		}
-	} catch {
-		// Fall through to the non-cryptographic renderer-safe fallback.
-	}
-	return Math.floor(Math.random() * STARFIELD_SEED_RANGE) >>> 0;
-}
-
-/** Mix the per-opening seed into each layer without losing layer separation. */
-export function agentUniverseStarfieldSeedForLayer(
-	layerSeed: number,
-	openingSeed: number,
-): number {
-	let state = (layerSeed ^ openingSeed) >>> 0;
-	state = Math.imul(state ^ (state >>> 16), 0x21f0aaad);
-	state = Math.imul(state ^ (state >>> 15), 0x735a2d97);
-	return (state ^ (state >>> 15)) >>> 0;
-}
-
 function clamp(value: number, minimum: number, maximum: number): number {
 	return Math.min(maximum, Math.max(minimum, value));
 }
@@ -135,7 +189,8 @@ function clamp(value: number, minimum: number, maximum: number): number {
  * density/shape contract testable without mounting a canvas.
  */
 export function generateAgentUniverseStarPoints(
-	layer: Pick<StarLayer, "density" | "seed">,
+	layer: Pick<StarLayer, "density" | "seed"> &
+		Partial<Omit<StarLayer, "density" | "seed">>,
 	pixelWidth: number,
 	pixelHeight: number,
 	dpr: number,
@@ -144,21 +199,30 @@ export function generateAgentUniverseStarPoints(
 	const safeHeight = Math.max(1, Math.round(pixelHeight));
 	const safeDpr = Math.max(1, Number.isFinite(dpr) ? dpr : 1);
 	const area = (safeWidth * safeHeight) / (safeDpr * safeDpr);
+	const starScale = clamp(finiteOrDefault(layer.starScale, 1), 0.1, 3);
+	const alphaScale = clamp(finiteOrDefault(layer.alphaScale, 1), 0.1, 1.4);
+	const clusterChance = clamp(finiteOrDefault(layer.clusterChance, 0.46), 0, 1);
+	const clusterSpread = clamp(finiteOrDefault(layer.clusterSpread, 1), 0.2, 2);
+	const flareChance = clamp(finiteOrDefault(layer.flareChance, 0.04), 0, 1);
 	// The reference field has a dense, photographic star count: most points are
-	// pinpricks, with a small bright tail that gives the eye something to find.
-	const baseCount = Math.round(clamp(area / 1_750, 420, 1_800));
+	// pinpricks, with a deliberately small bright tail that gives the eye
+	// something to find. Multiple layers provide the density without making one
+	// canvas tile carry every possible star size. The lower divisor is
+	// intentional: the distant layers contribute many tiny points, while the
+	// foreground layers keep their larger, brighter stars rare.
+	const baseCount = Math.round(clamp(area / 300, 1_800, 5_000));
 	const count = Math.max(1, Math.round(baseCount * layer.density));
 	const random = seededRandom(layer.seed ^ safeWidth ^ (safeHeight << 1));
-	const clusterCount = Math.round(clamp(area / 88_000, 10, 28));
-	const clusterRadius = Math.min(safeWidth, safeHeight) * 0.16;
+	const clusterCount = Math.round(clamp(area / 72_000, 14, 44));
+	const clusterRadius = Math.min(safeWidth, safeHeight) * 0.12 * clusterSpread;
 	const clusters = Array.from({ length: clusterCount }, () => ({
 		x: random() * safeWidth,
 		y: random() * safeHeight,
-		radius: clusterRadius * (0.45 + random() * 0.7),
+		radius: clusterRadius * (0.42 + random() * 0.78),
 	}));
 	const points: AgentUniverseStarPoint[] = [];
 	for (let index = 0; index < count; index += 1) {
-		const clustered = random() < 0.46;
+		const clustered = random() < clusterChance;
 		const cluster = clustered
 			? clusters[Math.floor(random() * clusters.length)]
 			: undefined;
@@ -172,37 +236,62 @@ export function generateAgentUniverseStarPoints(
 		const y = cluster
 			? ((cluster.y + Math.sin(angle) * distance) % safeHeight + safeHeight) % safeHeight
 			: random() * safeHeight;
-		const sizeRoll = random();
+		const sizeBand = random();
+		let radius: number;
+		if (sizeBand < 0.74) {
+			radius = 0.18 + Math.pow(random(), 2.6) * 0.62;
+		} else if (sizeBand < 0.97) {
+			radius = 0.46 + Math.pow(random(), 1.7) * 1.18;
+		} else {
+			radius = 1.12 + Math.pow(random(), 0.72) * 1.48;
+		}
+		// A physical sub-pixel disappears when the retina tile is composited back
+		// into the CSS-sized map. Keep the floor just large enough for the distant
+		// population to read as pinpricks rather than vanish entirely.
+		radius = Math.max(0.46, radius * starScale);
 		const brightnessRoll = random();
 		const colorRoll = random();
 		const color =
-			colorRoll < 0.06
+			colorRoll < 0.025
+				? STAR_COLORS[6]
+				: colorRoll < 0.055
 				? STAR_COLORS[4]
-				: colorRoll < 0.17
+				: colorRoll < 0.13
 					? STAR_COLORS[3]
-					: colorRoll < 0.43
+					: colorRoll < 0.18
+						? STAR_COLORS[5]
+						: colorRoll < 0.43
 						? STAR_COLORS[1]
-						: colorRoll < 0.62
+						: colorRoll < 0.67
 							? STAR_COLORS[2]
 							: STAR_COLORS[0];
-		const radius = 0.22 + Math.pow(sizeRoll, 2.8) * 2.0;
-		const alpha = 0.1 + Math.pow(brightnessRoll, 2.8) * 0.82;
+		const alpha = clamp(
+			(0.09 + Math.pow(brightnessRoll, 2.45) * 0.82) * alphaScale,
+			0.05,
+			0.96,
+		);
+		const glow = clamp(
+			(radius - 0.7) * 0.58 + (alpha - 0.4) * 0.85,
+			0,
+			1,
+		);
 		points.push({
 			x,
 			y,
-			// Most points stay below one CSS pixel. A small foreground tail supplies
-			// depth without turning the background into decorative glitter.
+			// Most points stay below one CSS pixel. A long-tail mixture supplies
+			// depth while keeping the larger stars rare and intentional.
 			radius: radius * safeDpr,
 			alpha,
 			color,
-			glow: clamp(
-				(radius - 0.72) * 0.72 + (alpha - 0.42) * 0.66,
-				0,
-				1,
-			),
+			glow,
+			flare: radius > 0.82 && alpha > 0.64 && random() < flareChance,
 		});
 	}
 	return points;
+}
+
+function finiteOrDefault(value: number | undefined, fallback: number): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function rgbaFromHex(hex: string, alpha: number): string {
@@ -220,26 +309,35 @@ function paintNebula(
 	pixelHeight: number,
 ): void {
 	const random = seededRandom(layer.seed ^ 0x4f1bbcdc);
-	const cloudCount = layer.density > 0.5 ? 4 : 3;
+	const cloudCount = layer.density > 0.5 ? 5 : 4;
 	for (let index = 0; index < cloudCount; index += 1) {
 		const x = pixelWidth * (0.08 + random() * 0.84);
 		const y = pixelHeight * (0.04 + random() * 0.92);
 		const radius =
-			Math.min(pixelWidth, pixelHeight) * (0.16 + random() * 0.22);
-		const color = random() < 0.78 ? "#5178b0" : "#9c6d62";
+			Math.min(pixelWidth, pixelHeight) * (0.14 + random() * 0.2);
+		const color = layer.hazeColor;
 		const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
 		gradient.addColorStop(
 			0,
-			rgbaFromHex(color, 0.045 * layer.hazeOpacity),
+			rgbaFromHex(color, 0.052 * layer.hazeOpacity),
 		);
 		gradient.addColorStop(
 			0.52,
-			rgbaFromHex(color, 0.014 * layer.hazeOpacity),
+			rgbaFromHex(color, 0.017 * layer.hazeOpacity),
 		);
+		gradient.addColorStop(0.8, rgbaFromHex(color, 0.005 * layer.hazeOpacity));
 		gradient.addColorStop(1, rgbaFromHex(color, 0));
 		context.fillStyle = gradient;
 		context.beginPath();
-		context.ellipse(x, y, radius * 1.65, radius, random() * Math.PI, 0, Math.PI * 2);
+		context.ellipse(
+			x,
+			y,
+			radius * (1.35 + random() * 0.55),
+			radius * (0.72 + random() * 0.32),
+			random() * Math.PI,
+			0,
+			Math.PI * 2,
+		);
 		context.fill();
 	}
 }
@@ -249,28 +347,25 @@ function buildLayer(
 	pixelWidth: number,
 	pixelHeight: number,
 	dpr: number,
-	openingSeed: number,
 ): RenderedStarLayer {
 	const tile = document.createElement("canvas");
 	tile.width = pixelWidth;
 	tile.height = pixelHeight;
 	const context = tile.getContext("2d");
 	if (!context) return { ...layer, tile };
+	context.imageSmoothingEnabled = true;
 	paintNebula(context, layer, pixelWidth, pixelHeight);
 
 	const points = generateAgentUniverseStarPoints(
-		{
-			...layer,
-			seed: agentUniverseStarfieldSeedForLayer(layer.seed, openingSeed),
-		},
+		layer,
 		pixelWidth,
 		pixelHeight,
 		dpr,
 	);
 	for (const point of points) {
 		context.globalAlpha = 1;
-		if (point.glow > 0.08) {
-			const glowRadius = point.radius * (3.2 + point.glow * 5.4);
+		if (point.glow > 0.22) {
+			const glowRadius = point.radius * (2.2 + point.glow * 4.2);
 			const glow = context.createRadialGradient(
 				point.x,
 				point.y,
@@ -281,9 +376,9 @@ function buildLayer(
 			);
 			glow.addColorStop(
 				0,
-				rgbaFromHex(point.color, point.alpha * 0.28 * point.glow),
+				rgbaFromHex(point.color, point.alpha * 0.3 * point.glow),
 			);
-			glow.addColorStop(0.18, rgbaFromHex(point.color, point.alpha * 0.1));
+			glow.addColorStop(0.2, rgbaFromHex(point.color, point.alpha * 0.1));
 			glow.addColorStop(1, rgbaFromHex(point.color, 0));
 			context.fillStyle = glow;
 			context.beginPath();
@@ -296,16 +391,23 @@ function buildLayer(
 		context.arc(
 			point.x,
 			point.y,
-			point.radius * (0.72 + point.glow * 0.22),
+			point.radius * (0.66 + point.glow * 0.3),
 			0,
 			Math.PI * 2,
 		);
 		context.fill();
-		if (point.glow > 0.78) {
-			const flareLength = point.radius * (2.2 + point.glow * 2.5);
+		if (point.glow > 0.56) {
+			context.fillStyle = "#ffffff";
+			context.globalAlpha = point.alpha * (0.44 + point.glow * 0.24);
+			context.beginPath();
+			context.arc(point.x, point.y, point.radius * 0.42, 0, Math.PI * 2);
+			context.fill();
+		}
+		if (point.flare) {
+			const flareLength = point.radius * (1.8 + point.glow * 4.8);
 			context.strokeStyle = point.color;
-			context.lineWidth = Math.max(0.35, point.radius * 0.16);
-			context.globalAlpha = point.alpha * 0.26 * point.glow;
+			context.lineWidth = Math.max(0.35, point.radius * 0.12);
+			context.globalAlpha = point.alpha * 0.24 * point.glow;
 			context.beginPath();
 			context.moveTo(point.x - flareLength, point.y);
 			context.lineTo(point.x + flareLength, point.y);
@@ -326,7 +428,6 @@ export function AgentUniverseStarfield({
 	reducedMotion?: boolean;
 }) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
-	const [openingSeed] = useState(() => createAgentUniverseStarfieldSeed());
 	const cameraRef = useRef<AgentUniverseCamera>(camera);
 	const drawRef = useRef<((time: number) => void) | null>(null);
 	cameraRef.current = camera;
@@ -391,7 +492,7 @@ export function AgentUniverseStarfield({
 			canvas.width = pixelWidth;
 			canvas.height = pixelHeight;
 			renderedLayers = STAR_LAYERS.map((layer) =>
-				buildLayer(layer, pixelWidth, pixelHeight, dpr, openingSeed),
+				buildLayer(layer, pixelWidth, pixelHeight, dpr),
 			);
 			draw(performance.now());
 		};
@@ -405,7 +506,7 @@ export function AgentUniverseStarfield({
 			if (frameId !== null) cancelAnimationFrame(frameId);
 			drawRef.current = null;
 		};
-	}, [openingSeed, reducedMotion]);
+	}, [reducedMotion]);
 
 	useEffect(() => {
 		// Reduced motion intentionally has no RAF loop, but camera panning is
