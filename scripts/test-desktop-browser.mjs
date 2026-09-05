@@ -590,6 +590,7 @@ async function createRuntimeSessionWithVisibleBrowser() {
 		const created = await window.kestrel.request({
 			type: "runtime-create-session",
 			title: "Visible browser test",
+			kind: "agent",
 		});
 		if (!created.ok || !("session" in created) || !created.session)
 			throw new Error("A fresh runtime session could not be created.");
@@ -1473,6 +1474,23 @@ try {
 		.getByRole("heading", { name: "Agent Universe", exact: true })
 		.waitFor();
 	await page.locator(".kestrel-sidebar").waitFor();
+	assert.equal(
+		await page.getByRole("button", { name: "New agent", exact: true }).count(),
+		1,
+		"Agent Universe should expose an explicit persistent-agent creation control.",
+	);
+	await page.getByRole("button", { name: "Open agent settings", exact: true }).click();
+	await page
+		.getByRole("heading", { name: "Workspace and sessions", exact: true })
+		.waitFor();
+	await page.getByText("Persistent agent planets", { exact: true }).waitFor();
+	await page
+		.getByRole("combobox", { name: "Planet for Visible browser test", exact: true })
+		.waitFor();
+	await openKestrelDestination(page, "Agent");
+	await page
+		.getByRole("heading", { name: "Agent Universe", exact: true })
+		.waitFor();
 	await waitForNativeView(
 		(value) => value.views.length === 0,
 		"Native page remained attached over Agent",
@@ -1562,9 +1580,20 @@ try {
 		);
 		return (
 			body?.getAttribute("data-physics-dragging") === "false" &&
-			Number(body.getAttribute("data-physics-displacement")) < 0.5
+			body?.closest("[data-system-positioned]")?.getAttribute("data-system-positioned") ===
+				"true"
 		);
 	}, runtimeSessionId);
+	const placedRootX = Number(await rootBody.getAttribute("data-physics-x"));
+	const placedRootY = Number(await rootBody.getAttribute("data-physics-y"));
+	await page.waitForTimeout(250);
+	assert(
+		Math.hypot(
+			Number(await rootBody.getAttribute("data-physics-x")) - placedRootX,
+			Number(await rootBody.getAttribute("data-physics-y")) - placedRootY,
+		) < 1,
+		"The root planet returned to its generated position instead of staying placed.",
+	);
 	await page.waitForFunction((id) => {
 		const body = document.querySelector(
 			`[data-node-id="${id}"] .agent-universe-node-body`,
@@ -1612,21 +1641,52 @@ try {
 	await page
 		.getByRole("heading", { name: "Visible browser worker", exact: true })
 		.waitFor();
+	assert.equal(
+		await page.getByRole("button", { name: "Send message to Visible browser worker", exact: true }).count(),
+		1,
+		"A delegated moon should expose its own conversation composer.",
+	);
 	await page
-		.getByRole("button", { name: "Close Visible browser worker context" })
+		.getByRole("button", { name: "Back to the map from Visible browser worker" })
 		.click();
 	assert.equal(
 		await page.getByRole("button", { name: "List", exact: true }).count(),
 		0,
 		"Agent should have one spatial surface, not a list mode",
 	);
+	await page.getByRole("button", { name: "Back to solar system", exact: true }).click();
+	await page.waitForFunction((id) => {
+		const system = document.querySelector(
+			`[data-node-id="${id}"]`,
+		)?.closest("[data-system-positioned]");
+		return system?.getAttribute("data-system-positioned") === "true";
+	}, runtimeSessionId);
+	assert(
+		Math.abs(Number(await rootBody.getAttribute("data-physics-x")) - placedRootX) < 1,
+		"The planet placement was not preserved when returning to the overview.",
+	);
+	assert.equal(
+		await page.getByRole("button", { name: "Back to solar system", exact: true }).count(),
+		0,
+		"Focused systems should have a clear route back to the solar system.",
+	);
 	await page.locator(".agent-universe-node.is-core").first().click();
 	await page.getByRole("heading", { name: "Visible browser test", exact: true }).waitFor();
 	await page.getByRole("heading", { name: "Conversation", exact: true }).waitFor();
 	assert.equal(
+		await page.getByRole("button", { name: "Visible browser test settings", exact: true }).count(),
+		1,
+		"The selected agent should expose its settings from the chat header.",
+	);
+	assert.equal(
 		await page.locator(".agent-universe-context-surface .agent-universe-context-composer textarea").count(),
 		1,
 		"The main system should expose the primary conversation composer.",
+	);
+	assert.equal(
+		await page.getByText("Kestrel model system", { exact: true }).count(),
+		1,
+		"The Agent Universe composer should use Kestrel's model system label.",
 	);
 	assert.equal(
 		await page.getByRole("button", { name: "Review approvals", exact: true }).count(),

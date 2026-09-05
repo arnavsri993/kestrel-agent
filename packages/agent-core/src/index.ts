@@ -1860,6 +1860,10 @@ export class AgentCore {
 				case "runtime-create-session": {
 					const session = this.runtime.createSession({
 						title: request.title,
+						...(request.kind ? { kind: request.kind } : {}),
+						...(request.planetAssetId
+							? { planetAssetId: request.planetAssetId }
+							: {}),
 						...(request.projectId ? { projectId: request.projectId } : {}),
 						...(request.workspaceRoot
 							? { workspaceRoot: request.workspaceRoot }
@@ -1871,6 +1875,14 @@ export class AgentCore {
 					this.pluginMcpManager?.attachSession(session.id);
 					return { ok: true, session };
 				}
+				case "runtime-update-agent-planet":
+					return {
+						ok: true,
+						session: this.runtime.updateAgentPlanet(
+							request.sessionId,
+							request.planetAssetId,
+						),
+					};
 				case "runtime-update-session-project":
 					return {
 						ok: true,

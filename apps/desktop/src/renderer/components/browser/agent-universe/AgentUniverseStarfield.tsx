@@ -9,6 +9,7 @@ interface StarLayer {
 	speed: number;
 	parallax: number;
 	seed: number;
+	hazeOpacity: number;
 }
 
 export interface AgentUniverseStarPoint {
@@ -16,6 +17,8 @@ export interface AgentUniverseStarPoint {
 	y: number;
 	radius: number;
 	alpha: number;
+	color: string;
+	glow: number;
 }
 
 interface RenderedStarLayer extends StarLayer {
@@ -23,10 +26,36 @@ interface RenderedStarLayer extends StarLayer {
 }
 
 const STAR_LAYERS: StarLayer[] = [
-	{ density: 1, speed: 0.55, parallax: 0.86, seed: 0x12ab34cd },
-	{ density: 0.62, speed: 0.3, parallax: 0.52, seed: 0x6e2f11a7 },
-	{ density: 0.28, speed: 0.14, parallax: 0.28, seed: 0xb91d70e3 },
+	{
+		density: 1,
+		speed: 0.55,
+		parallax: 0.86,
+		seed: 0x12ab34cd,
+		hazeOpacity: 0.9,
+	},
+	{
+		density: 0.58,
+		speed: 0.3,
+		parallax: 0.52,
+		seed: 0x6e2f11a7,
+		hazeOpacity: 0.62,
+	},
+	{
+		density: 0.24,
+		speed: 0.14,
+		parallax: 0.28,
+		seed: 0xb91d70e3,
+		hazeOpacity: 0.38,
+	},
 ];
+
+const STAR_COLORS = [
+	"#f4f7ff",
+	"#dbe9ff",
+	"#c4dcff",
+	"#fff0d4",
+	"#ffd4ae",
+] as const;
 
 export interface AgentUniverseStarfieldTransform {
 	scale: number;
@@ -115,11 +144,13 @@ export function generateAgentUniverseStarPoints(
 	const safeHeight = Math.max(1, Math.round(pixelHeight));
 	const safeDpr = Math.max(1, Number.isFinite(dpr) ? dpr : 1);
 	const area = (safeWidth * safeHeight) / (safeDpr * safeDpr);
-	const baseCount = Math.round(clamp(area / 2_800, 260, 900));
+	// The reference field has a dense, photographic star count: most points are
+	// pinpricks, with a small bright tail that gives the eye something to find.
+	const baseCount = Math.round(clamp(area / 1_750, 420, 1_800));
 	const count = Math.max(1, Math.round(baseCount * layer.density));
 	const random = seededRandom(layer.seed ^ safeWidth ^ (safeHeight << 1));
-	const clusterCount = Math.round(clamp(area / 110_000, 8, 22));
-	const clusterRadius = Math.min(safeWidth, safeHeight) * 0.13;
+	const clusterCount = Math.round(clamp(area / 88_000, 10, 28));
+	const clusterRadius = Math.min(safeWidth, safeHeight) * 0.16;
 	const clusters = Array.from({ length: clusterCount }, () => ({
 		x: random() * safeWidth,
 		y: random() * safeHeight,
@@ -127,7 +158,7 @@ export function generateAgentUniverseStarPoints(
 	}));
 	const points: AgentUniverseStarPoint[] = [];
 	for (let index = 0; index < count; index += 1) {
-		const clustered = random() < 0.7;
+		const clustered = random() < 0.46;
 		const cluster = clustered
 			? clusters[Math.floor(random() * clusters.length)]
 			: undefined;
@@ -143,16 +174,74 @@ export function generateAgentUniverseStarPoints(
 			: random() * safeHeight;
 		const sizeRoll = random();
 		const brightnessRoll = random();
+		const colorRoll = random();
+		const color =
+			colorRoll < 0.06
+				? STAR_COLORS[4]
+				: colorRoll < 0.17
+					? STAR_COLORS[3]
+					: colorRoll < 0.43
+						? STAR_COLORS[1]
+						: colorRoll < 0.62
+							? STAR_COLORS[2]
+							: STAR_COLORS[0];
+		const radius = 0.22 + Math.pow(sizeRoll, 2.8) * 2.0;
+		const alpha = 0.1 + Math.pow(brightnessRoll, 2.8) * 0.82;
 		points.push({
 			x,
 			y,
-			// Most points stay below one CSS pixel. A very small tail of nearer
-			// points supplies depth without turning into decorative sparkles.
-			radius: (0.28 + Math.pow(sizeRoll, 2.3) * 1.22) * safeDpr,
-			alpha: 0.14 + Math.pow(brightnessRoll, 2.2) * 0.48,
+			// Most points stay below one CSS pixel. A small foreground tail supplies
+			// depth without turning the background into decorative glitter.
+			radius: radius * safeDpr,
+			alpha,
+			color,
+			glow: clamp(
+				(radius - 0.72) * 0.72 + (alpha - 0.42) * 0.66,
+				0,
+				1,
+			),
 		});
 	}
 	return points;
+}
+
+function rgbaFromHex(hex: string, alpha: number): string {
+	const value = hex.replace(/^#/, "");
+	const red = Number.parseInt(value.slice(0, 2), 16);
+	const green = Number.parseInt(value.slice(2, 4), 16);
+	const blue = Number.parseInt(value.slice(4, 6), 16);
+	return `rgba(${red}, ${green}, ${blue}, ${clamp(alpha, 0, 1)})`;
+}
+
+function paintNebula(
+	context: CanvasRenderingContext2D,
+	layer: StarLayer,
+	pixelWidth: number,
+	pixelHeight: number,
+): void {
+	const random = seededRandom(layer.seed ^ 0x4f1bbcdc);
+	const cloudCount = layer.density > 0.5 ? 4 : 3;
+	for (let index = 0; index < cloudCount; index += 1) {
+		const x = pixelWidth * (0.08 + random() * 0.84);
+		const y = pixelHeight * (0.04 + random() * 0.92);
+		const radius =
+			Math.min(pixelWidth, pixelHeight) * (0.16 + random() * 0.22);
+		const color = random() < 0.78 ? "#5178b0" : "#9c6d62";
+		const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+		gradient.addColorStop(
+			0,
+			rgbaFromHex(color, 0.045 * layer.hazeOpacity),
+		);
+		gradient.addColorStop(
+			0.52,
+			rgbaFromHex(color, 0.014 * layer.hazeOpacity),
+		);
+		gradient.addColorStop(1, rgbaFromHex(color, 0));
+		context.fillStyle = gradient;
+		context.beginPath();
+		context.ellipse(x, y, radius * 1.65, radius, random() * Math.PI, 0, Math.PI * 2);
+		context.fill();
+	}
 }
 
 function buildLayer(
@@ -167,6 +256,7 @@ function buildLayer(
 	tile.height = pixelHeight;
 	const context = tile.getContext("2d");
 	if (!context) return { ...layer, tile };
+	paintNebula(context, layer, pixelWidth, pixelHeight);
 
 	const points = generateAgentUniverseStarPoints(
 		{
@@ -178,11 +268,53 @@ function buildLayer(
 		dpr,
 	);
 	for (const point of points) {
-		context.fillStyle = `rgba(222, 231, 248, ${point.alpha})`;
+		context.globalAlpha = 1;
+		if (point.glow > 0.08) {
+			const glowRadius = point.radius * (3.2 + point.glow * 5.4);
+			const glow = context.createRadialGradient(
+				point.x,
+				point.y,
+				0,
+				point.x,
+				point.y,
+				glowRadius,
+			);
+			glow.addColorStop(
+				0,
+				rgbaFromHex(point.color, point.alpha * 0.28 * point.glow),
+			);
+			glow.addColorStop(0.18, rgbaFromHex(point.color, point.alpha * 0.1));
+			glow.addColorStop(1, rgbaFromHex(point.color, 0));
+			context.fillStyle = glow;
+			context.beginPath();
+			context.arc(point.x, point.y, glowRadius, 0, Math.PI * 2);
+			context.fill();
+		}
+		context.fillStyle = point.color;
+		context.globalAlpha = point.alpha;
 		context.beginPath();
-		context.arc(point.x, point.y, point.radius, 0, Math.PI * 2);
+		context.arc(
+			point.x,
+			point.y,
+			point.radius * (0.72 + point.glow * 0.22),
+			0,
+			Math.PI * 2,
+		);
 		context.fill();
+		if (point.glow > 0.78) {
+			const flareLength = point.radius * (2.2 + point.glow * 2.5);
+			context.strokeStyle = point.color;
+			context.lineWidth = Math.max(0.35, point.radius * 0.16);
+			context.globalAlpha = point.alpha * 0.26 * point.glow;
+			context.beginPath();
+			context.moveTo(point.x - flareLength, point.y);
+			context.lineTo(point.x + flareLength, point.y);
+			context.moveTo(point.x, point.y - flareLength);
+			context.lineTo(point.x, point.y + flareLength);
+			context.stroke();
+		}
 	}
+	context.globalAlpha = 1;
 	return { ...layer, tile };
 }
 

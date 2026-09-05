@@ -604,12 +604,20 @@ export class AgentRuntime extends EventEmitter {
 
 	createSession(input: {
 		title: string;
+		kind?: RuntimeSession["kind"];
 		projectId?: string;
 		workspaceRoot?: string;
 		parentSessionId?: string;
 		allowedTools?: string[];
 		privacyMode?: RuntimeSession["privacyMode"];
+		planetAssetId?: RuntimeSession["planetAssetId"];
 	}): RuntimeSession {
+		if (input.kind === "agent" && input.parentSessionId)
+			throw new Error("A persistent agent must be a top-level session.");
+		if (input.kind === "subagent" && !input.parentSessionId)
+			throw new Error("A subagent must belong to a parent session.");
+		if (input.planetAssetId && input.kind !== "agent")
+			throw new Error("Only a persistent agent can choose a planet asset.");
 		const parent = input.parentSessionId
 			? this.database.getRuntimeSession(input.parentSessionId)
 			: undefined;
@@ -639,8 +647,12 @@ export class AgentRuntime extends EventEmitter {
 		const session = RuntimeSessionSchema.parse({
 			id: `session-${randomUUID()}`,
 			title: input.title,
+			kind: input.kind ?? "conversation",
 			...(input.parentSessionId
 				? { parentSessionId: input.parentSessionId }
+				: {}),
+			...(input.planetAssetId
+				? { planetAssetId: input.planetAssetId }
 				: {}),
 			...(project ? { projectId: project.id } : {}),
 			...(workspaceRoot ? { workspaceRoot } : {}),
@@ -749,6 +761,28 @@ export class AgentRuntime extends EventEmitter {
 		this.emitRuntimeEvent("session.updated", sessionId, {
 			action: "project-assigned",
 			projectId: project.id,
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
+	updateAgentPlanet(
+		sessionId: string,
+		planetAssetId: NonNullable<RuntimeSession["planetAssetId"]> | null,
+	): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		if (session.kind !== "agent")
+			throw new Error("Only a persistent agent can choose a planet asset.");
+		const next = { ...session };
+		if (planetAssetId === null) delete next.planetAssetId;
+		else next.planetAssetId = planetAssetId;
+		const updated = this.saveSession({
+			...next,
+			updatedAt: this.now(),
+		});
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "agent-planet-updated",
+			planetAssetId: planetAssetId ?? null,
 			sessionUpdatedAt: updated.updatedAt,
 		});
 		return updated;
@@ -1101,6 +1135,10 @@ export class AgentRuntime extends EventEmitter {
 		const activeWorkspaceRoot = this.resolveActiveWorkspaceRoot(parent);
 		let child = this.createSession({
 			title: title ?? `${parent.title} (fork)`,
+			kind:
+				parent.kind === "agent" || parent.kind === "subagent"
+					? "subagent"
+					: "conversation",
 			parentSessionId: parent.id,
 			...(parent.projectId ? { projectId: parent.projectId } : {}),
 			...(activeWorkspaceRoot ? { workspaceRoot: activeWorkspaceRoot } : {}),

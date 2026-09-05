@@ -30,6 +30,20 @@ describe("pet overlay IPC access", () => {
 				title: "Unattributed quick task",
 			}),
 		).toThrow("visibly attributed");
+		expect(() =>
+			access.assertAllowed({
+				type: "runtime-create-session",
+				title: "Pet · Persistent agent attempt",
+				kind: "agent",
+			}),
+		).toThrow("cannot create persistent agents");
+		expect(() =>
+			access.assertAllowed({
+				type: "runtime-create-session",
+				title: "Pet · Planet attempt",
+				planetAssetId: "earth",
+			}),
+		).toThrow("cannot create persistent agents");
 
 		access.registerSession("pet-session");
 		expect(() =>

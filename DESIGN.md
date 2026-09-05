@@ -116,14 +116,23 @@ Engineer repositories. The full evidence and decision record is in
   deliberately limited red/yellow/green palette inspired by the window's
   traffic lights; each system receives a stable identity color until the user
   chooses another, while status is communicated separately through size,
-  opacity, and rim treatment. The main agent is a matte planet-like body with
-  a restrained surface sheen; direct delegated sessions are smaller moon-like
-  bodies on compact root-centered guides, and deeper descendants stay close to
-  their owning moon. No trusted agent photo metadata exists in the runtime
-  contract yet, so the surface treatment is deterministic rather than a fake
-  profile image. Thin straight ownership links remain the persistent cue that
-  every relationship is real delegated work. Selection and focus add emphasis;
-  they do not mutate or invent runtime state.
+  opacity, and rim treatment. Only an explicitly created persistent agent owns
+  a planet; an ordinary conversation such as the default Main session never
+  becomes a planet by inference. Persistent agents choose from bundled,
+  attributed NASA/JPL planet imagery in Agent settings, while direct delegated
+  sessions are smaller moon-like bodies on compact root-centered guides and
+  deeper descendants stay close to their owning moon. No trusted agent photo
+  metadata exists in the runtime contract, so the body treatment uses real
+  celestial imagery rather than a fake profile image. Thin straight ownership
+  links remain the persistent cue that every relationship is real delegated
+  work. Selecting any planet or moon opens its runtime-backed conversation; the
+  focused view exposes an explicit Back to solar system control. Selection and
+  focus add emphasis; they do not mutate or invent runtime state.
+- **Starfield:** the ambient field uses several deterministic depth layers with
+  dense pinprick stars, small warm/cool color-temperature variation, rare bright
+  cores and soft halos, and barely visible blue/amber dust. Camera parallax and
+  slow drift preserve the depth cue without turning the map into a screensaver;
+  reduced motion freezes the field.
 - **Motion roles:** spatial continuity for focus and camera changes, direct
   manipulation for pan/zoom, and calm state feedback for real active work or
   recent runtime events. The map is still at rest: moons do not orbit, idle-bob,

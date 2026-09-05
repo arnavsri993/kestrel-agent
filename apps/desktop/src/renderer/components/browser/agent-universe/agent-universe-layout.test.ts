@@ -9,6 +9,7 @@ import { projectAgentUniverse } from "./agent-universe-model";
 const root: RuntimeSession = {
 	id: "layout-root",
 	title: "Layout root",
+	kind: "agent",
 	allowedTools: [],
 	status: "active",
 	checkpoints: [],
@@ -23,6 +24,7 @@ function makeSessions(count: number, rootId = root.id): RuntimeSession[] {
 			...root,
 			id: `${rootId}-child-${String(index).padStart(2, "0")}`,
 			title: `Child ${index}`,
+			kind: "subagent" as const,
 			parentSessionId: rootId,
 			updatedAt: `2026-09-01T10:${String(index % 60).padStart(2, "0")}:00.000Z`,
 		})),
@@ -75,20 +77,20 @@ describe("agent universe layout", () => {
 		}
 	});
 
-	it("places direct delegates on a compact root-centered moon orbit", () => {
+	it("places direct delegates on a compact, organic root-centered orbit", () => {
 		const snapshot = projectAgentUniverse(makeSessions(4));
 		const system = layoutAgentUniverse(snapshot, 1200, 700).systems[0]!;
 		const rootLayout = system.nodeLayouts.find((node) => node.nodeId === root.id)!;
 		const workerLayouts = system.nodeLayouts.filter((node) => node.nodeId !== root.id);
 
 		expect(system.orbitRadii).toHaveLength(1);
-		for (const worker of workerLayouts) {
-			expect(Math.hypot(worker.x - rootLayout.x, worker.y - rootLayout.y)).toBeCloseTo(
-				system.orbitRadii[0]!,
-				5,
-			);
-			expect(worker.orbitBand).toBe(1);
-		}
+		const distances = workerLayouts.map((worker) =>
+			Math.hypot(worker.x - rootLayout.x, worker.y - rootLayout.y),
+		);
+		expect(new Set(distances.map((distance) => distance.toFixed(2))).size).toBeGreaterThan(1);
+		expect(new Set(workerLayouts.map((worker) => worker.angle.toFixed(2))).size).toBeGreaterThan(2);
+		expect(workerLayouts.every((worker) => worker.orbitBand === 1)).toBe(true);
+		expect(distances.every((distance) => distance >= system.orbitRadii[0]! - 30)).toBe(true);
 	});
 
 	it("gives working and structurally important sessions more visual weight", () => {
@@ -145,6 +147,35 @@ describe("agent universe layout", () => {
 			activeLayout.nodeLayouts.find((node) => node.nodeId.endsWith("child-00"))!.radius,
 		).toBeGreaterThan(
 			settledLayout.nodeLayouts.find((node) => node.nodeId.endsWith("child-00"))!.radius,
+		);
+	});
+
+	it("keeps a placed planet and its moons together at the chosen map position", () => {
+		const snapshot = projectAgentUniverse(makeSessions(3));
+		const automatic = layoutAgentUniverse(snapshot, 1200, 700).systems[0]!;
+		const placed = layoutAgentUniverse(snapshot, 1200, 700, null, {
+			[root.id]: { x: 0.8, y: 0.25 },
+		}).systems[0]!;
+		const automaticRoot = automatic.nodeLayouts.find((node) => node.nodeId === root.id)!;
+		const placedRoot = placed.nodeLayouts.find((node) => node.nodeId === root.id)!;
+		const automaticMoon = automatic.nodeLayouts.find(
+			(node) => node.nodeId === `${root.id}-child-00`,
+		)!;
+		const placedMoon = placed.nodeLayouts.find(
+			(node) => node.nodeId === `${root.id}-child-00`,
+		)!;
+
+		expect(placed.centerX).toBe(960);
+		expect(placed.centerY).toBe(175);
+		expect(placedRoot.x).toBe(placed.centerX);
+		expect(placedRoot.y).toBe(placed.centerY);
+		expect(placedMoon.x - placedRoot.x).toBeCloseTo(
+			automaticMoon.x - automaticRoot.x,
+			8,
+		);
+		expect(placedMoon.y - placedRoot.y).toBeCloseTo(
+			automaticMoon.y - automaticRoot.y,
+			8,
 		);
 	});
 

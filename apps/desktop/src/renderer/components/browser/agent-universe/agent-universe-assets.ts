@@ -13,6 +13,7 @@ import titanUrl from "../../../assets/agent-universe/titan.jpg";
 import tritonUrl from "../../../assets/agent-universe/triton.jpg";
 import uranusUrl from "../../../assets/agent-universe/uranus.jpg";
 import venusUrl from "../../../assets/agent-universe/venus.jpg";
+import type { AgentPlanetAssetId } from "@kestrel/shared-types";
 import { stableAgentHash } from "./agent-universe-model";
 
 export interface AgentUniverseBodyAsset {
@@ -170,7 +171,7 @@ export const AGENT_UNIVERSE_BODY_ASSETS: readonly AgentUniverseBodyAsset[] = [
 	},
 ];
 
-const PLANET_ASSETS = AGENT_UNIVERSE_BODY_ASSETS.filter(
+export const AGENT_UNIVERSE_PLANET_ASSETS = AGENT_UNIVERSE_BODY_ASSETS.filter(
 	(asset) => asset.role === "planet",
 );
 const MOON_ASSETS = AGENT_UNIVERSE_BODY_ASSETS.filter(
@@ -180,8 +181,15 @@ const MOON_ASSETS = AGENT_UNIVERSE_BODY_ASSETS.filter(
 export function agentUniverseBodyAssetFor(
 	agentId: string,
 	isRoot: boolean,
+	planetAssetId?: AgentPlanetAssetId,
 ): AgentUniverseBodyAsset {
-	const assets = isRoot ? PLANET_ASSETS : MOON_ASSETS;
+	if (isRoot && planetAssetId) {
+		const configured = AGENT_UNIVERSE_PLANET_ASSETS.find(
+			(asset) => asset.id === planetAssetId,
+		);
+		if (configured) return configured;
+	}
+	const assets = isRoot ? AGENT_UNIVERSE_PLANET_ASSETS : MOON_ASSETS;
 	return assets[stableAgentHash(agentId) % assets.length]!;
 }
 

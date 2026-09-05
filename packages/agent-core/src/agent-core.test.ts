@@ -147,6 +147,54 @@ describe("teacher scheduling vertical slice", () => {
 });
 
 describe("core agent request path", () => {
+	it("creates and updates persistent agent planets through the core request path", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const core = new AgentCore({
+			database,
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+
+		const created = await core.handle({
+			type: "runtime-create-session",
+			title: "Research lead",
+			kind: "agent",
+			planetAssetId: "saturn",
+		});
+		expect(created).toMatchObject({
+			ok: true,
+			session: {
+				title: "Research lead",
+				kind: "agent",
+				planetAssetId: "saturn",
+			},
+		});
+		if (!created.ok || !created.session)
+			throw new Error("Persistent agent was not created.");
+
+		const updated = await core.handle({
+			type: "runtime-update-agent-planet",
+			sessionId: created.session.id,
+			planetAssetId: "mars",
+		});
+		expect(updated).toMatchObject({
+			ok: true,
+			session: {
+				id: created.session.id,
+				kind: "agent",
+				planetAssetId: "mars",
+			},
+		});
+
+		const listed = await core.handle({ type: "runtime-list-sessions" });
+		if (!listed.ok) throw new Error("Runtime sessions could not be listed.");
+		expect(listed.sessions?.find((session) => session.id === created.session!.id)).toMatchObject({
+			id: created.session.id,
+			kind: "agent",
+			planetAssetId: "mars",
+		});
+		await core.close();
+	});
+
 	it("turns model and provider auto-selection into an audited routed run", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		let received:

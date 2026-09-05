@@ -192,7 +192,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDefinition[] = [
 		scope: "agent",
 		tier: "advanced",
 		label: "Workspace & sessions",
-		description: "Folders, sessions, and project boundaries",
+		description: "Persistent agents, planets, folders, and project boundaries",
 	},
 	{
 		id: "agent-tools",
@@ -607,9 +607,9 @@ export const SETTINGS_CATALOG: readonly SettingSearchEntry[] = [
 		section: "agent-workspace",
 		scope: "agent",
 		tier: "advanced",
-		label: "Workspace and sessions",
-		description: "Manage local folder grants and active sessions.",
-		keywords: ["workspace", "project", "folder", "session"],
+		label: "Workspace, sessions, and agent planets",
+		description: "Manage local folder grants, persistent agents, and their real planet assets.",
+		keywords: ["workspace", "project", "folder", "session", "agent", "planet", "moon"],
 		anchor: "setting-agent-workspace",
 	},
 	{
