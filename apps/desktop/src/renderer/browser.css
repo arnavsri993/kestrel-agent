@@ -4062,6 +4062,23 @@ body:has(.ai-browser-app),
 	background: color-mix(in srgb, var(--solid) 12%, transparent);
 	color: var(--ink);
 }
+.browser-download-progress-badge {
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	display: grid;
+	place-items: center;
+	min-width: 13px;
+	height: 13px;
+	padding: 0 3px;
+	border: 1px solid var(--canvas);
+	border-radius: 7px;
+	background: var(--solid);
+	color: var(--canvas);
+	font-size: 8px;
+	font-weight: 700;
+	line-height: 1;
+}
 .browser-pinned-extension {
 	width: 28px !important;
 	height: 28px !important;
@@ -4252,10 +4269,10 @@ body:has(.ai-browser-app),
 .browser-download-popover-row {
 	display: grid;
 	grid-template-columns: 30px minmax(0, 1fr) auto;
-	align-items: center;
+	align-items: start;
 	gap: 8px;
-	min-height: 48px;
-	padding: 4px 5px;
+	min-height: 52px;
+	padding: 7px 5px;
 	border-radius: 9px;
 }
 .browser-download-popover-row:hover {
@@ -4264,11 +4281,14 @@ body:has(.ai-browser-app),
 .browser-download-popover-row .download-state {
 	width: 28px;
 	height: 28px;
+	margin-top: 1px;
 }
 .browser-download-popover-copy {
 	display: grid;
-	gap: 2px;
+	gap: 3px;
+	align-content: start;
 	min-width: 0;
+	padding-top: 1px;
 }
 .browser-download-popover-copy strong {
 	overflow: hidden;
@@ -4284,16 +4304,35 @@ body:has(.ai-browser-app),
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
-.browser-download-popover-copy progress {
-	width: min(220px, 100%);
-	height: 2px;
-	margin-top: 2px;
+.browser-download-popover-size {
+	font-variant-numeric: tabular-nums;
+}
+.browser-download-popover-progress {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	margin-top: 1px;
+}
+.browser-download-popover-progress progress {
+	width: 100%;
+	min-width: 0;
+	height: 4px;
 	accent-color: var(--solid);
+}
+.browser-download-popover-progress span {
+	color: var(--muted);
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 }
 .browser-download-popover-actions {
 	display: flex;
 	align-items: center;
 	justify-content: flex-end;
+	align-self: start;
+	flex-wrap: wrap;
 	gap: 2px;
 	white-space: nowrap;
 }
@@ -4313,6 +4352,15 @@ body:has(.ai-browser-app),
 	background: var(--selected);
 	color: var(--ink);
 }
+.browser-download-popover-actions .browser-download-reveal {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+.browser-download-popover-actions .browser-download-action svg {
+	width: 12px;
+	height: 12px;
+}
 .browser-download-popover-actions .browser-download-drag {
 	display: inline-flex;
 	align-items: center;
@@ -4328,6 +4376,15 @@ body:has(.ai-browser-app),
 .browser-download-drag svg {
 	width: 12px;
 	height: 12px;
+}
+@media (max-width: 560px) {
+	.browser-download-popover-row {
+		grid-template-columns: 30px minmax(0, 1fr);
+	}
+	.browser-download-popover-actions {
+		grid-column: 2;
+		justify-content: flex-start;
+	}
 }
 .browser-toolbar-popover-history {
 	width: min(380px, calc(100vw - 24px));
