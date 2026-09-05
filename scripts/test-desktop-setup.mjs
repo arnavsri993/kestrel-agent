@@ -255,6 +255,19 @@ try {
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
+	const automaticSetup = page.getByRole("region", {
+		name: "Automatic local setup",
+	});
+	await automaticSetup.waitFor();
+	await page.getByText(/logical CPUs? detected/).waitFor();
+	await automaticSetup
+		.getByText(/One click downloads the pinned Ollama runtime/)
+		.waitFor();
+	await automaticSetup
+		.getByRole("button", {
+			name: /Set up automatically|Verify local setup again/,
+		})
+		.waitFor();
 	await page.locator(".recommended-model-tiers article").first().waitFor();
 	const tierNames = page.locator(".model-tier-name strong");
 	await tierNames.first().waitFor();
@@ -266,15 +279,19 @@ try {
 		await page.locator(".recommended-model-tiers article.preferred").waitFor();
 		await page
 			.locator(".recommended-model-tiers")
-			.getByText("Recommended", { exact: true })
+			.getByText("Best fit", { exact: true })
 			.waitFor();
 	} else {
 		assert.ok(!names.includes("Balanced"));
 		assert.equal(
 			await page.locator(".recommended-model-tiers article.preferred").count(),
-			0,
-			"A constrained CI device must not claim a nonexistent balanced tier is recommended.",
+			1,
+			"The strongest compatible tier must be marked as the best fit even on a constrained device.",
 		);
+		await page
+			.locator(".recommended-model-tiers")
+			.getByText("Best fit", { exact: true })
+			.waitFor();
 	}
 	const tierDetails = page.locator(".model-tier-details");
 	const detailIndex = Math.min(1, (await tierDetails.count()) - 1);
@@ -290,10 +307,6 @@ try {
 		.nth(detailIndex)
 		.getByText(/GB · 256K context/, { exact: true })
 		.waitFor();
-	assert.equal(
-		await page.getByText("Automatic setup", { exact: true }).count(),
-		0,
-	);
 	await page
 		.getByText("huihui_ai/qwen3.5-abliterated:4b", { exact: true })
 		.count()

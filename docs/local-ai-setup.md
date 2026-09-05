@@ -50,7 +50,15 @@ The explicit paid-bandwidth smoke command is `pnpm test:local-ai:real`. It downl
 
 ## Model recommendation
 
-The default recommendation is selected from total device memory while reserving capacity for macOS and Kestrel:
+When the user chooses **Run on this Mac**, the setup assistant reads the device
+platform, architecture, memory, and logical CPU count. It selects the strongest
+curated model that fits the usable-memory budget and offers one explicit
+**Set up automatically** action. That action reuses a reachable Ollama service
+or installs the pinned managed runtime, pulls the selected model, verifies a
+real response, and reinitializes Kestrel's local route. It does not silently
+download or install anything before the user clicks it.
+
+The recommendation is selected from total device memory while reserving capacity for macOS and Kestrel:
 
 - 16 GB and above: reserve 4 GB.
 - 8–15 GB: reserve 2 GB.
