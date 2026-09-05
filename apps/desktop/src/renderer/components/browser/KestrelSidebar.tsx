@@ -7,6 +7,7 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent,
 	type MouseEvent as ReactMouseEvent,
 } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { Project, RuntimeSession } from "@kestrel/shared-types";
 import { sessionTitleForDisplay } from "../../chat-title";
 import {
@@ -25,6 +26,8 @@ import { Icon } from "../Icon";
 import type { SidebarDestination } from "./agent-sidebar";
 
 const MAX_SIDEBAR_CHATS = 8;
+const PROJECT_EXPANSION_DURATION_MS = 160;
+const PROJECT_EXPANSION_SWITCH_DELAY_MS = PROJECT_EXPANSION_DURATION_MS + 80;
 const PROJECT_EXPANDED_STORAGE_KEY = "kestrel:project-expanded";
 
 type ContextMenuState =
@@ -94,7 +97,7 @@ function SidebarNavItem({
 	return (
 		<button
 			type="button"
-			className={`kestrel-sidebar-nav-item${active ? " active" : ""}`}
+			className={`kestrel-sidebar-row kestrel-sidebar-nav-item${active ? " active" : ""}`}
 			aria-current={active ? "page" : undefined}
 			aria-label={label}
 			title={label}
@@ -250,12 +253,17 @@ export function KestrelSidebar({
 	onOpenSession(sessionId: string): void;
 	onMoveSession(sessionId: string, projectId: string | null): void;
 }) {
+	const reducedMotion = useReducedMotion() ?? false;
 	const [collapsed, setCollapsed] = useState(
 		() => localStorage.getItem("kestrel:navigation-sidebar") === "collapsed",
 	);
 	const [expandedProjectId, setExpandedProjectId] = useState<string | null>(() =>
 		readExpandedProjectId(projects),
 	);
+	const expandedProjectIdRef = useRef(expandedProjectId);
+	const expansionTimerRef = useRef<number | null>(null);
+	const pendingExpandedProjectIdRef = useRef<string | null>(null);
+	const manuallyCollapsedProjectIdRef = useRef<string | null>(null);
 	const [visibleProjectChats, setVisibleProjectChats] = useState<Record<string, number>>({});
 	const [globalChatLimit, setGlobalChatLimit] = useState(MAX_SIDEBAR_CHATS);
 	const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -267,33 +275,78 @@ export function KestrelSidebar({
 	);
 	const allChats = useMemo(() => sessionsWithoutProject(sessions, projects), [projects, sessions]);
 
+	function cancelPendingProjectExpansion() {
+		if (expansionTimerRef.current !== null) {
+			window.clearTimeout(expansionTimerRef.current);
+			expansionTimerRef.current = null;
+		}
+		pendingExpandedProjectIdRef.current = null;
+	}
+
+	function commitExpandedProjectId(projectId: string | null) {
+		expandedProjectIdRef.current = projectId;
+		setExpandedProjectId(projectId);
+		persistExpandedProjectId(projectId);
+	}
+
+	function selectExpandedProject(projectId: string) {
+		const current = expandedProjectIdRef.current;
+		const next = current === projectId ? null : projectId;
+		cancelPendingProjectExpansion();
+		manuallyCollapsedProjectIdRef.current = next ? null : projectId;
+		if (current && next && current !== next) {
+			pendingExpandedProjectIdRef.current = next;
+			commitExpandedProjectId(null);
+			// Keep the durable preference aligned with the user's choice while the
+			// outgoing project finishes its short collapse animation.
+			persistExpandedProjectId(next);
+			expansionTimerRef.current = window.setTimeout(
+				finishPendingProjectExpansion,
+				reducedMotion ? 0 : PROJECT_EXPANSION_SWITCH_DELAY_MS,
+			);
+			return;
+		}
+		commitExpandedProjectId(next);
+	}
+
+	function finishPendingProjectExpansion() {
+		expansionTimerRef.current = null;
+		const pending = pendingExpandedProjectIdRef.current;
+		pendingExpandedProjectIdRef.current = null;
+		if (pending && projects.some((project) => project.id === pending))
+			commitExpandedProjectId(pending);
+	}
+
 	useEffect(() => {
 		if (activeProjectId && projects.some((project) => project.id === activeProjectId)) {
-			setExpandedProjectId(activeProjectId);
-			persistExpandedProjectId(activeProjectId);
+			if (pendingExpandedProjectIdRef.current === activeProjectId) return;
+			if (manuallyCollapsedProjectIdRef.current === activeProjectId) return;
+			if (expandedProjectIdRef.current !== activeProjectId)
+				commitExpandedProjectId(activeProjectId);
 		}
 	}, [activeProjectId, projects]);
 
 	useEffect(() => {
 		if (projects.length === 0) return;
-		setExpandedProjectId((current) => {
-			if (current && projects.some((project) => project.id === current))
-				return current;
-			const persisted = readExpandedProjectId(projects);
-			if (persisted) {
-				persistExpandedProjectId(persisted);
-				return persisted;
-			}
-			return null;
-		});
+		if (pendingExpandedProjectIdRef.current) {
+			if (projects.some((project) => project.id === pendingExpandedProjectIdRef.current))
+				return;
+			cancelPendingProjectExpansion();
+		}
+		const current = expandedProjectIdRef.current;
+		if (current && projects.some((project) => project.id === current)) return;
+		const persisted = readExpandedProjectId(projects);
+		if (persisted) commitExpandedProjectId(persisted);
 	}, [projects]);
 
 	useEffect(() => {
 		if (expandedProjectId && !projects.some((project) => project.id === expandedProjectId)) {
-			setExpandedProjectId(null);
-			persistExpandedProjectId(null);
+			cancelPendingProjectExpansion();
+			commitExpandedProjectId(null);
 		}
 	}, [expandedProjectId, projects]);
+
+	useEffect(() => () => cancelPendingProjectExpansion(), []);
 
 	useEffect(() => {
 		if (!contextMenu) return;
@@ -354,11 +407,7 @@ export function KestrelSidebar({
 	}
 
 	function setExpanded(projectId: string) {
-		setExpandedProjectId((current) => {
-			const next = current === projectId ? null : projectId;
-			persistExpandedProjectId(next);
-			return next;
-		});
+		selectExpandedProject(projectId);
 	}
 
 	function toggleCollapsed() {
@@ -429,7 +478,7 @@ export function KestrelSidebar({
 
 			<button
 				type="button"
-				className="kestrel-sidebar-new-task"
+				className="kestrel-sidebar-row kestrel-sidebar-new-task"
 				aria-label="New chat"
 				title="New chat"
 				aria-keyshortcuts="Meta+N"
@@ -474,9 +523,10 @@ export function KestrelSidebar({
 									<li key={project.id} className="kestrel-sidebar-project">
 										<button
 											type="button"
-											className={`kestrel-sidebar-project-open${activeProjectId === project.id ? " active" : ""}`}
+											className={`kestrel-sidebar-row kestrel-sidebar-project-open${activeProjectId === project.id ? " active" : ""}`}
 											aria-current={activeProjectId === project.id ? "page" : undefined}
 											aria-expanded={expanded}
+											aria-controls={`kestrel-sidebar-project-chats-${project.id}`}
 											aria-label={`${expanded ? "Collapse" : "Open"} ${project.name} project`}
 											title={`${expanded ? "Collapse" : "Open"} ${project.name}`}
 											onClick={() => {
@@ -490,42 +540,60 @@ export function KestrelSidebar({
 											<span>{project.name}</span>
 											<Icon name="chevron" />
 										</button>
-										{expanded ? (
-											<div className="kestrel-sidebar-project-chat-group" aria-label={`Chats in ${project.name}`}>
-												{allProjectChats.length > 0 ? (
-													<ul className="kestrel-sidebar-project-chats">
-														{previewChats.map((session) => (
-															<li key={session.id}>
-																<button
-																	type="button"
-																	className={`kestrel-sidebar-project-chat${session.id === activeSessionId ? " active" : ""}`}
-																	aria-current={session.id === activeSessionId ? "page" : undefined}
-																	title={sessionTitleForDisplay(session.title)}
-																	onClick={() => onOpenSession(session.id)}
-																	onContextMenu={(event) => openChatContextMenu(event, session)}
-																	onKeyDown={(event) => openContextMenuFromKeyboard(event, "chat", session.id, event.currentTarget)}
-																>
-																	<span>{sessionTitleForDisplay(session.title)}</span>
-																</button>
-															</li>
-														))}
-														{allProjectChats.length > previewChats.length ? (
-															<li>
-																<button
-																	type="button"
-																	className="kestrel-sidebar-project-view-all"
-																	onClick={() => setVisibleProjectChats((current) => ({ ...current, [project.id]: previewChats.length + 5 }))}
-																>
-																	Show more
-																</button>
-															</li>
-														) : null}
-													</ul>
-												) : (
-													<p className="kestrel-sidebar-project-no-chats">No chats yet</p>
-												)}
-											</div>
-										) : null}
+										<AnimatePresence initial={false}>
+											{expanded ? (
+												<motion.div
+													key={`${project.id}-chats`}
+													id={`kestrel-sidebar-project-chats-${project.id}`}
+													className="kestrel-sidebar-project-chat-group"
+													role="group"
+													aria-label={`Chats in ${project.name}`}
+													initial={reducedMotion ? false : { height: 0, opacity: 0 }}
+													animate={{ height: "auto", opacity: 1 }}
+													exit={{ height: 0, opacity: 0 }}
+													transition={{
+														duration: reducedMotion ? 0 : PROJECT_EXPANSION_DURATION_MS / 1000,
+														ease: [0.25, 1, 0.35, 1],
+													}}
+													style={{ overflow: "hidden" }}
+												>
+													{allProjectChats.length > 0 ? (
+														<ul className="kestrel-sidebar-project-chats">
+															{previewChats.map((session) => (
+																<li key={session.id}>
+																	<button
+																		type="button"
+																		className={`kestrel-sidebar-row kestrel-sidebar-project-chat${session.id === activeSessionId ? " active" : ""}`}
+																		aria-current={session.id === activeSessionId ? "page" : undefined}
+																		title={sessionTitleForDisplay(session.title)}
+																		onClick={() => onOpenSession(session.id)}
+																		onContextMenu={(event) => openChatContextMenu(event, session)}
+																		onKeyDown={(event) => openContextMenuFromKeyboard(event, "chat", session.id, event.currentTarget)}
+																	>
+																		<span>{sessionTitleForDisplay(session.title)}</span>
+																	</button>
+																</li>
+															))}
+															{allProjectChats.length > previewChats.length ? (
+																<li>
+																	<button
+																		type="button"
+																		className="kestrel-sidebar-project-view-all"
+																		title={`Show more chats in ${project.name}`}
+																		onClick={() => setVisibleProjectChats((current) => ({ ...current, [project.id]: previewChats.length + 5 }))}
+																	>
+																		<span>Show more</span>
+																		<Icon name="chevron" aria-hidden="true" />
+																	</button>
+																</li>
+															) : null}
+														</ul>
+													) : (
+														<p className="kestrel-sidebar-project-no-chats">No chats yet</p>
+													)}
+												</motion.div>
+											) : null}
+										</AnimatePresence>
 									</li>
 								);
 							})}
@@ -548,7 +616,7 @@ export function KestrelSidebar({
 								<li key={session.id}>
 									<button
 										type="button"
-										className={`kestrel-sidebar-list-item${session.id === activeSessionId ? " active" : ""}`}
+										className={`kestrel-sidebar-row kestrel-sidebar-list-item${session.id === activeSessionId ? " active" : ""}`}
 										aria-current={session.id === activeSessionId ? "page" : undefined}
 										title={sessionTitleForDisplay(session.title)}
 										onClick={() => onOpenSession(session.id)}
