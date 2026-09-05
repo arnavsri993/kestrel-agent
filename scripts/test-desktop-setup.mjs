@@ -172,7 +172,44 @@ try {
 	await page
 		.getByRole("heading", { name: "Where should answers come from?" })
 		.waitFor();
-	await page.getByRole("button", { name: /Use an account/ }).click();
+	assert.equal(
+		await page.getByText(/Pick one to start/).count(),
+		0,
+		"The model choice page should not repeat the selection instruction.",
+	);
+	assert.equal(
+		await page
+			.getByText("Choose an option above to continue.", { exact: true })
+			.count(),
+		0,
+		"The footer should not repeat the selection instruction.",
+	);
+	assert.equal(await continueButton.isDisabled(), true);
+	const modelSourcePicker = page.locator(".model-source-picker");
+	const modelSourceLayout = await modelSourcePicker.evaluate((picker) => {
+		const style = getComputedStyle(picker);
+		return { display: style.display, rowGap: Number.parseFloat(style.rowGap) };
+	});
+	assert.equal(modelSourceLayout.display, "grid");
+	assert.ok(modelSourceLayout.rowGap >= 8);
+	const accountChoice = page.getByRole("button", { name: /Use an account/ });
+	await accountChoice.click();
+	assert.equal(await accountChoice.getAttribute("aria-pressed"), "true");
+	assert.equal(
+		await page
+			.getByRole("heading", { name: "Where should answers come from?" })
+			.count(),
+		1,
+	);
+	assert.equal(await continueButton.isEnabled(), true);
+	const footerBox = await page.locator(".onboarding-actions").boundingBox();
+	const backBox = await page.getByRole("button", { name: "Back" }).boundingBox();
+	assert.ok(footerBox && backBox);
+	assert.ok(
+		Math.abs(backBox.x - footerBox.x) <= 2,
+		`Back should align to the left edge of the footer (${backBox.x} vs ${footerBox.x}).`,
+	);
+	await continueButton.click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await page.getByText("Choose a paid provider", { exact: true }).waitFor();
 	const paidProviders = page.getByRole("group", { name: "Paid AI providers" });
@@ -254,6 +291,7 @@ try {
 	await page.getByLabel("Find a provider").fill("");
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
 	await page.locator(".recommended-model-tiers article").first().waitFor();
 	const tierNames = page.locator(".model-tier-name strong");
@@ -312,6 +350,7 @@ try {
 	await page.getByText("Any other Ollama model", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page
 		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();

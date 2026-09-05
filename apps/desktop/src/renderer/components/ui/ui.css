@@ -664,7 +664,7 @@
 	box-shadow: var(--shadow-md);
 }
 
-.model-source-picker .model-source-option-recommended {
+.model-source-picker button[aria-pressed="true"] {
 	border-color: var(--solid);
 	background: var(--selected-soft);
 	box-shadow: var(--shadow-sm);
@@ -1273,7 +1273,7 @@
 	#root { filter: none !important; }
 	.setup-rail li.current button,
 	.agent-sidebar-footer nav button.active,
-	.model-source-picker .model-source-option-recommended,
+	.model-source-picker button[aria-pressed="true"],
 	.command-pinned button:focus-visible { outline: 2px solid Highlight; }
 }
 
@@ -1504,7 +1504,7 @@ body { font-family: var(--sans); }
 .model-source-picker {
 	display: grid;
 	grid-template-columns: 1fr;
-	gap: 8px;
+	gap: 12px;
 	margin-top: 24px;
 }
 .model-source-picker button {
@@ -1527,7 +1527,7 @@ body { font-family: var(--sans); }
 	background: var(--surface-strong);
 	box-shadow: var(--shadow-md);
 }
-.model-source-picker .model-source-option-recommended {
+.model-source-picker button[aria-pressed="true"] {
 	border-color: var(--ink);
 	background: var(--selected-soft);
 	box-shadow: none;
