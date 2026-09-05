@@ -91,7 +91,7 @@ function errorText(cause: unknown, fallback: string): string {
 }
 
 function formatPath(path: string): string {
-  if (!path) return "Kestrel’s default Downloads folder";
+  if (!path) return "Your Downloads folder";
   const pieces = path.split(/[\\/]/).filter(Boolean);
   return pieces.length > 2 ? `…/${pieces.slice(-2).join("/")}` : path;
 }
@@ -1409,7 +1409,7 @@ export function BrowserSettings({
               <Icon name="downloads" /> Downloads
             </h2>
             <p>
-              Choose a profile-owned folder or review every download before it
+              Choose where files are saved, or review every download before it
               starts.
             </p>
           </header>
