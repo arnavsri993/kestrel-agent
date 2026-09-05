@@ -29,8 +29,22 @@ export interface AgentUniverseStarPoint {
 }
 
 interface RenderedStarLayer extends StarLayer {
-	tile: HTMLCanvasElement;
+	tiles: HTMLCanvasElement[];
+	tileWidth: number;
+	tileHeight: number;
 }
+
+// A small bank of independent tiles is cheaper than a single retina-sized
+// texture, while the coordinate-selected variants stop the eye from finding a
+// repeating wallpaper pattern after a long pan. Four variants is enough to
+// make the accessible plane feel unbounded without multiplying the runtime
+// draw work.
+export const AGENT_UNIVERSE_STAR_TILE_VARIANT_COUNT = 4;
+export const AGENT_UNIVERSE_STARFIELD_DPR_CAP = 1.25;
+
+const STAR_TILE_MIN_CSS_SIZE = 360;
+const STAR_TILE_MAX_CSS_SIZE = 560;
+const STAR_TILE_SIZE_RATIO = 0.64;
 
 const STAR_LAYERS: StarLayer[] = [
 	{
@@ -183,6 +197,163 @@ function clamp(value: number, minimum: number, maximum: number): number {
 	return Math.min(maximum, Math.max(minimum, value));
 }
 
+function mixSeed(...values: number[]): number {
+	let state = 0x9e3779b9;
+	for (const value of values) {
+		state = Math.imul(state ^ (value >>> 0), 0x85ebca6b);
+		state ^= state >>> 13;
+		state = Math.imul(state, 0xc2b2ae35);
+	}
+	return (state ^ (state >>> 16)) >>> 0;
+}
+
+/**
+ * Pick a tile variant from the tile's world coordinate, rather than from its
+ * render order. This keeps a camera repaint stable and makes neighbouring
+ * tiles statistically independent even though the tile canvases are cached.
+ */
+export function agentUniverseStarfieldTileVariant(
+	seed: number,
+	tileX: number,
+	tileY: number,
+	variantCount = AGENT_UNIVERSE_STAR_TILE_VARIANT_COUNT,
+): number {
+	const safeCount = Math.max(1, Math.floor(variantCount));
+	return mixSeed(seed, tileX, tileY) % safeCount;
+}
+
+export interface AgentUniverseStarfieldTilePlacement {
+	x: number;
+	y: number;
+	tileX: number;
+	tileY: number;
+	variant: number;
+}
+
+interface StarfieldTileCoverageOptions {
+	pixelWidth: number;
+	pixelHeight: number;
+	tileWidth: number;
+	tileHeight: number;
+	transform: AgentUniverseStarfieldTransform;
+	phaseX?: number;
+	phaseY?: number;
+	tileIndexOffsetX?: number;
+	tileIndexOffsetY?: number;
+	variantCount?: number;
+	seed?: number;
+}
+
+function tileIndexRange(
+	pixelSize: number,
+	tileSize: number,
+	center: number,
+	pan: number,
+	scale: number,
+	phase: number,
+): { start: number; end: number } {
+	const safePixelSize = Math.max(1, pixelSize);
+	const safeTileSize = Math.max(1, tileSize);
+	const safeScale = Math.max(0.01, Number.isFinite(scale) ? scale : 1);
+	const safePan = Number.isFinite(pan) ? pan : 0;
+	const safePhase = ((phase % safeTileSize) + safeTileSize) % safeTileSize;
+	// Convert the two viewport edges back into the untransformed tile plane.
+	// One extra cell on the near side handles exact boundary hits without
+	// relying on floating-point equality, and the intersection check below
+	// removes any genuinely unnecessary cell.
+	const worldStart = center + (0 - center - safePan) / safeScale;
+	const worldEnd =
+		center + (safePixelSize - center - safePan) / safeScale;
+	const minimum = Math.min(worldStart, worldEnd);
+	const maximum = Math.max(worldStart, worldEnd);
+	return {
+		start: Math.floor((minimum - safePhase) / safeTileSize) - 1,
+		end: Math.floor((maximum - safePhase) / safeTileSize),
+	};
+}
+
+/**
+ * Return the minimum set of cached tiles whose transformed rectangles cover
+ * the complete canvas. The old implementation always painted four copies;
+ * that left holes when camera pan and zoom moved the transformed tile lattice
+ * farther than those four copies could reach.
+ */
+export function starfieldTilePlacementsForViewport({
+	pixelWidth,
+	pixelHeight,
+	tileWidth,
+	tileHeight,
+	transform,
+	phaseX = 0,
+	phaseY = 0,
+	tileIndexOffsetX = 0,
+	tileIndexOffsetY = 0,
+	variantCount = AGENT_UNIVERSE_STAR_TILE_VARIANT_COUNT,
+	seed = 0,
+}: StarfieldTileCoverageOptions): AgentUniverseStarfieldTilePlacement[] {
+	const safeWidth = Math.max(1, pixelWidth);
+	const safeHeight = Math.max(1, pixelHeight);
+	const safeTileWidth = Math.max(1, tileWidth);
+	const safeTileHeight = Math.max(1, tileHeight);
+	const scale = Math.max(
+		0.01,
+		Number.isFinite(transform.scale) ? transform.scale : 1,
+	);
+	const panX = Number.isFinite(transform.panX) ? transform.panX : 0;
+	const panY = Number.isFinite(transform.panY) ? transform.panY : 0;
+	const normalizedPhaseX =
+		((phaseX % safeTileWidth) + safeTileWidth) % safeTileWidth;
+	const normalizedPhaseY =
+		((phaseY % safeTileHeight) + safeTileHeight) % safeTileHeight;
+	const xRange = tileIndexRange(
+		safeWidth,
+		safeTileWidth,
+		safeWidth / 2,
+		panX,
+		scale,
+		normalizedPhaseX,
+	);
+	const yRange = tileIndexRange(
+		safeHeight,
+		safeTileHeight,
+		safeHeight / 2,
+		panY,
+		scale,
+		normalizedPhaseY,
+	);
+	const placements: AgentUniverseStarfieldTilePlacement[] = [];
+	const safeVariantCount = Math.max(1, Math.floor(variantCount));
+	for (let tileY = yRange.start; tileY <= yRange.end; tileY += 1) {
+		const y = tileY * safeTileHeight + normalizedPhaseY;
+		const transformedTop =
+			safeHeight / 2 + panY + scale * (y - safeHeight / 2);
+		const transformedBottom = transformedTop + scale * safeTileHeight;
+		if (transformedBottom <= 0 || transformedTop >= safeHeight) continue;
+		for (let tileX = xRange.start; tileX <= xRange.end; tileX += 1) {
+			const x = tileX * safeTileWidth + normalizedPhaseX;
+			const transformedLeft =
+				safeWidth / 2 + panX + scale * (x - safeWidth / 2);
+			const transformedRight = transformedLeft + scale * safeTileWidth;
+			if (transformedRight <= 0 || transformedLeft >= safeWidth) continue;
+			const absoluteTileX = tileX + Math.trunc(tileIndexOffsetX);
+			const absoluteTileY = tileY + Math.trunc(tileIndexOffsetY);
+			placements.push({
+				x,
+				y,
+				tileX: absoluteTileX,
+				tileY: absoluteTileY,
+				variant: agentUniverseStarfieldTileVariant(
+					seed,
+					absoluteTileX,
+					absoluteTileY,
+					safeVariantCount,
+				),
+			});
+		}
+	}
+	return placements;
+}
+
 /**
  * Generate a stable, slightly clustered point field. The renderer only
  * paints these points into a tile; keeping generation separate makes the
@@ -206,11 +377,10 @@ export function generateAgentUniverseStarPoints(
 	const flareChance = clamp(finiteOrDefault(layer.flareChance, 0.04), 0, 1);
 	// The reference field has a dense, photographic star count: most points are
 	// pinpricks, with a deliberately small bright tail that gives the eye
-	// something to find. Multiple layers provide the density without making one
-	// canvas tile carry every possible star size. The lower divisor is
-	// intentional: the distant layers contribute many tiny points, while the
-	// foreground layers keep their larger, brighter stars rare.
-	const baseCount = Math.round(clamp(area / 300, 1_800, 5_000));
+	// something to find. Tiles are smaller than the viewport and several are
+	// composited, so keep each tile modest; this bounds startup work and memory
+	// even on a retina display while preserving the same visible density.
+	const baseCount = Math.round(clamp(area / 420, 320, 1_600));
 	const count = Math.max(1, Math.round(baseCount * layer.density));
 	const random = seededRandom(layer.seed ^ safeWidth ^ (safeHeight << 1));
 	const clusterCount = Math.round(clamp(area / 72_000, 14, 44));
@@ -309,7 +479,7 @@ function paintNebula(
 	pixelHeight: number,
 ): void {
 	const random = seededRandom(layer.seed ^ 0x4f1bbcdc);
-	const cloudCount = layer.density > 0.5 ? 5 : 4;
+	const cloudCount = layer.density > 0.5 ? 3 : 2;
 	for (let index = 0; index < cloudCount; index += 1) {
 		const x = pixelWidth * (0.08 + random() * 0.84);
 		const y = pixelHeight * (0.04 + random() * 0.92);
@@ -342,72 +512,91 @@ function paintNebula(
 	}
 }
 
-function buildLayer(
-	layer: StarLayer,
-	pixelWidth: number,
-	pixelHeight: number,
-	dpr: number,
-): RenderedStarLayer {
-	const tile = document.createElement("canvas");
-	tile.width = pixelWidth;
-	tile.height = pixelHeight;
-	const context = tile.getContext("2d");
-	if (!context) return { ...layer, tile };
-	context.imageSmoothingEnabled = true;
-	paintNebula(context, layer, pixelWidth, pixelHeight);
+interface StarBucket {
+	color: string;
+	alpha: number;
+	points: AgentUniverseStarPoint[];
+}
 
-	const points = generateAgentUniverseStarPoints(
-		layer,
-		pixelWidth,
-		pixelHeight,
-		dpr,
-	);
+function paintStarPoints(
+	context: CanvasRenderingContext2D,
+	points: AgentUniverseStarPoint[],
+	dpr: number,
+): void {
+	const buckets = new Map<string, StarBucket>();
 	for (const point of points) {
-		context.globalAlpha = 1;
-		if (point.glow > 0.22) {
-			const glowRadius = point.radius * (2.2 + point.glow * 4.2);
-			const glow = context.createRadialGradient(
-				point.x,
-				point.y,
-				0,
-				point.x,
-				point.y,
-				glowRadius,
-			);
-			glow.addColorStop(
-				0,
-				rgbaFromHex(point.color, point.alpha * 0.3 * point.glow),
-			);
-			glow.addColorStop(0.2, rgbaFromHex(point.color, point.alpha * 0.1));
-			glow.addColorStop(1, rgbaFromHex(point.color, 0));
-			context.fillStyle = glow;
-			context.beginPath();
-			context.arc(point.x, point.y, glowRadius, 0, Math.PI * 2);
-			context.fill();
+		// Quantizing alpha lets the renderer batch most of the pinpricks into a
+		// handful of paths. The tiny visual difference is far less noticeable
+		// than the CPU saved by avoiding one fill/style change per star.
+		const alpha = Math.round(point.alpha * 28) / 28;
+		const key = `${point.color}:${alpha}`;
+		const bucket = buckets.get(key);
+		if (bucket) {
+			bucket.points.push(point);
+		} else {
+			buckets.set(key, { color: point.color, alpha, points: [point] });
 		}
-		context.fillStyle = point.color;
-		context.globalAlpha = point.alpha;
-		context.beginPath();
-		context.arc(
+	}
+
+	// Soft halos are reserved for the small bright tail. Most stars are cheap
+	// filled dots, but the few luminous ones still keep the photographic bloom.
+	for (const point of points) {
+		if (point.glow <= 0.72) continue;
+		const glowRadius = point.radius * (2.1 + point.glow * 3.2);
+		const glow = context.createRadialGradient(
 			point.x,
 			point.y,
-			point.radius * (0.66 + point.glow * 0.3),
 			0,
-			Math.PI * 2,
+			point.x,
+			point.y,
+			glowRadius,
 		);
+		glow.addColorStop(
+			0,
+			rgbaFromHex(point.color, point.alpha * 0.24 * point.glow),
+		);
+		glow.addColorStop(0.24, rgbaFromHex(point.color, point.alpha * 0.07));
+		glow.addColorStop(1, rgbaFromHex(point.color, 0));
+		context.fillStyle = glow;
+		context.globalAlpha = 1;
+		context.beginPath();
+		context.arc(point.x, point.y, glowRadius, 0, Math.PI * 2);
 		context.fill();
+	}
+
+	for (const bucket of buckets.values()) {
+		context.fillStyle = bucket.color;
+		context.globalAlpha = bucket.alpha;
+		context.beginPath();
+		for (const point of bucket.points) {
+			const radius = point.radius * (0.66 + point.glow * 0.3);
+			if (radius <= dpr * 0.9) {
+				const size = Math.max(0.75, radius * 1.45);
+				context.rect(point.x - size / 2, point.y - size / 2, size, size);
+			} else {
+				context.moveTo(point.x + radius, point.y);
+				context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+			}
+		}
+		context.fill();
+	}
+
+	// Only the bright tail gets the extra white core and diffraction cross.
+	// Keeping these individual passes rare makes resize and first paint cheap.
+	for (const point of points) {
 		if (point.glow > 0.56) {
+			const coreRadius = point.radius * 0.42;
 			context.fillStyle = "#ffffff";
-			context.globalAlpha = point.alpha * (0.44 + point.glow * 0.24);
+			context.globalAlpha = point.alpha * (0.4 + point.glow * 0.2);
 			context.beginPath();
-			context.arc(point.x, point.y, point.radius * 0.42, 0, Math.PI * 2);
+			context.arc(point.x, point.y, coreRadius, 0, Math.PI * 2);
 			context.fill();
 		}
 		if (point.flare) {
-			const flareLength = point.radius * (1.8 + point.glow * 4.8);
+			const flareLength = point.radius * (1.8 + point.glow * 4.2);
 			context.strokeStyle = point.color;
 			context.lineWidth = Math.max(0.35, point.radius * 0.12);
-			context.globalAlpha = point.alpha * 0.24 * point.glow;
+			context.globalAlpha = point.alpha * 0.2 * point.glow;
 			context.beginPath();
 			context.moveTo(point.x - flareLength, point.y);
 			context.lineTo(point.x + flareLength, point.y);
@@ -417,7 +606,48 @@ function buildLayer(
 		}
 	}
 	context.globalAlpha = 1;
-	return { ...layer, tile };
+}
+
+function buildLayer(
+	layer: StarLayer,
+	pixelWidth: number,
+	pixelHeight: number,
+	dpr: number,
+	sessionSeed: number,
+): RenderedStarLayer {
+	const tiles = Array.from(
+		{ length: AGENT_UNIVERSE_STAR_TILE_VARIANT_COUNT },
+		(_, variant) => {
+			const tile = document.createElement("canvas");
+			tile.width = pixelWidth;
+			tile.height = pixelHeight;
+			const context = tile.getContext("2d");
+			if (!context) return tile;
+			const variantLayer = {
+				...layer,
+				seed: mixSeed(layer.seed, sessionSeed, variant + 1),
+			};
+			context.imageSmoothingEnabled = true;
+			paintNebula(context, variantLayer, pixelWidth, pixelHeight);
+			paintStarPoints(
+				context,
+				generateAgentUniverseStarPoints(
+					variantLayer,
+					pixelWidth,
+					pixelHeight,
+					dpr,
+				),
+				dpr,
+			);
+			return tile;
+		},
+	);
+	return {
+		...layer,
+		tiles,
+		tileWidth: pixelWidth,
+		tileHeight: pixelHeight,
+	};
 }
 
 export function AgentUniverseStarfield({
@@ -430,6 +660,16 @@ export function AgentUniverseStarfield({
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const cameraRef = useRef<AgentUniverseCamera>(camera);
 	const drawRef = useRef<((time: number) => void) | null>(null);
+	const sessionSeedRef = useRef<number | null>(null);
+	if (sessionSeedRef.current === null) {
+		const values = new Uint32Array(1);
+		if (globalThis.crypto?.getRandomValues) {
+			globalThis.crypto.getRandomValues(values);
+			sessionSeedRef.current = values[0] ?? 0;
+		} else {
+			sessionSeedRef.current = Math.floor(Math.random() * 4_294_967_296) >>> 0;
+		}
+	}
 	cameraRef.current = camera;
 
 	useEffect(() => {
@@ -441,58 +681,78 @@ export function AgentUniverseStarfield({
 		let pixelWidth = 0;
 		let pixelHeight = 0;
 		let dpr = 1;
-		let frameId: number | null = null;
-		const startedAt = performance.now();
 
-		const wrappedOffset = (value: number, size: number) => {
-			if (!size) return 0;
-			return ((value % size) + size) % size;
-		};
-
-		const draw = (time: number) => {
+		const draw = (_time: number) => {
 			if (!pixelWidth || !pixelHeight) return;
 			context.clearRect(0, 0, pixelWidth, pixelHeight);
-			const elapsed = reducedMotion ? 0 : Math.max(0, time - startedAt) / 1_000;
 			for (const layer of renderedLayers) {
-				const { scale, panX, panY } = starfieldTransformForCamera(
+				const transform = starfieldTransformForCamera(
 					cameraRef.current,
 					layer.parallax,
 				);
-				// The layers drift in one stable direction at sub-pixel-per-frame
-				// speeds. Wrapping the pre-rendered tile avoids seams and keeps this
-				// ambient depth cue cheap instead of turning it into a particle loop.
-				const x = wrappedOffset(elapsed * layer.speed * dpr, pixelWidth);
-				const y = wrappedOffset(elapsed * layer.speed * 0.16 * dpr, pixelHeight);
 				const centerX = pixelWidth / 2;
 				const centerY = pixelHeight / 2;
+				const placements = starfieldTilePlacementsForViewport({
+					pixelWidth,
+					pixelHeight,
+					tileWidth: layer.tileWidth,
+					tileHeight: layer.tileHeight,
+					transform: {
+						...transform,
+						panX: transform.panX * dpr,
+						panY: transform.panY * dpr,
+					},
+					variantCount: layer.tiles.length,
+					seed: mixSeed(sessionSeedRef.current ?? 0, layer.seed),
+				});
 				context.save();
-				context.translate(centerX + panX * dpr, centerY + panY * dpr);
-				context.scale(scale, scale);
+				context.translate(
+					centerX + transform.panX * dpr,
+					centerY + transform.panY * dpr,
+				);
+				context.scale(transform.scale, transform.scale);
 				context.translate(-centerX, -centerY);
-				context.drawImage(layer.tile, x, y);
-				context.drawImage(layer.tile, x - pixelWidth, y);
-				context.drawImage(layer.tile, x, y - pixelHeight);
-				context.drawImage(layer.tile, x - pixelWidth, y - pixelHeight);
+				for (const placement of placements) {
+					const tile = layer.tiles[placement.variant];
+					if (tile) context.drawImage(tile, placement.x, placement.y);
+				}
 				context.restore();
 			}
-			if (!reducedMotion) frameId = requestAnimationFrame(draw);
 		};
 		drawRef.current = draw;
 
 		const resize = () => {
-			if (frameId !== null) cancelAnimationFrame(frameId);
-			frameId = null;
 			const rect = canvas.getBoundingClientRect();
 			const width = Math.max(0, Math.round(rect.width));
 			const height = Math.max(0, Math.round(rect.height));
 			if (!width || !height) return;
-			dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+			// A capped backing store is deliberate: the field is ambient texture,
+			// not content that benefits from a full 2x retina surface. This keeps
+			// memory and fill work bounded on weak hardware.
+			dpr = Math.min(
+				AGENT_UNIVERSE_STARFIELD_DPR_CAP,
+				Math.max(1, window.devicePixelRatio || 1),
+			);
 			pixelWidth = Math.max(1, Math.round(width * dpr));
 			pixelHeight = Math.max(1, Math.round(height * dpr));
 			canvas.width = pixelWidth;
 			canvas.height = pixelHeight;
+			const tileCssSize = Math.round(
+				clamp(
+					Math.min(width, height) * STAR_TILE_SIZE_RATIO,
+					STAR_TILE_MIN_CSS_SIZE,
+					STAR_TILE_MAX_CSS_SIZE,
+				),
+			);
+			const tilePixelSize = Math.max(1, Math.round(tileCssSize * dpr));
 			renderedLayers = STAR_LAYERS.map((layer) =>
-				buildLayer(layer, pixelWidth, pixelHeight, dpr),
+				buildLayer(
+					layer,
+					tilePixelSize,
+					tilePixelSize,
+					dpr,
+					sessionSeedRef.current ?? 0,
+				),
 			);
 			draw(performance.now());
 		};
@@ -503,16 +763,16 @@ export function AgentUniverseStarfield({
 
 		return () => {
 			observer.disconnect();
-			if (frameId !== null) cancelAnimationFrame(frameId);
 			drawRef.current = null;
 		};
 	}, [reducedMotion]);
 
 	useEffect(() => {
-		// Reduced motion intentionally has no RAF loop, but camera panning is
-		// direct user input and still needs to repaint the attached field.
-		if (reducedMotion) drawRef.current?.(performance.now());
-	}, [camera, reducedMotion]);
+		// The field is intentionally idle between camera/size changes. A
+		// camera-aware repaint is enough to keep parallax responsive without a
+		// permanent RAF loop consuming a core on low-power machines.
+		drawRef.current?.(performance.now());
+	}, [camera]);
 
 	return (
 		<canvas
