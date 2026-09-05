@@ -14,6 +14,8 @@ const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
+const verifyRealChromeWebStoreInstall =
+	process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE === "1";
 const executablePath = packagedExecutable
 	? resolve(packagedExecutable)
 	: requireFromDesktop("electron");
@@ -1318,6 +1320,83 @@ try {
 	);
 	const storeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
 	assert(storeTab);
+	const storeListingUrl =
+		"https://chromewebstore.google.com/detail/json-formatter/bcjindcccaagfpapjjmafapmmgkkhgoa";
+	await page.evaluate(
+		async ({ tabId, input }) => {
+			await window.kestrel.request({
+				type: "browser-navigate",
+				tabId,
+				input,
+			});
+		},
+		{ tabId: storeTab.id, input: storeListingUrl },
+	);
+	await waitForBrowserState(
+		(value) =>
+			value.activeTabId === storeTab.id &&
+			value.tabs.some(
+				(tab) => tab.id === storeTab.id && tab.url === storeListingUrl,
+			),
+		"Chrome Web Store listing did not load in the managed tab",
+	);
+	const storeInstallBar = page.getByRole("region", {
+		name: "Chrome Web Store installation",
+	});
+	await storeInstallBar.waitFor();
+	await storeInstallBar
+		.getByRole("button", { name: "Add to Kestrel", exact: true })
+		.click();
+	await storeInstallBar.getByText("Add this extension to Kestrel?").waitFor();
+	await storeInstallBar
+		.getByText(/Extensions can read or change data on sites you visit/)
+		.waitFor();
+	if (verifyRealChromeWebStoreInstall) {
+		await storeInstallBar
+			.getByRole("button", { name: "Install extension", exact: true })
+			.click();
+		await page.waitForFunction(
+			() => {
+				const bar = document.querySelector(".chrome-web-store-install-bar");
+				return (
+					bar?.classList.contains("is-installed") ||
+					bar?.classList.contains("is-error")
+				);
+			},
+			undefined,
+			{ timeout: 60_000 },
+		);
+		const installBarClass = await storeInstallBar.getAttribute("class");
+		assert(
+			installBarClass?.includes("is-installed"),
+			`Real Chrome Web Store install failed: ${await storeInstallBar.textContent()}`,
+		);
+		const installedExtensions = await page.evaluate(async () => {
+			const response = await window.kestrel.request({
+				type: "browser-list-extensions",
+			});
+			return response.ok && "extensions" in response ? response.extensions : [];
+		});
+		assert(
+			installedExtensions.some(
+				(extension) => extension.id === "bcjindcccaagfpapjjmafapmmgkkhgoa",
+			),
+			"Verified Chrome Web Store extension was not registered",
+		);
+	} else {
+		await storeInstallBar
+			.getByRole("button", { name: "Cancel", exact: true })
+			.click();
+		const restoredInstallAction = storeInstallBar.getByRole("button", {
+			name: "Add to Kestrel",
+			exact: true,
+		});
+		await restoredInstallAction.waitFor();
+		await page.waitForFunction(
+			() =>
+				document.activeElement?.textContent?.trim() === "Add to Kestrel",
+		);
+	}
 	await page.evaluate(
 		async ({ storeTabId, sourceTabId }) => {
 			await window.kestrel.request({
@@ -2522,7 +2601,11 @@ try {
 
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation, hidden-view routing, and restart restore.\n",
+		`Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation and ${
+			verifyRealChromeWebStoreInstall
+				? "verified extension installation"
+				: "install confirmation"
+		}, hidden-view routing, and restart restore.\n`,
 	);
 } finally {
 	await application?.close();

@@ -5,6 +5,7 @@
 	--kestrel-sidebar-space: 0px;
 	--browser-tab-rail-width: 208px;
 	--browser-toolbar-height: 40px;
+	--browser-store-install-height: 48px;
 	--browser-chrome-height: calc(40px + var(--browser-toolbar-height));
 	--agent-panel-top: var(--browser-chrome-height);
 	position: relative;
@@ -39,6 +40,18 @@
 	--browser-chrome-height: calc(var(--browser-toolbar-height) + 32px);
 }
 
+.ai-browser-app:has(.browser-workspace-store-install:not(.browser-workspace-vertical)) {
+	--browser-chrome-height: calc(
+		40px + var(--browser-toolbar-height) + var(--browser-store-install-height)
+	);
+}
+
+.ai-browser-app:has(.browser-workspace-vertical.browser-workspace-store-install) {
+	--browser-chrome-height: calc(
+		var(--browser-toolbar-height) + var(--browser-store-install-height)
+	);
+}
+
 /* Keep the lower browser plane as a real two-column layout. The navigation
  * rail and New Tab shelf must be siblings, not an absolutely positioned rail
  * that can end up underneath the recommendation content. Browser chrome still
@@ -60,10 +73,26 @@
 		"viewport viewport .";
 }
 
+.browser-workspace.browser-workspace-store-install:not(.browser-workspace-vertical) {
+	grid-template-areas:
+		"tabs tabs tabs"
+		"toolbar toolbar toolbar"
+		"store-install store-install store-install"
+		"viewport viewport .";
+}
+
 .browser-workspace:not(.browser-workspace-vertical):has(> .kestrel-sidebar) {
 	grid-template-areas:
 		"tabs tabs tabs"
 		"toolbar toolbar toolbar"
+		"kestrel-sidebar viewport .";
+}
+
+.browser-workspace.browser-workspace-store-install:not(.browser-workspace-vertical):has(> .kestrel-sidebar) {
+	grid-template-areas:
+		"tabs tabs tabs"
+		"toolbar toolbar toolbar"
+		"store-install store-install store-install"
 		"kestrel-sidebar viewport .";
 }
 
