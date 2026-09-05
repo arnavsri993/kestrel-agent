@@ -104,6 +104,7 @@ import {
 	isKestrelAppPageUrl,
 	parseKestrelAppPage,
 } from "../utility/browser-app-pages";
+import { isLegacyBrowserDownloadDirectory } from "./user-browser-download-path";
 import type { PasswordVault } from "./password-vault";
 import type { SavePaymentCardInput } from "./payment-card-vault";
 import type { PaymentCardVault } from "./payment-card-vault";
@@ -215,6 +216,7 @@ export interface UserBrowserServiceOptions {
 	allowLocalExtensions?: boolean;
 	statePath: string;
 	downloadDirectory: string;
+	legacyDownloadDirectory?: string;
 	initialState?: UserBrowserState;
 	partitionName?: string;
 	now?: () => Date;
@@ -1093,6 +1095,7 @@ export class UserBrowserService {
 	>;
 	private readonly now: () => Date;
 	private readonly defaultDownloadDirectory: string;
+	private readonly legacyDownloadDirectory: string | undefined;
 	private downloadDirectory: string;
 	private readonly partitionName: string;
 	private readonly partitionCoordinator: BrowserPartitionCoordinator;
@@ -1146,8 +1149,17 @@ export class UserBrowserService {
 				: this.store.load(options.now);
 		this.now = options.now ?? (() => new Date());
 		this.defaultDownloadDirectory = options.downloadDirectory;
+		this.legacyDownloadDirectory = options.legacyDownloadDirectory;
+		const normalizedSettings = this.normalizeDownloadSettings(
+			this.state.settings,
+		);
+		const migratedDownloadDirectory =
+			normalizedSettings.downloadDirectory !==
+			this.state.settings.downloadDirectory;
+		if (migratedDownloadDirectory)
+			this.state = { ...this.state, settings: normalizedSettings };
 		this.downloadDirectory = this.configuredDownloadDirectory(
-			this.state.settings.downloadDirectory,
+			normalizedSettings.downloadDirectory,
 		);
 		this.onEvent = options.onEvent;
 		this.onPasswordPrompt = options.onPasswordPrompt;
@@ -1224,6 +1236,7 @@ export class UserBrowserService {
 				this.handleWillDownload(event, item, webContents),
 		};
 		this.partitionCoordinator.register(this.partitionParticipant);
+		if (migratedDownloadDirectory) this.store.save(this.state);
 		void this.backfillOriginFaviconsFromHistory();
 		void this.refreshFileStatuses();
 	}
@@ -1233,6 +1246,20 @@ export class UserBrowserService {
 		return candidate && isAbsolute(candidate)
 			? candidate
 			: this.defaultDownloadDirectory;
+	}
+
+	private normalizeDownloadSettings(
+		settings: UserBrowserSettings,
+	): UserBrowserSettings {
+		if (
+			!this.legacyDownloadDirectory ||
+			!isLegacyBrowserDownloadDirectory(
+				settings.downloadDirectory,
+				this.legacyDownloadDirectory,
+			)
+		)
+			return settings;
+		return { ...settings, downloadDirectory: "" };
 	}
 
 	private applySessionBrowserPreferences(): void {
@@ -1255,10 +1282,11 @@ export class UserBrowserService {
 		previous: UserBrowserSettings,
 		next: UserBrowserSettings,
 	): void {
-		this.state.settings = next;
-		if (next.downloadDirectory !== previous.downloadDirectory) {
+		const normalizedNext = this.normalizeDownloadSettings(next);
+		this.state.settings = normalizedNext;
+		if (normalizedNext.downloadDirectory !== previous.downloadDirectory) {
 			this.downloadDirectory = this.configuredDownloadDirectory(
-				next.downloadDirectory,
+				normalizedNext.downloadDirectory,
 			);
 			mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
 		}
@@ -1903,6 +1931,17 @@ export class UserBrowserService {
 		const normalized = directory?.trim() ?? "";
 		if (normalized && !isAbsolute(normalized))
 			throw new Error("Download location must be an absolute folder path.");
+		if (
+			normalized &&
+			this.legacyDownloadDirectory &&
+			isLegacyBrowserDownloadDirectory(
+				normalized,
+				this.legacyDownloadDirectory,
+			)
+		)
+			throw new Error(
+				"The old Kestrel Downloads folder is no longer used. Choose another folder.",
+			);
 		this.downloadDirectory = normalized
 			? normalized
 			: this.defaultDownloadDirectory;

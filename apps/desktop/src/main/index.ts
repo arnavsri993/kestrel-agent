@@ -69,6 +69,11 @@ import {
   UserBrowserService,
   isUserBrowserBackendWireRequest,
 } from "./user-browser-service";
+import {
+  defaultBrowserDownloadDirectory,
+  legacyBrowserDownloadDirectory,
+  removeLegacyBrowserDownloadDirectory,
+} from "./user-browser-download-path";
 import { LocalRuntimeManager } from "./local-runtime-manager";
 import { listWorkspaceFiles } from "./workspace-file-search";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
@@ -1397,6 +1402,39 @@ app.setPath(
     join(app.getPath("appData"), PRODUCT_IDENTITY.userDataDirectoryName),
 );
 
+function browserDownloadDirectory(): string {
+  return process.env.KESTREL_TEST_USER_DATA
+    ? join(app.getPath("userData"), "browser-downloads")
+    : defaultBrowserDownloadDirectory(app.getPath("downloads"));
+}
+
+function legacyBrowserDownloadDirectoryForCleanup(): string | undefined {
+  if (process.env.KESTREL_TEST_USER_DATA) return undefined;
+  return legacyBrowserDownloadDirectory(
+    app.getPath("downloads"),
+    PRODUCT_IDENTITY.productName,
+  );
+}
+
+async function removeLegacyBrowserDownloadFolder(): Promise<void> {
+  if (process.env.KESTREL_TEST_USER_DATA) return;
+  try {
+    const removed = await removeLegacyBrowserDownloadDirectory(
+      app.getPath("downloads"),
+      PRODUCT_IDENTITY.productName,
+    );
+    if (removed)
+      console.info(
+        `Removed the legacy ${PRODUCT_IDENTITY.productName} Downloads folder.`,
+      );
+  } catch (cause) {
+    console.warn(
+      `Could not remove the legacy ${PRODUCT_IDENTITY.productName} Downloads folder.`,
+      cause instanceof Error ? cause.message : String(cause),
+    );
+  }
+}
+
 function browserHardwareAccelerationDisabled(): boolean {
 	try {
 		const statePath = join(app.getPath("userData"), "browser", "state.json");
@@ -1727,6 +1765,7 @@ function finishMacWidgetRun(
 }
 
 function createMainWindow(): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForCleanup();
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -1764,9 +1803,8 @@ function createMainWindow(): BrowserWindow {
           allowDevTools: !isPackagedKestrelApp,
           allowLocalExtensions: !isPackagedKestrelApp,
           statePath: join(app.getPath("userData"), "browser", "state.json"),
-          downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-            ? join(app.getPath("userData"), "browser-downloads")
-            : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+          downloadDirectory: browserDownloadDirectory(),
+          ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
           passwordVault: passwordVault(),
           paymentCardVault: paymentCardVault(),
           onEvent: (event) => {
@@ -1899,6 +1937,7 @@ function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
 ): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForCleanup();
   const window = new BrowserWindow({
     ...detachedBrowserWindowBounds(),
     minWidth: 920,
@@ -1930,9 +1969,8 @@ function createDetachedBrowserWindow(
     allowLocalExtensions: !isPackagedKestrelApp,
     statePath,
     initialState: detachedBrowserState(sourceState, tab),
-    downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-      ? join(app.getPath("userData"), "browser-downloads")
-      : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+    downloadDirectory: browserDownloadDirectory(),
+    ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
     passwordVault: passwordVault(),
     paymentCardVault: paymentCardVault(),
     onEvent: (event) => {
@@ -4577,6 +4615,7 @@ void app
   .whenReady()
   .then(async () => {
     if (!singleInstance) return;
+    await removeLegacyBrowserDownloadFolder();
     startAutomaticUpdates(autoUpdater, {
       packaged: isPackagedKestrelApp,
       channel: PRODUCT_IDENTITY.updateChannel,
