@@ -179,6 +179,21 @@ try {
 	await page
 		.getByRole("heading", { name: "Where should answers come from?" })
 		.waitFor();
+	const modelSourcePicker = page.locator(".model-source-picker");
+	const modelSourceLayout = await modelSourcePicker.evaluate((picker) => {
+		const choice = picker.querySelector("button");
+		return {
+			rowGap: Number.parseFloat(getComputedStyle(picker).rowGap),
+			pickerBackground: getComputedStyle(picker).backgroundColor,
+			choiceBorder: choice ? getComputedStyle(choice).borderColor : "",
+		};
+	});
+	assert.ok(
+		modelSourceLayout.rowGap >= 24 &&
+			modelSourceLayout.pickerBackground === "rgba(0, 0, 0, 0)" &&
+			modelSourceLayout.choiceBorder !== "rgba(0, 0, 0, 0)",
+		`Model access choices should be visibly separated; found ${JSON.stringify(modelSourceLayout)}.`,
+	);
 	await page.getByRole("button", { name: /Use an account/ }).click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await page.getByText("Choose a paid provider", { exact: true }).waitFor();

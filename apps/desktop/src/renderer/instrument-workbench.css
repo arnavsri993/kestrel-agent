@@ -1379,6 +1379,19 @@
 	background: var(--surface);
 }
 
+.setup-onboarding .model-source-picker {
+	gap: 24px;
+	background: transparent;
+}
+
+.setup-onboarding .model-source-picker > button {
+	border: 1px solid var(--line);
+}
+
+.setup-onboarding .model-source-picker > button.model-source-option-recommended {
+	border-color: var(--ink);
+}
+
 /* Compact composition ------------------------------------------------------ */
 @container kestrel-browser-viewport (max-width: 860px) {
 	.unified-ui .settings-search {
