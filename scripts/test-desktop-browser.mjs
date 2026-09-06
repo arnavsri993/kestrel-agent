@@ -2397,8 +2397,11 @@ try {
 	await page.keyboard.press("Meta+J");
 	const downloadsMenu = page.getByRole("menu", { name: "Downloads" });
 	await downloadsMenu.waitFor();
-	await downloadsMenu.getByText("kestrel-browser.txt", { exact: true }).waitFor();
-	await downloadsMenu
+	const expectedDownload = downloadsMenu
+		.getByRole("listitem")
+		.filter({ hasText: "kestrel-browser.txt" });
+	await expectedDownload.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	await expectedDownload
 		.getByText(`${download.receivedBytes} B`, { exact: true })
 		.waitFor();
 	assert.equal(
