@@ -1,4 +1,3 @@
-import { lstat, rm } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 function downloadsRoot(downloadsDirectory: string): string {
@@ -31,24 +30,4 @@ export function isLegacyBrowserDownloadDirectory(
 	return (
 		isAbsolute(normalized) && resolve(normalized) === resolve(legacyDirectory)
 	);
-}
-
-export async function removeLegacyBrowserDownloadDirectory(
-	downloadsDirectory: string,
-	productName: string,
-): Promise<boolean> {
-	const legacyDirectory = legacyBrowserDownloadDirectory(
-		downloadsDirectory,
-		productName,
-	);
-	let metadata: Awaited<ReturnType<typeof lstat>>;
-	try {
-		metadata = await lstat(legacyDirectory);
-	} catch (cause) {
-		if ((cause as NodeJS.ErrnoException).code === "ENOENT") return false;
-		throw cause;
-	}
-	if (metadata.isSymbolicLink() || !metadata.isDirectory()) return false;
-	await rm(legacyDirectory, { recursive: true, force: true });
-	return true;
 }

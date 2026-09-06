@@ -72,7 +72,6 @@ import {
 import {
   defaultBrowserDownloadDirectory,
   legacyBrowserDownloadDirectory,
-  removeLegacyBrowserDownloadDirectory,
 } from "./user-browser-download-path";
 import { LocalRuntimeManager } from "./local-runtime-manager";
 import { listWorkspaceFiles } from "./workspace-file-search";
@@ -1408,31 +1407,12 @@ function browserDownloadDirectory(): string {
     : defaultBrowserDownloadDirectory(app.getPath("downloads"));
 }
 
-function legacyBrowserDownloadDirectoryForCleanup(): string | undefined {
+function legacyBrowserDownloadDirectoryForMigration(): string | undefined {
   if (process.env.KESTREL_TEST_USER_DATA) return undefined;
   return legacyBrowserDownloadDirectory(
     app.getPath("downloads"),
     PRODUCT_IDENTITY.productName,
   );
-}
-
-async function removeLegacyBrowserDownloadFolder(): Promise<void> {
-  if (process.env.KESTREL_TEST_USER_DATA) return;
-  try {
-    const removed = await removeLegacyBrowserDownloadDirectory(
-      app.getPath("downloads"),
-      PRODUCT_IDENTITY.productName,
-    );
-    if (removed)
-      console.info(
-        `Removed the legacy ${PRODUCT_IDENTITY.productName} Downloads folder.`,
-      );
-  } catch (cause) {
-    console.warn(
-      `Could not remove the legacy ${PRODUCT_IDENTITY.productName} Downloads folder.`,
-      cause instanceof Error ? cause.message : String(cause),
-    );
-  }
 }
 
 function browserHardwareAccelerationDisabled(): boolean {
@@ -1765,7 +1745,7 @@ function finishMacWidgetRun(
 }
 
 function createMainWindow(): BrowserWindow {
-  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForCleanup();
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -1937,7 +1917,7 @@ function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
 ): BrowserWindow {
-  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForCleanup();
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     ...detachedBrowserWindowBounds(),
     minWidth: 920,
@@ -4615,7 +4595,6 @@ void app
   .whenReady()
   .then(async () => {
     if (!singleInstance) return;
-    await removeLegacyBrowserDownloadFolder();
     startAutomaticUpdates(autoUpdater, {
       packaged: isPackagedKestrelApp,
       channel: PRODUCT_IDENTITY.updateChannel,
