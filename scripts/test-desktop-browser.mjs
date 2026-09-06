@@ -2155,6 +2155,44 @@ try {
 		existsSync(join(userData, "browser-downloads", download.filename)),
 		true,
 	);
+	const directDownloadCount = state.downloads.filter(
+		(item) => item.sourceUrl === `${origin}/download`,
+	).length;
+	await page.evaluate(
+		async ({ tabId, url }) => {
+			const response = await window.kestrel.request({
+				type: "browser-navigate",
+				tabId,
+				input: url,
+			});
+			if (!response.ok) throw new Error(response.error);
+		},
+		{ tabId, url: `${origin}/download` },
+	);
+	state = await waitForBrowserState(
+		(value) => {
+			const active = value.tabs.find((tab) => tab.id === tabId);
+			return (
+				value.downloads.filter(
+					(item) => item.sourceUrl === `${origin}/download`,
+				).length > directDownloadCount &&
+				active?.url === `${origin}/one` &&
+				!active.error
+			);
+		},
+		"Direct attachment navigation did not preserve the visible page",
+	);
+	const directDownloadMenu = page.getByRole("menu", { name: "Downloads" });
+	await directDownloadMenu.waitFor();
+	await page.keyboard.press("Escape");
+	await assertNativeViewHiddenThroughOverlayExit(
+		directDownloadMenu,
+		"Direct attachment Downloads popover",
+	);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"Visible page did not return after direct attachment download",
+	);
 	const historyTool = await callTool(
 		runtimeSessionId,
 		"browser.search-history",

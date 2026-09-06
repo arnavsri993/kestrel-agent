@@ -119,6 +119,7 @@ const POPUP_GESTURE_WINDOW_MS = 1_500;
 const USER_BROWSER_PARTITION = "persist:kestrel-user-browser-v1";
 const MAX_TAB_FOLDER_NAMING_TABS = 8;
 const CONTEXT_DOWNLOAD_REQUEST_TTL_MS = 30_000;
+const DIRECT_DOWNLOAD_DETECTION_WINDOW_MS = 10_000;
 const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
 const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
@@ -262,6 +263,11 @@ function mediaPermissionLabel(
 interface ViewRecord {
 	view: WebContentsView;
 	navigatingTo?: string;
+	pendingDownloadNavigation?: {
+		targetUrl: string;
+		previousTab: UserBrowserTab;
+		requestedAt: number;
+	};
 }
 
 interface PendingContextDownload {
@@ -330,6 +336,34 @@ function safePageUrl(value: string): URL | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function downloadMatchesNavigation(
+	item: Electron.DownloadItem,
+	navigationUrl: string,
+): boolean {
+	const expected = safePageUrl(navigationUrl)?.toString();
+	if (!expected) return false;
+	let candidates = [item.getURL()];
+	try {
+		if (typeof item.getURLChain === "function")
+			candidates = candidates.concat(item.getURLChain());
+	} catch {
+		// Some Electron download implementations do not expose a URL chain.
+	}
+	return candidates.some(
+		(candidate) => safePageUrl(candidate)?.toString() === expected,
+	);
+}
+
+function isAbortedNavigation(cause: unknown): boolean {
+	return /ERR_ABORTED/i.test(cause instanceof Error ? cause.message : String(cause));
+}
+
+function mayBecomeDirectDownload(cause: unknown): boolean {
+	return /ERR_(?:ABORTED|FAILED)\b/i.test(
+		cause instanceof Error ? cause.message : String(cause),
+	);
 }
 
 function safeDownloadFilename(value: string, fallback: string): string {
@@ -1554,6 +1588,11 @@ export class UserBrowserService {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents)
 			throw new Error("The browser page is still waking up. Try again.");
+		record.pendingDownloadNavigation = {
+			targetUrl: normalized.url,
+			previousTab: structuredClone(tab),
+			requestedAt: Date.now(),
+		};
 		this.elementRefs.delete(tabId);
 		tab.error = undefined;
 		tab.crashed = false;
@@ -1568,12 +1607,24 @@ export class UserBrowserService {
 		this.commit();
 		if (tabId === this.state.activeTabId) this.revealActiveWebContent();
 		this.attachActiveWebView();
+		let directDownloadMayArrive = false;
 		try {
 			if (loadOptions)
 				await webContents.loadURL(normalized.url, loadOptions);
 			else await webContents.loadURL(normalized.url);
 		} catch (cause) {
 			if (record.navigatingTo !== normalized.url) return this.getState();
+			if (mayBecomeDirectDownload(cause)) directDownloadMayArrive = true;
+			if (isAbortedNavigation(cause)) {
+				// Electron's will-download event can arrive after loadURL() rejects for a
+				// Content-Disposition attachment. Keep this short-lived candidate so the
+				// download handler can restore the previous page instead of turning a
+				// successful download into a false navigation error.
+				tab.loading = false;
+				tab.error = undefined;
+				this.commit();
+				return this.getState();
+			}
 			tab.loading = false;
 			tab.error = describeBrowserLoadFailure(
 				0,
@@ -1581,7 +1632,11 @@ export class UserBrowserService {
 			);
 			this.commit();
 		} finally {
-			if (record.navigatingTo === normalized.url) delete record.navigatingTo;
+			if (record.navigatingTo === normalized.url) {
+				delete record.navigatingTo;
+				if (!directDownloadMayArrive)
+					delete record.pendingDownloadNavigation;
+			}
 		}
 		this.discardLeastRecentViews();
 		return this.getState();
@@ -3879,6 +3934,38 @@ export class UserBrowserService {
 			record.canReveal = status === "completed" && existsSync(path);
 			this.commit();
 		});
+		if (!pendingContextDownload)
+			this.restoreDirectDownloadNavigation(tabId, item);
+	}
+
+	private restoreDirectDownloadNavigation(
+		tabId: string,
+		item: Electron.DownloadItem,
+	): boolean {
+		const record = this.views.get(tabId);
+		const pending = record?.pendingDownloadNavigation;
+		const tab = this.state.tabs.find((candidate) => candidate.id === tabId);
+		if (
+			!record ||
+			!pending ||
+			!tab ||
+			!downloadMatchesNavigation(item, pending.targetUrl)
+		)
+			return false;
+		if (Date.now() - pending.requestedAt > DIRECT_DOWNLOAD_DETECTION_WINDOW_MS) {
+			delete record.pendingDownloadNavigation;
+			return false;
+		}
+
+		Object.assign(tab, pending.previousTab);
+		delete record.navigatingTo;
+		delete record.pendingDownloadNavigation;
+		this.closeView(tabId);
+		tab.discarded = Boolean(tab.url);
+		this.commit();
+		if (tabId === this.state.activeTabId) void this.syncActiveView();
+		this.onCommand?.("open-downloads");
+		return true;
 	}
 
 	private async saveContextResource(

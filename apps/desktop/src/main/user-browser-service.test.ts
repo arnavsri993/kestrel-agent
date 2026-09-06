@@ -352,6 +352,57 @@ describe("UserBrowserService", () => {
 		expect(item.resume).toHaveBeenCalledOnce();
 	});
 
+	it("keeps the prior page when an address-bar navigation becomes a download", async () => {
+		const { service, commands } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com");
+		const contents = electron.state.views[0]!.webContents;
+		contents.url = "https://example.com/";
+		contents.title = "Example";
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		contents.emit("did-stop-loading");
+		const partition = electron.state.partitions[0]!.instance;
+		const downloadUrl = "https://files.example/report.pdf";
+		const item = {
+			getFilename: vi.fn(() => "report.pdf"),
+			getURL: vi.fn(() => downloadUrl),
+			getTotalBytes: vi.fn(() => 10),
+			getReceivedBytes: vi.fn(() => 0),
+			setSavePath: vi.fn(),
+			on: vi.fn(),
+			once: vi.fn(),
+			cancel: vi.fn(),
+		};
+		contents.loadURL.mockImplementationOnce(async () => {
+			throw new Error(`ERR_FAILED (-2) loading '${downloadUrl}'`);
+		});
+
+		const beforeDownloadEvent = await service.navigate(tab.id, downloadUrl);
+		expect(beforeDownloadEvent.tabs[0]).toMatchObject({
+			url: downloadUrl,
+		});
+		expect(beforeDownloadEvent.tabs[0]?.error).toMatch(/could not be opened/i);
+		partition.emit("will-download", {}, item, contents);
+		const state = service.getState();
+
+		expect(state.tabs[0]).toMatchObject({
+			url: "https://example.com/",
+			title: "Example",
+			loading: true,
+			error: undefined,
+		});
+		expect(state.downloads[0]).toMatchObject({
+			filename: "report.pdf",
+			sourceUrl: downloadUrl,
+			status: "progressing",
+		});
+		expect(commands).toContain("open-downloads");
+		expect(contents.close).toHaveBeenCalledOnce();
+		expect(electron.state.views.at(-1)!.webContents.loadURL).toHaveBeenCalledWith(
+			"https://example.com/",
+		);
+	});
+
 	 it("continues creating tabs beyond the legacy 32-tab boundary", async () => {
     const { service } = createService();
     const first = service.getState().tabs[0]!;
