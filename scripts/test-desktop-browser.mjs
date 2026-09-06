@@ -524,6 +524,146 @@ async function assertBrowserChromeLayout({
 	}
 }
 
+async function assertKestrelSidebarResize() {
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:navigation-sidebar", "open");
+	});
+	await page.reload();
+	await page.locator("#new-tab-title").waitFor();
+
+	const originalWindowSize = await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) =>
+				!candidate.isDestroyed() &&
+				!candidate.webContents.getURL().includes("petOverlay=1"),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		return window.getSize();
+	});
+	const handle = page.locator(".kestrel-sidebar-resize-handle");
+	const widenForResizeTest = !(await handle.isVisible().catch(() => false));
+	if (widenForResizeTest) {
+		const viewportWidthBeforeResize = await page.evaluate(() => innerWidth);
+		const resizeTestMinimumViewportWidth = 1200;
+		const resizeTestWidth = Math.max(
+			originalWindowSize[0],
+			Math.ceil(
+				(originalWindowSize[0] * resizeTestMinimumViewportWidth) /
+					Math.max(viewportWidthBeforeResize, 1),
+			) + 64,
+		);
+		await application.evaluate(
+			({ BrowserWindow }, width) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, window.getSize()[1]);
+			},
+			resizeTestWidth,
+		);
+		await page.waitForFunction(
+			(minimumWidth) => innerWidth >= minimumWidth,
+			resizeTestMinimumViewportWidth,
+		);
+	}
+
+	await handle.waitFor({ state: "visible" });
+	const initial = await page.locator(".kestrel-sidebar").evaluate((sidebar) => {
+		const resizeHandle = sidebar.querySelector(".kestrel-sidebar-resize-handle");
+		if (!resizeHandle) throw new Error("The Kestrel navigation resize handle is unavailable.");
+		const rect = sidebar.getBoundingClientRect();
+		return {
+			width: rect.width,
+			min: Number(resizeHandle.getAttribute("aria-valuemin")),
+			max: Number(resizeHandle.getAttribute("aria-valuemax")),
+			cursor: getComputedStyle(resizeHandle).cursor,
+		};
+	});
+	assert.equal(initial.cursor, "col-resize");
+	assert(initial.width >= initial.min - 1 && initial.width <= initial.max + 1);
+	assert(initial.max > initial.min);
+
+	const handleBox = await handle.boundingBox();
+	assert(handleBox, "The Kestrel navigation resize handle has no bounds.");
+	const targetWidth = Math.min(initial.max, initial.width + 72);
+	await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 120);
+	await page.mouse.down();
+	await page.mouse.move(
+		handleBox.x + handleBox.width / 2 + (targetWidth - initial.width),
+		handleBox.y + 120,
+		{ steps: 3 },
+	);
+	await page.mouse.up();
+	await page.waitForFunction(
+		({ expected, key }) => {
+			const sidebar = document.querySelector(".kestrel-sidebar");
+			return (
+				sidebar &&
+				Math.abs(sidebar.getBoundingClientRect().width - expected) <= 1 &&
+				Number(localStorage.getItem(key)) === Math.round(expected)
+			);
+		},
+		{ expected: targetWidth, key: "kestrel:navigation-sidebar-width" },
+	);
+
+	const overflow = await page.evaluate(() => {
+		const scroll = document.querySelector(".kestrel-sidebar-scroll");
+		return {
+			document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			body: document.body.scrollWidth - document.body.clientWidth,
+			sidebar: scroll
+				? {
+					overflowX: getComputedStyle(scroll).overflowX,
+					scrollWidth: scroll.scrollWidth,
+					clientWidth: scroll.clientWidth,
+				}
+				: null,
+		};
+	});
+	assert(overflow.document <= 1, `Kestrel navigation created document overflow: ${JSON.stringify(overflow)}`);
+	assert(overflow.body <= 1, `Kestrel navigation created body overflow: ${JSON.stringify(overflow)}`);
+	assert.equal(overflow.sidebar?.overflowX, "hidden");
+
+	await page.reload();
+	await page.locator("#new-tab-title").waitFor();
+	await page.waitForFunction(
+		(expected) =>
+			Math.abs(
+				(document.querySelector(".kestrel-sidebar")?.getBoundingClientRect().width ?? 0) -
+					expected,
+			) <= 1,
+		targetWidth,
+	);
+
+	await page.evaluate(() => {
+		localStorage.removeItem("kestrel:navigation-sidebar-width");
+	});
+	await page.reload();
+	await page.locator("#new-tab-title").waitFor();
+
+	if (widenForResizeTest) {
+		await application.evaluate(
+			({ BrowserWindow }, [width, height]) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, height);
+			},
+			originalWindowSize,
+		);
+		await page.waitForFunction(
+			(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
+			originalWindowSize[0],
+		);
+	}
+}
+
 async function activeViewScript(source) {
 	return application.evaluate(async ({ BrowserWindow }, script) => {
 		const window = BrowserWindow.getAllWindows().find(
@@ -667,6 +807,7 @@ try {
 	);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
 	await assertBrowserChromeLayout();
+	await assertKestrelSidebarResize();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
 	});
