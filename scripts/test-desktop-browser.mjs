@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -2317,10 +2318,20 @@ try {
 	assert.equal(download.status, "completed");
 	assert.equal(download.filename, "kestrel-browser.txt");
 	assert.equal(download.canReveal, true);
-	assert.equal(
-		existsSync(join(userData, "browser-downloads", download.filename)),
-		true,
-	);
+	const downloadPath = join(userData, "browser-downloads", download.filename);
+	assert.equal(existsSync(downloadPath), true);
+	if (process.platform === "darwin") {
+		const quarantine = execFileSync(
+			"xattr",
+			["-p", "com.apple.quarantine", downloadPath],
+			{ encoding: "utf8" },
+		).trim();
+		assert.notEqual(
+			quarantine,
+			"",
+			"Browser downloads must retain macOS quarantine metadata.",
+		);
+	}
 	const directDownloadCount = state.downloads.filter(
 		(item) => item.sourceUrl === `${origin}/download`,
 	).length;

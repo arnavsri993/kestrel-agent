@@ -278,6 +278,8 @@ function BookmarksWidget({
 
 function downloadStatus(download: UserBrowserDownload): string {
 	switch (download.status) {
+		case "checking":
+			return "Checking reputation";
 		case "progressing":
 			return "In progress";
 		case "completed":
@@ -286,6 +288,8 @@ function downloadStatus(download: UserBrowserDownload): string {
 			return "Canceled";
 		case "failed":
 			return "Failed";
+		case "blocked":
+			return "Blocked for safety";
 	}
 }
 

@@ -399,16 +399,29 @@ export class BrowserTabStore {
 							/^https?:\/\//.test(tab.url) ||
 							isKestrelAppPageUrl(tab.url),
 					)
-					.map((tab) => ({
-						...tab,
-						faviconDataUrl: undefined,
-						loading: false,
-						canGoBack: false,
-						canGoForward: false,
-						discarded: Boolean(tab.url) && !isKestrelAppPageUrl(tab.url),
-						crashed: false,
-						error: undefined,
-					}))
+					.map(({ blockedNavigation, ...tab }) => {
+						const blockedUrl = blockedNavigation
+							? sanitizeBrowserUrl(blockedNavigation.url)
+							: "";
+						return {
+							...tab,
+							...(blockedNavigation && blockedUrl
+								? {
+										blockedNavigation: {
+											...blockedNavigation,
+											url: blockedUrl,
+										},
+									}
+								: {}),
+							faviconDataUrl: undefined,
+							loading: false,
+							canGoBack: false,
+							canGoForward: false,
+							discarded: Boolean(tab.url) && !isKestrelAppPageUrl(tab.url),
+							crashed: false,
+							error: undefined,
+						};
+					})
 			: [];
 		const startupTabs =
 			state.settings.startupBehavior === "homepage"
@@ -435,7 +448,9 @@ export class BrowserTabStore {
 				downloads: state.downloads.map((download) => ({
 					...download,
 					status:
-						download.status === "progressing" ? "failed" : download.status,
+						download.status === "progressing" || download.status === "checking"
+							? "failed"
+							: download.status,
 					canReveal: false,
 				})),
 				settings: state.settings,
@@ -463,7 +478,9 @@ export class BrowserTabStore {
 			downloads: state.downloads.map((download) => ({
 				...download,
 				status:
-					download.status === "progressing" ? "failed" : download.status,
+					download.status === "progressing" || download.status === "checking"
+						? "failed"
+						: download.status,
 				canReveal: false,
 			})),
 		};
@@ -487,10 +504,29 @@ export class BrowserTabStore {
 		const bookmarkFolderIds = new Set(bookmarkFolders.map((folder) => folder.id));
 		const safe = UserBrowserStateSchema.parse({
 			...state,
-			tabs: state.tabs.map(({ faviconDataUrl: _faviconDataUrl, ...tab }) => ({
-				...tab,
-				url: tab.url ? sanitizeBrowserUrl(tab.url) : "",
-			})),
+			tabs: state.tabs.map(
+				({
+					faviconDataUrl: _faviconDataUrl,
+					blockedNavigation,
+					...tab
+				}) => {
+					const blockedUrl = blockedNavigation
+						? sanitizeBrowserUrl(blockedNavigation.url)
+						: "";
+					return {
+						...tab,
+						url: tab.url ? sanitizeBrowserUrl(tab.url) : "",
+						...(blockedNavigation && blockedUrl
+							? {
+									blockedNavigation: {
+										...blockedNavigation,
+										url: blockedUrl,
+									},
+								}
+							: {}),
+					};
+				},
+			),
 			history: state.history.flatMap((entry) => {
 				const url = sanitizeBrowserUrl(entry.url);
 				return url ? [{ ...entry, url }] : [];

@@ -2839,6 +2839,14 @@ function registerIpc(): void {
         ),
       };
     }
+    if (request.type === "browser-dismiss-threat") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.dismissThreat(request.tabId),
+      };
+    }
     if (request.type === "browser-back") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");

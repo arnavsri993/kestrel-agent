@@ -68,9 +68,11 @@ function compactDownloadBytes(value: number): string {
 
 function downloadStatusLabel(status: UserBrowserDownload["status"]): string {
   return {
+    checking: "Checking reputation",
     completed: "Completed",
     cancelled: "Cancelled",
     failed: "Failed",
+    blocked: "Blocked for safety",
     progressing: "Downloading",
   }[status];
 }
@@ -139,7 +141,8 @@ function BrowserDownloadsPopover({
                     name={
                       download.status === "completed"
                         ? "check"
-                        : download.status === "progressing"
+                        : download.status === "progressing" ||
+                            download.status === "checking"
                           ? "downloads"
                           : "warning"
                     }
@@ -206,7 +209,8 @@ function BrowserDownloadsPopover({
                       Finder
                     </button>
                   )}
-                  {download.status === "progressing" && (
+                  {(download.status === "progressing" ||
+                    download.status === "checking") && (
                     <button
                       type="button"
                       role="menuitem"
