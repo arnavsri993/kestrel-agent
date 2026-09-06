@@ -5346,6 +5346,61 @@ body:has(.calculator-overlay),
 	color: var(--faint);
 }
 /* Browser Settings Sections */
+.browser-settings-loading {
+	display: grid;
+	min-height: min(320px, 48vh);
+	place-content: center;
+	justify-items: center;
+	gap: 10px;
+	padding: 28px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-surface);
+	background: color-mix(in srgb, var(--panel) 88%, var(--canvas));
+	box-shadow: var(--shadow-xs);
+	color: var(--ink-secondary);
+	text-align: center;
+}
+
+.browser-settings-loading-mark {
+	width: 18px;
+	height: 18px;
+	border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent);
+	border-top-color: var(--ink-secondary);
+	border-radius: 50%;
+}
+
+.browser-settings-loading p {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.browser-settings-loading small {
+	max-width: 44rem;
+	padding: 7px 9px;
+	border-radius: var(--radius-sm);
+	background: color-mix(in srgb, var(--warning) 12%, transparent);
+	color: var(--warning-ink);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.browser-settings-loading .button {
+	min-width: 96px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.browser-settings-loading-mark {
+		animation: browser-settings-loading-spin var(--motion-loading) linear infinite;
+	}
+}
+
+@keyframes browser-settings-loading-spin {
+	to {
+		transform: rotate(1turn);
+	}
+}
+
 .browser-settings-wrapper {
 	display: flex;
 	flex-direction: column;

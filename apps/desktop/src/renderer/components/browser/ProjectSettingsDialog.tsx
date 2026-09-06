@@ -44,16 +44,21 @@ export function ProjectSettingsDialog({
 	const [selectedAppearance, setSelectedAppearance] = useState(appearance);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const busyRef = useRef(false);
+	const returnFocusRef = useRef<HTMLElement | null>(null);
+	const onCloseRef = useRef(onClose);
+	busyRef.current = busy;
+	onCloseRef.current = onClose;
 
 	useEffect(() => {
-		nameRef.current?.focus();
-	}, []);
-
-	useEffect(() => {
+		if (!returnFocusRef.current && document.activeElement instanceof HTMLElement)
+			returnFocusRef.current = document.activeElement;
+		const frame = window.requestAnimationFrame(() => nameRef.current?.focus());
 		function onKeyDown(event: KeyboardEvent) {
 			if (event.key === "Escape") {
+				if (event.defaultPrevented || busyRef.current) return;
 				event.preventDefault();
-				onClose();
+				onCloseRef.current();
 				return;
 			}
 			if (event.key !== "Tab" || !dialogRef.current) return;
@@ -72,8 +77,12 @@ export function ProjectSettingsDialog({
 			}
 		}
 		document.addEventListener("keydown", onKeyDown);
-		return () => document.removeEventListener("keydown", onKeyDown);
-	}, [onClose]);
+		return () => {
+			window.cancelAnimationFrame(frame);
+			document.removeEventListener("keydown", onKeyDown);
+			if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
+		};
+	}, []);
 
 	async function save(event: FormEvent) {
 		event.preventDefault();
@@ -123,6 +132,7 @@ export function ProjectSettingsDialog({
 				aria-modal="true"
 				aria-labelledby="kestrel-project-settings-title"
 				aria-describedby="kestrel-project-settings-description"
+				aria-busy={busy}
 			>
 				<header className="kestrel-project-settings-header">
 					<div className="kestrel-project-settings-heading">

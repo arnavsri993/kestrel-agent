@@ -217,6 +217,26 @@ has drifted after many small changes.
   one continuous physical cluster while Kestrel's approval, provenance, and
   recovery surfaces remain calm enough for daily work.
 
+### Interaction continuation — September 6, 2026
+
+- Audit finding: tab pickup was pointer-responsive but updated React state for
+  every pointer movement; sidebar project disclosures animated while their
+  context menus appeared and disappeared abruptly; browser-settings loading
+  had semantic status text but no visual loading surface; project settings
+  trapped focus without returning it to its opener.
+- Motion grammar: direct controls use the shortest feedback timing, menus use
+  a quick anchored transition, selection/reorder uses a firm overdamped spring,
+  and sheets use a slightly slower panel timing. Under reduced motion all of
+  these preserve state and focus feedback while removing travel and scale.
+- Surface ownership: the shared renderer contract owns timing and physical
+  families; TabStrip owns pointer-direct drag presentation; KestrelSidebar
+  owns anchored project/menu continuity; each dialog owns its focus lifecycle.
+  No new animation dependency, ambient loop, or Agent Universe rewrite is
+  required for this pass.
+- Verification intent: exercise rapid tab reorder/reversal, menu open/close
+  and Escape restoration, project dialog Tab/Escape paths, settings loading and
+  retry, reduced motion, and narrow browser chrome after each packaged refresh.
+
 ## Monochrome — August 2026
 
 This is the authoritative desktop visual system. It supersedes every older

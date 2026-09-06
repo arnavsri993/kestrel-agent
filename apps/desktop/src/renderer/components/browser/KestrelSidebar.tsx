@@ -1,4 +1,5 @@
 import {
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useMemo,
@@ -8,6 +9,7 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent,
 	type MouseEvent as ReactMouseEvent,
 	type PointerEvent as ReactPointerEvent,
+	type RefObject,
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { Project, RuntimeSession } from "@kestrel/shared-types";
@@ -33,9 +35,13 @@ import {
 	maxKestrelSidebarWidth,
 	KESTREL_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./kestrel-sidebar-layout";
+import {
+	KESTREL_MENU_TRANSITION,
+	KESTREL_SELECTION_TRANSITION,
+} from "../../motion-contract";
 
 const MAX_SIDEBAR_CHATS = 8;
-const PROJECT_EXPANSION_DURATION_MS = 160;
+const PROJECT_EXPANSION_DURATION_MS = KESTREL_SELECTION_TRANSITION.duration * 1_000;
 const PROJECT_EXPANSION_SWITCH_DELAY_MS = PROJECT_EXPANSION_DURATION_MS + 80;
 const PROJECT_EXPANDED_STORAGE_KEY = "kestrel:project-expanded";
 
@@ -125,6 +131,7 @@ function SidebarContextMenu({
 	chat,
 	projects,
 	projectAppearances,
+	menuRef,
 	onClose,
 	onOpenProject,
 	onNewProjectChat,
@@ -137,30 +144,39 @@ function SidebarContextMenu({
 	chat?: RuntimeSession;
 	projects: Project[];
 	projectAppearances: ProjectAppearanceMap;
-	onClose(): void;
+	menuRef: RefObject<HTMLDivElement | null>;
+	onClose(options?: { restoreFocus?: boolean }): void;
 	onOpenProject(project: Project): void;
 	onNewProjectChat(project: Project): void;
 	onOpenProjectSettings(project: Project): void;
 	onOpenSession(sessionId: string): void;
 	onMoveSession(sessionId: string, projectId: string | null): void;
 }) {
-	const menuRef = useRef<HTMLDivElement>(null);
+	const reducedMotion = useReducedMotion() ?? false;
 
 	useEffect(() => {
 		menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 	}, []);
 
 	function action(run: () => void) {
-		onClose();
+			onClose({ restoreFocus: true });
 		run();
 	}
 
 	return (
-		<div
+		<motion.div
 			ref={menuRef}
 			className="kestrel-sidebar-context-menu"
 			role="menu"
-			style={{ top: menu.top, left: menu.left }}
+			initial={reducedMotion ? false : { opacity: 0, y: -2, scale: 0.985 }}
+			animate={{ opacity: 1, y: 0, scale: 1 }}
+			exit={
+				reducedMotion
+					? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+					: { opacity: 0, y: -2, scale: 0.985, pointerEvents: "none" }
+			}
+			transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
+			style={{ top: menu.top, left: menu.left, transformOrigin: "top left" }}
 			onContextMenu={(event) => event.preventDefault()}
 		>
 			{menu.kind === "project" && project ? (
@@ -219,7 +235,7 @@ function SidebarContextMenu({
 					) : null}
 				</>
 			) : null}
-		</div>
+		</motion.div>
 	);
 }
 
@@ -293,6 +309,14 @@ export function KestrelSidebar({
 	const [globalChatLimit, setGlobalChatLimit] = useState(MAX_SIDEBAR_CHATS);
 	const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
+	const contextMenuTriggerRef = useRef<HTMLElement | null>(null);
+	const closeContextMenu = useCallback(
+		({ restoreFocus = false }: { restoreFocus?: boolean } = {}) => {
+			setContextMenu(null);
+			if (restoreFocus) contextMenuTriggerRef.current?.focus();
+		},
+		[],
+	);
 
 	const chats = useMemo(
 		() => sessionsWithoutProject(sessions, projects).slice(0, globalChatLimit),
@@ -477,12 +501,12 @@ export function KestrelSidebar({
 		if (!contextMenu) return;
 		function closeOnOutsidePointer(event: PointerEvent) {
 			if (event.target instanceof Node && contextMenuRef.current?.contains(event.target)) return;
-			setContextMenu(null);
+			closeContextMenu();
 		}
 		function closeOnEscape(event: KeyboardEvent) {
 			if (event.key === "Escape") {
 				event.preventDefault();
-				setContextMenu(null);
+				closeContextMenu({ restoreFocus: true });
 			}
 		}
 		document.addEventListener("pointerdown", closeOnOutsidePointer);
@@ -491,7 +515,7 @@ export function KestrelSidebar({
 			document.removeEventListener("pointerdown", closeOnOutsidePointer);
 			document.removeEventListener("keydown", closeOnEscape);
 		};
-	}, [contextMenu]);
+	}, [closeContextMenu, contextMenu]);
 
 	function appearanceForProject(project: Project): ProjectAppearance {
 		return projectAppearances[project.path] ?? DEFAULT_PROJECT_APPEARANCE;
@@ -499,6 +523,7 @@ export function KestrelSidebar({
 
 	function openProjectContextMenu(event: ReactMouseEvent, project: Project) {
 		event.preventDefault();
+		contextMenuTriggerRef.current = event.currentTarget as HTMLElement;
 		setContextMenu({
 			kind: "project",
 			id: project.id,
@@ -508,6 +533,7 @@ export function KestrelSidebar({
 
 	function openChatContextMenu(event: ReactMouseEvent, chat: RuntimeSession) {
 		event.preventDefault();
+		contextMenuTriggerRef.current = event.currentTarget as HTMLElement;
 		setContextMenu({
 			kind: "chat",
 			id: chat.id,
@@ -523,6 +549,7 @@ export function KestrelSidebar({
 	) {
 		if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
 		event.preventDefault();
+		contextMenuTriggerRef.current = current;
 		const rect = current.getBoundingClientRect();
 		setContextMenu({
 			kind,
@@ -694,8 +721,9 @@ export function KestrelSidebar({
 													animate={{ height: "auto", opacity: 1 }}
 													exit={{ height: 0, opacity: 0 }}
 													transition={{
-														duration: reducedMotion ? 0 : PROJECT_EXPANSION_DURATION_MS / 1000,
-														ease: [0.25, 1, 0.35, 1],
+														...(reducedMotion
+															? { duration: 0 }
+															: KESTREL_SELECTION_TRANSITION),
 													}}
 													style={{ overflow: "hidden" }}
 												>
@@ -781,23 +809,25 @@ export function KestrelSidebar({
 				</section>
 			</div>
 
-			{contextMenu && (contextProject || contextChat) ? (
-				<div ref={contextMenuRef}>
+			<AnimatePresence initial={false}>
+				{contextMenu && (contextProject || contextChat) ? (
 					<SidebarContextMenu
+						key={`${contextMenu.kind}-${contextMenu.id}`}
 						menu={contextMenu}
 						{...(contextProject ? { project: contextProject } : {})}
 						{...(contextChat ? { chat: contextChat } : {})}
 						projects={projects}
 						projectAppearances={projectAppearances}
-						onClose={() => setContextMenu(null)}
+						menuRef={contextMenuRef}
+						onClose={closeContextMenu}
 						onOpenProject={onOpenProject}
 						onNewProjectChat={onOpenProjectChat}
 						onOpenProjectSettings={onOpenProjectSettings}
 						onOpenSession={onOpenSession}
 						onMoveSession={onMoveSession}
 					/>
-				</div>
-			) : null}
+				) : null}
+			</AnimatePresence>
 
 		</aside>
 	);

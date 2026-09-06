@@ -8,7 +8,7 @@ import type {
 } from "@kestrel/shared-types";
 import { Icon } from "../Icon";
 import { TabFavicon } from "./TabFavicon";
-import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
+import { KESTREL_PANEL_TRANSITION } from "../../motion-contract";
 
 const FOLDER_COLORS: readonly UserBrowserTabFolderColor[] = [
 	"blue",
@@ -278,7 +278,7 @@ export function OrganizeTabsDialog({
 					? { opacity: 1, pointerEvents: "none" }
 					: { opacity: 0, pointerEvents: "none" }
 			}
-			transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+			transition={reducedMotion ? { duration: 0 } : KESTREL_PANEL_TRANSITION}
 			onMouseDown={(event) => {
 				if (event.target === event.currentTarget && !busy) onCancel();
 			}}
@@ -296,7 +296,7 @@ export function OrganizeTabsDialog({
 						? { opacity: 1, scale: 1, y: 0 }
 						: { opacity: 0, scale: 0.98, y: 8 }
 				}
-				transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+				transition={reducedMotion ? { duration: 0 } : KESTREL_PANEL_TRANSITION}
 				aria-busy={busy}
 			>
 				<header className="organize-tabs-dialog-header">

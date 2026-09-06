@@ -11,9 +11,10 @@
  * behind the user's reduced-motion preference.
  */
 :root {
-	--motion-smooth: 160ms;
-	--ease-smooth: cubic-bezier(0.2, 0.8, 0.2, 1);
-	--ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
+	/* Legacy names resolve to the shared semantic motion language in styles.css. */
+	--motion-smooth: var(--motion-selection);
+	--ease-smooth: var(--ease-kestrel);
+	--ease-soft: var(--ease-kestrel-soft);
 }
 
 @media (prefers-reduced-motion: no-preference) {

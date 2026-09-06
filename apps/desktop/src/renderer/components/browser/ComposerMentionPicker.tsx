@@ -6,7 +6,7 @@ import type {
 	UserBrowserTab,
 } from "@kestrel/shared-types";
 import { composerMentions, type ComposerMention } from "./composer-mentions";
-import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
+import { KESTREL_MENU_TRANSITION } from "../../motion-contract";
 
 export function ComposerMentionPicker({
 	query,
@@ -67,7 +67,7 @@ export function ComposerMentionPicker({
 					? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
 					: { opacity: 0, y: 4, scale: 0.992, pointerEvents: "none" }
 			}
-			transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+			transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
 			style={{ transformOrigin: "bottom center" }}
 		>
 			{items.map((item, index) => (

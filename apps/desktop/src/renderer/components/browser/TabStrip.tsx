@@ -9,6 +9,7 @@ import {
 	AnimatePresence,
 	LayoutGroup,
 	motion,
+	useMotionValue,
 	useReducedMotion,
 	type MotionStyle,
 } from "motion/react";
@@ -25,8 +26,10 @@ import {
 } from "react";
 import { Icon } from "../Icon";
 import {
-	KESTREL_CRITICAL_SPRING,
-	KESTREL_STATE_TRANSITION,
+	KESTREL_EXIT_TRANSITION,
+	KESTREL_MENU_TRANSITION,
+	KESTREL_REORDER_SPRING,
+	KESTREL_SELECTION_TRANSITION,
 } from "../../motion-contract";
 import {
 	computeLockedTabStyle,
@@ -174,7 +177,11 @@ export function TabStrip({
 		"none",
 	);
 	const draggingTabIdRef = useRef<string | null>(null);
-	const [dragDelta, setDragDelta] = useState({ x: 0, y: 0 });
+	// Pointer tracking stays outside React state. Reordering still renders when
+	// a neighboring tab must make room, but the picked-up tab never waits for a
+	// component render to catch up with the pointer.
+	const dragX = useMotionValue(0);
+	const dragY = useMotionValue(0);
 	const [provisionalTabOrder, setProvisionalTabOrder] = useState<string[] | null>(
 		null,
 	);
@@ -547,7 +554,8 @@ export function TabStrip({
 		reorderPendingRef.current = false;
 		draggingTabIdRef.current = null;
 		dragStartRef.current = null;
-		setDragDelta({ x: 0, y: 0 });
+		dragX.set(0);
+		dragY.set(0);
 		setDraggingTabId(null);
 		setDragIntent("none");
 		if (!preserveProvisional) {
@@ -590,7 +598,8 @@ export function TabStrip({
 			velocityX: 0,
 			velocityY: 0,
 		};
-		setDragDelta({ x: 0, y: 0 });
+		dragX.set(0);
+		dragY.set(0);
 		setDraggingTabId(tabId);
 		setDragIntent("none");
 		event.currentTarget.setPointerCapture(event.pointerId);
@@ -666,10 +675,8 @@ export function TabStrip({
 				 * that exact shift so the presentation stays under the pointer. */
 				activeDrag.x += after.left - before.left;
 				activeDrag.y += after.top - before.top;
-				setDragDelta({
-					x: activeDrag.lastX - activeDrag.x,
-					y: activeDrag.lastY - activeDrag.y,
-				});
+				dragX.set(activeDrag.lastX - activeDrag.x);
+				dragY.set(activeDrag.lastY - activeDrag.y);
 			}
 			reorderPendingRef.current = false;
 		});
@@ -691,7 +698,8 @@ export function TabStrip({
 		drag.lastX = event.clientX;
 		drag.lastY = event.clientY;
 		drag.lastAt = event.timeStamp;
-		setDragDelta({ x: dx, y: dy });
+		dragX.set(dx);
+		dragY.set(dy);
 		if (orientation === "horizontal") {
 			if (Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX) {
 				if (!detachDraggedTab()) setDragIntent("detach");
@@ -916,7 +924,7 @@ export function TabStrip({
 								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
 								: { opacity: 0, y: -4, scale: 0.99, pointerEvents: "none" }
 						}
-						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
 						style={{ transformOrigin: "top left" }}
 					>
 						{onToggleOrientation && (
@@ -1228,8 +1236,6 @@ export function TabStrip({
 									initial={reducedMotion ? false : { opacity: 0 }}
 									animate={{
 										opacity: isDragActive ? 0.82 : 1,
-										x: isDragging ? dragDelta.x : 0,
-										y: isDragging ? dragDelta.y : 0,
 										scale: isDragActive && !reducedMotion ? 1.015 : 1,
 									}}
 										exit={
@@ -1238,7 +1244,7 @@ export function TabStrip({
 												: {
 														opacity: 0,
 														pointerEvents: "none",
-													transition: { duration: 0.14, ease: [0.4, 0, 1, 1] },
+													transition: KESTREL_EXIT_TRANSITION,
 												}
 									}
 									transition={
@@ -1246,12 +1252,16 @@ export function TabStrip({
 											? { duration: 0 }
 											: draggingTabId
 												? {
-													default: KESTREL_STATE_TRANSITION,
-													layout: KESTREL_CRITICAL_SPRING,
+													default: KESTREL_SELECTION_TRANSITION,
+													layout: KESTREL_REORDER_SPRING,
 												}
-												: KESTREL_STATE_TRANSITION
+											: KESTREL_SELECTION_TRANSITION
 									}
-									style={tabStyle as MotionStyle}
+									style={{
+										...(tabStyle as MotionStyle),
+										x: isDragging ? dragX : 0,
+										y: isDragging ? dragY : 0,
+									}}
 									data-tab-id={tab.id}
 									data-drag-intent={isDragging ? dragIntent : undefined}
 									onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
@@ -1361,7 +1371,7 @@ export function TabStrip({
 						? { opacity: 1, scale: 1, pointerEvents: "none" }
 						: { opacity: 0, scale: 0.985, pointerEvents: "none" }
 				}
-					transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+					transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
 				>
 					{onOrganizeTabs && (
 						<button

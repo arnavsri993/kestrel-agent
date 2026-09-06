@@ -5,7 +5,7 @@ import type {
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
+import { KESTREL_MENU_TRANSITION } from "../../motion-contract";
 import { Icon } from "../Icon";
 import {
 	configuredProviders,
@@ -207,7 +207,7 @@ export function ModelSelector({
 										pointerEvents: "none",
 									}
 						}
-						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
 						style={{ top: menuPos.top, left: menuPos.left }}
 					>
 						<div className="model-selector-column" aria-label="Provider">
