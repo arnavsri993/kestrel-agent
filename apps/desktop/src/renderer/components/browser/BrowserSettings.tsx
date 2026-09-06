@@ -1,6 +1,9 @@
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import type {
-  InstalledExtension,
+	ChromeWebStoreExtensionInspection,
+	ExtensionCompatibilityReport,
+	ExtensionCompatibilityState,
+	InstalledExtension,
   UserBrowserSettings,
   UserBrowserSitePermission,
 } from "@kestrel/shared-types";
@@ -18,6 +21,8 @@ import { Status } from "../ui";
 import { PasswordSettings } from "./PasswordSettings";
 import { PaymentSettings } from "./PaymentSettings";
 import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
+import { browserExtensionOperationErrorMessage } from "../../../browser-extension-error";
+import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -111,6 +116,41 @@ function validHomepage(value: string): boolean {
   }
 }
 
+const EXTENSION_COMPATIBILITY_LABELS: Record<
+  ExtensionCompatibilityState,
+  string
+> = {
+  verified: "Runtime verified",
+  expected_compatible: "Expected compatible",
+  partial: "Partial compatibility",
+  unsupported: "Unsupported",
+  unknown: "Not yet verified",
+};
+
+function extensionCompatibilityLabel(
+  compatibility: ExtensionCompatibilityReport | undefined,
+): string {
+  return compatibility
+    ? EXTENSION_COMPATIBILITY_LABELS[compatibility.state]
+    : "Compatibility not recorded";
+}
+
+function runtimeEvidenceLabel(
+  compatibility: ExtensionCompatibilityReport | undefined,
+): string {
+  if (!compatibility) return "No runtime evidence recorded";
+  const runtime = compatibility.runtime;
+  const evidence: string[] = [];
+  if (runtime.registered === "passed") evidence.push("registered");
+  if (runtime.ready === "passed") evidence.push("ready");
+  if (runtime.backgroundServiceWorker === "passed") evidence.push("worker started");
+  if (runtime.remainedLoaded === "passed") evidence.push("still loaded");
+  if (runtime.persistedAcrossRestart === "passed") evidence.push("restart verified");
+  return evidence.length > 0
+    ? `Runtime evidence: ${evidence.join(", ")}`
+    : "Runtime evidence: not yet available";
+}
+
 export function BrowserSettings({
   browser,
   contextEnabled,
@@ -140,6 +180,8 @@ export function BrowserSettings({
   const [extensions, setExtensions] = useState<InstalledExtension[]>([]);
   const [extensionUrlInput, setExtensionUrlInput] = useState("");
   const [extensionLoading, setExtensionLoading] = useState(false);
+  const [extensionInspection, setExtensionInspection] =
+    useState<ChromeWebStoreExtensionInspection | null>(null);
   const [extensionMessage, setExtensionMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -351,22 +393,17 @@ export function BrowserSettings({
     }
   };
 
-  const handleInstallExtensionFromUrl = async () => {
+  const handleInspectExtensionFromUrl = async () => {
     if (!extensionUrlInput.trim()) return;
     setExtensionLoading(true);
     setExtensionMessage(null);
     try {
       const response = await window.kestrel.request({
-        type: "browser-install-extension-url",
+        type: "browser-inspect-extension-url",
         urlOrId: extensionUrlInput.trim(),
       });
-      if (response.ok && "extension" in response) {
-        setExtensionMessage({
-          type: "success",
-          text: `Successfully installed ${(response.extension as InstalledExtension).name}!`,
-        });
-        setExtensionUrlInput("");
-        await fetchExtensions();
+      if (response.ok && "extensionInspection" in response) {
+        setExtensionInspection(response.extensionInspection);
       } else {
         setExtensionMessage({
           type: "error",
@@ -374,7 +411,7 @@ export function BrowserSettings({
             new Error(
               "error" in response
                 ? String(response.error)
-                : "The extension installer returned no extension.",
+                : "The extension inspector returned no extension package.",
             ),
           ),
         });
@@ -389,6 +426,35 @@ export function BrowserSettings({
     }
   };
 
+  const handleInstallReviewedExtension = async (inspectionId: string) => {
+    try {
+      const response = await window.kestrel.request({
+        type: "browser-install-extension-url",
+        inspectionId,
+      });
+      if (!response.ok || !("extension" in response)) {
+        throw new Error(
+          chromeWebStoreInstallErrorMessage(
+            new Error(
+              "error" in response
+                ? String(response.error)
+                : "The extension installer returned no extension.",
+            ),
+          ),
+        );
+      }
+      setExtensionMessage({
+        type: "success",
+        text: `Installed ${(response.extension as InstalledExtension).name}. Kestrel will verify persistence after the next browser start.`,
+      });
+      setExtensionUrlInput("");
+      setExtensionInspection(null);
+      await fetchExtensions();
+    } catch (cause) {
+      throw new Error(chromeWebStoreInstallErrorMessage(cause));
+    }
+  };
+
   const handleToggleExtension = async (id: string, enabled: boolean) => {
     try {
       const response = await window.kestrel.request({
@@ -400,7 +466,7 @@ export function BrowserSettings({
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: errorText(cause, "Failed to toggle extension."),
+        text: browserExtensionOperationErrorMessage(cause),
       });
     }
   };
@@ -415,7 +481,28 @@ export function BrowserSettings({
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: errorText(cause, "Failed to uninstall extension."),
+        text: browserExtensionOperationErrorMessage(cause),
+      });
+    }
+  };
+
+  const handleReloadExtension = async (id: string) => {
+    try {
+      const response = await window.kestrel.request({
+        type: "browser-reload-extension",
+        extensionId: id,
+      });
+      if (!response.ok)
+        throw new Error(
+          "error" in response
+            ? String(response.error)
+            : "Failed to reload extension.",
+        );
+      await fetchExtensions();
+    } catch (cause) {
+      setExtensionMessage({
+        type: "error",
+        text: browserExtensionOperationErrorMessage(cause),
       });
     }
   };
@@ -1618,7 +1705,7 @@ export function BrowserSettings({
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  void handleInstallExtensionFromUrl();
+                  void handleInspectExtensionFromUrl();
                 }
               }}
               className="ui-input extension-url-input"
@@ -1627,10 +1714,10 @@ export function BrowserSettings({
             <button
               type="button"
               className="button primary"
-              onClick={() => void handleInstallExtensionFromUrl()}
+              onClick={() => void handleInspectExtensionFromUrl()}
               disabled={extensionLoading || !extensionUrlInput.trim()}
             >
-              {extensionLoading ? "Installing…" : "Install from Web Store"}
+              {extensionLoading ? "Reviewing…" : "Review from Web Store"}
             </button>
           </div>
           <div className="extension-actions-row">
@@ -1648,9 +1735,8 @@ export function BrowserSettings({
             </a>
           </div>
           <p className="honest-status">
-            Kestrel verifies each package and keeps it only after Electron loads
-            its signed identity. Some Chrome extension APIs are not available in
-            Electron.
+            Kestrel verifies each package before showing its declared access and
+            compatibility evidence. Electron does not implement every Chrome API.
           </p>
           <div className="installed-extensions-section">
             <h4>Installed extensions ({extensions.length})</h4>
@@ -1689,6 +1775,65 @@ export function BrowserSettings({
                         {extension.description}
                       </p>
                     )}
+                    <div className="extension-compatibility-summary">
+                      <span
+                        className={`extension-compatibility-badge is-${extension.compatibility?.state ?? "unknown"}`}
+                      >
+                        {extensionCompatibilityLabel(extension.compatibility)}
+                      </span>
+                      <p>
+                        {extension.compatibility?.summary ??
+                          "This extension was installed before Kestrel recorded compatibility evidence."}
+                      </p>
+                      {extension.compatibility?.findings
+                        .filter((finding) => finding.status !== "full")
+                        .slice(0, 3)
+                        .map((finding) => (
+                          <p
+                            className="extension-compatibility-finding"
+                            key={`${finding.capability}-${finding.evidence}`}
+                          >
+                            <strong>{finding.capability}</strong>
+                            <span className={`is-${finding.status}`}>
+                              {finding.status.replace("_", " ")}
+                            </span>
+                            <small>{finding.reason}</small>
+                          </p>
+                        ))}
+                      {extension.compatibility &&
+                        extension.compatibility.declaredRequirements.length >
+                          0 && (
+                          <p className="extension-permission-summary">
+                            Declared access: {" "}
+                            {extension.compatibility.declaredRequirements
+                              .slice(0, 3)
+                              .join(" · ")}
+                            {extension.compatibility.declaredRequirements
+                              .length > 3
+                              ? " · …"
+                              : ""}
+                          </p>
+                        )}
+                      <small className="extension-runtime-evidence">
+                        {runtimeEvidenceLabel(extension.compatibility)}
+                      </small>
+                      <details className="extension-developer-diagnostics">
+                        <summary>Developer diagnostics</summary>
+                        <code>Extension ID: {extension.id}</code>
+                        <small>
+                          Static analysis scanned {" "}
+                          {extension.compatibility?.staticAnalysis.filesScanned ??
+                            0} source file
+                          {(extension.compatibility?.staticAnalysis.filesScanned ??
+                            0) === 1
+                            ? ""
+                            : "s"}
+                          {extension.compatibility?.staticAnalysis.truncated
+                            ? "; coverage was limited."
+                            : "."}
+                        </small>
+                      </details>
+                    </div>
                     <div className="extension-card-actions">
                       <label className="extension-toggle-label">
                         <span>
@@ -1705,15 +1850,32 @@ export function BrowserSettings({
                           }
                         />
                       </label>
-                      <button
-                        type="button"
-                        className="button danger-subtle"
-                        onClick={() =>
-                          void handleUninstallExtension(extension.id)
-                        }
-                      >
-                        Remove
-                      </button>
+                      <div className="extension-card-action-buttons">
+                        <button
+                          type="button"
+                          className="button subtle"
+                          onClick={() =>
+                            void handleReloadExtension(extension.id)
+                          }
+                          disabled={!extension.enabled}
+                          title={
+                            extension.enabled
+                              ? "Reload extension"
+                              : "Enable the extension before reloading"
+                          }
+                        >
+                          Reload
+                        </button>
+                        <button
+                          type="button"
+                          className="button danger-subtle"
+                          onClick={() =>
+                            void handleUninstallExtension(extension.id)
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -1941,6 +2103,13 @@ export function BrowserSettings({
           This overview keeps existing deep links working. Use the Basic and
           Advanced sections in the settings rail for the focused layout.
         </p>
+      )}
+      {extensionInspection && (
+        <ExtensionCompatibilityDialog
+          inspection={extensionInspection}
+          onCancel={() => setExtensionInspection(null)}
+          onInstall={handleInstallReviewedExtension}
+        />
       )}
     </div>
   );

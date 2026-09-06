@@ -10,9 +10,11 @@ import {
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
 	parseChromeWebStoreListingUrl,
+	type ChromeWebStoreExtensionInspection,
 	type FilePreview,
 	type MemoryRecord,
 	type MemoryRecallStatus,
+	type InstalledExtension,
 	type RuntimeSession,
 	type UserBrowserFile,
 	type UserBrowserTabOrganizationPreview,
@@ -28,6 +30,8 @@ import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { BookmarkDialog, type BookmarkDialogSaveInput } from "./BookmarkDialog";
 import { ChromeWebStoreInstallBar } from "./ChromeWebStoreInstallBar";
+import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
+import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
 import { NewTabPage } from "./NewTabPage";
 import { OrganizeTabsDialog } from "./OrganizeTabsDialog";
 import { TabStrip } from "./TabStrip";
@@ -111,6 +115,12 @@ export function BrowserWorkspace({
     bookmarkId?: string;
   } | null>(null);
   const [bookmarkDialogPresent, setBookmarkDialogPresent] = useState(false);
+  const [extensionInspection, setExtensionInspection] =
+    useState<ChromeWebStoreExtensionInspection | null>(null);
+  const [installedChromeWebStoreExtension, setInstalledChromeWebStoreExtension] =
+    useState<InstalledExtension | null>(null);
+  const [extensionCompatibilityDialogPresent, setExtensionCompatibilityDialogPresent] =
+    useState(false);
   const organizeTabsRequestRef = useRef(0);
   const pagePreviewRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
@@ -286,11 +296,74 @@ export function BrowserWorkspace({
     !organizeTabsOpening &&
     !organizeTabsPreview &&
     !organizeTabsPresent &&
-    !bookmarkDialogPresent;
+    !bookmarkDialogPresent &&
+    !extensionCompatibilityDialogPresent;
   const showChromeWebStoreInstall = Boolean(
     nativePageEligible &&
       activeTab?.url &&
       parseChromeWebStoreListingUrl(activeTab.url),
+  );
+	const activeChromeWebStoreExtensionId = activeTab?.url
+		? parseChromeWebStoreListingUrl(activeTab.url)
+		: null;
+	useEffect(() => {
+		if (!activeChromeWebStoreExtensionId) return;
+		let cancelled = false;
+		void window.kestrel
+			.request({ type: "browser-list-extensions" })
+			.then((response) => {
+				if (cancelled || !response.ok || !("extensions" in response)) return;
+				const extension = response.extensions.find(
+					(item) => item.id === activeChromeWebStoreExtensionId,
+				);
+				if (extension) setInstalledChromeWebStoreExtension(extension);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [activeChromeWebStoreExtensionId]);
+  const inspectChromeWebStoreExtension = useCallback(
+    async (urlOrId: string) => {
+			setInstalledChromeWebStoreExtension(null);
+      const response = await window.kestrel.request({
+        type: "browser-inspect-extension-url",
+        urlOrId,
+      });
+      if (!response.ok || !("extensionInspection" in response)) {
+			const failure = new Error(
+				"error" in response
+					? String(response.error)
+					: "Kestrel could not inspect this Chrome Web Store package.",
+			);
+			throw new Error(chromeWebStoreInstallErrorMessage(failure));
+		}
+      setExtensionCompatibilityDialogPresent(true);
+      setExtensionInspection(response.extensionInspection);
+    },
+    [],
+  );
+  const closeExtensionCompatibilityDialog = useCallback(() => {
+    setExtensionInspection(null);
+  }, []);
+  const installReviewedChromeWebStoreExtension = useCallback(
+    async (inspectionId: string) => {
+      const response = await window.kestrel.request({
+        type: "browser-install-extension-url",
+        inspectionId,
+      });
+      if (!response.ok || !("extension" in response)) {
+			const failure = new Error(
+				"error" in response
+					? String(response.error)
+					: "Kestrel could not install this reviewed extension.",
+			);
+			throw new Error(chromeWebStoreInstallErrorMessage(failure));
+		}
+		setInstalledChromeWebStoreExtension(response.extension);
+      setExtensionInspection(null);
+    },
+    [],
   );
 
   const openFind = useCallback(() => {
@@ -880,7 +953,16 @@ export function BrowserWorkspace({
         />
       )}
       {showChromeWebStoreInstall && (
-        <ChromeWebStoreInstallBar url={activeTab.url} />
+        <ChromeWebStoreInstallBar
+          url={activeTab.url}
+          onReview={inspectChromeWebStoreExtension}
+			installedExtension={
+				installedChromeWebStoreExtension?.id ===
+				activeChromeWebStoreExtensionId
+					? installedChromeWebStoreExtension
+					: null
+			}
+        />
       )}
       <AnimatePresence initial={false}>
       {findOpen && (
@@ -1083,6 +1165,19 @@ export function BrowserWorkspace({
             onCancel={closeBookmarkDialog}
             onSave={saveBookmarkDialog}
             onCreateFolder={createBookmarkFolder}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence
+        initial={false}
+        onExitComplete={() => setExtensionCompatibilityDialogPresent(false)}
+      >
+        {extensionInspection && (
+          <ExtensionCompatibilityDialog
+            key={`extension-compatibility-${extensionInspection.inspectionId}`}
+            inspection={extensionInspection}
+            onCancel={closeExtensionCompatibilityDialog}
+            onInstall={installReviewedChromeWebStoreExtension}
           />
         )}
       </AnimatePresence>

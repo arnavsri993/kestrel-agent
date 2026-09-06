@@ -1,6 +1,7 @@
 export * from "./configuration";
 export * from "./communication";
 export * from "./chrome-web-store";
+export * from "./extension-compatibility";
 export * from "./contracts";
 export * from "./browser-tab-organization";
 export * from "./identity";

@@ -2,6 +2,7 @@ import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import {
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	renameSync,
 	rmSync,
@@ -10,11 +11,20 @@ import {
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import {
+	type ChromeWebStoreExtensionInspection,
+	type ExtensionCompatibilityReport,
+	ExtensionCompatibilityReportSchema,
 	type InstalledExtension,
 	InstalledExtensionSchema,
 	parseChromeWebStoreExtensionId,
 } from "@kestrel/shared-types";
-import type { Session } from "electron";
+import { z } from "zod";
+import {
+	analyzeExtensionCompatibility,
+	compatibilityWithRuntime,
+	emptyRuntimeVerification,
+} from "./extension-compatibility";
+import type { ExtensionRuntime } from "./extension-runtime";
 
 const MAX_EXTENSION_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const MAX_EXTENSION_FILES = 10_000;
@@ -22,6 +32,7 @@ const MAX_EXTENSION_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_EXTENSION_EXTRACTED_BYTES = 256 * 1024 * 1024;
 const MAX_ZIP_COMMENT_BYTES = 65_535;
 const EXTENSION_STARTUP_TIMEOUT_MS = 10_000;
+const INSPECTION_TTL_MS = 5 * 60_000;
 
 function checkedRangeEnd(start: number, length: number, available: number): number {
 	const end = start + length;
@@ -341,15 +352,13 @@ export function readExtensionManifest(
 }
 
 async function confirmServiceWorkerStartup(
-	session: Session,
+	runtime: ExtensionRuntime,
 	extensionId: string,
 ): Promise<void> {
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	try {
 		await Promise.race([
-			session.serviceWorkers.startWorkerForScope(
-				`chrome-extension://${extensionId}/`,
-			),
+			runtime.startServiceWorker(extensionId),
 			new Promise<never>((_resolve, reject) => {
 				timeout = setTimeout(
 					() =>
@@ -607,8 +616,105 @@ function manifestKeyMatchesExtensionId(
 	}
 }
 
+/**
+ * Stored compatibility reports evolve independently from the public extension
+ * record.  Keep a previously installed extension loadable when a newer Kestrel
+ * adds a report field; its report will be replaced with an explicit legacy
+ * result instead of silently dropping the whole extension record.
+ */
+const StoredExtensionSchema = InstalledExtensionSchema.omit({
+	compatibility: true,
+}).extend({
+	path: z.string().min(1),
+	compatibility: z.unknown().optional(),
+});
+
+type StoredExtension = Omit<InstalledExtension, "compatibility"> & {
+	path: string;
+	compatibility?: ExtensionCompatibilityReport;
+};
+
+type PendingInspection = {
+	id: string;
+	inspection: ChromeWebStoreExtensionInspection;
+	stagingDir?: string;
+	expiresAt: number;
+};
+
+function publicExtension(extension: StoredExtension): InstalledExtension {
+	const { path: _path, ...publicRecord } = extension;
+	return publicRecord;
+}
+
+function legacyCompatibility(): ExtensionCompatibilityReport {
+	return {
+		state: "unknown",
+		summary:
+			"Installed before Kestrel recorded compatibility evidence. Reload it to collect current runtime checks.",
+		manifest: {
+			manifestVersion: null,
+			permissions: [],
+			optionalPermissions: [],
+			hostPermissions: [],
+			optionalHostPermissions: [],
+			contentScriptCount: 0,
+			background: "none",
+			commands: [],
+			hasAction: false,
+			hasSidePanel: false,
+			hasDeclarativeNetRequest: false,
+			hasExternallyConnectable: false,
+			webAccessibleResourceCount: 0,
+			unknownManifestKeys: [],
+		},
+		declaredRequirements: [],
+		detectedApiUsage: [],
+		findings: [
+			{
+				capability: "legacy compatibility evidence",
+				status: "unknown",
+				reason:
+					"This extension was installed before Kestrel could inspect its requirements.",
+				evidence: "manifest",
+			},
+		],
+		staticAnalysis: {
+			filesScanned: 0,
+			sourceBytesScanned: 0,
+			truncated: true,
+			dynamicApiAccessDetected: false,
+		},
+		runtime: emptyRuntimeVerification(),
+	};
+}
+
+function restoredCompatibility(value: unknown): ExtensionCompatibilityReport {
+	const parsed = ExtensionCompatibilityReportSchema.safeParse(value);
+	return parsed.success ? parsed.data : legacyCompatibility();
+}
+
+function unresolvedRuntimeChecks(
+	report: ExtensionCompatibilityReport,
+): Pick<
+	ExtensionCompatibilityReport["runtime"],
+	"contentScripts" | "storageLocal" | "extensionAction" | "hostPermissions"
+> {
+	return {
+		contentScripts:
+			report.manifest.contentScriptCount > 0 ? "not_checked" : "not_applicable",
+		storageLocal: report.manifest.permissions.includes("storage")
+			? "not_checked"
+			: "not_applicable",
+		extensionAction: report.manifest.hasAction
+			? "not_checked"
+			: "not_applicable",
+		hostPermissions:
+			report.manifest.hostPermissions.length > 0 ? "not_checked" : "not_applicable",
+	};
+}
+
 function isManagedChromeWebStoreExtension(
-	extension: InstalledExtension,
+	extension: StoredExtension,
 	extensionsDir: string,
 ): boolean {
 	return (
@@ -619,12 +725,23 @@ function isManagedChromeWebStoreExtension(
 	);
 }
 
+function isOwnedExtensionDirectory(path: string, extensionsDir: string): boolean {
+	return (
+		resolve(path).startsWith(
+			`${resolve(extensionsDir)}${process.platform === "win32" ? "\\" : "/"}`,
+		)
+	);
+}
+
 export class BrowserExtensionManager {
 	private readonly extensionsDir: string;
 	private readonly metadataPath: string;
 	private readonly allowLocalExtensions: boolean;
-	private extensions: Map<string, InstalledExtension> = new Map();
-	private skippedExtensions: InstalledExtension[] = [];
+	private readonly loadedFromRegistry = new Set<string>();
+	private readonly pendingInspections = new Map<string, PendingInspection>();
+	private extensions: Map<string, StoredExtension> = new Map();
+	private skippedExtensions: StoredExtension[] = [];
+	private mutationQueue: Promise<void> = Promise.resolve();
 
 	constructor(
 		baseStorageDir: string,
@@ -634,30 +751,62 @@ export class BrowserExtensionManager {
 		this.metadataPath = join(this.extensionsDir, "extensions.json");
 		this.allowLocalExtensions = options.allowLocalExtensions === true;
 		mkdirSync(this.extensionsDir, { recursive: true, mode: 0o700 });
+		this.removeExpiredInspectionDirectories();
 		this.loadRegistry();
+	}
+
+	private serialize<T>(operation: () => Promise<T>): Promise<T> {
+		const result = this.mutationQueue.then(operation, operation);
+		this.mutationQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	}
+
+	private removeExpiredInspectionDirectories(): void {
+		for (const entry of readdirSync(this.extensionsDir, { withFileTypes: true })) {
+			if (!entry.isDirectory() || !entry.name.startsWith(".inspection-")) continue;
+			try {
+				rmSync(join(this.extensionsDir, entry.name), {
+					recursive: true,
+					force: true,
+				});
+			} catch {
+				// A stale temporary package can be retried at the next launch. It is
+				// never added to the install registry.
+			}
+		}
 	}
 
 	private loadRegistry(): void {
 		if (!existsSync(this.metadataPath)) return;
 		try {
 			const data = JSON.parse(readFileSync(this.metadataPath, "utf8"));
-			if (Array.isArray(data)) {
-				for (const item of data) {
-					const parsed = InstalledExtensionSchema.safeParse(item);
-					if (!parsed.success || !existsSync(parsed.data.path)) continue;
-					if (
-						!this.allowLocalExtensions &&
-						!isManagedChromeWebStoreExtension(parsed.data, this.extensionsDir)
-					) {
-						this.skippedExtensions.push(parsed.data);
-						continue;
-					}
-					this.extensions.set(parsed.data.id, parsed.data);
+			if (!Array.isArray(data)) return;
+			for (const item of data) {
+				const parsed = StoredExtensionSchema.safeParse(item);
+				if (!parsed.success || !existsSync(parsed.data.path)) continue;
+				const { compatibility: persistedCompatibility, ...storedRecord } =
+					parsed.data;
+				const extension: StoredExtension = {
+					...storedRecord,
+					compatibility: restoredCompatibility(persistedCompatibility),
+				};
+				if (
+					!this.allowLocalExtensions &&
+					!isManagedChromeWebStoreExtension(extension, this.extensionsDir)
+				) {
+					this.skippedExtensions.push(extension);
+					continue;
 				}
+				this.extensions.set(extension.id, extension);
+				this.loadedFromRegistry.add(extension.id);
 			}
 		} catch {
 			this.extensions.clear();
 			this.skippedExtensions = [];
+			this.loadedFromRegistry.clear();
 		}
 	}
 
@@ -680,83 +829,20 @@ export class BrowserExtensionManager {
 			throw new Error("Local extension installs are available only in development builds.");
 	}
 
-	private async loadVerifiedStoreExtension(
-		session: Session,
-		extensionPath: string,
-		expectedId: string,
-		requiresServiceWorker: boolean,
-	): Promise<void> {
-		let loadedId: string | undefined;
-		try {
-			const loaded = await session.extensions.loadExtension(extensionPath, {
-				// Kestrel's visible browser does not navigate file:// pages. Do not grant
-				// store extensions broader local-file access than the browser itself.
-				allowFileAccess: false,
-			});
-			loadedId = loaded.id;
-			if (loaded.id !== expectedId)
-				throw new Error("Electron loaded an extension with an unexpected identity.");
-			if (requiresServiceWorker)
-				await confirmServiceWorkerStartup(session, expectedId);
-		} catch (cause) {
-			if (loadedId) {
-				try {
-					session.extensions.removeExtension(loadedId);
-				} catch {
-					// Best effort cleanup after an extension fails startup verification.
-				}
-			}
-			throw cause;
+	private cleanupExpiredInspections(): void {
+		const now = Date.now();
+		for (const [inspectionId, inspection] of this.pendingInspections) {
+			if (inspection.expiresAt > now) continue;
+			this.pendingInspections.delete(inspectionId);
+			if (inspection.stagingDir && existsSync(inspection.stagingDir))
+				rmSync(inspection.stagingDir, { recursive: true, force: true });
 		}
 	}
 
-	async loadAll(session: Session): Promise<void> {
-		let registryChanged = false;
-		for (const extension of this.extensions.values()) {
-			if (extension.enabled && existsSync(extension.path)) {
-				try {
-					const manifest = readExtensionManifest(extension.path, extension.id);
-					if (extension.source === "chrome_web_store")
-						await this.loadVerifiedStoreExtension(
-							session,
-							extension.path,
-							extension.id,
-							manifest.requiresServiceWorker,
-						);
-					else
-						await session.extensions.loadExtension(extension.path, {
-							allowFileAccess: true,
-						});
-				} catch (err) {
-					extension.enabled = false;
-					registryChanged = true;
-					console.warn(
-						`[Extension] Failed to load extension ${extension.name}:`,
-						err,
-					);
-				}
-			}
-		}
-		if (registryChanged) this.saveRegistry();
-	}
-
-	list(): InstalledExtension[] {
-		return Array.from(this.extensions.values());
-	}
-
-	async installFromChromeWebStore(
-		urlOrId: string,
-		session: Session,
-	): Promise<InstalledExtension> {
-		const id = parseExtensionIdFromUrlOrId(urlOrId);
-		if (!id) {
-			throw new Error(
-				"Invalid Chrome Web Store URL or extension ID. Must be a 32-character ID.",
-			);
-		}
-		const existing = this.extensions.get(id);
-		if (existing) return existing;
-
+	private async downloadVerifiedStorePackage(
+		id: string,
+		inspectionId: string,
+	): Promise<PendingInspection> {
 		const crxUrl = `https://clients2.google.com/service/update2/crx?response=redirect&prodversion=128.0.6613.120&acceptformat=crx3&x=id%3D${id}%26uc`;
 		const downloadController = new AbortController();
 		const downloadTimeout = setTimeout(
@@ -772,207 +858,456 @@ export class BrowserExtensionManager {
 				signal: downloadController.signal,
 				redirect: "follow",
 			});
-			if (!response.ok) {
+			if (!response.ok)
 				throw new Error(
 					`Failed to download extension from Chrome Web Store (HTTP ${response.status}).`,
 				);
-			}
 			buffer = await readBoundedExtensionResponse(response);
 		} finally {
 			clearTimeout(downloadTimeout);
 		}
 		const verifiedCrx = validateChromeWebStoreCrx(buffer, id);
-		const targetDir = join(this.extensionsDir, id);
-		const stagingDir = join(this.extensionsDir, `.${id}-${randomUUID()}.partial`);
-		const backupDir = join(this.extensionsDir, `.${id}-${randomUUID()}.backup`);
-		const skippedBefore = this.skippedExtensions;
-		let backupCreated = false;
-		let targetInstalled = false;
+		const stagingDir = join(this.extensionsDir, `.inspection-${inspectionId}`);
 		try {
 			mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
 			extractCrxOrZip(verifiedCrx.archive, stagingDir);
 			injectVerifiedManifestKey(stagingDir, verifiedCrx.publicKey);
 			const manifest = readExtensionManifest(stagingDir, id);
-			if (existsSync(targetDir)) {
-				renameSync(targetDir, backupDir);
-				backupCreated = true;
-			}
-			// Extraction is complete before the managed location becomes visible.
-			renameSync(stagingDir, targetDir);
-			targetInstalled = true;
-
-			await this.loadVerifiedStoreExtension(
-				session,
-				targetDir,
+			const compatibility = analyzeExtensionCompatibility(stagingDir);
+			return {
 				id,
-				manifest.requiresServiceWorker,
-			);
-
-			const record: InstalledExtension = {
-				id,
-				name: manifest.name,
-				version: manifest.version,
-				description: manifest.description,
-				homepageUrl: manifest.homepageUrl,
-				enabled: true,
-				source: "chrome_web_store",
-				path: targetDir,
-				installedAt: new Date().toISOString(),
+				inspection: {
+					inspectionId,
+					id,
+					name: manifest.name,
+					version: manifest.version,
+					...(manifest.description ? { description: manifest.description } : {}),
+					source: "chrome_web_store",
+					compatibility,
+				},
+				stagingDir,
+				expiresAt: Date.now() + INSPECTION_TTL_MS,
 			};
-			this.skippedExtensions = this.skippedExtensions.filter(
-				(extension) => extension.id !== id,
-			);
-			this.extensions.set(id, record);
-			this.saveRegistry();
-			if (backupCreated) {
-				try {
-					rmSync(backupDir, { recursive: true, force: true });
-				} catch {
-					// The verified install is already durable. A recoverable backup is
-					// safer than rolling back because only cleanup failed.
-				}
-				backupCreated = false;
-			}
-			return record;
 		} catch (cause) {
-			this.extensions.delete(id);
-			this.skippedExtensions = skippedBefore;
-			try {
-				session.extensions.removeExtension(id);
-			} catch {
-				// Best effort cleanup after persistence fails.
+			if (existsSync(stagingDir)) rmSync(stagingDir, { recursive: true, force: true });
+			throw cause;
+		}
+	}
+
+	async inspectChromeWebStore(
+		urlOrId: string,
+	): Promise<ChromeWebStoreExtensionInspection> {
+		return this.serialize(async () => {
+			this.cleanupExpiredInspections();
+			const id = parseExtensionIdFromUrlOrId(urlOrId);
+			if (!id)
+				throw new Error(
+					"Invalid Chrome Web Store URL or extension ID. Must be a 32-character ID.",
+				);
+			const inspectionId = randomUUID();
+			const existing = this.extensions.get(id);
+			if (existing) {
+				const inspection: ChromeWebStoreExtensionInspection = {
+					inspectionId,
+					id,
+					name: existing.name,
+					version: existing.version,
+					...(existing.description ? { description: existing.description } : {}),
+					source: "chrome_web_store",
+					compatibility: existing.compatibility ?? legacyCompatibility(),
+				};
+				this.pendingInspections.set(inspectionId, {
+					id,
+					inspection,
+					expiresAt: Date.now() + INSPECTION_TTL_MS,
+				});
+				return inspection;
 			}
-			if (targetInstalled && existsSync(targetDir))
-				rmSync(targetDir, { recursive: true, force: true });
-			if (backupCreated && existsSync(backupDir)) {
+			const pending = await this.downloadVerifiedStorePackage(id, inspectionId);
+			this.pendingInspections.set(inspectionId, pending);
+			return pending.inspection;
+		});
+	}
+
+	private async loadVerifiedStoreExtension(
+		runtime: ExtensionRuntime,
+		extensionPath: string,
+		expectedId: string,
+		requiresServiceWorker: boolean,
+	): Promise<Pick<
+		ExtensionCompatibilityReport["runtime"],
+		"registered" | "ready" | "backgroundServiceWorker" | "remainedLoaded"
+	>> {
+		let loadedId: string | undefined;
+		try {
+			const loaded = await runtime.loadExtension(extensionPath, {
+				// Kestrel's visible browser does not navigate file:// pages. Do not grant
+				// store extensions broader local-file access than the browser itself.
+				allowFileAccess: false,
+			});
+			loadedId = loaded.id;
+			if (loaded.id !== expectedId)
+				throw new Error("The extension runtime loaded an unexpected identity.");
+			const observed = runtime.getExtension(expectedId);
+			if (
+				!observed ||
+				observed.id !== expectedId ||
+				resolve(observed.path) !== resolve(extensionPath)
+			)
+				throw new Error("The extension runtime did not register the verified package.");
+			let backgroundServiceWorker: "passed" | "not_applicable" = "not_applicable";
+			if (requiresServiceWorker) {
+				await confirmServiceWorkerStartup(runtime, expectedId);
+				backgroundServiceWorker = "passed";
+			}
+			return {
+				registered: "passed",
+				ready: loaded.ready,
+				backgroundServiceWorker,
+				remainedLoaded: "passed",
+			};
+		} catch (cause) {
+			if (loadedId) {
 				try {
-					renameSync(backupDir, targetDir);
-					backupCreated = false;
-				} catch (restoreCause) {
-					throw new AggregateError(
-						[cause, restoreCause],
-						`Extension install failed and the previous extension remains recoverable at ${backupDir}.`,
-					);
+					await runtime.removeExtension(loadedId);
+				} catch {
+					// Best effort cleanup after an extension fails startup verification.
 				}
 			}
 			throw cause;
-		} finally {
-			if (existsSync(stagingDir)) rmSync(stagingDir, { recursive: true, force: true });
 		}
+	}
+
+	private async loadLocalExtension(
+		runtime: ExtensionRuntime,
+		extensionPath: string,
+	): Promise<void> {
+		await runtime.loadExtension(extensionPath, { allowFileAccess: true });
+	}
+
+	async loadAll(runtime: ExtensionRuntime): Promise<void> {
+		return this.serialize(async () => {
+			let registryChanged = false;
+			for (const extension of this.extensions.values()) {
+				if (!extension.enabled || !existsSync(extension.path)) continue;
+				try {
+					const manifest = readExtensionManifest(extension.path, extension.id);
+					if (extension.source === "chrome_web_store") {
+						const currentCompatibility =
+							extension.compatibility ?? legacyCompatibility();
+						const checks = await this.loadVerifiedStoreExtension(
+							runtime,
+							extension.path,
+							extension.id,
+							manifest.requiresServiceWorker,
+						);
+						extension.compatibility = compatibilityWithRuntime(
+							currentCompatibility,
+							{
+								...unresolvedRuntimeChecks(currentCompatibility),
+								...checks,
+								persistedAcrossRestart: this.loadedFromRegistry.has(extension.id)
+									? "passed"
+									: currentCompatibility.runtime.persistedAcrossRestart ??
+										"not_checked",
+							},
+						);
+						registryChanged = true;
+					} else {
+						await this.loadLocalExtension(runtime, extension.path);
+					}
+				} catch (error) {
+					extension.enabled = false;
+					if (extension.source === "chrome_web_store")
+						extension.compatibility = compatibilityWithRuntime(
+							extension.compatibility ?? legacyCompatibility(),
+							{
+								registered: "failed",
+								remainedLoaded: "failed",
+							},
+						);
+					registryChanged = true;
+					console.warn(`[Extension] Failed to load extension ${extension.name}:`, error);
+				}
+			}
+			if (registryChanged) this.saveRegistry();
+		});
+	}
+
+	list(): InstalledExtension[] {
+		return [...this.extensions.values()].map(publicExtension);
+	}
+
+	async installInspectedChromeWebStore(
+		inspectionId: string,
+		runtime: ExtensionRuntime,
+	): Promise<InstalledExtension> {
+		return this.serialize(async () => {
+			this.cleanupExpiredInspections();
+			const pending = this.pendingInspections.get(inspectionId);
+			if (!pending || pending.expiresAt <= Date.now())
+				throw new Error("This extension review has expired. Review the package again before installing it.");
+			this.pendingInspections.delete(inspectionId);
+			if (pending.inspection.compatibility.state === "unsupported") {
+				if (pending.stagingDir && existsSync(pending.stagingDir))
+					rmSync(pending.stagingDir, { recursive: true, force: true });
+				throw new Error(
+					"Kestrel will not install this extension because its reviewed package requires a Chrome API Electron documents as unsupported.",
+				);
+			}
+			const existing = this.extensions.get(pending.id);
+			if (existing) return publicExtension(existing);
+			if (!pending.stagingDir || !existsSync(pending.stagingDir))
+				throw new Error("The reviewed extension package is no longer available. Review it again before installing.");
+			const targetDir = join(this.extensionsDir, pending.id);
+			const backupDir = join(this.extensionsDir, `.${pending.id}-${randomUUID()}.backup`);
+			let backupCreated = false;
+			let targetInstalled = false;
+			try {
+				const manifest = readExtensionManifest(pending.stagingDir, pending.id);
+				if (existsSync(targetDir)) {
+					renameSync(targetDir, backupDir);
+					backupCreated = true;
+				}
+				// Only the exact signed package the person reviewed becomes durable.
+				renameSync(pending.stagingDir, targetDir);
+				targetInstalled = true;
+				const checks = await this.loadVerifiedStoreExtension(
+					runtime,
+					targetDir,
+					pending.id,
+					manifest.requiresServiceWorker,
+				);
+				const record: StoredExtension = {
+					id: pending.id,
+					name: manifest.name,
+					version: manifest.version,
+					...(manifest.description ? { description: manifest.description } : {}),
+					...(manifest.homepageUrl ? { homepageUrl: manifest.homepageUrl } : {}),
+					enabled: true,
+					source: "chrome_web_store",
+					path: targetDir,
+					installedAt: new Date().toISOString(),
+					compatibility: compatibilityWithRuntime(pending.inspection.compatibility, {
+						...unresolvedRuntimeChecks(pending.inspection.compatibility),
+						...checks,
+						persistedAcrossRestart: "not_checked",
+					}),
+				};
+				this.skippedExtensions = this.skippedExtensions.filter(
+					(extension) => extension.id !== pending.id,
+				);
+				this.extensions.set(pending.id, record);
+				this.saveRegistry();
+				if (backupCreated) {
+					try {
+						rmSync(backupDir, { recursive: true, force: true });
+					} catch {
+						// The verified install is already durable. A recoverable backup is
+						// safer than rolling back because only cleanup failed.
+					}
+					backupCreated = false;
+				}
+				return publicExtension(record);
+			} catch (cause) {
+				try {
+					await runtime.removeExtension(pending.id);
+				} catch {
+					// Best effort cleanup after persistence fails.
+				}
+				if (targetInstalled && existsSync(targetDir))
+					rmSync(targetDir, { recursive: true, force: true });
+				if (backupCreated && existsSync(backupDir)) {
+					try {
+						renameSync(backupDir, targetDir);
+						backupCreated = false;
+					} catch (restoreCause) {
+						throw new AggregateError(
+							[cause, restoreCause],
+							`Extension install failed and the previous extension remains recoverable at ${backupDir}.`,
+						);
+					}
+				}
+				throw cause;
+			} finally {
+				if (existsSync(pending.stagingDir))
+					rmSync(pending.stagingDir, { recursive: true, force: true });
+			}
+		});
 	}
 
 	async installFromUnpacked(
 		folderPath: string,
-		session?: Session,
+		runtime?: ExtensionRuntime,
 	): Promise<InstalledExtension> {
-		this.assertLocalExtensionsAllowed();
-		const resolvedPath = resolve(folderPath);
-		if (!existsSync(resolvedPath)) {
-			throw new Error("Extension directory does not exist.");
-		}
-		const manifest = readExtensionManifest(resolvedPath);
-		const id = `ext-${randomUUID().slice(0, 8)}`;
-		const record: InstalledExtension = {
-			id,
-			name: manifest.name,
-			version: manifest.version,
-			description: manifest.description,
-			homepageUrl: manifest.homepageUrl,
-			enabled: true,
-			source: "unpacked",
-			path: resolvedPath,
-			installedAt: new Date().toISOString(),
-		};
-		if (session)
-			await session.extensions.loadExtension(resolvedPath, {
-				allowFileAccess: true,
-			});
-		this.extensions.set(id, record);
-		this.saveRegistry();
-		return record;
+		return this.serialize(async () => {
+			this.assertLocalExtensionsAllowed();
+			const resolvedPath = resolve(folderPath);
+			if (!existsSync(resolvedPath))
+				throw new Error("Extension directory does not exist.");
+			const manifest = readExtensionManifest(resolvedPath);
+			const id = `ext-${randomUUID().slice(0, 8)}`;
+			const record: StoredExtension = {
+				id,
+				name: manifest.name,
+				version: manifest.version,
+				...(manifest.description ? { description: manifest.description } : {}),
+				...(manifest.homepageUrl ? { homepageUrl: manifest.homepageUrl } : {}),
+				enabled: true,
+				source: "unpacked",
+				path: resolvedPath,
+				installedAt: new Date().toISOString(),
+				compatibility: analyzeExtensionCompatibility(resolvedPath),
+			};
+			if (runtime) await this.loadLocalExtension(runtime, resolvedPath);
+			this.extensions.set(id, record);
+			this.saveRegistry();
+			return publicExtension(record);
+		});
 	}
 
 	async installFromCrxOrZipFile(
 		filePath: string,
-		session?: Session,
+		runtime?: ExtensionRuntime,
 	): Promise<InstalledExtension> {
-		this.assertLocalExtensionsAllowed();
-		const resolvedPath = resolve(filePath);
-		if (!existsSync(resolvedPath)) throw new Error("Extension archive file does not exist.");
-		const buffer = readFileSync(resolvedPath);
-		const id = `ext-${randomUUID().slice(0, 8)}`;
-		const targetDir = join(this.extensionsDir, id);
-		mkdirSync(targetDir, { recursive: true });
-		try {
-			extractCrxOrZip(buffer, targetDir);
-			const manifest = readExtensionManifest(targetDir);
-			const record: InstalledExtension = {
-				id,
-				name: manifest.name,
-				version: manifest.version,
-				description: manifest.description,
-				homepageUrl: manifest.homepageUrl,
-				enabled: true,
-				source: "file",
-				path: targetDir,
-				installedAt: new Date().toISOString(),
-			};
-			if (session)
-				await session.extensions.loadExtension(targetDir, {
-					allowFileAccess: true,
-				});
-			this.extensions.set(id, record);
-			this.saveRegistry();
-			return record;
-		} catch (cause) {
-			rmSync(targetDir, { recursive: true, force: true });
-			throw cause;
-		}
+		return this.serialize(async () => {
+			this.assertLocalExtensionsAllowed();
+			const resolvedPath = resolve(filePath);
+			if (!existsSync(resolvedPath))
+				throw new Error("Extension archive file does not exist.");
+			const buffer = readFileSync(resolvedPath);
+			const id = `ext-${randomUUID().slice(0, 8)}`;
+			const targetDir = join(this.extensionsDir, id);
+			mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+			try {
+				extractCrxOrZip(buffer, targetDir);
+				const manifest = readExtensionManifest(targetDir);
+				const record: StoredExtension = {
+					id,
+					name: manifest.name,
+					version: manifest.version,
+					...(manifest.description ? { description: manifest.description } : {}),
+					...(manifest.homepageUrl ? { homepageUrl: manifest.homepageUrl } : {}),
+					enabled: true,
+					source: "file",
+					path: targetDir,
+					installedAt: new Date().toISOString(),
+					compatibility: analyzeExtensionCompatibility(targetDir),
+				};
+				if (runtime) await this.loadLocalExtension(runtime, targetDir);
+				this.extensions.set(id, record);
+				this.saveRegistry();
+				return publicExtension(record);
+			} catch (cause) {
+				rmSync(targetDir, { recursive: true, force: true });
+				throw cause;
+			}
+		});
 	}
 
-	async toggle(id: string, enabled: boolean, session?: Session): Promise<InstalledExtension> {
-		const extension = this.extensions.get(id);
-		if (!extension) throw new Error("Extension not found.");
-		if (extension.enabled === enabled) return extension;
-		if (session) {
-			if (enabled) {
+	async toggle(
+		id: string,
+		enabled: boolean,
+		runtime?: ExtensionRuntime,
+	): Promise<InstalledExtension> {
+		return this.serialize(async () => {
+			const extension = this.extensions.get(id);
+			if (!extension) throw new Error("Extension not found.");
+			if (extension.enabled === enabled) return publicExtension(extension);
+			if (runtime) {
+				if (enabled) {
+					const manifest = readExtensionManifest(extension.path, extension.id);
+					if (extension.source === "chrome_web_store") {
+						const currentCompatibility =
+							extension.compatibility ?? legacyCompatibility();
+						const checks = await this.loadVerifiedStoreExtension(
+							runtime,
+							extension.path,
+							extension.id,
+							manifest.requiresServiceWorker,
+						);
+						extension.compatibility = compatibilityWithRuntime(
+							currentCompatibility,
+							{
+								...unresolvedRuntimeChecks(currentCompatibility),
+								...checks,
+							},
+						);
+					} else await this.loadLocalExtension(runtime, extension.path);
+				} else {
+					await runtime.removeExtension(id);
+				}
+			}
+			extension.enabled = enabled;
+			this.saveRegistry();
+			return publicExtension(extension);
+		});
+	}
+
+	async reload(id: string, runtime: ExtensionRuntime): Promise<InstalledExtension> {
+		return this.serialize(async () => {
+			const extension = this.extensions.get(id);
+			if (!extension) throw new Error("Extension not found.");
+			if (!extension.enabled) throw new Error("Enable this extension before reloading it.");
+			try {
+				await runtime.removeExtension(id);
+			} catch {
+				// A reload should also recover if Electron had already unloaded it.
+			}
+			try {
 				const manifest = readExtensionManifest(extension.path, extension.id);
-				if (extension.source === "chrome_web_store")
-					await this.loadVerifiedStoreExtension(
-						session,
+				if (extension.source === "chrome_web_store") {
+					const currentCompatibility =
+						extension.compatibility ?? legacyCompatibility();
+					const checks = await this.loadVerifiedStoreExtension(
+						runtime,
 						extension.path,
 						extension.id,
 						manifest.requiresServiceWorker,
 					);
-				else
-					await session.extensions.loadExtension(extension.path, {
-						allowFileAccess: true,
-					});
-			} else session.extensions.removeExtension(id);
-		}
-		extension.enabled = enabled;
-		this.saveRegistry();
-		return extension;
+					extension.compatibility = compatibilityWithRuntime(
+						currentCompatibility,
+						{
+							...unresolvedRuntimeChecks(currentCompatibility),
+							...checks,
+						},
+					);
+				} else await this.loadLocalExtension(runtime, extension.path);
+				this.saveRegistry();
+				return publicExtension(extension);
+			} catch (cause) {
+				extension.enabled = false;
+				if (extension.source === "chrome_web_store")
+					extension.compatibility = compatibilityWithRuntime(
+						extension.compatibility ?? legacyCompatibility(),
+						{ registered: "failed" },
+					);
+				this.saveRegistry();
+				throw cause;
+			}
+		});
 	}
 
-	async uninstall(id: string, session?: Session): Promise<void> {
-		const extension = this.extensions.get(id);
-		if (!extension) return;
-		if (session) {
-			try {
-				session.extensions.removeExtension(id);
-			} catch {
-				// Ignore error if extension wasn't active.
+	async uninstall(id: string, runtime?: ExtensionRuntime): Promise<void> {
+		return this.serialize(async () => {
+			const extension = this.extensions.get(id);
+			if (!extension) return;
+			if (runtime) {
+				try {
+					await runtime.removeExtension(id);
+				} catch {
+					// Ignore an unload failure when removing Kestrel's own record.
+				}
 			}
-		}
-		this.extensions.delete(id);
-		this.saveRegistry();
-		if (resolve(extension.path).startsWith(`${resolve(this.extensionsDir)}${process.platform === "win32" ? "\\" : "/"}`)) {
-			try {
-				rmSync(extension.path, { recursive: true, force: true });
-			} catch {
-				// Ignore file removal errors.
+			this.extensions.delete(id);
+			this.saveRegistry();
+			if (isOwnedExtensionDirectory(extension.path, this.extensionsDir)) {
+				try {
+					rmSync(extension.path, { recursive: true, force: true });
+				} catch {
+					// Registry removal remains durable if the package cannot be cleaned up.
+				}
 			}
-		}
+		});
 	}
 }
