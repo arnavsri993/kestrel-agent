@@ -40,8 +40,15 @@ const electron = vi.hoisted(() => {
     zoomLevel = 0;
     zoomFactor = 1;
     getZoomLevel = vi.fn(() => this.zoomLevel);
-    setZoomLevel = vi.fn((level: number) => { this.zoomLevel = level; });
-    setZoomFactor = vi.fn((factor: number) => { this.zoomFactor = factor; });
+    getZoomFactor = vi.fn(() => this.zoomFactor);
+    setZoomLevel = vi.fn((level: number) => {
+      this.zoomLevel = level;
+      this.zoomFactor = Math.pow(1.2, level);
+    });
+    setZoomFactor = vi.fn((factor: number) => {
+      this.zoomFactor = factor;
+      this.zoomLevel = Math.log(factor) / Math.log(1.2);
+    });
     stop = vi.fn();
     focus = vi.fn();
     insertText = vi.fn();
@@ -2163,9 +2170,21 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       type: "keyDown",
       key: "Tab",
     });
+
+    // Electron reports physical keyboard codes independently from characters.
+    // Accept that form so Ctrl+= works on layouts that do not provide `=` here.
+    firstContents.emit("before-input-event", inputEvent, {
+      meta: false,
+      control: true,
+      shift: false,
+      type: "keyDown",
+      key: "Unidentified",
+      code: "Equal",
+    });
     await vi.waitFor(() =>
       expect(service.getState().activeTabId).toBe(second.id),
     );
+    expect(firstContents.zoomLevel).toBe(0.5);
 
     expect(commands).toEqual([
       "focus-address",
@@ -2176,7 +2195,7 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       "open-settings",
       "show-shortcuts",
     ]);
-    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(9);
+    expect(inputEvent.preventDefault).toHaveBeenCalledTimes(10);
   });
 
   it("supports reopening closed tabs and direct tab index switching", async () => {
@@ -2233,8 +2252,8 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     expect(service.getState().recentlyClosedTabs).toEqual([]);
   });
 
-  it("supports zoom in, zoom out, and zoom reset", async () => {
-    const { service } = createService();
+  it("supports zoom in, zoom out, and zoom reset with visible percent feedback", async () => {
+    const { service, events } = createService();
     const first = service.getState().tabs[0]!;
     await service.navigate(first.id, "https://first.example");
 
@@ -2252,6 +2271,22 @@ it("serializes closeTab behind an in-flight agent act", async () => {
 
     service.zoomReset(first.id);
     expect(contents.zoomLevel).toBe(0);
+    expect(
+      events.filter(
+        (
+          event,
+        ): event is { type: "zoom"; zoom: { tabId: string; percent: number } } =>
+          typeof event === "object" &&
+          event !== null &&
+          "type" in event &&
+          event.type === "zoom",
+      ),
+    ).toEqual([
+      { type: "zoom", zoom: { tabId: first.id, percent: 110 } },
+      { type: "zoom", zoom: { tabId: first.id, percent: 120 } },
+      { type: "zoom", zoom: { tabId: first.id, percent: 110 } },
+      { type: "zoom", zoom: { tabId: first.id, percent: 100 } },
+    ]);
   });
 
 	it("bookmarks, pins, and finds in the active page", async () => {

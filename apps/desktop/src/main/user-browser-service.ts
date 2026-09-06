@@ -288,6 +288,17 @@ function liveWebContents(
 	}
 }
 
+function zoomPercent(webContents: WebContents, fallbackLevel: number): number {
+	let factor = Math.pow(1.2, fallbackLevel);
+	try {
+		if (typeof webContents.getZoomFactor === "function")
+			factor = webContents.getZoomFactor();
+	} catch {
+		// The level we just applied remains accurate if Electron is closing the view.
+	}
+	return Math.min(500, Math.max(25, Math.round(factor * 100)));
+}
+
 type BrowserNavigationLoadOptions = Pick<
 	LoadURLOptions,
 	"extraHeaders" | "httpReferrer" | "postData"
@@ -1508,7 +1519,12 @@ export class UserBrowserService {
 					? webContents.getZoomLevel()
 					: 0;
 			if (typeof webContents.setZoomLevel === "function") {
-				webContents.setZoomLevel(Math.min(current + 0.5, 3.0));
+				const next = Math.min(current + 0.5, 3.0);
+				webContents.setZoomLevel(next);
+				this.onEvent({
+					type: "zoom",
+					zoom: { tabId: targetId, percent: zoomPercent(webContents, next) },
+				});
 			}
 		}
 		return this.getState();
@@ -1525,7 +1541,12 @@ export class UserBrowserService {
 					? webContents.getZoomLevel()
 					: 0;
 			if (typeof webContents.setZoomLevel === "function") {
-				webContents.setZoomLevel(Math.max(current - 0.5, -3.0));
+				const next = Math.max(current - 0.5, -3.0);
+				webContents.setZoomLevel(next);
+				this.onEvent({
+					type: "zoom",
+					zoom: { tabId: targetId, percent: zoomPercent(webContents, next) },
+				});
 			}
 		}
 		return this.getState();
@@ -1539,6 +1560,10 @@ export class UserBrowserService {
 		if (webContents) {
 			if (typeof webContents.setZoomLevel === "function") {
 				webContents.setZoomLevel(0);
+				this.onEvent({
+					type: "zoom",
+					zoom: { tabId: targetId, percent: zoomPercent(webContents, 0) },
+				});
 			}
 		}
 		return this.getState();
@@ -4462,6 +4487,7 @@ export class UserBrowserService {
 			const command = input.meta || input.control;
 			if (!command) return;
 			const key = input.key.toLowerCase();
+			const code = input.code?.toLowerCase() ?? "";
 
 			// Tab switching: Cmd/Ctrl + 1..8, Cmd/Ctrl + 9
 			if (/^[1-8]$/.test(input.key)) {
@@ -4499,17 +4525,26 @@ export class UserBrowserService {
 			}
 
 			// Zoom controls: Cmd/Ctrl + (+, =, -, _, 0)
-			if (["=", "+", "add", "numpadadd"].includes(key)) {
+			if (
+				["=", "+", "add", "numpadadd"].includes(key) ||
+				["equal", "numpadadd"].includes(code)
+			) {
 				event.preventDefault();
 				this.zoomIn(tab.id);
 				return;
 			}
-			if (["-", "_", "subtract", "numpadsubtract"].includes(key)) {
+			if (
+				["-", "_", "subtract", "numpadsubtract"].includes(key) ||
+				["minus", "numpadsubtract"].includes(code)
+			) {
 				event.preventDefault();
 				this.zoomOut(tab.id);
 				return;
 			}
-			if (["0", "numpad0"].includes(key)) {
+			if (
+				["0", "numpad0"].includes(key) ||
+				["digit0", "numpad0"].includes(code)
+			) {
 				event.preventDefault();
 				this.zoomReset(tab.id);
 				return;

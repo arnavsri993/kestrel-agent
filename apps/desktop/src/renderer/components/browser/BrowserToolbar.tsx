@@ -250,6 +250,7 @@ export function BrowserToolbar({
   onZoomIn,
   onZoomOut,
   onZoomReset,
+  zoomPercent,
   onNavigate,
   onSelectTab,
   onBack,
@@ -301,6 +302,7 @@ export function BrowserToolbar({
   onZoomIn(): void;
   onZoomOut(): void;
   onZoomReset(): void;
+  zoomPercent?: number;
   onNavigate(input: string): void;
   onSelectTab(tabId: string): void;
   onBack(): void;
@@ -1067,6 +1069,38 @@ export function BrowserToolbar({
         </AnimatePresence>
       </div>
       <div className="browser-toolbar-actions" role="group" aria-label="Page actions">
+        <AnimatePresence initial={false}>
+          {zoomPercent !== undefined && (
+            <motion.div
+              key={`browser-zoom-feedback-${zoomPercent}`}
+              className="browser-zoom-feedback"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              aria-label={`Page zoom ${zoomPercent} percent`}
+              initial={reducedMotion ? false : { opacity: 0, y: -3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={
+                reducedMotion
+                  ? { opacity: 1, y: 0, pointerEvents: "none" }
+                  : { opacity: 0, y: -3, pointerEvents: "none" }
+              }
+              transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+            >
+              <span aria-hidden="true">{zoomPercent}%</span>
+              {zoomPercent !== 100 && (
+                <button
+                  type="button"
+                  aria-label="Reset page zoom to 100 percent"
+                  title="Reset zoom to 100%"
+                  onClick={onZoomReset}
+                >
+                  Reset
+                </button>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
         <div className="browser-extension-cluster browser-toolbar-secondary">
           <button
             type="button"

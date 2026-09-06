@@ -182,6 +182,11 @@ export function BrowserWorkspace({
   }, [openOrganizeTabs, organizeTabsRequestId]);
 
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
+  const zoomFeedback = browser.zoomFeedback;
+  const activeZoomPercent =
+    zoomFeedback && zoomFeedback.tabId === activeTab?.id
+      ? zoomFeedback.percent
+      : undefined;
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
   const activeFilePage = activeTab ? parseKestrelFilePage(activeTab.url) : undefined;
   const openBookmarkDialog = useCallback(() => {
@@ -800,6 +805,9 @@ export function BrowserWorkspace({
         onZoomIn={() => void zoomIn(activeTab.id)}
         onZoomOut={() => void zoomOut(activeTab.id)}
         onZoomReset={() => void zoomReset(activeTab.id)}
+        {...(activeZoomPercent !== undefined
+          ? { zoomPercent: activeZoomPercent }
+          : {})}
         bookmarked={state.bookmarks.some((item) => item.url === activeTab.url)}
         onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}

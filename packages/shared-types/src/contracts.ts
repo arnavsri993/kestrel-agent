@@ -3887,10 +3887,20 @@ export const BrowserActivityEventSchema = z.strictObject({
 });
 export type BrowserActivityEvent = z.infer<typeof BrowserActivityEventSchema>;
 
+export const UserBrowserZoomSchema = z.object({
+	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	percent: z.number().int().min(25).max(500),
+});
+export type UserBrowserZoom = z.infer<typeof UserBrowserZoomSchema>;
+
 export const UserBrowserEventSchema = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("state"),
 		state: UserBrowserStateSchema,
+	}),
+	z.object({
+		type: z.literal("zoom"),
+		zoom: UserBrowserZoomSchema,
 	}),
 	z.object({
 		type: z.literal("find-in-page"),

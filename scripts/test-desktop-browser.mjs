@@ -1286,6 +1286,31 @@ try {
 		(value) => value.views[0]?.url === `${origin}/one`,
 		"Native page did not return after closing browser menu",
 	);
+	await sendInputToActiveView(
+		{ type: "keyDown", keyCode: "=", modifiers: ["control"] },
+		"The browser zoom-in shortcut could not reach the active page",
+	);
+	await page.locator(".browser-zoom-feedback").filter({ hasText: "110%" }).waitFor();
+	assert.equal(
+		await application.evaluate(({ BrowserWindow }) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+			);
+			const view = window?.contentView.children.find(
+				(child) => "webContents" in child,
+			);
+			if (!view || !("webContents" in view))
+				throw new Error("No active user browser view is attached.");
+			return Math.round(view.webContents.getZoomFactor() * 100);
+		}),
+		110,
+		"The visible zoom feedback did not match the native page scale",
+	);
+	await sendInputToActiveView(
+		{ type: "keyDown", keyCode: "-", modifiers: ["control"] },
+		"The browser zoom-out shortcut could not reach the active page",
+	);
+	await page.locator(".browser-zoom-feedback").filter({ hasText: "100%" }).waitFor();
 	const extensionsSourceTabId = (await browserState()).activeTabId;
 	assert(extensionsSourceTabId);
 	await page.getByRole("button", { name: "Extensions", exact: true }).click();
