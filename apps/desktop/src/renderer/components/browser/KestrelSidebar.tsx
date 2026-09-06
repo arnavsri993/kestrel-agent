@@ -156,10 +156,10 @@ function SidebarContextMenu({
 
 	useEffect(() => {
 		menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-	}, []);
+	}, [menu.id, menu.kind, menuRef]);
 
 	function action(run: () => void) {
-			onClose({ restoreFocus: true });
+		onClose({ restoreFocus: true });
 		run();
 	}
 
@@ -812,7 +812,6 @@ export function KestrelSidebar({
 			<AnimatePresence initial={false}>
 				{contextMenu && (contextProject || contextChat) ? (
 					<SidebarContextMenu
-						key={`${contextMenu.kind}-${contextMenu.id}`}
 						menu={contextMenu}
 						{...(contextProject ? { project: contextProject } : {})}
 						{...(contextChat ? { chat: contextChat } : {})}

@@ -1,5 +1,6 @@
 import {
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useState,
 	type CSSProperties,
@@ -50,10 +51,10 @@ export function ProjectSettingsDialog({
 	busyRef.current = busy;
 	onCloseRef.current = onClose;
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (!returnFocusRef.current && document.activeElement instanceof HTMLElement)
 			returnFocusRef.current = document.activeElement;
-		const frame = window.requestAnimationFrame(() => nameRef.current?.focus());
+		nameRef.current?.focus();
 		function onKeyDown(event: KeyboardEvent) {
 			if (event.key === "Escape") {
 				if (event.defaultPrevented || busyRef.current) return;
@@ -78,7 +79,6 @@ export function ProjectSettingsDialog({
 		}
 		document.addEventListener("keydown", onKeyDown);
 		return () => {
-			window.cancelAnimationFrame(frame);
 			document.removeEventListener("keydown", onKeyDown);
 			if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
 		};
