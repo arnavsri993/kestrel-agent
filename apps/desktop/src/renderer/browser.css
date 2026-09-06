@@ -1846,6 +1846,38 @@ body:has(.ai-browser-app),
 	justify-self: end;
 	gap: 3px;
 }
+.browser-zoom-feedback {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 38px;
+	height: 28px;
+	padding: 0 5px 0 8px;
+	border: 1px solid color-mix(in srgb, var(--solid) 34%, var(--line));
+	border-radius: 7px;
+	background: color-mix(in srgb, var(--solid) 10%, var(--surface));
+	color: var(--ink);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	font-weight: 620;
+	line-height: 1;
+	white-space: nowrap;
+	-webkit-app-region: no-drag;
+}
+.browser-toolbar-actions .browser-zoom-feedback button {
+	width: auto;
+	height: 20px;
+	padding: 0 4px;
+	border-radius: 4px;
+	color: var(--ink-secondary);
+	font-size: 10px;
+	font-weight: 600;
+}
+.browser-toolbar-actions .browser-zoom-feedback button:hover,
+.browser-toolbar-actions .browser-zoom-feedback button:focus-visible {
+	background: color-mix(in srgb, var(--solid) 14%, transparent);
+	color: var(--ink);
+}
 
 /* Vertical tabs move the tab strip out of the titlebar. Keep the remaining
  * browser chrome a real titlebar instead: controls and the address field stay
@@ -7396,6 +7428,10 @@ body:has(.calculator-overlay),
 
 	.browser-toolbar-actions .browser-extension-cluster,
 	.browser-toolbar-actions > .browser-toolbar-secondary {
+		display: none;
+	}
+
+	.browser-toolbar-actions .browser-zoom-feedback button {
 		display: none;
 	}
 

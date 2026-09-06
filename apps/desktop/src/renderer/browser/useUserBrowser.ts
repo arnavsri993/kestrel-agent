@@ -11,6 +11,7 @@ import type {
 	UserBrowserState,
 	UserBrowserTabOrganizationApply,
 	UserBrowserTabOrganizationPreview,
+	UserBrowserZoom,
 } from "@kestrel/shared-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { userFacingError } from "../error-copy";
@@ -27,6 +28,7 @@ export interface UserBrowserController {
 	isDetachedWindow: boolean;
 	refresh(): Promise<void>;
 	findMatch: UserBrowserFindMatch | null;
+	zoomFeedback: UserBrowserZoom | null;
 	openFileTabs(paths: string[], active?: boolean): Promise<SelectedAttachment[]>;
 	filePreview(tabId: string): Promise<FilePreview | undefined>;
 	openFileDefault(tabId: string): Promise<void>;
@@ -123,7 +125,9 @@ export function useUserBrowser(): UserBrowserController {
 	const [error, setError] = useState("");
 	const [isDetachedWindow, setIsDetachedWindow] = useState(false);
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
+	const [zoomFeedback, setZoomFeedback] = useState<UserBrowserZoom | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
+	const zoomFeedbackTimeoutRef = useRef<number | undefined>(undefined);
 	const tabCloseRequestRef = useRef<Promise<void>>(Promise.resolve());
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
 	const contentBoundsRequestRef = useRef<Promise<string | undefined>>(
@@ -224,6 +228,14 @@ export function useUserBrowser(): UserBrowserController {
 			if (event.type === "state") {
 				applyState(event.state);
 				setError("");
+			} else if (event.type === "zoom") {
+				setZoomFeedback(event.zoom);
+				if (zoomFeedbackTimeoutRef.current !== undefined)
+					window.clearTimeout(zoomFeedbackTimeoutRef.current);
+				zoomFeedbackTimeoutRef.current = window.setTimeout(() => {
+					setZoomFeedback(null);
+					zoomFeedbackTimeoutRef.current = undefined;
+				}, 2_600);
 			} else if (event.type === "find-in-page") {
 				setFindMatch(event.match);
 			}
@@ -231,6 +243,8 @@ export function useUserBrowser(): UserBrowserController {
 		void refresh().catch(() => undefined);
 		return () => {
 			unsubscribe();
+			if (zoomFeedbackTimeoutRef.current !== undefined)
+				window.clearTimeout(zoomFeedbackTimeoutRef.current);
 		};
 	}, [applyState, refresh]);
 
@@ -682,6 +696,7 @@ export function useUserBrowser(): UserBrowserController {
 			isDetachedWindow,
 			refresh,
 			findMatch,
+			zoomFeedback,
 			openFileTabs,
 			filePreview,
 			openFileDefault,
@@ -745,6 +760,7 @@ export function useUserBrowser(): UserBrowserController {
 			isDetachedWindow,
 			refresh,
 			findMatch,
+			zoomFeedback,
 			openFileTabs,
 			filePreview,
 			openFileDefault,
