@@ -525,6 +525,36 @@ async function assertBrowserChromeLayout({
 }
 
 async function assertKestrelSidebarResize() {
+	const originalWindowSize = await application.evaluate(({ BrowserWindow }) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) =>
+				!candidate.isDestroyed() &&
+				!candidate.webContents.getURL().includes("petOverlay=1"),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		return window.getSize();
+	});
+	const widenForResizeTest = originalWindowSize[0] <= 1120;
+	if (widenForResizeTest) {
+		const resizeTestWidth = 1280;
+		await application.evaluate(
+			({ BrowserWindow }, width) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, window.getSize()[1]);
+			},
+			resizeTestWidth,
+		);
+		await page.waitForFunction(
+			(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
+			resizeTestWidth,
+		);
+	}
+
 	const handle = page.locator(".kestrel-sidebar-resize-handle");
 	await handle.waitFor();
 	const initial = await page.locator(".kestrel-sidebar").evaluate((sidebar) => {
@@ -599,6 +629,25 @@ async function assertKestrelSidebarResize() {
 	});
 	await page.reload();
 	await page.locator("#new-tab-title").waitFor();
+
+	if (widenForResizeTest) {
+		await application.evaluate(
+			({ BrowserWindow }, [width, height]) => {
+				const window = BrowserWindow.getAllWindows().find(
+					(candidate) =>
+						!candidate.isDestroyed() &&
+						!candidate.webContents.getURL().includes("petOverlay=1"),
+				);
+				if (!window) throw new Error("The Kestrel window is unavailable.");
+				window.setSize(width, height);
+			},
+			originalWindowSize,
+		);
+		await page.waitForFunction(
+			(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
+			originalWindowSize[0],
+		);
+	}
 }
 
 async function activeViewScript(source) {
