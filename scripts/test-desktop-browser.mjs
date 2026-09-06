@@ -525,6 +525,12 @@ async function assertBrowserChromeLayout({
 }
 
 async function assertKestrelSidebarResize() {
+	await page.evaluate(() => {
+		localStorage.setItem("kestrel:navigation-sidebar", "open");
+	});
+	await page.reload();
+	await page.locator("#new-tab-title").waitFor();
+
 	const originalWindowSize = await application.evaluate(({ BrowserWindow }) => {
 		const window = BrowserWindow.getAllWindows().find(
 			(candidate) =>
@@ -534,9 +540,18 @@ async function assertKestrelSidebarResize() {
 		if (!window) throw new Error("The Kestrel window is unavailable.");
 		return window.getSize();
 	});
-	const widenForResizeTest = originalWindowSize[0] <= 1120;
+	const handle = page.locator(".kestrel-sidebar-resize-handle");
+	const widenForResizeTest = !(await handle.isVisible().catch(() => false));
 	if (widenForResizeTest) {
-		const resizeTestWidth = 1280;
+		const viewportWidthBeforeResize = await page.evaluate(() => innerWidth);
+		const resizeTestMinimumViewportWidth = 1200;
+		const resizeTestWidth = Math.max(
+			originalWindowSize[0],
+			Math.ceil(
+				(originalWindowSize[0] * resizeTestMinimumViewportWidth) /
+					Math.max(viewportWidthBeforeResize, 1),
+			) + 64,
+		);
 		await application.evaluate(
 			({ BrowserWindow }, width) => {
 				const window = BrowserWindow.getAllWindows().find(
@@ -550,13 +565,12 @@ async function assertKestrelSidebarResize() {
 			resizeTestWidth,
 		);
 		await page.waitForFunction(
-			(expectedWidth) => Math.abs(innerWidth - expectedWidth) <= 2,
-			resizeTestWidth,
+			(minimumWidth) => innerWidth >= minimumWidth,
+			resizeTestMinimumViewportWidth,
 		);
 	}
 
-	const handle = page.locator(".kestrel-sidebar-resize-handle");
-	await handle.waitFor();
+	await handle.waitFor({ state: "visible" });
 	const initial = await page.locator(".kestrel-sidebar").evaluate((sidebar) => {
 		const resizeHandle = sidebar.querySelector(".kestrel-sidebar-resize-handle");
 		if (!resizeHandle) throw new Error("The Kestrel navigation resize handle is unavailable.");
