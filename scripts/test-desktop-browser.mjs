@@ -2409,7 +2409,7 @@ try {
 		0,
 		"Completed downloads should not keep a status label",
 	);
-	await downloadsMenu
+	await expectedDownload
 		.getByRole("menuitem", { name: "Show in Finder", exact: true })
 		.waitFor();
 	const dragDownload = downloadsMenu.getByRole("menuitem", {
