@@ -202,7 +202,7 @@ function FrequentTabsWidget({
 				icon="history"
 				action={{ label: "Open history", onClick: onOpenHistory }}
 			>
-				Your frequent tabs will appear here.
+				Frequent tabs appear here.
 			</EmptyWidgetState>
 		);
 	}
@@ -250,7 +250,7 @@ function BookmarksWidget({
 				icon="star"
 				action={{ label: "Manage bookmarks", onClick: onOpenBookmarks }}
 			>
-			Save a page to start a bookmark shelf.
+				Save a page to get started.
 			</EmptyWidgetState>
 		);
 	}
@@ -310,7 +310,7 @@ function DownloadsWidget({
 				icon="downloads"
 				action={{ label: "Open downloads", onClick: onOpenDownloads }}
 			>
-				Downloads will appear here when you save a file.
+				Downloads appear here.
 			</EmptyWidgetState>
 		);
 	}
@@ -353,7 +353,7 @@ function RecentWorkWidget({
 				icon="agent"
 				action={{ label: "Start a task", onClick: () => onNewAgent() }}
 			>
-				Your recent Kestrel conversations will appear here.
+				Recent chats appear here.
 			</EmptyWidgetState>
 		);
 	}
@@ -419,8 +419,8 @@ function RecentMemoriesWidget({
 				{...(emptyAction ? { action: emptyAction } : {})}
 			>
 				{memoryRecall.explicitCapture
-					? "Say remember that … in chat to store a preference on this Mac."
-					: "Explicit memory capture is off in Settings → Memory."}
+					? "Say remember that … in chat."
+					: "Memory capture is off. Turn it on in Settings → Memory."}
 			</EmptyWidgetState>
 		);
 	}
@@ -469,7 +469,7 @@ function QuickActionsWidget({
 				icon="arrow"
 				action={{ label: `Ask ${agentName}`, onClick: () => onNewAgent() }}
 			>
-				Start a task above or browse a little to unlock tailored suggestions.
+				Start a task or browse to see suggestions.
 			</EmptyWidgetState>
 		);
 	}
@@ -510,8 +510,8 @@ function OpenTabsWidget({
 		return (
 			<EmptyWidgetState icon={pinnedOnly ? "pin" : "browser"}>
 				{pinnedOnly
-					? "Pin a tab to keep it ready here."
-					: "Tabs you open will be ready to pick up here."}
+					? "Pin a tab to keep it here."
+					: "Open tabs appear here."}
 			</EmptyWidgetState>
 		);
 	}
@@ -562,7 +562,7 @@ function RecentPagesWidget({
 	if (items.length === 0) {
 		return (
 			<EmptyWidgetState icon="history">
-				Pages you visit will appear here for a quick return.
+				Recent pages appear here.
 			</EmptyWidgetState>
 		);
 	}
@@ -943,7 +943,7 @@ function AddWidgetMenu({
 						onKeyDown={moveWidgetPopoverFocus}
 					>
 						<strong>Widgets</strong>
-						<p>Choose what should live beneath your Kestrel input.</p>
+						<p>Choose widgets for New Tab.</p>
 						{available.length > 0 ? (
 							<ul>
 								{available.map((definition) => (
@@ -968,7 +968,7 @@ function AddWidgetMenu({
 								))}
 							</ul>
 						) : (
-							<span className="kestrel-widget-add-empty">All available widgets are already on your page.</span>
+							<span className="kestrel-widget-add-empty">All widgets are already added.</span>
 						)}
 					</motion.div>
 				)}
@@ -1228,8 +1228,8 @@ export function NewTabWidgets({
 						<Icon name="sparkle" />
 					</span>
 					<div>
-						<strong>Make New Tab yours.</strong>
-						<p>Add a widget when you want a little more here.</p>
+						<strong>Customize New Tab.</strong>
+						<p>Add a widget.</p>
 						{!editing && (
 							<button type="button" onClick={() => setEditing(true)}>
 								Customize New Tab

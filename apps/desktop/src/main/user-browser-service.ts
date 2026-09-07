@@ -1,8 +1,19 @@
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { execFile as execFileCallback } from "node:child_process";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join } from "node:path";
+import { promisify } from "node:util";
 import {
 	annotateAccessibilityTree,
+	redactSensitiveContent,
 	type BrowserAction,
 	type BrowserSnapshot,
 	normalizeBrowserElementRef,
@@ -43,6 +54,7 @@ import {
 	type UserBrowserTabOrganizationApply,
 	type UserBrowserTabOrganizationPreview,
 	type UserBrowserTabFolder,
+	type ChromeWebStoreExtensionInspection,
 	type InstalledExtension,
 	type FilePreview,
 	type SelectedAttachment,
@@ -84,6 +96,11 @@ import {
 	type SuspiciousDownloadAnalyzer,
 } from "./browser-threat-provider";
 import {
+	browserExtensionOperationErrorMessage,
+	chromeWebStoreInstallErrorMessage,
+} from "../browser-extension-error";
+import { ElectronExtensionRuntime } from "./electron-extension-runtime";
+import {
 	isUserBrowserBackendWireRequest,
 	type UserBrowserBackendWireRequest,
 } from "./browser-backend-wire";
@@ -113,7 +130,9 @@ import {
 	isKestrelAppPageUrl,
 	parseKestrelAppPage,
 } from "../utility/browser-app-pages";
+import { isLegacyBrowserDownloadDirectory } from "./user-browser-download-path";
 import type { PasswordVault } from "./password-vault";
+import { LoginFlowTracker } from "./login-flow-tracker";
 import type { SavePaymentCardInput } from "./payment-card-vault";
 import type { PaymentCardVault } from "./payment-card-vault";
 
@@ -133,9 +152,27 @@ const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
 const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
 const PASSWORD_SUBMISSION_CHANNEL = "kestrel:user-browser-password-submission";
+const PASSWORD_COMMAND_CHANNEL = "kestrel:user-browser-credential-command";
+const PASSWORD_RESPONSE_CHANNEL = "kestrel:user-browser-credential-response";
+const PASSWORD_FORM_CHANGED_CHANNEL = "kestrel:user-browser-password-form-changed";
+const PASSWORD_BRIDGE_TIMEOUT_MS = 2_500;
+const STRONG_PASSWORD_LENGTH = 20;
+const PASSWORD_UPPERCASE = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+const PASSWORD_LOWERCASE = "abcdefghijkmnopqrstuvwxyz";
+const PASSWORD_DIGITS = "23456789";
+const PASSWORD_SYMBOLS = "!@#$%^&*_-+=";
+const HEIC_UPLOAD_CHANNEL = "kestrel:user-browser-heic-upload";
+const HEIC_UPLOAD_FAILED_CHANNEL = "kestrel:user-browser-heic-upload-failed";
+const HEIC_UPLOAD_INPUT_ID_ATTRIBUTE = "data-kestrel-heic-upload-id";
+const MAX_HEIC_UPLOAD_FILES = 20;
+const MAX_HEIC_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_HEIC_UPLOAD_PIXELS = 75_000_000;
+const HEIC_UPLOAD_CONVERSION_TIMEOUT_MS = 30_000;
+const HEIC_UPLOAD_TEMPORARY_FILE_TTL_MS = 60 * 60 * 1_000;
+const executeFile = promisify(execFileCallback);
 const PasswordSubmissionMessageSchema = z.object({
 	username: z.string().max(500),
-	password: z.string().min(1).max(100_000),
+	password: z.string().min(1).max(4_096),
 	passwordFieldRect: z
 		.object({
 			x: z.number().int().min(0).max(20_000),
@@ -144,6 +181,28 @@ const PasswordSubmissionMessageSchema = z.object({
 			height: z.number().int().min(0).max(20_000),
 		})
 		.optional(),
+});
+const PasswordBridgeRequestIdSchema = z
+	.string()
+	.regex(/^password-request-[a-f0-9-]{36}$/);
+const PasswordBridgeResponseSchema = z.object({
+	requestId: PasswordBridgeRequestIdSchema,
+	ok: z.boolean(),
+	filled: z.number().int().min(0).max(32).optional(),
+	snapshot: z
+		.object({
+			fields: z.array(PasswordFormFieldSchema).max(32),
+			focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
+		})
+		.optional(),
+});
+type PasswordBridgeResponse = z.infer<typeof PasswordBridgeResponseSchema>;
+const HeicUploadMessageSchema = z.object({
+	inputId: z.string().regex(/^[a-z0-9-]{10,100}$/),
+	paths: z
+		.array(z.string().min(1).max(16_384))
+		.min(1)
+		.max(MAX_HEIC_UPLOAD_FILES),
 });
 const AUTHENTICATION_HOSTS = new Set([
 	"accounts.google.com",
@@ -224,6 +283,7 @@ export interface UserBrowserServiceOptions {
 	allowLocalExtensions?: boolean;
 	statePath: string;
 	downloadDirectory: string;
+	legacyDownloadDirectory?: string;
 	initialState?: UserBrowserState;
 	partitionName?: string;
 	now?: () => Date;
@@ -241,6 +301,7 @@ export interface UserBrowserServiceOptions {
 	threatProvider?: BrowserThreatProvider;
 	/** Reserved post-download metadata hook for a future Kestrel AI analyzer. */
 	suspiciousDownloadAnalyzer?: SuspiciousDownloadAnalyzer;
+	requestPasswordUserPresence?(reason: string): Promise<void>;
 }
 
 type BrowserMediaRequestType = "video" | "audio";
@@ -284,6 +345,23 @@ interface ViewRecord {
 		requestedAt: number;
 		generation: number;
 	};
+}
+
+/**
+ * The only credential-related result that can cross the agent browser wire.
+ * It intentionally contains neither a credential identifier nor account or
+ * secret material: the main-process vault resolves and fills those locally.
+ */
+interface AgentCredentialAutofillResult {
+	credentialAvailable: boolean;
+	autofillResult:
+		| "filled"
+		| "disabled"
+		| "not_active"
+		| "not_a_login_form"
+		| "selection_required"
+		| "unavailable";
+	trust: "untrusted_browser";
 }
 
 interface PendingContextDownload {
@@ -350,6 +428,68 @@ function loadOptionsForWindowOpen(
 	};
 }
 
+function isHeicUploadPath(value: string): boolean {
+	return [".heic", ".heif"].includes(extname(value).toLowerCase());
+}
+
+function temporaryJpegFilename(source: string): string {
+	const name = basename(source, extname(source))
+		.trim()
+		.replace(/[^A-Za-z0-9._-]+/g, "-")
+		.replace(/^\.+/, "")
+		.slice(0, 120);
+	return `${name || "image"}.jpeg`;
+}
+
+async function convertHeicImageToJpeg(
+	source: string,
+	destination: string,
+): Promise<void> {
+	const metadata = await sharp(source, { failOn: "none" })
+		.metadata()
+		.catch(() => undefined);
+	if (
+		metadata?.width &&
+		metadata.height &&
+		metadata.width * metadata.height > MAX_HEIC_UPLOAD_PIXELS
+	)
+		throw new Error("This HEIC image is too large to convert safely.");
+	let sharpError: unknown;
+	try {
+		await sharp(source, {
+			failOn: "none",
+			limitInputPixels: MAX_HEIC_UPLOAD_PIXELS,
+		})
+			.rotate()
+			.jpeg({ quality: 92, progressive: true })
+			.toFile(destination);
+	} catch (cause) {
+		sharpError = cause;
+		// Sharp's macOS build can inspect HEIC metadata while omitting the HEVC
+		// decoder needed for pixels. Let macOS convert locally in that case.
+		if (process.platform !== "darwin") throw cause;
+		await executeFile(
+			"/usr/bin/sips",
+			["-s", "format", "jpeg", source, "--out", destination],
+			{
+				timeout: HEIC_UPLOAD_CONVERSION_TIMEOUT_MS,
+				maxBuffer: 64 * 1024,
+			},
+		);
+	}
+
+	const converted = statSync(destination);
+	if (
+		!converted.isFile() ||
+		converted.size === 0 ||
+		converted.size > MAX_HEIC_UPLOAD_BYTES
+	) {
+		throw sharpError instanceof Error
+			? sharpError
+			: new Error("Kestrel could not create a usable JPEG from this HEIC image.");
+	}
+}
+
 function safePageUrl(value: string): URL | undefined {
 	if (!value || value.length > 8_192) return undefined;
 	try {
@@ -364,6 +504,17 @@ function safePageUrl(value: string): URL | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function discardPasswordEntry(entry: { password: string }): void {
+	entry.password = "";
+}
+
+function redactAgentVisibleBrowserText(value: unknown, maximum: number): string {
+	return redactUntrustedBrowserText(
+		redactSensitiveContent(String(value ?? "")),
+		maximum,
+	);
 }
 
 function downloadMatchesNavigation(
@@ -503,68 +654,17 @@ function cloneState(state: UserBrowserState): UserBrowserState {
 	return UserBrowserStateSchema.parse(structuredClone(state));
 }
 
-const PASSWORD_FORM_SCAN_SCRIPT = String.raw`(() => {
-  const visible = (node) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return rect.width > 0 && rect.height > 0 &&
-      rect.bottom >= 0 && rect.right >= 0 &&
-      rect.top <= innerHeight && rect.left <= innerWidth &&
-      style.visibility !== "hidden" && style.display !== "none" &&
-      Number(style.opacity) > 0;
-  };
-  const describe = (node) => {
-    const type = String(node.type || node.tagName || "").toLowerCase();
-    const autocomplete = String(node.autocomplete || "").toLowerCase();
-    const hint = [
-      autocomplete,
-      node.name,
-      node.id,
-      node.placeholder,
-      node.getAttribute("aria-label"),
-      node.labels?.[0]?.innerText,
-    ].filter(Boolean).join(" ").toLowerCase();
-    if (autocomplete === "new-password") return null;
-    const isPassword = type === "password" || autocomplete === "current-password";
-    const isUsername = type === "email" || autocomplete === "username" ||
-      autocomplete === "email" || /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(hint);
-    if (!isPassword && !isUsername) return null;
-    const rect = node.getBoundingClientRect();
-    const label = String(
-      node.labels?.[0]?.innerText || node.getAttribute("aria-label") ||
-      node.placeholder || node.name || (isPassword ? "Password" : "Username")
-    ).replace(/\s+/g, " ").trim().slice(0, 500);
-    return {
-      kind: isPassword ? "password" : "username",
-      label,
-      type: type.slice(0, 100),
-      autocomplete: autocomplete.slice(0, 100),
-      rect: {
-        x: Math.max(0, Math.round(rect.left)),
-        y: Math.max(0, Math.round(rect.top)),
-        width: Math.max(0, Math.round(rect.width)),
-        height: Math.max(0, Math.round(rect.height)),
-      },
-      node,
-    };
-  };
-  const fields = Array.from(document.querySelectorAll("input,select,textarea"))
-    .filter(visible)
-    .map(describe)
-    .filter(Boolean)
-    .slice(0, 32)
-    .map((field, index) => ({ id: "field-" + index, ...field }));
-  const active = document.activeElement;
-  const focusedFieldId = fields.find((field) => field.node === active)?.id;
-  return {
-    fields: fields.map(({ node, ...field }) => field),
-    ...(focusedFieldId ? { focusedFieldId } : {}),
-  };
-})()`;
-
 interface PasswordFormSnapshot {
 	fields: PasswordFormField[];
 	focusedFieldId?: string;
+}
+
+interface PendingPasswordBridgeRequest {
+	webContentsId: number;
+	expectedOrigin: string;
+	resolve(response: PasswordBridgeResponse): void;
+	reject(error: Error): void;
+	timeout: ReturnType<typeof setTimeout>;
 }
 
 function parsePasswordFormSnapshot(raw: unknown): PasswordFormSnapshot {
@@ -582,6 +682,53 @@ function parsePasswordFormSnapshot(raw: unknown): PasswordFormSnapshot {
 			? candidate.focusedFieldId
 			: undefined;
 	return { fields, ...(focusedFieldId ? { focusedFieldId } : {}) };
+}
+
+function isSensitiveAgentFieldName(value: string | undefined): boolean {
+	const name = value?.normalize("NFKC").replace(/[._-]+/g, " ").trim();
+	return Boolean(
+		name === "Sensitive field" ||
+			(name &&
+				/(?:\b(?:new|current|old|confirm(?:ation)?|repeat)?\s*password\b|\b(?:one\s*time|recovery|verification|security)\s*(?:code|passcode|pin)\b|\botp\b|\b(?:cvv|cvc)\b|\bapi\s*(?:key|token)\b|\baccess\s*token\b|\bprivate\s*key\b)/i.test(
+					name,
+				)),
+	);
+}
+
+function randomCharacter(alphabet: string): string {
+	if (!alphabet) throw new Error("Password alphabet is unavailable.");
+	const limit = 256 - (256 % alphabet.length);
+	for (;;) {
+		const byte = randomBytes(1)[0]!;
+		if (byte < limit) return alphabet[byte % alphabet.length]!;
+	}
+}
+
+/** Uses cryptographic randomness, avoids ambiguous characters, and guarantees
+ * one character from every enabled class before filling the remaining slots. */
+export function generateStrongPassword(length = STRONG_PASSWORD_LENGTH): string {
+	if (!Number.isInteger(length) || length < 12 || length > 128)
+		throw new Error("Generated passwords must be between 12 and 128 characters.");
+	const classes = [
+		PASSWORD_UPPERCASE,
+		PASSWORD_LOWERCASE,
+		PASSWORD_DIGITS,
+		PASSWORD_SYMBOLS,
+	];
+	const characters = [
+		...classes.map(randomCharacter),
+		...Array.from({ length: length - classes.length }, () =>
+			randomCharacter(classes.join("")),
+		),
+	];
+	for (let index = characters.length - 1; index > 0; index -= 1) {
+		const limit = 256 - (256 % (index + 1));
+		let byte = randomBytes(1)[0]!;
+		while (byte >= limit) byte = randomBytes(1)[0]!;
+		const swap = byte % (index + 1);
+		[characters[index], characters[swap]] = [characters[swap]!, characters[index]!];
+	}
+	return characters.join("");
 }
 
 const PAYMENT_FORM_SCAN_SCRIPT = String.raw`(() => {
@@ -924,67 +1071,6 @@ function paymentFillScript(
 })()`;
 }
 
-function passwordFillScript(
-	username: string,
-	password: string,
-	fieldIndex?: number,
-	expectedOrigin?: string,
-): string {
-	const usernameLiteral = JSON.stringify(username);
-	const passwordLiteral = JSON.stringify(password);
-	const targetIndex = fieldIndex === undefined ? "undefined" : String(fieldIndex);
-	const originLiteral = JSON.stringify(expectedOrigin ?? "");
-	return String.raw`(() => {
-  if (${originLiteral} && location.origin !== ${originLiteral}) return false;
-  const visible = (node) => {
-    const rect = node.getBoundingClientRect();
-    const style = getComputedStyle(node);
-    return rect.width > 0 && rect.height > 0 &&
-      rect.bottom >= 0 && rect.right >= 0 &&
-      rect.top <= innerHeight && rect.left <= innerWidth &&
-      style.visibility !== "hidden" && style.display !== "none" &&
-      Number(style.opacity) > 0;
-  };
-  const describe = (node) => {
-    const type = String(node.type || node.tagName || "").toLowerCase();
-    const autocomplete = String(node.autocomplete || "").toLowerCase();
-    const hint = [autocomplete, node.name, node.id, node.placeholder,
-      node.getAttribute("aria-label"), node.labels?.[0]?.innerText]
-      .filter(Boolean).join(" ").toLowerCase();
-    if (autocomplete === "new-password") return null;
-    const isPassword = type === "password" || autocomplete === "current-password";
-    const isUsername = type === "email" || autocomplete === "username" || autocomplete === "email" ||
-      /(?:^|[-_ ])(?:user|username|email|login|account)(?:$|[-_ ])/i.test(hint);
-    if (!isPassword && !isUsername) return null;
-    return { node, kind: isPassword ? "password" : "username" };
-  };
-  const fields = Array.from(document.querySelectorAll("input,select,textarea"))
-    .filter(visible).map(describe).filter(Boolean).slice(0, 32);
-  const setValue = (node, value) => {
-    const prototype = Object.getPrototypeOf(node);
-    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-    if (setter) setter.call(node, value); else node.value = value;
-    node.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-    node.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
-  };
-  const index = ${targetIndex};
-  if (index !== undefined) {
-    const target = fields[index];
-    if (!target) return false;
-    setValue(target.node, target.kind === "password" ? ${passwordLiteral} : ${usernameLiteral});
-    target.node.focus();
-    return true;
-  }
-  let filled = 0;
-  const usernameField = fields.find((field) => field.kind === "username");
-  const passwordField = fields.find((field) => field.kind === "password");
-  if (usernameField) { setValue(usernameField.node, ${usernameLiteral}); filled += 1; }
-  if (passwordField) { setValue(passwordField.node, ${passwordLiteral}); filled += 1; }
-  if (passwordField) passwordField.node.focus();
-  return filled > 0;
-})()`;
-}
-
 interface BrowserPartitionParticipant {
 	ownsWebContents(webContents: WebContents): boolean;
 	isPermissionAllowed(
@@ -1112,8 +1198,11 @@ export class UserBrowserService {
 	private readonly store: BrowserTabStore;
 	private readonly partition: Session;
 	private readonly extensionManager: BrowserExtensionManager;
+	private readonly extensionRuntime: ElectronExtensionRuntime;
+	private readonly extensionStartup: Promise<void>;
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly elementRefs = new Map<string, Map<string, number>>();
+	private readonly sensitiveElementRefs = new Map<string, Set<string>>();
 	private readonly downloadPaths = new Map<string, string>();
 	private readonly pendingContextDownloads = new Map<
 		number,
@@ -1127,8 +1216,12 @@ export class UserBrowserService {
 	private readonly requestNativeMediaAccess: NonNullable<
 		UserBrowserServiceOptions["requestNativeMediaAccess"]
 	>;
+	private readonly requestPasswordUserPresence: NonNullable<
+		UserBrowserServiceOptions["requestPasswordUserPresence"]
+	>;
 	private readonly now: () => Date;
 	private readonly defaultDownloadDirectory: string;
+	private readonly legacyDownloadDirectory: string | undefined;
 	private downloadDirectory: string;
 	private readonly partitionName: string;
 	private readonly partitionCoordinator: BrowserPartitionCoordinator;
@@ -1150,11 +1243,17 @@ export class UserBrowserService {
 	private contentVisible = false;
 	private contentBoundsSeq = 0;
 	private disposed = false;
-	private passwordPollInterval: ReturnType<typeof setInterval> | undefined;
+	private paymentPollInterval: ReturnType<typeof setInterval> | undefined;
 	private passwordScanInFlight = false;
 	private passwordPromptGeneration = 0;
 	private passwordPromptKey = "";
 	private passwordPrompt: PasswordPrompt | undefined;
+	private readonly pendingPasswordBridgeRequests = new Map<
+		string,
+		PendingPasswordBridgeRequest
+	>();
+	private readonly loginFlows = new LoginFlowTracker();
+	private passwordSaveCommitTabId: string | undefined;
 	private pendingPasswordSave:
 		| {
 			tabId: string;
@@ -1162,15 +1261,23 @@ export class UserBrowserService {
 			title: string;
 			username: string;
 			password: string;
+			submittedUrl: string;
+			submittedAt: number;
+			flowInitiatingOrigin?: string;
+			anchor: PasswordPrompt["anchor"];
+			confirmedUrl?: string;
+			confirmedAt?: number;
 		}
 		| undefined;
 	private readonly passwordPromptSuppressedUntil = new Map<string, number>();
+	private readonly passwordAutofilledUntil = new Map<string, number>();
 	private paymentScanInFlight = false;
 	private paymentPromptKey = "";
 	private paymentPrompt: PaymentPrompt | undefined;
 	private readonly paymentPromptSuppressedUntil = new Map<string, number>();
 	private readonly agentTabPinCounts = new Map<string, number>();
 	private readonly closingTabIds = new Set<string>();
+	private readonly temporaryHeicUploadDirectories = new Set<string>();
 	private tabMutationQueue: Promise<void> = Promise.resolve();
 	private readonly allowDevTools: boolean;
 
@@ -1184,8 +1291,17 @@ export class UserBrowserService {
 				: this.store.load(options.now);
 		this.now = options.now ?? (() => new Date());
 		this.defaultDownloadDirectory = options.downloadDirectory;
+		this.legacyDownloadDirectory = options.legacyDownloadDirectory;
+		const normalizedSettings = this.normalizeDownloadSettings(
+			this.state.settings,
+		);
+		const migratedDownloadDirectory =
+			normalizedSettings.downloadDirectory !==
+			this.state.settings.downloadDirectory;
+		if (migratedDownloadDirectory)
+			this.state = { ...this.state, settings: normalizedSettings };
 		this.downloadDirectory = this.configuredDownloadDirectory(
-			this.state.settings.downloadDirectory,
+			normalizedSettings.downloadDirectory,
 		);
 		this.onEvent = options.onEvent;
 		this.threatProvider =
@@ -1219,6 +1335,28 @@ export class UserBrowserService {
 				process.platform === "darwin"
 					? systemPreferences.askForMediaAccess(mediaType)
 					: true);
+		this.requestPasswordUserPresence =
+			options.requestPasswordUserPresence ??
+			(async (reason) => {
+				if (
+					process.platform === "darwin" &&
+					typeof systemPreferences.promptTouchID === "function"
+				) {
+					await systemPreferences.promptTouchID(reason);
+					return;
+				}
+				const response = await dialog.showMessageBox(this.window, {
+					type: "question",
+					buttons: ["Continue", "Cancel"],
+					defaultId: 1,
+					cancelId: 1,
+					title: "Confirm saved password access",
+					message: reason,
+					detail: "Confirm local access before Kestrel uses a saved password.",
+				});
+				if (response.response !== 0)
+					throw new Error("Saved password access was cancelled.");
+			});
 		mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
 		this.extensionManager = new BrowserExtensionManager(dirname(options.statePath), {
 			allowLocalExtensions: options.allowLocalExtensions === true,
@@ -1231,15 +1369,19 @@ export class UserBrowserService {
 		this.partition = electronSession.fromPartition(this.partitionName, {
 			cache: true,
 		});
+		this.extensionRuntime = new ElectronExtensionRuntime(this.partition);
 		this.applySessionBrowserPreferences();
-		void this.extensionManager.loadAll(this.partition);
+		this.extensionStartup = this.extensionManager
+			.loadAll(this.extensionRuntime)
+			.catch((error) => {
+				console.warn("[Extension] Failed to restore browser extensions:", error);
+			});
 		this.startSleepingTabsMonitor();
-		if (this.passwordVault || this.paymentCardVault) {
-			this.passwordPollInterval = setInterval(() => {
-				void this.refreshPasswordPrompt();
+		if (this.paymentCardVault) {
+			this.paymentPollInterval = setInterval(() => {
 				void this.refreshPaymentPrompt();
 			}, 450);
-			this.passwordPollInterval.unref?.();
+			this.paymentPollInterval.unref?.();
 		}
 		this.partitionCoordinator = browserPartitionCoordinator(this.partition);
 		this.partitionParticipant = {
@@ -1265,6 +1407,7 @@ export class UserBrowserService {
 				this.handleWillDownload(event, item, webContents),
 		};
 		this.partitionCoordinator.register(this.partitionParticipant);
+		if (migratedDownloadDirectory) this.store.save(this.state);
 		void this.backfillOriginFaviconsFromHistory();
 		void this.refreshFileStatuses();
 	}
@@ -1274,6 +1417,20 @@ export class UserBrowserService {
 		return candidate && isAbsolute(candidate)
 			? candidate
 			: this.defaultDownloadDirectory;
+	}
+
+	private normalizeDownloadSettings(
+		settings: UserBrowserSettings,
+	): UserBrowserSettings {
+		if (
+			!this.legacyDownloadDirectory ||
+			!isLegacyBrowserDownloadDirectory(
+				settings.downloadDirectory,
+				this.legacyDownloadDirectory,
+			)
+		)
+			return settings;
+		return { ...settings, downloadDirectory: "" };
 	}
 
 	private applySessionBrowserPreferences(): void {
@@ -1296,10 +1453,11 @@ export class UserBrowserService {
 		previous: UserBrowserSettings,
 		next: UserBrowserSettings,
 	): void {
-		this.state.settings = next;
-		if (next.downloadDirectory !== previous.downloadDirectory) {
+		const normalizedNext = this.normalizeDownloadSettings(next);
+		this.state.settings = normalizedNext;
+		if (normalizedNext.downloadDirectory !== previous.downloadDirectory) {
 			this.downloadDirectory = this.configuredDownloadDirectory(
-				next.downloadDirectory,
+				normalizedNext.downloadDirectory,
 			);
 			mkdirSync(this.downloadDirectory, { recursive: true, mode: 0o700 });
 		}
@@ -1852,6 +2010,7 @@ export class UserBrowserService {
 		this.elementRefs.delete(tab.id);
 		delete tab.file;
 		delete tab.blockedNavigation;
+		this.sensitiveElementRefs.delete(tab.id);
 		tab.error = undefined;
 		tab.crashed = false;
 		tab.discarded = false;
@@ -2011,6 +2170,7 @@ export class UserBrowserService {
 		}
 		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
 		this.elementRefs.delete(tabId);
+		this.sensitiveElementRefs.delete(tabId);
 		tab.error = undefined;
 		tab.crashed = false;
 		const record = this.ensureView(tab);
@@ -2273,6 +2433,17 @@ export class UserBrowserService {
 		const normalized = directory?.trim() ?? "";
 		if (normalized && !isAbsolute(normalized))
 			throw new Error("Download location must be an absolute folder path.");
+		if (
+			normalized &&
+			this.legacyDownloadDirectory &&
+			isLegacyBrowserDownloadDirectory(
+				normalized,
+				this.legacyDownloadDirectory,
+			)
+		)
+			throw new Error(
+				"The old Kestrel Downloads folder is no longer used. Choose another folder.",
+			);
 		this.downloadDirectory = normalized
 			? normalized
 			: this.defaultDownloadDirectory;
@@ -2961,13 +3132,26 @@ export class UserBrowserService {
         const style = getComputedStyle(node);
         return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.right >= 0 && rect.top <= innerHeight && rect.left <= innerWidth && style.visibility !== "hidden" && style.display !== "none" && Number(style.opacity) > 0;
       };
+			const sensitiveField = (node) => {
+				const hint = [node.type, node.autocomplete, node.name, node.id, node.getAttribute("aria-label"), node.placeholder]
+					.filter(Boolean)
+					.join(" ")
+					.toLowerCase();
+				return node instanceof HTMLInputElement && (
+					node.type === "password" ||
+					/(?:current|new)[-_ ]password|one[-_ ]time[-_ ]code|\\botp\\b|recovery[-_ ]code|verification[-_ ]code|security[-_ ]code|\\b(?:cvv|cvc)\\b|api[-_ ]key|access[-_ ]token|private[-_ ]key/.test(hint)
+				);
+			};
       const nodes = Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,table,article,main")).filter(visible);
       const visibleText = nodes.map((node) => limit(node.innerText || node.textContent, 4000)).filter(Boolean).join("\\n").slice(0, 40000);
       const links = Array.from(document.querySelectorAll("a[href]")).filter(visible).slice(0, 100).map((node) => ({ text: limit(node.innerText || node.textContent, 500), url: node.href }));
-      const forms = Array.from(document.querySelectorAll("input,textarea,select,button")).filter(visible).slice(0, 60).map((node) => ({ label: limit(node.labels?.[0]?.innerText || node.getAttribute("aria-label") || node.placeholder || node.innerText, 500), type: limit(node.type || node.tagName.toLowerCase(), 100), name: limit(node.name || node.id, 500) }));
+			const forms = Array.from(document.querySelectorAll("input,textarea,select,button")).filter(visible).slice(0, 60).map((node) => sensitiveField(node)
+				? { label: "Sensitive field", type: "sensitive", name: "" }
+				: { label: limit(node.labels?.[0]?.innerText || node.getAttribute("aria-label") || node.placeholder || node.innerText, 500), type: limit(node.type || node.tagName.toLowerCase(), 100), name: limit(node.name || node.id, 500) });
+			const active = document.activeElement;
       return {
         description: limit(document.querySelector('meta[name="description"]')?.content, 2000),
-        selectedText: limit(getSelection()?.toString(), 20000),
+				selectedText: active instanceof Element && sensitiveField(active) ? "" : limit(getSelection()?.toString(), 20000),
         visibleText: visibleText || limit(document.body?.innerText, 40000),
         headings: Array.from(document.querySelectorAll("h1,h2,h3,h4,h5,h6")).filter(visible).slice(0, 60).map((node) => limit(node.innerText || node.textContent, 500)).filter(Boolean),
         links,
@@ -2986,7 +3170,7 @@ export class UserBrowserService {
 					return url
 						? [
 								{
-									text: redactUntrustedBrowserText(candidate.text, 500),
+									text: redactAgentVisibleBrowserText(candidate.text, 500),
 									url,
 								},
 							]
@@ -3003,9 +3187,9 @@ export class UserBrowserService {
 					};
 					return [
 						{
-							label: redactUntrustedBrowserText(candidate.label, 500),
-							type: redactUntrustedBrowserText(candidate.type, 100),
-							name: redactUntrustedBrowserText(candidate.name, 500),
+							label: redactAgentVisibleBrowserText(candidate.label, 500),
+							type: redactAgentVisibleBrowserText(candidate.type, 100),
+							name: redactAgentVisibleBrowserText(candidate.name, 500),
 						},
 					];
 				})
@@ -3018,16 +3202,16 @@ export class UserBrowserService {
 		return UserBrowserPageContextSchema.parse({
 			tabId: tab.id,
 			url,
-			title: redactUntrustedBrowserText(
+			title: redactAgentVisibleBrowserText(
 				webContents.getTitle() || tab.title,
 				500,
 			),
-			description: redactUntrustedBrowserText(raw.description, 2000),
-			selectedText: redactUntrustedBrowserText(raw.selectedText, 20_000),
-			visibleText: redactUntrustedBrowserText(raw.visibleText, 40_000),
+			description: redactAgentVisibleBrowserText(raw.description, 2000),
+			selectedText: redactAgentVisibleBrowserText(raw.selectedText, 20_000),
+			visibleText: redactAgentVisibleBrowserText(raw.visibleText, 40_000),
 			headings: Array.isArray(raw.headings)
 				? raw.headings
-						.map((heading) => redactUntrustedBrowserText(heading, 500))
+						.map((heading) => redactAgentVisibleBrowserText(heading, 500))
 						.filter(Boolean)
 				: [],
 			links,
@@ -3043,17 +3227,6 @@ export class UserBrowserService {
 		return this.passwordVault?.list() ?? [];
 	}
 
-	async savePassword(input: {
-		origin: string;
-		title?: string;
-		username: string;
-		password: string;
-	}): Promise<PasswordEntrySummary[]> {
-		if (!this.passwordVault)
-			throw new Error("The protected password store is unavailable.");
-		return this.passwordVault.save(input);
-	}
-
 	async savePasswordSuggestion(): Promise<PasswordEntrySummary[]> {
 		if (!this.passwordVault)
 			throw new Error("The protected password store is unavailable.");
@@ -3064,27 +3237,151 @@ export class UserBrowserService {
 		const tab = this.requireActiveTab();
 		if (tab.id !== pending.tabId || prompt.tabId !== tab.id)
 			throw new Error("The login page changed before the password was saved.");
+		if (
+			!pending.confirmedAt ||
+			!pending.confirmedUrl ||
+			this.now().getTime() - pending.confirmedAt > 30_000
+		)
+			throw new Error("That password suggestion is no longer available.");
 		const record = this.requireView(tab.id);
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents)
 			throw new Error("The login page is still waking up. Try again.");
 		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
-		if (
-			!url ||
-			url.protocol !== "https:" ||
-			url.origin !== pending.origin ||
-			prompt.origin !== url.origin
-		)
+		if (!url || url.protocol !== "https:" || url.toString() !== pending.confirmedUrl)
 			throw new Error("The login page changed before the password was saved.");
-		const summaries = await this.passwordVault.save({
-			origin: pending.origin,
-			title: pending.title,
-			username: pending.username,
-			password: pending.password,
-		});
-		this.suppressPasswordPrompt(tab.id, pending.origin, 4_000);
+		this.passwordSaveCommitTabId = tab.id;
+		try {
+			const summaries = await this.passwordVault.save({
+				origin: pending.origin,
+				title: pending.title,
+				username: pending.username,
+				password: pending.password,
+			});
+			// will-navigate/will-redirect are held while the encrypted vault write is
+			// in progress. Once it succeeds, discard the submitted secret immediately
+			// instead of leaving a stale save prompt alive for a possible second write.
+			this.suppressPasswordPrompt(tab.id, pending.origin, 4_000);
+			this.clearPasswordPrompt();
+			return summaries;
+		} finally {
+			this.passwordSaveCommitTabId = undefined;
+		}
+	}
+
+	async updatePasswordUsername(
+		id: PasswordEntryId,
+		username: string,
+	): Promise<PasswordEntrySummary[]> {
+		if (!this.passwordVault)
+			throw new Error("The protected password store is unavailable.");
+		return this.passwordVault.updateUsername(id, username);
+	}
+
+	async copyPassword(id: PasswordEntryId): Promise<void> {
+		const entry = await this.passwordEntryForSettings(id);
+		try {
+			await this.requirePasswordUserPresence("Copy saved password");
+			const copiedPasswordDigest = createHash("sha256")
+				.update(entry.password, "utf8")
+				.digest("hex");
+			clipboard.writeText(entry.password);
+			const clearTimer = setTimeout(() => {
+				try {
+					const currentClipboardDigest = createHash("sha256")
+						.update(clipboard.readText(), "utf8")
+						.digest("hex");
+					if (currentClipboardDigest === copiedPasswordDigest) clipboard.clear();
+				} catch {
+					// Clipboard access can be revoked while Kestrel is in the background.
+				}
+			}, 60_000);
+			clearTimer.unref?.();
+		} finally {
+			discardPasswordEntry(entry);
+		}
+	}
+
+	async revealPassword(id: PasswordEntryId): Promise<void> {
+		const entry = await this.passwordEntryForSettings(id);
+		try {
+			await this.requirePasswordUserPresence("Reveal saved password");
+			await dialog.showMessageBox(this.window, {
+				type: "none",
+				buttons: ["Done"],
+				defaultId: 0,
+				title: "Saved password",
+				message: entry.password,
+				detail:
+					"Shown after local device verification. Anyone who can see this window can read it.",
+			});
+		} finally {
+			discardPasswordEntry(entry);
+		}
+	}
+
+	markNeverSavePasswordForActiveOrigin(): void {
+		const tab = this.requireActiveTab();
+		const record = this.requireView(tab.id);
+		const webContents = liveWebContents(record?.view?.webContents);
+		const url = safePageUrl(webContents?.getURL() || tab.url);
+		if (!url || url.protocol !== "https:")
+			throw new Error("Password exceptions can only be saved for HTTPS websites.");
+		const origin =
+			this.passwordPrompt?.mode === "save"
+				? this.passwordPrompt.origin
+				: url.origin;
+		if (!this.state.settings.neverSavePasswordOrigins.includes(origin)) {
+			this.state.settings = {
+				...this.state.settings,
+				neverSavePasswordOrigins: [
+					...this.state.settings.neverSavePasswordOrigins,
+					origin,
+				].slice(-500),
+			};
+			this.commit();
+		}
 		this.clearPasswordPrompt();
-		return summaries;
+	}
+
+	async generatePasswordForActiveForm(): Promise<void> {
+		if (!this.state.settings.offerStrongPasswords)
+			throw new Error("Strong password suggestions are turned off in Password settings.");
+		const tab = this.requireActiveTab();
+		const record = this.requireView(tab.id);
+		const webContents = liveWebContents(record?.view?.webContents);
+		if (!webContents)
+			throw new Error("The sign-up page is still waking up. Try again.");
+		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		if (!url || url.protocol !== "https:")
+			throw new Error("Strong passwords can only be generated on HTTPS websites.");
+		const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
+		const newPasswordFields = snapshot.fields.filter(
+			(field) => field.kind === "new-password",
+		);
+		if (!newPasswordFields.length)
+			throw new Error("Kestrel could not find a new-password field on this page.");
+		let generatedPassword = generateStrongPassword();
+		try {
+			for (const field of newPasswordFields) {
+				const filled = await this.fillPasswordFields(webContents, url.origin, {
+					username: "",
+					password: generatedPassword,
+					fieldId: field.id,
+					includeUsername: false,
+					includePassword: true,
+				});
+				if (filled < 1)
+					throw new Error("Kestrel could not fill the new-password field.");
+			}
+		} finally {
+			// Do not promote generated values into service state; each bridge request
+			// has settled before this local reference is released.
+			generatedPassword = "";
+		}
+		// Keep the existing prompt stable so its renderer can acknowledge the
+		// completed action. Re-emitting a new generate prompt here would reset the
+		// UI and make a second, accidental generation look like the first one.
 	}
 
 	async removePassword(id: PasswordEntryId): Promise<PasswordEntrySummary[]> {
@@ -3177,13 +3474,23 @@ export class UserBrowserService {
 	async fillPasswordPage(id: PasswordEntryId): Promise<void> {
 		const { tab, webContents, entry, origin } =
 			await this.passwordEntryForActiveTab(id);
-		const filled = await webContents.executeJavaScript(
-			passwordFillScript(entry.username, entry.password, undefined, origin),
-		);
-		if (filled !== true)
-			throw new Error("Kestrel could not find a login field on this page.");
-		this.suppressPasswordPrompt(tab.id, origin, 4_000);
-		this.clearPasswordPrompt();
+		try {
+			const filled = await this.fillPasswordFields(webContents, origin, {
+				username: entry.username,
+				password: entry.password,
+				includeUsername: this.state.settings.autofillUsernames,
+				includePassword: this.state.settings.autofillPasswords,
+			});
+			if (filled < 1)
+				throw new Error("Kestrel could not find a login field on this page.");
+			this.loginFlows.selectCredential(tab.id, id, entry.username);
+			this.loginFlows.markAutofill(tab.id);
+			void this.markPasswordUsed(id, origin);
+			this.suppressPasswordPrompt(tab.id, origin, 4_000);
+			this.clearPasswordPrompt();
+		} finally {
+			discardPasswordEntry(entry);
+		}
 	}
 
 	async fillPasswordField(
@@ -3192,18 +3499,102 @@ export class UserBrowserService {
 	): Promise<void> {
 		const { tab, webContents, entry, origin } =
 			await this.passwordEntryForActiveTab(id);
-		const snapshot = await this.readPasswordFormSnapshot(webContents);
-		const field = snapshot.fields.find((candidate) => candidate.id === fieldId);
-		if (!field || field.kind === "other")
-			throw new Error("That form field is no longer available.");
-		const fieldIndex = Number(field.id.slice("field-".length));
-		const filled = await webContents.executeJavaScript(
-			passwordFillScript(entry.username, entry.password, fieldIndex, origin),
-		);
-		if (filled !== true)
-			throw new Error("Kestrel could not fill that form field.");
-		this.suppressPasswordPrompt(tab.id, origin, 4_000);
-		this.clearPasswordPrompt();
+		try {
+			const snapshot = await this.readPasswordFormSnapshot(webContents, origin);
+			const field = snapshot.fields.find((candidate) => candidate.id === fieldId);
+			if (!field || (field.kind !== "username" && field.kind !== "password"))
+				throw new Error("That form field is no longer available.");
+			const filled = await this.fillPasswordFields(webContents, origin, {
+				username: entry.username,
+				password: entry.password,
+				fieldId,
+				includeUsername: field.kind === "username",
+				includePassword: field.kind === "password",
+			});
+			if (filled < 1)
+				throw new Error("Kestrel could not fill that form field.");
+			this.loginFlows.selectCredential(tab.id, id, entry.username);
+			this.loginFlows.markAutofill(tab.id);
+			void this.markPasswordUsed(id, origin);
+			this.suppressPasswordPrompt(tab.id, origin, 4_000);
+			this.clearPasswordPrompt();
+		} finally {
+			discardPasswordEntry(entry);
+		}
+	}
+
+	private async autofillCredentialForAgent(
+		tabId: string,
+		signal: AbortSignal,
+	): Promise<AgentCredentialAutofillResult> {
+		const unavailable = (
+			autofillResult: AgentCredentialAutofillResult["autofillResult"],
+			credentialAvailable = false,
+		): AgentCredentialAutofillResult => ({
+			credentialAvailable,
+			autofillResult,
+			trust: "untrusted_browser",
+		});
+		if (signal.aborted) throw signal.reason;
+		if (tabId !== this.state.activeTabId) return unavailable("not_active");
+		if (
+			this.state.settings.passwordAutofillEnabled === false ||
+			(this.state.settings.autofillPasswords === false &&
+				this.state.settings.autofillUsernames === false)
+		)
+			return unavailable("disabled");
+		if (!this.passwordVault) return unavailable("unavailable");
+
+		const tab = this.requireTab(tabId);
+		const record = this.requireView(tab.id);
+		const webContents = liveWebContents(record.view.webContents);
+		const url = safePageUrl(webContents?.getURL() || tab.url);
+		if (!webContents || !url || url.protocol !== "https:")
+			return unavailable("not_a_login_form");
+		const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
+		if (signal.aborted) throw signal.reason;
+		if (
+			!snapshot.fields.some(
+				(field) => field.kind === "username" || field.kind === "password",
+			)
+		)
+			return unavailable("not_a_login_form");
+
+		const entries = await this.passwordVault.listForOrigin(url.origin);
+		if (signal.aborted) throw signal.reason;
+		if (!entries.length) return unavailable("unavailable");
+		const flow = this.loginFlows.readContext(tab.id);
+		const selected =
+			flow?.authOrigin === url.origin && flow.selectedCredentialId
+				? entries.find((entry) => entry.id === flow.selectedCredentialId)
+				: undefined;
+		const entrySummary = selected ?? (entries.length === 1 ? entries[0] : undefined);
+		if (!entrySummary) return unavailable("selection_required", true);
+
+		const entry = await this.passwordVault.getForOrigin(entrySummary.id, url.origin);
+		if (!entry) return unavailable("unavailable", true);
+		try {
+			if (signal.aborted) throw signal.reason;
+			const filled = await this.fillPasswordFields(webContents, url.origin, {
+				username: entry.username,
+				password: entry.password,
+				includeUsername: this.state.settings.autofillUsernames,
+				includePassword: this.state.settings.autofillPasswords,
+			});
+			if (signal.aborted) throw signal.reason;
+			if (filled < 1) return unavailable("unavailable", true);
+
+			this.loginFlows.selectCredential(tab.id, entry.id, entry.username);
+			this.loginFlows.markAutofill(tab.id);
+			void this.markPasswordUsed(entry.id, url.origin);
+			this.suppressPasswordPrompt(tab.id, url.origin, 4_000);
+			this.clearPasswordPrompt({
+				preservePending: this.pendingPasswordSave?.tabId === tab.id,
+			});
+			return unavailable("filled", true);
+		} finally {
+			discardPasswordEntry(entry);
+		}
 	}
 
 	dismissPasswordPrompt(): void {
@@ -3232,18 +3623,164 @@ export class UserBrowserService {
 		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
 		if (!url || url.protocol !== "https:")
 			throw new Error("Passwords can only be filled on HTTPS websites.");
+		if (
+			!this.passwordPrompt ||
+			this.passwordPrompt.tabId !== tab.id ||
+			this.passwordPrompt.origin !== url.origin ||
+			!this.passwordPrompt.entries.some((entry) => entry.id === id)
+		)
+			throw new Error("That saved login suggestion is no longer available.");
 		const entry = await this.passwordVault.getForOrigin(id, url.origin);
 		if (!entry)
 			throw new Error("That saved login is not available for this website.");
 		return { tab, webContents, entry, origin: url.origin };
 	}
 
+	private async passwordEntryForSettings(id: PasswordEntryId): Promise<
+		NonNullable<Awaited<ReturnType<PasswordVault["get"]>>>
+	> {
+		if (!this.passwordVault)
+			throw new Error("The protected password store is unavailable.");
+		const entry = await this.passwordVault.get(id);
+		if (!entry) throw new Error("That saved login no longer exists.");
+		return entry;
+	}
+
+	private async requirePasswordUserPresence(reason: string): Promise<void> {
+		await this.requestPasswordUserPresence(reason);
+	}
+
+	private async markPasswordUsed(id: PasswordEntryId, origin: string): Promise<void> {
+		if (!this.passwordVault) return;
+		const markUsed = (this.passwordVault as PasswordVault & {
+			markUsed?: (passwordId: PasswordEntryId, passwordOrigin: string) => Promise<void>;
+		}).markUsed;
+		if (typeof markUsed !== "function") return;
+		await Promise.resolve(markUsed.call(this.passwordVault, id, origin)).catch(
+			() => undefined,
+		);
+	}
+
 	private async readPasswordFormSnapshot(
 		webContents: WebContents,
+		origin: string,
 	): Promise<PasswordFormSnapshot> {
-		return parsePasswordFormSnapshot(
-			await webContents.executeJavaScript(PASSWORD_FORM_SCAN_SCRIPT),
-		);
+		const response = await this.requestPasswordBridge(webContents, origin, {
+			type: "scan",
+		});
+		if (!response.ok || !response.snapshot)
+			throw new Error("Kestrel could not inspect this login form.");
+		return parsePasswordFormSnapshot(response.snapshot);
+	}
+
+	private async fillPasswordFields(
+		webContents: WebContents,
+		origin: string,
+		input: {
+			username: string;
+			password: string;
+			fieldId?: string;
+			includeUsername?: boolean;
+			includePassword?: boolean;
+		},
+	): Promise<number> {
+		const response = await this.requestPasswordBridge(webContents, origin, {
+			type: "fill",
+			...input,
+		});
+		return response.ok ? response.filled ?? 0 : 0;
+	}
+
+	private requestPasswordBridge(
+		webContents: WebContents,
+		expectedOrigin: string,
+		command:
+			| { type: "scan" }
+			| {
+					type: "fill";
+					username: string;
+					password: string;
+					fieldId?: string;
+					includeUsername?: boolean;
+					includePassword?: boolean;
+				},
+	): Promise<PasswordBridgeResponse> {
+		if (!liveWebContents(webContents))
+			return Promise.reject(new Error("The login page is still waking up. Try again."));
+		const requestId = `password-request-${randomUUID()}`;
+		return new Promise((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				this.pendingPasswordBridgeRequests.delete(requestId);
+				reject(new Error("Kestrel could not reach this login form. Try again."));
+			}, PASSWORD_BRIDGE_TIMEOUT_MS);
+			this.pendingPasswordBridgeRequests.set(requestId, {
+				webContentsId: webContents.id,
+				expectedOrigin,
+				resolve,
+				reject,
+				timeout,
+			});
+			try {
+				webContents.send(PASSWORD_COMMAND_CHANNEL, {
+					requestId,
+					expectedOrigin,
+					...command,
+				});
+			} catch (error) {
+				clearTimeout(timeout);
+				this.pendingPasswordBridgeRequests.delete(requestId);
+				reject(
+					error instanceof Error
+						? error
+						: new Error("Kestrel could not reach this login form."),
+				);
+			}
+		});
+	}
+
+	private handlePasswordBridgeResponse(
+		webContents: WebContents,
+		event: Electron.IpcMainEvent,
+		raw: unknown,
+	): void {
+		const response = PasswordBridgeResponseSchema.safeParse(raw);
+		if (!response.success) return;
+		const pending = this.pendingPasswordBridgeRequests.get(response.data.requestId);
+		if (!pending || pending.webContentsId !== webContents.id) return;
+		// A preload can load in child frames. Only the current top-level document
+		// is allowed to settle a main-process credential command.
+		if (event.senderFrame !== webContents.mainFrame) return;
+		const frameUrl = safePageUrl(event.senderFrame.url);
+		if (!frameUrl || frameUrl.protocol !== "https:" || frameUrl.origin !== pending.expectedOrigin) {
+			this.settlePasswordBridgeRequest(
+				response.data.requestId,
+				new Error("The login page changed before Kestrel could fill it."),
+			);
+			return;
+		}
+		this.settlePasswordBridgeRequest(response.data.requestId, response.data);
+	}
+
+	private settlePasswordBridgeRequest(
+		requestId: string,
+		result: PasswordBridgeResponse | Error,
+	): void {
+		const pending = this.pendingPasswordBridgeRequests.get(requestId);
+		if (!pending) return;
+		this.pendingPasswordBridgeRequests.delete(requestId);
+		clearTimeout(pending.timeout);
+		if (result instanceof Error) pending.reject(result);
+		else pending.resolve(result);
+	}
+
+	private rejectPasswordBridgeRequests(
+		message: string,
+		webContentsId?: number,
+	): void {
+		for (const [requestId, pending] of this.pendingPasswordBridgeRequests) {
+			if (webContentsId !== undefined && pending.webContentsId !== webContentsId) continue;
+			this.settlePasswordBridgeRequest(requestId, new Error(message));
+		}
 	}
 
 	private async paymentCardForActiveTab(id: PaymentCardEntryId): Promise<{
@@ -3282,6 +3819,150 @@ export class UserBrowserService {
 		);
 	}
 
+	private async handleHeicUpload(
+		tab: UserBrowserTab,
+		webContents: WebContents,
+		event: Electron.IpcMainEvent,
+		raw: unknown,
+	): Promise<void> {
+		const parsed = HeicUploadMessageSchema.safeParse(raw);
+		if (!parsed.success || this.disposed || isKestrelAppPageUrl(tab.url)) return;
+		const pageUrl = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		const frameUrl = safePageUrl(
+			event.senderFrame?.url || webContents.getURL(),
+		);
+		if (!pageUrl || !frameUrl || pageUrl.origin !== frameUrl.origin) return;
+
+		let originalPaths: string[];
+		try {
+			originalPaths = this.validatedHeicUploadPaths(parsed.data.paths);
+		} catch {
+			this.notifyHeicUploadFailure(webContents, parsed.data.inputId);
+			return;
+		}
+
+		const temporaryDirectory = mkdtempSync(
+			join(tmpdir(), "kestrel-heic-upload-"),
+		);
+		this.temporaryHeicUploadDirectories.add(temporaryDirectory);
+		try {
+			const convertedPaths: string[] = [];
+			const usedFilenames = new Set<string>();
+			for (const [index, source] of originalPaths.entries()) {
+				if (!isHeicUploadPath(parsed.data.paths[index]!)) {
+					convertedPaths.push(source);
+					continue;
+				}
+				const filename = temporaryJpegFilename(source);
+				const stem = basename(filename, extname(filename));
+				let uniqueFilename = filename;
+				let duplicate = 2;
+				while (usedFilenames.has(uniqueFilename)) {
+					uniqueFilename = `${stem}-${duplicate}.jpeg`;
+					duplicate += 1;
+				}
+				usedFilenames.add(uniqueFilename);
+				const destination = join(temporaryDirectory, uniqueFilename);
+				await convertHeicImageToJpeg(source, destination);
+				convertedPaths.push(destination);
+			}
+			if (
+				this.disposed ||
+				!liveWebContents(webContents) ||
+				safePageUrl(webContents.getURL())?.origin !== pageUrl.origin
+			)
+				throw new Error("The page changed before the HEIC image was converted.");
+			await this.replaceHeicUploadInputFiles(
+				webContents,
+				parsed.data.inputId,
+				convertedPaths,
+			);
+			this.retainTemporaryHeicUploadDirectory(temporaryDirectory);
+		} catch {
+			this.releaseTemporaryHeicUploadDirectory(temporaryDirectory);
+			this.notifyHeicUploadFailure(webContents, parsed.data.inputId);
+		}
+	}
+
+	private validatedHeicUploadPaths(paths: readonly string[]): string[] {
+		if (!paths.some(isHeicUploadPath))
+			throw new Error("No HEIC image was selected.");
+		return paths.map((path) => {
+			if (!isAbsolute(path)) throw new Error("The selected image path is invalid.");
+			const source = realpathSync(path);
+			const metadata = statSync(source);
+			if (
+				!metadata.isFile() ||
+				metadata.size === 0 ||
+				metadata.size > MAX_HEIC_UPLOAD_BYTES
+			)
+				throw new Error("The selected image cannot be converted safely.");
+			return source;
+		});
+	}
+
+	private async replaceHeicUploadInputFiles(
+		webContents: WebContents,
+		inputId: string,
+		paths: string[],
+	): Promise<void> {
+		const attachedHere = !webContents.debugger.isAttached();
+		if (attachedHere) webContents.debugger.attach("1.3");
+		try {
+			const document = (await webContents.debugger.sendCommand(
+				"DOM.getDocument",
+				{ depth: 0 },
+			)) as { root: { nodeId: number } };
+			const selected = (await webContents.debugger.sendCommand(
+				"DOM.querySelector",
+				{
+					nodeId: document.root.nodeId,
+					selector: `input[${HEIC_UPLOAD_INPUT_ID_ATTRIBUTE}="${inputId}"]`,
+				},
+			)) as { nodeId: number };
+			if (!selected.nodeId)
+				throw new Error("The image upload field is no longer available.");
+			await webContents.debugger.sendCommand("DOM.setFileInputFiles", {
+				nodeId: selected.nodeId,
+				files: paths,
+			});
+		} finally {
+			if (attachedHere && liveWebContents(webContents)) {
+				try {
+					if (webContents.debugger.isAttached()) webContents.debugger.detach();
+				} catch {
+					// The page can close while its temporary upload is being installed.
+				}
+			}
+		}
+	}
+
+	private notifyHeicUploadFailure(webContents: WebContents, inputId: string): void {
+		if (!liveWebContents(webContents)) return;
+		try {
+			webContents.send(HEIC_UPLOAD_FAILED_CHANNEL, { inputId });
+		} catch {
+			// Falling back to the original file is best effort after page teardown.
+		}
+	}
+
+	private retainTemporaryHeicUploadDirectory(directory: string): void {
+		const cleanup = setTimeout(
+			() => this.releaseTemporaryHeicUploadDirectory(directory),
+			HEIC_UPLOAD_TEMPORARY_FILE_TTL_MS,
+		);
+		cleanup.unref?.();
+	}
+
+	private releaseTemporaryHeicUploadDirectory(directory: string): void {
+		if (!this.temporaryHeicUploadDirectories.delete(directory)) return;
+		try {
+			rmSync(directory, { recursive: true, force: true, maxRetries: 2 });
+		} catch {
+			// Temporary conversion artifacts are never user-owned files.
+		}
+	}
+
 	private async handlePasswordSubmission(
 		tab: UserBrowserTab,
 		webContents: WebContents,
@@ -3292,6 +3973,7 @@ export class UserBrowserService {
 			this.disposed ||
 			!this.passwordVault ||
 			this.state.settings.passwordAutofillEnabled === false ||
+			this.state.settings.offerToSavePasswords === false ||
 			tab.id !== this.state.activeTabId ||
 			isKestrelAppPageUrl(tab.url)
 		)
@@ -3300,9 +3982,8 @@ export class UserBrowserService {
 		if (!parsed.success || parsed.data.password.includes("\0")) return;
 		const pageUrl =
 			safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
-		const frameUrl = safePageUrl(
-			event.senderFrame?.url || webContents.getURL(),
-		);
+		if (event.senderFrame !== webContents.mainFrame) return;
+		const frameUrl = safePageUrl(event.senderFrame.url);
 		if (
 			!pageUrl ||
 			pageUrl.protocol !== "https:" ||
@@ -3310,38 +3991,23 @@ export class UserBrowserService {
 			frameUrl.origin !== pageUrl.origin
 		)
 			return;
+		if (this.state.settings.neverSavePasswordOrigins.includes(pageUrl.origin)) return;
 		const suppressionKey = `${tab.id}:${pageUrl.origin}`;
 		if (
 			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
 			this.now().getTime()
 		)
 			return;
-		// Keep the first submitted secret behind the confirmation that is already
-		// visible. A later submit from the same page must not silently replace the
-		// pending credential while the user is deciding whether to save it.
+		// Keep only the most recent submission for this tab while the login page
+		// remains unconfirmed. This matters when a person corrects a failed
+		// password attempt: a later successful navigation must never save the
+		// earlier, mistyped secret. Once a save prompt has been confirmed, it is
+		// immutable until the person accepts, dismisses, or navigates away.
 		if (
-			this.passwordPrompt?.mode === "save" &&
-			this.passwordPrompt.tabId === tab.id &&
-			this.passwordPrompt.origin === pageUrl.origin
+			this.pendingPasswordSave?.tabId === tab.id &&
+			this.pendingPasswordSave.confirmedAt
 		)
 			return;
-		const promptGeneration = ++this.passwordPromptGeneration;
-
-		// Use the origin hostname as the durable label. Page titles are controlled
-		// by the untrusted site and do not need to cross into the protected vault.
-		const title = hostnameTitle(pageUrl.toString());
-		const entries = (await this.passwordVault.listForOrigin(pageUrl.origin)).slice(
-			0,
-			24,
-		);
-		if (
-			this.disposed ||
-			tab.id !== this.state.activeTabId ||
-			promptGeneration !== this.passwordPromptGeneration ||
-			safePageUrl(webContents.getURL())?.origin !== pageUrl.origin
-		)
-			return;
-
 		const pageWidth =
 			this.contentBounds.width || this.window.getContentSize()[0] || 800;
 		const pageHeight =
@@ -3357,27 +4023,99 @@ export class UserBrowserService {
 			: {
 				x: Math.max(0, this.contentBounds.x + pageWidth - 368),
 				y: Math.max(0, this.contentBounds.y + 16),
-				width: 348,
-				height: Math.min(96, Math.max(1, pageHeight - 32)),
-			};
-		const prompt = PasswordPromptSchema.parse({
-			tabId: tab.id,
-			origin: pageUrl.origin,
-			title,
-			mode: "save",
-			fields: [],
-			entries,
-			candidate: { username: parsed.data.username.trim().slice(0, 500) },
-			anchor,
-		});
+					width: 348,
+					height: Math.min(96, Math.max(1, pageHeight - 32)),
+				};
+		const loginFlow = this.loginFlows.readContext(tab.id);
+		const flowMatchesOrigin = loginFlow?.authOrigin === pageUrl.origin;
+		const flowUsername = flowMatchesOrigin
+			? loginFlow.username?.slice(0, 500)
+			: undefined;
+		const flowInitiatingOrigin = flowMatchesOrigin
+			? loginFlow.initiatingOrigin
+			: undefined;
+		this.discardPendingPasswordSave();
 		this.pendingPasswordSave = {
 			tabId: tab.id,
 			origin: pageUrl.origin,
-			title,
-			username: parsed.data.username.trim().slice(0, 500),
+			title: hostnameTitle(pageUrl.toString()),
+			username:
+				parsed.data.username.trim().slice(0, 500) ||
+					flowUsername ||
+					"",
 			password: parsed.data.password,
+			submittedUrl: pageUrl.toString(),
+			submittedAt: this.now().getTime(),
+			...(flowInitiatingOrigin ? { flowInitiatingOrigin } : {}),
+			anchor,
 		};
-		this.setPasswordPrompt(prompt);
+	}
+
+	private async maybeOfferPasswordSaveAfterNavigation(
+		tab: UserBrowserTab,
+		webContents: WebContents,
+		navigationUrl: string,
+	): Promise<void> {
+		const pending = this.pendingPasswordSave;
+		const url = safePageUrl(navigationUrl);
+		if (
+			!pending ||
+			this.disposed ||
+			tab.id !== this.state.activeTabId ||
+			pending.tabId !== tab.id ||
+			!url ||
+			url.protocol !== "https:" ||
+			url.toString() === pending.submittedUrl ||
+			this.now().getTime() - pending.submittedAt > 30_000
+		) {
+			if (pending && this.now().getTime() - pending.submittedAt > 30_000)
+				this.discardPendingPasswordSave();
+			return;
+		}
+		if (this.state.settings.neverSavePasswordOrigins.includes(pending.origin)) {
+			this.discardPendingPasswordSave();
+			return;
+		}
+		const expectedLoginDestination =
+			url.origin === pending.origin ||
+			(pending.flowInitiatingOrigin !== undefined &&
+				url.origin === pending.flowInitiatingOrigin);
+		if (!expectedLoginDestination) {
+			// A submitted secret must not remain eligible while a tab is taken to an
+			// unrelated HTTPS page. Exact same-origin or a tracked return to the
+			// initiating site is the only cross-origin success relationship we trust.
+			this.discardPendingPasswordSave();
+			return;
+		}
+		try {
+			const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
+			// A destination that still contains a current-password field usually
+			// signals an unsuccessful login. Do not offer to save in that case.
+			if (snapshot.fields.some((field) => field.kind === "password")) return;
+			if (
+				this.pendingPasswordSave !== pending ||
+				safePageUrl(webContents.getURL())?.toString() !== url.toString()
+			)
+				return;
+			const entries = (await this.passwordVault?.listForOrigin(pending.origin) ?? []).slice(0, 24);
+			pending.confirmedUrl = url.toString();
+			pending.confirmedAt = this.now().getTime();
+			this.setPasswordPrompt(
+				PasswordPromptSchema.parse({
+					tabId: tab.id,
+					origin: pending.origin,
+					title: pending.title,
+					mode: "save",
+					fields: [],
+					entries,
+					candidate: { username: pending.username },
+					anchor: pending.anchor,
+				}),
+			);
+		} catch {
+			// The destination may still be constructing its preload document. Its
+			// did-stop-loading event will make one more bounded attempt.
+		}
 	}
 
 	private async refreshPasswordPrompt(tabId?: string): Promise<void> {
@@ -3407,9 +4145,22 @@ export class UserBrowserService {
 			this.clearPasswordPrompt();
 			return;
 		}
+		if (
+			this.pendingPasswordSave?.tabId === tab.id &&
+			!this.pendingPasswordSave.confirmedAt
+		)
+			return;
 		const suppressionKey = `${tab.id}:${url.origin}`;
 		if (
 			(this.passwordPromptSuppressedUntil.get(suppressionKey) ?? 0) >
+			this.now().getTime()
+		) {
+			this.clearPasswordPrompt();
+			return;
+		}
+		const automaticFillKey = `${tab.id}:${url.toString()}`;
+		if (
+			(this.passwordAutofilledUntil.get(automaticFillKey) ?? 0) >
 			this.now().getTime()
 		) {
 			this.clearPasswordPrompt();
@@ -3430,14 +4181,52 @@ export class UserBrowserService {
 		this.passwordScanInFlight = true;
 		const scanGeneration = this.passwordPromptGeneration;
 		try {
-			const snapshot = await this.readPasswordFormSnapshot(webContents);
+			const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
 			if (
 				scanGeneration !== this.passwordPromptGeneration ||
 				this.passwordPrompt?.mode === "save"
 			)
 				return;
 			if (!snapshot.fields.length) {
-				this.clearPasswordPrompt();
+				this.clearPasswordPrompt({
+					preservePending: this.pendingPasswordSave?.tabId === tab.id,
+				});
+				return;
+			}
+			const credentialFields = snapshot.fields.filter(
+				(field) =>
+					field.kind === "username" ||
+					field.kind === "password" ||
+					field.kind === "new-password",
+			);
+			if (!credentialFields.length) {
+				this.clearPasswordPrompt({
+					preservePending: this.pendingPasswordSave?.tabId === tab.id,
+				});
+				return;
+			}
+			const focused = snapshot.focusedFieldId
+				? snapshot.fields.find((field) => field.id === snapshot.focusedFieldId)
+				: undefined;
+			const newPasswordField = snapshot.fields.find(
+				(field) => field.kind === "new-password",
+			);
+			if (newPasswordField && this.state.settings.offerStrongPasswords) {
+				this.setPasswordPrompt(
+					PasswordPromptSchema.parse({
+						tabId: tab.id,
+						origin: url.origin,
+						title: redactUntrustedBrowserText(
+							webContents.getTitle() || hostnameTitle(url.toString()),
+							500,
+						),
+						mode: "generate",
+						fields: snapshot.fields,
+						...(focused ? { focusedFieldId: focused.id } : {}),
+						entries: [],
+						anchor: this.passwordPromptAnchor(snapshot, focused),
+					}),
+				);
 				return;
 			}
 			const entries = (await this.passwordVault.listForOrigin(url.origin)).slice(
@@ -3447,29 +4236,55 @@ export class UserBrowserService {
 			if (scanGeneration !== this.passwordPromptGeneration)
 				return;
 			if (!entries.length) {
-				this.clearPasswordPrompt();
+				this.clearPasswordPrompt({
+					preservePending: this.pendingPasswordSave?.tabId === tab.id,
+				});
 				return;
 			}
-			const focused = snapshot.focusedFieldId
-				? snapshot.fields.find((field) => field.id === snapshot.focusedFieldId)
-				: undefined;
-			const pageWidth =
-				this.contentBounds.width || this.window.getContentSize()[0] || 800;
-			const pageHeight =
-				this.contentBounds.height || this.window.getContentSize()[1] || 600;
-			const anchor = focused
-				? {
-					x: Math.max(0, this.contentBounds.x + focused.rect.x),
-					y: Math.max(0, this.contentBounds.y + focused.rect.y),
-					width: focused.rect.width,
-					height: focused.rect.height,
+			if (
+				this.state.settings.autofillPasswords === false &&
+				this.state.settings.autofillUsernames === false
+			) {
+				this.clearPasswordPrompt({
+					preservePending: this.pendingPasswordSave?.tabId === tab.id,
+				});
+				return;
+			}
+			const flow = this.loginFlows.readContext(tab.id);
+			const selectedFlowEntry =
+				flow?.authOrigin === url.origin && flow.selectedCredentialId
+					? entries.find((entry) => entry.id === flow.selectedCredentialId)
+					: undefined;
+			const automaticEntry = selectedFlowEntry ?? (entries.length === 1 ? entries[0] : undefined);
+			if (automaticEntry) {
+				const candidate = await this.passwordVault.getForOrigin(automaticEntry.id, url.origin);
+				if (candidate) {
+					try {
+						if (scanGeneration !== this.passwordPromptGeneration) return;
+						const filled = await this.fillPasswordFields(webContents, url.origin, {
+							username: candidate.username,
+							password: candidate.password,
+							includeUsername: this.state.settings.autofillUsernames,
+							includePassword: this.state.settings.autofillPasswords,
+						});
+						if (filled > 0) {
+							this.loginFlows.selectCredential(tab.id, candidate.id, candidate.username);
+							this.loginFlows.markAutofill(tab.id);
+							void this.markPasswordUsed(candidate.id, url.origin);
+							this.passwordAutofilledUntil.set(
+								automaticFillKey,
+								this.now().getTime() + 5_000,
+							);
+							this.clearPasswordPrompt({
+								preservePending: this.pendingPasswordSave?.tabId === tab.id,
+							});
+							return;
+						}
+					} finally {
+						discardPasswordEntry(candidate);
+					}
 				}
-				: {
-					x: Math.max(0, this.contentBounds.x + pageWidth - 368),
-					y: Math.max(0, this.contentBounds.y + 16),
-					width: 348,
-					height: Math.min(96, Math.max(1, pageHeight - 32)),
-				};
+			}
 			const prompt = PasswordPromptSchema.parse({
 				tabId: tab.id,
 				origin: url.origin,
@@ -3481,13 +4296,15 @@ export class UserBrowserService {
 				fields: snapshot.fields,
 				...(focused ? { focusedFieldId: focused.id } : {}),
 				entries,
-				anchor,
+				anchor: this.passwordPromptAnchor(snapshot, focused),
 			});
 			this.setPasswordPrompt(prompt);
 		} catch {
 			// A navigation or renderer restart can invalidate a scan. The next
 			// interval will retry without surfacing a page-owned error to the user.
-			this.clearPasswordPrompt();
+			this.clearPasswordPrompt({
+				preservePending: this.pendingPasswordSave?.tabId === tab.id,
+			});
 		} finally {
 			this.passwordScanInFlight = false;
 		}
@@ -3509,15 +4326,43 @@ export class UserBrowserService {
 		this.onPasswordPrompt?.(prompt);
 	}
 
-	private clearPasswordPrompt(): void {
+	private passwordPromptAnchor(
+		snapshot: PasswordFormSnapshot,
+		focused?: PasswordFormField,
+	): PasswordPrompt["anchor"] {
+		const target = focused ?? snapshot.fields.find((field) => field.kind !== "new-password");
+		if (target) {
+			return {
+				x: Math.max(0, this.contentBounds.x + target.rect.x),
+				y: Math.max(0, this.contentBounds.y + target.rect.y),
+				width: target.rect.width,
+				height: target.rect.height,
+			};
+		}
+		const pageWidth = this.contentBounds.width || this.window.getContentSize()[0] || 800;
+		const pageHeight = this.contentBounds.height || this.window.getContentSize()[1] || 600;
+		return {
+			x: Math.max(0, this.contentBounds.x + pageWidth - 368),
+			y: Math.max(0, this.contentBounds.y + 16),
+			width: 348,
+			height: Math.min(96, Math.max(1, pageHeight - 32)),
+		};
+	}
+
+	private clearPasswordPrompt(options: { preservePending?: boolean } = {}): void {
 		this.passwordPromptGeneration += 1;
 		// Never keep a submitted password alive after the associated prompt or page
 		// is gone. The secret is intentionally not part of any renderer contract.
-		this.pendingPasswordSave = undefined;
+		if (!options.preservePending) this.discardPendingPasswordSave();
 		if (!this.passwordPrompt && !this.passwordPromptKey) return;
 		this.passwordPrompt = undefined;
 		this.passwordPromptKey = "";
 		this.onPasswordPrompt?.(null);
+	}
+
+	private discardPendingPasswordSave(): void {
+		if (this.pendingPasswordSave) this.pendingPasswordSave.password = "";
+		this.pendingPasswordSave = undefined;
 	}
 
 	private suppressPasswordPrompt(
@@ -3760,6 +4605,7 @@ export class UserBrowserService {
 			sanitizeBrowserUrl(tab.url);
 		if (!url) {
 			this.elementRefs.set(tab.id, new Map());
+			this.sensitiveElementRefs.delete(tab.id);
 			return {
 				url: "about:blank",
 				title: (webContents.getTitle() || tab.title || "New Tab").slice(
@@ -3787,9 +4633,18 @@ export class UserBrowserService {
 			MAX_AX_SNAPSHOT_BYTES
 		) {
 			this.elementRefs.set(tab.id, new Map());
+			this.sensitiveElementRefs.delete(tab.id);
 			throw new Error("Visible browser accessibility snapshot exceeds 1.5 MB.");
 		}
 		this.elementRefs.set(tab.id, rememberElementRefs(interactive));
+		this.sensitiveElementRefs.set(
+			tab.id,
+			new Set(
+				interactive
+					.filter((item) => isSensitiveAgentFieldName(item.name))
+					.map((item) => item.ref),
+			),
+		);
 		return {
 			url,
 			title: redactUntrustedBrowserText(webContents.getTitle(), 500),
@@ -3877,8 +4732,8 @@ export class UserBrowserService {
 				const record = this.ensureView(tab);
 				const view = record.view;
 				const webContents = liveWebContents(view?.webContents);
-				if (
-					!webContents ||
+					if (
+						!webContents ||
 					!this.contentVisible ||
 					!this.window.contentView.children.includes(view)
 				) {
@@ -3886,9 +4741,10 @@ export class UserBrowserService {
 						"Active browser view is not attached for screenshot.",
 					);
 					await new Promise<void>((resolve) => setTimeout(resolve, 50));
-					continue;
-				}
-				try {
+						continue;
+					}
+					await this.assertScreenshotHasNoSensitiveForm(tab, webContents);
+					try {
 					const image = await capturePageWithDeadline(webContents, signal);
 					const { width, height } = image.getSize();
 					if (width < 1 || height < 1) {
@@ -3917,7 +4773,28 @@ export class UserBrowserService {
 			throw (
 				lastError ?? new Error("Visible browser screenshot capture failed.")
 			);
-		});
+			});
+	}
+
+	private async assertScreenshotHasNoSensitiveForm(
+		tab: UserBrowserTab,
+		webContents: WebContents,
+	): Promise<void> {
+		if (isKestrelAppPageUrl(tab.url)) return;
+		const url = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		if (!url || url.protocol !== "https:") return;
+		const snapshot = await this.readPasswordFormSnapshot(webContents, url.origin);
+		if (
+			snapshot.fields.some(
+				(field) =>
+					field.kind === "password" ||
+					field.kind === "new-password" ||
+					field.kind === "secret",
+			)
+		)
+			throw new Error(
+				"Kestrel does not share browser screenshots from pages with sensitive input fields.",
+			);
 	}
 
 	async act(
@@ -3954,12 +4831,22 @@ export class UserBrowserService {
 			await dispatchBrowserMouseClick(webContents, point, signal);
 			await new Promise<void>((resolveSettle) => setImmediate(resolveSettle));
 		} else if (action.type === "type") {
+			const ref = normalizeBrowserElementRef(action.target);
+			if (!ref)
+				throw new Error(
+					"Kestrel agents must use a current accessibility ref before typing into a browser field.",
+				);
+			if (this.sensitiveElementRefs.get(tabId)?.has(ref))
+				throw new Error(
+					"Kestrel agents cannot type into a sensitive browser field. Ask the user to enter that value directly.",
+				);
 			await this.targetPoint(
 				webContents,
 				action.target,
 				true,
 				tabId,
 				signal,
+				true,
 			);
 			if (signal.aborted) throw signal.reason;
 			webContents.insertText(action.text);
@@ -4012,7 +4899,8 @@ export class UserBrowserService {
 			if (
 				tabId &&
 				(request.operation === "visible-navigate" ||
-					request.operation === "visible-select")
+					request.operation === "visible-select" ||
+					request.operation === "visible-autofill")
 			) {
 				return this.withAgentTabPin(tabId, () =>
 					this.dispatchAgentRequest(request, signal),
@@ -4053,6 +4941,8 @@ export class UserBrowserService {
 				return this.searchHistory(request.query, request.limit);
 			case "visible-downloads":
 				return this.visibleDownloads();
+			case "visible-autofill":
+				return this.autofillCredentialForAgent(request.tabId, signal);
 			case "visible-act":
 				await this.actWhilePinned(request.tabId, request.action, signal);
 				return { performed: true };
@@ -4190,52 +5080,116 @@ export class UserBrowserService {
 		return this.extensionManager.list();
 	}
 
-	async installExtensionUrl(urlOrId: string): Promise<InstalledExtension> {
-		return this.extensionManager.installFromChromeWebStore(
-			urlOrId,
-			this.partition,
+	private extensionOperationError(
+		cause: unknown,
+		operation: "install" | "manage",
+	): Error {
+		// Keep the actionable native cause in the desktop log, but never send a
+		// filesystem path or Electron implementation detail to the renderer.
+		console.warn(`[Extension] ${operation} operation failed:`, cause);
+		return new Error(
+			operation === "install"
+				? chromeWebStoreInstallErrorMessage(cause)
+				: browserExtensionOperationErrorMessage(cause),
 		);
 	}
 
+	async inspectExtensionUrl(
+		urlOrId: string,
+	): Promise<ChromeWebStoreExtensionInspection> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.inspectChromeWebStore(urlOrId);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "install");
+		}
+	}
+
+	async installReviewedExtension(inspectionId: string): Promise<InstalledExtension> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installInspectedChromeWebStore(
+				inspectionId,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "install");
+		}
+	}
+
 	async installExtensionFile(filePath: string): Promise<InstalledExtension> {
-		return this.extensionManager.installFromCrxOrZipFile(
-			filePath,
-			this.partition,
-		);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installFromCrxOrZipFile(
+				filePath,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async installExtensionFolder(
 		folderPath: string,
 	): Promise<InstalledExtension> {
-		return this.extensionManager.installFromUnpacked(
-			folderPath,
-			this.partition,
-		);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installFromUnpacked(
+				folderPath,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async toggleExtension(
 		id: string,
 		enabled: boolean,
 	): Promise<InstalledExtension> {
-		return this.extensionManager.toggle(id, enabled, this.partition);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.toggle(id, enabled, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
+	}
+
+	async reloadExtension(id: string): Promise<InstalledExtension> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.reload(id, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async uninstallExtension(id: string): Promise<void> {
-		return this.extensionManager.uninstall(id, this.partition);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.uninstall(id, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
 		if (this.sleepingTabsInterval) clearInterval(this.sleepingTabsInterval);
-		if (this.passwordPollInterval) clearInterval(this.passwordPollInterval);
-		this.passwordPollInterval = undefined;
+		if (this.paymentPollInterval) clearInterval(this.paymentPollInterval);
+		this.paymentPollInterval = undefined;
+		this.rejectPasswordBridgeRequests("The browser tab is no longer available.");
+		this.loginFlows.clearAll();
 		this.clearPasswordPrompt();
 		this.clearPaymentPrompt();
 		this.partitionCoordinator.unregister(this.partitionParticipant);
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
 		this.elementRefs.clear();
+		this.sensitiveElementRefs.clear();
 		this.pendingContextDownloads.clear();
+		for (const directory of [...this.temporaryHeicUploadDirectories])
+			this.releaseTemporaryHeicUploadDirectory(directory);
 	}
 
 	private handleWillDownload(
@@ -4659,12 +5613,32 @@ export class UserBrowserService {
 			return { action: "deny" };
 		});
 		webContents.on("ipc-message", (event, channel, ...args) => {
-			if (channel !== PASSWORD_SUBMISSION_CHANNEL) return;
-			void this.handlePasswordSubmission(tab, webContents, event, args[0]).catch(
-				() => undefined,
-			);
+			if (channel === PASSWORD_SUBMISSION_CHANNEL) {
+				void this.handlePasswordSubmission(tab, webContents, event, args[0]).catch(
+					() => undefined,
+				);
+				return;
+			}
+			if (channel === PASSWORD_RESPONSE_CHANNEL) {
+				this.handlePasswordBridgeResponse(webContents, event, args[0]);
+				return;
+			}
+			if (
+				channel === PASSWORD_FORM_CHANGED_CHANNEL &&
+				event.senderFrame === webContents.mainFrame
+			) {
+				void this.refreshPasswordPrompt(tab.id);
+			}
+			if (channel === HEIC_UPLOAD_CHANNEL)
+				void this.handleHeicUpload(tab, webContents, event, args[0]).catch(
+					() => undefined,
+				);
 		});
 		webContents.on("will-navigate", (event, url) => {
+			if (this.passwordSaveCommitTabId === tab.id) {
+				event.preventDefault();
+				return;
+			}
 			const normalized = safePageUrl(url)?.toString();
 			if (!normalized) {
 				event.preventDefault();
@@ -4678,6 +5652,10 @@ export class UserBrowserService {
 			this.interceptPageNavigation(tab, record, normalized, "navigation");
 		});
 		webContents.on("will-redirect", (event, url) => {
+			if (this.passwordSaveCommitTabId === tab.id) {
+				event.preventDefault();
+				return;
+			}
 			const normalized = safePageUrl(url)?.toString();
 			event.preventDefault();
 			if (!normalized) return;
@@ -4700,6 +5678,11 @@ export class UserBrowserService {
 				if (origin) void this.loadFavicon(tab, `${origin}/favicon.ico`);
 			}
 			void this.refreshPasswordPrompt(tab.id);
+			void this.maybeOfferPasswordSaveAfterNavigation(
+				tab,
+				webContents,
+				webContents.getURL(),
+			);
 			void this.refreshPaymentPrompt(tab.id);
 		});
 		webContents.on("page-title-updated", (_event, title) => {
@@ -4721,10 +5704,14 @@ export class UserBrowserService {
 			(_event, url, _httpResponseCode, _httpStatusText) => {
 				if (tab.blockedNavigation) return;
 				if (tab.id === this.state.activeTabId) {
-					this.clearPasswordPrompt();
+					this.clearPasswordPrompt({
+						preservePending: this.pendingPasswordSave?.tabId === tab.id,
+					});
 					this.clearPaymentPrompt();
 				}
 				this.didNavigate(tab, webContents, url);
+				this.loginFlows.recordNavigation(tab.id, url);
+				void this.maybeOfferPasswordSaveAfterNavigation(tab, webContents, url);
 				void this.refreshPasswordPrompt(tab.id);
 				void this.refreshPaymentPrompt(tab.id);
 			},
@@ -4733,10 +5720,14 @@ export class UserBrowserService {
 			if (isMainFrame) {
 				if (tab.blockedNavigation) return;
 				if (tab.id === this.state.activeTabId) {
-					this.clearPasswordPrompt();
+					this.clearPasswordPrompt({
+						preservePending: this.pendingPasswordSave?.tabId === tab.id,
+					});
 					this.clearPaymentPrompt();
 				}
 				this.didNavigate(tab, webContents, url);
+				this.loginFlows.recordNavigation(tab.id, url);
+				void this.maybeOfferPasswordSaveAfterNavigation(tab, webContents, url);
 				void this.refreshPasswordPrompt(tab.id);
 				void this.refreshPaymentPrompt(tab.id);
 			}
@@ -5180,6 +6171,7 @@ export class UserBrowserService {
 		// Snapshot element refs are tied to a specific DOM generation. Any main-frame
 		// navigation, including SPA route changes, must invalidate them before reuse.
 		this.elementRefs.delete(tab.id);
+		this.sensitiveElementRefs.delete(tab.id);
 		tab.url = sanitizeBrowserUrl(url.toString());
 		tab.title =
 			webContents.getTitle().trim().slice(0, 500) || hostnameTitle(tab.url);
@@ -5299,11 +6291,15 @@ export class UserBrowserService {
 
 	private closeView(tabId: string, closeWebContents = true): void {
 		if (tabId === this.state.activeTabId) this.clearPasswordPrompt();
+		this.loginFlows.clearTab(tabId);
 		const record = this.views.get(tabId);
 		if (!record) return;
 		this.views.delete(tabId);
 		this.elementRefs.delete(tabId);
+		this.sensitiveElementRefs.delete(tabId);
 		const webContents = record?.view?.webContents;
+		if (webContents && typeof webContents.id === "number")
+			this.rejectPasswordBridgeRequests("The browser tab is no longer available.", webContents.id);
 		if (webContents && typeof webContents.id === "number")
 			this.webContentsToTab.delete(webContents.id);
 		if (
@@ -5782,6 +6778,7 @@ export class UserBrowserService {
 		focus: boolean,
 		tabId: string,
 		signal: AbortSignal,
+		rejectSensitive = false,
 	): Promise<{ x: number; y: number }> {
 		if (!selector || selector.length > 2_000)
 			throw new Error("Browser selector is invalid.");
@@ -5795,6 +6792,7 @@ export class UserBrowserService {
 				backendNodeId,
 				focus,
 				signal,
+				rejectSensitive,
 			);
 		}
 		return webContents.executeJavaScript(`(() => {
@@ -5805,6 +6803,22 @@ export class UserBrowserService {
       const style = getComputedStyle(node);
       if (box.width <= 0 || box.height <= 0 || style.display === "none" || style.visibility === "hidden" || Number(style.opacity) <= 0) throw new Error("Browser target is not visible.");
       if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") throw new Error("Browser target is disabled.");
+      const secretHint = [
+        node.tagName,
+        node.getAttribute("type"),
+        node.getAttribute("autocomplete"),
+        node.getAttribute("name"),
+        node.id,
+        node.getAttribute("aria-label"),
+        node.getAttribute("placeholder"),
+        node.labels?.[0]?.innerText,
+      ].filter(Boolean).join(" ").toLowerCase();
+      const isSensitive =
+        (node instanceof HTMLInputElement && node.type === "password") ||
+        /(?:\\b(?:new|current|old|confirm(?:ation)?|repeat)?\\s*password\\b|\\bone[-_\\s]*time[-_\\s]*(?:code|passcode|token)\\b|\\botp\\b|\\b(?:recovery|verification|security)\\s*(?:code|passcode|pin)\\b|\\b(?:cvv|cvc|cc[-_\\s]*csc)\\b|\\bapi[-_\\s]*(?:key|token)\\b|\\baccess[-_\\s]*token\\b|\\bprivate[-_\\s]*key\\b)/i.test(secretHint);
+      if (${rejectSensitive} && isSensitive) {
+        throw new Error("Kestrel agents cannot type into a sensitive browser field. Ask the user to enter that value directly.");
+      }
       const x = Math.round(Math.max(0, Math.min(innerWidth - 1, box.left + box.width / 2)));
       const y = Math.round(Math.max(0, Math.min(innerHeight - 1, box.top + box.height / 2)));
       const hit = document.elementFromPoint(x, y);

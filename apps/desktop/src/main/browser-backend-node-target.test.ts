@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	dispatchBrowserKey,
 	dispatchBrowserMouseClick,
+	targetPointFromBackendNode,
 } from "./browser-backend-node-target";
 
 function webContentsWith(
@@ -75,5 +76,31 @@ describe("bounded browser debugger input", () => {
 			type: "keyUp",
 			key: "Enter",
 		});
+	});
+
+	it("rechecks a ref against the live DOM before sensitive typing", async () => {
+		const sendCommand = vi.fn(async (method: string) => {
+			if (method === "DOM.resolveNode")
+				return { object: { objectId: "live-field" } };
+			if (method === "Runtime.callFunctionOn")
+				return { result: { value: { ok: false, code: "sensitive" } } };
+			return {};
+		});
+
+		await expect(
+			targetPointFromBackendNode(
+				webContentsWith(sendCommand),
+				42,
+				true,
+				new AbortController().signal,
+				true,
+			),
+		).rejects.toThrow("will not type into a sensitive browser field");
+		expect(sendCommand).toHaveBeenCalledWith(
+			"Runtime.callFunctionOn",
+			expect.objectContaining({
+				arguments: [{ value: true }, { value: true }],
+			}),
+		);
 	});
 });

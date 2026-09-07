@@ -414,10 +414,7 @@ function CalendarView() {
 					) : (
 						<>
 							<h2>Choose a time block</h2>
-							<p>
-								Inspect its source, confidence, people, location, and permission
-								boundary.
-							</p>
+							<p>See its source, details, and access.</p>
 						</>
 					)}
 				</aside>
@@ -429,8 +426,8 @@ function CalendarView() {
 					<div>
 						<h2>No time is mapped this week</h2>
 						<p>
-							Add a confirmed block below, connect Google Calendar, or tell
-							Kestrel a recurring routine in chat.
+							Add a local block, connect Google Calendar, or share a recurring
+							routine in chat.
 						</p>
 					</div>
 				</section>
@@ -471,8 +468,7 @@ function CalendarView() {
 					</button>
 				</form>
 				<small>
-					This creates an explicit local block. It does not write to a connected
-					calendar.
+					Creates a local block; it does not edit connected calendars.
 				</small>
 			</details>
 			{error && (
@@ -824,7 +820,7 @@ const detailRelatedIds = useMemo(
 					<h2>{summary?.title ?? "A day in motion"}</h2>
 					<p>
 						{summary?.summary ??
-							"Kestrel keeps meaningful activity in chronological blocks, with the original evidence available when you inspect a moment."}
+							"Activity grouped by time, with sources available to inspect."}
 					</p>
 				</div>
 				<dl>
@@ -881,7 +877,7 @@ const detailRelatedIds = useMemo(
 									{blockEvents.map(renderEvent)}
 									{blockEvents.length === 0 && (
 										<small className="timeline-missing-evidence">
-											The block is retained, but its event evidence is not in this page.
+											The block remains, but its source is not in this view.
 										</small>
 									)}
 								</div>
@@ -912,15 +908,14 @@ const detailRelatedIds = useMemo(
 								<p>
 									{appliedQuery
 										? "Try a broader phrase or clear the search to see the full day."
-										: "Meaningful Kestrel activity will appear here when capture is enabled. Private and incognito sessions stay out of the timeline."}
+										: "Captured Kestrel activity appears here. Private and incognito sessions are excluded."}
 								</p>
 							</div>
 						</section>
 					)}
 					{timeline.hasMore && (
 						<small className="timeline-more-note">
-							This day has more activity than the first 100 results. Narrow the search
-							to inspect a specific thread.
+							More than 100 results. Narrow the search.
 						</small>
 					)}
 				</section>
@@ -1005,7 +1000,7 @@ const detailRelatedIds = useMemo(
 									</div>
 								) : (
 									<small className="timeline-muted">
-										No additional provenance was recorded for this activity.
+									No additional source details.
 									</small>
 								)}
 							</section>
@@ -1014,7 +1009,7 @@ const detailRelatedIds = useMemo(
 						<div className="timeline-detail-empty">
 							<Icon name="activity" />
 							<h2>Inspect a moment</h2>
-							<p>Select a block or event to see the source, related work, pages, and files behind it.</p>
+							<p>Select a block or event to see its source and related work.</p>
 						</div>
 					)}
 				</aside>
@@ -1149,9 +1144,7 @@ function PeopleView() {
 				{people.length === 0 && !busy && (
 					<div className="people-empty">
 						<p>No people are stored yet.</p>
-						<small>
-							Add someone below and their context stays on this Mac.
-						</small>
+						<small>Add someone to keep relationship context on this Mac.</small>
 					</div>
 				)}
 			</section>
@@ -1254,10 +1247,7 @@ function PeopleView() {
 				) : (
 					<div className="person-detail-empty">
 						<h2>Select a person</h2>
-						<p>
-							Kestrel uses confirmed relationship and tone context when drafting
-							communication.
-						</p>
+						<p>Use confirmed relationship and tone context when drafting.</p>
 					</div>
 				)}
 			</section>
@@ -1552,9 +1542,8 @@ function MemoryView({
 					<small>Standard conversations only · no provider request</small>
 				</header>
 				<p>
-					Search runs on this Mac over encrypted transcript records. Private,
-					incognito, and forgotten conversations are excluded and remain out of
-					this result list.
+					Search encrypted conversations on this Mac. Private, incognito, and
+					forgotten chats are excluded.
 				</p>
 				<form className="memory-search" onSubmit={(event) => void searchTranscripts(event)}>
 					<label className="sr-only" htmlFor="transcript-search-input">
@@ -1583,7 +1572,7 @@ function MemoryView({
 									{result.sessionTitle} · {result.role} · {new Date(result.createdAt).toLocaleString()}
 								</span>
 								<strong>{result.preview}</strong>
-								<small>Open the exact message in this conversation</small>
+								<small>Open exact message</small>
 							</button>
 						))}
 					</div>
@@ -1598,9 +1587,8 @@ function MemoryView({
 					<div>
 						<h2>No memories yet</h2>
 						<p>
-							Say <em>remember that …</em> in chat to store a preference, or add a
-							confirmed fact below. Inspect what Kestrel keeps before it influences
-							a new chat.
+							Say <em>remember that …</em> in chat, or add a confirmed fact below.
+							Review saved memories before they shape a new chat.
 						</p>
 					</div>
 				</section>
@@ -1720,19 +1708,17 @@ function MemoryView({
 							</dl>
 							<details>
 								<summary>Why it was remembered</summary>
-								<p>
-									Kestrel kept this as {memoryState(selected)} {selected.type}{" "}
-									context from {selected.sourceType}. It can be selected only
-									when the task, people, project, or time range make it useful.
-								</p>
+							<p>
+								Saved as {memoryState(selected)} {selected.type} context from{" "}
+								{selected.sourceType}. It is used only when relevant to the task,
+								people, project, or time.
+							</p>
 							</details>
 						</>
 					) : (
 						<div className="memory-inspector-empty">
 							<h2>Select a memory</h2>
-							<p>
-								Inspect its source, authority, confidence, use, and controls.
-							</p>
+						<p>Review its source, confidence, use, and controls.</p>
 						</div>
 					)}
 				</section>
@@ -1861,9 +1847,8 @@ function MemoryView({
 
 			<DreamingPanel memories={snapshot.memories} onMemoryChanged={refresh} />
 			<p className="memory-control-note">
-				Sensitive and restricted fields are excluded from task context unless
-				the action has matching permission. Backups, export, and full data reset
-				remain in Settings.
+				Sensitive and restricted fields enter task context only with matching
+				permission. Manage backups, export, and reset in Settings.
 			</p>
 			{error && (
 				<p className="connection-error" role="alert">

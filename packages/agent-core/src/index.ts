@@ -118,6 +118,7 @@ import {
 	CodexAppServerProvider,
 	type CodexBrowserMcpAttachment,
 	createEnvironmentModelProviders,
+	ModelCatalog,
 	type ModelContentPart,
 	type ModelProvider,
 	ProviderPool,
@@ -216,6 +217,7 @@ export class AgentCore {
 	readonly modelRouter: AdaptiveModelRouter;
 	readonly runtime: AgentRuntime;
 	readonly providerPool: ProviderPool;
+	readonly modelCatalog: ModelCatalog;
 	readonly usageGovernor: UsageGovernor;
 	readonly agentLoop: AgentLoop;
 	readonly skillRegistry?: SkillRegistry;
@@ -488,6 +490,11 @@ export class AgentCore {
 		this.providerPool = new ProviderPool(
 			this.deps.modelProviders ?? createEnvironmentModelProviders(),
 		);
+		this.modelCatalog = new ModelCatalog(
+			this.deps.database,
+			this.providerPool.list(),
+			() => new Date(this.now()),
+		);
 		this.usageGovernor = new UsageGovernor(
 			this.deps.database,
 			() => new Date(this.deps.now?.() ?? Date.now()),
@@ -497,6 +504,7 @@ export class AgentCore {
 			this.providerPool.list(),
 			this.deps.modelProfiles ?? [],
 			() => new Date(this.now()),
+			this.modelCatalog,
 		);
 		this.modelRouter = new AdaptiveModelRouter(
 			this.deps.database,
@@ -807,6 +815,14 @@ export class AgentCore {
 		decision: ReturnType<AdaptiveModelRouter["route"]>;
 		requirements: ReturnType<TaskRequirementAnalyzer["analyze"]>;
 	} {
+		// Catalog entries can expire while this core remains running. Synchronize
+		// the registry immediately before an automatic decision so stale account
+		// models cannot remain eligible until a renderer happens to refresh.
+		this.modelRegistry.syncProviderCatalog(
+			this.providerPool.list(),
+			this.modelCatalog,
+			false,
+		);
 		this.modelRegistry.applyProviderHealth(this.providerPool.health());
 		const routedProviderIds = this.providerIdsForAttachments(
 			providerIds,
@@ -885,6 +901,40 @@ export class AgentCore {
 			decision,
 			requirements,
 		};
+	}
+
+	/**
+	 * Refresh an account-aware catalog and immediately republish the resulting
+	 * endpoint profiles to the router. Desktop bootstrap uses the stale-only
+	 * variant below before Auto becomes available.
+	 */
+	async refreshProviderModels(
+		providerId?: string,
+		signal?: AbortSignal,
+	) {
+		const providerAccounts = await this.modelCatalog.refresh(
+			this.providerPool.list(),
+			providerId,
+			signal,
+		);
+		this.modelRegistry.syncProviderCatalog(
+			this.providerPool.list(),
+			this.modelCatalog,
+		);
+		return providerAccounts;
+	}
+
+	/** Refresh only missing or expired dynamic catalogs at process startup. */
+	async refreshStaleProviderModels(signal?: AbortSignal) {
+		const providerAccounts = await this.modelCatalog.refreshStale(
+			this.providerPool.list(),
+			signal,
+		);
+		this.modelRegistry.syncProviderCatalog(
+			this.providerPool.list(),
+			this.modelCatalog,
+		);
+		return providerAccounts;
 	}
 
 	private providerAllowed(providerId: string, poolId?: string): boolean {
@@ -2609,6 +2659,9 @@ export class AgentCore {
 						...(request.providerModels
 							? { providerModels: request.providerModels }
 							: {}),
+						...(request.reasoningEffort
+							? { reasoningEffort: request.reasoningEffort }
+							: {}),
 						...(request.writerModel
 							? { writerModel: request.writerModel }
 							: {}),
@@ -3285,7 +3338,22 @@ export class AgentCore {
 								},
 							]
 						: [];
-					return { ok: true, providers: [...logical, ...auto] };
+					return {
+						ok: true,
+						providers: [...logical, ...auto],
+						providerAccounts: this.modelCatalog.list(),
+					};
+				}
+				case "runtime-refresh-provider-models": {
+					const providerAccounts = await this.refreshProviderModels(
+						request.providerId,
+						AbortSignal.timeout(60_000),
+					);
+					return {
+						ok: true,
+						providerAccounts,
+						modelProfiles: this.modelRegistry.list(),
+					};
 				}
 				case "runtime-verify-provider":
 					return {

@@ -30,6 +30,12 @@ import {
   type AddressBarSuggestionFilter,
 } from "./address-bar-suggestions";
 import { BrowserHistoryPopover } from "./BrowserHistoryPopover";
+import {
+  downloadProgress,
+  downloadSizeLabel,
+  downloadStatusLabel,
+  downloadTimeRemaining,
+} from "./browser-download-format";
 import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 
 type ToolbarMenuName =
@@ -57,24 +63,6 @@ function readPinnedExtensions(): string[] {
   } catch {
     return [];
   }
-}
-
-function compactDownloadBytes(value: number): string {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
-  if (value >= 1_000) return `${Math.round(value / 1_000)} KB`;
-  return `${value} B`;
-}
-
-function downloadStatusLabel(status: UserBrowserDownload["status"]): string {
-  return {
-    checking: "Checking reputation",
-    completed: "Completed",
-    cancelled: "Cancelled",
-    failed: "Failed",
-    blocked: "Blocked for safety",
-    progressing: "Downloading",
-  }[status];
 }
 
 function BrowserDownloadsPopover({
@@ -108,7 +96,7 @@ function BrowserDownloadsPopover({
         <Icon name="downloads" />
         <span>
           <strong>Downloads</strong>
-          <small>Drag a finished file onto a website upload field</small>
+          <small>Track progress and drag finished files to upload fields.</small>
         </span>
       </header>
       {downloads.length === 0 ? (
@@ -116,17 +104,11 @@ function BrowserDownloadsPopover({
       ) : (
         <ul className="browser-download-popover-list">
           {downloads.slice(0, 30).map((download) => {
-            const progress =
-              download.totalBytes > 0
-                ? Math.min(
-                    100,
-                    Math.round(
-                      (download.receivedBytes / download.totalBytes) * 100,
-                    ),
-                  )
-                : 0;
+            const progress = downloadProgress(download);
+            const isProgressing = download.status === "progressing";
+            const isCompleted = download.status === "completed";
             const canDrag =
-              download.status === "completed" && download.canReveal;
+              isCompleted && download.canReveal;
             return (
               <li
                 key={download.id}
@@ -150,20 +132,28 @@ function BrowserDownloadsPopover({
                 </span>
                 <div className="browser-download-popover-copy">
                   <strong title={download.filename}>{download.filename}</strong>
-                  <small>
-                    {download.status === "progressing"
-                      ? `Downloading · ${progress}% · ${compactDownloadBytes(download.receivedBytes)}`
-                      : `${downloadStatusLabel(download.status)} · ${compactDownloadBytes(download.receivedBytes)}`}
+                  <small className="browser-download-popover-size">
+                    {isCompleted
+                      ? downloadSizeLabel(download)
+                      : `${downloadStatusLabel(download.status)} · ${downloadSizeLabel(download)}`}
                   </small>
-                  {download.status === "progressing" && (
-                    <progress
-                      value={download.receivedBytes}
-                      max={Math.max(
-                        download.totalBytes,
-                        download.receivedBytes,
-                        1,
-                      )}
-                    />
+                  {isProgressing && (
+                    <div className="browser-download-popover-progress">
+                      <progress
+                        {...(progress === undefined
+                          ? {}
+                          : { value: progress, max: 100 })}
+                        aria-label={`Download progress for ${download.filename}`}
+                        aria-valuetext={
+                          progress === undefined
+                            ? "Progress is being calculated"
+                            : `${progress}% complete`
+                        }
+                      />
+                      <span aria-live="polite">
+                        {downloadTimeRemaining(download)}
+                      </span>
+                    </div>
                   )}
                 </div>
                 <div className="browser-download-popover-actions">
@@ -200,13 +190,14 @@ function BrowserDownloadsPopover({
                     <button
                       type="button"
                       role="menuitem"
-                      className="browser-download-action"
+                      className="browser-download-action browser-download-reveal"
                       onClick={() => {
                         closeMenu();
                         onRevealDownload(download.id);
                       }}
                     >
-                      Finder
+                      <Icon name="folder" />
+                      <span>Show in Finder</span>
                     </button>
                   )}
                   {(download.status === "progressing" ||
@@ -418,6 +409,11 @@ export function BrowserToolbar({
     : openMenu;
   const overlayOpen = Boolean(visibleMenu || showSuggestions);
   overlayOpenRef.current = overlayOpen;
+  const activeDownloadCount = downloads.reduce(
+    (count, download) =>
+      count + (download.status === "progressing" ? 1 : 0),
+    0,
+  );
 
   function clearSuggestionsCloseTimer() {
     if (suggestionsCloseTimerRef.current === null) return;
@@ -1179,7 +1175,11 @@ export function BrowserToolbar({
           ref={downloadsTriggerRef}
           type="button"
           className={`browser-toolbar-menu-trigger browser-toolbar-secondary ${downloadsOpen ? "active" : ""}`}
-          aria-label="Downloads"
+          aria-label={
+            activeDownloadCount > 0
+              ? `Downloads, ${activeDownloadCount} in progress`
+              : "Downloads"
+          }
           aria-haspopup="menu"
           aria-expanded={downloadsOpen}
           aria-keyshortcuts="Meta+J"
@@ -1187,6 +1187,11 @@ export function BrowserToolbar({
           onClick={toggleDownloads}
         >
           <Icon name="downloads" />
+          {activeDownloadCount > 0 && (
+            <span className="browser-download-progress-badge" aria-hidden="true">
+              {activeDownloadCount > 9 ? "9+" : activeDownloadCount}
+            </span>
+          )}
         </button>
         <button
           ref={browserMenuTriggerRef}
@@ -1264,7 +1269,6 @@ export function BrowserToolbar({
                   <Icon name="more" />
                   <span>
                     <strong>Browser menu</strong>
-                    <small>Tabs, history, page tools, and settings</small>
                   </span>
                 </header>
                 <div className="browser-toolbar-menu-list">
@@ -1460,7 +1464,7 @@ export function BrowserToolbar({
                   <Icon name="extensions" />
                   <span>
                     <strong>Extensions</strong>
-                    <small>Pin quick actions beside the logo</small>
+					<small>Pin extensions to the toolbar.</small>
                   </span>
                 </header>
                 {extensions.length === 0 ? (
@@ -1531,7 +1535,6 @@ export function BrowserToolbar({
                   <Icon name="tools" />
                   <span>
                     <strong>Tools</strong>
-                    <small>Common actions for this page</small>
                   </span>
                 </header>
                 <div className="browser-toolbar-tool-grid">
@@ -1615,7 +1618,6 @@ export function BrowserToolbar({
                   <Icon name="sliders" />
                   <span>
                     <strong>Page options</strong>
-                    <small>Quick settings for this browser surface</small>
                   </span>
                 </header>
                 <div className="browser-toolbar-settings-list">

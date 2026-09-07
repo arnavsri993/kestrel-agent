@@ -81,6 +81,27 @@ if (args[0] === "run") {
 	return { executable, capture };
 }
 
+async function fakeUnauthenticatedOpenCodeCli(): Promise<{ executable: string }> {
+	const root = await mkdtemp(join(tmpdir(), "kestrel-opencode-unauthenticated-"));
+	roots.push(root);
+	const executable = join(root, "opencode");
+	const body = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "auth") {
+  process.stderr.write("not authenticated\\n");
+  process.exit(1);
+}
+if (args[0] === "--version") {
+  process.stdout.write("opencode 1.0.0\\n");
+  process.exit(0);
+}
+process.exit(1);
+`;
+	await writeFile(executable, body, { mode: 0o700 });
+	await chmod(executable, 0o700);
+	return { executable };
+}
+
 afterEach(async () => {
 	await Promise.all(
 		roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -225,6 +246,17 @@ describe("vendor subscription CLI providers", () => {
 			toolCalls: [],
 		});
 		expect(deltas).toEqual(["OpenCode ", "subscription result"]);
+	});
+
+	it("does not treat an OpenCode version response as authenticated access", async () => {
+		const fake = await fakeUnauthenticatedOpenCodeCli();
+		const provider = new OpenCodeSubscriptionProvider({
+			executable: fake.executable,
+		});
+
+		await expect(provider.probe()).rejects.toThrow(
+			"OpenCode CLI authentication could not be verified.",
+		);
 	});
 
 	it("escalates to SIGKILL when the provider CLI ignores SIGTERM", async () => {

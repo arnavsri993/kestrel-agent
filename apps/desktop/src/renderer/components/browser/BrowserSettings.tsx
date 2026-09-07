@@ -1,6 +1,9 @@
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import type {
-  InstalledExtension,
+	ChromeWebStoreExtensionInspection,
+	ExtensionCompatibilityReport,
+	ExtensionCompatibilityState,
+	InstalledExtension,
   UserBrowserSettings,
   UserBrowserSitePermission,
 } from "@kestrel/shared-types";
@@ -17,6 +20,9 @@ import { Icon } from "../Icon";
 import { Status } from "../ui";
 import { PasswordSettings } from "./PasswordSettings";
 import { PaymentSettings } from "./PaymentSettings";
+import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
+import { browserExtensionOperationErrorMessage } from "../../../browser-extension-error";
+import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
 import {
   CUSTOM_BACKGROUND_MAX_BYTES,
   NEW_TAB_BACKGROUND_OPTIONS,
@@ -91,7 +97,7 @@ function errorText(cause: unknown, fallback: string): string {
 }
 
 function formatPath(path: string): string {
-  if (!path) return "Kestrel’s default Downloads folder";
+  if (!path) return "Your Downloads folder";
   const pieces = path.split(/[\\/]/).filter(Boolean);
   return pieces.length > 2 ? `…/${pieces.slice(-2).join("/")}` : path;
 }
@@ -108,6 +114,41 @@ function validHomepage(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+const EXTENSION_COMPATIBILITY_LABELS: Record<
+  ExtensionCompatibilityState,
+  string
+> = {
+  verified: "Runtime verified",
+  expected_compatible: "Expected compatible",
+  partial: "Partial compatibility",
+  unsupported: "Unsupported",
+  unknown: "Not yet verified",
+};
+
+function extensionCompatibilityLabel(
+  compatibility: ExtensionCompatibilityReport | undefined,
+): string {
+  return compatibility
+    ? EXTENSION_COMPATIBILITY_LABELS[compatibility.state]
+    : "Compatibility not recorded";
+}
+
+function runtimeEvidenceLabel(
+  compatibility: ExtensionCompatibilityReport | undefined,
+): string {
+  if (!compatibility) return "No runtime evidence recorded";
+  const runtime = compatibility.runtime;
+  const evidence: string[] = [];
+  if (runtime.registered === "passed") evidence.push("registered");
+  if (runtime.ready === "passed") evidence.push("ready");
+  if (runtime.backgroundServiceWorker === "passed") evidence.push("worker started");
+  if (runtime.remainedLoaded === "passed") evidence.push("still loaded");
+  if (runtime.persistedAcrossRestart === "passed") evidence.push("restart verified");
+  return evidence.length > 0
+    ? `Runtime evidence: ${evidence.join(", ")}`
+    : "Runtime evidence: not yet available";
 }
 
 export function BrowserSettings({
@@ -139,6 +180,8 @@ export function BrowserSettings({
   const [extensions, setExtensions] = useState<InstalledExtension[]>([]);
   const [extensionUrlInput, setExtensionUrlInput] = useState("");
   const [extensionLoading, setExtensionLoading] = useState(false);
+  const [extensionInspection, setExtensionInspection] =
+    useState<ChromeWebStoreExtensionInspection | null>(null);
   const [extensionMessage, setExtensionMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -350,38 +393,65 @@ export function BrowserSettings({
     }
   };
 
-  const handleInstallExtensionFromUrl = async () => {
+  const handleInspectExtensionFromUrl = async () => {
     if (!extensionUrlInput.trim()) return;
     setExtensionLoading(true);
     setExtensionMessage(null);
     try {
       const response = await window.kestrel.request({
-        type: "browser-install-extension-url",
+        type: "browser-inspect-extension-url",
         urlOrId: extensionUrlInput.trim(),
       });
-      if (response.ok && "extension" in response) {
-        setExtensionMessage({
-          type: "success",
-          text: `Successfully installed ${(response.extension as InstalledExtension).name}!`,
-        });
-        setExtensionUrlInput("");
-        await fetchExtensions();
+      if (response.ok && "extensionInspection" in response) {
+        setExtensionInspection(response.extensionInspection);
       } else {
         setExtensionMessage({
           type: "error",
-          text:
-            "error" in response
-              ? String(response.error)
-              : "Failed to install extension.",
+          text: chromeWebStoreInstallErrorMessage(
+            new Error(
+              "error" in response
+                ? String(response.error)
+                : "The extension inspector returned no extension package.",
+            ),
+          ),
         });
       }
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: errorText(cause, "Failed to download extension."),
+        text: chromeWebStoreInstallErrorMessage(cause),
       });
     } finally {
       setExtensionLoading(false);
+    }
+  };
+
+  const handleInstallReviewedExtension = async (inspectionId: string) => {
+    try {
+      const response = await window.kestrel.request({
+        type: "browser-install-extension-url",
+        inspectionId,
+      });
+      if (!response.ok || !("extension" in response)) {
+        throw new Error(
+          chromeWebStoreInstallErrorMessage(
+            new Error(
+              "error" in response
+                ? String(response.error)
+                : "The extension installer returned no extension.",
+            ),
+          ),
+        );
+      }
+      setExtensionMessage({
+        type: "success",
+        text: `Installed ${(response.extension as InstalledExtension).name}. Kestrel will verify persistence after the next browser start.`,
+      });
+      setExtensionUrlInput("");
+      setExtensionInspection(null);
+      await fetchExtensions();
+    } catch (cause) {
+      throw new Error(chromeWebStoreInstallErrorMessage(cause));
     }
   };
 
@@ -396,7 +466,7 @@ export function BrowserSettings({
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: errorText(cause, "Failed to toggle extension."),
+        text: browserExtensionOperationErrorMessage(cause),
       });
     }
   };
@@ -411,7 +481,28 @@ export function BrowserSettings({
     } catch (cause) {
       setExtensionMessage({
         type: "error",
-        text: errorText(cause, "Failed to uninstall extension."),
+        text: browserExtensionOperationErrorMessage(cause),
+      });
+    }
+  };
+
+  const handleReloadExtension = async (id: string) => {
+    try {
+      const response = await window.kestrel.request({
+        type: "browser-reload-extension",
+        extensionId: id,
+      });
+      if (!response.ok)
+        throw new Error(
+          "error" in response
+            ? String(response.error)
+            : "Failed to reload extension.",
+        );
+      await fetchExtensions();
+    } catch (cause) {
+      setExtensionMessage({
+        type: "error",
+        text: browserExtensionOperationErrorMessage(cause),
       });
     }
   };
@@ -593,17 +684,7 @@ export function BrowserSettings({
   return (
     <div className="browser-settings-wrapper" data-settings-section={section}>
       <header className="browser-settings-intro">
-        <span className="eyebrow">Browser settings</span>
-        <h2>
-          {section === "browser"
-            ? "Make the browser feel like yours."
-            : "Browser"}
-        </h2>
-        <p>
-          {section === "browser"
-            ? "Keep browser controls here. Agent behavior, models, memory, and approvals live in the separate Agent settings area."
-            : "Focused browser preferences with native behavior and profile-owned persistence."}
-        </p>
+        <h2>Browser</h2>
         {statusCopy && (
           <small
             className={`browser-settings-save-state ${saveState}`}
@@ -624,7 +705,7 @@ export function BrowserSettings({
             <h2 id="browser-startup-title">
               <Icon name="reload" /> Startup
             </h2>
-            <p>Choose what Kestrel opens when the app starts.</p>
+            <p>Choose what opens at launch.</p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -632,7 +713,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>When Kestrel starts</strong>
-              <p>Restoring a session keeps its tab order and folders.</p>
+              <p>Keeps your tabs and folders.</p>
             </div>
             <select
               aria-label="Startup behavior"
@@ -655,10 +736,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Homepage URL</strong>
-              <p>
-                Only HTTP(S) pages without embedded credentials are accepted.
-                Leave empty for the new tab page.
-              </p>
+              <p>Use an HTTP(S) address, or leave blank for New Tab.</p>
             </div>
             <div className="browser-inline-control">
               <input
@@ -684,9 +762,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Specific startup pages</strong>
-              <p>
-                Pages are opened in order when this startup mode is selected.
-              </p>
+              <p>Open these pages in order.</p>
             </div>
             <div className="browser-startup-pages-control">
               <div className="browser-inline-control">
@@ -857,10 +933,6 @@ export function BrowserSettings({
               <h2>
                 <Icon name="browser" /> Tabs and appearance
               </h2>
-              <p>
-                These are Kestrel-specific browser surfaces; vertical tabs,
-                folders, and the sidebar remain in their existing browser tools.
-              </p>
             </header>
             <div
               className="setting-row browser-setting-row"
@@ -868,7 +940,6 @@ export function BrowserSettings({
             >
               <div className="browser-setting-copy">
                 <strong>Tab layout</strong>
-                <p>Choose the tab rail that fits your workflow.</p>
               </div>
               <select
                 aria-label="Tab layout"
@@ -890,7 +961,7 @@ export function BrowserSettings({
               >
                 <div className="browser-setting-copy">
                   <strong>Tab sizing</strong>
-                  <p>Scroll across a readable rail or fit tabs like a browser.</p>
+                  <p>Choose scrolling or shrinking tabs.</p>
                 </div>
                 <select
                   aria-label="Tab sizing"
@@ -912,7 +983,7 @@ export function BrowserSettings({
             >
               <div className="browser-setting-copy">
                 <strong>Show bookmarks bar</strong>
-                <p>Shows saved pages under the address bar. Toggle with ⌘⇧B.</p>
+                <p>Show below the address bar. ⌘⇧B toggles it.</p>
               </div>
               <button
                 type="button"
@@ -933,9 +1004,7 @@ export function BrowserSettings({
             >
               <div className="browser-setting-copy">
                 <strong>Default page zoom</strong>
-                <p>
-                  Applied to newly opened pages and current pages when changed.
-                </p>
+                <p>Updates new and open pages.</p>
               </div>
               <select
                 aria-label="Default page zoom"
@@ -1070,10 +1139,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="privacy" /> Privacy and site permissions
             </h2>
-            <p>
-              Permission choices are stored per origin and can be revoked here.
-              Cookies and cache stay in the native browser partition.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1083,10 +1148,7 @@ export function BrowserSettings({
               className="browser-setting-copy"
             >
               <strong>Use current page context with agent</strong>
-              <p>
-                Share the selected page’s bounded, untrusted context only when
-                you ask Kestrel to use it.
-              </p>
+              <p>Kestrel uses the page only when you ask.</p>
             </div>
             <button
               type="button"
@@ -1105,7 +1167,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Keep browsing history</strong>
-              <p>History is retained only in this Kestrel profile.</p>
+              <p>Stored on this Mac.</p>
             </div>
             <select
               aria-label="Browser history retention"
@@ -1131,10 +1193,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Remembered site permissions</strong>
-              <p>
-                Allow or deny decisions for camera, microphone, notifications,
-                and other web permissions.
-              </p>
+              <p>Review what each site can access.</p>
               {sitePermissions.length === 0 ? (
                 <small>No remembered site permissions.</small>
               ) : (
@@ -1181,10 +1240,7 @@ export function BrowserSettings({
             <h2>
               <Icon name="lock" /> Autofill
             </h2>
-            <p>
-              Password and payment data stay in protected native vaults. Kestrel
-              never includes them in browser exports.
-            </p>
+            <p>Passwords and cards stay in your Mac's secure storage and are not exported.</p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1192,7 +1248,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Password autofill and save prompts</strong>
-              <p>Offer protected saved passwords and ask before saving new logins on matching HTTPS origins.</p>
+              <p>Fill saved passwords on matching HTTPS sites and ask before saving new ones.</p>
             </div>
             <button
               type="button"
@@ -1215,10 +1271,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Payment autofill</strong>
-              <p>
-                Offer protected saved payment cards only after explicit
-                confirmation.
-              </p>
+              <p>Fill saved cards only after you confirm.</p>
             </div>
             <button
               type="button"
@@ -1409,8 +1462,7 @@ export function BrowserSettings({
               <Icon name="downloads" /> Downloads
             </h2>
             <p>
-              Choose a profile-owned folder or review every download before it
-              starts.
+              Choose a folder, or ask where to save each file before it starts.
             </p>
           </header>
           <div
@@ -1477,11 +1529,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="writing" /> Languages and accessibility
             </h2>
-            <p>
-              Native spellcheck, font, and minimum-size preferences apply to
-              pages opened by Kestrel. Font changes reopen native page views so
-              the setting is real, not cosmetic.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1489,10 +1536,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Spellcheck</strong>
-              <p>
-                Use the operating system or Chromium spellchecker where
-                supported.
-              </p>
+              <p>Use your system spellchecker where available.</p>
             </div>
             <button
               type="button"
@@ -1531,10 +1575,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Default font</strong>
-              <p>
-                Sets the native default for pages that do not provide their own
-                font.
-              </p>
+              <p>Used when a page doesn't choose its own font.</p>
             </div>
             <select
               aria-label="Default font"
@@ -1553,7 +1594,7 @@ export function BrowserSettings({
           <div className="setting-row browser-setting-row">
             <div className="browser-setting-copy">
               <strong>Minimum text size</strong>
-              <p>0 keeps the page’s chosen size.</p>
+              <p>Default keeps the page's size.</p>
             </div>
             <select
               aria-label="Minimum text size"
@@ -1614,7 +1655,7 @@ export function BrowserSettings({
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
-                  void handleInstallExtensionFromUrl();
+                  void handleInspectExtensionFromUrl();
                 }
               }}
               className="ui-input extension-url-input"
@@ -1623,10 +1664,10 @@ export function BrowserSettings({
             <button
               type="button"
               className="button primary"
-              onClick={() => void handleInstallExtensionFromUrl()}
+              onClick={() => void handleInspectExtensionFromUrl()}
               disabled={extensionLoading || !extensionUrlInput.trim()}
             >
-              {extensionLoading ? "Installing…" : "Install from Web Store"}
+              {extensionLoading ? "Reviewing…" : "Review from Web Store"}
             </button>
           </div>
           <div className="extension-actions-row">
@@ -1644,9 +1685,8 @@ export function BrowserSettings({
             </a>
           </div>
           <p className="honest-status">
-            Kestrel verifies each package and keeps it only after Electron loads
-            its signed identity. Some Chrome extension APIs are not available in
-            Electron.
+            Kestrel verifies each package before showing its declared access and
+            compatibility evidence. Electron does not implement every Chrome API.
           </p>
           <div className="installed-extensions-section">
             <h4>Installed extensions ({extensions.length})</h4>
@@ -1685,6 +1725,65 @@ export function BrowserSettings({
                         {extension.description}
                       </p>
                     )}
+                    <div className="extension-compatibility-summary">
+                      <span
+                        className={`extension-compatibility-badge is-${extension.compatibility?.state ?? "unknown"}`}
+                      >
+                        {extensionCompatibilityLabel(extension.compatibility)}
+                      </span>
+                      <p>
+                        {extension.compatibility?.summary ??
+                          "This extension was installed before Kestrel recorded compatibility evidence."}
+                      </p>
+                      {extension.compatibility?.findings
+                        .filter((finding) => finding.status !== "full")
+                        .slice(0, 3)
+                        .map((finding) => (
+                          <p
+                            className="extension-compatibility-finding"
+                            key={`${finding.capability}-${finding.evidence}`}
+                          >
+                            <strong>{finding.capability}</strong>
+                            <span className={`is-${finding.status}`}>
+                              {finding.status.replace("_", " ")}
+                            </span>
+                            <small>{finding.reason}</small>
+                          </p>
+                        ))}
+                      {extension.compatibility &&
+                        extension.compatibility.declaredRequirements.length >
+                          0 && (
+                          <p className="extension-permission-summary">
+                            Declared access: {" "}
+                            {extension.compatibility.declaredRequirements
+                              .slice(0, 3)
+                              .join(" · ")}
+                            {extension.compatibility.declaredRequirements
+                              .length > 3
+                              ? " · …"
+                              : ""}
+                          </p>
+                        )}
+                      <small className="extension-runtime-evidence">
+                        {runtimeEvidenceLabel(extension.compatibility)}
+                      </small>
+                      <details className="extension-developer-diagnostics">
+                        <summary>Developer diagnostics</summary>
+                        <code>Extension ID: {extension.id}</code>
+                        <small>
+                          Static analysis scanned {" "}
+                          {extension.compatibility?.staticAnalysis.filesScanned ??
+                            0} source file
+                          {(extension.compatibility?.staticAnalysis.filesScanned ??
+                            0) === 1
+                            ? ""
+                            : "s"}
+                          {extension.compatibility?.staticAnalysis.truncated
+                            ? "; coverage was limited."
+                            : "."}
+                        </small>
+                      </details>
+                    </div>
                     <div className="extension-card-actions">
                       <label className="extension-toggle-label">
                         <span>
@@ -1701,15 +1800,32 @@ export function BrowserSettings({
                           }
                         />
                       </label>
-                      <button
-                        type="button"
-                        className="button danger-subtle"
-                        onClick={() =>
-                          void handleUninstallExtension(extension.id)
-                        }
-                      >
-                        Remove
-                      </button>
+                      <div className="extension-card-action-buttons">
+                        <button
+                          type="button"
+                          className="button subtle"
+                          onClick={() =>
+                            void handleReloadExtension(extension.id)
+                          }
+                          disabled={!extension.enabled}
+                          title={
+                            extension.enabled
+                              ? "Reload extension"
+                              : "Enable the extension before reloading"
+                          }
+                        >
+                          Reload
+                        </button>
+                        <button
+                          type="button"
+                          className="button danger-subtle"
+                          onClick={() =>
+                            void handleUninstallExtension(extension.id)
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -1729,10 +1845,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="system" /> System integration
             </h2>
-            <p>
-              These actions use native macOS or Windows registration instead of
-              exposing Electron internals to the renderer.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1740,10 +1852,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Default browser</strong>
-              <p>
-                Register Kestrel for supported web links and check the operating
-                system’s current choice.
-              </p>
+              <p>Open supported web links in Kestrel.</p>
             </div>
             {isDefaultBrowser ? (
               <Status tone="verified">Default browser</Status>
@@ -1766,10 +1875,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Hardware acceleration</strong>
-              <p>
-                Native rendering is enabled by default. Changing this requires a
-                Kestrel restart and is persisted in the browser profile.
-              </p>
+              <p>Uses your Mac's graphics hardware. Restart to apply changes.</p>
             </div>
             <button
               type="button"
@@ -1805,11 +1911,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="reset" /> Data and reset
             </h2>
-            <p>
-              Move safe browser preferences or clear local data. Cookies,
-              passwords, payment cards, extension packages, and native sessions
-              are never exported.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1817,13 +1918,8 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Import and export browser data</strong>
-              <p>
-                Bookmarks, history, remembered site permissions, and browser
-                preferences are merged from a reviewed JSON file.
-              </p>
-              <small>
-                Transfers never include protected credentials or cookies.
-              </small>
+              <p>Import or export bookmarks, history, permissions, and preferences.</p>
+              <small>Passwords, cards, cookies, and active sessions are never included.</small>
             </div>
             <div className="button-row">
               <button
@@ -1850,10 +1946,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Clear browsing history</strong>
-              <p>
-                Removes history, favicons, recently closed tabs, and new-tab
-                activity. Open tabs stay put.
-              </p>
+              <p>Keeps open tabs.</p>
             </div>
             <button
               type="button"
@@ -1873,10 +1966,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Clear cookies and site data</strong>
-              <p>
-                Removes cookies, cache, and remembered site permissions for this
-                browser profile.
-              </p>
+              <p>Removes cookies, cache, and saved permissions.</p>
             </div>
             <button
               type="button"
@@ -1894,10 +1984,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Reset browser settings</strong>
-              <p>
-                Restore Kestrel’s browser preferences without deleting history,
-                bookmarks, credentials, or extensions.
-              </p>
+              <p>Keeps history, saved pages, credentials, and extensions.</p>
             </div>
             <div className="button-row">
               {resetSettingsConfirm && (
@@ -1937,6 +2024,13 @@ export function BrowserSettings({
           This overview keeps existing deep links working. Use the Basic and
           Advanced sections in the settings rail for the focused layout.
         </p>
+      )}
+      {extensionInspection && (
+        <ExtensionCompatibilityDialog
+          inspection={extensionInspection}
+          onCancel={() => setExtensionInspection(null)}
+          onInstall={handleInstallReviewedExtension}
+        />
       )}
     </div>
   );
