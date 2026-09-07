@@ -773,16 +773,6 @@ export function BrowserWorkspace({
     zoomReset,
   ]);
 
-  if (!state || !activeTab) {
-    return (
-      <main className="browser-workspace browser-starting">
-        <BrandMark />
-        <p>{browser.error || "Opening your browser…"}</p>
-      </main>
-    );
-  }
-
-  const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
   const closeOrganizeTabs = useCallback(() => {
     setOrganizeTabsPreview(null);
   }, []);
@@ -804,6 +794,17 @@ export function BrowserWorkspace({
     },
     [applyTabOrganization],
   );
+
+  if (!state || !activeTab) {
+    return (
+      <main className="browser-workspace browser-starting">
+        <BrandMark />
+        <p>{browser.error || "Opening your browser…"}</p>
+      </main>
+    );
+  }
+
+  const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
 
   return (
     <main

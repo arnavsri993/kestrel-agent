@@ -2613,7 +2613,21 @@ try {
 	await page.keyboard.press("Meta+J");
 	const downloadsMenu = page.getByRole("menu", { name: "Downloads" });
 	await downloadsMenu.waitFor();
-	await downloadsMenu.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	const expectedDownload = downloadsMenu
+		.getByRole("listitem")
+		.filter({ hasText: "kestrel-browser.txt" });
+	await expectedDownload.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	await expectedDownload
+		.getByText(`${download.receivedBytes} B`, { exact: true })
+		.waitFor();
+	assert.equal(
+		await downloadsMenu.getByText("Completed", { exact: true }).count(),
+		0,
+		"Completed downloads should not keep a status label",
+	);
+	await expectedDownload
+		.getByRole("menuitem", { name: "Show in Finder", exact: true })
+		.waitFor();
 	const dragDownload = downloadsMenu.getByRole("menuitem", {
 		name: "Drag kestrel-browser.txt to a website upload field",
 	});

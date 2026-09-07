@@ -70,6 +70,10 @@ import {
   UserBrowserService,
   isUserBrowserBackendWireRequest,
 } from "./user-browser-service";
+import {
+  defaultBrowserDownloadDirectory,
+  legacyBrowserDownloadDirectory,
+} from "./user-browser-download-path";
 import { LocalRuntimeManager } from "./local-runtime-manager";
 import { listWorkspaceFiles } from "./workspace-file-search";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
@@ -1408,6 +1412,20 @@ app.setPath(
     join(app.getPath("appData"), PRODUCT_IDENTITY.userDataDirectoryName),
 );
 
+function browserDownloadDirectory(): string {
+  return process.env.KESTREL_TEST_USER_DATA
+    ? join(app.getPath("userData"), "browser-downloads")
+    : defaultBrowserDownloadDirectory(app.getPath("downloads"));
+}
+
+function legacyBrowserDownloadDirectoryForMigration(): string | undefined {
+  if (process.env.KESTREL_TEST_USER_DATA) return undefined;
+  return legacyBrowserDownloadDirectory(
+    app.getPath("downloads"),
+    PRODUCT_IDENTITY.productName,
+  );
+}
+
 function browserHardwareAccelerationDisabled(): boolean {
 	try {
 		const statePath = join(app.getPath("userData"), "browser", "state.json");
@@ -1738,6 +1756,7 @@ function finishMacWidgetRun(
 }
 
 function createMainWindow(): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -1775,9 +1794,8 @@ function createMainWindow(): BrowserWindow {
           allowDevTools: !isPackagedKestrelApp,
           allowLocalExtensions: !isPackagedKestrelApp,
           statePath: join(app.getPath("userData"), "browser", "state.json"),
-          downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-            ? join(app.getPath("userData"), "browser-downloads")
-            : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+          downloadDirectory: browserDownloadDirectory(),
+          ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
           passwordVault: passwordVault(),
           paymentCardVault: paymentCardVault(),
           onEvent: (event) => {
@@ -1910,6 +1928,7 @@ function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
 ): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     ...detachedBrowserWindowBounds(),
     minWidth: 920,
@@ -1941,9 +1960,8 @@ function createDetachedBrowserWindow(
     allowLocalExtensions: !isPackagedKestrelApp,
     statePath,
     initialState: detachedBrowserState(sourceState, tab),
-    downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-      ? join(app.getPath("userData"), "browser-downloads")
-      : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+    downloadDirectory: browserDownloadDirectory(),
+    ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
     passwordVault: passwordVault(),
     paymentCardVault: paymentCardVault(),
     onEvent: (event) => {
