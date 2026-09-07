@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -12,8 +13,37 @@ import {
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
+const heicUploadFixture = join(root, "kestrel-upload.HEIC");
+const heicSourcePng = join(root, "kestrel-upload-source.png");
+writeFileSync(
+	heicSourcePng,
+	Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+		"base64",
+	),
+);
+if (process.platform === "darwin") {
+	execFileSync(
+		"/usr/bin/sips",
+		["-s", "format", "heic", heicSourcePng, "--out", heicUploadFixture],
+		{ stdio: "ignore" },
+	);
+} else {
+	// The desktop smoke also runs where macOS ImageIO is unavailable. The
+	// extension exercises the browser handoff there; macOS validates actual HEIC
+	// decoding through sips above.
+	writeFileSync(
+		heicUploadFixture,
+		Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+			"base64",
+		),
+	);
+}
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
+const verifyRealChromeWebStoreInstall =
+	process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE === "1";
 const executablePath = packagedExecutable
 	? resolve(packagedExecutable)
 	: requireFromDesktop("electron");
@@ -87,6 +117,8 @@ const server = createServer((request, response) => {
           <label>Name <input id="name" name="name" autocomplete="off"></label>
           <button id="submit" type="button">Submit</button>
           <output id="result">Waiting</output>
+		  <label>Photo <input id="image-upload" type="file" accept="image/*"></label>
+		  <output id="image-upload-result">Waiting</output>
           <a id="next" href="/two">Next page</a>
           <a id="download" href="/download">Download fixture</a>
           <button id="popup" type="button">Open popup</button>
@@ -105,6 +137,22 @@ const server = createServer((request, response) => {
           document.querySelector("#popup").addEventListener("click", () => {
             window.open("/popup", "_blank");
           });
+		  const imageUpload = document.querySelector("#image-upload");
+		  const imageUploadResult = document.querySelector("#image-upload-result");
+		  let imageInputEvents = 0;
+		  let imageChangeEvents = 0;
+		  const renderImageUpload = () => {
+		    const files = [...imageUpload.files].map((file) => file.name + ":" + file.type);
+		    imageUploadResult.textContent = "input=" + imageInputEvents + ", change=" + imageChangeEvents + ", files=" + files.join(",");
+		  };
+		  imageUpload.addEventListener("input", () => {
+		    imageInputEvents += 1;
+		    renderImageUpload();
+		  });
+		  imageUpload.addEventListener("change", () => {
+		    imageChangeEvents += 1;
+		    renderImageUpload();
+		  });
         </script>
       </body>
     </html>`);
@@ -130,9 +178,10 @@ async function launch() {
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
-			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-			KESTREL_TEST_USER_DATA: userData,
-			KESTREL_REAL_USER_PROFILE: "1",
+		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+		KESTREL_TEST_USER_DATA: userData,
+		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+		KESTREL_REAL_USER_PROFILE: "1",
 		},
 	});
 	page = await application.firstWindow();
@@ -678,6 +727,62 @@ async function activeViewScript(source) {
 	}, source);
 }
 
+async function setActiveViewFileInput(selector, files) {
+	return application.evaluate(
+		async ({ BrowserWindow }, { selector: target, files: paths }) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+			);
+			const view = window?.contentView.children.find(
+				(child) => "webContents" in child,
+			);
+			if (!view || !("webContents" in view))
+				throw new Error("No active user browser view is attached.");
+			const webContents = view.webContents;
+			const attachedHere = !webContents.debugger.isAttached();
+			if (attachedHere) webContents.debugger.attach("1.3");
+			try {
+				const document = await webContents.debugger.sendCommand("DOM.getDocument", {
+					depth: 0,
+				});
+				const selected = await webContents.debugger.sendCommand(
+					"DOM.querySelector",
+					{ nodeId: document.root.nodeId, selector: target },
+				);
+				if (!selected.nodeId)
+					throw new Error("The native upload fixture was not found.");
+				await webContents.debugger.sendCommand("DOM.setFileInputFiles", {
+					nodeId: selected.nodeId,
+					files: paths,
+				});
+			} finally {
+				if (attachedHere && webContents.debugger.isAttached())
+					webContents.debugger.detach();
+			}
+		},
+		{ selector, files },
+	);
+}
+
+async function assertHeicUploadConversion() {
+	await setActiveViewFileInput("#image-upload", [heicUploadFixture]);
+	const deadline = Date.now() + 30_000;
+	let result = "";
+	while (Date.now() < deadline) {
+		result = await readActiveViewScript(
+			"document.querySelector('#image-upload-result').textContent",
+			"Native image upload fixture was not attached",
+		);
+		if (/files=kestrel-upload\.jpeg:image\/jpeg$/.test(result)) break;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	assert.match(
+		result,
+		/^input=1, change=1, files=kestrel-upload\.jpeg:image\/jpeg$/,
+		"HEIC uploads must be converted locally before the page receives them",
+	);
+}
+
 async function readActiveViewScript(source, label) {
 	const deadline = Date.now() + 30_000;
 	let lastError;
@@ -807,6 +912,44 @@ try {
 	);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
 	await assertBrowserChromeLayout();
+	const browserBeforeHeicUpload = await browserState();
+	const originalHeicUploadTabId = browserBeforeHeicUpload.activeTabId;
+	assert(originalHeicUploadTabId);
+	const heicUploadTabId = await page.evaluate(async (input) => {
+		const response = await window.kestrel.request({
+			type: "browser-create-tab",
+			input,
+			active: true,
+		});
+		if (!response.ok || !("browserState" in response))
+			throw new Error("The HEIC upload fixture tab could not be created.");
+		return response.browserState.activeTabId;
+	}, `${origin}/one`);
+	assert(heicUploadTabId);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"The HEIC upload fixture page did not load",
+	);
+	await assertHeicUploadConversion();
+	await page.evaluate(
+		async ({ uploadTabId, originalTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: uploadTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: originalTabId,
+			});
+		},
+		{ uploadTabId: heicUploadTabId, originalTabId: originalHeicUploadTabId },
+	);
+	await waitForBrowserState(
+		(value) =>
+			value.activeTabId === originalHeicUploadTabId &&
+			value.tabs.length === browserBeforeHeicUpload.tabs.length,
+		"The HEIC upload fixture tab did not close cleanly",
+	);
 	await assertKestrelSidebarResize();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
@@ -866,7 +1009,7 @@ try {
 		.getByRole("tab", { name: /^Browser/ })
 		.click();
 	await page
-		.getByRole("heading", { name: "Make the browser feel like yours." })
+		.getByRole("heading", { name: "Browser", exact: true })
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await selectNewTab();
@@ -1484,6 +1627,80 @@ try {
 	);
 	const storeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
 	assert(storeTab);
+	const storeExtensionId = "bcjindcccaagfpapjjmafapmmgkkhgoa";
+	const storeListingUrl =
+		`https://chromewebstore.google.com/detail/json-formatter/${storeExtensionId}`;
+	await page.evaluate(
+		async ({ tabId, input }) => {
+			await window.kestrel.request({
+				type: "browser-navigate",
+				tabId,
+				input,
+			});
+		},
+		{ tabId: storeTab.id, input: storeListingUrl },
+	);
+	await waitForBrowserState(
+		(value) =>
+			value.activeTabId === storeTab.id &&
+			value.tabs.some(
+				(tab) => tab.id === storeTab.id && tab.url === storeListingUrl,
+			),
+		"Chrome Web Store listing did not load in the managed tab",
+	);
+	const storeInstallBar = page.getByRole("region", {
+		name: "Chrome Web Store installation",
+	});
+	await storeInstallBar.waitFor();
+	const reviewAndAdd = storeInstallBar.getByRole("button", {
+		name: "Review & add",
+		exact: true,
+	});
+	await reviewAndAdd.waitFor();
+	assert.equal(await reviewAndAdd.isEnabled(), true);
+	if (verifyRealChromeWebStoreInstall) {
+		await reviewAndAdd.click();
+		const compatibilityDialog = page.getByRole("dialog", {
+			name: "Review extension",
+			exact: true,
+		});
+		await compatibilityDialog.waitFor({ timeout: 60_000 });
+		await compatibilityDialog
+			.getByText("Verified Chrome Web Store package", { exact: true })
+			.waitFor();
+		await compatibilityDialog
+			.getByRole("button", {
+				name: "Install reviewed extension",
+				exact: true,
+			})
+			.click();
+		await compatibilityDialog.waitFor({ state: "detached", timeout: 60_000 });
+		await storeInstallBar
+			.getByText("Added to Kestrel", { exact: true })
+			.waitFor({ timeout: 60_000 });
+		const installedExtensions = await page.evaluate(async () => {
+			const response = await window.kestrel.request({
+				type: "browser-list-extensions",
+			});
+			return response.ok && "extensions" in response ? response.extensions : [];
+		});
+		const installedExtension = installedExtensions.find(
+			(extension) => extension.id === storeExtensionId,
+		);
+		assert(installedExtension, "Reviewed Chrome Web Store extension was not registered");
+		assert.equal(installedExtension.source, "chrome_web_store");
+		assert.equal("path" in installedExtension, false);
+		assert(installedExtension.compatibility);
+		assert.notEqual(
+			installedExtension.compatibility.state,
+			"unsupported",
+			"An installed extension must not report an unsupported compatibility state",
+		);
+	} else {
+		// Package inspection downloads and installs are intentionally opt-in so the
+		// default visible-browser smoke stays hermetic.
+		assert.equal(await page.getByRole("dialog").count(), 0);
+	}
 	await page.evaluate(
 		async ({ storeTabId, sourceTabId }) => {
 			await window.kestrel.request({
@@ -1969,11 +2186,22 @@ try {
 		),
 		"Waiting",
 	);
+	const typingSnapshot = await callTool(
+		runtimeSessionId,
+		"browser.visible-snapshot",
+		{ tabId },
+		{ approvalStatus: "approved" },
+	);
+	assert.equal(typingSnapshot?.status, "verified");
+	const nameFieldRef = typingSnapshot?.output?.interactive?.find(
+		(target) => target.role === "textbox" && target.name === "Name",
+	)?.ref;
+	assert(nameFieldRef, "The visible browser snapshot did not expose the Name field.");
 
 	const typed = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",
-		{ tabId, action: { type: "type", target: "#name", text: "Kestrel" } },
+		{ tabId, action: { type: "type", target: nameFieldRef, text: "Kestrel" } },
 		{
 			approvalStatus: "approved",
 			idempotencyKey: "visible-browser-approved-type",
@@ -2317,10 +2545,20 @@ try {
 	assert.equal(download.status, "completed");
 	assert.equal(download.filename, "kestrel-browser.txt");
 	assert.equal(download.canReveal, true);
-	assert.equal(
-		existsSync(join(userData, "browser-downloads", download.filename)),
-		true,
-	);
+	const downloadPath = join(userData, "browser-downloads", download.filename);
+	assert.equal(existsSync(downloadPath), true);
+	if (process.platform === "darwin") {
+		const quarantine = execFileSync(
+			"xattr",
+			["-p", "com.apple.quarantine", downloadPath],
+			{ encoding: "utf8" },
+		).trim();
+		assert.notEqual(
+			quarantine,
+			"",
+			"Browser downloads must retain macOS quarantine metadata.",
+		);
+	}
 	const directDownloadCount = state.downloads.filter(
 		(item) => item.sourceUrl === `${origin}/download`,
 	).length;
@@ -2397,7 +2635,21 @@ try {
 	await page.keyboard.press("Meta+J");
 	const downloadsMenu = page.getByRole("menu", { name: "Downloads" });
 	await downloadsMenu.waitFor();
-	await downloadsMenu.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	const expectedDownload = downloadsMenu
+		.getByRole("listitem")
+		.filter({ hasText: "kestrel-browser.txt" });
+	await expectedDownload.getByText("kestrel-browser.txt", { exact: true }).waitFor();
+	await expectedDownload
+		.getByText(`${download.receivedBytes} B`, { exact: true })
+		.waitFor();
+	assert.equal(
+		await downloadsMenu.getByText("Completed", { exact: true }).count(),
+		0,
+		"Completed downloads should not keep a status label",
+	);
+	await expectedDownload
+		.getByRole("menuitem", { name: "Show in Finder", exact: true })
+		.waitFor();
 	const dragDownload = downloadsMenu.getByRole("menuitem", {
 		name: "Drag kestrel-browser.txt to a website upload field",
 	});
@@ -2433,7 +2685,7 @@ try {
 	await browserSettings.click();
 	assert.equal(await browserSettings.getAttribute("aria-selected"), "true");
 	await page
-		.getByRole("heading", { name: "Make the browser feel like yours.", exact: true })
+		.getByRole("heading", { name: "Browser", exact: true })
 		.waitFor();
 	await page
 		.locator("label.background-option")
@@ -2726,7 +2978,11 @@ try {
 
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation, hidden-view routing, and restart restore.\n",
+		`Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation and ${
+			verifyRealChromeWebStoreInstall
+				? "reviewed extension installation"
+				: "Review & add affordance"
+		}, hidden-view routing, and restart restore.\n`,
 	);
 } finally {
 	await application?.close();

@@ -55,7 +55,7 @@ try {
 	await external
 		.getByText("External secret sources", { exact: true })
 		.waitFor();
-	assert.match(await external.textContent(), /Optional for advanced setups/);
+	assert.match(await external.textContent(), /For advanced setups/);
 	await external.getByText("Command helper", { exact: true }).click();
 	await external.getByLabel("Run this exact executable at startup").check();
 	await external.getByLabel("Executable path").fill(helperPath);

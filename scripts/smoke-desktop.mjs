@@ -41,7 +41,13 @@ try {
 	application = await electron.launch({
 		executablePath,
 		args: launchArgs,
-		env: { ...process.env, KESTREL_TEST_USER_DATA: join(root, "user-data") },
+		env: {
+			...process.env,
+			KESTREL_TEST_USER_DATA: join(root, "user-data"),
+			// This disposable profile must be able to exercise a packaged binary
+			// while a person's canonical Kestrel app remains open.
+			KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+		},
 	});
 	const page = await application.firstWindow();
 	await page.evaluate(() => {
@@ -56,12 +62,15 @@ try {
 	await taskSettings.getByText(/Auto routes model, thinking level/).waitFor();
 	await page.getByRole("button", { name: /^Model:/ }).click();
 	const modelMenu = page.getByRole("dialog", {
-		name: "Choose provider, model, and thinking level",
+		name: "Choose a provider, account, model, and thinking level",
 	});
 	await modelMenu.waitFor();
+	await modelMenu.getByText("Account", { exact: true }).waitFor();
 	assert.equal(
 		await modelMenu
-			.getByRole("switch", { name: "Automatically choose a model" })
+			.getByRole("switch", {
+				name: "Automatically choose a discovered available model",
+			})
 			.getAttribute("aria-checked"),
 		"true",
 	);
@@ -146,13 +155,21 @@ try {
 					{ browserSessionId, url: `${browserOrigin}/smoke` },
 					"desktop-smoke-navigate",
 				);
+				const initialSnapshot = await call("browser.snapshot", {
+					browserSessionId,
+				});
+				const nameFieldRef = initialSnapshot?.interactive?.find(
+					(target) => target.role === "textbox" && target.name === "Name",
+				)?.ref;
+				if (!nameFieldRef)
+					throw new Error("Browser snapshot did not expose the Name field.");
 				await call(
 					"browser.act",
 					{
 						browserSessionId,
 						action: {
 							type: "type",
-							target: "#name",
+							target: nameFieldRef,
 							text: typedReceiptSentinel,
 						},
 					},

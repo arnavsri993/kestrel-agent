@@ -9,6 +9,7 @@
 	--kestrel-sidebar-space: 0px;
 	--browser-tab-rail-width: 208px;
 	--browser-toolbar-height: 40px;
+	--browser-store-install-height: 48px;
 	--browser-chrome-height: calc(40px + var(--browser-toolbar-height));
 	--agent-panel-top: var(--browser-chrome-height);
 	position: relative;
@@ -43,6 +44,18 @@
 	--browser-chrome-height: calc(var(--browser-toolbar-height) + 32px);
 }
 
+.ai-browser-app:has(.browser-workspace-store-install:not(.browser-workspace-vertical)) {
+	--browser-chrome-height: calc(
+		40px + var(--browser-toolbar-height) + var(--browser-store-install-height)
+	);
+}
+
+.ai-browser-app:has(.browser-workspace-vertical.browser-workspace-store-install) {
+	--browser-chrome-height: calc(
+		var(--browser-toolbar-height) + var(--browser-store-install-height)
+	);
+}
+
 /* Keep the lower browser plane as a real two-column layout. The navigation
  * rail and New Tab shelf must be siblings, not an absolutely positioned rail
  * that can end up underneath the recommendation content. Browser chrome still
@@ -64,10 +77,26 @@
 		"viewport viewport .";
 }
 
+.browser-workspace.browser-workspace-store-install:not(.browser-workspace-vertical) {
+	grid-template-areas:
+		"tabs tabs tabs"
+		"toolbar toolbar toolbar"
+		"store-install store-install store-install"
+		"viewport viewport .";
+}
+
 .browser-workspace:not(.browser-workspace-vertical):has(> .kestrel-sidebar) {
 	grid-template-areas:
 		"tabs tabs tabs"
 		"toolbar toolbar toolbar"
+		"kestrel-sidebar viewport .";
+}
+
+.browser-workspace.browser-workspace-store-install:not(.browser-workspace-vertical):has(> .kestrel-sidebar) {
+	grid-template-areas:
+		"tabs tabs tabs"
+		"toolbar toolbar toolbar"
+		"store-install store-install store-install"
 		"kestrel-sidebar viewport .";
 }
 
@@ -117,6 +146,7 @@
 	--kestrel-sidebar-content-inset: 8px;
 	--kestrel-sidebar-row-height: 38px;
 	--kestrel-sidebar-child-row-height: 34px;
+	--kestrel-sidebar-title-fade-width: 22px;
 	--kestrel-sidebar-hover-surface: color-mix(in srgb, var(--ink) 5%, transparent);
 	--kestrel-sidebar-pressed-surface: color-mix(in srgb, var(--ink) 11%, transparent);
 	--kestrel-sidebar-active-surface: color-mix(in srgb, var(--ink) 9%, transparent);
@@ -664,11 +694,28 @@
 	font-weight: 560;
 }
 
-.kestrel-sidebar-project-open > span:not(.kestrel-sidebar-project-badge) {
+.kestrel-sidebar-title {
+	display: block;
 	min-width: 0;
 	overflow: hidden;
-	text-overflow: ellipsis;
+	text-overflow: clip;
 	white-space: nowrap;
+	-webkit-mask-image: linear-gradient(
+		to right,
+		#000 0,
+		#000 calc(100% - var(--kestrel-sidebar-title-fade-width)),
+		transparent 100%
+	);
+	-webkit-mask-repeat: no-repeat;
+	-webkit-mask-size: 100% 100%;
+	mask-image: linear-gradient(
+		to right,
+		#000 0,
+		#000 calc(100% - var(--kestrel-sidebar-title-fade-width)),
+		transparent 100%
+	);
+	mask-repeat: no-repeat;
+	mask-size: 100% 100%;
 }
 
 .kestrel-sidebar-project-open > svg:last-child {
@@ -704,8 +751,8 @@
 
 .kestrel-sidebar-section ul.kestrel-sidebar-project-chats {
 	gap: 2px;
-	margin: 2px 0 4px 28px;
-	padding: 2px 0 0 22px;
+	margin: 2px 0 4px 18px;
+	padding: 2px 0 0 10px;
 }
 
 .kestrel-sidebar-project-chat,
@@ -727,14 +774,6 @@
 	font-size: 12.5px;
 	font-weight: 450;
 	line-height: 18px;
-}
-
-.kestrel-sidebar-project-chat span {
-	display: block;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 .kestrel-sidebar-project-chat.active {
@@ -796,14 +835,6 @@
 
 .kestrel-sidebar-list-item.active {
 	font-weight: 520;
-}
-
-.kestrel-sidebar-list-item span {
-	display: block;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 .kestrel-sidebar-view-more {

@@ -352,6 +352,56 @@ describe("browser address normalization", () => {
 });
 
 describe("browser tab persistence", () => {
+	it("marks interrupted reputation checks as failed after restart", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() =>
+			new Date("2026-08-11T12:00:00.000Z"),
+		);
+		state.downloads.push({
+			id: "download-00000000-0000-4000-8000-000000000001",
+			tabId: state.tabs[0]!.id,
+			filename: "pending.dmg",
+			sourceUrl: "https://download.example/pending.dmg",
+			receivedBytes: 0,
+			totalBytes: 10,
+			status: "checking",
+			startedAt: "2026-08-11T12:00:00.000Z",
+			canReveal: false,
+		});
+		store.save(state);
+
+		const restored = store.load();
+
+		expect(restored.downloads[0]).toMatchObject({
+			status: "failed",
+			canReveal: false,
+		});
+	});
+
+	it("redacts blocked navigation URLs before persistence and restore", () => {
+		const path = storePath();
+		const store = new BrowserTabStore(path);
+		const state = freshBrowserState(() =>
+			new Date("2026-08-11T12:00:00.000Z"),
+		);
+		state.tabs[0]!.url = "https://safe.example/";
+		state.tabs[0]!.blockedNavigation = {
+			url: "https://unsafe.example/callback?code=oauth-code#access_token=fragment-secret",
+			source: "navigation",
+			threatTypes: ["malware"],
+			provider: "test-reputation",
+		};
+		store.save(state);
+
+		const persisted = readFileSync(path, "utf8");
+		expect(persisted).not.toContain("oauth-code");
+		expect(persisted).not.toContain("fragment-secret");
+		expect(store.load().tabs[0]?.blockedNavigation?.url).toBe(
+			"https://unsafe.example/callback",
+		);
+	});
+
 	it("persists bookmark presentation choices, folders, and favicon snapshots", () => {
 		const path = storePath();
 		const store = new BrowserTabStore(path);

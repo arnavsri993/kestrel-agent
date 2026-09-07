@@ -16,7 +16,13 @@ import type {
 	UserBrowserHistoryEntry,
 	UserBrowserPageContext,
 } from "@kestrel/shared-types";
-import type { BrowserInteractiveRef } from "./browser-element-refs";
+import {
+	annotateAccessibilityTree,
+	isSensitiveBrowserInteractiveRef,
+	REDACTED_SENSITIVE_FIELD_NAME,
+	normalizeBrowserElementRef,
+	type BrowserInteractiveRef,
+} from "./browser-element-refs";
 import {
 	diffBrowserSnapshots,
 	type BrowserObservationDiff,
@@ -160,6 +166,20 @@ export interface BrowserAutomationBackend {
 		downloads: UserBrowserDownload[];
 		trust: "untrusted_browser";
 	}>;
+	visibleAutofill?(
+		tabId: string,
+		signal: AbortSignal,
+	): Promise<{
+		credentialAvailable: boolean;
+		autofillResult:
+			| "filled"
+			| "disabled"
+			| "not_active"
+			| "not_a_login_form"
+			| "selection_required"
+			| "unavailable";
+		trust: "untrusted_browser";
+	}>;
 	visibleAct?(
 		tabId: string,
 		action: BrowserAction,
@@ -194,6 +214,45 @@ const EMPTY_BROWSER_SNAPSHOT: BrowserSnapshot = {
 	title: "",
 	accessibilityTree: { nodes: [] },
 };
+const SENSITIVE_BROWSER_TYPING_REFUSAL =
+	"Kestrel will not type into an accessibility-identified sensitive field. Ask the user to enter that value directly.";
+const SELECTOR_BROWSER_TYPING_REFUSAL =
+	"Kestrel requires a current accessibility ref before an agent can type into a browser field. Ask the user to enter credentials directly.";
+
+function rejectSensitiveBrowserTyping(
+	action: BrowserAction,
+	snapshot: BrowserSnapshot,
+): void {
+	if (action.type !== "type") return;
+	const ref = normalizeBrowserElementRef(action.target);
+	if (!ref) throw new Error(SELECTOR_BROWSER_TYPING_REFUSAL);
+	const target = snapshot.interactive?.find((item) => item.ref === ref);
+	if (target && isSensitiveBrowserInteractiveRef(target))
+		throw new Error(SENSITIVE_BROWSER_TYPING_REFUSAL);
+}
+
+/**
+ * Treat every backend snapshot as untrusted, including implementations outside
+ * the desktop app. This keeps secret-field redaction at Agent Core's reusable
+ * boundary instead of relying on a particular browser host to remember it.
+ */
+function redactBrowserSnapshot(snapshot: BrowserSnapshot): BrowserSnapshot {
+	const annotated = annotateAccessibilityTree(snapshot.accessibilityTree);
+	const interactive =
+		annotated.interactive.length > 0
+			? annotated.interactive
+			: snapshot.interactive?.map((item) =>
+					isSensitiveBrowserInteractiveRef(item)
+						? { ...item, name: REDACTED_SENSITIVE_FIELD_NAME }
+						: item,
+				);
+	return {
+		...snapshot,
+		accessibilityTree: annotated.accessibilityTree,
+		...(interactive?.length ? { interactive } : {}),
+		truncated: Boolean(snapshot.truncated || annotated.truncated),
+	};
+}
 
 export function normalizeIsolatedBrowserOrigins(
 	allowedOrigins: string[],
@@ -348,6 +407,7 @@ export class BrowserController {
 		)
 			throw new Error("Browser scroll exceeds limits.");
 		const before = session.lastSnapshot ?? EMPTY_BROWSER_SNAPSHOT;
+		rejectSensitiveBrowserTyping(action, before);
 		const after = await withBrowserRecovery(
 			{
 				operation: "act",
@@ -389,7 +449,8 @@ export class BrowserController {
 		}
 		if (!serializedTree || serializedTree.length > 2_000_000)
 			throw new Error("Browser accessibility snapshot exceeds 2 MB.");
-		const stamped = { ...snapshot, trust: "untrusted_browser" as const };
+		const redacted = redactBrowserSnapshot(snapshot);
+		const stamped = { ...redacted, trust: "untrusted_browser" as const };
 		session.lastSnapshot = stamped;
 		return stamped;
 	}
@@ -400,6 +461,11 @@ export class BrowserController {
 		signal: AbortSignal,
 	): Promise<ScreenshotFrame> {
 		const session = this.require(ownerSessionId, id);
+		const snapshot = await this.snapshot(ownerSessionId, id, signal);
+		if (snapshot.interactive?.some(isSensitiveBrowserInteractiveRef))
+			throw new Error(
+				"Kestrel does not share browser screenshots from pages with sensitive input fields.",
+			);
 		const frame = await this.backend.screenshot(
 			session.backendSessionId,
 			signal,
@@ -619,7 +685,7 @@ export class BrowserController {
 			throw new Error("The visible user browser is unavailable.");
 		if (tabId !== undefined && !/^tab-[a-f0-9-]{36}$/.test(tabId))
 			throw new Error("Visible browser tab ID is invalid.");
-		const snapshot = await withBrowserRecovery(
+		const rawSnapshot = await withBrowserRecovery(
 			{
 				operation: "observe",
 				surface: "visible",
@@ -627,6 +693,10 @@ export class BrowserController {
 			},
 			() => this.backend.visibleSnapshot!(tabId, signal),
 		);
+		const snapshot = {
+			...redactBrowserSnapshot(rawSnapshot),
+			trust: "untrusted_browser" as const,
+		};
 		const serialized = JSON.stringify(snapshot.accessibilityTree);
 		if (serialized.length > 2_000_000)
 			throw new Error("Visible browser accessibility snapshot exceeds 2 MB.");
@@ -639,6 +709,11 @@ export class BrowserController {
 			throw new Error("The visible user browser is unavailable.");
 		if (tabId !== undefined && !/^tab-[a-f0-9-]{36}$/.test(tabId))
 			throw new Error("Visible browser tab ID is invalid.");
+		const snapshot = await this.visibleSnapshot(tabId, signal);
+		if (snapshot.interactive?.some(isSensitiveBrowserInteractiveRef))
+			throw new Error(
+				"Kestrel does not share browser screenshots from pages with sensitive input fields.",
+			);
 		const frame = await this.backend.visibleScreenshot(tabId, signal);
 		if (
 			frame.width < 1 ||
@@ -684,6 +759,20 @@ export class BrowserController {
 		return result;
 	}
 
+	async visibleAutofill(tabId: string, signal: AbortSignal) {
+		if (!this.backend.visibleAutofill)
+			throw new Error("The visible user browser is unavailable.");
+		this.validateVisibleTabId(tabId);
+		return withBrowserRecovery(
+			{
+				operation: "act",
+				surface: "visible",
+				effectState: "possibly_started",
+			},
+			() => this.backend.visibleAutofill!(tabId, signal),
+		);
+	}
+
 	async visibleAct(
 		tabId: string,
 		action: BrowserAction,
@@ -709,6 +798,7 @@ export class BrowserController {
 			);
 		const before =
 			this.lastVisibleSnapshots.get(tabId) ?? EMPTY_BROWSER_SNAPSHOT;
+		rejectSensitiveBrowserTyping(action, before);
 		const after = await withBrowserRecovery(
 			{
 				operation: "act",
@@ -1158,7 +1248,7 @@ export function installBrowserTools(
 		installed.push(name);
 	};
 	const snapshotTargetDescription =
-		"The action target may be a snapshot ref like e12 or a CSS selector.";
+		"The action target may be a snapshot ref like e12 or a CSS selector. Agent typing requires a current snapshot ref, and typing into a ref identified as sensitive is refused; ask the user to enter that value directly.";
 	const recoveryContractDescription =
 		"A failed browser operation may return typed advisory recovery metadata. Take fresh read-only observations before deciding what to do, and never automatically replay an action whose effect may have started.";
 	const snapshotTargetSchema = {
@@ -1537,6 +1627,20 @@ export function installBrowserTools(
 			additionalProperties: false,
 		},
 		({ signal }) => controller.visibleDownloads(signal),
+	);
+	addVisible(
+		"browser.autofill-credential",
+		"Autofill a saved credential",
+		false,
+		{
+			type: "object",
+			properties: { tabId: visibleTabProperty },
+			required: ["tabId"],
+			additionalProperties: false,
+		},
+		({ signal }, input) =>
+			controller.visibleAutofill(String(input.tabId), signal),
+		"Fills only a matching saved credential through the protected browser boundary. Its result never contains an account name, credential ID, password, or other secret.",
 	);
 	addVisible(
 		"browser.visible-act",

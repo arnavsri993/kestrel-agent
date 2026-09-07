@@ -194,6 +194,12 @@ export const BrowserBackendWireRequestSchema = z.discriminatedUnion(
 		z.object({ operation: z.literal("visible-downloads") }).strict(),
 		z
 			.object({
+				operation: z.literal("visible-autofill"),
+				tabId: TAB_ID,
+			})
+			.strict(),
+		z
+			.object({
 				operation: z.literal("visible-act"),
 				tabId: TAB_ID,
 				action: BrowserActionSchema,

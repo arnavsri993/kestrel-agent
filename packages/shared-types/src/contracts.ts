@@ -36,6 +36,10 @@ import {
 	ProvenanceRecordSchema,
 	WorkingTaskSchema,
 } from "./memory-architecture";
+import {
+	ChromeWebStoreExtensionInspectionSchema,
+	ExtensionCompatibilityReportSchema,
+} from "./extension-compatibility";
 
 export const SensitivitySchema = z.enum([
 	"public",
@@ -529,6 +533,33 @@ export const ModelProfileSchema = z.object({
 	learnedPerformance: CapabilityScoresSchema,
 	observations: z.number().int().nonnegative().default(0),
 	lastEvaluatedAt: z.string().datetime().optional(),
+	/**
+	 * Availability and discovery provenance are intentionally kept alongside a
+	 * profile rather than inferred from a marketing model name. Older persisted
+	 * profiles omit these fields and remain valid while their endpoint is
+	 * refreshed.
+	 */
+	availability: z
+		.enum([
+			"available",
+			"unknown",
+			"stale",
+			"authentication_required",
+			"permission_denied",
+			"unavailable",
+			"unsupported",
+		])
+		.optional(),
+	discoverySource: z
+		.enum(["provider_api", "cli", "protocol", "metadata", "fallback"])
+		.optional(),
+	/**
+	 * Kept separate from availability: an account can advertise a model while
+	 * omitting the model-specific capability metadata needed for auto-routing.
+	 */
+	capabilityProvenance: z
+		.enum(["confirmed", "transport", "unknown"])
+		.optional(),
 });
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 
@@ -1283,6 +1314,167 @@ export const ModelProviderSummarySchema = z.object({
 	}),
 });
 export type ModelProviderSummary = z.infer<typeof ModelProviderSummarySchema>;
+
+/**
+ * A provider account is a configured authentication context, not a model
+ * vendor. The endpoint ID is the runtime adapter instance used for execution;
+ * the account ID remains stable when a display name or endpoint URL changes.
+ */
+export const ProviderAccountAuthTransportSchema = z.enum([
+	"api_key",
+	"oauth",
+	"cli_profile",
+	"local",
+]);
+export type ProviderAccountAuthTransport = z.infer<
+	typeof ProviderAccountAuthTransportSchema
+>;
+
+export const ProviderModelAvailabilitySchema = z.enum([
+	"available",
+	"unknown",
+	"stale",
+	"authentication_required",
+	"permission_denied",
+	"unavailable",
+	"unsupported",
+]);
+export type ProviderModelAvailability = z.infer<
+	typeof ProviderModelAvailabilitySchema
+>;
+
+export const ProviderModelDiscoverySourceSchema = z.enum([
+	"provider_api",
+	"cli",
+	"protocol",
+	"metadata",
+	"fallback",
+]);
+export type ProviderModelDiscoverySource = z.infer<
+	typeof ProviderModelDiscoverySourceSchema
+>;
+
+export const ProviderAccountModelCapabilitiesSchema = z.object({
+	/**
+	 * Whether the individual model advertised these capabilities, the adapter
+	 * supplied transport-level defaults, or the listing did not say. A model
+	 * list alone is not evidence that every listed model can call tools or
+	 * accept every attachment type.
+	 */
+	capabilityProvenance: z.enum(["confirmed", "transport", "unknown"]),
+	streaming: z.boolean(),
+	tools: z.boolean(),
+	vision: z.boolean(),
+	audio: z.boolean(),
+	documents: z.boolean(),
+	video: z.boolean(),
+	structuredOutput: z.boolean(),
+	reasoningEfforts: z.array(ReasoningEffortSchema).max(6),
+	contextWindow: z.number().int().positive().optional(),
+	maxOutputTokens: z.number().int().positive().optional(),
+});
+export type ProviderAccountModelCapabilities = z.infer<
+	typeof ProviderAccountModelCapabilitiesSchema
+>;
+
+export const ProviderAccountModelSchema = z.object({
+	id: z.string().min(1).max(200),
+	displayName: z.string().min(1).max(300),
+	availability: ProviderModelAvailabilitySchema,
+	discoverySource: ProviderModelDiscoverySourceSchema,
+	discoveredAt: z.string().datetime().optional(),
+	capabilities: ProviderAccountModelCapabilitiesSchema,
+});
+export type ProviderAccountModel = z.infer<typeof ProviderAccountModelSchema>;
+
+export const ProviderAccountDiscoverySchema = z.object({
+	state: z.enum(["idle", "fresh", "stale", "failed", "unsupported"]),
+	lastAttemptAt: z.string().datetime().optional(),
+	lastSuccessAt: z.string().datetime().optional(),
+	/** A short, secret-free diagnostic suitable for a local settings surface. */
+	error: z.string().min(1).max(500).optional(),
+});
+export type ProviderAccountDiscovery = z.infer<
+	typeof ProviderAccountDiscoverySchema
+>;
+
+export const ProviderAccountSummarySchema = z.object({
+	id: z.string().min(1).max(100),
+	endpointId: z.string().min(1).max(100),
+	providerId: z.string().min(1).max(100),
+	displayName: z.string().min(1).max(200),
+	authTransport: ProviderAccountAuthTransportSchema,
+	enabled: z.boolean(),
+	capabilities: ModelProviderSummarySchema.shape.capabilities,
+	discovery: ProviderAccountDiscoverySchema,
+	models: z.array(ProviderAccountModelSchema).max(2_000),
+});
+export type ProviderAccountSummary = z.infer<
+	typeof ProviderAccountSummarySchema
+>;
+
+export const ProviderAccountAdapterSchema = z.enum([
+	"openai-responses",
+	"anthropic-messages",
+	"gemini-generate-content",
+	"openai-compatible",
+	"ollama",
+	"codex-app-server",
+	"opencode-cli",
+	"claude-cli",
+]);
+export type ProviderAccountAdapter = z.infer<typeof ProviderAccountAdapterSchema>;
+
+/** Public, non-secret input accepted from the renderer when adding an account. */
+export const ProviderAccountInputSchema = z.object({
+	providerId: z.string().regex(/^[a-z][a-z0-9-]{0,79}$/),
+	adapter: ProviderAccountAdapterSchema,
+	displayName: z.string().min(1).max(200),
+	authTransport: ProviderAccountAuthTransportSchema,
+	enabled: z.boolean().default(true),
+	baseUrl: z.string().url().max(2_000).optional(),
+	organization: z.string().max(300).optional(),
+	project: z.string().max(300).optional(),
+	defaultModel: z.string().min(1).max(200).optional(),
+	apiKey: z.string().min(8).max(20_000).optional(),
+	headers: z
+		.array(
+			z.object({
+				name: z.string().min(1).max(120),
+				value: z.string().min(1).max(4_000),
+			}),
+		)
+		.max(20)
+		.default([]),
+});
+export type ProviderAccountInput = z.infer<typeof ProviderAccountInputSchema>;
+
+/**
+ * Updates deliberately omit defaults. In particular, an unrelated rename must
+ * never turn an absent `headers` field into an empty array and clear protected
+ * request headers for the account.
+ */
+export const ProviderAccountUpdateSchema = z.object({
+	id: z.string().min(1).max(100),
+	displayName: z.string().min(1).max(200).optional(),
+	enabled: z.boolean().optional(),
+	baseUrl: z.string().url().max(2_000).optional(),
+	organization: z.string().max(300).optional(),
+	project: z.string().max(300).optional(),
+	defaultModel: z.string().min(1).max(200).optional(),
+	apiKey: z.string().min(8).max(20_000).optional(),
+	headers: z
+		.array(
+			z.object({
+				name: z.string().min(1).max(120),
+				value: z.string().min(1).max(4_000),
+			}),
+		)
+		.max(20)
+		.optional(),
+});
+export type ProviderAccountUpdate = z.infer<typeof ProviderAccountUpdateSchema>;
+
 export const ProviderVerificationSchema = z.object({
 	providerId: z.string().min(1),
 	poolId: z.string().min(1).optional(),
@@ -2565,6 +2757,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		includeSensitive: z.boolean().default(false),
 		providerIds: z.array(z.string().min(1).max(100)).min(1).max(8).default(["auto"]),
 		providerModels: z.record(z.string(), z.string().min(1).max(200)).optional(),
+		reasoningEffort: ReasoningEffortSchema.optional(),
 		writerModel: z.string().min(1).max(200).optional(),
 		reviewerModel: z.string().min(1).max(200).optional(),
 	}),
@@ -2884,6 +3077,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({ type: z.literal("runtime-list-providers") }),
 	z.object({
+		type: z.literal("runtime-refresh-provider-models"),
+		/** Omit to refresh every configured account. */
+		providerId: z.string().min(1).max(100).optional(),
+	}),
+	z.object({
 		type: z.literal("runtime-verify-provider"),
 		providerId: z.string().min(1).max(100),
 	}),
@@ -2980,6 +3178,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		receipts: z.array(ActionReceiptSchema).optional(),
 		plugins: z.array(PluginSummarySchema).optional(),
 		providers: z.array(ModelProviderSummarySchema).optional(),
+		providerAccounts: z.array(ProviderAccountSummarySchema).optional(),
 		modelProfiles: z.array(ModelProfileSchema).optional(),
 		routingPolicy: RoutingPolicySchema.optional(),
 		routingTraces: z.array(RoutingTraceSchema).optional(),
@@ -3218,6 +3417,29 @@ export const UserBrowserTabFolderSchema = z.object({
 });
 export type UserBrowserTabFolder = z.infer<typeof UserBrowserTabFolderSchema>;
 
+/**
+ * These are normalized, renderer-safe labels for a reputation provider's
+ * finding. Provider-specific codes stay in the main process.
+ */
+export const UserBrowserThreatTypeSchema = z.enum([
+	"malware",
+	"social-engineering",
+	"unwanted-software",
+	"potentially-harmful-application",
+	"unsafe-site",
+]);
+export type UserBrowserThreatType = z.infer<typeof UserBrowserThreatTypeSchema>;
+
+export const UserBrowserBlockedNavigationSchema = z.object({
+	url: z.string().url().max(8_192),
+	source: z.enum(["navigation", "redirect", "popup"]),
+	threatTypes: z.array(UserBrowserThreatTypeSchema).min(1).max(5),
+	provider: z.string().min(1).max(100),
+});
+export type UserBrowserBlockedNavigation = z.infer<
+	typeof UserBrowserBlockedNavigationSchema
+>;
+
 export const UserBrowserTabSchema = z.object({
 	id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	title: z.string().min(1).max(500),
@@ -3230,6 +3452,7 @@ export const UserBrowserTabSchema = z.object({
 	discarded: z.boolean(),
 	crashed: z.boolean(),
 	error: z.string().min(1).max(500).optional(),
+	blockedNavigation: UserBrowserBlockedNavigationSchema.optional(),
 	pinned: z.boolean().default(false),
 	muted: z.boolean().default(false),
 	tabFolderId: z.string().regex(/^tab-folder-[a-f0-9-]{36}$/).optional(),
@@ -3279,7 +3502,9 @@ export const PasswordEntrySummarySchema = z.object({
 	origin: z.string().url().max(8_192),
 	title: z.string().min(1).max(200),
 	username: z.string().max(500),
+	createdAt: z.string().datetime(),
 	updatedAt: z.string().datetime(),
+	lastUsedAt: z.string().datetime().optional(),
 });
 export type PasswordEntrySummary = z.infer<typeof PasswordEntrySummarySchema>;
 
@@ -3288,14 +3513,14 @@ export type PasswordEntrySummary = z.infer<typeof PasswordEntrySummarySchema>;
  * next to the public summary so storage and IPC validation cannot drift apart.
  */
 export const PasswordEntrySchema = PasswordEntrySummarySchema.extend({
-	password: z.string().min(1).max(100_000),
-	createdAt: z.string().datetime(),
+	/** Main-process only. This schema must never be used for renderer IPC. */
+	password: z.string().min(1).max(4_096),
 });
 export type PasswordEntry = z.infer<typeof PasswordEntrySchema>;
 
 export const PasswordFormFieldSchema = z.object({
 	id: z.string().regex(/^field-[0-9]+$/),
-	kind: z.enum(["username", "password", "other"]),
+	kind: z.enum(["username", "password", "new-password", "secret", "other"]),
 	label: z.string().max(500),
 	type: z.string().max(100),
 	autocomplete: z.string().max(100),
@@ -3318,7 +3543,7 @@ export const PasswordPromptSchema = z.object({
 	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	origin: z.string().url().max(8_192),
 	title: z.string().min(1).max(500),
-	mode: z.enum(["save", "page", "field"]),
+	mode: z.enum(["save", "page", "field", "generate", "autofilled"]),
 	fields: z.array(PasswordFormFieldSchema).max(32),
 	focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
 	entries: z.array(PasswordEntrySummarySchema).max(24),
@@ -3439,6 +3664,16 @@ export type UserBrowserHistoryEntry = z.infer<
 	typeof UserBrowserHistoryEntrySchema
 >;
 
+export const UserBrowserDownloadReputationSchema = z.object({
+	verdict: z.enum(["safe", "unknown", "malicious"]),
+	provider: z.string().min(1).max(100),
+	threatTypes: z.array(UserBrowserThreatTypeSchema).max(5).default([]),
+	checkedAt: z.string().datetime(),
+});
+export type UserBrowserDownloadReputation = z.infer<
+	typeof UserBrowserDownloadReputationSchema
+>;
+
 export const UserBrowserDownloadSchema = z.object({
 	id: z.string().regex(/^download-[a-f0-9-]{36}$/),
 	tabId: z
@@ -3449,10 +3684,18 @@ export const UserBrowserDownloadSchema = z.object({
 	sourceUrl: z.string().url().max(8_192),
 	receivedBytes: z.number().int().nonnegative(),
 	totalBytes: z.number().int().nonnegative(),
-	status: z.enum(["progressing", "completed", "cancelled", "failed"]),
+	status: z.enum([
+		"checking",
+		"progressing",
+		"completed",
+		"cancelled",
+		"failed",
+		"blocked",
+	]),
 	startedAt: z.string().datetime(),
 	completedAt: z.string().datetime().optional(),
 	canReveal: z.boolean(),
+	reputation: UserBrowserDownloadReputationSchema.optional(),
 });
 export type UserBrowserDownload = z.infer<typeof UserBrowserDownloadSchema>;
 
@@ -3709,7 +3952,16 @@ export const UserBrowserSettingsSchema = z.object({
 	memorySaverMode: z.boolean().default(true),
 	showBookmarksBar: z.boolean().default(true),
 	addressBarSuggestionsEnabled: z.boolean().default(true),
+	/** Legacy master switch retained for existing profiles. */
 	passwordAutofillEnabled: z.boolean().default(true),
+	offerToSavePasswords: z.boolean().default(true),
+	autofillPasswords: z.boolean().default(true),
+	autofillUsernames: z.boolean().default(true),
+	offerStrongPasswords: z.boolean().default(true),
+	neverSavePasswordOrigins: z
+		.array(z.string().url().max(8_192))
+		.max(500)
+		.default([]),
 	paymentAutofillEnabled: z.boolean().default(true),
 	defaultZoomPercent: z.number().int().min(25).max(500).default(100),
 	minimumFontSize: z.number().int().min(0).max(72).default(0),
@@ -3760,8 +4012,8 @@ export const InstalledExtensionSchema = z.object({
 	iconUrl: z.string().optional(),
 	homepageUrl: z.string().optional(),
 	source: z.enum(["chrome_web_store", "unpacked", "file", "other"]),
-	path: z.string().min(1),
 	installedAt: z.string().datetime(),
+	compatibility: ExtensionCompatibilityReportSchema.optional(),
 });
 export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
@@ -4006,6 +4258,10 @@ export const RendererRequestSchema = z.union([
 		input: z.string().min(1).max(8_192),
 	}),
 	z.object({
+		type: z.literal("browser-dismiss-threat"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
+	}),
+	z.object({
 		type: z.enum([
 			"browser-back",
 			"browser-forward",
@@ -4198,8 +4454,12 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("browser-list-extensions") }),
 	z.object({
-		type: z.literal("browser-install-extension-url"),
+		type: z.literal("browser-inspect-extension-url"),
 		urlOrId: z.string().min(1).max(8_192),
+	}),
+	z.object({
+		type: z.literal("browser-install-extension-url"),
+		inspectionId: z.string().uuid(),
 	}),
 	z.object({
 		type: z.literal("browser-toggle-extension"),
@@ -4208,6 +4468,10 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({
 		type: z.literal("browser-uninstall-extension"),
+		extensionId: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("browser-reload-extension"),
 		extensionId: z.string().min(1).max(100),
 	}),
 	z.object({
@@ -4271,6 +4535,23 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("create-local-backup") }),
 	z.object({ type: z.literal("reveal-local-backup"), path: z.string().min(1) }),
 	z.object({ type: z.literal("subscription-cli-status") }),
+	z.object({ type: z.literal("provider-account-list") }),
+	z.object({
+		type: z.literal("provider-account-create"),
+		account: ProviderAccountInputSchema,
+	}),
+	z.object({
+		type: z.literal("provider-account-update"),
+		account: ProviderAccountUpdateSchema,
+	}),
+	z.object({
+		type: z.literal("provider-account-remove"),
+		accountId: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("provider-account-connect"),
+		accountId: z.string().min(1).max(100),
+	}),
 	z.object({
 		type: z.literal("subscription-cli-set"),
 		id: z.enum(["codex", "claude", "opencode"]),
@@ -4287,14 +4568,20 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("oauth-google-disconnect") }),
 	z.object({ type: z.literal("password-list") }),
 	z.object({
-		type: z.literal("password-save"),
-		origin: z.string().url().max(8_192),
-		title: z.string().max(200).optional(),
-		username: z.string().max(500),
-		password: z.string().min(1).max(100_000),
+		type: z.literal("password-remove"),
+		passwordId: PasswordEntryIdSchema,
 	}),
 	z.object({
-		type: z.literal("password-remove"),
+		type: z.literal("password-update-username"),
+		passwordId: PasswordEntryIdSchema,
+		username: z.string().max(500),
+	}),
+	z.object({
+		type: z.literal("password-copy"),
+		passwordId: PasswordEntryIdSchema,
+	}),
+	z.object({
+		type: z.literal("password-reveal"),
 		passwordId: PasswordEntryIdSchema,
 	}),
 	z.object({
@@ -4307,6 +4594,8 @@ export const RendererRequestSchema = z.union([
 		fieldId: z.string().regex(/^field-[0-9]+$/),
 	}),
 	z.object({ type: z.literal("password-save-suggestion") }),
+	z.object({ type: z.literal("password-mark-never-save") }),
+	z.object({ type: z.literal("password-generate") }),
 	z.object({ type: z.literal("password-dismiss") }),
 	z.object({ type: z.literal("payment-list") }),
 	z.object({
@@ -4546,6 +4835,12 @@ export type RendererResponse =
 	| { ok: true; browserPagePreview?: string }
 	| { ok: true; extensions: InstalledExtension[] }
 	| { ok: true; extension: InstalledExtension }
+	| {
+			ok: true;
+			extensionInspection: z.infer<
+				typeof ChromeWebStoreExtensionInspectionSchema
+			>;
+	  }
 	| { ok: true; screenshotPath?: string; cancelled?: boolean }
 	| { ok: true; browserContext: UserBrowserPageContext }
 	| {
@@ -4595,6 +4890,7 @@ export type RendererResponse =
 	| { ok: true; diagnosticReportPath: string; cancelled?: boolean }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
+	| { ok: true; providerAccounts: ProviderAccountSummary[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }
 	| { ok: true; communicationSources: z.infer<typeof CommunicationSourceStatusSchema>[] }
 	| { ok: true; communicationScan: z.infer<typeof CommunicationCodeScanSchema> }

@@ -113,8 +113,8 @@ export function ObservabilitySettings() {
 			<div>
 				<strong>External observability</strong>
 				<p>
-					Prompt and response text, tool payloads, session IDs, paths, hostnames,
-					and credentials are never eligible for export.
+					Prompts, responses, tool payloads, session IDs, paths, hostnames, and
+					credentials never leave Kestrel.
 				</p>
 				<label className="checkbox-label">
 					<input
@@ -136,8 +136,7 @@ export function ObservabilitySettings() {
 								<span>
 									<b>OpenTelemetry · OTLP/HTTP protobuf</b>
 									<small>
-										Push metrics and sampled runtime traces to an HTTPS or
-										loopback collector.
+										Send metrics and sampled traces to an HTTPS or local collector.
 									</small>
 								</span>
 								<span
@@ -307,9 +306,8 @@ export function ObservabilitySettings() {
 									</label>
 								</div>
 								<small>
-									Kestrel appends <code>/v1/metrics</code> and{" "}
-									<code>/v1/traces</code>. The auth value is encrypted and never
-									read back.
+									Uses <code>/v1/metrics</code> and <code>/v1/traces</code>. The auth
+									value is encrypted and never shown again.
 								</small>
 							</div>
 						</details>
@@ -318,8 +316,7 @@ export function ObservabilitySettings() {
 								<span>
 									<b>Prometheus</b>
 									<small>
-										Pull metrics through the authenticated remote operator
-										endpoint.
+										Expose authenticated metrics to remote operators.
 									</small>
 								</span>
 								<span
@@ -343,10 +340,7 @@ export function ObservabilitySettings() {
 									<span>Expose metrics when remote serve is running</span>
 								</label>
 								<small>
-									Scrape <code>GET /v1/diagnostics/prometheus</code> with a
-									paired read-scope bearer token. There is no public
-									unauthenticated metrics route, and new series are capped at
-									2,048.
+									Requires a paired read token. There is no public metrics endpoint.
 								</small>
 							</div>
 						</details>

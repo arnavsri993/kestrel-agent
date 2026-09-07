@@ -500,9 +500,8 @@ function CommandSection({
 					</label>
 				</div>
 				<small>
-					Kestrel does not invoke a shell. The helper receives discrete
-					arguments, a minimal environment, a hard timeout, and must print
-					supported KEY=VALUE records.
+					Runs without a shell, with a minimal environment and hard timeout. It
+					must print supported KEY=VALUE records.
 				</small>
 				<label className="checkbox-label">
 					<input
@@ -727,8 +726,8 @@ export function ExternalSecretSettings() {
 			<div className="external-secret-content">
 				<strong>External secret sources</strong>
 				<p>
-					Optional for advanced setups. Saved protected fields keep precedence
-					unless you override them here.
+					For advanced setups. Saved fields take precedence unless you override
+					them here.
 				</p>
 				<div className="external-secret-list">
 					<OnePasswordSection

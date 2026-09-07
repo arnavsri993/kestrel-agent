@@ -117,7 +117,7 @@ try {
 	);
 	const firstBoundary = page.locator(".warning-panel details").first();
 	await firstBoundary.locator("summary").click();
-	await page.getByText(/retention and training terms/).waitFor();
+	await page.getByText(/provider's data terms/).waitFor();
 	const warningHeadingAfterFirstOpen = await warningHeading.boundingBox();
 	assert.ok(
 		warningHeadingAfterFirstOpen,

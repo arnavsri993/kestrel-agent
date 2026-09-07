@@ -1,4 +1,10 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
@@ -32,8 +38,34 @@ const electron = vi.hoisted(() => {
     id = nextWebContentsId++;
     destroyed = false;
     url = "";
+    mainFrame = { url: "" };
+    passwordSnapshot: unknown = { fields: [] };
     title = "";
-    loadURL = vi.fn(async (url: string) => { this.url = url; });
+    loadURL = vi.fn(async (url: string) => {
+      this.url = url;
+      this.mainFrame.url = url;
+    });
+    send = vi.fn((channel: string, payload: unknown) => {
+      if (
+        channel !== "kestrel:user-browser-credential-command" ||
+        !payload ||
+        typeof payload !== "object" ||
+        !["scan", "fill"].includes(String((payload as { type?: unknown }).type))
+      )
+        return;
+      const requestId = (payload as { requestId?: unknown }).requestId;
+      if (typeof requestId !== "string") return;
+      queueMicrotask(() => {
+        this.emit(
+          "ipc-message",
+          { senderFrame: this.mainFrame },
+          "kestrel:user-browser-credential-response",
+				(payload as { type?: unknown }).type === "scan"
+					? { requestId, ok: true, snapshot: this.passwordSnapshot }
+					: { requestId, ok: true, filled: 1 },
+        );
+      });
+    });
     close = vi.fn(() => { this.destroyed = true; });
     reload = vi.fn();
     reloadIgnoringCache = vi.fn();
@@ -52,6 +84,7 @@ const electron = vi.hoisted(() => {
     stop = vi.fn();
     focus = vi.fn();
     insertText = vi.fn();
+		sendInputEvent = vi.fn();
     executeJavaScript = vi.fn();
     invalidate = vi.fn();
     capturePage = vi.fn(async () => ({
@@ -84,6 +117,10 @@ const electron = vi.hoisted(() => {
     navigationHistory = {
       canGoBack: vi.fn(() => false),
       canGoForward: vi.fn(() => false),
+			getActiveIndex: vi.fn(() => 0),
+			getEntryAtIndex: vi.fn(
+				(_index: number): { url: string; title: string } | null => null,
+			),
       goBack: vi.fn(),
       goForward: vi.fn(),
       clear: vi.fn(),
@@ -168,6 +205,7 @@ import {
   isAuthenticationFlowUrl,
   UserBrowserService,
 } from "./user-browser-service";
+import type { BrowserThreatProvider } from "./browser-threat-provider";
 import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
 import type {
   BrowserTabFolderName,
@@ -204,6 +242,7 @@ function createService(options: {
   nameTabFolders?: (
     groups: BrowserTabFolderNamingGroup[],
   ) => Promise<BrowserTabFolderName[]>;
+	threatProvider?: BrowserThreatProvider;
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "kestrel-user-browser-"));
   directories.push(directory);
@@ -257,6 +296,9 @@ function createService(options: {
 		...(options.nameTabFolders
 			? { nameTabFolders: options.nameTabFolders }
 			: {}),
+		...(options.threatProvider
+			? { threatProvider: options.threatProvider }
+			: {}),
 	});
 	return { service, window, events, commands, statePath };
 }
@@ -264,6 +306,27 @@ function createService(options: {
 async function navigateNewTab(service: UserBrowserService, url: string) {
   const state = await service.createTab(url, false);
   return state.tabs.at(-1)!;
+}
+
+function threatProvider(
+	checkUrl: BrowserThreatProvider["checkUrl"],
+): BrowserThreatProvider {
+	return { id: "test-reputation", available: true, checkUrl };
+}
+
+function downloadItem(url: string, filename = "report.txt") {
+	return {
+		getFilename: vi.fn(() => filename),
+		getURL: vi.fn(() => url),
+		getReceivedBytes: vi.fn(() => 0),
+		getTotalBytes: vi.fn(() => 10),
+		setSavePath: vi.fn(),
+		pause: vi.fn(),
+		resume: vi.fn(),
+		on: vi.fn(),
+		once: vi.fn(),
+		cancel: vi.fn(),
+	};
 }
 
 describe("UserBrowserService", () => {
@@ -357,6 +420,290 @@ describe("UserBrowserService", () => {
 			expect(item.setSavePath).toHaveBeenCalledWith(chosenPath),
 		);
 		expect(item.resume).toHaveBeenCalledOnce();
+	});
+
+	it("blocks a malicious typed navigation before loading and hides the native view", async () => {
+		const provider = threatProvider(vi.fn(async () => ({
+			verdict: "malicious" as const,
+			provider: "test-reputation",
+			threatTypes: ["malware" as const],
+		})));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+
+		await service.navigate(tab.id, "https://malware.example/payload");
+		const contents = electron.state.views[0]!.webContents;
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://malware.example/payload",
+			context: "navigation",
+		});
+		expect(contents.loadURL).not.toHaveBeenCalled();
+		expect(contents.stop).toHaveBeenCalledOnce();
+		expect(electron.state.views[0]!.setVisible).toHaveBeenLastCalledWith(false);
+		expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+			url: "https://malware.example/payload",
+			source: "navigation",
+			threatTypes: ["malware"],
+		});
+	});
+
+	it("prevents and blocks a malicious page-initiated redirect", async () => {
+		const provider = threatProvider(vi.fn(async ({ url }) => url.includes("malware")
+			? { verdict: "malicious" as const, provider: "test-reputation", threatTypes: ["social-engineering" as const] }
+			: { verdict: "safe" as const, provider: "test-reputation" }));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const contents = electron.state.views[0]!.webContents;
+		const event = { preventDefault: vi.fn() };
+
+		contents.emit("will-redirect", event, "https://malware.example/redirect");
+		await vi.waitFor(() => expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+			url: "https://malware.example/redirect",
+			source: "redirect",
+		}));
+
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(contents.loadURL).not.toHaveBeenCalledWith("https://malware.example/redirect");
+		expect(contents.stop).toHaveBeenCalledOnce();
+	});
+
+	it("blocks a malicious managed popup before its native page loads", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["social-engineering" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const contents = electron.state.views[0]!.webContents;
+
+		const response = contents.windowOpenHandler?.({
+			url: "https://malware.example/popup",
+			disposition: "foreground-tab",
+		});
+
+		expect(response).toEqual({ action: "deny" });
+		await vi.waitFor(() =>
+			expect(
+				service
+					.getState()
+					.tabs.find((candidate) => candidate.blockedNavigation)?.blockedNavigation,
+			).toMatchObject({
+				url: "https://malware.example/popup",
+				source: "popup",
+			}),
+		);
+		expect(electron.state.views.at(-1)?.webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("redacts query and fragment data before an injected provider sees a URL", async () => {
+		const provider = threatProvider(
+			vi.fn(async () => ({
+				verdict: "safe" as const,
+				provider: "test-reputation",
+			})),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		const target =
+			"https://safe.example/callback?code=oauth-code&query=private#access_token=fragment-secret";
+
+		await service.navigate(tab.id, target);
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://safe.example/callback",
+			context: "navigation",
+		});
+		expect(electron.state.views[0]!.webContents.loadURL).toHaveBeenCalledWith(
+			target,
+		);
+	});
+
+	it("checks a history target before a programmatic back navigation", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["malware" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example/current");
+		const contents = electron.state.views[0]!.webContents;
+		contents.navigationHistory.canGoBack.mockReturnValue(true);
+		contents.navigationHistory.getActiveIndex.mockReturnValue(1);
+		contents.navigationHistory.getEntryAtIndex.mockReturnValue({
+			url: "https://malware.example/history",
+			title: "Malware history",
+		});
+
+		service.back(tab.id);
+
+		await vi.waitFor(() =>
+			expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+				url: "https://malware.example/history",
+				source: "navigation",
+			}),
+		);
+		expect(contents.navigationHistory.goBack).not.toHaveBeenCalled();
+	});
+
+	it("blocks a malicious download before choosing a destination", async () => {
+		const provider = threatProvider(vi.fn(async () => ({
+			verdict: "malicious" as const,
+			provider: "test-reputation",
+			threatTypes: ["potentially-harmful-application" as const],
+		})));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://malware.example/installer.dmg", "installer.dmg");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		expect(item.pause).toHaveBeenCalledOnce();
+		expect(item.setSavePath).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(item.cancel).toHaveBeenCalledOnce());
+
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "blocked",
+			reputation: { verdict: "malicious", provider: "test-reputation", threatTypes: ["potentially-harmful-application"] },
+		});
+	});
+
+	it("blocks a download when a redirect-chain URL is malicious", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["malware" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = {
+			...downloadItem("https://safe.example/installer.dmg", "installer.dmg"),
+			getURLChain: vi.fn(() => ["https://malware.example/redirect"]),
+		};
+
+		electron.state.partitions[0]!.instance.emit(
+			"will-download",
+			{},
+			item,
+			electron.state.views[0]!.webContents,
+		);
+		await vi.waitFor(() => expect(item.cancel).toHaveBeenCalledOnce());
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://malware.example/redirect",
+			context: "download",
+		});
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "blocked",
+			reputation: { verdict: "malicious", threatTypes: ["malware"] },
+		});
+	});
+
+	it("resumes a safe download only after its reputation check", async () => {
+		const provider = threatProvider(vi.fn(async () => ({ verdict: "safe" as const, provider: "test-reputation" })));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		expect(item.pause).toHaveBeenCalledOnce();
+		await vi.waitFor(() => expect(item.resume).toHaveBeenCalledOnce());
+		expect(item.setSavePath).toHaveBeenCalledOnce();
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "progressing",
+			reputation: { verdict: "safe", provider: "test-reputation" },
+		});
+	});
+
+	it("does not resume a download cancelled while its reputation check is pending", async () => {
+		let resolveCheck: ((value: Awaited<ReturnType<BrowserThreatProvider["checkUrl"]>>) => void) | undefined;
+		const checkUrl: BrowserThreatProvider["checkUrl"] = ({ context }) => context === "download"
+			? new Promise((resolve) => { resolveCheck = resolve; })
+			: Promise.resolve({ verdict: "safe" as const, provider: "test-reputation" });
+		const provider = threatProvider(vi.fn(checkUrl));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		const id = service.getState().downloads[0]!.id;
+		service.cancelDownload(id);
+		resolveCheck?.({
+			verdict: "malicious",
+			provider: "test-reputation",
+			threatTypes: ["malware"],
+		});
+		await Promise.resolve();
+
+		expect(item.cancel).toHaveBeenCalledOnce();
+		expect(item.resume).not.toHaveBeenCalled();
+		expect(service.getState().downloads[0]?.status).toBe("cancelled");
+	});
+
+	it("does not resume a canceled download when its Save dialog resolves late", async () => {
+		const provider = threatProvider(
+			vi.fn(async () => ({ verdict: "safe" as const, provider: "test-reputation" })),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		service.updateSettings(
+			UserBrowserSettingsSchema.parse({
+				...service.getState().settings,
+				downloadBehavior: "ask",
+			}),
+		);
+		type SaveDialogResult = Awaited<ReturnType<typeof dialog.showSaveDialog>>;
+		let resolveDialog: ((result: SaveDialogResult) => void) | undefined;
+		vi.mocked(dialog.showSaveDialog).mockImplementationOnce(
+			() =>
+				new Promise<SaveDialogResult>((resolve) => {
+					resolveDialog = resolve;
+				}),
+		);
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit(
+			"will-download",
+			{},
+			item,
+			electron.state.views[0]!.webContents,
+		);
+		await vi.waitFor(() => expect(dialog.showSaveDialog).toHaveBeenCalledOnce());
+		const id = service.getState().downloads[0]!.id;
+		service.cancelDownload(id);
+		resolveDialog?.({ canceled: false, filePath: join(tmpdir(), "late-save.txt") });
+		await Promise.resolve();
+
+		expect(item.cancel).toHaveBeenCalledOnce();
+		expect(item.setSavePath).not.toHaveBeenCalled();
+		expect(item.resume).not.toHaveBeenCalled();
+		expect(service.getState().downloads[0]?.status).toBe("cancelled");
 	});
 
 	it("keeps the prior page when an address-bar navigation becomes a download", async () => {
@@ -585,7 +932,52 @@ describe("UserBrowserService", () => {
     });
   });
 
-	it("offers to save submitted passwords without exposing the secret to the prompt", async () => {
+	it("locally converts HEIC browser uploads before replacing the file input", async () => {
+		const { service } = createService();
+		const sourceDirectory = mkdtempSync(join(tmpdir(), "kestrel-heic-upload-"));
+		directories.push(sourceDirectory);
+		const source = join(sourceDirectory, "camera-roll.HEIC");
+		writeFileSync(
+			source,
+			Buffer.from(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+				"base64",
+			),
+		);
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://chatgpt.com/");
+		const contents = electron.state.views[0]!.webContents;
+		contents.debugger.sendCommand
+			.mockResolvedValueOnce({ root: { nodeId: 1 } })
+			.mockResolvedValueOnce({ nodeId: 2 })
+			.mockResolvedValueOnce(undefined);
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: { url: "https://chatgpt.com/" } },
+			"kestrel:user-browser-heic-upload",
+			{ inputId: "heic-upload-123", paths: [source] },
+		);
+
+		await vi.waitFor(() =>
+			expect(contents.debugger.sendCommand).toHaveBeenLastCalledWith(
+				"DOM.setFileInputFiles",
+				expect.objectContaining({ nodeId: 2 }),
+			),
+		);
+		const replacedPaths = contents.debugger.sendCommand.mock.calls.at(-1)?.[1]
+			?.files as string[];
+		expect(replacedPaths).toHaveLength(1);
+		expect(replacedPaths[0]).toMatch(/camera-roll\.jpeg$/i);
+		expect(replacedPaths[0]).not.toEqual(source);
+		expect(existsSync(replacedPaths[0]!)).toBe(true);
+		expect(contents.send).not.toHaveBeenCalled();
+
+		service.dispose();
+		expect(existsSync(replacedPaths[0]!)).toBe(false);
+	});
+
+	it("offers to save submitted passwords only after a successful-looking navigation without exposing the secret", async () => {
 		const save = vi.fn(async (_input: SavePasswordInput) => []);
 		const passwordVault = {
 			list: vi.fn(async () => []),
@@ -605,7 +997,7 @@ describe("UserBrowserService", () => {
 
 		contents.emit(
 			"ipc-message",
-			{ senderFrame: { url: "https://login.example/sign-in" } },
+			{ senderFrame: contents.mainFrame },
 			"kestrel:user-browser-password-submission",
 			{
 				username: "person@example.test",
@@ -614,6 +1006,11 @@ describe("UserBrowserService", () => {
 			},
 		);
 
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(prompts).toEqual([]);
+		contents.url = "https://login.example/home";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
 		await vi.waitFor(() => expect(prompts).toHaveLength(1));
 		expect(prompts[0]).toMatchObject({
 			mode: "save",
@@ -634,7 +1031,524 @@ describe("UserBrowserService", () => {
 		expect(prompts.at(-1)).toBeNull();
 	});
 
-	it("does not save a submitted password after its page navigates away", async () => {
+	it("offers a Microsoft-style credential save after the tracked return to its initiating site", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		const contents = electron.state.views[0]?.webContents;
+		await service.navigate(tab.id, "https://stlcc.example/login");
+		const activeContents = contents ?? electron.state.views[0]!.webContents;
+		activeContents.emit(
+			"did-navigate",
+			{},
+			"https://stlcc.example/login",
+			200,
+			"OK",
+		);
+		await service.navigate(tab.id, "https://login.microsoftonline.com/sign-in");
+		activeContents.emit(
+			"did-navigate",
+			{},
+			"https://login.microsoftonline.com/sign-in",
+			200,
+			"OK",
+		);
+		activeContents.emit(
+			"ipc-message",
+			{ senderFrame: activeContents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "student@stlcc.example", password: "not-in-the-prompt" },
+		);
+		expect(
+			(service as unknown as {
+				pendingPasswordSave?: { flowInitiatingOrigin?: string; origin: string };
+			}).pendingPasswordSave,
+		).toMatchObject({
+			origin: "https://login.microsoftonline.com",
+			flowInitiatingOrigin: "https://stlcc.example",
+		});
+		activeContents.url = "https://stlcc.example/portal";
+		activeContents.mainFrame.url = activeContents.url;
+		activeContents.emit("did-navigate", {}, activeContents.url, 200, "OK");
+		await vi.waitFor(() => expect(activeContents.send).toHaveBeenCalled());
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
+		expect(prompts[0]).toMatchObject({
+			mode: "save",
+			origin: "https://login.microsoftonline.com",
+			candidate: { username: "student@stlcc.example" },
+		});
+		await service.savePasswordSuggestion();
+		expect(save).toHaveBeenCalledWith(
+			expect.objectContaining({
+				origin: "https://login.microsoftonline.com",
+				username: "student@stlcc.example",
+			}),
+		);
+	});
+
+	it("adds an origin to the never-save list from a successful save prompt", async () => {
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			getForOrigin: vi.fn(),
+			save: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "person", password: "not-to-save" },
+		);
+		contents.passwordSnapshot = { fields: [] };
+		contents.url = "https://login.example/home";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({ mode: "save" }));
+
+		service.markNeverSavePasswordForActiveOrigin();
+		expect(service.getState().settings.neverSavePasswordOrigins).toContain(
+			"https://login.example",
+		);
+		expect(prompts.at(-1)).toBeNull();
+	});
+
+	it("continues a selected username-first login with the same opaque credential on the password page", async () => {
+		const entry = {
+			id: "password-00000000-0000-4000-8000-000000000001",
+			origin: "https://login.microsoftonline.com",
+			title: "Microsoft",
+			username: "student@stlcc.example",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+		};
+		const passwordVault = {
+			list: vi.fn(async () => [entry]),
+			listForOrigin: vi.fn(async () => [entry]),
+			getForOrigin: vi.fn(async () => ({ ...entry, password: "privileged-only" })),
+			save: vi.fn(),
+			remove: vi.fn(),
+			markUsed: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.microsoftonline.com/username");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [{
+				id: "field-0",
+				kind: "username",
+				label: "Email, phone, or Skype",
+				type: "email",
+				autocomplete: "username",
+				rect: { x: 10, y: 20, width: 260, height: 42 },
+			}],
+		};
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() =>
+			expect(
+				contents.send.mock.calls.filter(
+					([channel, payload]) =>
+						channel === "kestrel:user-browser-credential-command" &&
+						(payload as { type?: unknown }).type === "fill",
+				).length,
+			).toBe(1),
+		);
+		await vi.waitFor(() => expect(passwordVault.markUsed).toHaveBeenCalledTimes(1));
+
+		contents.passwordSnapshot = {
+			fields: [{
+				id: "field-0",
+				kind: "password",
+				label: "Password",
+				type: "password",
+				autocomplete: "current-password",
+				rect: { x: 10, y: 20, width: 260, height: 42 },
+			}],
+		};
+		contents.url = "https://login.microsoftonline.com/password";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() =>
+			expect(
+				contents.send.mock.calls.filter(
+					([channel, payload]) =>
+						channel === "kestrel:user-browser-credential-command" &&
+						(payload as { type?: unknown }).type === "fill",
+				).length,
+			).toBe(2),
+		);
+		expect(prompts).toEqual([]);
+		expect(contents.sendInputEvent).not.toHaveBeenCalled();
+		expect(passwordVault.getForOrigin).toHaveBeenCalledWith(
+			entry.id,
+			entry.origin,
+		);
+	});
+
+	it("shows a credential picker instead of autofilling when an origin has multiple saved logins", async () => {
+		const entries = [
+			{
+				id: "password-00000000-0000-4000-8000-000000000001",
+				origin: "https://login.example",
+				title: "Example",
+				username: "personal@example.test",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+			{
+				id: "password-00000000-0000-4000-8000-000000000002",
+				origin: "https://login.example",
+				title: "Example",
+				username: "work@example.test",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+		];
+		const passwordVault = {
+			list: vi.fn(async () => entries),
+			listForOrigin: vi.fn(async () => entries),
+			getForOrigin: vi.fn(),
+			save: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "username",
+					label: "Email",
+					type: "email",
+					autocomplete: "username",
+					rect: { x: 10, y: 10, width: 260, height: 42 },
+				},
+				{
+					id: "field-1",
+					kind: "password",
+					label: "Password",
+					type: "password",
+					autocomplete: "current-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+			],
+		};
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({
+			mode: "page",
+			entries: entries.map((entry) => ({ id: entry.id, username: entry.username })),
+		}));
+		expect(
+			contents.send.mock.calls.filter(
+				([channel, payload]) =>
+					channel === "kestrel:user-browser-credential-command" &&
+					(payload as { type?: unknown }).type === "fill",
+			).length,
+		).toBe(0);
+		expect(passwordVault.getForOrigin).not.toHaveBeenCalled();
+		});
+
+	it("lets an approved agent request an opaque matching-credential autofill", async () => {
+		const entry = {
+			id: "password-00000000-0000-4000-8000-000000000001",
+			origin: "https://login.example",
+			title: "Example",
+			username: "person@example.test",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+		};
+		const passwordVault = {
+			list: vi.fn(async () => [entry]),
+			listForOrigin: vi.fn(async () => [entry]),
+			getForOrigin: vi.fn(async () => ({ ...entry, password: "privileged-only" })),
+			save: vi.fn(),
+			remove: vi.fn(),
+			markUsed: vi.fn(),
+		} as unknown as PasswordVault;
+		const { service } = createService({ passwordVault });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "username",
+					label: "Email",
+					type: "email",
+					autocomplete: "username",
+					rect: { x: 10, y: 10, width: 260, height: 42 },
+				},
+				{
+					id: "field-1",
+					kind: "password",
+					label: "Password",
+					type: "password",
+					autocomplete: "current-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+			],
+		};
+
+		const result = await service.handleAgentRequest(
+			{ operation: "visible-autofill", tabId: tab.id },
+			new AbortController().signal,
+		);
+
+		expect(result).toEqual({
+			credentialAvailable: true,
+			autofillResult: "filled",
+			trust: "untrusted_browser",
+		});
+		expect(JSON.stringify(result)).not.toContain(entry.id);
+		expect(JSON.stringify(result)).not.toContain(entry.username);
+		expect(JSON.stringify(result)).not.toContain("privileged-only");
+		expect(passwordVault.getForOrigin).toHaveBeenCalledWith(entry.id, entry.origin);
+		expect(
+			contents.send.mock.calls.some(
+				([channel, payload]) =>
+					channel === "kestrel:user-browser-credential-command" &&
+					(payload as { type?: unknown }).type === "fill",
+			),
+		).toBe(true);
+	});
+
+	it("does not let an agent choose between multiple saved credentials", async () => {
+		const entries = [
+			{
+				id: "password-00000000-0000-4000-8000-000000000001",
+				origin: "https://login.example",
+				title: "Example",
+				username: "personal@example.test",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+			{
+				id: "password-00000000-0000-4000-8000-000000000002",
+				origin: "https://login.example",
+				title: "Example",
+				username: "work@example.test",
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+		];
+		const passwordVault = {
+			list: vi.fn(async () => entries),
+			listForOrigin: vi.fn(async () => entries),
+			getForOrigin: vi.fn(),
+			save: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const { service } = createService({ passwordVault });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "password",
+					label: "Password",
+					type: "password",
+					autocomplete: "current-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+			],
+		};
+
+		const result = await service.handleAgentRequest(
+			{ operation: "visible-autofill", tabId: tab.id },
+			new AbortController().signal,
+		);
+
+		expect(result).toEqual({
+			credentialAvailable: true,
+			autofillResult: "selection_required",
+			trust: "untrusted_browser",
+		});
+		expect(JSON.stringify(result)).not.toContain(entries[0]!.username);
+		expect(JSON.stringify(result)).not.toContain(entries[1]!.username);
+		expect(passwordVault.getForOrigin).not.toHaveBeenCalled();
+	});
+
+	it("detects a dynamically inserted sign-in form through the preload bridge", async () => {
+		const entry = {
+			id: "password-00000000-0000-4000-8000-000000000001",
+			origin: "https://login.example",
+			title: "Example",
+			username: "person@example.test",
+			createdAt: "2026-01-01T00:00:00.000Z",
+			updatedAt: "2026-01-01T00:00:00.000Z",
+		};
+		const passwordVault = {
+			list: vi.fn(async () => [entry]),
+			listForOrigin: vi.fn(async () => [entry]),
+			getForOrigin: vi.fn(async () => ({ ...entry, password: "privileged-only" })),
+			save: vi.fn(),
+			remove: vi.fn(),
+			markUsed: vi.fn(),
+		} as unknown as PasswordVault;
+		const { service } = createService({ passwordVault });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "username",
+					label: "Email",
+					type: "email",
+					autocomplete: "username",
+					rect: { x: 10, y: 10, width: 260, height: 42 },
+				},
+				{
+					id: "field-1",
+					kind: "password",
+					label: "Password",
+					type: "password",
+					autocomplete: "current-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+			],
+		};
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-form-changed",
+		);
+
+		await vi.waitFor(() =>
+			expect(
+				contents.send.mock.calls.some(
+					([channel, payload]) =>
+						channel === "kestrel:user-browser-credential-command" &&
+						(payload as { type?: unknown }).type === "fill",
+				),
+			).toBe(true),
+		);
+	});
+
+	it("fills a generated password into all new-password fields and stages it only after submit", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			getForOrigin: vi.fn(),
+			save,
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://accounts.example/sign-up");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [
+				{
+					id: "field-0",
+					kind: "username",
+					label: "Email",
+					type: "email",
+					autocomplete: "username",
+					rect: { x: 10, y: 10, width: 260, height: 42 },
+				},
+				{
+					id: "field-1",
+					kind: "new-password",
+					label: "New password",
+					type: "password",
+					autocomplete: "new-password",
+					rect: { x: 10, y: 60, width: 260, height: 42 },
+				},
+				{
+					id: "field-2",
+					kind: "new-password",
+					label: "Confirm password",
+					type: "password",
+					autocomplete: "new-password",
+					rect: { x: 10, y: 110, width: 260, height: 42 },
+				},
+			],
+		};
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({ mode: "generate" }));
+
+		await service.generatePasswordForActiveForm();
+		const fills = contents.send.mock.calls
+			.filter(
+				([channel, payload]) =>
+					channel === "kestrel:user-browser-credential-command" &&
+					(payload as { type?: unknown }).type === "fill",
+			)
+			.map(([, payload]) => payload as { password: string; fieldId: string });
+		expect(fills).toHaveLength(2);
+		expect(fills.map((fill) => fill.fieldId)).toEqual(["field-1", "field-2"]);
+		const generated = fills[0]!.password;
+		expect(fills.every((fill) => fill.password === generated)).toBe(true);
+		expect(generated).toHaveLength(20);
+		expect(generated).toMatch(/[A-Z]/);
+		expect(generated).toMatch(/[a-z]/);
+		expect(generated).toMatch(/[0-9]/);
+		expect(generated).toMatch(/[^A-Za-z0-9]/);
+		expect(JSON.stringify(prompts)).not.toContain(generated);
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "person@example.test", password: generated },
+		);
+		contents.passwordSnapshot = { fields: [] };
+		contents.url = "https://accounts.example/welcome";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts.at(-1)).toMatchObject({ mode: "save" }));
+		await service.savePasswordSuggestion();
+		expect(save).toHaveBeenCalledWith(
+			expect.objectContaining({
+				origin: "https://accounts.example",
+				username: "person@example.test",
+				password: generated,
+			}),
+		);
+	});
+
+	it("does not offer or save a submitted password after a failed login navigation", async () => {
 		const save = vi.fn(async (_input: SavePasswordInput) => []);
 		const passwordVault = {
 			list: vi.fn(async () => []),
@@ -653,13 +1567,25 @@ describe("UserBrowserService", () => {
 		const contents = electron.state.views[0]!.webContents;
 		contents.emit(
 			"ipc-message",
-			{ senderFrame: { url: "https://login.example/sign-in" } },
+			{ senderFrame: contents.mainFrame },
 			"kestrel:user-browser-password-submission",
 			{ username: "person", password: "not-saved" },
 		);
-		await vi.waitFor(() => expect(prompts).toHaveLength(1));
-
-		await service.navigate(tab.id, "https://login.example/next");
+		contents.passwordSnapshot = {
+			fields: [{
+				id: "field-0",
+				kind: "password",
+				label: "Password",
+				type: "password",
+				autocomplete: "current-password",
+				rect: { x: 20, y: 80, width: 260, height: 42 },
+			}],
+		};
+		contents.url = "https://login.example/sign-in?error=invalid";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(prompts).toEqual([]);
 
 		await expect(service.savePasswordSuggestion()).rejects.toThrow(
 			"no longer available",
@@ -667,7 +1593,41 @@ describe("UserBrowserService", () => {
 		expect(save).not.toHaveBeenCalled();
 	});
 
-	it("does not replace a visible save prompt with a later submission", async () => {
+	it("clears a submitted password when the tab goes to an unrelated HTTPS origin", async () => {
+		const save = vi.fn(async (_input: SavePasswordInput) => []);
+		const passwordVault = {
+			list: vi.fn(async () => []),
+			listForOrigin: vi.fn(async () => []),
+			save,
+			getForOrigin: vi.fn(),
+			remove: vi.fn(),
+		} as unknown as PasswordVault;
+		const prompts: unknown[] = [];
+		const { service } = createService({
+			passwordVault,
+			onPasswordPrompt: (prompt) => prompts.push(prompt),
+		});
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://login.example/sign-in");
+		const contents = electron.state.views[0]!.webContents;
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: contents.mainFrame },
+			"kestrel:user-browser-password-submission",
+			{ username: "person", password: "not-saved" },
+		);
+		contents.url = "https://unrelated.example/home";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(prompts).toEqual([]);
+		await expect(service.savePasswordSuggestion()).rejects.toThrow(
+			"no longer available",
+		);
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	it("keeps only the latest submitted secret pending until success confirmation", async () => {
 		const save = vi.fn(async (_input: SavePasswordInput) => []);
 		const passwordVault = {
 			list: vi.fn(async () => []),
@@ -687,19 +1647,21 @@ describe("UserBrowserService", () => {
 		const submission = (password: string) =>
 			contents.emit(
 				"ipc-message",
-				{ senderFrame: { url: "https://login.example/sign-in" } },
+				{ senderFrame: contents.mainFrame },
 				"kestrel:user-browser-password-submission",
 				{ username: "person", password },
 			);
 
 		submission("first-secret");
-		await vi.waitFor(() => expect(prompts).toHaveLength(1));
 		submission("second-secret");
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		contents.url = "https://login.example/home";
+		contents.mainFrame.url = contents.url;
+		contents.emit("did-navigate", {}, contents.url, 200, "OK");
+		await vi.waitFor(() => expect(prompts).toHaveLength(1));
 
 		await service.savePasswordSuggestion();
 		expect(save).toHaveBeenCalledWith(
-			expect.objectContaining({ password: "first-secret" }),
+			expect.objectContaining({ password: "second-secret" }),
 		);
 		expect(prompts).toHaveLength(2);
 	});
@@ -1134,7 +2096,7 @@ describe("UserBrowserService", () => {
       once: vi.fn(),
     };
     electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
-    expect(item.setSavePath).toHaveBeenCalledWith(savePath);
+    await vi.waitFor(() => expect(item.setSavePath).toHaveBeenCalledWith(savePath));
 
     template.find((item) => item.label === "Screenshot")?.click?.();
     template
@@ -1935,6 +2897,50 @@ it("serializes closeTab behind an in-flight agent act", async () => {
     ).rejects.toThrow("Browser target ref is stale. Take a new snapshot.");
   });
 
+	it("never lets an agent type into a sensitive accessibility ref or a selector", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com/login");
+		const contents = electron.state.views[0]!.webContents;
+		contents.url = "https://example.com/login";
+		contents.mainFrame.url = contents.url;
+		contents.debugger.sendCommand.mockResolvedValue({
+			nodes: [
+				{
+					nodeId: "1",
+					role: { value: "textbox" },
+					name: { value: "Password" },
+					value: { value: "never-share-this" },
+					backendDOMNodeId: 9,
+				},
+			],
+		});
+
+		const snapshot = await service.snapshot(tab.id);
+		expect(JSON.stringify(snapshot)).not.toContain("never-share-this");
+		await expect(
+			service.handleAgentRequest(
+				{
+					operation: "visible-act",
+					tabId: tab.id,
+					action: { type: "type", target: "e1", text: "not-for-agents" },
+				},
+				new AbortController().signal,
+			),
+		).rejects.toThrow("cannot type into a sensitive browser field");
+		await expect(
+			service.handleAgentRequest(
+				{
+					operation: "visible-act",
+					tabId: tab.id,
+					action: { type: "type", target: "#password", text: "not-for-agents" },
+				},
+				new AbortController().signal,
+			),
+		).rejects.toThrow("must use a current accessibility ref");
+		expect(contents.insertText).not.toHaveBeenCalled();
+	});
+
   it("inserts a selected code only into the active page's matching domain", async () => {
     const { service } = createService();
     const tab = service.getState().tabs[0]!;
@@ -2032,6 +3038,31 @@ it("serializes closeTab behind an in-flight agent act", async () => {
       ),
     ).resolves.toEqual({ navigated: true });
   });
+
+	it("blocks agent screenshots while a password or OTP field is present", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://example.com/login");
+		const contents = electron.state.views[0]!.webContents;
+		contents.passwordSnapshot = {
+			fields: [{
+				id: "field-0",
+				kind: "secret",
+				label: "One-time code",
+				type: "text",
+				autocomplete: "one-time-code",
+				rect: { x: 10, y: 20, width: 260, height: 42 },
+			}],
+		};
+
+		await expect(
+			service.handleAgentRequest(
+				{ operation: "visible-screenshot", tabId: tab.id },
+				new AbortController().signal,
+			),
+		).rejects.toThrow("does not share browser screenshots");
+		expect(contents.capturePage).not.toHaveBeenCalled();
+	});
 
   it("rejects oversized accessibility snapshots before returning them", async () => {
     const { service } = createService();

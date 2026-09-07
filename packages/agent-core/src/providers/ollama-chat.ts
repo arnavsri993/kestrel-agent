@@ -1,6 +1,7 @@
 import { providerFetch, readNdjson } from "./http";
 import {
 	contentText,
+	type DiscoveredModel,
 	type ModelCallOptions,
 	type ModelMessage,
 	type ModelProvider,
@@ -86,6 +87,39 @@ export class OllamaChatProvider implements ModelProvider {
 			...(signal ? { signal } : {}),
 		});
 		await response.body?.cancel();
+	}
+
+	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {
+		const response = await providerFetch(this.id, `${this.baseUrl}/api/tags`, {
+			method: "GET",
+			headers: this.options.headers ?? {},
+			...(signal ? { signal } : {}),
+		});
+		let payload: Record<string, unknown>;
+		try {
+			payload = (await response.json()) as Record<string, unknown>;
+		} catch {
+			throw new Error("Ollama returned malformed model discovery JSON.");
+		}
+		return (Array.isArray(payload.models) ? payload.models : []).flatMap((raw) => {
+			if (!raw || typeof raw !== "object") return [];
+			const item = raw as Record<string, unknown>;
+			if (typeof item.name !== "string" || !item.name.trim()) return [];
+			return [
+				{
+					id: item.name,
+					displayName: item.name,
+					availability: "available" as const,
+					source: "provider_api" as const,
+					capabilities: {
+						// /api/tags lists installed names only. It cannot promise
+						// tools or modalities for every tag.
+						capabilityProvenance: "unknown" as const,
+						contextWindow: this.contextWindow,
+					},
+				},
+			];
+		});
 	}
 
 	async complete(
