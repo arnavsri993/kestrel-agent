@@ -12,6 +12,7 @@ import {
 	type ScreenshotFrame,
 	VisualValidator,
 } from "./browser-automation";
+import type { BrowserInteractiveRef } from "./browser-element-refs";
 import { AgentRuntime } from "./runtime";
 
 class FakeBrowser implements BrowserAutomationBackend {
@@ -21,6 +22,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 	desktopActions: Array<{ type: string }> = [];
 	visibleActions: BrowserAction[] = [];
 	snapshotCalls = 0;
+	interactive?: BrowserInteractiveRef[];
 	readonly visibleTabId = "tab-00000000-0000-4000-8000-000000000000";
 	async createSession(input: {
 		allowedOrigins: string[];
@@ -43,6 +45,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 			url: "https://example.test/",
 			title: "Example",
 			accessibilityTree: { role: "document" },
+			...(this.interactive ? { interactive: this.interactive } : {}),
 		};
 	}
 	async screenshot(): Promise<ScreenshotFrame> {
@@ -137,6 +140,7 @@ class FakeBrowser implements BrowserAutomationBackend {
 			url: "https://example.test/",
 			title: "Visible",
 			accessibilityTree: { role: "document" },
+			...(this.interactive ? { interactive: this.interactive } : {}),
 			trust: "untrusted_browser" as const,
 		};
 	}
@@ -179,6 +183,13 @@ class FakeBrowser implements BrowserAutomationBackend {
 					canReveal: true,
 				},
 			],
+			trust: "untrusted_browser" as const,
+		};
+	}
+	async visibleAutofill() {
+		return {
+			credentialAvailable: true,
+			autofillResult: "filled" as const,
 			trust: "untrusted_browser" as const,
 		};
 	}
@@ -473,6 +484,24 @@ describe("isolated browser automation and visual validation", () => {
 				downloads: [{ filename: "notes.pdf" }],
 			},
 		});
+		await expect(
+			runtime.callTool(
+				session.id,
+				"browser.autofill-credential",
+				{ tabId: backend.visibleTabId },
+				{
+					approvalStatus: "approved",
+					idempotencyKey: "visible-autofill",
+				},
+			),
+		).resolves.toMatchObject({
+			status: "verified",
+			output: {
+				credentialAvailable: true,
+				autofillResult: "filled",
+				trust: "untrusted_browser",
+			},
+		});
 
 		await expect(
 			runtime.callTool(
@@ -576,6 +605,127 @@ describe("isolated browser automation and visual validation", () => {
 		);
 		expect(backend.snapshotCalls).toBe(afterExplicit + 1);
 		expect(backend.actions).toEqual([{ type: "click", target: "#buy" }]);
+	});
+
+	it("refuses secret typing into accessibility-identified fields without exposing the attempted text", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const backend = new FakeBrowser();
+		backend.interactive = [
+			{ ref: "e1", role: "textbox", name: "New password" },
+			{ ref: "e2", role: "textbox", name: "Email address" },
+		];
+		const controller = new BrowserController(backend);
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Secret boundary" });
+		installBrowserTools(runtime, controller, session.id);
+		const created = await runtime.callTool(
+			session.id,
+			"browser.create",
+			{ allowedOrigins: ["https://example.test"] },
+			{ approvalStatus: "approved", idempotencyKey: "secret-boundary-browser" },
+		);
+		const browserSessionId = String(created.output?.browserSessionId);
+		await runtime.callTool(session.id, "browser.snapshot", { browserSessionId });
+		const attemptedSecret = "not-for-browser-output";
+		const refused = await runtime.callTool(
+			session.id,
+			"browser.act",
+			{
+				browserSessionId,
+				action: { type: "type", target: "e1", text: attemptedSecret },
+			},
+			{ approvalStatus: "approved", idempotencyKey: "secret-boundary-refusal" },
+		);
+		expect(refused).toMatchObject({
+			status: "failed",
+			error: "Kestrel will not type into an accessibility-identified sensitive field. Ask the user to enter that value directly.",
+		});
+		expect(JSON.stringify({ output: refused.output, error: refused.error })).not.toContain(
+			attemptedSecret,
+		);
+		expect(JSON.stringify(database.listToolExecutions(session.id))).not.toContain(
+			attemptedSecret,
+		);
+		expect(backend.actions).toEqual([]);
+
+		const permitted = await runtime.callTool(
+			session.id,
+			"browser.act",
+			{
+				browserSessionId,
+				action: { type: "type", target: "e2", text: "person@example.test" },
+			},
+			{ approvalStatus: "approved", idempotencyKey: "ordinary-typing" },
+		);
+		expect(permitted.status).toBe("verified");
+		expect(backend.actions).toEqual([
+			{ type: "type", target: "e2", text: "person@example.test" },
+		]);
+
+		await controller.visibleSnapshot(
+			backend.visibleTabId,
+			new AbortController().signal,
+		);
+		await expect(
+			controller.visibleAct(
+				backend.visibleTabId,
+				{ type: "type", target: "e1", text: attemptedSecret },
+				new AbortController().signal,
+			),
+		).rejects.toThrow("will not type into an accessibility-identified sensitive field");
+		expect(backend.visibleActions).toEqual([]);
+
+		await expect(
+			controller.act(
+				session.id,
+				browserSessionId,
+				{ type: "type", target: "#password", text: attemptedSecret },
+				new AbortController().signal,
+			),
+		).rejects.toThrow("requires a current accessibility ref");
+		expect(backend.actions).toEqual([
+			{ type: "type", target: "e2", text: "person@example.test" },
+		]);
+		database.close();
+	});
+
+	it("redacts direct backend snapshots and refuses their screenshots when a secret field is present", async () => {
+		const backend = new FakeBrowser();
+		const secret = "raw-backend-password-value";
+		backend.snapshot = async () => {
+			backend.snapshotCalls += 1;
+			return {
+				url: "https://example.test/login",
+				title: "Sign in",
+				accessibilityTree: {
+					nodes: [
+						{
+							nodeId: "password",
+							role: { value: "textbox" },
+							name: { value: "Password" },
+							value: { value: secret },
+							backendDOMNodeId: 1,
+						},
+					],
+				},
+			};
+		};
+		const controller = new BrowserController(backend);
+		const created = await controller.create("owner", ["https://example.test"]);
+		const signal = new AbortController().signal;
+
+		const snapshot = await controller.snapshot(
+			"owner",
+			created.browserSessionId,
+			signal,
+		);
+		expect(JSON.stringify(snapshot)).not.toContain(secret);
+		expect(snapshot.interactive).toMatchObject([
+			{ name: "Sensitive field" },
+		]);
+		await expect(
+			controller.screenshot("owner", created.browserSessionId, signal),
+		).rejects.toThrow("does not share browser screenshots");
 	});
 
 	it("does not diff an act against a snapshot from before navigation", async () => {

@@ -118,6 +118,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+const REDACTED_BROWSER_TYPING_TEXT = "[redacted browser input]";
+
+/**
+ * Browser typing can be refused only after the current accessibility snapshot
+ * identifies the target as sensitive. The runtime journals a pending execution
+ * before that check runs, so do not let its text reach durable journals.
+ */
+function redactBrowserTypingForStorage(
+	execution: RuntimeToolExecution,
+): RuntimeToolExecution {
+	if (
+		execution.toolName !== "browser.act" &&
+		execution.toolName !== "browser.visible-act"
+	)
+		return execution;
+	const action = execution.input.action;
+	if (
+		!isRecord(action) ||
+		action.type !== "type" ||
+		typeof action.text !== "string"
+	)
+		return execution;
+	return RuntimeToolExecutionSchema.parse({
+		...execution,
+		input: {
+			...execution.input,
+			action: { ...action, text: REDACTED_BROWSER_TYPING_TEXT },
+		},
+	});
+}
+
 function sessionAllowsMemory(session: Pick<RuntimeSession, "privacyMode">): boolean {
 	return (session.privacyMode ?? "standard") === "standard";
 }
@@ -2331,21 +2362,22 @@ export class AgentRuntime extends EventEmitter {
 		approval?: ActionReceiptApprovalContext,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		this.database.saveToolExecution(execution);
+		const persistedExecution = redactBrowserTypingForStorage(execution);
+		this.database.saveToolExecution(persistedExecution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
-			execution.id,
+			persistedExecution.id,
 		);
 		const receiptDescriptor =
-			descriptor ?? this.tools.get(execution.toolName)?.descriptor;
+			descriptor ?? this.tools.get(persistedExecution.toolName)?.descriptor;
 		const receiptApproval = approval ?? previousReceipt?.approval;
 		const receipt = buildActionReceipt({
-			execution,
+			execution: persistedExecution,
 			...(receiptDescriptor ? { descriptor: receiptDescriptor } : {}),
 			...(receiptApproval ? { approval: receiptApproval } : {}),
 		});
 		if (receipt) this.database.saveActionReceipt(receipt);
-		if (execution.status === "running") return;
-		const event = summarizeBrowserActivity(execution);
+		if (persistedExecution.status === "running") return;
+		const event = summarizeBrowserActivity(persistedExecution);
 		if (!event) return;
 		try {
 			this.database.appendBrowserActivity(event);
@@ -2381,11 +2413,12 @@ export class AgentRuntime extends EventEmitter {
 		execution: RuntimeToolExecution,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
+		const persistedExecution = redactBrowserTypingForStorage(execution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
-			execution.id,
+			persistedExecution.id,
 		);
 		const receipt = buildActionReceipt({
-			execution,
+			execution: persistedExecution,
 			...(descriptor ? { descriptor } : {}),
 			...(previousReceipt ? { approval: previousReceipt.approval } : {}),
 		});
@@ -2401,7 +2434,7 @@ export class AgentRuntime extends EventEmitter {
 		const completion = this.database.completeIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
-			execution,
+			redactBrowserTypingForStorage(execution),
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
 		this.journalToolExecution(result, approval, descriptor);
@@ -2414,11 +2447,14 @@ export class AgentRuntime extends EventEmitter {
 		signal?: AbortSignal,
 	): Promise<RuntimeToolExecution | undefined> {
 		const waitStartedAt = Date.now();
+		const persistedPendingExecution = redactBrowserTypingForStorage(
+			pendingExecution,
+		);
 		const initial = this.database.claimIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
 			process.pid,
-			pendingExecution,
+			persistedPendingExecution,
 		);
 		if (initial.state === "claimed") return undefined;
 		if (initial.state === "completed") {
@@ -2456,7 +2492,7 @@ export class AgentRuntime extends EventEmitter {
 				idempotencyKey,
 				this.idempotencyOwnerToken,
 				process.pid,
-				pendingExecution,
+				persistedPendingExecution,
 			);
 			if (retry.state === "claimed") return undefined;
 			if (retry.state === "completed")

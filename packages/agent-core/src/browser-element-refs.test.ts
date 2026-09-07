@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	annotateAccessibilityTree,
 	isBrowserElementRef,
+	isSensitiveBrowserInteractiveRef,
 	normalizeBrowserElementRef,
 } from "./browser-element-refs";
 
@@ -91,6 +92,91 @@ describe("browser element refs", () => {
 		expect(normalizeBrowserElementRef("e0")).toBeUndefined();
 		expect(isBrowserElementRef("@e3")).toBe(true);
 		expect(isBrowserElementRef("#main")).toBe(false);
+	});
+
+	it("identifies explicit secret fields without treating ordinary form fields as secret", () => {
+		for (const name of [
+			"New password",
+			"One-time code",
+			"Verification code",
+			"OTP",
+			"one-time-code",
+			"Recovery passcode",
+			"Security PIN",
+			"CVV",
+			"CVC",
+			"cc-csc",
+			"API key",
+			"API token",
+			"Personal access token",
+			"Private key",
+		])
+			expect(isSensitiveBrowserInteractiveRef({ name })).toBe(true);
+		for (const name of ["Email address", "Full name", "Search", "Country"])
+			expect(isSensitiveBrowserInteractiveRef({ name })).toBe(false);
+	});
+
+	it("redacts sensitive accessibility field values before exposing a snapshot", () => {
+		const secret = "not-visible-outside-the-password-field";
+		const result = annotateAccessibilityTree({
+			nodes: [
+				{
+					nodeId: "1",
+					role: { value: "textbox" },
+					name: { value: "Password" },
+					value: { value: secret },
+					properties: [
+						{ name: "autocomplete", value: { value: "current-password" } },
+						{ name: "value", value: { value: secret } },
+					],
+					backendDOMNodeId: 1,
+				},
+			],
+		});
+
+		expect(JSON.stringify(result)).not.toContain(secret);
+		expect(result.interactive).toEqual([
+			{
+				ref: "e1",
+				role: "textbox",
+				name: "Sensitive field",
+				backendDOMNodeId: 1,
+			},
+		]);
+		expect(isSensitiveBrowserInteractiveRef(result.interactive[0]!)).toBe(true);
+	});
+
+	it("uses autocomplete metadata to redact OTP and card-security fields", () => {
+		const otp = "never-show-otp";
+		const csc = "never-show-csc";
+		const result = annotateAccessibilityTree({
+			nodes: [
+				{
+					nodeId: "otp",
+					role: { value: "textbox" },
+					name: { value: "Confirm" },
+					value: { value: otp },
+					properties: [
+						{ name: "autocomplete", value: { value: "one-time-code" } },
+					],
+					backendDOMNodeId: 1,
+				},
+				{
+					nodeId: "csc",
+					role: { value: "textbox" },
+					name: { value: "Verification" },
+					value: { value: csc },
+					properties: [
+						{ name: "autocomplete", value: { value: "cc-csc" } },
+					],
+					backendDOMNodeId: 2,
+				},
+			],
+		});
+
+		expect(result.interactive.every(isSensitiveBrowserInteractiveRef)).toBe(true);
+		expect(JSON.stringify(result)).not.toContain(otp);
+		expect(JSON.stringify(result)).not.toContain(csc);
 	});
 
 	it("does not advertise refs that cannot be resolved", () => {
