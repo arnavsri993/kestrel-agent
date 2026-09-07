@@ -14,6 +14,7 @@ import {
 	type Project,
 	RuntimeEventSchema,
 } from "@kestrel/shared-types";
+import type { ProviderAccountRuntimeConfig } from "@kestrel/agent-core";
 import {
 	ProtectedDatabaseError,
 	PROTECTED_DATABASE_ERROR_CODE,
@@ -44,6 +45,8 @@ export interface CoreBootstrapConfig {
 	managedPluginRoots: string[];
 	learnedSkillRoot: string;
 	secureEnvironment: NodeJS.ProcessEnv;
+	/** Runtime-only protected account credentials for the child bootstrap. */
+	providerAccounts?: ProviderAccountRuntimeConfig[];
 }
 
 interface CoreProcess {
@@ -175,6 +178,14 @@ function cloneBootstrapConfig(
 		pluginRoots: [...config.pluginRoots],
 		managedPluginRoots: [...config.managedPluginRoots],
 		secureEnvironment: { ...config.secureEnvironment },
+		...(config.providerAccounts !== undefined
+			? {
+				providerAccounts: config.providerAccounts.map((account) => ({
+					...account,
+					...(account.headers ? { headers: { ...account.headers } } : {}),
+				})),
+			}
+			: {}),
 	};
 }
 

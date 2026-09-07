@@ -1,7 +1,5 @@
-import { readBoundedResponseBytes } from "../bounded-http";
 import { ModelProviderError } from "./types";
 
-const MAX_PROVIDER_ERROR_BYTES = 64_000;
 export const PROVIDER_CONNECT_TIMEOUT_MS = 20_000;
 
 const NETWORK_UNAVAILABLE_CODES = new Set(["ENOTFOUND", "ECONNREFUSED"]);
@@ -53,7 +51,7 @@ function providerFetchError(
 		);
 	}
 	throw new ModelProviderError(
-		`Provider request failed before a response was received: ${error instanceof Error ? error.message : "network error"}`,
+		"Provider request failed before a response was received.",
 		providerId,
 		true,
 	);
@@ -168,27 +166,17 @@ export async function providerFetch(
 		);
 	}
 	if (!response.ok) {
-		let body = "";
-		try {
-			const bytes = await readBoundedResponseBytes(
-				response,
-				MAX_PROVIDER_ERROR_BYTES,
-				"Provider error response exceeds 64 KB.",
-			);
-			body = Buffer.from(bytes)
-				.toString("utf8")
-				.slice(0, 2_000)
-				.replace(/[\r\n]+/g, " ");
-		} catch {
-			body = "error body exceeded the 64 KB safety limit";
-		}
+		// Upstream responses frequently echo authorization, custom request headers,
+		// or a signed request URL. Do not read or include that body in an error that
+		// can cross into verification UI, run history, or diagnostic state.
+		await response.body?.cancel();
 		const retryable =
 			response.status === 408 ||
 			response.status === 409 ||
 			response.status === 429 ||
 			response.status >= 500;
 		throw new ModelProviderError(
-			`Provider returned HTTP ${response.status}${body ? `: ${body}` : ""}`,
+			`Provider returned HTTP ${response.status}.`,
 			providerId,
 			retryable,
 			response.status,

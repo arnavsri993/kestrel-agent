@@ -59,6 +59,8 @@ interface TurnCollector {
 }
 
 export interface CodexAppServerOptions {
+	id?: string;
+	poolId?: string;
 	executable?: string;
 	defaultModel?: string;
 	environment?: NodeJS.ProcessEnv;
@@ -192,8 +194,8 @@ default_tools_approval_mode = "auto"
  * overlay CODEX_HOME that never writes the user's ~/.codex/config.toml.
  */
 export class CodexAppServerProvider {
-	readonly id = "codex-subscription";
-	readonly poolId = "codex-subscription";
+	readonly id: string;
+	readonly poolId: string;
 	readonly defaultModel: string;
 	readonly capabilities = {
 		streaming: true,
@@ -226,6 +228,8 @@ export class CodexAppServerProvider {
 	private closing = false;
 
 	constructor(options: CodexAppServerOptions = {}) {
+		this.id = options.id ?? "codex-subscription";
+		this.poolId = options.poolId ?? "codex-subscription";
 		this.executable = options.executable ?? "codex";
 		this.defaultModel = options.defaultModel ?? "gpt-5.6-sol";
 		this.environment = safeEnvironment(options.environment ?? process.env);

@@ -116,6 +116,16 @@ function availabilityDelay(
 	return Math.min(MAX_HEALTH_BACKOFF_MS, Math.trunc(base * multiplier));
 }
 
+function safeProviderFailureMessage(error: unknown): string {
+	// Provider/CLI errors are untrusted: they can contain an echoed secret,
+	// additional request header, or endpoint query. Keep renderer-visible and
+	// persisted attempt details categorical even when the originating adapter
+	// supplied a raw Error.
+	if (error instanceof ModelProviderError && error.status !== undefined)
+		return `Provider request failed (HTTP ${error.status}).`;
+	return "Provider request failed. Check the account connection and try again.";
+}
+
 export class ProviderPool {
 	private readonly providers = new Map<string, ModelProvider>();
 	private readonly unhealthyUntil = new Map<string, number>();
@@ -195,8 +205,16 @@ export class ProviderPool {
 			signal?.throwIfAborted();
 			const started = this.now().getTime();
 			try {
-				if (!provider.probe)
-					throw new Error("Provider does not expose a credential probe.");
+				if (!provider.probe) {
+					output.push({
+						providerId: provider.id,
+						...(provider.poolId ? { poolId: provider.poolId } : {}),
+						ok: false,
+						latencyMs: Math.max(0, this.now().getTime() - started),
+						error: "Provider does not expose a credential probe.",
+					});
+					continue;
+				}
 				await provider.probe(signal);
 				signal?.throwIfAborted();
 				output.push({
@@ -212,10 +230,7 @@ export class ProviderPool {
 					...(provider.poolId ? { poolId: provider.poolId } : {}),
 					ok: false,
 					latencyMs: Math.max(0, this.now().getTime() - started),
-					error:
-						error instanceof Error
-							? error.message.slice(0, 500)
-							: "Provider verification failed.",
+					error: safeProviderFailureMessage(error),
 				});
 			}
 		}
@@ -231,11 +246,16 @@ export class ProviderPool {
 	): ModelProvider[] {
 		const selected: ModelProvider[] = [];
 		for (const requested of providerIds) {
+			// Endpoint IDs take precedence over a logical provider alias. This keeps
+			// a persisted exact account selection exact even if someone later creates
+			// a provider whose display/logical ID happens to match that endpoint ID.
+			const direct = this.providers.get(requested);
+			if (direct) {
+				selected.push(direct);
+				continue;
+			}
 			for (const provider of this.providers.values())
-				if (
-					(provider.id === requested || provider.poolId === requested) &&
-					!selected.includes(provider)
-				)
+				if (provider.poolId === requested && !selected.includes(provider))
 					selected.push(provider);
 		}
 		if (!automatic) return selected;
@@ -330,6 +350,22 @@ export class ProviderPool {
 		];
 		if (providerIds.length === 0)
 			throw new Error("No model providers are configured.");
+		// A manually selected model must remain pinned to one account endpoint.
+		// Logical provider IDs are still useful for automatic routing, but expanding
+		// one into several accounts here would silently switch the account a person
+		// explicitly selected whenever the first attempt failed.
+		if (!automatic && request.model !== "auto") {
+			for (const requested of providerIds) {
+				if (this.providers.has(requested)) continue;
+				const matchingAccounts = [...this.providers.values()].filter(
+					(provider) => provider.poolId === requested,
+				);
+				if (matchingAccounts.length > 1)
+					throw new Error(
+						`Provider ${requested} has multiple configured accounts. Select a specific account endpoint.`,
+					);
+			}
+		}
 		const attempts: ProviderAttempt[] = [];
 		let callAttempt = 0;
 		const selected = this.candidates(
@@ -438,8 +474,7 @@ export class ProviderPool {
 					startedAt,
 					completedAt: this.now().toISOString(),
 					status: "failed",
-					error:
-						error instanceof Error ? error.message : "Provider call failed.",
+					error: safeProviderFailureMessage(error),
 				});
 				this.measured(provider, startedAt, false);
 				const consecutiveFailures =

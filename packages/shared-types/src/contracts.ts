@@ -529,6 +529,33 @@ export const ModelProfileSchema = z.object({
 	learnedPerformance: CapabilityScoresSchema,
 	observations: z.number().int().nonnegative().default(0),
 	lastEvaluatedAt: z.string().datetime().optional(),
+	/**
+	 * Availability and discovery provenance are intentionally kept alongside a
+	 * profile rather than inferred from a marketing model name. Older persisted
+	 * profiles omit these fields and remain valid while their endpoint is
+	 * refreshed.
+	 */
+	availability: z
+		.enum([
+			"available",
+			"unknown",
+			"stale",
+			"authentication_required",
+			"permission_denied",
+			"unavailable",
+			"unsupported",
+		])
+		.optional(),
+	discoverySource: z
+		.enum(["provider_api", "cli", "protocol", "metadata", "fallback"])
+		.optional(),
+	/**
+	 * Kept separate from availability: an account can advertise a model while
+	 * omitting the model-specific capability metadata needed for auto-routing.
+	 */
+	capabilityProvenance: z
+		.enum(["confirmed", "transport", "unknown"])
+		.optional(),
 });
 export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 
@@ -1283,6 +1310,167 @@ export const ModelProviderSummarySchema = z.object({
 	}),
 });
 export type ModelProviderSummary = z.infer<typeof ModelProviderSummarySchema>;
+
+/**
+ * A provider account is a configured authentication context, not a model
+ * vendor. The endpoint ID is the runtime adapter instance used for execution;
+ * the account ID remains stable when a display name or endpoint URL changes.
+ */
+export const ProviderAccountAuthTransportSchema = z.enum([
+	"api_key",
+	"oauth",
+	"cli_profile",
+	"local",
+]);
+export type ProviderAccountAuthTransport = z.infer<
+	typeof ProviderAccountAuthTransportSchema
+>;
+
+export const ProviderModelAvailabilitySchema = z.enum([
+	"available",
+	"unknown",
+	"stale",
+	"authentication_required",
+	"permission_denied",
+	"unavailable",
+	"unsupported",
+]);
+export type ProviderModelAvailability = z.infer<
+	typeof ProviderModelAvailabilitySchema
+>;
+
+export const ProviderModelDiscoverySourceSchema = z.enum([
+	"provider_api",
+	"cli",
+	"protocol",
+	"metadata",
+	"fallback",
+]);
+export type ProviderModelDiscoverySource = z.infer<
+	typeof ProviderModelDiscoverySourceSchema
+>;
+
+export const ProviderAccountModelCapabilitiesSchema = z.object({
+	/**
+	 * Whether the individual model advertised these capabilities, the adapter
+	 * supplied transport-level defaults, or the listing did not say. A model
+	 * list alone is not evidence that every listed model can call tools or
+	 * accept every attachment type.
+	 */
+	capabilityProvenance: z.enum(["confirmed", "transport", "unknown"]),
+	streaming: z.boolean(),
+	tools: z.boolean(),
+	vision: z.boolean(),
+	audio: z.boolean(),
+	documents: z.boolean(),
+	video: z.boolean(),
+	structuredOutput: z.boolean(),
+	reasoningEfforts: z.array(ReasoningEffortSchema).max(6),
+	contextWindow: z.number().int().positive().optional(),
+	maxOutputTokens: z.number().int().positive().optional(),
+});
+export type ProviderAccountModelCapabilities = z.infer<
+	typeof ProviderAccountModelCapabilitiesSchema
+>;
+
+export const ProviderAccountModelSchema = z.object({
+	id: z.string().min(1).max(200),
+	displayName: z.string().min(1).max(300),
+	availability: ProviderModelAvailabilitySchema,
+	discoverySource: ProviderModelDiscoverySourceSchema,
+	discoveredAt: z.string().datetime().optional(),
+	capabilities: ProviderAccountModelCapabilitiesSchema,
+});
+export type ProviderAccountModel = z.infer<typeof ProviderAccountModelSchema>;
+
+export const ProviderAccountDiscoverySchema = z.object({
+	state: z.enum(["idle", "fresh", "stale", "failed", "unsupported"]),
+	lastAttemptAt: z.string().datetime().optional(),
+	lastSuccessAt: z.string().datetime().optional(),
+	/** A short, secret-free diagnostic suitable for a local settings surface. */
+	error: z.string().min(1).max(500).optional(),
+});
+export type ProviderAccountDiscovery = z.infer<
+	typeof ProviderAccountDiscoverySchema
+>;
+
+export const ProviderAccountSummarySchema = z.object({
+	id: z.string().min(1).max(100),
+	endpointId: z.string().min(1).max(100),
+	providerId: z.string().min(1).max(100),
+	displayName: z.string().min(1).max(200),
+	authTransport: ProviderAccountAuthTransportSchema,
+	enabled: z.boolean(),
+	capabilities: ModelProviderSummarySchema.shape.capabilities,
+	discovery: ProviderAccountDiscoverySchema,
+	models: z.array(ProviderAccountModelSchema).max(2_000),
+});
+export type ProviderAccountSummary = z.infer<
+	typeof ProviderAccountSummarySchema
+>;
+
+export const ProviderAccountAdapterSchema = z.enum([
+	"openai-responses",
+	"anthropic-messages",
+	"gemini-generate-content",
+	"openai-compatible",
+	"ollama",
+	"codex-app-server",
+	"opencode-cli",
+	"claude-cli",
+]);
+export type ProviderAccountAdapter = z.infer<typeof ProviderAccountAdapterSchema>;
+
+/** Public, non-secret input accepted from the renderer when adding an account. */
+export const ProviderAccountInputSchema = z.object({
+	providerId: z.string().regex(/^[a-z][a-z0-9-]{0,79}$/),
+	adapter: ProviderAccountAdapterSchema,
+	displayName: z.string().min(1).max(200),
+	authTransport: ProviderAccountAuthTransportSchema,
+	enabled: z.boolean().default(true),
+	baseUrl: z.string().url().max(2_000).optional(),
+	organization: z.string().max(300).optional(),
+	project: z.string().max(300).optional(),
+	defaultModel: z.string().min(1).max(200).optional(),
+	apiKey: z.string().min(8).max(20_000).optional(),
+	headers: z
+		.array(
+			z.object({
+				name: z.string().min(1).max(120),
+				value: z.string().min(1).max(4_000),
+			}),
+		)
+		.max(20)
+		.default([]),
+});
+export type ProviderAccountInput = z.infer<typeof ProviderAccountInputSchema>;
+
+/**
+ * Updates deliberately omit defaults. In particular, an unrelated rename must
+ * never turn an absent `headers` field into an empty array and clear protected
+ * request headers for the account.
+ */
+export const ProviderAccountUpdateSchema = z.object({
+	id: z.string().min(1).max(100),
+	displayName: z.string().min(1).max(200).optional(),
+	enabled: z.boolean().optional(),
+	baseUrl: z.string().url().max(2_000).optional(),
+	organization: z.string().max(300).optional(),
+	project: z.string().max(300).optional(),
+	defaultModel: z.string().min(1).max(200).optional(),
+	apiKey: z.string().min(8).max(20_000).optional(),
+	headers: z
+		.array(
+			z.object({
+				name: z.string().min(1).max(120),
+				value: z.string().min(1).max(4_000),
+			}),
+		)
+		.max(20)
+		.optional(),
+});
+export type ProviderAccountUpdate = z.infer<typeof ProviderAccountUpdateSchema>;
+
 export const ProviderVerificationSchema = z.object({
 	providerId: z.string().min(1),
 	poolId: z.string().min(1).optional(),
@@ -2565,6 +2753,7 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 		includeSensitive: z.boolean().default(false),
 		providerIds: z.array(z.string().min(1).max(100)).min(1).max(8).default(["auto"]),
 		providerModels: z.record(z.string(), z.string().min(1).max(200)).optional(),
+		reasoningEffort: ReasoningEffortSchema.optional(),
 		writerModel: z.string().min(1).max(200).optional(),
 		reviewerModel: z.string().min(1).max(200).optional(),
 	}),
@@ -2884,6 +3073,11 @@ export const CoreRequestSchema = z.discriminatedUnion("type", [
 	}),
 	z.object({ type: z.literal("runtime-list-providers") }),
 	z.object({
+		type: z.literal("runtime-refresh-provider-models"),
+		/** Omit to refresh every configured account. */
+		providerId: z.string().min(1).max(100).optional(),
+	}),
+	z.object({
 		type: z.literal("runtime-verify-provider"),
 		providerId: z.string().min(1).max(100),
 	}),
@@ -2980,6 +3174,7 @@ export const CoreResponseSchema = z.discriminatedUnion("ok", [
 		receipts: z.array(ActionReceiptSchema).optional(),
 		plugins: z.array(PluginSummarySchema).optional(),
 		providers: z.array(ModelProviderSummarySchema).optional(),
+		providerAccounts: z.array(ProviderAccountSummarySchema).optional(),
 		modelProfiles: z.array(ModelProfileSchema).optional(),
 		routingPolicy: RoutingPolicySchema.optional(),
 		routingTraces: z.array(RoutingTraceSchema).optional(),
@@ -4271,6 +4466,23 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("create-local-backup") }),
 	z.object({ type: z.literal("reveal-local-backup"), path: z.string().min(1) }),
 	z.object({ type: z.literal("subscription-cli-status") }),
+	z.object({ type: z.literal("provider-account-list") }),
+	z.object({
+		type: z.literal("provider-account-create"),
+		account: ProviderAccountInputSchema,
+	}),
+	z.object({
+		type: z.literal("provider-account-update"),
+		account: ProviderAccountUpdateSchema,
+	}),
+	z.object({
+		type: z.literal("provider-account-remove"),
+		accountId: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("provider-account-connect"),
+		accountId: z.string().min(1).max(100),
+	}),
 	z.object({
 		type: z.literal("subscription-cli-set"),
 		id: z.enum(["codex", "claude", "opencode"]),
@@ -4595,6 +4807,7 @@ export type RendererResponse =
 	| { ok: true; diagnosticReportPath: string; cancelled?: boolean }
 	| { ok: true; localBackup: LocalBackupResult; cancelled?: boolean }
 	| { ok: true; subscriptionClis: SubscriptionCliStatus[] }
+	| { ok: true; providerAccounts: ProviderAccountSummary[] }
 	| { ok: true; googleWorkspaceOAuth: GoogleWorkspaceOAuthStatus }
 	| { ok: true; communicationSources: z.infer<typeof CommunicationSourceStatusSchema>[] }
 	| { ok: true; communicationScan: z.infer<typeof CommunicationCodeScanSchema> }

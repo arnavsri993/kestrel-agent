@@ -19,16 +19,10 @@ describe("provider HTTP helpers", () => {
 		}
 	});
 
-	it("bounds oversized non-success response bodies before creating provider errors", async () => {
-		let pulls = 0;
+	it("discards non-success response bodies without exposing echoed secrets", async () => {
 		let cancellations = 0;
 		const response = new Response(
 			new ReadableStream<Uint8Array>({
-				pull(controller) {
-					pulls += 1;
-					controller.enqueue(new Uint8Array(40_000));
-					if (pulls === 20) controller.close();
-				},
 				cancel() {
 					cancellations += 1;
 				},
@@ -40,9 +34,24 @@ describe("provider HTTP helpers", () => {
 		try {
 			await expect(
 				providerFetch("fixture", "https://provider.example.test", {}),
-			).rejects.toThrow("error body exceeded the 64 KB safety limit");
+			).rejects.toThrow("Provider returned HTTP 502.");
 			expect(cancellations).toBe(1);
-			expect(pulls).toBeLessThan(20);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	it("does not expose raw transport failures", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = async () => {
+			throw new Error("request to https://provider.test/?token=sk-secret failed");
+		};
+		try {
+			await expect(
+				providerFetch("fixture", "https://provider.example.test", {}),
+			).rejects.toMatchObject({
+				message: "Provider request failed before a response was received.",
+			});
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

@@ -215,6 +215,42 @@ describe("CoreSupervisor recovery", () => {
 		expect(processes).toHaveLength(3);
 	});
 
+	it("preserves explicit empty provider accounts instead of treating them as legacy config", async () => {
+		const child = new FakeCoreProcess();
+		const supervisor = new CoreSupervisor(undefined, undefined, {
+			processFactory: () => child,
+			startupTimeoutMs: 500,
+		});
+		const started = supervisor.start({ ...config, providerAccounts: [] });
+		child.ready();
+		await started;
+
+		expect(child.messages[0]).toMatchObject({
+			type: "bootstrap",
+			config: { providerAccounts: [] },
+		});
+		child.exitOnShutdown = true;
+		await supervisor.stop();
+	});
+
+	it("keeps provider accounts absent for a legacy bootstrap", async () => {
+		const child = new FakeCoreProcess();
+		const supervisor = new CoreSupervisor(undefined, undefined, {
+			processFactory: () => child,
+			startupTimeoutMs: 500,
+		});
+		const started = supervisor.start(config);
+		child.ready();
+		await started;
+
+		expect(child.messages[0]).toMatchObject({ type: "bootstrap" });
+		expect(
+			(child.messages[0] as { config: Record<string, unknown> }).config,
+		).not.toHaveProperty("providerAccounts");
+		child.exitOnShutdown = true;
+		await supervisor.stop();
+	});
+
 	it("rejects an in-flight request after a crash and never replays it", async () => {
 		vi.useFakeTimers();
 		const processes: FakeCoreProcess[] = [];
