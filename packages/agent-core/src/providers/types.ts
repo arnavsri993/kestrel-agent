@@ -80,6 +80,66 @@ export interface ModelProviderCapabilities {
   local: boolean;
 }
 
+/**
+ * Provenance for a model record. A fallback is deliberately distinct from a
+ * provider response so callers never confuse a usable default with a verified
+ * account entitlement.
+ */
+export type ProviderModelDiscoverySource =
+	| "provider_api"
+	| "cli"
+	| "protocol"
+	| "metadata"
+	| "fallback";
+
+export type ProviderModelAvailability =
+	| "available"
+	| "unknown"
+	| "stale"
+	| "authentication_required"
+	| "permission_denied"
+	| "unavailable"
+	| "unsupported";
+
+export interface DiscoveredModelCapabilities {
+	/** How confidently this adapter knows the per-model feature flags below. */
+	capabilityProvenance?: "confirmed" | "transport" | "unknown";
+	streaming?: boolean;
+	tools?: boolean;
+	images?: boolean;
+	audio?: boolean;
+	documents?: boolean;
+	video?: boolean;
+	structuredOutput?: boolean;
+	reasoningEfforts?: Array<
+		"none" | "low" | "medium" | "high" | "xhigh" | "max"
+	>;
+	contextWindow?: number;
+	maxOutputTokens?: number;
+}
+
+export interface DiscoveredModel {
+	id: string;
+	displayName?: string;
+	availability?: ProviderModelAvailability;
+	source: ProviderModelDiscoverySource;
+	capabilities?: DiscoveredModelCapabilities;
+}
+
+/**
+ * Non-secret identity attached to one executable provider endpoint. Secrets
+ * remain in the desktop credential broker and are never part of this shape.
+ */
+export interface ProviderAccountIdentity {
+	id: string;
+	providerId: string;
+	displayName: string;
+	authTransport: "api_key" | "oauth" | "cli_profile" | "local";
+	enabled: boolean;
+	/** Non-secret account revision used to invalidate an old model catalog. */
+	configurationVersion?: string;
+}
+
 import type { ModelTier } from "@kestrel/shared-types";
 
 export interface ModelProfileHints {
@@ -112,10 +172,13 @@ export interface ModelProfileHints {
 export interface ModelProvider {
   readonly id: string;
   readonly poolId?: string;
+	readonly account?: ProviderAccountIdentity;
   readonly defaultModel?: string;
   readonly capabilities: ModelProviderCapabilities;
   readonly profileHints?: ModelProfileHints;
   probe?(signal?: AbortSignal): Promise<void>;
+	/** Enumerates models through the adapter's supported provider or CLI surface. */
+	discoverModels?(signal?: AbortSignal): Promise<DiscoveredModel[]>;
   complete(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResult>;
   close?(): Promise<void>;
 }

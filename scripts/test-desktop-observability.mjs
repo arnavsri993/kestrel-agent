@@ -58,7 +58,7 @@ try {
 	await observability
 		.getByText("External observability", { exact: true })
 		.waitFor();
-	assert.match(await observability.textContent(), /never eligible for export/);
+	assert.match(await observability.textContent(), /credentials never leave Kestrel/);
 	await observability.getByLabel("Enable content-free diagnostics").check();
 	await observability
 		.getByText("OpenTelemetry · OTLP/HTTP protobuf", { exact: true })

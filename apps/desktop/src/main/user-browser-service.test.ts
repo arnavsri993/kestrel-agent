@@ -1,4 +1,10 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
@@ -611,6 +617,51 @@ describe("UserBrowserService", () => {
       icon: expect.anything(),
     });
   });
+
+	it("locally converts HEIC browser uploads before replacing the file input", async () => {
+		const { service } = createService();
+		const sourceDirectory = mkdtempSync(join(tmpdir(), "kestrel-heic-upload-"));
+		directories.push(sourceDirectory);
+		const source = join(sourceDirectory, "camera-roll.HEIC");
+		writeFileSync(
+			source,
+			Buffer.from(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+				"base64",
+			),
+		);
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://chatgpt.com/");
+		const contents = electron.state.views[0]!.webContents;
+		contents.debugger.sendCommand
+			.mockResolvedValueOnce({ root: { nodeId: 1 } })
+			.mockResolvedValueOnce({ nodeId: 2 })
+			.mockResolvedValueOnce(undefined);
+
+		contents.emit(
+			"ipc-message",
+			{ senderFrame: { url: "https://chatgpt.com/" } },
+			"kestrel:user-browser-heic-upload",
+			{ inputId: "heic-upload-123", paths: [source] },
+		);
+
+		await vi.waitFor(() =>
+			expect(contents.debugger.sendCommand).toHaveBeenLastCalledWith(
+				"DOM.setFileInputFiles",
+				expect.objectContaining({ nodeId: 2 }),
+			),
+		);
+		const replacedPaths = contents.debugger.sendCommand.mock.calls.at(-1)?.[1]
+			?.files as string[];
+		expect(replacedPaths).toHaveLength(1);
+		expect(replacedPaths[0]).toMatch(/camera-roll\.jpeg$/i);
+		expect(replacedPaths[0]).not.toEqual(source);
+		expect(existsSync(replacedPaths[0]!)).toBe(true);
+		expect(contents.send).not.toHaveBeenCalled();
+
+		service.dispose();
+		expect(existsSync(replacedPaths[0]!)).toBe(false);
+	});
 
 	it("offers to save submitted passwords only after a successful-looking navigation without exposing the secret", async () => {
 		const save = vi.fn(async (_input: SavePasswordInput) => []);

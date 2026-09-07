@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	contentText,
+	type DiscoveredModel,
 	type ModelCallOptions,
 	type ModelMessage,
 	type ModelProvider,
@@ -22,7 +23,9 @@ interface CliRunResult {
 	stderr: string;
 }
 
-interface SubscriptionCliOptions {
+export interface SubscriptionCliOptions {
+	id?: string;
+	poolId?: string;
 	executable?: string;
 	defaultModel?: string;
 	environment?: NodeJS.ProcessEnv;
@@ -213,9 +216,125 @@ function parseObject(line: string): Record<string, unknown> | undefined {
 	}
 }
 
+function asObject(value: unknown): Record<string, unknown> | undefined {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+function withoutAnsi(value: string): string {
+	return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+/**
+ * `opencode models --verbose` prints one pretty JSON record after optional
+ * progress lines. Parse balanced objects rather than assuming line-delimited
+ * JSON so the supported CLI output remains usable across formatting changes.
+ */
+function jsonObjectsFromOutput(value: string): Record<string, unknown>[] {
+	const output = withoutAnsi(value);
+	const records: Record<string, unknown>[] = [];
+	let start = -1;
+	let depth = 0;
+	let quoted = false;
+	let escaped = false;
+	for (let index = 0; index < output.length; index += 1) {
+		const character = output[index]!;
+		if (quoted) {
+			if (escaped) escaped = false;
+			else if (character === "\\") escaped = true;
+			else if (character === '"') quoted = false;
+			continue;
+		}
+		if (character === '"') {
+			quoted = true;
+			continue;
+		}
+		if (character === "{") {
+			if (depth === 0) start = index;
+			depth += 1;
+			continue;
+		}
+		if (character !== "}" || depth === 0) continue;
+		depth -= 1;
+		if (depth !== 0 || start < 0) continue;
+		try {
+			const parsed: unknown = JSON.parse(output.slice(start, index + 1));
+			const record = asObject(parsed);
+			if (record) records.push(record);
+		} catch {
+			// Ignore a progress record that happens to resemble JSON; discovery
+			// still returns every fully parseable model record.
+		}
+		start = -1;
+	}
+	return records;
+}
+
+function openCodeModelsFromOutput(value: string): DiscoveredModel[] {
+	const knownLevels = new Set([
+		"none",
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+		"max",
+	]);
+	const models = new Map<string, DiscoveredModel>();
+	for (const record of jsonObjectsFromOutput(value)) {
+		const rawId = typeof record.id === "string" ? record.id.trim() : "";
+		const providerId =
+			typeof record.providerID === "string" ? record.providerID.trim() : "";
+		if (!rawId) continue;
+		const id =
+			providerId && !rawId.startsWith(`${providerId}/`)
+				? `${providerId}/${rawId}`
+				: rawId;
+		const capabilities = asObject(record.capabilities) ?? {};
+		const inputs = asObject(capabilities.input) ?? {};
+		const limits = asObject(record.limit) ?? {};
+		const variants = asObject(record.variants) ?? {};
+		const reasoningEfforts = Object.keys(variants).filter((level) =>
+			knownLevels.has(level),
+		) as Array<"none" | "low" | "medium" | "high" | "xhigh" | "max">;
+		const contextWindow = Number(limits.context);
+		const maxOutputTokens = Number(limits.output);
+		models.set(id, {
+			id,
+			displayName:
+				typeof record.name === "string" && record.name.trim()
+					? record.name
+					: id,
+			// The CLI advertises models, but does not expose an entitlement API.
+			// Keep this truthful: an explicit selection is allowed, while the
+			// automatic router prefers models with a confirmed API result.
+			availability: "unknown",
+			source: "cli",
+			capabilities: {
+				capabilityProvenance: "confirmed",
+				streaming: true,
+				tools: capabilities.toolcall === true,
+				images: inputs.image === true,
+				audio: inputs.audio === true,
+				documents: inputs.pdf === true,
+				video: inputs.video === true,
+				structuredOutput: capabilities.toolcall === true,
+				...(reasoningEfforts.length ? { reasoningEfforts } : {}),
+				...(Number.isFinite(contextWindow) && contextWindow > 0
+					? { contextWindow: Math.floor(contextWindow) }
+					: {}),
+				...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+					? { maxOutputTokens: Math.floor(maxOutputTokens) }
+					: {}),
+			},
+		});
+	}
+	return [...models.values()];
+}
+
 export class ClaudeSubscriptionProvider implements ModelProvider {
-	readonly id = "claude-subscription";
-	readonly poolId = "claude-subscription";
+	readonly id: string;
+	readonly poolId: string;
 	readonly defaultModel: string;
 	readonly capabilities = {
 		streaming: true,
@@ -231,6 +350,8 @@ export class ClaudeSubscriptionProvider implements ModelProvider {
 	private readonly timeoutMs: number;
 
 	constructor(options: SubscriptionCliOptions = {}) {
+		this.id = options.id ?? "claude-subscription";
+		this.poolId = options.poolId ?? "claude-subscription";
 		this.executable = options.executable ?? "claude";
 		this.defaultModel = options.defaultModel ?? "sonnet";
 		this.environment = safeEnvironment(options.environment ?? process.env, {
@@ -356,8 +477,8 @@ export class ClaudeSubscriptionProvider implements ModelProvider {
 }
 
 export class OpenCodeSubscriptionProvider implements ModelProvider {
-	readonly id = "opencode-subscription";
-	readonly poolId = "opencode-subscription";
+	readonly id: string;
+	readonly poolId: string;
 	readonly defaultModel: string;
 	readonly capabilities = {
 		streaming: true,
@@ -366,13 +487,17 @@ export class OpenCodeSubscriptionProvider implements ModelProvider {
 		audio: false,
 		documents: false,
 		video: false,
-		local: true,
+		// OpenCode can front local or hosted providers; its catalog does not
+		// declare that distinction per model, so it must never imply privacy.
+		local: false,
 	} as const;
 	private readonly executable: string;
 	private readonly environment: NodeJS.ProcessEnv;
 	private readonly timeoutMs: number;
 
 	constructor(options: SubscriptionCliOptions = {}) {
+		this.id = options.id ?? "opencode-subscription";
+		this.poolId = options.poolId ?? "opencode-subscription";
 		this.executable = options.executable ?? "opencode";
 		this.defaultModel = options.defaultModel ?? "opencode";
 		this.environment = safeEnvironment(options.environment ?? process.env);
@@ -389,22 +514,43 @@ export class OpenCodeSubscriptionProvider implements ModelProvider {
 				timeoutMs: 15_000,
 			});
 		} catch (error) {
-			try {
-				await runCli(this.executable, ["--version"], "", {
+			if (signal?.aborted) throw error;
+			// A runnable binary only proves CLI availability. It is not evidence
+			// that its existing provider-owned account is authenticated.
+			throw new ModelProviderError(
+				"OpenCode CLI authentication could not be verified.",
+				this.id,
+				false,
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	}
+
+	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {
+		const root = await mkdtemp(join(tmpdir(), "kestrel-opencode-models-"));
+		try {
+			const result = await runCli(
+				this.executable,
+				["models", "--pure", "--verbose", "--refresh"],
+				"",
+				{
 					cwd: root,
 					environment: this.environment,
 					signal,
-					timeoutMs: 15_000,
-				});
-			} catch {
-				throw new ModelProviderError(
-					error instanceof Error
-						? error.message
-						: "OpenCode CLI authentication check failed.",
-					this.id,
-					false,
-				);
-			}
+					timeoutMs: Math.min(this.timeoutMs, 60_000),
+				},
+			);
+			return openCodeModelsFromOutput(result.stdout);
+		} catch (error) {
+			if (signal?.aborted) throw error;
+			throw new ModelProviderError(
+				error instanceof Error
+					? error.message
+					: "OpenCode model discovery failed.",
+				this.id,
+				true,
+			);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
@@ -503,4 +649,3 @@ export class OpenCodeSubscriptionProvider implements ModelProvider {
 		}
 	}
 }
-

@@ -1,80 +1,113 @@
-import type {
-	LocalModelSummary,
-	ModelProviderSummary,
-} from "@kestrel/shared-types";
+import type { ProviderAccountSummary } from "@kestrel/shared-types";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 import { Icon } from "../Icon";
 import {
-	configuredProviders,
-	modelSupportsThinking,
-	modelsForProvider,
-	providerDisplayName,
+	accountForChoice,
+	matchesCatalogSearch,
+	modelAvailabilityLabel,
+	modelForChoice,
+	providerGroups,
+	selectableModel,
 	selectAuto,
+	selectCustomModel,
 	selectModel,
-	selectProvider,
 	selectThinking,
 	selectorTriggerLabel,
 	THINKING_LEVELS,
 	type ModelSelectorChoice,
 } from "./model-selector";
 
+function providerLabel(value: string): string {
+	return value
+		.split("-")
+		.map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+		.join(" ");
+}
+
+function discoveryLabel(account: ProviderAccountSummary): string {
+	switch (account.discovery.state) {
+		case "fresh":
+			return "Catalog refreshed";
+		case "stale":
+			return "Cached catalog is stale";
+		case "failed":
+			return "Catalog refresh failed";
+		case "unsupported":
+			return "No supported model listing";
+		default:
+			return "Catalog not refreshed";
+	}
+}
+
 export function ModelSelector({
-	providers,
-	localModels,
+	accounts,
 	choice,
 	onChange,
 }: {
-	providers: readonly ModelProviderSummary[];
-	localModels: readonly LocalModelSummary[];
+	accounts: readonly ProviderAccountSummary[];
 	choice: ModelSelectorChoice;
 	onChange(next: ModelSelectorChoice): void;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
 	const [open, setOpen] = useState(false);
+	const [query, setQuery] = useState("");
 	const [menuPos, setMenuPos] = useState({
 		top: 0,
 		left: 0,
 		placement: "above" as "above" | "below",
 	});
-	const [hoveredProviderId, setHoveredProviderId] = useState(
-		choice.providerId || configuredProviders(providers)[0]?.id || "",
+	const groups = useMemo(() => providerGroups(accounts), [accounts]);
+	const visibleGroups = useMemo(
+		() => groups.filter((group) => matchesCatalogSearch(group, query)),
+		[groups, query],
 	);
-	const [hoveredModelId, setHoveredModelId] = useState(choice.model);
+	const selectedAccount = accountForChoice(accounts, choice);
+	const [activeProviderId, setActiveProviderId] = useState(
+		selectedAccount?.providerId ?? groups[0]?.id ?? "",
+	);
+	const [activeAccountId, setActiveAccountId] = useState(
+		selectedAccount?.id ?? groups[0]?.accounts[0]?.id ?? "",
+	);
+	const [activeModelId, setActiveModelId] = useState(choice.model);
 	const [customModel, setCustomModel] = useState("");
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
 	const menuRef = useRef<HTMLDivElement | null>(null);
 	const didFocusMenuRef = useRef(false);
-	const visibleProviders = configuredProviders(providers);
-	const activeProviderId =
-		hoveredProviderId ||
-		choice.providerId ||
-		visibleProviders[0]?.id ||
-		"";
-	const models = modelsForProvider({
-		providerId: activeProviderId,
-		localModels,
-		currentModel: choice.providerId === activeProviderId ? choice.model : "",
-	});
-	const activeModelId = hoveredModelId || models[0]?.id || "";
-	const showThinking = modelSupportsThinking(
-		activeProviderId,
-		activeModelId,
-		localModels,
-	);
+	const activeGroup =
+		visibleGroups.find((group) => group.id === activeProviderId) ??
+		visibleGroups[0];
+	const activeAccount =
+		activeGroup?.accounts.find((account) => account.id === activeAccountId) ??
+		activeGroup?.accounts[0];
+	const visibleModels = useMemo(() => {
+		if (!activeAccount) return [];
+		const normalized = query.trim().toLocaleLowerCase();
+		return activeAccount.models.filter(
+			(model) =>
+				!normalized ||
+				model.id.toLocaleLowerCase().includes(normalized) ||
+				model.displayName.toLocaleLowerCase().includes(normalized),
+		);
+	}, [activeAccount, query]);
+	const activeModel =
+		visibleModels.find((model) => model.id === activeModelId) ??
+		modelForChoice(accounts, choice) ??
+		visibleModels[0];
+	const showThinking =
+		activeModel?.capabilities.capabilityProvenance === "confirmed" &&
+		activeModel.capabilities.reasoningEfforts.length > 1;
 
 	useEffect(() => {
 		if (!open) return;
-		const firstId = configuredProviders(providers)[0]?.id || "";
-		setHoveredProviderId(
-			choice.executionMode === "automatic"
-				? firstId
-				: choice.providerId || firstId,
-		);
-		setHoveredModelId(choice.model);
-	}, [choice.executionMode, choice.model, choice.providerId, open, providers]);
+		const account = accountForChoice(accounts, choice) ?? groups[0]?.accounts[0];
+		setActiveProviderId(account?.providerId ?? "");
+		setActiveAccountId(account?.id ?? "");
+		setActiveModelId(choice.model);
+		setQuery("");
+	}, [accounts, choice, groups, open]);
 
 	const positionMenu = useCallback(() => {
 		if (!triggerRef.current || !menuRef.current) return;
@@ -99,12 +132,10 @@ export function ModelSelector({
 		if (!didFocusMenuRef.current) {
 			didFocusMenuRef.current = true;
 			window.requestAnimationFrame(() =>
-				menuRef.current
-					?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)")
-					?.focus(),
+				menuRef.current?.querySelector<HTMLInputElement>("input")?.focus(),
 			);
 		}
-	}, [open, activeProviderId, activeModelId, showThinking, models.length, positionMenu]);
+	}, [activeAccountId, activeModelId, open, positionMenu, showThinking, visibleModels.length]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -139,11 +170,9 @@ export function ModelSelector({
 			closeMenu();
 		}
 		function onKey(event: KeyboardEvent) {
-			if (event.key === "Escape") {
-				if (event.defaultPrevented) return;
-				event.preventDefault();
-				closeMenu({ restoreFocus: true });
-			}
+			if (event.key !== "Escape" || event.defaultPrevented) return;
+			event.preventDefault();
+			closeMenu({ restoreFocus: true });
 		}
 		window.addEventListener("pointerdown", onPointerDown);
 		window.addEventListener("focusin", onFocusIn);
@@ -160,6 +189,11 @@ export function ModelSelector({
 		if (close) closeMenu({ restoreFocus: true });
 	}
 
+	function selectFirstModel(account: ProviderAccountSummary): ModelSelectorChoice | undefined {
+		const model = account.models.find(selectableModel);
+		return model ? selectModel(account, model, choice) : undefined;
+	}
+
 	return (
 		<div className="model-selector" data-open={open ? "true" : "false"}>
 			<button
@@ -168,217 +202,257 @@ export function ModelSelector({
 				className="model-selector-trigger"
 				aria-haspopup="dialog"
 				aria-expanded={open}
-				aria-label={`Model: ${selectorTriggerLabel(choice)}`}
-				title={`Model: ${selectorTriggerLabel(choice)}`}
+				aria-label={`Model: ${selectorTriggerLabel(choice, accounts)}`}
+				title={`Model: ${selectorTriggerLabel(choice, accounts)}`}
 				onClick={() =>
 					setOpen((current) => {
-						if (current) window.requestAnimationFrame(() => triggerRef.current?.focus());
+						if (current)
+							window.requestAnimationFrame(() => triggerRef.current?.focus());
 						return !current;
 					})
 				}
 			>
 				<span className="model-selector-trigger-label">
-					{selectorTriggerLabel(choice)}
+					{selectorTriggerLabel(choice, accounts)}
 				</span>
 				<Icon name="chevron" />
 			</button>
 			{createPortal(
 				<AnimatePresence initial={false}>
 					{open ? (
-					<motion.div
-						ref={menuRef}
-						className="model-selector-menu"
-						role="dialog"
-						aria-label="Choose provider, model, and thinking level"
-						data-placement={menuPos.placement}
-						initial={
-							reducedMotion
-								? false
-								: { opacity: 0, y: menuPos.placement === "above" ? 4 : -4, scale: 0.992 }
-						}
-						animate={{ opacity: 1, y: 0, scale: 1 }}
-						exit={
-							reducedMotion
-								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
-								: {
-										opacity: 0,
-										y: menuPos.placement === "above" ? 4 : -4,
-										scale: 0.992,
-										pointerEvents: "none",
-									}
-						}
-						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
-						style={{ top: menuPos.top, left: menuPos.left }}
-					>
-						<div className="model-selector-column" aria-label="Provider">
-							<div className="model-selector-column-header">Provider</div>
-							<div className="model-selector-list">
-								{visibleProviders.length === 0 ? (
-									<p className="model-selector-empty">
-										Connect a provider in Settings first.
-									</p>
-								) : (
-									visibleProviders.map((provider) => {
-										const selected =
-											choice.executionMode === "manual" &&
-											choice.providerId === provider.id;
-										return (
-											<button
-												type="button"
-												key={provider.id}
-												className={`model-selector-item${
-													selected ? " is-selected" : ""
-												}${
-													activeProviderId === provider.id ? " is-active" : ""
-												}`}
-												onMouseEnter={() => {
-													setHoveredProviderId(provider.id);
-													setHoveredModelId("");
-												}}
-												onClick={() =>
-													commit(selectProvider(provider.id, localModels, choice), false)
-												}
-											>
-												<span className="model-selector-copy">
-													<strong>{providerDisplayName(provider.id)}</strong>
-													{provider.capabilities.local ? <small>Local</small> : null}
-												</span>
-												<Icon name="chevron" />
-											</button>
-										);
-									})
-								)}
-							</div>
-							<div className="model-selector-footer">
-								<span>Auto</span>
-								<button
-									type="button"
-									className={`model-selector-toggle${
-										choice.executionMode === "automatic" ? " is-on" : ""
-									}`}
-									role="switch"
-									aria-checked={choice.executionMode === "automatic"}
-									aria-label="Automatically choose a model"
-									onClick={() => {
-										if (choice.executionMode === "automatic") {
-											const providerId =
-												activeProviderId || visibleProviders[0]?.id || "";
-											if (!providerId) return;
-											commit(
-												selectProvider(providerId, localModels, choice),
-												false,
-											);
-											return;
+						<motion.div
+							ref={menuRef}
+							className="model-selector-menu model-selector-menu-accounts"
+							role="dialog"
+							aria-label="Choose a provider, account, model, and thinking level"
+							data-placement={menuPos.placement}
+							initial={
+								reducedMotion
+									? false
+									: {
+											opacity: 0,
+											y: menuPos.placement === "above" ? 4 : -4,
+											scale: 0.992,
 										}
-										commit(selectAuto(choice));
-									}}
+							}
+							animate={{ opacity: 1, y: 0, scale: 1 }}
+							exit={
+								reducedMotion
+									? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
+									: {
+											opacity: 0,
+											y: menuPos.placement === "above" ? 4 : -4,
+											scale: 0.992,
+											pointerEvents: "none",
+										}
+							}
+							transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+							style={{ top: menuPos.top, left: menuPos.left }}
+						>
+							<div className="model-selector-search">
+								<input
+									value={query}
+									onChange={(event) => setQuery(event.target.value)}
+									placeholder="Search accounts and models"
+									aria-label="Search provider accounts and models"
 								/>
+								<span className="sr-only" aria-live="polite">
+									{visibleGroups.length} provider groups available.
+								</span>
 							</div>
-						</div>
-						<div className="model-selector-column" aria-label="Model">
-							<div className="model-selector-column-header">Model</div>
-							<div className="model-selector-list">
-								{!activeProviderId ? (
-									<p className="model-selector-empty">Choose a provider.</p>
-								) : models.length === 0 ? (
-									<p className="model-selector-empty">
-										No catalog models yet. Enter a model ID below.
-									</p>
-								) : (
-									models.map((model) => {
-										const selected =
-											choice.executionMode === "manual" &&
-											choice.providerId === activeProviderId &&
-											choice.model === model.id;
-										return (
-											<button
-												type="button"
-												key={model.id}
-												className={`model-selector-item${
-													selected ? " is-selected" : ""
-												}${activeModelId === model.id ? " is-active" : ""}`}
-												onMouseEnter={() => setHoveredModelId(model.id)}
-												onClick={() => {
-													const next = selectModel(
-														activeProviderId,
-														model.id,
-														localModels,
-														choice,
-													);
-													commit(next, !model.reasoningLevels);
-												}}
-											>
-												<span className="model-selector-copy">
-													<strong>{model.label}</strong>
-													{model.detail ? <small>{model.detail}</small> : null}
-												</span>
-												{model.reasoningLevels ? <Icon name="chevron" /> : null}
-											</button>
-										);
-									})
-								)}
-							</div>
-							{activeProviderId && activeProviderId !== "ollama" ? (
-								<form
-									className="model-selector-custom"
-									onSubmit={(event) => {
-										event.preventDefault();
-										const model = customModel.trim();
-										if (!model) return;
-										commit(selectModel(activeProviderId, model, localModels, choice));
-										setCustomModel("");
-									}}
-								>
-									<input
-										value={customModel}
-										onChange={(event) => setCustomModel(event.target.value)}
-										placeholder="Custom model ID"
-										aria-label="Custom model ID"
-									/>
-								</form>
-							) : null}
-						</div>
-						{showThinking ? (
-							<div className="model-selector-column" aria-label="Thinking level">
-								<div className="model-selector-column-header">Thinking level</div>
-								<div className="model-selector-list">
-									{THINKING_LEVELS.map((level) => {
-										const selected =
-											choice.executionMode === "manual" &&
-											choice.providerId === activeProviderId &&
-											choice.model === activeModelId &&
-											choice.reasoningEffort === level.id;
-										return (
-											<button
-												type="button"
-												key={level.id}
-												className={`model-selector-item${
-													selected ? " is-selected" : ""
-												}`}
-												onClick={() =>
-													commit(
-														selectThinking(
-															level.id,
-															selectModel(
-																activeProviderId,
-																activeModelId,
-																localModels,
-																choice,
-															),
-														),
-													)
+							<div className="model-selector-columns">
+								<div className="model-selector-column" aria-label="Provider">
+									<div className="model-selector-column-header">Provider</div>
+									<div className="model-selector-list">
+										{visibleGroups.length === 0 ? (
+											<p className="model-selector-empty">
+												Connect an account in Settings first.
+											</p>
+										) : (
+											visibleGroups.map((group) => (
+												<button
+													type="button"
+													key={group.id}
+													className={`model-selector-item${
+														activeGroup?.id === group.id ? " is-active" : ""
+													}`}
+													onMouseEnter={() => {
+														setActiveProviderId(group.id);
+														setActiveAccountId(group.accounts[0]?.id ?? "");
+														setActiveModelId("");
+													}}
+													onClick={() => {
+														setActiveProviderId(group.id);
+														setActiveAccountId(group.accounts[0]?.id ?? "");
+														setActiveModelId("");
+													}}
+												>
+													<span className="model-selector-copy">
+														<strong>{providerLabel(group.label)}</strong>
+														<small>{group.accounts.length} account{group.accounts.length === 1 ? "" : "s"}</small>
+													</span>
+													<Icon name="chevron" />
+												</button>
+											))
+										)}
+									</div>
+									<div className="model-selector-footer">
+										<span>Auto</span>
+										<button
+											type="button"
+											className={`model-selector-toggle${
+												choice.executionMode === "automatic" ? " is-on" : ""
+											}`}
+											role="switch"
+											aria-checked={choice.executionMode === "automatic"}
+											aria-label="Automatically choose a discovered available model"
+											onClick={() => {
+												if (choice.executionMode !== "automatic") {
+													commit(selectAuto(choice));
+													return;
 												}
-											>
-												<span className="model-selector-copy">
-													<strong>{level.label}</strong>
-												</span>
-											</button>
-										);
-									})}
+												if (!activeAccount) return;
+												const next = selectFirstModel(activeAccount);
+												if (next) commit(next, false);
+											}}
+										/>
+									</div>
 								</div>
+								<div className="model-selector-column" aria-label="Account">
+									<div className="model-selector-column-header">Account</div>
+									<div className="model-selector-list">
+										{!activeGroup ? (
+											<p className="model-selector-empty">Choose a provider.</p>
+										) : (
+											activeGroup.accounts.map((account) => (
+												<button
+													type="button"
+													key={account.id}
+													className={`model-selector-item${
+														activeAccount?.id === account.id ? " is-active" : ""
+													}${
+														choice.executionMode === "manual" && choice.accountId === account.id
+															? " is-selected"
+															: ""
+													}`}
+													onMouseEnter={() => {
+														setActiveAccountId(account.id);
+														setActiveModelId("");
+													}}
+													onClick={() => {
+														setActiveAccountId(account.id);
+														setActiveModelId("");
+													}}
+												>
+													<span className="model-selector-copy">
+														<strong>{account.displayName}</strong>
+														<small>{discoveryLabel(account)}</small>
+													</span>
+													<Icon name="chevron" />
+												</button>
+											))
+										)}
+									</div>
+								</div>
+								<div className="model-selector-column" aria-label="Model">
+									<div className="model-selector-column-header">Model</div>
+									<div className="model-selector-list">
+										{!activeAccount ? (
+											<p className="model-selector-empty">Choose an account.</p>
+										) : visibleModels.length === 0 ? (
+											<p className="model-selector-empty">
+												No discovered models match. You can enter an explicit model ID below.
+											</p>
+										) : (
+											visibleModels.map((model) => {
+												const selected =
+													choice.executionMode === "manual" &&
+													choice.accountId === activeAccount.id &&
+													choice.model === model.id;
+												const selectable = selectableModel(model);
+												const supportsThinking =
+													model.capabilities.capabilityProvenance === "confirmed" &&
+													model.capabilities.reasoningEfforts.length > 1;
+												return (
+													<button
+														type="button"
+														key={model.id}
+														disabled={!selectable}
+														className={`model-selector-item${
+															selected ? " is-selected" : ""
+														}${activeModel?.id === model.id ? " is-active" : ""}`}
+														onMouseEnter={() => setActiveModelId(model.id)}
+														onClick={() => {
+															setActiveModelId(model.id);
+															const next = selectModel(activeAccount, model, choice);
+														commit(next, !supportsThinking);
+														}}
+													>
+														<span className="model-selector-copy">
+															<strong>{model.displayName}</strong>
+															<small>{modelAvailabilityLabel(model)} · {model.discoverySource.replaceAll("_", " ")}</small>
+														</span>
+														{supportsThinking ? <Icon name="chevron" /> : null}
+													</button>
+												);
+											})
+										)}
+									</div>
+									{activeAccount ? (
+										<form
+											className="model-selector-custom"
+											onSubmit={(event) => {
+												event.preventDefault();
+												const model = customModel.trim();
+												if (!model) return;
+												commit(selectCustomModel(activeAccount, model, choice));
+												setCustomModel("");
+											}}
+										>
+											<input
+												value={customModel}
+												onChange={(event) => setCustomModel(event.target.value)}
+												placeholder="Explicit model ID"
+												aria-label="Explicit model ID"
+											/>
+										</form>
+									) : null}
+								</div>
+								{showThinking && activeAccount && activeModel ? (
+									<div className="model-selector-column" aria-label="Thinking level">
+										<div className="model-selector-column-header">Thinking</div>
+										<div className="model-selector-list">
+											{THINKING_LEVELS.filter((level) =>
+												activeModel.capabilities.reasoningEfforts.includes(level.id),
+											).map((level) => (
+												<button
+													type="button"
+													key={level.id}
+													className={`model-selector-item${
+														choice.executionMode === "manual" &&
+														choice.accountId === activeAccount.id &&
+														choice.model === activeModel.id &&
+														choice.reasoningEffort === level.id
+															? " is-selected"
+															: ""
+													}`}
+													onClick={() =>
+														commit(
+															selectThinking(
+																level.id,
+																selectModel(activeAccount, activeModel, choice),
+															),
+														)
+													}
+												>
+													<span className="model-selector-copy"><strong>{level.label}</strong></span>
+												</button>
+											))}
+										</div>
+									</div>
+								) : null}
 							</div>
-						) : null}
-					</motion.div>
+						</motion.div>
 					) : null}
 				</AnimatePresence>,
 				document.body,

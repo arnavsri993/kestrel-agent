@@ -59,6 +59,7 @@ import {
   BrokerCredentialStore,
   MacOSKeychainCredentialStore,
 } from "./credential-store";
+import { ProviderAccountStore } from "./provider-account-store";
 import { PasswordVault } from "./password-vault";
 import { PaymentCardVault } from "./payment-card-vault";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
@@ -73,6 +74,10 @@ import {
   UserBrowserService,
   isUserBrowserBackendWireRequest,
 } from "./user-browser-service";
+import {
+  defaultBrowserDownloadDirectory,
+  legacyBrowserDownloadDirectory,
+} from "./user-browser-download-path";
 import { LocalRuntimeManager } from "./local-runtime-manager";
 import { listWorkspaceFiles } from "./workspace-file-search";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
@@ -568,6 +573,7 @@ function computerUseManager(): ComputerUseManager {
 let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
+let appProviderAccountStore: ProviderAccountStore | null = null;
 let appPasswordVault: PasswordVault | null = null;
 let appPaymentCardVault: PaymentCardVault | null = null;
 let googleOAuthController: AbortController | null = null;
@@ -899,6 +905,15 @@ function localRuntimeManager(): LocalRuntimeManager {
 function credentialBroker(): CredentialBroker {
 	appCredentialBroker ??= new CredentialBroker(app.getPath("userData"));
 	return appCredentialBroker;
+}
+
+function providerAccountStore(): ProviderAccountStore {
+	appProviderAccountStore ??= new ProviderAccountStore(
+		join(app.getPath("userData"), "provider-accounts.json"),
+		credentialBroker(),
+		app.getPath("userData"),
+	);
+	return appProviderAccountStore;
 }
 
 function passwordVault(): PasswordVault {
@@ -1404,6 +1419,20 @@ app.setPath(
     join(app.getPath("appData"), PRODUCT_IDENTITY.userDataDirectoryName),
 );
 
+function browserDownloadDirectory(): string {
+  return process.env.KESTREL_TEST_USER_DATA
+    ? join(app.getPath("userData"), "browser-downloads")
+    : defaultBrowserDownloadDirectory(app.getPath("downloads"));
+}
+
+function legacyBrowserDownloadDirectoryForMigration(): string | undefined {
+  if (process.env.KESTREL_TEST_USER_DATA) return undefined;
+  return legacyBrowserDownloadDirectory(
+    app.getPath("downloads"),
+    PRODUCT_IDENTITY.productName,
+  );
+}
+
 function browserHardwareAccelerationDisabled(): boolean {
 	try {
 		const statePath = join(app.getPath("userData"), "browser", "state.json");
@@ -1742,6 +1771,7 @@ function finishMacWidgetRun(
 }
 
 function createMainWindow(): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -1779,9 +1809,8 @@ function createMainWindow(): BrowserWindow {
           allowDevTools: !isPackagedKestrelApp,
           allowLocalExtensions: !isPackagedKestrelApp,
           statePath: join(app.getPath("userData"), "browser", "state.json"),
-          downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-            ? join(app.getPath("userData"), "browser-downloads")
-            : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+          downloadDirectory: browserDownloadDirectory(),
+          ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
           passwordVault: passwordVault(),
           paymentCardVault: paymentCardVault(),
           onEvent: (event) => {
@@ -1914,6 +1943,7 @@ function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
 ): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     ...detachedBrowserWindowBounds(),
     minWidth: 920,
@@ -1945,9 +1975,8 @@ function createDetachedBrowserWindow(
     allowLocalExtensions: !isPackagedKestrelApp,
     statePath,
     initialState: detachedBrowserState(sourceState, tab),
-    downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-      ? join(app.getPath("userData"), "browser-downloads")
-      : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+    downloadDirectory: browserDownloadDirectory(),
+    ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
     passwordVault: passwordVault(),
     paymentCardVault: paymentCardVault(),
     onEvent: (event) => {
@@ -2351,6 +2380,30 @@ async function initializeCore(
   } catch {
     // A local model server is optional and must not delay or block startup.
   }
+	// Migrate existing brokered/API and trusted CLI routes as account metadata.
+	// This is additive and reversible: credential bytes remain in their original
+	// protected broker slots until a person removes the legacy account.
+	const accounts = providerAccountStore();
+	await accounts.ensureLegacyAccounts(secureEnvironment);
+	const providerAccounts = (await accounts.runtimeAccounts(secureEnvironment)).flatMap(
+		(account) => {
+			const cliId =
+				account.adapter === "codex-app-server"
+					? "codex"
+					: account.adapter === "opencode-cli"
+						? "opencode"
+						: account.adapter === "claude-cli"
+							? "claude"
+							: undefined;
+			if (!cliId) return [account];
+			const executable = detectedSubscriptionCli(cliId);
+			if (executable) return [{ ...account, executable }];
+			// An account remains visible in Settings, but only a currently detected
+			// trusted executable may become a CLI endpoint. Do not execute a path
+			// persisted in profile metadata or guess a binary name.
+			return [];
+		},
+	);
   const workspaceGrantStore = new WorkspaceGrantStore(
     join(userData, "workspace-grants.json"),
   );
@@ -2376,6 +2429,7 @@ async function initializeCore(
       managedPluginRoots: [managedPluginRoot],
       learnedSkillRoot: join(userData, "learned-skills"),
       secureEnvironment,
+		providerAccounts,
     });
     const response = await supervisor.request({ type: "snapshot" });
     if (!response.ok)
@@ -3364,11 +3418,19 @@ function registerIpc(): void {
         extensions: requestBrowserService.listExtensions(),
       };
     }
+    if (request.type === "browser-inspect-extension-url") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extensionInspection = await requestBrowserService.inspectExtensionUrl(
+        request.urlOrId,
+      );
+      return { ok: true, extensionInspection };
+    }
     if (request.type === "browser-install-extension-url") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      const extension = await requestBrowserService.installExtensionUrl(
-        request.urlOrId,
+      const extension = await requestBrowserService.installReviewedExtension(
+        request.inspectionId,
       );
       return { ok: true, extension };
     }
@@ -3386,6 +3448,14 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       await requestBrowserService.uninstallExtension(request.extensionId);
       return { ok: true };
+    }
+    if (request.type === "browser-reload-extension") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extension = await requestBrowserService.reloadExtension(
+        request.extensionId,
+      );
+      return { ok: true, extension };
     }
     if (request.type === "browser-sleep-tab") {
       if (!requestBrowserService)
@@ -3712,6 +3782,78 @@ function registerIpc(): void {
     }
     if (request.type === "subscription-cli-status")
       return { ok: true, subscriptionClis: await subscriptionCliStatuses() };
+	if (request.type === "provider-account-list")
+		return { ok: true, providerAccounts: await providerAccountStore().list() };
+	if (request.type === "provider-account-create") {
+		await providerAccountStore().create(request.account);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-update") {
+		await providerAccountStore().update(request.account);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-remove") {
+		await providerAccountStore().remove(request.accountId);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-connect") {
+		if (chatGptOAuthController)
+			throw new Error("ChatGPT sign-in is already in progress.");
+		const account = await providerAccountStore().account(request.accountId);
+		if (!account) throw new Error("Provider account no longer exists.");
+		if (account.adapter !== "codex-app-server")
+			throw new Error(
+				"This account uses its provider's existing CLI or protected API-key flow.",
+			);
+		const codexPath = detectedSubscriptionCli("codex");
+		if (!codexPath)
+			throw new Error(
+				"Codex was not found in a trusted local installation path.",
+			);
+		if (account.profilePath)
+			await mkdir(account.profilePath, { recursive: true, mode: 0o700 });
+		const controller = new AbortController();
+		const manager = new ChatGptOAuthManager({
+			executable: codexPath,
+			environment: {
+				...process.env,
+				...(account.profilePath ? { CODEX_HOME: account.profilePath } : {}),
+			},
+			openExternal: async (url) => {
+				openExternalSafely((target) => shell.openExternal(target), url);
+			},
+		});
+		chatGptOAuthController = controller;
+		activeChatGptOAuthManager = manager;
+		await supervisor.stop();
+		try {
+			await manager.connect(controller.signal);
+		} finally {
+			if (chatGptOAuthController === controller) chatGptOAuthController = null;
+			if (activeChatGptOAuthManager === manager)
+				activeChatGptOAuthManager = null;
+			await initializeCore();
+		}
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
     if (request.type === "subscription-cli-set") {
       const statuses = await subscriptionCliStatuses();
       const selected = statuses.find((status) => status.id === request.id);
@@ -4489,6 +4631,7 @@ async function initializeCoreForStartup(): Promise<boolean> {
           // The failed attempt cached the old key. A new broker is required so
           // the first-run path creates a fresh protected key after the archive.
           appCredentialBroker = null;
+			appProviderAccountStore = null;
           appPasswordVault = null;
           appPaymentCardVault = null;
           continue;

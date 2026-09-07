@@ -126,8 +126,7 @@ function AgentUniverseEmptyState({
 				<>
 					<h2>Create a persistent agent</h2>
 					<p>
-						This agent becomes a planet in the universe. It will stay available for
-						work until you choose to forget it.
+						It appears here until you choose to forget it.
 					</p>
 					<AgentUniverseCreateAgentForm
 						onCreateAgent={onCreateAgent}
@@ -136,10 +135,10 @@ function AgentUniverseEmptyState({
 				</>
 			) : (
 				<>
-					<h2>No agent planets yet</h2>
+					<h2>No agents yet</h2>
 					<p>
-						Create a persistent agent to add its planet here. Ordinary chats and
-						tasks stay in Chats; only real delegated subagents become moons.
+						Create a persistent agent. Chats stay in Chat; delegated agents appear
+						as moons.
 					</p>
 					<div className="agent-universe-empty-actions">
 						<Button
@@ -195,10 +194,7 @@ function AgentUniverseCreateAgentMenu({
 							<Icon name="close" />
 						</button>
 					</div>
-					<p>
-						Only persistent agents become planets. Ordinary chats stay in Chats;
-						delegated work appears as moons.
-					</p>
+					<p>Chats stay in Chat; delegated agents appear as moons.</p>
 					<AgentUniverseCreateAgentForm
 						onCreateAgent={onCreateAgent}
 						onCancel={() => setOpen(false)}
@@ -213,8 +209,7 @@ function AgentUniverseLoadingState() {
 	return (
 		<div className="agent-universe-state-message" role="status" aria-live="polite">
 			<span className="agent-universe-loading-mark" aria-hidden="true" />
-			<strong>Reading agent systems</strong>
-			<span>Looking at Kestrel’s local runtime.</span>
+			<strong>Loading agents</strong>
 		</div>
 	);
 }
@@ -226,7 +221,7 @@ function AgentUniverseErrorState({ onRetry }: { onRetry?(): void }) {
 				!
 			</span>
 			<strong>Agent systems could not be loaded</strong>
-			<span>The local runtime did not return a session list.</span>
+			<span>Try again.</span>
 			{onRetry ? (
 				<Button variant="bordered" size="compact" onClick={onRetry}>
 					Try again
@@ -759,7 +754,7 @@ export function AgentWorkspace({
 								<p className="agent-universe-map-summary">
 									{hasSystems
 										? `${universe.overviewSystemIds.length} planet${universe.overviewSystemIds.length === 1 ? "" : "s"}${universe.overflowSystemIds.length > 0 ? ` · ${universe.overflowSystemIds.length} more system${universe.overflowSystemIds.length === 1 ? "" : "s"}` : ""} · ${universe.sessionCount} session${universe.sessionCount === 1 ? "" : "s"}`
-										: "A blank field for the work you start here"}
+										: "Create an agent to get started."}
 								</p>
 							</div>
 						</div>

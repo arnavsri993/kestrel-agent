@@ -663,7 +663,6 @@
 
 .unified-ui :is(.settings-stack, .connection-list) {
 	gap: 0;
-	border-top: 0;
 	background: transparent;
 }
 

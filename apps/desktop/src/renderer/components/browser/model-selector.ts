@@ -1,21 +1,23 @@
 import type {
-	LocalModelSummary,
-	ModelProviderSummary,
+	ProviderAccountModel,
+	ProviderAccountSummary,
 	ReasoningEffort,
 } from "@kestrel/shared-types";
 
 export type ModelSelectorChoice = {
 	executionMode: "automatic" | "manual";
+	/** Runtime endpoint ID. It is never a display label or a vendor-wide ID. */
 	providerId: string;
+	/** Stable account record ID, retained separately from the executable endpoint. */
+	accountId?: string;
 	model: string;
 	reasoningEffort: ReasoningEffort;
 };
 
-export type CatalogModel = {
+export type ProviderGroup = {
 	id: string;
 	label: string;
-	detail?: string;
-	reasoningLevels: boolean;
+	accounts: ProviderAccountSummary[];
 };
 
 export const THINKING_LEVELS: readonly {
@@ -29,292 +31,135 @@ export const THINKING_LEVELS: readonly {
 	{ id: "max", label: "Max" },
 ];
 
-const PROVIDER_LABELS: Record<string, string> = {
-	openai: "OpenAI",
-	anthropic: "Anthropic",
-	gemini: "Google",
-	ollama: "Ollama",
-	"codex-subscription": "Codex",
-	"claude-subscription": "Claude Code",
-	"opencode-subscription": "OpenCode",
-	groq: "Groq",
-	mistral: "Mistral",
-	openrouter: "OpenRouter",
-	nous: "Nous",
-	xai: "xAI",
-	deepseek: "DeepSeek",
-	together: "Together",
-	fireworks: "Fireworks",
-	nvidia: "NVIDIA",
-	huggingface: "Hugging Face",
-	perplexity: "Perplexity",
-	"github-models": "GitHub Models",
-	cohere: "Cohere",
-	cloudflare: "Cloudflare",
-	tokenrouter: "TokenRouter",
-	bai: "B.AI",
-	inferx: "InferX",
-	zenmux: "ZenMux",
-	"opencode-zen": "OpenCode Zen",
-	sensenova: "SenseNova",
-	gmicloud: "GMI Cloud",
-	tokenharbor: "Token Harbor",
-	cline: "Cline",
-	"command-code": "Command Code",
-	kilo: "Kilo",
-	orcarouter: "OrcaRouter",
-	aihubmix: "AIHubMix",
-};
-
-const PROVIDER_MODEL_CATALOG: Record<string, readonly CatalogModel[]> = {
-	openai: [
-		{ id: "gpt-5.6-sol", label: "Sol", reasoningLevels: true },
-		{ id: "gpt-5.6-luna", label: "Luna", reasoningLevels: true },
-		{ id: "gpt-5.6-terra", label: "Terra", reasoningLevels: true },
-	],
-	"codex-subscription": [
-		{ id: "gpt-5.6-sol", label: "Sol", reasoningLevels: true },
-		{ id: "gpt-5.6-terra", label: "Terra", reasoningLevels: true },
-		{ id: "gpt-5.6-luna", label: "Luna", reasoningLevels: true },
-	],
-	anthropic: [
-		{ id: "claude-sonnet-4-5", label: "Sonnet 4.5", reasoningLevels: true },
-		{ id: "claude-opus-4-6", label: "Opus 4.6", reasoningLevels: true },
-		{ id: "claude-haiku-4-5", label: "Haiku 4.5", reasoningLevels: false },
-	],
-	"claude-subscription": [
-		{ id: "sonnet", label: "Sonnet", reasoningLevels: false },
-		{ id: "opus", label: "Opus", reasoningLevels: false },
-		{ id: "haiku", label: "Haiku", reasoningLevels: false },
-	],
-	gemini: [
-		{ id: "gemini-3.6-flash", label: "Flash", reasoningLevels: false },
-	],
-	groq: [{ id: "openai/gpt-oss-20b", label: "GPT-OSS 20B", reasoningLevels: false }],
-	mistral: [
-		{ id: "mistral-small-latest", label: "Small", reasoningLevels: false },
-	],
-	openrouter: [{ id: "openrouter/free", label: "Free", reasoningLevels: false }],
-	nous: [
-		{
-			id: "stepfun/step-3.7-flash:free",
-			label: "Step 3.7 Flash",
-			reasoningLevels: false,
-		},
-	],
-	xai: [{ id: "grok-3-mini", label: "Grok 3 Mini", reasoningLevels: false }],
-	deepseek: [{ id: "deepseek-chat", label: "Chat", reasoningLevels: false }],
-	"opencode-subscription": [
-		{ id: "opencode", label: "OpenCode", reasoningLevels: false },
-	],
-	tokenrouter: [
-		{
-			id: "qwen/qwen3.8-max-free",
-			label: "Qwen 3.8 Max Free",
-			reasoningLevels: false,
-		},
-	],
-	bai: [
-		{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", reasoningLevels: false },
-	],
-	inferx: [
-		{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", reasoningLevels: false },
-	],
-	zenmux: [
-		{
-			id: "z-ai/glm-4.7-flash-free",
-			label: "GLM 4.7 Flash Free",
-			reasoningLevels: false,
-		},
-	],
-	"opencode-zen": [
-		{
-			id: "deepseek-v4-flash-free",
-			label: "DeepSeek V4 Flash Free",
-			reasoningLevels: false,
-		},
-		{
-			id: "muse-spark-1.2-contributor-free",
-			label: "Muse Spark 1.2 Contributor Free",
-			reasoningLevels: false,
-		},
-		{ id: "mimo-v2.5-free", label: "MiMo V2.5 Free", reasoningLevels: false },
-		{ id: "hy3-free", label: "HY 3 Free", reasoningLevels: false },
-		{
-			id: "ling-3.0-flash-fin-free",
-			label: "Ling 3.0 Flash Fin Free",
-			reasoningLevels: false,
-		},
-		{
-			id: "nemotron-3-ultra-free",
-			label: "Nemotron 3 Ultra Free",
-			reasoningLevels: false,
-		},
-		{
-			id: "nemotron-3.5-lightning-free",
-			label: "Nemotron 3.5 Lightning Free",
-			reasoningLevels: false,
-		},
-		{
-			id: "laguna-s-2.1-free",
-			label: "Laguna S 2.1 Free",
-			reasoningLevels: false,
-		},
-	],
-	sensenova: [
-		{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", reasoningLevels: false },
-	],
-	gmicloud: [
-		{
-			id: "deepseek-ai/DeepSeek-V4-Pro",
-			label: "DeepSeek V4 Pro",
-			reasoningLevels: false,
-		},
-	],
-	tokenharbor: [
-		{
-			id: "deepseek-v4-flash:free",
-			label: "DeepSeek V4 Flash Free",
-			reasoningLevels: false,
-		},
-	],
-	cline: [
-		{
-			id: "poolside/laguna-s-2.1:free",
-			label: "Laguna S 2.1 Free",
-			reasoningLevels: false,
-		},
-	],
-	"command-code": [
-		{
-			id: "poolside/laguna-s-2.1-free",
-			label: "Laguna S 2.1 Free",
-			reasoningLevels: false,
-		},
-	],
-	kilo: [{ id: "kilo-auto/free", label: "Auto Free", reasoningLevels: false }],
-	orcarouter: [
-		{ id: "orcarouter/free", label: "OrcaRouter Free", reasoningLevels: false },
-	],
-	aihubmix: [
-		{
-			id: "xiaomi-mimo-v2.5-free",
-			label: "MiMo V2.5 Free",
-			reasoningLevels: false,
-		},
-	],
-};
-
-export function providerDisplayName(providerId: string): string {
-	return PROVIDER_LABELS[providerId] ?? providerId;
-}
-
-export function compactModelBytes(value: number): string {
-	if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
-	if (value >= 1024 ** 2) return `${Math.round(value / 1024 ** 2)} MB`;
-	return `${value} B`;
-}
-
-export function configuredProviders(
-	providers: readonly ModelProviderSummary[],
-): ModelProviderSummary[] {
-	return providers.filter((provider) => provider.id !== "auto");
-}
-
-export function modelsForProvider(input: {
-	providerId: string;
-	localModels: readonly LocalModelSummary[];
-	currentModel: string;
-}): CatalogModel[] {
-	if (input.providerId === "ollama") {
-		const installed = input.localModels.map((item) => ({
-			id: item.name,
-			label: item.name,
-			detail: compactModelBytes(item.size),
-			reasoningLevels: false,
-		}));
-		return withCurrentModel(installed, input.currentModel);
+export function providerGroups(
+	accounts: readonly ProviderAccountSummary[],
+): ProviderGroup[] {
+	const groups = new Map<string, ProviderGroup>();
+	for (const account of accounts.filter((account) => account.enabled)) {
+		const group = groups.get(account.providerId) ?? {
+			id: account.providerId,
+			label: account.providerId,
+			accounts: [],
+		};
+		group.accounts.push(account);
+		groups.set(account.providerId, group);
 	}
-	const catalog = [...(PROVIDER_MODEL_CATALOG[input.providerId] ?? [])];
-	return withCurrentModel(catalog, input.currentModel);
+	return [...groups.values()]
+		.map((group) => ({
+			...group,
+			accounts: [...group.accounts].sort((left, right) =>
+				left.displayName.localeCompare(right.displayName),
+			),
+		}))
+		.sort((left, right) => left.label.localeCompare(right.label));
 }
 
-function withCurrentModel(
-	models: CatalogModel[],
-	currentModel: string,
-): CatalogModel[] {
-	const trimmed = currentModel.trim();
-	if (!trimmed || trimmed === "auto") return models;
-	if (models.some((model) => model.id === trimmed)) return models;
-	return [
-		{ id: trimmed, label: trimmed, detail: "Custom", reasoningLevels: false },
-		...models,
-	];
+export function selectableModel(model: ProviderAccountModel): boolean {
+	return ["available", "unknown", "stale"].includes(model.availability);
 }
 
-export function modelLabel(
-	providerId: string,
-	modelId: string,
-	localModels: readonly LocalModelSummary[] = [],
-): string {
-	const match = modelsForProvider({
-		providerId,
-		localModels,
-		currentModel: modelId,
-	}).find((model) => model.id === modelId);
-	return match?.label ?? modelId;
+export function modelAvailabilityLabel(model: ProviderAccountModel): string {
+	const capabilitiesUnverified =
+		model.capabilities.capabilityProvenance !== "confirmed";
+	switch (model.availability) {
+		case "available":
+			return capabilitiesUnverified
+				? "Available · capabilities unverified"
+				: "Available";
+		case "unknown":
+			return model.discoverySource === "fallback"
+				? "Fallback · capabilities unverified"
+				: "Check at run · capabilities unverified";
+		case "stale":
+			return "Stale";
+		case "authentication_required":
+			return "Sign in required";
+		case "permission_denied":
+			return "Permission denied";
+		case "unsupported":
+			return "Unsupported";
+		case "unavailable":
+			return "Unavailable";
+	}
+}
+
+export function accountForChoice(
+	accounts: readonly ProviderAccountSummary[],
+	choice: Pick<ModelSelectorChoice, "providerId" | "accountId">,
+): ProviderAccountSummary | undefined {
+	const enabledAccounts = accounts.filter((account) => account.enabled);
+	// A persisted account ID is an explicit user choice. Never substitute an
+	// endpoint or a sibling account when that identity has been removed.
+	if (choice.accountId)
+		return enabledAccounts.find((account) => account.id === choice.accountId);
+	const byEndpoint = enabledAccounts.find(
+		(account) => account.endpointId === choice.providerId,
+	);
+	if (byEndpoint) return byEndpoint;
+	// Older provider-level selections can be migrated only when unambiguous.
+	// Once a provider has multiple accounts, choosing the first one would route
+	// a future run through credentials the person did not select.
+	const byProvider = enabledAccounts.filter(
+		(account) => account.providerId === choice.providerId,
+	);
+	return byProvider.length === 1 ? byProvider[0] : undefined;
+}
+
+export function modelForChoice(
+	accounts: readonly ProviderAccountSummary[],
+	choice: ModelSelectorChoice,
+): ProviderAccountModel | undefined {
+	return accountForChoice(accounts, choice)?.models.find(
+		(model) => model.id === choice.model,
+	);
 }
 
 export function modelSupportsThinking(
-	providerId: string,
-	modelId: string,
-	localModels: readonly LocalModelSummary[] = [],
+	accounts: readonly ProviderAccountSummary[],
+	choice: ModelSelectorChoice,
 ): boolean {
+	const model = modelForChoice(accounts, choice);
 	return (
-		modelsForProvider({
-			providerId,
-			localModels,
-			currentModel: modelId,
-		}).find((model) => model.id === modelId)?.reasoningLevels === true
+		model?.capabilities.capabilityProvenance === "confirmed" &&
+		(model.capabilities.reasoningEfforts.length ?? 0) > 1
 	);
+}
+
+export function selectorTriggerLabel(
+	choice: ModelSelectorChoice,
+	accounts: readonly ProviderAccountSummary[],
+): string {
+	if (choice.executionMode === "automatic") return "Auto";
+	if (!accountForChoice(accounts, choice))
+		return choice.model.trim()
+			? `${choice.model} · account unavailable`
+			: "Account unavailable";
+	if (!choice.model.trim()) return "Choose model";
+	const model = modelForChoice(accounts, choice);
+	const name = model?.displayName ?? choice.model;
+	return modelSupportsThinking(accounts, choice) && choice.reasoningEffort !== "none"
+		? `${name} · ${thinkingLabel(choice.reasoningEffort)}`
+		: name;
 }
 
 export function thinkingLabel(effort: ReasoningEffort): string {
 	return THINKING_LEVELS.find((level) => level.id === effort)?.label ?? effort;
 }
 
-export function selectorTriggerLabel(choice: ModelSelectorChoice): string {
-	if (choice.executionMode === "automatic") return "Auto";
-	const name = modelLabel(choice.providerId, choice.model);
-	if (!choice.model.trim()) return "Choose model";
-	if (
-		modelSupportsThinking(choice.providerId, choice.model) &&
-		choice.reasoningEffort !== "none"
-	)
-		return `${name} · ${thinkingLabel(choice.reasoningEffort)}`;
-	return name;
-}
-
-export function selectProvider(
-	providerId: string,
-	localModels: readonly LocalModelSummary[],
+export function selectModel(
+	account: ProviderAccountSummary,
+	model: ProviderAccountModel,
 	current: ModelSelectorChoice,
 ): ModelSelectorChoice {
-	const models = modelsForProvider({
-		providerId,
-		localModels,
-		currentModel: current.providerId === providerId ? current.model : "",
-	});
-	const model =
-		current.providerId === providerId && current.model.trim()
-			? current.model
-			: (models[0]?.id ?? "");
-	const supports = modelSupportsThinking(providerId, model, localModels);
+	const supportsThinking =
+		model.capabilities.capabilityProvenance === "confirmed" &&
+		model.capabilities.reasoningEfforts.length > 1;
 	return {
 		executionMode: "manual",
-		providerId,
-		model,
-		reasoningEffort: supports
+		providerId: account.endpointId,
+		accountId: account.id,
+		model: model.id,
+		reasoningEffort: supportsThinking
 			? current.reasoningEffort === "none"
 				? "medium"
 				: current.reasoningEffort
@@ -322,22 +167,17 @@ export function selectProvider(
 	};
 }
 
-export function selectModel(
-	providerId: string,
+export function selectCustomModel(
+	account: ProviderAccountSummary,
 	model: string,
-	localModels: readonly LocalModelSummary[],
 	current: ModelSelectorChoice,
 ): ModelSelectorChoice {
-	const supports = modelSupportsThinking(providerId, model, localModels);
 	return {
 		executionMode: "manual",
-		providerId,
-		model,
-		reasoningEffort: supports
-			? current.reasoningEffort === "none"
-				? "medium"
-				: current.reasoningEffort
-			: "none",
+		providerId: account.endpointId,
+		accountId: account.id,
+		model: model.trim(),
+		reasoningEffort: "none",
 	};
 }
 
@@ -345,11 +185,7 @@ export function selectThinking(
 	effort: ReasoningEffort,
 	current: ModelSelectorChoice,
 ): ModelSelectorChoice {
-	return {
-		...current,
-		executionMode: "manual",
-		reasoningEffort: effort,
-	};
+	return { ...current, executionMode: "manual", reasoningEffort: effort };
 }
 
 export function selectAuto(current: ModelSelectorChoice): ModelSelectorChoice {
@@ -359,4 +195,22 @@ export function selectAuto(current: ModelSelectorChoice): ModelSelectorChoice {
 		model: current.model.trim() || "auto",
 		reasoningEffort: "none",
 	};
+}
+
+export function matchesCatalogSearch(
+	group: ProviderGroup,
+	query: string,
+): boolean {
+	const normalized = query.trim().toLocaleLowerCase();
+	if (!normalized) return true;
+	return group.accounts.some(
+		(account) =>
+			account.providerId.toLocaleLowerCase().includes(normalized) ||
+			account.displayName.toLocaleLowerCase().includes(normalized) ||
+			account.models.some(
+				(model) =>
+					model.id.toLocaleLowerCase().includes(normalized) ||
+					model.displayName.toLocaleLowerCase().includes(normalized),
+			),
+	);
 }

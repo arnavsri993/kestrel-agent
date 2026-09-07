@@ -179,17 +179,14 @@ export function GoalKanban({
 						})}
 					</ul>
 				) : (
-					<p>
-						No worker lanes are configured. Cards remain with the local
-						operator.
-					</p>
+					<p>No worker lanes. Cards remain local.</p>
 				)}
 			</div>
 
 			{activeGoals.length === 0 ? (
 				<div className="kanban-empty-board">
 					<strong>No active goals</strong>
-					<p>Create a goal and its task lines will appear here.</p>
+					<p>Create a goal to get started.</p>
 					{onCreateGoal ? (
 						<button
 							type="button"

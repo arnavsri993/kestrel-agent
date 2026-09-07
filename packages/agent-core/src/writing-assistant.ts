@@ -4,6 +4,7 @@ import {
 	type AgentContextBundle,
 	type ModelRoutingDecision,
 	type PersonRecord,
+	type ReasoningEffort,
 	type RoutingDecision,
 	type WritingAdaptationStrength,
 	type WritingContextCategory,
@@ -549,6 +550,7 @@ export class WritingAssistant {
 		includeSensitive?: boolean;
 		providerIds: string[];
 		providerModels?: Record<string, string>;
+		reasoningEffort?: ReasoningEffort;
 		writerModel?: string;
 		reviewerModel?: string;
 		signal?: AbortSignal;
@@ -623,6 +625,9 @@ export class WritingAssistant {
 				...(input.providerModels !== undefined
 					? { providerModels: input.providerModels }
 					: {}),
+				...(input.reasoningEffort && input.reasoningEffort !== "none"
+					? { reasoningEffort: input.reasoningEffort }
+					: {}),
 				...(input.writerModel !== undefined
 					? { modelOverride: input.writerModel }
 					: {}),
@@ -654,6 +659,9 @@ export class WritingAssistant {
 				providerIds: input.providerIds,
 				...(input.providerModels !== undefined
 					? { providerModels: input.providerModels }
+					: {}),
+				...(input.reasoningEffort && input.reasoningEffort !== "none"
+					? { reasoningEffort: input.reasoningEffort }
 					: {}),
 				...(input.reviewerModel !== undefined
 					? { modelOverride: input.reviewerModel }
@@ -705,6 +713,9 @@ export class WritingAssistant {
 						providerIds: input.providerIds,
 						...(input.providerModels !== undefined
 							? { providerModels: input.providerModels }
+							: {}),
+						...(input.reasoningEffort && input.reasoningEffort !== "none"
+							? { reasoningEffort: input.reasoningEffort }
 							: {}),
 						...(input.writerModel !== undefined
 							? { modelOverride: input.writerModel }
@@ -768,6 +779,7 @@ export class WritingAssistant {
 			tool: ModelTool;
 			providerIds: string[];
 			providerModels?: Record<string, string>;
+			reasoningEffort?: ReasoningEffort;
 			modelOverride?: string;
 			signal?: AbortSignal;
 		},
@@ -793,6 +805,7 @@ export class WritingAssistant {
 		tool: ModelTool;
 		providerIds: string[];
 		providerModels?: Record<string, string>;
+		reasoningEffort?: ReasoningEffort;
 		modelOverride?: string;
 		signal?: AbortSignal;
 	}): Promise<ModelCall> {
@@ -811,6 +824,9 @@ export class WritingAssistant {
 			...(input.providerModels ?? {}),
 		};
 		const model = plan?.execution.model ?? input.modelOverride;
+		const reasoningEffort =
+			plan?.route.reasoningEffort ??
+			(input.reasoningEffort === "none" ? undefined : input.reasoningEffort);
 		if (!model) throw new Error("A writing model route could not be selected.");
 		let lease: { release(): void } | undefined;
 		try {
@@ -832,8 +848,8 @@ export class WritingAssistant {
 					),
 					temperature: plan?.temperature ?? (input.role === "writer" ? 0.65 : 0.1),
 					...(plan?.route.serviceTier ? { serviceTier: plan.route.serviceTier } : {}),
-					...(plan?.route.reasoningEffort
-						? { reasoningEffort: plan.route.reasoningEffort }
+					...(reasoningEffort
+						? { reasoningEffort }
 						: {}),
 					metadata: {
 						surface: "writing-studio",
