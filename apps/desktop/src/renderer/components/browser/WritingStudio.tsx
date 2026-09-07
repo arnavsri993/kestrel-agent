@@ -427,15 +427,15 @@ export function WritingStudio() {
     <PageFrame
       as="main"
       className="writing-studio"
-      title="Draft like yourself, with your context."
+    title="Write with your context."
       titleId="writing-studio-title"
       eyebrow="Writing Studio"
-      description="Kestrel combines your brief, confirmed life context, recipient relationships, and opted-in voice signals into an editable draft."
+    description="Turn a brief and confirmed context into an editable draft."
       measure="wide"
       actions={
         <span className="writing-studio-badge">
           <Icon name="writing" />
-          Local-first draft workflow
+      Local-first drafts
         </span>
       }
     >
@@ -489,7 +489,7 @@ export function WritingStudio() {
               <span>Purpose</span>
               <textarea
                 value={purpose}
-                placeholder="Tell Kestrel the outcome, key points, and anything it must preserve."
+        placeholder="Outcome, key points, and details to keep."
                 maxLength={10_000}
                 required
                 onChange={(event) => setPurpose(event.target.value)}
@@ -501,7 +501,7 @@ export function WritingStudio() {
               </span>
               <textarea
                 value={sourceText}
-                placeholder="Paste rough notes or a draft when you want Kestrel to preserve and improve it."
+        placeholder="Paste notes or a draft to improve."
                 maxLength={20_000}
                 onChange={(event) => setSourceText(event.target.value)}
               />
@@ -552,8 +552,8 @@ export function WritingStudio() {
                 ))}
               </div>
               <p>
-                {selectedStrength?.detail}. Learned signals remain soft
-                preferences, not a promise of authorship or a detector result.
+        {selectedStrength?.detail}. Learned signals guide the draft; they do not
+        prove authorship.
               </p>
             </fieldset>
             <label className="writing-sensitive-toggle">
@@ -565,7 +565,7 @@ export function WritingStudio() {
               <span>
                 <strong>Include sensitive context for this draft</strong>
                 <small>
-                  Opt in only when the recipient and purpose call for it.
+          Opt in only if the recipient and purpose require it.
                 </small>
               </span>
             </label>
@@ -581,7 +581,7 @@ export function WritingStudio() {
                     ? "Adapt draft"
                     : "Create draft"}
               </button>
-              <small>Nothing is sent automatically.</small>
+        <small>Drafts are never sent automatically.</small>
             </div>
           </form>
         </section>
@@ -650,10 +650,7 @@ export function WritingStudio() {
             <div className="writing-context-empty">
               <Icon name="compass" />
               <strong>Start with a purpose</strong>
-              <p>
-                As you describe the outcome, Kestrel will show which confirmed
-                context is eligible before generating anything.
-              </p>
+        <p>Add a purpose to preview eligible confirmed context.</p>
             </div>
           )}
         </aside>
@@ -666,11 +663,10 @@ export function WritingStudio() {
         <header>
           <div>
             <span className="eyebrow">03 · Your voice</span>
-            <h2 id="writing-profile-title">Teach Kestrel your tendencies</h2>
-            <p>
-              Voice adaptation is off until you enable it. Kestrel stores
-              aggregate style signals locally; raw text is retained only for
-              samples you explicitly mark as private exemplars.
+      <h2 id="writing-profile-title">Your voice</h2>
+      <p>
+        Voice adaptation stays off until enabled. Style signals stay local;
+        only selected exemplars retain raw text.
             </p>
           </div>
           {profile && (
@@ -698,7 +694,7 @@ export function WritingStudio() {
                 />
                 <span>
                   <strong>Use my voice profile</strong>
-                  <small>Soft tendencies only; you review every draft.</small>
+          <small>Guides the draft; you review it.</small>
                 </span>
               </label>
               <label>
@@ -732,7 +728,7 @@ export function WritingStudio() {
                 />
                 <span>
                   <strong>Allow selected exemplars</strong>
-                  <small>Keep raw sample text encrypted for reference.</small>
+          <small>Keep raw sample text encrypted.</small>
                 </span>
               </label>
             </div>
@@ -761,7 +757,7 @@ export function WritingStudio() {
                 <span>Add a sample you wrote</span>
                 <textarea
                   value={sampleText}
-                  placeholder="Paste an email, message, or paragraph you want Kestrel to learn from."
+          placeholder="Paste an email, message, or paragraph to learn from."
                   maxLength={20_000}
                   disabled={profileBusy || !profileConfig.enabled}
                   onChange={(event) => setSampleText(event.target.value)}
@@ -871,8 +867,8 @@ export function WritingStudio() {
             <div>
               <strong>Review before you send</strong>
               <p>
-                Kestrel does not send drafts. Confirm names, dates, commitments,
-                and sensitive details yourself.
+        Kestrel does not send drafts. Review names, dates, commitments, and
+        sensitive details.
               </p>
             </div>
             {draft.quality.reviewerIssues.length > 0 && (
@@ -885,7 +881,7 @@ export function WritingStudio() {
           </div>
           {routes.length > 0 && (
             <details className="writing-route-details">
-              <summary>Model route and review evidence</summary>
+      <summary>Route details</summary>
               <div>
                 {routes.map((route) => (
                   <span key={`${route.taskId}-${route.selectedAt}`}>

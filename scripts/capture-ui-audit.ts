@@ -316,12 +316,12 @@ async function captureWorkspaceSurfaces(page: Page, viewport: ViewportKey) {
 
 	const settingsSections = [
 		["browser", "Browser", "settings-browser.png"],
-		["general", "General", "settings-general.png"],
-		["models", "Models", "settings-models.png"],
-		["intelligence", "Memory", "settings-memory.png"],
-		["extensions", "Plugins", "settings-extensions.png"],
-		["privacy", "Privacy", "settings-privacy.png"],
-		["advanced", "Advanced", "settings-advanced.png"],
+		["agent-general", "General", "settings-general.png"],
+		["agent-models", "Models", "settings-models.png"],
+		["agent-memory", "Memory", "settings-memory.png"],
+		["agent-tools", "Tools", "settings-extensions.png"],
+		["agent-permissions", "Permissions", "settings-privacy.png"],
+		["agent-diagnostics", "Diagnostics", "settings-advanced.png"],
 	] as const;
 	for (const [id, label, filename] of settingsSections) {
 		const compactPicker = page.locator(".settings-section-picker select");

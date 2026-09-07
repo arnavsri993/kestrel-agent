@@ -47,7 +47,7 @@ describe("New Tab widget layout model", () => {
 		expect(NEW_TAB_WIDGET_DEFINITIONS["open-tabs"]?.defaultSize).toBe("medium");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["pinned-tabs"]?.icon).toBe("pin");
 		expect(NEW_TAB_WIDGET_DEFINITIONS["recent-pages"]?.description).toContain(
-			"local browsing history",
+			"Visited pages",
 		);
 	});
 

@@ -98,7 +98,7 @@ export function BrowserHistory({
       className="browser-library"
       title="Browsing history"
       titleId="history-title"
-      description="Pages opened in this local profile, newest first."
+      description="Pages you've visited, newest first."
       measure="wide"
       actions={
         <>
@@ -129,22 +129,20 @@ export function BrowserHistory({
           className="library-empty"
           icon="history"
           title={query ? "No matching pages" : "No history yet"}
-          detail={
-            query
-              ? "Try a different search."
-              : "Pages you open in Kestrel stay available here on this Mac."
-          }
-          action={
-            !query ? (
-              <button
-                type="button"
-                className="button secondary"
-                onClick={onOpenBrowser}
-              >
-                Open browser
-              </button>
-            ) : undefined
-          }
+          {...(query ? { detail: "Try a different search." } : {})}
+          {...(!query
+            ? {
+                action: (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={onOpenBrowser}
+                  >
+                    Open browser
+                  </button>
+                ),
+              }
+            : {})}
         />
       ) : (
         <ol className="history-list">
@@ -187,7 +185,7 @@ export function BrowserDownloads({
       className="browser-library"
       title="Downloaded files"
       titleId="downloads-title"
-      description="Files saved from this local browser profile."
+      description="Files saved by Kestrel."
       measure="wide"
       actions={onBack ? <SurfaceBackButton onBack={onBack} /> : undefined}
     >
@@ -196,7 +194,6 @@ export function BrowserDownloads({
           className="library-empty"
           icon="downloads"
           title="No downloads yet"
-          detail="Files you save will appear here on this Mac."
         />
       ) : (
         <ul className="download-list">
@@ -441,7 +438,7 @@ export function BrowserBookmarks({
       className="browser-library"
       title="Saved pages"
       titleId="bookmarks-title"
-      description="Pages you chose to keep in this local browser profile."
+      description="Pages you save in Kestrel."
       measure="wide"
       actions={
         <>
@@ -543,7 +540,6 @@ export function BrowserBookmarks({
         <div className="bookmark-library-section-heading">
           <span>
             <strong id="bookmark-folders-title">Folders</strong>
-            <small>Keep the bar tidy without losing saved pages.</small>
           </span>
           <span>{bookmarkFolders.length}</span>
         </div>
@@ -651,9 +647,7 @@ export function BrowserBookmarks({
             })}
           </ul>
         ) : (
-          <p className="bookmark-library-folders-empty">
-            No folders yet. Create one to organize pages by project, topic, or read-later queue.
-          </p>
+          <p className="bookmark-library-folders-empty">Create a folder to organize saved pages.</p>
         )}
       </section>
 
@@ -665,7 +659,7 @@ export function BrowserBookmarks({
           detail={
             query || folderFilter !== "all"
               ? "Try a different search or folder."
-              : "Press ⌘D on a page to save it here."
+              : "Save a page with ⌘D."
           }
           action={
             !query ? (

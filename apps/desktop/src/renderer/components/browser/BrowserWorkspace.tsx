@@ -1267,8 +1267,8 @@ function FilePreviewBody({
       <span className="file-tab-fallback-mark" aria-hidden="true">
         <Icon name="artifacts" />
       </span>
-      <strong>Kestrel can keep this file as an object.</strong>
-      <p>{preview.detail || "This format is available to compatible agent routes and the default app."}</p>
+			<strong>Preview unavailable.</strong>
+			<p>{preview.detail || "You can still use this file with compatible apps."}</p>
     </div>
   );
 }

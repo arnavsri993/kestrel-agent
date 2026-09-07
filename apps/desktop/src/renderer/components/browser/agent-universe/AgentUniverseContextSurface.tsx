@@ -775,10 +775,9 @@ export function AgentUniverseContextSurface({
 					</summary>
 					<div className="agent-universe-context-memory-content">
 						<p className="agent-universe-context-memory-note">
-							Private to this system and its delegated agents. It is not shared
-							with other agent systems.
+							Only this system and its delegated agents can use this memory.
 						</p>
-						{groupMemoryLoading ? <p>Reading durable group context…</p> : null}
+						{groupMemoryLoading ? <p>Loading memory…</p> : null}
 						{groupMemoryError ? (
 							<p className="agent-universe-context-error" role="alert">
 								{groupMemoryError}
@@ -799,11 +798,11 @@ export function AgentUniverseContextSurface({
 							</ul>
 							) : null}
 						{groupMemory && groupMemory.memoryCount === 0 && !groupMemoryLoading ? (
-							<p>No durable context has been saved for this system yet.</p>
+							<p>No saved group memory.</p>
 						) : null}
 						{groupMemory && groupMemory.memoryCount > 6 ? (
 							<small className="agent-universe-memory-more">
-								Showing the six most important entries · {groupMemory.memoryCount} total
+								Showing 6 of {groupMemory.memoryCount}
 							</small>
 						) : null}
 					</div>
@@ -826,7 +825,7 @@ export function AgentUniverseContextSurface({
 						</small>
 					</summary>
 					<div className="agent-universe-context-memory-content">
-						{agentMemoryLoading ? <p>Reading this agent's private continuity…</p> : null}
+						{agentMemoryLoading ? <p>Loading agent memory…</p> : null}
 						{agentMemoryError ? (
 							<p className="agent-universe-context-error" role="alert">
 								{agentMemoryError}
@@ -835,8 +834,8 @@ export function AgentUniverseContextSurface({
 						{agentMemory ? (
 							<>
 								<p className="agent-universe-context-memory-note">
-									Private to {agentMemory.identity.name}. It survives this task and is
-									separate from shared group memory.
+									Private to {agentMemory.identity.name}; separate from group memory and
+									retained after this task.
 								</p>
 								<dl className="agent-universe-context-details">
 									<DefinitionRow label="Purpose">{agentMemory.identity.purpose}</DefinitionRow>
@@ -941,7 +940,7 @@ export function AgentUniverseContextSurface({
 																			</li>
 																		))}
 																	</ul>
-																) : <small>No provenance record is attached.</small>
+										) : <small>No source record.</small>
 															) : null}
 														</div>
 													) : null}
@@ -949,7 +948,7 @@ export function AgentUniverseContextSurface({
 											);
 										})}
 									</ul>
-								) : <p>No private lessons or outcomes yet.</p>}
+								) : <p>No saved agent memory.</p>}
 								{memoryMutationError ? (
 									<p className="agent-universe-context-error" role="alert">{memoryMutationError}</p>
 								) : null}
@@ -982,7 +981,7 @@ export function AgentUniverseContextSurface({
 						<span>Latest route</span>
 						<small>{run?.model ?? (runsLoading ? "Reading" : "Unavailable")}</small>
 					</summary>
-					{runsLoading ? <p>Reading the latest verified run…</p> : null}
+					{runsLoading ? <p>Loading latest run…</p> : null}
 					{runsError ? <p role="alert">{runsError}</p> : null}
 					{run ? (
 						<dl className="agent-universe-context-details agent-universe-routing-details">
