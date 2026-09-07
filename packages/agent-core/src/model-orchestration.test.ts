@@ -10,6 +10,7 @@ import {
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
 import type { ModelProvider } from "./providers";
+import { ModelCatalog } from "./providers/model-catalog";
 
 function provider(input: {
 	id: string;
@@ -94,6 +95,215 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+	it("does not automatically route to an unavailable account model", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const unavailable: ModelProvider = {
+			id: "openai-account-a",
+			poolId: "openai",
+			account: {
+				id: "account-a",
+				providerId: "openai",
+				displayName: "Account A",
+				authTransport: "api_key",
+				enabled: true,
+			},
+			defaultModel: "fallback-a",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			discoverModels: async () => [
+				{
+					id: "blocked-model",
+					availability: "unavailable",
+					source: "provider_api",
+					capabilities: {
+						capabilityProvenance: "confirmed",
+						tools: true,
+						structuredOutput: true,
+					},
+				},
+			],
+			complete: async (request) => ({
+				providerId: "openai-account-a",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop",
+			}),
+		};
+		const available: ModelProvider = {
+			...unavailable,
+			id: "openai-account-b",
+			account: { ...unavailable.account!, id: "account-b", displayName: "Account B" },
+			discoverModels: async () => [
+				{
+					id: "available-model",
+					availability: "available",
+					source: "provider_api",
+					capabilities: {
+						capabilityProvenance: "confirmed",
+						tools: true,
+						structuredOutput: true,
+					},
+				},
+			],
+		};
+		const catalog = new ModelCatalog(database, [unavailable, available]);
+		await catalog.refresh([unavailable, available]);
+		const registry = new ModelRegistry(database, [unavailable, available], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+		const requirements = new TaskRequirementAnalyzer().analyze(
+			"available-only",
+			"Summarize this small note.",
+		);
+
+		expect(router.route(requirements, { role: "worker" }).endpointId).toBe(
+			"openai-account-b",
+		);
+		database.close();
+	});
+
+	it("routes plain text through a discovery-only model without claiming features", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			id: "openai-discovery-only",
+			poolId: "openai",
+			account: {
+				id: "account-a",
+				providerId: "openai",
+				displayName: "Personal",
+				authTransport: "api_key",
+				enabled: true,
+			},
+			defaultModel: "configured-default",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: true,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			discoverModels: async () => [
+				{
+					id: "advertised-only",
+					availability: "available",
+					source: "provider_api",
+					capabilities: { capabilityProvenance: "unknown" },
+				},
+			],
+			complete: async (request) => ({
+				providerId: "openai-discovery-only",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop",
+			}),
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		await catalog.refresh([endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+
+		expect(
+			router.route(
+				new TaskRequirementAnalyzer().analyze(
+					"unknown-capabilities",
+					"Summarize this small note.",
+				),
+				{ role: "worker" },
+			).endpointId,
+		).toBe("openai-discovery-only");
+		expect(() =>
+			router.route(
+				new TaskRequirementAnalyzer().analyze(
+					"unknown-capabilities-tools",
+					"Use tools to inspect the repository.",
+				),
+				{ role: "worker" },
+			),
+		).toThrow("No configured model satisfies");
+		database.close();
+	});
+
+	it("does not automatically route through an unverified fallback model", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			...provider({ id: "fallback-only", model: "configured-default" }),
+			account: {
+				id: "fallback-account",
+				providerId: "openai-compatible",
+				displayName: "Fallback account",
+				authTransport: "api_key",
+				enabled: true,
+			},
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+
+		expect(catalog.modelsForEndpoint("fallback-only")).toMatchObject([
+			{ availability: "unknown", discoverySource: "fallback" },
+		]);
+		expect(() =>
+			router.route(
+				new TaskRequirementAnalyzer().analyze(
+					"fallback-only",
+					"Summarize this small note.",
+				),
+				{ role: "worker" },
+			),
+		).toThrow("No configured model satisfies");
+		database.close();
+	});
+
+	it("does not synthesize a default model for an empty dynamic catalog", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			id: "dynamic-empty",
+			poolId: "custom",
+			account: {
+				id: "dynamic-empty",
+				providerId: "custom",
+				displayName: "Empty dynamic account",
+				authTransport: "api_key",
+				enabled: true,
+			},
+			defaultModel: "should-not-appear",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			discoverModels: async () => [],
+			complete: async (request) => ({
+				providerId: "dynamic-empty",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop",
+			}),
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		expect(registry.list()).toEqual([]);
+		await catalog.refresh([endpoint]);
+		registry.syncProviderCatalog([endpoint], catalog);
+		expect(registry.list()).toEqual([]);
+		database.close();
+	});
+
 	it("falls back to the default policy when persisted routing state is malformed", () => {
 		const item = fixture([provider({ id: "local", model: "private" })]);
 		item.database.setPrivateState("orchestration.routing-policy.v1", {

@@ -1,172 +1,218 @@
 import { describe, expect, it } from "vitest";
-import type { ModelProviderSummary } from "@kestrel/shared-types";
+import type {
+	ProviderAccountModel,
+	ProviderAccountSummary,
+} from "@kestrel/shared-types";
 import {
-	configuredProviders,
+	accountForChoice,
+	matchesCatalogSearch,
+	modelAvailabilityLabel,
+	modelForChoice,
 	modelSupportsThinking,
-	modelsForProvider,
-	providerDisplayName,
+	providerGroups,
+	selectableModel,
 	selectAuto,
+	selectCustomModel,
 	selectModel,
-	selectProvider,
 	selectThinking,
 	selectorTriggerLabel,
 } from "./model-selector";
 
-const openai: ModelProviderSummary = {
-	id: "openai",
-	capabilities: {
-		streaming: true,
-		tools: true,
-		images: true,
-		audio: false,
-		documents: false,
-		local: false,
-	},
+const accountCapabilities: ProviderAccountSummary["capabilities"] = {
+	streaming: true,
+	tools: true,
+	images: false,
+	audio: false,
+	documents: false,
+	video: false,
+	local: false,
 };
 
-const freeProviderCatalog = [
-	["tokenrouter", "TokenRouter", "qwen/qwen3.8-max-free"],
-	["bai", "B.AI", "deepseek-v4-flash"],
-	["inferx", "InferX", "deepseek-v4-flash"],
-	["zenmux", "ZenMux", "z-ai/glm-4.7-flash-free"],
-	["opencode-zen", "OpenCode Zen", "mimo-v2.5-free"],
-	["sensenova", "SenseNova", "deepseek-v4-flash"],
-	["gmicloud", "GMI Cloud", "deepseek-ai/DeepSeek-V4-Pro"],
-	["tokenharbor", "Token Harbor", "deepseek-v4-flash:free"],
-	["cline", "Cline", "poolside/laguna-s-2.1:free"],
-	["command-code", "Command Code", "poolside/laguna-s-2.1-free"],
-	["kilo", "Kilo", "kilo-auto/free"],
-	["orcarouter", "OrcaRouter", "orcarouter/free"],
-	["aihubmix", "AIHubMix", "xiaomi-mimo-v2.5-free"],
-] as const;
+const modelCapabilities: ProviderAccountModel["capabilities"] = {
+	capabilityProvenance: "confirmed",
+	streaming: true,
+	tools: true,
+	vision: false,
+	audio: false,
+	documents: false,
+	video: false,
+	structuredOutput: true,
+	reasoningEfforts: [],
+};
 
-describe("cascading model selector", () => {
-	it("hides the synthetic auto provider from the provider list", () => {
-		expect(
-			configuredProviders([
-				openai,
-				{
-					id: "auto",
-					capabilities: openai.capabilities,
-				},
-			]).map((provider) => provider.id),
-		).toEqual(["openai"]);
-	});
+function model(
+	id: string,
+	overrides: Partial<ProviderAccountModel> = {},
+): ProviderAccountModel {
+	return {
+		id,
+		displayName: id,
+		availability: "available",
+		discoverySource: "provider_api",
+		capabilities: modelCapabilities,
+		...overrides,
+	};
+}
 
-	it("lists Sol, Luna, and Terra for OpenAI and treats them as thinking models", () => {
-		const models = modelsForProvider({
-			providerId: "openai",
-			localModels: [],
-			currentModel: "",
-		});
-		expect(models.map((model) => model.label)).toEqual(["Sol", "Luna", "Terra"]);
-		expect(modelSupportsThinking("openai", "gpt-5.6-terra")).toBe(true);
-	});
+function account(
+	id: string,
+	displayName: string,
+	models: ProviderAccountModel[],
+	overrides: Partial<ProviderAccountSummary> = {},
+): ProviderAccountSummary {
+	return {
+		id,
+		endpointId: id,
+		providerId: "openai",
+		displayName,
+		authTransport: "api_key",
+		enabled: true,
+		capabilities: accountCapabilities,
+		discovery: { state: "fresh" },
+		models,
+		...overrides,
+	};
+}
 
-	it("lists the supported Codex app-server models in default order", () => {
-		expect(
-			modelsForProvider({
-				providerId: "codex-subscription",
-				localModels: [],
-				currentModel: "",
-			}).map((model) => model.id),
-		).toEqual([
-			"gpt-5.6-sol",
-			"gpt-5.6-terra",
-			"gpt-5.6-luna",
-		]);
-	});
-
-	it("lists every currently returned OpenCode Zen free model in API order", () => {
-		expect(
-			modelsForProvider({
-				providerId: "opencode-zen",
-				localModels: [],
-				currentModel: "",
-			}).map((model) => model.id),
-		).toEqual([
-			"deepseek-v4-flash-free",
-			"muse-spark-1.2-contributor-free",
-			"mimo-v2.5-free",
-			"hy3-free",
-			"ling-3.0-flash-fin-free",
-			"nemotron-3-ultra-free",
-			"nemotron-3.5-lightning-free",
-			"laguna-s-2.1-free",
-		]);
-	});
-
-	it("exposes every added free provider with its configured default model", () => {
-		for (const [providerId, label, modelId] of freeProviderCatalog) {
-			expect(providerDisplayName(providerId)).toBe(label);
-			expect(
-				modelsForProvider({
-					providerId,
-					localModels: [],
-					currentModel: "",
-				}),
-			).toContainEqual(expect.objectContaining({ id: modelId }));
-		}
-	});
-
-	it("uses installed Ollama models instead of a static catalog", () => {
-		expect(
-			modelsForProvider({
-				providerId: "ollama",
-				localModels: [{ name: "qwen:test", size: 1024 ** 3 }],
-				currentModel: "",
-			}),
-		).toEqual([
-			{
-				id: "qwen:test",
-				label: "qwen:test",
-				detail: "1.0 GB",
-				reasoningLevels: false,
+const accounts: ProviderAccountSummary[] = [
+	account("openai-work", "Work OpenAI", [
+		model("gpt-work", {
+			displayName: "Work GPT",
+			capabilities: {
+				...modelCapabilities,
+				reasoningEfforts: ["low", "medium", "high"],
 			},
+		}),
+	]),
+	account("openai-personal", "Personal OpenAI", [
+		model("gpt-personal", {
+			availability: "stale",
+			discoverySource: "metadata",
+		}),
+	]),
+	account(
+		"local-ollama",
+		"Local Ollama",
+		[model("llama", { availability: "unsupported" })],
+		{
+			providerId: "ollama",
+			authTransport: "local",
+			enabled: false,
+			capabilities: { ...accountCapabilities, local: true },
+			discovery: { state: "unsupported" },
+		},
+	),
+];
+
+const choice = {
+	executionMode: "manual" as const,
+	providerId: "openai-work",
+	accountId: "openai-work",
+	model: "gpt-work",
+	reasoningEffort: "medium" as const,
+};
+
+describe("account-aware model selector", () => {
+	it("groups only enabled accounts by provider and sorts their labels", () => {
+		const groups = providerGroups(accounts);
+		expect(groups).toHaveLength(1);
+		expect(groups[0]!.accounts.map((item) => item.displayName)).toEqual([
+			"Personal OpenAI",
+			"Work OpenAI",
 		]);
 	});
 
-	it.each([
-		["openai", "gpt-4o-mini"],
-		["codex-subscription", "workspace-catalog-model"],
-	])("keeps a custom %s model at the top", (providerId, currentModel) => {
+	it("keeps unavailable account models out of explicit selection", () => {
+		expect(selectableModel(model("available"))).toBe(true);
+		expect(selectableModel(model("unknown", { availability: "unknown" }))).toBe(
+			true,
+		);
 		expect(
-			modelsForProvider({
-				providerId,
-				localModels: [],
-				currentModel,
-			})[0],
-		).toMatchObject({ id: currentModel, detail: "Custom" });
+			selectableModel(model("blocked", { availability: "permission_denied" })),
+		).toBe(false);
+		expect(
+			modelAvailabilityLabel(
+				model("fallback", {
+					availability: "unknown",
+					discoverySource: "fallback",
+				}),
+			),
+		).toBe("Fallback · capabilities unverified");
 	});
 
-	it("turns Auto on from the provider footer and labels the trigger Auto", () => {
-		const next = selectAuto({
-			executionMode: "manual",
-			providerId: "openai",
-			model: "gpt-5.6-terra",
-			reasoningEffort: "high",
-		});
-		expect(next.executionMode).toBe("automatic");
-		expect(selectorTriggerLabel(next)).toBe("Auto");
+	it("never substitutes a removed account with another endpoint", () => {
+		expect(accountForChoice(accounts, choice)?.id).toBe("openai-work");
+		expect(modelForChoice(accounts, choice)?.displayName).toBe("Work GPT");
+		expect(
+			accountForChoice(accounts, { providerId: "openai-work", accountId: "missing" }),
+		).toBeUndefined();
+		expect(accountForChoice(accounts, { providerId: "openai" })).toBeUndefined();
+		expect(selectorTriggerLabel({ ...choice, accountId: "missing" }, accounts)).toBe(
+			"gpt-work · account unavailable",
+		);
 	});
 
-	it("selects a provider's first model and a thinking level for that model", () => {
-		const afterProvider = selectProvider("openai", [], {
-			executionMode: "automatic",
-			providerId: "",
-			model: "",
-			reasoningEffort: "none",
-		});
-		expect(afterProvider).toMatchObject({
-			executionMode: "manual",
-			providerId: "openai",
-			model: "gpt-5.6-sol",
+	it("uses discovered reasoning capabilities rather than a vendor model name", () => {
+		expect(modelSupportsThinking(accounts, choice)).toBe(true);
+		expect(selectorTriggerLabel(choice, accounts)).toBe("Work GPT · Med");
+		expect(
+		modelSupportsThinking(accounts, {
+			...choice,
+			accountId: "openai-personal",
+			providerId: "openai-personal",
+			model: "gpt-personal",
+		}),
+		).toBe(false);
+		const unverifiedAccount = account("unverified", "Unverified", [
+			model("reported-thinking", {
+				capabilities: {
+					...modelCapabilities,
+					capabilityProvenance: "unknown",
+					reasoningEfforts: ["low", "medium"],
+				},
+			}),
+		]);
+		const unverifiedChoice = selectModel(
+			unverifiedAccount,
+			unverifiedAccount.models[0]!,
+			{ ...choice, reasoningEffort: "medium" },
+		);
+		expect(modelSupportsThinking([unverifiedAccount], unverifiedChoice)).toBe(
+			false,
+		);
+		expect(unverifiedChoice.reasoningEffort).toBe("none");
+	});
+
+	it("searches provider, account, and discovered model fields", () => {
+		const group = providerGroups(accounts)[0]!;
+		expect(matchesCatalogSearch(group, "personal")).toBe(true);
+		expect(matchesCatalogSearch(group, "gpt-work")).toBe(true);
+		expect(matchesCatalogSearch(group, "anthropic")).toBe(false);
+	});
+
+	it("keeps account identity through model, thinking, custom, and auto choices", () => {
+		const selected = selectModel(
+			accounts[0]!,
+			accounts[0]!.models[0]!,
+			{ ...choice, reasoningEffort: "none" },
+		);
+		expect(selected).toMatchObject({
+			providerId: "openai-work",
+			accountId: "openai-work",
+			model: "gpt-work",
 			reasoningEffort: "medium",
 		});
-		const afterModel = selectModel("openai", "gpt-5.6-luna", [], afterProvider);
-		expect(afterModel.model).toBe("gpt-5.6-luna");
-		expect(selectorTriggerLabel(selectThinking("low", afterModel))).toBe(
-			"Luna · Low",
-		);
+		expect(selectThinking("high", selected).reasoningEffort).toBe("high");
+		expect(
+			selectCustomModel(accounts[1]!, "  custom-model  ", selected),
+		).toMatchObject({
+			accountId: "openai-personal",
+			model: "custom-model",
+			reasoningEffort: "none",
+		});
+		expect(selectAuto(selected)).toMatchObject({
+			executionMode: "automatic",
+			reasoningEffort: "none",
+		});
 	});
 });

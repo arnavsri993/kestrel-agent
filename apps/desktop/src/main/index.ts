@@ -55,6 +55,7 @@ import {
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
+import { ProviderAccountStore } from "./provider-account-store";
 import { PasswordVault } from "./password-vault";
 import { PaymentCardVault } from "./payment-card-vault";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
@@ -564,6 +565,7 @@ function computerUseManager(): ComputerUseManager {
 let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
+let appProviderAccountStore: ProviderAccountStore | null = null;
 let appPasswordVault: PasswordVault | null = null;
 let appPaymentCardVault: PaymentCardVault | null = null;
 let googleOAuthController: AbortController | null = null;
@@ -895,6 +897,15 @@ function localRuntimeManager(): LocalRuntimeManager {
 function credentialBroker(): CredentialBroker {
 	appCredentialBroker ??= new CredentialBroker(app.getPath("userData"));
 	return appCredentialBroker;
+}
+
+function providerAccountStore(): ProviderAccountStore {
+	appProviderAccountStore ??= new ProviderAccountStore(
+		join(app.getPath("userData"), "provider-accounts.json"),
+		credentialBroker(),
+		app.getPath("userData"),
+	);
+	return appProviderAccountStore;
 }
 
 function passwordVault(): PasswordVault {
@@ -2336,6 +2347,30 @@ async function initializeCore(
   } catch {
     // A local model server is optional and must not delay or block startup.
   }
+	// Migrate existing brokered/API and trusted CLI routes as account metadata.
+	// This is additive and reversible: credential bytes remain in their original
+	// protected broker slots until a person removes the legacy account.
+	const accounts = providerAccountStore();
+	await accounts.ensureLegacyAccounts(secureEnvironment);
+	const providerAccounts = (await accounts.runtimeAccounts(secureEnvironment)).flatMap(
+		(account) => {
+			const cliId =
+				account.adapter === "codex-app-server"
+					? "codex"
+					: account.adapter === "opencode-cli"
+						? "opencode"
+						: account.adapter === "claude-cli"
+							? "claude"
+							: undefined;
+			if (!cliId) return [account];
+			const executable = detectedSubscriptionCli(cliId);
+			if (executable) return [{ ...account, executable }];
+			// An account remains visible in Settings, but only a currently detected
+			// trusted executable may become a CLI endpoint. Do not execute a path
+			// persisted in profile metadata or guess a binary name.
+			return [];
+		},
+	);
   const workspaceGrantStore = new WorkspaceGrantStore(
     join(userData, "workspace-grants.json"),
   );
@@ -2361,6 +2396,7 @@ async function initializeCore(
       managedPluginRoots: [managedPluginRoot],
       learnedSkillRoot: join(userData, "learned-skills"),
       secureEnvironment,
+		providerAccounts,
     });
     const response = await supervisor.request({ type: "snapshot" });
     if (!response.ok)
@@ -3691,6 +3727,78 @@ function registerIpc(): void {
     }
     if (request.type === "subscription-cli-status")
       return { ok: true, subscriptionClis: await subscriptionCliStatuses() };
+	if (request.type === "provider-account-list")
+		return { ok: true, providerAccounts: await providerAccountStore().list() };
+	if (request.type === "provider-account-create") {
+		await providerAccountStore().create(request.account);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-update") {
+		await providerAccountStore().update(request.account);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-remove") {
+		await providerAccountStore().remove(request.accountId);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-connect") {
+		if (chatGptOAuthController)
+			throw new Error("ChatGPT sign-in is already in progress.");
+		const account = await providerAccountStore().account(request.accountId);
+		if (!account) throw new Error("Provider account no longer exists.");
+		if (account.adapter !== "codex-app-server")
+			throw new Error(
+				"This account uses its provider's existing CLI or protected API-key flow.",
+			);
+		const codexPath = detectedSubscriptionCli("codex");
+		if (!codexPath)
+			throw new Error(
+				"Codex was not found in a trusted local installation path.",
+			);
+		if (account.profilePath)
+			await mkdir(account.profilePath, { recursive: true, mode: 0o700 });
+		const controller = new AbortController();
+		const manager = new ChatGptOAuthManager({
+			executable: codexPath,
+			environment: {
+				...process.env,
+				...(account.profilePath ? { CODEX_HOME: account.profilePath } : {}),
+			},
+			openExternal: async (url) => {
+				openExternalSafely((target) => shell.openExternal(target), url);
+			},
+		});
+		chatGptOAuthController = controller;
+		activeChatGptOAuthManager = manager;
+		await supervisor.stop();
+		try {
+			await manager.connect(controller.signal);
+		} finally {
+			if (chatGptOAuthController === controller) chatGptOAuthController = null;
+			if (activeChatGptOAuthManager === manager)
+				activeChatGptOAuthManager = null;
+			await initializeCore();
+		}
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
     if (request.type === "subscription-cli-set") {
       const statuses = await subscriptionCliStatuses();
       const selected = statuses.find((status) => status.id === request.id);
@@ -4460,6 +4568,7 @@ async function initializeCoreForStartup(): Promise<boolean> {
           // The failed attempt cached the old key. A new broker is required so
           // the first-run path creates a fresh protected key after the archive.
           appCredentialBroker = null;
+			appProviderAccountStore = null;
           appPasswordVault = null;
           appPaymentCardVault = null;
           continue;
