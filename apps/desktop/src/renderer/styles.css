@@ -74,10 +74,19 @@
 	 * fully rounded ends to make editable fields immediately recognizable. */
 	--radius-text-entry: var(--radius-pill);
 
-	/* Motion — fast */
-	--motion-feedback: 80ms;
-	--motion-state: 160ms;
+	/* Motion — named by interaction weight, not component ownership. */
+	--motion-instant: 60ms;
+	--motion-control: 80ms;
+	--motion-menu: 120ms;
+	--motion-selection: 160ms;
+	--motion-panel: 200ms;
+	--motion-navigation: 180ms;
+	--motion-loading: 900ms;
+	/* Compatibility aliases for existing surfaces. */
+	--motion-feedback: var(--motion-control);
+	--motion-state: var(--motion-selection);
 	--ease-kestrel: cubic-bezier(0.25, 1, 0.35, 1);
+	--ease-kestrel-soft: cubic-bezier(0.33, 1, 0.68, 1);
 
 	/* Elevation — softer, closer to macOS material depth */
 	--shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.16);

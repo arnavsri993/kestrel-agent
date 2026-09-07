@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
 	clampAgentPanelWidth,
+	KESTREL_CONTROL_TRANSITION,
 	KESTREL_CRITICAL_SPRING,
+	KESTREL_MENU_TRANSITION,
+	KESTREL_PANEL_TRANSITION,
+	KESTREL_REORDER_SPRING,
+	KESTREL_SELECTION_TRANSITION,
 	handoffSpringVelocity,
 	MAX_INTERRUPTED_PANEL_VELOCITY,
 	projectedPanelWidth,
@@ -10,9 +15,27 @@ import {
 } from "./motion-contract";
 
 describe("renderer motion contract", () => {
+	it("orders direct feedback, menus, selection, and panels by perceived weight", () => {
+		expect(KESTREL_CONTROL_TRANSITION.duration).toBeLessThan(
+			KESTREL_MENU_TRANSITION.duration,
+		);
+		expect(KESTREL_MENU_TRANSITION.duration).toBeLessThan(
+			KESTREL_SELECTION_TRANSITION.duration,
+		);
+		expect(KESTREL_SELECTION_TRANSITION.duration).toBeLessThan(
+			KESTREL_PANEL_TRANSITION.duration,
+		);
+	});
+
 	it("keeps the primary physical spring near critical damping", () => {
 		expect(springDampingRatio(KESTREL_CRITICAL_SPRING)).toBeGreaterThanOrEqual(0.95);
 		expect(springDampingRatio(KESTREL_CRITICAL_SPRING)).toBeLessThanOrEqual(1.08);
+	});
+
+	it("keeps tab reordering firm enough to settle without bounce", () => {
+		expect(springDampingRatio(KESTREL_REORDER_SPRING)).toBeGreaterThanOrEqual(
+			1,
+		);
 	});
 
 	it("clamps the agent rail to useful content and viewport bounds", () => {

@@ -36,7 +36,10 @@ import {
   downloadStatusLabel,
   downloadTimeRemaining,
 } from "./browser-download-format";
-import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
+import {
+  KESTREL_MENU_TRANSITION,
+  KESTREL_SELECTION_TRANSITION,
+} from "../../motion-contract";
 
 type ToolbarMenuName =
   | "browser"
@@ -953,7 +956,7 @@ export function BrowserToolbar({
                 ? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
                 : { opacity: 0, y: -4, scale: 0.992, pointerEvents: "none" }
             }
-            transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+            transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
             style={{ transformOrigin: "top center" }}
           >
             <div
@@ -1085,7 +1088,7 @@ export function BrowserToolbar({
                   ? { opacity: 1, y: 0, pointerEvents: "none" }
                   : { opacity: 0, y: -3, pointerEvents: "none" }
               }
-              transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+              transition={reducedMotion ? { duration: 0 } : KESTREL_SELECTION_TRANSITION}
             >
               <span aria-hidden="true">{zoomPercent}%</span>
               {zoomPercent !== 100 && (
@@ -1237,7 +1240,7 @@ export function BrowserToolbar({
                 ? { opacity: 1, scale: 1, pointerEvents: "none" }
                 : { opacity: 0, scale: 0.985, pointerEvents: "none" }
             }
-            transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+            transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
             role="menu"
             aria-label={
               visibleMenu === "downloads"

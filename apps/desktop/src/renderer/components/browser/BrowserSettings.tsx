@@ -651,6 +651,7 @@ export function BrowserSettings({
   if (!settings)
     return (
       <div className="browser-settings-loading" role="status" aria-busy="true">
+        <span className="browser-settings-loading-mark" aria-hidden="true" />
         <p>Browser settings are loading.</p>
         {browser.error && <small role="alert">{browser.error}</small>}
         <button

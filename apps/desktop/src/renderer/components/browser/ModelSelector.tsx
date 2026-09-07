@@ -2,7 +2,7 @@ import type { ProviderAccountSummary } from "@kestrel/shared-types";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
+import { KESTREL_MENU_TRANSITION } from "../../motion-contract";
 import { Icon } from "../Icon";
 import {
 	accountForChoice,
@@ -232,7 +232,7 @@ export function ModelSelector({
 									: {
 											opacity: 0,
 											y: menuPos.placement === "above" ? 4 : -4,
-											scale: 0.992,
+													scale: 0.992,
 										}
 							}
 							animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -246,7 +246,7 @@ export function ModelSelector({
 											pointerEvents: "none",
 										}
 							}
-							transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+							transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
 							style={{ top: menuPos.top, left: menuPos.left }}
 						>
 							<div className="model-selector-search">

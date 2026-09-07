@@ -15,7 +15,7 @@ import {
 import { BookmarkFavicon } from "./BookmarkFavicon";
 import { recommendedBookmarkTitle } from "./bookmark-title";
 import "./bookmark-dialog.css";
-import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
+import { KESTREL_PANEL_TRANSITION } from "../../motion-contract";
 
 const DISPLAY_OPTIONS: readonly {
 	mode: UserBrowserBookmarkDisplayMode;
@@ -289,7 +289,7 @@ export function BookmarkDialog({
 					? { opacity: 1, pointerEvents: "none" }
 					: { opacity: 0, pointerEvents: "none" }
 			}
-			transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+			transition={reducedMotion ? { duration: 0 } : KESTREL_PANEL_TRANSITION}
 			onMouseDown={(event: MouseEvent<HTMLDivElement>) => {
 				if (event.target === event.currentTarget && !busy) onCancel();
 			}}
@@ -309,7 +309,7 @@ export function BookmarkDialog({
 						? { opacity: 1, y: 0, scale: 1 }
 						: { opacity: 0, y: 8, scale: 0.985 }
 				}
-				transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+				transition={reducedMotion ? { duration: 0 } : KESTREL_PANEL_TRANSITION}
 			>
 				<header className="bookmark-dialog-header">
 					<div className="bookmark-dialog-heading">
