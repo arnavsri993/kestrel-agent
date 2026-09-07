@@ -3417,6 +3417,29 @@ export const UserBrowserTabFolderSchema = z.object({
 });
 export type UserBrowserTabFolder = z.infer<typeof UserBrowserTabFolderSchema>;
 
+/**
+ * These are normalized, renderer-safe labels for a reputation provider's
+ * finding. Provider-specific codes stay in the main process.
+ */
+export const UserBrowserThreatTypeSchema = z.enum([
+	"malware",
+	"social-engineering",
+	"unwanted-software",
+	"potentially-harmful-application",
+	"unsafe-site",
+]);
+export type UserBrowserThreatType = z.infer<typeof UserBrowserThreatTypeSchema>;
+
+export const UserBrowserBlockedNavigationSchema = z.object({
+	url: z.string().url().max(8_192),
+	source: z.enum(["navigation", "redirect", "popup"]),
+	threatTypes: z.array(UserBrowserThreatTypeSchema).min(1).max(5),
+	provider: z.string().min(1).max(100),
+});
+export type UserBrowserBlockedNavigation = z.infer<
+	typeof UserBrowserBlockedNavigationSchema
+>;
+
 export const UserBrowserTabSchema = z.object({
 	id: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	title: z.string().min(1).max(500),
@@ -3429,6 +3452,7 @@ export const UserBrowserTabSchema = z.object({
 	discarded: z.boolean(),
 	crashed: z.boolean(),
 	error: z.string().min(1).max(500).optional(),
+	blockedNavigation: UserBrowserBlockedNavigationSchema.optional(),
 	pinned: z.boolean().default(false),
 	muted: z.boolean().default(false),
 	tabFolderId: z.string().regex(/^tab-folder-[a-f0-9-]{36}$/).optional(),
@@ -3640,6 +3664,16 @@ export type UserBrowserHistoryEntry = z.infer<
 	typeof UserBrowserHistoryEntrySchema
 >;
 
+export const UserBrowserDownloadReputationSchema = z.object({
+	verdict: z.enum(["safe", "unknown", "malicious"]),
+	provider: z.string().min(1).max(100),
+	threatTypes: z.array(UserBrowserThreatTypeSchema).max(5).default([]),
+	checkedAt: z.string().datetime(),
+});
+export type UserBrowserDownloadReputation = z.infer<
+	typeof UserBrowserDownloadReputationSchema
+>;
+
 export const UserBrowserDownloadSchema = z.object({
 	id: z.string().regex(/^download-[a-f0-9-]{36}$/),
 	tabId: z
@@ -3650,10 +3684,18 @@ export const UserBrowserDownloadSchema = z.object({
 	sourceUrl: z.string().url().max(8_192),
 	receivedBytes: z.number().int().nonnegative(),
 	totalBytes: z.number().int().nonnegative(),
-	status: z.enum(["progressing", "completed", "cancelled", "failed"]),
+	status: z.enum([
+		"checking",
+		"progressing",
+		"completed",
+		"cancelled",
+		"failed",
+		"blocked",
+	]),
 	startedAt: z.string().datetime(),
 	completedAt: z.string().datetime().optional(),
 	canReveal: z.boolean(),
+	reputation: UserBrowserDownloadReputationSchema.optional(),
 });
 export type UserBrowserDownload = z.infer<typeof UserBrowserDownloadSchema>;
 
@@ -4214,6 +4256,10 @@ export const RendererRequestSchema = z.union([
 		type: z.literal("browser-navigate"),
 		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 		input: z.string().min(1).max(8_192),
+	}),
+	z.object({
+		type: z.literal("browser-dismiss-threat"),
+		tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	}),
 	z.object({
 		type: z.enum([

@@ -41,10 +41,12 @@ export function downloadStatusLabel(
 	status: UserBrowserDownload["status"],
 ): string {
 	return {
+		checking: "Checking reputation",
 		completed: "Completed",
 		cancelled: "Cancelled",
 		failed: "Failed",
 		progressing: "Downloading",
+		blocked: "Blocked for safety",
 	}[status];
 }
 

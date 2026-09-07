@@ -117,6 +117,10 @@ const electron = vi.hoisted(() => {
     navigationHistory = {
       canGoBack: vi.fn(() => false),
       canGoForward: vi.fn(() => false),
+			getActiveIndex: vi.fn(() => 0),
+			getEntryAtIndex: vi.fn(
+				(_index: number): { url: string; title: string } | null => null,
+			),
       goBack: vi.fn(),
       goForward: vi.fn(),
       clear: vi.fn(),
@@ -201,6 +205,7 @@ import {
   isAuthenticationFlowUrl,
   UserBrowserService,
 } from "./user-browser-service";
+import type { BrowserThreatProvider } from "./browser-threat-provider";
 import { UserBrowserSettingsSchema } from "@kestrel/shared-types";
 import type {
   BrowserTabFolderName,
@@ -237,6 +242,7 @@ function createService(options: {
   nameTabFolders?: (
     groups: BrowserTabFolderNamingGroup[],
   ) => Promise<BrowserTabFolderName[]>;
+	threatProvider?: BrowserThreatProvider;
 } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "kestrel-user-browser-"));
   directories.push(directory);
@@ -290,6 +296,9 @@ function createService(options: {
 		...(options.nameTabFolders
 			? { nameTabFolders: options.nameTabFolders }
 			: {}),
+		...(options.threatProvider
+			? { threatProvider: options.threatProvider }
+			: {}),
 	});
 	return { service, window, events, commands, statePath };
 }
@@ -297,6 +306,27 @@ function createService(options: {
 async function navigateNewTab(service: UserBrowserService, url: string) {
   const state = await service.createTab(url, false);
   return state.tabs.at(-1)!;
+}
+
+function threatProvider(
+	checkUrl: BrowserThreatProvider["checkUrl"],
+): BrowserThreatProvider {
+	return { id: "test-reputation", available: true, checkUrl };
+}
+
+function downloadItem(url: string, filename = "report.txt") {
+	return {
+		getFilename: vi.fn(() => filename),
+		getURL: vi.fn(() => url),
+		getReceivedBytes: vi.fn(() => 0),
+		getTotalBytes: vi.fn(() => 10),
+		setSavePath: vi.fn(),
+		pause: vi.fn(),
+		resume: vi.fn(),
+		on: vi.fn(),
+		once: vi.fn(),
+		cancel: vi.fn(),
+	};
 }
 
 describe("UserBrowserService", () => {
@@ -390,6 +420,290 @@ describe("UserBrowserService", () => {
 			expect(item.setSavePath).toHaveBeenCalledWith(chosenPath),
 		);
 		expect(item.resume).toHaveBeenCalledOnce();
+	});
+
+	it("blocks a malicious typed navigation before loading and hides the native view", async () => {
+		const provider = threatProvider(vi.fn(async () => ({
+			verdict: "malicious" as const,
+			provider: "test-reputation",
+			threatTypes: ["malware" as const],
+		})));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+
+		await service.navigate(tab.id, "https://malware.example/payload");
+		const contents = electron.state.views[0]!.webContents;
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://malware.example/payload",
+			context: "navigation",
+		});
+		expect(contents.loadURL).not.toHaveBeenCalled();
+		expect(contents.stop).toHaveBeenCalledOnce();
+		expect(electron.state.views[0]!.setVisible).toHaveBeenLastCalledWith(false);
+		expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+			url: "https://malware.example/payload",
+			source: "navigation",
+			threatTypes: ["malware"],
+		});
+	});
+
+	it("prevents and blocks a malicious page-initiated redirect", async () => {
+		const provider = threatProvider(vi.fn(async ({ url }) => url.includes("malware")
+			? { verdict: "malicious" as const, provider: "test-reputation", threatTypes: ["social-engineering" as const] }
+			: { verdict: "safe" as const, provider: "test-reputation" }));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const contents = electron.state.views[0]!.webContents;
+		const event = { preventDefault: vi.fn() };
+
+		contents.emit("will-redirect", event, "https://malware.example/redirect");
+		await vi.waitFor(() => expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+			url: "https://malware.example/redirect",
+			source: "redirect",
+		}));
+
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+		expect(contents.loadURL).not.toHaveBeenCalledWith("https://malware.example/redirect");
+		expect(contents.stop).toHaveBeenCalledOnce();
+	});
+
+	it("blocks a malicious managed popup before its native page loads", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["social-engineering" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const contents = electron.state.views[0]!.webContents;
+
+		const response = contents.windowOpenHandler?.({
+			url: "https://malware.example/popup",
+			disposition: "foreground-tab",
+		});
+
+		expect(response).toEqual({ action: "deny" });
+		await vi.waitFor(() =>
+			expect(
+				service
+					.getState()
+					.tabs.find((candidate) => candidate.blockedNavigation)?.blockedNavigation,
+			).toMatchObject({
+				url: "https://malware.example/popup",
+				source: "popup",
+			}),
+		);
+		expect(electron.state.views.at(-1)?.webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("redacts query and fragment data before an injected provider sees a URL", async () => {
+		const provider = threatProvider(
+			vi.fn(async () => ({
+				verdict: "safe" as const,
+				provider: "test-reputation",
+			})),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		const target =
+			"https://safe.example/callback?code=oauth-code&query=private#access_token=fragment-secret";
+
+		await service.navigate(tab.id, target);
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://safe.example/callback",
+			context: "navigation",
+		});
+		expect(electron.state.views[0]!.webContents.loadURL).toHaveBeenCalledWith(
+			target,
+		);
+	});
+
+	it("checks a history target before a programmatic back navigation", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["malware" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example/current");
+		const contents = electron.state.views[0]!.webContents;
+		contents.navigationHistory.canGoBack.mockReturnValue(true);
+		contents.navigationHistory.getActiveIndex.mockReturnValue(1);
+		contents.navigationHistory.getEntryAtIndex.mockReturnValue({
+			url: "https://malware.example/history",
+			title: "Malware history",
+		});
+
+		service.back(tab.id);
+
+		await vi.waitFor(() =>
+			expect(service.getState().tabs[0]?.blockedNavigation).toMatchObject({
+				url: "https://malware.example/history",
+				source: "navigation",
+			}),
+		);
+		expect(contents.navigationHistory.goBack).not.toHaveBeenCalled();
+	});
+
+	it("blocks a malicious download before choosing a destination", async () => {
+		const provider = threatProvider(vi.fn(async () => ({
+			verdict: "malicious" as const,
+			provider: "test-reputation",
+			threatTypes: ["potentially-harmful-application" as const],
+		})));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://malware.example/installer.dmg", "installer.dmg");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		expect(item.pause).toHaveBeenCalledOnce();
+		expect(item.setSavePath).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(item.cancel).toHaveBeenCalledOnce());
+
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "blocked",
+			reputation: { verdict: "malicious", provider: "test-reputation", threatTypes: ["potentially-harmful-application"] },
+		});
+	});
+
+	it("blocks a download when a redirect-chain URL is malicious", async () => {
+		const provider = threatProvider(
+			vi.fn(async ({ url }) =>
+				url.includes("malware")
+					? {
+							verdict: "malicious" as const,
+							provider: "test-reputation",
+							threatTypes: ["malware" as const],
+						}
+					: { verdict: "safe" as const, provider: "test-reputation" },
+			),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = {
+			...downloadItem("https://safe.example/installer.dmg", "installer.dmg"),
+			getURLChain: vi.fn(() => ["https://malware.example/redirect"]),
+		};
+
+		electron.state.partitions[0]!.instance.emit(
+			"will-download",
+			{},
+			item,
+			electron.state.views[0]!.webContents,
+		);
+		await vi.waitFor(() => expect(item.cancel).toHaveBeenCalledOnce());
+
+		expect(provider.checkUrl).toHaveBeenCalledWith({
+			url: "https://malware.example/redirect",
+			context: "download",
+		});
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "blocked",
+			reputation: { verdict: "malicious", threatTypes: ["malware"] },
+		});
+	});
+
+	it("resumes a safe download only after its reputation check", async () => {
+		const provider = threatProvider(vi.fn(async () => ({ verdict: "safe" as const, provider: "test-reputation" })));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		expect(item.pause).toHaveBeenCalledOnce();
+		await vi.waitFor(() => expect(item.resume).toHaveBeenCalledOnce());
+		expect(item.setSavePath).toHaveBeenCalledOnce();
+		expect(service.getState().downloads[0]).toMatchObject({
+			status: "progressing",
+			reputation: { verdict: "safe", provider: "test-reputation" },
+		});
+	});
+
+	it("does not resume a download cancelled while its reputation check is pending", async () => {
+		let resolveCheck: ((value: Awaited<ReturnType<BrowserThreatProvider["checkUrl"]>>) => void) | undefined;
+		const checkUrl: BrowserThreatProvider["checkUrl"] = ({ context }) => context === "download"
+			? new Promise((resolve) => { resolveCheck = resolve; })
+			: Promise.resolve({ verdict: "safe" as const, provider: "test-reputation" });
+		const provider = threatProvider(vi.fn(checkUrl));
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, electron.state.views[0]!.webContents);
+		const id = service.getState().downloads[0]!.id;
+		service.cancelDownload(id);
+		resolveCheck?.({
+			verdict: "malicious",
+			provider: "test-reputation",
+			threatTypes: ["malware"],
+		});
+		await Promise.resolve();
+
+		expect(item.cancel).toHaveBeenCalledOnce();
+		expect(item.resume).not.toHaveBeenCalled();
+		expect(service.getState().downloads[0]?.status).toBe("cancelled");
+	});
+
+	it("does not resume a canceled download when its Save dialog resolves late", async () => {
+		const provider = threatProvider(
+			vi.fn(async () => ({ verdict: "safe" as const, provider: "test-reputation" })),
+		);
+		const { service } = createService({ threatProvider: provider });
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://safe.example");
+		service.updateSettings(
+			UserBrowserSettingsSchema.parse({
+				...service.getState().settings,
+				downloadBehavior: "ask",
+			}),
+		);
+		type SaveDialogResult = Awaited<ReturnType<typeof dialog.showSaveDialog>>;
+		let resolveDialog: ((result: SaveDialogResult) => void) | undefined;
+		vi.mocked(dialog.showSaveDialog).mockImplementationOnce(
+			() =>
+				new Promise<SaveDialogResult>((resolve) => {
+					resolveDialog = resolve;
+				}),
+		);
+		const item = downloadItem("https://safe.example/report.txt");
+
+		electron.state.partitions[0]!.instance.emit(
+			"will-download",
+			{},
+			item,
+			electron.state.views[0]!.webContents,
+		);
+		await vi.waitFor(() => expect(dialog.showSaveDialog).toHaveBeenCalledOnce());
+		const id = service.getState().downloads[0]!.id;
+		service.cancelDownload(id);
+		resolveDialog?.({ canceled: false, filePath: join(tmpdir(), "late-save.txt") });
+		await Promise.resolve();
+
+		expect(item.cancel).toHaveBeenCalledOnce();
+		expect(item.setSavePath).not.toHaveBeenCalled();
+		expect(item.resume).not.toHaveBeenCalled();
+		expect(service.getState().downloads[0]?.status).toBe("cancelled");
 	});
 
 	it("keeps the prior page when an address-bar navigation becomes a download", async () => {
@@ -1782,7 +2096,7 @@ describe("UserBrowserService", () => {
       once: vi.fn(),
     };
     electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
-    expect(item.setSavePath).toHaveBeenCalledWith(savePath);
+    await vi.waitFor(() => expect(item.setSavePath).toHaveBeenCalledWith(savePath));
 
     template.find((item) => item.label === "Screenshot")?.click?.();
     template

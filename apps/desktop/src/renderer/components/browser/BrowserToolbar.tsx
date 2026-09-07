@@ -123,7 +123,8 @@ function BrowserDownloadsPopover({
                     name={
                       download.status === "completed"
                         ? "check"
-                        : download.status === "progressing"
+                        : download.status === "progressing" ||
+                            download.status === "checking"
                           ? "downloads"
                           : "warning"
                     }
@@ -199,7 +200,8 @@ function BrowserDownloadsPopover({
                       <span>Show in Finder</span>
                     </button>
                   )}
-                  {download.status === "progressing" && (
+                  {(download.status === "progressing" ||
+                    download.status === "checking") && (
                     <button
                       type="button"
                       role="menuitem"

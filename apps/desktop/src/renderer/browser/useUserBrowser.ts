@@ -37,6 +37,7 @@ export interface UserBrowserController {
 	closeTab(tabId: string): Promise<void>;
 	selectTab(tabId: string): Promise<void>;
 	navigate(tabId: string, input: string): Promise<void>;
+	dismissThreat(tabId: string): Promise<void>;
 	back(tabId: string): Promise<void>;
 	forward(tabId: string): Promise<void>;
 	reload(tabId: string, ignoreCache?: boolean): Promise<void>;
@@ -273,6 +274,11 @@ export function useUserBrowser(): UserBrowserController {
 	const navigate = useCallback(
 		(tabId: string, input: string) =>
 			requestState({ type: "browser-navigate", tabId, input }),
+		[requestState],
+	);
+	const dismissThreat = useCallback(
+		(tabId: string) =>
+			requestState({ type: "browser-dismiss-threat", tabId }),
 		[requestState],
 	);
 	const back = useCallback(
@@ -705,6 +711,7 @@ export function useUserBrowser(): UserBrowserController {
 			closeTab,
 			selectTab,
 			navigate,
+			dismissThreat,
 			back,
 			forward,
 			reload,
@@ -769,6 +776,7 @@ export function useUserBrowser(): UserBrowserController {
 			closeTab,
 			selectTab,
 			navigate,
+			dismissThreat,
 			back,
 			forward,
 			reload,

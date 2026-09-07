@@ -2676,6 +2676,93 @@ body:has(.ai-browser-app),
 	margin-top: 18px;
 }
 
+.browser-threat-interstitial {
+	display: grid;
+	place-items: center;
+	place-content: center;
+	min-height: 100%;
+	padding: 38px 30px;
+	text-align: center;
+	background:
+		radial-gradient(circle at 50% 25%, rgb(196 58 58 / 0.1), transparent 42%),
+		var(--canvas);
+}
+.browser-threat-interstitial-icon {
+	display: grid;
+	place-items: center;
+	width: 46px;
+	height: 46px;
+	border: 1px solid color-mix(in srgb, #c43a3a 44%, var(--line));
+	border-radius: 14px;
+	background: color-mix(in srgb, #c43a3a 12%, var(--surface));
+	color: color-mix(in srgb, #d85151 82%, var(--ink));
+}
+.browser-threat-interstitial-icon svg {
+	width: 25px;
+	height: 25px;
+}
+.browser-threat-interstitial-eyebrow {
+	margin: 16px 0 0;
+	color: color-mix(in srgb, #d85151 76%, var(--muted));
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+.browser-threat-interstitial h1 {
+	margin: 7px 0 8px;
+	font: 650 23px / 1.14 var(--display);
+	letter-spacing: -0.025em;
+}
+.browser-threat-interstitial > p:not(.browser-threat-interstitial-eyebrow) {
+	max-width: 52ch;
+	margin: 0;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.55;
+}
+.browser-threat-interstitial code {
+	max-width: min(620px, 100%);
+	margin-top: 16px;
+	padding: 7px 9px;
+	overflow-wrap: anywhere;
+	border: 1px solid var(--line);
+	border-radius: 7px;
+	background: var(--surface);
+	color: var(--ink);
+	font: 11px / 1.45 var(--mono);
+}
+.browser-threat-interstitial ul {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 6px;
+	margin: 13px 0 0;
+	padding: 0;
+	list-style: none;
+}
+.browser-threat-interstitial li {
+	padding: 4px 8px;
+	border: 1px solid color-mix(in srgb, #c43a3a 32%, var(--line));
+	border-radius: 999px;
+	background: color-mix(in srgb, #c43a3a 8%, transparent);
+	color: color-mix(in srgb, #d85151 76%, var(--ink));
+	font-size: 10px;
+	font-weight: 650;
+}
+.browser-threat-interstitial .browser-threat-interstitial-provider {
+	margin-top: 14px;
+	color: var(--faint);
+	font-size: 10px;
+}
+.browser-threat-interstitial > div {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 8px;
+	margin-top: 20px;
+}
+
 .surface-back-button {
 	display: inline-flex;
 	align-items: center;
@@ -2846,8 +2933,12 @@ body:has(.ai-browser-app),
 	color: var(--status-ink);
 }
 .download-state.failed,
-.download-state.cancelled {
+.download-state.cancelled,
+.download-state.blocked {
 	color: var(--status-ink);
+}
+.download-state.checking {
+	color: var(--muted);
 }
 .download-state svg {
 	width: 17px;

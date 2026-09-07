@@ -24,7 +24,9 @@ import {
 	type UserBrowserBookmarkDisplayMode,
 	type UserBrowserBookmarkFolder,
 	type UserBrowserBookmarkFolderId,
+	type UserBrowserBlockedNavigation,
 	type UserBrowserDownload,
+	type UserBrowserDownloadReputation,
 	type UserBrowserEvent,
 	type UserBrowserHistoryEntry,
 	type UserBrowserPageContext,
@@ -86,6 +88,13 @@ import {
 	targetPointFromBackendNode,
 } from "./browser-backend-node-target";
 import { BrowserExtensionManager } from "./browser-extension-manager";
+import {
+	createDefaultBrowserThreatProvider,
+	normalizeThreatLookupUrl,
+	type BrowserThreatProvider,
+	type BrowserThreatVerdict,
+	type SuspiciousDownloadAnalyzer,
+} from "./browser-threat-provider";
 import {
 	browserExtensionOperationErrorMessage,
 	chromeWebStoreInstallErrorMessage,
@@ -288,6 +297,10 @@ export interface UserBrowserServiceOptions {
 	nameTabFolders?(groups: BrowserTabFolderNamingGroup[]): Promise<BrowserTabFolderName[]>;
 	confirmSitePermission?(origin: string, permission: string): Promise<boolean>;
 	requestNativeMediaAccess?(mediaType: "camera" | "microphone"): Promise<boolean>;
+	/** URL-reputation adapter. Defaults to Google Safe Browsing when configured. */
+	threatProvider?: BrowserThreatProvider;
+	/** Reserved post-download metadata hook for a future Kestrel AI analyzer. */
+	suspiciousDownloadAnalyzer?: SuspiciousDownloadAnalyzer;
 	requestPasswordUserPresence?(reason: string): Promise<void>;
 }
 
@@ -324,10 +337,13 @@ function mediaPermissionLabel(
 interface ViewRecord {
 	view: WebContentsView;
 	navigatingTo?: string;
+	navigationGeneration: number;
+	approvedNavigationUrl?: string;
 	pendingDownloadNavigation?: {
 		targetUrl: string;
 		previousTab: UserBrowserTab;
 		requestedAt: number;
+		generation: number;
 	};
 }
 
@@ -350,7 +366,8 @@ interface AgentCredentialAutofillResult {
 
 interface PendingContextDownload {
 	url: string;
-	path: string;
+	defaultPath: string;
+	title: string;
 	requestedAt: number;
 }
 
@@ -516,6 +533,25 @@ function downloadMatchesNavigation(
 	return candidates.some(
 		(candidate) => safePageUrl(candidate)?.toString() === expected,
 	);
+}
+
+function reputationUrlsForDownload(item: Electron.DownloadItem): string[] {
+	const candidates = [item.getURL()];
+	try {
+		if (typeof item.getURLChain === "function")
+			candidates.push(...item.getURLChain());
+	} catch {
+		// A partial Electron DownloadItem implementation can still be checked by
+		// its final URL. Do not make the download machinery depend on a chain.
+	}
+	return [
+		...new Set(
+			candidates.flatMap((candidate) => {
+				const url = safePageUrl(candidate)?.toString();
+				return url ? [url] : [];
+			}),
+		),
+	];
 }
 
 function isAbortedNavigation(cause: unknown): boolean {
@@ -1190,6 +1226,8 @@ export class UserBrowserService {
 	private readonly partitionName: string;
 	private readonly partitionCoordinator: BrowserPartitionCoordinator;
 	private readonly partitionParticipant: BrowserPartitionParticipant;
+	private readonly threatProvider: BrowserThreatProvider;
+	private readonly suspiciousDownloadAnalyzer: SuspiciousDownloadAnalyzer | undefined;
 	private readonly onEvent: UserBrowserServiceOptions["onEvent"];
 	private readonly onPasswordPrompt?: UserBrowserServiceOptions["onPasswordPrompt"];
 	private readonly passwordVault: PasswordVault | undefined;
@@ -1266,6 +1304,9 @@ export class UserBrowserService {
 			normalizedSettings.downloadDirectory,
 		);
 		this.onEvent = options.onEvent;
+		this.threatProvider =
+			options.threatProvider ?? createDefaultBrowserThreatProvider();
+		this.suspiciousDownloadAnalyzer = options.suspiciousDownloadAnalyzer;
 		this.onPasswordPrompt = options.onPasswordPrompt;
 		this.passwordVault = options.passwordVault;
 		this.onPaymentPrompt = options.onPaymentPrompt;
@@ -1552,6 +1593,7 @@ export class UserBrowserService {
 		input?: string,
 		active = true,
 		loadOptions?: BrowserNavigationLoadOptions,
+		threatSource: UserBrowserBlockedNavigation["source"] = "navigation",
 	): Promise<UserBrowserState> {
 		this.assertAvailable();
 		const timestamp = this.now().toISOString();
@@ -1559,7 +1601,7 @@ export class UserBrowserService {
 		this.state.tabs.push(tab);
 		if (active || !this.state.activeTabId) this.state.activeTabId = tab.id;
 		this.commit();
-		if (input) await this.navigate(tab.id, input, loadOptions);
+		if (input) await this.navigate(tab.id, input, loadOptions, threatSource);
 		else await this.syncActiveView();
 		return this.getState();
 	}
@@ -1731,6 +1773,7 @@ export class UserBrowserService {
 		tabId: string,
 		input: string,
 		loadOptions?: BrowserNavigationLoadOptions,
+		threatSource: UserBrowserBlockedNavigation["source"] = "navigation",
 	): Promise<UserBrowserState> {
 		const tab = this.requireTab(tabId);
 		const appPage = parseKestrelAppPage(input);
@@ -1742,6 +1785,7 @@ export class UserBrowserService {
 			this.closeView(tabId);
 			delete tab.file;
 			tab.error = undefined;
+			delete tab.blockedNavigation;
 			tab.crashed = false;
 			tab.discarded = false;
 			tab.loading = false;
@@ -1768,46 +1812,232 @@ export class UserBrowserService {
 		// file tabs, discarded views, and crashed renderers still cross an
 		// explicit lifecycle boundary and receive a fresh view when needed.
 		const record = this.ensureView(tab, false);
-		const webContents = liveWebContents(record?.view?.webContents);
-		if (!webContents)
+		if (!liveWebContents(record?.view?.webContents))
 			throw new Error("The browser page is still waking up. Try again.");
-		record.pendingDownloadNavigation = {
-			targetUrl: normalized.url,
-			previousTab: structuredClone(tab),
-			requestedAt: Date.now(),
+		const generation = this.beginNavigationCheck(record);
+		await this.checkAndLoadNavigation(
+			tab,
+			record,
+			normalized.url,
+			threatSource,
+			generation,
+			loadOptions,
+		);
+		this.discardLeastRecentViews();
+		return this.getState();
+	}
+
+	dismissThreat(tabId: string): UserBrowserState {
+		const tab = this.requireTab(tabId);
+		if (!tab.blockedNavigation) return this.getState();
+		delete tab.blockedNavigation;
+		tab.loading = false;
+		tab.error = undefined;
+		this.commit();
+		if (tabId === this.state.activeTabId) void this.syncActiveView();
+		return this.getState();
+	}
+
+	private beginNavigationCheck(record: ViewRecord): number {
+		record.navigationGeneration += 1;
+		return record.navigationGeneration;
+	}
+
+	private navigationCheckIsCurrent(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		generation: number,
+	): boolean {
+		return (
+			!this.disposed &&
+			this.views.get(tab.id) === record &&
+			record.navigationGeneration === generation &&
+			this.state.tabs.some((candidate) => candidate.id === tab.id)
+		);
+	}
+
+	private snapshotTabBeforeNavigation(tab: UserBrowserTab): UserBrowserTab {
+		const snapshot = structuredClone(tab);
+		delete snapshot.blockedNavigation;
+		return snapshot;
+	}
+
+	private async reputationForUrl(
+		url: string,
+		context: "navigation" | "download",
+	): Promise<BrowserThreatVerdict | undefined> {
+		if (!this.threatProvider.available) return undefined;
+		const lookupUrl = normalizeThreatLookupUrl(url);
+		if (!lookupUrl)
+			return {
+				verdict: "unknown",
+				provider: this.threatProvider.id,
+				reason: "invalid-response",
+			};
+		try {
+			return await this.threatProvider.checkUrl({ url: lookupUrl, context });
+		} catch {
+			return {
+				verdict: "unknown",
+				provider: this.threatProvider.id,
+				reason: "unavailable",
+			};
+		}
+	}
+
+	private async checkAndLoadNavigation(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		url: string,
+		source: UserBrowserBlockedNavigation["source"],
+		generation: number,
+		loadOptions?: BrowserNavigationLoadOptions,
+	): Promise<void> {
+		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+		delete tab.blockedNavigation;
+		tab.error = undefined;
+		tab.crashed = false;
+		tab.loading = true;
+		this.commit();
+		if (!this.threatProvider.available) {
+			await this.loadApprovedNavigation(
+				tab,
+				record,
+				url,
+				generation,
+				loadOptions,
+			);
+			return;
+		}
+		const verdict = await this.reputationForUrl(url, "navigation");
+		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+		if (verdict?.verdict === "malicious") {
+			this.blockNavigation(tab, record, url, source, verdict);
+			return;
+		}
+		await this.loadApprovedNavigation(
+			tab,
+			record,
+			url,
+			generation,
+			loadOptions,
+		);
+	}
+
+	private async checkAndRestoreStoredNavigation(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		url: string,
+		generation: number,
+	): Promise<void> {
+		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+		if (this.threatProvider.available) {
+			const verdict = await this.reputationForUrl(url, "navigation");
+			if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+			if (verdict?.verdict === "malicious") {
+				this.blockNavigation(tab, record, url, "navigation", verdict);
+				return;
+			}
+		}
+		const webContents = liveWebContents(record.view.webContents);
+		if (!webContents) return;
+		// Restoring a discarded view should preserve the existing tab title,
+		// history and loading state. It is not a new user navigation, but it is
+		// still reputation-checked when a provider is configured.
+		record.approvedNavigationUrl = url;
+		try {
+			await webContents.loadURL(url);
+		} catch {
+			// The persisted tab remains usable even when its background restoration
+			// cannot complete (for example, while offline). The regular load events
+			// retain responsibility for user-visible failures.
+		} finally {
+			if (record.approvedNavigationUrl === url)
+				delete record.approvedNavigationUrl;
+		}
+	}
+
+	private blockNavigation(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		url: string,
+		source: UserBrowserBlockedNavigation["source"],
+		verdict: Extract<BrowserThreatVerdict, { verdict: "malicious" }>,
+	): void {
+		const threatTypes = verdict.threatTypes.length
+			? verdict.threatTypes.slice(0, 5)
+			: (["unsafe-site"] as const);
+		tab.blockedNavigation = {
+			url: sanitizeBrowserUrl(url) || "https://invalid.local/",
+			source,
+			threatTypes: [...threatTypes],
+			provider: verdict.provider.slice(0, 100) || "reputation-provider",
 		};
-			this.elementRefs.delete(tabId);
-			this.sensitiveElementRefs.delete(tabId);
+		tab.loading = false;
+		tab.error = undefined;
+		tab.crashed = false;
+		this.elementRefs.delete(tab.id);
+		delete record.navigatingTo;
+		delete record.approvedNavigationUrl;
+		delete record.pendingDownloadNavigation;
+		liveWebContents(record.view.webContents)?.stop();
+		if (tab.id === this.state.activeTabId) {
+			this.clearPasswordPrompt();
+			this.clearPaymentPrompt();
+		}
+		this.commit();
+		if (tab.id === this.state.activeTabId) void this.syncActiveView();
+	}
+
+	private async loadApprovedNavigation(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		url: string,
+		generation: number,
+		loadOptions?: BrowserNavigationLoadOptions,
+	): Promise<void> {
+		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+		const webContents = liveWebContents(record.view.webContents);
+		if (!webContents) return;
+		const priorNavigation = record.pendingDownloadNavigation;
+		record.pendingDownloadNavigation = {
+			targetUrl: url,
+			previousTab:
+				priorNavigation?.previousTab ?? this.snapshotTabBeforeNavigation(tab),
+			requestedAt: Date.now(),
+			generation,
+		};
+		this.elementRefs.delete(tab.id);
+		delete tab.file;
+		delete tab.blockedNavigation;
+		this.sensitiveElementRefs.delete(tab.id);
 		tab.error = undefined;
 		tab.crashed = false;
 		tab.discarded = false;
 		tab.loading = true;
-		// The actual WebContents still receives the complete navigation URL, but
-		// renderer state, persistence, history, and model-visible metadata never
-		// receive credential-like query or fragment values.
-		tab.url = sanitizeBrowserUrl(normalized.url);
-		tab.title = hostnameTitle(normalized.url);
-		record.navigatingTo = normalized.url;
+		// The actual WebContents receives the complete URL, but persisted and
+		// renderer-visible browser state stays free of credential-like values.
+		tab.url = sanitizeBrowserUrl(url);
+		tab.title = hostnameTitle(url);
+		record.navigatingTo = url;
 		this.commit();
-		if (tabId === this.state.activeTabId) this.revealActiveWebContent();
+		if (tab.id === this.state.activeTabId) this.revealActiveWebContent();
 		this.attachActiveWebView();
 		let directDownloadMayArrive = false;
+		record.approvedNavigationUrl = url;
 		try {
-			if (loadOptions)
-				await webContents.loadURL(normalized.url, loadOptions);
-			else await webContents.loadURL(normalized.url);
+			if (loadOptions) await webContents.loadURL(url, loadOptions);
+			else await webContents.loadURL(url);
 		} catch (cause) {
-			if (record.navigatingTo !== normalized.url) return this.getState();
+			if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
 			if (mayBecomeDirectDownload(cause)) directDownloadMayArrive = true;
 			if (isAbortedNavigation(cause)) {
-				// Electron's will-download event can arrive after loadURL() rejects for a
-				// Content-Disposition attachment. Keep this short-lived candidate so the
-				// download handler can restore the previous page instead of turning a
-				// successful download into a false navigation error.
+				// Electron can reject loadURL before its will-download event arrives.
+				// Keep the short-lived pending snapshot for that event to correlate.
 				tab.loading = false;
 				tab.error = undefined;
 				this.commit();
-				return this.getState();
+				return;
 			}
 			tab.loading = false;
 			tab.error = describeBrowserLoadFailure(
@@ -1816,23 +2046,39 @@ export class UserBrowserService {
 			);
 			this.commit();
 		} finally {
-			if (record.navigatingTo === normalized.url) {
+			if (record.approvedNavigationUrl === url)
+				delete record.approvedNavigationUrl;
+			if (
+				this.navigationCheckIsCurrent(tab, record, generation) &&
+				record.navigatingTo === url
+			) {
 				delete record.navigatingTo;
 				if (!directDownloadMayArrive)
 					delete record.pendingDownloadNavigation;
 			}
 		}
-		this.discardLeastRecentViews();
-		return this.getState();
+	}
+
+	private interceptPageNavigation(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		url: string,
+		source: Exclude<UserBrowserBlockedNavigation["source"], "popup">,
+	): void {
+		const normalized = safePageUrl(url)?.toString();
+		if (!normalized) return;
+		const generation = this.beginNavigationCheck(record);
+		void this.checkAndLoadNavigation(tab, record, normalized, source, generation);
 	}
 
 	back(tabId: string): UserBrowserState {
 		const tab = this.requireTab(tabId);
+		if (tab.blockedNavigation) return this.dismissThreat(tabId);
 		if (isKestrelAppPageUrl(tab.url)) return this.getState();
 		const record = this.requireView(tabId);
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (webContents?.navigationHistory.canGoBack())
-			webContents.navigationHistory.goBack();
+			this.requestHistoryNavigation(tab, record, webContents, -1);
 		return this.getState();
 	}
 
@@ -1842,12 +2088,86 @@ export class UserBrowserService {
 		const record = this.requireView(tabId);
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (webContents?.navigationHistory.canGoForward())
-			webContents.navigationHistory.goForward();
+			this.requestHistoryNavigation(tab, record, webContents, 1);
 		return this.getState();
+	}
+
+	private requestHistoryNavigation(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		webContents: WebContents,
+		offset: -1 | 1,
+	): void {
+		if (!this.threatProvider.available) {
+			if (offset < 0) webContents.navigationHistory.goBack();
+			else webContents.navigationHistory.goForward();
+			return;
+		}
+		const target = this.historyNavigationTarget(webContents, offset);
+		// A configured provider must never be bypassed just because Electron
+		// cannot expose the destination history entry on an older runtime.
+		if (!target) return;
+		const generation = this.beginNavigationCheck(record);
+		void this.checkAndRunHistoryNavigation(
+			tab,
+			record,
+			webContents,
+			target,
+			generation,
+			offset,
+		).catch(() => undefined);
+	}
+
+	private historyNavigationTarget(
+		webContents: WebContents,
+		offset: -1 | 1,
+	): string | undefined {
+		const history = webContents.navigationHistory;
+		if (
+			typeof history.getActiveIndex !== "function" ||
+			typeof history.getEntryAtIndex !== "function"
+		)
+			return undefined;
+		try {
+			const entry = history.getEntryAtIndex(
+				history.getActiveIndex() + offset,
+			);
+			return safePageUrl(entry?.url ?? "")?.toString();
+		} catch {
+			return undefined;
+		}
+	}
+
+	private async checkAndRunHistoryNavigation(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		webContents: WebContents,
+		url: string,
+		generation: number,
+		offset: -1 | 1,
+	): Promise<void> {
+		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+		tab.loading = true;
+		tab.error = undefined;
+		tab.crashed = false;
+		this.commit();
+		const verdict = await this.reputationForUrl(url, "navigation");
+		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+		if (verdict?.verdict === "malicious") {
+			this.blockNavigation(tab, record, url, "navigation", verdict);
+			return;
+		}
+		if (!liveWebContents(webContents)) return;
+		if (offset < 0) webContents.navigationHistory.goBack();
+		else webContents.navigationHistory.goForward();
 	}
 
 	reload(tabId: string, ignoreCache = false): UserBrowserState {
 		const tab = this.requireTab(tabId);
+		if (tab.blockedNavigation) {
+			void this.navigate(tabId, tab.blockedNavigation.url).catch(() => undefined);
+			return this.getState();
+		}
 		if (!tab.url || isKestrelAppPageUrl(tab.url)) return this.getState();
 		this.elementRefs.delete(tabId);
 		this.sensitiveElementRefs.delete(tabId);
@@ -1858,18 +2178,59 @@ export class UserBrowserService {
 		this.attachActiveWebView();
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return this.getState();
+		const normalized = safePageUrl(tab.url)?.toString();
+		if (!normalized) return this.getState();
+		const generation = this.beginNavigationCheck(record);
+		void this.checkAndReloadNavigation(
+			tab,
+			record,
+			normalized,
+			generation,
+			ignoreCache,
+		).catch(() => undefined);
+		return this.getState();
+	}
+
+	private async checkAndReloadNavigation(
+		tab: UserBrowserTab,
+		record: ViewRecord,
+		url: string,
+		generation: number,
+		ignoreCache: boolean,
+	): Promise<void> {
+		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+		tab.loading = true;
+		tab.error = undefined;
+		tab.crashed = false;
+		this.commit();
+		if (!this.threatProvider.available) {
+			const webContents = liveWebContents(record.view.webContents);
+			if (!webContents) return;
+			const loadedUrl = webContents.getURL?.() ?? "";
+			if (!loadedUrl) {
+				await this.loadApprovedNavigation(tab, record, url, generation);
+				return;
+			}
+			if (
+				ignoreCache &&
+				typeof webContents.reloadIgnoringCache === "function"
+			)
+				webContents.reloadIgnoringCache();
+			else webContents.reload();
+			return;
+		}
+		const verdict = await this.reputationForUrl(url, "navigation");
+		if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
+		if (verdict?.verdict === "malicious") {
+			this.blockNavigation(tab, record, url, "navigation", verdict);
+			return;
+		}
+		const webContents = liveWebContents(record.view.webContents);
+		if (!webContents) return;
 		const loadedUrl = webContents.getURL?.() ?? "";
 		if (!loadedUrl) {
-			void webContents.loadURL(tab.url).catch((cause) => {
-				if (!liveWebContents(webContents)) return;
-				tab.loading = false;
-				tab.error = describeBrowserLoadFailure(
-					0,
-					cause instanceof Error ? cause.message : "",
-				);
-				this.commit();
-			});
-			return this.getState();
+			await this.loadApprovedNavigation(tab, record, url, generation);
+			return;
 		}
 		if (
 			ignoreCache &&
@@ -1879,7 +2240,6 @@ export class UserBrowserService {
 		} else {
 			webContents.reload();
 		}
-		return this.getState();
 	}
 
 	stop(tabId: string): UserBrowserState {
@@ -1932,6 +2292,7 @@ export class UserBrowserService {
 			!tab ||
 			!tab.url ||
 			tab.error ||
+			tab.blockedNavigation ||
 			tab.file ||
 			isKestrelAppPageUrl(tab.url)
 		)
@@ -2026,6 +2387,15 @@ export class UserBrowserService {
 	cancelDownload(downloadId: string): UserBrowserState {
 		const item = this.activeDownloads.get(downloadId);
 		if (!item) throw new Error("This download is not in progress.");
+		const record = this.state.downloads.find(
+			(download) => download.id === downloadId,
+		);
+		if (record?.status === "checking" || record?.status === "progressing") {
+			record.status = "cancelled";
+			record.completedAt = this.now().toISOString();
+			record.canReveal = false;
+			this.commit();
+		}
 		item.cancel();
 		return this.getState();
 	}
@@ -4839,17 +5209,23 @@ export class UserBrowserService {
 		const id = `download-${randomUUID()}`;
 		const filename = pendingContextDownload
 			? safeDownloadFilename(
-					basename(pendingContextDownload.path),
+					basename(pendingContextDownload.defaultPath),
 					`${id}.download`,
 				)
 			: this.availableDownloadName(item.getFilename(), id);
 		let path =
-			pendingContextDownload?.path ?? join(this.downloadDirectory, filename);
+			pendingContextDownload?.defaultPath ??
+			join(this.downloadDirectory, filename);
 		const startedAt = this.now().toISOString();
 		const askForLocation =
-			!pendingContextDownload && this.state.settings.downloadBehavior === "ask";
-		if (!askForLocation) item.setSavePath(path);
-		else if (typeof item.pause === "function") item.pause();
+			Boolean(pendingContextDownload) ||
+			this.state.settings.downloadBehavior === "ask";
+		const requiresReputationCheck = this.threatProvider.available;
+		// Pause before allocating a destination or displaying the save panel. A
+		// provider can then block a bad download without a partial file being
+		// written to disk. Electron keeps the normal download implementation and
+		// its macOS quarantine behavior; Kestrel never edits xattrs or launch policy.
+		if (requiresReputationCheck && typeof item.pause === "function") item.pause();
 		this.downloadPaths.set(id, path);
 		this.activeDownloads.set(id, item);
 		this.state.downloads.push({
@@ -4859,7 +5235,7 @@ export class UserBrowserService {
 			sourceUrl: sanitizeBrowserUrl(item.getURL()) || "https://invalid.local/",
 			receivedBytes: 0,
 			totalBytes: Math.max(0, item.getTotalBytes()),
-			status: "progressing",
+			status: requiresReputationCheck ? "checking" : "progressing",
 			startedAt,
 			canReveal: false,
 		});
@@ -4868,29 +5244,11 @@ export class UserBrowserService {
 			Math.max(0, this.state.downloads.length - MAX_DOWNLOAD_ENTRIES),
 		);
 		this.commit();
-		if (askForLocation) {
-			void dialog
-				.showSaveDialog(this.window, {
-					title: "Save download",
-					defaultPath: path,
-				})
-				.then((result) => {
-					if (result.canceled || !result.filePath) {
-						item.cancel();
-						return;
-					}
-					path = result.filePath;
-					this.downloadPaths.set(id, path);
-					item.setSavePath(path);
-					if (typeof item.resume === "function") item.resume();
-				})
-				.catch(() => item.cancel());
-		}
 		item.on("updated", () => {
 			const record = this.state.downloads.find(
 				(download) => download.id === id,
 			);
-			if (!record) return;
+			if (!record || record.status !== "progressing") return;
 			record.receivedBytes = Math.max(0, item.getReceivedBytes());
 			record.totalBytes = Math.max(0, item.getTotalBytes());
 			this.emit();
@@ -4903,6 +5261,12 @@ export class UserBrowserService {
 			if (!record) return;
 			record.receivedBytes = Math.max(0, item.getReceivedBytes());
 			record.totalBytes = Math.max(0, item.getTotalBytes());
+				if (record.status === "blocked" || record.status === "cancelled") {
+					record.canReveal = false;
+					record.completedAt ??= this.now().toISOString();
+				this.commit();
+				return;
+			}
 			record.status =
 				status === "completed"
 					? "completed"
@@ -4912,9 +5276,165 @@ export class UserBrowserService {
 			record.completedAt = this.now().toISOString();
 			record.canReveal = status === "completed" && existsSync(path);
 			this.commit();
+			if (
+				status === "completed" &&
+				record.canReveal &&
+				record.reputation?.verdict === "unknown" &&
+				this.suspiciousDownloadAnalyzer
+			) {
+				void this.suspiciousDownloadAnalyzer
+					.analyze({
+						downloadId: id,
+						filePath: path,
+						filename,
+						sourceUrl: record.sourceUrl,
+						reputation: {
+							verdict: "unknown",
+							provider: record.reputation.provider,
+							reason: "unavailable",
+						},
+					})
+					.catch(() => undefined);
+			}
 		});
 		if (!pendingContextDownload)
 			this.restoreDirectDownloadNavigation(tabId, item);
+		const record = () =>
+			this.state.downloads.find((download) => download.id === id);
+		const permitDownload = (resume: boolean): void => {
+			const current = record();
+			if (
+				this.activeDownloads.get(id) !== item ||
+				!current ||
+				(current.status !== "checking" && current.status !== "progressing")
+			)
+				return;
+			current.status = "progressing";
+			this.commit();
+				const setDestinationAndResume = (destination: string): void => {
+					if (
+						this.activeDownloads.get(id) !== item ||
+						record()?.status !== "progressing"
+					)
+						return;
+				path = destination;
+				this.downloadPaths.set(id, path);
+				item.setSavePath(path);
+				if (resume && typeof item.resume === "function") item.resume();
+			};
+			if (!askForLocation) {
+				setDestinationAndResume(path);
+				return;
+			}
+			void dialog
+				.showSaveDialog(this.window, {
+					title: pendingContextDownload?.title ?? "Save download",
+					defaultPath: path,
+				})
+				.then((result) => {
+					if (result.canceled || !result.filePath) {
+						item.cancel();
+						return;
+					}
+					setDestinationAndResume(result.filePath);
+				})
+				.catch(() => item.cancel());
+		};
+		if (!requiresReputationCheck) {
+			if (askForLocation && typeof item.pause === "function") item.pause();
+			permitDownload(askForLocation);
+			return;
+		}
+		if (typeof item.pause !== "function") {
+			const current = record();
+			if (current) {
+				current.status = "failed";
+				current.completedAt = this.now().toISOString();
+				current.reputation = this.downloadReputation({
+					verdict: "unknown",
+					provider: this.threatProvider.id,
+					reason: "unavailable",
+				});
+				this.commit();
+			}
+			item.cancel();
+			return;
+		}
+		void this.checkAndStartDownload(item, id, permitDownload);
+	}
+
+	private downloadReputation(
+		verdict: BrowserThreatVerdict,
+	): UserBrowserDownloadReputation {
+		return {
+			verdict: verdict.verdict,
+			provider: verdict.provider.slice(0, 100) || "reputation-provider",
+			threatTypes:
+				verdict.verdict === "malicious"
+					? verdict.threatTypes.slice(0, 5)
+					: [],
+			checkedAt: this.now().toISOString(),
+		};
+	}
+
+	private async downloadUrlReputation(
+		item: Electron.DownloadItem,
+	): Promise<BrowserThreatVerdict> {
+		const urls = reputationUrlsForDownload(item);
+		if (!urls.length) {
+			return {
+				verdict: "unknown",
+				provider: this.threatProvider.id,
+				reason: "invalid-response",
+			};
+		}
+		let unknown: Extract<BrowserThreatVerdict, { verdict: "unknown" }> | undefined;
+		for (const url of urls) {
+			const verdict = await this.reputationForUrl(url, "download");
+			if (!verdict) {
+				unknown ??= {
+					verdict: "unknown",
+					provider: this.threatProvider.id,
+					reason: "unavailable",
+				};
+				continue;
+			}
+			if (verdict.verdict === "malicious") return verdict;
+			if (verdict.verdict === "unknown") unknown ??= verdict;
+		}
+		return (
+			unknown ?? {
+				verdict: "safe",
+				provider: this.threatProvider.id,
+			}
+		);
+	}
+
+	private async checkAndStartDownload(
+		item: Electron.DownloadItem,
+		downloadId: string,
+		permitDownload: (resume: boolean) => void,
+	): Promise<void> {
+		const verdict = await this.downloadUrlReputation(item);
+		const record = this.state.downloads.find(
+			(download) => download.id === downloadId,
+		);
+			if (
+				!record ||
+				this.activeDownloads.get(downloadId) !== item ||
+				record.status !== "checking"
+			)
+				return;
+		record.reputation = this.downloadReputation(verdict);
+		if (verdict.verdict === "malicious") {
+			record.status = "blocked";
+			record.completedAt = this.now().toISOString();
+			record.canReveal = false;
+			this.commit();
+			item.cancel();
+			return;
+		}
+		permitDownload(true);
 	}
 
 	private restoreDirectDownloadNavigation(
@@ -4928,6 +5448,7 @@ export class UserBrowserService {
 			!record ||
 			!pending ||
 			!tab ||
+			pending.generation !== record.navigationGeneration ||
 			!downloadMatchesNavigation(item, pending.targetUrl)
 		)
 			return false;
@@ -4963,15 +5484,10 @@ export class UserBrowserService {
 			this.downloadDirectory,
 			contextResourceFilename(url, suggestedFilename, fallback),
 		);
-		const result = await dialog.showSaveDialog(this.window, {
-			title: `Save ${resourceLabel[0]!.toUpperCase()}${resourceLabel.slice(1)} As…`,
-			defaultPath,
-		});
-		if (result.canceled || !result.filePath) return;
-
 		const pending = {
 			url,
-			path: result.filePath,
+			defaultPath,
+			title: `Save ${resourceLabel[0]!.toUpperCase()}${resourceLabel.slice(1)} As…`,
 			requestedAt: Date.now(),
 		};
 		const queue = this.pendingContextDownloads.get(webContents.id) ?? [];
@@ -5056,7 +5572,7 @@ export class UserBrowserService {
 			throw new Error("Kestrel could not create a browser page. Try again.");
 		view.setBackgroundColor("#ffffff");
 		this.applyViewBrowserPreferences(webContents);
-		const record: ViewRecord = { view };
+		const record: ViewRecord = { view, navigationGeneration: 0 };
 		this.views.set(tab.id, record);
 		this.webContentsToTab.set(webContents.id, tab.id);
 		this.configureView(tab, record);
@@ -5066,18 +5582,17 @@ export class UserBrowserService {
 		) {
 			webContents.setAudioMuted(true);
 		}
-		if (loadStoredUrl && tab.url) {
-			tab.discarded = false;
-			tab.loading = true;
-			void webContents.loadURL(tab.url).catch((cause) => {
-				if (!liveWebContents(webContents)) return;
-				tab.loading = false;
-				tab.error = describeBrowserLoadFailure(
-					0,
-					cause instanceof Error ? cause.message : "",
-				);
-				this.commit();
-			});
+		if (loadStoredUrl && tab.url && !tab.blockedNavigation) {
+			const restoredUrl = safePageUrl(tab.url)?.toString();
+			if (restoredUrl) {
+				const generation = this.beginNavigationCheck(record);
+				void this.checkAndRestoreStoredNavigation(
+					tab,
+					record,
+					restoredUrl,
+					generation,
+				).catch(() => undefined);
+			}
 		}
 		return record;
 	}
@@ -5092,6 +5607,7 @@ export class UserBrowserService {
 					url,
 					disposition !== "background-tab",
 					loadOptions,
+					"popup",
 				).catch(() => undefined);
 			}
 			return { action: "deny" };
@@ -5123,14 +5639,27 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
-			if (!safePageUrl(url)) event.preventDefault();
+			const normalized = safePageUrl(url)?.toString();
+			if (!normalized) {
+				event.preventDefault();
+				return;
+			}
+			if (record.approvedNavigationUrl === normalized) {
+				delete record.approvedNavigationUrl;
+				return;
+			}
+			event.preventDefault();
+			this.interceptPageNavigation(tab, record, normalized, "navigation");
 		});
 		webContents.on("will-redirect", (event, url) => {
 			if (this.passwordSaveCommitTabId === tab.id) {
 				event.preventDefault();
 				return;
 			}
-			if (!safePageUrl(url)) event.preventDefault();
+			const normalized = safePageUrl(url)?.toString();
+			event.preventDefault();
+			if (!normalized) return;
+			this.interceptPageNavigation(tab, record, normalized, "redirect");
 		});
 		webContents.on("did-start-loading", () => {
 			tab.loading = true;
@@ -5139,6 +5668,10 @@ export class UserBrowserService {
 		});
 		webContents.on("did-stop-loading", () => {
 			tab.loading = false;
+			if (tab.blockedNavigation) {
+				this.commit();
+				return;
+			}
 			this.updateNavigationState(tab, webContents);
 			if (!tab.faviconDataUrl && tab.url) {
 				const origin = safePageUrl(tab.url)?.origin;
@@ -5169,6 +5702,7 @@ export class UserBrowserService {
 		webContents.on(
 			"did-navigate",
 			(_event, url, _httpResponseCode, _httpStatusText) => {
+				if (tab.blockedNavigation) return;
 				if (tab.id === this.state.activeTabId) {
 					this.clearPasswordPrompt({
 						preservePending: this.pendingPasswordSave?.tabId === tab.id,
@@ -5184,6 +5718,7 @@ export class UserBrowserService {
 		);
 		webContents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
 			if (isMainFrame) {
+				if (tab.blockedNavigation) return;
 				if (tab.id === this.state.activeTabId) {
 					this.clearPasswordPrompt({
 						preservePending: this.pendingPasswordSave?.tabId === tab.id,
@@ -5199,14 +5734,22 @@ export class UserBrowserService {
 		});
 		webContents.on(
 			"did-fail-load",
-			(_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
+			(_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
 				if (!isMainFrame || errorCode === -3) return;
+				if (tab.blockedNavigation) return;
+				if (
+					record.navigatingTo &&
+					safePageUrl(validatedUrl)?.toString() !==
+						safePageUrl(record.navigatingTo)?.toString()
+				)
+					return;
 				tab.loading = false;
 				tab.error = describeBrowserLoadFailure(errorCode, errorDescription);
 				this.updateNavigationState(tab, webContents);
 			},
 		);
 		webContents.on("render-process-gone", () => {
+			if (tab.blockedNavigation) return;
 			if (tab.id === this.state.activeTabId) {
 				this.clearPasswordPrompt();
 				this.clearPaymentPrompt();
@@ -5707,7 +6250,14 @@ export class UserBrowserService {
 		const tab = this.state.tabs.find(
 			(candidate) => candidate.id === this.state.activeTabId,
 		);
-		if (!this.contentVisible || !tab || !tab.url || tab.error) return;
+		if (
+			!this.contentVisible ||
+			!tab ||
+			!tab.url ||
+			tab.error ||
+			tab.blockedNavigation
+		)
+			return;
 		if (isKestrelAppPageUrl(tab.url)) return;
 		const { view } = this.ensureView(tab);
 		const webContents = liveWebContents(view?.webContents);

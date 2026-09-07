@@ -60,6 +60,8 @@ function downloadStatusLabel(status: string): string {
       completed: "Completed",
       cancelled: "Cancelled",
       failed: "Failed",
+      blocked: "Blocked for safety",
+      checking: "Checking reputation",
       interrupted: "Interrupted",
       progressing: "Downloading",
     }[status] ?? status
@@ -214,7 +216,8 @@ export function BrowserDownloads({
                     name={
                       download.status === "completed"
                         ? "check"
-                        : download.status === "progressing"
+                        : download.status === "progressing" ||
+                            download.status === "checking"
                           ? "downloads"
                           : "warning"
                     }
@@ -256,7 +259,8 @@ export function BrowserDownloads({
                     Show in Finder
                   </button>
                 )}
-                {download.status === "progressing" && (
+                {(download.status === "progressing" ||
+                  download.status === "checking") && (
                   <button
                     type="button"
                     className="quiet-link"

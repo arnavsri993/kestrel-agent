@@ -38,6 +38,18 @@ import { TabStrip } from "./TabStrip";
 import { recordNewTabGreetingVisit } from "./new-tab";
 import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
 
+function threatTypeLabel(type: string): string {
+  return (
+    {
+      malware: "Malware",
+      "social-engineering": "Deceptive site",
+      "unwanted-software": "Unwanted software",
+      "potentially-harmful-application": "Potentially harmful app",
+      "unsafe-site": "Unsafe site",
+    }[type] ?? "Unsafe site"
+  );
+}
+
 export function BrowserWorkspace({
   browser,
   agentName,
@@ -134,6 +146,7 @@ export function BrowserWorkspace({
     reopenClosedTab,
     forward,
     navigate,
+    dismissThreat,
     reload,
     selectTab,
     setContentBounds,
@@ -287,7 +300,11 @@ export function BrowserWorkspace({
       setBookmarkDialog(null);
   }, [bookmarkDialog, state?.bookmarks, state?.tabs]);
   const nativePageEligible = Boolean(
-    activeTab?.url && !activeTab.error && !activeAppPage && !activeFilePage,
+    activeTab?.url &&
+      !activeTab.error &&
+      !activeTab.blockedNavigation &&
+      !activeAppPage &&
+      !activeFilePage,
   );
   const nativePageVisible =
     nativePageEligible &&
@@ -1081,7 +1098,49 @@ export function BrowserWorkspace({
             onAskFile={onAskFile}
           />
         )}
-        {!activeTab.url && (
+        {activeTab.blockedNavigation && (
+          <section
+            className="browser-threat-interstitial"
+            role="alert"
+            aria-labelledby="browser-threat-title"
+          >
+            <span className="browser-threat-interstitial-icon" aria-hidden="true">
+              <Icon name="warning" />
+            </span>
+            <p className="browser-threat-interstitial-eyebrow">Browsing protection</p>
+            <h1 id="browser-threat-title">Kestrel stopped this site</h1>
+            <p>
+              A reputation check flagged this address as potentially harmful. The
+              page was not opened.
+            </p>
+            <code>{activeTab.blockedNavigation.url}</code>
+            <ul aria-label="Reported risks">
+              {activeTab.blockedNavigation.threatTypes.map((type) => (
+                <li key={type}>{threatTypeLabel(type)}</li>
+              ))}
+            </ul>
+            <p className="browser-threat-interstitial-provider">
+              Reported by {activeTab.blockedNavigation.provider}.
+            </p>
+            <div>
+              <button
+                type="button"
+                className="button primary"
+                onClick={() => void dismissThreat(activeTab.id)}
+              >
+                Back to safety
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void createTab()}
+              >
+                New Tab
+              </button>
+            </div>
+          </section>
+        )}
+        {!activeTab.url && !activeTab.blockedNavigation && (
           <NewTabPage
             tabId={activeTab.id}
             history={state.history}
