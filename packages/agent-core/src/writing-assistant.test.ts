@@ -245,4 +245,58 @@ describe("Writing Studio", () => {
 		expect(calls).toBe(3);
 		await core.close();
 	});
+
+	it("honors an explicit account model and supported reasoning level", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const requests: Array<Parameters<ModelProvider["complete"]>[0]> = [];
+		const provider = writingProvider(async (request) => {
+			requests.push(request);
+			const name = request.tools?.[0]?.name;
+			if (name === "writing_candidates")
+				return result(request, name, {
+					candidateA: { body: "The meeting on 2026-09-07 works for me." },
+					candidateB: { body: "I can make the meeting on 2026-09-07." },
+				});
+			if (name === "writing_review")
+				return result(request, name, {
+					selected: "candidateA",
+					approved: true,
+					missingAnchors: [],
+					inventedClaims: [],
+					issues: [],
+					reviewerNote: "Ready.",
+				});
+			throw new Error(`Unexpected writing tool ${name ?? "none"}.`);
+		});
+		const core = new AgentCore({
+			database,
+			modelProviders: [provider],
+			now: () => NOW,
+		});
+
+		const response = await core.handle({
+			type: "writing-generate",
+			purpose: "confirm the meeting on 2026-09-07",
+			genre: "message",
+			adaptationStrength: "light",
+			includeSensitive: false,
+			providerIds: ["writing-provider"],
+			providerModels: { "writing-provider": "manual-writing-model" },
+			writerModel: "manual-writing-model",
+			reviewerModel: "manual-writing-model",
+			reasoningEffort: "high",
+		});
+
+		expect(response).toMatchObject({ ok: true });
+		expect(requests).toHaveLength(2);
+		expect(requests).toEqual(
+		expect.arrayContaining([
+			expect.objectContaining({
+				model: "manual-writing-model",
+				reasoningEffort: "high",
+			}),
+		]),
+		);
+		await core.close();
+	});
 });

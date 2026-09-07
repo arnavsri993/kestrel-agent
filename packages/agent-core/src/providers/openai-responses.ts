@@ -1,6 +1,7 @@
 import { providerFetch, readServerSentEvents } from "./http";
 import {
 	contentText,
+	type DiscoveredModel,
 	type ModelCallOptions,
 	type ModelContentPart,
 	type ModelFinishReason,
@@ -21,6 +22,7 @@ export interface OpenAIResponsesProviderOptions {
 	baseUrl?: string;
 	organization?: string;
 	project?: string;
+	headers?: Record<string, string>;
 }
 
 function inputPart(part: ModelContentPart): Record<string, unknown> {
@@ -127,21 +129,71 @@ export class OpenAIResponsesProvider implements ModelProvider {
 		);
 	}
 
+	private headers(): Record<string, string> {
+		return {
+			"content-type": "application/json",
+			...this.options.headers,
+			authorization: `Bearer ${this.options.apiKey}`,
+			...(this.options.organization
+				? { "openai-organization": this.options.organization }
+				: {}),
+			...(this.options.project
+				? { "openai-project": this.options.project }
+				: {}),
+		};
+	}
+
 	async probe(signal?: AbortSignal): Promise<void> {
 		const response = await providerFetch(this.id, `${this.baseUrl}/models`, {
 			method: "GET",
-			headers: {
-				authorization: `Bearer ${this.options.apiKey}`,
-				...(this.options.organization
-					? { "openai-organization": this.options.organization }
-					: {}),
-				...(this.options.project
-					? { "openai-project": this.options.project }
-					: {}),
-			},
+			headers: this.headers(),
 			...(signal ? { signal } : {}),
 		});
 		await response.body?.cancel();
+	}
+
+	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {
+		const response = await providerFetch(this.id, `${this.baseUrl}/models`, {
+			method: "GET",
+			headers: this.headers(),
+			...(signal ? { signal } : {}),
+		});
+		let payload: Record<string, unknown>;
+		try {
+			payload = (await response.json()) as Record<string, unknown>;
+		} catch {
+			throw new ModelProviderError(
+				"OpenAI returned malformed model discovery JSON.",
+				this.id,
+				false,
+			);
+		}
+		return (Array.isArray(payload.data) ? payload.data : []).flatMap((item) => {
+			if (!item || typeof item !== "object") return [];
+			const record = item as Record<string, unknown>;
+			if (typeof record.id !== "string" || !record.id.trim()) return [];
+			return [
+				{
+					id: record.id,
+					displayName:
+						typeof record.name === "string" && record.name.trim()
+							? record.name
+							: record.id,
+					availability: "available" as const,
+					source: "provider_api" as const,
+					capabilities: {
+						// This endpoint confirms that an account can see the model,
+						// but does not advertise its feature matrix.
+						capabilityProvenance: "unknown" as const,
+						...(typeof record.context_window === "number" &&
+						Number.isFinite(record.context_window) &&
+						record.context_window > 0
+							? { contextWindow: Math.floor(record.context_window) }
+							: {}),
+					},
+				},
+			];
+		});
 	}
 
 	async complete(
@@ -186,13 +238,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
 					}
 				: {}),
 		};
-		const headers: Record<string, string> = {
-			authorization: `Bearer ${this.options.apiKey}`,
-			"content-type": "application/json",
-		};
-		if (this.options.organization)
-			headers["openai-organization"] = this.options.organization;
-		if (this.options.project) headers["openai-project"] = this.options.project;
+		const headers = this.headers();
 		const response = await providerFetch(this.id, `${this.baseUrl}/responses`, {
 			method: "POST",
 			headers,

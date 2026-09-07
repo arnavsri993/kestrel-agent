@@ -22,7 +22,7 @@ import type {
 	MigrationPlanPreviewContract,
 	MigrationResultContract,
 	ModelProfile,
-	ModelProviderSummary,
+	ProviderAccountSummary,
 	ModelRoutingDecision,
 	OrganizationMemberContract,
 	PluginMutation,
@@ -95,7 +95,10 @@ import { KestrelSidebar } from "./components/browser/KestrelSidebar";
 import { ProjectsWorkspace } from "./components/browser/ProjectsWorkspace";
 import { ProjectSettingsDialog } from "./components/browser/ProjectSettingsDialog";
 import { ModelSelector } from "./components/browser/ModelSelector";
-import type { ModelSelectorChoice } from "./components/browser/model-selector";
+import {
+	accountForChoice,
+	type ModelSelectorChoice,
+} from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
 import {
 	AGENT_UNIVERSE_PLANET_ASSETS,
@@ -142,6 +145,7 @@ import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
+import { ProviderAccountsSettings } from "./components/ProviderAccountsSettings";
 import {
 	EmptyState,
 	PageFrame as SurfacePageFrame,
@@ -457,6 +461,24 @@ function setupAssistantState({
 
 function modelLabel(model: ModelRoutingDecision["model"]): string {
 	return model === "local-rules" ? "Local rules" : model.replaceAll("-", " ");
+}
+
+const PROVIDER_CATALOG_REFRESH_MS = 15 * 60_000;
+
+function catalogNeedsBackgroundRefresh(
+	accounts: readonly ProviderAccountSummary[],
+	now = Date.now(),
+): boolean {
+	return accounts.some((account) => {
+		if (!account.enabled || account.discovery.state === "unsupported") return false;
+		const attemptedAt = Date.parse(
+			account.discovery.lastAttemptAt ?? account.discovery.lastSuccessAt ?? "",
+		);
+		return (
+			!Number.isFinite(attemptedAt) ||
+			now - attemptedAt >= PROVIDER_CATALOG_REFRESH_MS
+		);
+	});
 }
 
 function formatConnectionStatus(status: string): string {
@@ -1224,9 +1246,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				type: "runtime-list-providers",
 			})) as CoreResponse;
 			if (!response.ok) throw new Error(response.error);
-			const providerIds = (response.providers ?? [])
-				.filter((provider) => provider.id !== "auto")
-				.map((provider) => provider.id);
+			const providerIds = (
+				"providerAccounts" in response ? response.providerAccounts ?? [] : []
+			)
+				.filter((account) => account.enabled)
+				.map((account) => account.endpointId);
 			const checked: ProviderVerification[] = [];
 			for (const providerId of providerIds) {
 				const result = (await window.kestrel.request({
@@ -3062,10 +3086,14 @@ function RuntimeConversation({
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
 	const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
-	const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
 	const [providerId, setProviderId] = useState(
 		() => localStorage.getItem("kestrel:provider-id") ?? "",
+	);
+	const [accountId, setAccountId] = useState(
+		() => localStorage.getItem("kestrel:provider-account-id") ?? "",
 	);
 	const [model, setModel] = useState(
 		() => localStorage.getItem("kestrel:model") ?? "",
@@ -3184,24 +3212,30 @@ function RuntimeConversation({
 			cancelled = true;
 		};
 	}, [activeMention, taskWorkspace]);
-	const manualRoutingReady = Boolean(providerId && model.trim());
-	const executionReady = executionMode === "automatic" || manualRoutingReady;
-	activeSessionIdRef.current = activeSessionId;
 	const modelChoice: ModelSelectorChoice = {
 		executionMode,
 		providerId,
+		...(accountId ? { accountId } : {}),
 		model,
 		reasoningEffort,
 	};
+	const selectedManualAccount = accountForChoice(providerAccounts, modelChoice);
+	const manualRoutingReady = Boolean(selectedManualAccount && model.trim());
+	const executionReady = executionMode === "automatic" || manualRoutingReady;
+	activeSessionIdRef.current = activeSessionId;
 
 	function applyModelChoice(next: ModelSelectorChoice) {
 		setExecutionMode(next.executionMode);
 		setProviderId(next.providerId);
+		setAccountId(next.accountId ?? "");
 		setModel(next.model);
 		setReasoningEffort(next.reasoningEffort);
 		localStorage.setItem("kestrel:execution-mode", next.executionMode);
 		if (next.providerId)
 			localStorage.setItem("kestrel:provider-id", next.providerId);
+		if (next.accountId)
+			localStorage.setItem("kestrel:provider-account-id", next.accountId);
+		else localStorage.removeItem("kestrel:provider-account-id");
 		if (next.model.trim())
 			localStorage.setItem("kestrel:model", next.model.trim());
 		localStorage.setItem("kestrel:reasoning-effort", next.reasoningEffort);
@@ -3414,24 +3448,20 @@ function RuntimeConversation({
 		let cancelled = false;
 		void Promise.all([
 			window.kestrel.request({ type: "runtime-list-providers" }),
-			window.kestrel.request({ type: "local-model-status" }),
 			window.kestrel.request({ type: "runtime-list-sessions" }),
 		])
 			.then(
 				async ([
 					providerResponse,
-					localModelResponse,
 					sessionResponse,
 				]) => {
 					if (cancelled) return;
-					if (providerResponse.ok && "providers" in providerResponse) {
-						const available = providerResponse.providers ?? [];
-						setProviders(available);
-						setProviderId((current) =>
-							available.some((provider) => provider.id === current)
-								? current
-								: available[0]?.id || "",
-						);
+					const available =
+						providerResponse.ok && "providerAccounts" in providerResponse
+							? (providerResponse.providerAccounts ?? [])
+							: [];
+					if (providerResponse.ok && "providerAccounts" in providerResponse) {
+						setProviderAccounts(available);
 					}
 					const availableGrants = availableWorkspaceGrants(projects);
 					setWorkspace(
@@ -3441,12 +3471,16 @@ function RuntimeConversation({
 								? current
 								: availableGrants[0]?.path) ?? "",
 					);
-					if (localModelResponse.ok && "localModels" in localModelResponse)
-						setLocalModels(localModelResponse.localModels);
 					if (sessionResponse.ok && "sessions" in sessionResponse)
 						onSessions(sessionResponse.sessions ?? []);
 					const visibleSessionId = activeSessionIdRef.current;
 					if (visibleSessionId) await loadSession(visibleSessionId);
+					if (!catalogNeedsBackgroundRefresh(available)) return;
+					const refreshed = await window.kestrel.request({
+						type: "runtime-refresh-provider-models",
+					});
+					if (!cancelled && refreshed.ok && "providerAccounts" in refreshed)
+						setProviderAccounts(refreshed.providerAccounts ?? []);
 				},
 			)
 			.catch((cause) => {
@@ -3569,19 +3603,6 @@ function RuntimeConversation({
 					);
 			});
 	}, [refreshRevision, visible]);
-
-	useEffect(() => {
-		if (providerId === "auto") {
-			setModel("auto");
-			return;
-		}
-		if (providerId !== "ollama") return;
-		setModel((current) =>
-			localModels.some((item) => item.name === current)
-				? current
-				: (localModels[0]?.name ?? ""),
-		);
-	}, [providerId, localModels]);
 
 	useEffect(() => {
 		const preserveActiveRun = shouldPreserveActiveRun({
@@ -3878,9 +3899,9 @@ function RuntimeConversation({
 			setOptimisticSteering((current) => [...current, prompt]);
 			return;
 		}
-		if (executionMode === "manual" && !providerId) {
+		if (executionMode === "manual" && !selectedManualAccount) {
 			setError(
-				"Choose a configured provider or switch execution back to Automatic.",
+				"The selected provider account is unavailable. Choose another account or switch execution back to Automatic.",
 			);
 			return;
 		}
@@ -4849,8 +4870,7 @@ function RuntimeConversation({
 								<Icon name="plus" />
 							</button>
 							<ModelSelector
-								providers={providers}
-								localModels={localModels}
+								accounts={providerAccounts}
 								choice={modelChoice}
 								onChange={applyModelChoice}
 							/>
@@ -5434,12 +5454,12 @@ function Readiness() {
 			})) as CoreResponse;
 			if (!response.ok) throw new Error(response.error);
 			const checked: ProviderVerification[] = [];
-			for (const provider of (response.providers ?? []).filter(
-				(item) => item.id !== "auto",
-			)) {
+			for (const provider of (
+				"providerAccounts" in response ? response.providerAccounts ?? [] : []
+			).filter((account) => account.enabled)) {
 				const result = (await window.kestrel.request({
 					type: "runtime-verify-provider",
-					providerId: provider.id,
+					providerId: provider.endpointId,
 				})) as CoreResponse;
 				if (!result.ok) throw new Error(result.error);
 				checked.push(...(result.providerVerifications ?? []));
@@ -5885,13 +5905,36 @@ function Work({
 	const [teams, setTeams] = useState<TeamRecordContract[]>([]);
 	const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
 	const [routingTraces, setRoutingTraces] = useState<RoutingTrace[]>([]);
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
-	const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
+	const [providerAccountsLoaded, setProviderAccountsLoaded] = useState(false);
 	const [parentSessionId, setParentSessionId] = useState(sessions[0]?.id ?? "");
-	const [providerId, setProviderId] = useState("auto");
-	const [model, setModel] = useState(
-		() => localStorage.getItem("kestrel:model") ?? "auto",
-	);
+	const [workModelChoice, setWorkModelChoice] =
+		useState<ModelSelectorChoice>(() => {
+			const accountId = localStorage.getItem("kestrel:provider-account-id");
+			const storedReasoningEffort = localStorage.getItem(
+				"kestrel:reasoning-effort",
+			);
+			return {
+				executionMode:
+					localStorage.getItem("kestrel:execution-mode") === "manual"
+						? "manual"
+						: "automatic",
+				providerId: localStorage.getItem("kestrel:provider-id") ?? "",
+				...(accountId ? { accountId } : {}),
+				model: localStorage.getItem("kestrel:model") ?? "auto",
+				reasoningEffort:
+					storedReasoningEffort === "low" ||
+					storedReasoningEffort === "medium" ||
+					storedReasoningEffort === "high" ||
+					storedReasoningEffort === "xhigh" ||
+					storedReasoningEffort === "max" ||
+					storedReasoningEffort === "none"
+						? storedReasoningEffort
+						: "none",
+			};
+		});
 	const [delegationEvidence, setDelegationEvidence] = useState("");
 	const [delegateTitle, setDelegateTitle] = useState("");
 	const [delegatePrompt, setDelegatePrompt] = useState("");
@@ -5926,9 +5969,25 @@ function Work({
 		}
 	}, [parentSessionId, sessions]);
 
+	const workManualAccount = accountForChoice(
+		providerAccounts,
+		workModelChoice,
+	);
+	const manualRoutingReady = Boolean(
+		providerAccountsLoaded && workManualAccount && workModelChoice.model.trim(),
+	);
+	const workRoutingReady =
+		workModelChoice.executionMode === "automatic" || manualRoutingReady;
+	const workRouting =
+		workModelChoice.executionMode === "automatic"
+			? { model: "auto", providerIds: ["auto"] }
+			: {
+					model: workModelChoice.model.trim(),
+					providerIds: [workModelChoice.providerId],
+				};
+
 	async function load() {
-		const [state, providerState, sessionState, localModelState, traceState] =
-			await Promise.all([
+		const [state, providerState, sessionState, traceState] = await Promise.all([
 				window.kestrel.request({
 					type: "orchestration-list",
 				}) as Promise<CoreResponse>,
@@ -5939,9 +5998,6 @@ function Work({
 					type: "runtime-list-sessions",
 				}) as Promise<CoreResponse>,
 				window.kestrel.request({
-					type: "local-model-status",
-				}),
-				window.kestrel.request({
 					type: "orchestration-routing-traces",
 				}) as Promise<CoreResponse>,
 			]);
@@ -5949,18 +6005,10 @@ function Work({
 		setGoals(state.goals ?? []);
 		setTeams(state.teams ?? []);
 		setJobs(state.jobs ?? []);
-		if (providerState.ok) {
-			setProviders(providerState.providers ?? []);
-			setProviderId((current) =>
-				providerState.providers?.some((provider) => provider.id === current)
-					? current
-					: providerState.providers?.some((provider) => provider.id === "auto")
-						? "auto"
-						: providerState.providers?.[0]?.id || "",
-			);
+		if (providerState.ok && "providerAccounts" in providerState) {
+			setProviderAccounts(providerState.providerAccounts ?? []);
+			setProviderAccountsLoaded(true);
 		}
-		if (localModelState.ok && "localModels" in localModelState)
-			setLocalModels(localModelState.localModels);
 		if (traceState.ok) setRoutingTraces(traceState.routingTraces ?? []);
 		if (sessionState.ok) onSessions(sessionState.sessions ?? []);
 	}
@@ -5987,13 +6035,59 @@ function Work({
 	}, []);
 
 	useEffect(() => {
-		if (providerId !== "ollama") return;
-		setModel((current) =>
-			localModels.some((item) => item.name === current)
-				? current
-				: (localModels[0]?.name ?? ""),
+		if (
+			!providerAccountsLoaded ||
+			!catalogNeedsBackgroundRefresh(providerAccounts)
+		)
+			return;
+		let cancelled = false;
+		void window.kestrel
+			.request({ type: "runtime-refresh-provider-models" })
+			.then((raw) => {
+				const response = raw as CoreResponse;
+				if (!cancelled && response.ok && "providerAccounts" in response)
+					setProviderAccounts(response.providerAccounts ?? []);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [providerAccounts, providerAccountsLoaded]);
+
+	useEffect(() => {
+		if (!providerAccountsLoaded) return;
+		setWorkModelChoice((current) => {
+			if (current.executionMode === "automatic") return current;
+			const account = accountForChoice(providerAccounts, current);
+			if (!account) return current;
+			return {
+				...current,
+				providerId: account.endpointId,
+				accountId: account.id,
+			};
+		});
+	}, [providerAccounts, providerAccountsLoaded]);
+
+	useEffect(() => {
+		localStorage.setItem(
+			"kestrel:execution-mode",
+			workModelChoice.executionMode,
 		);
-	}, [providerId, localModels]);
+		if (workModelChoice.providerId)
+			localStorage.setItem("kestrel:provider-id", workModelChoice.providerId);
+		if (workModelChoice.accountId)
+			localStorage.setItem(
+				"kestrel:provider-account-id",
+				workModelChoice.accountId,
+			);
+		else localStorage.removeItem("kestrel:provider-account-id");
+		if (workModelChoice.model.trim())
+			localStorage.setItem("kestrel:model", workModelChoice.model.trim());
+		localStorage.setItem(
+			"kestrel:reasoning-effort",
+			workModelChoice.reasoningEffort,
+		);
+	}, [workModelChoice]);
 
 	async function mutate(
 		request: RendererRequest,
@@ -6147,15 +6241,18 @@ function Work({
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
-						if (!parentSessionId || !providerId || !model.trim()) return;
+						if (!parentSessionId || !workRoutingReady) return;
 						void mutate(
 							{
 								type: "orchestration-delegate",
 								parentSessionId,
 								title: delegateTitle,
 								prompt: delegatePrompt,
-								model: model.trim(),
-								providerIds: [providerId],
+								...workRouting,
+								...(workModelChoice.executionMode === "manual" &&
+								workModelChoice.reasoningEffort !== "none"
+									? { reasoningEffort: workModelChoice.reasoningEffort }
+									: {}),
 								isolateWorktree,
 							},
 							() => {
@@ -6203,45 +6300,15 @@ function Work({
 					</label>
 					<details className="work-routing-override">
 						<summary>Override automatic routing</summary>
-						<div className="work-inline">
-							<select
-								aria-label="Provider"
-								value={providerId}
-								onChange={(event) => setProviderId(event.target.value)}
-							>
-								{providers.map((provider) => (
-									<option key={provider.id}>{provider.id}</option>
-								))}
-							</select>
-							{providerId === "ollama" ? (
-								<select
-									aria-label="Installed Ollama model"
-									value={model}
-									onChange={(event) => setModel(event.target.value)}
-									disabled={localModels.length === 0}
-								>
-									{localModels.length === 0 ? (
-										<option value="">No installed Ollama models found</option>
-									) : (
-										localModels.map((localModel) => (
-											<option value={localModel.name} key={localModel.name}>
-												{localModel.name} · {compactBytes(localModel.size)}
-											</option>
-										))
-									)}
-								</select>
-							) : (
-								<input
-									aria-label="Model"
-									placeholder={
-										providerId === "auto" ? "Automatically selected" : "Model"
-									}
-									value={model}
-									onChange={(event) => setModel(event.target.value)}
-									readOnly={providerId === "auto"}
-								/>
-							)}
-						</div>
+						<p className="work-card-note">
+							Choose one connected account only when this work must bypass
+							Kestrel's automatic router.
+						</p>
+						<ModelSelector
+							accounts={providerAccounts}
+							choice={workModelChoice}
+							onChange={setWorkModelChoice}
+						/>
 					</details>
 					{delegationEvidence && (
 						<small role="status">{delegationEvidence}</small>
@@ -6260,8 +6327,7 @@ function Work({
 							busy ||
 							!delegateTitle.trim() ||
 							!delegatePrompt.trim() ||
-							!providerId ||
-							!model.trim()
+							!workRoutingReady
 						}
 					>
 						Run delegate
@@ -6317,15 +6383,14 @@ function Work({
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
-						if (!parentSessionId || !providerId || !model.trim()) return;
+						if (!parentSessionId || !workRoutingReady) return;
 						void mutate(
 							{
 								type: "orchestration-schedule",
 								sessionId: parentSessionId,
 								title: scheduleTitle,
 								prompt: schedulePrompt,
-								model: model.trim(),
-								providerIds: [providerId],
+								...workRouting,
 								expression: scheduleExpression,
 							},
 							() => {
@@ -6371,8 +6436,7 @@ function Work({
 						!scheduleTitle.trim() ||
 						!schedulePrompt.trim() ||
 						!scheduleExpression.trim() ||
-						!providerId ||
-						!model.trim()
+						!workRoutingReady
 					}
 				>
 					Schedule
@@ -7486,7 +7550,9 @@ function SubscriptionCliSettings({
 }
 
 function ProviderVerificationSettings() {
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
 	const [results, setResults] = useState<
 		Record<string, ProviderVerification[]>
 	>({});
@@ -7497,13 +7563,11 @@ function ProviderVerificationSettings() {
 			.request({ type: "runtime-list-providers" })
 			.then((raw) => {
 				const response = raw as CoreResponse;
-				if (response.ok)
-					setProviders(
-						(response.providers ?? []).filter(
-							(provider) => provider.id !== "auto",
-						),
+				if (response.ok && "providerAccounts" in response)
+					setProviderAccounts(
+						(response.providerAccounts ?? []).filter((account) => account.enabled),
 					);
-				else setError(response.error);
+				else if (!response.ok) setError(response.error);
 			});
 	}, []);
 	async function verify(providerId: string) {
@@ -7537,17 +7601,17 @@ function ProviderVerificationSettings() {
 					Probe configured accounts from the isolated core — no credentials
 					exposed, no model prompt sent.
 				</p>
-				{providers.length === 0 ? (
-					<small>No model providers are configured.</small>
+				{providerAccounts.length === 0 ? (
+					<small>No enabled model accounts are configured.</small>
 				) : (
 					<ul className="workspace-grants">
-						{providers.map((provider) => {
-							const checks = results[provider.id];
+						{providerAccounts.map((account) => {
+							const checks = results[account.endpointId];
 							const valid = checks?.every((check) => check.ok);
 							return (
-								<li key={provider.id}>
+								<li key={account.id}>
 									<span>
-										{provider.id} ·{" "}
+										{account.providerId} · {account.displayName} ·{" "}
 										{checks
 											? valid
 												? `${checks.length} credential${checks.length === 1 ? "" : "s"} verified`
@@ -7563,9 +7627,9 @@ function ProviderVerificationSettings() {
 									<button
 										className="quiet-link"
 										disabled={Boolean(busy)}
-										onClick={() => void verify(provider.id)}
+										onClick={() => void verify(account.endpointId)}
 									>
-										{busy === provider.id ? "Checking…" : "Verify"}
+										{busy === account.endpointId ? "Checking…" : "Verify"}
 									</button>
 								</li>
 							);
@@ -9734,6 +9798,7 @@ function Settings({
 									</article>
 							</details>
 						<ProviderVerificationSettings />
+						<ProviderAccountsSettings />
 						<UsagePolicySettings />
 					</section>
 					</section>
