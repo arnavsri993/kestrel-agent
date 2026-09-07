@@ -2383,8 +2383,18 @@ try {
 	await page.mouse.down();
 	await page.waitForTimeout(50);
 	// Tear-off should work with the diagonal, slightly outward gesture people
-	// naturally make—not only with a perfectly vertical drag.
+	// naturally make—not only with a perfectly vertical drag. Keep the tab in
+	// the source window until release so it can be carried to another monitor.
 	await page.mouse.move(detachX + 72, detachY + 28, { steps: 8 });
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === detachableTabId),
+		"Tab detached before the tear-off gesture was released",
+	);
+	await page.mouse.move(detachX + 190, detachY + 120, { steps: 8 });
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === detachableTabId),
+		"Tab detached while it was being carried to its drop point",
+	);
 	await page.mouse.up();
 	await waitForBrowserState(
 		(value) => !value.tabs.some((tab) => tab.id === detachableTabId),
@@ -2485,6 +2495,49 @@ try {
 		remainingDetachedWindows,
 		1,
 		"Reattaching the tab did not close its detached window",
+	);
+
+	const blankTabId = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "browser-create-tab",
+			active: false,
+		});
+		if (!response.ok || !("browserState" in response))
+			throw new Error("A blank tab could not be created.");
+		return response.browserState.tabs.at(-1)?.id;
+	});
+	assert(blankTabId);
+	const blankTab = page.locator(`.browser-tab[data-tab-id="${blankTabId}"]`);
+	await blankTab.waitFor();
+	const blankBounds = await blankTab.boundingBox();
+	assert(blankBounds);
+	const blankX = blankBounds.x + blankBounds.width / 2;
+	const blankY = blankBounds.y + blankBounds.height / 2;
+	await page.mouse.move(blankX, blankY);
+	await page.mouse.down();
+	await page.mouse.move(blankX + 180, blankY + 120, { steps: 12 });
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === blankTabId),
+		"Blank New Tab detached before release",
+	);
+	await page.mouse.up();
+	await waitForBrowserState(
+		(value) => !value.tabs.some((tab) => tab.id === blankTabId),
+		"Blank New Tab did not leave the source window",
+	);
+	const blankDetachedPage = await waitForDetachedKestrelWindow(
+		blankTabId,
+		"Blank New Tab did not open in a new Kestrel window",
+	);
+	await blankDetachedPage
+		.getByRole("button", {
+			name: "Move tab back to main window",
+			exact: true,
+		})
+		.click();
+	await waitForBrowserState(
+		(value) => value.tabs.some((tab) => tab.id === blankTabId && tab.url === ""),
+		"Blank New Tab did not return to the main browser window",
 	);
 
 	const tabsBeforeToolPopup = (await browserState()).tabs.length;

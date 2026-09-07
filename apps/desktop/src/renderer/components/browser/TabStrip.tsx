@@ -36,8 +36,8 @@ import {
 import { recentTabFavicon, TabFavicon } from "./TabFavicon";
 
 // A tab only needs to leave the chrome by roughly two-thirds of its height to
-// tear off. Do not require the cross-axis movement to dominate: real pointer
-// drags are often diagonal, especially when moving a tab down and away.
+// arm a tear-off. The tab is moved on pointerup so the user can carry it to
+// another monitor before the new window is created.
 const DETACH_DRAG_THRESHOLD_PX = 24;
 const REORDER_DRAG_THRESHOLD_PX = 12;
 const COLLAPSED_TAB_FOLDERS_KEY = "kestrel:collapsed-tab-folders";
@@ -91,9 +91,7 @@ function tabDropIndex(
 }
 
 function tabCanDetach(tab: UserBrowserTab | undefined): boolean {
-	return Boolean(
-		tab?.url && !tab.file && !tab.error && !tab.url.startsWith("kestrel://"),
-	);
+	return Boolean(tab && !tab.file && !tab.error);
 }
 
 export function TabStrip({
@@ -556,22 +554,6 @@ export function TabStrip({
 		}
 	}
 
-	function detachDraggedTab() {
-		const tabId = draggingTabIdRef.current;
-		if (
-			!tabId ||
-			!onDetachTab ||
-			!tabCanDetach(tabs.find((tab) => tab.id === tabId))
-		)
-			return false;
-		suppressClickTabIdRef.current = tabId;
-		resetDrag();
-		void Promise.resolve()
-			.then(() => onDetachTab(tabId))
-			.catch(() => undefined);
-		return true;
-	}
-
 	function handleTabPointerDown(event: ReactPointerEvent, tabId: string) {
 		if (event.button !== 0) return;
 		if ((event.target as HTMLElement).closest(".browser-tab-close")) return;
@@ -694,7 +676,7 @@ export function TabStrip({
 		setDragDelta({ x: dx, y: dy });
 		if (orientation === "horizontal") {
 			if (Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX) {
-				if (!detachDraggedTab()) setDragIntent("detach");
+				setDragIntent("detach");
 				return;
 			}
 			if (Math.abs(dx) >= REORDER_DRAG_THRESHOLD_PX) {
@@ -704,7 +686,7 @@ export function TabStrip({
 			return;
 		}
 		if (Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX) {
-			if (!detachDraggedTab()) setDragIntent("detach");
+			setDragIntent("detach");
 			return;
 		}
 		if (Math.abs(dy) >= REORDER_DRAG_THRESHOLD_PX) {

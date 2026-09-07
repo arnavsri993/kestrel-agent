@@ -2123,6 +2123,35 @@ describe("UserBrowserService", () => {
     });
   });
 
+  it("can move a blank New Tab page between browser windows", async () => {
+    const source = createService();
+    const blankTab = source.service.getState().tabs[0]!;
+    const transferred = source.service.getTabForTransfer(blankTab.id);
+
+    expect(transferred).toMatchObject({
+      id: blankTab.id,
+      title: "New Tab",
+      url: "",
+    });
+
+    const sourceState = await source.service.detachTab(blankTab.id);
+    expect(sourceState.tabs).toHaveLength(1);
+    expect(sourceState.tabs[0]?.id).not.toBe(blankTab.id);
+
+    const target = createService();
+    const targetState = await target.service.importTabForTransfer(transferred);
+    expect(targetState.activeTabId).toBe(blankTab.id);
+    expect(targetState.tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: blankTab.id,
+          title: "New Tab",
+          url: "",
+        }),
+      ]),
+    );
+  });
+
   it("moves a web tab back between windows without treating it as closed", async () => {
     const source = createService();
     const target = createService();
