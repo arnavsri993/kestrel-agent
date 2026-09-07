@@ -1,11 +1,20 @@
-import { ipcRenderer } from "electron";
+import { ipcRenderer, webUtils } from "electron";
 
 // Deliberately leave drag-and-drop events untouched. This preload belongs to
 // the embedded website WebContentsView, whose upload controls must receive
 // native file drops. Kestrel's own chrome installs its separate drop guard.
 
 const PASSWORD_SUBMISSION_CHANNEL = "kestrel:user-browser-password-submission";
+const HEIC_UPLOAD_CHANNEL = "kestrel:user-browser-heic-upload";
+const HEIC_UPLOAD_FAILED_CHANNEL = "kestrel:user-browser-heic-upload-failed";
+const HEIC_UPLOAD_INPUT_ID_ATTRIBUTE = "data-kestrel-heic-upload-id";
 const MAX_PASSWORD_LENGTH = 100_000;
+
+interface PendingHeicUpload {
+	pathSignature: string;
+}
+
+const pendingHeicUploads = new WeakMap<HTMLInputElement, PendingHeicUpload>();
 
 type PasswordFieldElement =
 	| HTMLInputElement
@@ -108,4 +117,88 @@ function passwordFormSubmission(event: Event): void {
 	});
 }
 
+function fileInputFromEvent(event: Event): HTMLInputElement | undefined {
+	const target = event.target as { tagName?: unknown; type?: unknown } | null;
+	if (
+		!target ||
+		String(target.tagName).toUpperCase() !== "INPUT" ||
+		String(target.type).toLowerCase() !== "file"
+	)
+		return undefined;
+	return target as HTMLInputElement;
+}
+
+function localFilePaths(input: HTMLInputElement): string[] | undefined {
+	if (!input.files?.length) return undefined;
+	const paths: string[] = [];
+	for (const file of Array.from(input.files)) {
+		try {
+			const path = webUtils.getPathForFile(file);
+			if (!path) return undefined;
+			paths.push(path);
+		} catch {
+			return undefined;
+		}
+	}
+	return paths;
+}
+
+function hasHeicImage(paths: readonly string[]): boolean {
+	return paths.some((path) => /\.hei(?:c|f)$/i.test(path));
+}
+
+function stopWebsiteUploadEvent(event: Event): void {
+	event.stopImmediatePropagation();
+	event.stopPropagation();
+}
+
+function queueHeicUploadConversion(event: Event): void {
+	if (!event.isTrusted) return;
+	const input = fileInputFromEvent(event);
+	if (!input) return;
+	const paths = localFilePaths(input);
+	if (!paths || !hasHeicImage(paths)) {
+		pendingHeicUploads.delete(input);
+		input.removeAttribute(HEIC_UPLOAD_INPUT_ID_ATTRIBUTE);
+		return;
+	}
+	const pathSignature = paths.join("\0");
+	const pending = pendingHeicUploads.get(input);
+	if (pending?.pathSignature === pathSignature) {
+		stopWebsiteUploadEvent(event);
+		return;
+	}
+	const inputId = crypto.randomUUID();
+	pendingHeicUploads.set(input, { pathSignature });
+	input.setAttribute(HEIC_UPLOAD_INPUT_ID_ATTRIBUTE, inputId);
+	stopWebsiteUploadEvent(event);
+	ipcRenderer.send(HEIC_UPLOAD_CHANNEL, { inputId, paths });
+}
+
+ipcRenderer.on(HEIC_UPLOAD_FAILED_CHANNEL, (_event, value: unknown) => {
+	const inputId =
+		value &&
+		typeof value === "object" &&
+		"inputId" in value &&
+		typeof value.inputId === "string"
+			? value.inputId
+			: undefined;
+	if (!inputId || !/^[a-z0-9-]{10,100}$/.test(inputId)) return;
+	const input = document.querySelector<HTMLInputElement>(
+		`input[${HEIC_UPLOAD_INPUT_ID_ATTRIBUTE}="${inputId}"]`,
+	);
+	if (!input) return;
+	pendingHeicUploads.delete(input);
+	input.removeAttribute(HEIC_UPLOAD_INPUT_ID_ATTRIBUTE);
+	// Let the site handle the original selection if conversion fails. These
+	// replacement events are deliberately untrusted, so the capture handler
+	// above will not attempt a conversion loop.
+	input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+	input.dispatchEvent(new Event("change", { bubbles: true }));
+});
+
 document.addEventListener("submit", passwordFormSubmission, true);
+// Register on window before page scripts run, so a site cannot receive the
+// original HEIC in an earlier capture listener while Kestrel prepares JPEGs.
+window.addEventListener("input", queueHeicUploadConversion, true);
+window.addEventListener("change", queueHeicUploadConversion, true);

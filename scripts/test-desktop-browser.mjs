@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -12,6 +13,33 @@ import {
 
 const root = mkdtempSync(join(tmpdir(), "kestrel-visible-browser-"));
 const userData = join(root, "user-data");
+const heicUploadFixture = join(root, "kestrel-upload.HEIC");
+const heicSourcePng = join(root, "kestrel-upload-source.png");
+writeFileSync(
+	heicSourcePng,
+	Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+		"base64",
+	),
+);
+if (process.platform === "darwin") {
+	execFileSync(
+		"/usr/bin/sips",
+		["-s", "format", "heic", heicSourcePng, "--out", heicUploadFixture],
+		{ stdio: "ignore" },
+	);
+} else {
+	// The desktop smoke also runs where macOS ImageIO is unavailable. The
+	// extension exercises the browser handoff there; macOS validates actual HEIC
+	// decoding through sips above.
+	writeFileSync(
+		heicUploadFixture,
+		Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+			"base64",
+		),
+	);
+}
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
 const executablePath = packagedExecutable
@@ -87,6 +115,8 @@ const server = createServer((request, response) => {
           <label>Name <input id="name" name="name" autocomplete="off"></label>
           <button id="submit" type="button">Submit</button>
           <output id="result">Waiting</output>
+		  <label>Photo <input id="image-upload" type="file" accept="image/*"></label>
+		  <output id="image-upload-result">Waiting</output>
           <a id="next" href="/two">Next page</a>
           <a id="download" href="/download">Download fixture</a>
           <button id="popup" type="button">Open popup</button>
@@ -105,6 +135,22 @@ const server = createServer((request, response) => {
           document.querySelector("#popup").addEventListener("click", () => {
             window.open("/popup", "_blank");
           });
+		  const imageUpload = document.querySelector("#image-upload");
+		  const imageUploadResult = document.querySelector("#image-upload-result");
+		  let imageInputEvents = 0;
+		  let imageChangeEvents = 0;
+		  const renderImageUpload = () => {
+		    const files = [...imageUpload.files].map((file) => file.name + ":" + file.type);
+		    imageUploadResult.textContent = "input=" + imageInputEvents + ", change=" + imageChangeEvents + ", files=" + files.join(",");
+		  };
+		  imageUpload.addEventListener("input", () => {
+		    imageInputEvents += 1;
+		    renderImageUpload();
+		  });
+		  imageUpload.addEventListener("change", () => {
+		    imageChangeEvents += 1;
+		    renderImageUpload();
+		  });
         </script>
       </body>
     </html>`);
@@ -678,6 +724,62 @@ async function activeViewScript(source) {
 	}, source);
 }
 
+async function setActiveViewFileInput(selector, files) {
+	return application.evaluate(
+		async ({ BrowserWindow }, { selector: target, files: paths }) => {
+			const window = BrowserWindow.getAllWindows().find(
+				(candidate) => !candidate.webContents.getURL().includes("petOverlay=1"),
+			);
+			const view = window?.contentView.children.find(
+				(child) => "webContents" in child,
+			);
+			if (!view || !("webContents" in view))
+				throw new Error("No active user browser view is attached.");
+			const webContents = view.webContents;
+			const attachedHere = !webContents.debugger.isAttached();
+			if (attachedHere) webContents.debugger.attach("1.3");
+			try {
+				const document = await webContents.debugger.sendCommand("DOM.getDocument", {
+					depth: 0,
+				});
+				const selected = await webContents.debugger.sendCommand(
+					"DOM.querySelector",
+					{ nodeId: document.root.nodeId, selector: target },
+				);
+				if (!selected.nodeId)
+					throw new Error("The native upload fixture was not found.");
+				await webContents.debugger.sendCommand("DOM.setFileInputFiles", {
+					nodeId: selected.nodeId,
+					files: paths,
+				});
+			} finally {
+				if (attachedHere && webContents.debugger.isAttached())
+					webContents.debugger.detach();
+			}
+		},
+		{ selector, files },
+	);
+}
+
+async function assertHeicUploadConversion() {
+	await setActiveViewFileInput("#image-upload", [heicUploadFixture]);
+	const deadline = Date.now() + 30_000;
+	let result = "";
+	while (Date.now() < deadline) {
+		result = await readActiveViewScript(
+			"document.querySelector('#image-upload-result').textContent",
+			"Native image upload fixture was not attached",
+		);
+		if (/files=kestrel-upload\.jpeg:image\/jpeg$/.test(result)) break;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 75));
+	}
+	assert.match(
+		result,
+		/^input=1, change=1, files=kestrel-upload\.jpeg:image\/jpeg$/,
+		"HEIC uploads must be converted locally before the page receives them",
+	);
+}
+
 async function readActiveViewScript(source, label) {
 	const deadline = Date.now() + 30_000;
 	let lastError;
@@ -807,6 +909,44 @@ try {
 	);
 	assert.equal(await page.getByRole("heading", { name: "Frequent tabs" }).count(), 1);
 	await assertBrowserChromeLayout();
+	const browserBeforeHeicUpload = await browserState();
+	const originalHeicUploadTabId = browserBeforeHeicUpload.activeTabId;
+	assert(originalHeicUploadTabId);
+	const heicUploadTabId = await page.evaluate(async (input) => {
+		const response = await window.kestrel.request({
+			type: "browser-create-tab",
+			input,
+			active: true,
+		});
+		if (!response.ok || !("browserState" in response))
+			throw new Error("The HEIC upload fixture tab could not be created.");
+		return response.browserState.activeTabId;
+	}, `${origin}/one`);
+	assert(heicUploadTabId);
+	await waitForNativeView(
+		(value) => value.views[0]?.url === `${origin}/one`,
+		"The HEIC upload fixture page did not load",
+	);
+	await assertHeicUploadConversion();
+	await page.evaluate(
+		async ({ uploadTabId, originalTabId }) => {
+			await window.kestrel.request({
+				type: "browser-close-tab",
+				tabId: uploadTabId,
+			});
+			await window.kestrel.request({
+				type: "browser-select-tab",
+				tabId: originalTabId,
+			});
+		},
+		{ uploadTabId: heicUploadTabId, originalTabId: originalHeicUploadTabId },
+	);
+	await waitForBrowserState(
+		(value) =>
+			value.activeTabId === originalHeicUploadTabId &&
+			value.tabs.length === browserBeforeHeicUpload.tabs.length,
+		"The HEIC upload fixture tab did not close cleanly",
+	);
 	await assertKestrelSidebarResize();
 	const homeSend = page.getByRole("button", {
 		name: "Send message to Pragmatic",
