@@ -96,7 +96,7 @@ function BrowserDownloadsPopover({
         <Icon name="downloads" />
         <span>
           <strong>Downloads</strong>
-          <small>Track progress and find saved files here</small>
+          <small>Track progress and drag finished files to upload fields.</small>
         </span>
       </header>
       {downloads.length === 0 ? (
@@ -1267,7 +1267,6 @@ export function BrowserToolbar({
                   <Icon name="more" />
                   <span>
                     <strong>Browser menu</strong>
-                    <small>Tabs, history, page tools, and settings</small>
                   </span>
                 </header>
                 <div className="browser-toolbar-menu-list">
@@ -1463,7 +1462,7 @@ export function BrowserToolbar({
                   <Icon name="extensions" />
                   <span>
                     <strong>Extensions</strong>
-                    <small>Pin quick actions beside the logo</small>
+					<small>Pin extensions to the toolbar.</small>
                   </span>
                 </header>
                 {extensions.length === 0 ? (
@@ -1534,7 +1533,6 @@ export function BrowserToolbar({
                   <Icon name="tools" />
                   <span>
                     <strong>Tools</strong>
-                    <small>Common actions for this page</small>
                   </span>
                 </header>
                 <div className="browser-toolbar-tool-grid">
@@ -1618,7 +1616,6 @@ export function BrowserToolbar({
                   <Icon name="sliders" />
                   <span>
                     <strong>Page options</strong>
-                    <small>Quick settings for this browser surface</small>
                   </span>
                 </header>
                 <div className="browser-toolbar-settings-list">

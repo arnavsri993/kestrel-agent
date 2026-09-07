@@ -56,12 +56,15 @@ try {
 	await taskSettings.getByText(/Auto routes model, thinking level/).waitFor();
 	await page.getByRole("button", { name: /^Model:/ }).click();
 	const modelMenu = page.getByRole("dialog", {
-		name: "Choose provider, model, and thinking level",
+		name: "Choose a provider, account, model, and thinking level",
 	});
 	await modelMenu.waitFor();
+	await modelMenu.getByText("Account", { exact: true }).waitFor();
 	assert.equal(
 		await modelMenu
-			.getByRole("switch", { name: "Automatically choose a model" })
+			.getByRole("switch", {
+				name: "Automatically choose a discovered available model",
+			})
 			.getAttribute("aria-checked"),
 		"true",
 	);

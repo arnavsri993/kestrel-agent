@@ -140,9 +140,8 @@ export function ComputerUseSettings() {
 					</span>
 				</div>
 				<p>
-					Let Kestrel inspect and control other Mac apps with explicit approval. This
-					powerful surface is off by default and stays separate from the isolated and
-					visible Kestrel browser.
+					Let Kestrel inspect and control Mac apps after you approve each action.
+					It is off by default and separate from the Kestrel browser.
 				</p>
 				{status ? (
 					<div className="computer-use-permissions" aria-label="macOS permission status">
@@ -161,13 +160,13 @@ export function ComputerUseSettings() {
 					</div>
 				) : (
 					<p className="computer-use-loading" role="status">
-						Checking the native permission state…
+					Checking permissions…
 					</p>
 				)}
 				<p className="computer-use-boundary">
-					Kestrel never requests these permissions from this status check. Even when
-					enabled, approvals still pause consequential actions; this does not purchase,
-					create accounts, or bypass a CAPTCHA.
+					This check never requests permission. Even when enabled, approvals still
+					pause consequential actions; Kestrel cannot purchase, create accounts, or
+					bypass a CAPTCHA.
 				</p>
 				{error && <small className="computer-use-error" role="alert">{error}</small>}
 			</div>

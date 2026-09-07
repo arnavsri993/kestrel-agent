@@ -1,6 +1,16 @@
+import { execFile as execFileCallback } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import {
+	existsSync,
+	mkdtempSync,
+	mkdirSync,
+	realpathSync,
+	rmSync,
+	statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join } from "node:path";
+import { promisify } from "node:util";
 import {
 	annotateAccessibilityTree,
 	type BrowserAction,
@@ -41,6 +51,7 @@ import {
 	type UserBrowserTabOrganizationApply,
 	type UserBrowserTabOrganizationPreview,
 	type UserBrowserTabFolder,
+	type ChromeWebStoreExtensionInspection,
 	type InstalledExtension,
 	type FilePreview,
 	type SelectedAttachment,
@@ -74,6 +85,11 @@ import {
 	targetPointFromBackendNode,
 } from "./browser-backend-node-target";
 import { BrowserExtensionManager } from "./browser-extension-manager";
+import {
+	browserExtensionOperationErrorMessage,
+	chromeWebStoreInstallErrorMessage,
+} from "../browser-extension-error";
+import { ElectronExtensionRuntime } from "./electron-extension-runtime";
 import {
 	isUserBrowserBackendWireRequest,
 	type UserBrowserBackendWireRequest,
@@ -125,6 +141,15 @@ const SCREENSHOT_CAPTURE_TIMEOUT_MS = 5_000;
 const PAGE_PREVIEW_CAPTURE_TIMEOUT_MS = 750;
 const SCREENSHOT_CAPTURE_ATTEMPTS = 3;
 const PASSWORD_SUBMISSION_CHANNEL = "kestrel:user-browser-password-submission";
+const HEIC_UPLOAD_CHANNEL = "kestrel:user-browser-heic-upload";
+const HEIC_UPLOAD_FAILED_CHANNEL = "kestrel:user-browser-heic-upload-failed";
+const HEIC_UPLOAD_INPUT_ID_ATTRIBUTE = "data-kestrel-heic-upload-id";
+const MAX_HEIC_UPLOAD_FILES = 20;
+const MAX_HEIC_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_HEIC_UPLOAD_PIXELS = 75_000_000;
+const HEIC_UPLOAD_CONVERSION_TIMEOUT_MS = 30_000;
+const HEIC_UPLOAD_TEMPORARY_FILE_TTL_MS = 60 * 60 * 1_000;
+const executeFile = promisify(execFileCallback);
 const PasswordSubmissionMessageSchema = z.object({
 	username: z.string().max(500),
 	password: z.string().min(1).max(100_000),
@@ -136,6 +161,13 @@ const PasswordSubmissionMessageSchema = z.object({
 			height: z.number().int().min(0).max(20_000),
 		})
 		.optional(),
+});
+const HeicUploadMessageSchema = z.object({
+	inputId: z.string().regex(/^[a-z0-9-]{10,100}$/),
+	paths: z
+		.array(z.string().min(1).max(16_384))
+		.min(1)
+		.max(MAX_HEIC_UPLOAD_FILES),
 });
 const AUTHENTICATION_HOSTS = new Set([
 	"accounts.google.com",
@@ -333,6 +365,68 @@ function loadOptionsForWindowOpen(
 			? { httpReferrer: referrer }
 			: {}),
 	};
+}
+
+function isHeicUploadPath(value: string): boolean {
+	return [".heic", ".heif"].includes(extname(value).toLowerCase());
+}
+
+function temporaryJpegFilename(source: string): string {
+	const name = basename(source, extname(source))
+		.trim()
+		.replace(/[^A-Za-z0-9._-]+/g, "-")
+		.replace(/^\.+/, "")
+		.slice(0, 120);
+	return `${name || "image"}.jpeg`;
+}
+
+async function convertHeicImageToJpeg(
+	source: string,
+	destination: string,
+): Promise<void> {
+	const metadata = await sharp(source, { failOn: "none" })
+		.metadata()
+		.catch(() => undefined);
+	if (
+		metadata?.width &&
+		metadata.height &&
+		metadata.width * metadata.height > MAX_HEIC_UPLOAD_PIXELS
+	)
+		throw new Error("This HEIC image is too large to convert safely.");
+	let sharpError: unknown;
+	try {
+		await sharp(source, {
+			failOn: "none",
+			limitInputPixels: MAX_HEIC_UPLOAD_PIXELS,
+		})
+			.rotate()
+			.jpeg({ quality: 92, progressive: true })
+			.toFile(destination);
+	} catch (cause) {
+		sharpError = cause;
+		// Sharp's macOS build can inspect HEIC metadata while omitting the HEVC
+		// decoder needed for pixels. Let macOS convert locally in that case.
+		if (process.platform !== "darwin") throw cause;
+		await executeFile(
+			"/usr/bin/sips",
+			["-s", "format", "jpeg", source, "--out", destination],
+			{
+				timeout: HEIC_UPLOAD_CONVERSION_TIMEOUT_MS,
+				maxBuffer: 64 * 1024,
+			},
+		);
+	}
+
+	const converted = statSync(destination);
+	if (
+		!converted.isFile() ||
+		converted.size === 0 ||
+		converted.size > MAX_HEIC_UPLOAD_BYTES
+	) {
+		throw sharpError instanceof Error
+			? sharpError
+			: new Error("Kestrel could not create a usable JPEG from this HEIC image.");
+	}
 }
 
 function safePageUrl(value: string): URL | undefined {
@@ -1078,6 +1172,8 @@ export class UserBrowserService {
 	private readonly store: BrowserTabStore;
 	private readonly partition: Session;
 	private readonly extensionManager: BrowserExtensionManager;
+	private readonly extensionRuntime: ElectronExtensionRuntime;
+	private readonly extensionStartup: Promise<void>;
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly elementRefs = new Map<string, Map<string, number>>();
 	private readonly downloadPaths = new Map<string, string>();
@@ -1136,6 +1232,7 @@ export class UserBrowserService {
 	private readonly paymentPromptSuppressedUntil = new Map<string, number>();
 	private readonly agentTabPinCounts = new Map<string, number>();
 	private readonly closingTabIds = new Set<string>();
+	private readonly temporaryHeicUploadDirectories = new Set<string>();
 	private tabMutationQueue: Promise<void> = Promise.resolve();
 	private readonly allowDevTools: boolean;
 
@@ -1202,8 +1299,13 @@ export class UserBrowserService {
 		this.partition = electronSession.fromPartition(this.partitionName, {
 			cache: true,
 		});
+		this.extensionRuntime = new ElectronExtensionRuntime(this.partition);
 		this.applySessionBrowserPreferences();
-		void this.extensionManager.loadAll(this.partition);
+		this.extensionStartup = this.extensionManager
+			.loadAll(this.extensionRuntime)
+			.catch((error) => {
+				console.warn("[Extension] Failed to restore browser extensions:", error);
+			});
 		this.startSleepingTabsMonitor();
 		if (this.passwordVault || this.paymentCardVault) {
 			this.passwordPollInterval = setInterval(() => {
@@ -2951,6 +3053,150 @@ export class UserBrowserService {
 		);
 	}
 
+	private async handleHeicUpload(
+		tab: UserBrowserTab,
+		webContents: WebContents,
+		event: Electron.IpcMainEvent,
+		raw: unknown,
+	): Promise<void> {
+		const parsed = HeicUploadMessageSchema.safeParse(raw);
+		if (!parsed.success || this.disposed || isKestrelAppPageUrl(tab.url)) return;
+		const pageUrl = safePageUrl(webContents.getURL()) || safePageUrl(tab.url);
+		const frameUrl = safePageUrl(
+			event.senderFrame?.url || webContents.getURL(),
+		);
+		if (!pageUrl || !frameUrl || pageUrl.origin !== frameUrl.origin) return;
+
+		let originalPaths: string[];
+		try {
+			originalPaths = this.validatedHeicUploadPaths(parsed.data.paths);
+		} catch {
+			this.notifyHeicUploadFailure(webContents, parsed.data.inputId);
+			return;
+		}
+
+		const temporaryDirectory = mkdtempSync(
+			join(tmpdir(), "kestrel-heic-upload-"),
+		);
+		this.temporaryHeicUploadDirectories.add(temporaryDirectory);
+		try {
+			const convertedPaths: string[] = [];
+			const usedFilenames = new Set<string>();
+			for (const [index, source] of originalPaths.entries()) {
+				if (!isHeicUploadPath(parsed.data.paths[index]!)) {
+					convertedPaths.push(source);
+					continue;
+				}
+				const filename = temporaryJpegFilename(source);
+				const stem = basename(filename, extname(filename));
+				let uniqueFilename = filename;
+				let duplicate = 2;
+				while (usedFilenames.has(uniqueFilename)) {
+					uniqueFilename = `${stem}-${duplicate}.jpeg`;
+					duplicate += 1;
+				}
+				usedFilenames.add(uniqueFilename);
+				const destination = join(temporaryDirectory, uniqueFilename);
+				await convertHeicImageToJpeg(source, destination);
+				convertedPaths.push(destination);
+			}
+			if (
+				this.disposed ||
+				!liveWebContents(webContents) ||
+				safePageUrl(webContents.getURL())?.origin !== pageUrl.origin
+			)
+				throw new Error("The page changed before the HEIC image was converted.");
+			await this.replaceHeicUploadInputFiles(
+				webContents,
+				parsed.data.inputId,
+				convertedPaths,
+			);
+			this.retainTemporaryHeicUploadDirectory(temporaryDirectory);
+		} catch {
+			this.releaseTemporaryHeicUploadDirectory(temporaryDirectory);
+			this.notifyHeicUploadFailure(webContents, parsed.data.inputId);
+		}
+	}
+
+	private validatedHeicUploadPaths(paths: readonly string[]): string[] {
+		if (!paths.some(isHeicUploadPath))
+			throw new Error("No HEIC image was selected.");
+		return paths.map((path) => {
+			if (!isAbsolute(path)) throw new Error("The selected image path is invalid.");
+			const source = realpathSync(path);
+			const metadata = statSync(source);
+			if (
+				!metadata.isFile() ||
+				metadata.size === 0 ||
+				metadata.size > MAX_HEIC_UPLOAD_BYTES
+			)
+				throw new Error("The selected image cannot be converted safely.");
+			return source;
+		});
+	}
+
+	private async replaceHeicUploadInputFiles(
+		webContents: WebContents,
+		inputId: string,
+		paths: string[],
+	): Promise<void> {
+		const attachedHere = !webContents.debugger.isAttached();
+		if (attachedHere) webContents.debugger.attach("1.3");
+		try {
+			const document = (await webContents.debugger.sendCommand(
+				"DOM.getDocument",
+				{ depth: 0 },
+			)) as { root: { nodeId: number } };
+			const selected = (await webContents.debugger.sendCommand(
+				"DOM.querySelector",
+				{
+					nodeId: document.root.nodeId,
+					selector: `input[${HEIC_UPLOAD_INPUT_ID_ATTRIBUTE}="${inputId}"]`,
+				},
+			)) as { nodeId: number };
+			if (!selected.nodeId)
+				throw new Error("The image upload field is no longer available.");
+			await webContents.debugger.sendCommand("DOM.setFileInputFiles", {
+				nodeId: selected.nodeId,
+				files: paths,
+			});
+		} finally {
+			if (attachedHere && liveWebContents(webContents)) {
+				try {
+					if (webContents.debugger.isAttached()) webContents.debugger.detach();
+				} catch {
+					// The page can close while its temporary upload is being installed.
+				}
+			}
+		}
+	}
+
+	private notifyHeicUploadFailure(webContents: WebContents, inputId: string): void {
+		if (!liveWebContents(webContents)) return;
+		try {
+			webContents.send(HEIC_UPLOAD_FAILED_CHANNEL, { inputId });
+		} catch {
+			// Falling back to the original file is best effort after page teardown.
+		}
+	}
+
+	private retainTemporaryHeicUploadDirectory(directory: string): void {
+		const cleanup = setTimeout(
+			() => this.releaseTemporaryHeicUploadDirectory(directory),
+			HEIC_UPLOAD_TEMPORARY_FILE_TTL_MS,
+		);
+		cleanup.unref?.();
+	}
+
+	private releaseTemporaryHeicUploadDirectory(directory: string): void {
+		if (!this.temporaryHeicUploadDirectories.delete(directory)) return;
+		try {
+			rmSync(directory, { recursive: true, force: true, maxRetries: 2 });
+		} catch {
+			// Temporary conversion artifacts are never user-owned files.
+		}
+	}
+
 	private async handlePasswordSubmission(
 		tab: UserBrowserTab,
 		webContents: WebContents,
@@ -3859,38 +4105,97 @@ export class UserBrowserService {
 		return this.extensionManager.list();
 	}
 
-	async installExtensionUrl(urlOrId: string): Promise<InstalledExtension> {
-		return this.extensionManager.installFromChromeWebStore(
-			urlOrId,
-			this.partition,
+	private extensionOperationError(
+		cause: unknown,
+		operation: "install" | "manage",
+	): Error {
+		// Keep the actionable native cause in the desktop log, but never send a
+		// filesystem path or Electron implementation detail to the renderer.
+		console.warn(`[Extension] ${operation} operation failed:`, cause);
+		return new Error(
+			operation === "install"
+				? chromeWebStoreInstallErrorMessage(cause)
+				: browserExtensionOperationErrorMessage(cause),
 		);
 	}
 
+	async inspectExtensionUrl(
+		urlOrId: string,
+	): Promise<ChromeWebStoreExtensionInspection> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.inspectChromeWebStore(urlOrId);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "install");
+		}
+	}
+
+	async installReviewedExtension(inspectionId: string): Promise<InstalledExtension> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installInspectedChromeWebStore(
+				inspectionId,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "install");
+		}
+	}
+
 	async installExtensionFile(filePath: string): Promise<InstalledExtension> {
-		return this.extensionManager.installFromCrxOrZipFile(
-			filePath,
-			this.partition,
-		);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installFromCrxOrZipFile(
+				filePath,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async installExtensionFolder(
 		folderPath: string,
 	): Promise<InstalledExtension> {
-		return this.extensionManager.installFromUnpacked(
-			folderPath,
-			this.partition,
-		);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installFromUnpacked(
+				folderPath,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async toggleExtension(
 		id: string,
 		enabled: boolean,
 	): Promise<InstalledExtension> {
-		return this.extensionManager.toggle(id, enabled, this.partition);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.toggle(id, enabled, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
+	}
+
+	async reloadExtension(id: string): Promise<InstalledExtension> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.reload(id, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async uninstallExtension(id: string): Promise<void> {
-		return this.extensionManager.uninstall(id, this.partition);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.uninstall(id, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	dispose(): void {
@@ -3905,6 +4210,8 @@ export class UserBrowserService {
 		for (const tabId of [...this.views.keys()]) this.closeView(tabId);
 		this.elementRefs.clear();
 		this.pendingContextDownloads.clear();
+		for (const directory of [...this.temporaryHeicUploadDirectories])
+			this.releaseTemporaryHeicUploadDirectory(directory);
 	}
 
 	private handleWillDownload(
@@ -4182,10 +4489,16 @@ export class UserBrowserService {
 			return { action: "deny" };
 		});
 		webContents.on("ipc-message", (event, channel, ...args) => {
-			if (channel !== PASSWORD_SUBMISSION_CHANNEL) return;
-			void this.handlePasswordSubmission(tab, webContents, event, args[0]).catch(
-				() => undefined,
-			);
+			if (channel === PASSWORD_SUBMISSION_CHANNEL) {
+				void this.handlePasswordSubmission(tab, webContents, event, args[0]).catch(
+					() => undefined,
+				);
+				return;
+			}
+			if (channel === HEIC_UPLOAD_CHANNEL)
+				void this.handleHeicUpload(tab, webContents, event, args[0]).catch(
+					() => undefined,
+				);
 		});
 		webContents.on("will-navigate", (event, url) => {
 			if (!safePageUrl(url)) event.preventDefault();

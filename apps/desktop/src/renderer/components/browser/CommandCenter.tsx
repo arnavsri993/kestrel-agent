@@ -54,7 +54,6 @@ export function CommandCenter({
       className="command-center"
       title="Command Center"
       titleId="command-center-title"
-      description="Search Kestrel surfaces, shortcuts, and focused ways to start work."
       measure="standard"
       actions={onBack ? <SurfaceBackButton onBack={onBack} /> : undefined}
     >
@@ -64,7 +63,7 @@ export function CommandCenter({
         <input
           autoFocus
           value={query}
-          placeholder="Search Kestrel surfaces and shortcuts"
+          placeholder="Search Kestrel"
           onChange={(event) => setQuery(event.target.value)}
         />
         <kbd>⌘ K</kbd>
@@ -79,7 +78,6 @@ export function CommandCenter({
             <Icon name="agent" />
             <span>
               <strong>New task</strong>
-              <small>Start with an outcome</small>
             </span>
             <Icon name="chevron" />
           </button>
@@ -87,7 +85,7 @@ export function CommandCenter({
             <Icon name="writing" />
             <span>
               <strong>Writing Studio</strong>
-              <small>Draft with context and voice signals</small>
+              <small>Draft with your context</small>
             </span>
             <Icon name="chevron" />
           </button>
@@ -107,7 +105,7 @@ export function CommandCenter({
             <Icon name="readiness" />
             <span>
               <strong>Readiness</strong>
-              <small>Check what can work</small>
+              <small>Check your setup</small>
             </span>
             <Icon name="chevron" />
           </button>
@@ -122,9 +120,7 @@ export function CommandCenter({
         </div>
       </section>
       {visible.length === 0 ? (
-        <p className="command-empty">
-          Nothing matches &ldquo;{query.trim()}&rdquo;. Try a different search.
-        </p>
+        <p className="command-empty">No matches for &ldquo;{query.trim()}&rdquo;.</p>
       ) : (
         <div className="command-groups">
           {(["Browse", "Agent", "Context", "Build", "System"] as const).map(

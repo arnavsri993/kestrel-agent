@@ -1,0 +1,353 @@
+.extension-compatibility-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 10000;
+	display: grid;
+	place-items: center;
+	padding: 20px;
+	background: rgb(0 0 0 / 0.62);
+	backdrop-filter: blur(2px);
+}
+
+.extension-compatibility-dialog {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: min(700px, calc(100vw - 32px));
+	max-height: min(760px, calc(100vh - 32px));
+	overflow: hidden;
+	border: 1px solid rgb(255 255 255 / 0.12);
+	border-radius: 15px;
+	background: color-mix(in srgb, var(--panel) 96%, #000 4%);
+	box-shadow: 0 24px 64px rgb(0 0 0 / 0.48), inset 0 1px rgb(255 255 255 / 0.04);
+}
+
+.extension-compatibility-header,
+.extension-compatibility-footer,
+.extension-compatibility-heading,
+.extension-compatibility-state-row,
+.extension-compatibility-section-heading,
+.extension-compatibility-findings li {
+	display: flex;
+	align-items: center;
+}
+
+.extension-compatibility-header {
+	justify-content: space-between;
+	gap: 12px;
+	padding: 14px 18px;
+	border-bottom: 1px solid var(--line);
+}
+
+.extension-compatibility-heading {
+	min-width: 0;
+	gap: 10px;
+}
+
+.extension-compatibility-heading > span:last-child {
+	display: grid;
+	min-width: 0;
+	gap: 3px;
+}
+
+.extension-compatibility-heading strong,
+.extension-compatibility-heading small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.extension-compatibility-heading strong {
+	font-size: 14px;
+	font-weight: 650;
+}
+
+.extension-compatibility-heading small,
+.extension-compatibility-source,
+.extension-compatibility-section-heading small {
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.extension-compatibility-mark {
+	display: grid;
+	place-items: center;
+	flex: 0 0 30px;
+	width: 30px;
+	height: 30px;
+	border-radius: 8px;
+	background: color-mix(in srgb, var(--solid) 14%, transparent);
+	color: var(--solid);
+}
+
+.extension-compatibility-mark svg,
+.extension-compatibility-close svg,
+.extension-compatibility-analysis-note svg,
+.extension-compatibility-error svg {
+	width: 16px;
+	height: 16px;
+}
+
+.extension-compatibility-close {
+	display: grid;
+	place-items: center;
+	flex: 0 0 auto;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+}
+
+.extension-compatibility-close:hover,
+.extension-compatibility-close:focus-visible {
+	background: var(--selected);
+	color: var(--ink);
+	outline: none;
+}
+
+.extension-compatibility-body {
+	min-height: 0;
+	padding: 16px 18px 18px;
+	overflow: auto;
+	overscroll-behavior: contain;
+}
+
+.extension-compatibility-state-row {
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.extension-compatibility-state,
+.extension-capability-label {
+	display: inline-flex;
+	align-items: center;
+	min-height: 20px;
+	border: 1px solid var(--line);
+	border-radius: 99px;
+	padding: 1px 7px;
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.035em;
+	text-transform: uppercase;
+}
+
+.extension-compatibility-state.is-verified,
+.extension-compatibility-state.is-expected_compatible,
+.extension-capability-label.is-full {
+	border-color: color-mix(in srgb, #4caf7a 45%, var(--line));
+	background: color-mix(in srgb, #4caf7a 13%, transparent);
+	color: color-mix(in srgb, #4caf7a 72%, var(--ink));
+}
+
+.extension-compatibility-state.is-partial,
+.extension-capability-label.is-partial,
+.extension-capability-label.is-emulated {
+	border-color: color-mix(in srgb, #d6a540 45%, var(--line));
+	background: color-mix(in srgb, #d6a540 13%, transparent);
+	color: color-mix(in srgb, #d6a540 76%, var(--ink));
+}
+
+.extension-compatibility-state.is-unsupported,
+.extension-capability-label.is-unsupported {
+	border-color: color-mix(in srgb, #d96b6b 48%, var(--line));
+	background: color-mix(in srgb, #d96b6b 13%, transparent);
+	color: color-mix(in srgb, #d96b6b 78%, var(--ink));
+}
+
+.extension-compatibility-state.is-unknown,
+.extension-capability-label.is-unknown {
+	border-color: color-mix(in srgb, var(--muted) 55%, var(--line));
+	background: color-mix(in srgb, var(--muted) 12%, transparent);
+	color: var(--muted);
+}
+
+.extension-compatibility-summary {
+	margin: 0 0 18px;
+	color: var(--ink-secondary);
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.extension-compatibility-section + .extension-compatibility-section {
+	margin-top: 18px;
+	padding-top: 18px;
+	border-top: 1px solid var(--line);
+}
+
+.extension-compatibility-section-heading {
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 8px;
+}
+
+.extension-compatibility-section-heading h3 {
+	margin: 0;
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.extension-compatibility-section-heading small {
+	text-align: right;
+}
+
+.extension-compatibility-chips,
+.extension-compatibility-findings {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.extension-compatibility-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.extension-compatibility-chips li {
+	max-width: 100%;
+	overflow-wrap: anywhere;
+	border: 1px solid var(--line);
+	border-radius: 7px;
+	padding: 4px 7px;
+	background: color-mix(in srgb, var(--canvas) 65%, transparent);
+	color: var(--ink-secondary);
+	font-size: 11px;
+}
+
+.extension-compatibility-findings {
+	display: grid;
+	gap: 7px;
+}
+
+.extension-compatibility-findings li {
+	align-items: flex-start;
+	gap: 9px;
+	padding: 9px;
+	border: 1px solid var(--line);
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--surface) 65%, transparent);
+}
+
+.extension-compatibility-findings li > span:last-child {
+	display: grid;
+	min-width: 0;
+	gap: 3px;
+}
+
+.extension-compatibility-findings strong,
+.extension-compatibility-findings small {
+	overflow-wrap: anywhere;
+}
+
+.extension-compatibility-findings strong {
+	font-size: 11px;
+	font-weight: 650;
+}
+
+.extension-compatibility-findings small,
+.extension-compatibility-empty {
+	margin: 0;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.4;
+}
+
+.extension-compatibility-analysis-note,
+.extension-compatibility-error {
+	display: flex;
+	align-items: flex-start;
+	gap: 7px;
+	margin: 16px 0 0;
+	padding: 9px 10px;
+	border-radius: 8px;
+	font-size: 11px;
+	line-height: 1.4;
+}
+
+.extension-compatibility-analysis-note {
+	border: 1px solid var(--line);
+	background: color-mix(in srgb, var(--canvas) 65%, transparent);
+	color: var(--muted);
+}
+
+.extension-compatibility-error {
+	border: 1px solid color-mix(in srgb, #d96b6b 48%, var(--line));
+	background: color-mix(in srgb, #d96b6b 13%, transparent);
+	color: var(--ink);
+}
+
+.extension-compatibility-footer {
+	justify-content: flex-end;
+	gap: 8px;
+	padding: 13px 18px;
+	border-top: 1px solid var(--line);
+}
+
+.extension-compatibility-secondary,
+.extension-compatibility-primary {
+	min-height: 32px;
+	border-radius: 8px;
+	padding: 0 12px;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.extension-compatibility-secondary {
+	border: 1px solid var(--line);
+	background: transparent;
+	color: var(--ink-secondary);
+}
+
+.extension-compatibility-primary {
+	border: 1px solid color-mix(in srgb, var(--solid) 72%, transparent);
+	background: var(--solid);
+	color: var(--solid-ink, #fff);
+}
+
+.extension-compatibility-secondary:hover,
+.extension-compatibility-secondary:focus-visible {
+	border-color: var(--line-strong);
+	background: var(--selected);
+	outline: none;
+}
+
+.extension-compatibility-primary:hover,
+.extension-compatibility-primary:focus-visible {
+	filter: brightness(1.07);
+	outline: 2px solid color-mix(in srgb, var(--solid) 70%, transparent);
+	outline-offset: 2px;
+}
+
+.extension-compatibility-secondary:disabled,
+.extension-compatibility-primary:disabled,
+.extension-compatibility-close:disabled {
+	cursor: wait;
+	opacity: 0.56;
+}
+
+@media (max-width: 560px) {
+	.extension-compatibility-overlay {
+		padding: 10px;
+	}
+
+	.extension-compatibility-dialog {
+		width: min(100%, calc(100vw - 20px));
+		max-height: calc(100vh - 20px);
+	}
+
+	.extension-compatibility-section-heading {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 3px;
+	}
+
+	.extension-compatibility-section-heading small {
+		text-align: left;
+	}
+}

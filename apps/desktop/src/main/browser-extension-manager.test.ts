@@ -11,6 +11,7 @@ import {
 	readExtensionManifest,
 	validateChromeWebStoreCrx,
 } from "./browser-extension-manager";
+import type { ExtensionRuntime } from "./extension-runtime";
 
 const directories: string[] = [];
 
@@ -109,6 +110,48 @@ function signedCrx3(
 	return { archive, crx: Buffer.concat([prefix, header, archive]), id, publicDer };
 }
 
+function extensionRuntime(
+	id: string,
+	overrides: Partial<ExtensionRuntime> = {},
+): ExtensionRuntime {
+	let loadedPath = "";
+	const loadExtension =
+		overrides.loadExtension ??
+		vi.fn(async (path: string) => {
+			loadedPath = path;
+			return { id, ready: "passed" as const };
+		});
+	const removeExtension = overrides.removeExtension ?? vi.fn();
+	const startServiceWorker = overrides.startServiceWorker ?? vi.fn(async () => undefined);
+	return {
+		loadExtension,
+		removeExtension,
+		getExtension:
+			overrides.getExtension ??
+			vi.fn((extensionId: string) =>
+				extensionId === id && loadedPath
+					? {
+						id,
+						name: "Verified extension",
+						version: "1.0.0",
+						path: loadedPath,
+						manifest: {},
+					}
+					: null,
+			),
+		startServiceWorker,
+	};
+}
+
+async function inspectAndInstall(
+	manager: BrowserExtensionManager,
+	urlOrId: string,
+	runtime: ExtensionRuntime,
+) {
+	const inspection = await manager.inspectChromeWebStore(urlOrId);
+	return manager.installInspectedChromeWebStore(inspection.inspectionId, runtime);
+}
+
 describe("localized extension manifest metadata", () => {
 	it("resolves Chrome manifest message tokens and falls back rather than exposing unresolved tokens", () => {
 		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-"));
@@ -190,12 +233,10 @@ describe("BrowserExtensionManager release gates", () => {
 		}];
 		writeFileSync(registryPath, JSON.stringify(legacy));
 		const manager = new BrowserExtensionManager(directory);
-		const session = {
-			extensions: { loadExtension: vi.fn(), removeExtension: vi.fn() },
-		};
+		const runtime = extensionRuntime("ext-local");
 		expect(manager.list()).toEqual([]);
-		await manager.loadAll(session as never);
-		expect(session.extensions.loadExtension).not.toHaveBeenCalled();
+		await manager.loadAll(runtime);
+		expect(runtime.loadExtension).not.toHaveBeenCalled();
 		expect(JSON.parse(readFileSync(registryPath, "utf8"))).toEqual(legacy);
 		await expect(manager.installFromUnpacked(localPath)).rejects.toThrow(/development builds/i);
 	});
@@ -234,15 +275,11 @@ describe("BrowserExtensionManager release gates", () => {
 					crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength),
 			})),
 		);
-		const session = {
-			extensions: {
-				loadExtension: vi.fn(async () => ({ id })),
-				removeExtension: vi.fn(),
-			},
-		};
-		await expect(
-			manager.installFromChromeWebStore(id, session as never),
-		).resolves.toMatchObject({ id, source: "chrome_web_store" });
+		const runtime = extensionRuntime(id);
+		await expect(inspectAndInstall(manager, id, runtime)).resolves.toMatchObject({
+			id,
+			source: "chrome_web_store",
+		});
 		expect(JSON.parse(readFileSync(registryPath, "utf8"))).toHaveLength(1);
 		expect(manager.list()).toHaveLength(1);
 	});
@@ -258,18 +295,13 @@ describe("BrowserExtensionManager release gates", () => {
 		}));
 		vi.stubGlobal("fetch", fetchMock);
 		const manager = new BrowserExtensionManager(directory);
-		const session = {
-			extensions: {
-				loadExtension: vi.fn(async () => ({ id })),
-				removeExtension: vi.fn(),
-			},
-		};
-		const installed = await manager.installFromChromeWebStore(id, session as never);
+		const runtime = extensionRuntime(id);
+		const installed = await inspectAndInstall(manager, id, runtime);
 		expect(fetchMock).toHaveBeenCalledWith(
 			expect.stringContaining("acceptformat=crx3"),
 			expect.objectContaining({ redirect: "follow", signal: expect.any(AbortSignal) }),
 		);
-		expect(session.extensions.loadExtension).toHaveBeenCalledWith(
+		expect(runtime.loadExtension).toHaveBeenCalledWith(
 			join(directory, "browser-extensions", id),
 			{ allowFileAccess: false },
 		);
@@ -279,6 +311,154 @@ describe("BrowserExtensionManager release gates", () => {
 		) as { key?: string };
 		expect(manifest.key).toBe(publicDer.toString("base64"));
 		expect(manager.list()).toEqual([installed]);
+		expect(installed).not.toHaveProperty("path");
+	});
+
+	it("keeps an inspected package temporary and consumes its reviewed token once", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-"));
+		directories.push(directory);
+		const { crx, id } = signedCrx3({
+			"manifest.json": JSON.stringify({
+				name: "Reviewed extension",
+				version: "1.0.0",
+				manifest_version: 3,
+			}),
+		});
+		const fetchMock = vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			arrayBuffer: async () =>
+				crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength),
+		}));
+		vi.stubGlobal("fetch", fetchMock);
+		const manager = new BrowserExtensionManager(directory);
+		const inspection = await manager.inspectChromeWebStore(id);
+
+		expect(inspection).not.toHaveProperty("path");
+		expect(manager.list()).toEqual([]);
+		expect(existsSync(join(directory, "browser-extensions", id))).toBe(false);
+
+		const installed = await manager.installInspectedChromeWebStore(
+			inspection.inspectionId,
+			extensionRuntime(id),
+		);
+		expect(installed).not.toHaveProperty("path");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		await expect(
+			manager.installInspectedChromeWebStore(
+				inspection.inspectionId,
+				extensionRuntime(id),
+			),
+		).rejects.toThrow(/review has expired/i);
+	});
+
+	it("blocks an explicitly unsupported reviewed package before runtime loading", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-"));
+		directories.push(directory);
+		const { crx, id } = signedCrx3({
+			"manifest.json": JSON.stringify({
+				name: "Unsupported storage extension",
+				version: "1.0.0",
+				manifest_version: 3,
+			}),
+			"worker.js": "chrome.storage.sync.set({ enabled: true });",
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => ({
+				ok: true,
+				status: 200,
+				arrayBuffer: async () =>
+					crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength),
+			})),
+		);
+		const manager = new BrowserExtensionManager(directory);
+		const inspection = await manager.inspectChromeWebStore(id);
+		const runtime = extensionRuntime(id);
+
+		expect(inspection.compatibility.state).toBe("unsupported");
+		await expect(
+			manager.installInspectedChromeWebStore(inspection.inspectionId, runtime),
+		).rejects.toThrow(/will not install/i);
+		expect(runtime.loadExtension).not.toHaveBeenCalled();
+		expect(manager.list()).toEqual([]);
+	});
+
+	it("preserves a saved extension when an older compatibility report cannot be parsed, then verifies persistence after a restart", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-"));
+		directories.push(directory);
+		const { crx, id } = signedCrx3({
+			"manifest.json": JSON.stringify({
+				name: "Persistent extension",
+				version: "1.0.0",
+				manifest_version: 3,
+			}),
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => ({
+				ok: true,
+				status: 200,
+				arrayBuffer: async () =>
+					crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength),
+			})),
+		);
+		const initialManager = new BrowserExtensionManager(directory);
+		await inspectAndInstall(initialManager, id, extensionRuntime(id));
+		const registryPath = join(directory, "browser-extensions", "extensions.json");
+		const persisted = JSON.parse(readFileSync(registryPath, "utf8")) as Array<{
+			compatibility?: unknown;
+		}>;
+		persisted[0]!.compatibility = { state: "expected_compatible" };
+		writeFileSync(registryPath, JSON.stringify(persisted));
+
+		const restartedManager = new BrowserExtensionManager(directory);
+		expect(restartedManager.list()).toHaveLength(1);
+		expect(restartedManager.list()[0]?.compatibility?.state).toBe("unknown");
+
+		await restartedManager.loadAll(extensionRuntime(id));
+		const restored = restartedManager.list()[0];
+		expect(restored).toBeDefined();
+		expect(restored).not.toHaveProperty("path");
+		// The malformed legacy report is not treated as proof. A future review
+		// can replace it, while this restart still proves the package was loaded.
+		expect(restored?.compatibility?.runtime.persistedAcrossRestart).toBe(
+			"passed",
+		);
+	});
+
+	it("marks a basic expected-compatible package Verified only after a new manager reloads it", async () => {
+		const directory = mkdtempSync(join(tmpdir(), "kestrel-extension-"));
+		directories.push(directory);
+		const { crx, id } = signedCrx3({
+			"manifest.json": JSON.stringify({
+				name: "Restart verified extension",
+				version: "1.0.0",
+				manifest_version: 3,
+			}),
+		});
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => ({
+				ok: true,
+				status: 200,
+				arrayBuffer: async () =>
+					crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength),
+			})),
+		);
+		const initialManager = new BrowserExtensionManager(directory);
+		const installed = await inspectAndInstall(
+			initialManager,
+			id,
+			extensionRuntime(id),
+		);
+		expect(installed.compatibility?.state).toBe("expected_compatible");
+
+		const restartedManager = new BrowserExtensionManager(directory);
+		await restartedManager.loadAll(extensionRuntime(id));
+		const restored = restartedManager.list()[0];
+		expect(restored?.compatibility?.runtime.status).toBe("passed");
+		expect(restored?.compatibility?.state).toBe("verified");
 	});
 
 	it("confirms a Manifest V3 background worker can start before persisting", async () => {
@@ -302,20 +482,14 @@ describe("BrowserExtensionManager release gates", () => {
 					crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength),
 			})),
 		);
-		const startWorkerForScope = vi.fn(async () => ({}));
+		const startServiceWorker = vi.fn(async () => undefined);
 		const manager = new BrowserExtensionManager(directory);
-		const session = {
-			extensions: {
-				loadExtension: vi.fn(async () => ({ id })),
-				removeExtension: vi.fn(),
-			},
-			serviceWorkers: { startWorkerForScope },
-		};
+		const runtime = extensionRuntime(id, { startServiceWorker });
 
-		await expect(
-			manager.installFromChromeWebStore(id, session as never),
-		).resolves.toMatchObject({ id });
-		expect(startWorkerForScope).toHaveBeenCalledWith(`chrome-extension://${id}/`);
+		await expect(inspectAndInstall(manager, id, runtime)).resolves.toMatchObject({
+			id,
+		});
+		expect(startServiceWorker).toHaveBeenCalledWith(id);
 		expect(manager.list()).toHaveLength(1);
 	});
 
@@ -342,21 +516,16 @@ describe("BrowserExtensionManager release gates", () => {
 		);
 		const removeExtension = vi.fn();
 		const manager = new BrowserExtensionManager(directory);
-		const session = {
-			extensions: {
-				loadExtension: vi.fn(async () => ({ id })),
-				removeExtension,
-			},
-			serviceWorkers: {
-				startWorkerForScope: vi.fn(async () => {
+		const runtime = extensionRuntime(id, {
+			removeExtension,
+			startServiceWorker: vi.fn(async () => {
 					throw new Error("unsupported chrome API");
-				}),
-			},
-		};
+			}),
+		});
 
-		await expect(
-			manager.installFromChromeWebStore(id, session as never),
-		).rejects.toThrow(/does not support/i);
+		await expect(inspectAndInstall(manager, id, runtime)).rejects.toThrow(
+			/does not support/i,
+		);
 		expect(removeExtension).toHaveBeenCalledWith(id);
 		expect(manager.list()).toEqual([]);
 		expect(existsSync(join(directory, "browser-extensions", id))).toBe(false);
@@ -387,17 +556,12 @@ describe("BrowserExtensionManager release gates", () => {
 			);
 			const removeExtension = vi.fn();
 			const manager = new BrowserExtensionManager(directory);
-			const session = {
-				extensions: {
-					loadExtension: vi.fn(async () => ({ id })),
-					removeExtension,
-				},
-				serviceWorkers: {
-					startWorkerForScope: vi.fn(() => new Promise(() => undefined)),
-				},
-			};
+			const runtime = extensionRuntime(id, {
+				removeExtension,
+				startServiceWorker: vi.fn(() => new Promise<void>(() => undefined)),
+			});
 
-			const install = manager.installFromChromeWebStore(id, session as never);
+			const install = inspectAndInstall(manager, id, runtime);
 			const rejection = expect(install).rejects.toThrow(/could not start/i);
 			await vi.advanceTimersByTimeAsync(10_001);
 
@@ -420,15 +584,14 @@ describe("BrowserExtensionManager release gates", () => {
 			arrayBuffer: async () => crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.byteLength),
 		})));
 		const manager = new BrowserExtensionManager(directory);
-		const session = {
-			extensions: {
-				loadExtension: vi.fn(async () => {
+		const runtime = extensionRuntime(id, {
+			loadExtension: vi.fn(async () => {
 					throw new Error("Electron refused extension");
 				}),
-				removeExtension: vi.fn(),
-			},
-		};
-		await expect(manager.installFromChromeWebStore(id, session as never)).rejects.toThrow(/Electron refused/i);
+		});
+		await expect(inspectAndInstall(manager, id, runtime)).rejects.toThrow(
+			/Electron refused/i,
+		);
 		expect(manager.list()).toEqual([]);
 		expect(existsSync(join(directory, "browser-extensions", id))).toBe(false);
 		expect(existsSync(join(directory, "browser-extensions", "extensions.json"))).toBe(false);
@@ -466,18 +629,15 @@ describe("BrowserExtensionManager release gates", () => {
 			})),
 		);
 		const manager = new BrowserExtensionManager(directory);
-		const session = {
-			extensions: {
-				loadExtension: vi.fn(async () => {
+		const runtime = extensionRuntime(id, {
+			loadExtension: vi.fn(async () => {
 					throw new Error("Electron refused replacement");
 				}),
-				removeExtension: vi.fn(),
-			},
-		};
+		});
 
-		await expect(
-			manager.installFromChromeWebStore(id, session as never),
-		).rejects.toThrow(/refused replacement/i);
+		await expect(inspectAndInstall(manager, id, runtime)).rejects.toThrow(
+			/refused replacement/i,
+		);
 		expect(readFileSync(join(extensionPath, "manifest.json"), "utf8")).toBe(
 			legacyManifest,
 		);
@@ -487,5 +647,17 @@ describe("BrowserExtensionManager release gates", () => {
 
 	it("removes the local extension IPC request from the release contract", () => {
 		expect(RendererRequestSchema.safeParse({ type: "browser-install-extension-file" }).success).toBe(false);
+		expect(
+			RendererRequestSchema.safeParse({
+				type: "browser-install-extension-url",
+				urlOrId: "a".repeat(32),
+			}).success,
+		).toBe(false);
+		expect(
+			RendererRequestSchema.safeParse({
+				type: "browser-inspect-extension-url",
+				urlOrId: "a".repeat(32),
+			}).success,
+		).toBe(true);
 	});
 });

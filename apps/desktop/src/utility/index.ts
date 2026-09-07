@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
 	AgentCore,
+	createAccountModelProviders,
 	type BrowserAction,
 	type BrowserAutomationBackend,
 	BrowserController,
@@ -27,6 +28,7 @@ import {
 	loadSignedManagedPolicy,
 	type ScreenshotFrame,
 	VisualValidator,
+	type ProviderAccountRuntimeConfig,
 } from "@kestrel/agent-core";
 import {
 	isProtectedDatabaseError,
@@ -260,6 +262,7 @@ port.on("message", async ({ data }) => {
 			managedPluginRoots: string[];
 			learnedSkillRoot: string;
 			secureEnvironment: NodeJS.ProcessEnv;
+			providerAccounts?: ProviderAccountRuntimeConfig[];
 		};
 		requestId?: string;
 		request?: unknown;
@@ -331,9 +334,14 @@ port.on("message", async ({ data }) => {
 				seedDevelopmentFixtures:
 					Boolean(process.env.KESTREL_TEST_USER_DATA) &&
 					process.env.KESTREL_REAL_USER_PROFILE !== "1",
-				modelProviders: createEnvironmentModelProviders(
-					message.config.secureEnvironment,
-				),
+				// An explicit empty account set means every managed account was
+				// disabled or removed. It must not revive environment credentials from
+				// an older bootstrap path. Only a genuinely absent field represents a
+				// pre-account-registry bootstrap that still needs environment fallback.
+				modelProviders:
+					message.config.providerAccounts !== undefined
+						? createAccountModelProviders(message.config.providerAccounts)
+						: createEnvironmentModelProviders(message.config.secureEnvironment),
 				mediaProviders: createEnvironmentMediaProviders(
 					message.config.secureEnvironment,
 				),
@@ -363,6 +371,18 @@ port.on("message", async ({ data }) => {
 			const agentCore = core;
 			for (const key of Object.keys(message.config.secureEnvironment))
 				delete message.config.secureEnvironment[key];
+			for (const account of message.config.providerAccounts ?? []) {
+				delete account.apiKey;
+				delete account.headers;
+			}
+			// A new or expired dynamic catalog is resolved before Auto is offered.
+			// ModelCatalog limits discovery concurrency and this short deadline keeps
+			// startup responsive if an account endpoint is unreachable.
+			try {
+				await agentCore.refreshStaleProviderModels(AbortSignal.timeout(4_000));
+			} catch {
+				console.warn("Kestrel provider model catalog startup refresh did not complete.");
+			}
 			const mainSession = agentCore.runtime.ensureMainSession();
 			if (googleWorkspace)
 				installGoogleWorkspaceTools(

@@ -679,7 +679,7 @@ export function KestrelSidebar({
 											onKeyDown={(event) => openContextMenuFromKeyboard(event, "project", project.id, event.currentTarget)}
 										>
 											<ProjectBadge appearance={appearanceForProject(project)} />
-											<span>{project.name}</span>
+											<span className="kestrel-sidebar-title">{project.name}</span>
 											<Icon name="chevron" />
 										</button>
 										<AnimatePresence initial={false}>
@@ -712,7 +712,7 @@ export function KestrelSidebar({
 																		onContextMenu={(event) => openChatContextMenu(event, session)}
 																		onKeyDown={(event) => openContextMenuFromKeyboard(event, "chat", session.id, event.currentTarget)}
 																	>
-																		<span>{sessionTitleForDisplay(session.title)}</span>
+																		<span className="kestrel-sidebar-title">{sessionTitleForDisplay(session.title)}</span>
 																	</button>
 																</li>
 															))}
@@ -765,7 +765,7 @@ export function KestrelSidebar({
 										onContextMenu={(event) => openChatContextMenu(event, session)}
 										onKeyDown={(event) => openContextMenuFromKeyboard(event, "chat", session.id, event.currentTarget)}
 									>
-										<span>{sessionTitleForDisplay(session.title)}</span>
+										<span className="kestrel-sidebar-title">{sessionTitleForDisplay(session.title)}</span>
 									</button>
 								</li>
 							))}

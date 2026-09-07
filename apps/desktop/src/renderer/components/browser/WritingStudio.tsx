@@ -1,7 +1,7 @@
 import type {
   CoreResponse,
-  ModelProviderSummary,
   ModelRoutingDecision,
+  ProviderAccountSummary,
   RendererRequest,
   WritingAdaptationStrength,
   WritingContextPreview,
@@ -10,9 +10,14 @@ import type {
   WritingProfileStatus,
   WritingResult,
 } from "@kestrel/shared-types";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Icon } from "../Icon";
 import { PageFrame } from "../ui";
+import { ModelSelector } from "./ModelSelector";
+import {
+  accountForChoice,
+  type ModelSelectorChoice,
+} from "./model-selector";
 import "./surface-pages.css";
 import { writingProfilePanelPhase } from "./writing-studio-state";
 
@@ -46,12 +51,6 @@ const adaptationStrengths: Array<{
   { id: "strong", label: "Strong", detail: "Use more learned tendencies" },
 ];
 
-function providerLabel(provider: ModelProviderSummary): string {
-  return provider.id === "auto"
-    ? "Automatic route"
-    : provider.id.replaceAll("-", " ");
-}
-
 function routeLabel(route: ModelRoutingDecision): string {
   if (route.taskId.includes("reviewer")) return "Independent review";
   if (route.taskId.includes("repair")) return "Fidelity repair";
@@ -62,6 +61,16 @@ function contextCategoryLabel(category: string): string {
   return category
     .replaceAll("-", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function catalogNeedsRefresh(
+  accounts: readonly ProviderAccountSummary[],
+): boolean {
+  return accounts.some(
+    (account) =>
+      account.enabled &&
+      (account.discovery.state === "idle" || account.discovery.state === "stale"),
+  );
 }
 
 function formatQualityStatus(result: WritingResult): string {
@@ -79,11 +88,37 @@ export function WritingStudio() {
   const [adaptationStrength, setAdaptationStrength] =
     useState<WritingAdaptationStrength>("balanced");
   const [includeSensitive, setIncludeSensitive] = useState(false);
-  const [providerId, setProviderId] = useState("auto");
+  const [modelChoice, setModelChoice] = useState<ModelSelectorChoice>(() => {
+    const accountId = localStorage.getItem("kestrel:provider-account-id");
+    const storedReasoningEffort = localStorage.getItem(
+      "kestrel:reasoning-effort",
+    );
+    return {
+      executionMode:
+        localStorage.getItem("kestrel:execution-mode") === "manual"
+          ? "manual"
+          : "automatic",
+      providerId: localStorage.getItem("kestrel:provider-id") ?? "",
+      ...(accountId ? { accountId } : {}),
+      model: localStorage.getItem("kestrel:model") ?? "auto",
+      reasoningEffort:
+        storedReasoningEffort === "low" ||
+        storedReasoningEffort === "medium" ||
+        storedReasoningEffort === "high" ||
+        storedReasoningEffort === "xhigh" ||
+        storedReasoningEffort === "max" ||
+        storedReasoningEffort === "none"
+          ? storedReasoningEffort
+          : "none",
+    };
+  });
 
   const [profile, setProfile] = useState<WritingProfileStatus | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
-  const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
+  const [providerAccounts, setProviderAccounts] = useState<
+    ProviderAccountSummary[]
+  >([]);
+  const [providerAccountsLoaded, setProviderAccountsLoaded] = useState(false);
   const [sampleText, setSampleText] = useState("");
   const [sampleConsent, setSampleConsent] = useState(false);
   const [useAsExemplar, setUseAsExemplar] = useState(false);
@@ -97,23 +132,23 @@ export function WritingStudio() {
   const [error, setError] = useState("");
   const [previewError, setPreviewError] = useState("");
 
-  const routeOptions = useMemo(() => {
-    const configured = providers.filter((provider) => provider.id !== "auto");
-    return [
-      {
-        id: "auto",
-        label: "Automatic route",
-        detail: "Let Kestrel choose the best configured writing model",
-      },
-      ...configured.map((provider) => ({
-        id: provider.id,
-        label: providerLabel(provider),
-        detail: provider.capabilities.local
-          ? "Configured local endpoint"
-          : "Configured external endpoint",
-      })),
-    ];
-  }, [providers]);
+  const selectedManualAccount = accountForChoice(providerAccounts, modelChoice);
+  const manualRouteReady = Boolean(
+    providerAccountsLoaded && selectedManualAccount && modelChoice.model.trim(),
+  );
+  const writingRoutingReady =
+    modelChoice.executionMode === "automatic" || manualRouteReady;
+  const writingRouting =
+    modelChoice.executionMode === "automatic"
+      ? { providerIds: ["auto"] }
+      : {
+          providerIds: [modelChoice.providerId],
+          providerModels: {
+            [modelChoice.providerId]: modelChoice.model.trim(),
+          },
+          writerModel: modelChoice.model.trim(),
+          reviewerModel: modelChoice.model.trim(),
+        };
 
   useEffect(() => {
     let active = true;
@@ -137,18 +172,63 @@ export function WritingStudio() {
     void request({ type: "runtime-list-providers" })
       .then((response) => {
         if (!active) return;
-        setProviders(response.providers ?? []);
-        if (
-          response.providers?.length &&
-          !response.providers.some((provider) => provider.id === providerId)
-        )
-          setProviderId("auto");
+        if ("providerAccounts" in response) {
+          setProviderAccounts(response.providerAccounts ?? []);
+          setProviderAccountsLoaded(true);
+        }
       })
       .catch(() => undefined);
     return () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!providerAccountsLoaded) return;
+    setModelChoice((current) => {
+      if (current.executionMode === "automatic") return current;
+      const account = accountForChoice(providerAccounts, current);
+      if (!account) return current;
+      return {
+        ...current,
+        providerId: account.endpointId,
+        accountId: account.id,
+      };
+    });
+  }, [providerAccounts, providerAccountsLoaded]);
+
+  useEffect(() => {
+    if (!providerAccountsLoaded || !catalogNeedsRefresh(providerAccounts))
+      return;
+    let active = true;
+    void request({ type: "runtime-refresh-provider-models" })
+      .then((response) => {
+        if (active && response.providerAccounts)
+          setProviderAccounts(response.providerAccounts);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [providerAccounts, providerAccountsLoaded]);
+
+  useEffect(() => {
+    localStorage.setItem("kestrel:execution-mode", modelChoice.executionMode);
+    if (modelChoice.providerId)
+      localStorage.setItem("kestrel:provider-id", modelChoice.providerId);
+    if (modelChoice.accountId)
+      localStorage.setItem(
+        "kestrel:provider-account-id",
+        modelChoice.accountId,
+      );
+    else localStorage.removeItem("kestrel:provider-account-id");
+    if (modelChoice.model.trim())
+      localStorage.setItem("kestrel:model", modelChoice.model.trim());
+    localStorage.setItem(
+      "kestrel:reasoning-effort",
+      modelChoice.reasoningEffort,
+    );
+  }, [modelChoice]);
 
   useEffect(() => {
     const trimmedPurpose = purpose.trim();
@@ -271,6 +351,10 @@ export function WritingStudio() {
       setError("Add a purpose before creating a draft.");
       return;
     }
+    if (!writingRoutingReady) {
+      setError("Choose an available provider account and model before drafting.");
+      return;
+    }
     setBusy(true);
     setError("");
     setCopied(false);
@@ -284,7 +368,11 @@ export function WritingStudio() {
         ...(tone.trim() ? { tone: tone.trim() } : {}),
         adaptationStrength,
         includeSensitive,
-        providerIds: [providerId],
+        ...writingRouting,
+        ...(modelChoice.executionMode === "manual" &&
+        modelChoice.reasoningEffort !== "none"
+          ? { reasoningEffort: modelChoice.reasoningEffort }
+          : {}),
       });
       if (!response.writingResult)
         throw new Error("Kestrel did not return a writing draft.");
@@ -339,15 +427,15 @@ export function WritingStudio() {
     <PageFrame
       as="main"
       className="writing-studio"
-      title="Draft like yourself, with your context."
+    title="Write with your context."
       titleId="writing-studio-title"
       eyebrow="Writing Studio"
-      description="Kestrel combines your brief, confirmed life context, recipient relationships, and opted-in voice signals into an editable draft."
+    description="Turn a brief and confirmed context into an editable draft."
       measure="wide"
       actions={
         <span className="writing-studio-badge">
           <Icon name="writing" />
-          Local-first draft workflow
+      Local-first drafts
         </span>
       }
     >
@@ -401,7 +489,7 @@ export function WritingStudio() {
               <span>Purpose</span>
               <textarea
                 value={purpose}
-                placeholder="Tell Kestrel the outcome, key points, and anything it must preserve."
+        placeholder="Outcome, key points, and details to keep."
                 maxLength={10_000}
                 required
                 onChange={(event) => setPurpose(event.target.value)}
@@ -413,7 +501,7 @@ export function WritingStudio() {
               </span>
               <textarea
                 value={sourceText}
-                placeholder="Paste rough notes or a draft when you want Kestrel to preserve and improve it."
+        placeholder="Paste notes or a draft to improve."
                 maxLength={20_000}
                 onChange={(event) => setSourceText(event.target.value)}
               />
@@ -432,16 +520,15 @@ export function WritingStudio() {
               </label>
               <label>
                 <span>Model route</span>
-                <select
-                  value={providerId}
-                  onChange={(event) => setProviderId(event.target.value)}
-                >
-                  {routeOptions.map((option) => (
-                    <option value={option.id} key={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                <ModelSelector
+                  accounts={providerAccounts}
+                  choice={modelChoice}
+                  onChange={setModelChoice}
+                />
+                <small>
+                  Select an account and model to pin this draft, or leave
+                  routing automatic.
+                </small>
               </label>
             </div>
             <fieldset className="writing-strength-fieldset">
@@ -465,8 +552,8 @@ export function WritingStudio() {
                 ))}
               </div>
               <p>
-                {selectedStrength?.detail}. Learned signals remain soft
-                preferences, not a promise of authorship or a detector result.
+        {selectedStrength?.detail}. Learned signals guide the draft; they do not
+        prove authorship.
               </p>
             </fieldset>
             <label className="writing-sensitive-toggle">
@@ -478,14 +565,14 @@ export function WritingStudio() {
               <span>
                 <strong>Include sensitive context for this draft</strong>
                 <small>
-                  Opt in only when the recipient and purpose call for it.
+          Opt in only if the recipient and purpose require it.
                 </small>
               </span>
             </label>
             <div className="writing-submit-row">
               <button
                 className="button primary"
-                disabled={busy || !purpose.trim()}
+                disabled={busy || !purpose.trim() || !writingRoutingReady}
               >
                 {busy ? <Icon name="loader" /> : <Icon name="writing" />}
                 {busy
@@ -494,7 +581,7 @@ export function WritingStudio() {
                     ? "Adapt draft"
                     : "Create draft"}
               </button>
-              <small>Nothing is sent automatically.</small>
+        <small>Drafts are never sent automatically.</small>
             </div>
           </form>
         </section>
@@ -563,10 +650,7 @@ export function WritingStudio() {
             <div className="writing-context-empty">
               <Icon name="compass" />
               <strong>Start with a purpose</strong>
-              <p>
-                As you describe the outcome, Kestrel will show which confirmed
-                context is eligible before generating anything.
-              </p>
+        <p>Add a purpose to preview eligible confirmed context.</p>
             </div>
           )}
         </aside>
@@ -579,11 +663,10 @@ export function WritingStudio() {
         <header>
           <div>
             <span className="eyebrow">03 · Your voice</span>
-            <h2 id="writing-profile-title">Teach Kestrel your tendencies</h2>
-            <p>
-              Voice adaptation is off until you enable it. Kestrel stores
-              aggregate style signals locally; raw text is retained only for
-              samples you explicitly mark as private exemplars.
+      <h2 id="writing-profile-title">Your voice</h2>
+      <p>
+        Voice adaptation stays off until enabled. Style signals stay local;
+        only selected exemplars retain raw text.
             </p>
           </div>
           {profile && (
@@ -611,7 +694,7 @@ export function WritingStudio() {
                 />
                 <span>
                   <strong>Use my voice profile</strong>
-                  <small>Soft tendencies only; you review every draft.</small>
+          <small>Guides the draft; you review it.</small>
                 </span>
               </label>
               <label>
@@ -645,7 +728,7 @@ export function WritingStudio() {
                 />
                 <span>
                   <strong>Allow selected exemplars</strong>
-                  <small>Keep raw sample text encrypted for reference.</small>
+          <small>Keep raw sample text encrypted.</small>
                 </span>
               </label>
             </div>
@@ -674,7 +757,7 @@ export function WritingStudio() {
                 <span>Add a sample you wrote</span>
                 <textarea
                   value={sampleText}
-                  placeholder="Paste an email, message, or paragraph you want Kestrel to learn from."
+          placeholder="Paste an email, message, or paragraph to learn from."
                   maxLength={20_000}
                   disabled={profileBusy || !profileConfig.enabled}
                   onChange={(event) => setSampleText(event.target.value)}
@@ -784,8 +867,8 @@ export function WritingStudio() {
             <div>
               <strong>Review before you send</strong>
               <p>
-                Kestrel does not send drafts. Confirm names, dates, commitments,
-                and sensitive details yourself.
+        Kestrel does not send drafts. Review names, dates, commitments, and
+        sensitive details.
               </p>
             </div>
             {draft.quality.reviewerIssues.length > 0 && (
@@ -798,7 +881,7 @@ export function WritingStudio() {
           </div>
           {routes.length > 0 && (
             <details className="writing-route-details">
-              <summary>Model route and review evidence</summary>
+      <summary>Route details</summary>
               <div>
                 {routes.map((route) => (
                   <span key={`${route.taskId}-${route.selectedAt}`}>

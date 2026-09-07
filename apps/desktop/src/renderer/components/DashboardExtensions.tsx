@@ -83,7 +83,7 @@ export function DashboardExtensions({
     <PageFrame
       className="dashboard-extensions"
       title="Extension panels"
-      description="Signed extensions can contribute declarative local context without taking control of your workspace."
+      description="Signed plugins can add local panels."
       measure="wide"
     >
       {error && (
@@ -95,7 +95,7 @@ export function DashboardExtensions({
       {plugins && contributions.length === 0 && (
         <EmptyState
           title="No extension panels yet"
-          detail="Enable a signed plugin that contributes dashboard panels and it will appear here."
+          detail="Enable a signed plugin with a panel."
           action={
             <Button variant="bordered" onClick={() => onNavigate("settings")}>
               Open plugin settings

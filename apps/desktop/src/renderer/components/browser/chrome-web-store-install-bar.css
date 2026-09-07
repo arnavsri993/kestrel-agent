@@ -1,0 +1,118 @@
+.chrome-web-store-install-bar {
+	grid-area: store-install;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: var(--browser-store-install-height, 48px);
+	min-width: 0;
+	padding: 6px 12px;
+	border-bottom: 1px solid var(--line);
+	background: color-mix(in srgb, var(--raised) 88%, var(--canvas));
+	color: var(--ink);
+}
+
+.chrome-web-store-install-icon {
+	display: grid;
+	place-items: center;
+	flex: 0 0 auto;
+	width: 28px;
+	height: 28px;
+	border: 1px solid var(--line-strong);
+	border-radius: 8px;
+	background: var(--surface);
+	color: var(--ink-secondary);
+}
+
+.chrome-web-store-install-icon svg {
+	width: 15px;
+	height: 15px;
+}
+
+.chrome-web-store-install-copy {
+	display: grid;
+	flex: 1 1 auto;
+	gap: 1px;
+	min-width: 0;
+}
+
+.chrome-web-store-install-copy strong,
+.chrome-web-store-install-copy small {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chrome-web-store-install-copy strong {
+	font-size: 12px;
+	font-weight: 620;
+}
+
+.chrome-web-store-install-copy small {
+	color: var(--muted);
+	font-size: 10.5px;
+}
+
+.chrome-web-store-install-actions {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 6px;
+}
+
+.chrome-web-store-install-actions button {
+	min-height: 30px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: 7px;
+	background: var(--surface);
+	color: var(--ink);
+	font: inherit;
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.chrome-web-store-install-actions button.primary {
+	border-color: var(--solid);
+	background: var(--solid);
+	color: var(--on-solid);
+}
+
+.chrome-web-store-install-actions button:hover:not(:disabled) {
+	filter: brightness(1.06);
+}
+
+.chrome-web-store-install-actions button:focus-visible {
+	outline: 2px solid var(--solid);
+	outline-offset: 2px;
+}
+
+.chrome-web-store-install-actions button:disabled {
+	opacity: 0.58;
+	cursor: default;
+}
+
+.chrome-web-store-install-bar.is-installed .chrome-web-store-install-icon {
+	border-color: color-mix(in srgb, var(--status-ink) 40%, var(--line));
+	background: var(--status-fill);
+	color: var(--status-ink);
+}
+
+.chrome-web-store-install-bar.is-error .chrome-web-store-install-icon {
+	border-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+	color: var(--warning);
+}
+
+@media (max-width: 760px) {
+	.chrome-web-store-install-copy small {
+		display: none;
+	}
+}
+
+@media (forced-colors: active) {
+	.chrome-web-store-install-bar,
+	.chrome-web-store-install-icon,
+	.chrome-web-store-install-actions button {
+		border-color: CanvasText;
+	}
+}

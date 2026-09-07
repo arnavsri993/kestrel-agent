@@ -23,6 +23,8 @@ import {
 	type ModelProvider,
 	type ModelResult,
 	type ModelToolCall,
+	type ModelCatalog,
+	type CatalogModelRecord,
 } from "./providers";
 
 const CAPABILITIES: ModelCapability[] = [
@@ -410,19 +412,41 @@ function priorityEligible(
 
 function baselineCapabilities(
 	provider: ModelProvider,
+	model?: CatalogModelRecord,
 ): Record<ModelCapability, number> {
+	const modelCapabilitiesAreConfirmed =
+		model?.capabilities.capabilityProvenance === "confirmed";
+	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreConfirmed;
 	const scores = emptyScores(0.5);
 	scores.speed = provider.capabilities.local ? 0.82 : 0.58;
 	scores.cost_efficiency = provider.capabilities.local ? 0.95 : 0.5;
 	scores.reliability = 0.65;
 	scores.instruction_following = 0.62;
-	scores.structured_output = provider.capabilities.tools ? 0.68 : 0.48;
-	scores.tool_use = provider.capabilities.tools ? 0.75 : 0;
-	scores.image_understanding = provider.capabilities.images ? 0.72 : 0;
-	scores.long_context = provider.profileHints?.limits?.contextWindow
-		? bounded(provider.profileHints.limits.contextWindow / 200_000)
-		: 0.55;
-	if (provider.defaultModel) applyModelNamePriors(provider.defaultModel, scores);
+	scores.structured_output =
+		(useModelCapabilities
+			? model?.capabilities.structuredOutput
+			: provider.capabilities.tools)
+			? 0.68
+			: 0.48;
+	scores.tool_use =
+		(useModelCapabilities ? model?.capabilities.tools : provider.capabilities.tools)
+			? 0.75
+			: 0;
+	scores.image_understanding =
+		(useModelCapabilities
+			? model?.capabilities.vision
+			: provider.capabilities.images)
+			? 0.72
+			: 0;
+	const contextWindow =
+		model?.capabilities.contextWindow ??
+		provider.profileHints?.limits?.contextWindow;
+	scores.long_context = contextWindow ? bounded(contextWindow / 200_000) : 0.55;
+	// Name priors were the old compatibility fallback. Keep them only for a
+	// clearly-labelled fallback record; dynamic records rely on advertised
+	// capability/limit data and measured outcomes instead.
+	if (model?.isFallback && provider.defaultModel)
+		applyModelNamePriors(provider.defaultModel, scores);
 	for (const [capability, score] of Object.entries(
 		provider.profileHints?.capabilities ?? {},
 	)) {
@@ -434,39 +458,71 @@ function baselineCapabilities(
 
 function profileFromProvider(
 	provider: ModelProvider,
+	model?: CatalogModelRecord,
 ): ModelProfile | undefined {
-	if (!provider.defaultModel) return undefined;
-	const capabilities = baselineCapabilities(provider);
+	const modelId = model?.id ?? provider.defaultModel;
+	if (!modelId) return undefined;
+	const capabilities = baselineCapabilities(provider, model);
+	const modelCapabilitiesAreConfirmed =
+		model?.capabilities.capabilityProvenance === "confirmed";
+	const useModelCapabilities = Boolean(model?.isFallback) || modelCapabilitiesAreConfirmed;
+	// Older providers have no account identity. Their fallback stays a legacy
+	// static profile instead of being mistaken for an unverified account catalog
+	// record. Dynamic discovery is still authoritative whenever it exists.
+	const useCatalogMetadata = Boolean(
+		model && (provider.account || !model.isFallback),
+	);
 	const tier = inferModelTier(
-		provider.defaultModel,
+		modelId,
 		provider.id,
 		provider.capabilities.local,
 		capabilities,
-		provider.profileHints,
+		model?.isFallback ? provider.profileHints : undefined,
 	);
 	return ModelProfileSchema.parse({
-		id: `${provider.id}:${provider.defaultModel}`,
+		id: `${provider.id}:${modelId}`,
 		provider: provider.poolId ?? provider.id,
 		endpointId: provider.id,
-		model: provider.defaultModel,
-		displayName: provider.profileHints?.displayName ?? provider.defaultModel,
-		enabled: true,
+		model: modelId,
+		displayName:
+			model?.displayName ?? provider.profileHints?.displayName ?? modelId,
+		enabled:
+			model?.availability !== "authentication_required" &&
+			model?.availability !== "permission_denied" &&
+			model?.availability !== "unavailable" &&
+			model?.availability !== "unsupported",
 		local: provider.capabilities.local,
 		tier,
 		capabilities,
 		cost: provider.profileHints?.cost ?? {},
 		latency: provider.profileHints?.latency ?? {},
-		limits: provider.profileHints?.limits ?? {},
+		limits: {
+			...(provider.profileHints?.limits ?? {}),
+			...(model?.capabilities.contextWindow
+				? { contextWindow: model.capabilities.contextWindow }
+				: {}),
+			...(model?.capabilities.maxOutputTokens
+				? { maxOutputTokens: model.capabilities.maxOutputTokens }
+				: {}),
+		},
 		features: {
-			tools: provider.capabilities.tools,
-			vision: provider.capabilities.images,
+			tools: useModelCapabilities
+				? (model?.capabilities.tools ?? false)
+				: provider.capabilities.tools,
+			vision: useModelCapabilities
+				? (model?.capabilities.vision ?? false)
+				: provider.capabilities.images,
 			structuredOutput:
+				(useModelCapabilities ? model?.capabilities.structuredOutput : undefined) ??
 				provider.profileHints?.features?.structuredOutput ??
 				provider.capabilities.tools,
-			reasoningLevels:
-				provider.profileHints?.features?.reasoningLevels ?? false,
+			reasoningLevels: model
+				? useModelCapabilities && model.capabilities.reasoningEfforts.length > 1
+				: (provider.profileHints?.features?.reasoningLevels ?? false),
 			fastMode: provider.profileHints?.features?.fastMode ?? false,
-			streaming: provider.capabilities.streaming,
+			streaming: useModelCapabilities
+				? (model?.capabilities.streaming ?? false)
+				: provider.capabilities.streaming,
 		},
 		reliability: {
 			refusalRate: 0,
@@ -474,48 +530,40 @@ function profileFromProvider(
 		},
 		learnedPerformance: capabilities,
 		observations: 0,
+		...(useCatalogMetadata && model ? { availability: model.availability } : {}),
+		...(useCatalogMetadata && model
+			? { discoverySource: model.discoverySource }
+			: {}),
+		...(useCatalogMetadata && model
+			? { capabilityProvenance: model.capabilities.capabilityProvenance }
+			: { capabilityProvenance: "transport" as const }),
 	});
 }
 
 export class ModelRegistry {
 	private readonly key = "orchestration.model-registry.v1";
 	private profiles = new Map<string, ModelProfile>();
+	private readonly storedById: Map<string, ModelProfile>;
+	private readonly generatedIds = new Set<string>();
 
 	constructor(
 		private readonly database: KestrelDatabase,
 		providers: ModelProvider[],
 		configuredProfiles: ModelProfile[] = [],
 		private readonly now: () => Date = () => new Date(),
+		catalog?: ModelCatalog,
 	) {
 		const stored = database.getPrivateState<ModelProfile[]>(this.key) ?? [];
-		const storedById = new Map(
+		this.storedById = new Map(
 			stored.flatMap((profile) => {
 				const parsed = ModelProfileSchema.safeParse(profile);
 				return parsed.success ? [[parsed.data.id, parsed.data] as const] : [];
 			}),
 		);
-		for (const provider of providers) {
-			const discovered = profileFromProvider(provider);
-			if (!discovered) continue;
-			const learned = storedById.get(discovered.id);
-			this.profiles.set(
-				discovered.id,
-				learned
-					? ModelProfileSchema.parse({
-							...discovered,
-							learnedPerformance: learned.learnedPerformance,
-							reliability: learned.reliability,
-							observations: learned.observations,
-							...(learned.lastEvaluatedAt
-								? { lastEvaluatedAt: learned.lastEvaluatedAt }
-								: {}),
-						})
-					: discovered,
-			);
-		}
+		this.syncProviderCatalog(providers, catalog, false);
 		for (const profile of configuredProfiles) {
 			const parsed = ModelProfileSchema.parse(profile);
-			const learned = storedById.get(parsed.id);
+			const learned = this.storedById.get(parsed.id);
 			this.profiles.set(
 				parsed.id,
 				learned
@@ -532,6 +580,46 @@ export class ModelRegistry {
 			);
 		}
 		this.persist();
+	}
+
+	/** Replace generated endpoint/model profiles after account discovery changes. */
+	syncProviderCatalog(
+		providers: readonly ModelProvider[],
+		catalog?: ModelCatalog,
+		persist = true,
+	): void {
+		for (const id of this.generatedIds) this.profiles.delete(id);
+		this.generatedIds.clear();
+		for (const provider of providers) {
+			const models = catalog?.modelsForEndpoint(provider.id) ?? [];
+			// Dynamic discovery owns the entitlement boundary. Until it returns a
+			// model (or when it successfully returns none), do not manufacture the
+			// adapter default as a runnable account model.
+			const sourceModels = models.length
+				? models
+				: provider.discoverModels
+					? []
+					: [undefined];
+			for (const model of sourceModels) {
+				const discovered = profileFromProvider(provider, model);
+				if (!discovered) continue;
+				const learned = this.storedById.get(discovered.id);
+				const profile = learned
+					? ModelProfileSchema.parse({
+							...discovered,
+							learnedPerformance: learned.learnedPerformance,
+							reliability: learned.reliability,
+							observations: learned.observations,
+							...(learned.lastEvaluatedAt
+								? { lastEvaluatedAt: learned.lastEvaluatedAt }
+								: {}),
+						})
+					: discovered;
+				this.profiles.set(profile.id, profile);
+				this.generatedIds.add(profile.id);
+			}
+		}
+		if (persist) this.persist();
 	}
 
 	list(): ModelProfile[] {
@@ -1020,19 +1108,38 @@ export class AdaptiveModelRouter {
 		const policy = RoutingPolicySchema.parse(options.policy ?? this.policy());
 		const allowed = new Set(options.allowedProviderIds ?? []);
 		const excluded = new Set(options.excludeModelIds ?? []);
+		const needsConfirmedModelCapabilities =
+			requirements.requiresTools ||
+			requirements.requiresVision ||
+			requirements.requiresStructuredOutput;
 		let candidates = this.registry
 			.list()
 			.filter(
 				(profile) =>
 					profile.enabled &&
+					// Automatic routing uses an account model only after its catalog
+					// confirms it is currently available. Availability-less profiles
+					// are pre-account static configuration and keep their historical
+					// compatibility behavior; a labelled account fallback is always an
+					// explicit-selection path.
+					(profile.availability === undefined ||
+						profile.availability === "available") &&
+					// A listing proves that a model is available for plain-text work,
+					// but not its feature matrix. A capability-demanding task needs a
+					// model-level confirmation, never a transport-wide inference.
+					(!needsConfirmedModelCapabilities ||
+						profile.availability === undefined ||
+						profile.capabilityProvenance === "confirmed") &&
 					!excluded.has(profile.id) &&
 					this.providerAllowed(profile.provider, profile.endpointId) &&
 					(allowed.size === 0 ||
 						allowed.has("auto") ||
 						allowed.has(profile.provider) ||
 						allowed.has(profile.endpointId)) &&
-					(!requirements.requiresTools || profile.features.tools) &&
-					(!requirements.requiresVision || profile.features.vision) &&
+					(!requirements.requiresTools ||
+						profile.features.tools) &&
+					(!requirements.requiresVision ||
+						profile.features.vision) &&
 					(!requirements.requiresStructuredOutput ||
 						profile.features.structuredOutput) &&
 					(!profile.limits.contextWindow ||

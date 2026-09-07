@@ -99,8 +99,8 @@ export function ProjectsWorkspace({
 									<h1 id="projects-workspace-title">{selectedProject.name}</h1>
 									<p>
 										{selectedProject.instructions?.trim()
-											? "Project instructions apply to conversations here."
-											: "Conversations here share this project's local context."}
+											? "Project instructions apply here."
+											: "Chats share this project's context."}
 									</p>
 								</div>
 							</div>
@@ -149,7 +149,6 @@ export function ProjectsWorkspace({
 							<header className="projects-workspace-chats-heading">
 								<div>
 									<h2 id="projects-workspace-chats-title">Chats</h2>
-									<p>Each conversation keeps its own transcript.</p>
 								</div>
 								<label className="projects-workspace-search">
 									<Icon name="search" />
@@ -198,7 +197,7 @@ export function ProjectsWorkspace({
 											? "Try a different search."
 											: selectedProject.available === false
 												? "Reconnect the folder in Settings before starting new work."
-												: "Start a new chat to create the first conversation here."}
+												: "Start a chat."}
 									</p>
 									{query ? (
 										<button
@@ -234,8 +233,7 @@ export function ProjectsWorkspace({
 					<section className="projects-workspace-empty projects-workspace-no-projects">
 						<h1 id="projects-workspace-title">No projects yet</h1>
 						<p>
-							Add a local project folder to keep related conversations and their
-							shared context together.
+							Add a folder for related chats and context.
 						</p>
 						<button
 							type="button"
