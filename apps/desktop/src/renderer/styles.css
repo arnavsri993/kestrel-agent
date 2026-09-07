@@ -9563,40 +9563,6 @@ select {
 	border-top: 1px solid var(--line);
 }
 
-.password-save-form {
-	display: grid;
-	gap: 12px;
-	margin-top: 2px;
-	padding: 14px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
-	background: color-mix(in srgb, var(--surface) 80%, transparent);
-}
-
-.password-form-grid {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 10px;
-}
-
-.password-form-grid label {
-	display: grid;
-	gap: 6px;
-	min-width: 0;
-	color: var(--muted);
-	font-size: 11px;
-}
-
-.password-form-grid label small {
-	font-size: inherit;
-	opacity: 0.72;
-}
-
-.password-form-grid input {
-	width: 100%;
-	box-sizing: border-box;
-}
-
 .password-settings-message {
 	margin: 10px 0 0;
 	font-size: 12px;
@@ -9614,6 +9580,13 @@ select {
 	display: grid;
 	gap: 8px;
 	margin-top: 14px;
+}
+
+.password-entry-list > h3 {
+	margin: 0 0 2px;
+	color: var(--ink);
+	font-size: 12px;
+	font-weight: 650;
 }
 
 .password-empty-state,
@@ -9650,6 +9623,52 @@ select {
 	gap: 3px;
 }
 
+.password-entry-details {
+	flex: 1;
+}
+
+.password-entry-details label {
+	display: grid;
+	gap: 4px;
+	margin-top: 6px;
+	max-width: 360px;
+}
+
+.password-entry-details label > span {
+	font-size: 10px;
+	font-weight: 650;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+.password-entry-details input {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.password-entry-actions {
+	align-items: center;
+	justify-content: flex-end;
+	grid-template-columns: repeat(4, max-content);
+}
+
+.password-remove-confirmation {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.password-entry-card .quiet-action-link.danger {
+	color: #df8989;
+}
+
+.password-entry-card .quiet-action-link.danger:hover:not(:disabled) {
+	color: #f0a4a4;
+}
+
 .password-entry-card strong,
 .password-entry-card span,
 .password-entry-card small {
@@ -9677,12 +9696,12 @@ select {
 }
 
 @media (max-width: 720px) {
-	.password-form-grid {
-		grid-template-columns: 1fr;
-	}
 	.password-entry-card {
 		align-items: flex-start;
 		flex-direction: column;
+	}
+	.password-entry-actions {
+		justify-content: flex-start;
 	}
 }
 

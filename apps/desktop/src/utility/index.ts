@@ -224,6 +224,8 @@ const browserBackend: BrowserAutomationBackend = {
 		),
 	visibleDownloads: (signal) =>
 		browserRequest({ operation: "visible-downloads" }, signal),
+	visibleAutofill: (tabId, signal) =>
+		browserRequest({ operation: "visible-autofill", tabId }, signal),
 	visibleAct: async (tabId, action, signal) => {
 		await browserRequest({ operation: "visible-act", tabId, action }, signal);
 	},

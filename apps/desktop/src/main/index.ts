@@ -55,6 +55,10 @@ import {
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
+import {
+  BrokerCredentialStore,
+  MacOSKeychainCredentialStore,
+} from "./credential-store";
 import { ProviderAccountStore } from "./provider-account-store";
 import { PasswordVault } from "./password-vault";
 import { PaymentCardVault } from "./payment-card-vault";
@@ -913,7 +917,10 @@ function providerAccountStore(): ProviderAccountStore {
 }
 
 function passwordVault(): PasswordVault {
-	appPasswordVault ??= new PasswordVault(credentialBroker());
+	appPasswordVault ??= new PasswordVault(
+		new MacOSKeychainCredentialStore(app.getPath("userData")),
+		new BrokerCredentialStore(credentialBroker()),
+	);
 	return appPasswordVault;
 }
 
@@ -1451,7 +1458,15 @@ if (
 	app.disableHardwareAcceleration();
 }
 
-const singleInstance = acquireSingleInstanceLock(app);
+// macOS scopes Electron's single-instance lock to the application bundle, not
+// its user-data directory. An explicit disposable-profile test run therefore
+// needs an opt-in escape hatch so it cannot attach to a person's live Kestrel
+// instance. Production and ordinary test runs retain the normal lock.
+const singleInstance =
+	process.env.KESTREL_TEST_USER_DATA &&
+	process.env.KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES === "1"
+		? true
+		: acquireSingleInstanceLock(app);
 const developmentHeartbeatPath = process.env.KESTREL_DEV_ELECTRON_HEARTBEAT;
 if (process.env.NODE_ENV_ELECTRON_VITE === "development" && developmentHeartbeatPath) {
   const heartbeatMonitor = setInterval(() => {
@@ -2595,6 +2610,8 @@ function registerIpc(): void {
         "password-save-suggestion",
         "password-fill-page",
         "password-fill-field",
+        "password-mark-never-save",
+        "password-generate",
         "password-dismiss",
       ].includes(request.type)
     )
@@ -2651,6 +2668,10 @@ function registerIpc(): void {
           request.passwordId,
           request.fieldId,
         );
+      else if (request.type === "password-mark-never-save")
+        passwordService.markNeverSavePasswordForActiveOrigin();
+      else if (request.type === "password-generate")
+        await passwordService.generatePasswordForActiveForm();
       else passwordService.dismissPasswordPrompt();
       return { ok: true };
     }
@@ -4059,24 +4080,32 @@ function registerIpc(): void {
     }
     if (
       request.type === "password-list" ||
-      request.type === "password-save" ||
-      request.type === "password-remove"
+      request.type === "password-remove" ||
+      request.type === "password-update-username" ||
+      request.type === "password-copy" ||
+      request.type === "password-reveal"
     ) {
       const service = requestBrowserService ?? userBrowserService;
       if (!service)
         throw new Error("The visible user browser is unavailable.");
       if (request.type === "password-list")
         return { ok: true, passwords: await service.listPasswords() };
-      if (request.type === "password-save")
+      if (request.type === "password-update-username")
         return {
           ok: true,
-          passwords: await service.savePassword({
-            origin: request.origin,
-            ...(request.title ? { title: request.title } : {}),
-            username: request.username,
-            password: request.password,
-          }),
+          passwords: await service.updatePasswordUsername(
+            request.passwordId,
+            request.username,
+          ),
         };
+      if (request.type === "password-copy") {
+        await service.copyPassword(request.passwordId);
+        return { ok: true };
+      }
+      if (request.type === "password-reveal") {
+        await service.revealPassword(request.passwordId);
+        return { ok: true };
+      }
       return {
         ok: true,
         passwords: await service.removePassword(request.passwordId),

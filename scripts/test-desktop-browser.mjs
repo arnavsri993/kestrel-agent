@@ -178,9 +178,10 @@ async function launch() {
 			...process.env,
 			KESTREL_DISABLE_UPDATES: "1",
 			KESTREL_DISABLE_LOCAL_MODEL_DISCOVERY: "1",
-			KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
-			KESTREL_TEST_USER_DATA: userData,
-			KESTREL_REAL_USER_PROFILE: "1",
+		KESTREL_DISABLE_SUBSCRIPTION_CLI_DISCOVERY: "1",
+		KESTREL_TEST_USER_DATA: userData,
+		KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES: "1",
+		KESTREL_REAL_USER_PROFILE: "1",
 		},
 	});
 	page = await application.firstWindow();
@@ -2185,11 +2186,22 @@ try {
 		),
 		"Waiting",
 	);
+	const typingSnapshot = await callTool(
+		runtimeSessionId,
+		"browser.visible-snapshot",
+		{ tabId },
+		{ approvalStatus: "approved" },
+	);
+	assert.equal(typingSnapshot?.status, "verified");
+	const nameFieldRef = typingSnapshot?.output?.interactive?.find(
+		(target) => target.role === "textbox" && target.name === "Name",
+	)?.ref;
+	assert(nameFieldRef, "The visible browser snapshot did not expose the Name field.");
 
 	const typed = await callTool(
 		runtimeSessionId,
 		"browser.visible-act",
-		{ tabId, action: { type: "type", target: "#name", text: "Kestrel" } },
+		{ tabId, action: { type: "type", target: nameFieldRef, text: "Kestrel" } },
 		{
 			approvalStatus: "approved",
 			idempotencyKey: "visible-browser-approved-type",

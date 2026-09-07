@@ -3478,7 +3478,9 @@ export const PasswordEntrySummarySchema = z.object({
 	origin: z.string().url().max(8_192),
 	title: z.string().min(1).max(200),
 	username: z.string().max(500),
+	createdAt: z.string().datetime(),
 	updatedAt: z.string().datetime(),
+	lastUsedAt: z.string().datetime().optional(),
 });
 export type PasswordEntrySummary = z.infer<typeof PasswordEntrySummarySchema>;
 
@@ -3487,14 +3489,14 @@ export type PasswordEntrySummary = z.infer<typeof PasswordEntrySummarySchema>;
  * next to the public summary so storage and IPC validation cannot drift apart.
  */
 export const PasswordEntrySchema = PasswordEntrySummarySchema.extend({
-	password: z.string().min(1).max(100_000),
-	createdAt: z.string().datetime(),
+	/** Main-process only. This schema must never be used for renderer IPC. */
+	password: z.string().min(1).max(4_096),
 });
 export type PasswordEntry = z.infer<typeof PasswordEntrySchema>;
 
 export const PasswordFormFieldSchema = z.object({
 	id: z.string().regex(/^field-[0-9]+$/),
-	kind: z.enum(["username", "password", "other"]),
+	kind: z.enum(["username", "password", "new-password", "secret", "other"]),
 	label: z.string().max(500),
 	type: z.string().max(100),
 	autocomplete: z.string().max(100),
@@ -3517,7 +3519,7 @@ export const PasswordPromptSchema = z.object({
 	tabId: z.string().regex(/^tab-[a-f0-9-]{36}$/),
 	origin: z.string().url().max(8_192),
 	title: z.string().min(1).max(500),
-	mode: z.enum(["save", "page", "field"]),
+	mode: z.enum(["save", "page", "field", "generate", "autofilled"]),
 	fields: z.array(PasswordFormFieldSchema).max(32),
 	focusedFieldId: z.string().regex(/^field-[0-9]+$/).optional(),
 	entries: z.array(PasswordEntrySummarySchema).max(24),
@@ -3908,7 +3910,16 @@ export const UserBrowserSettingsSchema = z.object({
 	memorySaverMode: z.boolean().default(true),
 	showBookmarksBar: z.boolean().default(true),
 	addressBarSuggestionsEnabled: z.boolean().default(true),
+	/** Legacy master switch retained for existing profiles. */
 	passwordAutofillEnabled: z.boolean().default(true),
+	offerToSavePasswords: z.boolean().default(true),
+	autofillPasswords: z.boolean().default(true),
+	autofillUsernames: z.boolean().default(true),
+	offerStrongPasswords: z.boolean().default(true),
+	neverSavePasswordOrigins: z
+		.array(z.string().url().max(8_192))
+		.max(500)
+		.default([]),
 	paymentAutofillEnabled: z.boolean().default(true),
 	defaultZoomPercent: z.number().int().min(25).max(500).default(100),
 	minimumFontSize: z.number().int().min(0).max(72).default(0),
@@ -4511,14 +4522,20 @@ export const RendererRequestSchema = z.union([
 	z.object({ type: z.literal("oauth-google-disconnect") }),
 	z.object({ type: z.literal("password-list") }),
 	z.object({
-		type: z.literal("password-save"),
-		origin: z.string().url().max(8_192),
-		title: z.string().max(200).optional(),
-		username: z.string().max(500),
-		password: z.string().min(1).max(100_000),
+		type: z.literal("password-remove"),
+		passwordId: PasswordEntryIdSchema,
 	}),
 	z.object({
-		type: z.literal("password-remove"),
+		type: z.literal("password-update-username"),
+		passwordId: PasswordEntryIdSchema,
+		username: z.string().max(500),
+	}),
+	z.object({
+		type: z.literal("password-copy"),
+		passwordId: PasswordEntryIdSchema,
+	}),
+	z.object({
+		type: z.literal("password-reveal"),
 		passwordId: PasswordEntryIdSchema,
 	}),
 	z.object({
@@ -4531,6 +4548,8 @@ export const RendererRequestSchema = z.union([
 		fieldId: z.string().regex(/^field-[0-9]+$/),
 	}),
 	z.object({ type: z.literal("password-save-suggestion") }),
+	z.object({ type: z.literal("password-mark-never-save") }),
+	z.object({ type: z.literal("password-generate") }),
 	z.object({ type: z.literal("password-dismiss") }),
 	z.object({ type: z.literal("payment-list") }),
 	z.object({

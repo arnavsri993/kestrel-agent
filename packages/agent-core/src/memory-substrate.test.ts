@@ -135,6 +135,68 @@ describe("memory substrate", () => {
 		}
 	});
 
+	it("keeps credentials out of every memory ingress and derived surface", async () => {
+		const embedded: string[] = [];
+		const state = fixture({
+			explicitCaptureEnabled: () => true,
+			embeddingProvider: {
+				provider: "test",
+				model: "test-v1",
+				async embed(text) {
+					embedded.push(text);
+					return [1];
+				},
+			},
+		});
+		const secrets = [
+			"correct-horse-battery-staple",
+			"plain-language-password-should-not-persist",
+			"sk-proj-12345678901234567890",
+			"654321",
+			"cvv-test-492",
+			"-----BEGIN PRIVATE KEY-----\\nprivate-material\\n-----END PRIVATE KEY-----",
+		];
+		try {
+			state.runtime.appendMessage({
+				sessionId: state.main.id,
+				role: "user",
+				content: `password=${secrets[0]} api_key=${secrets[1]} otp=${secrets[2]} cvv=${secrets[3]}\\n${secrets[4]}`,
+			});
+			state.runtime.appendMessage({
+				sessionId: state.main.id,
+				role: "user",
+				content: `Remember that my recovery code is ${secrets[2]}.`,
+			});
+			state.runtime.appendMessage({
+				sessionId: state.main.id,
+				role: "user",
+				content: `I prefer password=${secrets[0]}`,
+			});
+			state.runtime.appendMessage({
+				sessionId: state.main.id,
+				role: "user",
+				content: `My password is ${secrets[1]}.`,
+			});
+			state.substrate.remember(memoryInput(`private_key=${secrets[4]}`));
+			await state.substrate.runMaintenance(200);
+
+			const persisted = JSON.stringify({
+				events: state.database.listTimelineEvents(),
+				sessions: state.database.listTimelineSessions(),
+				blocks: state.database.listActivityBlocks(),
+				summaries: state.database.listDailySummaries(),
+				memories: state.legacyMemory.list(),
+				agentMemories: state.database.listAllAgentMemories(),
+				provenance: state.database.listMemoryProvenance({ limit: 500 }),
+			});
+			for (const secret of secrets) expect(persisted).not.toContain(secret);
+			for (const text of embedded) for (const secret of secrets) expect(text).not.toContain(secret);
+			expect(embedded.length).toBeGreaterThan(0);
+		} finally {
+			await state.close();
+		}
+	});
+
 	it("keeps explicit Remember writes available while automatic capture is disabled", async () => {
 		const state = fixture();
 		try {

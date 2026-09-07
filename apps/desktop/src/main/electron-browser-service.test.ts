@@ -381,7 +381,7 @@ describe("Electron browser snapshot refs", () => {
 			if (method === "Runtime.callFunctionOn") {
 				expect(params).toMatchObject({
 					objectId: "button-object",
-					arguments: [{ value: false }],
+				arguments: [{ value: false }, { value: false }],
 					awaitPromise: true,
 					returnByValue: true,
 				});

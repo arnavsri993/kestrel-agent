@@ -199,6 +199,10 @@ function browserTargetError(code: unknown): Error {
 		return new Error("Browser select value is unavailable.");
 	if (code === "mismatch")
 		return new Error("Browser select value did not remain selected.");
+	if (code === "sensitive")
+		return new Error(
+			"Kestrel will not type into a sensitive browser field. Ask the user to enter that value directly.",
+		);
 	return new Error("Browser target action failed.");
 }
 
@@ -232,6 +236,7 @@ export async function targetPointFromBackendNode(
 	backendNodeId: number,
 	focus: boolean,
 	signal: AbortSignal,
+	rejectSensitive = false,
 ): Promise<{ x: number; y: number }> {
 	if (!webContents.debugger.isAttached())
 		webContents.debugger.attach("1.3");
@@ -266,7 +271,7 @@ export async function targetPointFromBackendNode(
 			"Runtime.callFunctionOn",
 			{
 				objectId,
-				functionDeclaration: `async function (shouldFocus) {
+				functionDeclaration: `async function (shouldFocus, rejectSensitive) {
   const node = this;
   if (!(node instanceof Element)) return { ok: false, code: "not_found" };
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -293,6 +298,20 @@ export async function targetPointFromBackendNode(
   if (node.matches(":disabled") || node.getAttribute("aria-disabled") === "true") {
     return { ok: false, code: "disabled" };
   }
+  const secretHint = [
+    node.tagName,
+    node.getAttribute("type"),
+    node.getAttribute("autocomplete"),
+    node.getAttribute("name"),
+    node.id,
+    node.getAttribute("aria-label"),
+    node.getAttribute("placeholder"),
+    node.labels?.[0]?.innerText,
+  ].filter(Boolean).join(" ").toLowerCase();
+  const isSensitive =
+    (node instanceof HTMLInputElement && node.type === "password") ||
+    /(?:\\b(?:new|current|old|confirm(?:ation)?|repeat)?\\s*password\\b|\\bone[-_\\s]*time[-_\\s]*(?:code|passcode|token)\\b|\\botp\\b|\\b(?:recovery|verification|security)\\s*(?:code|passcode|pin)\\b|\\b(?:cvv|cvc|cc[-_\\s]*csc)\\b|\\bapi[-_\\s]*(?:key|token)\\b|\\baccess[-_\\s]*token\\b|\\bprivate[-_\\s]*key\\b)/i.test(secretHint);
+  if (rejectSensitive && isSensitive) return { ok: false, code: "sensitive" };
   const left = Math.max(0, box.left);
   const top = Math.max(0, box.top);
   const right = Math.min(viewportWidth, box.right);
@@ -307,7 +326,7 @@ export async function targetPointFromBackendNode(
   if (shouldFocus && typeof node.focus === "function") node.focus({ preventScroll: true });
   return { ok: true, x, y };
 }`,
-				arguments: [{ value: focus }],
+				arguments: [{ value: focus }, { value: rejectSensitive }],
 				returnByValue: true,
 				awaitPromise: true,
 				timeout: Math.min(1_000, remaining),

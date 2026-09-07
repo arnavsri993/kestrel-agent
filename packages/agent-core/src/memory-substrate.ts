@@ -57,6 +57,7 @@ import {
 import { localSemanticEmbedding, semanticSimilarity } from "./semantic-search";
 import type { AgentRuntime } from "./runtime";
 import { MemoryManager, type MemoryInput } from "./memory";
+import { redactSensitiveContent } from "./tool-result-guardrails";
 
 const DAY_MS = 86_400_000;
 const SESSION_GAP_MS = 30 * 60_000;
@@ -240,14 +241,27 @@ function naturalTimeRange(query: string, now: Date): { startAt?: string; endAt?:
 }
 
 function redactText(value: string): string {
-	return value
+	const locallyRedacted = redactSensitiveContent(value)
+		.replace(
+			/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu,
+			"[redacted-private-key]",
+		)
 		.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/giu, "$1[redacted]")
 		.replace(/\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,})\b/gu, "[redacted-secret]")
 		.replace(
-			/\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret|cookie|authorization)\s*[:=]\s*[^\s,;]+/giu,
+			/\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret|cookie|authorization|recovery[_ -]?code|otp|one[_ -]?time[_ -]?pass(?:word|code)|pin|cvv|cvc|security[_ -]?code|private[_ -]?key|client[_ -]?secret)\s*[:=]\s*["'`]?[^\s,;"'`}]+/giu,
 			"$1=[redacted]",
 		)
+		.replace(
+			/\b(recovery\s+codes?|one[- ]time\s+(?:passwords?|codes?)|otp|pin|cvv|cvc|security\s+codes?)\s+(?:is|are)\s*[:=]?\s*["'`]?[^\s,;"'`}]+/giu,
+			"$1 is [redacted]",
+		)
+		.replace(
+			/\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|secret|cookie|authorization|recovery[_ -]?code|otp|one[_ -]?time[_ -]?pass(?:word|code)|pin|cvv|cvc|security[_ -]?code|private[_ -]?key|client[_ -]?secret)\s+(?:is|are|was|were)\s*[:=]?\s*["'`]?(?:\S+)/giu,
+			"$1 is [redacted]",
+		)
 		.slice(0, 100_000);
+	return locallyRedacted;
 }
 
 function redactUrl(value: string | undefined): string | undefined {
@@ -275,7 +289,7 @@ function redactStructured(value: unknown, depth = 0): unknown {
 	if (!value || typeof value !== "object") return undefined;
 	const output: Record<string, unknown> = {};
 	for (const [key, candidate] of Object.entries(value).slice(0, 100)) {
-		if (/token|key|secret|password|cookie|authorization|credential/i.test(key)) {
+		if (/token|key|secret|password|cookie|authorization|credential|recovery|otp|one.?time.?pass|pin|cvv|cvc|security.?code/i.test(key)) {
 			output[key] = "[redacted]";
 			continue;
 		}
@@ -749,7 +763,7 @@ export class MemorySubstrate {
 						confirmationStatus: "explicit",
 					});
 				} else {
-					const captured = this.legacyMemory.captureExplicit(message.content, message.id);
+					const captured = this.legacyMemory.captureExplicit(redactText(message.content), message.id);
 					if (captured.memory)
 						this.persistAgentMemoryFromLegacy(captured.memory, this.agentIdForSession(message.sessionId));
 				}
@@ -758,7 +772,7 @@ export class MemorySubstrate {
 			// automatic timeline capture is off. Pattern extraction is still
 			// automatic, so it must stay behind the capture gate and a captured event.
 			if (event && this.getCaptureConfiguration().enabled)
-				this.extractDeterministicUserMemory(message.content, message.id, message.sessionId);
+				this.extractDeterministicUserMemory(redactText(message.content), message.id, message.sessionId);
 		}
 		return event;
 	}

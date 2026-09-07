@@ -32,6 +32,21 @@ export interface BrowserInteractiveRef {
 	backendDOMNodeId?: number;
 }
 
+const SENSITIVE_FIELD_NAME_PATTERNS = [
+	/\b(?:new|current|old|confirm(?:ation)?|repeat)?\s*password\b/i,
+	/\b(?:one\s*time|recovery|verification|security)\s*(?:code|passcode|pin)\b/i,
+	/\botp\b/i,
+	/\bone[-_\s]*time[-_\s]*code\b/i,
+	/\b(?:cvv|cvc)\b/i,
+	/\bcc[-_\s]*csc\b/i,
+	/\bcard\s+(?:security|verification)\s+(?:code|number|value)\b/i,
+	/\bapi\s*(?:key|token)\b/i,
+	/\baccess\s*token\b/i,
+	/\bprivate\s*key\b/i,
+];
+
+export const REDACTED_SENSITIVE_FIELD_NAME = "Sensitive field";
+
 export interface AnnotatedBrowserTree {
 	accessibilityTree: unknown;
 	interactive: BrowserInteractiveRef[];
@@ -59,6 +74,70 @@ function looksLikeAccessibilityNode(value: Record<string, unknown>): boolean {
 	);
 }
 
+function sensitiveAccessibilityNodeText(node: Record<string, unknown>): string {
+	const parts: unknown[] = [node.role, node.name, node.description];
+	if (Array.isArray(node.properties)) {
+		for (const property of node.properties) {
+			if (!isRecord(property)) continue;
+			parts.push(property.name, property.value);
+		}
+	}
+	return parts
+		.map(axText)
+		.filter((value): value is string => value !== undefined)
+		.join(" ");
+}
+
+function isSensitiveAccessibilityNode(node: Record<string, unknown>): boolean {
+	return SENSITIVE_FIELD_NAME_PATTERNS.some((pattern) =>
+		pattern.test(sensitiveAccessibilityNodeText(node)),
+	);
+}
+
+function redactAccessibilityText(value: unknown, replacement: string): unknown {
+	if (isRecord(value) && "value" in value)
+		return { ...value, value: replacement };
+	return replacement;
+}
+
+/**
+ * Retains the structural accessibility data agents need while removing every
+ * mutable or descriptive value from recognised secret fields before the tree
+ * crosses a process, model, or activity boundary.
+ */
+function redactSensitiveAccessibilityFields(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(redactSensitiveAccessibilityFields);
+	if (!isRecord(value)) return value;
+	const sensitive =
+		looksLikeAccessibilityNode(value) && isSensitiveAccessibilityNode(value);
+	const next: Record<string, unknown> = {};
+	for (const [key, child] of Object.entries(value)) {
+		if (key === "nodes" || key === "children" || key === "childNodes") {
+			next[key] = redactSensitiveAccessibilityFields(child);
+			continue;
+		}
+		if (sensitive && key === "name") {
+			next[key] = redactAccessibilityText(child, REDACTED_SENSITIVE_FIELD_NAME);
+			continue;
+		}
+		if (sensitive && (key === "value" || key === "description")) {
+			next[key] = redactAccessibilityText(child, "");
+			continue;
+		}
+		if (sensitive && key === "properties" && Array.isArray(child)) {
+			next[key] = child.map((property) => {
+				if (!isRecord(property)) return property;
+				return "value" in property
+					? { ...property, value: redactAccessibilityText(property.value, "") }
+					: property;
+			});
+			continue;
+		}
+		next[key] = child;
+	}
+	return next;
+}
+
 export function normalizeBrowserElementRef(
 	target: string,
 ): string | undefined {
@@ -73,6 +152,25 @@ export function normalizeBrowserElementRef(
 
 export function isBrowserElementRef(target: string): boolean {
 	return normalizeBrowserElementRef(target) !== undefined;
+}
+
+/**
+ * Identifies fields whose accessible name says they accept an authentication
+ * secret. Keep this deliberately narrow: it protects clear secret prompts
+ * without disabling ordinary form entry such as names, email addresses, or
+ * search fields.
+ */
+export function isSensitiveBrowserInteractiveRef(
+	ref: Pick<BrowserInteractiveRef, "name">,
+): boolean {
+	const name = ref.name
+		?.normalize("NFKC")
+		.replace(/[._-]+/g, " ")
+		.trim();
+	return (
+		name === REDACTED_SENSITIVE_FIELD_NAME ||
+		Boolean(name && SENSITIVE_FIELD_NAME_PATTERNS.some((pattern) => pattern.test(name)))
+	);
 }
 
 export function annotateAccessibilityTree(
@@ -103,7 +201,9 @@ export function annotateAccessibilityTree(
 				: undefined;
 		if (backendDOMNodeId === undefined) return node;
 		const ref = `e${interactive.length + 1}`;
-		const name = axText(node.name);
+		const name = isSensitiveAccessibilityNode(node)
+			? REDACTED_SENSITIVE_FIELD_NAME
+			: axText(node.name);
 		interactive.push({
 			ref,
 			role,
@@ -129,7 +229,7 @@ export function annotateAccessibilityTree(
 	};
 
 	return {
-		accessibilityTree: walk(tree),
+		accessibilityTree: redactSensitiveAccessibilityFields(walk(tree)),
 		interactive,
 		truncated,
 	};
