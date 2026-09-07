@@ -36,6 +36,10 @@ import {
 	ProvenanceRecordSchema,
 	WorkingTaskSchema,
 } from "./memory-architecture";
+import {
+	ChromeWebStoreExtensionInspectionSchema,
+	ExtensionCompatibilityReportSchema,
+} from "./extension-compatibility";
 
 export const SensitivitySchema = z.enum([
 	"public",
@@ -3955,8 +3959,8 @@ export const InstalledExtensionSchema = z.object({
 	iconUrl: z.string().optional(),
 	homepageUrl: z.string().optional(),
 	source: z.enum(["chrome_web_store", "unpacked", "file", "other"]),
-	path: z.string().min(1),
 	installedAt: z.string().datetime(),
+	compatibility: ExtensionCompatibilityReportSchema.optional(),
 });
 export type InstalledExtension = z.infer<typeof InstalledExtensionSchema>;
 
@@ -4393,8 +4397,12 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({ type: z.literal("browser-list-extensions") }),
 	z.object({
-		type: z.literal("browser-install-extension-url"),
+		type: z.literal("browser-inspect-extension-url"),
 		urlOrId: z.string().min(1).max(8_192),
+	}),
+	z.object({
+		type: z.literal("browser-install-extension-url"),
+		inspectionId: z.string().uuid(),
 	}),
 	z.object({
 		type: z.literal("browser-toggle-extension"),
@@ -4403,6 +4411,10 @@ export const RendererRequestSchema = z.union([
 	}),
 	z.object({
 		type: z.literal("browser-uninstall-extension"),
+		extensionId: z.string().min(1).max(100),
+	}),
+	z.object({
+		type: z.literal("browser-reload-extension"),
 		extensionId: z.string().min(1).max(100),
 	}),
 	z.object({
@@ -4758,6 +4770,12 @@ export type RendererResponse =
 	| { ok: true; browserPagePreview?: string }
 	| { ok: true; extensions: InstalledExtension[] }
 	| { ok: true; extension: InstalledExtension }
+	| {
+			ok: true;
+			extensionInspection: z.infer<
+				typeof ChromeWebStoreExtensionInspectionSchema
+			>;
+	  }
 	| { ok: true; screenshotPath?: string; cancelled?: boolean }
 	| { ok: true; browserContext: UserBrowserPageContext }
 	| {

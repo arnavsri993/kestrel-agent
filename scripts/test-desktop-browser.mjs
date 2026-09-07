@@ -42,6 +42,8 @@ if (process.platform === "darwin") {
 }
 const requireFromDesktop = createRequire(resolve("apps/desktop/package.json"));
 const packagedExecutable = process.env.KESTREL_DESKTOP_EXECUTABLE;
+const verifyRealChromeWebStoreInstall =
+	process.env.KESTREL_TEST_REAL_CHROME_WEB_STORE === "1";
 const executablePath = packagedExecutable
 	? resolve(packagedExecutable)
 	: requireFromDesktop("electron");
@@ -1624,6 +1626,80 @@ try {
 	);
 	const storeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
 	assert(storeTab);
+	const storeExtensionId = "bcjindcccaagfpapjjmafapmmgkkhgoa";
+	const storeListingUrl =
+		`https://chromewebstore.google.com/detail/json-formatter/${storeExtensionId}`;
+	await page.evaluate(
+		async ({ tabId, input }) => {
+			await window.kestrel.request({
+				type: "browser-navigate",
+				tabId,
+				input,
+			});
+		},
+		{ tabId: storeTab.id, input: storeListingUrl },
+	);
+	await waitForBrowserState(
+		(value) =>
+			value.activeTabId === storeTab.id &&
+			value.tabs.some(
+				(tab) => tab.id === storeTab.id && tab.url === storeListingUrl,
+			),
+		"Chrome Web Store listing did not load in the managed tab",
+	);
+	const storeInstallBar = page.getByRole("region", {
+		name: "Chrome Web Store installation",
+	});
+	await storeInstallBar.waitFor();
+	const reviewAndAdd = storeInstallBar.getByRole("button", {
+		name: "Review & add",
+		exact: true,
+	});
+	await reviewAndAdd.waitFor();
+	assert.equal(await reviewAndAdd.isEnabled(), true);
+	if (verifyRealChromeWebStoreInstall) {
+		await reviewAndAdd.click();
+		const compatibilityDialog = page.getByRole("dialog", {
+			name: "Review extension",
+			exact: true,
+		});
+		await compatibilityDialog.waitFor({ timeout: 60_000 });
+		await compatibilityDialog
+			.getByText("Verified Chrome Web Store package", { exact: true })
+			.waitFor();
+		await compatibilityDialog
+			.getByRole("button", {
+				name: "Install reviewed extension",
+				exact: true,
+			})
+			.click();
+		await compatibilityDialog.waitFor({ state: "detached", timeout: 60_000 });
+		await storeInstallBar
+			.getByText("Added to Kestrel", { exact: true })
+			.waitFor({ timeout: 60_000 });
+		const installedExtensions = await page.evaluate(async () => {
+			const response = await window.kestrel.request({
+				type: "browser-list-extensions",
+			});
+			return response.ok && "extensions" in response ? response.extensions : [];
+		});
+		const installedExtension = installedExtensions.find(
+			(extension) => extension.id === storeExtensionId,
+		);
+		assert(installedExtension, "Reviewed Chrome Web Store extension was not registered");
+		assert.equal(installedExtension.source, "chrome_web_store");
+		assert.equal("path" in installedExtension, false);
+		assert(installedExtension.compatibility);
+		assert.notEqual(
+			installedExtension.compatibility.state,
+			"unsupported",
+			"An installed extension must not report an unsupported compatibility state",
+		);
+	} else {
+		// Package inspection downloads and installs are intentionally opt-in so the
+		// default visible-browser smoke stays hermetic.
+		assert.equal(await page.getByRole("dialog").count(), 0);
+	}
 	await page.evaluate(
 		async ({ storeTabId, sourceTabId }) => {
 			await window.kestrel.request({
@@ -2866,7 +2942,11 @@ try {
 
 	assert.deepEqual(runtimeErrors, []);
 	process.stdout.write(
-		"Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation, hidden-view routing, and restart restore.\n",
+		`Visible browser smoke passed: independent tabs/tasks, agent task resume, horizontal and vertical tab keyboard layouts, native bounds, navigation, history, context, approval-gated actions, AX/screenshot, popup tabs, full Kestrel detached windows, downloads, search settings, extension-store navigation and ${
+			verifyRealChromeWebStoreInstall
+				? "reviewed extension installation"
+				: "Review & add affordance"
+		}, hidden-view routing, and restart restore.\n`,
 	);
 } finally {
 	await application?.close();

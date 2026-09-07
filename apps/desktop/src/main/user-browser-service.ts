@@ -51,6 +51,7 @@ import {
 	type UserBrowserTabOrganizationApply,
 	type UserBrowserTabOrganizationPreview,
 	type UserBrowserTabFolder,
+	type ChromeWebStoreExtensionInspection,
 	type InstalledExtension,
 	type FilePreview,
 	type SelectedAttachment,
@@ -84,6 +85,11 @@ import {
 	targetPointFromBackendNode,
 } from "./browser-backend-node-target";
 import { BrowserExtensionManager } from "./browser-extension-manager";
+import {
+	browserExtensionOperationErrorMessage,
+	chromeWebStoreInstallErrorMessage,
+} from "../browser-extension-error";
+import { ElectronExtensionRuntime } from "./electron-extension-runtime";
 import {
 	isUserBrowserBackendWireRequest,
 	type UserBrowserBackendWireRequest,
@@ -1164,6 +1170,8 @@ export class UserBrowserService {
 	private readonly store: BrowserTabStore;
 	private readonly partition: Session;
 	private readonly extensionManager: BrowserExtensionManager;
+	private readonly extensionRuntime: ElectronExtensionRuntime;
+	private readonly extensionStartup: Promise<void>;
 	private readonly views = new Map<string, ViewRecord>();
 	private readonly elementRefs = new Map<string, Map<string, number>>();
 	private readonly downloadPaths = new Map<string, string>();
@@ -1279,8 +1287,13 @@ export class UserBrowserService {
 		this.partition = electronSession.fromPartition(this.partitionName, {
 			cache: true,
 		});
+		this.extensionRuntime = new ElectronExtensionRuntime(this.partition);
 		this.applySessionBrowserPreferences();
-		void this.extensionManager.loadAll(this.partition);
+		this.extensionStartup = this.extensionManager
+			.loadAll(this.extensionRuntime)
+			.catch((error) => {
+				console.warn("[Extension] Failed to restore browser extensions:", error);
+			});
 		this.startSleepingTabsMonitor();
 		if (this.passwordVault || this.paymentCardVault) {
 			this.passwordPollInterval = setInterval(() => {
@@ -4053,38 +4066,97 @@ export class UserBrowserService {
 		return this.extensionManager.list();
 	}
 
-	async installExtensionUrl(urlOrId: string): Promise<InstalledExtension> {
-		return this.extensionManager.installFromChromeWebStore(
-			urlOrId,
-			this.partition,
+	private extensionOperationError(
+		cause: unknown,
+		operation: "install" | "manage",
+	): Error {
+		// Keep the actionable native cause in the desktop log, but never send a
+		// filesystem path or Electron implementation detail to the renderer.
+		console.warn(`[Extension] ${operation} operation failed:`, cause);
+		return new Error(
+			operation === "install"
+				? chromeWebStoreInstallErrorMessage(cause)
+				: browserExtensionOperationErrorMessage(cause),
 		);
 	}
 
+	async inspectExtensionUrl(
+		urlOrId: string,
+	): Promise<ChromeWebStoreExtensionInspection> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.inspectChromeWebStore(urlOrId);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "install");
+		}
+	}
+
+	async installReviewedExtension(inspectionId: string): Promise<InstalledExtension> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installInspectedChromeWebStore(
+				inspectionId,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "install");
+		}
+	}
+
 	async installExtensionFile(filePath: string): Promise<InstalledExtension> {
-		return this.extensionManager.installFromCrxOrZipFile(
-			filePath,
-			this.partition,
-		);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installFromCrxOrZipFile(
+				filePath,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async installExtensionFolder(
 		folderPath: string,
 	): Promise<InstalledExtension> {
-		return this.extensionManager.installFromUnpacked(
-			folderPath,
-			this.partition,
-		);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.installFromUnpacked(
+				folderPath,
+				this.extensionRuntime,
+			);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async toggleExtension(
 		id: string,
 		enabled: boolean,
 	): Promise<InstalledExtension> {
-		return this.extensionManager.toggle(id, enabled, this.partition);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.toggle(id, enabled, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
+	}
+
+	async reloadExtension(id: string): Promise<InstalledExtension> {
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.reload(id, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	async uninstallExtension(id: string): Promise<void> {
-		return this.extensionManager.uninstall(id, this.partition);
+		try {
+			await this.extensionStartup;
+			return await this.extensionManager.uninstall(id, this.extensionRuntime);
+		} catch (cause) {
+			throw this.extensionOperationError(cause, "manage");
+		}
 	}
 
 	dispose(): void {

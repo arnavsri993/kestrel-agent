@@ -3379,11 +3379,19 @@ function registerIpc(): void {
         extensions: requestBrowserService.listExtensions(),
       };
     }
+    if (request.type === "browser-inspect-extension-url") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extensionInspection = await requestBrowserService.inspectExtensionUrl(
+        request.urlOrId,
+      );
+      return { ok: true, extensionInspection };
+    }
     if (request.type === "browser-install-extension-url") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      const extension = await requestBrowserService.installExtensionUrl(
-        request.urlOrId,
+      const extension = await requestBrowserService.installReviewedExtension(
+        request.inspectionId,
       );
       return { ok: true, extension };
     }
@@ -3401,6 +3409,14 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       await requestBrowserService.uninstallExtension(request.extensionId);
       return { ok: true };
+    }
+    if (request.type === "browser-reload-extension") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extension = await requestBrowserService.reloadExtension(
+        request.extensionId,
+      );
+      return { ok: true, extension };
     }
     if (request.type === "browser-sleep-tab") {
       if (!requestBrowserService)
