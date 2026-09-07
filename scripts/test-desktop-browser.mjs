@@ -866,7 +866,7 @@ try {
 		.getByRole("tab", { name: /^Browser/ })
 		.click();
 	await page
-		.getByRole("heading", { name: "Make the browser feel like yours." })
+		.getByRole("heading", { name: "Browser", exact: true })
 		.waitFor();
 	assert.equal((await browserState()).settings.newTabBackground, "graphite");
 	await selectNewTab();
@@ -2433,7 +2433,7 @@ try {
 	await browserSettings.click();
 	assert.equal(await browserSettings.getAttribute("aria-selected"), "true");
 	await page
-		.getByRole("heading", { name: "Make the browser feel like yours.", exact: true })
+		.getByRole("heading", { name: "Browser", exact: true })
 		.waitFor();
 	await page
 		.locator("label.background-option")

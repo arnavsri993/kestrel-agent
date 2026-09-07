@@ -24,9 +24,9 @@ export const WIDGET_SIZE_LABELS: Record<NewTabWidgetSize, string> = {
 };
 
 export const WIDGET_SIZE_DESCRIPTIONS: Record<NewTabWidgetSize, string> = {
-	small: "A focused glance",
-	medium: "A comfortable view",
-	large: "More room to explore",
+	small: "Shows fewer items",
+	medium: "Shows more items",
+	large: "Shows the most items",
 };
 
 const LEGACY_DEFAULT_NEW_TAB_WIDGET_IDS: readonly NewTabWidgetId[] = [
@@ -58,7 +58,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	"frequent-tabs": {
 		id: "frequent-tabs",
 		title: "Frequent tabs",
-		description: "Your most-used local browsing destinations",
+		description: "Most visited sites",
 		icon: "history",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "medium",
@@ -67,7 +67,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	bookmarks: {
 		id: "bookmarks",
 		title: "Bookmarks",
-		description: "Saved links from this Kestrel profile",
+		description: "Saved pages",
 		icon: "star",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "medium",
@@ -76,7 +76,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	downloads: {
 		id: "downloads",
 		title: "Downloads",
-		description: "The files you recently brought in",
+		description: "Recent files",
 		icon: "downloads",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "small",
@@ -85,7 +85,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	"recent-work": {
 		id: "recent-work",
 		title: "Recent work",
-		description: "Continue a recent Kestrel conversation",
+		description: "Recent chats",
 		icon: "agent",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "medium",
@@ -94,7 +94,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	"recent-memories": {
 		id: "recent-memories",
 		title: "Recent memories",
-		description: "Facts Kestrel keeps for future chats",
+		description: "Saved memories",
 		icon: "memory",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "medium",
@@ -103,7 +103,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	"quick-actions": {
 		id: "quick-actions",
 		title: "Suggested next steps",
-		description: "Continue recent work or start from a proven prompt",
+		description: "Actions based on recent work",
 		icon: "sparkle",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "medium",
@@ -112,7 +112,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	"open-tabs": {
 		id: "open-tabs",
 		title: "Open tabs",
-		description: "Jump back into tabs already open in Kestrel",
+		description: "Tabs open in Kestrel",
 		icon: "browser",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "medium",
@@ -121,7 +121,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	"pinned-tabs": {
 		id: "pinned-tabs",
 		title: "Pinned tabs",
-		description: "Keep your always-ready tabs close at hand",
+		description: "Tabs you pinned",
 		icon: "pin",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "small",
@@ -130,7 +130,7 @@ export const NEW_TAB_WIDGET_DEFINITIONS: Record<
 	"recent-pages": {
 		id: "recent-pages",
 		title: "Recent pages",
-		description: "Pick up where your local browsing history left off",
+		description: "Visited pages",
 		icon: "readiness",
 		supportedSizes: ["small", "medium", "large"],
 		defaultSize: "medium",

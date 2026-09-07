@@ -176,7 +176,7 @@ export function EventApplications({
       as="section"
       className="event-applications-page"
       title="Apply with your agent"
-      description="The agent may research and draft. It cannot turn a draft into a submitted application from this screen."
+		description="Research and drafts stay reviewable; submission still needs your approval."
       measure="wide"
       actions={<Status tone="needs-approval">Submission stays locked</Status>}
     >
@@ -188,7 +188,7 @@ export function EventApplications({
           <h2>Applications</h2>
           {applications.length === 0 ? (
             <p className="event-empty">
-              No applications yet. Import the official page to begin.
+				Import an official page to get started.
             </p>
           ) : (
             <ul>
@@ -299,8 +299,7 @@ export function EventApplications({
                       : "Prepare with local agent"}
                 </button>
                 <small>
-                  Research and drafting only. External submission requires a
-                  separate explicit approval.
+					Research and drafts only. Submission needs explicit approval.
                 </small>
               </div>
               <section>
@@ -316,7 +315,7 @@ export function EventApplications({
                 </div>
                 {selected.eligibility.length === 0 ? (
                   <p className="event-empty">
-                    The preparation agent has not added eligibility checks yet.
+					Prepare with the agent to add eligibility checks.
                   </p>
                 ) : (
                   <ul className="eligibility-list">
@@ -371,8 +370,7 @@ export function EventApplications({
                 </div>
                 {selected.answers.length === 0 ? (
                   <p className="event-empty">
-                    No draft answers yet. The agent will save drafts here
-                    without submitting them.
+					No draft answers yet. The agent saves drafts here; it does not submit.
                   </p>
                 ) : (
                   <div className="event-answer-list">
@@ -452,9 +450,8 @@ export function EventApplications({
                 <div>
                   <strong>Final consent boundary</strong>
                   <p>
-                    Approval confirms eligibility and answer content. The
-                    browser agent must still pause immediately before external
-                    submission and verify a receipt afterward.
+					Approve eligibility and answers. Kestrel still pauses before
+					submission and verifies a receipt afterward.
                   </p>
                 </div>
                 {selected.status === "approved" ? (

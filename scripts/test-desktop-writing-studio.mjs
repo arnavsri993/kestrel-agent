@@ -62,7 +62,7 @@ try {
 		.waitFor();
 	await page
 		.getByRole("heading", {
-			name: "Draft like yourself, with your context.",
+			name: "Write with your context.",
 			exact: true,
 		})
 		.waitFor();

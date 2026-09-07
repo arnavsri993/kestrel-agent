@@ -167,7 +167,7 @@ export function PasswordOverlay() {
 					</>
 				) : prompt.mode === "page" && !chooseFields ? (
 					<>
-						<p className="password-overlay-copy">Fill this sign-in form with a saved login.</p>
+						<p className="password-overlay-copy">Choose a saved login.</p>
 						<div className="password-overlay-entries" role="list">
 							{prompt.entries.map((entry) => (
 								<button

@@ -351,7 +351,7 @@ export function OrganizeTabsDialog({
 						<div className="organize-tabs-empty" role="status">
 							<Icon name="folder" />
 							<strong>No groups to suggest</strong>
-							<span>Open a few related pages, then try again.</span>
+							<span>Open related pages, then try again.</span>
 						</div>
 					) : (
 						visibleFolders.map((folder) => {

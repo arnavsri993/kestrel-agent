@@ -103,7 +103,7 @@ try {
 		.waitFor();
 	await page
 		.getByText(
-			"This contacts only the configured provider or local model service.",
+			"Checks the configured provider or local model. It does not send a project prompt.",
 			{ exact: false },
 		)
 		.waitFor();

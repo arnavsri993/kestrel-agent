@@ -593,17 +593,7 @@ export function BrowserSettings({
   return (
     <div className="browser-settings-wrapper" data-settings-section={section}>
       <header className="browser-settings-intro">
-        <span className="eyebrow">Browser settings</span>
-        <h2>
-          {section === "browser"
-            ? "Make the browser feel like yours."
-            : "Browser"}
-        </h2>
-        <p>
-          {section === "browser"
-            ? "Keep browser controls here. Agent behavior, models, memory, and approvals live in the separate Agent settings area."
-            : "Focused browser preferences with native behavior and profile-owned persistence."}
-        </p>
+        <h2>Browser</h2>
         {statusCopy && (
           <small
             className={`browser-settings-save-state ${saveState}`}
@@ -624,7 +614,7 @@ export function BrowserSettings({
             <h2 id="browser-startup-title">
               <Icon name="reload" /> Startup
             </h2>
-            <p>Choose what Kestrel opens when the app starts.</p>
+            <p>Choose what opens at launch.</p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -632,7 +622,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>When Kestrel starts</strong>
-              <p>Restoring a session keeps its tab order and folders.</p>
+              <p>Keeps your tabs and folders.</p>
             </div>
             <select
               aria-label="Startup behavior"
@@ -655,10 +645,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Homepage URL</strong>
-              <p>
-                Only HTTP(S) pages without embedded credentials are accepted.
-                Leave empty for the new tab page.
-              </p>
+              <p>Use an HTTP(S) address, or leave blank for New Tab.</p>
             </div>
             <div className="browser-inline-control">
               <input
@@ -684,9 +671,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Specific startup pages</strong>
-              <p>
-                Pages are opened in order when this startup mode is selected.
-              </p>
+              <p>Open these pages in order.</p>
             </div>
             <div className="browser-startup-pages-control">
               <div className="browser-inline-control">
@@ -857,10 +842,6 @@ export function BrowserSettings({
               <h2>
                 <Icon name="browser" /> Tabs and appearance
               </h2>
-              <p>
-                These are Kestrel-specific browser surfaces; vertical tabs,
-                folders, and the sidebar remain in their existing browser tools.
-              </p>
             </header>
             <div
               className="setting-row browser-setting-row"
@@ -868,7 +849,6 @@ export function BrowserSettings({
             >
               <div className="browser-setting-copy">
                 <strong>Tab layout</strong>
-                <p>Choose the tab rail that fits your workflow.</p>
               </div>
               <select
                 aria-label="Tab layout"
@@ -890,7 +870,7 @@ export function BrowserSettings({
               >
                 <div className="browser-setting-copy">
                   <strong>Tab sizing</strong>
-                  <p>Scroll across a readable rail or fit tabs like a browser.</p>
+                  <p>Choose scrolling or shrinking tabs.</p>
                 </div>
                 <select
                   aria-label="Tab sizing"
@@ -912,7 +892,7 @@ export function BrowserSettings({
             >
               <div className="browser-setting-copy">
                 <strong>Show bookmarks bar</strong>
-                <p>Shows saved pages under the address bar. Toggle with ⌘⇧B.</p>
+                <p>Show below the address bar. ⌘⇧B toggles it.</p>
               </div>
               <button
                 type="button"
@@ -933,9 +913,7 @@ export function BrowserSettings({
             >
               <div className="browser-setting-copy">
                 <strong>Default page zoom</strong>
-                <p>
-                  Applied to newly opened pages and current pages when changed.
-                </p>
+                <p>Updates new and open pages.</p>
               </div>
               <select
                 aria-label="Default page zoom"
@@ -1070,10 +1048,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="privacy" /> Privacy and site permissions
             </h2>
-            <p>
-              Permission choices are stored per origin and can be revoked here.
-              Cookies and cache stay in the native browser partition.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1083,10 +1057,7 @@ export function BrowserSettings({
               className="browser-setting-copy"
             >
               <strong>Use current page context with agent</strong>
-              <p>
-                Share the selected page’s bounded, untrusted context only when
-                you ask Kestrel to use it.
-              </p>
+              <p>Kestrel uses the page only when you ask.</p>
             </div>
             <button
               type="button"
@@ -1105,7 +1076,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Keep browsing history</strong>
-              <p>History is retained only in this Kestrel profile.</p>
+              <p>Stored on this Mac.</p>
             </div>
             <select
               aria-label="Browser history retention"
@@ -1131,10 +1102,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Remembered site permissions</strong>
-              <p>
-                Allow or deny decisions for camera, microphone, notifications,
-                and other web permissions.
-              </p>
+              <p>Review what each site can access.</p>
               {sitePermissions.length === 0 ? (
                 <small>No remembered site permissions.</small>
               ) : (
@@ -1181,10 +1149,7 @@ export function BrowserSettings({
             <h2>
               <Icon name="lock" /> Autofill
             </h2>
-            <p>
-              Password and payment data stay in protected native vaults. Kestrel
-              never includes them in browser exports.
-            </p>
+            <p>Passwords and cards stay in your Mac's secure storage and are not exported.</p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1192,7 +1157,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Password autofill and save prompts</strong>
-              <p>Offer protected saved passwords and ask before saving new logins on matching HTTPS origins.</p>
+              <p>Fill saved passwords on matching HTTPS sites and ask before saving new ones.</p>
             </div>
             <button
               type="button"
@@ -1215,10 +1180,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Payment autofill</strong>
-              <p>
-                Offer protected saved payment cards only after explicit
-                confirmation.
-              </p>
+              <p>Fill saved cards only after you confirm.</p>
             </div>
             <button
               type="button"
@@ -1408,10 +1370,7 @@ export function BrowserSettings({
             <h2>
               <Icon name="downloads" /> Downloads
             </h2>
-            <p>
-              Choose a profile-owned folder or review every download before it
-              starts.
-            </p>
+            <p>Choose a folder or ask where to save each file.</p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1477,11 +1436,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="writing" /> Languages and accessibility
             </h2>
-            <p>
-              Native spellcheck, font, and minimum-size preferences apply to
-              pages opened by Kestrel. Font changes reopen native page views so
-              the setting is real, not cosmetic.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1489,10 +1443,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Spellcheck</strong>
-              <p>
-                Use the operating system or Chromium spellchecker where
-                supported.
-              </p>
+              <p>Use your system spellchecker where available.</p>
             </div>
             <button
               type="button"
@@ -1531,10 +1482,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Default font</strong>
-              <p>
-                Sets the native default for pages that do not provide their own
-                font.
-              </p>
+              <p>Used when a page doesn't choose its own font.</p>
             </div>
             <select
               aria-label="Default font"
@@ -1553,7 +1501,7 @@ export function BrowserSettings({
           <div className="setting-row browser-setting-row">
             <div className="browser-setting-copy">
               <strong>Minimum text size</strong>
-              <p>0 keeps the page’s chosen size.</p>
+              <p>Default keeps the page's size.</p>
             </div>
             <select
               aria-label="Minimum text size"
@@ -1729,10 +1677,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="system" /> System integration
             </h2>
-            <p>
-              These actions use native macOS or Windows registration instead of
-              exposing Electron internals to the renderer.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1740,10 +1684,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Default browser</strong>
-              <p>
-                Register Kestrel for supported web links and check the operating
-                system’s current choice.
-              </p>
+              <p>Open supported web links in Kestrel.</p>
             </div>
             {isDefaultBrowser ? (
               <Status tone="verified">Default browser</Status>
@@ -1766,10 +1707,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Hardware acceleration</strong>
-              <p>
-                Native rendering is enabled by default. Changing this requires a
-                Kestrel restart and is persisted in the browser profile.
-              </p>
+              <p>Uses your Mac's graphics hardware. Restart to apply changes.</p>
             </div>
             <button
               type="button"
@@ -1805,11 +1743,6 @@ export function BrowserSettings({
             <h2>
               <Icon name="reset" /> Data and reset
             </h2>
-            <p>
-              Move safe browser preferences or clear local data. Cookies,
-              passwords, payment cards, extension packages, and native sessions
-              are never exported.
-            </p>
           </header>
           <div
             className="setting-row browser-setting-row"
@@ -1817,13 +1750,8 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Import and export browser data</strong>
-              <p>
-                Bookmarks, history, remembered site permissions, and browser
-                preferences are merged from a reviewed JSON file.
-              </p>
-              <small>
-                Transfers never include protected credentials or cookies.
-              </small>
+              <p>Import or export bookmarks, history, permissions, and preferences.</p>
+              <small>Passwords, cards, cookies, and active sessions are never included.</small>
             </div>
             <div className="button-row">
               <button
@@ -1850,10 +1778,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Clear browsing history</strong>
-              <p>
-                Removes history, favicons, recently closed tabs, and new-tab
-                activity. Open tabs stay put.
-              </p>
+              <p>Keeps open tabs.</p>
             </div>
             <button
               type="button"
@@ -1873,10 +1798,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Clear cookies and site data</strong>
-              <p>
-                Removes cookies, cache, and remembered site permissions for this
-                browser profile.
-              </p>
+              <p>Removes cookies, cache, and saved permissions.</p>
             </div>
             <button
               type="button"
@@ -1894,10 +1816,7 @@ export function BrowserSettings({
           >
             <div className="browser-setting-copy">
               <strong>Reset browser settings</strong>
-              <p>
-                Restore Kestrel’s browser preferences without deleting history,
-                bookmarks, credentials, or extensions.
-              </p>
+              <p>Keeps history, saved pages, credentials, and extensions.</p>
             </div>
             <div className="button-row">
               {resetSettingsConfirm && (

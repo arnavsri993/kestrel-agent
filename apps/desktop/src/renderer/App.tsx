@@ -283,63 +283,63 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "browser",
 		label: "Browser",
-		detail: "Open tabs and browse the web",
+		detail: "Browse the web",
 		icon: "browser",
 		group: "Browse",
 	},
 	{
 		id: "organize-tabs",
 		label: "Organize tabs",
-		detail: "Group related tabs into folders while keeping their order",
+		detail: "Group related tabs",
 		icon: "folder",
 		group: "Browse",
 	},
 	{
 		id: "agent",
 		label: "Agent",
-		detail: "Start, find, and resume your work",
+		detail: "Start or resume work",
 		icon: "agent",
 		group: "Agent",
 	},
 	{
 		id: "projects",
 		label: "Projects",
-		detail: "Keep related chats and local context together",
+		detail: "Keep related work together",
 		icon: "folder",
 		group: "Agent",
 	},
 	{
 		id: "writing",
 		label: "Writing Studio",
-		detail: "Draft with your context and confirmed voice signals",
+		detail: "Draft with your context",
 		icon: "writing",
 		group: "Agent",
 	},
 	{
 		id: "history",
 		label: "History",
-		detail: "Find pages you visited",
+		detail: "Pages you visited",
 		icon: "history",
 		group: "Browse",
 	},
 	{
 		id: "bookmarks",
 		label: "Bookmarks",
-		detail: "Pages you saved in this profile",
+		detail: "Pages you saved",
 		icon: "star",
 		group: "Browse",
 	},
 	{
 		id: "downloads",
 		label: "Downloads",
-		detail: "Track files from browser tabs",
+		detail: "Downloaded files",
 		icon: "downloads",
 		group: "Browse",
 	},
 	{
 		id: "approvals",
 		label: "Approvals",
-		detail: "Review consequential agent actions",
+		detail: "Review agent actions",
 		icon: "approvals",
 		group: "Agent",
 	},
@@ -353,7 +353,7 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "events",
 		label: "Opportunities",
-		detail: "Review event applications",
+		detail: "Event applications",
 		icon: "events",
 		group: "Agent",
 	},
@@ -367,49 +367,49 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "research",
 		label: "Research",
-		detail: "Saved sources and web findings",
+		detail: "Sources and findings",
 		icon: "research",
 		group: "Context",
 	},
 	{
 		id: "artifacts",
 		label: "Artifacts",
-		detail: "Files and generated results",
+		detail: "Files and results",
 		icon: "artifacts",
 		group: "Context",
 	},
 	{
 		id: "activity",
 		label: "Activity",
-		detail: "Runs, evidence, and audit trail",
+		detail: "Runs and evidence",
 		icon: "activity",
 		group: "Context",
 	},
 	{
 		id: "extensions",
 		label: "Extensions",
-		detail: "Plugin-provided capabilities",
+		detail: "Plugins and tools",
 		icon: "extensions",
 		group: "Build",
 	},
 	{
 		id: "readiness",
 		label: "Readiness",
-		detail: "Runtime and provider health",
+		detail: "Check what is ready",
 		icon: "readiness",
 		group: "System",
 	},
 	{
 		id: "settings",
 		label: "Settings",
-		detail: "Browser, agent, models, and privacy",
+		detail: "Browser, agent, and privacy",
 		icon: "settings",
 		group: "System",
 	},
 	{
 		id: "shortcuts",
 		label: "Keyboard Shortcuts",
-		detail: "View all default shortcuts and hotkeys",
+		detail: "Keyboard shortcuts",
 		icon: "command",
 		group: "System",
 	},
@@ -1441,8 +1441,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									Kestrel gets it done.
 								</h1>
 								<p>
-									Kestrel is a local agent for your Mac. It browses the web,
-									drafts work, and takes action with your approval.
+									Kestrel helps you browse, draft, and take action on your Mac—with
+									your approval.
 								</p>
 							</div>
 						)}
@@ -1457,14 +1457,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Cloud models receive what you send</strong>
 												<small>
-													Prompts and tool results may leave this Mac.
+													What you send may leave your Mac.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											Prompts, selected file excerpts, and tool results may go
-											to the provider under its retention and training terms.
+											Prompts, selected file excerpts, and tool results follow your
+											provider's data terms.
 										</p>
 									</details>
 									<details>
@@ -1473,15 +1473,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Connected services may charge you</strong>
 												<small>
-													API, media, and storage can bill their own accounts.
+											API, media, and storage can charge their own accounts.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											API calls, media generation, search, and storage can bill
-											their own accounts. Kestrel budgets do not replace
-											provider controls.
+											Kestrel budgets do not replace provider limits or billing
+											controls.
 										</p>
 									</details>
 									<details>
@@ -1490,15 +1489,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Approval is a pause, not a guarantee</strong>
 												<small>
-													Review still matters for consequential work.
+													Review consequential actions before approving.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
 											Sending, publishing, deleting, purchasing, and permission
-											changes pause for review. Factual, legal, financial, and
-											safety-critical work still needs your judgment.
+											changes pause for review. You remain responsible for legal,
+											financial, and safety-critical decisions.
 										</p>
 									</details>
 									<details>
@@ -1507,15 +1506,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Connections widen access</strong>
 												<small>
-													Approved tools use the folders and accounts you grant.
+													Approved tools use the access you grant.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											Approved tools can act through the folders, accounts,
-											microphone, browser, and screen access you grant.
-											Credentials remain protected.
+											Tools can use the folders, accounts, microphone, browser, and
+											screen access you grant. Credentials stay protected.
 										</p>
 									</details>
 								</div>
@@ -1536,7 +1534,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									</span>
 								</label>
 								<small>
-									You can change providers and permissions later in Settings.
+									Change providers and permissions later in Settings.
 								</small>
 							</div>
 						)}
@@ -1556,12 +1554,12 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									{step !== 2 && (
 										<p>
 											{modelView === "accounts"
-												? "Sign in with the provider, or add a protected API key."
+												? "Sign in with a provider or add a protected API key."
 												: modelView === "local"
 													? recommendedModel
-														? `Kestrel picked ${recommendedModel.title} for this Mac.`
+														? `Kestrel recommends ${recommendedModel.title} for this Mac.`
 														: "Checking this Mac's hardware…"
-													: "Terms and free limits vary by provider."}
+													: "Free plans and terms vary by provider."}
 										</p>
 									)}
 								</header>
@@ -2314,9 +2312,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											))}
 										</div>
 										<p className="provider-footnote">
-											“Free” availability, quotas, privacy terms, and model
-											lists change. Review the source before sending data. A
-											listing here is not a connection or a Kestrel endorsement.
+											Free plans, quotas, privacy terms, and models change. Review each
+											provider before sharing data. A listing here is not a connection
+											or endorsement.
 										</p>
 									</div>
 								)}
@@ -2843,9 +2841,7 @@ function Artifacts() {
 	const verifiedCount = artifacts.filter((artifact) => artifact.integrity === "verified").length;
 	return (
 		<PageFrame
-			eyebrow="Verified results"
 			title="Artifacts"
-			text="Inspect locally stored outputs together with their source, model, session, and verification hash."
 			measure="wide"
 		>
 			<div className="artifact-toolbar">
@@ -2864,7 +2860,6 @@ function Artifacts() {
 			{artifacts.length === 0 && !loading ? (
 				<Empty
 					title="Nothing saved yet"
-					text="Verified files and interactive results will appear here."
 				/>
 			) : (
 				<section className="artifact-grid" aria-live="polite">
@@ -5180,7 +5175,6 @@ function Memory({
 	return (
 		<PageFrame
 			title="Memory"
-			text="Review confirmed facts, provenance, and transcript matches before they shape future work."
 			measure="wide"
 		>
 			<form
@@ -5541,7 +5535,6 @@ function Readiness() {
 		<PageFrame
 			eyebrow={readiness?.readyForLiveWork ? "Ready for work" : "Needs attention"}
 			title="Readiness"
-			text="Check what is configured, what is reachable, and which recovery boundaries are available on this Mac."
 			measure="wide"
 			actions={
 				<button
@@ -5569,8 +5562,8 @@ function Readiness() {
 					</strong>
 					<p>
 						{readiness
-							? `${warnings} optional item${warnings === 1 ? "" : "s"} can be completed when a task needs them. Last checked ${new Date(readiness.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
-							: "Reading local status without sending project data anywhere."}
+							? `${warnings} optional setup item${warnings === 1 ? "" : "s"} remain. Checked ${new Date(readiness.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+							: "Checking this Mac. No project data is sent."}
 					</p>
 				</div>
 			</section>
@@ -5628,8 +5621,8 @@ function Readiness() {
 						)}
 					</header>
 					<p>
-						This contacts only the configured provider or local model service.
-						It does not send a project prompt.
+						Checks the configured provider or local model. It does not send a
+						project prompt.
 					</p>
 					{providerChecks.length > 0 && (
 							<ul>
@@ -5671,10 +5664,9 @@ function Readiness() {
 							</div>
 						</header>
 						<p>
-							Copies encrypted conversations, settings, protected credentials,
-							installed plugins, and artifacts after safely stopping the local
-							core. Project folders are not duplicated. The snapshot can unlock
-							your local state, so store it like a password.
+						Backs up encrypted conversations, settings, credentials, plugins, and
+						artifacts. Project folders are not copied. Treat the snapshot like a
+						password.
 						</p>
 						{backup && (
 							<div className="backup-result">
@@ -5720,9 +5712,8 @@ function Readiness() {
 							</div>
 						</header>
 						<p>
-							Saves a content-free JSON envelope with version, platform, readiness
-							counts, and failure class only. No prompts, page content,
-							credentials, or personal memory are included. Review before sharing.
+						Saves version, platform, readiness, and failure details—never prompts,
+						page content, credentials, or memory. Review it before sharing.
 						</p>
 						<button
 							className="button secondary"
@@ -5791,7 +5782,7 @@ function Research() {
 		<PageFrame
 			eyebrow="Search with sources"
 			title="Research"
-			text="Search the web directly, open a result in a bounded reader, and retain its retrieval evidence."
+			text="Search the web and keep sources with your findings."
 			measure="wide"
 		>
 			<form
@@ -5824,7 +5815,6 @@ function Research() {
 			{!query.trim() && results.length === 0 && !page && !busy && (
 				<Empty
 					title="Start with a question"
-					text="Enter a query to find web results Kestrel can cite in answers."
 				/>
 			)}
 			{query.trim() && results.length === 0 && !page && !busy && !error && (
@@ -6038,9 +6028,7 @@ function Work({
 
 	return (
 		<PageFrame
-			eyebrow="Plan and track"
 			title="Work"
-			text="Coordinate goals, delegates, schedules, and handoffs while keeping routing and approval evidence visible."
 			measure="wide"
 		>
 			{routedTask && (
@@ -6167,8 +6155,8 @@ function Work({
 				>
 				<h2>Delegate a task</h2>
 				<p className="work-card-note">
-					Kestrel picks a verified worker by capability, cost, privacy, and
-					your routing preference.
+					Kestrel selects a verified worker based on capability, cost, privacy,
+					and your preferences.
 				</p>
 				<label>
 					Parent task
@@ -6361,8 +6349,7 @@ function Work({
 					/>
 				</label>
 				<small>
-					Natural-language times are interpreted in UTC. Five-field cron is
-					supported.
+					Times are interpreted in UTC. Five-field cron is supported.
 				</small>
 				<button
 					className="button primary"
@@ -6381,9 +6368,8 @@ function Work({
 				<article className="work-card">
 					<h2>Automation boundary</h2>
 					<p>
-						Scheduled runs stay local and encrypted. Sensitive actions stop in
-						the review queue for approval, and recurring work advances only
-						after a completed run.
+						Runs stay local and encrypted. Sensitive actions wait for approval;
+						recurring work continues only after a run completes.
 					</p>
 				</article>
 			</section>
@@ -6803,8 +6789,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								"Checking for the official Codex runtime on this Mac."}
 						</p>
 						<small>
-							Codex owns the browser callback, credential storage, and token
-							refresh. Kestrel receives account status only.
+					Codex handles sign-in and credentials. Kestrel receives account status
+					only.
 						</small>
 					</div>
 					<span
@@ -6958,8 +6944,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								"Checking whether Kestrel can read the local Messages database."}
 						</p>
 						<small>
-							Read-only and on demand. Kestrel extracts a short code, never the
-							message body, and never sends a message.
+					Read-only and on demand. Kestrel extracts only a short code; it never
+					reads the body or sends messages.
 						</small>
 					</div>
 					<span
@@ -7152,8 +7138,8 @@ function LearnedSkillsSettings({
 			<div>
 				<strong>Experience-to-skill learning</strong>
 				<p>
-					Proposals are credential-scanned and parsed in isolation. Nothing
-					installs without your review.
+					Review proposals before installing them. Nothing installs without your
+					approval.
 				</p>
 				<small>
 					{installed.length} installed · {waiting.length} waiting ·{" "}
@@ -7285,8 +7271,8 @@ function CredentialSettings({
 			<div>
 				<strong>Protected provider credentials</strong>
 				<p>
-					Encrypted with macOS secure storage, sent only to the isolated core,
-					and never displayed again.
+					Encrypted in macOS secure storage, sent only to Kestrel's isolated
+					core, and never shown again.
 				</p>
 				<div className="credential-list">
 						{credentials.map((credential) => (
@@ -7434,8 +7420,8 @@ function SubscriptionCliSettings({
 			<div>
 				<strong>Existing vendor subscriptions</strong>
 				<p>
-					Use the Codex, Claude Code, or OpenCode sign-in already on this
-					Mac. Kestrel never copies vendor OAuth tokens.
+					Use an existing Codex, Claude Code, or OpenCode sign-in. Kestrel never
+					copies vendor OAuth tokens.
 				</p>
 				<ul className="subscription-setting-list">
 					{items
@@ -8756,8 +8742,8 @@ function AgentWorkspaceSettings() {
 			<header className="settings-panel-header">
 				<h2 id="settings-workspace-title">Workspace and sessions</h2>
 				<p>
-					Keep local folder access explicit and review the durable sessions that
-					can use it. Removing a folder does not delete files or transcripts.
+					Approve folder access and review persistent sessions. Removing a folder
+					keeps its files and chats.
 				</p>
 			</header>
 			<section className="settings-stack" aria-label="Workspace and session settings">
@@ -8765,8 +8751,8 @@ function AgentWorkspaceSettings() {
 					<div>
 						<strong>Project folder access</strong>
 						<p>
-							Only approved folders are available to workspace tools. Access is
-							revocable and unavailable folders remain visible for recovery.
+							Only approved folders are available to workspace tools. Remove access
+							anytime; unavailable folders stay listed so you can reconnect them.
 						</p>
 						{grants.length === 0 ? (
 							<small>No project folders are connected.</small>
@@ -8805,14 +8791,12 @@ function AgentWorkspaceSettings() {
 					<div>
 						<strong>Persistent agent planets</strong>
 						<p>
-							Choose the real NASA/JPL planet used for each persistent agent. The
-							automatic option is still a bundled planet, selected deterministically;
-							moons are reserved for delegated subagents.
+							Choose a planet for each persistent agent. Automatic selection uses a
+							bundled planet; delegated agents appear as moons.
 						</p>
 						{persistentAgents.length === 0 ? (
 							<small>
-								No persistent agents yet. Create one from Agent Universe to choose
-								its planet.
+								Create an agent in Agent Universe to choose a planet.
 							</small>
 						) : (
 							<ul className="workspace-grants agent-planet-settings-list">
@@ -8954,9 +8938,8 @@ function AgentAutomationsSettings() {
 			<header className="settings-panel-header">
 				<h2 id="settings-automations-title">Automations</h2>
 				<p>
-					Review scheduled work and its next run. Automation execution still
-					passes through the same provider, workspace, and approval boundaries as
-					an interactive task.
+					Review scheduled work and its next run. It follows the same provider,
+					workspace, and approval boundaries as an interactive task.
 				</p>
 			</header>
 			<section className="settings-stack" aria-label="Automation settings">
@@ -8964,7 +8947,7 @@ function AgentAutomationsSettings() {
 					<div>
 						<strong>Scheduled work</strong>
 						{jobs.length === 0 ? (
-							<p>No scheduled jobs are configured. Create one from the Work surface.</p>
+							<p>No scheduled jobs. Create one in Work.</p>
 						) : (
 							<ul className="workspace-grants automation-settings-list">
 								{jobs.map((job) => (
@@ -9060,8 +9043,8 @@ function AgentDiagnosticsSettings() {
 			<div>
 				<strong>Health and diagnostic reports</strong>
 				<p>
-					Run a content-free readiness check or export a bounded report for local
-					recovery. Reports do not include prompts, credentials, or page contents.
+					Run a content-free readiness check or export a local report. Reports omit
+					prompts, credentials, and page content.
 				</p>
 				<div className="button-row">
 					<button
@@ -9381,7 +9364,6 @@ function Settings({
 	return (
 		<PageFrame
 			title="Settings"
-			text="Configure Browser and Agent behavior without weakening current approval, privacy, or recovery boundaries."
 			measure="wide"
 			className="settings-page-frame"
 			{...(onBack ? { onBack } : {})}
@@ -9401,7 +9383,7 @@ function Settings({
 					<Icon name="browser" />
 					<span>
 						<strong>Browser</strong>
-						<small>Tabs, search, and new tab</small>
+						<small>Tabs, search, and privacy</small>
 					</span>
 				</button>
 				<button
@@ -9414,7 +9396,7 @@ function Settings({
 					<Icon name="agent" />
 					<span>
 						<strong>Agent</strong>
-						<small>Models, memory, and behavior</small>
+						<small>Models, memory, and work</small>
 					</span>
 				</button>
 			</div>
@@ -9604,16 +9586,13 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-general-title">Autonomy and behavior</h2>
-							<p>
-								Startup, communication style, and how much initiative Kestrel
-								takes.
-							</p>
+							<p>Set startup, communication, and initiative.</p>
 						</header>
 						<section className="settings-stack" aria-label="General settings">
 						<article className="setting-row">
 							<div>
 								<strong>Setup guide</strong>
-								<p>Reopen the walkthrough. Protected credentials stay in place.</p>
+								<p>Reopen setup without changing saved credentials.</p>
 							</div>
 							<button className="button secondary" onClick={reopenSetup}>
 								Open setup guide
@@ -9622,7 +9601,7 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Background work</strong>
-								<p>Pause proactive work without closing Kestrel.</p>
+								<p>Pause background work without closing Kestrel.</p>
 							</div>
 							<button
 								className="button secondary"
@@ -9636,10 +9615,7 @@ function Settings({
 						<article className="setting-row routing-setting">
 							<div>
 								<strong>Communication style</strong>
-								<p>
-									How Kestrel explains work. Safety and capability rules do not
-									change.
-								</p>
+								<p>Choose how Kestrel explains work. Safety settings stay the same.</p>
 							</div>
 								<div
 									className="segmented"
@@ -9691,9 +9667,7 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-models-title">Routing and providers</h2>
-							<p>
-								Model routing, live provider checks, and cost guardrails.
-							</p>
+							<p>Set routing priorities, check providers, and limit spend.</p>
 						</header>
 					<section
 						className="settings-stack"
@@ -9707,8 +9681,8 @@ function Settings({
 										<strong>Execution routing</strong>
 										<small>
 											{route.execution === "local"
-												? "No provider request was needed for the current task."
-												: "Live runs can use measured provider health, configured rates, and account pools."}
+												? "No provider request was needed for this task."
+												: "Live runs use provider health, rates, and available accounts."}
 										</small>
 									</div>
 									<div
@@ -9746,19 +9720,13 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-extensions-title">Plugins and publishers</h2>
-							<p>
-								Signed bundles from publishers you explicitly trust — nothing
-								else installs.
-							</p>
+							<p>Install signed plugins only from publishers you trust.</p>
 						</header>
 					<section className="settings-stack" aria-label="Extension settings">
 						<article className="setting-row plugin-supply-setting">
 								<div>
-									<strong>Plugin supply chain</strong>
-									<p>
-										Only Ed25519-signed bundles from publishers you explicitly
-										trust can be installed or updated.
-									</p>
+									<strong>Trusted publishers</strong>
+									<p>Only plugins signed by them can be installed or updated.</p>
 									{publishers.length > 0 ? (
 										<ul className="workspace-grants">
 											{publishers.map((publisher) => (
@@ -9910,10 +9878,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-intelligence-title">Memory and learning</h2>
-								<p>
-									What Kestrel remembers, senses, and learns stays reviewable
-									here.
-								</p>
+								<p>Review memory, context, and learned skills.</p>
 							</header>
 						<section
 							className="settings-stack"
@@ -9939,10 +9904,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-privacy-title">Permissions and sandbox</h2>
-								<p>
-									Persistent approval rules and recovery boundaries stay explicit,
-									revocable, and separate from credentials.
-								</p>
+								<p>Manage approval rules and desktop access.</p>
 							</header>
 						<section
 							className="settings-stack"
@@ -9961,20 +9923,14 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-agent-privacy-title">Privacy and credentials</h2>
-								<p>
-									Provider secrets stay in protected native storage. Kestrel only
-									shows status and offers explicit revocation.
-								</p>
+								<p>Credentials stay in secure storage. Review status or revoke access here.</p>
 							</header>
 							<section className="settings-stack" aria-label="Protected credential settings">
 								<CredentialSettings hideCodexDuplicate />
 								<article className="setting-row danger">
 									<div>
 										<strong>Reset local agent data</strong>
-										<p>
-											Deletes the local database and secure key after explicit
-											confirmation, then relaunches Kestrel.
-										</p>
+										<p>Deletes all local data and its secure key, then restarts Kestrel.</p>
 										<label>
 											Type Kestrel to confirm
 											<input
@@ -10003,10 +9959,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-agent-migration-title">Migration</h2>
-								<p>
-									Review bounded, checksum-verified imports from supported agent tools
-									without copying source credentials or overwriting files by default.
-								</p>
+								<p>Review imports before moving files. Credentials stay where they are.</p>
 							</header>
 							<section className="settings-stack" aria-label="Migration settings">
 								<MigrationSettings />
@@ -10021,9 +9974,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-advanced-title">Diagnostics and organization</h2>
-								<p>
-									Content-free diagnostics and local agent organization.
-								</p>
+								<p>Check health and organize local agents.</p>
 							</header>
 						<section className="settings-stack" aria-label="Advanced settings">
 							<ObservabilitySettings />
