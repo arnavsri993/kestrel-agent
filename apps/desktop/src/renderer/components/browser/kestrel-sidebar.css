@@ -117,6 +117,7 @@
 	--kestrel-sidebar-content-inset: 8px;
 	--kestrel-sidebar-row-height: 38px;
 	--kestrel-sidebar-child-row-height: 34px;
+	--kestrel-sidebar-title-fade-width: 22px;
 	--kestrel-sidebar-hover-surface: color-mix(in srgb, var(--ink) 5%, transparent);
 	--kestrel-sidebar-pressed-surface: color-mix(in srgb, var(--ink) 11%, transparent);
 	--kestrel-sidebar-active-surface: color-mix(in srgb, var(--ink) 9%, transparent);
@@ -664,11 +665,28 @@
 	font-weight: 560;
 }
 
-.kestrel-sidebar-project-open > span:not(.kestrel-sidebar-project-badge) {
+.kestrel-sidebar-title {
+	display: block;
 	min-width: 0;
 	overflow: hidden;
-	text-overflow: ellipsis;
+	text-overflow: clip;
 	white-space: nowrap;
+	-webkit-mask-image: linear-gradient(
+		to right,
+		#000 0,
+		#000 calc(100% - var(--kestrel-sidebar-title-fade-width)),
+		transparent 100%
+	);
+	-webkit-mask-repeat: no-repeat;
+	-webkit-mask-size: 100% 100%;
+	mask-image: linear-gradient(
+		to right,
+		#000 0,
+		#000 calc(100% - var(--kestrel-sidebar-title-fade-width)),
+		transparent 100%
+	);
+	mask-repeat: no-repeat;
+	mask-size: 100% 100%;
 }
 
 .kestrel-sidebar-project-open > svg:last-child {
@@ -704,8 +722,8 @@
 
 .kestrel-sidebar-section ul.kestrel-sidebar-project-chats {
 	gap: 2px;
-	margin: 2px 0 4px 28px;
-	padding: 2px 0 0 22px;
+	margin: 2px 0 4px 18px;
+	padding: 2px 0 0 10px;
 }
 
 .kestrel-sidebar-project-chat,
@@ -727,14 +745,6 @@
 	font-size: 12.5px;
 	font-weight: 450;
 	line-height: 18px;
-}
-
-.kestrel-sidebar-project-chat span {
-	display: block;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 .kestrel-sidebar-project-chat.active {
@@ -796,14 +806,6 @@
 
 .kestrel-sidebar-list-item.active {
 	font-weight: 520;
-}
-
-.kestrel-sidebar-list-item span {
-	display: block;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
 }
 
 .kestrel-sidebar-view-more {
