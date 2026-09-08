@@ -336,6 +336,19 @@ function downloadItem(url: string, filename = "report.txt") {
 }
 
 describe("UserBrowserService", () => {
+	it("restores the committed page when a download event follows loadURL completion", async () => {
+		const { service } = createService();
+		const tab = service.getState().tabs[0]!;
+		await service.navigate(tab.id, "https://files.example/page");
+		const contents = electron.state.views[0]!.webContents;
+		contents.emit("did-navigate", {}, "https://files.example/page", 200, "OK");
+		await service.navigate(tab.id, "https://files.example/report.pdf");
+		const item = downloadItem("https://files.example/report.pdf", "report.pdf");
+		electron.state.partitions[0]!.instance.emit("will-download", {}, item, contents);
+		expect(service.getState().tabs.find((entry) => entry.id === tab.id)?.url).toBe("https://files.example/page");
+		expect(item.setSavePath).toHaveBeenCalledOnce();
+	});
+
 	it("applies browser settings to the native session and persists them", async () => {
 		const { service, statePath } = createService();
 		const tab = service.getState().tabs[0]!;
