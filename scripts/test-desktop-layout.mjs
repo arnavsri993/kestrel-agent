@@ -166,23 +166,55 @@ async function readInteractionDiagnostics(page) {
 	});
 }
 
-async function readAgentRailMotionState(page) {
-	return page.evaluate(() => {
-		const shell = document.querySelector(".ai-browser-app");
-		const panel = document.querySelector(".agent-sidebar");
-		if (!shell || !panel) throw new Error("The Agent rail is unavailable.");
-		const presentedWidth = Number.parseFloat(
-			getComputedStyle(shell).getPropertyValue("--agent-panel-presented-width"),
-		);
-		return {
-			width: panel.getBoundingClientRect().width,
-			presentedWidth: Number.isFinite(presentedWidth) ? presentedWidth : null,
-			settling: shell.classList.contains("agent-sidebar-settling"),
-			ariaLabel: document
-				.querySelector("#browser-agent-toggle")
-				?.getAttribute("aria-label"),
+async function armAgentRailClickContinuityProbe(page) {
+	await page.evaluate(() => {
+		delete window.__kestrelAgentRailClickContinuity;
+		const readState = () => {
+			const shell = document.querySelector(".ai-browser-app");
+			const panel = document.querySelector(".agent-sidebar");
+			if (!shell || !panel) throw new Error("The Agent rail is unavailable.");
+			const presentedWidth = Number.parseFloat(
+				getComputedStyle(shell).getPropertyValue("--agent-panel-presented-width"),
+			);
+			return {
+				width: panel.getBoundingClientRect().width,
+				presentedWidth: Number.isFinite(presentedWidth) ? presentedWidth : null,
+				settling: shell.classList.contains("agent-sidebar-settling"),
+				ariaLabel: document
+					.querySelector("#browser-agent-toggle")
+					?.getAttribute("aria-label"),
+			};
 		};
+		const captureClick = (event) => {
+			const target =
+				event.target instanceof Element
+					? event.target.closest("#browser-agent-toggle")
+					: null;
+			if (!target) return;
+			document.removeEventListener("click", captureClick, true);
+			const before = readState();
+			const observer = new MutationObserver(() => {
+				if (target.getAttribute("aria-label") !== "Hide Pragmatic") return;
+				observer.disconnect();
+				window.__kestrelAgentRailClickContinuity = {
+					before,
+					after: readState(),
+				};
+			});
+			observer.observe(target, {
+				attributes: true,
+				attributeFilter: ["aria-label"],
+			});
+		};
+		document.addEventListener("click", captureClick, true);
 	});
+}
+
+async function readAgentRailClickContinuityProbe(page) {
+	await page.waitForFunction(
+		() => window.__kestrelAgentRailClickContinuity?.after,
+	);
+	return page.evaluate(() => window.__kestrelAgentRailClickContinuity);
 }
 
 function assertNear(actual, expected, message) {
@@ -616,18 +648,15 @@ async function assertAgentRailInterruption(page) {
 	// the first resumed frame before sampling two more frames; displacement over
 	// two frames is expected spring motion, not evidence of an endpoint jump.
 	// The close spring keeps moving while Playwright resolves the hit target.
-	// Sample immediately before dispatching the reopen click so the continuity
-	// assertion compares against the width the person could actually see.
+	// Capture the rendered width in the click's capture phase, then capture the
+	// committed React state from the aria-label mutation microtask. Both samples
+	// therefore belong to the same input event and land before the next spring
+	// animation frame, regardless of Playwright/CDP scheduling latency.
 	await waitForHitTestTarget(page, "#browser-agent-toggle");
-	const closingStateBeforeReopen = await readAgentRailMotionState(page);
+	await armAgentRailClickContinuityProbe(page);
 	await toggle.click();
-	await page.waitForFunction(
-		(label) =>
-			document.querySelector("#browser-agent-toggle")?.getAttribute("aria-label") ===
-			label,
-		"Hide Pragmatic",
-	);
-	const reopenedStart = await readAgentRailMotionState(page);
+	const { before: closingStateBeforeReopen, after: reopenedStart } =
+		await readAgentRailClickContinuityProbe(page);
 	const continuityTolerance = Math.max(24, expectedWidth * 0.16);
 	assert.ok(
 		reopenedStart.settling,
