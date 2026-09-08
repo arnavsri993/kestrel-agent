@@ -8,13 +8,16 @@ import {
   type RefObject,
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import type {
-	FilePreview,
-	MemoryRecord,
-	MemoryRecallStatus,
-	RuntimeSession,
-	UserBrowserFile,
-	UserBrowserTabOrganizationPreview,
+import {
+	parseChromeWebStoreListingUrl,
+	type ChromeWebStoreExtensionInspection,
+	type FilePreview,
+	type MemoryRecord,
+	type MemoryRecallStatus,
+	type InstalledExtension,
+	type RuntimeSession,
+	type UserBrowserFile,
+	type UserBrowserTabOrganizationPreview,
 } from "@kestrel/shared-types";
 import type { UserBrowserController } from "../../browser/useUserBrowser";
 import {
@@ -26,11 +29,26 @@ import { Icon } from "../Icon";
 import { BookmarksBar } from "./BookmarksBar";
 import { BrowserToolbar } from "./BrowserToolbar";
 import { BookmarkDialog, type BookmarkDialogSaveInput } from "./BookmarkDialog";
+import { ChromeWebStoreInstallBar } from "./ChromeWebStoreInstallBar";
+import { chromeWebStoreInstallErrorMessage } from "./chrome-web-store-install";
+import { ExtensionCompatibilityDialog } from "./ExtensionCompatibilityDialog";
 import { NewTabPage } from "./NewTabPage";
 import { OrganizeTabsDialog } from "./OrganizeTabsDialog";
 import { TabStrip } from "./TabStrip";
 import { recordNewTabGreetingVisit } from "./new-tab";
 import { KESTREL_STATE_TRANSITION } from "../../motion-contract";
+
+function threatTypeLabel(type: string): string {
+  return (
+    {
+      malware: "Malware",
+      "social-engineering": "Deceptive site",
+      "unwanted-software": "Unwanted software",
+      "potentially-harmful-application": "Potentially harmful app",
+      "unsafe-site": "Unsafe site",
+    }[type] ?? "Unsafe site"
+  );
+}
 
 export function BrowserWorkspace({
   browser,
@@ -95,6 +113,8 @@ export function BrowserWorkspace({
     tab: false,
     toolbar: false,
   });
+  const [tabDragActive, setTabDragActive] = useState(false);
+  const tabDragActiveRef = useRef(false);
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
@@ -109,10 +129,16 @@ export function BrowserWorkspace({
     bookmarkId?: string;
   } | null>(null);
   const [bookmarkDialogPresent, setBookmarkDialogPresent] = useState(false);
+  const [extensionInspection, setExtensionInspection] =
+    useState<ChromeWebStoreExtensionInspection | null>(null);
+  const [installedChromeWebStoreExtension, setInstalledChromeWebStoreExtension] =
+    useState<InstalledExtension | null>(null);
+  const [extensionCompatibilityDialogPresent, setExtensionCompatibilityDialogPresent] =
+    useState(false);
   const organizeTabsRequestRef = useRef(0);
   const pagePreviewRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
-  const syncBoundsRef = useRef<() => void>(() => undefined);
+  const syncBoundsRef = useRef<(visible?: boolean) => void>(() => undefined);
   const scheduleBoundsSyncRef = useRef<() => void>(() => undefined);
   const state = browser.state;
   const {
@@ -122,6 +148,7 @@ export function BrowserWorkspace({
     reopenClosedTab,
     forward,
     navigate,
+    dismissThreat,
     reload,
     selectTab,
     setContentBounds,
@@ -182,6 +209,20 @@ export function BrowserWorkspace({
   }, [openOrganizeTabs, organizeTabsRequestId]);
 
   const activeTab = state?.tabs.find((tab) => tab.id === state.activeTabId);
+  const prepareTabTransfer = useCallback(async (tabId: string) => {
+    const response = await window.kestrel.request({
+      type: "browser-prepare-tab-transfer",
+      tabId,
+    });
+    if (!response.ok || !("browserTabTransferToken" in response))
+      throw new Error("Kestrel could not authorize this tab transfer.");
+    return response.browserTabTransferToken;
+  }, []);
+  const zoomFeedback = browser.zoomFeedback;
+  const activeZoomPercent =
+    zoomFeedback && zoomFeedback.tabId === activeTab?.id
+      ? zoomFeedback.percent
+      : undefined;
   const activeAppPage = activeTab ? parseKestrelAppPage(activeTab.url) : undefined;
   const activeFilePage = activeTab ? parseKestrelFilePage(activeTab.url) : undefined;
   const openBookmarkDialog = useCallback(() => {
@@ -270,16 +311,91 @@ export function BrowserWorkspace({
       setBookmarkDialog(null);
   }, [bookmarkDialog, state?.bookmarks, state?.tabs]);
   const nativePageEligible = Boolean(
-    activeTab?.url && !activeTab.error && !activeAppPage && !activeFilePage,
+    activeTab?.url &&
+      !activeTab.error &&
+      !activeTab.blockedNavigation &&
+      !activeAppPage &&
+      !activeFilePage,
   );
   const nativePageVisible =
     nativePageEligible &&
+    // Keep the renderer in the input path while a tab is being dragged;
+    // native WebContentsView siblings sit above the renderer surface.
+    !tabDragActive &&
     !openChromeMenus.tab &&
     !openChromeMenus.toolbar &&
     !organizeTabsOpening &&
     !organizeTabsPreview &&
     !organizeTabsPresent &&
-    !bookmarkDialogPresent;
+    !bookmarkDialogPresent &&
+    !extensionCompatibilityDialogPresent;
+  const showChromeWebStoreInstall = Boolean(
+    nativePageEligible &&
+      activeTab?.url &&
+      parseChromeWebStoreListingUrl(activeTab.url),
+  );
+	const activeChromeWebStoreExtensionId = activeTab?.url
+		? parseChromeWebStoreListingUrl(activeTab.url)
+		: null;
+	useEffect(() => {
+		if (!activeChromeWebStoreExtensionId) return;
+		let cancelled = false;
+		void window.kestrel
+			.request({ type: "browser-list-extensions" })
+			.then((response) => {
+				if (cancelled || !response.ok || !("extensions" in response)) return;
+				const extension = response.extensions.find(
+					(item) => item.id === activeChromeWebStoreExtensionId,
+				);
+				if (extension) setInstalledChromeWebStoreExtension(extension);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [activeChromeWebStoreExtensionId]);
+  const inspectChromeWebStoreExtension = useCallback(
+    async (urlOrId: string) => {
+			setInstalledChromeWebStoreExtension(null);
+      const response = await window.kestrel.request({
+        type: "browser-inspect-extension-url",
+        urlOrId,
+      });
+      if (!response.ok || !("extensionInspection" in response)) {
+			const failure = new Error(
+				"error" in response
+					? String(response.error)
+					: "Kestrel could not inspect this Chrome Web Store package.",
+			);
+			throw new Error(chromeWebStoreInstallErrorMessage(failure));
+		}
+      setExtensionCompatibilityDialogPresent(true);
+      setExtensionInspection(response.extensionInspection);
+    },
+    [],
+  );
+  const closeExtensionCompatibilityDialog = useCallback(() => {
+    setExtensionInspection(null);
+  }, []);
+  const installReviewedChromeWebStoreExtension = useCallback(
+    async (inspectionId: string) => {
+      const response = await window.kestrel.request({
+        type: "browser-install-extension-url",
+        inspectionId,
+      });
+      if (!response.ok || !("extension" in response)) {
+			const failure = new Error(
+				"error" in response
+					? String(response.error)
+					: "Kestrel could not install this reviewed extension.",
+			);
+			throw new Error(chromeWebStoreInstallErrorMessage(failure));
+		}
+		setInstalledChromeWebStoreExtension(response.extension);
+      setExtensionInspection(null);
+    },
+    [],
+  );
 
   const openFind = useCallback(() => {
     findTabIdRef.current = activeTab?.id ?? null;
@@ -321,7 +437,7 @@ export function BrowserWorkspace({
     );
   }, []);
 
-  const syncBounds = useCallback(() => {
+  const syncBounds = useCallback((visibleOverride?: boolean) => {
     const node = viewportRef.current;
     if (!node) return;
     const rect = node.getBoundingClientRect();
@@ -332,14 +448,16 @@ export function BrowserWorkspace({
       height: Math.max(0, Math.round(rect.height)),
     };
     const targetTabId = activeTab?.id ?? null;
-    const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${nativePageVisible}:${targetTabId ?? ""}`;
+    const targetVisible =
+      visibleOverride ?? (!tabDragActiveRef.current && nativePageVisible);
+    const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${targetVisible}:${targetTabId ?? ""}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
     const requestId = ++pagePreviewRequestRef.current;
-    void setContentBounds(bounds, nativePageVisible)
+    void setContentBounds(bounds, targetVisible)
       .then((browserPagePreview) => {
         if (requestId !== pagePreviewRequestRef.current) return;
-        if (nativePageVisible) {
+        if (targetVisible) {
           setNativePagePreview(null);
           return;
         }
@@ -352,6 +470,12 @@ export function BrowserWorkspace({
       })
       .catch(() => undefined);
   }, [activeTab?.id, nativePageVisible, setContentBounds]);
+
+  const handleTabDragStateChange = useCallback((dragging: boolean) => {
+    tabDragActiveRef.current = dragging;
+    setTabDragActive(dragging);
+    if (dragging) syncBoundsRef.current(false);
+  }, []);
 
   const scheduleBoundsSync = useCallback(() => {
     syncBoundsRef.current();
@@ -688,16 +812,6 @@ export function BrowserWorkspace({
     zoomReset,
   ]);
 
-  if (!state || !activeTab) {
-    return (
-      <main className="browser-workspace browser-starting">
-        <BrandMark />
-        <p>{browser.error || "Opening your browser…"}</p>
-      </main>
-    );
-  }
-
-  const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
   const closeOrganizeTabs = useCallback(() => {
     setOrganizeTabsPreview(null);
   }, []);
@@ -720,11 +834,22 @@ export function BrowserWorkspace({
     [applyTabOrganization],
   );
 
+  if (!state || !activeTab) {
+    return (
+      <main className="browser-workspace browser-starting">
+        <BrandMark />
+        <p>{browser.error || "Opening your browser…"}</p>
+      </main>
+    );
+  }
+
+  const showBookmarksBar = state.settings.showBookmarksBar && !activeTab.url;
+
   return (
     <main
       className={`browser-workspace browser-workspace-${state.settings.tabLayout}${
         showBookmarksBar ? " browser-workspace-bookmarks" : ""
-      }`}
+      }${showChromeWebStoreInstall ? " browser-workspace-store-install" : ""}`}
       aria-label="Browser"
     >
       {navigationSidebar}
@@ -742,20 +867,29 @@ export function BrowserWorkspace({
         onDuplicate={(tabId) => void duplicateTab(tabId)}
         onCloseOthers={(tabId) => closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
+        onTabDragStateChange={handleTabDragStateChange}
         {...(!isDetachedWindow
           ? {
               onDetachTab: (tabId: string) => detachTab(tabId),
-              onTabDrop: (tabId: string) => reattachTab(tabId),
+              onTabDrop: (tabId: string, transferToken: string) =>
+                reattachTab(tabId, transferToken),
             }
           : {})}
         {...(isDetachedWindow
-          ? { onReattachTab: (tabId: string) => reattachTab(tabId) }
+          ? {
+              onReattachTab: (tabId: string) => reattachTab(tabId),
+              onPrepareTabTransfer: prepareTabTransfer,
+            }
           : {})}
         onReopenClosedTab={(index) => void reopenClosedTab(index)}
         recentlyClosedTabs={state.recentlyClosedTabs}
         onOrganizeTabs={openOrganizeTabs}
         onOpenWorkspaces={onOpenWorkspaces}
         onMenuOpenChange={handleTabMenuOpenChange}
+        tabSizing={state.settings.tabSizing}
+        onTabSizingChange={(tabSizing) => {
+          void browser.updateSettings({ tabSizing });
+        }}
         onToggleOrientation={() => {
           void browser.updateSettings({
             tabLayout:
@@ -799,6 +933,9 @@ export function BrowserWorkspace({
         onZoomIn={() => void zoomIn(activeTab.id)}
         onZoomOut={() => void zoomOut(activeTab.id)}
         onZoomReset={() => void zoomReset(activeTab.id)}
+        {...(activeZoomPercent !== undefined
+          ? { zoomPercent: activeZoomPercent }
+          : {})}
         bookmarked={state.bookmarks.some((item) => item.url === activeTab.url)}
         onToggleAgent={onToggleAgent}
         onNavigate={(input) => void navigate(activeTab.id, input)}
@@ -863,7 +1000,19 @@ export function BrowserWorkspace({
           onManage={onOpenBookmarks}
         />
       )}
-			<AnimatePresence initial={false}>
+      {showChromeWebStoreInstall && (
+        <ChromeWebStoreInstallBar
+          url={activeTab.url}
+          onReview={inspectChromeWebStoreExtension}
+			installedExtension={
+				installedChromeWebStoreExtension?.id ===
+				activeChromeWebStoreExtensionId
+					? installedChromeWebStoreExtension
+					: null
+			}
+        />
+      )}
+      <AnimatePresence initial={false}>
       {findOpen && (
         <motion.form
           key="browser-find-bar"
@@ -979,7 +1128,49 @@ export function BrowserWorkspace({
             onAskFile={onAskFile}
           />
         )}
-        {!activeTab.url && (
+        {activeTab.blockedNavigation && (
+          <section
+            className="browser-threat-interstitial"
+            role="alert"
+            aria-labelledby="browser-threat-title"
+          >
+            <span className="browser-threat-interstitial-icon" aria-hidden="true">
+              <Icon name="warning" />
+            </span>
+            <p className="browser-threat-interstitial-eyebrow">Browsing protection</p>
+            <h1 id="browser-threat-title">Kestrel stopped this site</h1>
+            <p>
+              A reputation check flagged this address as potentially harmful. The
+              page was not opened.
+            </p>
+            <code>{activeTab.blockedNavigation.url}</code>
+            <ul aria-label="Reported risks">
+              {activeTab.blockedNavigation.threatTypes.map((type) => (
+                <li key={type}>{threatTypeLabel(type)}</li>
+              ))}
+            </ul>
+            <p className="browser-threat-interstitial-provider">
+              Reported by {activeTab.blockedNavigation.provider}.
+            </p>
+            <div>
+              <button
+                type="button"
+                className="button primary"
+                onClick={() => void dismissThreat(activeTab.id)}
+              >
+                Back to safety
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => void createTab()}
+              >
+                New Tab
+              </button>
+            </div>
+          </section>
+        )}
+        {!activeTab.url && !activeTab.blockedNavigation && (
           <NewTabPage
             tabId={activeTab.id}
             history={state.history}
@@ -1064,6 +1255,19 @@ export function BrowserWorkspace({
             onCancel={closeBookmarkDialog}
             onSave={saveBookmarkDialog}
             onCreateFolder={createBookmarkFolder}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence
+        initial={false}
+        onExitComplete={() => setExtensionCompatibilityDialogPresent(false)}
+      >
+        {extensionInspection && (
+          <ExtensionCompatibilityDialog
+            key={`extension-compatibility-${extensionInspection.inspectionId}`}
+            inspection={extensionInspection}
+            onCancel={closeExtensionCompatibilityDialog}
+            onInstall={installReviewedChromeWebStoreExtension}
           />
         )}
       </AnimatePresence>
@@ -1258,8 +1462,8 @@ function FilePreviewBody({
       <span className="file-tab-fallback-mark" aria-hidden="true">
         <Icon name="artifacts" />
       </span>
-      <strong>Kestrel can keep this file as an object.</strong>
-      <p>{preview.detail || "This format is available to compatible agent routes and the default app."}</p>
+			<strong>Preview unavailable.</strong>
+			<p>{preview.detail || "You can still use this file with compatible apps."}</p>
     </div>
   );
 }

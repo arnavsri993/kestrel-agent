@@ -204,6 +204,15 @@ try {
 	await page.locator(".kestrel-sidebar-project-chat").filter({ hasText: "Beta chat" }).waitFor();
 	assert.equal(await page.locator(".kestrel-sidebar-project-chat").filter({ hasText: "Alpha chat" }).count(), 0);
 	assert.match((await betaRow.getAttribute("class")) ?? "", /active/);
+	await betaRow.click();
+	await page.waitForFunction(() =>
+		document
+			.querySelector('.kestrel-sidebar-project-open[aria-current="page"]')
+			?.getAttribute("aria-expanded") === "false",
+	);
+	await page.waitForFunction(() =>
+		document.querySelectorAll(".kestrel-sidebar-project-chat").length === 0,
+	);
 
 	const gammaRow = await waitForProject("Gamma");
 	await gammaRow.click();
@@ -223,8 +232,19 @@ try {
 
 	const renamedGamma = await waitForProject("Gamma renamed");
 	const contextDialog = await openProjectSettings(renamedGamma);
-	await contextDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	const projectNameInput = contextDialog.getByLabel("Project name");
+	assert.equal(
+		await projectNameInput.evaluate((input) => document.activeElement === input),
+		true,
+		"Project settings should put keyboard focus in the project name field.",
+	);
+	await page.keyboard.press("Escape");
 	await contextDialog.waitFor({ state: "detached" });
+	assert.equal(
+		await renamedGamma.evaluate((row) => document.activeElement === row),
+		true,
+		"Closing project settings with Escape should return focus to its project row.",
+	);
 
 	const globalRow = sidebar.locator(".kestrel-sidebar-list-item").filter({ hasText: "Global chat" }).first();
 	await globalRow.click({ button: "right" });

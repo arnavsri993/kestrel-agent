@@ -116,14 +116,23 @@ Engineer repositories. The full evidence and decision record is in
   deliberately limited red/yellow/green palette inspired by the window's
   traffic lights; each system receives a stable identity color until the user
   chooses another, while status is communicated separately through size,
-  opacity, and rim treatment. The main agent is a matte planet-like body with
-  a restrained surface sheen; direct delegated sessions are smaller moon-like
-  bodies on compact root-centered guides, and deeper descendants stay close to
-  their owning moon. No trusted agent photo metadata exists in the runtime
-  contract yet, so the surface treatment is deterministic rather than a fake
-  profile image. Thin straight ownership links remain the persistent cue that
-  every relationship is real delegated work. Selection and focus add emphasis;
-  they do not mutate or invent runtime state.
+  opacity, and rim treatment. Only an explicitly created persistent agent owns
+  a planet; an ordinary conversation such as the default Main session never
+  becomes a planet by inference. Persistent agents choose from bundled,
+  attributed NASA/JPL planet imagery in Agent settings, while direct delegated
+  sessions are smaller moon-like bodies on compact root-centered guides and
+  deeper descendants stay close to their owning moon. No trusted agent photo
+  metadata exists in the runtime contract, so the body treatment uses real
+  celestial imagery rather than a fake profile image. Thin straight ownership
+  links remain the persistent cue that every relationship is real delegated
+  work. Selecting any planet or moon opens its runtime-backed conversation; the
+  focused view exposes an explicit Back to solar system control. Selection and
+  focus add emphasis; they do not mutate or invent runtime state.
+- **Starfield:** the ambient field uses several deterministic depth layers with
+  dense pinprick stars, small warm/cool color-temperature variation, rare bright
+  cores and soft halos, and barely visible blue/amber dust. Camera parallax and
+  slow drift preserve the depth cue without turning the map into a screensaver;
+  reduced motion freezes the field.
 - **Motion roles:** spatial continuity for focus and camera changes, direct
   manipulation for pan/zoom, and calm state feedback for real active work or
   recent runtime events. The map is still at rest: moons do not orbit, idle-bob,
@@ -207,6 +216,26 @@ has drifted after many small changes.
 - Why this is not generic: the signature triangular traffic controls respond as
   one continuous physical cluster while Kestrel's approval, provenance, and
   recovery surfaces remain calm enough for daily work.
+
+### Interaction continuation — September 6, 2026
+
+- Audit finding: tab pickup was pointer-responsive but updated React state for
+  every pointer movement; sidebar project disclosures animated while their
+  context menus appeared and disappeared abruptly; browser-settings loading
+  had semantic status text but no visual loading surface; project settings
+  trapped focus without returning it to its opener.
+- Motion grammar: direct controls use the shortest feedback timing, menus use
+  a quick anchored transition, selection/reorder uses a firm overdamped spring,
+  and sheets use a slightly slower panel timing. Under reduced motion all of
+  these preserve state and focus feedback while removing travel and scale.
+- Surface ownership: the shared renderer contract owns timing and physical
+  families; TabStrip owns pointer-direct drag presentation; KestrelSidebar
+  owns anchored project/menu continuity; each dialog owns its focus lifecycle.
+  No new animation dependency, ambient loop, or Agent Universe rewrite is
+  required for this pass.
+- Verification intent: exercise rapid tab reorder/reversal, menu open/close
+  and Escape restoration, project dialog Tab/Escape paths, settings loading and
+  retry, reduced motion, and narrow browser chrome after each packaged refresh.
 
 ## Monochrome — August 2026
 

@@ -37,6 +37,8 @@ loopback fixture origins. The run therefore exercises:
   authentication-handoff paths used by the corpus;
 - bounded scripted recovery from delayed, renamed, missing, stale, obscured,
   redirected, modal, popup, validation, and expired-session states;
+- authentication handoff with sensitive fixture input entered directly in the
+  exposed test window, outside the agent tool path and redacted from reports;
 - independent server state for visits, submitted fields, activations, and
   downloads.
 

@@ -21,6 +21,7 @@ Personal memory, OAuth tokens, provider keys, selected files, schedules, message
 | Duplicate external action | operation idempotency keys and read-after-write verification |
 | Excessive autonomy/cost | initiative levels, resource governor, depth/task/cost limits, quiet hours |
 | Unsafe filesystem access | user-selected roots, normalized path checks, no full-disk scan |
+| Malicious websites or downloads | replaceable URL-reputation provider before top-level navigation and download destination selection; local interstitials and blocked-download records; normal macOS quarantine, Gatekeeper, notarization, and XProtect remain authoritative |
 | Malicious update | signed channel metadata, notarization/Gatekeeper release gates, no update during critical operations |
 | Local database theft | AES-256-GCM field encryption with a Keychain-protected key; future SQLCipher adapter |
 | Orphaned workers | bounded supervision, checkpointing, clean-quit process audit |

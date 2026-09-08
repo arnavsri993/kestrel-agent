@@ -47,6 +47,38 @@ export interface ModelUsage {
   reasoningTokens?: number;
 }
 
+/**
+ * Normalized, non-secret capacity telemetry returned by an upstream provider.
+ * It is intentionally limited to a fraction and optional reset timestamp so
+ * raw response headers never reach routing state, logs, or the renderer.
+ */
+export interface ProviderQuotaSnapshot {
+  confidence: "exact" | "estimated" | "inferred";
+  remainingFraction: number;
+  resetAt?: string;
+}
+
+export function normalizeProviderQuotaSnapshot(
+  value: ProviderQuotaSnapshot | undefined,
+): ProviderQuotaSnapshot | undefined {
+  if (!value || !Number.isFinite(value.remainingFraction)) return undefined;
+  if (
+    value.confidence !== "exact" &&
+    value.confidence !== "estimated" &&
+    value.confidence !== "inferred"
+  )
+    return undefined;
+  const remainingFraction = Math.max(0, Math.min(1, value.remainingFraction));
+  const resetAt = value.resetAt ? Date.parse(value.resetAt) : Number.NaN;
+  return {
+    confidence: value.confidence,
+    remainingFraction,
+    ...(Number.isFinite(resetAt)
+      ? { resetAt: new Date(resetAt).toISOString() }
+      : {}),
+  };
+}
+
 export type ModelFinishReason = "stop" | "tool_calls" | "length" | "refusal" | "cancelled" | "unknown";
 
 export interface ModelResult {
@@ -57,6 +89,7 @@ export interface ModelResult {
   toolCalls: ModelToolCall[];
   usage: ModelUsage;
   finishReason: ModelFinishReason;
+  quota?: ProviderQuotaSnapshot;
 }
 
 export type ModelStreamEvent =
@@ -78,6 +111,66 @@ export interface ModelProviderCapabilities {
   documents: boolean;
   video?: boolean;
   local: boolean;
+}
+
+/**
+ * Provenance for a model record. A fallback is deliberately distinct from a
+ * provider response so callers never confuse a usable default with a verified
+ * account entitlement.
+ */
+export type ProviderModelDiscoverySource =
+	| "provider_api"
+	| "cli"
+	| "protocol"
+	| "metadata"
+	| "fallback";
+
+export type ProviderModelAvailability =
+	| "available"
+	| "unknown"
+	| "stale"
+	| "authentication_required"
+	| "permission_denied"
+	| "unavailable"
+	| "unsupported";
+
+export interface DiscoveredModelCapabilities {
+	/** How confidently this adapter knows the per-model feature flags below. */
+	capabilityProvenance?: "confirmed" | "transport" | "unknown";
+	streaming?: boolean;
+	tools?: boolean;
+	images?: boolean;
+	audio?: boolean;
+	documents?: boolean;
+	video?: boolean;
+	structuredOutput?: boolean;
+	reasoningEfforts?: Array<
+		"none" | "low" | "medium" | "high" | "xhigh" | "max"
+	>;
+	contextWindow?: number;
+	maxOutputTokens?: number;
+}
+
+export interface DiscoveredModel {
+	id: string;
+	displayName?: string;
+	availability?: ProviderModelAvailability;
+	source: ProviderModelDiscoverySource;
+	capabilities?: DiscoveredModelCapabilities;
+}
+
+/**
+ * Non-secret identity attached to one executable provider endpoint. Secrets
+ * remain in the desktop credential broker and are never part of this shape.
+ */
+export interface ProviderAccountIdentity {
+	id: string;
+	providerId: string;
+	displayName: string;
+	authTransport: "api_key" | "oauth" | "cli_profile" | "local";
+	enabled: boolean;
+	/** Non-secret account revision used to invalidate an old model catalog. */
+	configurationVersion?: string;
 }
 
 import type { ModelTier } from "@kestrel/shared-types";
@@ -112,10 +205,13 @@ export interface ModelProfileHints {
 export interface ModelProvider {
   readonly id: string;
   readonly poolId?: string;
+	readonly account?: ProviderAccountIdentity;
   readonly defaultModel?: string;
   readonly capabilities: ModelProviderCapabilities;
   readonly profileHints?: ModelProfileHints;
   probe?(signal?: AbortSignal): Promise<void>;
+	/** Enumerates models through the adapter's supported provider or CLI surface. */
+	discoverModels?(signal?: AbortSignal): Promise<DiscoveredModel[]>;
   complete(request: ModelRequest, options?: ModelCallOptions): Promise<ModelResult>;
   close?(): Promise<void>;
 }
@@ -131,6 +227,7 @@ import { KestrelError } from "@kestrel/error-handling";
 export class ModelProviderError extends KestrelError {
   readonly isRefusal: boolean;
   readonly retryAfterMs?: number;
+	readonly quota?: ProviderQuotaSnapshot | undefined;
 
   constructor(
     message: string,
@@ -139,6 +236,7 @@ export class ModelProviderError extends KestrelError {
     readonly status?: number,
     isRefusal = false,
     retryAfterMs?: number,
+    quota?: ProviderQuotaSnapshot,
   ) {
     super({
       code: isRefusal ? "model_refusal_error" : "model_provider_error",
@@ -151,6 +249,7 @@ export class ModelProviderError extends KestrelError {
     if (retryAfterMs !== undefined && Number.isFinite(retryAfterMs)) {
       this.retryAfterMs = Math.max(0, Math.trunc(retryAfterMs));
     }
+    this.quota = normalizeProviderQuotaSnapshot(quota);
   }
 }
 

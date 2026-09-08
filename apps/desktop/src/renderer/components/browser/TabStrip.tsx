@@ -1,6 +1,7 @@
 import type {
 	UserBrowserOriginFavicon,
 	UserBrowserRecentlyClosedTab,
+	UserBrowserSettings,
 	UserBrowserTab,
 	UserBrowserTabFolder,
 } from "@kestrel/shared-types";
@@ -8,6 +9,7 @@ import {
 	AnimatePresence,
 	LayoutGroup,
 	motion,
+	useMotionValue,
 	useReducedMotion,
 	type MotionStyle,
 } from "motion/react";
@@ -25,8 +27,10 @@ import {
 } from "react";
 import { Icon } from "../Icon";
 import {
-	KESTREL_CRITICAL_SPRING,
-	KESTREL_STATE_TRANSITION,
+	KESTREL_EXIT_TRANSITION,
+	KESTREL_MENU_TRANSITION,
+	KESTREL_REORDER_SPRING,
+	KESTREL_SELECTION_TRANSITION,
 } from "../../motion-contract";
 import {
 	computeLockedTabStyle,
@@ -34,13 +38,14 @@ import {
 	TAB_CLOSE_REFIT_DELAY_MS,
 } from "./tab-strip-layout";
 import { recentTabFavicon, TabFavicon } from "./TabFavicon";
+import { KESTREL_TAB_TRANSFER_MIME, parseBrowserTabTransfer, serializeBrowserTabTransfer } from "./tab-transfer";
 
 // A tab only needs to leave the chrome by roughly two-thirds of its height to
-// tear off. Do not require the cross-axis movement to dominate: real pointer
-// drags are often diagonal, especially when moving a tab down and away.
+// arm a tear-off. The tab is moved on pointerup so the user can carry it to
+// another monitor before the new window is created.
 const DETACH_DRAG_THRESHOLD_PX = 24;
 const REORDER_DRAG_THRESHOLD_PX = 12;
-const KESTREL_TAB_TRANSFER_MIME = "application/x-kestrel-tab";
+
 const COLLAPSED_TAB_FOLDERS_KEY = "kestrel:collapsed-tab-folders";
 
 function readCollapsedTabFolders(): Set<string> {
@@ -92,9 +97,7 @@ function tabDropIndex(
 }
 
 function tabCanDetach(tab: UserBrowserTab | undefined): boolean {
-	return Boolean(
-		tab?.url && !tab.file && !tab.error && !tab.url.startsWith("kestrel://"),
-	);
+	return Boolean(tab && !tab.file && !tab.error);
 }
 
 export function TabStrip({
@@ -111,14 +114,18 @@ export function TabStrip({
 	onCloseOthers,
 	onMoveTab,
 	onDetachTab,
+	onTabDragStateChange,
 	onReattachTab,
 	onTabDrop,
+	onPrepareTabTransfer,
 	onReopenClosedTab,
 	onOrganizeTabs,
 	onOpenWorkspaces,
 	recentlyClosedTabs = [],
 	orientation,
 	onToggleOrientation,
+	tabSizing,
+	onTabSizingChange,
 	onMenuOpenChange,
 }: {
 	tabs: UserBrowserTab[];
@@ -137,14 +144,18 @@ export function TabStrip({
 	onCloseOthers?(tabId: string): void | Promise<void>;
 	onMoveTab?(tabId: string, toIndex: number): void | Promise<void>;
 	onDetachTab?(tabId: string): void | Promise<void>;
+	onTabDragStateChange?(dragging: boolean): void;
 	onReattachTab?(tabId: string): void | Promise<void>;
-	onTabDrop?(tabId: string): void | Promise<void>;
+	onTabDrop?(tabId: string, transferToken: string): void | Promise<void>;
+	onPrepareTabTransfer?(tabId: string): Promise<string>;
 	onReopenClosedTab?(index?: number): void;
 	onOrganizeTabs?(): void | Promise<void>;
 	onOpenWorkspaces?: (() => void) | undefined;
 	recentlyClosedTabs?: UserBrowserRecentlyClosedTab[];
 	orientation: "horizontal" | "vertical";
 	onToggleOrientation?(): void;
+	tabSizing: UserBrowserSettings["tabSizing"];
+	onTabSizingChange?(tabSizing: UserBrowserSettings["tabSizing"]): void;
 	onMenuOpenChange?(open: boolean): void;
 }) {
 	const reducedMotion = useReducedMotion() ?? false;
@@ -153,7 +164,6 @@ export function TabStrip({
 	const tabRefitTimerRef = useRef<number | null>(null);
 	const pendingCloseCountRef = useRef(0);
 	const pendingCloseKeysRef = useRef(new Set<string>());
-	const [compact, setCompact] = useState(false);
 	const [menu, setMenu] = useState<{
 		tabId: string;
 		x: number;
@@ -174,8 +184,39 @@ export function TabStrip({
 		"none",
 	);
 	const [tabDropTarget, setTabDropTarget] = useState(false);
+	const transferTokens = useRef(new Map<string, string>());
+	const nativeDragActive = useRef(false);
+	const transferTabIds = tabs.map((tab) => tab.id).join(",");
+	useEffect(() => {
+		if (!onPrepareTabTransfer) return;
+		let disposed = false;
+		const refresh = () => {
+			if (nativeDragActive.current) return;
+			for (const tabId of transferTabIds.split(",").filter(Boolean)) {
+				void onPrepareTabTransfer(tabId).then((token) => {
+					if (!disposed) transferTokens.current.set(tabId, token);
+				}).catch(() => { if (!disposed) transferTokens.current.delete(tabId); });
+			}
+		};
+		refresh();
+		const timer = window.setInterval(refresh, 15_000);
+		return () => { disposed = true; window.clearInterval(timer); transferTokens.current.clear(); };
+	}, [onPrepareTabTransfer, transferTabIds]);
+	const tabDragActiveRef = useRef(false);
+	const updateTabDragState = useCallback(
+		(dragging: boolean) => {
+			if (tabDragActiveRef.current === dragging) return;
+			tabDragActiveRef.current = dragging;
+			onTabDragStateChange?.(dragging);
+		},
+		[onTabDragStateChange],
+	);
 	const draggingTabIdRef = useRef<string | null>(null);
-	const [dragDelta, setDragDelta] = useState({ x: 0, y: 0 });
+	// Pointer tracking stays outside React state. Reordering still renders when
+	// a neighboring tab must make room, but the picked-up tab never waits for a
+	// component render to catch up with the pointer.
+	const dragX = useMotionValue(0);
+	const dragY = useMotionValue(0);
 	const [provisionalTabOrder, setProvisionalTabOrder] = useState<string[] | null>(
 		null,
 	);
@@ -454,8 +495,11 @@ export function TabStrip({
 			event.preventDefault();
 			return;
 		}
+		const transferToken = transferTokens.current.get(tabId);
+		if (!transferToken) { event.preventDefault(); return; }
+		nativeDragActive.current = true;
 		event.dataTransfer.effectAllowed = "move";
-		event.dataTransfer.setData(KESTREL_TAB_TRANSFER_MIME, tabId);
+		event.dataTransfer.setData(KESTREL_TAB_TRANSFER_MIME, serializeBrowserTabTransfer({ tabId, transferToken }));
 	}
 
 	function handleTabDragOver(event: ReactDragEvent<HTMLDivElement>) {
@@ -476,9 +520,9 @@ export function TabStrip({
 		if (!isKestrelTabTransfer(event)) return;
 		event.preventDefault();
 		setTabDropTarget(false);
-		const tabId = event.dataTransfer.getData(KESTREL_TAB_TRANSFER_MIME);
-		if (!tabId || !onTabDrop) return;
-		void Promise.resolve(onTabDrop(tabId)).catch(() => undefined);
+		const payload = parseBrowserTabTransfer(event.dataTransfer.getData(KESTREL_TAB_TRANSFER_MIME));
+		if (!payload || !onTabDrop) return;
+		void Promise.resolve(onTabDrop(payload.tabId, payload.transferToken)).catch(() => undefined);
 	}
 
 	function openMenu(event: ReactMouseEvent, tabId: string) {
@@ -592,29 +636,15 @@ export function TabStrip({
 		reorderPendingRef.current = false;
 		draggingTabIdRef.current = null;
 		dragStartRef.current = null;
-		setDragDelta({ x: 0, y: 0 });
+		dragX.set(0);
+		dragY.set(0);
 		setDraggingTabId(null);
 		setDragIntent("none");
+		updateTabDragState(false);
 		if (!preserveProvisional) {
 			provisionalTabOrderRef.current = null;
 			setProvisionalTabOrder(null);
 		}
-	}
-
-	function detachDraggedTab() {
-		const tabId = draggingTabIdRef.current;
-		if (
-			!tabId ||
-			!onDetachTab ||
-			!tabCanDetach(tabs.find((tab) => tab.id === tabId))
-		)
-			return false;
-		suppressClickTabIdRef.current = tabId;
-		resetDrag();
-		void Promise.resolve()
-			.then(() => onDetachTab(tabId))
-			.catch(() => undefined);
-		return true;
 	}
 
 	function handleTabPointerDown(event: ReactPointerEvent, tabId: string) {
@@ -638,7 +668,8 @@ export function TabStrip({
 			velocityX: 0,
 			velocityY: 0,
 		};
-		setDragDelta({ x: 0, y: 0 });
+		dragX.set(0);
+		dragY.set(0);
 		setDraggingTabId(tabId);
 		setDragIntent("none");
 		event.currentTarget.setPointerCapture(event.pointerId);
@@ -714,10 +745,8 @@ export function TabStrip({
 				 * that exact shift so the presentation stays under the pointer. */
 				activeDrag.x += after.left - before.left;
 				activeDrag.y += after.top - before.top;
-				setDragDelta({
-					x: activeDrag.lastX - activeDrag.x,
-					y: activeDrag.lastY - activeDrag.y,
-				});
+				dragX.set(activeDrag.lastX - activeDrag.x);
+				dragY.set(activeDrag.lastY - activeDrag.y);
 			}
 			reorderPendingRef.current = false;
 		});
@@ -739,10 +768,15 @@ export function TabStrip({
 		drag.lastX = event.clientX;
 		drag.lastY = event.clientY;
 		drag.lastAt = event.timeStamp;
-		setDragDelta({ x: dx, y: dy });
+		dragX.set(dx);
+		dragY.set(dy);
+		// Release the native page as soon as movement proves this is a drag. A
+		// WebContentsView sibling can otherwise swallow the final pointerup.
+		if (Math.max(Math.abs(dx), Math.abs(dy)) >= 2)
+			updateTabDragState(true);
 		if (orientation === "horizontal") {
 			if (Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX) {
-				if (!detachDraggedTab()) setDragIntent("detach");
+				setDragIntent("detach");
 				return;
 			}
 			if (Math.abs(dx) >= REORDER_DRAG_THRESHOLD_PX) {
@@ -752,7 +786,7 @@ export function TabStrip({
 			return;
 		}
 		if (Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX) {
-			if (!detachDraggedTab()) setDragIntent("detach");
+			setDragIntent("detach");
 			return;
 		}
 		if (Math.abs(dy) >= REORDER_DRAG_THRESHOLD_PX) {
@@ -815,6 +849,10 @@ export function TabStrip({
 	}
 
 	useEffect(() => () => resetDrag(), []);
+	useEffect(
+		() => () => updateTabDragState(false),
+		[updateTabDragState],
+	);
 
 	useEffect(() => {
 		if (draggingTabId || !provisionalTabOrder) return;
@@ -911,9 +949,9 @@ export function TabStrip({
 
 	return (
 		<div
-			className={`browser-tab-row browser-tab-row-${orientation} drag-region-browser${
-				compact ? " browser-tab-row-compact" : ""
-			}${dragIntent === "detach" ? " browser-tab-row-detaching" : ""}${
+			className={`browser-tab-row browser-tab-row-${orientation} browser-tab-row-${tabSizing} drag-region-browser${
+				dragIntent === "detach" ? " browser-tab-row-detaching" : ""
+			}${
 				tabDropTarget ? " browser-tab-row-drop-target" : ""
 			}`}
 			onDragOver={onTabDrop ? handleTabDragOver : undefined}
@@ -958,7 +996,7 @@ export function TabStrip({
 								? { opacity: 1, y: 0, scale: 1, pointerEvents: "none" }
 								: { opacity: 0, y: -4, scale: 0.99, pointerEvents: "none" }
 						}
-						transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+						transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
 						style={{ transformOrigin: "top left" }}
 					>
 						{onToggleOrientation && (
@@ -1042,18 +1080,31 @@ export function TabStrip({
 								<span>Move tab back to main window</span>
 							</button>
 						)}
-						<div className="browser-tab-tools-divider" />
-						<button
-							type="button"
-							className="browser-tab-tools-action browser-tab-tools-secondary-action"
-							role="menuitemcheckbox"
-							aria-checked={compact}
-							onClick={() => setCompact((value) => !value)}
-						>
-							<Icon name="tabActions" />
-							<span>Use narrow tabs</span>
-							<Icon name={compact ? "check" : "close"} />
-						</button>
+						{orientation === "horizontal" && onTabSizingChange && (
+							<>
+								<div className="browser-tab-tools-divider" />
+								<button
+									type="button"
+									className="browser-tab-tools-action browser-tab-tools-secondary-action"
+									role="menuitem"
+									onClick={() => {
+										onTabSizingChange(
+											tabSizing === "scrolling" ? "shrinking" : "scrolling",
+										);
+										closeTabTools();
+									}}
+								>
+									<Icon
+										name={tabSizing === "scrolling" ? "sliders" : "tabActions"}
+									/>
+									<span>
+										{tabSizing === "scrolling"
+											? "Turn On Shrinking Tabs"
+											: "Turn On Horizontal Scrolling Tabs"}
+									</span>
+								</button>
+							</>
+						)}
 						{onReopenClosedTab && (
 							<button
 								type="button"
@@ -1257,8 +1308,6 @@ export function TabStrip({
 									initial={reducedMotion ? false : { opacity: 0 }}
 									animate={{
 										opacity: isDragActive ? 0.82 : 1,
-										x: isDragging ? dragDelta.x : 0,
-										y: isDragging ? dragDelta.y : 0,
 										scale: isDragActive && !reducedMotion ? 1.015 : 1,
 									}}
 										exit={
@@ -1267,7 +1316,7 @@ export function TabStrip({
 												: {
 														opacity: 0,
 														pointerEvents: "none",
-													transition: { duration: 0.14, ease: [0.4, 0, 1, 1] },
+													transition: KESTREL_EXIT_TRANSITION,
 												}
 									}
 									transition={
@@ -1275,12 +1324,16 @@ export function TabStrip({
 											? { duration: 0 }
 											: draggingTabId
 												? {
-													default: KESTREL_STATE_TRANSITION,
-													layout: KESTREL_CRITICAL_SPRING,
+													default: KESTREL_SELECTION_TRANSITION,
+													layout: KESTREL_REORDER_SPRING,
 												}
-												: KESTREL_STATE_TRANSITION
+											: KESTREL_SELECTION_TRANSITION
 									}
-									style={tabStyle as MotionStyle}
+									style={{
+										...(tabStyle as MotionStyle),
+										x: isDragging ? dragX : 0,
+										y: isDragging ? dragY : 0,
+									}}
 									data-tab-id={tab.id}
 									data-drag-intent={isDragging ? dragIntent : undefined}
 									onAuxClick={(event) => handleTabAuxClick(event, tab.id)}
@@ -1308,6 +1361,7 @@ export function TabStrip({
 										aria-label={`${tab.title}${folder ? `, ${folder.name} folder` : ""}${isSleeping ? " (Sleeping)" : ""}`}
 										title={`${tab.title}${isSleeping ? " (Sleeping — click to wake)" : ""}${tab.url ? ` — ${tab.url}` : ""}`}
 										onDragStart={(event) => handleTabDragStart(event, tab.id)}
+										onDragEnd={() => { nativeDragActive.current = false; }}
 									>
 										<span className="browser-favicon" aria-hidden="true">
 											{getFaviconContent(tab)}
@@ -1394,7 +1448,7 @@ export function TabStrip({
 						? { opacity: 1, scale: 1, pointerEvents: "none" }
 						: { opacity: 0, scale: 0.985, pointerEvents: "none" }
 				}
-					transition={reducedMotion ? { duration: 0 } : KESTREL_STATE_TRANSITION}
+					transition={reducedMotion ? { duration: 0 } : KESTREL_MENU_TRANSITION}
 				>
 					{onOrganizeTabs && (
 						<button

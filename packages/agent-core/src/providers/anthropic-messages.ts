@@ -1,6 +1,11 @@
-import { providerFetch, readServerSentEvents } from "./http";
+import {
+	providerFetch,
+	quotaFromResponseHeaders,
+	readServerSentEvents,
+} from "./http";
 import {
 	contentText,
+	type DiscoveredModel,
 	type ModelCallOptions,
 	type ModelContentPart,
 	type ModelFinishReason,
@@ -20,6 +25,7 @@ export interface AnthropicMessagesProviderOptions {
 	defaultModel?: string;
 	baseUrl?: string;
 	version?: string;
+	headers?: Record<string, string>;
 }
 
 function contentPart(part: ModelContentPart): Record<string, unknown> {
@@ -121,20 +127,84 @@ export class AnthropicMessagesProvider implements ModelProvider {
 		);
 	}
 
+	private headers(): Record<string, string> {
+		return {
+			...this.options.headers,
+			"content-type": "application/json",
+			"x-api-key": this.options.apiKey,
+			"anthropic-version": this.options.version ?? "2023-06-01",
+		};
+	}
+
 	async probe(signal?: AbortSignal): Promise<void> {
 		const response = await providerFetch(
 			this.id,
 			`${this.baseUrl}/v1/models?limit=1`,
 			{
 				method: "GET",
-				headers: {
-					"x-api-key": this.options.apiKey,
-					"anthropic-version": this.options.version ?? "2023-06-01",
-				},
+				headers: this.headers(),
 				...(signal ? { signal } : {}),
 			},
 		);
 		await response.body?.cancel();
+	}
+
+	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {
+		const models: DiscoveredModel[] = [];
+		let afterId: string | undefined;
+		for (let page = 0; page < 20; page += 1) {
+			const params = new URLSearchParams({ limit: "100" });
+			if (afterId) params.set("after_id", afterId);
+			const response = await providerFetch(
+				this.id,
+				`${this.baseUrl}/v1/models?${params.toString()}`,
+				{
+					method: "GET",
+					headers: this.headers(),
+					...(signal ? { signal } : {}),
+				},
+			);
+			let payload: Record<string, unknown>;
+			try {
+				payload = (await response.json()) as Record<string, unknown>;
+			} catch {
+				throw new ModelProviderError(
+					"Anthropic returned malformed model discovery JSON.",
+					this.id,
+					false,
+				);
+			}
+			const pageModels: DiscoveredModel[] = (Array.isArray(payload.data) ? payload.data : []).flatMap(
+				(item) => {
+					if (!item || typeof item !== "object") return [];
+					const record = item as Record<string, unknown>;
+					if (typeof record.id !== "string" || !record.id.trim()) return [];
+					return [
+						{
+							id: record.id,
+							displayName:
+								typeof record.display_name === "string" &&
+								record.display_name.trim()
+									? record.display_name
+									: record.id,
+							availability: "available" as const,
+							source: "provider_api" as const,
+							capabilities: {
+								// The API confirms this account can see the model, but
+								// does not enumerate a per-model feature matrix.
+								capabilityProvenance: "unknown" as const,
+							},
+						},
+					];
+				},
+			);
+			models.push(...pageModels);
+			const next =
+				typeof payload.last_id === "string" ? payload.last_id : undefined;
+			if (payload.has_more !== true || !next || next === afterId) break;
+			afterId = next;
+		}
+		return models;
 	}
 
 	async complete(
@@ -151,11 +221,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
 			`${this.baseUrl}/v1/messages`,
 			{
 				method: "POST",
-				headers: {
-					"x-api-key": this.options.apiKey,
-					"anthropic-version": this.options.version ?? "2023-06-01",
-					"content-type": "application/json",
-				},
+				headers: this.headers(),
 				body: JSON.stringify({
 					model: request.model,
 					max_tokens: request.maxOutputTokens ?? 8_192,
@@ -181,6 +247,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
 				...(options.signal ? { signal: options.signal } : {}),
 			},
 		);
+		const quota = quotaFromResponseHeaders(response.headers);
 
 		let text = "";
 		let responseId: string | undefined;
@@ -282,6 +349,7 @@ export class AnthropicMessagesProvider implements ModelProvider {
 			toolCalls,
 			usage: { inputTokens, outputTokens, cachedInputTokens },
 			finishReason: mapStopReason(stopReason, toolCalls.length > 0),
+			...(quota ? { quota } : {}),
 		};
 		options.onEvent?.({ type: "completed", result });
 		return result;

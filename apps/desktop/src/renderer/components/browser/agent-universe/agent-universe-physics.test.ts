@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	commitAgentUniverseRootDrag,
 	createAgentUniversePhysicsState,
 	reconcileAgentUniversePhysicsState,
 	stepAgentUniversePhysics,
@@ -67,7 +68,7 @@ describe("agent universe local physics", () => {
 		expect(Math.hypot(worker.vx, worker.vy)).toBeLessThan(1);
 	});
 
-	it("lets a dragged planet lead its moons, then recenters the whole system", () => {
+	it("lets a dragged planet lead its moons and stay at its dropped position", () => {
 		const state = createAgentUniversePhysicsState(initialNodes);
 		state.drag = {
 			nodeId: "root",
@@ -83,12 +84,35 @@ describe("agent universe local physics", () => {
 		expect(worker.x).toBeGreaterThan(190);
 		expect(worker.y).toBeGreaterThan(-1);
 
-		displaced.drag = null;
-		const settled = step(displaced, 240);
+		const committed = commitAgentUniverseRootDrag(displaced);
+		expect(committed?.position).toEqual({ x: 240, y: 90 });
+		expect(committed?.state.drag).toBeNull();
+		const committedRoot = committed!.state.nodes.find((node) => node.id === "root")!;
+		const committedWorker = committed!.state.nodes.find((node) => node.id === "worker-a")!;
+		expect(committedRoot.x).toBe(240);
+		expect(committedRoot.y).toBe(90);
+		expect(committedRoot.homeX).toBe(240);
+		expect(committedRoot.homeY).toBe(90);
+		expect(committedWorker.homeX - committedRoot.homeX).toBe(190);
+		expect(committedWorker.homeY - committedRoot.homeY).toBe(0);
+
+		const settled = step(committed!.state, 240);
 		const settledRoot = settled.nodes.find((node) => node.id === "root")!;
 		const settledWorker = settled.nodes.find((node) => node.id === "worker-a")!;
-		expect(Math.hypot(settledRoot.x - settledRoot.homeX, settledRoot.y - settledRoot.homeY)).toBeLessThan(1);
-		expect(Math.hypot(settledWorker.x - settledWorker.homeX, settledWorker.y - settledWorker.homeY)).toBeLessThan(1);
+		expect(Math.hypot(settledRoot.x - 240, settledRoot.y - 90)).toBeLessThan(1);
+		expect(Math.hypot(settledWorker.x - committedWorker.homeX, settledWorker.y - committedWorker.homeY)).toBeLessThan(1);
+	});
+
+	it("does not commit a moon as a new planet position", () => {
+		const state = createAgentUniversePhysicsState(initialNodes);
+		state.drag = {
+			nodeId: "worker-a",
+			target: { x: 430, y: -20 },
+			origin: { x: 190, y: 0 },
+			offset: { x: 0, y: 0 },
+		};
+
+		expect(commitAgentUniverseRootDrag(state)).toBeUndefined();
 	});
 
 	it("keeps existing bodies on their rendered frame while homes change", () => {

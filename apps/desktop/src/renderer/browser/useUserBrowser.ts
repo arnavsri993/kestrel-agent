@@ -11,6 +11,7 @@ import type {
 	UserBrowserState,
 	UserBrowserTabOrganizationApply,
 	UserBrowserTabOrganizationPreview,
+	UserBrowserZoom,
 } from "@kestrel/shared-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { userFacingError } from "../error-copy";
@@ -27,6 +28,7 @@ export interface UserBrowserController {
 	isDetachedWindow: boolean;
 	refresh(): Promise<void>;
 	findMatch: UserBrowserFindMatch | null;
+	zoomFeedback: UserBrowserZoom | null;
 	openFileTabs(paths: string[], active?: boolean): Promise<SelectedAttachment[]>;
 	filePreview(tabId: string): Promise<FilePreview | undefined>;
 	openFileDefault(tabId: string): Promise<void>;
@@ -35,6 +37,7 @@ export interface UserBrowserController {
 	closeTab(tabId: string): Promise<void>;
 	selectTab(tabId: string): Promise<void>;
 	navigate(tabId: string, input: string): Promise<void>;
+	dismissThreat(tabId: string): Promise<void>;
 	back(tabId: string): Promise<void>;
 	forward(tabId: string): Promise<void>;
 	reload(tabId: string, ignoreCache?: boolean): Promise<void>;
@@ -91,7 +94,7 @@ export interface UserBrowserController {
 		organization: UserBrowserTabOrganizationApply,
 	): Promise<void>;
 	detachTab(tabId: string): Promise<void>;
-	reattachTab(tabId: string): Promise<void>;
+	reattachTab(tabId: string, transferToken?: string): Promise<void>;
 	findInPage(
 		tabId: string,
 		query: string,
@@ -123,12 +126,15 @@ export function useUserBrowser(): UserBrowserController {
 	const [error, setError] = useState("");
 	const [isDetachedWindow, setIsDetachedWindow] = useState(false);
 	const [findMatch, setFindMatch] = useState<UserBrowserFindMatch | null>(null);
+	const [zoomFeedback, setZoomFeedback] = useState<UserBrowserZoom | null>(null);
 	const stateRef = useRef<UserBrowserState | null>(state);
+	const zoomFeedbackTimeoutRef = useRef<number | undefined>(undefined);
 	const tabCloseRequestRef = useRef<Promise<void>>(Promise.resolve());
 	const settingsRequestRef = useRef<Promise<void>>(Promise.resolve());
 	const contentBoundsRequestRef = useRef<Promise<string | undefined>>(
 		Promise.resolve(undefined),
 	);
+	const contentBoundsIntentRef = useRef(0);
 	stateRef.current = state;
 	const applyState = useCallback((nextState: UserBrowserState) => {
 		stateRef.current = nextState;
@@ -224,6 +230,14 @@ export function useUserBrowser(): UserBrowserController {
 			if (event.type === "state") {
 				applyState(event.state);
 				setError("");
+			} else if (event.type === "zoom") {
+				setZoomFeedback(event.zoom);
+				if (zoomFeedbackTimeoutRef.current !== undefined)
+					window.clearTimeout(zoomFeedbackTimeoutRef.current);
+				zoomFeedbackTimeoutRef.current = window.setTimeout(() => {
+					setZoomFeedback(null);
+					zoomFeedbackTimeoutRef.current = undefined;
+				}, 2_600);
 			} else if (event.type === "find-in-page") {
 				setFindMatch(event.match);
 			}
@@ -231,6 +245,8 @@ export function useUserBrowser(): UserBrowserController {
 		void refresh().catch(() => undefined);
 		return () => {
 			unsubscribe();
+			if (zoomFeedbackTimeoutRef.current !== undefined)
+				window.clearTimeout(zoomFeedbackTimeoutRef.current);
 		};
 	}, [applyState, refresh]);
 
@@ -259,6 +275,11 @@ export function useUserBrowser(): UserBrowserController {
 	const navigate = useCallback(
 		(tabId: string, input: string) =>
 			requestState({ type: "browser-navigate", tabId, input }),
+		[requestState],
+	);
+	const dismissThreat = useCallback(
+		(tabId: string) =>
+			requestState({ type: "browser-dismiss-threat", tabId }),
 		[requestState],
 	);
 	const back = useCallback(
@@ -317,20 +338,25 @@ export function useUserBrowser(): UserBrowserController {
 			// Layout effects hide the native view during cleanup and reveal it
 			// again after a route or orientation change. Serialize those IPC
 			// updates so an older cleanup cannot arrive after the newer visible
-			// bounds and leave the active page detached.
-			const pending = contentBoundsRequestRef.current
-				.catch(() => undefined)
-				.then(async () => {
-					const response = await window.kestrel.request({
-						type: "browser-set-content-bounds",
-						bounds,
-						visible,
-					});
-					if (!response.ok) throw new Error(responseError(response));
-					return "browserPagePreview" in response
-						? response.browserPagePreview
-						: undefined;
+			// bounds and leave the active page detached. Hides are dispatched
+			// immediately so a native page cannot swallow a renderer pointerup
+			// while an older screenshot is still settling.
+			const intent = ++contentBoundsIntentRef.current;
+			const request = async () => {
+				if (visible && intent !== contentBoundsIntentRef.current) return undefined;
+				const response = await window.kestrel.request({
+					type: "browser-set-content-bounds",
+					bounds,
+					visible,
 				});
+				if (!response.ok) throw new Error(responseError(response));
+				return "browserPagePreview" in response
+					? response.browserPagePreview
+					: undefined;
+			};
+			const pending = visible
+				? contentBoundsRequestRef.current.catch(() => undefined).then(request)
+				: request();
 			contentBoundsRequestRef.current = pending;
 			return pending;
 		},
@@ -608,7 +634,12 @@ export function useUserBrowser(): UserBrowserController {
 		[requestState],
 	);
 	const reattachTab = useCallback(
-		(tabId: string) => requestState({ type: "browser-reattach-tab", tabId }),
+		(tabId: string, transferToken?: string) =>
+			requestState({
+				type: "browser-reattach-tab",
+				tabId,
+				...(transferToken ? { transferToken } : {}),
+			}),
 		[requestState],
 	);
 	const findInPage = useCallback(
@@ -682,6 +713,7 @@ export function useUserBrowser(): UserBrowserController {
 			isDetachedWindow,
 			refresh,
 			findMatch,
+			zoomFeedback,
 			openFileTabs,
 			filePreview,
 			openFileDefault,
@@ -690,6 +722,7 @@ export function useUserBrowser(): UserBrowserController {
 			closeTab,
 			selectTab,
 			navigate,
+			dismissThreat,
 			back,
 			forward,
 			reload,
@@ -745,6 +778,7 @@ export function useUserBrowser(): UserBrowserController {
 			isDetachedWindow,
 			refresh,
 			findMatch,
+			zoomFeedback,
 			openFileTabs,
 			filePreview,
 			openFileDefault,
@@ -753,6 +787,7 @@ export function useUserBrowser(): UserBrowserController {
 			closeTab,
 			selectTab,
 			navigate,
+			dismissThreat,
 			back,
 			forward,
 			reload,

@@ -2847,7 +2847,7 @@ describe("provider-neutral agent loop", () => {
 		database.close();
 	});
 
-	it("automatically switches models on refusal to achieve 0% refusal rate and fulfill the request", async () => {
+	it("preserves a safety-policy refusal instead of rerouting around it", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const runtime = new AgentRuntime(database);
 		const session = runtime.createSession({ title: "Refusal auto-recovery" });
@@ -2927,12 +2927,313 @@ describe("provider-neutral agent loop", () => {
 		});
 
 		expect(output.run.status).toBe("completed");
-		expect(output.run.model).toBe("permissive-model");
-		expect(output.run.refusalRecoveryCount).toBe(1);
-		expect(output.assistantMessage?.content).toMatch(
-			/Permissive fallback completed/i,
+		expect(output.run.model).toBe("strict-model");
+		expect(output.run.refusalRecoveryCount ?? 0).toBe(0);
+		expect(output.assistantMessage?.content).toMatch(/cannot fulfill/i);
+		expect(callCount).toBe(1);
+		database.close();
+	});
+
+	it("escalates an active run in place after a reasoning failure", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "In-place routing escalation" });
+		let escalationCalls = 0;
+		let strongModelSawPreservedContext = false;
+		const firstProvider: ModelProvider = {
+			id: "initial-route",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async () => ({
+				providerId: "initial-route",
+				model: "economy-model",
+				text: "I cannot resolve this dependency graph.",
+				toolCalls: [],
+				usage: { inputTokens: 4, outputTokens: 4 },
+				finishReason: "stop",
+			}),
+		};
+		const strongerProvider: ModelProvider = {
+			id: "escalated-route",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				const context = request.messages
+					.map((message) => contentText(message.content))
+					.join("\n");
+				strongModelSawPreservedContext =
+					context.includes("Fix the dependency graph") &&
+					context.includes("Routing handoff");
+				return {
+					providerId: "escalated-route",
+					model: "reasoning-model",
+					text: "Resolved the dependency graph from the preserved task state.",
+					toolCalls: [],
+					usage: { inputTokens: 8, outputTokens: 8 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([firstProvider, strongerProvider]),
 		);
-		expect(callCount).toBe(2);
+		const result = await loop.run({
+			sessionId: session.id,
+			model: "economy-model",
+			providerIds: ["initial-route"],
+			userContent: textContent("Fix the dependency graph"),
+			adaptiveExecution: { maximumEscalations: 1, maximumRetries: 0 },
+			onAdaptiveEscalation: async ({ run, category }) => {
+				escalationCalls += 1;
+				expect(run.id).toMatch(/^run-/);
+				expect(category).toBe("model_reasoning");
+				return {
+					model: "reasoning-model",
+					providerIds: ["escalated-route"],
+					reasoningEffort: "high",
+					maximumContextCharacters: 48_000,
+					maximumOutputTokens: 4_096,
+					temperature: 0.2,
+					explanation: "Escalated the unresolved dependency reasoning step.",
+				};
+			},
+		});
+		expect(result.run.status).toBe("completed");
+		expect(escalationCalls).toBe(1);
+		expect(result.run.model).toBe("reasoning-model");
+		expect(result.run.refusalRecoveryCount).toBe(1);
+		expect(strongModelSawPreservedContext).toBe(true);
+		expect(
+			runtime
+				.listMessages(session.id)
+				.filter((message) => message.role === "user")
+				.map((message) => message.content),
+		).toEqual(["Fix the dependency graph"]);
+		expect(database.listAgentRuns(session.id)).toHaveLength(1);
+		database.close();
+	});
+
+	it("performs one verifier-requested correction within the durable run turn budget", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Verifier correction" });
+		let calls = 0;
+		let preservedPriorAnswer = false;
+		let sawVerifierInstruction = false;
+		let sawVerifierFeedback = false;
+		let verifierFeedbackRole: string | undefined;
+		let rawFeedbackAppearedInSystemMessage = false;
+		const provider: ModelProvider = {
+			id: "verifier-correction",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				const context = request.messages
+					.map((message) => contentText(message.content))
+					.join("\n");
+				if (calls === 2) {
+					preservedPriorAnswer = context.includes("Initial answer with a defect.");
+					sawVerifierInstruction = context.includes(
+						"Independent verification found a concrete issue",
+					);
+					sawVerifierFeedback = context.includes(
+						"The required field is missing.",
+					);
+					verifierFeedbackRole = request.messages.find((message) =>
+						message.content.some(
+							(part) =>
+								part.type === "text" &&
+								part.text.includes("The required field is missing."),
+						),
+					)?.role;
+					rawFeedbackAppearedInSystemMessage = request.messages.some(
+						(message) =>
+							message.role === "system" &&
+							message.content.some(
+								(part) =>
+									part.type === "text" &&
+									part.text.includes("The required field is missing."),
+							),
+					);
+				}
+				return {
+					providerId: "verifier-correction",
+					model: request.model,
+					text:
+						calls === 1
+							? "Initial answer with a defect."
+							: "Corrected answer using the preserved task state.",
+					toolCalls: [],
+					usage: { inputTokens: 3, outputTokens: 2 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		);
+		const initial = await loop.run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Complete the task."),
+			maximumTurns: 2,
+		});
+		const corrected = await loop.reworkAfterVerification({
+			runId: initial.run.id,
+			maximumTurns: 2,
+			verificationFeedback: "The required field is missing.",
+			adaptiveExecution: { maximumEscalations: 0 },
+		});
+
+		expect(corrected.run).toMatchObject({
+			id: initial.run.id,
+			status: "completed",
+			turn: 2,
+		});
+		expect(corrected.assistantMessage?.content).toMatch(/corrected answer/i);
+		expect(preservedPriorAnswer).toBe(true);
+		expect(sawVerifierInstruction).toBe(true);
+		expect(sawVerifierFeedback).toBe(true);
+		expect(verifierFeedbackRole).toBe("user");
+		expect(rawFeedbackAppearedInSystemMessage).toBe(false);
+		expect(database.listAgentRuns(session.id)).toHaveLength(1);
+		await expect(
+			loop.reworkAfterVerification({ runId: initial.run.id }),
+		).rejects.toThrow("rework budget is exhausted");
+		database.close();
+	});
+
+	it("does not extend a completed run's turn budget for verifier rework", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Verifier turn budget" });
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "verifier-turn-budget",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				return {
+					providerId: "verifier-turn-budget",
+					model: request.model,
+					text: "Completed within the configured turn budget.",
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		);
+		const initial = await loop.run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Complete the task."),
+			maximumTurns: 1,
+		});
+
+		await expect(
+			loop.reworkAfterVerification({
+				runId: initial.run.id,
+				maximumTurns: 2,
+			}),
+		).rejects.toThrow("The independent verifier has no remaining turn budget.");
+		expect(calls).toBe(1);
+		expect(database.getAgentRun(initial.run.id)).toMatchObject({
+			status: "completed",
+			turn: 1,
+			maximumTurns: 1,
+		});
+		database.close();
+	});
+
+	it("honors a verifier rework request's tighter turn limit", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const runtime = new AgentRuntime(database);
+		const session = runtime.createSession({ title: "Verifier request turn budget" });
+		let calls = 0;
+		const provider: ModelProvider = {
+			id: "verifier-request-turn-budget",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				calls += 1;
+				return {
+					providerId: "verifier-request-turn-budget",
+					model: request.model,
+					text: "Completed within the configured turn budget.",
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const loop = new AgentLoop(
+			database,
+			runtime,
+			new ProviderPool([provider]),
+		);
+		const initial = await loop.run({
+			sessionId: session.id,
+			model: "fixture",
+			providerIds: [provider.id],
+			userContent: textContent("Complete the task."),
+			maximumTurns: 2,
+		});
+
+		await expect(
+			loop.reworkAfterVerification({
+				runId: initial.run.id,
+				maximumTurns: 1,
+			}),
+		).rejects.toThrow("The independent verifier has no remaining turn budget.");
+		expect(calls).toBe(1);
+		expect(database.getAgentRun(initial.run.id)).toMatchObject({
+			status: "completed",
+			turn: 1,
+			maximumTurns: 2,
+		});
 		database.close();
 	});
 

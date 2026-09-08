@@ -54,7 +54,7 @@ export interface AgentUniversePhysicsController {
 	): void;
 	startDrag(nodeId: string, point: AgentUniversePhysicsPoint): boolean;
 	moveDrag(point: AgentUniversePhysicsPoint): void;
-	endDrag(): void;
+	endDrag(options?: { keepPosition?: boolean }): AgentUniversePhysicsPoint | undefined;
 	cancelDrag(): void;
 	isDragging(): boolean;
 	destroy(): void;
@@ -267,8 +267,7 @@ export function stepAgentUniversePhysics(
 			const target = isDragged ? drag.target : { x: node.homeX, y: node.homeY };
 			// A dragged planet has more mass than a moon: it follows the pointer
 			// promptly, while its children still receive the parent's moving
-			// position through targetForNode below. Once released, the same spring
-			// returns the complete system to its stable spatial identity.
+			// position through targetForNode below.
 			const rootSpring = isDragged
 				? reducedMotion
 					? 96
@@ -381,6 +380,43 @@ export function stepAgentUniversePhysics(
 	};
 }
 
+/**
+ * Turn a root drag into a durable local placement. The dropped planet becomes
+ * the new home for the system and every descendant keeps the same relative
+ * hierarchy, so releasing a planet never snaps it back to the generated pack.
+ */
+export function commitAgentUniverseRootDrag(
+	state: AgentUniversePhysicsState,
+): { state: AgentUniversePhysicsState; position: AgentUniversePhysicsPoint } | undefined {
+	const drag = state.drag;
+	if (!drag) return undefined;
+	const dragged = state.nodes.find((node) => node.id === drag.nodeId);
+	if (!dragged?.isRoot) return undefined;
+
+	const position = { ...drag.target };
+	const frameDelta = {
+		x: position.x - dragged.x,
+		y: position.y - dragged.y,
+	};
+	const homeDelta = {
+		x: position.x - dragged.homeX,
+		y: position.y - dragged.homeY,
+	};
+	const nodes = state.nodes.map((node) => ({
+		...node,
+		x: node.id === dragged.id ? position.x : node.x + frameDelta.x,
+		y: node.id === dragged.id ? position.y : node.y + frameDelta.y,
+		homeX: node.homeX + homeDelta.x,
+		homeY: node.homeY + homeDelta.y,
+		parentHomeX: node.parentHomeX + homeDelta.x,
+		parentHomeY: node.parentHomeY + homeDelta.y,
+		vx: 0,
+		vy: 0,
+	}));
+
+	return { state: { nodes, drag: null }, position };
+}
+
 function hasSettled(state: AgentUniversePhysicsState): boolean {
 	if (state.drag) return false;
 	return state.nodes.every((node) => {
@@ -453,12 +489,25 @@ class AgentUniversePhysicsControllerImpl implements AgentUniversePhysicsControll
 		this.ensureFrame();
 	}
 
-	endDrag(): void {
-		if (!this.state.drag) return;
+	endDrag(
+		options: { keepPosition?: boolean } = {},
+	): AgentUniversePhysicsPoint | undefined {
+		if (!this.state.drag) return undefined;
+		if (options.keepPosition) {
+			const committed = commitAgentUniverseRootDrag(this.state);
+			if (committed) {
+				this.state = committed.state;
+				if (this.reducedMotion) this.snapToHomes();
+				this.render();
+				this.ensureFrame();
+				return committed.position;
+			}
+		}
 		this.state.drag = null;
 		if (this.reducedMotion) this.snapToHomes();
 		this.render();
 		this.ensureFrame();
+		return undefined;
 	}
 
 	cancelDrag(): void {

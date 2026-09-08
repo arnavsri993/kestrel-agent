@@ -136,10 +136,7 @@ export function PluginSettings() {
 			<article className="setting-row">
 				<div>
 					<strong>Plugin supply chain</strong>
-					<p>
-						Only Ed25519-signed bundles from publishers you explicitly trust can
-						be installed or updated.
-					</p>
+					<p>Install or update only bundles signed by publishers you trust.</p>
 					{publishers.length > 0 ? (
 						<ul className="workspace-grants">
 							{publishers.map((publisher) => (

@@ -5,6 +5,8 @@ import {
 	type ModelRequest,
 	type ModelResult,
 	type ProviderAvailabilityReason,
+	type ProviderQuotaSnapshot,
+	normalizeProviderQuotaSnapshot,
 } from "./types";
 
 const DEFAULT_HEALTH_BACKOFF_MS = 30_000;
@@ -31,6 +33,8 @@ export interface ProviderHealth {
 	failures: number;
 	consecutiveFailures: number;
 	averageLatencyMs: number;
+	/** Process-local concurrency signal used by the account-aware router. */
+	activeRequests?: number;
 	unhealthyUntil?: string;
 	unhealthyReason?: ProviderAvailabilityReason;
 }
@@ -41,6 +45,13 @@ export interface ProviderVerification {
 	ok: boolean;
 	latencyMs: number;
 	error?: string;
+}
+
+/** A routing-safe quota observation for one concrete provider/account endpoint. */
+export interface ProviderQuotaObservation extends ProviderQuotaSnapshot {
+	endpointId: string;
+	providerId: string;
+	poolId?: string;
 }
 
 export class ProviderPoolError extends Error {
@@ -116,6 +127,16 @@ function availabilityDelay(
 	return Math.min(MAX_HEALTH_BACKOFF_MS, Math.trunc(base * multiplier));
 }
 
+function safeProviderFailureMessage(error: unknown): string {
+	// Provider/CLI errors are untrusted: they can contain an echoed secret,
+	// additional request header, or endpoint query. Keep renderer-visible and
+	// persisted attempt details categorical even when the originating adapter
+	// supplied a raw Error.
+	if (error instanceof ModelProviderError && error.status !== undefined)
+		return `Provider request failed (HTTP ${error.status}).`;
+	return "Provider request failed. Check the account connection and try again.";
+}
+
 export class ProviderPool {
 	private readonly providers = new Map<string, ModelProvider>();
 	private readonly unhealthyUntil = new Map<string, number>();
@@ -130,6 +151,8 @@ export class ProviderPool {
 			"providerId" | "poolId" | "unhealthyUntil" | "unhealthyReason"
 		>
 	>();
+	private readonly activeRequests = new Map<string, number>();
+	private readonly quotaByProvider = new Map<string, ProviderQuotaSnapshot>();
 
 	constructor(
 		providers: ModelProvider[],
@@ -169,6 +192,7 @@ export class ProviderPool {
 				providerId: provider.id,
 				...(provider.poolId ? { poolId: provider.poolId } : {}),
 				...measurement,
+				activeRequests: this.activeRequests.get(provider.id) ?? 0,
 				...(isUnhealthy && unhealthyUntil !== undefined
 					? {
 							unhealthyUntil: new Date(unhealthyUntil).toISOString(),
@@ -177,6 +201,49 @@ export class ProviderPool {
 					: {}),
 			};
 		});
+	}
+
+	/**
+	 * Latest non-secret capacity observations. These are process-local and are
+	 * discarded after a successful response that does not provide quota metadata
+	 * or once a provider-provided reset boundary has passed.
+	 */
+	accountQuotaSnapshots(): ProviderQuotaObservation[] {
+		const nowMs = this.now().getTime();
+		return [...this.providers.values()].flatMap((provider) => {
+			const quota = this.quotaByProvider.get(provider.id);
+			if (!quota) return [];
+			const resetAt = quota.resetAt ? Date.parse(quota.resetAt) : Number.NaN;
+			if (Number.isFinite(resetAt) && resetAt <= nowMs) {
+				this.quotaByProvider.delete(provider.id);
+				return [];
+			}
+			return [
+				{
+					endpointId: provider.id,
+					providerId: provider.id,
+					...(provider.poolId ? { poolId: provider.poolId } : {}),
+					...quota,
+				},
+			];
+		});
+	}
+
+	private async withActiveRequest<T>(
+		providerId: string,
+		operation: () => Promise<T>,
+	): Promise<T> {
+		this.activeRequests.set(
+			providerId,
+			(this.activeRequests.get(providerId) ?? 0) + 1,
+		);
+		try {
+			return await operation();
+		} finally {
+			const remaining = Math.max(0, (this.activeRequests.get(providerId) ?? 1) - 1);
+			if (remaining === 0) this.activeRequests.delete(providerId);
+			else this.activeRequests.set(providerId, remaining);
+		}
 	}
 
 	async verify(
@@ -195,8 +262,16 @@ export class ProviderPool {
 			signal?.throwIfAborted();
 			const started = this.now().getTime();
 			try {
-				if (!provider.probe)
-					throw new Error("Provider does not expose a credential probe.");
+				if (!provider.probe) {
+					output.push({
+						providerId: provider.id,
+						...(provider.poolId ? { poolId: provider.poolId } : {}),
+						ok: false,
+						latencyMs: Math.max(0, this.now().getTime() - started),
+						error: "Provider does not expose a credential probe.",
+					});
+					continue;
+				}
 				await provider.probe(signal);
 				signal?.throwIfAborted();
 				output.push({
@@ -212,10 +287,7 @@ export class ProviderPool {
 					...(provider.poolId ? { poolId: provider.poolId } : {}),
 					ok: false,
 					latencyMs: Math.max(0, this.now().getTime() - started),
-					error:
-						error instanceof Error
-							? error.message.slice(0, 500)
-							: "Provider verification failed.",
+					error: safeProviderFailureMessage(error),
 				});
 			}
 		}
@@ -231,11 +303,16 @@ export class ProviderPool {
 	): ModelProvider[] {
 		const selected: ModelProvider[] = [];
 		for (const requested of providerIds) {
+			// Endpoint IDs take precedence over a logical provider alias. This keeps
+			// a persisted exact account selection exact even if someone later creates
+			// a provider whose display/logical ID happens to match that endpoint ID.
+			const direct = this.providers.get(requested);
+			if (direct) {
+				selected.push(direct);
+				continue;
+			}
 			for (const provider of this.providers.values())
-				if (
-					(provider.id === requested || provider.poolId === requested) &&
-					!selected.includes(provider)
-				)
+				if (provider.poolId === requested && !selected.includes(provider))
 					selected.push(provider);
 		}
 		if (!automatic) return selected;
@@ -286,6 +363,16 @@ export class ProviderPool {
 		});
 	}
 
+	private recordQuota(
+		providerId: string,
+		quota: ProviderQuotaSnapshot | undefined,
+		clearWhenUnavailable = false,
+	): void {
+		const normalized = normalizeProviderQuotaSnapshot(quota);
+		if (normalized) this.quotaByProvider.set(providerId, normalized);
+		else if (clearWhenUnavailable) this.quotaByProvider.delete(providerId);
+	}
+
 	private supports(provider: ModelProvider, request: ModelRequest): boolean {
 		const parts = request.messages.flatMap((message) => message.content);
 		return (
@@ -330,6 +417,22 @@ export class ProviderPool {
 		];
 		if (providerIds.length === 0)
 			throw new Error("No model providers are configured.");
+		// A manually selected model must remain pinned to one account endpoint.
+		// Logical provider IDs are still useful for automatic routing, but expanding
+		// one into several accounts here would silently switch the account a person
+		// explicitly selected whenever the first attempt failed.
+		if (!automatic && request.model !== "auto") {
+			for (const requested of providerIds) {
+				if (this.providers.has(requested)) continue;
+				const matchingAccounts = [...this.providers.values()].filter(
+					(provider) => provider.poolId === requested,
+				);
+				if (matchingAccounts.length > 1)
+					throw new Error(
+						`Provider ${requested} has multiple configured accounts. Select a specific account endpoint.`,
+					);
+			}
+		}
 		const attempts: ProviderAttempt[] = [];
 		let callAttempt = 0;
 		const selected = this.candidates(
@@ -419,7 +522,10 @@ export class ProviderPool {
 				const providerRequest: ModelRequest = provider.capabilities.tools
 					? { ...requestWithoutTools, model, ...(tools ? { tools } : {}) }
 					: { ...requestWithoutTools, model };
-				const result = await provider.complete(providerRequest, options);
+				const result = await this.withActiveRequest(providerId, () =>
+					provider.complete(providerRequest, options),
+				);
+				this.recordQuota(providerId, result.quota, true);
 				attempts.push({
 					providerId,
 					startedAt,
@@ -432,14 +538,15 @@ export class ProviderPool {
 				return { result, attempts };
 			} catch (error) {
 				if (options.signal?.aborted) throw error;
+				if (error instanceof ModelProviderError)
+					this.recordQuota(providerId, error.quota);
 				lastError = error;
 				attempts.push({
 					providerId,
 					startedAt,
 					completedAt: this.now().toISOString(),
 					status: "failed",
-					error:
-						error instanceof Error ? error.message : "Provider call failed.",
+					error: safeProviderFailureMessage(error),
 				});
 				this.measured(provider, startedAt, false);
 				const consecutiveFailures =

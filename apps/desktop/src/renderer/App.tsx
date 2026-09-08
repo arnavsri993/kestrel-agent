@@ -1,6 +1,7 @@
 import type {
 	ActionReceipt,
 	AgentRun,
+	AgentPlanetAssetId,
 	AgentState,
 	ApprovalRule,
 	ArtifactRecordContract,
@@ -21,7 +22,7 @@ import type {
 	MigrationPlanPreviewContract,
 	MigrationResultContract,
 	ModelProfile,
-	ModelProviderSummary,
+	ProviderAccountSummary,
 	ModelRoutingDecision,
 	OrganizationMemberContract,
 	PluginMutation,
@@ -94,8 +95,15 @@ import { KestrelSidebar } from "./components/browser/KestrelSidebar";
 import { ProjectsWorkspace } from "./components/browser/ProjectsWorkspace";
 import { ProjectSettingsDialog } from "./components/browser/ProjectSettingsDialog";
 import { ModelSelector } from "./components/browser/ModelSelector";
-import type { ModelSelectorChoice } from "./components/browser/model-selector";
+import {
+	accountForChoice,
+	type ModelSelectorChoice,
+} from "./components/browser/model-selector";
 import { AgentWorkspace } from "./components/browser/AgentWorkspace";
+import {
+	AGENT_UNIVERSE_PLANET_ASSETS,
+	agentUniverseBodyAssetFor,
+} from "./components/browser/agent-universe/agent-universe-assets";
 import {
 	appendAgentUniverseActivity,
 	type AgentUniverseActivity,
@@ -137,6 +145,7 @@ import { Icon } from "./components/Icon";
 import { LifeContext } from "./components/LifeContext";
 import { ObservabilitySettings } from "./components/ObservabilitySettings";
 import { PresenceSettings } from "./components/PresenceSettings";
+import { ProviderAccountsSettings } from "./components/ProviderAccountsSettings";
 import {
 	EmptyState,
 	PageFrame as SurfacePageFrame,
@@ -154,6 +163,7 @@ import {
 } from "../utility/browser-app-pages";
 import {
 	memoryInGb,
+	recommendedLocalModel,
 	recommendedLocalModelTiers,
 	supportedLocalModels,
 } from "./local-model-catalog";
@@ -277,63 +287,63 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "browser",
 		label: "Browser",
-		detail: "Open tabs and browse the web",
+		detail: "Browse the web",
 		icon: "browser",
 		group: "Browse",
 	},
 	{
 		id: "organize-tabs",
 		label: "Organize tabs",
-		detail: "Group related tabs into folders while keeping their order",
+		detail: "Group related tabs",
 		icon: "folder",
 		group: "Browse",
 	},
 	{
 		id: "agent",
 		label: "Agent",
-		detail: "Start, find, and resume your work",
+		detail: "Start or resume work",
 		icon: "agent",
 		group: "Agent",
 	},
 	{
 		id: "projects",
 		label: "Projects",
-		detail: "Keep related chats and local context together",
+		detail: "Keep related work together",
 		icon: "folder",
 		group: "Agent",
 	},
 	{
 		id: "writing",
 		label: "Writing Studio",
-		detail: "Draft with your context and confirmed voice signals",
+		detail: "Draft with your context",
 		icon: "writing",
 		group: "Agent",
 	},
 	{
 		id: "history",
 		label: "History",
-		detail: "Find pages you visited",
+		detail: "Pages you visited",
 		icon: "history",
 		group: "Browse",
 	},
 	{
 		id: "bookmarks",
 		label: "Bookmarks",
-		detail: "Pages you saved in this profile",
+		detail: "Pages you saved",
 		icon: "star",
 		group: "Browse",
 	},
 	{
 		id: "downloads",
 		label: "Downloads",
-		detail: "Track files from browser tabs",
+		detail: "Downloaded files",
 		icon: "downloads",
 		group: "Browse",
 	},
 	{
 		id: "approvals",
 		label: "Approvals",
-		detail: "Review consequential agent actions",
+		detail: "Review agent actions",
 		icon: "approvals",
 		group: "Agent",
 	},
@@ -347,7 +357,7 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "events",
 		label: "Opportunities",
-		detail: "Review event applications",
+		detail: "Event applications",
 		icon: "events",
 		group: "Agent",
 	},
@@ -361,49 +371,49 @@ const commandDestinations: CommandDestination[] = [
 	{
 		id: "research",
 		label: "Research",
-		detail: "Saved sources and web findings",
+		detail: "Sources and findings",
 		icon: "research",
 		group: "Context",
 	},
 	{
 		id: "artifacts",
 		label: "Artifacts",
-		detail: "Files and generated results",
+		detail: "Files and results",
 		icon: "artifacts",
 		group: "Context",
 	},
 	{
 		id: "activity",
 		label: "Activity",
-		detail: "Runs, evidence, and audit trail",
+		detail: "Runs and evidence",
 		icon: "activity",
 		group: "Context",
 	},
 	{
 		id: "extensions",
 		label: "Extensions",
-		detail: "Plugin-provided capabilities",
+		detail: "Plugins and tools",
 		icon: "extensions",
 		group: "Build",
 	},
 	{
 		id: "readiness",
 		label: "Readiness",
-		detail: "Runtime and provider health",
+		detail: "Check what is ready",
 		icon: "readiness",
 		group: "System",
 	},
 	{
 		id: "settings",
 		label: "Settings",
-		detail: "Browser, agent, models, and privacy",
+		detail: "Browser, agent, and privacy",
 		icon: "settings",
 		group: "System",
 	},
 	{
 		id: "shortcuts",
 		label: "Keyboard Shortcuts",
-		detail: "View all default shortcuts and hotkeys",
+		detail: "Keyboard shortcuts",
 		icon: "command",
 		group: "System",
 	},
@@ -451,6 +461,24 @@ function setupAssistantState({
 
 function modelLabel(model: ModelRoutingDecision["model"]): string {
 	return model === "local-rules" ? "Local rules" : model.replaceAll("-", " ");
+}
+
+const PROVIDER_CATALOG_REFRESH_MS = 15 * 60_000;
+
+function catalogNeedsBackgroundRefresh(
+	accounts: readonly ProviderAccountSummary[],
+	now = Date.now(),
+): boolean {
+	return accounts.some((account) => {
+		if (!account.enabled || account.discovery.state === "unsupported") return false;
+		const attemptedAt = Date.parse(
+			account.discovery.lastAttemptAt ?? account.discovery.lastSuccessAt ?? "",
+		);
+		return (
+			!Number.isFinite(attemptedAt) ||
+			now - attemptedAt >= PROVIDER_CATALOG_REFRESH_MS
+		);
+	});
 }
 
 function formatConnectionStatus(status: string): string {
@@ -982,6 +1010,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const [modelView, setModelView] = useState<"accounts" | "local" | "open">(
 		"accounts",
 	);
+	const [selectedModelAccess, setSelectedModelAccess] = useState<
+		"accounts" | "local" | "open" | null
+	>(null);
 	const [providerQuery, setProviderQuery] = useState("");
 	const [selectedPaidProviderId, setSelectedPaidProviderId] =
 		useState<(typeof paidProviderCatalog)[number]["id"]>("openai");
@@ -1105,8 +1136,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	}
 
 	function chooseModelAccess(view: "accounts" | "local" | "open") {
-		setModelView(view);
-		go(3);
+		setSelectedModelAccess(view);
 	}
 
 	async function saveCredential(credentialId: BrokeredCredentialSummary["id"]) {
@@ -1216,9 +1246,11 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				type: "runtime-list-providers",
 			})) as CoreResponse;
 			if (!response.ok) throw new Error(response.error);
-			const providerIds = (response.providers ?? [])
-				.filter((provider) => provider.id !== "auto")
-				.map((provider) => provider.id);
+			const providerIds = (
+				"providerAccounts" in response ? response.providerAccounts ?? [] : []
+			)
+				.filter((account) => account.enabled)
+				.map((account) => account.endpointId);
 			const checked: ProviderVerification[] = [];
 			for (const providerId of providerIds) {
 				const result = (await window.kestrel.request({
@@ -1313,6 +1345,17 @@ function Onboarding({ onDone }: { onDone(): void }) {
 	const verifiedModelReady =
 		Boolean(localRuntime?.verifiedModel) ||
 		providerChecks.some((check) => check.ok);
+	const recommendedModel = recommendedLocalModel(systemProfile);
+	const recommendedModelInstalled = Boolean(
+		recommendedModel &&
+		localModels.some(
+			(item) =>
+				item.name === recommendedModel.name ||
+				item.name === `${recommendedModel.name}:latest`,
+		),
+	);
+	const localSetupAvailable =
+		ollamaAvailable || localRuntime?.automaticSupported === true;
 	const recommendedTiers = recommendedLocalModelTiers(systemProfile);
 	const compatibleLocalModels = supportedLocalModels(systemProfile);
 	const matchingPaidProviders = paidProviderCatalog.filter((provider) => {
@@ -1422,8 +1465,8 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									Kestrel gets it done.
 								</h1>
 								<p>
-									Kestrel is a local agent for your Mac. It browses the web,
-									drafts work, and takes action with your approval.
+									Kestrel helps you browse, draft, and take action on your Mac—with
+									your approval.
 								</p>
 							</div>
 						)}
@@ -1438,14 +1481,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Cloud models receive what you send</strong>
 												<small>
-													Prompts and tool results may leave this Mac.
+													What you send may leave your Mac.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											Prompts, selected file excerpts, and tool results may go
-											to the provider under its retention and training terms.
+											Prompts, selected file excerpts, and tool results follow your
+											provider's data terms.
 										</p>
 									</details>
 									<details>
@@ -1454,15 +1497,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Connected services may charge you</strong>
 												<small>
-													API, media, and storage can bill their own accounts.
+											API, media, and storage can charge their own accounts.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											API calls, media generation, search, and storage can bill
-											their own accounts. Kestrel budgets do not replace
-											provider controls.
+											Kestrel budgets do not replace provider limits or billing
+											controls.
 										</p>
 									</details>
 									<details>
@@ -1471,15 +1513,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Approval is a pause, not a guarantee</strong>
 												<small>
-													Review still matters for consequential work.
+													Review consequential actions before approving.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
 											Sending, publishing, deleting, purchasing, and permission
-											changes pause for review. Factual, legal, financial, and
-											safety-critical work still needs your judgment.
+											changes pause for review. You remain responsible for legal,
+											financial, and safety-critical decisions.
 										</p>
 									</details>
 									<details>
@@ -1488,15 +1530,14 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											<span>
 												<strong>Connections widen access</strong>
 												<small>
-													Approved tools use the folders and accounts you grant.
+													Approved tools use the access you grant.
 												</small>
 											</span>
 											<Icon name="chevron" />
 										</summary>
 										<p>
-											Approved tools can act through the folders, accounts,
-											microphone, browser, and screen access you grant.
-											Credentials remain protected.
+											Tools can use the folders, accounts, microphone, browser, and
+											screen access you grant. Credentials stay protected.
 										</p>
 									</details>
 								</div>
@@ -1517,7 +1558,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 									</span>
 								</label>
 								<small>
-									You can change providers and permissions later in Settings.
+									Change providers and permissions later in Settings.
 								</small>
 							</div>
 						)}
@@ -1534,23 +1575,27 @@ function Onboarding({ onDone }: { onDone(): void }) {
 													? "Set up a local model."
 													: "Set up free provider accounts."}
 									</h1>
-									<p>
-										{step === 2
-											? "Pick one to start — you can change it later."
-											: modelView === "accounts"
-												? "Sign in with the provider, or add a protected API key."
+									{step !== 2 && (
+										<p>
+											{modelView === "accounts"
+												? "Sign in with a provider or add a protected API key."
 												: modelView === "local"
-													? "Balanced is recommended for this Mac."
-													: "Terms and free limits vary by provider."}
-									</p>
+													? recommendedModel
+														? `Kestrel recommends ${recommendedModel.title} for this Mac.`
+														: "Checking this Mac's hardware…"
+													: "Free plans and terms vary by provider."}
+										</p>
+									)}
 								</header>
 								{step === 2 && (
 									<div
 										className="model-source-picker"
+										role="group"
 										aria-label="Model access choices"
 									>
 										<button
 											type="button"
+											aria-pressed={selectedModelAccess === "accounts"}
 											onClick={() => chooseModelAccess("accounts")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -1570,6 +1615,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 										<button
 											type="button"
 											className="model-source-option model-source-option-recommended"
+											aria-pressed={selectedModelAccess === "local"}
 											onClick={() => chooseModelAccess("local")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -1589,6 +1635,7 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											</button>
 										<button
 											type="button"
+											aria-pressed={selectedModelAccess === "open"}
 											onClick={() => chooseModelAccess("open")}
 										>
 											<span className="source-glyph" aria-hidden="true">
@@ -1879,9 +1926,52 @@ function Onboarding({ onDone }: { onDone(): void }) {
 															? `${memoryInGb(systemProfile)} GB ${systemProfile.architecture === "arm64" ? "Apple Silicon Mac" : `${systemProfile.architecture} Mac`}`
 															: "Checking this Mac…"}
 													</strong>
+													<small>
+														{systemProfile
+															? `${systemProfile.logicalCpus} logical CPU${systemProfile.logicalCpus === 1 ? "" : "s"} detected`
+															: "Reading hardware before choosing a model…"}
+													</small>
 												</span>
 											</div>
 										</div>
+										{recommendedModel && (
+											<section
+												className="local-auto-setup"
+												aria-label="Automatic local setup"
+											>
+												<div className="local-auto-setup-copy">
+													<span className="local-auto-setup-label">
+														Best fit for this Mac
+													</span>
+													<strong>{recommendedModel.title}</strong>
+													<code>{recommendedModel.name}</code>
+													<p>
+														One click downloads the pinned Ollama runtime if
+														needed, pulls this {recommendedModel.size} model,
+														verifies a real response, and configures local
+														routing. Inference stays on this Mac.
+													</p>
+												</div>
+												<button
+													className="button primary"
+													disabled={
+														automaticBusy ||
+														Boolean(downloading) ||
+														!localSetupAvailable
+													}
+													onClick={() =>
+														void bootstrapLocal(recommendedModel.name)
+													}
+												>
+													{automaticBusy &&
+													automaticModel === recommendedModel.name
+														? "Setting up…"
+														: recommendedModelInstalled
+															? "Verify local setup again"
+															: "Set up automatically"}
+												</button>
+											</section>
+										)}
 										{recommendedTiers.length > 0 && (
 											<section
 												className="recommended-model-tiers"
@@ -1894,47 +1984,45 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																item.name === model.name ||
 																item.name === `${model.name}:latest`,
 														);
+														const isRecommended =
+															model.name === recommendedModel?.name;
 														const tier =
 															index === 0
 																? { name: "Light" }
 																: index === recommendedTiers.length - 1
 																	? { name: "Power" }
-																	: { name: "Balanced" };
-														return (
-															<article
-																key={model.name}
-																className={
-																	tier.name === "Balanced" ? "preferred" : ""
-																}
-															>
-																<div className="model-tier-name">
-																	<strong>{tier.name}</strong>
-																	{tier.name === "Balanced" && (
-																		<span>Recommended</span>
-																	)}
-																</div>
-																<small>{model.bestFor}</small>
-																<details className="model-tier-details">
-																	<summary>Details</summary>
-																	<dl>
-																		<div>
-																			<dt>Model</dt>
-																			<dd>{model.title}</dd>
-																		</div>
-																		<div>
-																			<dt>Requirements</dt>
-																			<dd>
-																				{model.speed} · {model.minimumMemory}{" "}
-																				GB+ usable memory
-																			</dd>
-																		</div>
-																		<div>
-																			<dt>Download</dt>
-																			<dd>
-																				{model.size} · {model.contextLength}{" "}
-																				context
-																			</dd>
-																		</div>
+																		: { name: "Balanced" };
+													return (
+														<article
+															key={model.name}
+															className={isRecommended ? "preferred" : ""}
+														>
+															<div className="model-tier-name">
+																<strong>{tier.name}</strong>
+																{isRecommended && <span>Best fit</span>}
+															</div>
+															<small>{model.bestFor}</small>
+															<details className="model-tier-details">
+																<summary>Details</summary>
+																<dl>
+																	<div>
+																		<dt>Model</dt>
+																		<dd>{model.title}</dd>
+																	</div>
+																	<div>
+																		<dt>Requirements</dt>
+																		<dd>
+																			{model.speed} · {model.minimumMemory}{" "}
+																			GB+ usable memory
+																		</dd>
+																	</div>
+																	<div>
+																		<dt>Download</dt>
+																		<dd>
+																			{model.size} · {model.contextLength}{" "}
+																			context
+																		</dd>
+																	</div>
 																	</dl>
 																</details>
 																{installed ? (
@@ -1944,33 +2032,25 @@ function Onboarding({ onDone }: { onDone(): void }) {
 																	</span>
 																) : (
 																	<button
-																		className={`button ${tier.name === "Balanced" ? "primary" : "secondary"}`}
+																		className={`button ${isRecommended ? "primary" : "secondary"}`}
 																		disabled={
 																			automaticBusy ||
 																			Boolean(downloading) ||
-																			(!ollamaAvailable &&
-																				localRuntime?.automaticSupported ===
-																					false)
+																			!localSetupAvailable
 																		}
-																		onClick={() =>
-																			ollamaAvailable
-																				? void downloadModel(model.name)
-																				: void bootstrapLocal(model.name)
-																		}
+																		onClick={() => void bootstrapLocal(model.name)}
 																	>
 																		{automaticBusy &&
-																		automaticModel === model.name
+																			automaticModel === model.name
 																			? "Setting up…"
-																			: downloading === model.name
-																				? "Downloading…"
-																				: tier.name === "Balanced"
-																					? `Install recommended · ${model.size}`
-																					: `Install ${tier.name.toLowerCase()} · ${model.size}`}
+																			: isRecommended
+																			? `Set up best fit · ${model.size}`
+																			: `Set up ${tier.name.toLowerCase()} · ${model.size}`}
 																	</button>
 																)}
-															</article>
-														);
-													})}
+														</article>
+													);
+												})}
 												</div>
 											</section>
 										)}
@@ -2256,9 +2336,9 @@ function Onboarding({ onDone }: { onDone(): void }) {
 											))}
 										</div>
 										<p className="provider-footnote">
-											“Free” availability, quotas, privacy terms, and model
-											lists change. Review the source before sending data. A
-											listing here is not a connection or a Kestrel endorsement.
+											Free plans, quotas, privacy terms, and models change. Review each
+											provider before sharing data. A listing here is not a connection
+											or endorsement.
 										</p>
 									</div>
 								)}
@@ -2361,11 +2441,6 @@ function Onboarding({ onDone }: { onDone(): void }) {
 				</AnimatePresence>
 			</div>
 			<footer className="onboarding-actions">
-				{step === 2 && (
-					<small className="setup-continue-hint">
-						Choose an option above to continue.
-					</small>
-				)}
 				{step === finalSetupStep && modelReady && !verifiedModelReady && (
 					<small className="setup-continue-hint">
 						Verify one model route before opening Kestrel.
@@ -2412,11 +2487,15 @@ function Onboarding({ onDone }: { onDone(): void }) {
 						className="button primary"
 						disabled={
 							(step === 1 && !warningAccepted) ||
-							step === 2 ||
+							(step === 2 && !selectedModelAccess) ||
 							(step === finalSetupStep && !onboardingCompleteAllowed)
 						}
 						onClick={() => {
-							if (step === finalSetupStep) {
+							if (step === 2) {
+								if (!selectedModelAccess) return;
+								setModelView(selectedModelAccess);
+								go(3);
+							} else if (step === finalSetupStep) {
 								if (verifiedModelReady) {
 									localStorage.setItem("kestrel:first-task", "yes");
 								}
@@ -2786,9 +2865,7 @@ function Artifacts() {
 	const verifiedCount = artifacts.filter((artifact) => artifact.integrity === "verified").length;
 	return (
 		<PageFrame
-			eyebrow="Verified results"
 			title="Artifacts"
-			text="Inspect locally stored outputs together with their source, model, session, and verification hash."
 			measure="wide"
 		>
 			<div className="artifact-toolbar">
@@ -2807,7 +2884,6 @@ function Artifacts() {
 			{artifacts.length === 0 && !loading ? (
 				<Empty
 					title="Nothing saved yet"
-					text="Verified files and interactive results will appear here."
 				/>
 			) : (
 				<section className="artifact-grid" aria-live="polite">
@@ -3005,10 +3081,14 @@ function RuntimeConversation({
 	const [messages, setMessages] = useState<RuntimeMessage[]>([]);
 	const [hasEarlierMessages, setHasEarlierMessages] = useState(false);
 	const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
-	const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
 	const [providerId, setProviderId] = useState(
 		() => localStorage.getItem("kestrel:provider-id") ?? "",
+	);
+	const [accountId, setAccountId] = useState(
+		() => localStorage.getItem("kestrel:provider-account-id") ?? "",
 	);
 	const [model, setModel] = useState(
 		() => localStorage.getItem("kestrel:model") ?? "",
@@ -3127,24 +3207,30 @@ function RuntimeConversation({
 			cancelled = true;
 		};
 	}, [activeMention, taskWorkspace]);
-	const manualRoutingReady = Boolean(providerId && model.trim());
-	const executionReady = executionMode === "automatic" || manualRoutingReady;
-	activeSessionIdRef.current = activeSessionId;
 	const modelChoice: ModelSelectorChoice = {
 		executionMode,
 		providerId,
+		...(accountId ? { accountId } : {}),
 		model,
 		reasoningEffort,
 	};
+	const selectedManualAccount = accountForChoice(providerAccounts, modelChoice);
+	const manualRoutingReady = Boolean(selectedManualAccount && model.trim());
+	const executionReady = executionMode === "automatic" || manualRoutingReady;
+	activeSessionIdRef.current = activeSessionId;
 
 	function applyModelChoice(next: ModelSelectorChoice) {
 		setExecutionMode(next.executionMode);
 		setProviderId(next.providerId);
+		setAccountId(next.accountId ?? "");
 		setModel(next.model);
 		setReasoningEffort(next.reasoningEffort);
 		localStorage.setItem("kestrel:execution-mode", next.executionMode);
 		if (next.providerId)
 			localStorage.setItem("kestrel:provider-id", next.providerId);
+		if (next.accountId)
+			localStorage.setItem("kestrel:provider-account-id", next.accountId);
+		else localStorage.removeItem("kestrel:provider-account-id");
 		if (next.model.trim())
 			localStorage.setItem("kestrel:model", next.model.trim());
 		localStorage.setItem("kestrel:reasoning-effort", next.reasoningEffort);
@@ -3357,24 +3443,20 @@ function RuntimeConversation({
 		let cancelled = false;
 		void Promise.all([
 			window.kestrel.request({ type: "runtime-list-providers" }),
-			window.kestrel.request({ type: "local-model-status" }),
 			window.kestrel.request({ type: "runtime-list-sessions" }),
 		])
 			.then(
 				async ([
 					providerResponse,
-					localModelResponse,
 					sessionResponse,
 				]) => {
 					if (cancelled) return;
-					if (providerResponse.ok && "providers" in providerResponse) {
-						const available = providerResponse.providers ?? [];
-						setProviders(available);
-						setProviderId((current) =>
-							available.some((provider) => provider.id === current)
-								? current
-								: available[0]?.id || "",
-						);
+					const available =
+						providerResponse.ok && "providerAccounts" in providerResponse
+							? (providerResponse.providerAccounts ?? [])
+							: [];
+					if (providerResponse.ok && "providerAccounts" in providerResponse) {
+						setProviderAccounts(available);
 					}
 					const availableGrants = availableWorkspaceGrants(projects);
 					setWorkspace(
@@ -3384,12 +3466,16 @@ function RuntimeConversation({
 								? current
 								: availableGrants[0]?.path) ?? "",
 					);
-					if (localModelResponse.ok && "localModels" in localModelResponse)
-						setLocalModels(localModelResponse.localModels);
 					if (sessionResponse.ok && "sessions" in sessionResponse)
 						onSessions(sessionResponse.sessions ?? []);
 					const visibleSessionId = activeSessionIdRef.current;
 					if (visibleSessionId) await loadSession(visibleSessionId);
+					if (!catalogNeedsBackgroundRefresh(available)) return;
+					const refreshed = await window.kestrel.request({
+						type: "runtime-refresh-provider-models",
+					});
+					if (!cancelled && refreshed.ok && "providerAccounts" in refreshed)
+						setProviderAccounts(refreshed.providerAccounts ?? []);
 				},
 			)
 			.catch((cause) => {
@@ -3512,19 +3598,6 @@ function RuntimeConversation({
 					);
 			});
 	}, [refreshRevision, visible]);
-
-	useEffect(() => {
-		if (providerId === "auto") {
-			setModel("auto");
-			return;
-		}
-		if (providerId !== "ollama") return;
-		setModel((current) =>
-			localModels.some((item) => item.name === current)
-				? current
-				: (localModels[0]?.name ?? ""),
-		);
-	}, [providerId, localModels]);
 
 	useEffect(() => {
 		const preserveActiveRun = shouldPreserveActiveRun({
@@ -3821,9 +3894,9 @@ function RuntimeConversation({
 			setOptimisticSteering((current) => [...current, prompt]);
 			return;
 		}
-		if (executionMode === "manual" && !providerId) {
+		if (executionMode === "manual" && !selectedManualAccount) {
 			setError(
-				"Choose a configured provider or switch execution back to Automatic.",
+				"The selected provider account is unavailable. Choose another account or switch execution back to Automatic.",
 			);
 			return;
 		}
@@ -4792,8 +4865,7 @@ function RuntimeConversation({
 								<Icon name="plus" />
 							</button>
 							<ModelSelector
-								providers={providers}
-								localModels={localModels}
+								accounts={providerAccounts}
 								choice={modelChoice}
 								onChange={applyModelChoice}
 							/>
@@ -5123,7 +5195,6 @@ function Memory({
 	return (
 		<PageFrame
 			title="Memory"
-			text="Review confirmed facts, provenance, and transcript matches before they shape future work."
 			measure="wide"
 		>
 			<form
@@ -5377,12 +5448,12 @@ function Readiness() {
 			})) as CoreResponse;
 			if (!response.ok) throw new Error(response.error);
 			const checked: ProviderVerification[] = [];
-			for (const provider of (response.providers ?? []).filter(
-				(item) => item.id !== "auto",
-			)) {
+			for (const provider of (
+				"providerAccounts" in response ? response.providerAccounts ?? [] : []
+			).filter((account) => account.enabled)) {
 				const result = (await window.kestrel.request({
 					type: "runtime-verify-provider",
-					providerId: provider.id,
+					providerId: provider.endpointId,
 				})) as CoreResponse;
 				if (!result.ok) throw new Error(result.error);
 				checked.push(...(result.providerVerifications ?? []));
@@ -5484,7 +5555,6 @@ function Readiness() {
 		<PageFrame
 			eyebrow={readiness?.readyForLiveWork ? "Ready for work" : "Needs attention"}
 			title="Readiness"
-			text="Check what is configured, what is reachable, and which recovery boundaries are available on this Mac."
 			measure="wide"
 			actions={
 				<button
@@ -5512,8 +5582,8 @@ function Readiness() {
 					</strong>
 					<p>
 						{readiness
-							? `${warnings} optional item${warnings === 1 ? "" : "s"} can be completed when a task needs them. Last checked ${new Date(readiness.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
-							: "Reading local status without sending project data anywhere."}
+							? `${warnings} optional setup item${warnings === 1 ? "" : "s"} remain. Checked ${new Date(readiness.checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`
+							: "Checking this Mac. No project data is sent."}
 					</p>
 				</div>
 			</section>
@@ -5571,8 +5641,8 @@ function Readiness() {
 						)}
 					</header>
 					<p>
-						This contacts only the configured provider or local model service.
-						It does not send a project prompt.
+						Checks the configured provider or local model. It does not send a
+						project prompt.
 					</p>
 					{providerChecks.length > 0 && (
 							<ul>
@@ -5614,10 +5684,9 @@ function Readiness() {
 							</div>
 						</header>
 						<p>
-							Copies encrypted conversations, settings, protected credentials,
-							installed plugins, and artifacts after safely stopping the local
-							core. Project folders are not duplicated. The snapshot can unlock
-							your local state, so store it like a password.
+						Backs up encrypted conversations, settings, credentials, plugins, and
+						artifacts. Project folders are not copied. Treat the snapshot like a
+						password.
 						</p>
 						{backup && (
 							<div className="backup-result">
@@ -5663,9 +5732,8 @@ function Readiness() {
 							</div>
 						</header>
 						<p>
-							Saves a content-free JSON envelope with version, platform, readiness
-							counts, and failure class only. No prompts, page content,
-							credentials, or personal memory are included. Review before sharing.
+						Saves version, platform, readiness, and failure details—never prompts,
+						page content, credentials, or memory. Review it before sharing.
 						</p>
 						<button
 							className="button secondary"
@@ -5734,7 +5802,7 @@ function Research() {
 		<PageFrame
 			eyebrow="Search with sources"
 			title="Research"
-			text="Search the web directly, open a result in a bounded reader, and retain its retrieval evidence."
+			text="Search the web and keep sources with your findings."
 			measure="wide"
 		>
 			<form
@@ -5767,7 +5835,6 @@ function Research() {
 			{!query.trim() && results.length === 0 && !page && !busy && (
 				<Empty
 					title="Start with a question"
-					text="Enter a query to find web results Kestrel can cite in answers."
 				/>
 			)}
 			{query.trim() && results.length === 0 && !page && !busy && !error && (
@@ -5828,13 +5895,36 @@ function Work({
 	const [teams, setTeams] = useState<TeamRecordContract[]>([]);
 	const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
 	const [routingTraces, setRoutingTraces] = useState<RoutingTrace[]>([]);
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
-	const [localModels, setLocalModels] = useState<LocalModelSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
+	const [providerAccountsLoaded, setProviderAccountsLoaded] = useState(false);
 	const [parentSessionId, setParentSessionId] = useState(sessions[0]?.id ?? "");
-	const [providerId, setProviderId] = useState("auto");
-	const [model, setModel] = useState(
-		() => localStorage.getItem("kestrel:model") ?? "auto",
-	);
+	const [workModelChoice, setWorkModelChoice] =
+		useState<ModelSelectorChoice>(() => {
+			const accountId = localStorage.getItem("kestrel:provider-account-id");
+			const storedReasoningEffort = localStorage.getItem(
+				"kestrel:reasoning-effort",
+			);
+			return {
+				executionMode:
+					localStorage.getItem("kestrel:execution-mode") === "manual"
+						? "manual"
+						: "automatic",
+				providerId: localStorage.getItem("kestrel:provider-id") ?? "",
+				...(accountId ? { accountId } : {}),
+				model: localStorage.getItem("kestrel:model") ?? "auto",
+				reasoningEffort:
+					storedReasoningEffort === "low" ||
+					storedReasoningEffort === "medium" ||
+					storedReasoningEffort === "high" ||
+					storedReasoningEffort === "xhigh" ||
+					storedReasoningEffort === "max" ||
+					storedReasoningEffort === "none"
+						? storedReasoningEffort
+						: "none",
+			};
+		});
 	const [delegationEvidence, setDelegationEvidence] = useState("");
 	const [delegateTitle, setDelegateTitle] = useState("");
 	const [delegatePrompt, setDelegatePrompt] = useState("");
@@ -5869,9 +5959,25 @@ function Work({
 		}
 	}, [parentSessionId, sessions]);
 
+	const workManualAccount = accountForChoice(
+		providerAccounts,
+		workModelChoice,
+	);
+	const manualRoutingReady = Boolean(
+		providerAccountsLoaded && workManualAccount && workModelChoice.model.trim(),
+	);
+	const workRoutingReady =
+		workModelChoice.executionMode === "automatic" || manualRoutingReady;
+	const workRouting =
+		workModelChoice.executionMode === "automatic"
+			? { model: "auto", providerIds: ["auto"] }
+			: {
+					model: workModelChoice.model.trim(),
+					providerIds: [workModelChoice.providerId],
+				};
+
 	async function load() {
-		const [state, providerState, sessionState, localModelState, traceState] =
-			await Promise.all([
+		const [state, providerState, sessionState, traceState] = await Promise.all([
 				window.kestrel.request({
 					type: "orchestration-list",
 				}) as Promise<CoreResponse>,
@@ -5882,9 +5988,6 @@ function Work({
 					type: "runtime-list-sessions",
 				}) as Promise<CoreResponse>,
 				window.kestrel.request({
-					type: "local-model-status",
-				}),
-				window.kestrel.request({
 					type: "orchestration-routing-traces",
 				}) as Promise<CoreResponse>,
 			]);
@@ -5892,18 +5995,10 @@ function Work({
 		setGoals(state.goals ?? []);
 		setTeams(state.teams ?? []);
 		setJobs(state.jobs ?? []);
-		if (providerState.ok) {
-			setProviders(providerState.providers ?? []);
-			setProviderId((current) =>
-				providerState.providers?.some((provider) => provider.id === current)
-					? current
-					: providerState.providers?.some((provider) => provider.id === "auto")
-						? "auto"
-						: providerState.providers?.[0]?.id || "",
-			);
+		if (providerState.ok && "providerAccounts" in providerState) {
+			setProviderAccounts(providerState.providerAccounts ?? []);
+			setProviderAccountsLoaded(true);
 		}
-		if (localModelState.ok && "localModels" in localModelState)
-			setLocalModels(localModelState.localModels);
 		if (traceState.ok) setRoutingTraces(traceState.routingTraces ?? []);
 		if (sessionState.ok) onSessions(sessionState.sessions ?? []);
 	}
@@ -5930,13 +6025,59 @@ function Work({
 	}, []);
 
 	useEffect(() => {
-		if (providerId !== "ollama") return;
-		setModel((current) =>
-			localModels.some((item) => item.name === current)
-				? current
-				: (localModels[0]?.name ?? ""),
+		if (
+			!providerAccountsLoaded ||
+			!catalogNeedsBackgroundRefresh(providerAccounts)
+		)
+			return;
+		let cancelled = false;
+		void window.kestrel
+			.request({ type: "runtime-refresh-provider-models" })
+			.then((raw) => {
+				const response = raw as CoreResponse;
+				if (!cancelled && response.ok && "providerAccounts" in response)
+					setProviderAccounts(response.providerAccounts ?? []);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [providerAccounts, providerAccountsLoaded]);
+
+	useEffect(() => {
+		if (!providerAccountsLoaded) return;
+		setWorkModelChoice((current) => {
+			if (current.executionMode === "automatic") return current;
+			const account = accountForChoice(providerAccounts, current);
+			if (!account) return current;
+			return {
+				...current,
+				providerId: account.endpointId,
+				accountId: account.id,
+			};
+		});
+	}, [providerAccounts, providerAccountsLoaded]);
+
+	useEffect(() => {
+		localStorage.setItem(
+			"kestrel:execution-mode",
+			workModelChoice.executionMode,
 		);
-	}, [providerId, localModels]);
+		if (workModelChoice.providerId)
+			localStorage.setItem("kestrel:provider-id", workModelChoice.providerId);
+		if (workModelChoice.accountId)
+			localStorage.setItem(
+				"kestrel:provider-account-id",
+				workModelChoice.accountId,
+			);
+		else localStorage.removeItem("kestrel:provider-account-id");
+		if (workModelChoice.model.trim())
+			localStorage.setItem("kestrel:model", workModelChoice.model.trim());
+		localStorage.setItem(
+			"kestrel:reasoning-effort",
+			workModelChoice.reasoningEffort,
+		);
+	}, [workModelChoice]);
 
 	async function mutate(
 		request: RendererRequest,
@@ -5981,9 +6122,7 @@ function Work({
 
 	return (
 		<PageFrame
-			eyebrow="Plan and track"
 			title="Work"
-			text="Coordinate goals, delegates, schedules, and handoffs while keeping routing and approval evidence visible."
 			measure="wide"
 		>
 			{routedTask && (
@@ -6090,15 +6229,18 @@ function Work({
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
-						if (!parentSessionId || !providerId || !model.trim()) return;
+						if (!parentSessionId || !workRoutingReady) return;
 						void mutate(
 							{
 								type: "orchestration-delegate",
 								parentSessionId,
 								title: delegateTitle,
 								prompt: delegatePrompt,
-								model: model.trim(),
-								providerIds: [providerId],
+								...workRouting,
+								...(workModelChoice.executionMode === "manual" &&
+								workModelChoice.reasoningEffort !== "none"
+									? { reasoningEffort: workModelChoice.reasoningEffort }
+									: {}),
 								isolateWorktree,
 							},
 							() => {
@@ -6110,8 +6252,8 @@ function Work({
 				>
 				<h2>Delegate a task</h2>
 				<p className="work-card-note">
-					Kestrel picks a verified worker by capability, cost, privacy, and
-					your routing preference.
+					Kestrel selects a verified worker based on capability, cost, privacy,
+					and your preferences.
 				</p>
 				<label>
 					Parent task
@@ -6146,45 +6288,15 @@ function Work({
 					</label>
 					<details className="work-routing-override">
 						<summary>Override automatic routing</summary>
-						<div className="work-inline">
-							<select
-								aria-label="Provider"
-								value={providerId}
-								onChange={(event) => setProviderId(event.target.value)}
-							>
-								{providers.map((provider) => (
-									<option key={provider.id}>{provider.id}</option>
-								))}
-							</select>
-							{providerId === "ollama" ? (
-								<select
-									aria-label="Installed Ollama model"
-									value={model}
-									onChange={(event) => setModel(event.target.value)}
-									disabled={localModels.length === 0}
-								>
-									{localModels.length === 0 ? (
-										<option value="">No installed Ollama models found</option>
-									) : (
-										localModels.map((localModel) => (
-											<option value={localModel.name} key={localModel.name}>
-												{localModel.name} · {compactBytes(localModel.size)}
-											</option>
-										))
-									)}
-								</select>
-							) : (
-								<input
-									aria-label="Model"
-									placeholder={
-										providerId === "auto" ? "Automatically selected" : "Model"
-									}
-									value={model}
-									onChange={(event) => setModel(event.target.value)}
-									readOnly={providerId === "auto"}
-								/>
-							)}
-						</div>
+						<p className="work-card-note">
+							Choose one connected account only when this work must bypass
+							Kestrel's automatic router.
+						</p>
+						<ModelSelector
+							accounts={providerAccounts}
+							choice={workModelChoice}
+							onChange={setWorkModelChoice}
+						/>
 					</details>
 					{delegationEvidence && (
 						<small role="status">{delegationEvidence}</small>
@@ -6203,8 +6315,7 @@ function Work({
 							busy ||
 							!delegateTitle.trim() ||
 							!delegatePrompt.trim() ||
-							!providerId ||
-							!model.trim()
+							!workRoutingReady
 						}
 					>
 						Run delegate
@@ -6260,15 +6371,14 @@ function Work({
 					className="work-card"
 					onSubmit={(event) => {
 						event.preventDefault();
-						if (!parentSessionId || !providerId || !model.trim()) return;
+						if (!parentSessionId || !workRoutingReady) return;
 						void mutate(
 							{
 								type: "orchestration-schedule",
 								sessionId: parentSessionId,
 								title: scheduleTitle,
 								prompt: schedulePrompt,
-								model: model.trim(),
-								providerIds: [providerId],
+								...workRouting,
 								expression: scheduleExpression,
 							},
 							() => {
@@ -6304,8 +6414,7 @@ function Work({
 					/>
 				</label>
 				<small>
-					Natural-language times are interpreted in UTC. Five-field cron is
-					supported.
+					Times are interpreted in UTC. Five-field cron is supported.
 				</small>
 				<button
 					className="button primary"
@@ -6314,8 +6423,7 @@ function Work({
 						!scheduleTitle.trim() ||
 						!schedulePrompt.trim() ||
 						!scheduleExpression.trim() ||
-						!providerId ||
-						!model.trim()
+						!workRoutingReady
 					}
 				>
 					Schedule
@@ -6324,9 +6432,8 @@ function Work({
 				<article className="work-card">
 					<h2>Automation boundary</h2>
 					<p>
-						Scheduled runs stay local and encrypted. Sensitive actions stop in
-						the review queue for approval, and recurring work advances only
-						after a completed run.
+						Runs stay local and encrypted. Sensitive actions wait for approval;
+						recurring work continues only after a run completes.
 					</p>
 				</article>
 			</section>
@@ -6746,8 +6853,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								"Checking for the official Codex runtime on this Mac."}
 						</p>
 						<small>
-							Codex owns the browser callback, credential storage, and token
-							refresh. Kestrel receives account status only.
+					Codex handles sign-in and credentials. Kestrel receives account status
+					only.
 						</small>
 					</div>
 					<span
@@ -6901,8 +7008,8 @@ function Connections({ snapshot }: { snapshot: WorkspaceSnapshot }) {
 								"Checking whether Kestrel can read the local Messages database."}
 						</p>
 						<small>
-							Read-only and on demand. Kestrel extracts a short code, never the
-							message body, and never sends a message.
+					Read-only and on demand. Kestrel extracts only a short code; it never
+					reads the body or sends messages.
 						</small>
 					</div>
 					<span
@@ -7095,8 +7202,8 @@ function LearnedSkillsSettings({
 			<div>
 				<strong>Experience-to-skill learning</strong>
 				<p>
-					Proposals are credential-scanned and parsed in isolation. Nothing
-					installs without your review.
+					Review proposals before installing them. Nothing installs without your
+					approval.
 				</p>
 				<small>
 					{installed.length} installed · {waiting.length} waiting ·{" "}
@@ -7228,8 +7335,8 @@ function CredentialSettings({
 			<div>
 				<strong>Protected provider credentials</strong>
 				<p>
-					Encrypted with macOS secure storage, sent only to the isolated core,
-					and never displayed again.
+					Encrypted in macOS secure storage, sent only to Kestrel's isolated
+					core, and never shown again.
 				</p>
 				<div className="credential-list">
 						{credentials.map((credential) => (
@@ -7377,8 +7484,8 @@ function SubscriptionCliSettings({
 			<div>
 				<strong>Existing vendor subscriptions</strong>
 				<p>
-					Use the Codex, Claude Code, or OpenCode sign-in already on this
-					Mac. Kestrel never copies vendor OAuth tokens.
+					Use an existing Codex, Claude Code, or OpenCode sign-in. Kestrel never
+					copies vendor OAuth tokens.
 				</p>
 				<ul className="subscription-setting-list">
 					{items
@@ -7429,7 +7536,9 @@ function SubscriptionCliSettings({
 }
 
 function ProviderVerificationSettings() {
-	const [providers, setProviders] = useState<ModelProviderSummary[]>([]);
+	const [providerAccounts, setProviderAccounts] = useState<
+		ProviderAccountSummary[]
+	>([]);
 	const [results, setResults] = useState<
 		Record<string, ProviderVerification[]>
 	>({});
@@ -7440,13 +7549,11 @@ function ProviderVerificationSettings() {
 			.request({ type: "runtime-list-providers" })
 			.then((raw) => {
 				const response = raw as CoreResponse;
-				if (response.ok)
-					setProviders(
-						(response.providers ?? []).filter(
-							(provider) => provider.id !== "auto",
-						),
+				if (response.ok && "providerAccounts" in response)
+					setProviderAccounts(
+						(response.providerAccounts ?? []).filter((account) => account.enabled),
 					);
-				else setError(response.error);
+				else if (!response.ok) setError(response.error);
 			});
 	}, []);
 	async function verify(providerId: string) {
@@ -7480,17 +7587,17 @@ function ProviderVerificationSettings() {
 					Probe configured accounts from the isolated core — no credentials
 					exposed, no model prompt sent.
 				</p>
-				{providers.length === 0 ? (
-					<small>No model providers are configured.</small>
+				{providerAccounts.length === 0 ? (
+					<small>No enabled model accounts are configured.</small>
 				) : (
 					<ul className="workspace-grants">
-						{providers.map((provider) => {
-							const checks = results[provider.id];
+						{providerAccounts.map((account) => {
+							const checks = results[account.endpointId];
 							const valid = checks?.every((check) => check.ok);
 							return (
-								<li key={provider.id}>
+								<li key={account.id}>
 									<span>
-										{provider.id} ·{" "}
+										{account.providerId} · {account.displayName} ·{" "}
 										{checks
 											? valid
 												? `${checks.length} credential${checks.length === 1 ? "" : "s"} verified`
@@ -7506,9 +7613,9 @@ function ProviderVerificationSettings() {
 									<button
 										className="quiet-link"
 										disabled={Boolean(busy)}
-										onClick={() => void verify(provider.id)}
+										onClick={() => void verify(account.endpointId)}
 									>
-										{busy === provider.id ? "Checking…" : "Verify"}
+										{busy === account.endpointId ? "Checking…" : "Verify"}
 									</button>
 								</li>
 							);
@@ -8165,6 +8272,17 @@ function RoutingPolicySettings() {
 		);
 
 	const latest = traces.at(-1);
+	const updateProviderIds = (
+		field: "preferredProviderIds" | "avoidedProviderIds",
+		value: string,
+	) =>
+		setPolicy({
+			...policy,
+			[field]: value
+				.split(",")
+				.map((providerId) => providerId.trim())
+				.filter(Boolean),
+		});
 	return (
 		<article className="setting-row routing-policy-setting">
 			<div>
@@ -8220,6 +8338,46 @@ function RoutingPolicySettings() {
 				<details className="routing-advanced">
 					<summary>Advanced routing and latest trace</summary>
 					<div className="routing-advanced-grid">
+						<label className="checkbox-label routing-policy-toggle">
+							<input
+								type="checkbox"
+								checked={policy.allowAutomaticEscalation}
+								onChange={(event) =>
+									setPolicy({
+										...policy,
+										allowAutomaticEscalation: event.target.checked,
+									})
+								}
+							/>{" "}
+							Allow automatic escalation
+							<small>Move to a stronger route only when needed.</small>
+						</label>
+						<label>
+							Maximum escalations
+							<input
+								type="number"
+								min="0"
+								max="8"
+								value={policy.maximumEscalations}
+								onChange={(event) =>
+									setPolicy({
+										...policy,
+										maximumEscalations: Number(event.target.value),
+									})
+								}
+							/>
+						</label>
+						<label className="checkbox-label routing-policy-toggle">
+							<input
+								type="checkbox"
+								checked={policy.allowVerifier}
+								onChange={(event) =>
+									setPolicy({ ...policy, allowVerifier: event.target.checked })
+								}
+							/>{" "}
+							Use independent verification
+							<small>Add a separate reviewer when the route requires it.</small>
+						</label>
 						<label>
 							Maximum parallel agents
 							<input
@@ -8280,6 +8438,28 @@ function RoutingPolicySettings() {
 								}
 							/>
 						</label>
+						<label>
+							Preferred provider IDs
+							<input
+								value={policy.preferredProviderIds.join(", ")}
+								placeholder="comma separated"
+								onChange={(event) =>
+									updateProviderIds("preferredProviderIds", event.target.value)
+								}
+							/>
+							<small>Soft preference. IDs only; never credentials.</small>
+						</label>
+						<label>
+							Avoided provider IDs
+							<input
+								value={policy.avoidedProviderIds.join(", ")}
+								placeholder="comma separated"
+								onChange={(event) =>
+									updateProviderIds("avoidedProviderIds", event.target.value)
+								}
+							/>
+							<small>Hard exclusion. IDs only; never credentials.</small>
+						</label>
 					</div>
 					<button
 						className="button secondary"
@@ -8304,6 +8484,39 @@ function RoutingPolicySettings() {
 									? ` · ${latest.escalationCount} escalation${latest.escalationCount === 1 ? "" : "s"}`
 									: ""}
 							</small>
+							{latest.decisions.length > 0 && (
+								<dl className="routing-trace-context">
+									<div>
+										<dt>Account</dt>
+										<dd>{latest.decisions[0]?.accountAlias ?? "Default account"}</dd>
+									</div>
+									<div>
+										<dt>Execution</dt>
+										<dd>
+											{latest.decisions[0]?.executionPattern?.replaceAll("_", " ") ??
+												"single executor"}
+										</dd>
+									</div>
+									<div>
+										<dt>Why this route</dt>
+										<dd>{latest.decisions[0]?.reasons.join(" · ")}</dd>
+									</div>
+								</dl>
+							)}
+							{latest.candidates?.length ? (
+								<details className="routing-trace-candidates">
+									<summary>Candidate routes ({latest.candidates.length})</summary>
+									<ul>
+										{latest.candidates.map((candidate) => (
+											<li key={`${candidate.modelId}-${candidate.endpointId}`}>
+												<strong>{candidate.model}</strong> via {candidate.providerId}
+												{candidate.accountAlias ? ` · ${candidate.accountAlias}` : ""}
+												{candidate.selected ? " · selected" : ""}
+											</li>
+										))}
+									</ul>
+								</details>
+							) : null}
 						</div>
 					) : (
 						<small>No routed task trace yet.</small>
@@ -8570,6 +8783,10 @@ function AgentWorkspaceSettings() {
 	const [grants, setGrants] = useState<WorkspaceGrant[]>([]);
 	const [sessions, setSessions] = useState<RuntimeSession[]>([]);
 	const [busy, setBusy] = useState(false);
+	const [planetBusySessionId, setPlanetBusySessionId] = useState<string | null>(
+		null,
+	);
+	const [planetError, setPlanetError] = useState("");
 	const [error, setError] = useState("");
 
 	const load = useCallback(async () => {
@@ -8647,6 +8864,45 @@ function AgentWorkspaceSettings() {
 		}
 	}
 
+	async function updateAgentPlanet(sessionId: string, value: string) {
+		const asset = value
+			? AGENT_UNIVERSE_PLANET_ASSETS.find((candidate) => candidate.id === value)
+			: undefined;
+		if (value && !asset) {
+			setPlanetError("That planet is not available in the local NASA asset set.");
+			return;
+		}
+		setPlanetBusySessionId(sessionId);
+		setPlanetError("");
+		try {
+			const response = (await window.kestrel.request({
+				type: "runtime-update-agent-planet",
+				sessionId,
+				planetAssetId: asset ? (asset.id as AgentPlanetAssetId) : null,
+			})) as CoreResponse;
+			if (!response.ok) throw new Error(response.error);
+			if (!response.session)
+				throw new Error("The updated agent session was not returned.");
+			setSessions((current) =>
+				current.map((session) =>
+					session.id === response.session!.id ? response.session! : session,
+				),
+			);
+		} catch (cause) {
+			setPlanetError(
+				cause instanceof Error
+					? cause.message
+					: "The agent planet could not be updated.",
+			);
+		} finally {
+			setPlanetBusySessionId(null);
+		}
+	}
+
+	const persistentAgents = sessions.filter(
+		(session) => session.kind === "agent" && !session.forgottenAt,
+	);
+
 	return (
 		<section
 			className="settings-panel"
@@ -8656,8 +8912,8 @@ function AgentWorkspaceSettings() {
 			<header className="settings-panel-header">
 				<h2 id="settings-workspace-title">Workspace and sessions</h2>
 				<p>
-					Keep local folder access explicit and review the durable sessions that
-					can use it. Removing a folder does not delete files or transcripts.
+					Approve folder access and review persistent sessions. Removing a folder
+					keeps its files and chats.
 				</p>
 			</header>
 			<section className="settings-stack" aria-label="Workspace and session settings">
@@ -8665,8 +8921,8 @@ function AgentWorkspaceSettings() {
 					<div>
 						<strong>Project folder access</strong>
 						<p>
-							Only approved folders are available to workspace tools. Access is
-							revocable and unavailable folders remain visible for recovery.
+							Only approved folders are available to workspace tools. Remove access
+							anytime; unavailable folders stay listed so you can reconnect them.
 						</p>
 						{grants.length === 0 ? (
 							<small>No project folders are connected.</small>
@@ -8700,6 +8956,67 @@ function AgentWorkspaceSettings() {
 					>
 						{busy ? "Updating…" : "Add folder"}
 					</button>
+				</article>
+				<article className="setting-row agent-planet-settings" id="setting-agent-planets">
+					<div>
+						<strong>Persistent agent planets</strong>
+						<p>
+							Choose a planet for each persistent agent. Automatic selection uses a
+							bundled planet; delegated agents appear as moons.
+						</p>
+						{persistentAgents.length === 0 ? (
+							<small>
+								Create an agent in Agent Universe to choose a planet.
+							</small>
+						) : (
+							<ul className="workspace-grants agent-planet-settings-list">
+								{persistentAgents.map((session) => {
+									const asset = agentUniverseBodyAssetFor(
+										session.id,
+										true,
+										session.planetAssetId,
+									);
+									const updating = planetBusySessionId === session.id;
+									return (
+										<li key={session.id}>
+											<span className="agent-planet-setting-identity">
+												<img src={asset.url} alt="" aria-hidden="true" />
+												<span>
+													<strong>{session.title}</strong>
+													<small>
+														{asset.label} · NASA/JPL-Caltech
+														{session.planetAssetId ? "" : " · automatic"}
+													</small>
+												</span>
+											</span>
+											<label>
+												<span className="sr-only">Planet for {session.title}</span>
+												<select
+													value={session.planetAssetId ?? ""}
+													disabled={Boolean(planetBusySessionId)}
+													onChange={(event) =>
+														void updateAgentPlanet(session.id, event.target.value)
+													}
+												>
+													<option value="">Automatic planet</option>
+													{AGENT_UNIVERSE_PLANET_ASSETS.map((candidate) => (
+														<option key={candidate.id} value={candidate.id}>
+															{candidate.label}
+														</option>
+													))}
+												</select>
+												{updating ? <small>Saving…</small> : null}
+											</label>
+										</li>
+									);
+								})}
+							</ul>
+						)}
+						{planetError ? <small role="alert">{planetError}</small> : null}
+					</div>
+					<span className="status">
+						{persistentAgents.length} agent{persistentAgents.length === 1 ? "" : "s"}
+					</span>
 				</article>
 				<article className="setting-row" id="setting-agent-sessions">
 					<div>
@@ -8791,9 +9108,8 @@ function AgentAutomationsSettings() {
 			<header className="settings-panel-header">
 				<h2 id="settings-automations-title">Automations</h2>
 				<p>
-					Review scheduled work and its next run. Automation execution still
-					passes through the same provider, workspace, and approval boundaries as
-					an interactive task.
+					Review scheduled work and its next run. It follows the same provider,
+					workspace, and approval boundaries as an interactive task.
 				</p>
 			</header>
 			<section className="settings-stack" aria-label="Automation settings">
@@ -8801,7 +9117,7 @@ function AgentAutomationsSettings() {
 					<div>
 						<strong>Scheduled work</strong>
 						{jobs.length === 0 ? (
-							<p>No scheduled jobs are configured. Create one from the Work surface.</p>
+							<p>No scheduled jobs. Create one in Work.</p>
 						) : (
 							<ul className="workspace-grants automation-settings-list">
 								{jobs.map((job) => (
@@ -8897,8 +9213,8 @@ function AgentDiagnosticsSettings() {
 			<div>
 				<strong>Health and diagnostic reports</strong>
 				<p>
-					Run a content-free readiness check or export a bounded report for local
-					recovery. Reports do not include prompts, credentials, or page contents.
+					Run a content-free readiness check or export a local report. Reports omit
+					prompts, credentials, and page content.
 				</p>
 				<div className="button-row">
 					<button
@@ -9218,7 +9534,6 @@ function Settings({
 	return (
 		<PageFrame
 			title="Settings"
-			text="Configure Browser and Agent behavior without weakening current approval, privacy, or recovery boundaries."
 			measure="wide"
 			className="settings-page-frame"
 			{...(onBack ? { onBack } : {})}
@@ -9238,7 +9553,7 @@ function Settings({
 					<Icon name="browser" />
 					<span>
 						<strong>Browser</strong>
-						<small>Tabs, search, and new tab</small>
+						<small>Tabs, search, and privacy</small>
 					</span>
 				</button>
 				<button
@@ -9251,7 +9566,7 @@ function Settings({
 					<Icon name="agent" />
 					<span>
 						<strong>Agent</strong>
-						<small>Models, memory, and behavior</small>
+						<small>Models, memory, and work</small>
 					</span>
 				</button>
 			</div>
@@ -9441,16 +9756,13 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-general-title">Autonomy and behavior</h2>
-							<p>
-								Startup, communication style, and how much initiative Kestrel
-								takes.
-							</p>
+							<p>Set startup, communication, and initiative.</p>
 						</header>
 						<section className="settings-stack" aria-label="General settings">
 						<article className="setting-row">
 							<div>
 								<strong>Setup guide</strong>
-								<p>Reopen the walkthrough. Protected credentials stay in place.</p>
+								<p>Reopen setup without changing saved credentials.</p>
 							</div>
 							<button className="button secondary" onClick={reopenSetup}>
 								Open setup guide
@@ -9459,7 +9771,7 @@ function Settings({
 						<article className="setting-row">
 							<div>
 								<strong>Background work</strong>
-								<p>Pause proactive work without closing Kestrel.</p>
+								<p>Pause background work without closing Kestrel.</p>
 							</div>
 							<button
 								className="button secondary"
@@ -9473,10 +9785,7 @@ function Settings({
 						<article className="setting-row routing-setting">
 							<div>
 								<strong>Communication style</strong>
-								<p>
-									How Kestrel explains work. Safety and capability rules do not
-									change.
-								</p>
+								<p>Choose how Kestrel explains work. Safety settings stay the same.</p>
 							</div>
 								<div
 									className="segmented"
@@ -9528,9 +9837,7 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-models-title">Routing and providers</h2>
-							<p>
-								Model routing, live provider checks, and cost guardrails.
-							</p>
+							<p>Set routing priorities, check providers, and limit spend.</p>
 						</header>
 					<section
 						className="settings-stack"
@@ -9544,8 +9851,8 @@ function Settings({
 										<strong>Execution routing</strong>
 										<small>
 											{route.execution === "local"
-												? "No provider request was needed for the current task."
-												: "Live runs can use measured provider health, configured rates, and account pools."}
+												? "No provider request was needed for this task."
+												: "Live runs use provider health, rates, and available accounts."}
 										</small>
 									</div>
 									<div
@@ -9571,6 +9878,7 @@ function Settings({
 									</article>
 							</details>
 						<ProviderVerificationSettings />
+						<ProviderAccountsSettings />
 						<UsagePolicySettings />
 					</section>
 					</section>
@@ -9583,19 +9891,13 @@ function Settings({
 					>
 						<header className="settings-panel-header">
 							<h2 id="settings-extensions-title">Plugins and publishers</h2>
-							<p>
-								Signed bundles from publishers you explicitly trust — nothing
-								else installs.
-							</p>
+							<p>Install signed plugins only from publishers you trust.</p>
 						</header>
 					<section className="settings-stack" aria-label="Extension settings">
 						<article className="setting-row plugin-supply-setting">
 								<div>
-									<strong>Plugin supply chain</strong>
-									<p>
-										Only Ed25519-signed bundles from publishers you explicitly
-										trust can be installed or updated.
-									</p>
+									<strong>Trusted publishers</strong>
+									<p>Only plugins signed by them can be installed or updated.</p>
 									{publishers.length > 0 ? (
 										<ul className="workspace-grants">
 											{publishers.map((publisher) => (
@@ -9747,10 +10049,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-intelligence-title">Memory and learning</h2>
-								<p>
-									What Kestrel remembers, senses, and learns stays reviewable
-									here.
-								</p>
+								<p>Review memory, context, and learned skills.</p>
 							</header>
 						<section
 							className="settings-stack"
@@ -9776,10 +10075,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-privacy-title">Permissions and sandbox</h2>
-								<p>
-									Persistent approval rules and recovery boundaries stay explicit,
-									revocable, and separate from credentials.
-								</p>
+								<p>Manage approval rules and desktop access.</p>
 							</header>
 						<section
 							className="settings-stack"
@@ -9798,20 +10094,14 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-agent-privacy-title">Privacy and credentials</h2>
-								<p>
-									Provider secrets stay in protected native storage. Kestrel only
-									shows status and offers explicit revocation.
-								</p>
+								<p>Credentials stay in secure storage. Review status or revoke access here.</p>
 							</header>
 							<section className="settings-stack" aria-label="Protected credential settings">
 								<CredentialSettings hideCodexDuplicate />
 								<article className="setting-row danger">
 									<div>
 										<strong>Reset local agent data</strong>
-										<p>
-											Deletes the local database and secure key after explicit
-											confirmation, then relaunches Kestrel.
-										</p>
+										<p>Deletes all local data and its secure key, then restarts Kestrel.</p>
 										<label>
 											Type Kestrel to confirm
 											<input
@@ -9840,10 +10130,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-agent-migration-title">Migration</h2>
-								<p>
-									Review bounded, checksum-verified imports from supported agent tools
-									without copying source credentials or overwriting files by default.
-								</p>
+								<p>Review imports before moving files. Credentials stay where they are.</p>
 							</header>
 							<section className="settings-stack" aria-label="Migration settings">
 								<MigrationSettings />
@@ -9858,9 +10145,7 @@ function Settings({
 						>
 							<header className="settings-panel-header">
 								<h2 id="settings-advanced-title">Diagnostics and organization</h2>
-								<p>
-									Content-free diagnostics and local agent organization.
-								</p>
+								<p>Check health and organize local agents.</p>
 							</header>
 						<section className="settings-stack" aria-label="Advanced settings">
 							<ObservabilitySettings />
@@ -10227,6 +10512,7 @@ export function App() {
 			const response = (await window.kestrel.request({
 				type: "runtime-create-session",
 				title: normalizedTitle,
+				kind: "agent",
 				...(selectedProject ? { projectId: selectedProject.id } : {}),
 			})) as CoreResponse;
 			if (!response.ok || !response.session)
@@ -10956,6 +11242,7 @@ export function App() {
 					onOpenSession={openSidebarSession}
 					onOpenApprovals={() => navigate("approvals")}
 					onOpenWork={() => navigate("work")}
+					onOpenSettings={() => openSettings("agent-workspace")}
 					onToggleAgentSidebar={toggleAgentSidebar}
 					onRetrySessions={() => void refreshRuntimeSessions().catch(() => undefined)}
 					onBack={() => void openBrowserWorkspace()}

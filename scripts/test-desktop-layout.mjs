@@ -1236,10 +1236,23 @@ function assertInTabAgentLayout(layout) {
 	assertTheme(layout);
 }
 
+async function sendWindowFocusState(application, focused) {
+	await application.evaluate(({ BrowserWindow }, value) => {
+		const window = BrowserWindow.getAllWindows().find(
+			(candidate) => !candidate.isDestroyed() && candidate.isVisible(),
+		);
+		if (!window) throw new Error("The Kestrel window is unavailable.");
+		// The renderer deliberately renders the state carried by this trusted main
+		// process bridge. Driving the bridge avoids depending on macOS granting a
+		// background test process native foreground ownership.
+		window.webContents.send("kestrel:window-focus", value);
+	}, focused);
+}
+
 async function assertWindowControlMotion(page, application) {
 	const control = page.locator(".window-control-close");
 	await control.waitFor();
-	await page.bringToFront();
+	await sendWindowFocusState(application, true);
 	await page.waitForFunction(
 		() =>
 			!document
@@ -1269,25 +1282,13 @@ async function assertWindowControlMotion(page, application) {
 		{ fill: "#00bc00", iconColor: "#2e7300" },
 	]);
 
-	await application.evaluate(({ BrowserWindow }) => {
-		const window = BrowserWindow.getAllWindows().find(
-			(candidate) => !candidate.isDestroyed() && candidate.isVisible(),
-		);
-		if (!window) throw new Error("The Kestrel window is unavailable.");
-		window.blur();
-	});
+	await sendWindowFocusState(application, false);
 	await page.waitForFunction(() =>
 		document
 			.querySelector(".window-controls")
 			?.classList.contains("window-controls-inactive"),
 	);
-	await application.evaluate(({ BrowserWindow }) => {
-		const window = BrowserWindow.getAllWindows().find(
-			(candidate) => !candidate.isDestroyed() && candidate.isVisible(),
-		);
-		if (!window) throw new Error("The Kestrel window is unavailable.");
-		window.focus();
-	});
+	await sendWindowFocusState(application, true);
 	await page.waitForFunction(
 		() =>
 			!document

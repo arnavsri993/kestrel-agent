@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { providerFetch } from "./http";
+import { providerFetch, quotaFromResponseHeaders } from "./http";
 import {
 	contentText,
+	type DiscoveredModel,
 	type ModelCallOptions,
 	type ModelContentPart,
 	type ModelFinishReason,
@@ -18,6 +19,7 @@ export interface GeminiGenerateContentProviderOptions {
 	id?: string;
 	defaultModel?: string;
 	baseUrl?: string;
+	headers?: Record<string, string>;
 }
 
 function part(input: ModelContentPart): Record<string, unknown> {
@@ -95,17 +97,101 @@ export class GeminiGenerateContentProvider implements ModelProvider {
 		).replace(/\/$/, "");
 	}
 
+	private headers(): Record<string, string> {
+		return {
+			...this.options.headers,
+			"content-type": "application/json",
+			"x-goog-api-key": this.options.apiKey,
+		};
+	}
+
 	async probe(signal?: AbortSignal): Promise<void> {
 		const response = await providerFetch(
 			this.id,
 			`${this.baseUrl}/models?pageSize=1`,
 			{
 				method: "GET",
-				headers: { "x-goog-api-key": this.options.apiKey },
+				headers: this.headers(),
 				...(signal ? { signal } : {}),
 			},
 		);
 		await response.body?.cancel();
+	}
+
+	async discoverModels(signal?: AbortSignal): Promise<DiscoveredModel[]> {
+		const models: DiscoveredModel[] = [];
+		let pageToken: string | undefined;
+		for (let page = 0; page < 20; page += 1) {
+			const params = new URLSearchParams({ pageSize: "1000" });
+			if (pageToken) params.set("pageToken", pageToken);
+			const response = await providerFetch(
+				this.id,
+				`${this.baseUrl}/models?${params.toString()}`,
+				{
+					method: "GET",
+					headers: this.headers(),
+					...(signal ? { signal } : {}),
+				},
+			);
+			let payload: Record<string, unknown>;
+			try {
+				payload = (await response.json()) as Record<string, unknown>;
+			} catch {
+				throw new ModelProviderError(
+					"Gemini returned malformed model discovery JSON.",
+					this.id,
+					false,
+				);
+			}
+			for (const raw of Array.isArray(payload.models) ? payload.models : []) {
+				if (!raw || typeof raw !== "object") continue;
+				const item = raw as Record<string, unknown>;
+				const rawName = typeof item.name === "string" ? item.name : "";
+				const id = rawName.replace(/^models\//, "");
+				if (!id) continue;
+				const methods = Array.isArray(item.supportedGenerationMethods)
+					? item.supportedGenerationMethods
+					: [];
+				if (
+					methods.length > 0 &&
+					!methods.some(
+						(method) =>
+							method === "generateContent" || method === "streamGenerateContent",
+					)
+				)
+					continue;
+				const inputTokenLimit = Number(item.inputTokenLimit);
+				const outputTokenLimit = Number(item.outputTokenLimit);
+				models.push({
+					id,
+					displayName:
+						typeof item.displayName === "string" && item.displayName.trim()
+							? item.displayName
+							: id,
+					availability: "available",
+					source: "provider_api",
+					capabilities: {
+						// The API specifies supported generation methods and limits,
+						// but not its per-model tools or modality matrix.
+						capabilityProvenance: "unknown" as const,
+						streaming: methods.includes("streamGenerateContent"),
+						...(Number.isFinite(inputTokenLimit) && inputTokenLimit > 0
+							? { contextWindow: Math.floor(inputTokenLimit) }
+							: {}),
+						...(Number.isFinite(outputTokenLimit) && outputTokenLimit > 0
+							? { maxOutputTokens: Math.floor(outputTokenLimit) }
+							: {}),
+					},
+				});
+			}
+			const next =
+				typeof payload.nextPageToken === "string"
+					? payload.nextPageToken
+					: undefined;
+			if (!next || next === pageToken) break;
+			pageToken = next;
+		}
+		return models;
 	}
 
 	async complete(
@@ -154,14 +240,12 @@ export class GeminiGenerateContentProvider implements ModelProvider {
 			`${this.baseUrl}/models/${model}:generateContent`,
 			{
 				method: "POST",
-				headers: {
-					"x-goog-api-key": this.options.apiKey,
-					"content-type": "application/json",
-				},
+				headers: this.headers(),
 				body: JSON.stringify(body),
 				...(options.signal ? { signal: options.signal } : {}),
 			},
 		);
+		const quota = quotaFromResponseHeaders(response.headers);
 		let payload: Record<string, unknown>;
 		try {
 			payload = (await response.json()) as Record<string, unknown>;
@@ -221,6 +305,7 @@ export class GeminiGenerateContentProvider implements ModelProvider {
 				reasoningTokens: usageCount(usage.thoughtsTokenCount),
 			},
 			finishReason: finishReason(candidate?.finishReason, toolCalls),
+			...(quota ? { quota } : {}),
 		};
 		if (text) options.onEvent?.({ type: "text_delta", delta: text });
 		options.onEvent?.({ type: "completed", result });

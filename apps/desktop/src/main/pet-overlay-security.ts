@@ -21,6 +21,10 @@ export class PetOverlayRequestAccess {
 	assertAllowed(request: RendererRequest): void {
 		if (PASSIVE_PET_REQUESTS.has(request.type)) return;
 		if (request.type === "runtime-create-session") {
+			if (request.kind || request.planetAssetId)
+				throw new Error(
+					"Pet quick tasks cannot create persistent agents or choose planet assets.",
+				);
 			if (request.workspaceRoot)
 				throw new Error(
 					"Pet quick tasks cannot request access to a project workspace.",

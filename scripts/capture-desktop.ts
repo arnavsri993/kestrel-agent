@@ -222,11 +222,13 @@ try {
 	await capture(page, "setup-03-choose-model.png");
 
 	await page.getByRole("button", { name: /Use an account/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await capture(page, "setup-04-account.png");
 
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page
 		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();
@@ -247,6 +249,7 @@ try {
 	await page.setViewportSize({ width: 1320, height: 860 });
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
 	await capture(page, "setup-04-local-model.png");
 

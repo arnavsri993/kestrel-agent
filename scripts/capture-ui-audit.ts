@@ -188,6 +188,7 @@ async function captureSetupFlow(page: Page, viewport: ViewportKey) {
 	await capture(page, viewport, "setup", "setup-03-choose-model");
 
 	await page.getByRole("button", { name: /Use an account/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await capture(page, viewport, "setup", "setup-04-account", {
 		state: "model-accounts",
@@ -195,6 +196,7 @@ async function captureSetupFlow(page: Page, viewport: ViewportKey) {
 
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page
 		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();
@@ -204,6 +206,7 @@ async function captureSetupFlow(page: Page, viewport: ViewportKey) {
 
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
 	await capture(page, viewport, "setup", "setup-04-local-model", {
 		state: "model-local",
@@ -313,12 +316,12 @@ async function captureWorkspaceSurfaces(page: Page, viewport: ViewportKey) {
 
 	const settingsSections = [
 		["browser", "Browser", "settings-browser.png"],
-		["general", "General", "settings-general.png"],
-		["models", "Models", "settings-models.png"],
-		["intelligence", "Memory", "settings-memory.png"],
-		["extensions", "Plugins", "settings-extensions.png"],
-		["privacy", "Privacy", "settings-privacy.png"],
-		["advanced", "Advanced", "settings-advanced.png"],
+		["agent-general", "General", "settings-general.png"],
+		["agent-models", "Models", "settings-models.png"],
+		["agent-memory", "Memory", "settings-memory.png"],
+		["agent-tools", "Tools", "settings-extensions.png"],
+		["agent-permissions", "Permissions", "settings-privacy.png"],
+		["agent-diagnostics", "Diagnostics", "settings-advanced.png"],
 	] as const;
 	for (const [id, label, filename] of settingsSections) {
 		const compactPicker = page.locator(".settings-section-picker select");

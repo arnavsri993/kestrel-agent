@@ -1,5 +1,6 @@
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
+import { ModelProfileSchema, RoutingPolicySchema } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
 	AdaptiveModelRouter,
@@ -10,6 +11,8 @@ import {
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
 import type { ModelProvider } from "./providers";
+import { ModelCatalog } from "./providers/model-catalog";
+import { AccountAvailabilityMonitor } from "./routing/account-availability";
 
 function provider(input: {
 	id: string;
@@ -94,6 +97,215 @@ function fixture(providers: ModelProvider[]) {
 }
 
 describe("adaptive model orchestration", () => {
+	it("does not automatically route to an unavailable account model", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const unavailable: ModelProvider = {
+			id: "openai-account-a",
+			poolId: "openai",
+			account: {
+				id: "account-a",
+				providerId: "openai",
+				displayName: "Account A",
+				authTransport: "api_key",
+				enabled: true,
+			},
+			defaultModel: "fallback-a",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			discoverModels: async () => [
+				{
+					id: "blocked-model",
+					availability: "unavailable",
+					source: "provider_api",
+					capabilities: {
+						capabilityProvenance: "confirmed",
+						tools: true,
+						structuredOutput: true,
+					},
+				},
+			],
+			complete: async (request) => ({
+				providerId: "openai-account-a",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop",
+			}),
+		};
+		const available: ModelProvider = {
+			...unavailable,
+			id: "openai-account-b",
+			account: { ...unavailable.account!, id: "account-b", displayName: "Account B" },
+			discoverModels: async () => [
+				{
+					id: "available-model",
+					availability: "available",
+					source: "provider_api",
+					capabilities: {
+						capabilityProvenance: "confirmed",
+						tools: true,
+						structuredOutput: true,
+					},
+				},
+			],
+		};
+		const catalog = new ModelCatalog(database, [unavailable, available]);
+		await catalog.refresh([unavailable, available]);
+		const registry = new ModelRegistry(database, [unavailable, available], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+		const requirements = new TaskRequirementAnalyzer().analyze(
+			"available-only",
+			"Summarize this small note.",
+		);
+
+		expect(router.route(requirements, { role: "worker" }).endpointId).toBe(
+			"openai-account-b",
+		);
+		database.close();
+	});
+
+	it("routes plain text through a discovery-only model without claiming features", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			id: "openai-discovery-only",
+			poolId: "openai",
+			account: {
+				id: "account-a",
+				providerId: "openai",
+				displayName: "Personal",
+				authTransport: "api_key",
+				enabled: true,
+			},
+			defaultModel: "configured-default",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: true,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			discoverModels: async () => [
+				{
+					id: "advertised-only",
+					availability: "available",
+					source: "provider_api",
+					capabilities: { capabilityProvenance: "unknown" },
+				},
+			],
+			complete: async (request) => ({
+				providerId: "openai-discovery-only",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop",
+			}),
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		await catalog.refresh([endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+
+		expect(
+			router.route(
+				new TaskRequirementAnalyzer().analyze(
+					"unknown-capabilities",
+					"Summarize this small note.",
+				),
+				{ role: "worker" },
+			).endpointId,
+		).toBe("openai-discovery-only");
+		expect(() =>
+			router.route(
+				new TaskRequirementAnalyzer().analyze(
+					"unknown-capabilities-tools",
+					"Use tools to inspect the repository.",
+				),
+				{ role: "worker" },
+			),
+		).toThrow("No configured model satisfies");
+		database.close();
+	});
+
+	it("does not automatically route through an unverified fallback model", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			...provider({ id: "fallback-only", model: "configured-default" }),
+			account: {
+				id: "fallback-account",
+				providerId: "openai-compatible",
+				displayName: "Fallback account",
+				authTransport: "api_key",
+				enabled: true,
+			},
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		const router = new AdaptiveModelRouter(database, registry, () => 0);
+
+		expect(catalog.modelsForEndpoint("fallback-only")).toMatchObject([
+			{ availability: "unknown", discoverySource: "fallback" },
+		]);
+		expect(() =>
+			router.route(
+				new TaskRequirementAnalyzer().analyze(
+					"fallback-only",
+					"Summarize this small note.",
+				),
+				{ role: "worker" },
+			),
+		).toThrow("No configured model satisfies");
+		database.close();
+	});
+
+	it("does not synthesize a default model for an empty dynamic catalog", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const endpoint: ModelProvider = {
+			id: "dynamic-empty",
+			poolId: "custom",
+			account: {
+				id: "dynamic-empty",
+				providerId: "custom",
+				displayName: "Empty dynamic account",
+				authTransport: "api_key",
+				enabled: true,
+			},
+			defaultModel: "should-not-appear",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			discoverModels: async () => [],
+			complete: async (request) => ({
+				providerId: "dynamic-empty",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 0, outputTokens: 0 },
+				finishReason: "stop",
+			}),
+		};
+		const catalog = new ModelCatalog(database, [endpoint]);
+		const registry = new ModelRegistry(database, [endpoint], [], undefined, catalog);
+		expect(registry.list()).toEqual([]);
+		await catalog.refresh([endpoint]);
+		registry.syncProviderCatalog([endpoint], catalog);
+		expect(registry.list()).toEqual([]);
+		database.close();
+	});
+
 	it("falls back to the default policy when persisted routing state is malformed", () => {
 		const item = fixture([provider({ id: "local", model: "private" })]);
 		item.database.setPrivateState("orchestration.routing-policy.v1", {
@@ -153,6 +365,107 @@ describe("adaptive model orchestration", () => {
 		});
 		expect(decision.reasons.join(" ")).not.toMatch(/chain.of.thought/i);
 		item.database.close();
+	});
+
+	it("routes around a scarce account while retaining account-safe candidate evidence", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const premium = {
+			...provider({
+				id: "premium-account",
+				model: "premium-reasoner",
+				capabilities: {
+					technical_writing: 0.98,
+					instruction_following: 0.98,
+					reliability: 0.96,
+				},
+			}),
+			poolId: "example-provider",
+			account: {
+				id: "premium-account-id",
+				providerId: "example-provider",
+				displayName: "Premium workspace",
+				authTransport: "api_key" as const,
+				enabled: true,
+			},
+		};
+		const healthy = {
+			...provider({
+				id: "healthy-account",
+				model: "steady-reasoner",
+				capabilities: {
+					technical_writing: 0.87,
+					instruction_following: 0.88,
+					reliability: 0.89,
+				},
+			}),
+			poolId: "example-provider",
+			account: {
+				id: "healthy-account-id",
+				providerId: "example-provider",
+				displayName: "Steady workspace",
+				authTransport: "api_key" as const,
+				enabled: true,
+			},
+		};
+		const registry = new ModelRegistry(database, [premium, healthy]);
+		const availability = new AccountAvailabilityMonitor(
+			() => new Date("2026-07-29T12:00:00.000Z"),
+		);
+		availability.sync({
+			profiles: registry.list(),
+			providerHealth: [
+				{
+					providerId: premium.id,
+					poolId: premium.poolId,
+					attempts: 4,
+					successes: 4,
+					failures: 0,
+					consecutiveFailures: 0,
+					averageLatencyMs: 400,
+					activeRequests: 0,
+				},
+				{
+					providerId: healthy.id,
+					poolId: healthy.poolId,
+					attempts: 4,
+					successes: 4,
+					failures: 0,
+					consecutiveFailures: 0,
+					averageLatencyMs: 400,
+					activeRequests: 0,
+				},
+			],
+		});
+		availability.applyQuotaUpdate({
+			endpointId: premium.id,
+			confidence: "exact",
+			remainingFraction: 0.02,
+		});
+		const router = new AdaptiveModelRouter(
+			database,
+			registry,
+			() => 0.01,
+			() => true,
+			() => new Date("2026-07-29T12:00:00.000Z"),
+			availability,
+		);
+		const decision = router.route(
+			new TaskRequirementAnalyzer().analyze(
+				"account-scarcity",
+				"Rewrite this short technical note clearly.",
+			),
+			{ role: "worker" },
+		);
+		expect(decision.endpointId).toBe("healthy-account");
+		expect(decision.accountAlias).toBe("Steady workspace");
+		const candidates = router.traces().at(-1)?.candidates ?? [];
+		expect(candidates.find((candidate) => candidate.endpointId === premium.id))
+			.toMatchObject({ scarcityPenalty: expect.any(Number), accountAlias: "Premium workspace" });
+		expect(
+			candidates.find((candidate) => candidate.endpointId === premium.id)
+				?.scarcityPenalty,
+		).toBeGreaterThan(0);
+		database.close();
 	});
 
 	it("uses a stronger reasoning endpoint for complex high-impact architecture", () => {
@@ -452,6 +765,143 @@ describe("adaptive model orchestration", () => {
 		item.database.close();
 	});
 
+	it("keeps routing traces profile-only when a prompt contains sensitive text", () => {
+		const item = fixture([provider({ id: "safe", model: "one" })]);
+		const secret = "sk-routing-private-token";
+		item.router.route(
+			item.analyzer.analyze(
+				"private-trace",
+				`Implement this change. Never retain ${secret} in routing diagnostics.`,
+			),
+			{ role: "worker" },
+		);
+		const trace = item.router.traces()[0]!;
+
+		expect(trace.summary).toMatch(/task; .* risk; difficulty/i);
+		expect(JSON.stringify(trace)).not.toContain(secret);
+		expect(
+			JSON.stringify(
+				item.database.getPrivateState("orchestration.routing-traces.v1"),
+			),
+		).not.toContain(secret);
+		item.database.close();
+	});
+
+	it("rejects known secret-like provider preferences before policy can be persisted", () => {
+		const item = fixture([provider({ id: "safe", model: "one" })]);
+		for (const identifier of [
+			"sk-private-routing-token",
+			`ghp_${"a".repeat(36)}`,
+			`xoxb-${"a".repeat(24)}`,
+			`AKIA${"A".repeat(16)}`,
+			`AIza${"a".repeat(35)}`,
+		]) {
+			expect(
+				RoutingPolicySchema.safeParse({
+					...item.router.policy(),
+					preferredProviderIds: [identifier],
+				}).success,
+			).toBe(false);
+		}
+		item.database.close();
+	});
+
+	it("omits unsafe account identifiers and aliases from routing traces", () => {
+		for (const unsafeAccountId of [
+			"owner@example.com",
+			`ghp_${"a".repeat(36)}`,
+		]) {
+			const item = fixture([
+				{
+					...provider({ id: "account-endpoint", model: "one" }),
+					poolId: "openai",
+					account: {
+						id: unsafeAccountId,
+						providerId: "openai",
+						displayName: unsafeAccountId,
+						authTransport: "api_key",
+						enabled: true,
+					},
+				},
+			]);
+
+			const decision = item.router.route(
+				item.analyzer.analyze("unsafe-account", "Summarize this note."),
+				{ role: "worker" },
+			);
+			const trace = item.router.traces()[0]!;
+
+			expect(decision.accountId).toBeUndefined();
+			expect(decision.accountAlias).toBeUndefined();
+			expect(JSON.stringify(trace)).not.toContain(unsafeAccountId);
+			expect(
+				JSON.stringify(
+					item.database.getPrivateState("orchestration.routing-traces.v1"),
+				),
+			).not.toContain(unsafeAccountId);
+			item.database.close();
+		}
+	});
+
+	it("rejects unsafe routing profile metadata before it can reach traces", () => {
+		const item = fixture([provider({ id: "safe", model: "one" })]);
+		const profile = item.registry.get("safe:one");
+		for (const unsafe of [
+			"owner@example.com",
+			"https://provider.example/v1",
+			`ghp_${"a".repeat(36)}`,
+		]) {
+			expect(
+				ModelProfileSchema.safeParse({
+					...profile,
+					accountAlias: unsafe,
+				}).success,
+			).toBe(false);
+			expect(
+				ModelProfileSchema.safeParse({
+					...profile,
+					endpointId: unsafe,
+				}).success,
+			).toBe(false);
+		}
+		const unsafeDatabase = new KestrelDatabase(":memory:", createEncryptionKey());
+		expect(
+			new ModelRegistry(unsafeDatabase, [
+				provider({
+					id: "https://provider.example/v1",
+					model: `ghp_${"a".repeat(36)}`,
+				}),
+			]).list(),
+		).toEqual([]);
+		unsafeDatabase.close();
+		item.database.close();
+	});
+
+	it("does not allow caller task IDs or event text to become trace content", () => {
+		const item = fixture([provider({ id: "safe", model: "one" })]);
+		const secret = `ghp_${"a".repeat(36)}`;
+		expect(() => item.analyzer.analyze("owner@example.com", "Summarize this note.")).toThrow(
+			/opaque, non-secret identifier/i,
+		);
+		item.router.route(
+			item.analyzer.analyze("safe-task", "Summarize this note."),
+			{ role: "worker" },
+		);
+		const trace = item.router.traces()[0]!;
+		Reflect.apply(item.router.recordTraceEvent, item.router, [
+			trace.id,
+			"ROUTE_RETRIED",
+			secret,
+		]);
+		const updated = item.router.traces()[0]!;
+		expect(updated.events?.at(-1)).toMatchObject({
+			type: "ROUTE_RETRIED",
+			message: "Retried execution after a normalized transient signal.",
+		});
+		expect(JSON.stringify(updated)).not.toContain(secret);
+		item.database.close();
+	});
+
 	it("translates natural language preferences into task-scoped policy", () => {
 		const item = fixture([
 			provider({ id: "local", model: "private", local: true }),
@@ -547,13 +997,16 @@ describe("adaptive model orchestration", () => {
 		expect(
 			detectModelRefusal({ finishReason: "refusal", text: "" }).refused,
 		).toBe(true);
+		expect(
+			detectModelRefusal({ finishReason: "refusal", text: "" }).safetyPolicy,
+		).toBe(true);
 
 		// 2. Semantic text refusal
 		expect(
 			detectModelRefusal({
 				finishReason: "stop",
 				text: "I cannot fulfill this request because it violates safety policies.",
-			}).refused,
+			}).safetyPolicy,
 		).toBe(true);
 
 		expect(

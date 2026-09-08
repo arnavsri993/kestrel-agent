@@ -68,6 +68,18 @@ must make another full snapshot to learn what changed, which is expensive and
 leaves the action/result relationship implicit. The first slice closes that
 gap with a pure, bounded semantic diff helper and controller integration.
 
+## Browser runtime migration ledger
+
+| Subsystem | Current state | Native Chromium migration seam |
+| --- | --- | --- |
+| User and autonomous page runtime | Electron / `WebContentsView` | Existing browser backend contracts isolate typed page actions from the renderer. |
+| Browser extensions | **Abstracted, Electron-backed, dual-backend-ready** | `BrowserExtensionManager` owns signed-package review, compatibility reports, persistence, and management; `ElectronExtensionRuntime` is the sole Electron adapter. A future `ChromiumExtensionRuntime` must implement the same Kestrel-owned runtime interface and provide new evidence before raising a compatibility state. |
+
+The Extensions row is deliberately not labelled **Chromium**: no native
+Chromium extension runtime ships in this repository today. See [browser
+extension compatibility](browser-extension-compatibility.md) for the current
+security and capability boundary.
+
 ## Delivery plan
 
 ### P0 — action observation (this increment)

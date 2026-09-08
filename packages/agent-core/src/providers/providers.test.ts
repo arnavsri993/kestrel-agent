@@ -216,6 +216,31 @@ describe("model provider adapters", () => {
 		expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
 	});
 
+	it("uses a configured loopback compatible runtime without an authorization header", async () => {
+		let authorization: string | undefined;
+		const baseUrl = await serve((request, response) => {
+			authorization = request.headers.authorization;
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			response.end(
+				`data: ${JSON.stringify({ id: "local-1", choices: [{ delta: { content: "local result" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+			);
+		});
+		const provider = new OpenAIChatCompletionsProvider({
+			id: "local-compatible",
+			local: true,
+			defaultModel: "local-model",
+			baseUrl,
+		});
+
+		const result = await provider.complete({
+			model: "local-model",
+			messages: [{ role: "user", content: textContent("hello") }],
+		});
+		expect(authorization).toBeUndefined();
+		expect(provider.capabilities.local).toBe(true);
+		expect(result.text).toBe("local result");
+	});
+
 	it("verifies live provider credentials without sending a model prompt", async () => {
 		let method = "";
 		let authorization = "";
@@ -262,7 +287,7 @@ describe("model provider adapters", () => {
 		).rejects.toBeInstanceOf(Error);
 		expect(pool.health()[0]).toMatchObject({
 			unhealthyUntil: "2026-07-29T12:00:12.000Z",
-			unhealthyReason: "capacity",
+			unhealthyReason: "rate_limit",
 		});
 		nowMs += 11_000;
 		await expect(
@@ -271,6 +296,54 @@ describe("model provider adapters", () => {
 				messages: [{ role: "user", content: textContent("hello") }],
 			}),
 		).rejects.toMatchObject({ attempts: [] });
+	});
+
+	it("reports in-flight endpoint requests for account-aware routing", async () => {
+		let reportStarted: () => void = () => undefined;
+		let release: () => void = () => undefined;
+		const started = new Promise<void>((resolvePromise) => {
+			reportStarted = resolvePromise;
+		});
+		const gate = new Promise<void>((resolvePromise) => {
+			release = resolvePromise;
+		});
+		const provider: ModelProvider = {
+			id: "busy-account",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				reportStarted();
+				await gate;
+				return {
+					providerId: "busy-account",
+					model: request.model,
+					text: "completed",
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const pool = new ProviderPool([provider]);
+		const pending = pool.complete({
+			model: "fixture",
+			messages: [{ role: "user", content: textContent("hello") }],
+		});
+		await started;
+		expect(pool.health()).toMatchObject([
+			{ providerId: "busy-account", activeRequests: 1 },
+		]);
+		release();
+		await pending;
+		expect(pool.health()).toMatchObject([
+			{ providerId: "busy-account", activeRequests: 0 },
+		]);
 	});
 
 	it("stops provider verification when cancellation wins", async () => {
@@ -832,6 +905,63 @@ describe("model provider adapters", () => {
 		]);
 	});
 
+	it("keeps only normalized endpoint quota observations for account-aware routing", async () => {
+		let exposesQuota = true;
+		const provider: ModelProvider = {
+			id: "account-endpoint",
+			poolId: "logical-provider",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async (request) => ({
+				providerId: "account-endpoint",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 1, outputTokens: 1 },
+				finishReason: "stop",
+				...(exposesQuota
+					? {
+						quota: {
+							confidence: "exact" as const,
+							remainingFraction: 0.2,
+							resetAt: "2026-09-08T12:00:00.000Z",
+						},
+					}
+					: {}),
+			}),
+		};
+		const pool = new ProviderPool([provider], () =>
+			new Date("2026-09-07T12:00:00.000Z"),
+		);
+		await pool.complete({
+			model: "test",
+			messages: [{ role: "user", content: textContent("hello") }],
+		});
+
+		expect(pool.accountQuotaSnapshots()).toEqual([
+			{
+				endpointId: "account-endpoint",
+				providerId: "account-endpoint",
+				poolId: "logical-provider",
+				confidence: "exact",
+				remainingFraction: 0.2,
+				resetAt: "2026-09-08T12:00:00.000Z",
+			},
+		]);
+		exposesQuota = false;
+		await pool.complete({
+			model: "test",
+			messages: [{ role: "user", content: textContent("hello again") }],
+		});
+		expect(pool.accountQuotaSnapshots()).toEqual([]);
+	});
+
 	it("rotates nonretryable credential failures inside one logical provider pool", async () => {
 		const invalid: ModelProvider = {
 			id: "openai-key-1",
@@ -872,7 +1002,7 @@ describe("model provider adapters", () => {
 				model: "test",
 				messages: [{ role: "user", content: textContent("hello") }],
 			},
-			{ providerIds: ["openai"] },
+			{ providerIds: ["openai"], automaticRouting: true },
 		);
 		expect(output.result.providerId).toBe("openai-key-2");
 		expect(output.attempts.map((attempt) => attempt.providerId)).toEqual([
@@ -893,6 +1023,86 @@ describe("model provider adapters", () => {
 				consecutiveFailures: 0,
 			},
 		]);
+	});
+
+	it("does not expand a manually selected provider label across multiple accounts", async () => {
+		const calls: string[] = [];
+		const account = (id: string): ModelProvider => ({
+			id,
+			poolId: "openai",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async (request) => {
+				calls.push(id);
+				return {
+					providerId: id,
+					model: request.model,
+					text: "unexpected",
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		});
+		const pool = new ProviderPool([account("personal"), account("work")]);
+
+		await expect(
+			pool.complete(
+				{
+					model: "gpt-account-scoped",
+					messages: [{ role: "user", content: textContent("hello") }],
+				},
+				{ providerIds: ["openai"] },
+			),
+		).rejects.toThrow("Select a specific account endpoint");
+		expect(calls).toEqual([]);
+	});
+
+	it("gives an exact account endpoint precedence over a matching provider alias", async () => {
+		const calls: string[] = [];
+		const provider = (id: string, poolId?: string): ModelProvider => ({
+			id,
+			...(poolId ? { poolId } : {}),
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async (request) => {
+				calls.push(id);
+				return {
+					providerId: id,
+					model: request.model,
+					text: id,
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		});
+		const pool = new ProviderPool([
+			provider("account-personal"),
+			provider("other-account", "account-personal"),
+		]);
+
+		const result = await pool.complete(
+			{
+				model: "exact-model",
+				messages: [{ role: "user", content: textContent("hello") }],
+			},
+			{ providerIds: ["account-personal"] },
+		);
+		expect(result.result.providerId).toBe("account-personal");
+		expect(calls).toEqual(["account-personal"]);
 	});
 
 	it("automatically ranks eligible providers by measured cost and stops budget-blocked retries", async () => {

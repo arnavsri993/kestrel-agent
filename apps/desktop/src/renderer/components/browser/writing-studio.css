@@ -147,6 +147,11 @@
 	font-weight: 480;
 }
 
+.writing-studio .model-selector-trigger {
+	width: 100%;
+	max-width: none;
+}
+
 .writing-studio textarea {
 	min-height: 104px;
 	resize: vertical;

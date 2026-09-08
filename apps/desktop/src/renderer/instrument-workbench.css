@@ -663,7 +663,6 @@
 
 .unified-ui :is(.settings-stack, .connection-list) {
 	gap: 0;
-	border-top: 0;
 	background: transparent;
 }
 
@@ -1377,6 +1376,19 @@
 .setup-onboarding .finish-checks {
 	border-radius: 12px;
 	background: var(--surface);
+}
+
+.setup-onboarding .model-source-picker {
+	gap: 24px;
+	background: transparent;
+}
+
+.setup-onboarding .model-source-picker > button {
+	border: 1px solid var(--line);
+}
+
+.setup-onboarding .model-source-picker > button.model-source-option-recommended {
+	border-color: var(--ink);
 }
 
 /* Compact composition ------------------------------------------------------ */

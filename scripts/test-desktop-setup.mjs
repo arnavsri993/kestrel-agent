@@ -108,9 +108,16 @@ try {
 	const warningPanel = page.locator(".warning-panel");
 	const warningPanelBefore = await warningPanel.boundingBox();
 	assert.ok(warningPanelBefore, "The warning panel should be measurable.");
+	const warningCheck = page.locator(".warning-check");
+	const warningCheckBox = await warningCheck.boundingBox();
+	assert.ok(warningCheckBox, "The warning acknowledgement should be measurable.");
+	assert.ok(
+		warningCheckBox.height <= 48,
+		`The warning acknowledgement should stay compact, but is ${warningCheckBox.height}px tall.`,
+	);
 	const firstBoundary = page.locator(".warning-panel details").first();
 	await firstBoundary.locator("summary").click();
-	await page.getByText(/retention and training terms/).waitFor();
+	await page.getByText(/provider's data terms/).waitFor();
 	const warningHeadingAfterFirstOpen = await warningHeading.boundingBox();
 	assert.ok(
 		warningHeadingAfterFirstOpen,
@@ -172,7 +179,54 @@ try {
 	await page
 		.getByRole("heading", { name: "Where should answers come from?" })
 		.waitFor();
-	await page.getByRole("button", { name: /Use an account/ }).click();
+	assert.equal(
+		await page.getByText(/Pick one to start/).count(),
+		0,
+		"The model choice page should not repeat the selection instruction.",
+	);
+	assert.equal(
+		await page
+			.getByText("Choose an option above to continue.", { exact: true })
+			.count(),
+		0,
+		"The footer should not repeat the selection instruction.",
+	);
+	assert.equal(await continueButton.isDisabled(), true);
+	const modelSourcePicker = page.locator(".model-source-picker");
+	const modelSourceLayout = await modelSourcePicker.evaluate((picker) => {
+		const choice = picker.querySelector("button");
+		return {
+			display: getComputedStyle(picker).display,
+			rowGap: Number.parseFloat(getComputedStyle(picker).rowGap),
+			pickerBackground: getComputedStyle(picker).backgroundColor,
+			choiceBorder: choice ? getComputedStyle(choice).borderColor : "",
+		};
+	});
+	assert.ok(
+		modelSourceLayout.display === "grid" &&
+		modelSourceLayout.rowGap >= 24 &&
+			modelSourceLayout.pickerBackground === "rgba(0, 0, 0, 0)" &&
+			modelSourceLayout.choiceBorder !== "rgba(0, 0, 0, 0)",
+		`Model access choices should be visibly separated; found ${JSON.stringify(modelSourceLayout)}.`,
+	);
+	const accountChoice = page.getByRole("button", { name: /Use an account/ });
+	await accountChoice.click();
+	assert.equal(await accountChoice.getAttribute("aria-pressed"), "true");
+	assert.equal(
+		await page
+			.getByRole("heading", { name: "Where should answers come from?" })
+			.count(),
+		1,
+	);
+	assert.equal(await continueButton.isEnabled(), true);
+	const footerBox = await page.locator(".onboarding-actions").boundingBox();
+	const backBox = await page.getByRole("button", { name: "Back" }).boundingBox();
+	assert.ok(footerBox && backBox);
+	assert.ok(
+		Math.abs(backBox.x - footerBox.x) <= 2,
+		`Back should align to the left edge of the footer (${backBox.x} vs ${footerBox.x}).`,
+	);
+	await continueButton.click();
 	await page.getByRole("heading", { name: "Connect an account." }).waitFor();
 	await page.getByText("Choose a paid provider", { exact: true }).waitFor();
 	const paidProviders = page.getByRole("group", { name: "Paid AI providers" });
@@ -254,7 +308,21 @@ try {
 	await page.getByLabel("Find a provider").fill("");
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Run on this Mac/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page.getByRole("heading", { name: "Set up a local model." }).waitFor();
+	const automaticSetup = page.getByRole("region", {
+		name: "Automatic local setup",
+	});
+	await automaticSetup.waitFor();
+	await page.getByText(/logical CPUs? detected/).waitFor();
+	await automaticSetup
+		.getByText(/One click downloads the pinned Ollama runtime/)
+		.waitFor();
+	await automaticSetup
+		.getByRole("button", {
+			name: /Set up automatically|Verify local setup again/,
+		})
+		.waitFor();
 	await page.locator(".recommended-model-tiers article").first().waitFor();
 	const tierNames = page.locator(".model-tier-name strong");
 	await tierNames.first().waitFor();
@@ -266,15 +334,19 @@ try {
 		await page.locator(".recommended-model-tiers article.preferred").waitFor();
 		await page
 			.locator(".recommended-model-tiers")
-			.getByText("Recommended", { exact: true })
+			.getByText("Best fit", { exact: true })
 			.waitFor();
 	} else {
 		assert.ok(!names.includes("Balanced"));
 		assert.equal(
 			await page.locator(".recommended-model-tiers article.preferred").count(),
-			0,
-			"A constrained CI device must not claim a nonexistent balanced tier is recommended.",
+			1,
+			"The strongest compatible tier must be marked as the best fit even on a constrained device.",
 		);
+		await page
+			.locator(".recommended-model-tiers")
+			.getByText("Best fit", { exact: true })
+			.waitFor();
 	}
 	const tierDetails = page.locator(".model-tier-details");
 	const detailIndex = Math.min(1, (await tierDetails.count()) - 1);
@@ -290,10 +362,6 @@ try {
 		.nth(detailIndex)
 		.getByText(/GB · 256K context/, { exact: true })
 		.waitFor();
-	assert.equal(
-		await page.getByText("Automatic setup", { exact: true }).count(),
-		0,
-	);
 	await page
 		.getByText("huihui_ai/qwen3.5-abliterated:4b", { exact: true })
 		.count()
@@ -312,6 +380,7 @@ try {
 	await page.getByText("Any other Ollama model", { exact: true }).waitFor();
 	await page.getByRole("button", { name: "Back" }).click();
 	await page.getByRole("button", { name: /Try free providers/ }).click();
+	await page.getByRole("button", { name: "Continue" }).click();
 	await page
 		.getByRole("heading", { name: "Set up free provider accounts." })
 		.waitFor();

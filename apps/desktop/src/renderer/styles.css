@@ -74,10 +74,19 @@
 	 * fully rounded ends to make editable fields immediately recognizable. */
 	--radius-text-entry: var(--radius-pill);
 
-	/* Motion — fast */
-	--motion-feedback: 80ms;
-	--motion-state: 160ms;
+	/* Motion — named by interaction weight, not component ownership. */
+	--motion-instant: 60ms;
+	--motion-control: 80ms;
+	--motion-menu: 120ms;
+	--motion-selection: 160ms;
+	--motion-panel: 200ms;
+	--motion-navigation: 180ms;
+	--motion-loading: 900ms;
+	/* Compatibility aliases for existing surfaces. */
+	--motion-feedback: var(--motion-control);
+	--motion-state: var(--motion-selection);
 	--ease-kestrel: cubic-bezier(0.25, 1, 0.35, 1);
+	--ease-kestrel-soft: cubic-bezier(0.33, 1, 0.68, 1);
 
 	/* Elevation — softer, closer to macOS material depth */
 	--shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.16);
@@ -4131,6 +4140,203 @@ input[type="radio"] {
 	color: var(--muted);
 	font: 11px var(--mono);
 }
+.provider-accounts-setting {
+	display: block;
+	padding-block: 22px;
+}
+.provider-accounts-content {
+	width: min(100%, 920px);
+}
+.provider-accounts-heading,
+.provider-account-card > header,
+.provider-account-add > header,
+.provider-account-actions,
+.provider-account-rename {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+.provider-accounts-heading .button {
+	flex: 0 0 auto;
+}
+.provider-account-empty {
+	padding: 12px;
+	border: 1px dashed var(--line-strong);
+	border-radius: 9px;
+	background: var(--surface);
+}
+.provider-account-groups {
+	display: grid;
+	gap: 14px;
+	margin-top: 15px;
+}
+.provider-account-group {
+	display: grid;
+	gap: 8px;
+}
+.provider-account-group h3 {
+	margin: 0;
+	font-size: 12px;
+}
+.provider-account-cards {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 9px;
+}
+.provider-account-card,
+.provider-account-add {
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--surface);
+	padding: 13px;
+}
+.provider-account-card > p {
+	margin: 7px 0 0;
+}
+.provider-account-card header strong,
+.provider-account-card header small {
+	display: block;
+}
+.provider-account-status {
+	flex: 0 0 auto;
+	border-radius: 999px;
+	padding: 4px 7px;
+	font: 10px var(--mono);
+	background: color-mix(in srgb, var(--line) 60%, transparent);
+	color: var(--muted);
+}
+.provider-account-status.is-ready {
+	background: color-mix(in srgb, var(--success, #3db983) 18%, transparent);
+	color: var(--success, #3db983);
+}
+.provider-account-status.is-warning {
+	background: color-mix(in srgb, #e5a849 18%, transparent);
+	color: #b7791f;
+}
+.provider-account-status.is-error,
+.provider-account-error,
+.provider-account-global-error {
+	color: var(--danger, #d35d5d);
+}
+.provider-account-actions {
+	justify-content: flex-start;
+	flex-wrap: wrap;
+	margin-top: 12px;
+}
+.provider-account-details {
+	margin-top: 11px;
+	border-top: 1px solid var(--line);
+	padding-top: 9px;
+}
+.provider-account-details > summary,
+.provider-account-advanced > summary {
+	cursor: pointer;
+	color: var(--muted);
+	font-size: 11px;
+}
+.provider-account-rename {
+	align-items: end;
+	margin-top: 10px;
+}
+.provider-account-rename label,
+.provider-account-add label {
+	display: grid;
+	gap: 5px;
+	margin: 0;
+	color: var(--muted);
+	font-size: 11px;
+}
+.provider-account-rename input,
+.provider-account-add input,
+.provider-account-add select,
+.provider-account-add textarea {
+	min-width: 0;
+	border: 1px solid var(--line-strong);
+	border-radius: 7px;
+	background: var(--canvas);
+	color: var(--ink);
+	padding: 7px 8px;
+}
+.provider-account-rename input {
+	width: min(100%, 245px);
+}
+.provider-account-models {
+	margin-top: 11px;
+}
+.provider-account-models > strong {
+	display: block;
+	margin-bottom: 5px;
+}
+.provider-account-models ul {
+	display: grid;
+	gap: 4px;
+	max-height: 178px;
+	overflow: auto;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.provider-account-models li {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 5px 0;
+	border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+	font-size: 11px;
+}
+.provider-account-models li small {
+	margin: 0;
+	text-align: right;
+}
+.provider-account-remove {
+	margin-top: 12px;
+	color: var(--danger, #d35d5d);
+}
+.provider-account-add {
+	margin-top: 17px;
+	background: color-mix(in srgb, var(--surface) 86%, var(--accent, #5965d8));
+}
+.provider-account-unsupported {
+	margin-top: 17px;
+	border: 1px solid color-mix(in srgb, #d89b40 44%, var(--line));
+	border-radius: 10px;
+	background: color-mix(in srgb, #d89b40 8%, var(--surface));
+	padding: 12px 13px;
+}
+.provider-account-unsupported strong,
+.provider-account-unsupported p {
+	display: block;
+}
+.provider-account-unsupported p {
+	margin: 6px 0 0;
+	max-width: 720px;
+}
+.provider-account-add-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+	margin-top: 12px;
+}
+.provider-account-add-grid > label {
+	min-width: 0;
+}
+.provider-account-headers {
+	grid-column: 1 / -1;
+}
+.provider-account-add textarea {
+	resize: vertical;
+}
+.provider-account-advanced {
+	margin-top: 11px;
+}
+.provider-account-kind-description {
+	max-width: 690px;
+	margin: 10px 0 !important;
+}
+.provider-account-global-error {
+	margin-top: 10px !important;
+}
 .routing-setting {
 	align-items: start;
 	padding-block: 22px;
@@ -4218,9 +4424,23 @@ input[type="radio"] {
 	color: var(--muted);
 	font-size: 11px;
 }
+.routing-advanced-grid .routing-policy-toggle {
+	display: block;
+	color: var(--ink);
+}
+.routing-policy-toggle small,
+.routing-advanced-grid label small {
+	display: block;
+	margin-top: 4px;
+	color: var(--muted);
+	line-height: 1.35;
+}
 .routing-advanced-grid input {
 	width: 100%;
 	margin-top: 5px;
+}
+.routing-advanced-grid .routing-policy-toggle input {
+	width: auto;
 }
 .routing-trace-summary {
 	display: grid;
@@ -4232,6 +4452,39 @@ input[type="radio"] {
 .routing-trace-summary span,
 .routing-trace-summary small {
 	color: var(--muted);
+}
+.routing-trace-context {
+	display: grid;
+	gap: 5px;
+	margin: 4px 0 0;
+}
+.routing-trace-context div {
+	display: grid;
+	grid-template-columns: 72px minmax(0, 1fr);
+	gap: 8px;
+}
+.routing-trace-context dt,
+.routing-trace-context dd {
+	margin: 0;
+	font-size: 11px;
+}
+.routing-trace-context dt {
+	color: var(--muted);
+}
+.routing-trace-context dd {
+	overflow-wrap: anywhere;
+}
+.routing-trace-candidates {
+	margin-top: 7px;
+	font-size: 11px;
+}
+.routing-trace-candidates summary {
+	cursor: pointer;
+	color: var(--muted);
+}
+.routing-trace-candidates ul {
+	margin: 6px 0 0;
+	padding-left: 17px;
 }
 .routing-grid {
 	display: grid;
@@ -5167,6 +5420,48 @@ input[type="radio"] {
 	margin-top: 3px;
 	color: var(--muted);
 	font-size: 11px;
+}
+.local-auto-setup {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 20px;
+	margin-top: 14px;
+	padding: 16px;
+	border: 1px solid color-mix(in srgb, var(--solid) 30%, transparent);
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--solid) 7%, transparent);
+}
+.local-auto-setup-copy > * {
+	display: block;
+}
+.local-auto-setup-label {
+	color: var(--ink);
+	font: 11px var(--mono);
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+.local-auto-setup-copy > strong {
+	margin-top: 7px;
+	font: 17px var(--display);
+	font-weight: 560;
+}
+.local-auto-setup-copy > code {
+	margin-top: 4px;
+	color: var(--muted);
+	font: 11px var(--mono);
+	word-break: break-word;
+}
+.local-auto-setup-copy > p {
+	max-width: 650px;
+	margin: 8px 0 0;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.55;
+}
+.local-auto-setup > .button {
+	flex: none;
+	white-space: nowrap;
 }
 .recommended-model-tiers {
 	margin-top: 10px;
@@ -7568,6 +7863,10 @@ body {
 		grid-template-columns: minmax(0, 1fr) auto;
 		grid-template-rows: auto auto auto;
 	}
+	.local-auto-setup {
+		grid-template-columns: minmax(0, 1fr);
+		align-items: start;
+	}
 	.model-tier-name {
 		grid-column: 1;
 		grid-row: 1;
@@ -9320,40 +9619,6 @@ select {
 	border-top: 1px solid var(--line);
 }
 
-.password-save-form {
-	display: grid;
-	gap: 12px;
-	margin-top: 2px;
-	padding: 14px;
-	border: 1px solid var(--line);
-	border-radius: 12px;
-	background: color-mix(in srgb, var(--surface) 80%, transparent);
-}
-
-.password-form-grid {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 10px;
-}
-
-.password-form-grid label {
-	display: grid;
-	gap: 6px;
-	min-width: 0;
-	color: var(--muted);
-	font-size: 11px;
-}
-
-.password-form-grid label small {
-	font-size: inherit;
-	opacity: 0.72;
-}
-
-.password-form-grid input {
-	width: 100%;
-	box-sizing: border-box;
-}
-
 .password-settings-message {
 	margin: 10px 0 0;
 	font-size: 12px;
@@ -9371,6 +9636,13 @@ select {
 	display: grid;
 	gap: 8px;
 	margin-top: 14px;
+}
+
+.password-entry-list > h3 {
+	margin: 0 0 2px;
+	color: var(--ink);
+	font-size: 12px;
+	font-weight: 650;
 }
 
 .password-empty-state,
@@ -9407,6 +9679,52 @@ select {
 	gap: 3px;
 }
 
+.password-entry-details {
+	flex: 1;
+}
+
+.password-entry-details label {
+	display: grid;
+	gap: 4px;
+	margin-top: 6px;
+	max-width: 360px;
+}
+
+.password-entry-details label > span {
+	font-size: 10px;
+	font-weight: 650;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+.password-entry-details input {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.password-entry-actions {
+	align-items: center;
+	justify-content: flex-end;
+	grid-template-columns: repeat(4, max-content);
+}
+
+.password-remove-confirmation {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	color: var(--muted);
+	font-size: 11px;
+}
+
+.password-entry-card .quiet-action-link.danger {
+	color: #df8989;
+}
+
+.password-entry-card .quiet-action-link.danger:hover:not(:disabled) {
+	color: #f0a4a4;
+}
+
 .password-entry-card strong,
 .password-entry-card span,
 .password-entry-card small {
@@ -9434,12 +9752,12 @@ select {
 }
 
 @media (max-width: 720px) {
-	.password-form-grid {
-		grid-template-columns: 1fr;
-	}
 	.password-entry-card {
 		align-items: flex-start;
 		flex-direction: column;
+	}
+	.password-entry-actions {
+		justify-content: flex-start;
 	}
 }
 

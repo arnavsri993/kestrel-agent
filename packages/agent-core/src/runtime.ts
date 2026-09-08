@@ -118,6 +118,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+const REDACTED_BROWSER_TYPING_TEXT = "[redacted browser input]";
+
+/**
+ * Browser typing can be refused only after the current accessibility snapshot
+ * identifies the target as sensitive. The runtime journals a pending execution
+ * before that check runs, so do not let its text reach durable journals.
+ */
+function redactBrowserTypingForStorage(
+	execution: RuntimeToolExecution,
+): RuntimeToolExecution {
+	if (
+		execution.toolName !== "browser.act" &&
+		execution.toolName !== "browser.visible-act"
+	)
+		return execution;
+	const action = execution.input.action;
+	if (
+		!isRecord(action) ||
+		action.type !== "type" ||
+		typeof action.text !== "string"
+	)
+		return execution;
+	return RuntimeToolExecutionSchema.parse({
+		...execution,
+		input: {
+			...execution.input,
+			action: { ...action, text: REDACTED_BROWSER_TYPING_TEXT },
+		},
+	});
+}
+
 function sessionAllowsMemory(session: Pick<RuntimeSession, "privacyMode">): boolean {
 	return (session.privacyMode ?? "standard") === "standard";
 }
@@ -604,12 +635,20 @@ export class AgentRuntime extends EventEmitter {
 
 	createSession(input: {
 		title: string;
+		kind?: RuntimeSession["kind"];
 		projectId?: string;
 		workspaceRoot?: string;
 		parentSessionId?: string;
 		allowedTools?: string[];
 		privacyMode?: RuntimeSession["privacyMode"];
+		planetAssetId?: RuntimeSession["planetAssetId"];
 	}): RuntimeSession {
+		if (input.kind === "agent" && input.parentSessionId)
+			throw new Error("A persistent agent must be a top-level session.");
+		if (input.kind === "subagent" && !input.parentSessionId)
+			throw new Error("A subagent must belong to a parent session.");
+		if (input.planetAssetId && input.kind !== "agent")
+			throw new Error("Only a persistent agent can choose a planet asset.");
 		const parent = input.parentSessionId
 			? this.database.getRuntimeSession(input.parentSessionId)
 			: undefined;
@@ -639,8 +678,12 @@ export class AgentRuntime extends EventEmitter {
 		const session = RuntimeSessionSchema.parse({
 			id: `session-${randomUUID()}`,
 			title: input.title,
+			kind: input.kind ?? "conversation",
 			...(input.parentSessionId
 				? { parentSessionId: input.parentSessionId }
+				: {}),
+			...(input.planetAssetId
+				? { planetAssetId: input.planetAssetId }
 				: {}),
 			...(project ? { projectId: project.id } : {}),
 			...(workspaceRoot ? { workspaceRoot } : {}),
@@ -749,6 +792,28 @@ export class AgentRuntime extends EventEmitter {
 		this.emitRuntimeEvent("session.updated", sessionId, {
 			action: "project-assigned",
 			projectId: project.id,
+			sessionUpdatedAt: updated.updatedAt,
+		});
+		return updated;
+	}
+
+	updateAgentPlanet(
+		sessionId: string,
+		planetAssetId: NonNullable<RuntimeSession["planetAssetId"]> | null,
+	): RuntimeSession {
+		const session = this.requireSession(sessionId);
+		if (session.kind !== "agent")
+			throw new Error("Only a persistent agent can choose a planet asset.");
+		const next = { ...session };
+		if (planetAssetId === null) delete next.planetAssetId;
+		else next.planetAssetId = planetAssetId;
+		const updated = this.saveSession({
+			...next,
+			updatedAt: this.now(),
+		});
+		this.emitRuntimeEvent("session.updated", sessionId, {
+			action: "agent-planet-updated",
+			planetAssetId: planetAssetId ?? null,
 			sessionUpdatedAt: updated.updatedAt,
 		});
 		return updated;
@@ -1101,6 +1166,10 @@ export class AgentRuntime extends EventEmitter {
 		const activeWorkspaceRoot = this.resolveActiveWorkspaceRoot(parent);
 		let child = this.createSession({
 			title: title ?? `${parent.title} (fork)`,
+			kind:
+				parent.kind === "agent" || parent.kind === "subagent"
+					? "subagent"
+					: "conversation",
 			parentSessionId: parent.id,
 			...(parent.projectId ? { projectId: parent.projectId } : {}),
 			...(activeWorkspaceRoot ? { workspaceRoot: activeWorkspaceRoot } : {}),
@@ -2293,21 +2362,22 @@ export class AgentRuntime extends EventEmitter {
 		approval?: ActionReceiptApprovalContext,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
-		this.database.saveToolExecution(execution);
+		const persistedExecution = redactBrowserTypingForStorage(execution);
+		this.database.saveToolExecution(persistedExecution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
-			execution.id,
+			persistedExecution.id,
 		);
 		const receiptDescriptor =
-			descriptor ?? this.tools.get(execution.toolName)?.descriptor;
+			descriptor ?? this.tools.get(persistedExecution.toolName)?.descriptor;
 		const receiptApproval = approval ?? previousReceipt?.approval;
 		const receipt = buildActionReceipt({
-			execution,
+			execution: persistedExecution,
 			...(receiptDescriptor ? { descriptor: receiptDescriptor } : {}),
 			...(receiptApproval ? { approval: receiptApproval } : {}),
 		});
 		if (receipt) this.database.saveActionReceipt(receipt);
-		if (execution.status === "running") return;
-		const event = summarizeBrowserActivity(execution);
+		if (persistedExecution.status === "running") return;
+		const event = summarizeBrowserActivity(persistedExecution);
 		if (!event) return;
 		try {
 			this.database.appendBrowserActivity(event);
@@ -2343,11 +2413,12 @@ export class AgentRuntime extends EventEmitter {
 		execution: RuntimeToolExecution,
 		descriptor?: RuntimeToolDescriptor,
 	): void {
+		const persistedExecution = redactBrowserTypingForStorage(execution);
 		const previousReceipt = this.database.getActionReceiptForExecution(
-			execution.id,
+			persistedExecution.id,
 		);
 		const receipt = buildActionReceipt({
-			execution,
+			execution: persistedExecution,
 			...(descriptor ? { descriptor } : {}),
 			...(previousReceipt ? { approval: previousReceipt.approval } : {}),
 		});
@@ -2363,7 +2434,7 @@ export class AgentRuntime extends EventEmitter {
 		const completion = this.database.completeIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
-			execution,
+			redactBrowserTypingForStorage(execution),
 		);
 		const result = RuntimeToolExecutionSchema.parse(completion.result);
 		this.journalToolExecution(result, approval, descriptor);
@@ -2376,11 +2447,14 @@ export class AgentRuntime extends EventEmitter {
 		signal?: AbortSignal,
 	): Promise<RuntimeToolExecution | undefined> {
 		const waitStartedAt = Date.now();
+		const persistedPendingExecution = redactBrowserTypingForStorage(
+			pendingExecution,
+		);
 		const initial = this.database.claimIdempotentResult(
 			idempotencyKey,
 			this.idempotencyOwnerToken,
 			process.pid,
-			pendingExecution,
+			persistedPendingExecution,
 		);
 		if (initial.state === "claimed") return undefined;
 		if (initial.state === "completed") {
@@ -2418,7 +2492,7 @@ export class AgentRuntime extends EventEmitter {
 				idempotencyKey,
 				this.idempotencyOwnerToken,
 				process.pid,
-				pendingExecution,
+				persistedPendingExecution,
 			);
 			if (retry.state === "claimed") return undefined;
 			if (retry.state === "completed")

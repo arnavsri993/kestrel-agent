@@ -103,7 +103,7 @@ try {
 		.waitFor();
 	await page
 		.getByText(
-			"This contacts only the configured provider or local model service.",
+			"Checks the configured provider or local model. It does not send a project prompt.",
 			{ exact: false },
 		)
 		.waitFor();
@@ -139,6 +139,22 @@ try {
 	await chatGptConnection
 		.getByRole("button", { name: "Disable model route" })
 		.waitFor();
+	const codexAccountEndpointId = await page.evaluate(async () => {
+		const response = await window.kestrel.request({
+			type: "runtime-list-providers",
+		});
+		if (!response.ok || !response.providerAccounts)
+			throw new Error("The account-aware provider catalog is unavailable.");
+		const account = response.providerAccounts.find(
+			(candidate) =>
+				candidate.providerId === "codex" &&
+				candidate.authTransport === "oauth" &&
+				candidate.enabled,
+		);
+		if (!account)
+			throw new Error("The enabled Codex account is missing from the provider catalog.");
+		return account.endpointId;
+	});
 	await openKestrelDestination(page, "Extensions");
 	await page
 		.getByRole("button", { name: "Open readiness", exact: true })
@@ -148,11 +164,11 @@ try {
 		.getByText("Ready for work", { exact: true })
 		.waitFor();
 	await page.getByRole("button", { name: "Verify model access" }).click();
-	await page.getByText("codex-subscription", { exact: true }).waitFor();
+	await page.getByText(codexAccountEndpointId, { exact: true }).waitFor();
 	const codexCheck = page
 		.locator(".model-check-panel")
 		.getByRole("listitem")
-		.filter({ hasText: "codex-subscription" });
+		.filter({ hasText: codexAccountEndpointId });
 	await codexCheck.waitFor();
 	const codexCheckText = await codexCheck.innerText();
 	assert.match(

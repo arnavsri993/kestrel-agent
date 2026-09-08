@@ -247,6 +247,55 @@ describe("agent runtime", () => {
 		database.close();
 	});
 
+	it("persists explicit agent kinds and configurable planet assets", () => {
+		const { database, runtime, session } = fixture();
+		const events: RuntimeEvent[] = [];
+		runtime.on("event", (event: RuntimeEvent) => events.push(event));
+		const agent = runtime.createSession({
+			title: "Research lead",
+			kind: "agent",
+			planetAssetId: "saturn",
+		});
+		const child = runtime.createSession({
+			title: "Delegated research",
+			kind: "subagent",
+			parentSessionId: agent.id,
+		});
+
+		expect(agent.kind).toBe("agent");
+		expect(agent.planetAssetId).toBe("saturn");
+		expect(child.kind).toBe("subagent");
+		expect(child.parentSessionId).toBe(agent.id);
+		expect(session.kind).toBe("conversation");
+
+		const updated = runtime.updateAgentPlanet(agent.id, "mars");
+		expect(updated.planetAssetId).toBe("mars");
+		expect(database.getRuntimeSession(agent.id)?.planetAssetId).toBe("mars");
+		expect(events.at(-1)).toMatchObject({
+			type: "session.updated",
+			sessionId: agent.id,
+			payload: { action: "agent-planet-updated", planetAssetId: "mars" },
+		});
+
+		const reset = runtime.updateAgentPlanet(agent.id, null);
+		expect(reset).not.toHaveProperty("planetAssetId");
+		expect(database.getRuntimeSession(agent.id)).not.toHaveProperty("planetAssetId");
+		expect(() =>
+			runtime.createSession({
+				title: "Nested persistent agent",
+				kind: "agent",
+				parentSessionId: agent.id,
+			}),
+		).toThrow("persistent agent must be a top-level session");
+		expect(() =>
+			runtime.createSession({ title: "Unowned moon", kind: "subagent" }),
+		).toThrow("subagent must belong to a parent session");
+		expect(() => runtime.updateAgentPlanet(session.id, "earth")).toThrow(
+			"Only a persistent agent can choose a planet asset",
+		);
+		database.close();
+	});
+
 	it("persists message activity as session recency without allowing stale clocks to move it backward", () => {
 		const directory = mkdtempSync(join(tmpdir(), "kestrel-session-recency-"));
 		temporaryDirectories.push(directory);

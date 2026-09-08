@@ -55,6 +55,11 @@ import {
 } from "@kestrel/shared-types";
 import { CoreSupervisor } from "./core-supervisor";
 import { CredentialBroker } from "./credential-broker";
+import {
+  BrokerCredentialStore,
+  MacOSKeychainCredentialStore,
+} from "./credential-store";
+import { ProviderAccountStore } from "./provider-account-store";
 import { PasswordVault } from "./password-vault";
 import { PaymentCardVault } from "./payment-card-vault";
 import { WorkspaceGrantStore } from "./workspace-grant-store";
@@ -65,10 +70,15 @@ import {
   PendingMigrationPlanStore,
 } from "./migration-plan-store";
 import { ElectronBrowserService } from "./electron-browser-service";
+import { BrowserTabTransferAccess } from "./browser-tab-transfer-access";
 import {
   UserBrowserService,
   isUserBrowserBackendWireRequest,
 } from "./user-browser-service";
+import {
+  defaultBrowserDownloadDirectory,
+  legacyBrowserDownloadDirectory,
+} from "./user-browser-download-path";
 import { LocalRuntimeManager } from "./local-runtime-manager";
 import { listWorkspaceFiles } from "./workspace-file-search";
 import { GoogleWorkspaceOAuthManager } from "./google-workspace-oauth";
@@ -188,6 +198,7 @@ const browserService = new ElectronBrowserService();
 let computerUseManagerInstance: ComputerUseManager | null = null;
 let userBrowserService: UserBrowserService | null = null;
 const browserWindowServices = new Map<BrowserWindow, UserBrowserService>();
+const browserTabTransfers = new BrowserTabTransferAccess<BrowserWindow>();
 interface CalculatorAnchorBounds {
   x: number;
   y: number;
@@ -564,6 +575,7 @@ function computerUseManager(): ComputerUseManager {
 let localGreetingNamePromise: Promise<string | undefined> | undefined;
 let managedLocalRuntime: LocalRuntimeManager | null = null;
 let appCredentialBroker: CredentialBroker | null = null;
+let appProviderAccountStore: ProviderAccountStore | null = null;
 let appPasswordVault: PasswordVault | null = null;
 let appPaymentCardVault: PaymentCardVault | null = null;
 let googleOAuthController: AbortController | null = null;
@@ -897,8 +909,20 @@ function credentialBroker(): CredentialBroker {
 	return appCredentialBroker;
 }
 
+function providerAccountStore(): ProviderAccountStore {
+	appProviderAccountStore ??= new ProviderAccountStore(
+		join(app.getPath("userData"), "provider-accounts.json"),
+		credentialBroker(),
+		app.getPath("userData"),
+	);
+	return appProviderAccountStore;
+}
+
 function passwordVault(): PasswordVault {
-	appPasswordVault ??= new PasswordVault(credentialBroker());
+	appPasswordVault ??= new PasswordVault(
+		new MacOSKeychainCredentialStore(app.getPath("userData")),
+		new BrokerCredentialStore(credentialBroker()),
+	);
 	return appPasswordVault;
 }
 
@@ -1397,6 +1421,20 @@ app.setPath(
     join(app.getPath("appData"), PRODUCT_IDENTITY.userDataDirectoryName),
 );
 
+function browserDownloadDirectory(): string {
+  return process.env.KESTREL_TEST_USER_DATA
+    ? join(app.getPath("userData"), "browser-downloads")
+    : defaultBrowserDownloadDirectory(app.getPath("downloads"));
+}
+
+function legacyBrowserDownloadDirectoryForMigration(): string | undefined {
+  if (process.env.KESTREL_TEST_USER_DATA) return undefined;
+  return legacyBrowserDownloadDirectory(
+    app.getPath("downloads"),
+    PRODUCT_IDENTITY.productName,
+  );
+}
+
 function browserHardwareAccelerationDisabled(): boolean {
 	try {
 		const statePath = join(app.getPath("userData"), "browser", "state.json");
@@ -1422,7 +1460,15 @@ if (
 	app.disableHardwareAcceleration();
 }
 
-const singleInstance = acquireSingleInstanceLock(app);
+// macOS scopes Electron's single-instance lock to the application bundle, not
+// its user-data directory. An explicit disposable-profile test run therefore
+// needs an opt-in escape hatch so it cannot attach to a person's live Kestrel
+// instance. Production and ordinary test runs retain the normal lock.
+const singleInstance =
+	process.env.KESTREL_TEST_USER_DATA &&
+	process.env.KESTREL_TEST_ALLOW_MULTIPLE_INSTANCES === "1"
+		? true
+		: acquireSingleInstanceLock(app);
 const developmentHeartbeatPath = process.env.KESTREL_DEV_ELECTRON_HEARTBEAT;
 if (process.env.NODE_ENV_ELECTRON_VITE === "development" && developmentHeartbeatPath) {
   const heartbeatMonitor = setInterval(() => {
@@ -1727,6 +1773,7 @@ function finishMacWidgetRun(
 }
 
 function createMainWindow(): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -1764,9 +1811,8 @@ function createMainWindow(): BrowserWindow {
           allowDevTools: !isPackagedKestrelApp,
           allowLocalExtensions: !isPackagedKestrelApp,
           statePath: join(app.getPath("userData"), "browser", "state.json"),
-          downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-            ? join(app.getPath("userData"), "browser-downloads")
-            : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+          downloadDirectory: browserDownloadDirectory(),
+          ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
           passwordVault: passwordVault(),
           paymentCardVault: paymentCardVault(),
           onEvent: (event) => {
@@ -1899,6 +1945,7 @@ function createDetachedBrowserWindow(
   sourceState: UserBrowserState,
   tab: UserBrowserTab,
 ): BrowserWindow {
+  const legacyDownloadDirectory = legacyBrowserDownloadDirectoryForMigration();
   const window = new BrowserWindow({
     ...detachedBrowserWindowBounds(),
     minWidth: 920,
@@ -1930,9 +1977,8 @@ function createDetachedBrowserWindow(
     allowLocalExtensions: !isPackagedKestrelApp,
     statePath,
     initialState: detachedBrowserState(sourceState, tab),
-    downloadDirectory: process.env.KESTREL_TEST_USER_DATA
-      ? join(app.getPath("userData"), "browser-downloads")
-      : join(app.getPath("downloads"), PRODUCT_IDENTITY.productName),
+    downloadDirectory: browserDownloadDirectory(),
+    ...(legacyDownloadDirectory ? { legacyDownloadDirectory } : {}),
     passwordVault: passwordVault(),
     paymentCardVault: paymentCardVault(),
     onEvent: (event) => {
@@ -1961,6 +2007,7 @@ function createDetachedBrowserWindow(
   window.on("closed", () => {
     closePasswordOverlay(window);
     closePaymentOverlay(window);
+    browserTabTransfers.revokeOwner(window);
     service.dispose();
     browserWindowServices.delete(window);
     void rm(statePath, { force: true }).catch(() => undefined);
@@ -2336,6 +2383,30 @@ async function initializeCore(
   } catch {
     // A local model server is optional and must not delay or block startup.
   }
+	// Migrate existing brokered/API and trusted CLI routes as account metadata.
+	// This is additive and reversible: credential bytes remain in their original
+	// protected broker slots until a person removes the legacy account.
+	const accounts = providerAccountStore();
+	await accounts.ensureLegacyAccounts(secureEnvironment);
+	const providerAccounts = (await accounts.runtimeAccounts(secureEnvironment)).flatMap(
+		(account) => {
+			const cliId =
+				account.adapter === "codex-app-server"
+					? "codex"
+					: account.adapter === "opencode-cli"
+						? "opencode"
+						: account.adapter === "claude-cli"
+							? "claude"
+							: undefined;
+			if (!cliId) return [account];
+			const executable = detectedSubscriptionCli(cliId);
+			if (executable) return [{ ...account, executable }];
+			// An account remains visible in Settings, but only a currently detected
+			// trusted executable may become a CLI endpoint. Do not execute a path
+			// persisted in profile metadata or guess a binary name.
+			return [];
+		},
+	);
   const workspaceGrantStore = new WorkspaceGrantStore(
     join(userData, "workspace-grants.json"),
   );
@@ -2361,6 +2432,7 @@ async function initializeCore(
       managedPluginRoots: [managedPluginRoot],
       learnedSkillRoot: join(userData, "learned-skills"),
       secureEnvironment,
+		providerAccounts,
     });
     const response = await supervisor.request({ type: "snapshot" });
     if (!response.ok)
@@ -2541,6 +2613,8 @@ function registerIpc(): void {
         "password-save-suggestion",
         "password-fill-page",
         "password-fill-field",
+        "password-mark-never-save",
+        "password-generate",
         "password-dismiss",
       ].includes(request.type)
     )
@@ -2597,6 +2671,10 @@ function registerIpc(): void {
           request.passwordId,
           request.fieldId,
         );
+      else if (request.type === "password-mark-never-save")
+        passwordService.markNeverSavePasswordForActiveOrigin();
+      else if (request.type === "password-generate")
+        await passwordService.generatePasswordForActiveForm();
       else passwordService.dismissPasswordPrompt();
       return { ok: true };
     }
@@ -2837,6 +2915,14 @@ function registerIpc(): void {
           request.tabId,
           request.input,
         ),
+      };
+    }
+    if (request.type === "browser-dismiss-threat") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      return {
+        ok: true,
+        browserState: requestBrowserService.dismissThreat(request.tabId),
       };
     }
     if (request.type === "browser-back") {
@@ -3214,6 +3300,18 @@ function registerIpc(): void {
         throw cause;
       }
     }
+    if (request.type === "browser-prepare-tab-transfer") {
+      if (!requestBrowserService || senderWindow === mainWindow)
+        throw new Error("Only a detached browser tab can begin this transfer.");
+      requestBrowserService.getTabForTransfer(request.tabId);
+      return {
+        ok: true,
+        browserTabTransferToken: browserTabTransfers.issue(
+          senderWindow,
+          request.tabId,
+        ),
+      };
+    }
     if (request.type === "browser-reattach-tab") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
@@ -3222,9 +3320,13 @@ function registerIpc(): void {
       const targetService = browserServiceForWindow(mainWindow);
       if (!targetService)
         throw new Error("The main Kestrel window is unavailable.");
+      const sourceWindow =
+        senderWindow === mainWindow && request.transferToken
+          ? browserTabTransfers.consume(request.transferToken, request.tabId)
+          : null;
       const sourceService =
         senderWindow === mainWindow
-          ? browserServiceForTab(request.tabId)
+          ? browserServiceForWindow(sourceWindow)
           : requestBrowserService;
       if (!sourceService || sourceService === targetService)
         throw new Error("That detached browser tab is unavailable.");
@@ -3350,11 +3452,19 @@ function registerIpc(): void {
         extensions: requestBrowserService.listExtensions(),
       };
     }
+    if (request.type === "browser-inspect-extension-url") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extensionInspection = await requestBrowserService.inspectExtensionUrl(
+        request.urlOrId,
+      );
+      return { ok: true, extensionInspection };
+    }
     if (request.type === "browser-install-extension-url") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      const extension = await requestBrowserService.installExtensionUrl(
-        request.urlOrId,
+      const extension = await requestBrowserService.installReviewedExtension(
+        request.inspectionId,
       );
       return { ok: true, extension };
     }
@@ -3372,6 +3482,14 @@ function registerIpc(): void {
         throw new Error("The visible user browser is unavailable.");
       await requestBrowserService.uninstallExtension(request.extensionId);
       return { ok: true };
+    }
+    if (request.type === "browser-reload-extension") {
+      if (!requestBrowserService)
+        throw new Error("The visible user browser is unavailable.");
+      const extension = await requestBrowserService.reloadExtension(
+        request.extensionId,
+      );
+      return { ok: true, extension };
     }
     if (request.type === "browser-sleep-tab") {
       if (!requestBrowserService)
@@ -3698,6 +3816,78 @@ function registerIpc(): void {
     }
     if (request.type === "subscription-cli-status")
       return { ok: true, subscriptionClis: await subscriptionCliStatuses() };
+	if (request.type === "provider-account-list")
+		return { ok: true, providerAccounts: await providerAccountStore().list() };
+	if (request.type === "provider-account-create") {
+		await providerAccountStore().create(request.account);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-update") {
+		await providerAccountStore().update(request.account);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-remove") {
+		await providerAccountStore().remove(request.accountId);
+		await supervisor.stop();
+		await initializeCore();
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
+	if (request.type === "provider-account-connect") {
+		if (chatGptOAuthController)
+			throw new Error("ChatGPT sign-in is already in progress.");
+		const account = await providerAccountStore().account(request.accountId);
+		if (!account) throw new Error("Provider account no longer exists.");
+		if (account.adapter !== "codex-app-server")
+			throw new Error(
+				"This account uses its provider's existing CLI or protected API-key flow.",
+			);
+		const codexPath = detectedSubscriptionCli("codex");
+		if (!codexPath)
+			throw new Error(
+				"Codex was not found in a trusted local installation path.",
+			);
+		if (account.profilePath)
+			await mkdir(account.profilePath, { recursive: true, mode: 0o700 });
+		const controller = new AbortController();
+		const manager = new ChatGptOAuthManager({
+			executable: codexPath,
+			environment: {
+				...process.env,
+				...(account.profilePath ? { CODEX_HOME: account.profilePath } : {}),
+			},
+			openExternal: async (url) => {
+				openExternalSafely((target) => shell.openExternal(target), url);
+			},
+		});
+		chatGptOAuthController = controller;
+		activeChatGptOAuthManager = manager;
+		await supervisor.stop();
+		try {
+			await manager.connect(controller.signal);
+		} finally {
+			if (chatGptOAuthController === controller) chatGptOAuthController = null;
+			if (activeChatGptOAuthManager === manager)
+				activeChatGptOAuthManager = null;
+			await initializeCore();
+		}
+		return {
+			ok: true,
+			providerAccounts: await providerAccountStore().list(),
+		};
+	}
     if (request.type === "subscription-cli-set") {
       const statuses = await subscriptionCliStatuses();
       const selected = statuses.find((status) => status.id === request.id);
@@ -3924,24 +4114,32 @@ function registerIpc(): void {
     }
     if (
       request.type === "password-list" ||
-      request.type === "password-save" ||
-      request.type === "password-remove"
+      request.type === "password-remove" ||
+      request.type === "password-update-username" ||
+      request.type === "password-copy" ||
+      request.type === "password-reveal"
     ) {
       const service = requestBrowserService ?? userBrowserService;
       if (!service)
         throw new Error("The visible user browser is unavailable.");
       if (request.type === "password-list")
         return { ok: true, passwords: await service.listPasswords() };
-      if (request.type === "password-save")
+      if (request.type === "password-update-username")
         return {
           ok: true,
-          passwords: await service.savePassword({
-            origin: request.origin,
-            ...(request.title ? { title: request.title } : {}),
-            username: request.username,
-            password: request.password,
-          }),
+          passwords: await service.updatePasswordUsername(
+            request.passwordId,
+            request.username,
+          ),
         };
+      if (request.type === "password-copy") {
+        await service.copyPassword(request.passwordId);
+        return { ok: true };
+      }
+      if (request.type === "password-reveal") {
+        await service.revealPassword(request.passwordId);
+        return { ok: true };
+      }
       return {
         ok: true,
         passwords: await service.removePassword(request.passwordId),
@@ -4467,6 +4665,7 @@ async function initializeCoreForStartup(): Promise<boolean> {
           // The failed attempt cached the old key. A new broker is required so
           // the first-run path creates a fresh protected key after the archive.
           appCredentialBroker = null;
+			appProviderAccountStore = null;
           appPasswordVault = null;
           appPaymentCardVault = null;
           continue;

@@ -1,9 +1,51 @@
 /** Shared physical-motion constants and pure helpers for renderer interactions. */
+const KESTREL_EASE_OUT = [0.25, 1, 0.35, 1] as const;
+const KESTREL_EASE_IN = [0.4, 0, 1, 1] as const;
+
+/**
+ * A small, named set of timing families keeps controls responsive without
+ * making menus, selection, and panels all feel like the same object. These
+ * transitions only ever decorate a state change; callers must commit the
+ * underlying action immediately.
+ */
+export const KESTREL_CONTROL_TRANSITION = {
+	duration: 0.08,
+	ease: KESTREL_EASE_OUT,
+};
+
+export const KESTREL_MENU_TRANSITION = {
+	duration: 0.12,
+	ease: KESTREL_EASE_OUT,
+};
+
+export const KESTREL_SELECTION_TRANSITION = {
+	duration: 0.16,
+	ease: KESTREL_EASE_OUT,
+};
+
+export const KESTREL_PANEL_TRANSITION = {
+	duration: 0.2,
+	ease: KESTREL_EASE_OUT,
+};
+
+export const KESTREL_EXIT_TRANSITION = {
+	duration: 0.12,
+	ease: KESTREL_EASE_IN,
+};
+
 export const KESTREL_CRITICAL_SPRING = {
 	type: "spring" as const,
 	stiffness: 520,
 	damping: 42,
 	mass: 0.85,
+};
+
+/** Neighboring tabs make space quickly, while the lifted tab stays pointer-direct. */
+export const KESTREL_REORDER_SPRING = {
+	type: "spring" as const,
+	stiffness: 580,
+	damping: 46,
+	mass: 0.75,
 };
 
 export const KESTREL_GENTLE_SPRING = {
@@ -13,10 +55,8 @@ export const KESTREL_GENTLE_SPRING = {
 	mass: 0.85,
 };
 
-export const KESTREL_STATE_TRANSITION = {
-	duration: 0.16,
-	ease: [0.2, 0.8, 0.2, 1] as const,
-};
+/** @deprecated Use the more specific transition family for new surfaces. */
+export const KESTREL_STATE_TRANSITION = KESTREL_SELECTION_TRANSITION;
 
 /**
  * An interrupted rail transition may have accumulated a large velocity when

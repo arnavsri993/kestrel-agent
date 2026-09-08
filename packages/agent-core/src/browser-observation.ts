@@ -19,6 +19,16 @@ const OBSERVATION_STATE_NAMES = [
 const SENSITIVE_URL_PARAMETER =
 	/(?:token|secret|password|passwd|api[_-]?key|auth|credential|session|signature|sig|code)/i;
 
+const SENSITIVE_FIELD_MARKERS = [
+	/\bpass(?:word|code)?\b/i,
+	/\b(?:current|new)[-_ ]password\b/i,
+	/\b(?:one[-_ ]time[-_ ](?:code|passcode|token)|otp|recovery[-_ ](?:code|passcode)|verification[-_ ](?:code|passcode)|security[-_ ]code)\b/i,
+	/\b(?:cvv|cvc|cc[-_ ]?csc|security code)\b/i,
+	/\b(?:api[-_ ]?key|access[-_ ]?token|private[-_ ]key)\b/i,
+];
+
+const REDACTED_FIELD_NAME = "Sensitive field";
+
 export interface BrowserObservationSnapshot {
 	url: string;
 	title: string;
@@ -73,6 +83,26 @@ function fieldText(node: Record<string, unknown>, name: string): string | undefi
 	const value = scalarValue(node[name]);
 	if (value === undefined) return undefined;
 	return boundedText(String(value));
+}
+
+function sensitiveFieldText(node: Record<string, unknown>): string {
+	const parts = [node.role, node.name, node.description];
+	if (Array.isArray(node.properties)) {
+		for (const property of node.properties) {
+			if (!isRecord(property)) continue;
+			parts.push(property.name, property.value);
+		}
+	}
+	return parts
+		.map((part) => scalarValue(part))
+		.filter((part): part is string | boolean | number => part !== undefined)
+		.map(String)
+		.join(" ");
+}
+
+function isSensitiveField(node: Record<string, unknown>): boolean {
+	const text = sensitiveFieldText(node);
+	return SENSITIVE_FIELD_MARKERS.some((marker) => marker.test(text));
 }
 
 function stateText(value: unknown): string | undefined {
@@ -134,9 +164,10 @@ function collectAccessibilityNodes(tree: unknown): {
 		while (usedKeys.has(key)) key = `${baseKey}#${duplicate++}`;
 		usedKeys.add(key);
 		const role = fieldText(value, "role") || "unknown";
-		const name = fieldText(value, "name");
-		const nodeValue = fieldText(value, "value");
-		const description = fieldText(value, "description");
+		const sensitive = isSensitiveField(value);
+		const name = sensitive ? REDACTED_FIELD_NAME : fieldText(value, "name");
+		const nodeValue = sensitive ? undefined : fieldText(value, "value");
+		const description = sensitive ? undefined : fieldText(value, "description");
 		const states = observationStates(value);
 		const publicNode: BrowserObservationNode = {
 			key,
