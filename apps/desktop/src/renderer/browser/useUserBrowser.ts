@@ -134,6 +134,7 @@ export function useUserBrowser(): UserBrowserController {
 	const contentBoundsRequestRef = useRef<Promise<string | undefined>>(
 		Promise.resolve(undefined),
 	);
+	const contentBoundsIntentRef = useRef(0);
 	stateRef.current = state;
 	const applyState = useCallback((nextState: UserBrowserState) => {
 		stateRef.current = nextState;
@@ -337,20 +338,25 @@ export function useUserBrowser(): UserBrowserController {
 			// Layout effects hide the native view during cleanup and reveal it
 			// again after a route or orientation change. Serialize those IPC
 			// updates so an older cleanup cannot arrive after the newer visible
-			// bounds and leave the active page detached.
-			const pending = contentBoundsRequestRef.current
-				.catch(() => undefined)
-				.then(async () => {
-					const response = await window.kestrel.request({
-						type: "browser-set-content-bounds",
-						bounds,
-						visible,
-					});
-					if (!response.ok) throw new Error(responseError(response));
-					return "browserPagePreview" in response
-						? response.browserPagePreview
-						: undefined;
+			// bounds and leave the active page detached. Hides are dispatched
+			// immediately so a native page cannot swallow a renderer pointerup
+			// while an older screenshot is still settling.
+			const intent = ++contentBoundsIntentRef.current;
+			const request = async () => {
+				if (visible && intent !== contentBoundsIntentRef.current) return undefined;
+				const response = await window.kestrel.request({
+					type: "browser-set-content-bounds",
+					bounds,
+					visible,
 				});
+				if (!response.ok) throw new Error(responseError(response));
+				return "browserPagePreview" in response
+					? response.browserPagePreview
+					: undefined;
+			};
+			const pending = visible
+				? contentBoundsRequestRef.current.catch(() => undefined).then(request)
+				: request();
 			contentBoundsRequestRef.current = pending;
 			return pending;
 		},

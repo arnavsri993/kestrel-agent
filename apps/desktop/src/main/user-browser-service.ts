@@ -2282,6 +2282,7 @@ export class UserBrowserService {
 		visible: boolean,
 	): Promise<string | undefined> {
 		this.assertAvailable();
+		const seq = ++this.contentBoundsSeq;
 		const pagePreviewPromise =
 			!visible && bounds.width >= 160 && bounds.height >= 120
 				? this.captureNativePagePreview()
@@ -2304,7 +2305,7 @@ export class UserBrowserService {
 		const pagePreview = pagePreviewPromise
 			? await pagePreviewPromise
 			: undefined;
-		const seq = ++this.contentBoundsSeq;
+		if (seq !== this.contentBoundsSeq) return undefined;
 		const size = this.window.getContentSize();
 		const windowWidth = size[0] ?? 0;
 		const windowHeight = size[1] ?? 0;
