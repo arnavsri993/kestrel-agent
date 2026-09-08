@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { KestrelDatabase } from "@kestrel/database";
+import { isRoutingSecretLikeValue } from "@kestrel/shared-types";
 
 /** The encrypted private-state key used exclusively for routing outcomes. */
 export const ROUTING_OUTCOME_STORE_KEY = "routing.outcomes.v1";
@@ -74,6 +75,10 @@ export interface RoutingOutcomeInput {
 	verifierStatus?: RoutingVerifierStatus;
 	success?: boolean;
 	costScarcity?: RoutingCostScarcity;
+	estimatedCostUsd?: number;
+	actualCostUsd?: number;
+	effectiveCost?: number;
+	scarcityPenalty?: number;
 	timestamp?: Date | string;
 }
 
@@ -90,12 +95,25 @@ export interface RoutingOutcomeRecord {
 	verifierStatus?: RoutingVerifierStatus;
 	success?: boolean;
 	costScarcity?: RoutingCostScarcity;
+	estimatedCostUsd?: number;
+	actualCostUsd?: number;
+	effectiveCost?: number;
+	scarcityPenalty?: number;
 }
 
 function boundedInteger(value: unknown, maximum: number): number | undefined {
 	if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
 		return undefined;
 	return Math.min(maximum, Math.floor(value));
+}
+
+function boundedNonnegativeNumber(
+	value: unknown,
+	maximum: number,
+): number | undefined {
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+		return undefined;
+	return Math.min(maximum, value);
 }
 
 function safeIdentifier(value: unknown): string | undefined {
@@ -106,6 +124,7 @@ function safeIdentifier(value: unknown): string | undefined {
 		normalized.length > 128 ||
 		!/[a-z0-9]/.test(normalized) ||
 		!/^[-._:a-z0-9]+$/.test(normalized) ||
+		isRoutingSecretLikeValue(normalized) ||
 		/(?:https?:|www\.|@|(?:^|[-_.])(?:sk|pk)[:-]|\b(?:api[_-]?key|access[_-]?token|auth(?:orization)?|bearer|credential|password|secret)\b)/.test(
 			normalized,
 		)
@@ -169,6 +188,19 @@ function sanitizeOutcome(
 	const toolFailureCount = boundedInteger(input.toolFailureCount, 100);
 	const verifierStatus = enumValue<RoutingVerifierStatus>(input.verifierStatus, VERIFIER_STATUSES);
 	const costScarcity = enumValue<RoutingCostScarcity>(input.costScarcity, COST_SCARCITY_LEVELS);
+	const estimatedCostUsd = boundedNonnegativeNumber(
+		input.estimatedCostUsd,
+		1_000_000,
+	);
+	const actualCostUsd = boundedNonnegativeNumber(
+		input.actualCostUsd,
+		1_000_000,
+	);
+	const effectiveCost = boundedNonnegativeNumber(
+		input.effectiveCost,
+		1_000_000,
+	);
+	const scarcityPenalty = boundedNonnegativeNumber(input.scarcityPenalty, 1);
 	if (taskProfile) outcome.taskProfile = taskProfile;
 	if (route) outcome.route = route;
 	if (thinkingLevel) outcome.thinkingLevel = thinkingLevel;
@@ -179,6 +211,10 @@ function sanitizeOutcome(
 	if (verifierStatus) outcome.verifierStatus = verifierStatus;
 	if (typeof input.success === "boolean") outcome.success = input.success;
 	if (costScarcity) outcome.costScarcity = costScarcity;
+	if (estimatedCostUsd !== undefined) outcome.estimatedCostUsd = estimatedCostUsd;
+	if (actualCostUsd !== undefined) outcome.actualCostUsd = actualCostUsd;
+	if (effectiveCost !== undefined) outcome.effectiveCost = effectiveCost;
+	if (scarcityPenalty !== undefined) outcome.scarcityPenalty = scarcityPenalty;
 	return outcome;
 }
 

@@ -298,6 +298,54 @@ describe("model provider adapters", () => {
 		).rejects.toMatchObject({ attempts: [] });
 	});
 
+	it("reports in-flight endpoint requests for account-aware routing", async () => {
+		let reportStarted: () => void = () => undefined;
+		let release: () => void = () => undefined;
+		const started = new Promise<void>((resolvePromise) => {
+			reportStarted = resolvePromise;
+		});
+		const gate = new Promise<void>((resolvePromise) => {
+			release = resolvePromise;
+		});
+		const provider: ModelProvider = {
+			id: "busy-account",
+			capabilities: {
+				streaming: false,
+				tools: false,
+				images: false,
+				audio: false,
+				documents: false,
+				local: true,
+			},
+			complete: async (request) => {
+				reportStarted();
+				await gate;
+				return {
+					providerId: "busy-account",
+					model: request.model,
+					text: "completed",
+					toolCalls: [],
+					usage: { inputTokens: 1, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		};
+		const pool = new ProviderPool([provider]);
+		const pending = pool.complete({
+			model: "fixture",
+			messages: [{ role: "user", content: textContent("hello") }],
+		});
+		await started;
+		expect(pool.health()).toMatchObject([
+			{ providerId: "busy-account", activeRequests: 1 },
+		]);
+		release();
+		await pending;
+		expect(pool.health()).toMatchObject([
+			{ providerId: "busy-account", activeRequests: 0 },
+		]);
+	});
+
 	it("stops provider verification when cancellation wins", async () => {
 		const capabilities = {
 			streaming: false,

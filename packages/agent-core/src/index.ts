@@ -33,7 +33,12 @@ import {
 	type ManagedPolicy,
 	ManagedPolicyStore,
 } from "./administration";
-import { AgentLoop, type AgentLoopResult } from "./agent-loop";
+import {
+	AgentLoop,
+	type AgentAdaptiveEscalationInput,
+	type AgentAdaptiveEscalationUpdate,
+	type AgentLoopResult,
+} from "./agent-loop";
 import { selectBrowserContext } from "./browser-context";
 import {
 	type ChannelEnvelope,
@@ -99,6 +104,12 @@ import {
 	ModelRegistry,
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
+import { AccountAvailabilityMonitor } from "./routing/account-availability";
+import {
+	RoutingOutcomeStore,
+	type RoutingCostScarcity,
+	type RoutingVerifierStatus,
+} from "./routing/outcome-store";
 import { WritingAssistant } from "./writing-assistant";
 import { WritingProfileStore } from "./writing-profile";
 import { NativeNodeManager } from "./native-nodes";
@@ -172,6 +183,16 @@ function persistedCompactionCount(value: unknown): number {
 		: 0;
 }
 
+/** Parse only the required first-line verifier contract; never retain review text. */
+export function parseIndependentReviewerVerdict(
+	text: string | undefined,
+): Extract<RoutingVerifierStatus, "passed" | "failed" | "unavailable"> {
+	const firstLine = text?.split(/\r?\n/, 1)[0]?.trim() ?? "";
+	if (/^VERDICT:\s*PASS\b/i.test(firstLine)) return "passed";
+	if (/^VERDICT:\s*FAIL\b/i.test(firstLine)) return "failed";
+	return "unavailable";
+}
+
 export interface AgentCoreDependencies {
 	database: KestrelDatabase;
 	/** Seed the deterministic teacher-scheduling data used by preview and test surfaces. */
@@ -218,6 +239,8 @@ export class AgentCore {
 	readonly runtime: AgentRuntime;
 	readonly providerPool: ProviderPool;
 	readonly modelCatalog: ModelCatalog;
+	readonly accountAvailability: AccountAvailabilityMonitor;
+	readonly routingOutcomes: RoutingOutcomeStore;
 	readonly usageGovernor: UsageGovernor;
 	readonly agentLoop: AgentLoop;
 	readonly skillRegistry?: SkillRegistry;
@@ -506,6 +529,17 @@ export class AgentCore {
 			() => new Date(this.now()),
 			this.modelCatalog,
 		);
+		this.accountAvailability = new AccountAvailabilityMonitor(
+			() => new Date(this.now()),
+		);
+		this.accountAvailability.sync({
+			providerHealth: this.providerPool.health(),
+			profiles: this.modelRegistry.list(),
+		});
+		this.routingOutcomes = new RoutingOutcomeStore(
+			this.deps.database,
+			() => new Date(this.now()),
+		);
 		this.modelRouter = new AdaptiveModelRouter(
 			this.deps.database,
 			this.modelRegistry,
@@ -523,6 +557,7 @@ export class AgentCore {
 				}
 			},
 			() => new Date(this.now()),
+			this.accountAvailability,
 		);
 		if (this.deps.routingPolicy)
 			this.modelRouter.setPolicy(this.deps.routingPolicy);
@@ -610,6 +645,19 @@ export class AgentCore {
 			() => this.configuration.current().workflows.maximumTurns,
 			this.groupMemory,
 			this.memorySubstrate,
+			() => {
+				this.modelRegistry.syncProviderCatalog(
+					this.providerPool.list(),
+					this.modelCatalog,
+					false,
+				);
+				this.modelRegistry.applyProviderHealth(this.providerPool.health());
+				this.accountAvailability.sync({
+					providerHealth: this.providerPool.health(),
+					profiles: this.modelRegistry.list(),
+				});
+			},
+			this.routingOutcomes,
 		);
 		installOrchestrationTools(this.runtime, this.orchestrator, mainSession.id);
 		for (const session of this.runtime.listSessions()) {
@@ -814,6 +862,10 @@ export class AgentCore {
 		orchestrationInstructions: string;
 		decision: ReturnType<AdaptiveModelRouter["route"]>;
 		requirements: ReturnType<TaskRequirementAnalyzer["analyze"]>;
+		policy: RoutingPolicy;
+		allowedProviderIds: string[];
+		initialSelectedModelId: string;
+		attemptedModelIds: string[];
 	} {
 		// Catalog entries can expire while this core remains running. Synchronize
 		// the registry immediately before an automatic decision so stale account
@@ -824,6 +876,10 @@ export class AgentCore {
 			false,
 		);
 		this.modelRegistry.applyProviderHealth(this.providerPool.health());
+		this.accountAvailability.sync({
+			providerHealth: this.providerPool.health(),
+			profiles: this.modelRegistry.list(),
+		});
 		const routedProviderIds = this.providerIdsForAttachments(
 			providerIds,
 			attachments,
@@ -855,25 +911,7 @@ export class AgentCore {
 		if (decision.traceId)
 			this.modelRouter.completeTrace(decision.traceId, { status: "running" });
 		const execution = this.modelRouter.executionPlan(decision);
-		const route: ModelRoutingDecision = {
-			taskId,
-			model: decision.model,
-			providerId: decision.providerId,
-			selectedModelId: decision.selectedModelId,
-			tier: decision.tier,
-			reasoningEffort: decision.reasoningLevel,
-			fastMode: decision.fastMode,
-			serviceTier: decision.fastMode ? "priority" : "standard",
-			execution: this.modelRegistry.get(decision.selectedModelId).local
-				? "local"
-				: "configured_endpoint",
-			rationale: decision.reasons.join(" "),
-			confidence: decision.confidence,
-			...(decision.traceId ? { traceId: decision.traceId } : {}),
-			fallbackModelIds: decision.fallbackModelIds,
-			reviewRequired: decision.settings.reviewRequired,
-			selectedAt: decision.selectedAt,
-		};
+		const route = this.modelRoutingDecision(taskId, decision);
 		this.currentRouting = route;
 		this.deps.database.setState("modelRouting", route);
 		const orchestrationInstructions = requirements.parallelizable
@@ -900,6 +938,168 @@ export class AgentCore {
 			orchestrationInstructions,
 			decision,
 			requirements,
+			policy: taskPolicy,
+			allowedProviderIds: routedProviderIds,
+			initialSelectedModelId: decision.selectedModelId,
+			attemptedModelIds: [decision.selectedModelId],
+		};
+	}
+
+	private modelRoutingDecision(
+		taskId: string,
+		decision: ReturnType<AdaptiveModelRouter["route"]>,
+	): ModelRoutingDecision {
+		return {
+			taskId,
+			model: decision.model,
+			providerId: decision.providerId,
+			selectedModelId: decision.selectedModelId,
+			...(decision.accountId ? { accountId: decision.accountId } : {}),
+			...(decision.accountAlias ? { accountAlias: decision.accountAlias } : {}),
+			tier: decision.tier,
+			reasoningEffort: decision.reasoningLevel,
+			fastMode: decision.fastMode,
+			serviceTier: decision.fastMode ? "priority" : "standard",
+			execution: this.modelRegistry.get(decision.selectedModelId).local
+				? "local"
+				: "configured_endpoint",
+			rationale: decision.reasons.join(" "),
+			confidence: decision.confidence,
+			...(decision.traceId ? { traceId: decision.traceId } : {}),
+			fallbackModelIds: decision.fallbackModelIds,
+			reviewRequired: decision.settings.reviewRequired,
+			...(decision.effectiveCost !== undefined
+				? { effectiveCost: decision.effectiveCost }
+				: {}),
+			...(decision.scarcityPenalty !== undefined
+				? { scarcityPenalty: decision.scarcityPenalty }
+				: {}),
+			...(decision.executionPattern
+				? { executionPattern: decision.executionPattern }
+				: {}),
+			selectedAt: decision.selectedAt,
+		};
+	}
+
+	private adaptiveEscalationFor(
+		automatic: ReturnType<AgentCore["automaticRoute"]>,
+	): (
+		input: AgentAdaptiveEscalationInput,
+	) => Promise<AgentAdaptiveEscalationUpdate | undefined> {
+		return async ({ run, category, attemptedRouteIds }) => {
+			if (!automatic.policy.allowAutomaticEscalation) return undefined;
+			if (
+				category !== "model_reasoning" &&
+				category !== "insufficient_capability" &&
+				category !== "verification"
+			)
+				return undefined;
+			this.modelRegistry.syncProviderCatalog(
+				this.providerPool.list(),
+				this.modelCatalog,
+				false,
+			);
+			this.modelRegistry.applyProviderHealth(this.providerPool.health());
+			this.accountAvailability.sync({
+				providerHealth: this.providerPool.health(),
+				profiles: this.modelRegistry.list(),
+			});
+			const previousDecision = automatic.decision;
+			let decision: ReturnType<AdaptiveModelRouter["route"]>;
+			try {
+				decision = this.modelRouter.route(automatic.requirements, {
+					role: "fallback",
+					allowedProviderIds: automatic.allowedProviderIds,
+					excludeModelIds: [
+						...new Set([
+							...automatic.attemptedModelIds,
+							...attemptedRouteIds,
+						]),
+					],
+					policy: automatic.policy,
+					...(previousDecision.traceId
+						? { parentTraceId: previousDecision.traceId }
+						: {}),
+					escalationReason:
+						category === "verification"
+							? "validation"
+							: category === "insufficient_capability"
+								? "timeout"
+								: "refusal",
+					switchedFromModelId: previousDecision.selectedModelId,
+				});
+			} catch {
+				// Keep the same run alive for its existing, explicit fallback ladder.
+				// Provider details are deliberately not persisted or surfaced here.
+				return undefined;
+			}
+			if (
+				decision.selectedModelId === previousDecision.selectedModelId &&
+				decision.reasoningLevel === previousDecision.reasoningLevel
+			)
+				return undefined;
+			if (previousDecision.traceId)
+				this.modelRouter.completeTrace(previousDecision.traceId, {
+					status: "completed",
+					escalated: true,
+				});
+			if (decision.traceId)
+				this.modelRouter.completeTrace(decision.traceId, { status: "running" });
+			const route = this.modelRoutingDecision(automatic.route.taskId, decision);
+			automatic.route = route;
+			automatic.execution = this.modelRouter.executionPlan(decision);
+			automatic.maximumContextCharacters =
+				decision.settings.maximumContextCharacters;
+			automatic.maximumOutputTokens = decision.settings.maximumOutputTokens;
+			automatic.temperature = decision.settings.temperature;
+			automatic.decision = decision;
+			automatic.attemptedModelIds = [
+				...new Set([...automatic.attemptedModelIds, decision.selectedModelId]),
+			];
+			this.currentRouting = route;
+			this.deps.database.setState("modelRouting", route);
+			return {
+				model: automatic.execution.model,
+				providerIds: automatic.execution.providerIds,
+				providerModels: automatic.execution.providerModels,
+				fallbackModelIds: decision.fallbackModelIds,
+				reasoningEffort: route.reasoningEffort,
+				serviceTier: route.serviceTier,
+				maximumContextCharacters: automatic.maximumContextCharacters,
+				maximumOutputTokens: automatic.maximumOutputTokens,
+				temperature: automatic.temperature,
+				explanation: `Escalated the active reasoning step from ${run.model} to ${decision.model} after a normalized ${category.replaceAll("_", " ")} signal. The existing task, conversation, workspace, and tool state were preserved.`,
+			};
+		};
+	}
+
+	private adaptiveExecutionOptions(
+		automatic: ReturnType<AgentCore["automaticRoute"]>,
+	) {
+		return {
+			maximumRetries: automatic.policy.maximumRetries,
+			maximumEscalations: automatic.policy.allowAutomaticEscalation
+				? automatic.policy.maximumEscalations
+				: 0,
+		};
+	}
+
+	private routingEventHandler(
+		automatic: ReturnType<AgentCore["automaticRoute"]>,
+	): (event: { type: string; detail: string }) => void {
+		return (event) => {
+			const traceId = automatic.decision.traceId;
+			if (!traceId) return;
+			if (event.type === "routing_retry")
+				this.modelRouter.recordTraceEvent(
+					traceId,
+					"ROUTE_RETRIED",
+				);
+			else if (event.type === "routing_escalated")
+				this.modelRouter.recordTraceEvent(
+					traceId,
+					"ROUTE_ESCALATED",
+				);
 		};
 	}
 
@@ -921,6 +1121,10 @@ export class AgentCore {
 			this.providerPool.list(),
 			this.modelCatalog,
 		);
+		this.accountAvailability.sync({
+			providerHealth: this.providerPool.health(),
+			profiles: this.modelRegistry.list(),
+		});
 		return providerAccounts;
 	}
 
@@ -934,6 +1138,10 @@ export class AgentCore {
 			this.providerPool.list(),
 			this.modelCatalog,
 		);
+		this.accountAvailability.sync({
+			providerHealth: this.providerPool.health(),
+			profiles: this.modelRegistry.list(),
+		});
 		return providerAccounts;
 	}
 
@@ -1187,9 +1395,22 @@ export class AgentCore {
 		}
 	}
 
+	private routingScarcity(
+		penalty: number | undefined,
+	): RoutingCostScarcity {
+		if (penalty === undefined) return "unknown";
+		if (penalty >= 0.28) return "exhausted";
+		if (penalty >= 0.12) return "constrained";
+		if (penalty > 0) return "normal";
+		return "abundant";
+	}
+
 	private recordAutomaticOutcome(
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		result: AgentLoopResult,
+		verifierStatus: RoutingVerifierStatus = automatic.route.reviewRequired
+			? "unavailable"
+			: "skipped",
 	): void {
 		if (result.run.status === "waiting_approval") {
 			this.deps.database.setPrivateState(
@@ -1215,11 +1436,16 @@ export class AgentCore {
 		const modelId = winning?.id ?? automatic.decision.selectedModelId;
 		const completed = result.run.status === "completed";
 		const refusal = detectModelRefusal(result.modelResult ?? { text: "" });
+		const escalated =
+			(result.run.refusalRecoveryCount ?? 0) > 0 ||
+			modelId !== automatic.initialSelectedModelId;
+		const verified =
+			!automatic.route.reviewRequired || verifierStatus === "passed";
 		this.modelRegistry.recordOutcome({
 			modelId,
 			capabilities: automatic.requirements.capabilities,
 			succeeded: completed,
-			validationPassed: completed,
+			validationPassed: completed && verified,
 			refused: refusal.refused,
 			...(refusal.reason ? { refusalReason: refusal.reason } : {}),
 			...((result.run.refusalRecoveryCount ?? 0) > 0
@@ -1227,8 +1453,48 @@ export class AgentCore {
 				: {}),
 			latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
 			actualCostUsd,
-			escalated: modelId !== automatic.decision.selectedModelId,
+			escalated,
 			observedAt: this.now(),
+		});
+		const toolFailureCount = this.deps.database
+			.listToolExecutions(result.run.sessionId)
+			.filter(
+				(execution) =>
+					execution.idempotencyKey?.startsWith(`${result.run.id}:`) &&
+					(execution.status === "failed" || execution.status === "cancelled"),
+			).length;
+		this.routingOutcomes.record({
+			taskProfile: automatic.requirements.taskProfile.type,
+			route: {
+				providerId: automatic.decision.providerId,
+				...(automatic.decision.accountId
+					? { accountId: automatic.decision.accountId }
+					: {}),
+				transportId: automatic.decision.endpointId,
+				modelId,
+			},
+			thinkingLevel: automatic.route.reasoningEffort,
+			durationMs: Math.max(
+				0,
+				Date.parse(result.run.updatedAt) - Date.parse(result.run.createdAt),
+			),
+			retryCount: audits.filter((audit) => audit.status === "failed").length,
+			toolFailureCount,
+			escalated,
+			verifierStatus,
+			success: completed,
+			costScarcity: this.routingScarcity(automatic.decision.scarcityPenalty),
+			...(automatic.decision.estimatedCost !== undefined
+				? { estimatedCostUsd: automatic.decision.estimatedCost }
+				: {}),
+			actualCostUsd,
+			...(automatic.decision.effectiveCost !== undefined
+				? { effectiveCost: automatic.decision.effectiveCost }
+				: {}),
+			...(automatic.decision.scarcityPenalty !== undefined
+				? { scarcityPenalty: automatic.decision.scarcityPenalty }
+				: {}),
+			timestamp: this.now(),
 		});
 		if (automatic.decision.traceId) {
 			this.modelRouter.completeTrace(automatic.decision.traceId, {
@@ -1240,7 +1506,7 @@ export class AgentCore {
 							? "failed"
 							: "running",
 				actualCostUsd,
-				escalated: modelId !== automatic.decision.selectedModelId,
+				escalated,
 			});
 		}
 	}
@@ -1249,18 +1515,48 @@ export class AgentCore {
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		cancelled: boolean,
 	): void {
+		const escalated =
+			automatic.decision.selectedModelId !== automatic.initialSelectedModelId;
 		this.modelRegistry.recordOutcome({
 			modelId: automatic.decision.selectedModelId,
 			capabilities: automatic.requirements.capabilities,
 			succeeded: false,
 			validationPassed: false,
-			escalated: false,
+			escalated,
 			observedAt: this.now(),
+		});
+		this.routingOutcomes.record({
+			taskProfile: automatic.requirements.taskProfile.type,
+			route: {
+				providerId: automatic.decision.providerId,
+				...(automatic.decision.accountId
+					? { accountId: automatic.decision.accountId }
+					: {}),
+				transportId: automatic.decision.endpointId,
+				modelId: automatic.decision.selectedModelId,
+			},
+			thinkingLevel: automatic.route.reasoningEffort,
+			retryCount: 0,
+			toolFailureCount: 0,
+			escalated,
+			verifierStatus: "unavailable",
+			success: false,
+			costScarcity: this.routingScarcity(automatic.decision.scarcityPenalty),
+			...(automatic.decision.estimatedCost !== undefined
+				? { estimatedCostUsd: automatic.decision.estimatedCost }
+				: {}),
+			...(automatic.decision.effectiveCost !== undefined
+				? { effectiveCost: automatic.decision.effectiveCost }
+				: {}),
+			...(automatic.decision.scarcityPenalty !== undefined
+				? { scarcityPenalty: automatic.decision.scarcityPenalty }
+				: {}),
+			timestamp: this.now(),
 		});
 		if (automatic.decision.traceId) {
 			this.modelRouter.completeTrace(automatic.decision.traceId, {
 				status: cancelled ? "cancelled" : "failed",
-				escalated: false,
+				escalated,
 			});
 		}
 	}
@@ -1269,19 +1565,25 @@ export class AgentCore {
 		automatic: ReturnType<AgentCore["automaticRoute"]>,
 		sessionId: string,
 		result: AgentLoopResult,
-	): Promise<void> {
+	): Promise<{
+		result: AgentLoopResult;
+		verifierStatus: RoutingVerifierStatus;
+	}> {
 		if (!automatic.route.reviewRequired || result.run.status !== "completed")
-			return;
+			return { result, verifierStatus: "skipped" };
 		const review = await this.orchestrator.delegate({
 			parentSessionId: sessionId,
 			title: "Independent result review",
 			prompt: [
 				"Review the completed agent result below for correctness, safety, and evidence.",
-				"This is an independent review route. Identify any concrete defect or missing validation; do not delegate further.",
+				"This is an independent review route. Do not delegate further. Your first line must be exactly `VERDICT: PASS` when the result is supported, or `VERDICT: FAIL` when you find a concrete defect, missing validation, or safety concern. Put a short evidence-based explanation after that line.",
 				`Result:\n${result.assistantMessage?.content.slice(0, 50_000) ?? "[No assistant text was returned.]"}`,
 			].join("\n\n"),
 			model: "auto",
-			providerIds: automatic.execution.providerIds,
+			// Give the independent reviewer the entire policy-allowed pool, rather
+			// than only the executor's fallback ladder. That preserves the user's
+			// provider policy while allowing a genuinely independent specialist.
+			providerIds: automatic.allowedProviderIds,
 			role: "reviewer",
 			allowedTools: [],
 			requiredCapabilities: { code_review: 0.95, reliability: 0.9 },
@@ -1289,6 +1591,33 @@ export class AgentCore {
 		});
 		if (review.result.run.status !== "completed")
 			throw new Error("The required independent reviewer did not complete.");
+		const verdict = parseIndependentReviewerVerdict(
+			review.result.assistantMessage?.content,
+		);
+		if (verdict === "unavailable")
+			throw new Error("The required independent reviewer did not return a verdict.");
+		if (verdict === "passed") {
+			if (automatic.decision.traceId)
+				this.modelRouter.recordTraceEvent(
+					automatic.decision.traceId,
+					"ROUTE_VERIFIED",
+				);
+			return { result, verifierStatus: "passed" };
+		}
+
+		if (automatic.decision.traceId)
+			this.modelRouter.recordTraceEvent(
+				automatic.decision.traceId,
+				"ROUTE_VERIFIED",
+			);
+		const corrected = await this.agentLoop.reworkAfterVerification({
+			runId: result.run.id,
+			maximumTurns: this.configuration.current().workflows.maximumTurns,
+			adaptiveExecution: this.adaptiveExecutionOptions(automatic),
+			onAdaptiveEscalation: this.adaptiveEscalationFor(automatic),
+			onEvent: this.routingEventHandler(automatic),
+		});
+		return { result: corrected, verifierStatus: "failed" };
 	}
 
 	resolveChannelSession(envelope: ChannelEnvelope): string {
@@ -2118,24 +2447,37 @@ export class AgentCore {
 								? { takeSteering: () => active.steering.splice(0) }
 								: {}),
 							...(memoryRecallReceipt ? { memoryRecallReceipt } : {}),
+							...(route
+								? {
+										adaptiveExecution: this.adaptiveExecutionOptions(route),
+										onAdaptiveEscalation: this.adaptiveEscalationFor(route),
+										onEvent: this.routingEventHandler(route),
+									}
+								: {}),
 						});
+						let finalizedResult = result;
 						if (route) {
-							await this.ensureIndependentReview(
+							const review = await this.ensureIndependentReview(
 								route,
 								request.sessionId,
 								result,
 							);
-							this.recordAutomaticOutcome(route, result);
+							finalizedResult = review.result;
+							this.recordAutomaticOutcome(
+								route,
+								finalizedResult,
+								review.verifierStatus,
+							);
 						}
 						return {
 							ok: true,
-							run: result.run,
+							run: finalizedResult.run,
 							...(route ? { routing: route.route } : {}),
-							...(result.assistantMessage
-								? { messages: [result.assistantMessage] }
+							...(finalizedResult.assistantMessage
+								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
-							...(result.pendingExecution
-								? { execution: result.pendingExecution }
+							...(finalizedResult.pendingExecution
+								? { execution: finalizedResult.pendingExecution }
 								: {}),
 						};
 					} catch (error) {
@@ -3568,23 +3910,36 @@ export class AgentCore {
 								? { takeSteering: () => active.steering.splice(0) }
 								: {}),
 							...(memoryRecallReceipt ? { memoryRecallReceipt } : {}),
+							...(route
+								? {
+										adaptiveExecution: this.adaptiveExecutionOptions(route),
+										onAdaptiveEscalation: this.adaptiveEscalationFor(route),
+										onEvent: this.routingEventHandler(route),
+									}
+								: {}),
 						});
+						let finalizedResult = result;
 						if (route) {
-							await this.ensureIndependentReview(
+							const review = await this.ensureIndependentReview(
 								route,
 								request.sessionId,
 								result,
 							);
-							this.recordAutomaticOutcome(route, result);
+							finalizedResult = review.result;
+							this.recordAutomaticOutcome(
+								route,
+								finalizedResult,
+								review.verifierStatus,
+							);
 						}
 						if (workingTask) {
 							try {
 								const taskStatus =
-									result.run.status === "completed"
+									finalizedResult.run.status === "completed"
 										? "completed"
-										: result.run.status === "cancelled"
+										: finalizedResult.run.status === "cancelled"
 											? "cancelled"
-											: result.run.status === "failed"
+											: finalizedResult.run.status === "failed"
 												? "failed"
 												: "waiting";
 								this.memorySubstrate.recordTaskOutcome({
@@ -3593,11 +3948,11 @@ export class AgentCore {
 									...(taskStatus === "completed" || taskStatus === "failed" || taskStatus === "cancelled"
 										? { completedAt: this.now() }
 										: {}),
-									...(result.assistantMessage
-										? { outcomeSummary: result.assistantMessage.content }
+									...(finalizedResult.assistantMessage
+										? { outcomeSummary: finalizedResult.assistantMessage.content }
 										: {}),
-									...(taskStatus === "failed" && result.run.error
-										? { failures: [...workingTask.failures, result.run.error].slice(-100) }
+									...(taskStatus === "failed" && finalizedResult.run.error
+										? { failures: [...workingTask.failures, finalizedResult.run.error].slice(-100) }
 										: {}),
 									updatedAt: this.now(),
 								});
@@ -3607,13 +3962,13 @@ export class AgentCore {
 						}
 						return {
 							ok: true,
-							run: result.run,
+							run: finalizedResult.run,
 							...(route ? { routing: route.route } : {}),
-							...(result.assistantMessage
-								? { messages: [result.assistantMessage] }
+							...(finalizedResult.assistantMessage
+								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
-							...(result.pendingExecution
-								? { execution: result.pendingExecution }
+							...(finalizedResult.pendingExecution
+								? { execution: finalizedResult.pendingExecution }
 								: {}),
 						};
 					} catch (error) {
@@ -3693,14 +4048,27 @@ export class AgentCore {
 							...(active
 								? { takeSteering: () => active.steering.splice(0) }
 								: {}),
+							...(automatic
+								? {
+										adaptiveExecution: this.adaptiveExecutionOptions(automatic),
+										onAdaptiveEscalation: this.adaptiveEscalationFor(automatic),
+										onEvent: this.routingEventHandler(automatic),
+									}
+								: {}),
 						});
+						let finalizedResult = result;
 						if (automatic && result.run.status !== "waiting_approval") {
-							await this.ensureIndependentReview(
+							const review = await this.ensureIndependentReview(
 								automatic,
 								result.run.sessionId,
 								result,
 							);
-							this.recordAutomaticOutcome(automatic, result);
+							finalizedResult = review.result;
+							this.recordAutomaticOutcome(
+								automatic,
+								finalizedResult,
+								review.verifierStatus,
+							);
 							this.deps.database.setPrivateState(
 								`agent-run-routing.${request.runId}`,
 								null,
@@ -3708,12 +4076,12 @@ export class AgentCore {
 						}
 						return {
 							ok: true,
-							run: result.run,
-							...(result.assistantMessage
-								? { messages: [result.assistantMessage] }
+							run: finalizedResult.run,
+							...(finalizedResult.assistantMessage
+								? { messages: [finalizedResult.assistantMessage] }
 								: {}),
-							...(result.pendingExecution
-								? { execution: result.pendingExecution }
+							...(finalizedResult.pendingExecution
+								? { execution: finalizedResult.pendingExecution }
 								: {}),
 						};
 					} finally {

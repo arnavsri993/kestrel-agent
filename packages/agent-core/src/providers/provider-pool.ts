@@ -31,6 +31,8 @@ export interface ProviderHealth {
 	failures: number;
 	consecutiveFailures: number;
 	averageLatencyMs: number;
+	/** Process-local concurrency signal used by the account-aware router. */
+	activeRequests?: number;
 	unhealthyUntil?: string;
 	unhealthyReason?: ProviderAvailabilityReason;
 }
@@ -140,6 +142,7 @@ export class ProviderPool {
 			"providerId" | "poolId" | "unhealthyUntil" | "unhealthyReason"
 		>
 	>();
+	private readonly activeRequests = new Map<string, number>();
 
 	constructor(
 		providers: ModelProvider[],
@@ -179,6 +182,7 @@ export class ProviderPool {
 				providerId: provider.id,
 				...(provider.poolId ? { poolId: provider.poolId } : {}),
 				...measurement,
+				activeRequests: this.activeRequests.get(provider.id) ?? 0,
 				...(isUnhealthy && unhealthyUntil !== undefined
 					? {
 							unhealthyUntil: new Date(unhealthyUntil).toISOString(),
@@ -187,6 +191,23 @@ export class ProviderPool {
 					: {}),
 			};
 		});
+	}
+
+	private async withActiveRequest<T>(
+		providerId: string,
+		operation: () => Promise<T>,
+	): Promise<T> {
+		this.activeRequests.set(
+			providerId,
+			(this.activeRequests.get(providerId) ?? 0) + 1,
+		);
+		try {
+			return await operation();
+		} finally {
+			const remaining = Math.max(0, (this.activeRequests.get(providerId) ?? 1) - 1);
+			if (remaining === 0) this.activeRequests.delete(providerId);
+			else this.activeRequests.set(providerId, remaining);
+		}
 	}
 
 	async verify(
@@ -455,7 +476,9 @@ export class ProviderPool {
 				const providerRequest: ModelRequest = provider.capabilities.tools
 					? { ...requestWithoutTools, model, ...(tools ? { tools } : {}) }
 					: { ...requestWithoutTools, model };
-				const result = await provider.complete(providerRequest, options);
+				const result = await this.withActiveRequest(providerId, () =>
+					provider.complete(providerRequest, options),
+				);
 				attempts.push({
 					providerId,
 					startedAt,

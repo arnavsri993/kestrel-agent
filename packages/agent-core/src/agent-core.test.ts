@@ -8,6 +8,7 @@ import {
 	AgentCore,
 	DevelopmentCalendarConnector,
 	DevelopmentEmailConnector,
+	parseIndependentReviewerVerdict,
 	type ModelProvider,
 	OpportunityEngine,
 	PersonalityRegistry,
@@ -67,6 +68,20 @@ describe("fresh application state", () => {
 			requiredApprovalLevel: 0,
 		});
 		core.close();
+	});
+});
+
+describe("independent verifier contract", () => {
+	it("accepts only explicit first-line pass or fail verdicts", () => {
+		expect(
+			parseIndependentReviewerVerdict("VERDICT: PASS\nEvidence is sufficient."),
+		).toBe("passed");
+		expect(
+			parseIndependentReviewerVerdict("VERDICT: FAIL\nA regression test is missing."),
+		).toBe("failed");
+		expect(
+			parseIndependentReviewerVerdict("Looks good overall."),
+		).toBe("unavailable");
 	});
 });
 
@@ -607,7 +622,10 @@ describe("core agent request path", () => {
 				return {
 					providerId: id,
 					model: request.model,
-					text: `${id} result`,
+					text:
+						id === "reviewer"
+							? "VERDICT: PASS\nThe result is supported by the available evidence."
+							: `${id} result`,
 					toolCalls: [],
 					usage: { inputTokens: 3, outputTokens: 1 },
 					finishReason: "stop",
@@ -636,6 +654,95 @@ describe("core agent request path", () => {
 		});
 		expect(response).toMatchObject({ ok: true, run: { status: "completed" } });
 		expect(calls).toEqual(["primary", "reviewer"]);
+		expect(core.routingOutcomes.list()).toContainEqual(
+			expect.objectContaining({ verifierStatus: "passed", success: true }),
+		);
+		await core.close();
+	});
+
+	it("applies one verifier-requested correction through the preserved automatic run", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const calls: string[] = [];
+		const makeProvider = (
+			id: string,
+			capabilities: Record<string, number>,
+		): ModelProvider => ({
+			id,
+			defaultModel: `${id}-model`,
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			profileHints: { capabilities, features: { reasoningLevels: true } },
+			probe: async () => undefined,
+			complete: async (request) => {
+				calls.push(id);
+				return {
+					providerId: id,
+					model: request.model,
+					text:
+						id === "reviewer"
+							? "VERDICT: FAIL\nThe initial answer lacks the required validation evidence."
+							: id === "repair"
+								? "Corrected answer with the requested validation evidence."
+								: "Initial answer without validation evidence.",
+					toolCalls: [],
+					usage: { inputTokens: 3, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		});
+		const core = new AgentCore({
+			database,
+			modelProviders: [
+				makeProvider("primary", {
+					coding: 0.99,
+					backend_architecture: 0.99,
+					complex_reasoning: 0.99,
+					reliability: 0.99,
+				}),
+				makeProvider("reviewer", {
+					code_review: 0.99,
+					reliability: 0.99,
+				}),
+				makeProvider("repair", {
+					coding: 0.96,
+					backend_architecture: 0.96,
+					complex_reasoning: 0.96,
+					reliability: 0.96,
+				}),
+			],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+		const session = core.runtime.ensureMainSession();
+		const response = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Implement this production backend architecture change.",
+			model: "auto",
+			providerIds: ["auto"],
+		});
+
+		expect(response).toMatchObject({
+			ok: true,
+			run: { status: "completed", model: "repair-model", refusalRecoveryCount: 1 },
+			messages: [
+				{ content: "Corrected answer with the requested validation evidence." },
+			],
+		});
+		expect(calls).toEqual(["primary", "reviewer", "repair"]);
+		expect(database.listAgentRuns(session.id)).toHaveLength(1);
+		expect(core.routingOutcomes.list()).toContainEqual(
+			expect.objectContaining({
+				verifierStatus: "failed",
+				escalated: true,
+				success: true,
+			}),
+		);
 		await core.close();
 	});
 

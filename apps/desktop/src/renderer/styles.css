@@ -4424,9 +4424,23 @@ input[type="radio"] {
 	color: var(--muted);
 	font-size: 11px;
 }
+.routing-advanced-grid .routing-policy-toggle {
+	display: block;
+	color: var(--ink);
+}
+.routing-policy-toggle small,
+.routing-advanced-grid label small {
+	display: block;
+	margin-top: 4px;
+	color: var(--muted);
+	line-height: 1.35;
+}
 .routing-advanced-grid input {
 	width: 100%;
 	margin-top: 5px;
+}
+.routing-advanced-grid .routing-policy-toggle input {
+	width: auto;
 }
 .routing-trace-summary {
 	display: grid;
@@ -4438,6 +4452,39 @@ input[type="radio"] {
 .routing-trace-summary span,
 .routing-trace-summary small {
 	color: var(--muted);
+}
+.routing-trace-context {
+	display: grid;
+	gap: 5px;
+	margin: 4px 0 0;
+}
+.routing-trace-context div {
+	display: grid;
+	grid-template-columns: 72px minmax(0, 1fr);
+	gap: 8px;
+}
+.routing-trace-context dt,
+.routing-trace-context dd {
+	margin: 0;
+	font-size: 11px;
+}
+.routing-trace-context dt {
+	color: var(--muted);
+}
+.routing-trace-context dd {
+	overflow-wrap: anywhere;
+}
+.routing-trace-candidates {
+	margin-top: 7px;
+	font-size: 11px;
+}
+.routing-trace-candidates summary {
+	cursor: pointer;
+	color: var(--muted);
+}
+.routing-trace-candidates ul {
+	margin: 6px 0 0;
+	padding-left: 17px;
 }
 .routing-grid {
 	display: grid;

@@ -35,6 +35,12 @@ import { prematureBrowserCompletionErrorForRun } from "./agent-run-completion";
 import type { AgentRuntime } from "./runtime";
 import { modelVisibleToolResult } from "./tool-result-guardrails";
 import { UsageGovernor } from "./usage-governor";
+import {
+	decideAdaptiveExecution,
+	emptyAdaptiveExecutionBudget,
+	type AdaptiveExecutionBudget,
+	type AdaptiveFailureCategory,
+} from "./routing/adaptive-execution";
 
 const CREDENTIAL_BOUNDARY_INSTRUCTIONS =
 	"Never ask the user to paste API keys, OAuth tokens, passwords, session cookies, private keys, or other secrets into chat. Direct credential entry to the product's protected native credential field or the provider's own OAuth or device-login surface. You may explain what a credential enables and verify only non-secret connection status.";
@@ -96,6 +102,40 @@ export interface AgentLoopInput {
 	takeSteering?: () => string[];
 	onEvent?: (event: { type: string; detail: string }) => void;
 	memoryRecallReceipt?: MemoryRecallReceipt;
+	adaptiveExecution?: AgentAdaptiveExecutionOptions;
+	onAdaptiveEscalation?: (
+		input: AgentAdaptiveEscalationInput,
+	) => Promise<AgentAdaptiveEscalationUpdate | undefined>;
+}
+
+/**
+ * Bounded, route-safe recovery configuration supplied by the meta-router.
+ * It intentionally contains no task content, credentials, or provider errors.
+ */
+export interface AgentAdaptiveExecutionOptions {
+	maximumRetries?: number;
+	maximumEscalations?: number;
+}
+
+export interface AgentAdaptiveEscalationInput {
+	run: AgentRun;
+	category: AdaptiveFailureCategory;
+	/** Previously attempted endpoint:model routes for this durable run. */
+	attemptedRouteIds: string[];
+}
+
+/** A route update for the same durable AgentRun; it never creates a new task. */
+export interface AgentAdaptiveEscalationUpdate {
+	model: string;
+	providerIds: string[];
+	providerModels?: Record<string, string>;
+	fallbackModelIds?: string[];
+	reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+	serviceTier?: "standard" | "priority";
+	maximumContextCharacters?: number;
+	maximumOutputTokens?: number;
+	temperature?: number;
+	explanation: string;
 }
 
 export interface AgentLoopResult {
@@ -114,6 +154,30 @@ export interface AgentLoopResumeInput {
 	signal?: AbortSignal;
 	onTextDelta?: (delta: string) => void;
 	takeSteering?: () => string[];
+	onEvent?: (event: { type: string; detail: string }) => void;
+	adaptiveExecution?: AgentAdaptiveExecutionOptions;
+	onAdaptiveEscalation?: (
+		input: AgentAdaptiveEscalationInput,
+	) => Promise<AgentAdaptiveEscalationUpdate | undefined>;
+}
+
+/**
+ * One bounded correction pass requested by an independent verifier. The
+ * original AgentRun, conversation, workspace state, and tool idempotency keys
+ * are preserved; this never creates a replacement task or a free-form loop.
+ */
+export interface AgentLoopVerificationReworkInput {
+	runId: string;
+	maximumTurns?: number;
+	maximumContextCharacters?: number;
+	signal?: AbortSignal;
+	onTextDelta?: (delta: string) => void;
+	takeSteering?: () => string[];
+	onEvent?: (event: { type: string; detail: string }) => void;
+	adaptiveExecution?: AgentAdaptiveExecutionOptions;
+	onAdaptiveEscalation?: (
+		input: AgentAdaptiveEscalationInput,
+	) => Promise<AgentAdaptiveEscalationUpdate | undefined>;
 }
 
 export type AgentLoopRetryInput = Omit<AgentLoopInput, "userContent">;
@@ -173,6 +237,14 @@ function browserRecoveryStateKey(runId: string): string {
 	return `agent-run-browser-recovery.${runId}`;
 }
 
+function adaptiveExecutionStateKey(runId: string): string {
+	return `agent-run-adaptive-execution.${runId}`;
+}
+
+function verifierReworkStateKey(runId: string): string {
+	return `agent-run-verifier-rework.${runId}`;
+}
+
 function processIsAlive(pid: number): boolean {
 	try {
 		process.kill(pid, 0);
@@ -187,6 +259,11 @@ const CORE_RESTART_INTERRUPTION_REASON =
 
 const SUPERSEDED_BY_NEW_MESSAGE_REASON =
 	"Superseded by a new message. The pending approval is no longer available.";
+
+interface StoredAdaptiveExecutionState {
+	budget: AdaptiveExecutionBudget;
+	attemptedRouteIds: string[];
+}
 
 export class AgentLoop {
 	private readonly compactor = new ContextCompactor();
@@ -225,6 +302,74 @@ export class AgentLoop {
 					: {}),
 			});
 		}
+	}
+
+	private recordAdaptiveFailure(
+		run: AgentRun,
+		category: AdaptiveFailureCategory,
+		options: AgentAdaptiveExecutionOptions | undefined,
+	) {
+		const stored = this.database.getPrivateState<StoredAdaptiveExecutionState>(
+			adaptiveExecutionStateKey(run.id),
+		);
+		const decision = decideAdaptiveExecution(
+			stored?.budget?.version === 1
+				? stored.budget
+				: emptyAdaptiveExecutionBudget(),
+			{ category },
+			options,
+		);
+		const attemptedRouteIds = [
+			...new Set([
+				...(stored?.attemptedRouteIds ?? []),
+				`${run.providerIds[0] ?? "auto"}:${run.model}`.slice(0, 256),
+			]),
+		].slice(-16);
+		this.database.setPrivateState(adaptiveExecutionStateKey(run.id), {
+			budget: decision.budget,
+			attemptedRouteIds,
+		} satisfies StoredAdaptiveExecutionState);
+		return decision;
+	}
+
+	private attemptedRouteIds(run: AgentRun): string[] {
+		return (
+			this.database.getPrivateState<StoredAdaptiveExecutionState>(
+				adaptiveExecutionStateKey(run.id),
+			)?.attemptedRouteIds ?? []
+		).slice(-16);
+	}
+
+	private withAdaptiveRoute(
+		run: AgentRun,
+		update: AgentAdaptiveEscalationUpdate,
+	): AgentRun {
+		return {
+			...run,
+			model: update.model,
+			providerIds: update.providerIds,
+			...(update.providerModels
+				? { providerModels: update.providerModels }
+				: {}),
+			...(update.fallbackModelIds
+				? { fallbackModelIds: update.fallbackModelIds }
+				: {}),
+			...(update.reasoningEffort
+				? { reasoningEffort: update.reasoningEffort }
+				: {}),
+			...(update.serviceTier ? { serviceTier: update.serviceTier } : {}),
+			...(update.maximumContextCharacters
+				? { maximumContextCharacters: update.maximumContextCharacters }
+				: {}),
+			...(update.maximumOutputTokens
+				? { maximumOutputTokens: update.maximumOutputTokens }
+				: {}),
+			...(update.temperature !== undefined
+				? { temperature: update.temperature }
+				: {}),
+			refusalRecoveryCount: (run.refusalRecoveryCount ?? 0) + 1,
+			updatedAt: this.now().toISOString(),
+		};
 	}
 
 	async run(input: AgentLoopInput): Promise<AgentLoopResult> {
@@ -376,8 +521,15 @@ export class AgentLoop {
 			...(input.signal ? { signal: input.signal } : {}),
 			...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
 			...(input.takeSteering ? { takeSteering: input.takeSteering } : {}),
+			...(input.onEvent ? { onEvent: input.onEvent } : {}),
 			...(input.memoryRecallReceipt
 				? { memoryRecallReceipt: input.memoryRecallReceipt }
+				: {}),
+			...(input.adaptiveExecution
+				? { adaptiveExecution: input.adaptiveExecution }
+				: {}),
+			...(input.onAdaptiveEscalation
+				? { onAdaptiveEscalation: input.onAdaptiveEscalation }
 				: {}),
 		});
 	}
@@ -550,6 +702,13 @@ export class AgentLoop {
 					...(input.signal ? { signal: input.signal } : {}),
 					...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
 					...(input.takeSteering ? { takeSteering: input.takeSteering } : {}),
+					...(input.onEvent ? { onEvent: input.onEvent } : {}),
+					...(input.adaptiveExecution
+						? { adaptiveExecution: input.adaptiveExecution }
+						: {}),
+					...(input.onAdaptiveEscalation
+						? { onAdaptiveEscalation: input.onAdaptiveEscalation }
+						: {}),
 				},
 			);
 		} catch (error) {
@@ -569,6 +728,163 @@ export class AgentLoop {
 						updatedAt: this.now().toISOString(),
 					});
 				}
+			}
+			throw error;
+		}
+	}
+
+	async reworkAfterVerification(
+		input: AgentLoopVerificationReworkInput,
+	): Promise<AgentLoopResult> {
+		const run = this.database.getAgentRun(input.runId);
+		if (!run) throw new Error("Agent run not found.");
+		return this.withSessionRunClaim(run.sessionId, () =>
+			this.reworkAfterVerificationClaimed(input),
+		);
+	}
+
+	private async reworkAfterVerificationClaimed(
+		input: AgentLoopVerificationReworkInput,
+	): Promise<AgentLoopResult> {
+		let run = this.database.getAgentRun(input.runId);
+		if (!run) throw new Error("Agent run not found.");
+		if (run.status !== "completed")
+			throw new Error("Only a completed agent run can receive verifier rework.");
+		const reworkState = this.database.getPrivateState<{ attempts?: number }>(
+			verifierReworkStateKey(run.id),
+		);
+		if ((reworkState?.attempts ?? 0) >= 1)
+			throw new Error("The independent verifier rework budget is exhausted.");
+
+		const storedMaximumTurns = boundedMaximumTurns(run.maximumTurns);
+		const maximumTurns =
+			input.maximumTurns === undefined
+				? storedMaximumTurns
+				: Math.min(
+						storedMaximumTurns,
+						boundedMaximumTurns(input.maximumTurns),
+					);
+		if (run.turn >= maximumTurns)
+			throw new Error("The independent verifier has no remaining turn budget.");
+
+		try {
+			const session = this.requireRunnableSession(run.sessionId, run.providerIds);
+			const instructionState = this.database.getPrivateState<{
+				instructions?: string;
+			}>(`agent-run-instructions.${run.id}`);
+			const compacted = this.compactor.compact(
+				this.runtime
+					.listMessages(run.sessionId)
+					.filter((message) => !isManagedInstructionMessage(message)),
+				session.checkpoints,
+				{
+					maximumCharacters:
+						input.maximumContextCharacters ??
+						run.maximumContextCharacters ??
+						120_000,
+				},
+			);
+			const priorCompaction = this.database.getPrivateState<{
+				removedMessages: number;
+			}>(`agent-run-compaction.${run.id}`);
+			this.database.setPrivateState(`agent-run-compaction.${run.id}`, {
+				sessionId: run.sessionId,
+				removedMessages: Math.max(
+					priorCompaction?.removedMessages ?? 0,
+					compacted.removedMessages,
+				),
+				estimatedCharacters: compacted.estimatedCharacters,
+			});
+
+			// This is a controlled state transition: unlike a new run, the same run
+			// ID preserves its conversation, workspace mutations, and tool keys.
+			run = { ...run, status: "running", updatedAt: this.now().toISOString() };
+			this.database.saveAgentRun(run);
+			this.database.setPrivateState(verifierReworkStateKey(run.id), {
+				attempts: (reworkState?.attempts ?? 0) + 1,
+			});
+
+			if (input.adaptiveExecution && input.onAdaptiveEscalation) {
+				const recovery = this.recordAdaptiveFailure(
+					run,
+					"verification",
+					input.adaptiveExecution,
+				);
+				if (recovery.action === "escalate") {
+					const update = await input.onAdaptiveEscalation({
+						run,
+						category: recovery.classification.category,
+						attemptedRouteIds: this.attemptedRouteIds(run),
+					});
+					const routeChanged = Boolean(
+						update &&
+							(update.model !== run.model ||
+								update.reasoningEffort !== run.reasoningEffort ||
+								update.providerIds.join("\u0000") !==
+									run.providerIds.join("\u0000")),
+					);
+					if (update && routeChanged) {
+						input.onEvent?.({
+							type: "routing_escalated",
+							detail: update.explanation.slice(0, 500),
+						});
+						run = this.withAdaptiveRoute(run, update);
+						this.saveActiveRun(run);
+					}
+				}
+			}
+
+			const modelMessages: ModelMessage[] = [
+				...(instructionState?.instructions
+					? [
+							{
+								role: "system" as const,
+								content: textContent(instructionState.instructions),
+							},
+						]
+					: []),
+				...compacted.messages,
+				{
+					role: "system",
+					content: textContent(
+						"Independent verification found a concrete issue in the prior answer. Recheck the answer against available evidence, correct it, and preserve completed work and idempotent side effects. Do not repeat actions solely because verification requested a correction.",
+					),
+				},
+			];
+			input.onEvent?.({
+				type: "routing_retry",
+				detail:
+					"An independent verifier requested one bounded corrective pass using the preserved task state.",
+			});
+			return await this.continueRun(run, modelMessages, compacted.removedMessages, {
+				maximumTurns,
+				approvalStatus: "pending",
+				...(run.maximumOutputTokens
+					? { maximumOutputTokens: run.maximumOutputTokens }
+					: {}),
+				...(run.temperature !== undefined
+					? { temperature: run.temperature }
+					: {}),
+				...(input.signal ? { signal: input.signal } : {}),
+				...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
+				...(input.takeSteering ? { takeSteering: input.takeSteering } : {}),
+				...(input.onEvent ? { onEvent: input.onEvent } : {}),
+				...(input.adaptiveExecution
+					? { adaptiveExecution: input.adaptiveExecution }
+					: {}),
+				...(input.onAdaptiveEscalation
+					? { onAdaptiveEscalation: input.onAdaptiveEscalation }
+					: {}),
+			});
+		} catch (error) {
+			const current = this.database.getAgentRun(input.runId);
+			if (current?.status === "running") {
+				this.database.saveAgentRunIfActive({
+					...current,
+					status: input.signal?.aborted ? "cancelled" : "failed",
+					error: agentRunErrorMessage(error, input.signal?.aborted === true),
+					updatedAt: this.now().toISOString(),
+				});
 			}
 			throw error;
 		}
@@ -628,6 +944,10 @@ export class AgentLoop {
 			takeSteering?: () => string[];
 			onEvent?: (event: { type: string; detail: string }) => void;
 			memoryRecallReceipt?: MemoryRecallReceipt;
+			adaptiveExecution?: AgentAdaptiveExecutionOptions;
+			onAdaptiveEscalation?: (
+				input: AgentAdaptiveEscalationInput,
+			) => Promise<AgentAdaptiveEscalationUpdate | undefined>;
 		},
 	): Promise<AgentLoopResult> {
 		let run = initialRun;
@@ -682,12 +1002,12 @@ export class AgentLoop {
 								? { reasoningEffort: run.reasoningEffort }
 								: {}),
 							...(run.serviceTier ? { serviceTier: run.serviceTier } : {}),
-							...(options.maximumOutputTokens
-								? { maxOutputTokens: options.maximumOutputTokens }
-								: {}),
-							...(options.temperature !== undefined
-								? { temperature: options.temperature }
-								: {}),
+								...(run.maximumOutputTokens
+									? { maxOutputTokens: run.maximumOutputTokens }
+									: {}),
+								...(run.temperature !== undefined
+									? { temperature: run.temperature }
+									: {}),
 						},
 						{
 							...(run.providerIds.includes("auto")
@@ -711,10 +1031,27 @@ export class AgentLoop {
 							},
 						},
 					);
-				} catch (error) {
-					if (error instanceof ProviderPoolError)
-						this.saveAttemptAudits(run, run.model, error.attempts);
-					throw error;
+					} catch (error) {
+						if (error instanceof ProviderPoolError) {
+							this.saveAttemptAudits(run, run.model, error.attempts);
+							if (options.adaptiveExecution) {
+								const recovery = this.recordAdaptiveFailure(
+									run,
+									"provider",
+									options.adaptiveExecution,
+								);
+								if (recovery.action === "retry") {
+									options.onEvent?.({
+										type: "routing_retry",
+										detail:
+											"A provider attempt failed. Retrying the existing route without changing model capability.",
+									});
+									turn -= 1;
+									continue;
+								}
+							}
+						}
+						throw error;
 				} finally {
 					lease.release();
 				}
@@ -727,9 +1064,57 @@ export class AgentLoop {
 				this.saveActiveRun(run);
 				const result = poolResult.result;
 
-				const refusal = detectModelRefusal(result);
-				if (
+					const refusal = detectModelRefusal(result);
+					if (
+						refusal.refused &&
+						!refusal.safetyPolicy &&
+						options.adaptiveExecution &&
+						options.onAdaptiveEscalation
+					) {
+						const recovery = this.recordAdaptiveFailure(
+							run,
+							"model_reasoning",
+							options.adaptiveExecution,
+						);
+						if (recovery.action === "escalate") {
+							const update = await options.onAdaptiveEscalation({
+								run,
+								category: recovery.classification.category,
+								attemptedRouteIds: this.attemptedRouteIds(run),
+							});
+							const routeChanged = Boolean(
+								update &&
+									(update.model !== run.model ||
+										update.reasoningEffort !== run.reasoningEffort ||
+										update.providerIds.join("\u0000") !==
+											run.providerIds.join("\u0000")),
+							);
+							if (update && routeChanged) {
+								options.onEvent?.({
+									type: "routing_escalated",
+									detail: update.explanation.slice(0, 500),
+								});
+								// Keep the existing conversation, workspace, tool-result history,
+								// run ID, and idempotency keys. Only the execution route changes.
+								modelMessages = [
+									...reframePromptForNeutrality(modelMessages),
+									{
+										role: "system",
+										content: textContent(
+											"Routing handoff: a prior executor could not complete this reasoning step. Continue from the preserved conversation and tool state; do not repeat completed work.",
+										),
+									},
+								];
+								run = this.withAdaptiveRoute(run, update);
+								this.saveActiveRun(run);
+								turn -= 1;
+								continue;
+							}
+						}
+					}
+					if (
 					refusal.refused &&
+					!refusal.safetyPolicy &&
 					((run.fallbackModelIds && run.fallbackModelIds.length > 0) ||
 						run.providerIds.includes("auto"))
 				) {
@@ -839,8 +1224,25 @@ export class AgentLoop {
 				for (const call of result.toolCalls) {
 					if (options.signal?.aborted) throw options.signal.reason;
 					const descriptor = descriptors.get(call.name);
-					if (!descriptor) {
-						const content = JSON.stringify({
+						if (!descriptor) {
+							if (options.adaptiveExecution) {
+								const recovery = this.recordAdaptiveFailure(
+									run,
+									"tool",
+									options.adaptiveExecution,
+								);
+								options.onEvent?.({
+									type:
+										recovery.action === "retry"
+											? "routing_retry"
+											: "routing_failure_budget",
+									detail:
+										recovery.action === "retry"
+											? "A requested tool was unavailable. The current executor can revise its approach without changing model capability."
+											: "The bounded tool-recovery budget is exhausted; the current task route remains unchanged.",
+								});
+							}
+							const content = JSON.stringify({
 							status: "failed",
 							error: `Tool ${call.name} is unavailable.`,
 						});
@@ -887,9 +1289,26 @@ export class AgentLoop {
 								: {}),
 							...(options.signal ? { signal: options.signal } : {}),
 						},
-					);
-					this.saveActiveRun(run);
-					let modelExecution = execution;
+						);
+						this.saveActiveRun(run);
+						if (execution.status === "failed" && options.adaptiveExecution) {
+							const recovery = this.recordAdaptiveFailure(
+								run,
+								"tool",
+								options.adaptiveExecution,
+							);
+							options.onEvent?.({
+								type:
+									recovery.action === "retry"
+										? "routing_retry"
+										: "routing_failure_budget",
+								detail:
+									recovery.action === "retry"
+										? "A tool step failed. Its safe result is preserved so the current executor can retry or change approach."
+										: "The bounded tool-recovery budget is exhausted; Kestrel will not switch models for this tool failure.",
+							});
+						}
+						let modelExecution = execution;
 					if (descriptor.category === "browser") {
 						const recovery = browserRecoveryGuidanceFromOutput(
 							execution.output,

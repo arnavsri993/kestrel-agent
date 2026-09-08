@@ -16,6 +16,7 @@ import {
 	TaskOrchestrator,
 } from "./orchestration";
 import { type ModelProvider, ProviderPool, textContent } from "./providers";
+import { RoutingOutcomeStore } from "./routing/outcome-store";
 import { AgentRuntime } from "./runtime";
 
 const directories: string[] = [];
@@ -44,6 +45,7 @@ function fixture(
 	);
 	const loop = new AgentLoop(database, runtime, providers, now);
 	const registry = new ModelRegistry(database, providers.list(), [], now);
+	const routingOutcomes = new RoutingOutcomeStore(database, now);
 	const router = new AdaptiveModelRouter(
 		database,
 		registry,
@@ -69,7 +71,12 @@ function fixture(
 			registry,
 			undefined,
 			configuredMaximumTurns,
+			undefined,
+			undefined,
+			undefined,
+			routingOutcomes,
 		),
+		routingOutcomes,
 	};
 }
 
@@ -507,6 +514,32 @@ describe("task orchestration", () => {
 			providerId: "independent",
 			model: "critic",
 		});
+		item.database.close();
+	});
+
+	it("records a completed automatic delegated route in the private outcome store", async () => {
+		const item = fixture({
+			...finalProvider(),
+			defaultModel: "local-test-model",
+			probe: async () => undefined,
+		});
+		const delegated = await item.orchestrator.delegate({
+			parentSessionId: item.parent.id,
+			title: "Outcome-backed worker",
+			prompt: "Inspect this TypeScript implementation and report the result.",
+			model: "auto",
+			providerIds: ["auto"],
+		});
+
+		expect(delegated.result.run.status).toBe("completed");
+		expect(item.routingOutcomes.list()).toMatchObject([
+			{
+				taskProfile: "coding",
+				route: { providerId: "fake", transportId: "fake" },
+				success: true,
+				verifierStatus: "skipped",
+			},
+		]);
 		item.database.close();
 	});
 

@@ -15,6 +15,8 @@ import {
 } from "@kestrel/shared-types";
 import {
 	type AgentLoop,
+	type AgentAdaptiveEscalationInput,
+	type AgentAdaptiveEscalationUpdate,
 	type AgentLoopResult,
 	SessionRunBusyError,
 } from "./agent-loop";
@@ -23,6 +25,10 @@ import {
 	type ModelRegistry,
 	TaskRequirementAnalyzer,
 } from "./model-orchestration";
+import {
+	type RoutingCostScarcity,
+	type RoutingOutcomeStore,
+} from "./routing/outcome-store";
 import {
 	AGENT_GROUP_MEMORY_TOOL_NAMES,
 	type AgentGroupMemoryManager,
@@ -116,6 +122,16 @@ export interface ScheduledAgentJob {
 
 const MIN_SCHEDULE_INTERVAL_MS = 60_000;
 const MAX_SCHEDULE_INTERVAL_MS = 31_536_000_000;
+
+function routingCostScarcity(
+	penalty: number | undefined,
+): RoutingCostScarcity {
+	if (penalty === undefined) return "unknown";
+	if (penalty >= 0.28) return "exhausted";
+	if (penalty >= 0.12) return "constrained";
+	if (penalty > 0) return "normal";
+	return "abundant";
+}
 
 function cronField(
 	value: string,
@@ -522,6 +538,8 @@ export class TaskOrchestrator {
 		private readonly configuredMaximumTurns: () => number = () => 12,
 		private readonly groupMemory?: AgentGroupMemoryManager,
 		private readonly memorySubstrate?: MemorySubstrate,
+		private readonly prepareAutomaticRoute?: () => void,
+		private readonly routingOutcomes?: RoutingOutcomeStore,
 	) {
 		this.reconcileInterruptedJobs();
 	}
@@ -852,6 +870,13 @@ export class TaskOrchestrator {
 				session.id,
 				input.prompt,
 			);
+			const selectedPolicy =
+				selected && this.modelRouter
+					? this.requirementAnalyzer.routingPolicy(
+							input.prompt,
+							this.modelRouter.policy(),
+						)
+					: undefined;
 			const result = await this.loop.run({
 				sessionId: session.id,
 				model: selected?.execution.model ?? input.model,
@@ -876,6 +901,22 @@ export class TaskOrchestrator {
 							maximumContextCharacters: selected.maximumContextCharacters,
 							maximumOutputTokens: selected.maximumOutputTokens,
 							temperature: selected.temperature,
+						}
+					: {}),
+				...(selected && selectedPolicy
+					? {
+							adaptiveExecution: {
+								maximumRetries: selectedPolicy.maximumRetries,
+								maximumEscalations:
+									selectedPolicy.allowAutomaticEscalation
+										? selectedPolicy.maximumEscalations
+										: 0,
+							},
+							onAdaptiveEscalation: this.adaptiveEscalationForWorker(
+								selected,
+								input,
+							),
+							onEvent: this.routingEventForWorker(selected),
 						}
 					: {}),
 				userContent: textContent(input.prompt),
@@ -947,19 +988,7 @@ export class TaskOrchestrator {
 					? "cancelled"
 					: "failed";
 			if (selected) {
-				this.modelRegistry?.recordOutcome({
-					modelId: selected.decision.selectedModelId,
-					capabilities: selected.requirements.capabilities,
-					succeeded: false,
-					validationPassed: false,
-					escalated: false,
-					observedAt: this.now().toISOString(),
-				});
-				if (selected.decision.traceId)
-					this.modelRouter?.completeTrace(selected.decision.traceId, {
-						status: terminalStatus,
-						escalated: false,
-					});
+				this.recordSelectedFailure(selected, terminalStatus === "cancelled");
 			}
 			if (workingTask) {
 				const sessionId = session?.id;
@@ -1036,6 +1065,8 @@ export class TaskOrchestrator {
 		instructions: string;
 		decision: ReturnType<AdaptiveModelRouter["route"]>;
 		requirements: ReturnType<TaskRequirementAnalyzer["analyze"]>;
+		initialSelectedModelId: string;
+		attemptedModelIds: string[];
 	}> {
 		if (!this.providers || !this.modelRouter || !this.modelRegistry)
 			throw new Error(
@@ -1050,6 +1081,7 @@ export class TaskOrchestrator {
 			throw new Error(
 				`Delegation depth exceeds the configured maximum of ${policy.maximumDelegationDepth}.`,
 			);
+		this.prepareAutomaticRoute?.();
 		this.modelRegistry.applyProviderHealth(this.providers.health());
 		const requirements = this.requirementAnalyzer.analyze(
 			taskId,
@@ -1145,6 +1177,8 @@ export class TaskOrchestrator {
 						.join(" "),
 					decision,
 					requirements,
+					initialSelectedModelId: decision.selectedModelId,
+					attemptedModelIds: [decision.selectedModelId],
 				};
 			}
 			this.modelRegistry.recordOutcome({
@@ -1170,6 +1204,138 @@ export class TaskOrchestrator {
 		);
 	}
 
+	private adaptiveEscalationForWorker(
+		selected: Awaited<ReturnType<TaskOrchestrator["selectWorker"]>>,
+		input: DelegatedTaskInput,
+	): (
+		input: AgentAdaptiveEscalationInput,
+	) => Promise<AgentAdaptiveEscalationUpdate | undefined> {
+		return async ({ run, category, attemptedRouteIds }) => {
+			if (
+				!this.providers ||
+				!this.modelRouter ||
+				!this.modelRegistry ||
+				(category !== "model_reasoning" &&
+					category !== "insufficient_capability" &&
+					category !== "verification")
+			)
+				return undefined;
+			const policy = this.requirementAnalyzer.routingPolicy(
+				input.prompt,
+				this.modelRouter.policy(),
+			);
+			if (!policy.allowAutomaticEscalation) return undefined;
+			this.prepareAutomaticRoute?.();
+			this.modelRegistry.applyProviderHealth(this.providers.health());
+			const previous = selected.decision;
+			let decision: ReturnType<AdaptiveModelRouter["route"]>;
+			try {
+				decision = this.modelRouter.route(selected.requirements, {
+					role: "fallback",
+					allowedProviderIds: input.providerIds,
+					excludeModelIds: [
+						...new Set([
+							...selected.attemptedModelIds,
+							...attemptedRouteIds,
+						]),
+					],
+					policy,
+					...(previous.traceId ? { parentTraceId: previous.traceId } : {}),
+					escalationReason:
+						category === "verification"
+							? "validation"
+							: category === "insufficient_capability"
+								? "timeout"
+								: "refusal",
+					switchedFromModelId: previous.selectedModelId,
+				});
+			} catch {
+				return undefined;
+			}
+			if (
+				decision.selectedModelId === previous.selectedModelId &&
+				decision.reasoningLevel === previous.reasoningLevel
+			)
+				return undefined;
+			const verification = await this.providers.verify(decision.endpointId);
+			const checked = verification.find(
+				(item) => item.providerId === decision.endpointId,
+			);
+			if (!checked?.ok) {
+				if (decision.traceId)
+					this.modelRouter.completeTrace(decision.traceId, { status: "failed" });
+				return undefined;
+			}
+			if (previous.traceId)
+				this.modelRouter.completeTrace(previous.traceId, {
+					status: "completed",
+					escalated: true,
+				});
+			if (decision.traceId)
+				this.modelRouter.completeTrace(decision.traceId, { status: "running" });
+			const profile = this.modelRegistry.get(decision.selectedModelId);
+			selected.decision = decision;
+			selected.execution = this.modelRouter.executionPlan(decision);
+			selected.maximumContextCharacters =
+				decision.settings.maximumContextCharacters;
+			selected.maximumOutputTokens = decision.settings.maximumOutputTokens;
+			selected.temperature = decision.settings.temperature;
+			selected.attemptedModelIds = [
+				...new Set([...selected.attemptedModelIds, decision.selectedModelId]),
+			];
+			selected.route = {
+				providerId: decision.providerId,
+				model: decision.model,
+				selectedModelId: decision.selectedModelId,
+				...(decision.tier ? { tier: decision.tier } : {}),
+				role: decision.role,
+				reasoningEffort: decision.reasoningLevel,
+				fastMode: decision.fastMode,
+				local: profile.local,
+				confidence: decision.confidence,
+				...(decision.estimatedCost === undefined
+					? {}
+					: { estimatedCost: decision.estimatedCost }),
+				fallbackModelIds: decision.fallbackModelIds,
+				...(decision.traceId ? { traceId: decision.traceId } : {}),
+				...(decision.refusalRecovery ? { refusalRecovery: true } : {}),
+				verifiedAt: this.now().toISOString(),
+				verificationLatencyMs: checked.latencyMs,
+				rationale: decision.reasons.join(" "),
+			};
+			return {
+				model: selected.execution.model,
+				providerIds: selected.execution.providerIds,
+				providerModels: selected.execution.providerModels,
+				fallbackModelIds: decision.fallbackModelIds,
+				reasoningEffort: decision.reasoningLevel,
+				serviceTier: decision.fastMode ? "priority" : "standard",
+				maximumContextCharacters: selected.maximumContextCharacters,
+				maximumOutputTokens: selected.maximumOutputTokens,
+				temperature: selected.temperature,
+				explanation: `Escalated delegated work from ${run.model} to ${decision.model} after a normalized ${category.replaceAll("_", " ")} signal while preserving the child run state.`,
+			};
+		};
+	}
+
+	private routingEventForWorker(
+		selected: Awaited<ReturnType<TaskOrchestrator["selectWorker"]>>,
+	): (event: { type: string; detail: string }) => void {
+		return (event) => {
+			if (!selected.decision.traceId) return;
+			if (event.type === "routing_retry")
+				this.modelRouter?.recordTraceEvent(
+					selected.decision.traceId,
+					"ROUTE_RETRIED",
+				);
+			else if (event.type === "routing_escalated")
+				this.modelRouter?.recordTraceEvent(
+					selected.decision.traceId,
+					"ROUTE_ESCALATED",
+				);
+		};
+	}
+
 	private recordSelectedOutcome(
 		selected: Awaited<ReturnType<TaskOrchestrator["selectWorker"]>> | undefined,
 		result: AgentLoopResult,
@@ -1190,6 +1356,9 @@ export class TaskOrchestrator {
 			(sum, audit) => sum + audit.estimatedCostUsd,
 			0,
 		);
+		const escalated =
+			(result.run.refusalRecoveryCount ?? 0) > 0 ||
+			modelId !== selected.initialSelectedModelId;
 		this.modelRegistry?.recordOutcome({
 			modelId,
 			capabilities: selected.requirements.capabilities,
@@ -1197,8 +1366,49 @@ export class TaskOrchestrator {
 			validationPassed: result.run.status === "completed",
 			latencyMs: audits.reduce((sum, audit) => sum + audit.durationMs, 0),
 			actualCostUsd,
-			escalated: modelId !== selected.decision.selectedModelId,
+			escalated,
 			observedAt: this.now().toISOString(),
+		});
+		const toolFailureCount = this.database
+			.listToolExecutions(result.run.sessionId)
+			.filter(
+				(execution) =>
+					execution.idempotencyKey?.startsWith(`${result.run.id}:`) &&
+					(execution.status === "failed" || execution.status === "cancelled"),
+			)
+			.length;
+		this.routingOutcomes?.record({
+			taskProfile: selected.requirements.taskProfile.type,
+			route: {
+				providerId: selected.decision.providerId,
+				...(selected.decision.accountId
+					? { accountId: selected.decision.accountId }
+					: {}),
+				transportId: selected.decision.endpointId,
+				modelId,
+			},
+			thinkingLevel: selected.route.reasoningEffort,
+			durationMs: Math.max(
+				0,
+				Date.parse(result.run.updatedAt) - Date.parse(result.run.createdAt),
+			),
+			retryCount: audits.filter((audit) => audit.status === "failed").length,
+			toolFailureCount,
+			escalated,
+			verifierStatus: "skipped",
+			success: result.run.status === "completed",
+			costScarcity: routingCostScarcity(selected.decision.scarcityPenalty),
+			...(selected.decision.estimatedCost !== undefined
+				? { estimatedCostUsd: selected.decision.estimatedCost }
+				: {}),
+			actualCostUsd,
+			...(selected.decision.effectiveCost !== undefined
+				? { effectiveCost: selected.decision.effectiveCost }
+				: {}),
+			...(selected.decision.scarcityPenalty !== undefined
+				? { scarcityPenalty: selected.decision.scarcityPenalty }
+				: {}),
+			timestamp: this.now(),
 		});
 		if (selected.decision.traceId)
 			this.modelRouter?.completeTrace(selected.decision.traceId, {
@@ -1206,10 +1416,59 @@ export class TaskOrchestrator {
 					result.run.status === "completed"
 						? "completed"
 						: result.run.status === "cancelled"
-							? "cancelled"
-							: "failed",
+						? "cancelled"
+						: "failed",
 				actualCostUsd,
-				escalated: modelId !== selected.decision.selectedModelId,
+				escalated,
+			});
+	}
+
+	private recordSelectedFailure(
+		selected: Awaited<ReturnType<TaskOrchestrator["selectWorker"]>>,
+		cancelled: boolean,
+	): void {
+		const escalated =
+			selected.decision.selectedModelId !== selected.initialSelectedModelId;
+		this.modelRegistry?.recordOutcome({
+			modelId: selected.decision.selectedModelId,
+			capabilities: selected.requirements.capabilities,
+			succeeded: false,
+			validationPassed: false,
+			escalated,
+			observedAt: this.now().toISOString(),
+		});
+		this.routingOutcomes?.record({
+			taskProfile: selected.requirements.taskProfile.type,
+			route: {
+				providerId: selected.decision.providerId,
+				...(selected.decision.accountId
+					? { accountId: selected.decision.accountId }
+					: {}),
+				transportId: selected.decision.endpointId,
+				modelId: selected.decision.selectedModelId,
+			},
+			thinkingLevel: selected.route.reasoningEffort,
+			retryCount: 0,
+			toolFailureCount: 0,
+			escalated,
+			verifierStatus: "unavailable",
+			success: false,
+			costScarcity: routingCostScarcity(selected.decision.scarcityPenalty),
+			...(selected.decision.estimatedCost !== undefined
+				? { estimatedCostUsd: selected.decision.estimatedCost }
+				: {}),
+			...(selected.decision.effectiveCost !== undefined
+				? { effectiveCost: selected.decision.effectiveCost }
+				: {}),
+			...(selected.decision.scarcityPenalty !== undefined
+				? { scarcityPenalty: selected.decision.scarcityPenalty }
+				: {}),
+			timestamp: this.now(),
+		});
+		if (selected.decision.traceId)
+			this.modelRouter?.completeTrace(selected.decision.traceId, {
+				status: cancelled ? "cancelled" : "failed",
+				escalated,
 			});
 	}
 

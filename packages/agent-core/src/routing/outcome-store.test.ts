@@ -41,6 +41,20 @@ describe("RoutingOutcomeStore", () => {
 		expect(store.list()).toEqual([]);
 	});
 
+	it("rejects common credential formats from private route metadata", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const store = new RoutingOutcomeStore(database);
+		for (const identifier of [
+			`ghp_${"a".repeat(36)}`,
+			`xoxb-${"a".repeat(24)}`,
+			`AKIA${"A".repeat(16)}`,
+			`AIza${"a".repeat(35)}`,
+		]) {
+			expect(store.record({ route: { providerId: identifier } }).route).toBeUndefined();
+		}
+		database.close();
+	});
+
 	it("keeps only the configured newest outcomes and lists newest first", () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const store = new RoutingOutcomeStore(database, () => new Date(), 2);
