@@ -16,6 +16,8 @@ interface StarLayer {
 	hazeOpacity: number;
 	hazeColor: string;
 	flareChance: number;
+	shimmerDepth: number;
+	cloudStrength: number;
 }
 
 export interface AgentUniverseStarPoint {
@@ -46,6 +48,8 @@ const STAR_TILE_MIN_CSS_SIZE = 360;
 const STAR_TILE_MAX_CSS_SIZE = 560;
 const STAR_TILE_SIZE_RATIO = 0.64;
 const STARFIELD_REPAINT_INTERVAL_MS = 1_000 / 30;
+const STARFIELD_DRIFT_PIXELS_PER_SECOND = 7.2;
+const STARFIELD_DRIFT_Y_RATIO = 0.38;
 
 const STAR_LAYERS: StarLayer[] = [
 	{
@@ -62,6 +66,8 @@ const STAR_LAYERS: StarLayer[] = [
 		hazeOpacity: 0.32,
 		hazeColor: "#2d456d",
 		flareChance: 0,
+		shimmerDepth: 0.026,
+		cloudStrength: 0,
 	},
 	{
 		// Deep dust is plentiful but nearly still: it gives the black plane a
@@ -77,6 +83,8 @@ const STAR_LAYERS: StarLayer[] = [
 		hazeOpacity: 0.42,
 		hazeColor: "#334d78",
 		flareChance: 0,
+		shimmerDepth: 0.032,
+		cloudStrength: 0,
 	},
 	{
 		density: 1,
@@ -90,6 +98,8 @@ const STAR_LAYERS: StarLayer[] = [
 		hazeOpacity: 0.55,
 		hazeColor: "#3d6795",
 		flareChance: 0.002,
+		shimmerDepth: 0.04,
+		cloudStrength: 0,
 	},
 	{
 		density: 0.78,
@@ -103,6 +113,8 @@ const STAR_LAYERS: StarLayer[] = [
 		hazeOpacity: 0.72,
 		hazeColor: "#536b9b",
 		flareChance: 0.006,
+		shimmerDepth: 0.048,
+		cloudStrength: 1,
 	},
 	{
 		density: 0.55,
@@ -116,6 +128,8 @@ const STAR_LAYERS: StarLayer[] = [
 		hazeOpacity: 0.86,
 		hazeColor: "#68769c",
 		flareChance: 0.012,
+		shimmerDepth: 0.055,
+		cloudStrength: 0,
 	},
 	{
 		density: 0.32,
@@ -129,6 +143,8 @@ const STAR_LAYERS: StarLayer[] = [
 		hazeOpacity: 0.74,
 		hazeColor: "#926b67",
 		flareChance: 0.035,
+		shimmerDepth: 0.062,
+		cloudStrength: 0,
 	},
 	{
 		// A sparse near layer carries the larger colored stars and the occasional
@@ -144,6 +160,8 @@ const STAR_LAYERS: StarLayer[] = [
 		hazeOpacity: 0.52,
 		hazeColor: "#a77c6d",
 		flareChance: 0.08,
+		shimmerDepth: 0.07,
+		cloudStrength: 0,
 	},
 ];
 
@@ -163,6 +181,56 @@ export interface AgentUniverseStarfieldTransform {
 	scale: number;
 	panX: number;
 	panY: number;
+}
+
+export interface AgentUniverseStarfieldAmbientState {
+	phaseX: number;
+	phaseY: number;
+	tileIndexOffsetX: number;
+	tileIndexOffsetY: number;
+	opacity: number;
+}
+
+/**
+ * Advance cached star tiles as one calm diagonal sky plane. Different layer
+ * speeds create depth, while a shallow, long-period opacity change gives the
+ * bright tail a restrained twinkle without regenerating stars every frame.
+ * Tile index offsets keep variant selection continuous when a phase wraps.
+ */
+export function starfieldAmbientState(
+	elapsedMs: number,
+	layer: Pick<StarLayer, "speed" | "seed"> &
+		Partial<Pick<StarLayer, "shimmerDepth">>,
+	tileWidth: number,
+	tileHeight: number,
+	dpr = 1,
+): AgentUniverseStarfieldAmbientState {
+	const safeElapsed = Math.max(
+		0,
+		Number.isFinite(elapsedMs) ? elapsedMs : 0,
+	);
+	const safeSpeed = clamp(finiteOrDefault(layer.speed, 0), 0, 2);
+	const safeDpr = clamp(Number.isFinite(dpr) ? dpr : 1, 1, 2);
+	const safeTileWidth = Math.max(1, finiteOrDefault(tileWidth, 1));
+	const safeTileHeight = Math.max(1, finiteOrDefault(tileHeight, 1));
+	const elapsedSeconds = safeElapsed / 1_000;
+	const travelX =
+		elapsedSeconds * safeSpeed * STARFIELD_DRIFT_PIXELS_PER_SECOND * safeDpr;
+	const travelY = travelX * STARFIELD_DRIFT_Y_RATIO;
+	const shimmerDepth = clamp(
+		finiteOrDefault(layer.shimmerDepth, 0.05),
+		0,
+		0.12,
+	);
+	const shimmerPhase = ((layer.seed >>> 7) % 628) / 100;
+	const shimmer = 0.5 + 0.5 * Math.sin(elapsedSeconds * 0.48 + shimmerPhase);
+	return {
+		phaseX: ((travelX % safeTileWidth) + safeTileWidth) % safeTileWidth,
+		phaseY: ((travelY % safeTileHeight) + safeTileHeight) % safeTileHeight,
+		tileIndexOffsetX: -Math.floor(travelX / safeTileWidth) || 0,
+		tileIndexOffsetY: -Math.floor(travelY / safeTileHeight) || 0,
+		opacity: 1 - shimmer * shimmerDepth,
+	};
 }
 
 /**
@@ -186,7 +254,10 @@ export function starfieldTransformForCamera(
 }
 
 function seededRandom(seed: number): () => number {
-	let state = seed >>> 0;
+	// The mixing function has a valid zero output, but zero is a fixed point for
+	// this compact generator. Substitute a non-zero state so every permitted
+	// opening seed still produces a varied field.
+	let state = (seed >>> 0) || 0x6d2b79f5;
 	return () => {
 		state = Math.imul(state ^ (state >>> 15), 1 | state);
 		state ^= state + Math.imul(state ^ (state >>> 7), 61 | state);
@@ -409,9 +480,9 @@ export function generateAgentUniverseStarPoints(
 			: random() * safeHeight;
 		const sizeBand = random();
 		let radius: number;
-		if (sizeBand < 0.74) {
+		if (sizeBand < 0.8) {
 			radius = 0.18 + Math.pow(random(), 2.6) * 0.62;
-		} else if (sizeBand < 0.97) {
+		} else if (sizeBand < 0.98) {
 			radius = 0.46 + Math.pow(random(), 1.7) * 1.18;
 		} else {
 			radius = 1.12 + Math.pow(random(), 0.72) * 1.48;
@@ -513,6 +584,108 @@ function paintNebula(
 	}
 }
 
+interface StarCloudGeometry {
+	x: number;
+	y: number;
+	radiusX: number;
+	radiusY: number;
+	rotation: number;
+}
+
+function starCloudGeometry(
+	seed: number,
+	pixelWidth: number,
+	pixelHeight: number,
+): StarCloudGeometry {
+	const random = seededRandom(seed ^ 0x93c467e1);
+	const shortestSide = Math.min(pixelWidth, pixelHeight);
+	return {
+		x: pixelWidth * (0.3 + random() * 0.4),
+		y: pixelHeight * (0.3 + random() * 0.4),
+		radiusX: shortestSide * (0.26 + random() * 0.1),
+		radiusY: shortestSide * (0.11 + random() * 0.055),
+		rotation: (random() - 0.5) * 0.9,
+	};
+}
+
+/**
+ * Generate the rare, localized star cloud visible in the reference. It is a
+ * broad, center-weighted population rather than a bright fog patch, so labels
+ * remain readable and the surrounding black sky still carries the contrast.
+ */
+export function generateAgentUniverseStarCloudPoints(
+	seed: number,
+	pixelWidth: number,
+	pixelHeight: number,
+	dpr: number,
+	strength = 1,
+): AgentUniverseStarPoint[] {
+	const safeWidth = Math.max(1, Math.round(pixelWidth));
+	const safeHeight = Math.max(1, Math.round(pixelHeight));
+	const safeDpr = clamp(Number.isFinite(dpr) ? dpr : 1, 1, 2);
+	const safeStrength = clamp(Number.isFinite(strength) ? strength : 1, 0, 1.4);
+	const geometry = starCloudGeometry(seed, safeWidth, safeHeight);
+	const random = seededRandom(seed ^ 0xc7a4d59b);
+	const cssArea = (safeWidth * safeHeight) / (safeDpr * safeDpr);
+	const count = Math.round(clamp((cssArea / 620) * safeStrength, 240, 720));
+	const cosRotation = Math.cos(geometry.rotation);
+	const sinRotation = Math.sin(geometry.rotation);
+	const points: AgentUniverseStarPoint[] = [];
+
+	for (let index = 0; index < count; index += 1) {
+		const angle = random() * Math.PI * 2;
+		const distance = Math.pow(random(), 1.85);
+		const feather = 0.78 + random() * 0.34;
+		const localX = Math.cos(angle) * geometry.radiusX * distance * feather;
+		const localY = Math.sin(angle) * geometry.radiusY * distance * feather;
+		const x = clamp(
+			geometry.x + localX * cosRotation - localY * sinRotation,
+			0,
+			safeWidth,
+		);
+		const y = clamp(
+			geometry.y + localX * sinRotation + localY * cosRotation,
+			0,
+			safeHeight,
+		);
+		const brightness = random();
+		const size = random();
+		const colorRoll = random();
+		const color =
+			colorRoll < 0.035
+				? STAR_COLORS[4]
+				: colorRoll < 0.075
+					? STAR_COLORS[6]
+					: colorRoll < 0.34
+						? STAR_COLORS[1]
+						: colorRoll < 0.58
+							? STAR_COLORS[2]
+							: STAR_COLORS[0];
+		const radius =
+			(0.34 + Math.pow(size, 2.7) * 1.02) * safeDpr;
+		const alpha = clamp(
+			(0.16 + Math.pow(brightness, 1.9) * 0.76) * safeStrength,
+			0.08,
+			0.94,
+		);
+		const glow = clamp(
+			(radius / safeDpr - 0.62) * 0.8 + (alpha - 0.48) * 0.72,
+			0,
+			0.94,
+		);
+		points.push({
+			x,
+			y,
+			radius,
+			alpha,
+			color,
+			glow,
+			flare: glow > 0.72 && random() < 0.006,
+		});
+	}
+	return points;
+}
+
 interface StarBucket {
 	color: string;
 	alpha: number;
@@ -609,6 +782,41 @@ function paintStarPoints(
 	context.globalAlpha = 1;
 }
 
+function paintStarCloud(
+	context: CanvasRenderingContext2D,
+	layer: StarLayer,
+	pixelWidth: number,
+	pixelHeight: number,
+	dpr: number,
+): void {
+	const geometry = starCloudGeometry(layer.seed, pixelWidth, pixelHeight);
+	context.save();
+	context.translate(geometry.x, geometry.y);
+	context.rotate(geometry.rotation);
+	context.scale(geometry.radiusX, geometry.radiusY);
+	const haze = context.createRadialGradient(0, 0, 0, 0, 0, 1);
+	haze.addColorStop(0, rgbaFromHex("#b9d8ff", 0.07 * layer.cloudStrength));
+	haze.addColorStop(0.32, rgbaFromHex("#477bb2", 0.027 * layer.cloudStrength));
+	haze.addColorStop(0.72, rgbaFromHex("#23476c", 0.009 * layer.cloudStrength));
+	haze.addColorStop(1, rgbaFromHex("#142a44", 0));
+	context.fillStyle = haze;
+	context.beginPath();
+	context.arc(0, 0, 1, 0, Math.PI * 2);
+	context.fill();
+	context.restore();
+	paintStarPoints(
+		context,
+		generateAgentUniverseStarCloudPoints(
+			layer.seed,
+			pixelWidth,
+			pixelHeight,
+			dpr,
+			layer.cloudStrength,
+		),
+		dpr,
+	);
+}
+
 function buildLayer(
 	layer: StarLayer,
 	pixelWidth: number,
@@ -616,6 +824,9 @@ function buildLayer(
 	dpr: number,
 	sessionSeed: number,
 ): RenderedStarLayer {
+	const cloudVariant =
+		mixSeed(layer.seed, sessionSeed, 0x6d2b79f5) %
+		AGENT_UNIVERSE_STAR_TILE_VARIANT_COUNT;
 	const tiles = Array.from(
 		{ length: AGENT_UNIVERSE_STAR_TILE_VARIANT_COUNT },
 		(_, variant) => {
@@ -630,6 +841,15 @@ function buildLayer(
 			};
 			context.imageSmoothingEnabled = true;
 			paintNebula(context, variantLayer, pixelWidth, pixelHeight);
+			if (layer.cloudStrength > 0 && variant === cloudVariant) {
+				paintStarCloud(
+					context,
+					variantLayer,
+					pixelWidth,
+					pixelHeight,
+					dpr,
+				);
+			}
 			paintStarPoints(
 				context,
 				generateAgentUniverseStarPoints(
@@ -683,12 +903,23 @@ export function AgentUniverseStarfield({
 		let pixelHeight = 0;
 		let dpr = 1;
 		let repaintTimer: number | null = null;
+		let ambientTimer: number | null = null;
+		let ambientFrame: number | null = null;
+		let ambientElapsedMs = 0;
+		let lastAmbientTickAt = performance.now();
 		let lastPaintAt = 0;
 
 		const draw = (time: number) => {
 			if (!pixelWidth || !pixelHeight) return;
 			context.clearRect(0, 0, pixelWidth, pixelHeight);
 			for (const layer of renderedLayers) {
+				const ambient = starfieldAmbientState(
+					reducedMotion ? 0 : ambientElapsedMs,
+					layer,
+					layer.tileWidth,
+					layer.tileHeight,
+					dpr,
+				);
 				const transform = starfieldTransformForCamera(
 					cameraRef.current,
 					layer.parallax,
@@ -705,10 +936,15 @@ export function AgentUniverseStarfield({
 						panX: transform.panX * dpr,
 						panY: transform.panY * dpr,
 					},
+					phaseX: ambient.phaseX,
+					phaseY: ambient.phaseY,
+					tileIndexOffsetX: ambient.tileIndexOffsetX,
+					tileIndexOffsetY: ambient.tileIndexOffsetY,
 					variantCount: layer.tiles.length,
 					seed: mixSeed(sessionSeedRef.current ?? 0, layer.seed),
 				});
 				context.save();
+				context.globalAlpha = reducedMotion ? 1 : ambient.opacity;
 				context.translate(
 					centerX + transform.panX * dpr,
 					centerY + transform.panY * dpr,
@@ -742,6 +978,42 @@ export function AgentUniverseStarfield({
 			}
 		};
 		drawRef.current = requestDraw;
+
+		const scheduleAmbient = () => {
+			if (
+				reducedMotion ||
+				document.visibilityState === "hidden" ||
+				ambientTimer !== null ||
+				ambientFrame !== null
+			) {
+				return;
+			}
+			ambientTimer = window.setTimeout(() => {
+				ambientTimer = null;
+				ambientFrame = window.requestAnimationFrame((time) => {
+					ambientFrame = null;
+					ambientElapsedMs += Math.min(
+						100,
+						Math.max(0, time - lastAmbientTickAt),
+					);
+					lastAmbientTickAt = time;
+					draw(time);
+					scheduleAmbient();
+				});
+			}, STARFIELD_REPAINT_INTERVAL_MS);
+		};
+
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === "hidden") {
+				if (ambientTimer !== null) window.clearTimeout(ambientTimer);
+				if (ambientFrame !== null) window.cancelAnimationFrame(ambientFrame);
+				ambientTimer = null;
+				ambientFrame = null;
+				return;
+			}
+			lastAmbientTickAt = performance.now();
+			scheduleAmbient();
+		};
 
 		const resize = () => {
 			const rect = canvas.getBoundingClientRect();
@@ -781,20 +1053,24 @@ export function AgentUniverseStarfield({
 
 		const observer = new ResizeObserver(resize);
 		observer.observe(canvas);
+		document.addEventListener("visibilitychange", handleVisibilityChange);
 		resize();
+		scheduleAmbient();
 
 		return () => {
 			observer.disconnect();
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
 			if (repaintTimer !== null) window.clearTimeout(repaintTimer);
+			if (ambientTimer !== null) window.clearTimeout(ambientTimer);
+			if (ambientFrame !== null) window.cancelAnimationFrame(ambientFrame);
 			drawRef.current = null;
 		};
 	}, [reducedMotion]);
 
 	useEffect(() => {
-		// The field is intentionally idle between camera/size changes. Camera
-		// updates are coalesced to at most 30 paints per second, which keeps
-		// parallax responsive without a permanent RAF loop consuming a core on
-		// low-power machines.
+		// Camera updates join the same capped paint cadence as ambient drift, so
+		// direct manipulation stays responsive without creating a second loop.
+		// Reduced Motion has no ambient timer and repaints only on real changes.
 		drawRef.current?.();
 	}, [camera]);
 
