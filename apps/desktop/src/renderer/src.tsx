@@ -15,6 +15,7 @@ import "./components/browser/writing-studio.css";
 import "./components/browser/password-overlay.css";
 import "./components/browser/payment-overlay.css";
 import "./surface-responsive.css";
+import "./materials.css";
 import "./instrument-workbench.css";
 import { App } from "./App";
 import { CalculatorOverlay } from "./components/browser/CalculatorOverlay";
