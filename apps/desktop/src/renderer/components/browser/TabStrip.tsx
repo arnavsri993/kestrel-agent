@@ -111,6 +111,7 @@ export function TabStrip({
 	onCloseOthers,
 	onMoveTab,
 	onDetachTab,
+	onDetachDragStateChange,
 	onReattachTab,
 	onReopenClosedTab,
 	onOrganizeTabs,
@@ -138,6 +139,7 @@ export function TabStrip({
 	onCloseOthers?(tabId: string): void | Promise<void>;
 	onMoveTab?(tabId: string, toIndex: number): void | Promise<void>;
 	onDetachTab?(tabId: string): void | Promise<void>;
+	onDetachDragStateChange?(detaching: boolean): void;
 	onReattachTab?(tabId: string): void | Promise<void>;
 	onReopenClosedTab?(index?: number): void;
 	onOrganizeTabs?(): void | Promise<void>;
@@ -173,6 +175,15 @@ export function TabStrip({
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragIntent, setDragIntent] = useState<"none" | "reorder" | "detach">(
 		"none",
+	);
+	const detachDragActiveRef = useRef(false);
+	const updateDetachDragState = useCallback(
+		(detaching: boolean) => {
+			if (detachDragActiveRef.current === detaching) return;
+			detachDragActiveRef.current = detaching;
+			onDetachDragStateChange?.(detaching);
+		},
+		[onDetachDragStateChange],
 	);
 	const draggingTabIdRef = useRef<string | null>(null);
 	// Pointer tracking stays outside React state. Reordering still renders when
@@ -556,6 +567,7 @@ export function TabStrip({
 		dragY.set(0);
 		setDraggingTabId(null);
 		setDragIntent("none");
+		updateDetachDragState(false);
 		if (!preserveProvisional) {
 			provisionalTabOrderRef.current = null;
 			setProvisionalTabOrder(null);
@@ -684,6 +696,7 @@ export function TabStrip({
 		dragY.set(dy);
 		if (orientation === "horizontal") {
 			if (Math.abs(dy) >= DETACH_DRAG_THRESHOLD_PX) {
+				updateDetachDragState(true);
 				setDragIntent("detach");
 				return;
 			}
@@ -694,6 +707,7 @@ export function TabStrip({
 			return;
 		}
 		if (Math.abs(dx) >= DETACH_DRAG_THRESHOLD_PX) {
+			updateDetachDragState(true);
 			setDragIntent("detach");
 			return;
 		}
@@ -757,6 +771,10 @@ export function TabStrip({
 	}
 
 	useEffect(() => () => resetDrag(), []);
+	useEffect(
+		() => () => updateDetachDragState(false),
+		[updateDetachDragState],
+	);
 
 	useEffect(() => {
 		if (draggingTabId || !provisionalTabOrder) return;
