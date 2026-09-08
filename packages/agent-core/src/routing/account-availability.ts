@@ -110,9 +110,11 @@ export class AccountAvailabilityMonitor {
 	sync(input: {
 		providerHealth: readonly ProviderHealth[];
 		profiles: readonly ModelProfile[];
+		quotaUpdates?: readonly QuotaUpdate[];
 	}): AccountAvailabilitySnapshot[] {
 		this.syncProfiles(input.profiles);
 		this.syncProviderHealth(input.providerHealth);
+		this.syncQuotaUpdates(input.quotaUpdates ?? []);
 		return this.snapshot();
 	}
 
@@ -160,19 +162,32 @@ export class AccountAvailabilityMonitor {
 	applyQuotaUpdate(update: QuotaUpdate): AccountAvailabilitySnapshot {
 		const state = this.stateFor(update.endpointId);
 		const remainingFraction = normalizedFraction(update.remainingFraction);
-		state.quotaConfidence =
+		const confidence =
 			update.confidence === "exact" ||
 			update.confidence === "estimated" ||
 			update.confidence === "inferred"
 				? update.confidence
 				: "unknown";
-		state.remainingFraction = remainingFraction;
-		state.resetAt = normalizedTimestamp(update.resetAt);
-		if (state.quotaConfidence === "unknown") {
-			state.remainingFraction = undefined;
-			state.resetAt = undefined;
+		if (confidence === "unknown" || remainingFraction === undefined)
+			this.clearQuota(state);
+		else {
+			state.quotaConfidence = confidence;
+			state.remainingFraction = remainingFraction;
+			state.resetAt = normalizedTimestamp(update.resetAt);
 		}
 		return this.snapshotFor(state);
+	}
+
+	syncQuotaUpdates(updates: readonly QuotaUpdate[]): AccountAvailabilitySnapshot[] {
+		const updatedEndpoints = new Set(updates.map((update) => update.endpointId));
+		// ProviderPool publishes a complete process-local snapshot. An omitted
+		// endpoint therefore means a newer response did not expose quota metadata;
+		// retaining an older exhausted value would otherwise block it forever.
+		for (const state of this.states.values())
+			if (!updatedEndpoints.has(state.endpointId)) this.clearQuota(state);
+		for (const update of updates) this.applyQuotaUpdate(update);
+		this.clearExpiredQuota();
+		return this.snapshot();
 	}
 
 	setActiveRequests(update: ActiveRequestUpdate): AccountAvailabilitySnapshot {
@@ -195,6 +210,7 @@ export class AccountAvailabilityMonitor {
 				reasons,
 			};
 		}
+		this.clearExpiredQuota(state);
 
 		const profile = candidate.profileId
 			? state.profiles.get(candidate.profileId)
@@ -219,6 +235,7 @@ export class AccountAvailabilityMonitor {
 	}
 
 	snapshot(): AccountAvailabilitySnapshot[] {
+		this.clearExpiredQuota();
 		return [...this.states.values()]
 			.map((state) => this.snapshotFor(state))
 			.sort((left, right) => left.endpointId.localeCompare(right.endpointId));
@@ -253,6 +270,21 @@ export class AccountAvailabilityMonitor {
 					(health.poolId !== undefined && state.providerId === health.poolId),
 			)
 		);
+	}
+
+	private clearQuota(state: AvailabilityState): void {
+		state.quotaConfidence = "unknown";
+		state.remainingFraction = undefined;
+		state.resetAt = undefined;
+	}
+
+	private clearExpiredQuota(state?: AvailabilityState): void {
+		const now = this.now().getTime();
+		const states = state ? [state] : this.states.values();
+		for (const item of states) {
+			const resetAt = item.resetAt ? Date.parse(item.resetAt) : Number.NaN;
+			if (Number.isFinite(resetAt) && resetAt <= now) this.clearQuota(item);
+		}
 	}
 
 	private scarcityPenalty(state: AvailabilityState): number {

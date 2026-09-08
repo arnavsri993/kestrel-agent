@@ -598,6 +598,63 @@ describe("core agent request path", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
+	it("feeds a completed provider's quota telemetry into the next automatic route", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const provider: ModelProvider = {
+			id: "quota-account",
+			defaultModel: "quota-model",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			profileHints: {
+				capabilities: { writing: 0.9, reliability: 0.95 },
+				features: { reasoningLevels: true },
+			},
+			complete: async (request) => ({
+				providerId: "quota-account",
+				model: request.model,
+				text: "A compact answer.",
+				toolCalls: [],
+				usage: { inputTokens: 2, outputTokens: 1 },
+				finishReason: "stop",
+				quota: {
+					confidence: "exact",
+					remainingFraction: 0.2,
+					resetAt: "2026-07-23T15:00:00.000Z",
+				},
+			}),
+		};
+		const core = new AgentCore({
+			database,
+			modelProviders: [provider],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+		const session = core.runtime.ensureMainSession();
+		for (let run = 0; run < 2; run += 1)
+			await core.handle({
+				type: "runtime-run-agent",
+				sessionId: session.id,
+				message: "Summarize this note in one sentence.",
+				model: "auto",
+				providerIds: ["auto"],
+			});
+
+		expect(core.accountAvailability.snapshot()).toContainEqual(
+			expect.objectContaining({
+				endpointId: "quota-account",
+				quotaConfidence: "exact",
+				remainingFraction: 0.2,
+				resetAt: "2026-07-23T15:00:00.000Z",
+			}),
+		);
+		await core.close();
+	});
+
 	it("requires an independent reviewer before accepting a consequential automatic result", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const calls: string[] = [];
@@ -660,9 +717,84 @@ describe("core agent request path", () => {
 		await core.close();
 	});
 
+	it("preserves a completed automatic result when the optional verifier is unavailable", async () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const calls: string[] = [];
+		const makeProvider = (
+			id: string,
+			capabilities: Record<string, number>,
+		): ModelProvider => ({
+			id,
+			defaultModel: `${id}-model`,
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			profileHints: { capabilities, features: { reasoningLevels: true } },
+			...(id === "reviewer" ? {} : { probe: async () => undefined }),
+			complete: async (request) => {
+				calls.push(id);
+				const isVerifierRun = request.messages.some(
+					(message) =>
+						message.content.some(
+							(part) =>
+								part.type === "text" &&
+								part.text.startsWith("Review the completed agent result"),
+						),
+				);
+				if (isVerifierRun)
+					throw new Error("Independent reviewer is temporarily unavailable.");
+				return {
+					providerId: id,
+					model: request.model,
+					text: "Completed executor result.",
+					toolCalls: [],
+					usage: { inputTokens: 3, outputTokens: 1 },
+					finishReason: "stop",
+				};
+			},
+		});
+		const core = new AgentCore({
+			database,
+			modelProviders: [
+				makeProvider("primary", {
+					coding: 0.99,
+					backend_architecture: 0.99,
+					reliability: 0.98,
+				}),
+				makeProvider("reviewer", { code_review: 0.99, reliability: 0.99 }),
+			],
+			now: () => "2026-07-22T15:00:00.000Z",
+		});
+		const session = core.runtime.ensureMainSession();
+		const response = await core.handle({
+			type: "runtime-run-agent",
+			sessionId: session.id,
+			message: "Implement this production backend architecture change.",
+			model: "auto",
+			providerIds: ["auto"],
+		});
+
+		expect(response).toMatchObject({
+			ok: true,
+			run: { status: "completed" },
+			messages: [{ content: "Completed executor result." }],
+		});
+		expect(calls).toEqual(["primary"]);
+		expect(core.routingOutcomes.list()).toContainEqual(
+			expect.objectContaining({ verifierStatus: "unavailable", success: true }),
+		);
+		await core.close();
+	});
+
 	it("applies one verifier-requested correction through the preserved automatic run", async () => {
 		const database = new KestrelDatabase(":memory:", createEncryptionKey());
 		const calls: string[] = [];
+		let repairSawVerifierFeedback = false;
 		const makeProvider = (
 			id: string,
 			capabilities: Record<string, number>,
@@ -681,6 +813,16 @@ describe("core agent request path", () => {
 			probe: async () => undefined,
 			complete: async (request) => {
 				calls.push(id);
+				if (id === "repair")
+					repairSawVerifierFeedback = request.messages
+						.flatMap((message) => message.content)
+						.some(
+							(part) =>
+								part.type === "text" &&
+								part.text.includes(
+									"The initial answer lacks the required validation evidence.",
+								),
+						);
 				return {
 					providerId: id,
 					model: request.model,
@@ -735,6 +877,7 @@ describe("core agent request path", () => {
 			],
 		});
 		expect(calls).toEqual(["primary", "reviewer", "repair"]);
+		expect(repairSawVerifierFeedback).toBe(true);
 		expect(database.listAgentRuns(session.id)).toHaveLength(1);
 		expect(core.routingOutcomes.list()).toContainEqual(
 			expect.objectContaining({

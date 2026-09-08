@@ -48,12 +48,17 @@ describe("AccountAvailabilityMonitor", () => {
 		const monitor = new AccountAvailabilityMonitor(
 			() => new Date("2026-09-07T12:00:00.000Z"),
 		);
-		monitor.sync({ providerHealth: [health()], profiles: [profile()] });
-		monitor.applyQuotaUpdate({
-			endpointId: "endpoint",
-			confidence: "exact",
-			remainingFraction: 0.2,
-			resetAt: "2026-09-08T12:00:00.000Z",
+		monitor.sync({
+			providerHealth: [health()],
+			profiles: [profile()],
+			quotaUpdates: [
+				{
+					endpointId: "endpoint",
+					confidence: "exact",
+					remainingFraction: 0.2,
+					resetAt: "2026-09-08T12:00:00.000Z",
+				},
+			],
 		});
 		monitor.setActiveRequests({ endpointId: "endpoint", activeRequests: 1 });
 
@@ -106,6 +111,35 @@ describe("AccountAvailabilityMonitor", () => {
 			eligible: false,
 			reasons: ["profile_unavailable", "cooldown", "concurrency", "quota_exhausted"],
 		});
+	});
+
+	it("clears an older quota observation when the latest provider snapshot omits it", () => {
+		const monitor = new AccountAvailabilityMonitor(
+			() => new Date("2026-09-07T12:00:00.000Z"),
+		);
+		monitor.sync({
+			providerHealth: [health()],
+			profiles: [profile()],
+			quotaUpdates: [
+				{ endpointId: "endpoint", confidence: "exact", remainingFraction: 0 },
+			],
+		});
+		expect(monitor.snapshot()[0]).toMatchObject({
+			quotaConfidence: "exact",
+			remainingFraction: 0,
+			eligible: false,
+		});
+
+		monitor.sync({
+			providerHealth: [health()],
+			profiles: [profile()],
+			quotaUpdates: [],
+		});
+		expect(monitor.snapshot()[0]).toMatchObject({
+			quotaConfidence: "unknown",
+			eligible: true,
+		});
+		expect(monitor.snapshot()[0]).not.toHaveProperty("remainingFraction");
 	});
 
 	it("normalizes malformed or unknown quota input without retaining it", () => {

@@ -905,6 +905,63 @@ describe("model provider adapters", () => {
 		]);
 	});
 
+	it("keeps only normalized endpoint quota observations for account-aware routing", async () => {
+		let exposesQuota = true;
+		const provider: ModelProvider = {
+			id: "account-endpoint",
+			poolId: "logical-provider",
+			capabilities: {
+				streaming: true,
+				tools: true,
+				images: false,
+				audio: false,
+				documents: false,
+				local: false,
+			},
+			complete: async (request) => ({
+				providerId: "account-endpoint",
+				model: request.model,
+				text: "ok",
+				toolCalls: [],
+				usage: { inputTokens: 1, outputTokens: 1 },
+				finishReason: "stop",
+				...(exposesQuota
+					? {
+						quota: {
+							confidence: "exact" as const,
+							remainingFraction: 0.2,
+							resetAt: "2026-09-08T12:00:00.000Z",
+						},
+					}
+					: {}),
+			}),
+		};
+		const pool = new ProviderPool([provider], () =>
+			new Date("2026-09-07T12:00:00.000Z"),
+		);
+		await pool.complete({
+			model: "test",
+			messages: [{ role: "user", content: textContent("hello") }],
+		});
+
+		expect(pool.accountQuotaSnapshots()).toEqual([
+			{
+				endpointId: "account-endpoint",
+				providerId: "account-endpoint",
+				poolId: "logical-provider",
+				confidence: "exact",
+				remainingFraction: 0.2,
+				resetAt: "2026-09-08T12:00:00.000Z",
+			},
+		]);
+		exposesQuota = false;
+		await pool.complete({
+			model: "test",
+			messages: [{ role: "user", content: textContent("hello again") }],
+		});
+		expect(pool.accountQuotaSnapshots()).toEqual([]);
+	});
+
 	it("rotates nonretryable credential failures inside one logical provider pool", async () => {
 		const invalid: ModelProvider = {
 			id: "openai-key-1",

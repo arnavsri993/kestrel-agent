@@ -3034,6 +3034,9 @@ describe("provider-neutral agent loop", () => {
 		let calls = 0;
 		let preservedPriorAnswer = false;
 		let sawVerifierInstruction = false;
+		let sawVerifierFeedback = false;
+		let verifierFeedbackRole: string | undefined;
+		let rawFeedbackAppearedInSystemMessage = false;
 		const provider: ModelProvider = {
 			id: "verifier-correction",
 			capabilities: {
@@ -3053,6 +3056,25 @@ describe("provider-neutral agent loop", () => {
 					preservedPriorAnswer = context.includes("Initial answer with a defect.");
 					sawVerifierInstruction = context.includes(
 						"Independent verification found a concrete issue",
+					);
+					sawVerifierFeedback = context.includes(
+						"The required field is missing.",
+					);
+					verifierFeedbackRole = request.messages.find((message) =>
+						message.content.some(
+							(part) =>
+								part.type === "text" &&
+								part.text.includes("The required field is missing."),
+						),
+					)?.role;
+					rawFeedbackAppearedInSystemMessage = request.messages.some(
+						(message) =>
+							message.role === "system" &&
+							message.content.some(
+								(part) =>
+									part.type === "text" &&
+									part.text.includes("The required field is missing."),
+							),
 					);
 				}
 				return {
@@ -3083,6 +3105,7 @@ describe("provider-neutral agent loop", () => {
 		const corrected = await loop.reworkAfterVerification({
 			runId: initial.run.id,
 			maximumTurns: 2,
+			verificationFeedback: "The required field is missing.",
 			adaptiveExecution: { maximumEscalations: 0 },
 		});
 
@@ -3094,6 +3117,9 @@ describe("provider-neutral agent loop", () => {
 		expect(corrected.assistantMessage?.content).toMatch(/corrected answer/i);
 		expect(preservedPriorAnswer).toBe(true);
 		expect(sawVerifierInstruction).toBe(true);
+		expect(sawVerifierFeedback).toBe(true);
+		expect(verifierFeedbackRole).toBe("user");
+		expect(rawFeedbackAppearedInSystemMessage).toBe(false);
 		expect(database.listAgentRuns(session.id)).toHaveLength(1);
 		await expect(
 			loop.reworkAfterVerification({ runId: initial.run.id }),

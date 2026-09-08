@@ -1,4 +1,8 @@
-import { providerFetch, readServerSentEvents } from "./http";
+import {
+	providerFetch,
+	quotaFromResponseHeaders,
+	readServerSentEvents,
+} from "./http";
 import {
 	contentText,
 	type DiscoveredModel,
@@ -245,6 +249,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
 			body: JSON.stringify(body),
 			...(options.signal ? { signal: options.signal } : {}),
 		});
+		const quota = quotaFromResponseHeaders(response.headers);
 
 		let text = "";
 		let completed: Record<string, unknown> = {};
@@ -332,6 +337,7 @@ export class OpenAIResponsesProvider implements ModelProvider {
 				reasoningTokens: usageCount(outputDetails.reasoning_tokens),
 			},
 			finishReason: finishReason(completed, calls),
+			...(quota ? { quota } : {}),
 		};
 		options.onEvent?.({ type: "completed", result });
 		return result;

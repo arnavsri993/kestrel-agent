@@ -132,6 +132,7 @@ import {
 	ModelCatalog,
 	type ModelContentPart,
 	type ModelProvider,
+	ModelProviderError,
 	ProviderPool,
 	ProviderPoolError,
 	type ModelResult,
@@ -191,6 +192,16 @@ export function parseIndependentReviewerVerdict(
 	if (/^VERDICT:\s*PASS\b/i.test(firstLine)) return "passed";
 	if (/^VERDICT:\s*FAIL\b/i.test(firstLine)) return "failed";
 	return "unavailable";
+}
+
+function reviewerUnavailableError(error: unknown): boolean {
+	if (error instanceof ModelProviderError || error instanceof ProviderPoolError)
+		return true;
+	if (!(error instanceof Error)) return false;
+	return (
+		/^No routed worker endpoint passed its health check\b/.test(error.message) ||
+		/^No configured model (satisfies|fits)\b/.test(error.message)
+	);
 }
 
 export interface AgentCoreDependencies {
@@ -512,6 +523,7 @@ export class AgentCore {
 		}
 		this.providerPool = new ProviderPool(
 			this.deps.modelProviders ?? createEnvironmentModelProviders(),
+			() => new Date(this.now()),
 		);
 		this.modelCatalog = new ModelCatalog(
 			this.deps.database,
@@ -532,10 +544,7 @@ export class AgentCore {
 		this.accountAvailability = new AccountAvailabilityMonitor(
 			() => new Date(this.now()),
 		);
-		this.accountAvailability.sync({
-			providerHealth: this.providerPool.health(),
-			profiles: this.modelRegistry.list(),
-		});
+		this.synchronizeAccountAvailability();
 		this.routingOutcomes = new RoutingOutcomeStore(
 			this.deps.database,
 			() => new Date(this.now()),
@@ -652,10 +661,7 @@ export class AgentCore {
 					false,
 				);
 				this.modelRegistry.applyProviderHealth(this.providerPool.health());
-				this.accountAvailability.sync({
-					providerHealth: this.providerPool.health(),
-					profiles: this.modelRegistry.list(),
-				});
+				this.synchronizeAccountAvailability();
 			},
 			this.routingOutcomes,
 		);
@@ -847,6 +853,15 @@ export class AgentCore {
 		return filtered;
 	}
 
+	/** Keep endpoint health, concurrency, and provider-reported capacity together. */
+	private synchronizeAccountAvailability(): void {
+		this.accountAvailability.sync({
+			providerHealth: this.providerPool.health(),
+			profiles: this.modelRegistry.list(),
+			quotaUpdates: this.providerPool.accountQuotaSnapshots(),
+		});
+	}
+
 	private automaticRoute(
 		taskId: string,
 		message: string,
@@ -876,10 +891,7 @@ export class AgentCore {
 			false,
 		);
 		this.modelRegistry.applyProviderHealth(this.providerPool.health());
-		this.accountAvailability.sync({
-			providerHealth: this.providerPool.health(),
-			profiles: this.modelRegistry.list(),
-		});
+		this.synchronizeAccountAvailability();
 		const routedProviderIds = this.providerIdsForAttachments(
 			providerIds,
 			attachments,
@@ -1000,10 +1012,7 @@ export class AgentCore {
 				false,
 			);
 			this.modelRegistry.applyProviderHealth(this.providerPool.health());
-			this.accountAvailability.sync({
-				providerHealth: this.providerPool.health(),
-				profiles: this.modelRegistry.list(),
-			});
+			this.synchronizeAccountAvailability();
 			const previousDecision = automatic.decision;
 			let decision: ReturnType<AdaptiveModelRouter["route"]>;
 			try {
@@ -1121,10 +1130,7 @@ export class AgentCore {
 			this.providerPool.list(),
 			this.modelCatalog,
 		);
-		this.accountAvailability.sync({
-			providerHealth: this.providerPool.health(),
-			profiles: this.modelRegistry.list(),
-		});
+		this.synchronizeAccountAvailability();
 		return providerAccounts;
 	}
 
@@ -1138,10 +1144,7 @@ export class AgentCore {
 			this.providerPool.list(),
 			this.modelCatalog,
 		);
-		this.accountAvailability.sync({
-			providerHealth: this.providerPool.health(),
-			profiles: this.modelRegistry.list(),
-		});
+		this.synchronizeAccountAvailability();
 		return providerAccounts;
 	}
 
@@ -1571,31 +1574,38 @@ export class AgentCore {
 	}> {
 		if (!automatic.route.reviewRequired || result.run.status !== "completed")
 			return { result, verifierStatus: "skipped" };
-		const review = await this.orchestrator.delegate({
-			parentSessionId: sessionId,
-			title: "Independent result review",
-			prompt: [
-				"Review the completed agent result below for correctness, safety, and evidence.",
-				"This is an independent review route. Do not delegate further. Your first line must be exactly `VERDICT: PASS` when the result is supported, or `VERDICT: FAIL` when you find a concrete defect, missing validation, or safety concern. Put a short evidence-based explanation after that line.",
-				`Result:\n${result.assistantMessage?.content.slice(0, 50_000) ?? "[No assistant text was returned.]"}`,
-			].join("\n\n"),
-			model: "auto",
-			// Give the independent reviewer the entire policy-allowed pool, rather
-			// than only the executor's fallback ladder. That preserves the user's
-			// provider policy while allowing a genuinely independent specialist.
-			providerIds: automatic.allowedProviderIds,
-			role: "reviewer",
-			allowedTools: [],
-			requiredCapabilities: { code_review: 0.95, reliability: 0.9 },
-			maximumTurns: this.configuration.current().workflows.maximumTurns,
-		});
+		let review: Awaited<ReturnType<TaskOrchestrator["delegate"]>>;
+		try {
+			review = await this.orchestrator.delegate({
+				parentSessionId: sessionId,
+				title: "Independent result review",
+				prompt: [
+					"Review the completed agent result below for correctness, safety, and evidence.",
+					"This is an independent review route. Do not delegate further. Your first line must be exactly `VERDICT: PASS` when the result is supported, or `VERDICT: FAIL` when you find a concrete defect, missing validation, or safety concern. Put a short evidence-based explanation after that line.",
+					`Result:\n${result.assistantMessage?.content.slice(0, 50_000) ?? "[No assistant text was returned.]"}`,
+				].join("\n\n"),
+				model: "auto",
+				// Give the independent reviewer the entire policy-allowed pool, rather
+				// than only the executor's fallback ladder. That preserves the user's
+				// provider policy while allowing a genuinely independent specialist.
+				providerIds: automatic.allowedProviderIds,
+				role: "reviewer",
+				allowedTools: [],
+				requiredCapabilities: { code_review: 0.95, reliability: 0.9 },
+				maximumTurns: this.configuration.current().workflows.maximumTurns,
+			});
+		} catch (error) {
+			if (!reviewerUnavailableError(error)) throw error;
+			// Independent review strengthens a completed answer, but an unavailable
+			// reviewer must not retroactively turn that executor result into a failure.
+			return { result, verifierStatus: "unavailable" };
+		}
 		if (review.result.run.status !== "completed")
-			throw new Error("The required independent reviewer did not complete.");
-		const verdict = parseIndependentReviewerVerdict(
-			review.result.assistantMessage?.content,
-		);
+			return { result, verifierStatus: "unavailable" };
+		const reviewerFeedback = review.result.assistantMessage?.content;
+		const verdict = parseIndependentReviewerVerdict(reviewerFeedback);
 		if (verdict === "unavailable")
-			throw new Error("The required independent reviewer did not return a verdict.");
+			return { result, verifierStatus: "unavailable" };
 		if (verdict === "passed") {
 			if (automatic.decision.traceId)
 				this.modelRouter.recordTraceEvent(
@@ -1613,6 +1623,7 @@ export class AgentCore {
 		const corrected = await this.agentLoop.reworkAfterVerification({
 			runId: result.run.id,
 			maximumTurns: this.configuration.current().workflows.maximumTurns,
+			...(reviewerFeedback ? { verificationFeedback: reviewerFeedback } : {}),
 			adaptiveExecution: this.adaptiveExecutionOptions(automatic),
 			onAdaptiveEscalation: this.adaptiveEscalationFor(automatic),
 			onEvent: this.routingEventHandler(automatic),

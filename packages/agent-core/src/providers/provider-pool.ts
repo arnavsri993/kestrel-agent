@@ -5,6 +5,8 @@ import {
 	type ModelRequest,
 	type ModelResult,
 	type ProviderAvailabilityReason,
+	type ProviderQuotaSnapshot,
+	normalizeProviderQuotaSnapshot,
 } from "./types";
 
 const DEFAULT_HEALTH_BACKOFF_MS = 30_000;
@@ -43,6 +45,13 @@ export interface ProviderVerification {
 	ok: boolean;
 	latencyMs: number;
 	error?: string;
+}
+
+/** A routing-safe quota observation for one concrete provider/account endpoint. */
+export interface ProviderQuotaObservation extends ProviderQuotaSnapshot {
+	endpointId: string;
+	providerId: string;
+	poolId?: string;
 }
 
 export class ProviderPoolError extends Error {
@@ -143,6 +152,7 @@ export class ProviderPool {
 		>
 	>();
 	private readonly activeRequests = new Map<string, number>();
+	private readonly quotaByProvider = new Map<string, ProviderQuotaSnapshot>();
 
 	constructor(
 		providers: ModelProvider[],
@@ -190,6 +200,32 @@ export class ProviderPool {
 						}
 					: {}),
 			};
+		});
+	}
+
+	/**
+	 * Latest non-secret capacity observations. These are process-local and are
+	 * discarded after a successful response that does not provide quota metadata
+	 * or once a provider-provided reset boundary has passed.
+	 */
+	accountQuotaSnapshots(): ProviderQuotaObservation[] {
+		const nowMs = this.now().getTime();
+		return [...this.providers.values()].flatMap((provider) => {
+			const quota = this.quotaByProvider.get(provider.id);
+			if (!quota) return [];
+			const resetAt = quota.resetAt ? Date.parse(quota.resetAt) : Number.NaN;
+			if (Number.isFinite(resetAt) && resetAt <= nowMs) {
+				this.quotaByProvider.delete(provider.id);
+				return [];
+			}
+			return [
+				{
+					endpointId: provider.id,
+					providerId: provider.id,
+					...(provider.poolId ? { poolId: provider.poolId } : {}),
+					...quota,
+				},
+			];
 		});
 	}
 
@@ -325,6 +361,16 @@ export class ProviderPool {
 					? latency
 					: Math.round(previous.averageLatencyMs * 0.7 + latency * 0.3),
 		});
+	}
+
+	private recordQuota(
+		providerId: string,
+		quota: ProviderQuotaSnapshot | undefined,
+		clearWhenUnavailable = false,
+	): void {
+		const normalized = normalizeProviderQuotaSnapshot(quota);
+		if (normalized) this.quotaByProvider.set(providerId, normalized);
+		else if (clearWhenUnavailable) this.quotaByProvider.delete(providerId);
 	}
 
 	private supports(provider: ModelProvider, request: ModelRequest): boolean {
@@ -479,6 +525,7 @@ export class ProviderPool {
 				const result = await this.withActiveRequest(providerId, () =>
 					provider.complete(providerRequest, options),
 				);
+				this.recordQuota(providerId, result.quota, true);
 				attempts.push({
 					providerId,
 					startedAt,
@@ -491,6 +538,8 @@ export class ProviderPool {
 				return { result, attempts };
 			} catch (error) {
 				if (options.signal?.aborted) throw error;
+				if (error instanceof ModelProviderError)
+					this.recordQuota(providerId, error.quota);
 				lastError = error;
 				attempts.push({
 					providerId,
