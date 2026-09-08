@@ -796,10 +796,6 @@ body:has(.ai-browser-app),
 	width: 16px;
 	height: 16px;
 }
-.browser-tab-reattach-btn svg {
-	transform: rotate(180deg);
-}
-
 .browser-tab-tools-menu {
 	position: absolute;
 	top: calc(100% + 8px);
@@ -1596,6 +1592,10 @@ body:has(.ai-browser-app),
 
 .browser-tab-row-detaching {
 	cursor: grabbing;
+}
+
+.browser-tab-row.browser-tab-row-drop-target {
+	background: color-mix(in srgb, var(--solid) 8%, var(--sidebar));
 }
 
 .browser-tab::after {

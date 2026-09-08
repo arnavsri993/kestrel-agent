@@ -1958,6 +1958,30 @@ try {
 	await detachedPage.getByRole("tablist", { name: "Browser tabs" }).waitFor();
 	await detachedPage.locator("#browser-address-input").waitFor();
 	assert.equal(await detachedPage.getByRole("tab", { name: "Page two", exact: true }).count(), 1);
+	assert.equal(
+		await detachedPage.locator(".browser-tab [role='tab'][draggable='true']").count(),
+		1,
+		"Detached tab did not expose a native drag target",
+	);
+	assert.equal(
+		await detachedPage.locator(".browser-tab-reattach-btn").count(),
+		0,
+		"Detached window rendered the redundant reattach button",
+	);
+	const detachedDragTransfer = await detachedPage.evaluateHandle(
+		() => new DataTransfer(),
+	);
+	await detachedPage
+		.locator(".browser-tab [role='tab'][draggable='true']")
+		.dispatchEvent("dragstart", { dataTransfer: detachedDragTransfer });
+	assert.deepEqual(
+		await detachedPage.evaluate(
+			(transfer) => Array.from(transfer.types),
+			detachedDragTransfer,
+		),
+		["application/x-kestrel-tab"],
+		"Detached tab drag did not advertise a Kestrel tab transfer",
+	);
 	const detachedPlacement = await application.evaluate(
 		({ BrowserWindow, screen }, expectedUrl) => {
 			const cursor = screen.getCursorScreenPoint();
@@ -2000,12 +2024,18 @@ try {
 			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <= 1,
 		`Detached window did not open at the pointer-relative, work-area-clamped position: ${JSON.stringify(detachedPlacement)}`,
 	);
-	await detachedPage
-		.getByRole("button", {
-			name: "Move tab back to main window",
-			exact: true,
-		})
-		.click();
+	const reattachTransfer = await page.evaluateHandle((tabId) => {
+		const transfer = new DataTransfer();
+		transfer.effectAllowed = "move";
+		transfer.setData("application/x-kestrel-tab", tabId);
+		return transfer;
+	}, detachableTabId);
+	await page.locator(".browser-tab-row").dispatchEvent("dragover", {
+		dataTransfer: reattachTransfer,
+	});
+	await page.locator(".browser-tab-row").dispatchEvent("drop", {
+		dataTransfer: reattachTransfer,
+	});
 	await waitForBrowserState(
 		(value) =>
 			value.tabs.length === sourceTabIdsBeforeDetach.length + 1 &&

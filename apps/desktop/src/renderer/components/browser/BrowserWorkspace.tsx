@@ -743,7 +743,10 @@ export function BrowserWorkspace({
         onCloseOthers={(tabId) => closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
         {...(!isDetachedWindow
-          ? { onDetachTab: (tabId: string) => detachTab(tabId) }
+          ? {
+              onDetachTab: (tabId: string) => detachTab(tabId),
+              onTabDrop: (tabId: string) => reattachTab(tabId),
+            }
           : {})}
         {...(isDetachedWindow
           ? { onReattachTab: (tabId: string) => reattachTab(tabId) }

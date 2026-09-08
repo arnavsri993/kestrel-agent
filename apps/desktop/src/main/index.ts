@@ -3217,19 +3217,23 @@ function registerIpc(): void {
     if (request.type === "browser-reattach-tab") {
       if (!requestBrowserService)
         throw new Error("The visible user browser is unavailable.");
-      if (senderWindow === mainWindow)
-        throw new Error("This tab is already in the main Kestrel window.");
       if (!mainWindow || mainWindow.isDestroyed())
         throw new Error("The main Kestrel window is unavailable.");
       const targetService = browserServiceForWindow(mainWindow);
       if (!targetService)
         throw new Error("The main Kestrel window is unavailable.");
-      const tab = requestBrowserService.getTabForTransfer(request.tabId);
+      const sourceService =
+        senderWindow === mainWindow
+          ? browserServiceForTab(request.tabId)
+          : requestBrowserService;
+      if (!sourceService || sourceService === targetService)
+        throw new Error("That detached browser tab is unavailable.");
+      const tab = sourceService.getTabForTransfer(request.tabId);
       let imported = false;
       try {
         await targetService.importTabForTransfer(tab);
         imported = true;
-        await requestBrowserService.removeTabForTransfer(request.tabId);
+        await sourceService.removeTabForTransfer(request.tabId);
       } catch (cause) {
         if (imported)
           await targetService.removeTabForTransfer(tab.id).catch(() => undefined);
@@ -3239,8 +3243,11 @@ function registerIpc(): void {
       mainWindow.focus();
       return {
         ok: true,
-        browserState: requestBrowserService.getState(),
-        browserWindowRole: "detached",
+        browserState:
+          senderWindow === mainWindow
+            ? targetService.getState()
+            : sourceService.getState(),
+        browserWindowRole: senderWindow === mainWindow ? "main" : "detached",
       };
     }
     if (request.type === "browser-find-in-page") {
