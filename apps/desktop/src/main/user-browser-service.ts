@@ -2282,20 +2282,28 @@ export class UserBrowserService {
 		visible: boolean,
 	): Promise<string | undefined> {
 		this.assertAvailable();
+		const pagePreviewPromise =
+			!visible && bounds.width >= 160 && bounds.height >= 120
+				? this.captureNativePagePreview()
+				: undefined;
 		if (!visible) {
 			// Release native input before waiting for the optional screenshot. A
 			// WebContentsView sibling can otherwise swallow renderer pointerup
-			// events while capturePage is in flight.
-			for (const { view } of this.views.values()) view.setVisible(false);
+			// events while capturePage is in flight. The capture was started above
+			// while the active view was still attached, so the preview remains valid.
+			for (const { view } of this.views.values()) {
+				view.setVisible(false);
+				if (this.window.contentView.children.includes(view))
+					this.window.contentView.removeChildView(view);
+			}
 		}
 		// Renderer menus live in the main window's renderer, while web pages are
 		// native WebContentsViews painted above that renderer. Capture the page
-		// before releasing the native view so opening a menu does not turn the
-		// entire page area into an empty canvas.
-		const pagePreview =
-			!visible && bounds.width >= 160 && bounds.height >= 120
-				? await this.captureNativePagePreview()
-				: undefined;
+		// before returning the preview so opening a menu does not turn the entire
+		// page area into an empty canvas.
+		const pagePreview = pagePreviewPromise
+			? await pagePreviewPromise
+			: undefined;
 		const seq = ++this.contentBoundsSeq;
 		const size = this.window.getContentSize();
 		const windowWidth = size[0] ?? 0;
