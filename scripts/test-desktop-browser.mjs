@@ -2573,8 +2573,8 @@ try {
 	const blankTab = page.locator(`.browser-tab[data-tab-id="${blankTabId}"]`);
 	await blankTab.waitFor();
 	await blankTab.scrollIntoViewIfNeeded();
-	// Wait for the reordered tab rail to settle and confirm this tab receives
-	// pointer input before deriving raw drag coordinates from its bounds.
+	// Wait for the tab to settle and receive pointer input after rail scrolling.
+	// Raw coordinates can otherwise land on its neighbor during layout motion.
 	await blankTab.hover();
 	const blankBounds = await blankTab.boundingBox();
 	assert(blankBounds);

@@ -4,7 +4,9 @@ import {
 	AGENT_UNIVERSE_STARFIELD_DPR_CAP,
 	AGENT_UNIVERSE_STAR_TILE_VARIANT_COUNT,
 	agentUniverseStarfieldTileVariant,
+	generateAgentUniverseStarCloudPoints,
 	generateAgentUniverseStarPoints,
+	starfieldAmbientState,
 	starfieldTilePlacementsForViewport,
 	starfieldTransformForCamera,
 } from "./AgentUniverseStarfield";
@@ -53,6 +55,73 @@ describe("agent universe starfield camera attachment", () => {
 		expect(first.some((point) => point.radius > 1.5 && point.glow > 0)).toBe(true);
 		const uniqueLocations = new Set(first.map((point) => `${point.x.toFixed(3)}:${point.y.toFixed(3)}`));
 		expect(uniqueLocations.size).toBe(first.length);
+	});
+
+	it("adds a deterministic localized star cloud with fine points and rare color", () => {
+		const first = generateAgentUniverseStarCloudPoints(
+			0xc7a4d59b,
+			700,
+			700,
+			1.25,
+		);
+		const second = generateAgentUniverseStarCloudPoints(
+			0xc7a4d59b,
+			700,
+			700,
+			1.25,
+		);
+		expect(first).toEqual(second);
+		expect(first.length).toBeGreaterThan(400);
+		expect(first.length).toBeLessThanOrEqual(720);
+		expect(first.every((point) => point.x >= 0 && point.x <= 700)).toBe(true);
+		expect(first.every((point) => point.y >= 0 && point.y <= 700)).toBe(true);
+		expect(first.every((point) => point.radius > 0 && point.radius < 2)).toBe(true);
+		expect(new Set(first.map((point) => point.color)).size).toBeGreaterThan(3);
+		expect(first.some((point) => point.glow > 0.5)).toBe(true);
+	});
+
+	it("drifts cached layers slowly and keeps shimmer within a restrained range", () => {
+		const start = starfieldAmbientState(
+			0,
+			{ speed: 0.5, seed: 0x12ab34cd, shimmerDepth: 0.06 },
+			560,
+			560,
+		);
+		const later = starfieldAmbientState(
+			6_000,
+			{ speed: 0.5, seed: 0x12ab34cd, shimmerDepth: 0.06 },
+			560,
+			560,
+		);
+		expect(start.phaseX).toBe(0);
+		expect(start.phaseY).toBe(0);
+		expect(later.phaseX).toBeGreaterThan(18);
+		expect(later.phaseX).toBeLessThan(24);
+		expect(later.phaseY).toBeGreaterThan(6);
+		expect(later.phaseY).toBeLessThan(10);
+		expect(start.opacity).toBeGreaterThanOrEqual(0.94);
+		expect(start.opacity).toBeLessThanOrEqual(1);
+		expect(later.opacity).toBeGreaterThanOrEqual(0.94);
+		expect(later.opacity).toBeLessThanOrEqual(1);
+	});
+
+	it("keeps tile selection continuous when ambient drift wraps", () => {
+		const before = starfieldAmbientState(
+			55_550,
+			{ speed: 1.4, seed: 0x12ab34cd },
+			560,
+			560,
+		);
+		const after = starfieldAmbientState(
+			55_560,
+			{ speed: 1.4, seed: 0x12ab34cd },
+			560,
+			560,
+		);
+		expect(before.tileIndexOffsetX).toBe(0);
+		expect(after.tileIndexOffsetX).toBe(-1);
+		expect(before.phaseX).toBeGreaterThan(559);
+		expect(after.phaseX).toBeLessThan(1);
 	});
 
 	it.each([

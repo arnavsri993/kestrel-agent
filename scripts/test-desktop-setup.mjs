@@ -659,6 +659,9 @@ try {
 	await page
 		.getByRole("heading", { name: "Command Center", exact: true })
 		.waitFor();
+	// Use Command Center search at compact width so the destination stays in
+	// the visible viewport instead of racing nested scroll restoration.
+	await page.getByLabel("Search Kestrel").fill("Settings");
 	await page
 		.locator(".command-groups button")
 		.filter({ has: page.getByText("Settings", { exact: true }) })
