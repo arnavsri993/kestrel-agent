@@ -2534,6 +2534,7 @@ try {
 	const blankY = blankBounds.y + blankBounds.height / 2;
 	await page.mouse.move(blankX, blankY);
 	await page.mouse.down();
+	await page.waitForTimeout(50);
 	await page.mouse.move(blankX + 180, blankY + 120, { steps: 12 });
 	await waitForBrowserState(
 		(value) => value.tabs.some((tab) => tab.id === blankTabId),
