@@ -5,6 +5,8 @@ import {
 	type ModelRequest,
 	type ModelResult,
 	type ProviderAvailabilityReason,
+	type ProviderQuotaSnapshot,
+	normalizeProviderQuotaSnapshot,
 } from "./types";
 
 const DEFAULT_HEALTH_BACKOFF_MS = 30_000;
@@ -31,6 +33,8 @@ export interface ProviderHealth {
 	failures: number;
 	consecutiveFailures: number;
 	averageLatencyMs: number;
+	/** Process-local concurrency signal used by the account-aware router. */
+	activeRequests?: number;
 	unhealthyUntil?: string;
 	unhealthyReason?: ProviderAvailabilityReason;
 }
@@ -41,6 +45,13 @@ export interface ProviderVerification {
 	ok: boolean;
 	latencyMs: number;
 	error?: string;
+}
+
+/** A routing-safe quota observation for one concrete provider/account endpoint. */
+export interface ProviderQuotaObservation extends ProviderQuotaSnapshot {
+	endpointId: string;
+	providerId: string;
+	poolId?: string;
 }
 
 export class ProviderPoolError extends Error {
@@ -140,6 +151,8 @@ export class ProviderPool {
 			"providerId" | "poolId" | "unhealthyUntil" | "unhealthyReason"
 		>
 	>();
+	private readonly activeRequests = new Map<string, number>();
+	private readonly quotaByProvider = new Map<string, ProviderQuotaSnapshot>();
 
 	constructor(
 		providers: ModelProvider[],
@@ -179,6 +192,7 @@ export class ProviderPool {
 				providerId: provider.id,
 				...(provider.poolId ? { poolId: provider.poolId } : {}),
 				...measurement,
+				activeRequests: this.activeRequests.get(provider.id) ?? 0,
 				...(isUnhealthy && unhealthyUntil !== undefined
 					? {
 							unhealthyUntil: new Date(unhealthyUntil).toISOString(),
@@ -187,6 +201,49 @@ export class ProviderPool {
 					: {}),
 			};
 		});
+	}
+
+	/**
+	 * Latest non-secret capacity observations. These are process-local and are
+	 * discarded after a successful response that does not provide quota metadata
+	 * or once a provider-provided reset boundary has passed.
+	 */
+	accountQuotaSnapshots(): ProviderQuotaObservation[] {
+		const nowMs = this.now().getTime();
+		return [...this.providers.values()].flatMap((provider) => {
+			const quota = this.quotaByProvider.get(provider.id);
+			if (!quota) return [];
+			const resetAt = quota.resetAt ? Date.parse(quota.resetAt) : Number.NaN;
+			if (Number.isFinite(resetAt) && resetAt <= nowMs) {
+				this.quotaByProvider.delete(provider.id);
+				return [];
+			}
+			return [
+				{
+					endpointId: provider.id,
+					providerId: provider.id,
+					...(provider.poolId ? { poolId: provider.poolId } : {}),
+					...quota,
+				},
+			];
+		});
+	}
+
+	private async withActiveRequest<T>(
+		providerId: string,
+		operation: () => Promise<T>,
+	): Promise<T> {
+		this.activeRequests.set(
+			providerId,
+			(this.activeRequests.get(providerId) ?? 0) + 1,
+		);
+		try {
+			return await operation();
+		} finally {
+			const remaining = Math.max(0, (this.activeRequests.get(providerId) ?? 1) - 1);
+			if (remaining === 0) this.activeRequests.delete(providerId);
+			else this.activeRequests.set(providerId, remaining);
+		}
 	}
 
 	async verify(
@@ -304,6 +361,16 @@ export class ProviderPool {
 					? latency
 					: Math.round(previous.averageLatencyMs * 0.7 + latency * 0.3),
 		});
+	}
+
+	private recordQuota(
+		providerId: string,
+		quota: ProviderQuotaSnapshot | undefined,
+		clearWhenUnavailable = false,
+	): void {
+		const normalized = normalizeProviderQuotaSnapshot(quota);
+		if (normalized) this.quotaByProvider.set(providerId, normalized);
+		else if (clearWhenUnavailable) this.quotaByProvider.delete(providerId);
 	}
 
 	private supports(provider: ModelProvider, request: ModelRequest): boolean {
@@ -455,7 +522,10 @@ export class ProviderPool {
 				const providerRequest: ModelRequest = provider.capabilities.tools
 					? { ...requestWithoutTools, model, ...(tools ? { tools } : {}) }
 					: { ...requestWithoutTools, model };
-				const result = await provider.complete(providerRequest, options);
+				const result = await this.withActiveRequest(providerId, () =>
+					provider.complete(providerRequest, options),
+				);
+				this.recordQuota(providerId, result.quota, true);
 				attempts.push({
 					providerId,
 					startedAt,
@@ -468,6 +538,8 @@ export class ProviderPool {
 				return { result, attempts };
 			} catch (error) {
 				if (options.signal?.aborted) throw error;
+				if (error instanceof ModelProviderError)
+					this.recordQuota(providerId, error.quota);
 				lastError = error;
 				attempts.push({
 					providerId,

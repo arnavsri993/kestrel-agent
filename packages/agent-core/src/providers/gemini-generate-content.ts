@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { providerFetch } from "./http";
+import { providerFetch, quotaFromResponseHeaders } from "./http";
 import {
 	contentText,
 	type DiscoveredModel,
@@ -245,6 +245,7 @@ export class GeminiGenerateContentProvider implements ModelProvider {
 				...(options.signal ? { signal: options.signal } : {}),
 			},
 		);
+		const quota = quotaFromResponseHeaders(response.headers);
 		let payload: Record<string, unknown>;
 		try {
 			payload = (await response.json()) as Record<string, unknown>;
@@ -304,6 +305,7 @@ export class GeminiGenerateContentProvider implements ModelProvider {
 				reasoningTokens: usageCount(usage.thoughtsTokenCount),
 			},
 			finishReason: finishReason(candidate?.finishReason, toolCalls),
+			...(quota ? { quota } : {}),
 		};
 		if (text) options.onEvent?.({ type: "text_delta", delta: text });
 		options.onEvent?.({ type: "completed", result });

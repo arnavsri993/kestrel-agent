@@ -21,6 +21,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
+		"evaluate:model-routing": "tsx scripts/evaluate-model-routing.ts",
     "test:security": "tsx scripts/scan-production-secrets.ts",
     "audit:settings": "node scripts/audit-settings-parity.mjs",
     "audit:references": "node scripts/audit-reference-docs.mjs --verify",

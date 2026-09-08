@@ -1,4 +1,8 @@
-import { providerFetch, readServerSentEvents } from "./http";
+import {
+	providerFetch,
+	quotaFromResponseHeaders,
+	readServerSentEvents,
+} from "./http";
 import {
 	contentText,
 	type DiscoveredModel,
@@ -215,6 +219,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 				...(options.signal ? { signal: options.signal } : {}),
 			},
 		);
+		const quota = quotaFromResponseHeaders(response.headers);
 
 		let text = "";
 		let responseId: string | undefined;
@@ -299,6 +304,7 @@ export class OpenAIChatCompletionsProvider implements ModelProvider {
 				outputTokens: usageCount(usage.completion_tokens),
 			},
 			finishReason: finishReason(stopped, toolCalls),
+			...(quota ? { quota } : {}),
 		};
 	}
 }

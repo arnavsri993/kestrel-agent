@@ -113,6 +113,8 @@ export function BrowserWorkspace({
     tab: false,
     toolbar: false,
   });
+  const [tabDragActive, setTabDragActive] = useState(false);
+  const tabDragActiveRef = useRef(false);
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
@@ -136,7 +138,7 @@ export function BrowserWorkspace({
   const organizeTabsRequestRef = useRef(0);
   const pagePreviewRequestRef = useRef(0);
   const lastBoundsRef = useRef("");
-  const syncBoundsRef = useRef<() => void>(() => undefined);
+  const syncBoundsRef = useRef<(visible?: boolean) => void>(() => undefined);
   const scheduleBoundsSyncRef = useRef<() => void>(() => undefined);
   const state = browser.state;
   const {
@@ -308,6 +310,9 @@ export function BrowserWorkspace({
   );
   const nativePageVisible =
     nativePageEligible &&
+    // Keep the renderer in the input path while a tab is being dragged;
+    // native WebContentsView siblings sit above the renderer surface.
+    !tabDragActive &&
     !openChromeMenus.tab &&
     !openChromeMenus.toolbar &&
     !organizeTabsOpening &&
@@ -423,7 +428,7 @@ export function BrowserWorkspace({
     );
   }, []);
 
-  const syncBounds = useCallback(() => {
+  const syncBounds = useCallback((visibleOverride?: boolean) => {
     const node = viewportRef.current;
     if (!node) return;
     const rect = node.getBoundingClientRect();
@@ -434,14 +439,16 @@ export function BrowserWorkspace({
       height: Math.max(0, Math.round(rect.height)),
     };
     const targetTabId = activeTab?.id ?? null;
-    const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${nativePageVisible}:${targetTabId ?? ""}`;
+    const targetVisible =
+      visibleOverride ?? (!tabDragActiveRef.current && nativePageVisible);
+    const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${targetVisible}:${targetTabId ?? ""}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
     const requestId = ++pagePreviewRequestRef.current;
-    void setContentBounds(bounds, nativePageVisible)
+    void setContentBounds(bounds, targetVisible)
       .then((browserPagePreview) => {
         if (requestId !== pagePreviewRequestRef.current) return;
-        if (nativePageVisible) {
+        if (targetVisible) {
           setNativePagePreview(null);
           return;
         }
@@ -454,6 +461,12 @@ export function BrowserWorkspace({
       })
       .catch(() => undefined);
   }, [activeTab?.id, nativePageVisible, setContentBounds]);
+
+  const handleTabDragStateChange = useCallback((dragging: boolean) => {
+    tabDragActiveRef.current = dragging;
+    setTabDragActive(dragging);
+    if (dragging) syncBoundsRef.current(false);
+  }, []);
 
   const scheduleBoundsSync = useCallback(() => {
     syncBoundsRef.current();
@@ -845,6 +858,7 @@ export function BrowserWorkspace({
         onDuplicate={(tabId) => void duplicateTab(tabId)}
         onCloseOthers={(tabId) => closeOtherTabs(tabId)}
         onMoveTab={(tabId, toIndex) => moveTab(tabId, toIndex)}
+        onTabDragStateChange={handleTabDragStateChange}
         {...(!isDetachedWindow
           ? { onDetachTab: (tabId: string) => detachTab(tabId) }
           : {})}

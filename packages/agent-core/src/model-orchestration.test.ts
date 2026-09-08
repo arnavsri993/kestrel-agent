@@ -1,5 +1,6 @@
 import { KestrelDatabase } from "@kestrel/database";
 import { createEncryptionKey } from "@kestrel/encryption";
+import { ModelProfileSchema, RoutingPolicySchema } from "@kestrel/shared-types";
 import { describe, expect, it } from "vitest";
 import {
 	AdaptiveModelRouter,
@@ -11,6 +12,7 @@ import {
 } from "./model-orchestration";
 import type { ModelProvider } from "./providers";
 import { ModelCatalog } from "./providers/model-catalog";
+import { AccountAvailabilityMonitor } from "./routing/account-availability";
 
 function provider(input: {
 	id: string;
@@ -365,6 +367,107 @@ describe("adaptive model orchestration", () => {
 		item.database.close();
 	});
 
+	it("routes around a scarce account while retaining account-safe candidate evidence", () => {
+		const database = new KestrelDatabase(":memory:", createEncryptionKey());
+		const premium = {
+			...provider({
+				id: "premium-account",
+				model: "premium-reasoner",
+				capabilities: {
+					technical_writing: 0.98,
+					instruction_following: 0.98,
+					reliability: 0.96,
+				},
+			}),
+			poolId: "example-provider",
+			account: {
+				id: "premium-account-id",
+				providerId: "example-provider",
+				displayName: "Premium workspace",
+				authTransport: "api_key" as const,
+				enabled: true,
+			},
+		};
+		const healthy = {
+			...provider({
+				id: "healthy-account",
+				model: "steady-reasoner",
+				capabilities: {
+					technical_writing: 0.87,
+					instruction_following: 0.88,
+					reliability: 0.89,
+				},
+			}),
+			poolId: "example-provider",
+			account: {
+				id: "healthy-account-id",
+				providerId: "example-provider",
+				displayName: "Steady workspace",
+				authTransport: "api_key" as const,
+				enabled: true,
+			},
+		};
+		const registry = new ModelRegistry(database, [premium, healthy]);
+		const availability = new AccountAvailabilityMonitor(
+			() => new Date("2026-07-29T12:00:00.000Z"),
+		);
+		availability.sync({
+			profiles: registry.list(),
+			providerHealth: [
+				{
+					providerId: premium.id,
+					poolId: premium.poolId,
+					attempts: 4,
+					successes: 4,
+					failures: 0,
+					consecutiveFailures: 0,
+					averageLatencyMs: 400,
+					activeRequests: 0,
+				},
+				{
+					providerId: healthy.id,
+					poolId: healthy.poolId,
+					attempts: 4,
+					successes: 4,
+					failures: 0,
+					consecutiveFailures: 0,
+					averageLatencyMs: 400,
+					activeRequests: 0,
+				},
+			],
+		});
+		availability.applyQuotaUpdate({
+			endpointId: premium.id,
+			confidence: "exact",
+			remainingFraction: 0.02,
+		});
+		const router = new AdaptiveModelRouter(
+			database,
+			registry,
+			() => 0.01,
+			() => true,
+			() => new Date("2026-07-29T12:00:00.000Z"),
+			availability,
+		);
+		const decision = router.route(
+			new TaskRequirementAnalyzer().analyze(
+				"account-scarcity",
+				"Rewrite this short technical note clearly.",
+			),
+			{ role: "worker" },
+		);
+		expect(decision.endpointId).toBe("healthy-account");
+		expect(decision.accountAlias).toBe("Steady workspace");
+		const candidates = router.traces().at(-1)?.candidates ?? [];
+		expect(candidates.find((candidate) => candidate.endpointId === premium.id))
+			.toMatchObject({ scarcityPenalty: expect.any(Number), accountAlias: "Premium workspace" });
+		expect(
+			candidates.find((candidate) => candidate.endpointId === premium.id)
+				?.scarcityPenalty,
+		).toBeGreaterThan(0);
+		database.close();
+	});
+
 	it("uses a stronger reasoning endpoint for complex high-impact architecture", () => {
 		const item = fixture([
 			provider({
@@ -662,6 +765,143 @@ describe("adaptive model orchestration", () => {
 		item.database.close();
 	});
 
+	it("keeps routing traces profile-only when a prompt contains sensitive text", () => {
+		const item = fixture([provider({ id: "safe", model: "one" })]);
+		const secret = "sk-routing-private-token";
+		item.router.route(
+			item.analyzer.analyze(
+				"private-trace",
+				`Implement this change. Never retain ${secret} in routing diagnostics.`,
+			),
+			{ role: "worker" },
+		);
+		const trace = item.router.traces()[0]!;
+
+		expect(trace.summary).toMatch(/task; .* risk; difficulty/i);
+		expect(JSON.stringify(trace)).not.toContain(secret);
+		expect(
+			JSON.stringify(
+				item.database.getPrivateState("orchestration.routing-traces.v1"),
+			),
+		).not.toContain(secret);
+		item.database.close();
+	});
+
+	it("rejects known secret-like provider preferences before policy can be persisted", () => {
+		const item = fixture([provider({ id: "safe", model: "one" })]);
+		for (const identifier of [
+			"sk-private-routing-token",
+			`ghp_${"a".repeat(36)}`,
+			`xoxb-${"a".repeat(24)}`,
+			`AKIA${"A".repeat(16)}`,
+			`AIza${"a".repeat(35)}`,
+		]) {
+			expect(
+				RoutingPolicySchema.safeParse({
+					...item.router.policy(),
+					preferredProviderIds: [identifier],
+				}).success,
+			).toBe(false);
+		}
+		item.database.close();
+	});
+
+	it("omits unsafe account identifiers and aliases from routing traces", () => {
+		for (const unsafeAccountId of [
+			"owner@example.com",
+			`ghp_${"a".repeat(36)}`,
+		]) {
+			const item = fixture([
+				{
+					...provider({ id: "account-endpoint", model: "one" }),
+					poolId: "openai",
+					account: {
+						id: unsafeAccountId,
+						providerId: "openai",
+						displayName: unsafeAccountId,
+						authTransport: "api_key",
+						enabled: true,
+					},
+				},
+			]);
+
+			const decision = item.router.route(
+				item.analyzer.analyze("unsafe-account", "Summarize this note."),
+				{ role: "worker" },
+			);
+			const trace = item.router.traces()[0]!;
+
+			expect(decision.accountId).toBeUndefined();
+			expect(decision.accountAlias).toBeUndefined();
+			expect(JSON.stringify(trace)).not.toContain(unsafeAccountId);
+			expect(
+				JSON.stringify(
+					item.database.getPrivateState("orchestration.routing-traces.v1"),
+				),
+			).not.toContain(unsafeAccountId);
+			item.database.close();
+		}
+	});
+
+	it("rejects unsafe routing profile metadata before it can reach traces", () => {
+		const item = fixture([provider({ id: "safe", model: "one" })]);
+		const profile = item.registry.get("safe:one");
+		for (const unsafe of [
+			"owner@example.com",
+			"https://provider.example/v1",
+			`ghp_${"a".repeat(36)}`,
+		]) {
+			expect(
+				ModelProfileSchema.safeParse({
+					...profile,
+					accountAlias: unsafe,
+				}).success,
+			).toBe(false);
+			expect(
+				ModelProfileSchema.safeParse({
+					...profile,
+					endpointId: unsafe,
+				}).success,
+			).toBe(false);
+		}
+		const unsafeDatabase = new KestrelDatabase(":memory:", createEncryptionKey());
+		expect(
+			new ModelRegistry(unsafeDatabase, [
+				provider({
+					id: "https://provider.example/v1",
+					model: `ghp_${"a".repeat(36)}`,
+				}),
+			]).list(),
+		).toEqual([]);
+		unsafeDatabase.close();
+		item.database.close();
+	});
+
+	it("does not allow caller task IDs or event text to become trace content", () => {
+		const item = fixture([provider({ id: "safe", model: "one" })]);
+		const secret = `ghp_${"a".repeat(36)}`;
+		expect(() => item.analyzer.analyze("owner@example.com", "Summarize this note.")).toThrow(
+			/opaque, non-secret identifier/i,
+		);
+		item.router.route(
+			item.analyzer.analyze("safe-task", "Summarize this note."),
+			{ role: "worker" },
+		);
+		const trace = item.router.traces()[0]!;
+		Reflect.apply(item.router.recordTraceEvent, item.router, [
+			trace.id,
+			"ROUTE_RETRIED",
+			secret,
+		]);
+		const updated = item.router.traces()[0]!;
+		expect(updated.events?.at(-1)).toMatchObject({
+			type: "ROUTE_RETRIED",
+			message: "Retried execution after a normalized transient signal.",
+		});
+		expect(JSON.stringify(updated)).not.toContain(secret);
+		item.database.close();
+	});
+
 	it("translates natural language preferences into task-scoped policy", () => {
 		const item = fixture([
 			provider({ id: "local", model: "private", local: true }),
@@ -757,13 +997,16 @@ describe("adaptive model orchestration", () => {
 		expect(
 			detectModelRefusal({ finishReason: "refusal", text: "" }).refused,
 		).toBe(true);
+		expect(
+			detectModelRefusal({ finishReason: "refusal", text: "" }).safetyPolicy,
+		).toBe(true);
 
 		// 2. Semantic text refusal
 		expect(
 			detectModelRefusal({
 				finishReason: "stop",
 				text: "I cannot fulfill this request because it violates safety policies.",
-			}).refused,
+			}).safetyPolicy,
 		).toBe(true);
 
 		expect(
