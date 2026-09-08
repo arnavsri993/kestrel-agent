@@ -2282,6 +2282,12 @@ export class UserBrowserService {
 		visible: boolean,
 	): Promise<string | undefined> {
 		this.assertAvailable();
+		if (!visible) {
+			// Release native input before waiting for the optional screenshot. A
+			// WebContentsView sibling can otherwise swallow renderer pointerup
+			// events while capturePage is in flight.
+			for (const { view } of this.views.values()) view.setVisible(false);
+		}
 		// Renderer menus live in the main window's renderer, while web pages are
 		// native WebContentsViews painted above that renderer. Capture the page
 		// before releasing the native view so opening a menu does not turn the

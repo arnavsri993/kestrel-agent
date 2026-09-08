@@ -2977,6 +2977,12 @@ try {
 		.getByRole("menuitem", { name: "Organize tabs", exact: true })
 		.click();
 	await organizeDialog.waitFor();
+	const suggestedCloseCheckboxes = organizeDialog.locator(
+		".organize-tabs-deletion input[type='checkbox']",
+	);
+	for (const checkbox of await suggestedCloseCheckboxes.all()) {
+		if (await checkbox.isChecked()) await checkbox.uncheck();
+	}
 	await organizeDialog.getByRole("button", { name: /^Edit / }).first().click();
 	await organizeDialog.getByLabel("Folder name").fill("Local Pages");
 	await organizeDialog.getByRole("button", { name: "Rose", exact: true }).click();
