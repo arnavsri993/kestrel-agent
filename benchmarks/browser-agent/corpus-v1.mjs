@@ -13,6 +13,12 @@ const type = (role, name, text, extra = {}) => ({
 	text,
 	...extra,
 });
+const userInput = (role, name, text, extra = {}) => ({
+	op: "user-input",
+	target: target(role, name),
+	text,
+	...extra,
+});
 
 function researchWorkflow({
 	id,
@@ -814,13 +820,16 @@ const accounts = [
 		steps: [
 			navigate("/verify"),
 			{ op: "auth-handoff", visible: true, intervention: true },
-			type("textbox", "Verification code", "246810"),
+			userInput("textbox", "Verification code", "246810", {
+				site: "primary",
+				path: "/verify",
+			}),
 			{ op: "auth-handoff", visible: false },
 			click("button", "Verify fixture code"),
 			{ op: "observe-text", text: "Verification complete" },
 		],
 		predicates: [
-			{ kind: "field", name: "code", equals: "246810" },
+			{ kind: "field", name: "code", equals: "246810", sensitive: true },
 			{ kind: "activation", id: "verify", equals: 1 },
 		],
 	},

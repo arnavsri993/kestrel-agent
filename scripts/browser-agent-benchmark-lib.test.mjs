@@ -9,6 +9,7 @@ import {
 	corpusSha256,
 	evaluateBenchmarkPredicates,
 	predicatesPassed,
+	redactBenchmarkPredicateResults,
 	summarizeBenchmarkResults,
 	validateBenchmarkCorpus,
 } from "./browser-agent-benchmark-lib.mjs";
@@ -42,11 +43,35 @@ describe("browser-agent benchmark corpus", () => {
 
 	it("uses a stable canonical corpus hash", () => {
 		expect(corpusSha256(BROWSER_AGENT_BENCHMARK_CORPUS)).toBe(
-			"0a3ce075553f906e001656a3be71aa2f7cba3ad390628b853d9ce430cad84c0e",
+			"aadf606b16d190f4647148b19171cd3b90519bdee46acc40b87d2e872bfbf141",
 		);
 		expect(corpusSha256([{ b: 2, a: 1 }])).toBe(
 			corpusSha256([{ a: 1, b: 2 }]),
 		);
+	});
+
+	it("redacts sensitive predicate values in report results", () => {
+		const evaluated = evaluateBenchmarkPredicates(
+			{ fields: { code: "246810" } },
+			[{ kind: "field", name: "code", equals: "246810", sensitive: true }],
+		);
+		const redacted = redactBenchmarkPredicateResults(evaluated);
+
+		expect(predicatesPassed(evaluated)).toBe(true);
+		expect(JSON.stringify(redacted)).not.toContain("246810");
+		expect(redacted).toEqual([
+			{
+				predicate: {
+					kind: "field",
+					name: "code",
+					equals: "[redacted]",
+					sensitive: true,
+				},
+				actual: "[redacted]",
+				expected: { equals: "[redacted]" },
+				passed: true,
+			},
+		]);
 	});
 
 	it("rejects a drifted or duplicated corpus", () => {
