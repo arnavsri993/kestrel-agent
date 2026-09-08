@@ -2502,6 +2502,16 @@ try {
 			Math.abs(detachedPlacement.bounds.y - detachedPlacement.expectedBounds.y) <= 1,
 		`Detached window did not open at the pointer-relative, work-area-clamped position: ${JSON.stringify(detachedPlacement)}`,
 	);
+	const rejectedForgedTransfer = await page.evaluate(async (tabId) => {
+		try {
+			await window.kestrel.request({
+				type: "browser-reattach-tab", tabId,
+				transferToken: "00000000-0000-4000-8000-000000000000",
+			});
+			return false;
+		} catch { return true; }
+	}, detachableTabId);
+	assert(rejectedForgedTransfer, "Main window accepted an unauthorized tab transfer");
 	const authorizedTransfer = await detachedPage.evaluate(
 		(transfer) => transfer.getData("application/x-kestrel-tab"), detachedDragTransfer,
 	);
