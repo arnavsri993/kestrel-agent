@@ -114,6 +114,7 @@ export function BrowserWorkspace({
     toolbar: false,
   });
   const [tabDragActive, setTabDragActive] = useState(false);
+  const tabDragActiveRef = useRef(false);
   const [organizeTabsPreview, setOrganizeTabsPreview] =
     useState<UserBrowserTabOrganizationPreview | null>(null);
   const [organizeTabsOpening, setOrganizeTabsOpening] = useState(false);
@@ -438,7 +439,8 @@ export function BrowserWorkspace({
       height: Math.max(0, Math.round(rect.height)),
     };
     const targetTabId = activeTab?.id ?? null;
-    const targetVisible = visibleOverride ?? nativePageVisible;
+    const targetVisible =
+      visibleOverride ?? (!tabDragActiveRef.current && nativePageVisible);
     const key = `${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}:${targetVisible}:${targetTabId ?? ""}`;
     if (lastBoundsRef.current === key) return;
     lastBoundsRef.current = key;
@@ -461,6 +463,7 @@ export function BrowserWorkspace({
   }, [activeTab?.id, nativePageVisible, setContentBounds]);
 
   const handleTabDragStateChange = useCallback((dragging: boolean) => {
+    tabDragActiveRef.current = dragging;
     setTabDragActive(dragging);
     if (dragging) syncBoundsRef.current(false);
   }, []);
