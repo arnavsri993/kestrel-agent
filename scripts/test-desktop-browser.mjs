@@ -2528,6 +2528,7 @@ try {
 	assert(blankTabId);
 	const blankTab = page.locator(`.browser-tab[data-tab-id="${blankTabId}"]`);
 	await blankTab.waitFor();
+	await blankTab.scrollIntoViewIfNeeded();
 	const blankBounds = await blankTab.boundingBox();
 	assert(blankBounds);
 	const blankX = blankBounds.x + blankBounds.width / 2;
