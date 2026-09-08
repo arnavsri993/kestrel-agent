@@ -121,7 +121,7 @@ try {
 	await page.getByText("Override automatic routing", { exact: true }).waitFor();
 	assert.match(
 		await page.locator(".work-card-note").first().innerText(),
-		/capability, cost, privacy, and your routing preference/,
+		/capability, cost, privacy, and your preferences?/,
 	);
 	assert.equal(runtimeErrors.length, 0, runtimeErrors.join("\n"));
 	console.log("Desktop intelligent model routing UI passed.");
