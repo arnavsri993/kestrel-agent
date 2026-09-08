@@ -2051,14 +2051,16 @@ export class UserBrowserService {
 		this.commit();
 		if (tab.id === this.state.activeTabId) this.revealActiveWebContent();
 		this.attachActiveWebView();
-		let directDownloadMayArrive = false;
+		// A resolved loadURL does not prove a document committed: Electron may
+		// deliver will-download afterward. Only did-navigate clears that snapshot.
+		let directDownloadMayArrive = true;
 		record.approvedNavigationUrl = url;
 		try {
 			if (loadOptions) await webContents.loadURL(url, loadOptions);
 			else await webContents.loadURL(url);
 		} catch (cause) {
 			if (!this.navigationCheckIsCurrent(tab, record, generation)) return;
-			if (mayBecomeDirectDownload(cause)) directDownloadMayArrive = true;
+			directDownloadMayArrive = mayBecomeDirectDownload(cause);
 			if (isAbortedNavigation(cause)) {
 				// Electron can reject loadURL before its will-download event arrives.
 				// Keep the short-lived pending snapshot for that event to correlate.
@@ -6221,6 +6223,9 @@ export class UserBrowserService {
 	): void {
 		const url = safePageUrl(value);
 		if (!url || !liveWebContents(webContents)) return;
+		const record = this.views.get(tab.id);
+		if (record?.view.webContents !== webContents) return;
+		delete record.pendingDownloadNavigation;
 		// Snapshot element refs are tied to a specific DOM generation. Any main-frame
 		// navigation, including SPA route changes, must invalidate them before reuse.
 		this.elementRefs.delete(tab.id);
