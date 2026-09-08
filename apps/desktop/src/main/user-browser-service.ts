@@ -215,6 +215,8 @@ const AUTHENTICATION_HOSTS = new Set([
 ]);
 const AUTHENTICATION_PATH_PATTERN =
 	/(?:^|\/)(?:auth|authenticate|authentication|authorize|authorization|challenge|consent|log[-_]?in|oauth\d*|sign[-_]?in|sign[-_]?up|signin|signup|sso|verify|verification)(?:\/|$)/i;
+const APP_STORE_PROTOCOLS = new Set(["itms-apps:", "macappstore:"]);
+const APP_STORE_HOSTS = new Set(["apps.apple.com", "itunes.apple.com"]);
 const ALWAYS_ALLOW_PERMISSIONS = new Set([
 	"fullscreen",
 	"clipboard-sanitized-write",
@@ -504,6 +506,32 @@ function safePageUrl(value: string): URL | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/** Allow only Apple App Store deep links to cross from a page into macOS. */
+export function safeAppStoreUrl(value: string): string | undefined {
+	if (!value || value.length > 8_192) return undefined;
+	try {
+		const url = new URL(value);
+		if (
+			!APP_STORE_PROTOCOLS.has(url.protocol) ||
+			!APP_STORE_HOSTS.has(url.hostname.toLowerCase()) ||
+			url.port ||
+			url.username ||
+			url.password
+		)
+			return undefined;
+		return url.toString();
+	} catch {
+		return undefined;
+	}
+}
+
+function openAppStoreUrl(value: string): boolean {
+	const url = safeAppStoreUrl(value);
+	if (!url) return false;
+	void Promise.resolve(shell.openExternal(url)).catch(() => undefined);
+	return true;
 }
 
 function discardPasswordEntry(entry: { password: string }): void {
@@ -2771,8 +2799,8 @@ export class UserBrowserService {
 			);
 		}
 		const tab = this.requireTab(tabId);
-		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
-			throw new Error("Only loaded web pages can move between windows.");
+		if (tab.file || tab.error) {
+			throw new Error("Only browser tabs can move between windows.");
 		}
 		return structuredClone(tab);
 	}
@@ -2796,7 +2824,8 @@ export class UserBrowserService {
 			this.state.activeTabId = imported.id;
 			this.commit();
 			try {
-				await this.navigate(imported.id, imported.url);
+				if (imported.url) await this.navigate(imported.id, imported.url);
+				else await this.syncActiveView();
 			} catch (cause) {
 				this.closeView(imported.id);
 				this.state.tabs = this.state.tabs.filter(
@@ -3026,8 +3055,8 @@ export class UserBrowserService {
 			);
 		}
 		const tab = this.requireTab(tabId);
-		if (!tab.url || tab.file || tab.error || isKestrelAppPageUrl(tab.url)) {
-			throw new Error("Only loaded web pages can open in a separate window.");
+		if (tab.file || tab.error) {
+			throw new Error("Only browser tabs can open in a separate window.");
 		}
 		this.closeView(tabId);
 		const index = this.state.tabs.findIndex((item) => item.id === tabId);
@@ -5601,6 +5630,7 @@ export class UserBrowserService {
 		const webContents = liveWebContents(record?.view?.webContents);
 		if (!webContents) return;
 		webContents.setWindowOpenHandler(({ url, disposition, postBody, referrer }) => {
+			if (openAppStoreUrl(url)) return { action: "deny" };
 			if (safePageUrl(url)) {
 				const loadOptions = loadOptionsForWindowOpen(postBody, referrer);
 				void this.createTab(
@@ -5639,6 +5669,10 @@ export class UserBrowserService {
 				event.preventDefault();
 				return;
 			}
+			if (openAppStoreUrl(url)) {
+				event.preventDefault();
+				return;
+			}
 			const normalized = safePageUrl(url)?.toString();
 			if (!normalized) {
 				event.preventDefault();
@@ -5653,6 +5687,10 @@ export class UserBrowserService {
 		});
 		webContents.on("will-redirect", (event, url) => {
 			if (this.passwordSaveCommitTabId === tab.id) {
+				event.preventDefault();
+				return;
+			}
+			if (openAppStoreUrl(url)) {
 				event.preventDefault();
 				return;
 			}

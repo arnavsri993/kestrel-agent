@@ -195,14 +195,20 @@ vi.mock("electron", () => ({
       resize: () => ({ toDataURL: () => "data:image/png;base64,INLINE" }),
     })),
   },
-  shell: { showItemInFolder: vi.fn(), openPath: vi.fn(async () => "") },
+  shell: {
+    showItemInFolder: vi.fn(),
+    openPath: vi.fn(async () => ""),
+    openExternal: vi.fn(async () => undefined),
+  },
 }));
 
 import { nativeImage } from "electron";
 import { dialog } from "electron";
+import { shell } from "electron";
 import { BrowserTabStore } from "./browser-tab-store";
 import {
   isAuthenticationFlowUrl,
+  safeAppStoreUrl,
   UserBrowserService,
 } from "./user-browser-service";
 import type { BrowserThreatProvider } from "./browser-threat-provider";
@@ -2123,6 +2129,35 @@ describe("UserBrowserService", () => {
     });
   });
 
+  it("can move a blank New Tab page between browser windows", async () => {
+    const source = createService();
+    const blankTab = source.service.getState().tabs[0]!;
+    const transferred = source.service.getTabForTransfer(blankTab.id);
+
+    expect(transferred).toMatchObject({
+      id: blankTab.id,
+      title: "New Tab",
+      url: "",
+    });
+
+    const sourceState = await source.service.detachTab(blankTab.id);
+    expect(sourceState.tabs).toHaveLength(1);
+    expect(sourceState.tabs[0]?.id).not.toBe(blankTab.id);
+
+    const target = createService();
+    const targetState = await target.service.importTabForTransfer(transferred);
+    expect(targetState.activeTabId).toBe(blankTab.id);
+    expect(targetState.tabs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: blankTab.id,
+          title: "New Tab",
+          url: "",
+        }),
+      ]),
+    );
+  });
+
   it("moves a web tab back between windows without treating it as closed", async () => {
     const source = createService();
     const target = createService();
@@ -2168,6 +2203,60 @@ describe("UserBrowserService", () => {
     await vi.waitFor(() => expect(service.getState().tabs).toHaveLength(2));
     expect(service.getState()).toMatchObject({ activeTabId: expect.any(String) });
     expect(service.getState().tabs.at(-1)).toMatchObject({ url: "https://open.example/path" });
+  });
+
+  it("hands off allowlisted App Store links to macOS", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(
+      first.id,
+      "https://apps.apple.com/us/app/speedtest-by-ookla/id113517709?mt=12",
+    );
+    const source = electron.state.views[0]!.webContents;
+    const appStoreUrl =
+      "macappstore://itunes.apple.com/us/app/speedtest-by-ookla/id113517709?mt=12";
+    const preventDefault = vi.fn();
+
+    source.emit("will-navigate", { preventDefault }, appStoreUrl);
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl);
+    expect(service.getState().tabs).toHaveLength(1);
+  });
+
+  it("hands off App Store popup links without creating a browser tab", async () => {
+    const { service } = createService();
+    const first = service.getState().tabs[0]!;
+    await service.navigate(first.id, "https://apps.apple.com/");
+    const source = electron.state.views[0]!.webContents;
+    const appStoreUrl = "itms-apps://apps.apple.com/app/id113517709?mt=12";
+
+    expect(
+      source.windowOpenHandler?.({
+        url: appStoreUrl,
+        disposition: "foreground-tab",
+      }),
+    ).toEqual({ action: "deny" });
+    expect(shell.openExternal).toHaveBeenCalledWith(appStoreUrl);
+    expect(service.getState().tabs).toHaveLength(1);
+  });
+
+  it("accepts both Apple App Store URL forms and rejects other custom schemes", () => {
+    expect(
+      safeAppStoreUrl("macappstore://itunes.apple.com/app/id113517709?mt=12"),
+    ).toBe("macappstore://itunes.apple.com/app/id113517709?mt=12");
+    expect(
+      safeAppStoreUrl("itms-apps://apps.apple.com/app/id113517709?mt=12"),
+    ).toBe("itms-apps://apps.apple.com/app/id113517709?mt=12");
+    for (const url of [
+      "javascript:alert(1)",
+      "my-app://itunes.apple.com/app/id113517709",
+      "macappstore://evil.example/app/id113517709",
+      "macappstore://itunes.apple.com:8080/app/id113517709",
+      "macappstore://user:secret@itunes.apple.com/app/id113517709",
+    ]) {
+      expect(safeAppStoreUrl(url)).toBeUndefined();
+    }
   });
 
   it("preserves target=_blank form POST bodies when opening managed tabs", async () => {
